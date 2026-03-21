@@ -9,6 +9,7 @@ Thumbs.db
 # AI agents/tools config (local)
 .claude/
 .opencode/
+opencode.json
 .crush/
 .ruff_cache/
 .ai-context/
