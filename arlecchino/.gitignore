@@ -1,0 +1,10 @@
+build/bin
+node_modules
+frontend/dist
+arlecchino
+data/*.db
+data/*.db-wal
+data/*.db-shm
+frontend/wailsjs/runtime/package 2.json
+frontend/test-results/
+playwright-report/

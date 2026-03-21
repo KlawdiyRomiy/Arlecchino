@@ -1,0 +1,5 @@
+{
+    "require-dev": {
+        "phpactor/phpactor": "^0.18.1"
+    }
+}

@@ -1,0 +1,283 @@
+# ============================================================
+# ARLE Code Completion Ranking Model - Configuration
+# ============================================================
+# Purpose: Train BiLSTM+Attention model for RANKING completions
+# NOT for language detection!
+# ============================================================
+
+model:
+  name: "arle_ranking_bilstm"
+  version: "1.0.0"
+  task: "ranking"  # NOT classification!
+  
+  architecture:
+    type: "bilstm_attention"
+    embed_dim: 128        # Reduced from 256 for smaller model
+    lstm_hidden: 128      # Bi-directional: 128*2 = 256
+    lstm_layers: 2        # 2-layer BiLSTM
+    attention_dim: 64     # Attention mechanism
+    dropout: 0.1
+    
+  output:
+    type: "logits"        # Token prediction logits
+    vocab_size: 8000      # Reduced from 32000 for speed
+    max_seq_len: 128      # Context window
+    
+  target_size:
+    fp32_mb: 40           # Before quantization
+    int8_mb: 20           # After INT8 quantization
+    
+training:
+  task_type: "pairwise_ranking"  # Learn to rank good vs bad completions
+  loss_function: "margin_ranking_loss"  # or "cross_entropy" for next-token
+  
+  # Pairwise ranking: (context, good_completion, bad_completion)
+  # Score(good) > Score(bad) + margin
+  margin: 0.5
+  
+  # Alternative: Next-token prediction
+  # Predict next token given context
+  # loss = CrossEntropy(predicted_token, actual_token)
+  use_next_token_prediction: false
+  
+  data:
+    # Training samples per language
+    samples_per_language: 5000
+    train_split: 0.95
+    val_split: 0.05
+    
+    # Data augmentation
+    augment:
+      random_crop: true
+      random_mask: 0.15   # Mask 15% of tokens
+      swap_completions: true
+    
+  hyperparameters:
+    batch_size: 64
+    epochs: 5
+    learning_rate: 0.001
+    weight_decay: 0.01
+    gradient_clip: 1.0
+    
+  optimizer: "adamw"
+  scheduler:
+    type: "cosine_annealing"
+    t_max: 5
+    
+  early_stopping:
+    patience: 2
+    min_delta: 0.001
+
+tokenizer:
+  type: "bpe"
+  vocab_size: 8000
+  special_tokens:
+    - "<PAD>"
+    - "<UNK>"
+    - "<BOS>"
+    - "<EOS>"
+    - "<MASK>"
+    - "<SEP>"    # Separator between context and completion
+  min_frequency: 3
+  add_prefix_space: false
+  
+  # Save format compatible with arle_tokenizer.go
+  output_format: "huggingface_json"
+  output_file: "arle_tokenizer_ranking.json"
+
+languages:
+  # Tier 1: Most important (high priority)
+  tier_1:
+    weight: 3.0
+    languages:
+      - python
+      - javascript
+      - typescript
+      - java
+      - go
+      - rust
+      - cpp
+      - c
+      - php
+      - ruby
+      
+  # Tier 2: Important
+  tier_2:
+    weight: 2.0
+    languages:
+      - swift
+      - kotlin
+      - scala
+      - csharp
+      - dart
+      - lua
+      - r
+      - julia
+      - perl
+      - shell
+      
+  # Tier 3: Niche languages
+  tier_3:
+    weight: 1.0
+    languages:
+      - haskell
+      - clojure
+      - elixir
+      - erlang
+      - groovy
+      - powershell
+      - objective-c
+      - fsharp
+      - ocaml
+      - fortran
+      - cobol
+      - ada
+      - prolog
+      - common-lisp
+      - scheme
+      - racket
+      - emacs-lisp
+      - assembly
+      - vhdl
+      - verilog
+      - zig
+      - nim
+      - crystal
+      
+  # Data formats (lower priority)
+  tier_4:
+    weight: 0.5
+    languages:
+      - json
+      - yaml
+      - toml
+      - xml
+      - markdown
+      - dockerfile
+      - sql
+      - html
+      - css
+
+data_sources:
+  primary: "bigcode/the-stack-v2"  # Updated dataset
+  fallback: "bigcode/the-stack"
+  
+  # HuggingFace dataset config
+  dataset_config:
+    streaming: true
+    trust_remote_code: true
+    
+  filters:
+    min_file_size: 100
+    max_file_size: 10000
+    min_line_length: 5
+    max_line_length: 200
+    
+    # Quality filters
+    exclude_patterns:
+      - "test_*"
+      - "*_test.py"
+      - "*.min.js"
+      - "*.bundle.js"
+      - "vendor/*"
+      - "node_modules/*"
+    
+    # Only include files with clear structure
+    require_functions: true
+    require_classes: false
+
+ranking_strategy:
+  # How to generate positive/negative pairs
+  positive_samples:
+    # Good completions: actual next lines from code
+    source: "ground_truth"
+    augment: true
+    
+  negative_samples:
+    # Bad completions: random from other files, wrong types, etc.
+    strategies:
+      - type: "random_from_vocab"
+        weight: 0.3
+      - type: "wrong_type"       # int when expecting string
+        weight: 0.2
+      - type: "wrong_context"    # from different file/class
+        weight: 0.3
+      - type: "shuffled_tokens"  # randomize order
+        weight: 0.2
+    
+  hard_negatives:
+    # Generate harder negatives for better learning
+    enabled: true
+    ratio: 0.3  # 30% hard negatives
+    strategies:
+      - "similar_names"      # "getUserById" vs "getUserByEmail"
+      - "wrong_prefix"       # "get_user" vs "set_user"
+      - "wrong_language"     # PHP code when in Python file
+
+export:
+  formats:
+    - onnx
+    - torchscript
+  
+  onnx:
+    opset_version: 14
+    input_names: ["input_ids"]
+    output_names: ["logits"]
+    dynamic_axes:
+      input_ids: {0: "batch_size", 1: "sequence_length"}
+      logits: {0: "batch_size", 1: "sequence_length"}
+    
+  quantization:
+    enabled: true
+    method: "dynamic"  # Dynamic INT8 quantization
+    backend: "qnnpack"  # ARM-optimized
+    
+  validation:
+    # Test exported model before saving
+    run_test_inputs: true
+    compare_with_pytorch: true
+    max_difference: 1e-4
+
+deployment:
+  model_name: "arle_model_ranking.onnx"
+  tokenizer_name: "arle_tokenizer_ranking.json"
+  
+  target_path: "../../arlecchino/assets/"
+  
+  metadata:
+    # Embed metadata in ONNX model
+    task: "code_completion_ranking"
+    languages: "51_languages"
+    vocab_size: 8000
+    max_seq_len: 128
+    version: "1.0.0"
+
+evaluation:
+  metrics:
+    # Ranking metrics
+    - "ndcg@5"         # Normalized Discounted Cumulative Gain
+    - "ndcg@10"
+    - "mrr"            # Mean Reciprocal Rank
+    - "map@5"          # Mean Average Precision
+    - "accuracy@1"     # Top-1 accuracy
+    - "accuracy@5"     # Top-5 accuracy
+    
+  test_sets:
+    # Held-out test sets per language
+    per_language_samples: 500
+    
+  benchmarks:
+    # Optional: test on public benchmarks
+    - "humaneval"
+    - "mbpp"
+
+logging:
+  level: "info"
+  tensorboard: true
+  wandb: false
+  
+  checkpoints:
+    save_every_n_epochs: 1
+    keep_best_n: 3
+    metric: "val_ndcg@5"
+    mode: "max"

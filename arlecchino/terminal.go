@@ -1,0 +1,185 @@
+package main
+
+import (
+	"arlecchino/internal/terminal"
+	"encoding/base64"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+// Terminal Management - PTY session lifecycle and I/O
+
+func (a *App) CreateTerminal(id, name string) error {
+	workingDir := a.GetCurrentProjectPath()
+	if workingDir == "" {
+		home, _ := os.UserHomeDir()
+		workingDir = home
+	}
+
+	session, err := a.termManager.Create(id, name, workingDir)
+	if err != nil {
+		return err
+	}
+
+	session.SetOnData(func(data []byte) {
+		encoded := base64.StdEncoding.EncodeToString(data)
+		runtime.EventsEmit(a.ctx, "terminal:data", map[string]interface{}{
+			"id":   id,
+			"data": encoded,
+		})
+	})
+
+	session.SetOnExit(func(code int) {
+		runtime.EventsEmit(a.ctx, "terminal:exit", map[string]interface{}{
+			"id":   id,
+			"code": code,
+		})
+	})
+
+	session.SetOnMode(func(event terminal.TUIModeEvent) {
+		if legacyPTYBootstrapEnabled() && session.ReserveAgentGuideInjection(event) {
+			a.tryInjectAgentGuide(session, id)
+		}
+
+		runtime.EventsEmit(a.ctx, "terminal:mode", map[string]interface{}{
+			"id":            id,
+			"mode":          event.Mode,
+			"active":        event.Active,
+			"reason":        event.Reason,
+			"confidence":    event.Confidence,
+			"sourceSignals": event.SourceSignals,
+			"timestamp":     time.Now().UnixMilli(),
+		})
+	})
+
+	session.SetOnShell(func(event terminal.ShellEvent) {
+		payload := map[string]interface{}{
+			"id":   id,
+			"type": event.Type,
+			"cwd":  event.CWD,
+			"raw":  event.Raw,
+		}
+		if event.ExitCode != nil {
+			payload["exitCode"] = *event.ExitCode
+		}
+
+		runtime.EventsEmit(a.ctx, "terminal:shell", payload)
+	})
+
+	session.SetOnSemantic(func(event terminal.SemanticEvent) {
+		runtime.EventsEmit(a.ctx, "terminal:semantic", map[string]interface{}{
+			"id":       id,
+			"kind":     event.Kind,
+			"path":     event.Path,
+			"line":     event.Line,
+			"column":   event.Column,
+			"severity": event.Severity,
+			"message":  event.Message,
+		})
+	})
+
+	return nil
+}
+
+func (a *App) WriteTerminal(id string, data string) error {
+	session := a.termManager.Get(id)
+	if session == nil {
+		return fmt.Errorf("terminal session not found")
+	}
+
+	payload := []byte(data)
+	if decoded, err := base64.StdEncoding.DecodeString(data); err == nil {
+		payload = decoded
+	}
+
+	legacyBootstrapEnabled := legacyPTYBootstrapEnabled()
+	reservedForInput, shouldForceAgentMode := session.TrackAgentLaunchForInput(payload, legacyBootstrapEnabled)
+
+	if err := session.Write(payload); err != nil {
+		if reservedForInput {
+			session.RollbackAgentGuideInjection()
+		}
+		return err
+	}
+
+	if shouldForceAgentMode {
+		session.ForceAgentCLIMode("agent-launch")
+	}
+
+	if reservedForInput {
+		a.tryInjectAgentGuide(session, id)
+	}
+
+	return nil
+}
+
+func (a *App) ResizeTerminal(id string, rows, cols int) error {
+	session := a.termManager.Get(id)
+	if session == nil {
+		return fmt.Errorf("terminal session not found")
+	}
+	return session.Resize(uint16(rows), uint16(cols))
+}
+
+func (a *App) CloseTerminal(id string) error {
+	return a.termManager.Close(id)
+}
+
+func (a *App) CloseAllTerminals() {
+	a.termManager.CloseAll()
+}
+
+func (a *App) ListTerminalSessions() []string {
+	return a.termManager.List()
+}
+
+func (a *App) SendTerminalText(id, text string) error {
+	session := a.termManager.Get(id)
+	if session == nil {
+		return fmt.Errorf("terminal session not found")
+	}
+
+	return session.Write([]byte(text))
+}
+
+func (a *App) tryInjectAgentGuide(session *terminal.Session, sessionID string) {
+	projectRoot := a.GetCurrentProjectPath()
+	if projectRoot == "" {
+		session.RollbackAgentGuideInjection()
+		runtime.LogWarningf(a.ctx, "[Terminal] agent guide injection skipped for session %s: empty project root", sessionID)
+		return
+	}
+
+	guidePath, _, ensureErr := terminal.EnsureAgentGuideFile(projectRoot)
+	if ensureErr != nil {
+		session.RollbackAgentGuideInjection()
+		runtime.LogWarningf(a.ctx, "[Terminal] agent guide ensure failed for session %s: %v", sessionID, ensureErr)
+		return
+	}
+
+	bootstrapMessage := terminal.BuildAgentGuideBootstrapMessage(guidePath)
+	if bootstrapMessage == "" {
+		session.RollbackAgentGuideInjection()
+		runtime.LogWarningf(a.ctx, "[Terminal] agent guide bootstrap is empty for session %s", sessionID)
+		return
+	}
+
+	if writeErr := session.Write([]byte(bootstrapMessage)); writeErr != nil {
+		session.RollbackAgentGuideInjection()
+		runtime.LogWarningf(a.ctx, "[Terminal] agent guide bootstrap write failed for session %s: %v", sessionID, writeErr)
+	}
+}
+
+func legacyPTYBootstrapEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("ARLECCHINO_LEGACY_PTY_BOOTSTRAP")))
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}

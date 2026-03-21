@@ -1,0 +1,50 @@
+import { shortcuts } from "./keyboard";
+
+export const isTerminalFocusedElement = (element: Element | null): boolean => {
+  if (!element) {
+    return false;
+  }
+
+  return (
+    element.classList.contains("xterm-helper-textarea") ||
+    element.classList.contains("xterm") ||
+    element.closest(".xterm") !== null
+  );
+};
+
+export const shouldBypassGlobalFindShortcuts = (
+  event: KeyboardEvent,
+  activeElement: Element | null,
+): boolean => {
+  if (!isTerminalFocusedElement(activeElement)) {
+    return false;
+  }
+
+  return (
+    shortcuts.terminalFind(event) ||
+    shortcuts.terminalFindNext(event) ||
+    shortcuts.terminalFindPrev(event)
+  );
+};
+
+interface TerminalShortcutContextInput {
+  activeElement: Element | null;
+  tuiModeActive: boolean;
+  terminalPanelVisible: boolean;
+}
+
+export const isTerminalShortcutContext = ({
+  activeElement,
+  tuiModeActive,
+  terminalPanelVisible: _terminalPanelVisible,
+}: TerminalShortcutContextInput): boolean => {
+  if (isTerminalFocusedElement(activeElement)) {
+    return true;
+  }
+
+  if (tuiModeActive) {
+    return true;
+  }
+
+  return false;
+};

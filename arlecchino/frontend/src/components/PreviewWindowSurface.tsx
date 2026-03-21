@@ -1,0 +1,412 @@
+import React, { useEffect, useMemo, useState } from "react";
+
+import { ReadFile } from "../../wailsjs/go/main/App";
+import { useTheme } from "../hooks/useTheme";
+import { useEditorStore } from "../stores/editorStore";
+import { useExplorerStore } from "../stores/explorerStore";
+import { useTerminalStore } from "../stores/terminalStore";
+import { getThemeColors } from "../styles/colors";
+import type { Theme } from "../types/theme";
+import { AIChatPanelContent } from "./AIChatPanel";
+import { BrowserPreview } from "./BrowserPreview";
+import { GitPanel } from "./GitPanel";
+import type {
+  AppearancePreviewState,
+  PreviewWindow,
+} from "../stores/previewWindowStore";
+
+interface PreviewWindowSurfaceProps {
+  window: PreviewWindow;
+  appearancePreview: AppearancePreviewState | null;
+  currentTheme: Theme;
+  currentUiScale: number;
+  onAppearancePatch: (patch: { theme?: Theme; uiScale?: number }) => void;
+  onAppearanceApply: () => void;
+  onAppearanceCancel: () => void;
+  onFileOpen?: (
+    path: string,
+    content: string,
+    name: string,
+    line?: number,
+  ) => void;
+}
+
+const codePreviewContainerStyle: React.CSSProperties = {
+  width: "100%",
+  height: "100%",
+  display: "flex",
+  flexDirection: "column",
+  minHeight: 0,
+};
+
+const codePreviewHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  padding: "8px 12px",
+  borderBottom: "1px solid var(--border-subtle)",
+  gap: 8,
+};
+
+const codePreviewPathStyle: React.CSSProperties = {
+  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+  fontSize: 11,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const codePreviewBodyStyle: React.CSSProperties = {
+  margin: 0,
+  padding: "12px",
+  overflow: "auto",
+  flex: 1,
+  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+  fontSize: 12,
+  lineHeight: 1.55,
+};
+
+const appearanceContainerStyle: React.CSSProperties = {
+  width: "100%",
+  height: "100%",
+  display: "flex",
+  flexDirection: "column",
+  minHeight: 0,
+  padding: 12,
+  gap: 12,
+};
+
+const appearanceControlStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+};
+
+const appearanceButtonRowStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  marginTop: "auto",
+};
+
+const terminalPreviewContainerStyle: React.CSSProperties = {
+  width: "100%",
+  height: "100%",
+  display: "flex",
+  flexDirection: "column",
+  justifyContent: "center",
+  alignItems: "center",
+  gap: 10,
+  padding: 16,
+  textAlign: "center",
+};
+
+const terminalPreviewButtonStyle: React.CSSProperties = {
+  border: "1px solid var(--border-subtle)",
+  background: "var(--bg-secondary)",
+  borderRadius: 8,
+  padding: "8px 12px",
+  cursor: "pointer",
+};
+
+export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
+  window,
+  appearancePreview,
+  currentTheme,
+  currentUiScale,
+  onAppearancePatch,
+  onAppearanceApply,
+  onAppearanceCancel,
+  onFileOpen,
+}) => {
+  const { isDark } = useTheme();
+  const palette = getThemeColors(isDark);
+  const projectPath = useExplorerStore((state) => state.projectPath);
+  const focusActiveTerminal = useTerminalStore(
+    (state) => state.focusActiveTerminal,
+  );
+  const activePaneId = useEditorStore((state) => state.activePaneId);
+  const activeTab = useEditorStore((state) => state.getActiveTab(activePaneId));
+  const [loadedFileContent, setLoadedFileContent] = useState<string | null>(
+    null,
+  );
+  const [isLoadingFile, setIsLoadingFile] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  const filePath =
+    typeof window.payload.path === "string" ? window.payload.path : "";
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (window.surface !== "file") {
+      setLoadedFileContent(null);
+      setIsLoadingFile(false);
+      setFileError(null);
+      return;
+    }
+
+    const inlineContent =
+      typeof window.payload.content === "string" ? window.payload.content : "";
+
+    if (inlineContent.length > 0) {
+      setLoadedFileContent(inlineContent);
+      setIsLoadingFile(false);
+      setFileError(null);
+      return;
+    }
+
+    if (!filePath) {
+      setLoadedFileContent(activeTab?.content ?? "");
+      setIsLoadingFile(false);
+      setFileError(null);
+      return;
+    }
+
+    setIsLoadingFile(true);
+    setFileError(null);
+
+    ReadFile(filePath)
+      .then((content) => {
+        if (cancelled) {
+          return;
+        }
+        setLoadedFileContent(content);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        setFileError(message);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingFile(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab?.content, filePath, window.payload.content, window.surface]);
+
+  const previewCode = useMemo(() => {
+    if (
+      typeof window.payload.content === "string" &&
+      window.payload.content.length > 0
+    ) {
+      return window.payload.content;
+    }
+    if (typeof loadedFileContent === "string") {
+      return loadedFileContent;
+    }
+    if (activeTab?.content) {
+      return activeTab.content;
+    }
+    return "";
+  }, [activeTab?.content, loadedFileContent, window.payload.content]);
+
+  const appearanceTheme = appearancePreview?.theme ?? currentTheme;
+  const appearanceScale = appearancePreview?.uiScale ?? currentUiScale;
+
+  if (window.surface === "browser") {
+    const browserUrl =
+      typeof window.payload.url === "string" && window.payload.url.trim()
+        ? window.payload.url
+        : undefined;
+    const htmlContent =
+      typeof window.payload.htmlContent === "string" &&
+      window.payload.htmlContent.trim()
+        ? window.payload.htmlContent
+        : undefined;
+    const sourceLabel =
+      typeof window.payload.sourceLabel === "string" &&
+      window.payload.sourceLabel.trim()
+        ? window.payload.sourceLabel
+        : undefined;
+    const revision =
+      typeof window.payload.revision === "number" &&
+      Number.isFinite(window.payload.revision)
+        ? window.payload.revision
+        : undefined;
+
+    return (
+      <BrowserPreview
+        initialUrl={browserUrl}
+        currentUrl={browserUrl}
+        htmlContent={htmlContent}
+        sourceLabel={sourceLabel}
+        revision={revision}
+      />
+    );
+  }
+
+  if (window.surface === "git") {
+    return (
+      <GitPanel
+        projectPath={projectPath}
+        onFileOpen={(path) => {
+          onFileOpen?.(path, "", path.split("/").pop() || path);
+        }}
+      />
+    );
+  }
+
+  if (window.surface === "chat") {
+    return <AIChatPanelContent />;
+  }
+
+  if (window.surface === "terminal") {
+    return (
+      <div style={terminalPreviewContainerStyle}>
+        <div style={{ fontSize: 13, color: palette.textPrimary }}>
+          Terminal preview is synchronized with the main terminal panel.
+        </div>
+        <div style={{ fontSize: 12, color: palette.textSecondary }}>
+          Use the shared terminal panel to avoid rendering conflicts and
+          flicker.
+        </div>
+        <button
+          style={{ ...terminalPreviewButtonStyle, color: palette.textPrimary }}
+          onClick={focusActiveTerminal}
+        >
+          Focus active terminal
+        </button>
+      </div>
+    );
+  }
+
+  if (window.surface === "appearance") {
+    return (
+      <div style={appearanceContainerStyle}>
+        <div
+          style={{
+            fontSize: 12,
+            color: palette.textSecondary,
+            lineHeight: 1.5,
+          }}
+        >
+          Live preview updates IDE visuals immediately. Apply keeps global
+          settings, cancel restores checkpoint.
+        </div>
+
+        <div style={appearanceControlStyle}>
+          <label style={{ fontSize: 12, color: palette.textSecondary }}>
+            Theme
+          </label>
+          <select
+            value={appearanceTheme}
+            onChange={(event) => {
+              onAppearancePatch({ theme: event.currentTarget.value as Theme });
+            }}
+            style={{
+              border: "1px solid var(--border-subtle)",
+              background: "var(--bg-secondary)",
+              color: palette.textPrimary,
+              borderRadius: 8,
+              padding: "8px 10px",
+            }}
+          >
+            <option value="system">System</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+
+        <div style={appearanceControlStyle}>
+          <label style={{ fontSize: 12, color: palette.textSecondary }}>
+            UI scale ({appearanceScale.toFixed(2)}x)
+          </label>
+          <input
+            type="range"
+            min={0.7}
+            max={2}
+            step={0.05}
+            value={appearanceScale}
+            onChange={(event) => {
+              onAppearancePatch({ uiScale: Number(event.currentTarget.value) });
+            }}
+          />
+        </div>
+
+        <div style={appearanceButtonRowStyle}>
+          <button
+            style={{
+              border: "1px solid var(--border-subtle)",
+              background: "var(--bg-secondary)",
+              color: palette.textPrimary,
+              borderRadius: 8,
+              padding: "8px 10px",
+              cursor: "pointer",
+            }}
+            onClick={onAppearanceCancel}
+          >
+            Cancel
+          </button>
+          <button
+            style={{
+              border: "1px solid var(--border-subtle)",
+              background: "var(--color-primary)",
+              color: "white",
+              borderRadius: 8,
+              padding: "8px 10px",
+              cursor: "pointer",
+            }}
+            onClick={onAppearanceApply}
+          >
+            Apply globally
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={codePreviewContainerStyle}>
+      <div style={codePreviewHeaderStyle}>
+        <div style={codePreviewPathStyle}>
+          {filePath || activeTab?.path || "Untitled"}
+        </div>
+        {filePath && (
+          <button
+            onClick={() => {
+              onFileOpen?.(
+                filePath,
+                previewCode,
+                filePath.split("/").pop() || filePath,
+                typeof window.payload.line === "number"
+                  ? window.payload.line
+                  : undefined,
+              );
+            }}
+            style={{
+              border: "1px solid var(--border-subtle)",
+              background: "var(--bg-secondary)",
+              color: palette.textPrimary,
+              borderRadius: 8,
+              padding: "6px 8px",
+              cursor: "pointer",
+              fontSize: 11,
+            }}
+          >
+            Open in editor
+          </button>
+        )}
+      </div>
+
+      <pre
+        style={{
+          ...codePreviewBodyStyle,
+          color: palette.textPrimary,
+          background: "transparent",
+        }}
+      >
+        {isLoadingFile
+          ? "Loading file preview..."
+          : fileError
+            ? `Failed to load file: ${fileError}`
+            : previewCode || "No file content available"}
+      </pre>
+    </div>
+  );
+};

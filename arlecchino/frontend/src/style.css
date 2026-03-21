@@ -1,0 +1,107 @@
+html {
+    background-color: rgba(27, 38, 54, 1);
+    text-align: center;
+    color: white;
+}
+
+body {
+    margin: 0;
+    color: white;
+    font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
+    "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+    sans-serif;
+}
+
+@font-face {
+    font-family: "Nunito";
+    font-style: normal;
+    font-weight: 400;
+    src: local(""),
+    url("assets/fonts/nunito-v16-latin-regular.woff2") format("woff2");
+}
+
+#app {
+    height: 100vh;
+    text-align: center;
+}
+
+/* React Resizable custom handles */
+.react-resizable {
+    position: relative;
+}
+
+.react-resizable-handle {
+    position: absolute;
+    background: transparent;
+    z-index: 100;
+}
+
+.react-resizable-handle:hover {
+    background: rgba(239, 68, 68, 0.3);
+}
+
+.react-resizable-handle-n,
+.react-resizable-handle-s {
+    left: 10px;
+    right: 10px;
+    height: 6px;
+}
+
+.react-resizable-handle-n {
+    top: 0;
+    cursor: ns-resize;
+}
+
+.react-resizable-handle-s {
+    bottom: 0;
+    cursor: ns-resize;
+}
+
+.react-resizable-handle-e,
+.react-resizable-handle-w {
+    top: 10px;
+    bottom: 10px;
+    width: 6px;
+}
+
+.react-resizable-handle-e {
+    right: 0;
+    cursor: ew-resize;
+}
+
+.react-resizable-handle-w {
+    left: 0;
+    cursor: ew-resize;
+}
+
+.react-resizable-handle-ne,
+.react-resizable-handle-nw,
+.react-resizable-handle-se,
+.react-resizable-handle-sw {
+    width: 12px;
+    height: 12px;
+}
+
+.react-resizable-handle-ne {
+    top: 0;
+    right: 0;
+    cursor: nesw-resize;
+}
+
+.react-resizable-handle-nw {
+    top: 0;
+    left: 0;
+    cursor: nwse-resize;
+}
+
+.react-resizable-handle-se {
+    bottom: 0;
+    right: 0;
+    cursor: nwse-resize;
+}
+
+.react-resizable-handle-sw {
+    bottom: 0;
+    left: 0;
+    cursor: nesw-resize;
+}
