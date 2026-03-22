@@ -107,15 +107,15 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
     if (isVisible || mode === "floating") return {};
     switch (position) {
       case "left":
-        return { transform: `translateX(-${size.width}px)` };
+        return { transform: `translate3d(-${size.width}px, 0, 0)` };
       case "right":
-        return { transform: `translateX(${size.width}px)` };
+        return { transform: `translate3d(${size.width}px, 0, 0)` };
       case "bottom":
-        return { transform: `translateY(${size.height}px)` };
+        return { transform: `translate3d(0, ${size.height}px, 0)` };
       case "top":
-        return { transform: `translateY(-${size.height}px)` };
+        return { transform: `translate3d(0, -${size.height}px, 0)` };
       default:
-        return { transform: `translateX(-${size.width}px)` };
+        return { transform: `translate3d(-${size.width}px, 0, 0)` };
     }
   };
 
@@ -335,14 +335,15 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       overflow: "hidden",
       pointerEvents: isVisible ? "auto" : "none",
       visibility: isVisible ? "visible" : "hidden",
-      willChange: isDragging || isResizing ? "transform,width,height" : "auto",
-      contain: "layout paint",
+      opacity: isVisible ? 1 : 0,
+      willChange: isDragging || isResizing ? "transform" : "auto",
+      backfaceVisibility: "hidden" as const,
       transition:
         isResizing || isDragging
           ? "none"
           : isVisible
-            ? "transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1)"
-            : "transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1), visibility 0s linear 0.18s",
+            ? "transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.15s ease-out"
+            : "transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.12s ease-in, visibility 0s linear 0.18s",
       ...getSlideOffset(),
     };
 

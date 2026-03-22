@@ -375,6 +375,44 @@ const parseAppearancePatch = (
   };
 };
 
+const DEFAULT_PANELS: PanelVisibility = {
+  explorer: true,
+  terminal: false,
+  aiChat: false,
+  git: false,
+};
+
+const DEFAULT_PANEL_CONFIGS: PanelConfigs = {
+  explorer: {
+    position: "left",
+    size: { width: 260, height: 0 },
+    mode: "snapped",
+    x: 0,
+    y: 0,
+  },
+  terminal: {
+    position: "bottom",
+    size: { width: 0, height: 220 },
+    mode: "snapped",
+    x: 0,
+    y: 0,
+  },
+  aiChat: {
+    position: "right",
+    size: { width: 320, height: 0 },
+    mode: "snapped",
+    x: 0,
+    y: 0,
+  },
+  git: {
+    position: "left",
+    size: { width: 280, height: 0 },
+    mode: "snapped",
+    x: 0,
+    y: 0,
+  },
+};
+
 export const MainLayout: React.FC<MainLayoutProps> = ({
   children,
   onFileOpen,
@@ -390,6 +428,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [isPerspectiveOpen, setIsPerspectiveOpen] = useState(false);
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const setUiScale = useEditorSettingsStore((state) => state.setUiScale);
+  const activeProjectId = useWorkspaceStore((s) => s.activeId);
   const {
     tuiModeActive,
     tuiAssist,
@@ -460,44 +499,36 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     );
   }, [uiScale]);
 
-  const STORAGE_KEY = "panelState.v1";
+  const panelStorageKey = activeProjectId
+    ? `panelState:${activeProjectId}`
+    : null;
 
-  const [panels, setPanels] = useState<PanelVisibility>({
-    explorer: true,
-    terminal: false,
-    aiChat: false,
-    git: false,
+  const [panels, setPanels] = useState<PanelVisibility>(() => {
+    if (!panelStorageKey) return { ...DEFAULT_PANELS };
+    try {
+      const raw = localStorage.getItem(panelStorageKey);
+      if (!raw) return { ...DEFAULT_PANELS };
+      const { panels: saved } = JSON.parse(raw);
+      if (!saved) return { ...DEFAULT_PANELS };
+      const { browser: _, ...rest } = saved;
+      return rest as PanelVisibility;
+    } catch {
+      return { ...DEFAULT_PANELS };
+    }
   });
 
-  const [panelConfigs, setPanelConfigs] = useState<PanelConfigs>({
-    explorer: {
-      position: "left",
-      size: { width: 260, height: 0 },
-      mode: "snapped",
-      x: 0,
-      y: 0,
-    },
-    terminal: {
-      position: "bottom",
-      size: { width: 0, height: 220 },
-      mode: "snapped",
-      x: 0,
-      y: 0,
-    },
-    aiChat: {
-      position: "right",
-      size: { width: 320, height: 0 },
-      mode: "snapped",
-      x: 0,
-      y: 0,
-    },
-    git: {
-      position: "left",
-      size: { width: 280, height: 0 },
-      mode: "snapped",
-      x: 0,
-      y: 0,
-    },
+  const [panelConfigs, setPanelConfigs] = useState<PanelConfigs>(() => {
+    if (!panelStorageKey) return structuredClone(DEFAULT_PANEL_CONFIGS);
+    try {
+      const raw = localStorage.getItem(panelStorageKey);
+      if (!raw) return structuredClone(DEFAULT_PANEL_CONFIGS);
+      const { panelConfigs: saved } = JSON.parse(raw);
+      if (!saved) return structuredClone(DEFAULT_PANEL_CONFIGS);
+      const { browser: _, ...rest } = saved;
+      return rest as PanelConfigs;
+    } catch {
+      return structuredClone(DEFAULT_PANEL_CONFIGS);
+    }
   });
   const [tuiLayoutSnapshot, setTuiLayoutSnapshot] = useState<{
     panels: PanelVisibility;
@@ -542,33 +573,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed.panels && parsed.panelConfigs) {
-          const { browser: _droppedPanel, ...restPanels } = parsed.panels;
-          const { browser: _droppedConfig, ...restConfigs } =
-            parsed.panelConfigs;
-          setPanels(restPanels as PanelVisibility);
-          setPanelConfigs(restConfigs as PanelConfigs);
-        }
-      }
-    } catch (_) {}
-  }, []);
-
-  useEffect(() => {
-    try {
-      if (tuiModeActive) {
-        return;
-      }
+      if (tuiModeActive || !panelStorageKey) return;
       localStorage.setItem(
-        STORAGE_KEY,
+        panelStorageKey,
         JSON.stringify({ panels, panelConfigs }),
       );
-    } catch (_) {
-      /* ignore quota errors */
+    } catch {
+      /* quota */
     }
-  }, [panels, panelConfigs, tuiModeActive]);
+  }, [panels, panelConfigs, tuiModeActive, panelStorageKey]);
 
   useEffect(() => {
     setPowerProfile(tuiModeActive ? "hard_pause" : "normal");
@@ -636,9 +649,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     y: number;
     size: { width: number; height: number };
   } | null>(null);
-
-  // Закреплённые панели - не скрываются при уходе курсора
-  const [pinnedPanels, setPinnedPanels] = useState<Set<PanelId>>(new Set());
 
   const [draggingPanel, setDraggingPanel] = useState<PanelId | null>(null);
   const [dropTargetPosition, setDropTargetPosition] =
@@ -1813,7 +1823,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     position: "relative",
     overflow: "clip",
     minHeight: 0,
-    backgroundColor: isDark ? "var(--bg-blackprint)" : colors.light.bg,
+    backgroundColor: isDark ? "var(--bg-secondary)" : colors.light.bg,
   };
 
   const editorAreaStyle: React.CSSProperties = {
@@ -1828,6 +1838,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     overflow: "hidden",
     position: "relative",
     backgroundColor: "var(--bg-secondary)",
+    transition: "margin 0.18s cubic-bezier(0.25, 0.8, 0.25, 1)",
   };
 
   const notificationStyle: React.CSSProperties = {
@@ -1891,19 +1902,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }
   };
 
-  // Переключить закрепление панели
-  const togglePinPanel = useCallback((panelId: PanelId) => {
-    setPinnedPanels((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(panelId)) {
-        newSet.delete(panelId);
-      } else {
-        newSet.add(panelId);
-      }
-      return newSet;
-    });
-  }, []);
-
   const renderPanel = (panelId: PanelId) => {
     const isVisible = panels[panelId];
     const config = panelConfigs[panelId];
@@ -1957,8 +1955,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onClose: () => togglePanel(panelId),
       isDropTarget,
       adjacentPanels: getAdjacentPanels(),
-      isPinned: pinnedPanels.has(panelId),
-      onPin: () => togglePinPanel(panelId),
     };
 
     const handleTerminalPanelClose = () => {
@@ -2025,8 +2021,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             onClose={handleTerminalPanelClose}
             useViewportPositioning={tuiModeActive}
             zIndex={tuiModeActive ? zIndex.tooltip + 10 : undefined}
-            onPin={undefined}
-            isPinned={undefined}
             onFullscreen={() => {
               const cur = panelConfigs.terminal;
               const isFullscreen =

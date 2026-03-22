@@ -43,6 +43,9 @@ const isManualAutocompleteFixture = (filePath: string) => {
   return fileName === "test.go" || fileName.includes(".manual.");
 };
 
+const makeTabId = (filePath: string) =>
+  `tab-${filePath.replace(/[^a-zA-Z0-9]/g, "-")}`;
+
 const ProjectScreen: React.FC<ProjectScreenProps> = ({
   projectPath,
   fileToOpen,
@@ -53,8 +56,36 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const { isDark } = useTheme();
   const editorBgColor = isDark ? "#1e1e1e" : "#ffffff";
 
-  const [tabs, setTabs] = useState<Tab[]>([]);
-  const [activeTab, setActiveTab] = useState<string | null>(null);
+  const tabStorageKey = `editorTabs:${projectPath}`;
+
+  const [tabs, setTabs] = useState<Tab[]>(() => {
+    try {
+      const raw = localStorage.getItem(`editorTabs:${projectPath}`);
+      if (!raw) return [];
+      const { tabs: saved } = JSON.parse(raw);
+      return Array.isArray(saved)
+        ? saved.map((t: { path: string; label: string }) => ({
+            id: makeTabId(t.path),
+            label: t.label,
+            path: t.path,
+            isDirty: false,
+          }))
+        : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [activeTab, setActiveTab] = useState<string | null>(() => {
+    try {
+      const raw = localStorage.getItem(`editorTabs:${projectPath}`);
+      if (!raw) return null;
+      return JSON.parse(raw).activeTabId ?? null;
+    } catch {
+      return null;
+    }
+  });
+
   const [fileContents, setFileContents] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [highlightLine, setHighlightLine] = useState<number | undefined>(
@@ -118,6 +149,60 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const fileContentsRef = useRef<Record<string, string>>({});
   const hasLoadedRef = useRef(false);
   const lastProjectPathRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (tabs.length === 0) return;
+
+    const restoredTabs = [...tabs];
+    let cancelled = false;
+
+    Promise.allSettled(
+      restoredTabs.map((tab) => AppFunctions.ReadFile(tab.path)),
+    ).then((results) => {
+      if (cancelled) return;
+
+      const loaded: Record<string, string> = {};
+      const invalidIds = new Set<string>();
+
+      restoredTabs.forEach((tab, i) => {
+        if (results[i].status === "fulfilled") {
+          loaded[tab.id] = (results[i] as PromiseFulfilledResult<string>).value;
+        } else {
+          invalidIds.add(tab.id);
+        }
+      });
+
+      setFileContents((prev) => ({ ...prev, ...loaded }));
+
+      if (invalidIds.size > 0) {
+        setTabs((prev) => prev.filter((t) => !invalidIds.has(t.id)));
+        setActiveTab((prev) =>
+          prev && invalidIds.has(prev)
+            ? (restoredTabs.filter((t) => !invalidIds.has(t.id)).pop()?.id ??
+              null)
+            : prev,
+        );
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (tabs.length === 0) {
+      localStorage.removeItem(tabStorageKey);
+      return;
+    }
+    localStorage.setItem(
+      tabStorageKey,
+      JSON.stringify({
+        tabs: tabs.map((t) => ({ path: t.path, label: t.label })),
+        activeTabId: activeTab,
+      }),
+    );
+  }, [tabs, activeTab, tabStorageKey]);
 
   useEffect(() => {
     if (!projectPath) {
@@ -465,7 +550,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       }
 
       // Create new tab
-      const tabId = `tab-${Date.now()}`;
+      const tabId = makeTabId(filePath);
       const newTab: Tab = {
         id: tabId,
         label: fileName,
@@ -827,7 +912,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         className="flex-1 min-h-0 overflow-hidden"
         style={{ background: activeTabData ? editorBgColor : "transparent" }}
       >
-        {activeTabData ? (
+        {activeTabData && activeTab && activeTab in fileContents ? (
           splitDirection && secondaryTabData ? (
             <div
               className={`flex h-full ${splitDirection === "horizontal" ? "flex-row" : "flex-col"}`}

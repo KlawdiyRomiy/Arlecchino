@@ -52,19 +52,23 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
             transition={blurTransition}
           >
             {projects.map((p) => (
-              <button
+              <div
                 key={p.id}
-                onClick={() => {
-                  onSwitch(p.id);
-                  resetTimer();
-                }}
-                className={`topbar-space-dot w-2 h-2 p-0 rounded-full shrink-0 ${
-                  activeId === p.id
-                    ? "topbar-space-dot-active bg-[var(--text-primary)] shadow-[0_0_8px_rgba(255,255,255,0.3)]"
-                    : "bg-[var(--text-muted)]"
-                }`}
-                title={p.name}
-              />
+                className="flex items-center justify-center w-2.5 h-2.5"
+              >
+                <button
+                  onClick={() => {
+                    onSwitch(p.id);
+                    resetTimer();
+                  }}
+                  className={`topbar-space-dot w-2 h-2 p-0 rounded-full shrink-0 ${
+                    activeId === p.id
+                      ? "topbar-space-dot-active bg-[var(--text-primary)] shadow-[0_0_8px_rgba(255,255,255,0.3)]"
+                      : "bg-[var(--text-muted)]"
+                  }`}
+                  title={p.name}
+                />
+              </div>
             ))}
           </motion.div>
         ) : (

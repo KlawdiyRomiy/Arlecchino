@@ -551,10 +551,17 @@ const editorStyles = EditorView.theme({
     borderLeftColor: "#fff",
     borderLeftWidth: "2px",
   },
-  ".cm-selectionBackground": {
+  ".cm-selectionBackground, .cm-content ::selection": {
     backgroundColor: "#264f78 !important",
   },
-  "&.cm-focused .cm-selectionBackground": {
+  "&.cm-focused .cm-selectionBackground, &.cm-focused .cm-content ::selection":
+    {
+      backgroundColor: "#264f78 !important",
+    },
+  "& .cm-selectionLayer .cm-selectionBackground": {
+    backgroundColor: "#264f78 !important",
+  },
+  "&:not(.cm-focused) .cm-selectionBackground": {
     backgroundColor: "#264f78 !important",
   },
   ".cm-line": {
@@ -2396,6 +2403,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           searchKeymap: false,
           tabSize: 4,
         }}
+        theme="none"
         className="h-full"
       />
 
