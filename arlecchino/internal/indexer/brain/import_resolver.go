@@ -1,0 +1,306 @@
+package brain
+
+import (
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+)
+
+type ImportChainResolver struct {
+	mu         sync.RWMutex
+	cache      map[string]*importCache
+	maxEntries int
+	cacheTTL   time.Duration
+
+	phpUsePattern   *regexp.Regexp
+	phpAliasPattern *regexp.Regexp
+	tsImportPattern *regexp.Regexp
+	pyFromPattern   *regexp.Regexp
+	goImportPattern *regexp.Regexp
+	rustUsePattern  *regexp.Regexp
+}
+
+type importCache struct {
+	imports    map[string]string
+	contentMD5 string
+	cachedAt   time.Time
+}
+
+func NewImportChainResolver() *ImportChainResolver {
+	return &ImportChainResolver{
+		cache:           make(map[string]*importCache),
+		maxEntries:      200,
+		cacheTTL:        2 * time.Minute,
+		phpUsePattern:   regexp.MustCompile(`^\s*use\s+([^\s;]+?)(?:\s+as\s+(\w+))?\s*;`),
+		phpAliasPattern: regexp.MustCompile(`^\s*use\s+([^\s{;]+)\s*\{([^}]+)\}`),
+		tsImportPattern: regexp.MustCompile(`^\s*import\s+(?:\{([^}]+)\}|(\w+))\s+from\s+['"]([^'"]+)['"]`),
+		pyFromPattern:   regexp.MustCompile(`^\s*from\s+(\S+)\s+import\s+(.+)`),
+		goImportPattern: regexp.MustCompile(`^\s*(?:import\s+)?(?:(\w+)\s+)?["']([^"']+)["']`),
+		rustUsePattern:  regexp.MustCompile(`^\s*use\s+([^;]+);`),
+	}
+}
+
+func (r *ImportChainResolver) ResolveClassName(filePath string, content []byte, shortName, language string) string {
+	imports := r.ParseImports(filePath, content, language)
+	if fullPath, ok := imports[shortName]; ok {
+		return fullPath
+	}
+	return ""
+}
+
+func (r *ImportChainResolver) ParseImports(filePath string, content []byte, language string) map[string]string {
+	r.mu.RLock()
+	cached, ok := r.cache[filePath]
+	r.mu.RUnlock()
+
+	contentStr := string(content)
+	if ok && time.Since(cached.cachedAt) < r.cacheTTL && len(contentStr) == len(cached.contentMD5) {
+		return cached.imports
+	}
+
+	imports := r.parseImportsForLanguage(contentStr, language)
+
+	r.mu.Lock()
+	r.cache[filePath] = &importCache{
+		imports:    imports,
+		contentMD5: contentStr[:min(100, len(contentStr))],
+		cachedAt:   time.Now(),
+	}
+	r.cleanupCacheLocked()
+	r.mu.Unlock()
+
+	return imports
+}
+
+func (r *ImportChainResolver) parseImportsForLanguage(content, language string) map[string]string {
+	switch language {
+	case "php", "php-laravel":
+		return r.parsePHPImports(content)
+	case "typescript", "typescriptreact", "javascript", "javascriptreact":
+		return r.parseTSImports(content)
+	case "python":
+		return r.parsePythonImports(content)
+	case "go":
+		return r.parseGoImports(content)
+	case "rust":
+		return r.parseRustImports(content)
+	default:
+		return make(map[string]string)
+	}
+}
+
+func (r *ImportChainResolver) parsePHPImports(content string) map[string]string {
+	imports := make(map[string]string)
+	lines := strings.Split(content, "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		if strings.HasPrefix(line, "class ") || strings.HasPrefix(line, "interface ") ||
+			strings.HasPrefix(line, "trait ") || strings.HasPrefix(line, "function ") {
+			break
+		}
+
+		if matches := r.phpUsePattern.FindStringSubmatch(line); len(matches) >= 2 {
+			fullPath := matches[1]
+			shortName := ""
+			if len(matches) >= 3 && matches[2] != "" {
+				shortName = matches[2]
+			} else {
+				parts := strings.Split(fullPath, "\\")
+				shortName = parts[len(parts)-1]
+			}
+			imports[shortName] = fullPath
+			continue
+		}
+
+		if matches := r.phpAliasPattern.FindStringSubmatch(line); len(matches) >= 3 {
+			basePath := matches[1]
+			groupItems := matches[2]
+			for _, item := range strings.Split(groupItems, ",") {
+				item = strings.TrimSpace(item)
+				if item == "" {
+					continue
+				}
+				parts := strings.Split(item, " as ")
+				className := strings.TrimSpace(parts[0])
+				shortName := className
+				if len(parts) > 1 {
+					shortName = strings.TrimSpace(parts[1])
+				}
+				imports[shortName] = basePath + className
+			}
+		}
+	}
+
+	return imports
+}
+
+func (r *ImportChainResolver) parseTSImports(content string) map[string]string {
+	imports := make(map[string]string)
+	lines := strings.Split(content, "\n")
+
+	for _, line := range lines {
+		if matches := r.tsImportPattern.FindStringSubmatch(line); len(matches) >= 4 {
+			modulePath := matches[3]
+			if matches[1] != "" {
+				for _, name := range strings.Split(matches[1], ",") {
+					name = strings.TrimSpace(name)
+					parts := strings.Split(name, " as ")
+					originalName := strings.TrimSpace(parts[0])
+					shortName := originalName
+					if len(parts) > 1 {
+						shortName = strings.TrimSpace(parts[1])
+					}
+					imports[shortName] = modulePath
+				}
+			} else if matches[2] != "" {
+				imports[matches[2]] = modulePath
+			}
+		}
+	}
+
+	return imports
+}
+
+func (r *ImportChainResolver) parsePythonImports(content string) map[string]string {
+	imports := make(map[string]string)
+	lines := strings.Split(content, "\n")
+
+	for _, line := range lines {
+		if matches := r.pyFromPattern.FindStringSubmatch(line); len(matches) >= 3 {
+			modulePath := matches[1]
+			importPart := matches[2]
+			for _, name := range strings.Split(importPart, ",") {
+				name = strings.TrimSpace(name)
+				parts := strings.Split(name, " as ")
+				originalName := strings.TrimSpace(parts[0])
+				shortName := originalName
+				if len(parts) > 1 {
+					shortName = strings.TrimSpace(parts[1])
+				}
+				imports[shortName] = modulePath + "." + originalName
+			}
+		}
+	}
+
+	return imports
+}
+
+func (r *ImportChainResolver) parseGoImports(content string) map[string]string {
+	imports := make(map[string]string)
+	lines := strings.Split(content, "\n")
+	inImportBlock := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "import (") {
+			inImportBlock = true
+			continue
+		}
+		if inImportBlock && trimmed == ")" {
+			inImportBlock = false
+			continue
+		}
+
+		if inImportBlock || strings.HasPrefix(trimmed, "import ") {
+			if matches := r.goImportPattern.FindStringSubmatch(line); len(matches) >= 3 {
+				pkgPath := matches[2]
+				alias := matches[1]
+				parts := strings.Split(pkgPath, "/")
+				pkgName := parts[len(parts)-1]
+				if alias != "" {
+					imports[alias] = pkgPath
+				} else {
+					imports[pkgName] = pkgPath
+				}
+			}
+		}
+	}
+
+	return imports
+}
+
+func (r *ImportChainResolver) parseRustImports(content string) map[string]string {
+	imports := make(map[string]string)
+	lines := strings.Split(content, "\n")
+
+	for _, line := range lines {
+		if matches := r.rustUsePattern.FindStringSubmatch(line); len(matches) >= 2 {
+			usePath := strings.TrimSpace(matches[1])
+			parts := strings.Split(usePath, "::")
+			if len(parts) > 0 {
+				shortName := parts[len(parts)-1]
+				if strings.Contains(shortName, "{") {
+					basePath := strings.Join(parts[:len(parts)-1], "::")
+					shortName = strings.Trim(shortName, "{}")
+					for _, name := range strings.Split(shortName, ",") {
+						name = strings.TrimSpace(name)
+						imports[name] = basePath + "::" + name
+					}
+				} else {
+					imports[shortName] = usePath
+				}
+			}
+		}
+	}
+
+	return imports
+}
+
+func (r *ImportChainResolver) InvalidateCache(filePath string) {
+	r.mu.Lock()
+	delete(r.cache, filePath)
+	r.mu.Unlock()
+}
+
+func (r *ImportChainResolver) ClearCache() {
+	r.mu.Lock()
+	r.cache = make(map[string]*importCache)
+	r.mu.Unlock()
+}
+
+func (r *ImportChainResolver) Stats() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.cache)
+}
+
+func (r *ImportChainResolver) cleanupCacheLocked() {
+	if len(r.cache) <= r.maxEntries {
+		return
+	}
+
+	now := time.Now()
+	for key, cached := range r.cache {
+		if now.Sub(cached.cachedAt) > r.cacheTTL {
+			delete(r.cache, key)
+		}
+	}
+
+	for len(r.cache) > r.maxEntries {
+		var oldestKey string
+		var oldestTime time.Time
+		first := true
+		for key, cached := range r.cache {
+			if first || cached.cachedAt.Before(oldestTime) {
+				oldestKey = key
+				oldestTime = cached.cachedAt
+				first = false
+			}
+		}
+		if oldestKey == "" {
+			break
+		}
+		delete(r.cache, oldestKey)
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

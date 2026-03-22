@@ -1,0 +1,249 @@
+{
+  "version": "1.0",
+  "name": "PHP Patterns",
+  "description": "Core PHP language patterns",
+  "language": "php",
+  "patterns": [
+    {
+      "id": "php:class:definition",
+      "name": "Class Definition",
+      "description": "Define a new PHP class",
+      "language": "php",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "class"
+      },
+      "template": "class $NAME\n{\n\t$BODY\n}",
+      "priority": 85
+    },
+    {
+      "id": "php:class:extends",
+      "name": "Class Extends",
+      "description": "Class extending another class",
+      "language": "php",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "class"
+      },
+      "template": "class $NAME extends $PARENT\n{\n\t$BODY\n}",
+      "priority": 80
+    },
+    {
+      "id": "php:class:constructor",
+      "name": "Constructor",
+      "description": "Constructor method",
+      "language": "php",
+      "context": {
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "con"
+      },
+      "template": "public function __construct($PARAMS)\n{\n\t$BODY\n}",
+      "priority": 95
+    },
+    {
+      "id": "php:method:public",
+      "name": "Public Function",
+      "description": "Public class method",
+      "language": "php",
+      "context": {
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "pub"
+      },
+      "template": "public function $NAME($PARAMS): $RETURN_TYPE\n{\n\t$BODY\n}",
+      "priority": 85
+    },
+    {
+      "id": "php:method:private",
+      "name": "Private Function",
+      "description": "Private class method",
+      "language": "php",
+      "context": {
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "pri"
+      },
+      "template": "private function $NAME($PARAMS): $RETURN_TYPE\n{\n\t$BODY\n}",
+      "priority": 80
+    },
+    {
+      "id": "php:method:protected",
+      "name": "Protected Function",
+      "description": "Protected class method",
+      "language": "php",
+      "context": {
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "pro"
+      },
+      "template": "protected function $NAME($PARAMS): $RETURN_TYPE\n{\n\t$BODY\n}",
+      "priority": 80
+    },
+    {
+      "id": "php:method:static",
+      "name": "Static Function",
+      "description": "Static class method",
+      "language": "php",
+      "context": {
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "sta"
+      },
+      "template": "public static function $NAME($PARAMS): $RETURN_TYPE\n{\n\t$BODY\n}",
+      "priority": 80
+    },
+    {
+      "id": "php:interface:definition",
+      "name": "Interface",
+      "description": "Define a new interface",
+      "language": "php",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "int"
+      },
+      "template": "interface $NAME\n{\n\tpublic function $METHOD($PARAMS): $RETURN_TYPE;\n}",
+      "priority": 80
+    },
+    {
+      "id": "php:trait:definition",
+      "name": "Trait",
+      "description": "Define a new trait",
+      "language": "php",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "tra"
+      },
+      "template": "trait $NAME\n{\n\t$BODY\n}",
+      "priority": 75
+    },
+    {
+      "id": "php:enum:definition",
+      "name": "Enum",
+      "description": "Define a backed enum (PHP 8.1+)",
+      "language": "php",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "enum"
+      },
+      "template": "enum $NAME: string\n{\n\tcase $CASE = '$VALUE';\n}",
+      "priority": 75
+    },
+    {
+      "id": "php:function:definition",
+      "name": "Function",
+      "description": "Standalone function",
+      "language": "php",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "fun"
+      },
+      "template": "function $NAME($PARAMS): $RETURN_TYPE\n{\n\t$BODY\n}",
+      "priority": 75
+    },
+    {
+      "id": "php:try:catch",
+      "name": "Try Catch",
+      "description": "Exception handling block",
+      "language": "php",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "try"
+      },
+      "template": "try {\n\t$TRY_BODY\n} catch ($EXCEPTION_TYPE $e) {\n\t$CATCH_BODY\n}",
+      "priority": 85
+    },
+    {
+      "id": "php:foreach:loop",
+      "name": "Foreach",
+      "description": "Iterate over array or collection",
+      "language": "php",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "for"
+      },
+      "template": "foreach ($$ARRAY as $$ITEM) {\n\t$BODY\n}",
+      "priority": 85
+    },
+    {
+      "id": "php:if:statement",
+      "name": "If Statement",
+      "description": "Conditional statement",
+      "language": "php",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "if"
+      },
+      "template": "if ($CONDITION) {\n\t$BODY\n}",
+      "priority": 85
+    },
+    {
+      "id": "php:match:expression",
+      "name": "Match",
+      "description": "PHP 8.0+ match expression",
+      "language": "php",
+      "context": {
+        "positions": ["method_body", "assignment"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "mat"
+      },
+      "template": "match ($$SUBJECT) {\n\t$PATTERN => $RESULT,\n\tdefault => $DEFAULT,\n}",
+      "priority": 80
+    },
+    {
+      "id": "php:test:method",
+      "name": "Test Method",
+      "description": "PHPUnit test method",
+      "language": "php",
+      "context": {
+        "fileTypes": ["test"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "test"
+      },
+      "template": "public function test_$NAME(): void\n{\n\t$BODY\n}",
+      "priority": 95
+    }
+  ]
+}

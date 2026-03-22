@@ -1,0 +1,175 @@
+{
+  "version": "1.0",
+  "name": "Vue Patterns",
+  "description": "Vue 3 framework patterns",
+  "language": "vue",
+  "framework": "vue",
+  "patterns": [
+    {
+      "id": "vue:component:composition",
+      "name": "Composition API Component",
+      "description": "Vue 3 script setup component",
+      "language": "vue",
+      "framework": "vue",
+      "context": {
+        "fileTypes": ["component"],
+        "positions": ["file_start"]
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "<script setup lang=\"ts\">\nimport { ref, computed } from 'vue'\n\nconst $STATE = ref($INITIAL)\n</script>\n\n<template>\n\t<div class=\"$CLASS\">\n\t\t$CONTENT\n\t</div>\n</template>\n\n<style scoped>\n.$CLASS {\n\t$STYLES\n}\n</style>",
+      "priority": 100,
+      "builtin": true,
+      "isSkeleton": true
+    },
+    {
+      "id": "vue:component:options",
+      "name": "Options API Component",
+      "description": "Vue 3 options API component",
+      "language": "vue",
+      "framework": "vue",
+      "context": {
+        "fileTypes": ["component"],
+        "positions": ["file_start"]
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "<script lang=\"ts\">\nimport { defineComponent } from 'vue'\n\nexport default defineComponent({\n\tname: '$NAME',\n\tprops: {\n\t\t$PROPS\n\t},\n\tdata() {\n\t\treturn {\n\t\t\t$DATA\n\t\t}\n\t},\n\tmethods: {\n\t\t$METHODS\n\t}\n})\n</script>\n\n<template>\n\t<div class=\"$NAME\">\n\t\t$CONTENT\n\t</div>\n</template>\n\n<style scoped>\n.$NAME {\n\t$STYLES\n}\n</style>",
+      "priority": 95,
+      "builtin": true,
+      "isSkeleton": true
+    },
+    {
+      "id": "vue:ref",
+      "name": "Reactive Ref",
+      "description": "Create reactive reference",
+      "language": "typescript",
+      "framework": "vue",
+      "context": {
+        "positions": ["after_imports", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const $NAME = ref<$TYPE>($INITIAL)",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "vue:computed",
+      "name": "Computed Property",
+      "description": "Computed reactive property",
+      "language": "typescript",
+      "framework": "vue",
+      "context": {
+        "positions": ["after_imports", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const $NAME = computed(() => {\n\treturn $EXPRESSION\n})",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "vue:watch",
+      "name": "Watch Effect",
+      "description": "Watch reactive source",
+      "language": "typescript",
+      "framework": "vue",
+      "context": {
+        "positions": ["after_imports", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "watch($SOURCE, ($NEW, $OLD) => {\n\t$BODY\n})",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "vue:onMounted",
+      "name": "On Mounted Hook",
+      "description": "Component mounted lifecycle",
+      "language": "typescript",
+      "framework": "vue",
+      "context": {
+        "positions": ["after_imports", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "onMounted(() => {\n\t$BODY\n})",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "vue:composable",
+      "name": "Composable Function",
+      "description": "Reusable composition function",
+      "language": "typescript",
+      "framework": "vue",
+      "context": {
+        "positions": ["file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "import { ref, computed, onMounted } from 'vue'\n\nexport function use$NAME() {\n\tconst $STATE = ref($INITIAL)\n\n\tconst $COMPUTED = computed(() => {\n\t\treturn $EXPRESSION\n\t})\n\n\tonMounted(() => {\n\t\t$INIT\n\t})\n\n\treturn {\n\t\t$STATE,\n\t\t$COMPUTED\n\t}\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "vue:pinia:store",
+      "name": "Pinia Store",
+      "description": "Pinia state management store",
+      "language": "typescript",
+      "framework": "vue",
+      "context": {
+        "fileTypes": ["module"],
+        "positions": ["file_start"]
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import { defineStore } from 'pinia'\n\nexport const use$NAMEStore = defineStore('$ID', {\n\tstate: () => ({\n\t\t$STATE\n\t}),\n\tgetters: {\n\t\t$GETTERS\n\t},\n\tactions: {\n\t\t$ACTIONS\n\t}\n})",
+      "priority": 95,
+      "builtin": true,
+      "isSkeleton": true
+    },
+    {
+      "id": "vue:emit",
+      "name": "Define Emits",
+      "description": "Type-safe event emitting",
+      "language": "typescript",
+      "framework": "vue",
+      "context": {
+        "positions": ["after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const emit = defineEmits<{\n\t(e: '$EVENT', $PARAMS): void\n}>()",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "vue:props",
+      "name": "Define Props",
+      "description": "Type-safe props definition",
+      "language": "typescript",
+      "framework": "vue",
+      "context": {
+        "positions": ["after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "interface Props {\n\t$PROP: $TYPE\n}\n\nconst props = defineProps<Props>()",
+      "priority": 85,
+      "builtin": true
+    }
+  ]
+}

@@ -1,0 +1,410 @@
+{
+  "version": "1.0",
+  "name": "Go Gin Patterns",
+  "description": "Gin web framework patterns for predictive code completion",
+  "language": "go",
+  "framework": "gin",
+  "patterns": [
+    {
+      "id": "go:gin:handler",
+      "name": "Gin Handler Function",
+      "description": "Basic Gin HTTP handler",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "positions": ["after_imports", "file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "func $NAME(c *gin.Context) {\n\t$BODY\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:handler-with-service",
+      "name": "Gin Handler with Service",
+      "description": "Handler struct method with dependency injection",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "positions": ["after_imports", "file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "func (h *$HANDLER) $NAME(c *gin.Context) {\n\t$BODY\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:json-success",
+      "name": "Gin JSON Success Response",
+      "description": "Return JSON with 200 OK",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "c.JSON(http.StatusOK, gin.H{\n\t\"$KEY\": $VALUE,\n})",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:json-data",
+      "name": "Gin JSON Data Response",
+      "description": "Return struct as JSON",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "c.JSON(http.StatusOK, $DATA)",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:json-created",
+      "name": "Gin JSON Created Response",
+      "description": "Return JSON with 201 Created",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "c.JSON(http.StatusCreated, $DATA)",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:bind-json",
+      "name": "Gin Bind JSON Request",
+      "description": "Parse JSON request body",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "var $REQUEST $REQUEST_TYPE\nif err := c.ShouldBindJSON(&$REQUEST); err != nil {\n\tc.JSON(http.StatusBadRequest, gin.H{\"error\": err.Error()})\n\treturn\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:bind-uri",
+      "name": "Gin Bind URI Params",
+      "description": "Parse URI path parameters",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "var $URI struct {\n\t$PARAM $TYPE `uri:\"$PARAM_NAME\" binding:\"required\"`\n}\nif err := c.ShouldBindUri(&$URI); err != nil {\n\tc.JSON(http.StatusBadRequest, gin.H{\"error\": err.Error()})\n\treturn\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:bind-query",
+      "name": "Gin Bind Query Params",
+      "description": "Parse query string parameters",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "var $QUERY struct {\n\t$PARAM $TYPE `form:\"$PARAM_NAME\"`\n}\nif err := c.ShouldBindQuery(&$QUERY); err != nil {\n\tc.JSON(http.StatusBadRequest, gin.H{\"error\": err.Error()})\n\treturn\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:param",
+      "name": "Gin Get Path Param",
+      "description": "Get single path parameter",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "$PARAM := c.Param(\"$PARAM_NAME\")",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:query",
+      "name": "Gin Get Query Param",
+      "description": "Get single query parameter with default",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "$PARAM := c.DefaultQuery(\"$PARAM_NAME\", \"$DEFAULT\")",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:middleware",
+      "name": "Gin Middleware Function",
+      "description": "Custom middleware function",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "positions": ["after_imports", "file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "func $NAME() gin.HandlerFunc {\n\treturn func(c *gin.Context) {\n\t\t// Before request\n\t\t$BEFORE\n\n\t\tc.Next()\n\n\t\t// After request\n\t\t$AFTER\n\t}\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:middleware-auth",
+      "name": "Gin Auth Middleware",
+      "description": "Authentication middleware pattern",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "positions": ["after_imports", "file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "func AuthMiddleware() gin.HandlerFunc {\n\treturn func(c *gin.Context) {\n\t\ttoken := c.GetHeader(\"Authorization\")\n\t\tif token == \"\" {\n\t\t\tc.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{\"error\": \"missing authorization header\"})\n\t\t\treturn\n\t\t}\n\n\t\t// Validate token\n\t\t$USER, err := $VALIDATE_TOKEN(token)\n\t\tif err != nil {\n\t\t\tc.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{\"error\": \"invalid token\"})\n\t\t\treturn\n\t\t}\n\n\t\tc.Set(\"user\", $USER)\n\t\tc.Next()\n\t}\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:router-group",
+      "name": "Gin Router Group",
+      "description": "Create route group with prefix",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "$GROUP := $ROUTER.Group(\"/$PREFIX\")\n{\n\t$GROUP.GET(\"/$PATH\", $HANDLER)\n\t$GROUP.POST(\"/$PATH\", $HANDLER)\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:router-group-with-middleware",
+      "name": "Gin Router Group with Middleware",
+      "description": "Route group with applied middleware",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "$GROUP := $ROUTER.Group(\"/$PREFIX\")\n$GROUP.Use($MIDDLEWARE())\n{\n\t$GROUP.GET(\"/$PATH\", $HANDLER)\n\t$GROUP.POST(\"/$PATH\", $HANDLER)\n}",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:abort-error",
+      "name": "Gin Abort with Error",
+      "description": "Abort request with error response",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "c.AbortWithStatusJSON(http.Status$STATUS, gin.H{\"error\": $ERROR})",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:abort-error-wrap",
+      "name": "Gin Abort with Wrapped Error",
+      "description": "Abort with error wrapping",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "if err != nil {\n\tc.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{\n\t\t\"error\": \"$MESSAGE\",\n\t\t\"details\": err.Error(),\n\t})\n\treturn\n}",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:context-get",
+      "name": "Gin Get Context Value",
+      "description": "Get value from context with type assertion",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "$VALUE, exists := c.Get(\"$KEY\")\nif !exists {\n\tc.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{\"error\": \"$KEY not found in context\"})\n\treturn\n}\n$TYPED := $VALUE.($TYPE)",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:context-set",
+      "name": "Gin Set Context Value",
+      "description": "Store value in context",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "c.Set(\"$KEY\", $VALUE)",
+      "priority": 75,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:handler-struct",
+      "name": "Gin Handler Struct",
+      "description": "Handler struct with dependencies",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "positions": ["after_imports", "file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "type $NAME struct {\n\t$SERVICE *$SERVICE_TYPE\n}\n\nfunc New$NAME($SERVICE *$SERVICE_TYPE) *$NAME {\n\treturn &$NAME{\n\t\t$SERVICE: $SERVICE,\n\t}\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:crud-handler",
+      "name": "Gin CRUD Handler Struct",
+      "description": "Complete CRUD handler with all methods",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "positions": ["after_imports", "file_start"]
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "type $RESOURCE_Handler struct {\n\tservice *$RESOURCE_Service\n}\n\nfunc New$RESOURCE_Handler(service *$RESOURCE_Service) *$RESOURCE_Handler {\n\treturn &$RESOURCE_Handler{service: service}\n}\n\nfunc (h *$RESOURCE_Handler) List(c *gin.Context) {\n\titems, err := h.service.List(c.Request.Context())\n\tif err != nil {\n\t\tc.JSON(http.StatusInternalServerError, gin.H{\"error\": err.Error()})\n\t\treturn\n\t}\n\tc.JSON(http.StatusOK, items)\n}\n\nfunc (h *$RESOURCE_Handler) Get(c *gin.Context) {\n\tid := c.Param(\"id\")\n\titem, err := h.service.Get(c.Request.Context(), id)\n\tif err != nil {\n\t\tc.JSON(http.StatusNotFound, gin.H{\"error\": \"not found\"})\n\t\treturn\n\t}\n\tc.JSON(http.StatusOK, item)\n}\n\nfunc (h *$RESOURCE_Handler) Create(c *gin.Context) {\n\tvar req $CREATE_REQUEST\n\tif err := c.ShouldBindJSON(&req); err != nil {\n\t\tc.JSON(http.StatusBadRequest, gin.H{\"error\": err.Error()})\n\t\treturn\n\t}\n\titem, err := h.service.Create(c.Request.Context(), &req)\n\tif err != nil {\n\t\tc.JSON(http.StatusInternalServerError, gin.H{\"error\": err.Error()})\n\t\treturn\n\t}\n\tc.JSON(http.StatusCreated, item)\n}\n\nfunc (h *$RESOURCE_Handler) Update(c *gin.Context) {\n\tid := c.Param(\"id\")\n\tvar req $UPDATE_REQUEST\n\tif err := c.ShouldBindJSON(&req); err != nil {\n\t\tc.JSON(http.StatusBadRequest, gin.H{\"error\": err.Error()})\n\t\treturn\n\t}\n\titem, err := h.service.Update(c.Request.Context(), id, &req)\n\tif err != nil {\n\t\tc.JSON(http.StatusInternalServerError, gin.H{\"error\": err.Error()})\n\t\treturn\n\t}\n\tc.JSON(http.StatusOK, item)\n}\n\nfunc (h *$RESOURCE_Handler) Delete(c *gin.Context) {\n\tid := c.Param(\"id\")\n\tif err := h.service.Delete(c.Request.Context(), id); err != nil {\n\t\tc.JSON(http.StatusInternalServerError, gin.H{\"error\": err.Error()})\n\t\treturn\n\t}\n\tc.JSON(http.StatusNoContent, nil)\n}",
+      "priority": 80,
+      "isSkeleton": true,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:register-routes",
+      "name": "Gin Register Routes",
+      "description": "Register handler routes to router",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "func (h *$HANDLER) RegisterRoutes(rg *gin.RouterGroup) {\n\t$RESOURCES := rg.Group(\"/$RESOURCE\")\n\t{\n\t\t$RESOURCES.GET(\"\", h.List)\n\t\t$RESOURCES.GET(\"/:id\", h.Get)\n\t\t$RESOURCES.POST(\"\", h.Create)\n\t\t$RESOURCES.PUT(\"/:id\", h.Update)\n\t\t$RESOURCES.DELETE(\"/:id\", h.Delete)\n\t}\n}",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:validation-error",
+      "name": "Gin Validation Error Handler",
+      "description": "Handle validation errors with details",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "position": "method_body"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "if err := c.ShouldBindJSON(&$REQUEST); err != nil {\n\tvar ve validator.ValidationErrors\n\tif errors.As(err, &ve) {\n\t\tout := make([]gin.H, len(ve))\n\t\tfor i, fe := range ve {\n\t\t\tout[i] = gin.H{\n\t\t\t\t\"field\":   fe.Field(),\n\t\t\t\t\"message\": fe.Error(),\n\t\t\t}\n\t\t}\n\t\tc.JSON(http.StatusBadRequest, gin.H{\"errors\": out})\n\t\treturn\n\t}\n\tc.JSON(http.StatusBadRequest, gin.H{\"error\": err.Error()})\n\treturn\n}",
+      "priority": 75,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:recovery-middleware",
+      "name": "Gin Custom Recovery Middleware",
+      "description": "Custom panic recovery middleware",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "positions": ["after_imports", "file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "func CustomRecovery() gin.HandlerFunc {\n\treturn func(c *gin.Context) {\n\t\tdefer func() {\n\t\t\tif err := recover(); err != nil {\n\t\t\t\tlog.Printf(\"panic recovered: %v\", err)\n\t\t\t\tc.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{\n\t\t\t\t\t\"error\": \"internal server error\",\n\t\t\t\t})\n\t\t\t}\n\t\t}()\n\t\tc.Next()\n\t}\n}",
+      "priority": 75,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:cors-middleware",
+      "name": "Gin CORS Middleware",
+      "description": "CORS middleware configuration",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "positions": ["after_imports", "file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "func CORSMiddleware() gin.HandlerFunc {\n\treturn func(c *gin.Context) {\n\t\tc.Writer.Header().Set(\"Access-Control-Allow-Origin\", \"$ORIGIN\")\n\t\tc.Writer.Header().Set(\"Access-Control-Allow-Credentials\", \"true\")\n\t\tc.Writer.Header().Set(\"Access-Control-Allow-Headers\", \"Content-Type, Authorization\")\n\t\tc.Writer.Header().Set(\"Access-Control-Allow-Methods\", \"GET, POST, PUT, DELETE, OPTIONS\")\n\n\t\tif c.Request.Method == \"OPTIONS\" {\n\t\t\tc.AbortWithStatus(http.StatusNoContent)\n\t\t\treturn\n\t\t}\n\n\t\tc.Next()\n\t}\n}",
+      "priority": 75,
+      "builtin": true
+    },
+    {
+      "id": "go:gin:logging-middleware",
+      "name": "Gin Logging Middleware",
+      "description": "Request logging middleware",
+      "language": "go",
+      "framework": "gin",
+      "context": {
+        "positions": ["after_imports", "file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "func LoggingMiddleware(logger *$LOGGER) gin.HandlerFunc {\n\treturn func(c *gin.Context) {\n\t\tstart := time.Now()\n\t\tpath := c.Request.URL.Path\n\n\t\tc.Next()\n\n\t\tlatency := time.Since(start)\n\t\tlogger.Info(\"request\",\n\t\t\t\"method\", c.Request.Method,\n\t\t\t\"path\", path,\n\t\t\t\"status\", c.Writer.Status(),\n\t\t\t\"latency\", latency,\n\t\t)\n\t}\n}",
+      "priority": 75,
+      "builtin": true
+    }
+  ]
+}

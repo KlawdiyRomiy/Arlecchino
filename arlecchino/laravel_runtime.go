@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 
-	"arlecchino/internal/indexer"
 	"arlecchino/internal/plugins/laravel"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -78,13 +77,6 @@ func (a *App) ExecuteQuery(query string, bindings []interface{}) (interface{}, e
 		return nil, fmt.Errorf("no PHP Bridge available")
 	}
 	return bridge.ExecuteQuery(query, bindings)
-}
-
-func (a *App) GetRelatedFiles(filePath string) ([]indexer.FileRelation, error) {
-	if a.idx == nil {
-		return nil, fmt.Errorf("no project opened")
-	}
-	return a.idx.AnalyzeFile(filePath)
 }
 
 func (a *App) InspectProject() (*laravel.ProjectStructure, error) {

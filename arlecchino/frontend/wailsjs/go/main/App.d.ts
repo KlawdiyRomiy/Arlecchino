@@ -3,10 +3,10 @@
 import {system} from '../models';
 import {laravel} from '../models';
 import {main} from '../models';
+import {indexer} from '../models';
 import {welcome} from '../models';
 import {lsp} from '../models';
 import {project} from '../models';
-import {indexer} from '../models';
 import {composer} from '../models';
 
 export function AnalyzeModels(arg1:string):Promise<any>;
@@ -86,6 +86,8 @@ export function GetCurrentProjectID():Promise<string>;
 export function GetCurrentProjectPath():Promise<string>;
 
 export function GetCurrentWorkDir():Promise<string>;
+
+export function GetDependencyGraph(arg1:string,arg2:number):Promise<indexer.DependencyGraph>;
 
 export function GetDevToolsStatus():Promise<Array<welcome.ToolStatus>>;
 

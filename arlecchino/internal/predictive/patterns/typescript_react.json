@@ -1,0 +1,514 @@
+{
+  "version": "1.0",
+  "name": "TypeScript React Patterns",
+  "description": "React patterns with TypeScript for functional components, hooks, and common patterns",
+  "language": "typescript",
+  "framework": "react",
+  "patterns": [
+    {
+      "id": "ts:react:fc",
+      "name": "Functional Component with Props",
+      "description": "React functional component with typed props interface",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["file_start", "after_imports"],
+        "fileType": "component"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "interface $NAMEProps {\n\t$PROP_NAME: $PROP_TYPE;\n}\n\nexport function $NAME({ $PROP_NAME }: $NAMEProps): JSX.Element {\n\treturn (\n\t\t<div>\n\t\t\t{$CONTENT}\n\t\t</div>\n\t);\n}",
+      "priority": 100,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:fc:children",
+      "name": "Component with Children",
+      "description": "React component accepting children prop",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["file_start", "after_imports"],
+        "fileType": "component"
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "interface $NAMEProps {\n\tchildren: React.ReactNode;\n\t$PROP_NAME?: $PROP_TYPE;\n}\n\nexport function $NAME({ children, $PROP_NAME }: $NAMEProps): JSX.Element {\n\treturn (\n\t\t<div>\n\t\t\t{children}\n\t\t</div>\n\t);\n}",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useState",
+      "name": "useState Hook",
+      "description": "React useState hook with type annotation",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const [$STATE, set$STATE_SETTER] = useState<$STATE_TYPE>($INITIAL_VALUE);",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useState:object",
+      "name": "useState with Object",
+      "description": "React useState with typed object state",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const [$STATE, set$STATE_SETTER] = useState<$STATE_TYPE>({\n\t$FIELD_NAME: $FIELD_VALUE,\n});",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useEffect",
+      "name": "useEffect Hook",
+      "description": "React useEffect hook with cleanup",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "useEffect(() => {\n\t$EFFECT_BODY\n\n\treturn () => {\n\t\t$CLEANUP_BODY\n\t};\n}, [$DEPENDENCIES]);",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useEffect:fetch",
+      "name": "useEffect for Data Fetching",
+      "description": "useEffect with async data fetching pattern",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "useEffect(() => {\n\tlet isMounted = true;\n\n\tconst fetchData = async (): Promise<void> => {\n\t\ttry {\n\t\t\tconst response = await $FETCH_CALL;\n\t\t\tif (isMounted) {\n\t\t\t\tset$STATE(response);\n\t\t\t}\n\t\t} catch (error) {\n\t\t\tif (isMounted) {\n\t\t\t\t$ERROR_HANDLER\n\t\t\t}\n\t\t}\n\t};\n\n\tvoid fetchData();\n\n\treturn () => {\n\t\tisMounted = false;\n\t};\n}, [$DEPENDENCIES]);",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useCallback",
+      "name": "useCallback Hook",
+      "description": "React useCallback for memoized callbacks",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const $CALLBACK_NAME = useCallback(\n\t($PARAMS): $RETURN_TYPE => {\n\t\t$CALLBACK_BODY\n\t},\n\t[$DEPENDENCIES]\n);",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useMemo",
+      "name": "useMemo Hook",
+      "description": "React useMemo for memoized values",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const $MEMO_NAME = useMemo<$MEMO_TYPE>(\n\t() => {\n\t\t$COMPUTATION\n\t},\n\t[$DEPENDENCIES]\n);",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useRef",
+      "name": "useRef Hook",
+      "description": "React useRef for DOM references",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const $REF_NAME = useRef<$ELEMENT_TYPE>(null);",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useRef:value",
+      "name": "useRef for Mutable Value",
+      "description": "React useRef for mutable value storage",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const $REF_NAME = useRef<$VALUE_TYPE>($INITIAL_VALUE);",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useReducer",
+      "name": "useReducer Hook",
+      "description": "React useReducer with typed state and actions",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "interface $STATE_TYPE {\n\t$STATE_FIELD: $FIELD_TYPE;\n}\n\ntype $ACTION_TYPE =\n\t| { type: '$ACTION_A'; payload: $PAYLOAD_A_TYPE }\n\t| { type: '$ACTION_B'; payload: $PAYLOAD_B_TYPE };\n\nfunction $REDUCER_NAME(state: $STATE_TYPE, action: $ACTION_TYPE): $STATE_TYPE {\n\tswitch (action.type) {\n\t\tcase '$ACTION_A':\n\t\t\treturn { ...state, $STATE_FIELD: action.payload };\n\t\tcase '$ACTION_B':\n\t\t\treturn { ...state, $STATE_FIELD: action.payload };\n\t\tdefault:\n\t\t\treturn state;\n\t}\n}\n\nconst [$STATE, dispatch] = useReducer($REDUCER_NAME, $INITIAL_STATE);",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:customHook",
+      "name": "Custom Hook",
+      "description": "Custom React hook with typed return value",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["file_start", "after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "interface Use$NAMEReturn {\n\t$RETURN_FIELD: $RETURN_TYPE;\n\t$METHOD_NAME: ($PARAMS) => $METHOD_RETURN;\n}\n\nexport function use$NAME($PARAMS): Use$NAMEReturn {\n\tconst [$STATE, set$STATE_SETTER] = useState<$STATE_TYPE>($INITIAL);\n\n\tconst $METHOD_NAME = useCallback(($PARAMS): $METHOD_RETURN => {\n\t\t$METHOD_BODY\n\t}, [$DEPENDENCIES]);\n\n\treturn {\n\t\t$RETURN_FIELD: $STATE,\n\t\t$METHOD_NAME,\n\t};\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:context",
+      "name": "Context Provider",
+      "description": "React context with typed value and provider",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["file_start", "after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "interface $NAMEContextValue {\n\t$VALUE_FIELD: $VALUE_TYPE;\n\t$METHOD_NAME: ($PARAMS) => $METHOD_RETURN;\n}\n\nconst $NAMEContext = createContext<$NAMEContextValue | undefined>(undefined);\n\nexport function $NAMEProvider({ children }: { children: React.ReactNode }): JSX.Element {\n\tconst [$STATE, set$STATE_SETTER] = useState<$VALUE_TYPE>($INITIAL);\n\n\tconst $METHOD_NAME = useCallback(($PARAMS): $METHOD_RETURN => {\n\t\t$METHOD_BODY\n\t}, [$DEPENDENCIES]);\n\n\tconst value: $NAMEContextValue = useMemo(\n\t\t() => ({ $VALUE_FIELD: $STATE, $METHOD_NAME }),\n\t\t[$STATE, $METHOD_NAME]\n\t);\n\n\treturn (\n\t\t<$NAMEContext.Provider value={value}>\n\t\t\t{children}\n\t\t</$NAMEContext.Provider>\n\t);\n}\n\nexport function use$NAMEContext(): $NAMEContextValue {\n\tconst context = useContext($NAMEContext);\n\tif (context === undefined) {\n\t\tthrow new Error('use$NAMEContext must be used within a $NAMEProvider');\n\t}\n\treturn context;\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:forwardRef",
+      "name": "forwardRef Component",
+      "description": "React forwardRef with typed ref and props",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["file_start", "after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "interface $NAMEProps {\n\t$PROP_NAME: $PROP_TYPE;\n}\n\nexport const $NAME = forwardRef<$REF_TYPE, $NAMEProps>(\n\tfunction $NAME({ $PROP_NAME }, ref): JSX.Element {\n\t\treturn (\n\t\t\t<$ELEMENT ref={ref}>\n\t\t\t\t{$CONTENT}\n\t\t\t</$ELEMENT>\n\t\t);\n\t}\n);",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:memo",
+      "name": "React.memo Component",
+      "description": "Memoized component with custom comparison",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["file_start", "after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "interface $NAMEProps {\n\t$PROP_NAME: $PROP_TYPE;\n}\n\nexport const $NAME = memo<$NAMEProps>(\n\tfunction $NAME({ $PROP_NAME }): JSX.Element {\n\t\treturn (\n\t\t\t<div>\n\t\t\t\t{$CONTENT}\n\t\t\t</div>\n\t\t);\n\t},\n\t(prevProps, nextProps) => {\n\t\treturn prevProps.$PROP_NAME === nextProps.$PROP_NAME;\n\t}\n);",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:onClick",
+      "name": "onClick Handler",
+      "description": "Typed onClick event handler",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const handle$NAMEClick = (event: React.MouseEvent<HTMLButtonElement>): void => {\n\tevent.preventDefault();\n\t$HANDLER_BODY\n};",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:onChange",
+      "name": "onChange Handler",
+      "description": "Typed onChange event handler for inputs",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const handle$NAMEChange = (event: React.ChangeEvent<HTMLInputElement>): void => {\n\tconst { value } = event.target;\n\t$HANDLER_BODY\n};",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:onSubmit",
+      "name": "onSubmit Handler",
+      "description": "Typed onSubmit form handler",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const handleSubmit = (event: React.FormEvent<HTMLFormElement>): void => {\n\tevent.preventDefault();\n\tconst formData = new FormData(event.currentTarget);\n\t$HANDLER_BODY\n};",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:conditional",
+      "name": "Conditional Rendering",
+      "description": "Conditional rendering with ternary",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "{$CONDITION ? (\n\t<$TRUE_ELEMENT>\n\t\t{$TRUE_CONTENT}\n\t</$TRUE_ELEMENT>\n) : (\n\t<$FALSE_ELEMENT>\n\t\t{$FALSE_CONTENT}\n\t</$FALSE_ELEMENT>\n)}",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:conditional:null",
+      "name": "Conditional Rendering with Null",
+      "description": "Conditional rendering returning null",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "{$CONDITION && (\n\t<$ELEMENT>\n\t\t{$CONTENT}\n\t</$ELEMENT>\n)}",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:map",
+      "name": "Map Array Rendering",
+      "description": "Render array items with map",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "{$ARRAY.map(($ITEM) => (\n\t<$ELEMENT key={$ITEM.$KEY_FIELD}>\n\t\t{$ITEM.$DISPLAY_FIELD}\n\t</$ELEMENT>\n))}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:suspense",
+      "name": "Suspense Boundary",
+      "description": "React Suspense with fallback",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "<Suspense fallback={<$FALLBACK_COMPONENT />}>\n\t<$LAZY_COMPONENT />\n</Suspense>",
+      "priority": 75,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:errorBoundary",
+      "name": "Error Boundary",
+      "description": "Error boundary class component",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["file_start", "after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "interface ErrorBoundaryProps {\n\tchildren: React.ReactNode;\n\tfallback: React.ReactNode;\n}\n\ninterface ErrorBoundaryState {\n\thasError: boolean;\n\terror: Error | null;\n}\n\nexport class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {\n\tstate: ErrorBoundaryState = {\n\t\thasError: false,\n\t\terror: null,\n\t};\n\n\tstatic getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {\n\t\treturn { hasError: true, error };\n\t}\n\n\tcomponentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {\n\t\tconsole.error('Error caught by boundary:', error, errorInfo);\n\t}\n\n\trender(): React.ReactNode {\n\t\tif (this.state.hasError) {\n\t\t\treturn this.props.fallback;\n\t\t}\n\t\treturn this.props.children;\n\t}\n}",
+      "priority": 75,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:lazy",
+      "name": "Lazy Component Import",
+      "description": "React.lazy for code splitting",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["file_start", "after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const $NAME = lazy(() => import('./$MODULE_PATH'));",
+      "priority": 75,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useTransition",
+      "name": "useTransition Hook",
+      "description": "Non-blocking state updates with concurrent rendering",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["component_body", "method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "use"
+      },
+      "template": "const [isPending, startTransition] = useTransition();",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useId",
+      "name": "useId Hook",
+      "description": "Generate SSR-safe unique IDs for accessibility",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["component_body", "method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "use"
+      },
+      "template": "const id = useId();",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useDeferredValue",
+      "name": "useDeferredValue Hook",
+      "description": "Defer expensive re-renders (search filtering, etc.)",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["component_body", "method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "use"
+      },
+      "template": "const deferredValue = useDeferredValue($VALUE);",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useImperativeHandle",
+      "name": "useImperativeHandle Hook",
+      "description": "Customize ref instance value exposed to parent",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["component_body", "method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "use"
+      },
+      "template": "useImperativeHandle(ref, () => ({\n\t$METHOD_NAME: () => {\n\t\t$IMPLEMENTATION\n\t}\n}), []);",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useLayoutEffect",
+      "name": "useLayoutEffect Hook",
+      "description": "Synchronous DOM mutations before paint (tooltips, scroll)",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["component_body", "method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "use"
+      },
+      "template": "useLayoutEffect(() => {\n\t$BODY\n}, [$DEPS]);",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:useDebugValue",
+      "name": "useDebugValue Hook",
+      "description": "Debug custom hooks in React DevTools",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["component_body", "method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "use"
+      },
+      "template": "useDebugValue($VALUE, ($VAL) => `Custom: ${$VAL}`);",
+      "priority": 70,
+      "builtin": true
+    },
+    {
+      "id": "ts:react:use",
+      "name": "use Hook (React 19)",
+      "description": "Read resources (Promises, Context) directly in components",
+      "language": "typescript",
+      "framework": "react",
+      "context": {
+        "positions": ["component_body", "method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "use"
+      },
+      "template": "const $DATA = use($RESOURCE);",
+      "priority": 95,
+      "builtin": true
+    }
+  ]
+}

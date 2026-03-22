@@ -1,0 +1,1415 @@
+{
+  "version": "1.0",
+  "name": "Laravel Patterns",
+  "description": "Laravel framework patterns",
+  "language": "php",
+  "framework": "laravel",
+  "patterns": [
+    {
+      "id": "php:laravel:route:get",
+      "name": "Route GET",
+      "description": "Define GET route",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::get('/$PATH', [$CONTROLLER::class, '$METHOD']);",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:post",
+      "name": "Route POST",
+      "description": "Define POST route",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::post('/$PATH', [$CONTROLLER::class, '$METHOD']);",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:put",
+      "name": "Route PUT",
+      "description": "Define PUT route",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::put('/$PATH', [$CONTROLLER::class, '$METHOD']);",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:patch",
+      "name": "Route PATCH",
+      "description": "Define PATCH route",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::patch('/$PATH', [$CONTROLLER::class, '$METHOD']);",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:delete",
+      "name": "Route DELETE",
+      "description": "Define DELETE route",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::delete('/$PATH', [$CONTROLLER::class, '$METHOD']);",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:options",
+      "name": "Route OPTIONS",
+      "description": "Define OPTIONS route",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::options('/$PATH', [$CONTROLLER::class, '$METHOD']);",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:any",
+      "name": "Route ANY",
+      "description": "Define route for any HTTP method",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::any('/$PATH', [$CONTROLLER::class, '$METHOD']);",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:match",
+      "name": "Route MATCH",
+      "description": "Define route for specific HTTP methods",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::match(['get', 'post'], '/$PATH', [$CONTROLLER::class, '$METHOD']);",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:redirect",
+      "name": "Route Redirect",
+      "description": "Define redirect route",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::redirect('/$FROM', '/$TO', $STATUS);",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:view",
+      "name": "Route View",
+      "description": "Define view route",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::view('/$PATH', '$VIEW');",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:fallback",
+      "name": "Route Fallback",
+      "description": "Define fallback route for 404",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::fallback(function () {\n\treturn response()->json(['message' => 'Not Found'], 404);\n});",
+      "priority": 75,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:resource",
+      "name": "Route Resource",
+      "description": "Define resource routes",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::resource('$RESOURCE', $CONTROLLER::class);",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:api-resource",
+      "name": "Route API Resource",
+      "description": "Define API resource routes",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::apiResource('$RESOURCE', $CONTROLLER::class);",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:route:group",
+      "name": "Route Group",
+      "description": "Group routes with middleware",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["route"],
+        "positions": ["after_imports", "top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Route::middleware(['$MIDDLEWARE'])->group(function () {\n\t$ROUTES\n});",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:model:fillable",
+      "name": "Model Fillable",
+      "description": "Mass assignable attributes",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "protected $$fillable = [\n\t'$FIELD',\n];",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:model:hidden",
+      "name": "Model Hidden",
+      "description": "Hidden attributes for serialization",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "protected $$hidden = [\n\t'password',\n\t'remember_token',\n];",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:model:casts",
+      "name": "Model Casts",
+      "description": "Attribute type casting",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "protected $$casts = [\n\t'$ATTRIBUTE' => '$TYPE',\n];",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:model:relationship:hasMany",
+      "name": "Has Many Relationship",
+      "description": "One-to-many relationship",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function $RELATION(): HasMany\n{\n\treturn $$this->hasMany($MODEL::class);\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:model:relationship:belongsTo",
+      "name": "Belongs To Relationship",
+      "description": "Inverse one-to-many relationship",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function $RELATION(): BelongsTo\n{\n\treturn $$this->belongsTo($MODEL::class);\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:model:relationship:hasOne",
+      "name": "Has One Relationship",
+      "description": "One-to-one relationship",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function $RELATION(): HasOne\n{\n\treturn $$this->hasOne($MODEL::class);\n}",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:model:relationship:belongsToMany",
+      "name": "Belongs To Many Relationship",
+      "description": "Many-to-many relationship",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function $RELATION(): BelongsToMany\n{\n\treturn $$this->belongsToMany($MODEL::class);\n}",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:model:scope",
+      "name": "Query Scope",
+      "description": "Local query scope",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function scope$NAME(Builder $$query): Builder\n{\n\treturn $$query->where('$COLUMN', $VALUE);\n}",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:controller:method:index",
+      "name": "Controller Index",
+      "description": "List all resources",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["controller"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function index(): JsonResponse\n{\n\treturn response()->json($MODEL::all());\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:controller:method:store",
+      "name": "Controller Store",
+      "description": "Store new resource",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["controller"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function store($REQUEST $$request): JsonResponse\n{\n\t$$model = $MODEL::create($$request->validated());\n\treturn response()->json($$model, 201);\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:controller:method:show",
+      "name": "Controller Show",
+      "description": "Show single resource",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["controller"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function show($MODEL $$model): JsonResponse\n{\n\treturn response()->json($$model);\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:controller:method:update",
+      "name": "Controller Update",
+      "description": "Update resource",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["controller"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function update($REQUEST $$request, $MODEL $$model): JsonResponse\n{\n\t$$model->update($$request->validated());\n\treturn response()->json($$model);\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:controller:method:destroy",
+      "name": "Controller Destroy",
+      "description": "Delete resource",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["controller"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function destroy($MODEL $$model): JsonResponse\n{\n\t$$model->delete();\n\treturn response()->json(null, 204);\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:request:rules",
+      "name": "Request Rules",
+      "description": "Validation rules method",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["request"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function rules(): array\n{\n\treturn [\n\t\t'$FIELD' => ['required', '$RULES'],\n\t];\n}",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:migration:create-table",
+      "name": "Migration Create Table",
+      "description": "Create new table",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["migration"],
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Schema::create('$TABLE', function (Blueprint $$table) {\n\t$$table->id();\n\t$$table->string('$COLUMN');\n\t$$table->timestamps();\n});",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:migration:add-column",
+      "name": "Migration Add Column",
+      "description": "Add column to existing table",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["migration"],
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "Schema::table('$TABLE', function (Blueprint $$table) {\n\t$$table->$TYPE('$COLUMN');\n});",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:middleware:handle",
+      "name": "Middleware Handle",
+      "description": "Middleware handle method",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["middleware"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function handle(Request $$request, Closure $$next): Response\n{\n\t$BEFORE\n\t$$response = $$next($$request);\n\t$AFTER\n\treturn $$response;\n}",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:job:handle",
+      "name": "Job Handle",
+      "description": "Job handle method",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["job"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function handle(): void\n{\n\t$BODY\n}",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:event:dispatch",
+      "name": "Dispatch Event",
+      "description": "Dispatch an event",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "$EVENT::dispatch($PARAMS);",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:test:feature",
+      "name": "Feature Test",
+      "description": "Laravel feature test method",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["test"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "public function test_$NAME(): void\n{\n\t$$response = $$this->$METHOD('/$PATH');\n\t$$response->assertStatus(200);\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:view:helper",
+      "name": "View Helper",
+      "description": "Return view response",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "return view('$VIEW', [\n\t'$VAR' => $$data,\n]);",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:if",
+      "name": "Blade @if",
+      "description": "Conditional statement",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@if ($CONDITION)\n\t$CONTENT\n@endif",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:foreach",
+      "name": "Blade @foreach",
+      "description": "Loop through items",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@foreach ($ITEMS as $ITEM)\n\t$CONTENT\n@endforeach",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:forelse",
+      "name": "Blade @forelse",
+      "description": "Loop with empty fallback",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@forelse ($ITEMS as $ITEM)\n\t$CONTENT\n@empty\n\t$EMPTY\n@endforelse",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:auth",
+      "name": "Blade @auth",
+      "description": "Authenticated user check",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@auth\n\t$CONTENT\n@endauth",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:guest",
+      "name": "Blade @guest",
+      "description": "Guest user check",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@guest\n\t$CONTENT\n@endguest",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:section",
+      "name": "Blade @section",
+      "description": "Define section content",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@section('$NAME')\n\t$CONTENT\n@endsection",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:extends",
+      "name": "Blade @extends",
+      "description": "Extend layout",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@extends('$LAYOUT')",
+      "priority": 100,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:include",
+      "name": "Blade @include",
+      "description": "Include partial",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@include('$PARTIAL')",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:component",
+      "name": "Blade @component",
+      "description": "Render component",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "<x-$COMPONENT />",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:yield",
+      "name": "Blade @yield",
+      "description": "Yield section content",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@yield('$SECTION')",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:can",
+      "name": "Blade @can",
+      "description": "Authorization check",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@can('$ABILITY', $MODEL)\n\t$CONTENT\n@endcan",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:env",
+      "name": "Blade @env",
+      "description": "Environment check",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@env('$ENVIRONMENT')\n\t$CONTENT\n@endenv",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:production",
+      "name": "Blade @production",
+      "description": "Production environment check",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@production\n\t$CONTENT\n@endproduction",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:switch",
+      "name": "Blade @switch",
+      "description": "Switch statement",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@switch($VARIABLE)\n\t@case($VALUE)\n\t\t$CONTENT\n\t\t@break\n\t@default\n\t\t$DEFAULT\n@endswitch",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:while",
+      "name": "Blade @while",
+      "description": "While loop",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@while ($CONDITION)\n\t$CONTENT\n@endwhile",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:for",
+      "name": "Blade @for",
+      "description": "For loop",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@for ($i = 0; $i < $COUNT; $i++)\n\t$CONTENT\n@endfor",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:push",
+      "name": "Blade @push",
+      "description": "Push to stack",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@push('$STACK')\n\t$CONTENT\n@endpush",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:stack",
+      "name": "Blade @stack",
+      "description": "Render stack",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@stack('$STACK')",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:once",
+      "name": "Blade @once",
+      "description": "Execute once per render",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@once\n\t$CONTENT\n@endonce",
+      "priority": 75,
+      "builtin": true
+    },
+    {
+      "id": "php:laravel:blade:php",
+      "name": "Blade @php",
+      "description": "Inline PHP code",
+      "language": "php",
+      "framework": "laravel",
+      "context": {
+        "fileTypes": ["blade"],
+        "positions": ["top_level", "method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@php\n\t$CODE\n@endphp",
+      "priority": 75,
+      "builtin": true
+    },
+     {
+       "id": "php:laravel:blade:json",
+       "name": "Blade @json",
+       "description": "JSON encode variable",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "fileTypes": ["blade"],
+         "positions": ["top_level", "method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "@json($VARIABLE)",
+       "priority": 75,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:livewire:component",
+       "name": "Livewire Component",
+       "description": "Create Livewire component class",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "fileTypes": ["livewire"],
+         "positions": ["class_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "public function $PROPERTY = '$VALUE';\n\npublic function update$PROPERTY($$value): void\n{\n\t$$this->$PROPERTY = $$value;\n}",
+       "priority": 90,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:livewire:render",
+       "name": "Livewire Render",
+       "description": "Render Livewire component",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "fileTypes": ["livewire"],
+         "positions": ["class_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "public function render(): View\n{\n\treturn view('livewire.$COMPONENT', [\n\t\t'$VAR' => $$this->$VAR,\n\t]);\n}",
+       "priority": 95,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:livewire:blade-tag",
+       "name": "Livewire Component Tag",
+       "description": "Render Livewire component in Blade",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "fileTypes": ["blade"],
+         "positions": ["top_level", "method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "<livewire:$COMPONENT wire:key=\"$IDENTIFIER\" />",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:livewire:action",
+       "name": "Livewire Action",
+       "description": "Livewire action method",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "fileTypes": ["livewire"],
+         "positions": ["class_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "#[On('$EVENT')]\npublic function $ACTION(): void\n{\n\t$BODY\n}",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:livewire:dispatch",
+       "name": "Livewire Dispatch",
+       "description": "Dispatch Livewire event",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "fileTypes": ["livewire"],
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$this->dispatch('$EVENT', $PARAMS);",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:livewire:wire-click",
+       "name": "Livewire wire:click",
+       "description": "Wire click action",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "fileTypes": ["blade"],
+         "positions": ["top_level", "method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "wire:click=\"$ACTION('$PARAM')\"",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:livewire:wire-model",
+       "name": "Livewire wire:model",
+       "description": "Two-way data binding",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "fileTypes": ["blade"],
+         "positions": ["top_level", "method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "wire:model=\"$PROPERTY\"",
+       "priority": 90,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:spatie:permission:role",
+       "name": "Spatie Role Check",
+       "description": "Check user role with Spatie",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$user->hasRole('$ROLE')",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:spatie:permission:permission",
+       "name": "Spatie Permission Check",
+       "description": "Check user permission with Spatie",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$user->hasPermission('$PERMISSION')",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:spatie:assign-role",
+       "name": "Spatie Assign Role",
+       "description": "Assign role to user",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$user->assignRole('$ROLE');",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:spatie:assign-permission",
+       "name": "Spatie Assign Permission",
+       "description": "Assign permission to user",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$user->givePermissionTo('$PERMISSION');",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:spatie:gate",
+       "name": "Spatie Gate",
+       "description": "Define authorization gate",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "fileTypes": ["provider"],
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "Gate::define('$ABILITY', function (User $$user) {\n\treturn $$user->hasPermission('$PERMISSION');\n});",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:spatie:sync-roles",
+       "name": "Spatie Sync Roles",
+       "description": "Sync roles for user",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$user->syncRoles(['$ROLE1', '$ROLE2']);",
+       "priority": 75,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:eloquent:where",
+       "name": "Eloquent Where",
+       "description": "Filter query with where clause",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$MODEL::where('$COLUMN', '$OPERATOR', '$VALUE')->get();",
+       "priority": 95,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:eloquent:find",
+       "name": "Eloquent Find",
+       "description": "Find model by ID",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$MODEL::find($$id);",
+       "priority": 95,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:eloquent:create",
+       "name": "Eloquent Create",
+       "description": "Create and save new model",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$MODEL::create([\n\t'$FIELD' => $$value,\n]);",
+       "priority": 95,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:eloquent:update",
+       "name": "Eloquent Update",
+       "description": "Update model attributes",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$model->update([\n\t'$FIELD' => $$value,\n]);",
+       "priority": 95,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:eloquent:delete",
+       "name": "Eloquent Delete",
+       "description": "Delete model instance",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$model->delete();",
+       "priority": 90,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:eloquent:with",
+       "name": "Eloquent with (Eager Load)",
+       "description": "Eager load relationships",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$MODEL::with('$RELATION')->get();",
+       "priority": 90,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:eloquent:pluck",
+       "name": "Eloquent Pluck",
+       "description": "Extract specific column values",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$MODEL::pluck('$COLUMN');",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:eloquent:chunk",
+       "name": "Eloquent Chunk",
+       "description": "Process large datasets in chunks",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$MODEL::chunk(100, function ($$models) {\n\tforeach ($$models as $$model) {\n\t\t$BODY\n\t}\n});",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:collection:map",
+       "name": "Collection Map",
+       "description": "Transform collection items",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$collection->map(function ($$item) {\n\treturn $$item->$PROPERTY;\n});",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:collection:filter",
+       "name": "Collection Filter",
+       "description": "Filter collection items",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$collection->filter(function ($$item) {\n\treturn $$item->$PROPERTY === $VALUE;\n});",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:collection:reduce",
+       "name": "Collection Reduce",
+       "description": "Reduce collection to single value",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$collection->reduce(function ($$carry, $$item) {\n\treturn $$carry + $$item->$PROPERTY;\n}, 0);",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:collection:group-by",
+       "name": "Collection Group By",
+       "description": "Group collection by key",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$collection->groupBy('$KEY');",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:collection:sort-by",
+       "name": "Collection Sort By",
+       "description": "Sort collection by key",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$collection->sortBy('$KEY');",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:collection:first",
+       "name": "Collection First",
+       "description": "Get first item matching condition",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$collection->first(function ($$item) {\n\treturn $$item->$PROPERTY === $VALUE;\n});",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "php:laravel:collection:unique",
+       "name": "Collection Unique",
+       "description": "Get unique items by key",
+       "language": "php",
+       "framework": "laravel",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$collection->unique('$KEY');",
+       "priority": 80,
+       "builtin": true
+     }
+   ]
+ }

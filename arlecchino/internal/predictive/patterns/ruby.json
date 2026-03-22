@@ -1,0 +1,144 @@
+{
+  "version": "1.0",
+  "name": "Ruby Patterns",
+  "description": "Core Ruby language patterns",
+  "language": "ruby",
+  "patterns": [
+    {
+      "id": "rb:class:definition",
+      "name": "Class Definition",
+      "description": "Define a new Ruby class",
+      "language": "ruby",
+      "context": {
+        "positions": ["after_imports", "file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "class $NAME\n\tdef initialize($PARAMS)\n\t\t$BODY\n\tend\nend",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "rb:class:inherit",
+      "name": "Class with Inheritance",
+      "description": "Class inheriting from another",
+      "language": "ruby",
+      "context": {
+        "positions": ["after_imports", "file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "class $NAME < $PARENT\n\t$BODY\nend",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "rb:module:definition",
+      "name": "Module Definition",
+      "description": "Define a new module",
+      "language": "ruby",
+      "context": {
+        "positions": ["after_imports", "file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "module $NAME\n\t$BODY\nend",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "rb:method:definition",
+      "name": "Method Definition",
+      "description": "Instance method",
+      "language": "ruby",
+      "context": {
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "def $NAME($PARAMS)\n\t$BODY\nend",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "rb:method:class-method",
+      "name": "Class Method",
+      "description": "Class-level method",
+      "language": "ruby",
+      "context": {
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "def self.$NAME($PARAMS)\n\t$BODY\nend",
+      "priority": 75,
+      "builtin": true
+    },
+    {
+      "id": "rb:attr:accessor",
+      "name": "Attribute Accessor",
+      "description": "Getter and setter",
+      "language": "ruby",
+      "context": {
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "attr_accessor :$NAME",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "rb:block:do-end",
+      "name": "Do-End Block",
+      "description": "Multi-line block",
+      "language": "ruby",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "do |$PARAMS|\n\t$BODY\nend",
+      "priority": 75,
+      "builtin": true
+    },
+    {
+      "id": "rb:each:iterator",
+      "name": "Each Iterator",
+      "description": "Iterate over collection",
+      "language": "ruby",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "$COLLECTION.each do |$ITEM|\n\t$BODY\nend",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "rb:test:rspec-describe",
+      "name": "RSpec Describe",
+      "description": "RSpec describe block",
+      "language": "ruby",
+      "context": {
+        "fileTypes": ["test"],
+        "positions": ["file_start", "class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "RSpec.describe $CLASS do\n\tdescribe '#$METHOD' do\n\t\tit '$DESCRIPTION' do\n\t\t\t$BODY\n\t\tend\n\tend\nend",
+      "priority": 90,
+      "builtin": true
+    }
+  ]
+}

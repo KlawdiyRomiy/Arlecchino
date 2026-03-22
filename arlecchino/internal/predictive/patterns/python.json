@@ -1,0 +1,428 @@
+{
+  "version": "1.0",
+  "name": "Python Patterns",
+  "language": "python",
+  "patterns": [
+    {
+      "id": "py:class:init",
+      "name": "Class",
+      "language": "python",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "class"
+      },
+      "template": "class $NAME:\n\t\"\"\"$DOCSTRING\"\"\"\n\t\n\tdef __init__(self, $PARAMS) -> None:\n\t\t$BODY",
+      "priority": 90
+    },
+    {
+      "id": "py:dataclass",
+      "name": "Dataclass",
+      "language": "python",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "@dat"
+      },
+      "template": "from dataclasses import dataclass, field\n\n@dataclass\nclass $NAME:\n\t\"\"\"$DOCSTRING\"\"\"\n\t$FIELD_NAME: $FIELD_TYPE\n\t$FIELD_NAME2: $FIELD_TYPE2 = field(default=$DEFAULT)",
+      "priority": 90
+    },
+    {
+      "id": "py:function:typed",
+      "name": "Def Function",
+      "language": "python",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "def"
+      },
+      "template": "def $NAME($PARAMS) -> $RETURN_TYPE:\n\t\"\"\"$DOCSTRING\"\"\"\n\t$BODY",
+      "priority": 90
+    },
+    {
+      "id": "py:async:function",
+      "name": "Async Def",
+      "language": "python",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "async"
+      },
+      "template": "async def $NAME($PARAMS) -> $RETURN_TYPE:\n\t\"\"\"$DOCSTRING\"\"\"\n\t$BODY",
+      "priority": 90
+    },
+    {
+      "id": "py:method",
+      "name": "Def Method",
+      "language": "python",
+      "context": {
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "def"
+      },
+      "template": "def $NAME(self, $PARAMS) -> $RETURN_TYPE:\n\t\"\"\"$DOCSTRING\"\"\"\n\t$BODY",
+      "priority": 85
+    },
+    {
+      "id": "py:property",
+      "name": "Property",
+      "language": "python",
+      "context": {
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "@pro"
+      },
+      "template": "@property\ndef $NAME(self) -> $RETURN_TYPE:\n\t\"\"\"$DOCSTRING\"\"\"\n\treturn self._$NAME",
+      "priority": 90
+    },
+    {
+      "id": "py:classmethod",
+      "name": "Classmethod",
+      "language": "python",
+      "context": {
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "@cla"
+      },
+      "template": "@classmethod\ndef $NAME(cls, $PARAMS) -> $RETURN_TYPE:\n\t\"\"\"$DOCSTRING\"\"\"\n\t$BODY",
+      "priority": 85
+    },
+    {
+      "id": "py:staticmethod",
+      "name": "Staticmethod",
+      "language": "python",
+      "context": {
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "@sta"
+      },
+      "template": "@staticmethod\ndef $NAME($PARAMS) -> $RETURN_TYPE:\n\t\"\"\"$DOCSTRING\"\"\"\n\t$BODY",
+      "priority": 85
+    },
+    {
+      "id": "py:try:except",
+      "name": "Try Except",
+      "language": "python",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "try"
+      },
+      "template": "try:\n\t$TRY_BODY\nexcept $EXCEPTION_TYPE as e:\n\t$EXCEPT_BODY",
+      "priority": 90
+    },
+    {
+      "id": "py:with:statement",
+      "name": "With Statement",
+      "language": "python",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "with"
+      },
+      "template": "with $CONTEXT_MANAGER as $VAR:\n\t$BODY",
+      "priority": 90
+    },
+    {
+      "id": "py:for:loop",
+      "name": "For Loop",
+      "language": "python",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "for"
+      },
+      "template": "for $ITEM in $ITERABLE:\n\t$BODY",
+      "priority": 90
+    },
+    {
+      "id": "py:if:statement",
+      "name": "If Statement",
+      "language": "python",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "if"
+      },
+      "template": "if $CONDITION:\n\t$BODY",
+      "priority": 90
+    },
+    {
+      "id": "py:if:main",
+      "name": "If Main",
+      "language": "python",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "if"
+      },
+      "template": "if __name__ == \"__main__\":\n\t$BODY",
+      "priority": 95
+    },
+    {
+      "id": "py:import",
+      "name": "Import",
+      "language": "python",
+      "context": {
+        "positions": ["file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "imp"
+      },
+      "template": "import $MODULE",
+      "priority": 90
+    },
+    {
+      "id": "py:from:import",
+      "name": "From Import",
+      "language": "python",
+      "context": {
+        "positions": ["file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "from"
+      },
+      "template": "from $MODULE import $NAME",
+      "priority": 90
+    },
+     {
+       "id": "py:pytest:test",
+       "name": "Test Function",
+       "language": "python",
+       "context": {
+         "fileTypes": ["test"],
+         "positions": ["top_level", "after_imports"]
+       },
+       "trigger": {
+         "type": "prefix",
+         "value": "def"
+       },
+       "template": "def test_$NAME() -> None:\n\t\"\"\"Test $DESCRIPTION.\"\"\"\n\t# Arrange\n\t$ARRANGE\n\t\n\t# Act\n\t$ACT\n\t\n\t# Assert\n\tassert $ASSERTION",
+       "priority": 95
+     },
+     {
+       "id": "py:list:comprehension",
+       "name": "List Comprehension",
+       "language": "python",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "[$$item for $$item in $ITERABLE if $CONDITION]",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "py:dict:comprehension",
+       "name": "Dict Comprehension",
+       "language": "python",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "{$$key: $$value for $$key, $$value in $ITERABLE}",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "py:generator:expression",
+       "name": "Generator Expression",
+       "language": "python",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "($$item for $$item in $ITERABLE if $CONDITION)",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "py:lambda:function",
+       "name": "Lambda",
+       "language": "python",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "lambda $PARAMS: $BODY",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "py:decorator",
+       "name": "Decorator",
+       "language": "python",
+       "context": {
+         "positions": ["top_level", "after_imports"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "def $DECORATOR(func):\n\tdef wrapper(*args, **kwargs):\n\t\t$BEFORE\n\t\tresult = func(*args, **kwargs)\n\t\t$AFTER\n\t\treturn result\n\treturn wrapper",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "py:context:manager",
+       "name": "Context Manager",
+       "language": "python",
+       "context": {
+         "positions": ["class_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "def __enter__(self):\n\treturn self\n\ndef __exit__(self, exc_type, exc_val, exc_tb):\n\tpass",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "py:enum:class",
+       "name": "Enum",
+       "language": "python",
+       "context": {
+         "positions": ["top_level", "after_imports"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "from enum import Enum\n\nclass $NAME(Enum):\n\t$MEMBER1 = '$VALUE1'\n\t$MEMBER2 = '$VALUE2'",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "py:type:annotation",
+       "name": "Type Hint",
+       "language": "python",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "from typing import $TYPE\n\n$$variable: $TYPE = $VALUE",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "py:logging:setup",
+       "name": "Logging Setup",
+       "language": "python",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "import logging\n\nlogger = logging.getLogger(__name__)\nlogger.setLevel(logging.DEBUG)\n\nhandler = logging.StreamHandler()\nlogger.addHandler(handler)",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "py:pydantic:model",
+       "name": "Pydantic Model",
+       "language": "python",
+       "context": {
+         "positions": ["top_level", "after_imports"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "from pydantic import BaseModel, Field\n\nclass $NAME(BaseModel):\n\t$FIELD: $TYPE = Field(..., description=\"$DESC\")",
+       "priority": 90,
+       "builtin": true
+     },
+     {
+       "id": "py:sqlalchemy:query",
+       "name": "SQLAlchemy Query",
+       "language": "python",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$results = session.query($MODEL).filter($MODEL.$COLUMN == $VALUE).all()",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "py:typing:union",
+       "name": "Union Type",
+       "language": "python",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "from typing import Union\n\n$$var: Union[$TYPE1, $TYPE2] = $VALUE",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "py:typing:optional",
+       "name": "Optional Type",
+       "language": "python",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "from typing import Optional\n\n$$var: Optional[$TYPE] = None",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "py:typing:generic",
+       "name": "Generic Type",
+       "language": "python",
+       "context": {
+         "positions": ["top_level", "after_imports"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "from typing import Generic, TypeVar\n\nT = TypeVar('T')\n\nclass $NAME(Generic[T]):\n\t$BODY",
+       "priority": 75,
+       "builtin": true
+     }
+   ]
+ }

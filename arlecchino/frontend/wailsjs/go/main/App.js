@@ -158,6 +158,10 @@ export function GetCurrentWorkDir() {
   return window['go']['main']['App']['GetCurrentWorkDir']();
 }
 
+export function GetDependencyGraph(arg1, arg2) {
+  return window['go']['main']['App']['GetDependencyGraph'](arg1, arg2);
+}
+
 export function GetDevToolsStatus() {
   return window['go']['main']['App']['GetDevToolsStatus']();
 }

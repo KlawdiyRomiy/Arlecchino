@@ -1,0 +1,110 @@
+package project
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"time"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
+
+type Project struct {
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	Name       string    `json:"name"`
+	Path       string    `json:"path"`
+	Framework  string    `json:"framework"` // laravel, django, rails, express, go, unknown
+	Version    string    `json:"version"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastOpened time.Time `json:"last_opened"`
+	IsFavorite bool      `json:"is_favorite"`
+}
+
+type ProjectManager struct {
+	db             *DB
+	CurrentProject *Project
+}
+
+type DB struct {
+	*gorm.DB
+}
+
+func NewDB(dbPath string) (*DB, error) {
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+
+	err = db.AutoMigrate(&Project{})
+	if err != nil {
+		return nil, err
+	}
+
+	return &DB{db}, nil
+}
+
+// OpenProject opens any directory as a project (framework-agnostic)
+func (pm *ProjectManager) OpenProject(path string) error {
+	// Verify path exists and is a directory
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("path is not a directory")
+	}
+
+	name := filepath.Base(path)
+
+	var project Project
+	result := pm.db.Where("path = ?", path).First(&project)
+
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		project = Project{
+			Name:       name,
+			Path:       path,
+			Framework:  "unknown", // Will be set by app.go after plugin detection
+			Version:    "",
+			CreatedAt:  time.Now(),
+			LastOpened: time.Now(),
+		}
+		pm.db.Create(&project)
+	} else {
+		project.LastOpened = time.Now()
+		pm.db.Save(&project)
+	}
+
+	pm.CurrentProject = &project
+	return nil
+}
+
+// UpdateFramework updates the detected framework for current project
+func (pm *ProjectManager) UpdateFramework(framework string, version string) {
+	if pm.CurrentProject != nil {
+		pm.CurrentProject.Framework = framework
+		pm.CurrentProject.Version = version
+		pm.db.Save(pm.CurrentProject)
+	}
+}
+
+func (pm *ProjectManager) CloseProject() error {
+	pm.CurrentProject = nil
+	return nil
+}
+
+func (pm *ProjectManager) GetRecentProjects(limit int) ([]Project, error) {
+	var projects []Project
+	result := pm.db.Order("last_opened desc").Limit(limit).Find(&projects)
+	return projects, result.Error
+}
+
+func NewProjectManager(dbPath string) (*ProjectManager, error) {
+	db, err := NewDB(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	return &ProjectManager{
+		db: db,
+	}, nil
+}

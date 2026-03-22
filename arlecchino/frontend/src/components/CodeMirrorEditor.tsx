@@ -1300,23 +1300,32 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   }, [filePath, language]);
 
   useEffect(() => {
-    if (!highlightLine || highlightLine <= 0 || !editorRef.current?.view)
-      return;
+    const view = editorRef.current?.view;
+    if (!view) return;
 
-    const view = editorRef.current.view;
-    view.dispatch({ effects: setHighlightLineEffect.of(highlightLine) });
-
-    const timer = setTimeout(() => {
+    if (!highlightLine || highlightLine <= 0) {
       view.dispatch({ effects: setHighlightLineEffect.of(null) });
-    }, 2500);
+      return;
+    }
 
     const line = view.state.doc.line(
       Math.min(highlightLine, view.state.doc.lines),
     );
+    const yMargin = Math.round(view.dom.clientHeight * 0.35);
     view.dispatch({
+      effects: [
+        setHighlightLineEffect.of(highlightLine),
+        EditorView.scrollIntoView(line.from, {
+          y: "start",
+          yMargin,
+        }),
+      ],
       selection: { anchor: line.from },
-      scrollIntoView: true,
     });
+
+    const timer = setTimeout(() => {
+      view.dispatch({ effects: setHighlightLineEffect.of(null) });
+    }, 1500);
 
     return () => clearTimeout(timer);
   }, [highlightLine]);

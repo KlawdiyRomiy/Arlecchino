@@ -1,0 +1,247 @@
+{
+  "version": "1.0",
+  "name": "Ruby on Rails Patterns",
+  "description": "Rails framework patterns",
+  "language": "ruby",
+  "framework": "rails",
+  "patterns": [
+    {
+      "id": "rb:rails:model:definition",
+      "name": "Rails Model",
+      "description": "ActiveRecord model",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "class $NAME < ApplicationRecord\n\t$BODY\nend",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:model:has-many",
+      "name": "Has Many Association",
+      "description": "One-to-many association",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "has_many :$ASSOCIATION",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:model:belongs-to",
+      "name": "Belongs To Association",
+      "description": "Inverse association",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "belongs_to :$ASSOCIATION",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:model:validates",
+      "name": "Validation",
+      "description": "Model validation",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "validates :$ATTRIBUTE, $VALIDATIONS",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:model:scope",
+      "name": "Model Scope",
+      "description": "Named scope",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["model"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "scope :$NAME, -> { $QUERY }",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:controller:action:index",
+      "name": "Controller Index Action",
+      "description": "List all resources",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["controller"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "def index\n\t@$RESOURCES = $MODEL.all\nend",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:controller:action:show",
+      "name": "Controller Show Action",
+      "description": "Show single resource",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["controller"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "def show\nend",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:controller:action:create",
+      "name": "Controller Create Action",
+      "description": "Create new resource",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["controller"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "def create\n\t@$RESOURCE = $MODEL.new($RESOURCE_params)\n\tif @$RESOURCE.save\n\t\tredirect_to @$RESOURCE, notice: '$MODEL was successfully created.'\n\telse\n\t\trender :new, status: :unprocessable_entity\n\tend\nend",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:controller:before-action",
+      "name": "Before Action",
+      "description": "Controller callback",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["controller"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "before_action :$METHOD, only: [:$ACTIONS]",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:controller:strong-params",
+      "name": "Strong Parameters",
+      "description": "Permitted params method",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["controller"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "private\n\ndef $RESOURCE_params\n\tparams.require(:$RESOURCE).permit($ATTRIBUTES)\nend",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:migration:create-table",
+      "name": "Migration Create Table",
+      "description": "Create database table",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["migration"],
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "create_table :$TABLE do |t|\n\tt.$TYPE :$COLUMN\n\n\tt.timestamps\nend",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:migration:add-column",
+      "name": "Migration Add Column",
+      "description": "Add column to table",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["migration"],
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "add_column :$TABLE, :$COLUMN, :$TYPE",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:job:perform",
+      "name": "Active Job Perform",
+      "description": "Background job method",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["job"],
+        "positions": ["class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "def perform($PARAMS)\n\t$BODY\nend",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "rb:rails:service:call",
+      "name": "Service Object",
+      "description": "Service object pattern",
+      "language": "ruby",
+      "framework": "rails",
+      "context": {
+        "fileTypes": ["service"],
+        "positions": ["file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "class $NAMEService\n\tdef initialize($PARAMS)\n\t\t@$PARAM = $PARAM\n\tend\n\n\tdef call\n\t\t$BODY\n\tend\n\n\tprivate\n\n\tattr_reader :$PARAM\nend",
+      "priority": 95,
+      "builtin": true
+    }
+  ]
+}

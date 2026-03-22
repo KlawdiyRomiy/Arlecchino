@@ -542,6 +542,64 @@ const clearGhostText = () => {
 
 ---
 
+## Git Workflow (GitHub)
+
+> Проект публикуется на GitHub: https://github.com/KlawdiyRomiy/Arlecchino
+> Все правила ниже написаны с учётом пуша на удалённый репозиторий.
+
+### Ветки
+| Ветка | Назначение |
+|-------|-----------|
+| `main` | Всегда рабочий код. То, что можно собрать и отдать. |
+| `feat/<name>` | Новая фича. От main → в main. |
+| `fix/<name>` | Баг-фикс. От main → в main. |
+
+Отдельная ветка для тестов **не нужна** — тесты живут в feature/fix ветках.
+
+### Ежедневная работа
+```bash
+git checkout -b feat/<name>          # 1. Новая ветка от main
+# ... пишешь код, коммитишь ...
+git checkout main                    # 2. Переключиться на main
+git merge feat/<name>                # 3. Merge (или squash merge)
+git push origin main                 # 4. Push на GitHub
+git branch -d feat/<name>            # 5. Удалить локальную ветку
+```
+
+### Коммиты — Conventional Commits
+```
+feat: add terminal tab support
+fix: prevent page reload on binding regeneration
+refactor: extract completion cache to separate module
+docs: update AGENTS.md with new workflow
+chore: update dependencies
+test: add tests for PHP adapter
+```
+Формат: `<type>: <описание на английском>`. Без заглавной буквы после двоеточия, без точки в конце.
+
+### Релизы
+```bash
+git tag v0.1.0                       # Семантическое версионирование
+git push origin v0.1.0               # Push тега
+# wails build → create-dmg → GitHub Release для этого тега
+```
+
+### Хотфиксы после релиза
+```bash
+git checkout -b fix/<name>           # От main
+# ... фиксишь ...
+git checkout main && git merge fix/<name>
+git tag v0.1.1                       # Патч-версия
+# Новый билд → новый DMG → новый GitHub Release
+```
+
+### Запрещено
+- Коммитить напрямую в main — всегда через ветку → merge
+- `git push --force` в main (исключение: одноразовая инициализация репо)
+- Копить огромные ветки неделями — мержить часто, маленькими порциями
+
+---
+
 ## Communication Style
 
 - Язык: ТОЛЬКО русский

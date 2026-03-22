@@ -1,0 +1,308 @@
+{
+  "version": "1.0",
+  "name": "TypeScript Core Patterns",
+  "description": "Core TypeScript language patterns for IDE autocomplete",
+  "language": "typescript",
+  "patterns": [
+    {
+      "id": "ts:interface",
+      "name": "Interface",
+      "description": "TypeScript interface with typed fields",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "int"
+      },
+      "template": "export interface $NAME {\n\t$FIELD_NAME: $FIELD_TYPE;\n}",
+      "priority": 85
+    },
+    {
+      "id": "ts:type:alias",
+      "name": "Type Alias",
+      "description": "TypeScript type alias declaration",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "type"
+      },
+      "template": "export type $NAME = $TYPE_DEFINITION;",
+      "priority": 85
+    },
+    {
+      "id": "ts:enum",
+      "name": "Enum",
+      "description": "TypeScript enum with members",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "enum"
+      },
+      "template": "export enum $NAME {\n\t$MEMBER_A = '$VALUE_A',\n\t$MEMBER_B = '$VALUE_B',\n}",
+      "priority": 80
+    },
+    {
+      "id": "ts:class",
+      "name": "Class",
+      "description": "TypeScript class with typed constructor",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "class"
+      },
+      "template": "export class $NAME {\n\tprivate readonly $FIELD_NAME: $FIELD_TYPE;\n\n\tconstructor($PARAM_NAME: $PARAM_TYPE) {\n\t\tthis.$FIELD_NAME = $PARAM_NAME;\n\t}\n}",
+      "priority": 85
+    },
+    {
+      "id": "ts:function:async",
+      "name": "Async Function",
+      "description": "TypeScript async function with Promise return type",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports", "class_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "async"
+      },
+      "template": "export async function $NAME($PARAMS): Promise<$RETURN_TYPE> {\n\t$BODY\n}",
+      "priority": 90
+    },
+    {
+      "id": "ts:function:export",
+      "name": "Export Function",
+      "description": "Exported function",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "exp"
+      },
+      "template": "export function $NAME($PARAMS): $RETURN_TYPE {\n\t$BODY\n}",
+      "priority": 85
+    },
+    {
+      "id": "ts:arrow:function",
+      "name": "Const Arrow",
+      "description": "TypeScript typed arrow function",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports", "method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "const"
+      },
+      "template": "const $NAME = ($PARAMS): $RETURN_TYPE => {\n\t$BODY\n};",
+      "priority": 85
+    },
+    {
+      "id": "ts:try:catch:typed",
+      "name": "Try Catch",
+      "description": "Try-catch block with error type guard",
+      "language": "typescript",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "try"
+      },
+      "template": "try {\n\t$TRY_BODY\n} catch (error: unknown) {\n\tif (error instanceof Error) {\n\t\t$ERROR_BODY\n\t}\n\tthrow error;\n}",
+      "priority": 90
+    },
+    {
+      "id": "ts:import:named",
+      "name": "Import",
+      "description": "Named import from module",
+      "language": "typescript",
+      "context": {
+        "positions": ["file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "imp"
+      },
+      "template": "import { $IMPORT_NAME } from '$MODULE_PATH';",
+      "priority": 90
+    },
+    {
+      "id": "ts:import:type",
+      "name": "Import Type",
+      "description": "Import type only (tree-shakeable)",
+      "language": "typescript",
+      "context": {
+        "positions": ["file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "imp"
+      },
+      "template": "import type { $TYPE_NAME } from '$MODULE_PATH';",
+      "priority": 85
+    },
+    {
+      "id": "ts:type:guard",
+      "name": "Type Guard",
+      "description": "User-defined type guard function",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "func"
+      },
+      "template": "function is$TYPE_NAME(value: unknown): value is $TYPE_NAME {\n\treturn (\n\t\ttypeof value === 'object' &&\n\t\tvalue !== null &&\n\t\t'$PROPERTY' in value\n\t);\n}",
+      "priority": 80
+    },
+    {
+      "id": "ts:if:statement",
+      "name": "If Statement",
+      "description": "Conditional statement",
+      "language": "typescript",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "if"
+      },
+      "template": "if ($CONDITION) {\n\t$BODY\n}",
+      "priority": 90
+    },
+    {
+      "id": "ts:for:of",
+      "name": "For Of",
+      "description": "For-of loop",
+      "language": "typescript",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "for"
+      },
+      "template": "for (const $ITEM of $ITERABLE) {\n\t$BODY\n}",
+      "priority": 90
+    },
+    {
+      "id": "ts:satisfies",
+      "name": "Satisfies",
+      "description": "Type safety without losing type inference (TS 4.9+)",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "method_body", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "sat"
+      },
+      "template": "const $NAME = $VALUE satisfies $TYPE;",
+      "priority": 90
+    },
+    {
+      "id": "ts:as:const",
+      "name": "As Const",
+      "description": "Const assertion for literal types and readonly arrays",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "method_body", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "const"
+      },
+      "template": "const $NAME = {\n\t$KEY: $VALUE\n} as const;",
+      "priority": 90
+    },
+    {
+      "id": "ts:utility:partial",
+      "name": "Partial Type",
+      "description": "Make all properties optional",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "type"
+      },
+      "template": "type $NAME = Partial<$TYPE>;",
+      "priority": 85
+    },
+    {
+      "id": "ts:utility:pick",
+      "name": "Pick Type",
+      "description": "Extract subset of properties from type",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "type"
+      },
+      "template": "type $NAME = Pick<$TYPE, '$PROPERTY_1' | '$PROPERTY_2'>;",
+      "priority": 85
+    },
+    {
+      "id": "ts:utility:omit",
+      "name": "Omit Type",
+      "description": "Exclude properties from type",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "type"
+      },
+      "template": "type $NAME = Omit<$TYPE, '$PROPERTY_1' | '$PROPERTY_2'>;",
+      "priority": 85
+    },
+    {
+      "id": "ts:utility:record",
+      "name": "Record Type",
+      "description": "Object type with known value type",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "type"
+      },
+      "template": "type $NAME = Record<$KEY_TYPE, $VALUE_TYPE>;",
+      "priority": 85
+    },
+    {
+      "id": "ts:generic:constraint",
+      "name": "Generic Constraint",
+      "description": "Type-safe generic function with keyof constraint",
+      "language": "typescript",
+      "context": {
+        "positions": ["top_level", "after_imports"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "func"
+      },
+      "template": "function $NAME<T, K extends keyof T>(obj: T, key: K): T[K] {\n\treturn obj[key];\n}",
+      "priority": 80
+    }
+  ]
+}

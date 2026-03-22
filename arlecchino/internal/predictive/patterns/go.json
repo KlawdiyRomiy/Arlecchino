@@ -1,0 +1,735 @@
+{
+  "version": "1.0",
+  "name": "Go Patterns",
+  "description": "Idiomatic Go code patterns for predictive code completion",
+  "language": "go",
+  "patterns": [
+    {
+      "id": "go:struct:definition",
+      "name": "Struct",
+      "description": "Define a new struct type with fields",
+      "language": "go",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "type"
+      },
+      "template": "type $NAME struct {\n\t$FIELD $TYPE\n}",
+      "priority": 85
+    },
+    {
+      "id": "go:interface:definition",
+      "name": "Interface",
+      "description": "Define a new interface type",
+      "language": "go",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "type"
+      },
+      "template": "type $NAME interface {\n\t$METHOD($PARAMS) $RETURN\n}",
+      "priority": 85
+    },
+    {
+      "id": "go:function:basic",
+      "name": "Function",
+      "description": "Basic function definition",
+      "language": "go",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "func"
+      },
+      "template": "func $NAME($PARAMS) $RETURN {\n\t$BODY\n}",
+      "priority": 85
+    },
+    {
+      "id": "go:function:with-error",
+      "name": "Function Error",
+      "description": "Function returning value and error",
+      "language": "go",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "func"
+      },
+      "template": "func $NAME($PARAMS) ($RETURN, error) {\n\t$BODY\n\treturn $RESULT, nil\n}",
+      "priority": 80
+    },
+    {
+      "id": "go:function:constructor",
+      "name": "New Constructor",
+      "description": "Constructor function returning pointer",
+      "language": "go",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "func"
+      },
+      "template": "func New$TYPE($PARAMS) *$TYPE {\n\treturn &$TYPE{\n\t\t$FIELD: $VALUE,\n\t}\n}",
+      "priority": 80
+    },
+    {
+      "id": "go:method:receiver",
+      "name": "Method Receiver",
+      "description": "Method on a struct type",
+      "language": "go",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "func"
+      },
+      "template": "func ($RECEIVER *$TYPE) $NAME($PARAMS) $RETURN {\n\t$BODY\n}",
+      "priority": 75
+    },
+    {
+      "id": "go:error:check",
+      "name": "If Error",
+      "description": "Idiomatic error handling",
+      "language": "go",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "if"
+      },
+      "template": "if err != nil {\n\treturn $ZERO_VALUE, fmt.Errorf(\"$CONTEXT: %w\", err)\n}",
+      "priority": 95
+    },
+    {
+      "id": "go:for:range-slice",
+      "name": "For Range",
+      "description": "Iterate over slice with index and value",
+      "language": "go",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "for"
+      },
+      "template": "for $INDEX, $ITEM := range $SLICE {\n\t$BODY\n}",
+      "priority": 90
+    },
+    {
+      "id": "go:for:range-map",
+      "name": "For Range Map",
+      "description": "Iterate over map keys and values",
+      "language": "go",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "for"
+      },
+      "template": "for $KEY, $VALUE := range $MAP {\n\t$BODY\n}",
+      "priority": 85
+    },
+    {
+      "id": "go:select:case",
+      "name": "Select",
+      "description": "Select on multiple channels",
+      "language": "go",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "sel"
+      },
+      "template": "select {\ncase $MSG := <-$CHANNEL:\n\t$BODY\ncase <-$DONE:\n\treturn\ndefault:\n\t$DEFAULT_BODY\n}",
+      "priority": 85
+    },
+    {
+      "id": "go:goroutine:anonymous",
+      "name": "Go Func",
+      "description": "Launch anonymous goroutine",
+      "language": "go",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "go"
+      },
+      "template": "go func() {\n\t$BODY\n}()",
+      "priority": 90
+    },
+    {
+      "id": "go:defer:basic",
+      "name": "Defer",
+      "description": "Defer function call",
+      "language": "go",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "def"
+      },
+      "template": "defer $RESOURCE.Close()",
+      "priority": 90
+    },
+    {
+      "id": "go:defer:mutex",
+      "name": "Defer Unlock",
+      "description": "Lock/Unlock pattern with defer",
+      "language": "go",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "def"
+      },
+      "template": "$MU.Lock()\ndefer $MU.Unlock()",
+      "priority": 85
+    },
+    {
+      "id": "go:make:slice",
+      "name": "Make Slice",
+      "description": "Create slice with length and capacity",
+      "language": "go",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "mak"
+      },
+      "template": "$SLICE := make([]$TYPE, $LENGTH, $CAPACITY)",
+      "priority": 85
+    },
+    {
+      "id": "go:make:map",
+      "name": "Make Map",
+      "description": "Create map with optional capacity hint",
+      "language": "go",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "mak"
+      },
+      "template": "$MAP := make(map[$KEY_TYPE]$VALUE_TYPE)",
+      "priority": 85
+    },
+    {
+      "id": "go:make:channel",
+      "name": "Make Chan",
+      "description": "Create buffered channel",
+      "language": "go",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "mak"
+      },
+      "template": "$CHANNEL := make(chan $TYPE, $BUFFER_SIZE)",
+      "priority": 80
+    },
+    {
+      "id": "go:var:declaration",
+      "name": "Var Block",
+      "description": "Var block with explicit types",
+      "language": "go",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "var"
+      },
+      "template": "var (\n\t$NAME $TYPE\n)",
+      "priority": 80
+    },
+    {
+      "id": "go:const:block",
+      "name": "Const Block",
+      "description": "Constant block with iota",
+      "language": "go",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "con"
+      },
+      "template": "const (\n\t$NAME $TYPE = iota\n\t$NEXT\n)",
+      "priority": 80
+    },
+    {
+      "id": "go:test:function",
+      "name": "Test Function",
+      "description": "Standard test function",
+      "language": "go",
+      "context": {
+        "fileTypes": ["test"],
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "func"
+      },
+      "template": "func Test$NAME(t *testing.T) {\n\t$BODY\n}",
+      "priority": 95
+    },
+    {
+      "id": "go:test:table-driven",
+      "name": "Table Test",
+      "description": "Idiomatic table-driven test pattern",
+      "language": "go",
+      "context": {
+        "fileTypes": ["test"],
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "func"
+      },
+      "template": "func Test$NAME(t *testing.T) {\n\ttests := []struct {\n\t\tname     string\n\t\tinput    $INPUT_TYPE\n\t\texpected $OUTPUT_TYPE\n\t}{\n\t\t{\n\t\t\tname:     \"$CASE_NAME\",\n\t\t\tinput:    $INPUT,\n\t\t\texpected: $EXPECTED,\n\t\t},\n\t}\n\n\tfor _, tt := range tests {\n\t\tt.Run(tt.name, func(t *testing.T) {\n\t\t\tgot := $FUNCTION(tt.input)\n\t\t\tif got != tt.expected {\n\t\t\t\tt.Errorf(\"$FUNCTION() = %v, want %v\", got, tt.expected)\n\t\t\t}\n\t\t})\n\t}\n}",
+      "priority": 90
+    },
+    {
+      "id": "go:benchmark:function",
+      "name": "Benchmark",
+      "description": "Standard benchmark function",
+      "language": "go",
+      "context": {
+        "fileTypes": ["test"],
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "func"
+      },
+      "template": "func Benchmark$NAME(b *testing.B) {\n\tfor i := 0; i < b.N; i++ {\n\t\t$FUNCTION($INPUT)\n\t}\n}",
+      "priority": 85
+    },
+    {
+      "id": "go:context:with-timeout",
+      "name": "Context Timeout",
+      "description": "Create context with timeout and defer cancel",
+      "language": "go",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "ctx"
+      },
+      "template": "ctx, cancel := context.WithTimeout($PARENT_CTX, $DURATION)\ndefer cancel()",
+      "priority": 85
+    },
+    {
+      "id": "go:http:handler",
+      "name": "HTTP Handler",
+      "description": "Standard http.HandlerFunc",
+      "language": "go",
+      "context": {
+        "positions": ["after_imports", "file_start", "top_level"]
+      },
+      "trigger": {
+        "type": "prefix",
+        "value": "func"
+      },
+      "template": "func $NAME(w http.ResponseWriter, r *http.Request) {\n\t$BODY\n}",
+      "priority": 80
+    },
+     {
+       "id": "go:sync:waitgroup",
+       "name": "WaitGroup",
+       "description": "Launch goroutines with WaitGroup",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "prefix",
+         "value": "var"
+       },
+       "template": "var wg sync.WaitGroup\nfor _, $ITEM := range $ITEMS {\n\twg.Add(1)\n\tgo func($PARAM $TYPE) {\n\t\tdefer wg.Done()\n\t\t$BODY\n\t}($ITEM)\n}\nwg.Wait()",
+       "priority": 80
+     },
+     {
+       "id": "go:gorm:find",
+       "name": "GORM Find",
+       "description": "Query model with GORM",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "db.Where(\"$COLUMN = ?\", $VALUE).Find(&$RESULTS)",
+       "priority": 90,
+       "builtin": true
+     },
+     {
+       "id": "go:gorm:create",
+       "name": "GORM Create",
+       "description": "Create new record with GORM",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "db.Create(&$MODEL)",
+       "priority": 90,
+       "builtin": true
+     },
+     {
+       "id": "go:gorm:update",
+       "name": "GORM Update",
+       "description": "Update record with GORM",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "db.Model(&$MODEL).Update(\"$FIELD\", $VALUE)",
+       "priority": 90,
+       "builtin": true
+     },
+     {
+       "id": "go:gorm:delete",
+       "name": "GORM Delete",
+       "description": "Delete record with GORM",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "db.Delete(&$MODEL)",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "go:gorm:associations",
+       "name": "GORM Associations",
+       "description": "Load associations with GORM",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "db.Preload(\"$ASSOCIATION\").Find(&$RESULTS)",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "go:gorm:transaction",
+       "name": "GORM Transaction",
+       "description": "Execute queries in transaction",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "tx := db.BeginTx(ctx, nil)\nif tx.Error != nil {\n\treturn tx.Error\n}\n$BODY\nreturn tx.Commit().Error",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "go:gorm:pagination",
+       "name": "GORM Pagination",
+       "description": "Paginate query results",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "db.Offset(($$page - 1) * $$limit).Limit($$limit).Find(&$RESULTS)",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "go:testify:assert",
+       "name": "Testify Assert",
+       "description": "Assert equality with testify",
+       "language": "go",
+       "context": {
+         "fileTypes": ["test"],
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "assert.Equal(t, $EXPECTED, $ACTUAL)",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "go:testify:require",
+       "name": "Testify Require",
+       "description": "Require with testify",
+       "language": "go",
+       "context": {
+         "fileTypes": ["test"],
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "require.NoError(t, $ERROR)",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "go:testify:mock",
+       "name": "Testify Mock",
+       "description": "Create mock with testify",
+       "language": "go",
+       "context": {
+         "fileTypes": ["test"],
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "mock := new($INTERFACE)\nmock.On(\"$METHOD\", mock.Anything).Return($RESULT, nil)",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "go:testify:suite",
+       "name": "Testify Suite",
+       "description": "Test suite with testify",
+       "language": "go",
+       "context": {
+         "fileTypes": ["test"],
+         "positions": ["after_imports", "top_level"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "type $SuiteName struct {\n\tsuite.Suite\n}\n\nfunc (suite *$SuiteName) SetupTest() {\n\t$SETUP\n}\n\nfunc Test$SuiteName(t *testing.T) {\n\tsuite.Run(t, new($SuiteName))\n}",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "go:viper:load-config",
+       "name": "Viper Load Config",
+       "description": "Load configuration with Viper",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "viper.SetConfigName(\"$CONFIG_NAME\")\nviper.SetConfigType(\"$FORMAT\")\nviper.AddConfigPath(\".\")\nif err := viper.ReadInConfig(); err != nil {\n\treturn err\n}",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "go:viper:get-value",
+       "name": "Viper Get Value",
+       "description": "Get config value from Viper",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$$value := viper.GetString(\"$KEY\")",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "go:viper:watch",
+       "name": "Viper Watch",
+       "description": "Watch config file changes",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "viper.OnConfigChange(func(e fsnotify.Event) {\n\t$HANDLER\n})\nviper.WatchConfig()",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "go:zap:logger-new",
+       "name": "Zap New Logger",
+       "description": "Create new Zap logger",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "logger, err := zap.NewProduction()\nif err != nil {\n\treturn err\n}\ndefer logger.Sync()",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "go:zap:log-info",
+       "name": "Zap Log Info",
+       "description": "Log info level message",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "logger.Info(\"$MESSAGE\", zap.String(\"$KEY\", $VALUE))",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "go:zap:log-error",
+       "name": "Zap Log Error",
+       "description": "Log error level message",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "logger.Error(\"$MESSAGE\", zap.Error($ERROR))",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "go:zap:sugar-logger",
+       "name": "Zap Sugar Logger",
+       "description": "Create sugared Zap logger",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "logger, _ := zap.NewProduction()\nsugar := logger.Sugar()\ndefer logger.Sync()",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "go:cobra:command",
+       "name": "Cobra Command",
+       "description": "Define Cobra CLI command",
+       "language": "go",
+       "context": {
+         "positions": ["after_imports", "top_level"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "var $CmdName = &cobra.Command{\n\tUse:   \"$NAME\",\n\tShort: \"$DESCRIPTION\",\n\tRun: func(cmd *cobra.Command, args []string) {\n\t\t$BODY\n\t},\n}",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "go:cobra:flags",
+       "name": "Cobra Flags",
+       "description": "Add flags to Cobra command",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$Cmd.Flags().String(\"$FLAG_NAME\", \"$DEFAULT\", \"$DESCRIPTION\")\n$Cmd.MarkFlagRequired(\"$FLAG_NAME\")",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "go:cobra:subcommands",
+       "name": "Cobra Subcommands",
+       "description": "Add subcommands to parent",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "$RootCmd.AddCommand($SubCmd1)\n$RootCmd.AddCommand($SubCmd2)",
+       "priority": 80,
+       "builtin": true
+     },
+     {
+       "id": "go:errors:wrap",
+       "name": "Errors Wrap",
+       "description": "Wrap error with context",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "return fmt.Errorf(\"$CONTEXT: %w\", $ERROR)",
+       "priority": 90,
+       "builtin": true
+     },
+     {
+       "id": "go:errors:is",
+       "name": "Errors Is",
+       "description": "Check error type with errors.Is",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "if errors.Is($ERROR, $TARGET_ERROR) {\n\t$HANDLER\n}",
+       "priority": 85,
+       "builtin": true
+     },
+     {
+       "id": "go:errors:as",
+       "name": "Errors As",
+       "description": "Assert error type with errors.As",
+       "language": "go",
+       "context": {
+         "positions": ["method_body"]
+       },
+       "trigger": {
+         "type": "always"
+       },
+       "template": "var $VAR $ERROR_TYPE\nif errors.As($ERROR, &$$VAR) {\n\t$HANDLER\n}",
+       "priority": 80,
+       "builtin": true
+     }
+   ]
+ }

@@ -1,0 +1,258 @@
+{
+  "version": "1.0",
+  "name": "TypeScript Next.js Patterns",
+  "description": "Next.js patterns including App Router, Pages Router, and API routes",
+  "language": "typescript",
+  "framework": "nextjs",
+  "patterns": [
+    {
+      "id": "ts:nextjs:page:serverProps",
+      "name": "Page with getServerSideProps",
+      "description": "Next.js page component with server-side data fetching",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "page"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import type { GetServerSideProps, InferGetServerSidePropsType } from 'next';\n\ninterface $NAMEData {\n\t$DATA_FIELD: $DATA_TYPE;\n}\n\nexport const getServerSideProps: GetServerSideProps<$NAMEData> = async (context) => {\n\tconst { params, req, res } = context;\n\t\n\t$FETCH_LOGIC\n\n\treturn {\n\t\tprops: {\n\t\t\t$DATA_FIELD: $DATA_VALUE,\n\t\t},\n\t};\n};\n\nexport default function $NAMEPage({\n\t$DATA_FIELD,\n}: InferGetServerSidePropsType<typeof getServerSideProps>): JSX.Element {\n\treturn (\n\t\t<main>\n\t\t\t{$CONTENT}\n\t\t</main>\n\t);\n}",
+      "priority": 100,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:page:staticProps",
+      "name": "Page with getStaticProps",
+      "description": "Next.js page component with static generation",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "page"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import type { GetStaticProps, GetStaticPaths, InferGetStaticPropsType } from 'next';\n\ninterface $NAMEData {\n\t$DATA_FIELD: $DATA_TYPE;\n}\n\nexport const getStaticPaths: GetStaticPaths = async () => {\n\treturn {\n\t\tpaths: [\n\t\t\t{ params: { $PARAM_NAME: '$PARAM_VALUE' } },\n\t\t],\n\t\tfallback: $FALLBACK,\n\t};\n};\n\nexport const getStaticProps: GetStaticProps<$NAMEData> = async (context) => {\n\tconst { params } = context;\n\t\n\t$FETCH_LOGIC\n\n\treturn {\n\t\tprops: {\n\t\t\t$DATA_FIELD: $DATA_VALUE,\n\t\t},\n\t\trevalidate: $REVALIDATE_SECONDS,\n\t};\n};\n\nexport default function $NAMEPage({\n\t$DATA_FIELD,\n}: InferGetStaticPropsType<typeof getStaticProps>): JSX.Element {\n\treturn (\n\t\t<main>\n\t\t\t{$CONTENT}\n\t\t</main>\n\t);\n}",
+      "priority": 100,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:api:route",
+      "name": "API Route Handler (Pages)",
+      "description": "Next.js API route handler for Pages Router",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "api"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import type { NextApiRequest, NextApiResponse } from 'next';\n\ninterface $RESPONSEData {\n\t$FIELD_NAME: $FIELD_TYPE;\n}\n\ninterface ErrorResponse {\n\terror: string;\n}\n\nexport default async function handler(\n\treq: NextApiRequest,\n\tres: NextApiResponse<$RESPONSEData | ErrorResponse>\n): Promise<void> {\n\tif (req.method === 'GET') {\n\t\ttry {\n\t\t\t$GET_LOGIC\n\t\t\tres.status(200).json({ $FIELD_NAME: $RESPONSE_VALUE });\n\t\t} catch (error) {\n\t\t\tres.status(500).json({ error: 'Internal Server Error' });\n\t\t}\n\t} else if (req.method === 'POST') {\n\t\ttry {\n\t\t\tconst body = req.body as $REQUEST_TYPE;\n\t\t\t$POST_LOGIC\n\t\t\tres.status(201).json({ $FIELD_NAME: $RESPONSE_VALUE });\n\t\t} catch (error) {\n\t\t\tres.status(500).json({ error: 'Internal Server Error' });\n\t\t}\n\t} else {\n\t\tres.setHeader('Allow', ['GET', 'POST']);\n\t\tres.status(405).json({ error: `Method ${req.method} Not Allowed` });\n\t}\n}",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:middleware",
+      "name": "Middleware",
+      "description": "Next.js Edge middleware",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["file_start"]
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import { NextResponse } from 'next/server';\nimport type { NextRequest } from 'next/server';\n\nexport function middleware(request: NextRequest): NextResponse {\n\tconst { pathname } = request.nextUrl;\n\n\tif (pathname.startsWith('$PROTECTED_PATH')) {\n\t\tconst token = request.cookies.get('$AUTH_COOKIE')?.value;\n\n\t\tif (!token) {\n\t\t\treturn NextResponse.redirect(new URL('$REDIRECT_PATH', request.url));\n\t\t}\n\t}\n\n\t$MIDDLEWARE_LOGIC\n\n\treturn NextResponse.next();\n}\n\nexport const config = {\n\tmatcher: ['$MATCHER_PATTERN'],\n};",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:layout",
+      "name": "Layout Component (App Router)",
+      "description": "Next.js App Router layout component",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "layout"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import type { Metadata } from 'next';\n\nexport const metadata: Metadata = {\n\ttitle: '$TITLE',\n\tdescription: '$DESCRIPTION',\n};\n\ninterface $NAMELayoutProps {\n\tchildren: React.ReactNode;\n}\n\nexport default function $NAMELayout({ children }: $NAMELayoutProps): JSX.Element {\n\treturn (\n\t\t<section>\n\t\t\t<nav>\n\t\t\t\t{$NAV_CONTENT}\n\t\t\t</nav>\n\t\t\t{children}\n\t\t</section>\n\t);\n}",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:loading",
+      "name": "Loading Component",
+      "description": "Next.js loading UI component",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "loading"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "export default function Loading(): JSX.Element {\n\treturn (\n\t\t<div className=\"$LOADING_CLASS\">\n\t\t\t<$SPINNER_COMPONENT />\n\t\t\t<p>$LOADING_TEXT</p>\n\t\t</div>\n\t);\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:error",
+      "name": "Error Component",
+      "description": "Next.js error boundary component",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "error"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "'use client';\n\nimport { useEffect } from 'react';\n\ninterface ErrorProps {\n\terror: Error & { digest?: string };\n\treset: () => void;\n}\n\nexport default function Error({ error, reset }: ErrorProps): JSX.Element {\n\tuseEffect(() => {\n\t\tconsole.error(error);\n\t}, [error]);\n\n\treturn (\n\t\t<div className=\"$ERROR_CLASS\">\n\t\t\t<h2>$ERROR_TITLE</h2>\n\t\t\t<p>{error.message}</p>\n\t\t\t<button\n\t\t\t\ttype=\"button\"\n\t\t\t\tonClick={() => reset()}\n\t\t\t>\n\t\t\t\t$RETRY_TEXT\n\t\t\t</button>\n\t\t</div>\n\t);\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:useRouter",
+      "name": "useRouter Hook Usage",
+      "description": "Next.js useRouter hook for navigation",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "const router = useRouter();\n\nconst handleNavigation = (): void => {\n\trouter.push('$ROUTE_PATH');\n};",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:image",
+      "name": "Image Component",
+      "description": "Next.js optimized Image component",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "<Image\n\tsrc=\"$IMAGE_SRC\"\n\talt=\"$ALT_TEXT\"\n\twidth={$WIDTH}\n\theight={$HEIGHT}\n\tpriority={$PRIORITY}\n\tplaceholder=\"blur\"\n\tblurDataURL=\"$BLUR_DATA_URL\"\n/>",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:link",
+      "name": "Link Component",
+      "description": "Next.js Link component for client-side navigation",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["method_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "<Link\n\thref=\"$HREF\"\n\tclassName=\"$LINK_CLASS\"\n\tprefetch={$PREFETCH}\n>\n\t{$LINK_TEXT}\n</Link>",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:serverComponent",
+      "name": "Server Component (App Router)",
+      "description": "Next.js App Router async server component",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "page"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "interface $NAMEPageProps {\n\tparams: { $PARAM_NAME: string };\n\tsearchParams: { [key: string]: string | string[] | undefined };\n}\n\nasync function getData($PARAM_NAME: string): Promise<$DATA_TYPE> {\n\tconst res = await fetch(`$API_URL/${$PARAM_NAME}`, {\n\t\tcache: '$CACHE_STRATEGY',\n\t\tnext: { revalidate: $REVALIDATE_SECONDS },\n\t});\n\n\tif (!res.ok) {\n\t\tthrow new Error('Failed to fetch data');\n\t}\n\n\treturn res.json() as Promise<$DATA_TYPE>;\n}\n\nexport default async function $NAMEPage({\n\tparams,\n}: $NAMEPageProps): Promise<JSX.Element> {\n\tconst data = await getData(params.$PARAM_NAME);\n\n\treturn (\n\t\t<main>\n\t\t\t{$CONTENT}\n\t\t</main>\n\t);\n}",
+      "priority": 100,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:clientComponent",
+      "name": "Client Component",
+      "description": "Next.js App Router client component with 'use client' directive",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "component"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "'use client';\n\nimport { useState } from 'react';\n\ninterface $NAMEProps {\n\t$PROP_NAME: $PROP_TYPE;\n}\n\nexport function $NAME({ $PROP_NAME }: $NAMEProps): JSX.Element {\n\tconst [$STATE, set$STATE_SETTER] = useState<$STATE_TYPE>($INITIAL_VALUE);\n\n\tconst handle$ACTION = (): void => {\n\t\t$ACTION_BODY\n\t};\n\n\treturn (\n\t\t<div>\n\t\t\t{$CONTENT}\n\t\t</div>\n\t);\n}",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:serverAction",
+      "name": "Server Action",
+      "description": "Next.js Server Action function",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["file_start", "after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "'use server';\n\nimport { revalidatePath } from 'next/cache';\nimport { redirect } from 'next/navigation';\n\ninterface $ACTION_NAMEInput {\n\t$FIELD_NAME: $FIELD_TYPE;\n}\n\ninterface $ACTION_NAMEResult {\n\tsuccess: boolean;\n\terror?: string;\n\tdata?: $DATA_TYPE;\n}\n\nexport async function $ACTION_NAME(\n\tprevState: $ACTION_NAMEResult | null,\n\tformData: FormData\n): Promise<$ACTION_NAMEResult> {\n\ttry {\n\t\tconst $FIELD_NAME = formData.get('$FIELD_NAME') as string;\n\n\t\t$ACTION_LOGIC\n\n\t\trevalidatePath('$REVALIDATE_PATH');\n\t\treturn { success: true, data: $RESULT_DATA };\n\t} catch (error) {\n\t\treturn {\n\t\t\tsuccess: false,\n\t\t\terror: error instanceof Error ? error.message : 'An error occurred',\n\t\t};\n\t}\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:routeHandler",
+      "name": "Route Handler (App Router)",
+      "description": "Next.js App Router API route handler",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "route"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import { NextRequest, NextResponse } from 'next/server';\n\ninterface $RESPONSEData {\n\t$FIELD_NAME: $FIELD_TYPE;\n}\n\nexport async function GET(\n\trequest: NextRequest,\n\t{ params }: { params: { $PARAM_NAME: string } }\n): Promise<NextResponse<$RESPONSEData>> {\n\ttry {\n\t\tconst { searchParams } = new URL(request.url);\n\t\tconst $QUERY_PARAM = searchParams.get('$QUERY_NAME');\n\n\t\t$GET_LOGIC\n\n\t\treturn NextResponse.json({ $FIELD_NAME: $RESPONSE_VALUE });\n\t} catch (error) {\n\t\treturn NextResponse.json(\n\t\t\t{ error: 'Internal Server Error' },\n\t\t\t{ status: 500 }\n\t\t);\n\t}\n}\n\nexport async function POST(\n\trequest: NextRequest\n): Promise<NextResponse<$RESPONSEData>> {\n\ttry {\n\t\tconst body = await request.json() as $REQUEST_TYPE;\n\n\t\t$POST_LOGIC\n\n\t\treturn NextResponse.json(\n\t\t\t{ $FIELD_NAME: $RESPONSE_VALUE },\n\t\t\t{ status: 201 }\n\t\t);\n\t} catch (error) {\n\t\treturn NextResponse.json(\n\t\t\t{ error: 'Internal Server Error' },\n\t\t\t{ status: 500 }\n\t\t);\n\t}\n}",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "ts:nextjs:generateMetadata",
+      "name": "Dynamic Metadata",
+      "description": "Next.js generateMetadata for dynamic pages",
+      "language": "typescript",
+      "framework": "nextjs",
+      "context": {
+        "positions": ["file_start", "after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "import type { Metadata, ResolvingMetadata } from 'next';\n\ninterface Props {\n\tparams: { $PARAM_NAME: string };\n\tsearchParams: { [key: string]: string | string[] | undefined };\n}\n\nexport async function generateMetadata(\n\t{ params, searchParams }: Props,\n\tparent: ResolvingMetadata\n): Promise<Metadata> {\n\tconst $DATA = await fetch(`$API_URL/${params.$PARAM_NAME}`).then(\n\t\t(res) => res.json() as Promise<$DATA_TYPE>\n\t);\n\n\treturn {\n\t\ttitle: $DATA.$TITLE_FIELD,\n\t\tdescription: $DATA.$DESCRIPTION_FIELD,\n\t\topenGraph: {\n\t\t\timages: [$DATA.$IMAGE_FIELD],\n\t\t},\n\t};\n}",
+      "priority": 85,
+      "builtin": true
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "version": "1.0",
+  "name": "Common Patterns",
+  "description": "Universal patterns for all languages",
+  "language": "*",
+  "patterns": [
+    {
+      "id": "common:todo",
+      "name": "TODO Comment",
+      "description": "Add TODO comment",
+      "language": "*",
+      "context": {
+        "positions": ["method_body", "class_body", "after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "// TODO: $DESCRIPTION",
+      "priority": 50,
+      "builtin": true
+    },
+    {
+      "id": "common:fixme",
+      "name": "FIXME Comment",
+      "description": "Add FIXME comment",
+      "language": "*",
+      "context": {
+        "positions": ["method_body", "class_body", "after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "// FIXME: $DESCRIPTION",
+      "priority": 50,
+      "builtin": true
+    },
+    {
+      "id": "common:note",
+      "name": "NOTE Comment",
+      "description": "Add NOTE comment",
+      "language": "*",
+      "context": {
+        "positions": ["method_body", "class_body", "after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "// NOTE: $DESCRIPTION",
+      "priority": 45,
+      "builtin": true
+    },
+    {
+      "id": "common:hack",
+      "name": "HACK Comment",
+      "description": "Add HACK comment for workarounds",
+      "language": "*",
+      "context": {
+        "positions": ["method_body", "class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "// HACK: $DESCRIPTION",
+      "priority": 45,
+      "builtin": true
+    },
+    {
+      "id": "common:region",
+      "name": "Code Region",
+      "description": "Add collapsible code region",
+      "language": "*",
+      "context": {
+        "positions": ["class_body", "after_imports"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "// region $NAME\n$BODY\n// endregion",
+      "priority": 40,
+      "builtin": true
+    }
+  ]
+}

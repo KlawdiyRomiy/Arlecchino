@@ -47,18 +47,19 @@ test-html.html
 # Debug screenshots
 before-*.png
 mid-*.png
+perspective-*.png
 
 # Legacy/scratch directories
 docs/
 redesign/
 logo*/
 twitter_media/
-tests/
-backend/
-demo/
-autocomplete-test/
-internal/
-pkg/
+/tests/
+/backend/
+/demo/
+/autocomplete-test/
+/internal/
+/pkg/
 
 # Misc
 --help

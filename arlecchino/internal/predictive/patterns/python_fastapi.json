@@ -1,0 +1,230 @@
+{
+  "version": "1.0",
+  "name": "FastAPI Patterns",
+  "language": "python",
+  "framework": "fastapi",
+  "patterns": [
+  {
+    "id": "py:fastapi:app",
+    "name": "FastAPI Application",
+    "context": {
+      "positions": ["file_start"]
+    },
+    "trigger": {
+      "type": "empty"
+    },
+    "template": "from fastapi import FastAPI, Depends, HTTPException, status\nfrom fastapi.middleware.cors import CORSMiddleware\n\napp = FastAPI(\n\ttitle=\"$TITLE\",\n\tdescription=\"$DESCRIPTION\",\n\tversion=\"1.0.0\",\n)\n\napp.add_middleware(\n\tCORSMiddleware,\n\tallow_origins=[\"*\"],\n\tallow_credentials=True,\n\tallow_methods=[\"*\"],\n\tallow_headers=[\"*\"],\n)",
+    "priority": 100,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:get",
+    "name": "@app.get Endpoint",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "@app.get(\"/$PATH\", response_model=$RESPONSE_MODEL, tags=[\"$TAG\"])\nasync def $NAME($PARAMS) -> $RETURN_TYPE:\n\t\"\"\"$DOCSTRING\"\"\"\n\t$BODY",
+    "priority": 95,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:post",
+    "name": "@app.post Endpoint",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "@app.post(\"/$PATH\", response_model=$RESPONSE_MODEL, status_code=status.HTTP_201_CREATED, tags=[\"$TAG\"])\nasync def $NAME($BODY_PARAM: $BODY_MODEL) -> $RETURN_TYPE:\n\t\"\"\"$DOCSTRING\"\"\"\n\t$BODY",
+    "priority": 95,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:put",
+    "name": "@app.put Endpoint",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "@app.put(\"/$PATH/{$ID}\", response_model=$RESPONSE_MODEL, tags=[\"$TAG\"])\nasync def $NAME($ID: $ID_TYPE, $BODY_PARAM: $BODY_MODEL) -> $RETURN_TYPE:\n\t\"\"\"$DOCSTRING\"\"\"\n\t$BODY",
+    "priority": 90,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:delete",
+    "name": "@app.delete Endpoint",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "@app.delete(\"/$PATH/{$ID}\", status_code=status.HTTP_204_NO_CONTENT, tags=[\"$TAG\"])\nasync def $NAME($ID: $ID_TYPE) -> None:\n\t\"\"\"$DOCSTRING\"\"\"\n\t$BODY",
+    "priority": 90,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:pydantic:model",
+    "name": "Pydantic BaseModel",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from pydantic import BaseModel, Field, ConfigDict\nfrom typing import Optional\n\nclass $NAME(BaseModel):\n\t\"\"\"$DOCSTRING\"\"\"\n\t$FIELD: $TYPE = Field(..., description=\"$DESCRIPTION\")\n\t$FIELD2: Optional[$TYPE2] = Field(default=None, description=\"$DESCRIPTION2\")\n\t\n\tmodel_config = ConfigDict(from_attributes=True)",
+    "priority": 95,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:depends",
+    "name": "Dependency Injection",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from fastapi import Depends\nfrom typing import Annotated\n\nasync def get_$NAME($PARAMS) -> $RETURN_TYPE:\n\t\"\"\"$DOCSTRING\"\"\"\n\t$BODY\n\treturn $RESOURCE\n\n$NAMEDep = Annotated[$RETURN_TYPE, Depends(get_$NAME)]",
+    "priority": 90,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:depends:db",
+    "name": "Database Session Dependency",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from fastapi import Depends\nfrom sqlalchemy.orm import Session\nfrom typing import Generator, Annotated\nfrom .database import SessionLocal\n\ndef get_db() -> Generator[Session, None, None]:\n\tdb = SessionLocal()\n\ttry:\n\t\tyield db\n\tfinally:\n\t\tdb.close()\n\nDbSession = Annotated[Session, Depends(get_db)]",
+    "priority": 90,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:router",
+    "name": "APIRouter",
+    "context": {
+      "positions": ["file_start"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from fastapi import APIRouter, Depends, HTTPException, status\nfrom typing import List\nfrom . import schemas, crud\nfrom .database import DbSession\n\nrouter = APIRouter(\n\tprefix=\"/$PREFIX\",\n\ttags=[\"$TAG\"],\n\tresponses={404: {\"description\": \"Not found\"}},\n)\n\n@router.get(\"/\", response_model=List[schemas.$RESPONSE_MODEL])\nasync def list_$NAME(db: DbSession, skip: int = 0, limit: int = 100):\n\treturn crud.get_$NAME(db, skip=skip, limit=limit)\n\n@router.get(\"/{$ID}\", response_model=schemas.$RESPONSE_MODEL)\nasync def get_$NAME(db: DbSession, $ID: int):\n\titem = crud.get_$NAME_by_id(db, $ID)\n\tif item is None:\n\t\traise HTTPException(status_code=404, detail=\"$NAME not found\")\n\treturn item",
+    "priority": 95,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:background_task",
+    "name": "Background Task",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from fastapi import BackgroundTasks\nimport logging\n\nlogger = logging.getLogger(__name__)\n\ndef $TASK_NAME($PARAMS) -> None:\n\tlogger.info(f\"Starting task: $TASK_NAME\")\n\t$BODY\n\tlogger.info(f\"Completed task: $TASK_NAME\")\n\n@app.post(\"/$PATH\")\nasync def $ENDPOINT(background_tasks: BackgroundTasks, $PARAMS):\n\tbackground_tasks.add_task($TASK_NAME, $TASK_PARAMS)\n\treturn {\"message\": \"Task scheduled\"}",
+    "priority": 85,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:websocket",
+    "name": "WebSocket Endpoint",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from fastapi import WebSocket, WebSocketDisconnect\nfrom typing import List\n\nclass ConnectionManager:\n\tdef __init__(self):\n\t\tself.active_connections: List[WebSocket] = []\n\t\n\tasync def connect(self, websocket: WebSocket) -> None:\n\t\tawait websocket.accept()\n\t\tself.active_connections.append(websocket)\n\t\n\tdef disconnect(self, websocket: WebSocket) -> None:\n\t\tself.active_connections.remove(websocket)\n\t\n\tasync def broadcast(self, message: str) -> None:\n\t\tfor connection in self.active_connections:\n\t\t\tawait connection.send_text(message)\n\nmanager = ConnectionManager()\n\n@app.websocket(\"/ws/{$CLIENT_ID}\")\nasync def websocket_endpoint(websocket: WebSocket, $CLIENT_ID: str):\n\tawait manager.connect(websocket)\n\ttry:\n\t\twhile True:\n\t\t\tdata = await websocket.receive_text()\n\t\t\tawait manager.broadcast(f\"Client {$CLIENT_ID}: {data}\")\n\texcept WebSocketDisconnect:\n\t\tmanager.disconnect(websocket)",
+    "priority": 80,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:exception_handler",
+    "name": "Exception Handler",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from fastapi import Request\nfrom fastapi.responses import JSONResponse\nimport logging\n\nlogger = logging.getLogger(__name__)\n\nclass $NAMEException(Exception):\n\tdef __init__(self, detail: str, status_code: int = 400):\n\t\tself.detail = detail\n\t\tself.status_code = status_code\n\n@app.exception_handler($NAMEException)\nasync def $NAME_exception_handler(request: Request, exc: $NAMEException) -> JSONResponse:\n\tlogger.error(f\"$NAME error: {exc.detail}\")\n\treturn JSONResponse(\n\t\tstatus_code=exc.status_code,\n\t\tcontent={\"detail\": exc.detail},\n\t)",
+    "priority": 80,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:middleware",
+    "name": "Custom Middleware",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from fastapi import Request\nfrom starlette.middleware.base import BaseHTTPMiddleware\nfrom starlette.responses import Response\nimport time\n\nclass $NAMEMiddleware(BaseHTTPMiddleware):\n\tasync def dispatch(self, request: Request, call_next) -> Response:\n\t\tstart_time = time.time()\n\t\t$BEFORE\n\t\t\n\t\tresponse = await call_next(request)\n\t\t\n\t\tprocess_time = time.time() - start_time\n\t\tresponse.headers[\"X-Process-Time\"] = str(process_time)\n\t\t$AFTER\n\t\t\n\t\treturn response\n\napp.add_middleware($NAMEMiddleware)",
+    "priority": 80,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:sqlalchemy:model",
+    "name": "SQLAlchemy Model",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from sqlalchemy import Column, Integer, String, DateTime, ForeignKey\nfrom sqlalchemy.orm import relationship\nfrom sqlalchemy.sql import func\nfrom .database import Base\n\nclass $NAME(Base):\n\t__tablename__ = \"$TABLE_NAME\"\n\t\n\tid = Column(Integer, primary_key=True, index=True)\n\t$FIELD = Column($COLUMN_TYPE, nullable=$NULLABLE)\n\tcreated_at = Column(DateTime(timezone=True), server_default=func.now())\n\tupdated_at = Column(DateTime(timezone=True), onupdate=func.now())\n\t\n\t$RELATED = relationship(\"$RELATED_MODEL\", back_populates=\"$BACK_POPULATES\")",
+    "priority": 90,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:crud",
+    "name": "CRUD Operations",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from sqlalchemy.orm import Session\nfrom typing import List, Optional\nfrom . import models, schemas\n\ndef get_$NAME(db: Session, skip: int = 0, limit: int = 100) -> List[models.$MODEL]:\n\treturn db.query(models.$MODEL).offset(skip).limit(limit).all()\n\ndef get_$NAME_by_id(db: Session, $NAME_id: int) -> Optional[models.$MODEL]:\n\treturn db.query(models.$MODEL).filter(models.$MODEL.id == $NAME_id).first()\n\ndef create_$NAME(db: Session, $NAME: schemas.$NAMECreate) -> models.$MODEL:\n\tdb_$NAME = models.$MODEL(**$NAME.model_dump())\n\tdb.add(db_$NAME)\n\tdb.commit()\n\tdb.refresh(db_$NAME)\n\treturn db_$NAME\n\ndef delete_$NAME(db: Session, $NAME_id: int) -> bool:\n\tdb_$NAME = get_$NAME_by_id(db, $NAME_id)\n\tif db_$NAME is None:\n\t\treturn False\n\tdb.delete(db_$NAME)\n\tdb.commit()\n\treturn True",
+    "priority": 85,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:database:setup",
+    "name": "Database Setup",
+    "context": {
+      "positions": ["file_start"]
+    },
+    "trigger": {
+      "type": "empty"
+    },
+    "template": "from sqlalchemy import create_engine\nfrom sqlalchemy.ext.declarative import declarative_base\nfrom sqlalchemy.orm import sessionmaker\n\nDATABASE_URL = \"$DATABASE_URL\"\n\nengine = create_engine(DATABASE_URL)\nSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)\nBase = declarative_base()\n\ndef create_tables():\n\tBase.metadata.create_all(bind=engine)",
+    "priority": 90,
+    "builtin": true
+  },
+  {
+    "id": "py:fastapi:test",
+    "name": "FastAPI Test with TestClient",
+    "context": {
+      "fileTypes": ["test"],
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from fastapi.testclient import TestClient\nimport pytest\nfrom .main import app\n\n@pytest.fixture\ndef client():\n\twith TestClient(app) as c:\n\t\tyield c\n\nclass Test$NAME:\n\tdef test_create(self, client):\n\t\tresponse = client.post(\"/$PATH/\", json=$DATA)\n\t\tassert response.status_code == 201\n\t\n\tdef test_list(self, client):\n\t\tresponse = client.get(\"/$PATH/\")\n\t\tassert response.status_code == 200\n\t\tassert isinstance(response.json(), list)",
+    "priority": 85,
+    "builtin": true
+  }
+]
+}

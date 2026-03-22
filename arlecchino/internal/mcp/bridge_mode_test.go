@@ -1,0 +1,643 @@
+package mcp
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+)
+
+type fakeBridgeCall struct {
+	Method string
+	Params map[string]any
+}
+
+type fakeBridge struct {
+	mu       sync.Mutex
+	calls    []fakeBridgeCall
+	response map[string]any
+}
+
+func newFakeBridge() *fakeBridge {
+	return &fakeBridge{
+		response: map[string]any{},
+	}
+}
+
+func (f *fakeBridge) Mode() string {
+	return "fake"
+}
+
+func (f *fakeBridge) Available() bool {
+	return true
+}
+
+func (f *fakeBridge) Call(method string, params map[string]any) (any, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	copyParams := map[string]any{}
+	for k, v := range params {
+		copyParams[k] = v
+	}
+	f.calls = append(f.calls, fakeBridgeCall{Method: method, Params: copyParams})
+
+	if response, ok := f.response[method]; ok {
+		return response, nil
+	}
+
+	return map[string]any{"ok": true}, nil
+}
+
+func (f *fakeBridge) methodCalls(method string) []fakeBridgeCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	result := make([]fakeBridgeCall, 0, len(f.calls))
+	for _, call := range f.calls {
+		if call.Method == method {
+			result = append(result, call)
+		}
+	}
+	return result
+}
+
+func TestToolService_ToolDefinitionsAlwaysIncludeBridgeTools(t *testing.T) {
+	root := t.TempDir()
+
+	standalone, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+
+	toolNames := map[string]bool{}
+	for _, definition := range standalone.ToolDefinitions() {
+		toolNames[definition.Name] = true
+	}
+
+	required := []string{
+		"ide_backend.project_open",
+		"ide_backend.project_close",
+		"ide_backend.project_status",
+		"ide_backend.lsp_status",
+		"ide_backend.terminal_create",
+		"ide_backend.git_status",
+		"ide_ui.emit_event",
+		"ide_ui.preview_open",
+		"ide_ui.preview_navigate",
+		"ide_ui.preview_focus",
+		"ide_ui.preview_close",
+		"ide_ui.apply_layout_profile",
+		"ide_ui.list_layout_profiles",
+		"ide_ui.hot_switch",
+	}
+	for _, toolName := range required {
+		if !toolNames[toolName] {
+			t.Fatalf("standalone ToolDefinitions() missing tool %q — all tools must be registered regardless of bridge", toolName)
+		}
+	}
+
+	// Verify bridge-tools return graceful error when called without bridge
+	_, err = standalone.CallTool("ide_backend.project_status", map[string]any{})
+	if err == nil {
+		t.Fatalf("ide_backend.project_status should fail without bridge")
+	}
+	if !strings.Contains(err.Error(), "requires live IDE bridge") {
+		t.Fatalf("ide_backend.project_status error = %v, want contains %q", err, "requires live IDE bridge")
+	}
+}
+
+func TestToolService_ProjectOpenRequiresUserApproval(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_REQUIRE_APPROVAL", "true")
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "bridge-approval")
+
+	bridge := newFakeBridge()
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	_, err = service.CallTool("ide_backend.project_open", map[string]any{"path": root})
+	if err == nil {
+		t.Fatalf("project_open should fail without user approval")
+	}
+	if !strings.Contains(err.Error(), "requires user approval") {
+		t.Fatalf("project_open error = %v, want contains %q", err, "requires user approval")
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "bridge-approval",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	_, err = service.CallTool("ide_backend.project_open", map[string]any{"path": root})
+	if err != nil {
+		t.Fatalf("project_open after approval error = %v", err)
+	}
+
+	if len(bridge.methodCalls("project.open")) != 1 {
+		t.Fatalf("project.open bridge calls = %d, want 1", len(bridge.methodCalls("project.open")))
+	}
+}
+
+func TestToolService_ProjectOpenOutsideRootRequiresApprovalWhenGlobalDisabled(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_REQUIRE_APPROVAL", "false")
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "force-boundary")
+
+	bridge := newFakeBridge()
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	_, err = service.CallTool("ide_backend.project_open", map[string]any{"path": outside})
+	if err == nil {
+		t.Fatalf("project_open outside root should require approval even when global gate disabled")
+	}
+	if !strings.Contains(err.Error(), "requires user approval") {
+		t.Fatalf("project_open outside root error = %v, want contains %q", err, "requires user approval")
+	}
+}
+
+func TestToolService_AuditLogsPersistToDisk(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_control.search_files", map[string]any{"pattern": "*.go"}); err != nil {
+		t.Fatalf("search_files error = %v", err)
+	}
+
+	auditResult, err := service.CallTool("ide_control.audit_logs", map[string]any{"limit": 10})
+	if err != nil {
+		t.Fatalf("audit_logs error = %v", err)
+	}
+
+	auditMap, ok := auditResult.(map[string]any)
+	if !ok {
+		t.Fatalf("audit_logs result type = %T, want map[string]any", auditResult)
+	}
+	items, ok := auditMap["items"].([]AuditEntry)
+	if !ok {
+		t.Fatalf("audit_logs items type = %T, want []AuditEntry", auditMap["items"])
+	}
+	if len(items) == 0 {
+		t.Fatalf("audit_logs should contain at least one entry")
+	}
+
+	diskPath, ok := auditMap["diskPath"].(string)
+	if !ok || strings.TrimSpace(diskPath) == "" {
+		t.Fatalf("audit_logs diskPath = %v, want non-empty string", auditMap["diskPath"])
+	}
+	diskData, err := os.ReadFile(diskPath)
+	if err != nil {
+		t.Fatalf("ReadFile(audit disk) error = %v", err)
+	}
+	if len(strings.TrimSpace(string(diskData))) == 0 {
+		t.Fatalf("audit disk log must not be empty")
+	}
+}
+
+func TestToolService_ApplyLayoutProfileEmitsEventsImmediately(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "layout-code")
+
+	bridge := newFakeBridge()
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "layout-code",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_ui.apply_layout_profile", map[string]any{"name": "terminal_focus"})
+	if err != nil {
+		t.Fatalf("apply_layout_profile error = %v", err)
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("apply_layout_profile result type = %T, want map[string]any", result)
+	}
+	appliedActions, ok := resultMap["appliedActions"].(int)
+	if !ok || appliedActions <= 0 {
+		t.Fatalf("apply_layout_profile appliedActions = %v, want > 0", resultMap["appliedActions"])
+	}
+
+	eventCalls := bridge.methodCalls("ui.emit_event")
+	if len(eventCalls) == 0 {
+		t.Fatalf("apply_layout_profile should emit ui.emit_event bridge calls")
+	}
+}
+
+func TestToolService_PreviewToolsEmitCanonicalWindowEvents(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "preview-code")
+
+	bridge := newFakeBridge()
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "preview-code",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		toolName    string
+		args        map[string]any
+		wantEvent   string
+		wantPayload map[string]any
+	}{
+		{
+			name:     "open",
+			toolName: "ide_ui.preview_open",
+			args: map[string]any{
+				"id":    "preview-test",
+				"url":   "http://localhost:3000",
+				"title": "Preview",
+			},
+			wantEvent: "ide:window:open",
+			wantPayload: map[string]any{
+				"id":      "preview-test",
+				"surface": "browser",
+				"title":   "Preview",
+				"payload": map[string]any{"url": "http://localhost:3000"},
+			},
+		},
+		{
+			name:     "navigate",
+			toolName: "ide_ui.preview_navigate",
+			args: map[string]any{
+				"id":  "preview-test",
+				"url": "http://localhost:4000",
+			},
+			wantEvent: "ide:window:update",
+			wantPayload: map[string]any{
+				"id":      "preview-test",
+				"payload": map[string]any{"url": "http://localhost:4000"},
+			},
+		},
+		{
+			name:      "focus",
+			toolName:  "ide_ui.preview_focus",
+			args:      map[string]any{"id": "preview-test"},
+			wantEvent: "ide:window:focus",
+			wantPayload: map[string]any{
+				"id": "preview-test",
+			},
+		},
+		{
+			name:      "close",
+			toolName:  "ide_ui.preview_close",
+			args:      map[string]any{"id": "preview-test"},
+			wantEvent: "ide:window:close",
+			wantPayload: map[string]any{
+				"id": "preview-test",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := len(bridge.methodCalls("ui.emit_event"))
+
+			if _, err := service.CallTool(tt.toolName, tt.args); err != nil {
+				t.Fatalf("CallTool(%q) error = %v", tt.toolName, err)
+			}
+
+			calls := bridge.methodCalls("ui.emit_event")
+			if len(calls) != before+1 {
+				t.Fatalf("ui.emit_event calls = %d, want %d", len(calls), before+1)
+			}
+
+			lastCall := calls[len(calls)-1]
+			if got := lastCall.Params["event"]; got != tt.wantEvent {
+				t.Fatalf("event = %v, want %q", got, tt.wantEvent)
+			}
+
+			payload, ok := lastCall.Params["payload"].(map[string]any)
+			if !ok {
+				t.Fatalf("payload type = %T, want map[string]any", lastCall.Params["payload"])
+			}
+			if !equalBridgePayload(payload, tt.wantPayload) {
+				t.Fatalf("payload = %#v, want %#v", payload, tt.wantPayload)
+			}
+		})
+	}
+}
+
+func equalBridgePayload(got, want map[string]any) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for key, wantValue := range want {
+		gotValue, ok := got[key]
+		if !ok {
+			return false
+		}
+		wantMap, wantIsMap := wantValue.(map[string]any)
+		gotMap, gotIsMap := gotValue.(map[string]any)
+		if wantIsMap || gotIsMap {
+			if !wantIsMap || !gotIsMap || !equalBridgePayload(gotMap, wantMap) {
+				return false
+			}
+			continue
+		}
+		if gotValue != wantValue {
+			return false
+		}
+	}
+	return true
+}
+
+func TestToolService_RegisterAndApplyCustomLayoutProfile(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "custom-layout")
+
+	bridge := newFakeBridge()
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "custom-layout",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	actions := []map[string]any{
+		{
+			"event":   "ide:panel:open",
+			"payload": "terminal",
+		},
+		{
+			"event":   "ide:editor:split",
+			"payload": "horizontal",
+		},
+	}
+	if _, err := service.CallTool("ide_ui.register_layout_profile", map[string]any{
+		"name":    "custom-test",
+		"actions": actions,
+	}); err != nil {
+		t.Fatalf("register_layout_profile error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_ui.apply_layout_profile", map[string]any{"name": "custom-test"}); err != nil {
+		t.Fatalf("apply_layout_profile(custom-test) error = %v", err)
+	}
+
+	eventCalls := bridge.methodCalls("ui.emit_event")
+	if len(eventCalls) < 2 {
+		t.Fatalf("ui.emit_event calls = %d, want at least 2", len(eventCalls))
+	}
+
+	payloads := make([]string, 0, len(eventCalls))
+	for _, call := range eventCalls {
+		encoded, _ := json.Marshal(call.Params)
+		payloads = append(payloads, string(encoded))
+	}
+	joined := strings.Join(payloads, "\n")
+	if !strings.Contains(joined, "ide:panel:open") || !strings.Contains(joined, "ide:editor:split") {
+		t.Fatalf("ui.emit_event payloads do not contain expected events: %s", joined)
+	}
+}
+
+func TestToolService_AuditDiskPathLivesInProjectRoot(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_control.audit_logs", map[string]any{"limit": 1})
+	if err != nil {
+		t.Fatalf("audit_logs error = %v", err)
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("audit_logs result type = %T, want map[string]any", result)
+	}
+	diskPath, ok := resultMap["diskPath"].(string)
+	if !ok {
+		t.Fatalf("audit_logs diskPath type = %T, want string", resultMap["diskPath"])
+	}
+
+	rel, relErr := filepath.Rel(root, diskPath)
+	if relErr != nil {
+		t.Fatalf("filepath.Rel(root,diskPath) error = %v", relErr)
+	}
+	if strings.HasPrefix(rel, "..") {
+		t.Fatalf("audit disk path %q must remain inside project root %q", diskPath, root)
+	}
+}
+
+func TestToolService_CapabilitiesExposeBridgeModeAndProfiles(t *testing.T) {
+	root := t.TempDir()
+	bridge := newFakeBridge()
+
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_control.capabilities", map[string]any{})
+	if err != nil {
+		t.Fatalf("capabilities error = %v", err)
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("capabilities result type = %T, want map[string]any", result)
+	}
+
+	if resultMap["mode"] != "bridge" {
+		t.Fatalf("capabilities mode = %v, want %q", resultMap["mode"], "bridge")
+	}
+
+	if resultMap["supportsUIControlV1"] != true {
+		t.Fatalf("supportsUIControlV1 = %v, want true", resultMap["supportsUIControlV1"])
+	}
+
+	layoutProfiles, ok := resultMap["layoutProfiles"].([]string)
+	if !ok {
+		t.Fatalf("layoutProfiles type = %T, want []string", resultMap["layoutProfiles"])
+	}
+	if len(layoutProfiles) == 0 {
+		t.Fatalf("layoutProfiles should not be empty")
+	}
+}
+
+func TestToolService_HotSwitchCreatesSnapshotAndReapplyWorks(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "hotswitch-code")
+
+	bridge := newFakeBridge()
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "hotswitch-code",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	actions := []map[string]any{
+		{"event": "ide:panel:open", "payload": "terminal"},
+		{"event": "ide:tui:assist:open"},
+	}
+	hotSwitchResult, err := service.CallTool("ide_ui.hot_switch", map[string]any{
+		"actions": actions,
+		"label":   "review-live",
+	})
+	if err != nil {
+		t.Fatalf("hot_switch error = %v", err)
+	}
+
+	hotSwitchMap, ok := hotSwitchResult.(map[string]any)
+	if !ok {
+		t.Fatalf("hot_switch result type = %T, want map[string]any", hotSwitchResult)
+	}
+	snapshotAny, ok := hotSwitchMap["snapshot"]
+	if !ok {
+		t.Fatalf("hot_switch result missing snapshot")
+	}
+
+	snapshotMap, ok := snapshotAny.(LayoutSnapshot)
+	if !ok {
+		t.Fatalf("hot_switch snapshot type = %T, want LayoutSnapshot", snapshotAny)
+	}
+
+	listResult, err := service.CallTool("ide_ui.list_layout_snapshots", map[string]any{"limit": 5})
+	if err != nil {
+		t.Fatalf("list_layout_snapshots error = %v", err)
+	}
+	listMap, ok := listResult.(map[string]any)
+	if !ok {
+		t.Fatalf("list_layout_snapshots result type = %T, want map[string]any", listResult)
+	}
+	items, ok := listMap["items"].([]LayoutSnapshot)
+	if !ok {
+		t.Fatalf("list_layout_snapshots items type = %T, want []LayoutSnapshot", listMap["items"])
+	}
+	if len(items) == 0 {
+		t.Fatalf("list_layout_snapshots should return at least one snapshot")
+	}
+
+	if _, err := service.CallTool("ide_ui.apply_layout_snapshot", map[string]any{"id": snapshotMap.ID}); err != nil {
+		t.Fatalf("apply_layout_snapshot error = %v", err)
+	}
+
+	eventCalls := bridge.methodCalls("ui.emit_event")
+	if len(eventCalls) < 4 {
+		t.Fatalf("ui.emit_event calls = %d, want >= 4 after hot_switch + snapshot apply", len(eventCalls))
+	}
+}
+
+func TestToolService_HotSwitchRejectsTooManyActions(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "too-many-actions")
+
+	bridge := newFakeBridge()
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "too-many-actions",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	actions := make([]map[string]any, 0, maxLayoutActions+1)
+	for i := 0; i < maxLayoutActions+1; i++ {
+		actions = append(actions, map[string]any{
+			"event":   "ide:panel:open",
+			"payload": "terminal",
+		})
+	}
+
+	_, err = service.CallTool("ide_ui.hot_switch", map[string]any{
+		"actions": actions,
+		"label":   "oversized",
+	})
+	if err == nil {
+		t.Fatalf("hot_switch should reject too many actions")
+	}
+	if !strings.Contains(err.Error(), "too many hot switch actions") {
+		t.Fatalf("hot_switch error = %v, want contains %q", err, "too many hot switch actions")
+	}
+}
+
+func TestToolService_UIRateLimitRejectsBurst(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "ui-rate-limit")
+
+	bridge := newFakeBridge()
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "ui-rate-limit",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	actions := make([]map[string]any, 0, maxLayoutActions)
+	for i := 0; i < maxLayoutActions; i++ {
+		actions = append(actions, map[string]any{
+			"event":   "ide:panel:open",
+			"payload": "terminal",
+		})
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := service.CallTool("ide_ui.hot_switch", map[string]any{
+			"actions": actions,
+			"label":   "rate-check",
+		}); err != nil {
+			t.Fatalf("hot_switch call %d unexpected error = %v", i+1, err)
+		}
+	}
+
+	_, err = service.CallTool("ide_ui.hot_switch", map[string]any{
+		"actions": actions,
+		"label":   "rate-overflow",
+	})
+	if err == nil {
+		t.Fatalf("hot_switch should fail when ui rate limit exceeded")
+	}
+	if !strings.Contains(err.Error(), "rate limit") {
+		t.Fatalf("hot_switch rate-limit error = %v, want contains %q", err, "rate limit")
+	}
+}

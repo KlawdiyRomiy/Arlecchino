@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 
 	"arlecchino/internal/composer"
-	"arlecchino/internal/indexer"
 	"arlecchino/internal/indexer/adapters"
 	"arlecchino/internal/indexer/brain"
 	"arlecchino/internal/indexer/core"
@@ -35,7 +34,6 @@ type App struct {
 	sys              *system.SystemManager
 	projectManager   *project.ProjectManager
 	welcomeScreen    *welcome.WelcomeScreen
-	idx              *indexer.Indexer
 	coreEngine       *core.Engine
 	brain            completionBrain
 	lspManager       *lsp.Manager
@@ -157,7 +155,6 @@ func (a *App) OpenProject(path string) error {
 	}
 	a.sys = sys
 
-	a.idx = indexer.NewIndexer(path)
 	var lspManager *lsp.Manager
 	lspInstaller := a.lspInstaller
 	pluginRegistry := a.plugins
@@ -339,7 +336,6 @@ func (a *App) CloseProject() error {
 
 	a.cmp = nil
 	a.sys = nil
-	a.idx = nil
 	a.projectPath = ""
 	a.projectCtx = nil
 	a.projectCancel = nil

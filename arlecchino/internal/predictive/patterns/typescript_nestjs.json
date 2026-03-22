@@ -1,0 +1,245 @@
+{
+  "version": "1.0",
+  "name": "TypeScript NestJS Patterns",
+  "description": "NestJS patterns for controllers, services, modules, guards, pipes, and more",
+  "language": "typescript",
+  "framework": "nestjs",
+  "patterns": [
+    {
+      "id": "ts:nestjs:controller",
+      "name": "Controller Class",
+      "description": "NestJS controller with CRUD endpoints",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "controller"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import {\n\tController,\n\tGet,\n\tPost,\n\tPut,\n\tDelete,\n\tBody,\n\tParam,\n\tQuery,\n\tHttpCode,\n\tHttpStatus,\n} from '@nestjs/common';\nimport { $NAMEService } from './$NAME_LOWER.service';\nimport { Create$NAMEDto } from './dto/create-$NAME_LOWER.dto';\nimport { Update$NAMEDto } from './dto/update-$NAME_LOWER.dto';\n\n@Controller('$ROUTE_PREFIX')\nexport class $NAMEController {\n\tconstructor(private readonly $NAME_LOWERService: $NAMEService) {}\n\n\t@Get()\n\tasync findAll(@Query('$QUERY_PARAM') $QUERY_PARAM?: string): Promise<$ENTITY[]> {\n\t\treturn this.$NAME_LOWERService.findAll($QUERY_PARAM);\n\t}\n\n\t@Get(':id')\n\tasync findOne(@Param('id') id: string): Promise<$ENTITY> {\n\t\treturn this.$NAME_LOWERService.findOne(id);\n\t}\n\n\t@Post()\n\t@HttpCode(HttpStatus.CREATED)\n\tasync create(@Body() create$NAMEDto: Create$NAMEDto): Promise<$ENTITY> {\n\t\treturn this.$NAME_LOWERService.create(create$NAMEDto);\n\t}\n\n\t@Put(':id')\n\tasync update(\n\t\t@Param('id') id: string,\n\t\t@Body() update$NAMEDto: Update$NAMEDto\n\t): Promise<$ENTITY> {\n\t\treturn this.$NAME_LOWERService.update(id, update$NAMEDto);\n\t}\n\n\t@Delete(':id')\n\t@HttpCode(HttpStatus.NO_CONTENT)\n\tasync remove(@Param('id') id: string): Promise<void> {\n\t\treturn this.$NAME_LOWERService.remove(id);\n\t}\n}",
+      "priority": 100,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:service",
+      "name": "Service Class",
+      "description": "NestJS injectable service with repository",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "service"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import { Injectable, NotFoundException } from '@nestjs/common';\nimport { InjectRepository } from '@nestjs/typeorm';\nimport { Repository } from 'typeorm';\nimport { $ENTITY } from './entities/$ENTITY_LOWER.entity';\nimport { Create$NAMEDto } from './dto/create-$NAME_LOWER.dto';\nimport { Update$NAMEDto } from './dto/update-$NAME_LOWER.dto';\n\n@Injectable()\nexport class $NAMEService {\n\tconstructor(\n\t\t@InjectRepository($ENTITY)\n\t\tprivate readonly $ENTITY_LOWERRepository: Repository<$ENTITY>,\n\t) {}\n\n\tasync findAll($FILTER_PARAM?: string): Promise<$ENTITY[]> {\n\t\tconst query = this.$ENTITY_LOWERRepository.createQueryBuilder('$ALIAS');\n\t\t\n\t\tif ($FILTER_PARAM) {\n\t\t\tquery.where('$ALIAS.$FILTER_FIELD LIKE :$FILTER_PARAM', {\n\t\t\t\t$FILTER_PARAM: `%${$FILTER_PARAM}%`,\n\t\t\t});\n\t\t}\n\t\t\n\t\treturn query.getMany();\n\t}\n\n\tasync findOne(id: string): Promise<$ENTITY> {\n\t\tconst $ENTITY_LOWER = await this.$ENTITY_LOWERRepository.findOne({\n\t\t\twhere: { id },\n\t\t});\n\t\t\n\t\tif (!$ENTITY_LOWER) {\n\t\t\tthrow new NotFoundException(`$ENTITY with ID \"${id}\" not found`);\n\t\t}\n\t\t\n\t\treturn $ENTITY_LOWER;\n\t}\n\n\tasync create(create$NAMEDto: Create$NAMEDto): Promise<$ENTITY> {\n\t\tconst $ENTITY_LOWER = this.$ENTITY_LOWERRepository.create(create$NAMEDto);\n\t\treturn this.$ENTITY_LOWERRepository.save($ENTITY_LOWER);\n\t}\n\n\tasync update(id: string, update$NAMEDto: Update$NAMEDto): Promise<$ENTITY> {\n\t\tconst $ENTITY_LOWER = await this.findOne(id);\n\t\tObject.assign($ENTITY_LOWER, update$NAMEDto);\n\t\treturn this.$ENTITY_LOWERRepository.save($ENTITY_LOWER);\n\t}\n\n\tasync remove(id: string): Promise<void> {\n\t\tconst $ENTITY_LOWER = await this.findOne(id);\n\t\tawait this.$ENTITY_LOWERRepository.remove($ENTITY_LOWER);\n\t}\n}",
+      "priority": 100,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:module",
+      "name": "Module Class",
+      "description": "NestJS module with imports, controllers, and providers",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "module"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import { Module } from '@nestjs/common';\nimport { TypeOrmModule } from '@nestjs/typeorm';\nimport { $NAMEController } from './$NAME_LOWER.controller';\nimport { $NAMEService } from './$NAME_LOWER.service';\nimport { $ENTITY } from './entities/$ENTITY_LOWER.entity';\n\n@Module({\n\timports: [\n\t\tTypeOrmModule.forFeature([$ENTITY]),\n\t],\n\tcontrollers: [$NAMEController],\n\tproviders: [$NAMEService],\n\texports: [$NAMEService],\n})\nexport class $NAMEModule {}",
+      "priority": 100,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:injectable",
+      "name": "Injectable Provider",
+      "description": "NestJS injectable provider/helper",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "provider"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import { Injectable, Inject } from '@nestjs/common';\nimport { $DEPENDENCY } from '$DEPENDENCY_PATH';\n\n@Injectable()\nexport class $NAMEProvider {\n\tconstructor(\n\t\t@Inject($INJECTION_TOKEN)\n\t\tprivate readonly $DEPENDENCY_NAME: $DEPENDENCY_TYPE,\n\t) {}\n\n\tasync $METHOD_NAME($PARAMS): Promise<$RETURN_TYPE> {\n\t\t$METHOD_BODY\n\t}\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:guard",
+      "name": "Guard",
+      "description": "NestJS guard for route protection",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "guard"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import {\n\tInjectable,\n\tCanActivate,\n\tExecutionContext,\n\tUnauthorizedException,\n} from '@nestjs/common';\nimport { Reflector } from '@nestjs/core';\nimport { Request } from 'express';\n\n@Injectable()\nexport class $NAMEGuard implements CanActivate {\n\tconstructor(private readonly reflector: Reflector) {}\n\n\tasync canActivate(context: ExecutionContext): Promise<boolean> {\n\t\tconst request = context.switchToHttp().getRequest<Request>();\n\t\t\n\t\tconst $TOKEN = this.extractToken(request);\n\t\tif (!$TOKEN) {\n\t\t\tthrow new UnauthorizedException('$UNAUTHORIZED_MESSAGE');\n\t\t}\n\n\t\ttry {\n\t\t\t$VALIDATION_LOGIC\n\t\t\treturn true;\n\t\t} catch {\n\t\t\tthrow new UnauthorizedException('$INVALID_TOKEN_MESSAGE');\n\t\t}\n\t}\n\n\tprivate extractToken(request: Request): string | undefined {\n\t\tconst [type, token] = request.headers.authorization?.split(' ') ?? [];\n\t\treturn type === 'Bearer' ? token : undefined;\n\t}\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:interceptor",
+      "name": "Interceptor",
+      "description": "NestJS interceptor for request/response transformation",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "interceptor"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import {\n\tInjectable,\n\tNestInterceptor,\n\tExecutionContext,\n\tCallHandler,\n} from '@nestjs/common';\nimport { Observable } from 'rxjs';\nimport { map, tap } from 'rxjs/operators';\n\nexport interface Response<T> {\n\tdata: T;\n\ttimestamp: string;\n}\n\n@Injectable()\nexport class $NAMEInterceptor<T> implements NestInterceptor<T, Response<T>> {\n\tintercept(\n\t\tcontext: ExecutionContext,\n\t\tnext: CallHandler<T>\n\t): Observable<Response<T>> {\n\t\tconst now = Date.now();\n\n\t\treturn next.handle().pipe(\n\t\t\ttap(() => {\n\t\t\t\tconsole.log(`$LOG_PREFIX: ${Date.now() - now}ms`);\n\t\t\t}),\n\t\t\tmap((data) => ({\n\t\t\t\tdata,\n\t\t\t\ttimestamp: new Date().toISOString(),\n\t\t\t})),\n\t\t);\n\t}\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:pipe",
+      "name": "Validation Pipe",
+      "description": "NestJS custom validation pipe",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "pipe"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import {\n\tPipeTransform,\n\tInjectable,\n\tArgumentMetadata,\n\tBadRequestException,\n} from '@nestjs/common';\n\n@Injectable()\nexport class $NAMEPipe implements PipeTransform<$INPUT_TYPE, $OUTPUT_TYPE> {\n\ttransform(value: $INPUT_TYPE, metadata: ArgumentMetadata): $OUTPUT_TYPE {\n\t\tif (!value) {\n\t\t\tthrow new BadRequestException('$VALIDATION_MESSAGE');\n\t\t}\n\n\t\t$TRANSFORM_LOGIC\n\n\t\treturn $TRANSFORMED_VALUE;\n\t}\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:filter",
+      "name": "Exception Filter",
+      "description": "NestJS custom exception filter",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "filter"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import {\n\tExceptionFilter,\n\tCatch,\n\tArgumentsHost,\n\tHttpException,\n\tHttpStatus,\n} from '@nestjs/common';\nimport { Request, Response } from 'express';\n\ninterface ErrorResponse {\n\tstatusCode: number;\n\tmessage: string;\n\ttimestamp: string;\n\tpath: string;\n}\n\n@Catch($EXCEPTION_TYPE)\nexport class $NAMEFilter implements ExceptionFilter {\n\tcatch(exception: $EXCEPTION_TYPE, host: ArgumentsHost): void {\n\t\tconst ctx = host.switchToHttp();\n\t\tconst response = ctx.getResponse<Response>();\n\t\tconst request = ctx.getRequest<Request>();\n\n\t\tconst status =\n\t\t\texception instanceof HttpException\n\t\t\t\t? exception.getStatus()\n\t\t\t\t: HttpStatus.INTERNAL_SERVER_ERROR;\n\n\t\tconst message =\n\t\t\texception instanceof HttpException\n\t\t\t\t? exception.message\n\t\t\t\t: '$DEFAULT_ERROR_MESSAGE';\n\n\t\tconst errorResponse: ErrorResponse = {\n\t\t\tstatusCode: status,\n\t\t\tmessage,\n\t\t\ttimestamp: new Date().toISOString(),\n\t\t\tpath: request.url,\n\t\t};\n\n\t\tresponse.status(status).json(errorResponse);\n\t}\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:dto",
+      "name": "DTO Class",
+      "description": "NestJS DTO with class-validator decorators",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "dto"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import {\n\tIsString,\n\tIsNotEmpty,\n\tIsEmail,\n\tIsOptional,\n\tMinLength,\n\tMaxLength,\n\tIsInt,\n\tMin,\n\tMax,\n} from 'class-validator';\nimport { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';\n\nexport class $NAMEDto {\n\t@ApiProperty({\n\t\tdescription: '$FIELD_DESCRIPTION',\n\t\texample: '$FIELD_EXAMPLE',\n\t})\n\t@IsString()\n\t@IsNotEmpty()\n\t@MinLength($MIN_LENGTH)\n\t@MaxLength($MAX_LENGTH)\n\t$FIELD_NAME: string;\n\n\t@ApiPropertyOptional({\n\t\tdescription: '$OPTIONAL_FIELD_DESCRIPTION',\n\t})\n\t@IsOptional()\n\t@IsString()\n\t$OPTIONAL_FIELD?: string;\n}",
+      "priority": 90,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:entity",
+      "name": "TypeORM Entity",
+      "description": "NestJS TypeORM entity class",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "entity"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import {\n\tEntity,\n\tPrimaryGeneratedColumn,\n\tColumn,\n\tCreateDateColumn,\n\tUpdateDateColumn,\n\tManyToOne,\n\tJoinColumn,\n} from 'typeorm';\n\n@Entity('$TABLE_NAME')\nexport class $NAME {\n\t@PrimaryGeneratedColumn('uuid')\n\tid: string;\n\n\t@Column({ type: 'varchar', length: $MAX_LENGTH })\n\t$COLUMN_NAME: string;\n\n\t@Column({ type: 'boolean', default: $DEFAULT_VALUE })\n\t$BOOLEAN_COLUMN: boolean;\n\n\t@ManyToOne(() => $RELATED_ENTITY, ($RELATED_LOWER) => $RELATED_LOWER.$INVERSE_PROPERTY)\n\t@JoinColumn({ name: '$FOREIGN_KEY' })\n\t$RELATION_NAME: $RELATED_ENTITY;\n\n\t@CreateDateColumn({ name: 'created_at' })\n\tcreatedAt: Date;\n\n\t@UpdateDateColumn({ name: 'updated_at' })\n\tupdatedAt: Date;\n}",
+      "priority": 95,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:repository",
+      "name": "Custom Repository",
+      "description": "NestJS custom TypeORM repository",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "repository"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import { Injectable } from '@nestjs/common';\nimport { DataSource, Repository } from 'typeorm';\nimport { $ENTITY } from './entities/$ENTITY_LOWER.entity';\n\n@Injectable()\nexport class $NAMERepository extends Repository<$ENTITY> {\n\tconstructor(private readonly dataSource: DataSource) {\n\t\tsuper($ENTITY, dataSource.createEntityManager());\n\t}\n\n\tasync findBy$FIELD($FIELD_NAME: $FIELD_TYPE): Promise<$ENTITY[]> {\n\t\treturn this.createQueryBuilder('$ALIAS')\n\t\t\t.where('$ALIAS.$FIELD_NAME = :$FIELD_NAME', { $FIELD_NAME })\n\t\t\t.getMany();\n\t}\n\n\tasync findWithRelations(id: string): Promise<$ENTITY | null> {\n\t\treturn this.createQueryBuilder('$ALIAS')\n\t\t\t.leftJoinAndSelect('$ALIAS.$RELATION', '$RELATION_ALIAS')\n\t\t\t.where('$ALIAS.id = :id', { id })\n\t\t\t.getOne();\n\t}\n}",
+      "priority": 85,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:swagger",
+      "name": "Swagger Decorators",
+      "description": "NestJS Swagger API documentation decorators",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["method_body", "class_body"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "@ApiOperation({ summary: '$OPERATION_SUMMARY' })\n@ApiResponse({\n\tstatus: HttpStatus.$STATUS,\n\tdescription: '$RESPONSE_DESCRIPTION',\n\ttype: $RESPONSE_TYPE,\n})\n@ApiResponse({\n\tstatus: HttpStatus.BAD_REQUEST,\n\tdescription: 'Invalid input data',\n})\n@ApiResponse({\n\tstatus: HttpStatus.NOT_FOUND,\n\tdescription: '$NOT_FOUND_DESCRIPTION',\n})",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:decorator",
+      "name": "Custom Decorator",
+      "description": "NestJS custom parameter decorator",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"]
+      },
+      "trigger": {
+        "type": "always"
+      },
+      "template": "import { createParamDecorator, ExecutionContext } from '@nestjs/common';\nimport { Request } from 'express';\n\nexport const $NAME = createParamDecorator(\n\t(data: $DATA_TYPE | undefined, ctx: ExecutionContext): $RETURN_TYPE => {\n\t\tconst request = ctx.switchToHttp().getRequest<Request>();\n\t\t$DECORATOR_LOGIC\n\t\treturn data ? $SPECIFIC_VALUE : $DEFAULT_VALUE;\n\t},\n);",
+      "priority": 80,
+      "builtin": true
+    },
+    {
+      "id": "ts:nestjs:test",
+      "name": "Unit Test",
+      "description": "NestJS unit test with testing module",
+      "language": "typescript",
+      "framework": "nestjs",
+      "context": {
+        "positions": ["file_start"],
+        "fileType": "test"
+      },
+      "trigger": {
+        "type": "empty"
+      },
+      "template": "import { Test, TestingModule } from '@nestjs/testing';\nimport { $NAMEService } from './$NAME_LOWER.service';\nimport { getRepositoryToken } from '@nestjs/typeorm';\nimport { $ENTITY } from './entities/$ENTITY_LOWER.entity';\nimport { Repository } from 'typeorm';\n\ndescribe('$NAMEService', () => {\n\tlet service: $NAMEService;\n\tlet repository: Repository<$ENTITY>;\n\n\tconst mockRepository = {\n\t\tfind: jest.fn(),\n\t\tfindOne: jest.fn(),\n\t\tcreate: jest.fn(),\n\t\tsave: jest.fn(),\n\t\tremove: jest.fn(),\n\t};\n\n\tbeforeEach(async () => {\n\t\tconst module: TestingModule = await Test.createTestingModule({\n\t\t\tproviders: [\n\t\t\t\t$NAMEService,\n\t\t\t\t{\n\t\t\t\t\tprovide: getRepositoryToken($ENTITY),\n\t\t\t\t\tuseValue: mockRepository,\n\t\t\t\t},\n\t\t\t],\n\t\t}).compile();\n\n\t\tservice = module.get<$NAMEService>($NAMEService);\n\t\trepository = module.get<Repository<$ENTITY>>(getRepositoryToken($ENTITY));\n\t});\n\n\tit('should be defined', () => {\n\t\texpect(service).toBeDefined();\n\t});\n\n\tdescribe('$METHOD_NAME', () => {\n\t\tit('should $TEST_DESCRIPTION', async () => {\n\t\t\t$TEST_SETUP\n\t\t\t$TEST_ACTION\n\t\t\t$TEST_ASSERTION\n\t\t});\n\t});\n});",
+      "priority": 85,
+      "builtin": true
+    }
+  ]
+}

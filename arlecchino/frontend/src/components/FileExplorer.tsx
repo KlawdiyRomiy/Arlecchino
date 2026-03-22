@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { ChevronDown, Folder, FolderOpen } from "lucide-react";
 import * as App from "../../wailsjs/go/main/App";
 import { colors, getThemeColors } from "../styles/colors";
@@ -72,10 +72,9 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   const [files, setFiles] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([]);
-  const [perspectiveTarget, setPerspectiveTarget] = useState<{
-    path: string;
-    content: string;
-  } | null>(null);
+  const [perspectiveTarget, setPerspectiveTarget] = useState<string | null>(
+    null,
+  );
   const [quickMenu, setQuickMenu] = useState<{
     isOpen: boolean;
     x: number;
@@ -84,10 +83,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   const [treeOpen, setTreeOpen] = useState(false);
   const [highlightedPath, setHighlightedPath] = useState<string | null>(null);
   const explorerRef = useRef<HTMLDivElement>(null);
-  const relations = useFileRelations(
-    perspectiveTarget?.path || "",
-    perspectiveTarget?.content || "",
-  );
+  const relations = useFileRelations(perspectiveTarget || "");
 
   // Синхронизируем isExpanded из store в файлы
   const getIsExpanded = (path: string): boolean => expandedPaths.has(path);
@@ -100,6 +96,42 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     unblockProjectSwitch(PROJECT_SWITCH_BLOCKERS.filePerspective);
     onPerspectiveClose?.();
   };
+
+  const handlePerspectiveFileSelect = useCallback(
+    async (path: string, line?: number) => {
+      const readPromise = App.ReadFile(path);
+      closePerspective();
+      handleRevealFile(path);
+      const content = await readPromise;
+      if (onFileOpen)
+        onFileOpen(path, content, path.split("/").pop() || "", line);
+    },
+    [closePerspective, onFileOpen],
+  );
+
+  const renderPerspectiveOverlays = () => (
+    <>
+      <AnimatePresence>
+        {quickMenu.isOpen && (
+          <QuickRelationsMenu
+            isOpen={quickMenu.isOpen}
+            x={quickMenu.x}
+            y={quickMenu.y}
+            relations={relations}
+            onClose={closePerspective}
+            onFileSelect={handlePerspectiveFileSelect}
+          />
+        )}
+      </AnimatePresence>
+      {treeOpen && perspectiveTarget && (
+        <DependencyTree
+          filePath={perspectiveTarget}
+          onClose={closePerspective}
+          onFileSelect={handlePerspectiveFileSelect}
+        />
+      )}
+    </>
+  );
 
   useEffect(() => {
     loadProject();
@@ -566,35 +598,24 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         e.stopPropagation();
         const clickX = e.clientX;
         const clickY = e.clientY;
-        try {
-          const content = await App.ReadFile(node.path);
-          blockProjectSwitch(PROJECT_SWITCH_BLOCKERS.filePerspective);
-          setPerspectiveTarget({ path: node.path, content });
-          setQuickMenu({
-            isOpen: true,
-            x: clickX,
-            y: clickY,
-          });
-        } catch (err) {
-          console.error("Failed to read file for perspective:", err);
-        }
+        blockProjectSwitch(PROJECT_SWITCH_BLOCKERS.filePerspective);
+        setPerspectiveTarget(node.path);
+        setQuickMenu({
+          isOpen: true,
+          x: clickX,
+          y: clickY,
+        });
         return;
       }
       if (e.metaKey && !e.altKey && !e.ctrlKey) {
         e.preventDefault();
         e.stopPropagation();
 
-        try {
-          const content = await App.ReadFile(node.path);
-          blockProjectSwitch(PROJECT_SWITCH_BLOCKERS.filePerspective);
-          setPerspectiveTarget({ path: node.path, content });
-          setTreeOpen(true);
-          // Hide terminal and AI chat when perspective opens
-          if (onPerspectiveOpen) {
-            onPerspectiveOpen();
-          }
-        } catch (err) {
-          console.error("Failed to read file for perspective:", err);
+        blockProjectSwitch(PROJECT_SWITCH_BLOCKERS.filePerspective);
+        setPerspectiveTarget(node.path);
+        setTreeOpen(true);
+        if (onPerspectiveOpen) {
+          onPerspectiveOpen();
         }
         return;
       }
@@ -1022,55 +1043,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
           )}
         </div>
 
-        <AnimatePresence>
-          {quickMenu.isOpen && (
-            <QuickRelationsMenu
-              isOpen={quickMenu.isOpen}
-              x={quickMenu.x}
-              y={quickMenu.y}
-              relations={relations}
-              onClose={closePerspective}
-              onFileSelect={async (path, line) => {
-                closePerspective();
-                await handleRevealFile(path);
-                App.ReadFile(path).then((content) => {
-                  if (onFileOpen)
-                    onFileOpen(
-                      path,
-                      content,
-                      path.split("/").pop() || "",
-                      line,
-                    );
-                });
-              }}
-            />
-          )}
-        </AnimatePresence>
-
-        <AnimatePresence>
-          {treeOpen && perspectiveTarget && (
-            <DependencyTree
-              isOpen={treeOpen}
-              relations={relations}
-              currentFileName={perspectiveTarget.path.split("/").pop() || ""}
-              explorerPosition="left"
-              onClose={closePerspective}
-              onFileSelect={async (path, line) => {
-                closePerspective();
-                await handleRevealFile(path);
-                App.ReadFile(path).then((content) => {
-                  if (onFileOpen)
-                    onFileOpen(
-                      path,
-                      content,
-                      path.split("/").pop() || "",
-                      line,
-                    );
-                });
-              }}
-            />
-          )}
-        </AnimatePresence>
+        {renderPerspectiveOverlays()}
       </div>
     );
   };
@@ -1136,45 +1109,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         )}
       </div>
 
-      <AnimatePresence>
-        {quickMenu.isOpen && (
-          <QuickRelationsMenu
-            isOpen={quickMenu.isOpen}
-            x={quickMenu.x}
-            y={quickMenu.y}
-            relations={relations}
-            onClose={closePerspective}
-            onFileSelect={async (path, line) => {
-              closePerspective();
-              await handleRevealFile(path);
-              App.ReadFile(path).then((content) => {
-                if (onFileOpen)
-                  onFileOpen(path, content, path.split("/").pop() || "", line);
-              });
-            }}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {treeOpen && perspectiveTarget && (
-          <DependencyTree
-            isOpen={treeOpen}
-            relations={relations}
-            currentFileName={perspectiveTarget.path.split("/").pop() || ""}
-            explorerPosition="left"
-            onClose={closePerspective}
-            onFileSelect={async (path, line) => {
-              closePerspective();
-              await handleRevealFile(path);
-              App.ReadFile(path).then((content) => {
-                if (onFileOpen)
-                  onFileOpen(path, content, path.split("/").pop() || "", line);
-              });
-            }}
-          />
-        )}
-      </AnimatePresence>
+      {renderPerspectiveOverlays()}
     </div>
   );
 };

@@ -1,0 +1,242 @@
+{
+  "version": "1.0",
+  "name": "Django Patterns",
+  "language": "python",
+  "framework": "django",
+  "patterns": [
+  {
+    "id": "py:django:model",
+    "name": "Django Model Class",
+    "context": {
+      "fileTypes": ["model"],
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from django.db import models\n\nclass $NAME(models.Model):\n\t\"\"\"$DOCSTRING\"\"\"\n\t$FIELD = models.$FIELD_TYPE($FIELD_ARGS)\n\t\n\tcreated_at = models.DateTimeField(auto_now_add=True)\n\tupdated_at = models.DateTimeField(auto_now=True)\n\t\n\tclass Meta:\n\t\tdb_table = \"$TABLE_NAME\"\n\t\tordering = [\"-created_at\"]\n\t\n\tdef __str__(self) -> str:\n\t\treturn f\"{self.$FIELD}\"",
+    "priority": 100,
+    "builtin": true
+  },
+  {
+    "id": "py:django:model:field:char",
+    "name": "CharField",
+    "context": {
+      "fileTypes": ["model"],
+      "positions": ["class_body"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "$NAME = models.CharField(max_length=$MAX_LENGTH, verbose_name=\"$VERBOSE_NAME\")",
+    "priority": 90,
+    "builtin": true
+  },
+  {
+    "id": "py:django:model:field:text",
+    "name": "TextField",
+    "context": {
+      "fileTypes": ["model"],
+      "positions": ["class_body"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "$NAME = models.TextField(blank=True, verbose_name=\"$VERBOSE_NAME\")",
+    "priority": 85,
+    "builtin": true
+  },
+  {
+    "id": "py:django:model:field:foreignkey",
+    "name": "ForeignKey",
+    "context": {
+      "fileTypes": ["model"],
+      "positions": ["class_body"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "$NAME = models.ForeignKey(\n\t\"$RELATED_MODEL\",\n\ton_delete=models.$ON_DELETE,\n\trelated_name=\"$RELATED_NAME\",\n)",
+    "priority": 90,
+    "builtin": true
+  },
+  {
+    "id": "py:django:model:field:manytomany",
+    "name": "ManyToManyField",
+    "context": {
+      "fileTypes": ["model"],
+      "positions": ["class_body"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "$NAME = models.ManyToManyField(\n\t\"$RELATED_MODEL\",\n\trelated_name=\"$RELATED_NAME\",\n\tblank=True,\n)",
+    "priority": 85,
+    "builtin": true
+  },
+  {
+    "id": "py:django:serializer",
+    "name": "ModelSerializer",
+    "context": {
+      "fileTypes": ["serializer"],
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from rest_framework import serializers\nfrom .models import $MODEL\n\nclass $NAMESerializer(serializers.ModelSerializer):\n\t\"\"\"Serializer for $MODEL.\"\"\"\n\t\n\tclass Meta:\n\t\tmodel = $MODEL\n\t\tfields = [\n\t\t\t\"id\",\n\t\t\t$FIELDS\n\t\t]\n\t\tread_only_fields = [\"id\", \"created_at\", \"updated_at\"]",
+    "priority": 95,
+    "builtin": true
+  },
+  {
+    "id": "py:django:viewset",
+    "name": "ModelViewSet",
+    "context": {
+      "fileTypes": ["view"],
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from rest_framework import viewsets, permissions\nfrom .models import $MODEL\nfrom .serializers import $MODELSerializer\n\nclass $NAMEViewSet(viewsets.ModelViewSet):\n\t\"\"\"ViewSet for $MODEL CRUD operations.\"\"\"\n\tqueryset = $MODEL.objects.all()\n\tserializer_class = $MODELSerializer\n\tpermission_classes = [permissions.IsAuthenticated]\n\t\n\tdef get_queryset(self):\n\t\treturn super().get_queryset().filter($FILTER)",
+    "priority": 95,
+    "builtin": true
+  },
+  {
+    "id": "py:django:apiview",
+    "name": "APIView Class",
+    "context": {
+      "fileTypes": ["view"],
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from rest_framework.views import APIView\nfrom rest_framework.response import Response\nfrom rest_framework import status, permissions\n\nclass $NAMEView(APIView):\n\t\"\"\"$DOCSTRING\"\"\"\n\tpermission_classes = [permissions.IsAuthenticated]\n\t\n\tdef get(self, request) -> Response:\n\t\t$GET_BODY\n\t\treturn Response($DATA, status=status.HTTP_200_OK)\n\t\n\tdef post(self, request) -> Response:\n\t\t$POST_BODY\n\t\treturn Response($DATA, status=status.HTTP_201_CREATED)",
+    "priority": 90,
+    "builtin": true
+  },
+  {
+    "id": "py:django:urls",
+    "name": "URL Patterns",
+    "context": {
+      "fileTypes": ["urls"],
+      "positions": ["file_start"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from django.urls import path, include\nfrom rest_framework.routers import DefaultRouter\nfrom . import views\n\nrouter = DefaultRouter()\nrouter.register(r\"$RESOURCE\", views.$NAMEViewSet, basename=\"$BASENAME\")\n\napp_name = \"$APP_NAME\"\n\nurlpatterns = [\n\tpath(\"\", include(router.urls)),\n]",
+    "priority": 90,
+    "builtin": true
+  },
+  {
+    "id": "py:django:admin",
+    "name": "Admin Registration",
+    "context": {
+      "fileTypes": ["admin"],
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from django.contrib import admin\nfrom .models import $MODEL\n\n@admin.register($MODEL)\nclass $MODELAdmin(admin.ModelAdmin):\n\tlist_display = [\"$FIELD1\", \"$FIELD2\", \"created_at\"]\n\tlist_filter = [\"$FILTER_FIELD\", \"created_at\"]\n\tsearch_fields = [\"$SEARCH_FIELD\"]\n\tordering = [\"-created_at\"]",
+    "priority": 90,
+    "builtin": true
+  },
+  {
+    "id": "py:django:form",
+    "name": "ModelForm",
+    "context": {
+      "fileTypes": ["form"],
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from django import forms\nfrom .models import $MODEL\n\nclass $MODELForm(forms.ModelForm):\n\t\n\tclass Meta:\n\t\tmodel = $MODEL\n\t\tfields = [\"$FIELD1\", \"$FIELD2\"]\n\t\twidgets = {\n\t\t\t\"$FIELD1\": forms.TextInput(attrs={\"class\": \"form-control\"}),\n\t\t}",
+    "priority": 85,
+    "builtin": true
+  },
+  {
+    "id": "py:django:signal",
+    "name": "Signal Handler",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from django.db.models.signals import post_save\nfrom django.dispatch import receiver\nfrom .models import $MODEL\n\n@receiver(post_save, sender=$MODEL)\ndef $NAME_post_save(sender, instance, created, **kwargs):\n\tif created:\n\t\t$ON_CREATE\n\telse:\n\t\t$ON_UPDATE",
+    "priority": 80,
+    "builtin": true
+  },
+  {
+    "id": "py:django:middleware",
+    "name": "Middleware Class",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from django.http import HttpRequest, HttpResponse\nfrom typing import Callable\n\nclass $NAMEMiddleware:\n\t\"\"\"$DOCSTRING\"\"\"\n\t\n\tdef __init__(self, get_response: Callable[[HttpRequest], HttpResponse]):\n\t\tself.get_response = get_response\n\t\n\tdef __call__(self, request: HttpRequest) -> HttpResponse:\n\t\t$BEFORE\n\t\tresponse = self.get_response(request)\n\t\t$AFTER\n\t\treturn response",
+    "priority": 75,
+    "builtin": true
+  },
+  {
+    "id": "py:django:command",
+    "name": "Management Command",
+    "context": {
+      "positions": ["file_start"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from django.core.management.base import BaseCommand, CommandError\n\nclass Command(BaseCommand):\n\thelp = \"$HELP_TEXT\"\n\t\n\tdef add_arguments(self, parser):\n\t\tparser.add_argument(\"$ARG\", type=str, help=\"$ARG_HELP\")\n\t\n\tdef handle(self, *args, **options):\n\t\ttry:\n\t\t\t$BODY\n\t\t\tself.stdout.write(self.style.SUCCESS(\"$SUCCESS_MSG\"))\n\t\texcept Exception as e:\n\t\t\traise CommandError(f\"Error: {e}\")",
+    "priority": 80,
+    "builtin": true
+  },
+  {
+    "id": "py:django:test",
+    "name": "Django TestCase",
+    "context": {
+      "fileTypes": ["test"],
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from django.test import TestCase, Client\nfrom django.urls import reverse\nfrom .models import $MODEL\n\nclass $NAMETestCase(TestCase):\n\t\n\tdef setUp(self):\n\t\tself.client = Client()\n\t\tself.$MODEL = $MODEL.objects.create($FIELDS)\n\t\n\tdef test_$METHOD(self):\n\t\tresponse = self.client.get(reverse(\"$URL_NAME\"))\n\t\tself.assertEqual(response.status_code, 200)",
+    "priority": 85,
+    "builtin": true
+  },
+  {
+    "id": "py:django:test:api",
+    "name": "DRF APITestCase",
+    "context": {
+      "fileTypes": ["test"],
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from rest_framework.test import APITestCase, APIClient\nfrom rest_framework import status\nfrom django.contrib.auth import get_user_model\nfrom .models import $MODEL\n\nUser = get_user_model()\n\nclass $NAMEAPITestCase(APITestCase):\n\t\n\tdef setUp(self):\n\t\tself.user = User.objects.create_user(username=\"testuser\", password=\"testpass123\")\n\t\tself.client = APIClient()\n\t\tself.client.force_authenticate(user=self.user)\n\t\n\tdef test_list(self):\n\t\tresponse = self.client.get(\"/api/$ENDPOINT/\")\n\t\tself.assertEqual(response.status_code, status.HTTP_200_OK)\n\t\n\tdef test_create(self):\n\t\tdata = {$DATA}\n\t\tresponse = self.client.post(\"/api/$ENDPOINT/\", data)\n\t\tself.assertEqual(response.status_code, status.HTTP_201_CREATED)",
+    "priority": 85,
+    "builtin": true
+  },
+  {
+    "id": "py:django:celery:task",
+    "name": "Celery Task",
+    "context": {
+      "positions": ["top_level", "after_imports"]
+    },
+    "trigger": {
+      "type": "always"
+    },
+    "template": "from celery import shared_task\nimport logging\n\nlogger = logging.getLogger(__name__)\n\n@shared_task(bind=True, max_retries=3)\ndef $NAME(self, $PARAMS):\n\ttry:\n\t\t$BODY\n\t\tlogger.info(f\"Task $NAME completed\")\n\texcept Exception as exc:\n\t\tlogger.error(f\"Task $NAME failed: {exc}\")\n\t\traise self.retry(exc=exc, countdown=60)",
+    "priority": 75,
+    "builtin": true
+  }
+]
+}
