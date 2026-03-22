@@ -175,104 +175,27 @@ export const AIChatPanelContent: React.FC<AIChatPanelProps> = ({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={messagesContainerStyle}>
-        {messages.map((message) => (
-          <div key={message.id} style={messageStyle(message.role)}>
-            <div style={avatarStyle(message.role)}>
-              {message.role === "assistant" ? (
-                <Sparkles size={16} />
-              ) : (
-                <User size={16} />
-              )}
-            </div>
-            <div style={bubbleStyle(message.role)}>
-              <div style={contentStyle}>{message.content}</div>
-              {message.role === "assistant" && (
-                <div style={actionsStyle}>
-                  <button
-                    style={actionBtnStyle}
-                    onClick={() => copyToClipboard(message.content, message.id)}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = isDark
-                        ? "rgba(255,255,255,0.1)"
-                        : "rgba(0,0,0,0.05)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = "transparent";
-                    }}
-                  >
-                    {copiedId === message.id ? (
-                      <>
-                        <Check size={12} />
-                        Copied
-                      </>
-                    ) : (
-                      <>
-                        <Copy size={12} />
-                        Copy
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-
-        {isLoading && (
-          <div style={messageStyle("assistant")}>
-            <div style={avatarStyle("assistant")}>
-              <Sparkles size={16} />
-            </div>
-            <div style={bubbleStyle("assistant")}>
-              <div style={{ ...contentStyle, color: theme.textMuted }}>
-                Thinking...
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div ref={messagesEndRef} />
-      </div>
-
-      <div style={inputContainerStyle}>
-        <div style={inputWrapperStyle}>
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            style={textareaStyle}
-            placeholder="Ask about your Laravel project..."
-            rows={1}
-            onFocus={(e) => {
-              e.currentTarget.style.borderColor = theme.textSecondary;
-            }}
-            onBlur={(e) => {
-              e.currentTarget.style.borderColor = theme.border;
-            }}
-          />
-          <button
-            style={sendBtnStyle}
-            onClick={handleSubmit}
-            disabled={!input.trim() || isLoading}
-            onMouseEnter={(e) => {
-              if (input.trim() && !isLoading) {
-                e.currentTarget.style.backgroundColor = isDark
-                  ? "rgba(255,255,255,0.2)"
-                  : "rgba(0,0,0,0.15)";
-              }
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = isDark
-                ? "rgba(255,255,255,0.15)"
-                : "rgba(0,0,0,0.1)";
-            }}
-          >
-            <Send size={18} />
-          </button>
-        </div>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        position: "relative",
+      }}
+    >
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--text-muted)",
+          fontSize: "14px",
+          fontWeight: 500,
+          letterSpacing: "0.5px",
+        }}
+      >
+        Coming Soon
       </div>
     </div>
   );
