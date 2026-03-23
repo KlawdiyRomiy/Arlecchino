@@ -11,7 +11,7 @@ go test -run TestASTAnalyzer_PHP ./internal/predictive/
 go test -v -run TestExtractPrefixWithAccessChain ./internal/predictive/
 go test ./internal/predictive/...
 
-# Frontend (from arlecchino/frontend/)
+# Frontend (from frontend/)
 npx prettier --check "src/path/to/file.tsx"
 npx prettier --write "src/path/to/file.tsx"
 npx playwright test tests/smoke.spec.ts
@@ -21,25 +21,25 @@ wails build
 
 ### Full project commands (only when explicitly requested)
 ```bash
-# Development (from arlecchino/)
+# Development (from project root)
 wails dev                          # Live dev with hot reload (frontend at :5173, backend at :34115)
 
 # Build
 wails build                        # Production build
 
-# Go tests (from arlecchino/)
+# Go tests (from project root)
 go test ./internal/...             # All internal tests
 
-# Frontend (from arlecchino/frontend/)
+# Frontend (from frontend/)
 npm run dev                        # Vite dev server
 npm run build                      # TypeScript + Vite build
 npm run test:smoke                 # Playwright smoke tests
 
 # Lint / Format
-go vet ./...                       # Go static analysis (from arlecchino/)
-go fmt ./...                       # Go formatting (from arlecchino/)
-npx prettier --check "src/**/*.{ts,tsx}"  # TypeScript format check (from arlecchino/frontend/)
-npx prettier --write "src/**/*.{ts,tsx}"  # TypeScript format fix (from arlecchino/frontend/)
+go vet ./...                       # Go static analysis (from project root)
+go fmt ./...                       # Go formatting (from project root)
+npx prettier --check "src/**/*.{ts,tsx}"  # TypeScript format check (from frontend/)
+npx prettier --write "src/**/*.{ts,tsx}"  # TypeScript format fix (from frontend/)
 ```
 
 **Rule:** Always prefer fast, file-scoped commands. Full builds/tests only when explicitly requested or before final delivery.
@@ -213,7 +213,7 @@ If you touch these files: explain why, run narrow tests, and document the change
 ### SQLite MCP (отладка индексера)
 **Когда**: Дебаг автокомплита, проверка что индексер записал данные корректно.
 **Как**: `open_database` → `execute_read_query` с SELECT.
-**Путь к БД**: `arlecchino/data/projects.db` (проекты), `arlecchino/data/*.db` (индексы).
+**Путь к БД**: `data/projects.db` (проекты), `data/*.db` (индексы).
 **Типичные запросы**:
 ```sql
 -- Проверить символы после индексации
@@ -227,7 +227,7 @@ EXPLAIN QUERY PLAN SELECT ...
 
 ### Tree-sitter MCP (AST-анализ)
 **Когда**: Рефакторинг, поиск паттернов в коде, анализ сложности.
-**Как**: Проект зарегистрирован как `arlecchino`, пути относительно корня репо (например `arlecchino/app.go`).
+**Как**: Проект зарегистрирован как `arlecchino`, пути относительно корня репо (например `app.go`).
 **Инструменты**:
 - `get_ast` — структура файла без чтения целиком
 - `find_text` — regex-поиск по всем файлам проекта
@@ -293,7 +293,7 @@ EXPLAIN QUERY PLAN SELECT ...
 ## Project Structure
 
 ```
-arlecchino/
+./
 ├── app.go                    # Main App struct, Wails bindings entry
 ├── completion.go             # Autocomplete API (GetEditorCompletions)
 ├── definition.go             # Go-to-definition API
@@ -495,7 +495,7 @@ const clearGhostText = () => {
 
 ### File Organization
 - Business logic: `internal/` packages
-- Wails bindings: root `arlecchino/*.go` files
+- Wails bindings: root `*.go` files
 - Language adapters: `internal/indexer/adapters/`
 - Framework plugins: `internal/plugins/<framework>/`
 - React components: `frontend/src/components/`
@@ -706,8 +706,8 @@ Sub-Agents (specialists):
 
 | Purpose | File |
 |---------|------|
-| App entry, bindings | `arlecchino/app.go` |
-| Autocomplete API | `arlecchino/completion.go` |
+| App entry, bindings | `app.go` |
+| Autocomplete API | `completion.go` |
 | Core indexer | `internal/indexer/core/engine.go` |
 | Prediction brain | `internal/indexer/brain/prediction.go` |
 | AST analysis | `internal/predictive/ast.go` |

@@ -27,12 +27,13 @@ firebase-debug.log
 
 # Build artifacts
 build/bin/
+frontend/dist/
 dist/
 *.exe
 
 # Binaries
-arlecchino/arlecchino
-arlecchino/.bin/
+arlecchino/
+.bin/
 
 # Dependencies
 node_modules/
@@ -55,11 +56,8 @@ redesign/
 logo*/
 twitter_media/
 /tests/
-/backend/
 /demo/
 /autocomplete-test/
-/internal/
-/pkg/
 
 # Misc
 --help
@@ -67,3 +65,12 @@ session-ses_*.md
 project-switch-transition-*.png
 ANALYSIS_COMPLETE.md
 code_dataset_recommendation.md
+
+# Runtime data
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Frontend generated/runtime noise
+frontend/wailsjs/runtime/package 2.json
+frontend/test-results/

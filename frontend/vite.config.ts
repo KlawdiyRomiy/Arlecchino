@@ -5,11 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     watch: {
-      ignored: [
-        "**/.arlecchino/**",
-        "**/tests/ide-autocomplete/scenarios/**",
-        "**/wailsjs/**",
-      ],
+      ignored: ["**/.arlecchino/**", "**/wailsjs/**"],
     },
   },
   build: {

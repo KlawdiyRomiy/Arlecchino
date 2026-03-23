@@ -24,7 +24,7 @@ Arlecchino's autocomplete system uses a **6-provider architecture** with paralle
 
 ### 1.1 Hot Path: `App.GetEditorCompletions()` → `PredictionBrain.Complete()`
 
-**File:** `arlecchino/completion.go:141-262` → `internal/indexer/brain/prediction.go:513-632`
+**File:** `completion.go:141-262` → `internal/indexer/brain/prediction.go:513-632`
 
 #### Request Flow (Synchronous Steps):
 ```
@@ -865,7 +865,7 @@ key := MD5(filePath + line + prefix + language)
 ## Appendix A: Code Locations
 
 ### Critical Files for Performance
-- `arlecchino/completion.go` - Entry point
+- `completion.go` - Entry point
 - `internal/indexer/brain/prediction.go` - Main completion logic (2000+ lines)
 - `internal/predictive/engine.go` - Prefix extraction
 - `internal/indexer/core/engine.go` - Indexer core

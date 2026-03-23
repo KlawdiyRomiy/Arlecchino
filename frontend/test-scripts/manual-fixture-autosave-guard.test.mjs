@@ -7,32 +7,33 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const projectScreenPath = resolve(here, "../src/components/ProjectScreen.tsx");
 
-test("project screen defines manual fixture detection helper", () => {
+test("project screen removes legacy manual fixture detection helper", () => {
   const source = readFileSync(projectScreenPath, "utf8");
 
-  assert.match(
+  assert.doesNotMatch(
     source,
     /isManualAutocompleteFixture\s*=\s*\(filePath:\s*string\)\s*=>/,
-    "ProjectScreen must define isManualAutocompleteFixture(filePath) helper",
+    "ProjectScreen should not keep the deleted manual fixture helper",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     source,
     /frontend\/tests\/ide-autocomplete\/scenarios/,
-    "manual fixture helper must target frontend/tests/ide-autocomplete/scenarios",
+    "ProjectScreen should not reference removed ide-autocomplete fixture paths",
   );
 });
 
-test("project screen blocks autosave writes for manual fixtures", () => {
+test("project screen autosaves without manual fixture bypass", () => {
   const source = readFileSync(projectScreenPath, "utf8");
 
+  const scheduleToken = "scheduleAutoSave(activeTab)";
   const guardToken = "isManualAutocompleteFixture(tab.path)";
   const writeToken = "AppFunctions.WriteFile(tab.path, content)";
 
   assert.equal(
-    source.includes(guardToken),
+    source.includes(scheduleToken),
     true,
-    "autoSaveFile must check isManualAutocompleteFixture(tab.path)",
+    "content changes should still schedule autosave for the active tab",
   );
 
   assert.equal(
@@ -42,8 +43,8 @@ test("project screen blocks autosave writes for manual fixtures", () => {
   );
 
   assert.equal(
-    source.indexOf(guardToken) < source.indexOf(writeToken),
-    true,
-    "manual fixture guard must run before WriteFile call",
+    source.includes(guardToken),
+    false,
+    "autoSaveFile should not keep the removed manual fixture guard",
   );
 });

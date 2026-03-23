@@ -31,18 +31,6 @@ interface ProjectScreenProps {
 
 const AUTO_SAVE_DELAY = 1500;
 
-const isManualAutocompleteFixture = (filePath: string) => {
-  if (!filePath) return false;
-
-  const normalizedPath = filePath.replace(/\\/g, "/");
-  if (!normalizedPath.includes("/frontend/tests/ide-autocomplete/scenarios/")) {
-    return false;
-  }
-
-  const fileName = normalizedPath.split("/").pop() || "";
-  return fileName === "test.go" || fileName.includes(".manual.");
-};
-
 const makeTabId = (filePath: string) =>
   `tab-${filePath.replace(/[^a-zA-Z0-9]/g, "-")}`;
 
@@ -619,10 +607,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       return;
     }
 
-    if (isManualAutocompleteFixture(tab.path)) {
-      return;
-    }
-
     const content = fileContentsRef.current[tabId];
     if (content === undefined) {
       console.log("Auto-save skipped: no content for", tabId);
@@ -672,13 +656,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       ),
     );
 
-    const activeTabData = tabs.find((tab) => tab.id === activeTab);
-    if (!activeTabData || !isManualAutocompleteFixture(activeTabData.path)) {
-      scheduleAutoSave(activeTab);
-      return;
-    }
-
-    return;
+    scheduleAutoSave(activeTab);
   };
 
   const handleSaveFile = useCallback(async () => {
