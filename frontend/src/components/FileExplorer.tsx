@@ -137,7 +137,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     loadProject();
   }, []);
 
-  // Handle reveal file request from store (triggered by UnifiedSearchBar, etc.)
   useEffect(() => {
     if (revealRequestPath && projectPath) {
       const doReveal = async () => {

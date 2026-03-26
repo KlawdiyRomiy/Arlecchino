@@ -79,8 +79,14 @@ export const useBrowserPreviewStore = create<BrowserPreviewStoreState>()(
   ),
 );
 
-function normalizeProjectPathKey(projectPath: string): string {
-  return projectPath.trim();
+export function normalizeProjectPathKey(projectPath: string): string {
+  const normalized = projectPath.trim().replace(/\\/g, "/");
+  if (!normalized) {
+    return "";
+  }
+
+  const withoutTrailingSeparators = normalized.replace(/\/+$/, "");
+  return withoutTrailingSeparators || "/";
 }
 
 export function isAllowedPreviewUrl(

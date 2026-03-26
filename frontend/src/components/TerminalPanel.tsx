@@ -1374,6 +1374,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       )}
       {searchState.visible && (
         <div
+          data-terminal-search-root="true"
           style={{
             position: "absolute",
             top: "10px",
@@ -1392,6 +1393,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           }}
         >
           <input
+            data-terminal-search-input="true"
             ref={searchInputRef}
             value={searchState.query}
             onChange={(event) => {

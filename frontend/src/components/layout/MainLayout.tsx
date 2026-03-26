@@ -7,11 +7,13 @@ import { TerminalPanelContent } from "../TerminalPanel";
 import { AIChatPanelContent } from "../AIChatPanel";
 import { GitPanel } from "../GitPanel";
 import { PreviewWindowLayer } from "./PreviewWindowLayer";
-import { ArtisanFormModal } from "../ArtisanFormModal";
+import { ExecutionDialog } from "../ExecutionDialog";
+import { LaravelPlugin } from "../../plugins/LaravelPlugin";
+import { SettingsModal } from "../SettingsModal";
 import { SnippetsManager } from "../SnippetsManager";
 import { CommandDispatcher } from "../CommandDispatcher";
-import { useCommands } from "../../hooks/useCommands";
 import { useDispatcher } from "../../hooks/useDispatcher";
+import { useEditorStore } from "../../stores/editorStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { FloatingPanel, PanelPosition, PanelSize } from "../ui/FloatingPanel";
 import { FolderTree, Terminal, Sparkles, GitBranch, Globe } from "lucide-react";
@@ -27,6 +29,7 @@ import {
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { usePluginModal } from "../../contexts/PluginModalContext";
 import {
   usePreviewWindowStore,
   type OpenPreviewWindowInput,
@@ -49,6 +52,10 @@ import {
   getTUIPanelVisibility,
 } from "../../utils/terminalLayout";
 import { ReadFile, WriteTerminal } from "../../../wailsjs/go/main/App";
+import {
+  type ExecutionProfile,
+  resolveExecutionProfiles,
+} from "../../utils/executionProfiles";
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -83,20 +90,6 @@ type PanelConfigs = Record<PanelId, PanelConfig>;
 import { useIDEEvents } from "../../hooks/useIDEEvents";
 import { useBrowserPreviewBridge } from "../../hooks/useBrowserPreviewBridge";
 import { usePreviewableContext } from "../../hooks/usePreviewableContext";
-
-const DEFAULT_BROWSER_PREVIEW_INPUT: OpenPreviewWindowInput = {
-  id: "preview-browser-default",
-  surface: "browser",
-  title: "Browser Preview",
-  payload: {
-    title: "Browser Preview",
-    url: "http://localhost:8000",
-    htmlContent: "",
-    sourceLabel: "",
-  },
-  side: "right",
-  mode: "snapped",
-};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -426,9 +419,24 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const { isDark, theme: currentTheme, setTheme } = useTheme();
   const theme = getThemeColors(isDark);
   const [isPerspectiveOpen, setIsPerspectiveOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [executionDialogMode, setExecutionDialogMode] = useState<
+    "run" | "debug" | null
+  >(null);
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const setUiScale = useEditorSettingsStore((state) => state.setUiScale);
   const activeProjectId = useWorkspaceStore((s) => s.activeId);
+  const workspaceProjectPath = useWorkspaceStore((state) => {
+    const activeProject = state.projects.find(
+      (project) => project.id === state.activeId,
+    );
+    return activeProject?.path ?? "";
+  });
+  const explorerProjectPath = useExplorerStore((state) => state.projectPath);
+  const activeProjectPath = explorerProjectPath || workspaceProjectPath;
+  const activeEditorTab = useEditorStore((state) =>
+    state.getActiveTab(state.activePaneId),
+  );
   const {
     tuiModeActive,
     tuiAssist,
@@ -487,6 +495,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const cancelAppearancePreview = usePreviewWindowStore(
     (state) => state.cancelAppearancePreview,
   );
+  const executionProfiles = resolveExecutionProfiles({
+    projectPath: activeProjectPath,
+    activeTab: activeEditorTab,
+  });
+  const dispatcher = useDispatcher();
+  const { activeModal, closeModal } = usePluginModal();
 
   // Apply UI scale to CSS variable for font sizing
   useEffect(() => {
@@ -550,6 +564,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     >
   >(new Map());
   const previewUpdateFrameRef = React.useRef<number | null>(null);
+  const openCanonicalBrowserPreviewRef = React.useRef<() => void>(() => {});
 
   const clonePanelConfigs = useCallback(
     (source: PanelConfigs): PanelConfigs => {
@@ -611,7 +626,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         },
       }));
 
-      setPanels((prev) => getTUIPanelVisibility(prev));
+      setPanels((prev) => {
+        const nextPanels = getTUIPanelVisibility({ ...prev, browser: false });
+        const { browser: _browser, ...rest } = nextPanels;
+        return rest;
+      });
 
       setTUIAssist({ active: false, panel: null, swapped: false });
     } else {
@@ -654,7 +673,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [dropTargetPosition, setDropTargetPosition] =
     useState<PanelPosition | null>(null);
 
-  const [modalType, setModalType] = useState<string | null>(null);
   const [showSnippetsManager, setShowSnippetsManager] = useState(false);
   const [notification, setNotification] = useState<{
     type: "success" | "error";
@@ -668,6 +686,154 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setTimeout(() => setNotification(null), timeout);
     },
     [],
+  );
+
+  const handlePluginCommandSuccess = useCallback(
+    (message: string) => {
+      showNotification("success", message);
+    },
+    [showNotification],
+  );
+
+  const handlePluginCommandError = useCallback(
+    (message: string) => {
+      showNotification("error", message);
+    },
+    [showNotification],
+  );
+
+  const openCommandDispatcher = useCallback(() => {
+    if (tuiModeActive || isDispatcherPaused) {
+      return;
+    }
+
+    dispatcher.open();
+  }, [dispatcher, isDispatcherPaused, tuiModeActive]);
+
+  const toggleCommandDispatcher = useCallback(() => {
+    if (tuiModeActive || isDispatcherPaused) {
+      return;
+    }
+
+    if (dispatcher.isOpen) {
+      dispatcher.close();
+      return;
+    }
+
+    dispatcher.open();
+  }, [dispatcher, isDispatcherPaused, tuiModeActive]);
+
+  const submitTerminalCommand = useCallback(
+    async (command: string, terminalName = "Terminal") => {
+      const state = useTerminalStore.getState();
+      state.initialize();
+      let activePane = state.panes.find(
+        (pane) => pane.id === state.activePaneId,
+      );
+
+      if (!activePane && state.panes.length > 0) {
+        activePane = state.panes[0];
+        state.setActivePane(activePane.id);
+      }
+
+      if (!activePane) {
+        showNotification("error", "[Terminal] Terminal pane is not available");
+        return false;
+      }
+
+      let targetSessionId = activePane.activeTabId;
+      if (!targetSessionId) {
+        try {
+          targetSessionId = await state.createTerminal(
+            activePane.id,
+            isDark,
+            terminalName,
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Unable to create terminal session";
+          showNotification("error", `[Terminal] ${message}`);
+          return false;
+        }
+      }
+
+      const bytes = new TextEncoder().encode(command + "\n");
+      const binary = Array.from(bytes, (byte) =>
+        String.fromCharCode(byte),
+      ).join("");
+
+      try {
+        await WriteTerminal(targetSessionId, btoa(binary));
+        setPanels((previous) => ({ ...previous, terminal: true }));
+        setTimeout(() => useTerminalStore.getState().focusActiveTerminal(), 80);
+        return true;
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unable to send command to terminal";
+        showNotification("error", `[Terminal] ${message}`);
+        return false;
+      }
+    },
+    [isDark, showNotification],
+  );
+
+  const executeExecutionProfile = useCallback(
+    async (profile: ExecutionProfile) => {
+      if (profile.kind === "preview") {
+        openCanonicalBrowserPreviewRef.current();
+        return true;
+      }
+
+      return submitTerminalCommand(
+        profile.command,
+        profile.mode === "debug" ? "Debug" : "Run",
+      );
+    },
+    [submitTerminalCommand],
+  );
+
+  const openRunDialog = useCallback(() => {
+    const primaryProfile = executionProfiles.runProfiles[0];
+    if (primaryProfile) {
+      void executeExecutionProfile(primaryProfile);
+      return;
+    }
+
+    setExecutionDialogMode("run");
+  }, [executeExecutionProfile, executionProfiles.runProfiles]);
+
+  const openDebugDialog = useCallback(() => {
+    setExecutionDialogMode("debug");
+  }, []);
+
+  const openSettings = useCallback(() => {
+    setIsSettingsOpen(true);
+  }, []);
+
+  const closeSettings = useCallback(() => {
+    setIsSettingsOpen(false);
+  }, []);
+
+  const closeExecutionDialog = useCallback(() => {
+    setExecutionDialogMode(null);
+  }, []);
+
+  const executeCustomCommand = useCallback(
+    async (command: string, mode: "run" | "debug") => {
+      const submitted = await submitTerminalCommand(
+        command,
+        mode === "debug" ? "Debug" : "Run",
+      );
+
+      if (submitted) {
+        closeExecutionDialog();
+      }
+    },
+    [closeExecutionDialog, submitTerminalCommand],
   );
 
   const getActiveTerminalSessionId = useCallback((): string | null => {
@@ -770,17 +936,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     state.setTUIAssist({ active: true, ratio });
   }, []);
 
-  const dispatcher = useDispatcher();
-
-  const { artisanCommands, composerCommands, systemCommands } = useCommands({
-    onSuccess: (message) => showNotification("success", message),
-    onError: (error) => showNotification("error", error),
-    onOpenModal: (type) => {
-      dispatcher.close();
-      setModalType(type);
-    },
-  });
-
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const terminalState = useTerminalStore.getState();
@@ -846,11 +1001,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         if (terminalState.isDispatcherPaused) {
           return;
         }
-        if (dispatcher.isOpen) {
-          dispatcher.close();
-        } else {
-          dispatcher.open();
-        }
+        toggleCommandDispatcher();
         return;
       }
 
@@ -876,7 +1027,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         const localProjectSwitchBlocked =
           dispatcher.isOpen ||
           showSnippetsManager ||
-          modalType !== null ||
+          activeModal !== null ||
           isPerspectiveOpen;
 
         if (
@@ -957,7 +1108,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         }
 
         e.preventDefault();
-        openCanonicalBrowserPreview();
+        openCanonicalBrowserPreviewRef.current();
         return;
       }
 
@@ -981,7 +1132,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         }
 
         dispatcher.close();
-        setModalType(null);
+        closeModal();
       }
 
       // Zoom: Cmd+Plus / Cmd+Minus / Cmd+0
@@ -1077,11 +1228,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [
+    activeModal,
     closePreviewWindow,
+    closeModal,
     closeTUIAssistPanel,
     dispatcher,
     getActiveTerminalSessionId,
     isDark,
+    toggleCommandDispatcher,
     toggleTUIAssistPanel,
   ]);
 
@@ -1405,8 +1559,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const openCanonicalBrowserPreview = useCallback(() => {
-    const nextInput =
-      previewButtonState.launchInput ?? DEFAULT_BROWSER_PREVIEW_INPUT;
+    const nextInput = previewButtonState.launchInput;
+    if (!nextInput) {
+      showNotification(
+        "error",
+        "[Preview] No preview is available for the current context",
+      );
+      return;
+    }
 
     handlePreviewWindowOpenEvent({
       ...nextInput,
@@ -1415,7 +1575,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         revision: Date.now(),
       },
     });
-  }, [handlePreviewWindowOpenEvent, previewButtonState.launchInput]);
+  }, [
+    handlePreviewWindowOpenEvent,
+    previewButtonState.launchInput,
+    showNotification,
+  ]);
+
+  useEffect(() => {
+    openCanonicalBrowserPreviewRef.current = openCanonicalBrowserPreview;
+  }, [openCanonicalBrowserPreview]);
 
   const handlePreviewWindowUpdateEvent = useCallback(
     (payload: unknown) => {
@@ -1487,7 +1655,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     onOpenPanel: useCallback(
       (panel: string) => {
         if (panel === "browser" || panel === "web") {
-          openCanonicalBrowserPreview();
+          openCanonicalBrowserPreviewRef.current();
+          return;
+        }
+
+        if (panel === "search") {
+          openCommandDispatcher();
           return;
         }
 
@@ -1496,7 +1669,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           ai: "aiChat",
           terminal: "terminal",
           explorer: "explorer",
-          search: "explorer",
         };
         const panelId = panelMap[panel];
         if (!panelId) {
@@ -1517,7 +1689,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
         setPanels((p) => ({ ...p, [panelId]: true }));
       },
-      [openTUIAssistPanel],
+      [openCommandDispatcher, openTUIAssistPanel],
     ),
     onToggle: useCallback(
       (element: string) => {
@@ -1658,10 +1830,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           break;
       }
     }, []),
-    onAppSettings: useCallback(() => {
-      // TODO: Open settings modal
-      console.log("[IDE Event] Open settings");
-    }, []),
+    onAppSettings: openSettings,
     onGitStatus: useCallback(() => {
       setPanels((p) => ({ ...p, git: true }));
     }, []),
@@ -2102,7 +2271,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             {...panelProps}
           >
             <GitPanel
-              projectPath={useExplorerStore.getState().projectPath}
+              projectPath={activeProjectPath}
               onFileOpen={(path) =>
                 handleFileOpen(path, "", path.split("/").pop() || "")
               }
@@ -2121,7 +2290,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     explorer: "Explorer",
     aiChat: "AI Assistant",
     git: "Git",
-    browser: "Browser",
   };
 
   const renderAssistPanelContent = () => {
@@ -2144,7 +2312,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       case "git":
         return (
           <GitPanel
-            projectPath={useExplorerStore.getState().projectPath}
+            projectPath={activeProjectPath}
             onFileOpen={(path) =>
               handleFileOpen(path, "", path.split("/").pop() || "")
             }
@@ -2281,6 +2449,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               dispatcher.open();
             }
           }}
+          onOpenSearch={openCommandDispatcher}
+          onOpenSettings={openSettings}
           onToggleExplorer={() => {
             if (tuiModeActive) {
               toggleTUIAssistPanel("explorer");
@@ -2306,6 +2476,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             }
             togglePanelAtPosition("right");
           }}
+          onToggleGit={() => {
+            if (tuiModeActive) {
+              toggleTUIAssistPanel("git");
+              return;
+            }
+            setPanels((previous) => ({ ...previous, git: !previous.git }));
+          }}
+          onRun={openRunDialog}
+          onOpenDebug={openDebugDialog}
           onOpenPreview={openCanonicalBrowserPreview}
           onBackToWelcome={onBackToWelcome}
           onProjectOpen={onProjectOpen}
@@ -2319,8 +2498,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             aiChat: tuiModeActive
               ? tuiAssist.active && tuiAssist.panel === "aiChat"
               : isPanelVisibleAtPosition("right"),
+            git: isPanelVisibleAtPosition("left") && panels.git,
           }}
-          projectPath={useExplorerStore.getState().projectPath}
+          projectPath={activeProjectPath}
           previewEnabled={previewButtonState.enabled}
           previewActive={previewButtonState.active}
           previewTitle={previewButtonState.buttonTitle}
@@ -2417,80 +2597,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           }}
           onOpenFile={(path, line) => openFileFromPath(path, line)}
           onTerminalCommand={(command) => {
-            const submitTerminalCommand = async () => {
-              const state = useTerminalStore.getState();
-              state.initialize();
-              let activePane = state.panes.find(
-                (pane) => pane.id === state.activePaneId,
-              );
-
-              if (!activePane && state.panes.length > 0) {
-                activePane = state.panes[0];
-                state.setActivePane(activePane.id);
-              }
-
-              if (!activePane) {
-                showNotification(
-                  "error",
-                  "[Terminal] Terminal pane is not available",
-                );
-                return;
-              }
-
-              let targetSessionId = activePane.activeTabId;
-              if (!targetSessionId) {
-                try {
-                  targetSessionId = await state.createTerminal(
-                    activePane.id,
-                    isDark,
-                    "Terminal",
-                  );
-                } catch (error) {
-                  const message =
-                    error instanceof Error
-                      ? error.message
-                      : "Unable to create terminal session";
-                  showNotification("error", `[Terminal] ${message}`);
-                  return;
-                }
-              }
-
-              const encodeToBase64 = (value: string) => {
-                const bytes = new TextEncoder().encode(value);
-                const binary = Array.from(bytes, (byte) =>
-                  String.fromCharCode(byte),
-                ).join("");
-                return btoa(binary);
-              };
-
-              try {
-                await WriteTerminal(
-                  targetSessionId,
-                  encodeToBase64(command + "\n"),
-                );
-              } catch (error) {
-                const message =
-                  error instanceof Error
-                    ? error.message
-                    : "Unable to send command to terminal";
-                showNotification("error", `[Terminal] ${message}`);
-              }
-            };
-
-            void submitTerminalCommand();
+            void submitTerminalCommand(command);
           }}
           pinnedItems={dispatcher.pinnedItems}
           recentItems={dispatcher.recentItems}
-          projectPath={useExplorerStore.getState().projectPath}
+          projectPath={activeProjectPath}
         />
       )}
 
-      <ArtisanFormModal
-        isOpen={modalType !== null}
-        onClose={() => setModalType(null)}
-        modalType={modalType || ""}
-        onSuccess={(message) => showNotification("success", message)}
-        onError={(error) => showNotification("error", error)}
+      <LaravelPlugin
+        closeDispatcher={dispatcher.close}
+        onSuccess={handlePluginCommandSuccess}
+        onError={handlePluginCommandError}
       />
 
       <SnippetsManager
@@ -2499,6 +2617,27 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         onSave={(snippet) => {
           console.log("Snippet saved:", snippet);
           showNotification("success", `Snippet "${snippet.name}" saved`);
+        }}
+      />
+
+      <SettingsModal isOpen={isSettingsOpen} onClose={closeSettings} />
+      <ExecutionDialog
+        isOpen={executionDialogMode !== null}
+        mode={executionDialogMode}
+        profiles={[
+          ...executionProfiles.runProfiles,
+          ...executionProfiles.debugProfiles,
+        ]}
+        activeFileName={activeEditorTab?.name}
+        onClose={closeExecutionDialog}
+        onExecuteProfile={async (profile) => {
+          const executed = await executeExecutionProfile(profile);
+          if (executed) {
+            closeExecutionDialog();
+          }
+        }}
+        onExecuteCustomCommand={(command, mode) => {
+          void executeCustomCommand(command, mode);
         }}
       />
 

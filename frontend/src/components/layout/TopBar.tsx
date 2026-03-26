@@ -5,7 +5,6 @@ import {
   FolderOpen,
   Search,
   Settings,
-  Grid3x3,
   Bug,
   Play,
   Globe,
@@ -25,13 +24,19 @@ interface PanelVisibility {
   explorer: boolean;
   terminal: boolean;
   aiChat: boolean;
+  git?: boolean;
 }
 
 interface TopBarProps {
   onCommandPaletteOpen?: () => void;
+  onOpenSearch?: () => void;
+  onOpenSettings?: () => void;
   onToggleExplorer?: () => void;
   onToggleTerminal?: () => void;
   onToggleAIChat?: () => void;
+  onToggleGit?: () => void;
+  onRun?: () => void;
+  onOpenDebug?: () => void;
   onOpenPreview?: () => void;
   onBackToWelcome?: () => void;
   onProjectOpen?: (path: string) => void;
@@ -45,9 +50,14 @@ interface TopBarProps {
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
+  onOpenSearch,
+  onOpenSettings,
   onToggleExplorer,
   onToggleTerminal,
   onToggleAIChat,
+  onToggleGit,
+  onRun,
+  onOpenDebug,
   onOpenPreview,
   onCommandPaletteOpen,
   onProjectOpen,
@@ -86,12 +96,14 @@ export const TopBar: React.FC<TopBarProps> = ({
           <FolderOpen size={16} />
         </button>
         <button
+          onClick={onOpenSearch}
           className={`${topBarButtonClass} text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)]`}
           title="Search"
         >
           <Search size={16} />
         </button>
         <button
+          onClick={onOpenSettings}
           className={`${topBarButtonClass} text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)]`}
           title="Settings"
         >
@@ -170,13 +182,15 @@ export const TopBar: React.FC<TopBarProps> = ({
         className="flex items-center gap-1 pl-4 border-l border-[var(--border-subtle)] h-full"
         style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}
       >
-        <button className={topBarActionClass} title="Perspective View">
-          <Grid3x3 size={16} />
-        </button>
-        <button className={topBarActionClass} title="Debug">
+        <div className="h-8 w-8" aria-hidden="true" />
+        <button
+          onClick={onOpenDebug}
+          className={topBarActionClass}
+          title="Debug"
+        >
           <Bug size={16} />
         </button>
-        <button className={topBarActionClass} title="Run">
+        <button onClick={onRun} className={topBarActionClass} title="Run">
           <Play size={16} />
         </button>
         <button
@@ -237,9 +251,15 @@ export const TopBar: React.FC<TopBarProps> = ({
                 )}
               </DropdownMenu.Item>
 
-              <DropdownMenu.Item className="flex items-center gap-3 px-3 py-2 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] cursor-pointer outline-none transition-colors">
+              <DropdownMenu.Item
+                onSelect={() => onToggleGit?.()}
+                className="flex items-center gap-3 px-3 py-2 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] cursor-pointer outline-none transition-colors"
+              >
                 <GitBranch size={14} />
                 Git
+                {panels.git && (
+                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)]" />
+                )}
               </DropdownMenu.Item>
 
               <DropdownMenu.Separator className="h-px bg-[var(--border-subtle)] my-1" />

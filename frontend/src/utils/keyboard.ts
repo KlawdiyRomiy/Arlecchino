@@ -198,7 +198,9 @@ export const shortcuts = {
   terminalClear: (e: KeyboardEvent) =>
     isShortcut(e, "cmd+k") || isShortcut(e, "ctrl+shift+k"),
   terminalFind: (e: KeyboardEvent) =>
-    isShortcut(e, "cmd+f") || isShortcut(e, "ctrl+shift+f"),
+    isShortcut(e, "cmd+f") ||
+    isShortcut(e, "ctrl+f") ||
+    isShortcut(e, "ctrl+shift+f"),
   terminalFindNext: (e: KeyboardEvent) =>
     isShortcut(e, "cmd+g") || isShortcut(e, "ctrl+g") || isKey(e, "f3"),
   terminalFindPrev: (e: KeyboardEvent) =>

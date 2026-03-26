@@ -25,7 +25,6 @@ func NewIDEEventEmitter(ctx context.Context) *IDEEventEmitter {
 const (
 	defaultPreviewWindowID = "preview-browser-default"
 	defaultPreviewTitle    = "Browser Preview"
-	defaultPreviewURL      = "http://localhost:8000"
 )
 
 func (e *IDEEventEmitter) RegisterHandlers(d *Dispatcher) {
@@ -87,11 +86,8 @@ func defaultPreviewOpenPayload() map[string]any {
 		"id":      defaultPreviewWindowID,
 		"surface": "browser",
 		"title":   defaultPreviewTitle,
-		"payload": map[string]any{
-			"url": defaultPreviewURL,
-		},
-		"mode": "snapped",
-		"side": "right",
+		"mode":    "snapped",
+		"side":    "right",
 	}
 }
 

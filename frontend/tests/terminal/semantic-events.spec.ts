@@ -260,6 +260,33 @@ test("preview bridge remembers last target without auto-open", async ({
   expect(previewState.windowsCount).toBe(0);
 });
 
+test("browser preview targets normalize trailing project separators", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  const target = await page.evaluate(async () => {
+    const { useBrowserPreviewStore } =
+      await import("/src/stores/browserPreviewStore.ts");
+
+    useBrowserPreviewStore.setState({
+      lastKnownTargetByProject: {},
+    });
+
+    const store = useBrowserPreviewStore.getState();
+    store.rememberProjectTarget("/tmp/polyglot-preview-project/", {
+      url: "http://localhost:4173/app",
+      sessionId: "term-42",
+      source: "terminal",
+      updatedAt: 1710000000000,
+    });
+
+    return store.getLastKnownTarget("/tmp/polyglot-preview-project");
+  });
+
+  expect(target?.url).toBe("http://localhost:4173/app");
+});
+
 test("preview bridge auto-opens and reuses window per terminal session", async ({
   page,
 }) => {

@@ -2,10 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { EditorTabs, Tab } from "./EditorTabs";
 import { SnippetsManager } from "./SnippetsManager";
-import { UnifiedSearchBar } from "./UnifiedSearchBar";
 import QuickLookModal from "./QuickLookModal";
 import * as AppFunctions from "../../wailsjs/go/main/App";
-import { useProjectStore } from "../stores/projectStore";
 import { shortcuts, isShortcut } from "../utils/keyboard";
 import {
   PROJECT_SWITCH_BLOCKERS,
@@ -81,10 +79,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   );
   const [closedTabs, setClosedTabs] = useState<Tab[]>([]);
   const [showSnippetsManager, setShowSnippetsManager] = useState(false);
-  const [showUnifiedSearch, setShowUnifiedSearch] = useState(false);
-  const [searchInitialMode, setSearchInitialMode] = useState<"all" | "search">(
-    "all",
-  );
   const [splitDirection, setSplitDirection] = useState<SplitDirection>(null);
   const [secondaryActiveTab, setSecondaryActiveTab] = useState<string | null>(
     null,
@@ -112,31 +106,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setShowSnippetsManager(false);
   };
 
-  const openUnifiedSearch = (mode: "all" | "search" = "all") => {
-    setSearchInitialMode(mode);
-    blockProjectSwitch(PROJECT_SWITCH_BLOCKERS.unifiedSearch);
-    setShowUnifiedSearch(true);
-  };
-
-  const closeUnifiedSearch = () => {
-    unblockProjectSwitch(PROJECT_SWITCH_BLOCKERS.unifiedSearch);
-    setShowUnifiedSearch(false);
-  };
-
   const closeQuickLook = () => {
     unblockProjectSwitch(PROJECT_SWITCH_BLOCKERS.quickLook);
     setQuickLook((prev) => ({ ...prev, isOpen: false }));
   };
 
-  const setStructure = useProjectStore((state) => state.setStructure);
-  const setLoading = useProjectStore((state) => state.setLoading);
-  const setError = useProjectStore((state) => state.setError);
-
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tabsRef = useRef<Tab[]>([]);
   const fileContentsRef = useRef<Record<string, string>>({});
-  const hasLoadedRef = useRef(false);
-  const lastProjectPathRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (tabs.length === 0) return;
@@ -192,44 +169,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     );
   }, [tabs, activeTab, tabStorageKey]);
 
-  useEffect(() => {
-    if (!projectPath) {
-      console.warn("ProjectScreen: No project path provided");
-      return;
-    }
-
-    // Prevent duplicate loads for the same project
-    if (lastProjectPathRef.current === projectPath && hasLoadedRef.current) {
-      return;
-    }
-
-    lastProjectPathRef.current = projectPath;
-    hasLoadedRef.current = true;
-
-    const loadProjectStructure = async () => {
-      setLoading(true);
-      try {
-        console.log(
-          "ProjectScreen: Inspecting project structure for",
-          projectPath,
-        );
-        const structure = await AppFunctions.InspectProject();
-        console.log(
-          "ProjectScreen: Project structure loaded successfully",
-          structure,
-        );
-        setStructure(structure);
-      } catch (err) {
-        console.error("ProjectScreen: Failed to inspect project:", err);
-        setError(String(err));
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadProjectStructure();
-  }, [projectPath]);
-
   const lastFileToOpenRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -250,21 +189,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const isAnyModalOpen =
-        showSnippetsManager || showUnifiedSearch || quickLook.isOpen;
+      const isAnyModalOpen = showSnippetsManager || quickLook.isOpen;
 
       // Ctrl+Shift+S (Open Snippets Manager)
       if (isShortcut(e, "ctrl+shift+s")) {
         e.preventDefault();
         e.stopPropagation();
         openSnippetsManager();
-        return;
-      }
-
-      // Cmd+F (Unified Search)
-      if (shortcuts.unifiedSearch(e)) {
-        e.preventDefault();
-        openUnifiedSearch("all");
         return;
       }
 
@@ -338,7 +269,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     fileContents,
     closedTabs,
     showSnippetsManager,
-    showUnifiedSearch,
     quickLook.isOpen,
     splitDirection,
   ]);
@@ -950,14 +880,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         onSave={(snippet) => {
           console.log("Snippet saved:", snippet);
         }}
-      />
-
-      <UnifiedSearchBar
-        isOpen={showUnifiedSearch}
-        onClose={closeUnifiedSearch}
-        projectPath={projectPath}
-        onFileOpen={handleOpenFileRequest}
-        initialMode={searchInitialMode}
       />
 
       <QuickLookModal

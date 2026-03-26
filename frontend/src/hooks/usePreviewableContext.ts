@@ -5,9 +5,11 @@ import { useEditorStore } from "../stores/editorStore";
 import {
   type BrowserPreviewTarget,
   isAllowedPreviewUrl,
+  normalizeProjectPathKey,
   useBrowserPreviewStore,
 } from "../stores/browserPreviewStore";
 import { useExplorerStore } from "../stores/explorerStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 import type { OpenPreviewWindowInput } from "../stores/previewWindowStore";
 
 const DEFAULT_PREVIEW_BUTTON_WINDOW_ID = "preview-browser-default";
@@ -318,7 +320,13 @@ export function usePreviewableContext(): PreviewButtonState {
   const activeTab = useEditorStore((state) =>
     state.getActiveTab(state.activePaneId),
   );
-  const projectPath = useExplorerStore((state) => state.projectPath);
+  const explorerProjectPath = useExplorerStore((state) => state.projectPath);
+  const workspaceProjectPath = useWorkspaceStore((state) => {
+    const activeProject = state.projects.find(
+      (project) => project.id === state.activeId,
+    );
+    return activeProject?.path ?? "";
+  });
   const allowedOrigins = useBrowserPreviewStore(
     (state) => state.allowedOrigins,
   );
@@ -326,8 +334,11 @@ export function usePreviewableContext(): PreviewButtonState {
     (state) => state.lastKnownTargetByProject,
   );
 
-  const lastKnownTarget = projectPath.trim()
-    ? (lastKnownTargetByProject[projectPath.trim()] ?? null)
+  const projectPath = explorerProjectPath || workspaceProjectPath;
+  const projectKey = normalizeProjectPathKey(projectPath);
+
+  const lastKnownTarget = projectKey
+    ? (lastKnownTargetByProject[projectKey] ?? null)
     : null;
 
   return useMemo(

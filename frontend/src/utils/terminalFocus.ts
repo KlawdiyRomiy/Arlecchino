@@ -6,9 +6,12 @@ export const isTerminalFocusedElement = (element: Element | null): boolean => {
   }
 
   return (
+    (element instanceof HTMLElement &&
+      element.dataset.terminalSearchInput === "true") ||
     element.classList.contains("xterm-helper-textarea") ||
     element.classList.contains("xterm") ||
-    element.closest(".xterm") !== null
+    element.closest(".xterm") !== null ||
+    element.closest('[data-terminal-search-root="true"]') !== null
   );
 };
 

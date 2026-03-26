@@ -11,6 +11,7 @@ import {
   usePreviewWindowStore,
 } from "../stores/previewWindowStore";
 import { useTerminalStore } from "../stores/terminalStore";
+import { useWorkspaceStore } from "../stores/workspaceStore";
 
 interface BrowserPreviewBridgeOptions {
   openPreviewWindow: (input: OpenPreviewWindowInput) => {
@@ -147,7 +148,13 @@ export function useBrowserPreviewBridge({
     (state) => state.sessionSemanticEntries,
   );
   const sessions = useTerminalStore((state) => state.sessions);
-  const projectPath = useExplorerStore((state) => state.projectPath);
+  const explorerProjectPath = useExplorerStore((state) => state.projectPath);
+  const workspaceProjectPath = useWorkspaceStore((state) => {
+    const activeProject = state.projects.find(
+      (project) => project.id === state.activeId,
+    );
+    return activeProject?.path ?? "";
+  });
   const {
     autoOpenFromTerminal,
     reuseWindowPerSession,
@@ -155,6 +162,7 @@ export function useBrowserPreviewBridge({
     allowedOrigins,
     rememberProjectTarget,
   } = useBrowserPreviewStore();
+  const projectPath = explorerProjectPath || workspaceProjectPath;
 
   const processedTimestampsRef = useRef<Map<string, number>>(new Map());
   const autoOpenedWindowIdsRef = useRef<Map<string, string>>(new Map());
