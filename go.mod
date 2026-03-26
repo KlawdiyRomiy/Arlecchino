@@ -7,12 +7,13 @@ require (
 	github.com/dgraph-io/ristretto/v2 v2.3.0
 	github.com/sahilm/fuzzy v0.1.1
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
-	github.com/wailsapp/wails/v2 v2.11.0
+	github.com/wailsapp/wails/v2 v2.12.0
 	github.com/yalue/onnxruntime_go v1.25.0
 	mvdan.cc/sh/v3 v3.12.0
 )
 
 require (
+	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
@@ -53,4 +54,4 @@ require (
 	gorm.io/gorm v1.25.4
 )
 
-// replace github.com/wailsapp/wails/v2 v2.11.0 => /Users/a1/go/pkg/mod
+// replace github.com/wailsapp/wails/v2 v2.12.0 => /Users/a1/go/pkg/mod
