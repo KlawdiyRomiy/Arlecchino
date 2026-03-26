@@ -2,9 +2,10 @@ package system
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 )
+
+var systemLookPath = exec.LookPath
 
 type SystemManager struct {
 	ProjectPath string
@@ -61,29 +62,10 @@ func NewSystemManager(projectPath string) (*SystemManager, error) {
 }
 
 func findPHP() (string, error) {
-	if path, err := exec.LookPath("php"); err == nil {
+	if path, err := systemLookPath("php"); err == nil {
 		return path, nil
 	}
-
-	paths := []string{
-		"/usr/bin/php",
-		"/usr/local/bin/php",
-		"/opt/homebrew/bin/php",
-		"/Applications/MAMP/bin/php/php8.1/bin/php",
-		"/Applications/MAMP/bin/php/php8.2/bin/php",
-		"/Applications/MAMP/bin/php/php8.3/bin/php",
-		"/Applications/MAMP/bin/php/php8.4/bin/php",
-		"/Applications/MAMP/bin/php/php8.5/bin/php",
-		"/Library/Application Support/Herd/bin//php",
-	}
-
-	for _, path := range paths {
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
-		}
-	}
-
-	return "", fmt.Errorf("PHP not found in standard locations")
+	return "", fmt.Errorf("php not found in PATH; add it to your shell profile")
 }
 
 func (s *SystemManager) RunArtisan(command string, args ...string) (string, error) {

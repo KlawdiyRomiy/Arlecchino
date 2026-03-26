@@ -46,6 +46,7 @@ type App struct {
 	lastRequestID    atomic.Value
 	mcpBridgeServer  *mcp.IDEBridgeServer
 	mcpBridgeMu      sync.Mutex
+	managerMu        sync.Mutex
 
 	projectCtx    context.Context
 	projectCancel context.CancelFunc
@@ -142,18 +143,6 @@ func (a *App) OpenProject(path string) error {
 			return err
 		}
 	}
-
-	cmp, err := composer.NewComposerManager(path)
-	if err != nil {
-		return err
-	}
-	a.cmp = cmp
-
-	sys, err := system.NewSystemManager(path)
-	if err != nil {
-		return err
-	}
-	a.sys = sys
 
 	var lspManager *lsp.Manager
 	lspInstaller := a.lspInstaller
@@ -334,8 +323,10 @@ func (a *App) CloseProject() error {
 		a.coreEngine = nil
 	}
 
+	a.managerMu.Lock()
 	a.cmp = nil
 	a.sys = nil
+	a.managerMu.Unlock()
 	a.projectPath = ""
 	a.projectCtx = nil
 	a.projectCancel = nil
@@ -379,6 +370,14 @@ func (a *App) ValidateEnvironment() map[string]bool {
 // GetCurrentProjectPath returns the current project root path
 func (a *App) GetCurrentProjectPath() string {
 	return a.projectPath
+}
+
+func (a *App) GetCurrentProjectFramework() string {
+	if a.projectManager == nil || a.projectManager.CurrentProject == nil {
+		return ""
+	}
+
+	return a.projectManager.CurrentProject.Framework
 }
 
 // CreateNewProject creates a new project via plugin system

@@ -1,135 +1,149 @@
 package main
 
-import (
-	"fmt"
-
-	"arlecchino/internal/system"
-)
+import "arlecchino/internal/system"
 
 // System Commands - Artisan system operations (migrate, cache, serve, etc.)
 
 func (a *App) Migrate(opts system.MigrateOptions) (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.Migrate(opts)
+	return sys.Migrate(opts)
 }
 
 func (a *App) MigrateRollback(opts system.MigrateRollbackOptions) (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.MigrateRollback(opts)
+	return sys.MigrateRollback(opts)
 }
 
 func (a *App) MigrateRefresh(opts system.MigrateRefreshOptions) (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.MigrateRefresh(opts)
+	return sys.MigrateRefresh(opts)
 }
 
 func (a *App) MigrateStatus() (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.MigrateStatus()
+	return sys.MigrateStatus()
 }
 
 func (a *App) MigrateReset(opts system.MigrateResetOptions) (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.MigrateReset(opts)
+	return sys.MigrateReset(opts)
 }
 
 func (a *App) MigrateFresh(opts system.MigrateRefreshOptions) (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.MigrateFresh(opts)
+	return sys.MigrateFresh(opts)
 }
 
 func (a *App) CacheClear(opts system.CacheOptions) (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.CacheClear(opts)
+	return sys.CacheClear(opts)
 }
 
 func (a *App) ConfigCache() (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.ConfigCache()
+	return sys.ConfigCache()
 }
 
 func (a *App) RouteCache() (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.RouteCache()
+	return sys.RouteCache()
 }
 
 func (a *App) ViewCache() (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.ViewCache()
+	return sys.ViewCache()
 }
 
 func (a *App) ClearCompiled() (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.ClearCompiled()
+	return sys.ClearCompiled()
 }
 
 func (a *App) Serve(opts system.ServeOptions) error {
-	if a.sys == nil {
-		return fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return err
 	}
-	return a.sys.Serve(opts)
+	return sys.Serve(opts)
 }
 
 func (a *App) QueueWork(connection string, queue string) error {
-	if a.sys == nil {
-		return fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return err
 	}
-	return a.sys.QueueWork(connection, queue)
+	return sys.QueueWork(connection, queue)
 }
 
 func (a *App) ScheduleRun() (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.ScheduleRun()
+	return sys.ScheduleRun()
 }
 
 func (a *App) Tinker() error {
-	if a.sys == nil {
-		return fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return err
 	}
-	return a.sys.Tinker()
+	return sys.Tinker()
 }
 
 func (a *App) DBSeed(class string) (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.DBSeed(class)
+	return sys.DBSeed(class)
 }
 
 func (a *App) MigrateSeed(opts system.MigrateOptions) (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.MigrateSeed(opts)
+	return sys.MigrateSeed(opts)
 }
 
 func (a *App) StorageLink() (string, error) {
-	if a.sys == nil {
-		return "", fmt.Errorf("no project opened")
+	sys, err := a.ensureSystemManager()
+	if err != nil {
+		return "", err
 	}
-	return a.sys.StorageLink()
+	return sys.StorageLink()
 }

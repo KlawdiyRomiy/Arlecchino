@@ -33,9 +33,22 @@ func (p *stubPlugin) OnFileSaved(path string) {}
 
 type stubTerminalPlugin struct {
 	*stubPlugin
+	parsed *ParsedCommand
+}
+
+type stubCommandsPlugin struct {
+	*stubPlugin
+	registry *CommandRegistry
+}
+
+func (p *stubCommandsPlugin) Commands() *CommandRegistry {
+	return p.registry
 }
 
 func (p *stubTerminalPlugin) ParseCommand(input string) *ParsedCommand {
+	if p.parsed != nil {
+		return p.parsed
+	}
 	return &ParsedCommand{Valid: true, Prefix: p.name}
 }
 
@@ -154,5 +167,66 @@ func TestRegistry_DetectFramework_FallsBackToCommon(t *testing.T) {
 
 	if got := r.DetectFramework("/tmp/project"); got != "common" {
 		t.Fatalf("DetectFramework = %q, want common", got)
+	}
+}
+
+func TestRegistry_ParseCommand_PrefersFirstValidTerminalPlugin(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&stubPlugin{name: "common", applicable: true})
+	r.Register(&stubTerminalPlugin{
+		stubPlugin: &stubPlugin{name: "django", applicable: true},
+		parsed:     &ParsedCommand{Valid: false, Prefix: "django"},
+	})
+	r.Register(&stubTerminalPlugin{
+		stubPlugin: &stubPlugin{name: "laravel", applicable: true},
+		parsed: &ParsedCommand{
+			Valid:   true,
+			Prefix:  "laravel",
+			Command: "make:model",
+		},
+	})
+
+	parsed := r.ParseCommand("/tmp/project", "php artisan make:model User")
+	if parsed == nil {
+		t.Fatal("ParseCommand returned nil")
+	}
+	if parsed.Prefix != "laravel" || parsed.Command != "make:model" {
+		t.Fatalf("ParseCommand = %#v, want laravel make:model", parsed)
+	}
+}
+
+func TestRegistry_GetAllCommands_AggregatesApplicableCommandProviders(t *testing.T) {
+	r := NewRegistry()
+
+	laravelRegistry := NewCommandRegistry()
+	laravelRegistry.Register(&CommandDef{
+		Prefix:      "artisan",
+		Name:        "make:model",
+		Description: "Create a model",
+	})
+
+	djangoRegistry := NewCommandRegistry()
+	djangoRegistry.Register(&CommandDef{
+		Prefix:      "manage.py",
+		Name:        "makemigrations",
+		Description: "Create migrations",
+	})
+
+	r.Register(&stubCommandsPlugin{
+		stubPlugin: &stubPlugin{name: "laravel", applicable: true},
+		registry:   laravelRegistry,
+	})
+	r.Register(&stubCommandsPlugin{
+		stubPlugin: &stubPlugin{name: "django", applicable: false},
+		registry:   djangoRegistry,
+	})
+
+	commands := r.GetAllCommands("/tmp/project")
+	if len(commands) != 1 {
+		t.Fatalf("GetAllCommands len = %d, want 1", len(commands))
+	}
+
+	if commands[0].Prefix != "artisan" || commands[0].Name != "make:model" {
+		t.Fatalf("GetAllCommands[0] = %#v, want artisan make:model", commands[0])
 	}
 }

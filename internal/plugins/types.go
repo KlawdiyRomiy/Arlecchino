@@ -7,21 +7,21 @@ import (
 
 // CommandDef represents a terminal command definition
 type CommandDef struct {
-	Prefix      string    // "artisan", "composer", "git", "manage.py", "rails"
-	Name        string    // Command name (e.g., "make:model", "require", "checkout")
-	Description string    // Human-readable description
-	OutputKind  string    // What kind of file/entity this creates (e.g., "model", "controller")
-	PathPattern string    // Template for output path (e.g., "app/Models/{name}.php")
-	Namespace   string    // Default namespace for created files
-	Flags       []FlagDef // Available flags/options
+	Prefix      string    `json:"prefix"`      // "artisan", "composer", "git", "manage.py", "rails"
+	Name        string    `json:"name"`        // Command name (e.g., "make:model", "require", "checkout")
+	Description string    `json:"description"` // Human-readable description
+	OutputKind  string    `json:"outputKind"`  // What kind of file/entity this creates (e.g., "model", "controller")
+	PathPattern string    `json:"pathPattern"` // Template for output path (e.g., "app/Models/{name}.php")
+	Namespace   string    `json:"namespace"`   // Default namespace for created files
+	Flags       []FlagDef `json:"flags"`       // Available flags/options
 }
 
 // FlagDef represents a command flag/option
 type FlagDef struct {
-	Name        string // Long name (e.g., "--migration")
-	Short       string // Short name (e.g., "-m")
-	Description string // What the flag does
-	HasValue    bool   // Whether flag takes a value
+	Name        string `json:"name"`        // Long name (e.g., "--migration")
+	Short       string `json:"short"`       // Short name (e.g., "-m")
+	Description string `json:"description"` // What the flag does
+	HasValue    bool   `json:"hasValue"`    // Whether flag takes a value
 }
 
 // CommandRegistry holds all commands for a plugin

@@ -33,7 +33,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     prefix: "",
     body: "",
     description: "",
-    language: "php",
+    language: "text",
   });
 
   useEffect(() => {
@@ -48,7 +48,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         prefix: "",
         body: "",
         description: "",
-        language: "php",
+        language: "text",
       });
     }
   }, [isOpen]);
@@ -93,7 +93,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       prefix: "",
       body: "",
       description: "",
-      language: "php",
+      language: "text",
     });
     setEditingSnippet(null);
     setShowForm(true);
@@ -220,7 +220,9 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                 style={{
                   marginBottom: "16px",
                   padding: "8px 16px",
-                  backgroundColor: isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.1)",
+                  backgroundColor: isDark
+                    ? "rgba(255,255,255,0.15)"
+                    : "rgba(0,0,0,0.1)",
                   color: theme.text,
                   border: `1px solid ${theme.border}`,
                   borderRadius: radius.md,
@@ -234,7 +236,9 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                     : "rgba(0,0,0,0.15)")
                 }
                 onMouseLeave={(e) =>
-                  (e.currentTarget.style.backgroundColor = isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.1)")
+                  (e.currentTarget.style.backgroundColor = isDark
+                    ? "rgba(255,255,255,0.15)"
+                    : "rgba(0,0,0,0.1)")
                 }
               >
                 + Create New Snippet
@@ -433,7 +437,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                   onChange={(e) =>
                     setFormData({ ...formData, name: e.target.value })
                   }
-                  placeholder="e.g., Laravel Controller Method"
+                  placeholder="e.g., API request helper"
                   style={{
                     width: "100%",
                     padding: "8px 12px",
@@ -465,7 +469,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                   onChange={(e) =>
                     setFormData({ ...formData, prefix: e.target.value })
                   }
-                  placeholder="e.g., lcontroller"
+                  placeholder="e.g., apih"
                   style={{
                     width: "100%",
                     padding: "8px 12px",
@@ -506,10 +510,11 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                     fontSize: "14px",
                   }}
                 >
+                  <option value="text">Plain Text</option>
                   <option value="php">PHP</option>
                   <option value="javascript">JavaScript</option>
                   <option value="typescript">TypeScript</option>
-                  <option value="html">HTML/Blade</option>
+                  <option value="html">HTML</option>
                   <option value="css">CSS</option>
                   <option value="json">JSON</option>
                 </select>
@@ -533,7 +538,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                   onChange={(e) =>
                     setFormData({ ...formData, description: e.target.value })
                   }
-                  placeholder="e.g., Creates a basic Laravel controller method"
+                  placeholder="e.g., Creates a reusable request helper"
                   style={{
                     width: "100%",
                     padding: "8px 12px",
@@ -593,7 +598,9 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                   type="submit"
                   style={{
                     padding: "8px 16px",
-                    backgroundColor: isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.1)",
+                    backgroundColor: isDark
+                      ? "rgba(255,255,255,0.15)"
+                      : "rgba(0,0,0,0.1)",
                     color: theme.text,
                     border: `1px solid ${theme.border}`,
                     borderRadius: radius.md,
@@ -607,7 +614,9 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                       : "rgba(0,0,0,0.15)")
                   }
                   onMouseLeave={(e) =>
-                    (e.currentTarget.style.backgroundColor = isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.1)")
+                    (e.currentTarget.style.backgroundColor = isDark
+                      ? "rgba(255,255,255,0.15)"
+                      : "rgba(0,0,0,0.1)")
                   }
                 >
                   {editingSnippet ? "Update Snippet" : "Create Snippet"}

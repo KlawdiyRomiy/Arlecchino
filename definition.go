@@ -8,10 +8,10 @@ import (
 	"regexp"
 	"strings"
 
-	"arlecchino/internal/plugins/laravel"
+	"arlecchino/internal/plugins"
 )
 
-// Definition Navigation - Laravel-aware Go To Definition with smart pattern recognition
+// Definition Navigation - Framework-aware Go To Definition with smart pattern recognition
 
 // DefinitionResult represents a single Go to Definition result
 type DefinitionResult struct {
@@ -19,6 +19,42 @@ type DefinitionResult struct {
 	Line        int    `json:"line"`
 	Context     string `json:"context"`
 	DisplayPath string `json:"displayPath"`
+}
+
+func (a *App) routeEntries() []plugins.RouteEntry {
+	provider := a.getDefinitionProvider()
+	if provider == nil {
+		return nil
+	}
+	routes, err := provider.RouteEntries()
+	if err != nil {
+		return nil
+	}
+	return routes
+}
+
+func (a *App) viewEntries() []plugins.ViewEntry {
+	provider := a.getDefinitionProvider()
+	if provider == nil {
+		return nil
+	}
+	views, err := provider.ViewEntries()
+	if err != nil {
+		return nil
+	}
+	return views
+}
+
+func (a *App) modelEntries() map[string]plugins.ModelEntry {
+	provider := a.getDefinitionProvider()
+	if provider == nil {
+		return nil
+	}
+	models, err := provider.ModelEntries()
+	if err != nil {
+		return nil
+	}
+	return models
 }
 
 // GoToDefinition finds definition for a symbol at given position
@@ -117,12 +153,7 @@ func (a *App) GoToDefinition(filePath string, content string, line int, column i
 				results = append(results, usage)
 			}
 			// Also add the route definition itself
-			lp := a.getLaravelPlugin()
-			var routes []laravel.RouteIndexInfo
-			if lp != nil && lp.Routes() != nil {
-				routes, _ = lp.Routes().Index()
-			}
-			for _, route := range routes {
+			for _, route := range a.routeEntries() {
 				if route.Name == fullRouteName {
 					results = append(results, DefinitionResult{
 						Path:        route.FilePath,
@@ -143,11 +174,7 @@ func (a *App) GoToDefinition(filePath string, content string, line int, column i
 		// Extract full route name from quotes
 		fullRouteName := extractRouteName(beforeWord, word, afterWord)
 		if fullRouteName != "" {
-			var routes []laravel.RouteIndexInfo
-			if lp := a.getLaravelPlugin(); lp != nil && lp.Routes() != nil {
-				routes, _ = lp.Routes().Index()
-			}
-			for _, route := range routes {
+			for _, route := range a.routeEntries() {
 				if route.Name == fullRouteName {
 					// Если есть путь к контроллеру, используем его
 					if route.ControllerPath != "" {
@@ -194,11 +221,7 @@ func (a *App) GoToDefinition(filePath string, content string, line int, column i
 	if viewPatternMatch {
 		fullViewName := extractViewName(beforeWord, word, afterWord)
 		if fullViewName != "" {
-			var views []laravel.ViewIndexInfo
-			if lp := a.getLaravelPlugin(); lp != nil && lp.Views() != nil {
-				views, _ = lp.Views().Index()
-			}
-			for _, view := range views {
+			for _, view := range a.viewEntries() {
 				if view.Name == fullViewName {
 					results = append(results, DefinitionResult{
 						Path:        view.Path,
@@ -230,10 +253,7 @@ func (a *App) GoToDefinition(filePath string, content string, line int, column i
 
 	// 4. Check model static calls: User::find(), User::where()
 	if matchesPattern(afterWord, `^::`) && !matchesPattern(afterWord, `^::class`) {
-		var models map[string]laravel.ModelIndexInfo
-		if lp := a.getLaravelPlugin(); lp != nil && lp.Models() != nil {
-			models, _ = lp.Models().Index()
-		}
+		models := a.modelEntries()
 		if model, ok := models[word]; ok {
 			results = append(results, DefinitionResult{
 				Path:        model.FilePath,
@@ -260,10 +280,7 @@ func (a *App) GoToDefinition(filePath string, content string, line int, column i
 		}
 
 		// Ищем модель
-		var models map[string]laravel.ModelIndexInfo
-		if lp := a.getLaravelPlugin(); lp != nil && lp.Models() != nil {
-			models, _ = lp.Models().Index()
-		}
+		models := a.modelEntries()
 		if model, ok := models[word]; ok {
 			results = append(results, DefinitionResult{
 				Path:        model.FilePath,
@@ -297,10 +314,7 @@ func (a *App) GoToDefinition(filePath string, content string, line int, column i
 	// 6. Check model relationships: $this->hasMany(), $this->belongsTo()
 	if matchesPattern(beforeWord, `\$this->(hasMany|hasOne|belongsTo|belongsToMany|morphTo|morphMany)\(`) {
 		// word is the related model
-		var models map[string]laravel.ModelIndexInfo
-		if lp := a.getLaravelPlugin(); lp != nil && lp.Models() != nil {
-			models, _ = lp.Models().Index()
-		}
+		models := a.modelEntries()
 		if model, ok := models[word]; ok {
 			results = append(results, DefinitionResult{
 				Path:        model.FilePath,
@@ -334,10 +348,7 @@ func (a *App) GoToDefinition(filePath string, content string, line int, column i
 	if matchesPattern(beforeWord, `new\s+$`) && matchesPattern(afterWord, `^\(`) {
 		// word is the class being instantiated
 		// Check models
-		var models map[string]laravel.ModelIndexInfo
-		if lp := a.getLaravelPlugin(); lp != nil && lp.Models() != nil {
-			models, _ = lp.Models().Index()
-		}
+		models := a.modelEntries()
 		if model, ok := models[word]; ok {
 			results = append(results, DefinitionResult{
 				Path:        model.FilePath,

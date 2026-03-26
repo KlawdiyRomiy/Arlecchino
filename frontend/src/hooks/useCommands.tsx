@@ -18,28 +18,17 @@ import {
   Sprout,
   Zap,
   Server,
-  Eye,
   Archive,
   HardDrive,
+  Eye,
 } from "lucide-react";
 import * as App from "../../wailsjs/go/main/App";
-
-interface Command {
-  id: string;
-  label: string;
-  description?: string;
-  category: "artisan" | "composer" | "file" | "system" | "git";
-  icon: React.ReactNode;
-  shortcut?: string;
-  action: () => void | Promise<void>;
-  needsInput?: boolean;
-  inputPlaceholder?: string;
-}
+import type { Command } from "../types/commands";
 
 interface UseCommandsOptions {
   onSuccess?: (message: string) => void;
   onError?: (error: string) => void;
-  onOpenModal?: (modalType: string, data?: any) => void;
+  onOpenModal?: (modalType: string, data?: unknown) => void;
 }
 
 export const useCommands = (options: UseCommandsOptions = {}) => {
@@ -281,7 +270,7 @@ export const useCommands = (options: UseCommandsOptions = {}) => {
       {
         id: "make-model",
         label: "Create Model",
-        description: "php artisan make:model - Create a new Eloquent model",
+        description: "php artisan make:model - Create a new application model",
         category: "artisan",
         icon: <Box size={16} className="text-green-500" />,
         action: () => {
@@ -484,7 +473,7 @@ export const useCommands = (options: UseCommandsOptions = {}) => {
       {
         id: "install-livewire",
         label: "Install Livewire",
-        description: "livewire/livewire - Full-stack framework for Laravel",
+        description: "livewire/livewire - Reactive UI package",
         category: "composer",
         icon: <Zap size={16} className="text-pink-500" />,
         action: async () => {
@@ -499,7 +488,8 @@ export const useCommands = (options: UseCommandsOptions = {}) => {
       {
         id: "install-breeze",
         label: "Install Breeze",
-        description: "laravel/breeze - Lightweight authentication scaffolding",
+        description:
+          "laravel/breeze - Lightweight authentication scaffolding package",
         category: "composer",
         icon: <Shield size={16} className="text-blue-500" />,
         action: async () => {
@@ -514,7 +504,8 @@ export const useCommands = (options: UseCommandsOptions = {}) => {
       {
         id: "install-jetstream",
         label: "Install Jetstream",
-        description: "laravel/jetstream - Full authentication scaffolding",
+        description:
+          "laravel/jetstream - Full authentication scaffolding package",
         category: "composer",
         icon: <Server size={16} className="text-indigo-500" />,
         action: async () => {
@@ -529,7 +520,7 @@ export const useCommands = (options: UseCommandsOptions = {}) => {
       {
         id: "install-fortify",
         label: "Install Fortify",
-        description: "laravel/fortify - Backend authentication",
+        description: "laravel/fortify - Backend authentication package",
         category: "composer",
         icon: <Shield size={16} className="text-purple-500" />,
         action: async () => {
@@ -550,7 +541,8 @@ export const useCommands = (options: UseCommandsOptions = {}) => {
       {
         id: "artisan-serve",
         label: "Start Development Server",
-        description: "php artisan serve - Start the Laravel development server",
+        description:
+          "php artisan serve - Start the framework development server",
         category: "system",
         icon: <PlayCircle size={16} className="text-green-500" />,
         shortcut: "⌘+R+S",
@@ -598,34 +590,20 @@ export const useCommands = (options: UseCommandsOptions = {}) => {
           }
         },
       },
-      {
-        id: "debug-project-structure",
-        label: "Debug: Show Project Structure",
-        description: "Inspect project structure and log to console",
-        category: "system",
-        icon: <Eye size={16} className="text-gray-400" />,
-        action: async () => {
-          try {
-            const result = await App.InspectProject();
-            console.log("Project Structure:", result);
-            handleResult(
-              JSON.stringify(result, null, 2),
-              "Project structure logged to console",
-            );
-          } catch (e) {
-            handleError(e, "Failed to inspect project");
-          }
-        },
-      },
     ],
     [handleResult, handleError],
+  );
+
+  const allCommands = useMemo(
+    () => [...artisanCommands, ...composerCommands, ...systemCommands],
+    [artisanCommands, composerCommands, systemCommands],
   );
 
   return {
     artisanCommands,
     composerCommands,
     systemCommands,
-    allCommands: [...artisanCommands, ...composerCommands, ...systemCommands],
+    allCommands,
   };
 };
 

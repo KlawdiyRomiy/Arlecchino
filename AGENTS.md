@@ -719,31 +719,12 @@ Sub-Agents (specialists):
 
 ---
 
-## Project Vision
-
-Arlecchino — детерминированный автокомплит, агентский хаб для оркестровки и управление IDE через MCP Tool для полного контроля IDE и даже переделку его через этот tool.
-
-**Философия**: "Faster than Zed, smarter than JetBrains"
-
-**Отличия от конкурентов**:
-- Работает offline, без API задержек
-- Предсказуемое поведение (нет галлюцинаций)
-- Низкое потребление ресурсов
-- Framework-aware (понимает Laravel/Django/Rails conventions)
-
-**Уникальные фичи**:
-- Predictive Engine (6,383 LOC) — контекстный анализ без ML
-- Terminal Predictions — ghost text для artisan/manage.py
-- Virtual Store — autocomplete для несохранённых файлов
-- Hybrid Parsing — regex (быстро) + Tree-sitter (точно)
-
----
-
 ## Stack
 
 ### Go Version
 - **Текущий**: 1.26.1
 
 ### Dependencies
+- Wails 2.12.0
 - React 19.2.1, Zustand 5.0.8, Tailwind 4.1.17 — актуальны
 - Tree-sitter — проверить обновления грамматик

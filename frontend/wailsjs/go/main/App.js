@@ -146,6 +146,10 @@ export function GetAllLSPServers() {
   return window['go']['main']['App']['GetAllLSPServers']();
 }
 
+export function GetCurrentProjectFramework() {
+  return window['go']['main']['App']['GetCurrentProjectFramework']();
+}
+
 export function GetCurrentProjectID() {
   return window['go']['main']['App']['GetCurrentProjectID']();
 }
@@ -252,6 +256,10 @@ export function GetLaravelVersion(arg1) {
 
 export function GetMiddlewareList() {
   return window['go']['main']['App']['GetMiddlewareList']();
+}
+
+export function GetPluginCommands() {
+  return window['go']['main']['App']['GetPluginCommands']();
 }
 
 export function GetRecentProjects(arg1) {

@@ -109,10 +109,6 @@ class LaravelBridge
                     $result = $this->executeQuery($params);
                     $success = true;
                     break;
-                case "artisan.run":
-                    $result = $this->runArtisanCommand($params);
-                    $success = true;
-                    break;
                 case "middleware.list":
                     $result = $this->getMiddlewareList($params);
                     $success = true;
@@ -416,43 +412,6 @@ class LaravelBridge
         } catch (Exception $e) {
             throw new Exception("Failed to get middleware: " . $e->getMessage());
         }
-    }
-
-    private function runArtisanCommand($params)
-    {
-        $command = $params["command"] ?? null;
-        $arguments = $params["arguments"] ?? [];
-
-        if (!$command) {
-            throw new Exception("Command is required for artisan.run action");
-        }
-
-        $fullCommand = "php artisan {$command}";
-
-        foreach ($arguments as $key => $value) {
-            if (is_numeric($key)) {
-                $fullCommand .= " " . escapeshellarg($value);
-            } else {
-                if (is_bool($value)) {
-                    if ($value) {
-                        $fullCommand .= " --{$key}";
-                    }
-                } else {
-                    $fullCommand .= " --{$key}=" . escapeshellarg($value);
-                }
-            }
-        }
-
-        $output = shell_exec($fullCommand);
-
-        if ($output === null) {
-            throw new Exception("Failed to execute artisan command");
-        }
-
-        return [
-            "command" => $fullCommand,
-            "output" => trim($output),
-        ];
     }
 
     private function inspectProject($params)

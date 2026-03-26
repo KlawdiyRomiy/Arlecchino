@@ -163,438 +163,6 @@ export namespace indexer {
 
 }
 
-export namespace laravel {
-	
-	export class BindingInfo {
-	    abstract: string;
-	    concrete: string;
-	    shared: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new BindingInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.abstract = source["abstract"];
-	        this.concrete = source["concrete"];
-	        this.shared = source["shared"];
-	    }
-	}
-	export class ComponentOptions {
-	    Force: boolean;
-	    Plain: boolean;
-	    Invokable: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new ComponentOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Force = source["Force"];
-	        this.Plain = source["Plain"];
-	        this.Invokable = source["Invokable"];
-	    }
-	}
-	export class ControllerOptions {
-	    Resource: boolean;
-	    Api: boolean;
-	    Plain: boolean;
-	    Invokable: boolean;
-	    Model: string;
-	    Parent: string;
-	    Singleton: boolean;
-	    Requests: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new ControllerOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Resource = source["Resource"];
-	        this.Api = source["Api"];
-	        this.Plain = source["Plain"];
-	        this.Invokable = source["Invokable"];
-	        this.Model = source["Model"];
-	        this.Parent = source["Parent"];
-	        this.Singleton = source["Singleton"];
-	        this.Requests = source["Requests"];
-	    }
-	}
-	export class EnumClassOptions {
-	    Force: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new EnumClassOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Force = source["Force"];
-	    }
-	}
-	export class EventClassOptions {
-	    Force: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new EventClassOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Force = source["Force"];
-	    }
-	}
-	export class FactoryClassOptions {
-	    Force: boolean;
-	    Model: string;
-	    Seeded: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new FactoryClassOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Force = source["Force"];
-	        this.Model = source["Model"];
-	        this.Seeded = source["Seeded"];
-	    }
-	}
-	export class JobOptions {
-	    Sync: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new JobOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Sync = source["Sync"];
-	    }
-	}
-	export class LivewireComponentOptions {
-	    Force: boolean;
-	    Inline: boolean;
-	    Plain: boolean;
-	    Invokable: boolean;
-	    SkipViews: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new LivewireComponentOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Force = source["Force"];
-	        this.Inline = source["Inline"];
-	        this.Plain = source["Plain"];
-	        this.Invokable = source["Invokable"];
-	        this.SkipViews = source["SkipViews"];
-	    }
-	}
-	export class MailOptions {
-	    Markdown: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new MailOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Markdown = source["Markdown"];
-	    }
-	}
-	export class MethodInfo {
-	    name: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new MethodInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	    }
-	}
-	export class MiddlewareInfo {
-	    global: string[];
-	    groups: Record<string, Array<string>>;
-	    aliases: Record<string, string>;
-	
-	    static createFrom(source: any = {}) {
-	        return new MiddlewareInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.global = source["global"];
-	        this.groups = source["groups"];
-	        this.aliases = source["aliases"];
-	    }
-	}
-	export class MigrationOptions {
-	    Create: string;
-	    Table: string;
-	    Path: string;
-	    Force: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new MigrationOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Create = source["Create"];
-	        this.Table = source["Table"];
-	        this.Path = source["Path"];
-	        this.Force = source["Force"];
-	    }
-	}
-	export class RelationshipInfo {
-	    name: string;
-	    type: string;
-	    related_model: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new RelationshipInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.type = source["type"];
-	        this.related_model = source["related_model"];
-	    }
-	}
-	export class PropertyInfo {
-	    name: string;
-	    visibility: string;
-	    doc_comment: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PropertyInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.visibility = source["visibility"];
-	        this.doc_comment = source["doc_comment"];
-	    }
-	}
-	export class ModelInfo {
-	    name: string;
-	    namespace: string;
-	    filename: string;
-	    properties: PropertyInfo[];
-	    methods: MethodInfo[];
-	    relationships: RelationshipInfo[];
-	
-	    static createFrom(source: any = {}) {
-	        return new ModelInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.namespace = source["namespace"];
-	        this.filename = source["filename"];
-	        this.properties = this.convertValues(source["properties"], PropertyInfo);
-	        this.methods = this.convertValues(source["methods"], MethodInfo);
-	        this.relationships = this.convertValues(source["relationships"], RelationshipInfo);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	export class ModelOptions {
-	    All: boolean;
-	    Controller: boolean;
-	    Factory: boolean;
-	    Invokable: boolean;
-	    Migration: boolean;
-	    Policy: boolean;
-	    Resource: boolean;
-	    Seeder: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new ModelOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.All = source["All"];
-	        this.Controller = source["Controller"];
-	        this.Factory = source["Factory"];
-	        this.Invokable = source["Invokable"];
-	        this.Migration = source["Migration"];
-	        this.Policy = source["Policy"];
-	        this.Resource = source["Resource"];
-	        this.Seeder = source["Seeder"];
-	    }
-	}
-	export class NotificationOptions {
-	    Force: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new NotificationOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Force = source["Force"];
-	    }
-	}
-	export class PolicyClassOptions {
-	    Force: boolean;
-	    Model: string;
-	    Guard: string;
-	    Resource: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new PolicyClassOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Force = source["Force"];
-	        this.Model = source["Model"];
-	        this.Guard = source["Guard"];
-	        this.Resource = source["Resource"];
-	    }
-	}
-	export class ViewInfo {
-	    name: string;
-	    path: string;
-	    type: string;
-	    class?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ViewInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.name = source["name"];
-	        this.path = source["path"];
-	        this.type = source["type"];
-	        this.class = source["class"];
-	    }
-	}
-	export class RouteInfo {
-	    method: string;
-	    uri: string;
-	    name: string;
-	    action: string;
-	    middleware: string[];
-	
-	    static createFrom(source: any = {}) {
-	        return new RouteInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.method = source["method"];
-	        this.uri = source["uri"];
-	        this.name = source["name"];
-	        this.action = source["action"];
-	        this.middleware = source["middleware"];
-	    }
-	}
-	export class ProjectStructure {
-	    routes: RouteInfo[];
-	    models: ModelInfo[];
-	    bindings: BindingInfo[];
-	    views: ViewInfo[];
-	    middleware: MiddlewareInfo;
-	
-	    static createFrom(source: any = {}) {
-	        return new ProjectStructure(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.routes = this.convertValues(source["routes"], RouteInfo);
-	        this.models = this.convertValues(source["models"], ModelInfo);
-	        this.bindings = this.convertValues(source["bindings"], BindingInfo);
-	        this.views = this.convertValues(source["views"], ViewInfo);
-	        this.middleware = this.convertValues(source["middleware"], MiddlewareInfo);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-	
-	
-	export class ResourceClassOptions {
-	    Collection: boolean;
-	    Force: boolean;
-	    Invokable: boolean;
-	    Model: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ResourceClassOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Collection = source["Collection"];
-	        this.Force = source["Force"];
-	        this.Invokable = source["Invokable"];
-	        this.Model = source["Model"];
-	    }
-	}
-	
-	export class SeederClassOptions {
-	    Force: boolean;
-	    Class: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new SeederClassOptions(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.Force = source["Force"];
-	        this.Class = source["Class"];
-	    }
-	}
-
-}
-
 export namespace lsp {
 	
 	export class ServerStatus {
@@ -918,6 +486,24 @@ export namespace main {
 	        this.isDirectory = source["isDirectory"];
 	    }
 	}
+	export class FlagDefJS {
+	    name: string;
+	    short: string;
+	    description: string;
+	    hasValue: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new FlagDefJS(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.short = source["short"];
+	        this.description = source["description"];
+	        this.hasValue = source["hasValue"];
+	    }
+	}
 	export class GitCommitInfo {
 	    hash: string;
 	    shortHash: string;
@@ -1223,6 +809,50 @@ export namespace main {
 	        this.documentation = source["documentation"];
 	    }
 	}
+	export class PluginCommandDefJS {
+	    plugin: string;
+	    prefix: string;
+	    name: string;
+	    description: string;
+	    outputKind: string;
+	    pathPattern: string;
+	    namespace: string;
+	    flags: FlagDefJS[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PluginCommandDefJS(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.plugin = source["plugin"];
+	        this.prefix = source["prefix"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.outputKind = source["outputKind"];
+	        this.pathPattern = source["pathPattern"];
+	        this.namespace = source["namespace"];
+	        this.flags = this.convertValues(source["flags"], FlagDefJS);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	
 	export class SearchResult {
 	    file: string;
@@ -1381,6 +1011,243 @@ export namespace main {
 	        this.isSafe = source["isSafe"];
 	        this.exitCode = source["exitCode"];
 	        this.truncated = source["truncated"];
+	    }
+	}
+
+}
+
+export namespace plugins {
+	
+	export class ComponentOptions {
+	    Force: boolean;
+	    Plain: boolean;
+	    Invokable: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ComponentOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Force = source["Force"];
+	        this.Plain = source["Plain"];
+	        this.Invokable = source["Invokable"];
+	    }
+	}
+	export class ControllerOptions {
+	    Resource: boolean;
+	    Api: boolean;
+	    Plain: boolean;
+	    Invokable: boolean;
+	    Model: string;
+	    Parent: string;
+	    Singleton: boolean;
+	    Requests: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ControllerOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Resource = source["Resource"];
+	        this.Api = source["Api"];
+	        this.Plain = source["Plain"];
+	        this.Invokable = source["Invokable"];
+	        this.Model = source["Model"];
+	        this.Parent = source["Parent"];
+	        this.Singleton = source["Singleton"];
+	        this.Requests = source["Requests"];
+	    }
+	}
+	export class EnumClassOptions {
+	    Force: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new EnumClassOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Force = source["Force"];
+	    }
+	}
+	export class EventClassOptions {
+	    Force: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new EventClassOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Force = source["Force"];
+	    }
+	}
+	export class FactoryClassOptions {
+	    Force: boolean;
+	    Model: string;
+	    Seeded: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new FactoryClassOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Force = source["Force"];
+	        this.Model = source["Model"];
+	        this.Seeded = source["Seeded"];
+	    }
+	}
+	export class JobOptions {
+	    Sync: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new JobOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Sync = source["Sync"];
+	    }
+	}
+	export class LivewireComponentOptions {
+	    Force: boolean;
+	    Inline: boolean;
+	    Plain: boolean;
+	    Invokable: boolean;
+	    SkipViews: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new LivewireComponentOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Force = source["Force"];
+	        this.Inline = source["Inline"];
+	        this.Plain = source["Plain"];
+	        this.Invokable = source["Invokable"];
+	        this.SkipViews = source["SkipViews"];
+	    }
+	}
+	export class MailOptions {
+	    Markdown: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MailOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Markdown = source["Markdown"];
+	    }
+	}
+	export class MigrationOptions {
+	    Create: string;
+	    Table: string;
+	    Path: string;
+	    Force: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MigrationOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Create = source["Create"];
+	        this.Table = source["Table"];
+	        this.Path = source["Path"];
+	        this.Force = source["Force"];
+	    }
+	}
+	export class ModelOptions {
+	    All: boolean;
+	    Controller: boolean;
+	    Factory: boolean;
+	    Invokable: boolean;
+	    Migration: boolean;
+	    Policy: boolean;
+	    Resource: boolean;
+	    Seeder: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.All = source["All"];
+	        this.Controller = source["Controller"];
+	        this.Factory = source["Factory"];
+	        this.Invokable = source["Invokable"];
+	        this.Migration = source["Migration"];
+	        this.Policy = source["Policy"];
+	        this.Resource = source["Resource"];
+	        this.Seeder = source["Seeder"];
+	    }
+	}
+	export class NotificationOptions {
+	    Force: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new NotificationOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Force = source["Force"];
+	    }
+	}
+	export class PolicyClassOptions {
+	    Force: boolean;
+	    Model: string;
+	    Guard: string;
+	    Resource: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new PolicyClassOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Force = source["Force"];
+	        this.Model = source["Model"];
+	        this.Guard = source["Guard"];
+	        this.Resource = source["Resource"];
+	    }
+	}
+	export class ResourceClassOptions {
+	    Collection: boolean;
+	    Force: boolean;
+	    Invokable: boolean;
+	    Model: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ResourceClassOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Collection = source["Collection"];
+	        this.Force = source["Force"];
+	        this.Invokable = source["Invokable"];
+	        this.Model = source["Model"];
+	    }
+	}
+	export class SeederClassOptions {
+	    Force: boolean;
+	    Class: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SeederClassOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Force = source["Force"];
+	        this.Class = source["Class"];
 	    }
 	}
 

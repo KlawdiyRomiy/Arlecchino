@@ -59,6 +59,12 @@ type TerminalPlugin interface {
 	SearchClasses(prefix string) []ClassResult
 }
 
+// CommandsProvider extends Plugin with command registry exposure.
+type CommandsProvider interface {
+	Plugin
+	Commands() *CommandRegistry
+}
+
 // ClassResult represents a class search result from plugin
 type ClassResult struct {
 	Name      string
@@ -220,13 +226,15 @@ func (r *Registry) SuggestCommand(projectPath, input string) []CommandSuggestion
 	return suggestions
 }
 
-// ParseCommand parses input using the first applicable terminal plugin
+// ParseCommand parses input using the first applicable terminal plugin that returns a valid result.
 func (r *Registry) ParseCommand(projectPath, input string) *ParsedCommand {
-	tp := r.GetTerminalPlugin(projectPath)
-	if tp == nil {
-		return nil
+	for _, tp := range r.GetAllTerminalPlugins(projectPath) {
+		parsed := tp.ParseCommand(input)
+		if parsed != nil && parsed.Valid {
+			return parsed
+		}
 	}
-	return tp.ParseCommand(input)
+	return nil
 }
 
 // UpdatePrediction updates predictions on all applicable terminal plugins
@@ -276,6 +284,19 @@ func (r *Registry) SearchClasses(projectPath, prefix string) []ClassResult {
 		result = append(result, tp.SearchClasses(prefix)...)
 	}
 	return result
+}
+
+// GetAllCommands aggregates command definitions from all applicable command providers.
+func (r *Registry) GetAllCommands(projectPath string) []*CommandDef {
+	result := NewCommandRegistry()
+	for _, p := range r.applicablePlugins(projectPath) {
+		provider, ok := p.(CommandsProvider)
+		if !ok {
+			continue
+		}
+		result.Merge(provider.Commands())
+	}
+	return result.All()
 }
 
 func (r *Registry) applicablePlugins(projectPath string) []Plugin {

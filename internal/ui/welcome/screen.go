@@ -29,12 +29,10 @@ type ToolStatus struct {
 func (ws *WelcomeScreen) ValidateEnvironment() map[string]bool {
 	phpAvailable := exec.Command("php", "--version").Run() == nil
 	composerAvailable := exec.Command("composer", "--version").Run() == nil
-	artisanAvailable := true
 
 	return map[string]bool{
 		"php":      phpAvailable,
 		"composer": composerAvailable,
-		"artisan":  artisanAvailable,
 	}
 }
 

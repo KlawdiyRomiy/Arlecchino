@@ -2,8 +2,10 @@ package laravel
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"arlecchino/internal/indexer"
 	"arlecchino/internal/indexer/adapters"
@@ -18,6 +20,7 @@ type Plugin struct {
 	adapter     *adapters.LaravelAdapter
 	registry    *plugins.CommandRegistry
 	initialized bool
+	mu          sync.Mutex
 
 	// Laravel-specific components (moved from app.go)
 	exec          *SimpleExec
@@ -26,6 +29,35 @@ type Plugin struct {
 	routesIndexer *RoutesIndexer
 	viewsIndexer  *ViewsIndexer
 	configIndexer *ConfigIndexer
+}
+
+var (
+	newSimpleExec = NewSimpleExec
+	newPHPBridge  = NewPHPBridge
+)
+
+type runtimeInspector struct {
+	bridge *PHPBridge
+}
+
+func (r runtimeInspector) GetMiddlewareList() (interface{}, error) {
+	return r.bridge.GetMiddlewareList()
+}
+
+func (r runtimeInspector) GetRouteList(filter string) (interface{}, error) {
+	return r.bridge.GetRouteList(filter)
+}
+
+func (r runtimeInspector) AnalyzeModels(modelName string) (interface{}, error) {
+	return r.bridge.AnalyzeModels(modelName)
+}
+
+func (r runtimeInspector) ExecuteQuery(query string, bindings []interface{}) (interface{}, error) {
+	return r.bridge.ExecuteQuery(query, bindings)
+}
+
+func (r runtimeInspector) InspectProject() (interface{}, error) {
+	return r.bridge.InspectProject()
 }
 
 // New creates a new Laravel plugin
@@ -58,21 +90,6 @@ func (p *Plugin) Init(projectPath string) error {
 	// Initialize Laravel adapter for indexing
 	p.adapter = adapters.NewLaravelAdapter()
 
-	// Initialize SimpleExec for artisan commands
-	exec, err := NewSimpleExec(projectPath)
-	if err != nil {
-		return err
-	}
-	p.exec = exec
-
-	// Initialize PHP bridge (optional - may fail if PHP not available)
-	bridge, err := NewPHPBridge(projectPath)
-	if err != nil {
-		fmt.Printf("[Laravel Plugin] Warning: PHP bridge not available: %v\n", err)
-	} else {
-		p.bridge = bridge
-	}
-
 	// Initialize indexers
 	p.modelsIndexer = NewModelsIndexer(projectPath)
 	p.routesIndexer = NewRoutesIndexer(projectPath)
@@ -85,10 +102,14 @@ func (p *Plugin) Init(projectPath string) error {
 
 // Close releases plugin resources
 func (p *Plugin) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if p.engine != nil {
 		p.engine.Close()
 		p.engine = nil
 	}
+	p.exec = nil
 	if p.bridge != nil {
 		p.bridge.Close()
 		p.bridge = nil
@@ -100,12 +121,70 @@ func (p *Plugin) Close() {
 
 // Exec returns the SimpleExec for artisan command execution
 func (p *Plugin) Exec() *SimpleExec {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.exec
+}
+
+// EnsureExec lazily initializes the SimpleExec for artisan command execution.
+func (p *Plugin) EnsureExec() (*SimpleExec, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.projectPath == "" {
+		return nil, fmt.Errorf("laravel plugin is not initialized")
+	}
+	if p.exec != nil {
+		return p.exec, nil
+	}
+
+	exec, err := newSimpleExec(p.projectPath)
+	if err != nil {
+		return nil, err
+	}
+	p.exec = exec
+	return p.exec, nil
+}
+
+// EnsureArtisanExecutor exposes the Laravel executor through the generic plugin capability seam.
+func (p *Plugin) EnsureArtisanExecutor() (plugins.ArtisanExecutor, error) {
+	return p.EnsureExec()
 }
 
 // Bridge returns the PHP bridge for runtime introspection
 func (p *Plugin) Bridge() *PHPBridge {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.bridge
+}
+
+// EnsureBridge lazily initializes the PHP bridge for runtime introspection.
+func (p *Plugin) EnsureBridge() (*PHPBridge, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.projectPath == "" {
+		return nil, fmt.Errorf("laravel plugin is not initialized")
+	}
+	if p.bridge != nil {
+		return p.bridge, nil
+	}
+
+	bridge, err := newPHPBridge(p.projectPath)
+	if err != nil {
+		return nil, err
+	}
+	p.bridge = bridge
+	return p.bridge, nil
+}
+
+// EnsureRuntimeInspector exposes the Laravel bridge through the generic plugin capability seam.
+func (p *Plugin) EnsureRuntimeInspector() (plugins.RuntimeInspector, error) {
+	bridge, err := p.EnsureBridge()
+	if err != nil {
+		return nil, err
+	}
+	return runtimeInspector{bridge: bridge}, nil
 }
 
 // Models returns the models indexer
@@ -113,9 +192,87 @@ func (p *Plugin) Models() *ModelsIndexer {
 	return p.modelsIndexer
 }
 
+// ModelEntries exposes Laravel model index data through the generic plugin capability seam.
+func (p *Plugin) ModelEntries() (map[string]plugins.ModelEntry, error) {
+	if p.modelsIndexer == nil {
+		return map[string]plugins.ModelEntry{}, nil
+	}
+
+	models, err := p.modelsIndexer.Index()
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make(map[string]plugins.ModelEntry, len(models))
+	for name, model := range models {
+		fields := make([]plugins.ModelField, 0, len(model.Fields))
+		for _, field := range model.Fields {
+			fields = append(fields, plugins.ModelField{
+				Name:     field.Name,
+				Type:     field.Type,
+				Nullable: field.Nullable,
+				Default:  field.Default,
+			})
+		}
+
+		relationships := make([]plugins.ModelRelationship, 0, len(model.Relationships))
+		for _, relationship := range model.Relationships {
+			relationships = append(relationships, plugins.ModelRelationship{
+				Name:   relationship.Name,
+				Type:   relationship.Type,
+				Model:  relationship.Model,
+				Method: relationship.Method,
+			})
+		}
+
+		entries[name] = plugins.ModelEntry{
+			Name:          model.Name,
+			Table:         model.Table,
+			Fields:        fields,
+			Fillable:      append([]string(nil), model.Fillable...),
+			Hidden:        append([]string(nil), model.Hidden...),
+			Casts:         maps.Clone(model.Casts),
+			Relationships: relationships,
+			FilePath:      model.FilePath,
+		}
+	}
+
+	return entries, nil
+}
+
 // Routes returns the routes indexer
 func (p *Plugin) Routes() *RoutesIndexer {
 	return p.routesIndexer
+}
+
+// RouteEntries exposes Laravel route index data through the generic plugin capability seam.
+func (p *Plugin) RouteEntries() ([]plugins.RouteEntry, error) {
+	if p.routesIndexer == nil {
+		return []plugins.RouteEntry{}, nil
+	}
+
+	routes, err := p.routesIndexer.Index()
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]plugins.RouteEntry, 0, len(routes))
+	for _, route := range routes {
+		entries = append(entries, plugins.RouteEntry{
+			Name:           route.Name,
+			Method:         route.Method,
+			URI:            route.URI,
+			Action:         route.Action,
+			Controller:     route.Controller,
+			Middleware:     append([]string(nil), route.Middleware...),
+			FilePath:       route.FilePath,
+			LineNumber:     route.LineNumber,
+			ControllerPath: route.ControllerPath,
+			ActionLine:     route.ActionLine,
+		})
+	}
+
+	return entries, nil
 }
 
 // Views returns the views indexer
@@ -123,14 +280,62 @@ func (p *Plugin) Views() *ViewsIndexer {
 	return p.viewsIndexer
 }
 
+// ViewEntries exposes Laravel view index data through the generic plugin capability seam.
+func (p *Plugin) ViewEntries() ([]plugins.ViewEntry, error) {
+	if p.viewsIndexer == nil {
+		return []plugins.ViewEntry{}, nil
+	}
+
+	views, err := p.viewsIndexer.Index()
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]plugins.ViewEntry, 0, len(views))
+	for _, view := range views {
+		entries = append(entries, plugins.ViewEntry{
+			Name:     view.Name,
+			Path:     view.Path,
+			RelPath:  view.RelPath,
+			IsLayout: view.IsLayout,
+		})
+	}
+
+	return entries, nil
+}
+
 // Config returns the config indexer
 func (p *Plugin) Config() *ConfigIndexer {
 	return p.configIndexer
 }
 
+// ConfigEntries exposes Laravel config index data through the generic plugin capability seam.
+func (p *Plugin) ConfigEntries() ([]plugins.ConfigEntry, error) {
+	if p.configIndexer == nil {
+		return []plugins.ConfigEntry{}, nil
+	}
+
+	keys, err := p.configIndexer.Index()
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]plugins.ConfigEntry, 0, len(keys))
+	for _, key := range keys {
+		entries = append(entries, plugins.ConfigEntry{
+			Key:         key.Key,
+			Value:       key.Value,
+			File:        key.File,
+			Description: key.Description,
+		})
+	}
+
+	return entries, nil
+}
+
 // CreateProject creates a new Laravel project (implements ProjectCreator interface)
 func (p *Plugin) CreateProject(name string, directory string) (string, error) {
-	exec, err := NewSimpleExec(directory)
+	exec, err := newSimpleExec(directory)
 	if err != nil {
 		return "", err
 	}
@@ -357,3 +562,4 @@ func findSubstring(content, substr []byte) int {
 // Ensure Plugin implements the interfaces
 var _ plugins.Plugin = (*Plugin)(nil)
 var _ plugins.TerminalPlugin = (*Plugin)(nil)
+var _ plugins.CommandsProvider = (*Plugin)(nil)

@@ -12,6 +12,7 @@ export interface WorkspaceProject {
 interface WorkspaceState {
   projects: WorkspaceProject[];
   activeId: string | null;
+  activeFramework: string | null;
   pendingId: string | null;
   ready: boolean;
   switchDirection: number;
@@ -25,6 +26,7 @@ interface WorkspaceState {
   switchNextProject: () => string | null;
   switchPrevProject: () => string | null;
   setReady: (ready: boolean) => void;
+  setActiveFramework: (framework: string | null) => void;
   blockProjectSwitch: (key: string) => void;
   unblockProjectSwitch: (key: string) => void;
   clearProjectSwitchBlockers: () => void;
@@ -82,6 +84,7 @@ const createWorkspaceStore = () =>
       (set, get) => ({
         projects: [],
         activeId: null,
+        activeFramework: null,
         pendingId: null,
         ready: false,
         switchDirection: 1,
@@ -146,7 +149,12 @@ const createWorkspaceStore = () =>
         },
 
         clearActiveProject: () =>
-          set({ activeId: null, pendingId: null, uiBlockers: [] }),
+          set({
+            activeId: null,
+            activeFramework: null,
+            pendingId: null,
+            uiBlockers: [],
+          }),
 
         beginProjectSwitch: (id: string, direction?: number) => {
           const state = get();
@@ -203,6 +211,9 @@ const createWorkspaceStore = () =>
         },
 
         setReady: (ready: boolean) => set({ ready }),
+
+        setActiveFramework: (activeFramework: string | null) =>
+          set({ activeFramework }),
 
         blockProjectSwitch: (key: string) => {
           if (!key) {
@@ -277,9 +288,15 @@ export const initializeWorkspace = async () => {
 
     try {
       await AppFunctions.OpenProject(project.path);
+      useWorkspaceStore
+        .getState()
+        .setActiveFramework(
+          (await AppFunctions.GetCurrentProjectFramework()) || null,
+        );
     } catch (error) {
       console.error("Error restoring workspace:", error);
       useWorkspaceStore.getState().removeProject(activeId);
+      useWorkspaceStore.getState().setActiveFramework(null);
     }
   })().finally(() => {
     useWorkspaceStore.getState().setReady(true);

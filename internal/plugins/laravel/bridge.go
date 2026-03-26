@@ -312,17 +312,3 @@ func (b *PHPBridge) ExecuteQuery(query string, bindings []interface{}) (interfac
 
 	return result, nil
 }
-
-func (b *PHPBridge) RunArtisanCommand(command string, arguments map[string]interface{}) (interface{}, error) {
-	params := map[string]interface{}{
-		"command":   command,
-		"arguments": arguments,
-	}
-
-	result, err := b.Call("artisan.run", params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to run artisan command: %w", err)
-	}
-
-	return result, nil
-}

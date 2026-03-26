@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"arlecchino/internal/plugins"
 )
 
 type SimpleExec struct {
@@ -13,98 +15,12 @@ type SimpleExec struct {
 	PHPPath     string
 }
 
-type ControllerOptions struct {
-	Resource  bool
-	Api       bool
-	Plain     bool
-	Invokable bool
-	Model     string
-	Parent    string
-	Singleton bool
-	Requests  bool
-}
-
-type ModelOptions struct {
-	All        bool
-	Controller bool
-	Factory    bool
-	Invokable  bool
-	Migration  bool
-	Policy     bool
-	Resource   bool
-	Seeder     bool
-}
-
 type ListenerOptions struct {
 	Event  string
 	Queued bool
 }
 
-type MailOptions struct {
-	Markdown string
-}
-
-type NotificationOptions struct {
-	Force bool
-}
-
-type JobOptions struct {
-	Sync bool
-}
-
-type ComponentOptions struct {
-	Force     bool
-	Plain     bool
-	Invokable bool
-}
-
-type LivewireComponentOptions struct {
-	Force     bool
-	Inline    bool
-	Plain     bool
-	Invokable bool
-	SkipViews bool
-}
-
-type EnumClassOptions struct {
-	Force bool
-}
-
-type EventClassOptions struct {
-	Force bool
-}
-
-type ResourceClassOptions struct {
-	Collection bool
-	Force      bool
-	Invokable  bool
-	Model      string
-}
-
-type FactoryClassOptions struct {
-	Force  bool
-	Model  string
-	Seeded bool
-}
-
-type SeederClassOptions struct {
-	Force bool
-	Class string
-}
-
-type PolicyClassOptions struct {
-	Force    bool
-	Model    string
-	Guard    string
-	Resource bool
-}
-
-type MigrationOptions struct {
-	Create string // Create the migration for the given table
-	Table  string // The table to migrate
-	Path   string // The location where the migration file should be created
-	Force  bool   // Create the class even if the migration already exists
-}
+var phpLookPath = exec.LookPath
 
 func NewSimpleExec(projectPath string) (*SimpleExec, error) {
 	phpPath, err := findPHP()
@@ -119,29 +35,10 @@ func NewSimpleExec(projectPath string) (*SimpleExec, error) {
 }
 
 func findPHP() (string, error) {
-	if path, err := exec.LookPath("php"); err == nil {
+	if path, err := phpLookPath("php"); err == nil {
 		return path, nil
 	}
-
-	paths := []string{
-		"/usr/bin/php",
-		"/usr/local/bin/php",
-		"/opt/homebrew/bin/php",
-		"/Applications/MAMP/bin/php/php8.1/bin/php",
-		"/Applications/MAMP/bin/php/php8.2/bin/php",
-		"/Applications/MAMP/bin/php/php8.3/bin/php",
-		"/Applications/MAMP/bin/php/php8.4/bin/php",
-		"/Applications/MAMP/bin/php/php8.5/bin/php",
-		"/Library/Application Support/Herd/bin//php",
-	}
-
-	for _, path := range paths {
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
-		}
-	}
-
-	return "", fmt.Errorf("PHP not found in standard locations")
+	return "", fmt.Errorf("php not found in PATH; add it to your shell profile")
 }
 
 func (s *SimpleExec) MakeNewLaravelProject(projectName string) error {
@@ -175,7 +72,7 @@ func (s *SimpleExec) RunMigrate() error {
 	return err
 }
 
-func (s *SimpleExec) CreateController(name string, opts ControllerOptions) error {
+func (s *SimpleExec) CreateController(name string, opts plugins.ControllerOptions) error {
 	args := []string{name}
 
 	if opts.Api {
@@ -204,7 +101,7 @@ func (s *SimpleExec) CreateController(name string, opts ControllerOptions) error
 	return err
 }
 
-func (s *SimpleExec) CreateModel(name string, opts ModelOptions) error {
+func (s *SimpleExec) CreateModel(name string, opts plugins.ModelOptions) error {
 	args := []string{name}
 	if opts.All {
 		args = append(args, "--all")
@@ -248,7 +145,7 @@ func (s *SimpleExec) CreateListener(name string, opts ListenerOptions) error {
 	return err
 }
 
-func (s *SimpleExec) CreateMail(name string, opts MailOptions) error {
+func (s *SimpleExec) CreateMail(name string, opts plugins.MailOptions) error {
 	args := []string{name}
 	if opts.Markdown != "" {
 		args = append(args, "--markdown="+opts.Markdown)
@@ -257,7 +154,7 @@ func (s *SimpleExec) CreateMail(name string, opts MailOptions) error {
 	return err
 }
 
-func (s *SimpleExec) CreateNotifications(name string, opts NotificationOptions) error {
+func (s *SimpleExec) CreateNotifications(name string, opts plugins.NotificationOptions) error {
 	args := []string{name}
 
 	if opts.Force {
@@ -268,7 +165,7 @@ func (s *SimpleExec) CreateNotifications(name string, opts NotificationOptions) 
 	return err
 }
 
-func (s *SimpleExec) CreateComponent(name string, opts ComponentOptions) error {
+func (s *SimpleExec) CreateComponent(name string, opts plugins.ComponentOptions) error {
 	args := []string{name}
 
 	if opts.Force {
@@ -285,7 +182,7 @@ func (s *SimpleExec) CreateComponent(name string, opts ComponentOptions) error {
 	return err
 }
 
-func (s *SimpleExec) CreateLivewire(name string, opts LivewireComponentOptions) error {
+func (s *SimpleExec) CreateLivewire(name string, opts plugins.LivewireComponentOptions) error {
 	args := []string{name}
 
 	if opts.Force {
@@ -308,7 +205,7 @@ func (s *SimpleExec) CreateLivewire(name string, opts LivewireComponentOptions) 
 	return err
 }
 
-func (s *SimpleExec) CreateEnum(name string, opts EnumClassOptions) error {
+func (s *SimpleExec) CreateEnum(name string, opts plugins.EnumClassOptions) error {
 	args := []string{name}
 
 	if opts.Force {
@@ -319,7 +216,7 @@ func (s *SimpleExec) CreateEnum(name string, opts EnumClassOptions) error {
 	return err
 }
 
-func (s *SimpleExec) CreateEvent(name string, opts EventClassOptions) error {
+func (s *SimpleExec) CreateEvent(name string, opts plugins.EventClassOptions) error {
 	args := []string{name}
 
 	if opts.Force {
@@ -330,7 +227,7 @@ func (s *SimpleExec) CreateEvent(name string, opts EventClassOptions) error {
 	return err
 }
 
-func (s *SimpleExec) CreateJob(name string, opts JobOptions) error {
+func (s *SimpleExec) CreateJob(name string, opts plugins.JobOptions) error {
 	args := []string{name}
 
 	if opts.Sync {
@@ -341,7 +238,7 @@ func (s *SimpleExec) CreateJob(name string, opts JobOptions) error {
 	return err
 }
 
-func (s *SimpleExec) CreateResource(name string, opts ResourceClassOptions) error {
+func (s *SimpleExec) CreateResource(name string, opts plugins.ResourceClassOptions) error {
 	args := []string{name}
 
 	if opts.Collection {
@@ -361,7 +258,7 @@ func (s *SimpleExec) CreateResource(name string, opts ResourceClassOptions) erro
 	return err
 }
 
-func (s *SimpleExec) CreateFactory(name string, opts FactoryClassOptions) error {
+func (s *SimpleExec) CreateFactory(name string, opts plugins.FactoryClassOptions) error {
 	args := []string{name}
 
 	if opts.Force {
@@ -378,7 +275,7 @@ func (s *SimpleExec) CreateFactory(name string, opts FactoryClassOptions) error 
 	return err
 }
 
-func (s *SimpleExec) CreateSeeder(name string, opts SeederClassOptions) error {
+func (s *SimpleExec) CreateSeeder(name string, opts plugins.SeederClassOptions) error {
 	args := []string{name}
 
 	if opts.Force {
@@ -392,7 +289,7 @@ func (s *SimpleExec) CreateSeeder(name string, opts SeederClassOptions) error {
 	return err
 }
 
-func (s *SimpleExec) CreatePolicy(name string, opts PolicyClassOptions) error {
+func (s *SimpleExec) CreatePolicy(name string, opts plugins.PolicyClassOptions) error {
 	args := []string{name}
 
 	if opts.Force {
@@ -412,7 +309,7 @@ func (s *SimpleExec) CreatePolicy(name string, opts PolicyClassOptions) error {
 	return err
 }
 
-func (s *SimpleExec) CreateMigration(name string, opts MigrationOptions) error {
+func (s *SimpleExec) CreateMigration(name string, opts plugins.MigrationOptions) error {
 	args := []string{name}
 
 	if opts.Create != "" {

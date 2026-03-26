@@ -3,8 +3,9 @@ import WelcomeScreen from "./components/WelcomeScreen";
 import { MainLayout } from "./components/layout/MainLayout";
 import { ProjectSwitchTransition } from "./components/layout/ProjectSwitchTransition";
 import ProjectScreen from "./components/ProjectScreen";
+import { CommandRegistryProvider } from "./contexts/CommandRegistryContext";
+import { PluginModalProvider } from "./contexts/PluginModalContext";
 import * as AppFunctions from "../wailsjs/go/main/App";
-import { useLaravelIndexing } from "./hooks/useLaravelIndexing";
 import {
   getAdjacentProject,
   resolveProjectSwitchDirection,
@@ -25,12 +26,16 @@ const App: React.FC = () => {
     line?: number;
   } | null>(null);
 
-  useLaravelIndexing(activeProject?.path ?? null);
+  const syncCurrentFramework = async () => {
+    const framework = await AppFunctions.GetCurrentProjectFramework();
+    useWorkspaceStore.getState().setActiveFramework(framework || null);
+  };
 
   const handleProjectOpen = async (projectPath: string) => {
     try {
       await AppFunctions.OpenProject(projectPath);
       useWorkspaceStore.getState().addProject(projectPath);
+      await syncCurrentFramework();
       setFileToOpen(null);
     } catch (error) {
       console.error("Error opening project:", error);
@@ -53,6 +58,7 @@ const App: React.FC = () => {
 
     try {
       await AppFunctions.OpenProject(project.path);
+      await syncCurrentFramework();
       useWorkspaceStore.getState().confirmProjectSwitch(id);
       setFileToOpen(null);
     } catch (error) {
@@ -80,6 +86,7 @@ const App: React.FC = () => {
     try {
       await AppFunctions.CloseProject();
       useWorkspaceStore.getState().removeProject(currentId);
+      useWorkspaceStore.getState().setActiveFramework(null);
       setFileToOpen(null);
     } catch (error) {
       console.error("Error returning to welcome:", error);
@@ -104,6 +111,7 @@ const App: React.FC = () => {
       try {
         await AppFunctions.CloseProject();
         useWorkspaceStore.getState().removeProject(id);
+        useWorkspaceStore.getState().setActiveFramework(null);
         setFileToOpen(null);
       } catch (error) {
         console.error("Error closing last project:", error);
@@ -121,6 +129,7 @@ const App: React.FC = () => {
 
     try {
       await AppFunctions.OpenProject(nextProject.path);
+      await syncCurrentFramework();
       const workspace = useWorkspaceStore.getState();
       workspace.confirmProjectSwitch(nextProject.id);
       workspace.removeProject(id);
@@ -153,20 +162,24 @@ const App: React.FC = () => {
           layoutKey={activeProject.path}
           direction={switchDirection}
         >
-          <MainLayout
-            key={activeProject.path}
-            onFileOpen={handleFileOpen}
-            onBackToWelcome={handleBackToWelcome}
-            onProjectOpen={handleProjectOpen}
-            onSwitchProject={handleSwitchProject}
-            onCloseProject={handleCloseProject}
-          >
-            <ProjectScreen
-              projectPath={activeProject.path}
-              fileToOpen={fileToOpen}
-              onFileOpened={() => setFileToOpen(null)}
-            />
-          </MainLayout>
+          <PluginModalProvider key={activeProject.path}>
+            <CommandRegistryProvider>
+              <MainLayout
+                key={activeProject.path}
+                onFileOpen={handleFileOpen}
+                onBackToWelcome={handleBackToWelcome}
+                onProjectOpen={handleProjectOpen}
+                onSwitchProject={handleSwitchProject}
+                onCloseProject={handleCloseProject}
+              >
+                <ProjectScreen
+                  projectPath={activeProject.path}
+                  fileToOpen={fileToOpen}
+                  onFileOpened={() => setFileToOpen(null)}
+                />
+              </MainLayout>
+            </CommandRegistryProvider>
+          </PluginModalProvider>
         </ProjectSwitchTransition>
       </div>
     );

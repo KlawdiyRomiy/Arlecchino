@@ -2,9 +2,10 @@ package composer
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 )
+
+var composerLookPath = exec.LookPath
 
 type ComposerManager struct {
 	ProjectPath  string
@@ -39,25 +40,10 @@ func NewComposerManager(projectPath string) (*ComposerManager, error) {
 }
 
 func findComposer() (string, error) {
-	if path, err := exec.LookPath("composer"); err == nil {
+	if path, err := composerLookPath("composer"); err == nil {
 		return path, nil
 	}
-
-	paths := []string{
-		"/usr/local/bin/composer",
-		"/usr/bin/composer",
-		"/opt/homebrew/bin/composer",
-		"/usr/local/bin/composer.phar",
-		"/usr/bin/composer.phar",
-	}
-
-	for _, path := range paths {
-		if _, err := os.Stat(path); err == nil {
-			return path, nil
-		}
-	}
-
-	return "", fmt.Errorf("Composer not found in standard locations")
+	return "", fmt.Errorf("composer not found in PATH; add it to your shell profile")
 }
 
 func (c *ComposerManager) RunCommand(command string, args ...string) (string, error) {

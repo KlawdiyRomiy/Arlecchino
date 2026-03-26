@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"arlecchino/internal/plugins/laravel"
@@ -9,31 +10,6 @@ import (
 )
 
 // Laravel Runtime - PHP Bridge operations, indexing, and inspection
-
-// getLaravelPlugin returns Laravel plugin, or nil if not available
-func (a *App) getLaravelPlugin() *laravel.Plugin {
-	if a.plugins == nil {
-		return nil
-	}
-	p := a.plugins.Get("laravel")
-	if p == nil {
-		return nil
-	}
-	lp, ok := p.(*laravel.Plugin)
-	if !ok {
-		return nil
-	}
-	return lp
-}
-
-// getLaravelBridge returns Laravel PHP bridge from plugin
-func (a *App) getLaravelBridge() *laravel.PHPBridge {
-	lp := a.getLaravelPlugin()
-	if lp == nil {
-		return nil
-	}
-	return lp.Bridge()
-}
 
 func (a *App) IsLaravelProject(path string) bool {
 	return laravel.IsLaravelProject(path)
@@ -48,48 +24,48 @@ func (a *App) GetLaravelVersion(path string) (string, error) {
 }
 
 func (a *App) GetMiddlewareList() (interface{}, error) {
-	bridge := a.getLaravelBridge()
-	if bridge == nil {
-		return nil, fmt.Errorf("no PHP Bridge available")
+	inspector, err := a.getRuntimeInspector()
+	if err != nil {
+		return nil, err
 	}
-	return bridge.GetMiddlewareList()
+	return inspector.GetMiddlewareList()
 }
 
 func (a *App) GetRouteList(filter string) (interface{}, error) {
-	bridge := a.getLaravelBridge()
-	if bridge == nil {
-		return nil, fmt.Errorf("no PHP Bridge available")
+	inspector, err := a.getRuntimeInspector()
+	if err != nil {
+		return nil, err
 	}
-	return bridge.GetRouteList(filter)
+	return inspector.GetRouteList(filter)
 }
 
 func (a *App) AnalyzeModels(modelName string) (interface{}, error) {
-	bridge := a.getLaravelBridge()
-	if bridge == nil {
-		return nil, fmt.Errorf("no PHP Bridge available")
+	inspector, err := a.getRuntimeInspector()
+	if err != nil {
+		return nil, err
 	}
-	return bridge.AnalyzeModels(modelName)
+	return inspector.AnalyzeModels(modelName)
 }
 
 func (a *App) ExecuteQuery(query string, bindings []interface{}) (interface{}, error) {
-	bridge := a.getLaravelBridge()
-	if bridge == nil {
-		return nil, fmt.Errorf("no PHP Bridge available")
+	inspector, err := a.getRuntimeInspector()
+	if err != nil {
+		return nil, err
 	}
-	return bridge.ExecuteQuery(query, bindings)
+	return inspector.ExecuteQuery(query, bindings)
 }
 
-func (a *App) InspectProject() (*laravel.ProjectStructure, error) {
-	bridge := a.getLaravelBridge()
-	if bridge == nil {
-		return nil, fmt.Errorf("no PHP Bridge available")
+func (a *App) InspectProject() (interface{}, error) {
+	inspector, err := a.getRuntimeInspector()
+	if err != nil {
+		return nil, err
 	}
-	return bridge.InspectProject()
+	return inspector.InspectProject()
 }
 
 func (a *App) IndexLaravelModels() (string, error) {
-	lp := a.getLaravelPlugin()
-	if lp == nil || lp.Models() == nil {
+	provider := a.getDefinitionProvider()
+	if provider == nil {
 		return "{}", nil
 	}
 
@@ -97,7 +73,7 @@ func (a *App) IndexLaravelModels() (string, error) {
 		"type": "models",
 	})
 
-	models, err := lp.Models().Index()
+	models, err := provider.ModelEntries()
 	if err != nil {
 		runtime.EventsEmit(a.ctx, "indexing:error", map[string]string{
 			"type":  "models",
@@ -106,10 +82,11 @@ func (a *App) IndexLaravelModels() (string, error) {
 		return "{}", nil
 	}
 
-	jsonData, err := lp.Models().ExportJSON(models)
+	jsonBytes, err := json.Marshal(models)
 	if err != nil {
 		return "{}", nil
 	}
+	jsonData := string(jsonBytes)
 
 	if jsonData == "" {
 		jsonData = "{}"
@@ -124,8 +101,8 @@ func (a *App) IndexLaravelModels() (string, error) {
 }
 
 func (a *App) IndexLaravelRoutes() (string, error) {
-	lp := a.getLaravelPlugin()
-	if lp == nil || lp.Routes() == nil {
+	provider := a.getDefinitionProvider()
+	if provider == nil {
 		return "", fmt.Errorf("no Laravel project opened")
 	}
 
@@ -133,7 +110,7 @@ func (a *App) IndexLaravelRoutes() (string, error) {
 		"type": "routes",
 	})
 
-	routes, err := lp.Routes().Index()
+	routes, err := provider.RouteEntries()
 	if err != nil {
 		runtime.EventsEmit(a.ctx, "indexing:error", map[string]string{
 			"type":  "routes",
@@ -142,10 +119,11 @@ func (a *App) IndexLaravelRoutes() (string, error) {
 		return "", err
 	}
 
-	jsonData, err := lp.Routes().ExportJSON(routes)
+	jsonBytes, err := json.Marshal(routes)
 	if err != nil {
 		return "", err
 	}
+	jsonData := string(jsonBytes)
 
 	runtime.EventsEmit(a.ctx, "indexing:completed", map[string]interface{}{
 		"type":  "routes",
@@ -156,8 +134,8 @@ func (a *App) IndexLaravelRoutes() (string, error) {
 }
 
 func (a *App) IndexLaravelViews() (string, error) {
-	lp := a.getLaravelPlugin()
-	if lp == nil || lp.Views() == nil {
+	provider := a.getDefinitionProvider()
+	if provider == nil {
 		return "", fmt.Errorf("no Laravel project opened")
 	}
 
@@ -165,7 +143,7 @@ func (a *App) IndexLaravelViews() (string, error) {
 		"type": "views",
 	})
 
-	views, err := lp.Views().Index()
+	views, err := provider.ViewEntries()
 	if err != nil {
 		runtime.EventsEmit(a.ctx, "indexing:error", map[string]string{
 			"type":  "views",
@@ -174,10 +152,11 @@ func (a *App) IndexLaravelViews() (string, error) {
 		return "", err
 	}
 
-	jsonData, err := lp.Views().ExportJSON(views)
+	jsonBytes, err := json.Marshal(views)
 	if err != nil {
 		return "", err
 	}
+	jsonData := string(jsonBytes)
 
 	runtime.EventsEmit(a.ctx, "indexing:completed", map[string]interface{}{
 		"type":  "views",
@@ -188,8 +167,8 @@ func (a *App) IndexLaravelViews() (string, error) {
 }
 
 func (a *App) IndexLaravelConfig() (string, error) {
-	lp := a.getLaravelPlugin()
-	if lp == nil || lp.Config() == nil {
+	provider := a.getDefinitionProvider()
+	if provider == nil {
 		return "", fmt.Errorf("no Laravel project opened")
 	}
 
@@ -197,7 +176,7 @@ func (a *App) IndexLaravelConfig() (string, error) {
 		"type": "config",
 	})
 
-	keys, err := lp.Config().Index()
+	keys, err := provider.ConfigEntries()
 	if err != nil {
 		runtime.EventsEmit(a.ctx, "indexing:error", map[string]string{
 			"type":  "config",
@@ -206,10 +185,11 @@ func (a *App) IndexLaravelConfig() (string, error) {
 		return "", err
 	}
 
-	jsonData, err := lp.Config().ExportJSON(keys)
+	jsonBytes, err := json.Marshal(keys)
 	if err != nil {
 		return "", err
 	}
+	jsonData := string(jsonBytes)
 
 	runtime.EventsEmit(a.ctx, "indexing:completed", map[string]interface{}{
 		"type":  "config",

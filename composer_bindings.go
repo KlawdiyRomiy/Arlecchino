@@ -1,100 +1,109 @@
 package main
 
-import (
-	"fmt"
-
-	"arlecchino/internal/composer"
-)
+import "arlecchino/internal/composer"
 
 // Composer Commands - Package management
 
 func (a *App) InstallPackage(name string, opts composer.InstallOptions) error {
-	if a.cmp == nil {
-		return fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return err
 	}
-	return a.cmp.InstallPackage(name, opts)
+	return cmp.InstallPackage(name, opts)
 }
 
 func (a *App) RemovePackage(name string, opts composer.RemoveOptions) error {
-	if a.cmp == nil {
-		return fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return err
 	}
-	return a.cmp.RemovePackage(name, opts)
+	return cmp.RemovePackage(name, opts)
 }
 
 func (a *App) UpdatePackage(name string) error {
-	if a.cmp == nil {
-		return fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return err
 	}
-	return a.cmp.UpdatePackage(name)
+	return cmp.UpdatePackage(name)
 }
 
 func (a *App) UpdateAll() error {
-	if a.cmp == nil {
-		return fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return err
 	}
-	return a.cmp.UpdateAll()
+	return cmp.UpdateAll()
 }
 
 func (a *App) InstallAll() error {
-	if a.cmp == nil {
-		return fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return err
 	}
-	return a.cmp.InstallAll()
+	return cmp.InstallAll()
 }
 
 func (a *App) DumpAutoload() error {
-	if a.cmp == nil {
-		return fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return err
 	}
-	return a.cmp.DumpAutoload()
+	return cmp.DumpAutoload()
 }
 
 func (a *App) PublishAssets(packageName string, tags []string) error {
-	if a.cmp == nil {
-		return fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return err
 	}
-	return a.cmp.PublishAssets(packageName, tags)
+	return cmp.PublishAssets(packageName, tags)
 }
 
 func (a *App) InstallLivewire() error {
-	if a.cmp == nil {
-		return fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return err
 	}
-	return a.cmp.InstallLivewire()
+	return cmp.InstallLivewire()
 }
 
 func (a *App) InstallFortify() error {
-	if a.cmp == nil {
-		return fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return err
 	}
-	return a.cmp.InstallFortify()
+	return cmp.InstallFortify()
 }
 
 func (a *App) InstallJetstream() error {
-	if a.cmp == nil {
-		return fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return err
 	}
-	return a.cmp.InstallJetstream()
+	return cmp.InstallJetstream()
 }
 
 func (a *App) InstallBreeze() error {
-	if a.cmp == nil {
-		return fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return err
 	}
-	return a.cmp.InstallBreeze()
+	return cmp.InstallBreeze()
 }
 
 func (a *App) ListInstalledPackages() (string, error) {
-	if a.cmp == nil {
-		return "", fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return "", err
 	}
-	return a.cmp.ListInstalledPackages()
+	return cmp.ListInstalledPackages()
 }
 
 func (a *App) ShowPackageInfo(name string) (string, error) {
-	if a.cmp == nil {
-		return "", fmt.Errorf("no project opened")
+	cmp, err := a.ensureComposerManager()
+	if err != nil {
+		return "", err
 	}
-	return a.cmp.ShowPackageInfo(name)
+	return cmp.ShowPackageInfo(name)
 }
