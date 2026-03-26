@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { ChevronDown, Folder, FolderOpen } from "lucide-react";
 import * as App from "../../wailsjs/go/main/App";
 import { colors, getThemeColors } from "../styles/colors";
@@ -9,7 +9,7 @@ import { DependencyTree } from "./DependencyTree";
 import { AnimatePresence, motion } from "framer-motion";
 import { useExplorerStore } from "../stores/explorerStore";
 import { FileContextMenu } from "./ui/FileContextMenu";
-import { buildFileNodes, shouldIgnoreEntry } from "../utils/fileTreeHelpers";
+import { buildFileNodes } from "../utils/fileTreeHelpers";
 import {
   PROJECT_SWITCH_BLOCKERS,
   blockProjectSwitch,
@@ -45,7 +45,6 @@ export interface FileExplorerProps {
     line?: number,
   ) => void;
   isHorizontal?: boolean;
-  onRevealFile?: (path: string) => void;
   onPerspectiveOpen?: () => void;
   onPerspectiveClose?: () => void;
 }
@@ -53,7 +52,6 @@ export interface FileExplorerProps {
 export const FileExplorer: React.FC<FileExplorerProps> = ({
   onFileOpen,
   isHorizontal = false,
-  onRevealFile,
   onPerspectiveOpen,
   onPerspectiveClose,
 }) => {
@@ -83,7 +81,12 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   const [treeOpen, setTreeOpen] = useState(false);
   const [highlightedPath, setHighlightedPath] = useState<string | null>(null);
   const explorerRef = useRef<HTMLDivElement>(null);
+  const filesRef = useRef<FileNode[]>([]);
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const relations = useFileRelations(perspectiveTarget || "");
+  // Latest tree snapshot for async reveal/expand flows.
+  filesRef.current = files;
 
   // Синхронизируем isExpanded из store в файлы
   const getIsExpanded = (path: string): boolean => expandedPaths.has(path);
@@ -97,17 +100,14 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     onPerspectiveClose?.();
   };
 
-  const handlePerspectiveFileSelect = useCallback(
-    async (path: string, line?: number) => {
-      const readPromise = App.ReadFile(path);
-      closePerspective();
-      handleRevealFile(path);
-      const content = await readPromise;
-      if (onFileOpen)
-        onFileOpen(path, content, path.split("/").pop() || "", line);
-    },
-    [closePerspective, onFileOpen],
-  );
+  const handlePerspectiveFileSelect = async (path: string, line?: number) => {
+    const readPromise = App.ReadFile(path);
+    closePerspective();
+    void revealPath(path);
+    const content = await readPromise;
+    if (onFileOpen)
+      onFileOpen(path, content, path.split("/").pop() || "", line);
+  };
 
   const renderPerspectiveOverlays = () => (
     <>
@@ -138,44 +138,15 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   }, []);
 
   useEffect(() => {
-    if (revealRequestPath && projectPath) {
-      const doReveal = async () => {
-        await expandToPath(revealRequestPath);
-        setHighlightedPath(revealRequestPath);
-        setStoreHighlightedPath(revealRequestPath);
-        setTimeout(() => {
-          const element = document.querySelector(
-            `[data-file-path="${revealRequestPath}"]`,
-          );
-          if (element) {
-            element.scrollIntoView({ behavior: "smooth", block: "center" });
-          }
-        }, 300);
-        setTimeout(() => {
-          setHighlightedPath(null);
-          setStoreHighlightedPath(null);
-        }, 2000);
-        clearRevealRequest();
-      };
-      doReveal();
-    }
-  }, [revealRequestPath, projectPath]);
-
-  useEffect(() => {
-    if (onRevealFile) {
-      const revealFile = async (path: string) => {
-        await expandToPath(path);
-        setHighlightedPath(path);
-        setTimeout(() => {
-          const element = document.querySelector(`[data-file-path="${path}"]`);
-          if (element) {
-            element.scrollIntoView({ behavior: "smooth", block: "center" });
-          }
-        }, 300);
-        setTimeout(() => setHighlightedPath(null), 2000);
-      };
-    }
-  }, [onRevealFile]);
+    return () => {
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+      }
+      if (highlightTimerRef.current) {
+        clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
 
   const expandToPath = async (targetPath: string) => {
     if (!targetPath || !projectPath) return;
@@ -192,73 +163,125 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     }
 
     for (const path of pathsToExpand) {
-      await new Promise<void>((resolve) => {
-        expandNodeByPath(path).then(() => {
-          setTimeout(resolve, 50);
-        });
-      });
+      await expandNodeByPath(path);
+      // Give React a tiny window to flush the folder expansion before the next step.
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
     }
   };
 
-  const expandNodeByPath = async (path: string): Promise<void> => {
-    return new Promise((resolve) => {
-      const expandRecursive = async (
-        nodes: FileNode[],
-        targetPath: string,
-      ): Promise<FileNode[] | null> => {
-        for (const node of nodes) {
-          if (node.path === targetPath) {
-            if (!node.isLoaded && node.isDirectory) {
-              try {
-                const entries: FileEntry[] = await App.ReadDirectory(node.path);
-                const childNodes: FileNode[] = buildFileNodes(entries);
+  const revealPath = async (path: string, clearRequest: boolean = false) => {
+    if (!path || !projectPath) {
+      if (clearRequest) {
+        clearRevealRequest();
+      }
+      return;
+    }
 
-                return nodes.map((n) =>
-                  n.path === targetPath
-                    ? {
-                        ...n,
-                        isExpanded: true,
-                        isLoaded: true,
-                        children: childNodes,
-                      }
-                    : n,
-                );
-              } catch (error) {
-                console.error("Error expanding node:", error);
-                return null;
-              }
-            } else {
-              return nodes.map((n) =>
-                n.path === targetPath ? { ...n, isExpanded: true } : n,
-              );
-            }
-          }
+    const normalizedProjectPath = projectPath.endsWith("/")
+      ? projectPath.slice(0, -1)
+      : projectPath;
+    const isProjectPath =
+      path === normalizedProjectPath ||
+      path.startsWith(`${normalizedProjectPath}/`);
 
-          if (node.children && node.isDirectory) {
-            const updated = await expandRecursive(node.children, targetPath);
-            if (updated) {
-              return nodes.map((n) =>
-                n.path === node.path ? { ...n, children: updated } : n,
-              );
-            }
-          }
-        }
-        return null;
-      };
+    if (!isProjectPath) {
+      if (clearRequest) {
+        clearRevealRequest();
+      }
+      return;
+    }
 
-      setFiles((currentFiles) => {
-        expandRecursive(currentFiles, path).then((updatedFiles) => {
-          if (updatedFiles) {
-            setFiles(updatedFiles);
-          }
-          resolve();
-        });
-        return currentFiles;
-      });
-    });
+    await expandToPath(path);
+    setHighlightedPath(path);
+    setStoreHighlightedPath(path);
+
+    if (scrollTimerRef.current) {
+      clearTimeout(scrollTimerRef.current);
+    }
+    if (highlightTimerRef.current) {
+      clearTimeout(highlightTimerRef.current);
+    }
+
+    scrollTimerRef.current = setTimeout(() => {
+      const element = document.querySelector(`[data-file-path="${path}"]`);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 300);
+
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightedPath(null);
+      setStoreHighlightedPath(null);
+    }, 2000);
+
+    if (clearRequest) {
+      clearRevealRequest();
+    }
   };
 
-  const shouldIgnore = shouldIgnoreEntry;
+  useEffect(() => {
+    if (!revealRequestPath || !projectPath) {
+      return;
+    }
+
+    void revealPath(revealRequestPath, true);
+  }, [projectPath, revealRequestPath]);
+
+  const expandNodeByPath = async (path: string): Promise<void> => {
+    const expandRecursive = async (
+      nodes: FileNode[],
+      targetPath: string,
+    ): Promise<FileNode[] | null> => {
+      for (const node of nodes) {
+        if (node.path === targetPath) {
+          if (!node.isLoaded && node.isDirectory) {
+            try {
+              const entries: FileEntry[] = await App.ReadDirectory(node.path);
+              const childNodes: FileNode[] = buildFileNodes(entries);
+
+              return nodes.map((n) =>
+                n.path === targetPath
+                  ? {
+                      ...n,
+                      isExpanded: true,
+                      isLoaded: true,
+                      children: childNodes,
+                    }
+                  : n,
+              );
+            } catch (error) {
+              console.error("Error expanding node:", error);
+              return null;
+            }
+          }
+
+          return nodes.map((n) =>
+            n.path === targetPath ? { ...n, isExpanded: true } : n,
+          );
+        }
+
+        if (node.children && node.isDirectory) {
+          const updated = await expandRecursive(node.children, targetPath);
+          if (updated) {
+            return nodes.map((n) =>
+              n.path === node.path ? { ...n, children: updated } : n,
+            );
+          }
+        }
+      }
+
+      return null;
+    };
+
+    const updatedFiles = await expandRecursive(filesRef.current, path);
+    if (!updatedFiles) {
+      return;
+    }
+
+    filesRef.current = updatedFiles;
+    setFiles(updatedFiles);
+    setExpanded(path, true);
+  };
 
   // Загрузить содержимое папки и вернуть children
   const loadFolderChildren = async (dirPath: string): Promise<FileNode[]> => {
@@ -322,6 +345,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         nodes = await restoreExpandedFolders(nodes);
       }
 
+      filesRef.current = nodes;
       setFiles(nodes);
     } catch (error) {
       console.error("Error reading directory:", error);
@@ -640,44 +664,48 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       await loadFolderContents(node);
     }
 
+    const findNodeByPath = (
+      nodes: FileNode[],
+      targetPath: string,
+    ): FileNode | null => {
+      for (const currentNode of nodes) {
+        if (currentNode.path === targetPath) {
+          return currentNode;
+        }
+
+        if (currentNode.children) {
+          const nestedNode = findNodeByPath(currentNode.children, targetPath);
+          if (nestedNode) {
+            return nestedNode;
+          }
+        }
+      }
+
+      return null;
+    };
+
     const pathParts = node.path.replace(projectPath + "/", "").split("/");
     const newBreadcrumbs: Breadcrumb[] = [];
     let currentPath = projectPath;
-    let currentNode = { children: files } as any;
 
     for (const part of pathParts) {
       currentPath += "/" + part;
-      const childNode = currentNode.children?.find(
-        (n: FileNode) => n.name === part,
-      );
+      let childNode = findNodeByPath(filesRef.current, currentPath);
       if (childNode) {
         if (!childNode.isLoaded && childNode.isDirectory) {
-          const loadedNode = await loadNodeChildren(childNode);
-          if (loadedNode) {
-            childNode.children = loadedNode.children;
-            childNode.isLoaded = true;
-          }
+          await loadFolderContents(childNode);
+          childNode = findNodeByPath(filesRef.current, currentPath);
         }
+
+        if (!childNode) {
+          break;
+        }
+
         newBreadcrumbs.push({ name: part, path: currentPath, node: childNode });
-        currentNode = childNode;
       }
     }
 
     setBreadcrumbs(newBreadcrumbs);
-  };
-
-  const loadNodeChildren = async (node: FileNode): Promise<FileNode | null> => {
-    if (!node.isDirectory) return null;
-
-    try {
-      const entries: FileEntry[] = await App.ReadDirectory(node.path);
-      const childNodes: FileNode[] = buildFileNodes(entries);
-
-      return { ...node, isLoaded: true, children: childNodes };
-    } catch (error) {
-      console.error("Error loading node children:", error);
-      return null;
-    }
   };
 
   const loadFolderContents = async (node: FileNode) => {
@@ -702,7 +730,11 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
           });
         };
 
-        setFiles(updateNode(files));
+        setFiles((currentFiles) => {
+          const updatedFiles = updateNode(currentFiles);
+          filesRef.current = updatedFiles;
+          return updatedFiles;
+        });
       } catch (error) {
         console.error("Error loading folder:", error);
       }
@@ -736,7 +768,11 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
           });
         };
 
-        setFiles(updateNode(files));
+        setFiles((currentFiles) => {
+          const updatedFiles = updateNode(currentFiles);
+          filesRef.current = updatedFiles;
+          return updatedFiles;
+        });
         setExpanded(node.path, true);
       } catch (error) {
         console.error("Error loading directory:", error);
@@ -757,7 +793,11 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
         });
       };
 
-      setFiles(updateNode(files));
+      setFiles((currentFiles) => {
+        const updatedFiles = updateNode(currentFiles);
+        filesRef.current = updatedFiles;
+        return updatedFiles;
+      });
     }
   };
 
@@ -994,18 +1034,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
   const getCurrentFiles = (): FileNode[] => {
     return getCurrentItems().filter((item) => !item.isDirectory);
-  };
-
-  const handleRevealFile = async (path: string) => {
-    await expandToPath(path);
-    setHighlightedPath(path);
-    setTimeout(() => {
-      const element = document.querySelector(`[data-file-path="${path}"]`);
-      if (element) {
-        element.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    }, 300);
-    setTimeout(() => setHighlightedPath(null), 2000);
   };
 
   const renderHorizontalLayout = () => {

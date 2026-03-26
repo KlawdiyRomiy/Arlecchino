@@ -21,7 +21,10 @@ import {
   zIndex,
 } from "../styles/colors";
 import { useTheme } from "../hooks/useTheme";
-import { RelationGroup, RelatedFile } from "../hooks/useFileRelations";
+import {
+  matchesRelationFilter,
+  type RelationGroup,
+} from "../utils/perspectiveRelations";
 
 interface QuickRelationsMenuProps {
   isOpen: boolean;
@@ -36,8 +39,18 @@ const typeIcons: Record<string, React.ReactNode> = {
   route: <GitBranch size={14} className="text-blue-500" />,
   model: <Box size={14} className="text-purple-500" />,
   view: <Layout size={14} className="text-green-500" />,
+  component: <Layout size={14} className="text-green-500" />,
   controller: <FileCode size={14} className="text-orange-500" />,
+  hook: <GitBranch size={14} className="text-blue-500" />,
+  store: <Database size={14} className="text-yellow-500" />,
+  service: <FileCode size={14} className="text-orange-500" />,
+  test: <Search size={14} className="text-gray-500" />,
   migration: <Database size={14} className="text-yellow-500" />,
+  config: <Database size={14} className="text-gray-500" />,
+  style: <Layout size={14} className="text-gray-500" />,
+  asset: <Layout size={14} className="text-gray-500" />,
+  doc: <FileCode size={14} className="text-gray-500" />,
+  reference: <FileCode size={14} className="text-gray-500" />,
   other: <FileCode size={14} className="text-gray-500" />,
 };
 
@@ -82,10 +95,8 @@ export const QuickRelationsMenu: React.FC<QuickRelationsMenuProps> = ({
   }, [isOpen, onClose]);
 
   const flatItems = relations.flatMap((group) => group.items);
-  const filteredItems = flatItems.filter(
-    (item) =>
-      item.name.toLowerCase().includes(filter.toLowerCase()) ||
-      item.type.toLowerCase().includes(filter.toLowerCase()),
+  const filteredItems = flatItems.filter((item) =>
+    matchesRelationFilter(item, filter),
   );
 
   if (!isOpen) return null;
@@ -145,7 +156,7 @@ export const QuickRelationsMenu: React.FC<QuickRelationsMenuProps> = ({
     <div style={{ overflowY: "auto", padding: "8px 0", flex: 1 }}>
       {relations.map((group) => {
         const groupItems = group.items.filter((item) =>
-          item.name.toLowerCase().includes(filter.toLowerCase()),
+          matchesRelationFilter(item, filter),
         );
 
         if (groupItems.length === 0) return null;
