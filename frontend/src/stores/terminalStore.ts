@@ -11,75 +11,19 @@ import {
   CloseTerminal,
 } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
-
-export type TerminalMode = "shell" | "tui" | "agent_cli" | "agent_tui";
-export type TerminalPowerProfile = "normal" | "soft_pause" | "hard_pause";
-
-export interface TUIAssistState {
-  active: boolean;
-  panel: "explorer" | "aiChat" | "git" | "browser" | null;
-  ratio: number;
-  swapped: boolean;
-}
-
-export interface TerminalSecurityPolicy {
-  enabled: boolean;
-  allowSensitiveInspection: boolean;
-  requireWriteApproval: boolean;
-  blockedFileNames: string[];
-}
-
-export interface TerminalAccessDecision {
-  allowed: boolean;
-  reason: string;
-}
-
-export interface TerminalSession {
-  id: string;
-  name: string;
-  terminal: Terminal;
-  fitAddon: FitAddon;
-  searchAddon: SearchAddon;
-  streamDecoder: TextDecoder;
-  isAttached: boolean;
-  mode: TerminalMode;
-  modeReason: string;
-  modeConfidence: number;
-  modeSourceSignals: string[];
-  modeUpdatedAt: number;
-}
-
-export interface TerminalPane {
-  id: string;
-  tabIds: string[];
-  activeTabId: string;
-}
-
-export interface TerminalShellState {
-  phase: string;
-  cwd: string;
-  lastExitCode: number | null;
-  updatedAt: number;
-  raw: string;
-}
-
-export interface TerminalSemanticEntry {
-  kind: string;
-  path: string;
-  line: number;
-  column: number;
-  severity: string;
-  message: string;
-  imageDataUrl: string;
-  timestamp: number;
-}
-
-interface ClosedTerminalTab {
-  paneId: string;
-  name: string;
-}
-
-export type SplitDirection = "horizontal" | "vertical" | null;
+import type {
+  ClosedTerminalTab,
+  SplitDirection,
+  TerminalAccessDecision,
+  TerminalMode,
+  TerminalPane,
+  TerminalPowerProfile,
+  TerminalSecurityPolicy,
+  TerminalSemanticEntry,
+  TerminalSession,
+  TerminalShellState,
+  TUIAssistState,
+} from "../types/terminal";
 
 interface TerminalState {
   sessions: Map<string, TerminalSession>;
@@ -159,6 +103,7 @@ interface TerminalActions {
   }) => void;
   listRemoteSessions: () => Promise<string[]>;
   sendRemoteText: (id: string, text: string) => Promise<boolean>;
+  resetForProjectSwitch: () => void;
 }
 
 let terminalCounter = 0;
@@ -1301,6 +1246,35 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
         console.error("[TerminalStore] Failed to send remote text", error);
         return false;
       }
+    },
+
+    resetForProjectSwitch: () => {
+      const state = get();
+      state.sessions.forEach((session, id) => {
+        cleanupSemanticSessionState(id);
+        try {
+          session.terminal.dispose();
+        } catch (error) {
+          console.debug("[TerminalStore] Failed to dispose session", error);
+        }
+      });
+
+      const nextPanes = createDefaultPanes();
+      persistLayoutSnapshot(nextPanes, nextPanes[0].id, null);
+
+      set((current) => ({
+        ...current,
+        sessions: new Map(),
+        panes: nextPanes,
+        activePaneId: nextPanes[0].id,
+        splitDirection: null,
+        closedTabsStack: [],
+        sessionShellState: new Map(),
+        sessionSemanticEntries: new Map(),
+        tuiModeActive: false,
+        tuiActiveSessionId: null,
+        tuiAssist: { active: false, panel: null, ratio: 0.4, swapped: false },
+      }));
     },
   }),
 );

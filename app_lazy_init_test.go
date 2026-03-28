@@ -9,6 +9,7 @@ import (
 
 	"arlecchino/internal/composer"
 	"arlecchino/internal/system"
+	"arlecchino/internal/terminal"
 )
 
 func TestOpenProject_DoesNotInitializePHPSpecificManagersEagerly(t *testing.T) {
@@ -258,5 +259,31 @@ func TestCloseProject_WaitsForManagerMutexBeforeClearingManagers(t *testing.T) {
 
 	if app.cmp != nil || app.sys != nil {
 		t.Fatal("CloseProject did not clear managers after acquiring managerMu")
+	}
+}
+
+func TestCloseProject_ClosesAllTerminalSessions(t *testing.T) {
+	workingDir := t.TempDir()
+	termManager := terminal.NewManager()
+	session, err := termManager.Create("term-1", "Terminal", workingDir)
+	if err != nil {
+		t.Fatalf("Create terminal session error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		termManager.CloseAll()
+	})
+
+	app := &App{termManager: termManager, projectPath: workingDir}
+	if got := len(termManager.List()); got != 1 {
+		t.Fatalf("terminal sessions before CloseProject = %d, want 1", got)
+	}
+
+	if err := app.CloseProject(); err != nil {
+		t.Fatalf("CloseProject error = %v", err)
+	}
+
+	if got := len(termManager.List()); got != 0 {
+		t.Fatalf("terminal sessions after CloseProject = %d, want 0", got)
 	}
 }

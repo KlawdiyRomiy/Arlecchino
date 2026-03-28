@@ -203,6 +203,8 @@ export function LSPGoToDefinition(arg1:string,arg2:string,arg3:number,arg4:numbe
 
 export function LSPHover(arg1:string,arg2:string,arg3:number,arg4:number):Promise<string>;
 
+export function LSPPreloadProjectDiagnostics(arg1:string):Promise<boolean>;
+
 export function LSPSignatureHelp(arg1:string,arg2:string,arg3:number,arg4:number):Promise<main.SignatureHelpResult>;
 
 export function ListInstalledPackages():Promise<string>;

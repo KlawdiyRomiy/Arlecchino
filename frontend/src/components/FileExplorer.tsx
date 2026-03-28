@@ -647,6 +647,8 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     if (!node.isDirectory) {
       try {
         const content = await App.ReadFile(node.path);
+        setHighlightedPath(node.path);
+        setStoreHighlightedPath(node.path);
         if (onFileOpen) {
           onFileOpen(node.path, content, node.name);
         }

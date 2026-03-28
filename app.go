@@ -195,6 +195,9 @@ func (a *App) OpenProject(path string) error {
 
 		// Initialize LSP manager for all languages
 		a.lspManager = lsp.NewManager(path)
+		a.lspManager.SetDiagnosticsCallback(func(language, filePath string, diagnostics []lsp.Diagnostic) {
+			a.emitEvent("lsp:diagnostics", newLSPDiagnosticsEvent(language, filePath, diagnostics))
+		})
 		lspManager = a.lspManager
 
 		// Initialize prediction brain
@@ -264,6 +267,23 @@ func (a *App) OpenProject(path string) error {
 				return pluginRegistry.InitAll(path)
 			},
 		},
+		projectWarmupStep{
+			name: "diagnostics preload",
+			run: func(ctx context.Context) error {
+				if lspManager == nil {
+					return nil
+				}
+
+				select {
+				case <-ctx.Done():
+					return nil
+				default:
+				}
+
+				a.LSPPreloadProjectDiagnostics(path)
+				return nil
+			},
+		},
 	)
 
 	a.emitEvent("lsp:ready", map[string]interface{}{
@@ -303,6 +323,8 @@ func (a *App) CloseProject() error {
 	}
 
 	a.wg.Wait()
+
+	a.termManager.CloseAll()
 
 	if a.plugins != nil {
 		a.plugins.CloseAll()

@@ -390,6 +390,10 @@ export function LSPHover(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['LSPHover'](arg1, arg2, arg3, arg4);
 }
 
+export function LSPPreloadProjectDiagnostics(arg1) {
+  return window['go']['main']['App']['LSPPreloadProjectDiagnostics'](arg1);
+}
+
 export function LSPSignatureHelp(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['LSPSignatureHelp'](arg1, arg2, arg3, arg4);
 }

@@ -36,6 +36,7 @@ type Manager struct {
 	completionWait  time.Duration
 	diagnosticsMu   sync.RWMutex
 	diagnostics     map[string]map[string][]Diagnostic
+	onDiagnostics   func(language, filePath string, diagnostics []Diagnostic)
 	rootPath        string
 }
 
@@ -229,6 +230,12 @@ func NewManager(rootPath string) *Manager {
 	}
 }
 
+func (m *Manager) SetDiagnosticsCallback(callback func(language, filePath string, diagnostics []Diagnostic)) {
+	m.diagnosticsMu.Lock()
+	m.onDiagnostics = callback
+	m.diagnosticsMu.Unlock()
+}
+
 func (m *Manager) HasConfig(language string) bool {
 	m.mu.RLock()
 	_, ok := m.configs[language]
@@ -412,6 +419,11 @@ func (m *Manager) StopAll() {
 	m.idleTimers = make(map[string]*time.Timer)
 	m.openDocsByLang = make(map[string]map[string]int)
 	m.mu.Unlock()
+
+	m.diagnosticsMu.Lock()
+	m.diagnostics = make(map[string]map[string][]Diagnostic)
+	m.onDiagnostics = nil
+	m.diagnosticsMu.Unlock()
 
 	for _, s := range servers {
 		s.shutdown()
@@ -752,39 +764,61 @@ func (m *Manager) handleNotification(language, method string, params json.RawMes
 }
 
 func (m *Manager) setDiagnostics(language, filePath string, diagnostics []Diagnostic) {
+	cloned := cloneDiagnostics(diagnostics)
+
 	m.diagnosticsMu.Lock()
-	defer m.diagnosticsMu.Unlock()
-
-	if m.diagnostics[language] == nil {
-		m.diagnostics[language] = make(map[string][]Diagnostic)
-	}
-
-	if len(diagnostics) == 0 {
-		delete(m.diagnostics[language], filePath)
-		if len(m.diagnostics[language]) == 0 {
-			delete(m.diagnostics, language)
+	callback := m.onDiagnostics
+	if len(cloned) == 0 {
+		langDiagnostics := m.diagnostics[language]
+		if langDiagnostics != nil {
+			delete(langDiagnostics, filePath)
+			if len(langDiagnostics) == 0 {
+				delete(m.diagnostics, language)
+			}
+		}
+		m.diagnosticsMu.Unlock()
+		if callback != nil {
+			callback(language, filePath, nil)
 		}
 		return
 	}
 
-	cloned := make([]Diagnostic, len(diagnostics))
-	copy(cloned, diagnostics)
+	if m.diagnostics[language] == nil {
+		m.diagnostics[language] = make(map[string][]Diagnostic)
+	}
 	m.diagnostics[language][filePath] = cloned
+	m.diagnosticsMu.Unlock()
+
+	if callback != nil {
+		callback(language, filePath, cloneDiagnostics(cloned))
+	}
 }
 
 func (m *Manager) clearDiagnostics(language, filePath string) {
 	m.diagnosticsMu.Lock()
-	defer m.diagnosticsMu.Unlock()
-
+	callback := m.onDiagnostics
 	langDiagnostics := m.diagnostics[language]
-	if langDiagnostics == nil {
-		return
+	if langDiagnostics != nil {
+		delete(langDiagnostics, filePath)
+		if len(langDiagnostics) == 0 {
+			delete(m.diagnostics, language)
+		}
+	}
+	m.diagnosticsMu.Unlock()
+
+	if callback != nil {
+		callback(language, filePath, nil)
+	}
+}
+
+func cloneDiagnostics(diagnostics []Diagnostic) []Diagnostic {
+	if len(diagnostics) == 0 {
+		return nil
 	}
 
-	delete(langDiagnostics, filePath)
-	if len(langDiagnostics) == 0 {
-		delete(m.diagnostics, language)
-	}
+	cloned := make([]Diagnostic, len(diagnostics))
+	copy(cloned, diagnostics)
+	return cloned
 }
 
 func fileURIToPath(uri string) string {

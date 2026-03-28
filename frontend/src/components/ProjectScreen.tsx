@@ -11,6 +11,7 @@ import {
   unblockProjectSwitch,
 } from "../utils/priorityUI";
 import { useTheme } from "../hooks/useTheme";
+import { useEditorStore } from "../stores/editorStore";
 
 type SplitDirection = "horizontal" | "vertical" | null;
 
@@ -23,6 +24,7 @@ interface ProjectScreenProps {
     line?: number;
   } | null;
   onFileOpened?: () => void;
+  onToggleProblems?: () => void;
   onPerspectiveOpen?: () => void;
   onPerspectiveClose?: () => void;
 }
@@ -36,11 +38,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   projectPath,
   fileToOpen,
   onFileOpened,
+  onToggleProblems,
   onPerspectiveOpen,
   onPerspectiveClose,
 }) => {
   const { isDark } = useTheme();
   const editorBgColor = isDark ? "#1e1e1e" : "#ffffff";
+  const setStatusFile = useEditorStore((state) => state.setStatusFile);
 
   const tabStorageKey = `editorTabs:${projectPath}`;
 
@@ -458,6 +462,24 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     return languageMap[ext || ""] || "plaintext";
   };
 
+  useEffect(() => {
+    const primaryActiveTab = tabs.find((tab) => tab.id === activeTab) ?? null;
+    const secondaryTab =
+      tabs.find((tab) => tab.id === secondaryActiveTab) ?? null;
+    const statusTab = primaryActiveTab ?? secondaryTab;
+
+    if (!statusTab) {
+      setStatusFile(null, null, null);
+      return;
+    }
+
+    setStatusFile(
+      statusTab.path,
+      statusTab.label,
+      getLanguageFromPath(statusTab.path),
+    );
+  }, [activeTab, secondaryActiveTab, setStatusFile, tabs]);
+
   const handleFileOpen = useCallback(
     async (filePath: string, content: string, fileName: string) => {
       // Check if tab already exists
@@ -785,6 +807,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       language={getLanguageFromPath(tabData.path)}
       onChange={isSecondary ? () => {} : handleContentChange}
       onSave={handleSaveFile}
+      onToggleProblems={onToggleProblems}
       onOpenFile={handleOpenFileRequest}
       onQuickLook={handleQuickLookRequest}
       onPerspectiveOpen={onPerspectiveOpen}

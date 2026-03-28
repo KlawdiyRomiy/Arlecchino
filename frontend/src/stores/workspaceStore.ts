@@ -1,6 +1,10 @@
 import * as AppFunctions from "../../wailsjs/go/main/App";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import {
+  preloadProjectDiagnostics,
+  resetProjectBoundStores,
+} from "../utils/projectBoundState";
 
 export interface WorkspaceProject {
   id: string;
@@ -288,11 +292,13 @@ export const initializeWorkspace = async () => {
 
     try {
       await AppFunctions.OpenProject(project.path);
+      resetProjectBoundStores();
       useWorkspaceStore
         .getState()
         .setActiveFramework(
           (await AppFunctions.GetCurrentProjectFramework()) || null,
         );
+      await preloadProjectDiagnostics(project.path);
     } catch (error) {
       console.error("Error restoring workspace:", error);
       useWorkspaceStore.getState().removeProject(activeId);

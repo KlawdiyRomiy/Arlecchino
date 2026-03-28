@@ -25,7 +25,8 @@ const SwitchRow: React.FC<{
   description: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
-}> = ({ title, description, checked, onCheckedChange }) => (
+  controlLabel?: string;
+}> = ({ title, description, checked, onCheckedChange, controlLabel }) => (
   <div className="flex items-center justify-between gap-4 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-4 py-3">
     <div>
       <div className="text-sm font-medium text-[var(--text-primary)]">
@@ -36,6 +37,7 @@ const SwitchRow: React.FC<{
     <Switch.Root
       checked={checked}
       onCheckedChange={onCheckedChange}
+      aria-label={controlLabel ?? title}
       className="relative h-6 w-11 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] transition-colors data-[state=checked]:bg-[var(--accent-primary)]"
     >
       <Switch.Thumb className="block h-5 w-5 translate-x-0.5 rounded-full bg-white shadow-sm transition-transform data-[state=checked]:translate-x-[22px]" />
@@ -53,9 +55,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     editorFontSize,
     minFontSize,
     maxFontSize,
+    showInlineDiagnostics,
+    showCompactDiagnostics,
+    showDiagnosticsDonut,
+    showMinimap,
     setUiScale,
     setEditorFontSize,
     resetZoom,
+    setShowInlineDiagnostics,
+    setShowCompactDiagnostics,
+    setShowDiagnosticsDonut,
+    setShowMinimap,
   } = useEditorSettingsStore();
   const {
     autoOpenFromTerminal,
@@ -184,6 +194,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   >
                     Reset Zoom
                   </button>
+
+                  <div className="border-t border-[var(--border-subtle)] pt-4">
+                    <div className="mb-3 text-sm font-medium text-[var(--text-primary)]">
+                      Diagnostics Surfaces
+                    </div>
+                    <div className="space-y-3">
+                      <SwitchRow
+                        title="Show minimap"
+                        description="Display the code minimap in the editor gutter for supported file sizes."
+                        checked={showMinimap}
+                        onCheckedChange={setShowMinimap}
+                      />
+                      <SwitchRow
+                        title="Show inline diagnostics"
+                        description="Render squiggles, line emphasis, and inline problem messages inside the editor."
+                        checked={showInlineDiagnostics}
+                        onCheckedChange={setShowInlineDiagnostics}
+                      />
+                      <SwitchRow
+                        title="Show compact diagnostics"
+                        description="Keep the project-wide problems badge visible in the status bar."
+                        checked={showCompactDiagnostics}
+                        onCheckedChange={setShowCompactDiagnostics}
+                      />
+                      <SwitchRow
+                        title="Show file donut indicator"
+                        description="Display the per-file donut near the editor minimap and view chrome."
+                        checked={showDiagnosticsDonut}
+                        onCheckedChange={setShowDiagnosticsDonut}
+                      />
+                    </div>
+                  </div>
                 </div>
               </section>
             </div>

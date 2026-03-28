@@ -182,7 +182,6 @@ export const TopBar: React.FC<TopBarProps> = ({
         className="flex items-center gap-1 pl-4 border-l border-[var(--border-subtle)] h-full"
         style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}
       >
-        <div className="h-8 w-8" aria-hidden="true" />
         <button
           onClick={onOpenDebug}
           className={topBarActionClass}

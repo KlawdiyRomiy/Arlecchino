@@ -11,6 +11,10 @@ import {
   resolveProjectSwitchDirection,
   useWorkspaceStore,
 } from "./stores/workspaceStore";
+import {
+  preloadProjectDiagnostics,
+  resetProjectBoundStores,
+} from "./utils/projectBoundState";
 
 const App: React.FC = () => {
   const activeId = useWorkspaceStore((state) => state.activeId);
@@ -34,8 +38,10 @@ const App: React.FC = () => {
   const handleProjectOpen = async (projectPath: string) => {
     try {
       await AppFunctions.OpenProject(projectPath);
+      resetProjectBoundStores();
       useWorkspaceStore.getState().addProject(projectPath);
       await syncCurrentFramework();
+      await preloadProjectDiagnostics(projectPath);
       setFileToOpen(null);
     } catch (error) {
       console.error("Error opening project:", error);
@@ -58,8 +64,10 @@ const App: React.FC = () => {
 
     try {
       await AppFunctions.OpenProject(project.path);
+      resetProjectBoundStores();
       await syncCurrentFramework();
       useWorkspaceStore.getState().confirmProjectSwitch(id);
+      await preloadProjectDiagnostics(project.path);
       setFileToOpen(null);
     } catch (error) {
       useWorkspaceStore.getState().cancelProjectSwitch(id);
@@ -85,6 +93,7 @@ const App: React.FC = () => {
 
     try {
       await AppFunctions.CloseProject();
+      resetProjectBoundStores();
       useWorkspaceStore.getState().removeProject(currentId);
       useWorkspaceStore.getState().setActiveFramework(null);
       setFileToOpen(null);
@@ -110,6 +119,7 @@ const App: React.FC = () => {
     if (!nextProject) {
       try {
         await AppFunctions.CloseProject();
+        resetProjectBoundStores();
         useWorkspaceStore.getState().removeProject(id);
         useWorkspaceStore.getState().setActiveFramework(null);
         setFileToOpen(null);
@@ -129,10 +139,12 @@ const App: React.FC = () => {
 
     try {
       await AppFunctions.OpenProject(nextProject.path);
+      resetProjectBoundStores();
       await syncCurrentFramework();
       const workspace = useWorkspaceStore.getState();
       workspace.confirmProjectSwitch(nextProject.id);
       workspace.removeProject(id);
+      await preloadProjectDiagnostics(nextProject.path);
       setFileToOpen(null);
     } catch (error) {
       useWorkspaceStore.getState().cancelProjectSwitch(nextProject.id);

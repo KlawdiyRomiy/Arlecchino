@@ -91,6 +91,7 @@ import prettierPluginHtml from "prettier/plugins/html";
 import prettierPluginPostcss from "prettier/plugins/postcss";
 import prettierPluginTypescript from "prettier/plugins/typescript";
 import prettierPluginPhp from "@prettier/plugin-php";
+import { useEditorStore } from "../stores/editorStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import {
   findDefinitions,
@@ -100,6 +101,7 @@ import {
   DefinitionChooserMenu,
   DefinitionItem as MenuDefinitionItem,
 } from "./DefinitionChooserMenu";
+import { DiagnosticsDonutIndicator } from "./problems/DiagnosticsDonutIndicator";
 import { main as MainModels } from "../../wailsjs/go/models";
 import {
   GetEditorCompletions,
@@ -113,6 +115,7 @@ import {
   SearchClasses,
 } from "../../wailsjs/go/main/App";
 import { createCompletionOrchestrator } from "../extensions/completionOrchestrator";
+import { createDiagnosticsExtension } from "../extensions/diagnosticsExtension";
 import { ghostExtension } from "../extensions/ghostExtension";
 import { metricsExtension } from "../extensions/metricsExtension";
 import { createCompletionCache } from "../utils/completionCache";
@@ -531,7 +534,7 @@ const editorStyles = EditorView.theme({
     overflow: "auto",
   },
   ".cm-content": {
-    padding: "8px 0",
+    padding: "8px 8px",
     caretColor: "#fff",
     backgroundColor: "#000",
   },
@@ -547,9 +550,14 @@ const editorStyles = EditorView.theme({
   ".cm-activeLine": {
     backgroundColor: "#0a0a0a",
   },
+  ".cm-cursorLayer": {
+    overflow: "visible",
+  },
   ".cm-cursor": {
     borderLeftColor: "#fff",
     borderLeftWidth: "2px",
+    height: "1.35em",
+    marginTop: "0.05em",
   },
   ".cm-selectionBackground, .cm-content ::selection": {
     backgroundColor: "#264f78 !important",
@@ -565,7 +573,7 @@ const editorStyles = EditorView.theme({
     backgroundColor: "#264f78 !important",
   },
   ".cm-line": {
-    padding: "0 8px",
+    padding: "0",
   },
   ".cm-foldGutter": {
     width: "12px",
@@ -1192,6 +1200,7 @@ interface CodeMirrorEditorProps {
   language: string;
   onChange: (value: string | undefined) => void;
   onSave?: () => void;
+  onToggleProblems?: () => void;
   onOpenFile?: (path: string, line?: number) => void;
   onQuickLook?: (path: string, line?: number) => void;
   onPerspectiveOpen?: () => void;
@@ -1209,6 +1218,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   language,
   onChange,
   onSave,
+  onToggleProblems,
   onOpenFile,
   onQuickLook,
   onPerspectiveOpen: _onPerspectiveOpen,
@@ -1228,6 +1238,22 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const signatureRequestGuardRef = useRef(createLatestRequestGuard());
   const editorFontSize = useEditorSettingsStore(
     (state) => state.editorFontSize,
+  );
+  const showInlineDiagnostics = useEditorSettingsStore(
+    (state) => state.showInlineDiagnostics,
+  );
+  const showMinimapSetting = useEditorSettingsStore(
+    (state) => state.showMinimap,
+  );
+  const setCursorPosition = useEditorStore((state) => state.setCursorPosition);
+  const diagnosticsExtension = useMemo(
+    () =>
+      createDiagnosticsExtension({
+        filePath,
+        language,
+        enabled: showInlineDiagnostics,
+      }),
+    [filePath, language, showInlineDiagnostics],
   );
 
   const [definitionMenu, setDefinitionMenu] = useState<DefinitionMenuState>({
@@ -1489,8 +1515,20 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
 
   const shouldShowMinimap = useMemo(
-    () => shouldEnableCodeMirrorMinimap(content),
-    [content],
+    () => showMinimapSetting && shouldEnableCodeMirrorMinimap(content),
+    [content, showMinimapSetting],
+  );
+  const syncCursorPosition = useCallback(
+    (state: EditorState) => {
+      const head = state.selection.main.head;
+      const line = state.doc.lineAt(head);
+      setCursorPosition(line.number, head - line.from + 1);
+    },
+    [setCursorPosition],
+  );
+  const fileName = useMemo(
+    () => filePath.split("/").pop() || filePath,
+    [filePath],
   );
 
   const orchestrator = useMemo(
@@ -1792,7 +1830,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             boost: effectivePriority / 500,
             __insertText: insertText,
           };
-          (completion as Record<string, unknown>).__source = sourceLabel;
+          (completion as unknown as Record<string, unknown>).__source =
+            sourceLabel;
 
           return completion;
         });
@@ -2301,6 +2340,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     saveKeymap,
     formatKeymap,
     EditorView.updateListener.of((update) => {
+      if (!update.selectionSet && !update.docChanged) return;
+      syncCursorPosition(update.state);
+    }),
+    EditorView.updateListener.of((update) => {
       if (!update.docChanged) return;
       if (completionStatus(update.state) !== null) return;
       if (update.view.composing || update.view.compositionStarted) return;
@@ -2350,7 +2393,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       addToOptions: [
         {
           render(completion) {
-            const src = (completion as Record<string, unknown>)
+            const src = (completion as unknown as Record<string, unknown>)
               .__source as string;
             if (!src) return null;
             const el = document.createElement("span");
@@ -2363,6 +2406,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       ],
     }),
     rainbowBrackets(),
+    ...diagnosticsExtension,
   ];
 
   if (shouldShowMinimap) {
@@ -2380,7 +2424,14 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   extensions.push(...definitionLinkExtension, ...signatureHelpExtension);
 
   return (
-    <div className="h-full w-full overflow-hidden">
+    <div className="relative h-full w-full overflow-hidden">
+      <DiagnosticsDonutIndicator
+        filePath={filePath}
+        fileName={fileName}
+        rightOffset={shouldShowMinimap ? 74 : 12}
+        onClick={onToggleProblems}
+      />
+
       <CodeMirror
         ref={editorRef}
         value={content}
@@ -2405,6 +2456,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         }}
         theme="none"
         className="h-full"
+        onCreateEditor={(view) => {
+          syncCursorPosition(view.state);
+        }}
       />
 
       <DefinitionChooserMenu

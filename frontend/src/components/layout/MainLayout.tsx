@@ -6,6 +6,7 @@ import { FileExplorer } from "../FileExplorer";
 import { TerminalPanelContent } from "../TerminalPanel";
 import { AIChatPanelContent } from "../AIChatPanel";
 import { GitPanel } from "../GitPanel";
+import { ProblemsPanel } from "../problems/ProblemsPanel";
 import { PreviewWindowLayer } from "./PreviewWindowLayer";
 import { ExecutionDialog } from "../ExecutionDialog";
 import { LaravelPlugin } from "../../plugins/LaravelPlugin";
@@ -16,7 +17,14 @@ import { useDispatcher } from "../../hooks/useDispatcher";
 import { useEditorStore } from "../../stores/editorStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { FloatingPanel, PanelPosition, PanelSize } from "../ui/FloatingPanel";
-import { FolderTree, Terminal, Sparkles, GitBranch, Globe } from "lucide-react";
+import {
+  AlertCircle,
+  FolderTree,
+  Terminal,
+  Sparkles,
+  GitBranch,
+  Globe,
+} from "lucide-react";
 
 import {
   colors,
@@ -81,8 +89,8 @@ interface PanelConfig {
   y: number;
 }
 
-type PanelId = "explorer" | "terminal" | "aiChat" | "git";
-type AssistPanelId = Exclude<PanelId, "terminal">;
+type PanelId = "explorer" | "terminal" | "aiChat" | "git" | "problems";
+type AssistPanelId = Exclude<PanelId, "terminal" | "problems">;
 type PanelVisibility = Record<PanelId, boolean>;
 
 type PanelConfigs = Record<PanelId, PanelConfig>;
@@ -373,6 +381,7 @@ const DEFAULT_PANELS: PanelVisibility = {
   terminal: false,
   aiChat: false,
   git: false,
+  problems: false,
 };
 
 const DEFAULT_PANEL_CONFIGS: PanelConfigs = {
@@ -403,6 +412,13 @@ const DEFAULT_PANEL_CONFIGS: PanelConfigs = {
     mode: "snapped",
     x: 0,
     y: 0,
+  },
+  problems: {
+    position: "bottom",
+    size: { width: 520, height: 320 },
+    mode: "floating",
+    x: 96,
+    y: 96,
   },
 };
 
@@ -525,7 +541,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       const { panels: saved } = JSON.parse(raw);
       if (!saved) return { ...DEFAULT_PANELS };
       const { browser: _, ...rest } = saved;
-      return rest as PanelVisibility;
+      return { ...DEFAULT_PANELS, ...(rest as Partial<PanelVisibility>) };
     } catch {
       return { ...DEFAULT_PANELS };
     }
@@ -539,7 +555,48 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       const { panelConfigs: saved } = JSON.parse(raw);
       if (!saved) return structuredClone(DEFAULT_PANEL_CONFIGS);
       const { browser: _, ...rest } = saved;
-      return rest as PanelConfigs;
+      return {
+        explorer: {
+          ...DEFAULT_PANEL_CONFIGS.explorer,
+          ...(rest.explorer ?? {}),
+          size: {
+            ...DEFAULT_PANEL_CONFIGS.explorer.size,
+            ...(rest.explorer?.size ?? {}),
+          },
+        },
+        terminal: {
+          ...DEFAULT_PANEL_CONFIGS.terminal,
+          ...(rest.terminal ?? {}),
+          size: {
+            ...DEFAULT_PANEL_CONFIGS.terminal.size,
+            ...(rest.terminal?.size ?? {}),
+          },
+        },
+        aiChat: {
+          ...DEFAULT_PANEL_CONFIGS.aiChat,
+          ...(rest.aiChat ?? {}),
+          size: {
+            ...DEFAULT_PANEL_CONFIGS.aiChat.size,
+            ...(rest.aiChat?.size ?? {}),
+          },
+        },
+        git: {
+          ...DEFAULT_PANEL_CONFIGS.git,
+          ...(rest.git ?? {}),
+          size: {
+            ...DEFAULT_PANEL_CONFIGS.git.size,
+            ...(rest.git?.size ?? {}),
+          },
+        },
+        problems: {
+          ...DEFAULT_PANEL_CONFIGS.problems,
+          ...(rest.problems ?? {}),
+          size: {
+            ...DEFAULT_PANEL_CONFIGS.problems.size,
+            ...(rest.problems?.size ?? {}),
+          },
+        },
+      };
     } catch {
       return structuredClone(DEFAULT_PANEL_CONFIGS);
     }
@@ -573,6 +630,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         terminal: { ...source.terminal, size: { ...source.terminal.size } },
         aiChat: { ...source.aiChat, size: { ...source.aiChat.size } },
         git: { ...source.git, size: { ...source.git.size } },
+        problems: { ...source.problems, size: { ...source.problems.size } },
       };
     },
     [],
@@ -629,7 +687,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setPanels((prev) => {
         const nextPanels = getTUIPanelVisibility({ ...prev, browser: false });
         const { browser: _browser, ...rest } = nextPanels;
-        return rest;
+        return {
+          ...rest,
+          problems: prev.problems,
+        };
       });
 
       setTUIAssist({ active: false, panel: null, swapped: false });
@@ -1091,6 +1152,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
+      if (shortcuts.toggleSettings(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        if (isSettingsOpen) {
+          closeSettings();
+        } else {
+          openSettings();
+        }
+        return;
+      }
+
       // Toggle Git: Cmd+Shift+G
       if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "g") {
         if (isTerminalShortcutContext) {
@@ -1128,6 +1203,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           usePreviewWindowStore.getState().activeWindowId;
         if (activePreviewWindowId) {
           closePreviewWindow(activePreviewWindowId);
+          return;
+        }
+
+        if (isSettingsOpen) {
+          closeSettings();
           return;
         }
 
@@ -1234,7 +1314,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     closeTUIAssistPanel,
     dispatcher,
     getActiveTerminalSessionId,
+    isSettingsOpen,
     isDark,
+    openSettings,
+    closeSettings,
     toggleCommandDispatcher,
     toggleTUIAssistPanel,
   ]);
@@ -1669,6 +1752,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           ai: "aiChat",
           terminal: "terminal",
           explorer: "explorer",
+          problems: "problems",
         };
         const panelId = panelMap[panel];
         if (!panelId) {
@@ -2278,6 +2362,23 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             />
           </FloatingPanel>
         );
+      case "problems":
+        return (
+          <FloatingPanel
+            key="problems"
+            id="problems"
+            title="Problems"
+            icon={<AlertCircle size={16} />}
+            minSize={320}
+            maxSize={760}
+            {...panelProps}
+          >
+            <ProblemsPanel
+              activeFilePath={activeEditorTab?.path ?? null}
+              onNavigate={(path, line, _column) => openFileFromPath(path, line)}
+            />
+          </FloatingPanel>
+        );
       default:
         return null;
     }
@@ -2537,15 +2638,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           {renderPanel("explorer")}
           {renderPanel("git")}
           {renderPanel("aiChat")}
+          {renderPanel("problems")}
           {!tuiModeActive && renderPanel("terminal")}
 
           <div style={editorAreaStyle}>
             {React.cloneElement(
               children as React.ReactElement<{
+                onToggleProblems?: () => void;
                 onPerspectiveOpen?: () => void;
                 onPerspectiveClose?: () => void;
               }>,
               {
+                onToggleProblems: () => togglePanel("problems"),
                 onPerspectiveOpen: handlePerspectiveOpen,
                 onPerspectiveClose: handlePerspectiveClose,
               },
@@ -2571,7 +2675,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       </div>
 
       <div style={bottomChromeStyle}>
-        <StatusBar />
+        <StatusBar onToggleProblems={() => togglePanel("problems")} />
       </div>
 
       <div style={tuiOverlayStyle} data-testid="tui-overlay">

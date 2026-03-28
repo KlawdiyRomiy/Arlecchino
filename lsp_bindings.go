@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -71,6 +72,17 @@ type LSPDiagnostic struct {
 	Message  string   `json:"message"`
 }
 
+type LSPDiagnosticsEvent struct {
+	URI      string          `json:"uri"`
+	FilePath string          `json:"filePath"`
+	Language string          `json:"language"`
+	Items    []LSPDiagnostic `json:"items"`
+}
+
+type LSPDiagnosticsPreloadEvent struct {
+	ProjectPath string `json:"projectPath"`
+}
+
 type LSPCodeAction struct {
 	Title       string            `json:"title"`
 	Kind        string            `json:"kind,omitempty"`
@@ -105,6 +117,109 @@ func ensureDocOpen(manager *indexerlsp.Manager, language, filePath, content stri
 		return true, nil
 	}
 	return false, nil
+}
+
+func convertLSPDiagnostics(diagnostics []indexerlsp.Diagnostic) []LSPDiagnostic {
+	if len(diagnostics) == 0 {
+		return nil
+	}
+
+	result := make([]LSPDiagnostic, 0, len(diagnostics))
+	for _, d := range diagnostics {
+		code := ""
+		if d.Code != nil {
+			code = fmt.Sprintf("%v", d.Code)
+		}
+		result = append(result, LSPDiagnostic{
+			Range: LSPRange{
+				Start: LSPPosition{Line: d.Range.Start.Line, Character: d.Range.Start.Character},
+				End:   LSPPosition{Line: d.Range.End.Line, Character: d.Range.End.Character},
+			},
+			Severity: d.Severity,
+			Code:     code,
+			Source:   d.Source,
+			Message:  d.Message,
+		})
+	}
+
+	return result
+}
+
+func newLSPDiagnosticsEvent(language, filePath string, diagnostics []indexerlsp.Diagnostic) LSPDiagnosticsEvent {
+	return LSPDiagnosticsEvent{
+		URI:      "file://" + filepath.ToSlash(filePath),
+		FilePath: filePath,
+		Language: language,
+		Items:    convertLSPDiagnostics(diagnostics),
+	}
+}
+
+func shouldSkipPreloadDir(name string) bool {
+	switch name {
+	case "vendor", "node_modules", ".git", "storage":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) LSPPreloadProjectDiagnostics(projectPath string) bool {
+	if a.lspManager == nil {
+		return false
+	}
+
+	root := strings.TrimSpace(projectPath)
+	if root == "" {
+		root = strings.TrimSpace(a.projectPath)
+	}
+	if root == "" {
+		return false
+	}
+
+	a.emitEvent("lsp:diagnostics:preload:start", LSPDiagnosticsPreloadEvent{ProjectPath: root})
+	defer a.emitEvent("lsp:diagnostics:preload:complete", LSPDiagnosticsPreloadEvent{ProjectPath: root})
+
+	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		if a.projectCtx != nil {
+			select {
+			case <-a.projectCtx.Done():
+				return context.Canceled
+			default:
+			}
+		}
+
+		if entry.IsDir() {
+			if path != root && shouldSkipPreloadDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		language := detectLanguage(path)
+		if language == "" || a.lspManager.IsDocOpen(language, path) {
+			return nil
+		}
+
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+
+		if _, openErr := ensureDocOpen(a.lspManager, language, path, string(content)); openErr != nil {
+			a.logWarning(fmt.Sprintf("[DiagnosticsPreload] %s: %v", path, openErr))
+		}
+
+		return nil
+	})
+	if walkErr != nil && walkErr != context.Canceled {
+		a.logWarning(fmt.Sprintf("[DiagnosticsPreload] walk error: %v", walkErr))
+	}
+
+	return true
 }
 
 // LSPGoToDefinition finds definition using unified LSP manager
@@ -248,25 +363,7 @@ func (a *App) LSPGetDiagnostics(filePath string) ([]LSPDiagnostic, error) {
 		return nil, nil
 	}
 
-	result := make([]LSPDiagnostic, 0, len(diagnostics))
-	for _, d := range diagnostics {
-		code := ""
-		if d.Code != nil {
-			code = fmt.Sprintf("%v", d.Code)
-		}
-		result = append(result, LSPDiagnostic{
-			Range: LSPRange{
-				Start: LSPPosition{Line: d.Range.Start.Line, Character: d.Range.Start.Character},
-				End:   LSPPosition{Line: d.Range.End.Line, Character: d.Range.End.Character},
-			},
-			Severity: d.Severity,
-			Code:     code,
-			Source:   d.Source,
-			Message:  d.Message,
-		})
-	}
-
-	return result, nil
+	return convertLSPDiagnostics(diagnostics), nil
 }
 
 func (a *App) LSPGetCodeActions(filePath string, content string, line int, character int) ([]LSPCodeAction, error) {
