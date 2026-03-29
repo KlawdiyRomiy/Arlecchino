@@ -35,7 +35,6 @@ import {
   zIndex,
 } from "../../styles/colors";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
-import { useExplorerStore } from "../../stores/explorerStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { usePluginModal } from "../../contexts/PluginModalContext";
 import {
@@ -448,8 +447,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     );
     return activeProject?.path ?? "";
   });
-  const explorerProjectPath = useExplorerStore((state) => state.projectPath);
-  const activeProjectPath = explorerProjectPath || workspaceProjectPath;
+  const activeProjectPath = workspaceProjectPath;
   const activeEditorTab = useEditorStore((state) =>
     state.getActiveTab(state.activePaneId),
   );
@@ -2252,6 +2250,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             {...panelProps}
           >
             <FileExplorer
+              projectPath={activeProjectPath}
               onFileOpen={handleFileOpen}
               isHorizontal={
                 config.position === "bottom" || config.position === "top"
@@ -2402,6 +2401,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       case "explorer":
         return (
           <FileExplorer
+            projectPath={activeProjectPath}
             onFileOpen={handleFileOpen}
             isHorizontal={false}
             onPerspectiveOpen={handlePerspectiveOpen}

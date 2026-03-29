@@ -2,9 +2,11 @@ import * as AppFunctions from "../../wailsjs/go/main/App";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
+  activateProjectScope,
   preloadProjectDiagnostics,
   resetProjectBoundStores,
 } from "../utils/projectBoundState";
+import { useTerminalStore } from "./terminalStore";
 
 export interface WorkspaceProject {
   id: string;
@@ -18,6 +20,7 @@ interface WorkspaceState {
   activeId: string | null;
   activeFramework: string | null;
   pendingId: string | null;
+  switchSourceId: string | null;
   ready: boolean;
   switchDirection: number;
   uiBlockers: string[];
@@ -26,6 +29,7 @@ interface WorkspaceState {
   clearActiveProject: () => void;
   beginProjectSwitch: (id: string, direction?: number) => void;
   confirmProjectSwitch: (id: string) => void;
+  completeProjectSwitch: (id: string) => void;
   cancelProjectSwitch: (id?: string | null) => void;
   switchNextProject: () => string | null;
   switchPrevProject: () => string | null;
@@ -37,6 +41,28 @@ interface WorkspaceState {
 }
 
 const getProjectName = (path: string) => path.split("/").pop() || path;
+
+export const getProjectPathById = (
+  projects: WorkspaceProject[],
+  id: string | null,
+) => {
+  if (!id) {
+    return null;
+  }
+
+  return projects.find((project) => project.id === id)?.path ?? null;
+};
+
+export const resolveDiagnosticsProjectPath = (
+  projects: WorkspaceProject[],
+  activeId: string | null,
+  pendingId: string | null,
+  switchSourceId: string | null,
+) =>
+  getProjectPathById(
+    projects,
+    pendingId && switchSourceId ? switchSourceId : activeId,
+  );
 
 export const resolveProjectSwitchDirection = (
   projects: WorkspaceProject[],
@@ -90,6 +116,7 @@ const createWorkspaceStore = () =>
         activeId: null,
         activeFramework: null,
         pendingId: null,
+        switchSourceId: null,
         ready: false,
         switchDirection: 1,
         uiBlockers: [],
@@ -102,6 +129,7 @@ const createWorkspaceStore = () =>
             set((state) => ({
               activeId: existing.id,
               pendingId: null,
+              switchSourceId: null,
               switchDirection: resolveProjectSwitchDirection(
                 state.projects,
                 state.activeId,
@@ -124,6 +152,7 @@ const createWorkspaceStore = () =>
             ],
             activeId: path,
             pendingId: null,
+            switchSourceId: null,
             switchDirection: 1,
             uiBlockers: [],
           }));
@@ -147,6 +176,8 @@ const createWorkspaceStore = () =>
               projects,
               activeId,
               pendingId: state.pendingId === id ? null : state.pendingId,
+              switchSourceId:
+                state.switchSourceId === id ? null : state.switchSourceId,
               uiBlockers: activeId === null ? [] : state.uiBlockers,
             };
           });
@@ -157,6 +188,7 @@ const createWorkspaceStore = () =>
             activeId: null,
             activeFramework: null,
             pendingId: null,
+            switchSourceId: null,
             uiBlockers: [],
           }),
 
@@ -168,6 +200,7 @@ const createWorkspaceStore = () =>
 
           set({
             pendingId: id,
+            switchSourceId: state.activeId,
             switchDirection:
               direction ??
               resolveProjectSwitchDirection(state.projects, state.activeId, id),
@@ -176,10 +209,21 @@ const createWorkspaceStore = () =>
 
         confirmProjectSwitch: (id: string) =>
           set((state) => ({
-            activeId: id,
-            pendingId: state.pendingId === id ? null : state.pendingId,
-            uiBlockers: [],
+            activeId: state.pendingId === id ? id : state.activeId,
           })),
+
+        completeProjectSwitch: (id: string) =>
+          set((state) => {
+            if (state.activeId !== id) {
+              return state;
+            }
+
+            return {
+              pendingId: state.pendingId === id ? null : state.pendingId,
+              switchSourceId: null,
+              uiBlockers: [],
+            };
+          }),
 
         cancelProjectSwitch: (id?: string | null) =>
           set((state) => {
@@ -187,7 +231,14 @@ const createWorkspaceStore = () =>
               return state;
             }
 
-            return { pendingId: null };
+            return {
+              activeId:
+                state.pendingId && state.activeId === state.pendingId
+                  ? state.switchSourceId
+                  : state.activeId,
+              pendingId: null,
+              switchSourceId: null,
+            };
           }),
 
         switchNextProject: () => {
@@ -281,18 +332,22 @@ export const initializeWorkspace = async () => {
 
     const { activeId, projects } = useWorkspaceStore.getState();
     if (!activeId) {
+      useTerminalStore.getState().setActiveProject(null);
       return;
     }
 
     const project = projects.find((item) => item.id === activeId);
     if (!project) {
+      useTerminalStore.getState().setActiveProject(null);
       useWorkspaceStore.getState().clearActiveProject();
       return;
     }
 
     try {
-      await AppFunctions.OpenProject(project.path);
       resetProjectBoundStores();
+      activateProjectScope(project.path);
+      await AppFunctions.OpenProject(project.path);
+      useTerminalStore.getState().setActiveProject(project.path);
       useWorkspaceStore
         .getState()
         .setActiveFramework(
@@ -300,6 +355,8 @@ export const initializeWorkspace = async () => {
         );
       await preloadProjectDiagnostics(project.path);
     } catch (error) {
+      useTerminalStore.getState().setActiveProject(null);
+      resetProjectBoundStores();
       console.error("Error restoring workspace:", error);
       useWorkspaceStore.getState().removeProject(activeId);
       useWorkspaceStore.getState().setActiveFramework(null);

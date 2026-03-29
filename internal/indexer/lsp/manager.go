@@ -36,6 +36,8 @@ type Manager struct {
 	completionWait  time.Duration
 	diagnosticsMu   sync.RWMutex
 	diagnostics     map[string]map[string][]Diagnostic
+	diagnosticSeq   uint64
+	diagnosticSeen  map[string]uint64
 	onDiagnostics   func(language, filePath string, diagnostics []Diagnostic)
 	rootPath        string
 }
@@ -226,9 +228,12 @@ func NewManager(rootPath string) *Manager {
 		completionMax:   200,
 		completionWait:  500 * time.Millisecond,
 		diagnostics:     make(map[string]map[string][]Diagnostic),
+		diagnosticSeen:  make(map[string]uint64),
 		rootPath:        rootPath,
 	}
 }
+
+const diagnosticsPublishPollInterval = 25 * time.Millisecond
 
 func (m *Manager) SetDiagnosticsCallback(callback func(language, filePath string, diagnostics []Diagnostic)) {
 	m.diagnosticsMu.Lock()
@@ -422,6 +427,8 @@ func (m *Manager) StopAll() {
 
 	m.diagnosticsMu.Lock()
 	m.diagnostics = make(map[string]map[string][]Diagnostic)
+	m.diagnosticSeq = 0
+	m.diagnosticSeen = make(map[string]uint64)
 	m.onDiagnostics = nil
 	m.diagnosticsMu.Unlock()
 
@@ -767,6 +774,8 @@ func (m *Manager) setDiagnostics(language, filePath string, diagnostics []Diagno
 	cloned := cloneDiagnostics(diagnostics)
 
 	m.diagnosticsMu.Lock()
+	m.diagnosticSeq++
+	m.diagnosticSeen[filePath] = m.diagnosticSeq
 	callback := m.onDiagnostics
 	if len(cloned) == 0 {
 		langDiagnostics := m.diagnostics[language]
@@ -796,6 +805,8 @@ func (m *Manager) setDiagnostics(language, filePath string, diagnostics []Diagno
 
 func (m *Manager) clearDiagnostics(language, filePath string) {
 	m.diagnosticsMu.Lock()
+	m.diagnosticSeq++
+	m.diagnosticSeen[filePath] = m.diagnosticSeq
 	callback := m.onDiagnostics
 	langDiagnostics := m.diagnostics[language]
 	if langDiagnostics != nil {
@@ -809,6 +820,56 @@ func (m *Manager) clearDiagnostics(language, filePath string) {
 	if callback != nil {
 		callback(language, filePath, nil)
 	}
+}
+
+func (m *Manager) WaitForDiagnosticsPublications(ctx context.Context, filePaths []string) bool {
+	tracked := make(map[string]uint64, len(filePaths))
+	for _, filePath := range filePaths {
+		if filePath == "" {
+			continue
+		}
+		tracked[filePath] = 0
+	}
+	if len(tracked) == 0 {
+		return true
+	}
+
+	m.diagnosticsMu.RLock()
+	for filePath := range tracked {
+		tracked[filePath] = m.diagnosticSeen[filePath]
+	}
+	m.diagnosticsMu.RUnlock()
+
+	if m.haveDiagnosticsPublicationsSince(tracked) {
+		return true
+	}
+
+	ticker := time.NewTicker(diagnosticsPublishPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			if m.haveDiagnosticsPublicationsSince(tracked) {
+				return true
+			}
+		}
+	}
+}
+
+func (m *Manager) haveDiagnosticsPublicationsSince(tracked map[string]uint64) bool {
+	m.diagnosticsMu.RLock()
+	defer m.diagnosticsMu.RUnlock()
+
+	for filePath, version := range tracked {
+		if m.diagnosticSeen[filePath] <= version {
+			return false
+		}
+	}
+
+	return true
 }
 
 func cloneDiagnostics(diagnostics []Diagnostic) []Diagnostic {

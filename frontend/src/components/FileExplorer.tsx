@@ -44,6 +44,7 @@ export interface FileExplorerProps {
     name: string,
     line?: number,
   ) => void;
+  projectPath?: string;
   isHorizontal?: boolean;
   onPerspectiveOpen?: () => void;
   onPerspectiveClose?: () => void;
@@ -51,6 +52,7 @@ export interface FileExplorerProps {
 
 export const FileExplorer: React.FC<FileExplorerProps> = ({
   onFileOpen,
+  projectPath: initialProjectPath = "",
   isHorizontal = false,
   onPerspectiveOpen,
   onPerspectiveClose,
@@ -66,7 +68,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     setHighlightedPath: setStoreHighlightedPath,
     setProjectPath: setStoreProjectPath,
   } = useExplorerStore();
-  const [projectPath, setProjectPath] = useState<string>("");
+  const [projectPath, setProjectPath] = useState<string>(initialProjectPath);
   const [files, setFiles] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([]);
@@ -322,12 +324,17 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
   const loadProject = async () => {
     try {
-      const path = await App.GetCurrentProjectPath();
-      if (path) {
-        setProjectPath(path);
-        setStoreProjectPath(path);
-        await loadDirectory(path);
+      const resolvedProjectPath =
+        initialProjectPath || (await App.GetCurrentProjectPath());
+      if (!resolvedProjectPath) {
+        setProjectPath("");
+        setStoreProjectPath("");
+        return;
       }
+
+      setProjectPath(resolvedProjectPath);
+      setStoreProjectPath(resolvedProjectPath);
+      await loadDirectory(resolvedProjectPath);
     } catch (error) {
       console.error("Error loading project:", error);
     } finally {

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -73,14 +72,22 @@ type LSPDiagnostic struct {
 }
 
 type LSPDiagnosticsEvent struct {
-	URI      string          `json:"uri"`
-	FilePath string          `json:"filePath"`
-	Language string          `json:"language"`
-	Items    []LSPDiagnostic `json:"items"`
+	URI         string          `json:"uri"`
+	FilePath    string          `json:"filePath"`
+	ProjectPath string          `json:"projectPath"`
+	Generation  uint64          `json:"generation"`
+	Language    string          `json:"language"`
+	Items       []LSPDiagnostic `json:"items"`
 }
 
 type LSPDiagnosticsPreloadEvent struct {
-	ProjectPath string `json:"projectPath"`
+	ProjectPath        string `json:"projectPath"`
+	Generation         uint64 `json:"generation"`
+	Bounded            bool   `json:"bounded"`
+	TotalCandidates    int    `json:"totalCandidates"`
+	SelectedCandidates int    `json:"selectedCandidates"`
+	TotalLanguages     int    `json:"totalLanguages"`
+	SelectedLanguages  int    `json:"selectedLanguages"`
 }
 
 type LSPCodeAction struct {
@@ -145,12 +152,14 @@ func convertLSPDiagnostics(diagnostics []indexerlsp.Diagnostic) []LSPDiagnostic 
 	return result
 }
 
-func newLSPDiagnosticsEvent(language, filePath string, diagnostics []indexerlsp.Diagnostic) LSPDiagnosticsEvent {
+func newLSPDiagnosticsEvent(projectPath string, generation uint64, language, filePath string, diagnostics []indexerlsp.Diagnostic) LSPDiagnosticsEvent {
 	return LSPDiagnosticsEvent{
-		URI:      "file://" + filepath.ToSlash(filePath),
-		FilePath: filePath,
-		Language: language,
-		Items:    convertLSPDiagnostics(diagnostics),
+		URI:         "file://" + filepath.ToSlash(filePath),
+		FilePath:    filePath,
+		ProjectPath: projectPath,
+		Generation:  generation,
+		Language:    language,
+		Items:       convertLSPDiagnostics(diagnostics),
 	}
 }
 
@@ -164,62 +173,7 @@ func shouldSkipPreloadDir(name string) bool {
 }
 
 func (a *App) LSPPreloadProjectDiagnostics(projectPath string) bool {
-	if a.lspManager == nil {
-		return false
-	}
-
-	root := strings.TrimSpace(projectPath)
-	if root == "" {
-		root = strings.TrimSpace(a.projectPath)
-	}
-	if root == "" {
-		return false
-	}
-
-	a.emitEvent("lsp:diagnostics:preload:start", LSPDiagnosticsPreloadEvent{ProjectPath: root})
-	defer a.emitEvent("lsp:diagnostics:preload:complete", LSPDiagnosticsPreloadEvent{ProjectPath: root})
-
-	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-
-		if a.projectCtx != nil {
-			select {
-			case <-a.projectCtx.Done():
-				return context.Canceled
-			default:
-			}
-		}
-
-		if entry.IsDir() {
-			if path != root && shouldSkipPreloadDir(entry.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		language := detectLanguage(path)
-		if language == "" || a.lspManager.IsDocOpen(language, path) {
-			return nil
-		}
-
-		content, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return nil
-		}
-
-		if _, openErr := ensureDocOpen(a.lspManager, language, path, string(content)); openErr != nil {
-			a.logWarning(fmt.Sprintf("[DiagnosticsPreload] %s: %v", path, openErr))
-		}
-
-		return nil
-	})
-	if walkErr != nil && walkErr != context.Canceled {
-		a.logWarning(fmt.Sprintf("[DiagnosticsPreload] walk error: %v", walkErr))
-	}
-
-	return true
+	return a.lspPreloadProjectDiagnostics(projectPath, a.projectGeneration.Load())
 }
 
 // LSPGoToDefinition finds definition using unified LSP manager

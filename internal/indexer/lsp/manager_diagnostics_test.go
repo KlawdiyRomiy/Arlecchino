@@ -1,6 +1,10 @@
 package lsp
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+)
 
 func TestSetDiagnosticsCallbackReceivesClonedSnapshot(t *testing.T) {
 	m := NewManager(t.TempDir())
@@ -74,5 +78,42 @@ func TestClearDiagnosticsNotifiesWithEmptySnapshot(t *testing.T) {
 	stored := m.GetDiagnostics("go", "/tmp/test.go")
 	if len(stored) != 0 {
 		t.Fatalf("expected diagnostics store to be empty, got %d", len(stored))
+	}
+}
+
+func TestWaitForDiagnosticsPublicationsWaitsForTrackedFiles(t *testing.T) {
+	m := NewManager(t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	start := time.Now()
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		m.setDiagnostics("go", "/tmp/first.go", []Diagnostic{{Message: "first"}})
+		time.Sleep(40 * time.Millisecond)
+		m.setDiagnostics("go", "/tmp/second.go", nil)
+	}()
+
+	if !m.WaitForDiagnosticsPublications(ctx, []string{"/tmp/first.go", "/tmp/second.go"}) {
+		t.Fatalf("expected tracked publications to arrive before timeout")
+	}
+
+	if elapsed := time.Since(start); elapsed < 70*time.Millisecond {
+		t.Fatalf("expected wait to include both tracked publications, got %s", elapsed)
+	}
+}
+
+func TestWaitForDiagnosticsPublicationsTimesOutWhenTrackedFileIsMissing(t *testing.T) {
+	m := NewManager(t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+	defer cancel()
+
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		m.setDiagnostics("go", "/tmp/first.go", []Diagnostic{{Message: "first"}})
+	}()
+
+	if m.WaitForDiagnosticsPublications(ctx, []string{"/tmp/first.go", "/tmp/missing.go"}) {
+		t.Fatalf("expected wait to stop when tracked publication never arrives")
 	}
 }

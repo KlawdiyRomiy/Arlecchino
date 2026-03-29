@@ -59,6 +59,8 @@ export function CreateSeeder(arg1:string,arg2:plugins.SeederClassOptions):Promis
 
 export function CreateTerminal(arg1:string,arg2:string):Promise<void>;
 
+export function CreateTerminalForProject(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function DBSeed(arg1:string):Promise<string>;
 
 export function DetectLanguage(arg1:string):Promise<Array<main.LanguagePrediction>>;

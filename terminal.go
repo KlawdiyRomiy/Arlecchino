@@ -14,7 +14,11 @@ import (
 // Terminal Management - PTY session lifecycle and I/O
 
 func (a *App) CreateTerminal(id, name string) error {
-	workingDir := a.GetCurrentProjectPath()
+	return a.CreateTerminalForProject(id, name, a.GetCurrentProjectPath())
+}
+
+func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
+	workingDir := projectPath
 	if workingDir == "" {
 		home, _ := os.UserHomeDir()
 		workingDir = home

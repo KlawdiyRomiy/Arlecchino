@@ -47,7 +47,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-test("workspace store stages project switch until backend confirms it", async ({
+test("workspace store promotes switch for animation and completes it after backend work", async ({
   page,
 }) => {
   const result = await page.evaluate(async () => {
@@ -69,20 +69,24 @@ test("workspace store stages project switch until backend confirms it", async ({
     const state = store.getState() as {
       activeId: string | null;
       pendingId?: string | null;
+      switchSourceId?: string | null;
       switchDirection: number;
       beginProjectSwitch?: (id: string, direction?: number) => void;
       confirmProjectSwitch?: (id: string) => void;
+      completeProjectSwitch?: (id: string) => void;
       cancelProjectSwitch?: (id?: string) => void;
     };
 
     if (
       typeof state.beginProjectSwitch !== "function" ||
       typeof state.confirmProjectSwitch !== "function" ||
+      typeof state.completeProjectSwitch !== "function" ||
       typeof state.cancelProjectSwitch !== "function"
     ) {
       return {
         hasBegin: typeof state.beginProjectSwitch === "function",
         hasConfirm: typeof state.confirmProjectSwitch === "function",
+        hasComplete: typeof state.completeProjectSwitch === "function",
         hasCancel: typeof state.cancelProjectSwitch === "function",
       };
     }
@@ -93,8 +97,10 @@ test("workspace store stages project switch until backend confirms it", async ({
     const staged = store.getState() as {
       activeId: string | null;
       pendingId: string | null;
+      switchSourceId: string | null;
       switchDirection: number;
       confirmProjectSwitch: (id: string) => void;
+      completeProjectSwitch: (id: string) => void;
       cancelProjectSwitch: (id?: string) => void;
     };
 
@@ -103,32 +109,114 @@ test("workspace store stages project switch until backend confirms it", async ({
     const confirmed = store.getState() as {
       activeId: string | null;
       pendingId: string | null;
+      switchSourceId: string | null;
     };
 
-    staged.cancelProjectSwitch("/beta");
+    const diagnosticsDuringSwitch = workspace.resolveDiagnosticsProjectPath(
+      store.getState().projects,
+      confirmed.activeId,
+      confirmed.pendingId,
+      confirmed.switchSourceId,
+    );
+
+    staged.completeProjectSwitch("/beta");
+
+    const completed = store.getState() as {
+      activeId: string | null;
+      pendingId: string | null;
+      switchSourceId: string | null;
+    };
+
+    const diagnosticsAfterComplete = workspace.resolveDiagnosticsProjectPath(
+      store.getState().projects,
+      completed.activeId,
+      completed.pendingId,
+      completed.switchSourceId,
+    );
 
     return {
       hasBegin: true,
       hasConfirm: true,
+      hasComplete: true,
       hasCancel: true,
       beforeActiveId,
       stagedActiveId: staged.activeId,
       stagedPendingId: staged.pendingId,
+      stagedSourceId: staged.switchSourceId,
       stagedDirection: staged.switchDirection,
       confirmedActiveId: confirmed.activeId,
       confirmedPendingId: confirmed.pendingId,
+      confirmedSourceId: confirmed.switchSourceId,
+      completedActiveId: completed.activeId,
+      completedPendingId: completed.pendingId,
+      completedSourceId: completed.switchSourceId,
+      diagnosticsDuringSwitch,
+      diagnosticsAfterComplete,
     };
   });
 
   expect(result.hasBegin).toBe(true);
   expect(result.hasConfirm).toBe(true);
+  expect(result.hasComplete).toBe(true);
   expect(result.hasCancel).toBe(true);
   expect(result.beforeActiveId).toBe("/alpha");
   expect(result.stagedActiveId).toBe("/alpha");
   expect(result.stagedPendingId).toBe("/beta");
+  expect(result.stagedSourceId).toBe("/alpha");
   expect(result.stagedDirection).toBe(-1);
   expect(result.confirmedActiveId).toBe("/beta");
-  expect(result.confirmedPendingId).toBeNull();
+  expect(result.confirmedPendingId).toBe("/beta");
+  expect(result.confirmedSourceId).toBe("/alpha");
+  expect(result.completedActiveId).toBe("/beta");
+  expect(result.completedPendingId).toBeNull();
+  expect(result.completedSourceId).toBeNull();
+  expect(result.diagnosticsDuringSwitch).toBe("/alpha");
+  expect(result.diagnosticsAfterComplete).toBe("/beta");
+});
+
+test("workspace store cancels promoted switch back to the previous project", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const workspace = await import("/src/stores/workspaceStore.ts");
+    const store = workspace.useWorkspaceStore;
+
+    store.setState({
+      projects: [
+        { id: "/alpha", path: "/alpha", name: "alpha", openedAt: 1 },
+        { id: "/beta", path: "/beta", name: "beta", openedAt: 2 },
+      ],
+      activeId: "/alpha",
+      switchSourceId: null,
+      switchDirection: 1,
+      ready: true,
+      pendingId: null,
+      uiBlockers: [],
+    });
+
+    const state = store.getState() as {
+      beginProjectSwitch: (id: string, direction?: number) => void;
+      confirmProjectSwitch: (id: string) => void;
+      cancelProjectSwitch: (id?: string) => void;
+      activeId: string | null;
+      pendingId: string | null;
+      switchSourceId: string | null;
+    };
+
+    state.beginProjectSwitch("/beta", 1);
+    state.confirmProjectSwitch("/beta");
+    state.cancelProjectSwitch("/beta");
+
+    return {
+      activeId: store.getState().activeId,
+      pendingId: store.getState().pendingId,
+      switchSourceId: store.getState().switchSourceId,
+    };
+  });
+
+  expect(result.activeId).toBe("/alpha");
+  expect(result.pendingId).toBeNull();
+  expect(result.switchSourceId).toBeNull();
 });
 
 test("project switch blockers are keyed store state, not a module-global counter", async ({
@@ -194,15 +282,150 @@ test("workspace restore and indexing progress are no longer driven by useEffect"
   );
 });
 
-test("add project menu does not wire New Project to Open Project", async ({
+test("app no longer uses the project switch placeholder screen", async ({
   page,
 }) => {
-  const source = await readSource(
-    page,
-    "/src/components/layout/AddProjectMenu.tsx",
-  );
-  const openHandlerUsages =
-    source.match(/onSelect=\{handleOpenProject\}/g) ?? [];
+  const [appSource, transitionSource] = await Promise.all([
+    readSource(page, "/src/App.tsx"),
+    readSource(page, "/src/components/layout/ProjectSwitchTransition.tsx"),
+  ]);
 
-  expect(openHandlerUsages).toHaveLength(1);
+  expect(appSource).not.toMatch(/ProjectSwitchPlaceholder/);
+  expect(appSource).not.toMatch(/pendingId === activeId/);
+  expect(transitionSource).toMatch(/useIndexingPhase/);
+  expect(transitionSource).not.toMatch(/useIndexingProgress\(/);
+});
+
+test("project switching no longer clears terminal and TUI store state", async ({
+  page,
+}) => {
+  const [appSource, scopeSource] = await Promise.all([
+    readSource(page, "/src/App.tsx"),
+    readSource(page, "/src/utils/projectBoundState.ts"),
+  ]);
+
+  expect(appSource).not.toMatch(/resetForProjectSwitch\(/);
+  expect(scopeSource).not.toMatch(/useTerminalStore/);
+  expect(scopeSource).not.toMatch(/resetForProjectSwitch\(/);
+});
+
+test("terminal context follows the active project instead of caching workdir on mount", async ({
+  page,
+}) => {
+  const [panelSource, predictionSource] = await Promise.all([
+    readSource(page, "/src/components/TerminalPanel.tsx"),
+    readSource(page, "/src/hooks/useTerminalPrediction.ts"),
+  ]);
+
+  expect(panelSource).toMatch(/activeProjectPath = useTerminalStore/);
+  expect(panelSource).not.toMatch(/GetCurrentWorkDir/);
+  expect(predictionSource).toMatch(/activeProjectPath = useTerminalStore/);
+  expect(predictionSource).not.toMatch(/GetCurrentWorkDir/);
+});
+
+test("workspace restore syncs terminal project scope to the restored project", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const workspace = await import("/src/stores/workspaceStore.ts");
+    const terminal = await import("/src/stores/terminalStore.ts");
+
+    workspace.useWorkspaceStore.setState({
+      projects: [
+        {
+          id: "/alpha",
+          path: "/alpha",
+          name: "alpha",
+          openedAt: 1,
+        },
+      ],
+      activeId: "/alpha",
+      activeFramework: null,
+      pendingId: null,
+      switchSourceId: null,
+      ready: false,
+      switchDirection: 1,
+      uiBlockers: [],
+    });
+
+    terminal.useTerminalStore.setState({
+      activeProjectPath: null,
+    });
+
+    await workspace.initializeWorkspace();
+
+    return {
+      workspaceActiveId: workspace.useWorkspaceStore.getState().activeId,
+      terminalProjectPath:
+        terminal.useTerminalStore.getState().activeProjectPath,
+    };
+  });
+
+  expect(result.workspaceActiveId).toBe("/alpha");
+  expect(result.terminalProjectPath).toBe("/alpha");
+});
+
+test("app and workspace restore explicitly sync terminal store to the active project", async ({
+  page,
+}) => {
+  const [appSource, workspaceSource] = await Promise.all([
+    readSource(page, "/src/App.tsx"),
+    readSource(page, "/src/stores/workspaceStore.ts"),
+  ]);
+
+  expect(appSource).toMatch(/useTerminalStore/);
+  expect(appSource).toMatch(/setActiveProject\(/);
+  expect(workspaceSource).toMatch(/useTerminalStore/);
+  expect(workspaceSource).toMatch(/setActiveProject\(/);
+});
+
+test("project switching starts backend project open before promoting terminal project state", async ({
+  page,
+}) => {
+  const appSource = await readSource(page, "/src/App.tsx");
+
+  const switchOpenIndex = appSource.indexOf(
+    "const openProjectRequest = AppFunctions.OpenProject(project.path);",
+  );
+  const switchConfirmIndex = appSource.indexOf(
+    "useWorkspaceStore.getState().confirmProjectSwitch(id);",
+  );
+  const switchTerminalIndex = appSource.indexOf(
+    "useTerminalStore.getState().setActiveProject(project.path);",
+  );
+  const closeOpenIndex = appSource.indexOf(
+    "const openProjectRequest = AppFunctions.OpenProject(nextProject.path);",
+  );
+  const closeConfirmIndex = appSource.indexOf(
+    "useWorkspaceStore.getState().confirmProjectSwitch(nextProject.id);",
+  );
+  const closeTerminalIndex = appSource.indexOf(
+    "useTerminalStore.getState().setActiveProject(nextProject.path);",
+  );
+
+  expect(switchOpenIndex).toBeGreaterThan(-1);
+  expect(switchConfirmIndex).toBeGreaterThan(switchOpenIndex);
+  expect(switchTerminalIndex).toBeGreaterThan(switchOpenIndex);
+  expect(closeOpenIndex).toBeGreaterThan(-1);
+  expect(closeConfirmIndex).toBeGreaterThan(closeOpenIndex);
+  expect(closeTerminalIndex).toBeGreaterThan(closeOpenIndex);
+});
+
+test("layout and explorer resolve the active project from workspace state", async ({
+  page,
+}) => {
+  const [layoutSource, explorerSource] = await Promise.all([
+    readSource(page, "/src/components/layout/MainLayout.tsx"),
+    readSource(page, "/src/components/FileExplorer.tsx"),
+  ]);
+
+  expect(layoutSource).toMatch(
+    /const activeProjectPath = workspaceProjectPath;/,
+  );
+  expect(layoutSource).not.toMatch(/explorerProjectPath/);
+  expect(explorerSource).toMatch(/projectPath\?: string;/);
+  expect(explorerSource).toMatch(/projectPath: initialProjectPath =/);
+  expect(explorerSource).toMatch(/resolvedProjectPath/);
+  expect(explorerSource).toMatch(/initialProjectPath \|\|/);
+  expect(explorerSource).toMatch(/GetCurrentProjectPath/);
 });

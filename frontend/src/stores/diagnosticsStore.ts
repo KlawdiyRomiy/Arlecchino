@@ -26,6 +26,8 @@ export interface DiagnosticsEventItem {
 export interface DiagnosticsEventPayload {
   uri?: string;
   filePath?: string;
+  projectPath?: string;
+  generation?: number;
   language?: string;
   items?: DiagnosticsEventItem[] | null;
 }
@@ -68,7 +70,10 @@ export interface DiagnosticsGroupOptions {
 
 interface DiagnosticsState {
   byFile: Map<string, DiagnosticsFileGroup>;
+  activeProjectPath: string | null;
+  currentGeneration: number;
   ingestDiagnosticsEvent: (event: DiagnosticsEventPayload) => void;
+  setProjectScope: (projectPath: string | null, generation?: number) => void;
   setFileDiagnostics: (
     filePath: string,
     language: string,
@@ -266,16 +271,64 @@ const matchesProjectPath = (filePath: string, projectPath?: string | null) => {
   );
 };
 
+const normalizeGeneration = (generation: number | undefined): number => {
+  if (typeof generation !== "number" || !Number.isFinite(generation)) {
+    return 0;
+  }
+
+  return generation > 0 ? Math.trunc(generation) : 0;
+};
+
 let diagnosticsEventsBound = false;
 
 export const useDiagnosticsStore = create<DiagnosticsState>()(
   subscribeWithSelector((set, get) => ({
     byFile: new Map(),
+    activeProjectPath: null,
+    currentGeneration: 0,
+
+    setProjectScope: (projectPath, generation = 0) => {
+      set({
+        activeProjectPath: projectPath,
+        currentGeneration: normalizeGeneration(generation),
+      });
+    },
 
     ingestDiagnosticsEvent: (event) => {
       const filePath = resolveFilePath(event);
       if (filePath === "") {
         return;
+      }
+
+      const { activeProjectPath, currentGeneration } = get();
+      const eventProjectPath =
+        typeof event.projectPath === "string" && event.projectPath !== ""
+          ? event.projectPath
+          : null;
+      const eventGeneration = normalizeGeneration(event.generation);
+
+      if (
+        activeProjectPath &&
+        !matchesProjectPath(filePath, activeProjectPath)
+      ) {
+        return;
+      }
+      if (
+        activeProjectPath &&
+        eventProjectPath &&
+        eventProjectPath !== activeProjectPath
+      ) {
+        return;
+      }
+      if (
+        currentGeneration > 0 &&
+        eventGeneration > 0 &&
+        eventGeneration !== currentGeneration
+      ) {
+        return;
+      }
+      if (activeProjectPath && currentGeneration === 0 && eventGeneration > 0) {
+        get().setProjectScope(activeProjectPath, eventGeneration);
       }
 
       const items = Array.isArray(event.items) ? event.items : [];
@@ -303,7 +356,12 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
       });
     },
 
-    reset: () => set({ byFile: new Map() }),
+    reset: () =>
+      set({
+        byFile: new Map(),
+        activeProjectPath: null,
+        currentGeneration: 0,
+      }),
 
     getProjectSummary: (projectPath = null) =>
       summarizeGroups(

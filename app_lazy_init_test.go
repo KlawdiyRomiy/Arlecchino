@@ -31,12 +31,13 @@ func TestOpenProject_DoesNotInitializePHPSpecificManagersEagerly(t *testing.T) {
 		return nil, errors.New("system manager should not initialize during OpenProject")
 	}
 
+	projectPath := t.TempDir()
 	app := &App{}
 	t.Cleanup(func() {
 		_ = app.CloseProject()
 	})
 
-	if err := app.OpenProject(t.TempDir()); err != nil {
+	if err := app.OpenProject(projectPath); err != nil {
 		t.Fatalf("OpenProject returned error for non-Laravel project: %v", err)
 	}
 
@@ -285,5 +286,36 @@ func TestCloseProject_ClosesAllTerminalSessions(t *testing.T) {
 
 	if got := len(termManager.List()); got != 0 {
 		t.Fatalf("terminal sessions after CloseProject = %d, want 0", got)
+	}
+}
+
+func TestOpenProject_PreservesTerminalSessionsAcrossProjectSwitch(t *testing.T) {
+	fromDir := t.TempDir()
+	toDir := t.TempDir()
+	termManager := terminal.NewManager()
+	session, err := termManager.Create("term-1", "Terminal", fromDir)
+	if err != nil {
+		t.Fatalf("Create terminal session error = %v", err)
+	}
+
+	app := &App{termManager: termManager, projectPath: fromDir}
+	t.Cleanup(func() {
+		_ = app.CloseProject()
+	})
+
+	if got := len(termManager.List()); got != 1 {
+		t.Fatalf("terminal sessions before OpenProject = %d, want 1", got)
+	}
+
+	if err := app.OpenProject(toDir); err != nil {
+		t.Fatalf("OpenProject error = %v", err)
+	}
+
+	if got := len(termManager.List()); got != 1 {
+		t.Fatalf("terminal sessions after OpenProject = %d, want 1", got)
+	}
+
+	if err := session.Write([]byte("pwd\n")); err != nil {
+		t.Fatalf("preserved terminal session write error = %v", err)
 	}
 }

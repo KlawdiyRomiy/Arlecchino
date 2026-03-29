@@ -26,6 +26,7 @@ import type {
 } from "../types/terminal";
 
 interface TerminalState {
+  activeProjectPath: string | null;
   sessions: Map<string, TerminalSession>;
   panes: TerminalPane[];
   activePaneId: string;
@@ -44,9 +45,11 @@ interface TerminalState {
   securityPolicy: TerminalSecurityPolicy;
   sessionShellState: Map<string, TerminalShellState>;
   sessionSemanticEntries: Map<string, TerminalSemanticEntry[]>;
+  projectLayouts: Map<string, TerminalProjectState>;
 }
 
 interface TerminalActions {
+  setActiveProject: (projectPath: string | null) => void;
   initialize: () => void;
   createTerminal: (
     paneId: string,
@@ -117,6 +120,12 @@ const TERMINAL_LAYOUT_STORAGE_KEY = "terminal.layout.v1";
 const SEMANTIC_BATCH_DELAY_MS = 16;
 const SEMANTIC_DEDUPE_WINDOW_MS = 400;
 const SEMANTIC_DEDUPE_MESSAGE_MAX = 256;
+const DEFAULT_TUI_ASSIST: TUIAssistState = {
+  active: false,
+  panel: null,
+  ratio: 0.4,
+  swapped: false,
+};
 
 interface PendingSemanticEntry {
   entry: TerminalSemanticEntry;
@@ -134,7 +143,20 @@ interface TerminalLayoutSnapshot {
   splitDirection: SplitDirection;
 }
 
+interface TerminalProjectState {
+  panes: TerminalPane[];
+  activePaneId: string;
+  splitDirection: SplitDirection;
+  closedTabsStack: ClosedTerminalTab[];
+  tuiAssist: TUIAssistState;
+}
+
 interface TerminalAppBridge {
+  CreateTerminalForProject?: (
+    id: string,
+    name: string,
+    projectPath: string,
+  ) => Promise<unknown>;
   ListTerminalSessions?: () => Promise<string[]>;
   SendTerminalText?: (id: string, text: string) => Promise<unknown>;
 }
@@ -155,11 +177,52 @@ const getTerminalAppBridge = (): TerminalAppBridge | null => {
   return maybeWindow.go?.main?.App ?? null;
 };
 
+const createTerminalBackendSession = async (
+  id: string,
+  name: string,
+  projectPath: string,
+) => {
+  const appBridge = getTerminalAppBridge();
+  if (
+    appBridge &&
+    typeof appBridge.CreateTerminalForProject === "function" &&
+    projectPath !== ""
+  ) {
+    await appBridge.CreateTerminalForProject(id, name, projectPath);
+    return;
+  }
+
+  await CreateTerminal(id, name);
+};
+
 const createDefaultPanes = (): TerminalPane[] => [
   { id: "pane-1", tabIds: [], activeTabId: "" },
 ];
 
-const loadLayoutSnapshot = (): {
+const normalizeProjectPathKey = (projectPath: string | null | undefined) =>
+  (projectPath ?? "").trim().replace(/\\/g, "/").replace(/\/+/g, "/");
+
+const escapeShellSingleQuotes = (value: string) => value.replace(/'/g, `'\\''`);
+
+const getProjectLayoutMapKey = (projectPath: string | null | undefined) =>
+  normalizeProjectPathKey(projectPath) || "__global__";
+
+const getLayoutStorageKey = (projectPath: string | null | undefined) => {
+  const normalizedProjectPath = normalizeProjectPathKey(projectPath);
+  return normalizedProjectPath
+    ? `${TERMINAL_LAYOUT_STORAGE_KEY}:${normalizedProjectPath}`
+    : TERMINAL_LAYOUT_STORAGE_KEY;
+};
+
+const clonePanes = (panes: TerminalPane[]): TerminalPane[] =>
+  panes.map((pane) => ({
+    ...pane,
+    tabIds: [...pane.tabIds],
+  }));
+
+const loadLayoutSnapshot = (
+  projectPath?: string | null,
+): {
   panes: TerminalPane[];
   activePaneId: string;
   splitDirection: SplitDirection;
@@ -175,7 +238,7 @@ const loadLayoutSnapshot = (): {
   }
 
   try {
-    const raw = window.localStorage.getItem(TERMINAL_LAYOUT_STORAGE_KEY);
+    const raw = window.localStorage.getItem(getLayoutStorageKey(projectPath));
     if (!raw) {
       return {
         panes: fallbackPanes,
@@ -229,6 +292,7 @@ const persistLayoutSnapshot = (
   panes: TerminalPane[],
   activePaneId: string,
   splitDirection: SplitDirection,
+  projectPath?: string | null,
 ) => {
   if (typeof window === "undefined") {
     return;
@@ -248,7 +312,7 @@ const persistLayoutSnapshot = (
 
   try {
     window.localStorage.setItem(
-      TERMINAL_LAYOUT_STORAGE_KEY,
+      getLayoutStorageKey(projectPath),
       JSON.stringify(snapshot),
     );
   } catch (error) {
@@ -259,7 +323,166 @@ const persistLayoutSnapshot = (
   }
 };
 
-const initialLayout = loadLayoutSnapshot();
+const createProjectState = (
+  projectPath: string | null,
+  overrides?: Partial<TerminalProjectState>,
+): TerminalProjectState => {
+  const layout = loadLayoutSnapshot(projectPath);
+  return {
+    panes: clonePanes(overrides?.panes ?? layout.panes),
+    activePaneId: overrides?.activePaneId ?? layout.activePaneId,
+    splitDirection: overrides?.splitDirection ?? layout.splitDirection,
+    closedTabsStack: [...(overrides?.closedTabsStack ?? [])],
+    tuiAssist: overrides?.tuiAssist
+      ? { ...overrides.tuiAssist }
+      : { ...DEFAULT_TUI_ASSIST },
+  };
+};
+
+const sanitizeProjectState = (
+  projectState: TerminalProjectState,
+  sessions: Map<string, TerminalSession>,
+  projectPath: string | null,
+): TerminalProjectState => {
+  const normalizedProjectPath = normalizeProjectPathKey(projectPath);
+  const panes =
+    projectState.panes.length > 0
+      ? projectState.panes.map((pane) => {
+          const tabIds = pane.tabIds.filter((id) => {
+            const session = sessions.get(id);
+            return (
+              !!session &&
+              normalizeProjectPathKey(session.projectPath) ===
+                normalizedProjectPath
+            );
+          });
+
+          return {
+            ...pane,
+            tabIds,
+            activeTabId: tabIds.includes(pane.activeTabId)
+              ? pane.activeTabId
+              : tabIds[0] || "",
+          };
+        })
+      : createDefaultPanes();
+
+  const activePaneId = panes.some(
+    (pane) => pane.id === projectState.activePaneId,
+  )
+    ? projectState.activePaneId
+    : panes[0]?.id || "pane-1";
+  const splitDirection: SplitDirection =
+    panes.length > 1 ? projectState.splitDirection : null;
+
+  return {
+    panes,
+    activePaneId,
+    splitDirection,
+    closedTabsStack: [...projectState.closedTabsStack],
+    tuiAssist: { ...projectState.tuiAssist },
+  };
+};
+
+const resolveProjectTUISessionId = (
+  panes: TerminalPane[],
+  sessions: Map<string, TerminalSession>,
+  activePaneId: string,
+) => {
+  const activePane = panes.find((pane) => pane.id === activePaneId);
+  const activeSession = activePane?.activeTabId
+    ? sessions.get(activePane.activeTabId)
+    : undefined;
+  if (activeSession && activeSession.mode !== "shell") {
+    return activeSession.id;
+  }
+
+  for (const pane of panes) {
+    for (const tabId of pane.tabIds) {
+      const session = sessions.get(tabId);
+      if (session && session.mode !== "shell") {
+        return session.id;
+      }
+    }
+  }
+
+  return null;
+};
+
+const buildProjectSwitchCommand = (projectPath: string) =>
+  `cd '${escapeShellSingleQuotes(projectPath)}'\n`;
+
+const isShellPathWithinProject = (
+  cwd: string | null | undefined,
+  projectPath: string | null | undefined,
+) => {
+  const normalizedCwd = normalizeProjectPathKey(cwd);
+  const normalizedProjectPath = normalizeProjectPathKey(projectPath);
+  if (!normalizedCwd || !normalizedProjectPath) {
+    return false;
+  }
+
+  return (
+    normalizedCwd === normalizedProjectPath ||
+    normalizedCwd.startsWith(`${normalizedProjectPath}/`)
+  );
+};
+
+const syncVisibleProjectSessions = (
+  projectPath: string | null,
+  projectState: TerminalProjectState,
+  sessions: Map<string, TerminalSession>,
+  sessionShellState: Map<string, TerminalShellState>,
+  sendRemoteText: TerminalActions["sendRemoteText"],
+) => {
+  const normalizedProjectPath = normalizeProjectPathKey(projectPath);
+  if (!normalizedProjectPath) {
+    return;
+  }
+
+  const switchCommand = buildProjectSwitchCommand(projectPath ?? "");
+  for (const pane of projectState.panes) {
+    const sessionId = pane.activeTabId;
+    if (!sessionId) {
+      continue;
+    }
+
+    const session = sessions.get(sessionId);
+    if (
+      !session ||
+      normalizeProjectPathKey(session.projectPath) !== normalizedProjectPath ||
+      session.mode !== "shell"
+    ) {
+      continue;
+    }
+
+    const shellState = sessionShellState.get(sessionId);
+    if (isShellPathWithinProject(shellState?.cwd, projectPath)) {
+      continue;
+    }
+
+    void sendRemoteText(sessionId, switchCommand);
+  }
+};
+
+const initialLayout = createProjectState(null);
+
+const captureProjectState = (
+  state: Pick<
+    TerminalState,
+    | "panes"
+    | "activePaneId"
+    | "splitDirection"
+    | "closedTabsStack"
+    | "tuiAssist"
+  >,
+): TerminalProjectState => ({
+  panes: clonePanes(state.panes),
+  activePaneId: state.activePaneId,
+  splitDirection: state.splitDirection,
+  closedTabsStack: [...state.closedTabsStack],
+  tuiAssist: { ...state.tuiAssist },
+});
 
 const isAbsolutePath = (inputPath: string) =>
   /^([A-Za-z]:[\\/]|\/)/.test(inputPath);
@@ -427,15 +650,16 @@ const getTerminalTheme = (isDark: boolean) =>
 
 export const useTerminalStore = create<TerminalState & TerminalActions>(
   (set, get) => ({
+    activeProjectPath: null,
     sessions: new Map(),
-    panes: initialLayout.panes,
+    panes: clonePanes(initialLayout.panes),
     activePaneId: initialLayout.activePaneId,
     splitDirection: initialLayout.splitDirection,
     isInitialized: false,
     eventsRegistered: false,
     tuiModeActive: false,
     tuiActiveSessionId: null,
-    tuiAssist: { active: false, panel: null, ratio: 0.4, swapped: false },
+    tuiAssist: { ...DEFAULT_TUI_ASSIST },
     powerProfile: "normal",
     isDispatcherPaused: false,
     isArlePaused: false,
@@ -444,11 +668,107 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
     closedTabsStack: [],
     sessionShellState: new Map(),
     sessionSemanticEntries: new Map(),
+    projectLayouts: new Map(),
     securityPolicy: {
       enabled: true,
       allowSensitiveInspection: false,
       requireWriteApproval: true,
       blockedFileNames: [".env", ".gitignore"],
+    },
+
+    setActiveProject: (projectPath) => {
+      const previousSessionShellState = get().sessionShellState;
+      set((state) => {
+        const nextProjectLayouts = new Map(state.projectLayouts);
+        const currentProjectKey = getProjectLayoutMapKey(
+          state.activeProjectPath,
+        );
+        nextProjectLayouts.set(currentProjectKey, captureProjectState(state));
+        persistLayoutSnapshot(
+          state.panes,
+          state.activePaneId,
+          state.splitDirection,
+          state.activeProjectPath,
+        );
+
+        const nextProjectKey = getProjectLayoutMapKey(projectPath);
+        const savedProjectState =
+          nextProjectLayouts.get(nextProjectKey) ??
+          createProjectState(projectPath);
+        const nextProjectState = sanitizeProjectState(
+          savedProjectState,
+          state.sessions,
+          projectPath,
+        );
+        const nextTuiSessionId = resolveProjectTUISessionId(
+          nextProjectState.panes,
+          state.sessions,
+          nextProjectState.activePaneId,
+        );
+
+        const nextShellState = new Map(state.sessionShellState);
+        const normalizedProjectPath = normalizeProjectPathKey(projectPath);
+        if (normalizedProjectPath) {
+          const updatedAt = Date.now();
+          for (const pane of nextProjectState.panes) {
+            const sessionId = pane.activeTabId;
+            const session = sessionId
+              ? state.sessions.get(sessionId)
+              : undefined;
+            if (
+              !session ||
+              normalizeProjectPathKey(session.projectPath) !==
+                normalizedProjectPath ||
+              session.mode !== "shell"
+            ) {
+              continue;
+            }
+
+            const previousShellState = nextShellState.get(sessionId);
+            if (
+              isShellPathWithinProject(previousShellState?.cwd, projectPath)
+            ) {
+              continue;
+            }
+            nextShellState.set(sessionId, {
+              phase: previousShellState?.phase || "cwd",
+              cwd: projectPath ?? "",
+              lastExitCode: previousShellState?.lastExitCode ?? null,
+              updatedAt,
+              raw: previousShellState?.raw ?? "",
+            });
+          }
+        }
+
+        return {
+          activeProjectPath: projectPath,
+          panes: nextProjectState.panes,
+          activePaneId: nextProjectState.activePaneId,
+          splitDirection: nextProjectState.splitDirection,
+          closedTabsStack: nextProjectState.closedTabsStack,
+          tuiAssist: nextProjectState.tuiAssist,
+          tuiActiveSessionId: nextTuiSessionId,
+          tuiModeActive: nextTuiSessionId !== null,
+          sessionShellState: nextShellState,
+          projectLayouts: nextProjectLayouts,
+        };
+      });
+
+      const state = get();
+      const visibleProjectState: TerminalProjectState = {
+        panes: clonePanes(state.panes),
+        activePaneId: state.activePaneId,
+        splitDirection: state.splitDirection,
+        closedTabsStack: [...state.closedTabsStack],
+        tuiAssist: { ...state.tuiAssist },
+      };
+      syncVisibleProjectSessions(
+        projectPath,
+        visibleProjectState,
+        state.sessions,
+        previousSessionShellState,
+        state.sendRemoteText,
+      );
     },
 
     initialize: () => {
@@ -538,7 +858,9 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
     createTerminal: async (paneId: string, isDark: boolean, terminalName) => {
       const id = generateTerminalId();
       const name = terminalName?.trim() || "Terminal";
-      const terminalFontSize = get().terminalFontSize;
+      const state = get();
+      const terminalFontSize = state.terminalFontSize;
+      const projectPath = state.activeProjectPath ?? "";
 
       const terminal = new Terminal({
         cursorBlink: true,
@@ -570,6 +892,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       const session: TerminalSession = {
         id,
         name,
+        projectPath,
         terminal,
         fitAddon,
         searchAddon,
@@ -597,11 +920,18 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
           return pane;
         });
 
+        persistLayoutSnapshot(
+          newPanes,
+          state.activePaneId,
+          state.splitDirection,
+          state.activeProjectPath,
+        );
+
         return { sessions: newSessions, panes: newPanes };
       });
 
       try {
-        await CreateTerminal(id, name);
+        await createTerminalBackendSession(id, name, projectPath);
       } catch (error) {
         terminal.dispose();
         set((state) => {
@@ -688,7 +1018,12 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
         const nextSplitDirection: SplitDirection =
           nextPanes.length > 1 ? state.splitDirection : null;
 
-        persistLayoutSnapshot(nextPanes, nextActivePaneId, nextSplitDirection);
+        persistLayoutSnapshot(
+          nextPanes,
+          nextActivePaneId,
+          nextSplitDirection,
+          state.activeProjectPath,
+        );
 
         const nextActiveSessionId =
           state.tuiActiveSessionId === tabId ? null : state.tuiActiveSessionId;
@@ -714,17 +1049,47 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
     },
 
     setActiveTab: (paneId: string, tabId: string) => {
-      set((state) => ({
-        panes: state.panes.map((pane) =>
+      set((state) => {
+        const nextPanes = state.panes.map((pane) =>
           pane.id === paneId ? { ...pane, activeTabId: tabId } : pane,
-        ),
-      }));
+        );
+        persistLayoutSnapshot(
+          nextPanes,
+          state.activePaneId,
+          state.splitDirection,
+          state.activeProjectPath,
+        );
+        const nextTuiSessionId = resolveProjectTUISessionId(
+          nextPanes,
+          state.sessions,
+          state.activePaneId,
+        );
+        return {
+          panes: nextPanes,
+          tuiActiveSessionId: nextTuiSessionId,
+          tuiModeActive: nextTuiSessionId !== null,
+        };
+      });
     },
 
     setActivePane: (paneId: string) => {
       set((state) => {
-        persistLayoutSnapshot(state.panes, paneId, state.splitDirection);
-        return { activePaneId: paneId };
+        persistLayoutSnapshot(
+          state.panes,
+          paneId,
+          state.splitDirection,
+          state.activeProjectPath,
+        );
+        const nextTuiSessionId = resolveProjectTUISessionId(
+          state.panes,
+          state.sessions,
+          paneId,
+        );
+        return {
+          activePaneId: paneId,
+          tuiActiveSessionId: nextTuiSessionId,
+          tuiModeActive: nextTuiSessionId !== null,
+        };
       });
     },
 
@@ -736,7 +1101,12 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
           ...state.panes,
           { id: newPaneId, tabIds: [], activeTabId: "" },
         ];
-        persistLayoutSnapshot(nextPanes, state.activePaneId, direction);
+        persistLayoutSnapshot(
+          nextPanes,
+          state.activePaneId,
+          direction,
+          state.activeProjectPath,
+        );
         return {
           splitDirection: direction,
           panes: nextPanes,
@@ -914,13 +1284,11 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
           modeUpdatedAt: typeof timestamp === "number" ? timestamp : Date.now(),
         });
 
-        let nextTuiActiveSessionId = state.tuiActiveSessionId;
-        if (isActiveTerminalMode) {
-          nextTuiActiveSessionId = id;
-        } else if (state.tuiActiveSessionId === id) {
-          nextTuiActiveSessionId = null;
-        }
-
+        const nextTuiActiveSessionId = resolveProjectTUISessionId(
+          state.panes,
+          updatedSessions,
+          state.activePaneId,
+        );
         const nextTuiModeActive = nextTuiActiveSessionId !== null;
 
         if (!nextTuiModeActive && state.tuiAssist.active) {
@@ -928,12 +1296,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
             sessions: updatedSessions,
             tuiModeActive: false,
             tuiActiveSessionId: null,
-            tuiAssist: {
-              active: false,
-              panel: null,
-              ratio: 0.4,
-              swapped: false,
-            },
+            tuiAssist: { ...DEFAULT_TUI_ASSIST },
           };
         }
 
@@ -971,21 +1334,22 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
           typeof assist.ratio === "number"
             ? Math.max(0.2, Math.min(0.8, assist.ratio))
             : state.tuiAssist.ratio;
+        const nextTuiAssist = {
+          active: assist.active ?? state.tuiAssist.active,
+          panel: assist.panel ?? state.tuiAssist.panel,
+          swapped: assist.swapped ?? state.tuiAssist.swapped,
+          ratio,
+        };
 
         return {
-          tuiAssist: {
-            active: assist.active ?? state.tuiAssist.active,
-            panel: assist.panel ?? state.tuiAssist.panel,
-            swapped: assist.swapped ?? state.tuiAssist.swapped,
-            ratio,
-          },
+          tuiAssist: nextTuiAssist,
         };
       });
     },
 
     resetTUIAssist: () => {
       set({
-        tuiAssist: { active: false, panel: null, ratio: 0.4, swapped: false },
+        tuiAssist: { ...DEFAULT_TUI_ASSIST },
       });
     },
 
@@ -1260,10 +1624,11 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       });
 
       const nextPanes = createDefaultPanes();
-      persistLayoutSnapshot(nextPanes, nextPanes[0].id, null);
+      persistLayoutSnapshot(nextPanes, nextPanes[0].id, null, null);
 
       set((current) => ({
         ...current,
+        activeProjectPath: null,
         sessions: new Map(),
         panes: nextPanes,
         activePaneId: nextPanes[0].id,
@@ -1273,7 +1638,8 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
         sessionSemanticEntries: new Map(),
         tuiModeActive: false,
         tuiActiveSessionId: null,
-        tuiAssist: { active: false, panel: null, ratio: 0.4, swapped: false },
+        tuiAssist: { ...DEFAULT_TUI_ASSIST },
+        projectLayouts: new Map(),
       }));
     },
   }),

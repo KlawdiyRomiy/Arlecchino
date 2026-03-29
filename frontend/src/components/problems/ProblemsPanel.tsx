@@ -17,7 +17,10 @@ import { useEditorStore } from "../../stores/editorStore";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useIndexingProgress } from "../../hooks/useIndexingProgress";
 import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
+import {
+  resolveDiagnosticsProjectPath,
+  useWorkspaceStore,
+} from "../../stores/workspaceStore";
 
 interface ProblemsPanelProps {
   activeFilePath?: string | null;
@@ -114,10 +117,13 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     (state) => state.getActiveTab(state.activePaneId)?.path ?? null,
   );
   const highlightedPath = useExplorerStore((state) => state.highlightedPath);
-  const activeProjectPath = useWorkspaceStore(
-    (state) =>
-      state.projects.find((project) => project.id === state.activeId)?.path ??
-      null,
+  const activeProjectPath = useWorkspaceStore((state) =>
+    resolveDiagnosticsProjectPath(
+      state.projects,
+      state.activeId,
+      state.pendingId,
+      state.switchSourceId,
+    ),
   );
   const currentFileCandidatePath =
     activeFilePath ?? activeEditorFilePath ?? highlightedPath ?? null;
@@ -168,6 +174,16 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const isDiagnosticsPreloadActive =
     diagnosticsPreload.active &&
     diagnosticsPreload.projectPath === activeProjectPath;
+  const isBoundedDiagnosticsProject =
+    diagnosticsPreload.projectPath === activeProjectPath &&
+    diagnosticsPreload.bounded;
+  const isWorkspaceDiagnosticsUnavailable =
+    diagnosticsPreload.projectPath === activeProjectPath &&
+    !diagnosticsPreload.active &&
+    diagnosticsPreload.totalCandidates === 0;
+  const isPartialWorkspaceDiagnostics =
+    isBoundedDiagnosticsProject &&
+    diagnosticsPreload.totalCandidates > diagnosticsPreload.selectedCandidates;
   const showScanningState =
     displayedGroups.length === 0 &&
     (isIndexingActive || isDiagnosticsPreloadActive);
@@ -222,6 +238,11 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
             {projectSummary.warnings} warnings
           </span>
           <span className="text-[#3B82F6]">{projectSummary.infos} info</span>
+          {isPartialWorkspaceDiagnostics ? (
+            <span className="rounded-full border border-[var(--border-subtle)] px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-[#F59E0B]">
+              Partial results
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -273,6 +294,30 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
                 <span className="font-mono text-sm text-[var(--text-muted)]">
                   Scanning...
                 </span>
+              </motion.div>
+            ) : isWorkspaceDiagnosticsUnavailable ? (
+              <motion.div
+                key="unsupported"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                className="max-w-sm text-center text-sm text-[var(--text-muted)]"
+              >
+                Workspace diagnostics are not available for the detected files
+                in this project yet.
+              </motion.div>
+            ) : isPartialWorkspaceDiagnostics ? (
+              <motion.div
+                key="partial"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+                className="max-w-sm text-center text-sm text-[var(--text-muted)]"
+              >
+                No problems found in the scanned subset yet. Project-wide
+                results are currently limited for this workload.
               </motion.div>
             ) : (
               <motion.div

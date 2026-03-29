@@ -3,7 +3,6 @@ import {
   PredictTerminalCommand,
   RecordCommandExecution,
   GetCurrentProjectID,
-  GetCurrentWorkDir,
 } from "../../wailsjs/go/main/App";
 import { terminal } from "../../wailsjs/go/models";
 import { useTerminalStore } from "../stores/terminalStore";
@@ -17,6 +16,9 @@ export interface TerminalPredictionState {
 export const useTerminalPrediction = (currentInput: string) => {
   const isArlePaused = useTerminalStore((state) => state.isArlePaused);
   const tuiModeActive = useTerminalStore((state) => state.tuiModeActive);
+  const activeProjectPath = useTerminalStore(
+    (state) => state.activeProjectPath,
+  );
 
   const [state, setState] = useState<TerminalPredictionState>({
     ghostText: "",
@@ -31,20 +33,26 @@ export const useTerminalPrediction = (currentInput: string) => {
   const workDirRef = useRef<string>("");
 
   useEffect(() => {
-    const loadContext = async () => {
+    let disposed = false;
+    workDirRef.current = activeProjectPath ?? "";
+    projectIDRef.current = "";
+
+    const loadProjectID = async () => {
       try {
-        const [pid, wd] = await Promise.all([
-          GetCurrentProjectID(),
-          GetCurrentWorkDir(),
-        ]);
-        projectIDRef.current = pid;
-        workDirRef.current = wd;
+        const pid = await GetCurrentProjectID();
+        if (!disposed && workDirRef.current === (activeProjectPath ?? "")) {
+          projectIDRef.current = pid;
+        }
       } catch (err) {
         console.error("[TerminalPrediction] Failed to load context:", err);
       }
     };
-    loadContext();
-  }, []);
+    void loadProjectID();
+
+    return () => {
+      disposed = true;
+    };
+  }, [activeProjectPath]);
 
   const fetchPredictions = useCallback(
     async (input: string) => {

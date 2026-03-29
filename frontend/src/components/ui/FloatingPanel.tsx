@@ -8,6 +8,8 @@ import {
   transitions,
   zIndex,
 } from "../../styles/colors";
+import { useIndexingProgress } from "../../hooks/useIndexingProgress";
+import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
 import { useTheme } from "../../hooks/useTheme";
 
 export type PanelPosition = "left" | "right" | "bottom" | "top";
@@ -88,7 +90,11 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   useViewportPositioning = false,
 }) => {
   const { isDark } = useTheme();
+  const indexing = useIndexingProgress();
+  const diagnosticsPreload = useProjectDiagnosticsPreload();
   const theme = getThemeColors(isDark);
+  const reduceMotion =
+    indexing.phase === "indexing" || diagnosticsPreload.active;
   const [isResizing, setIsResizing] = useState(false);
   const [resizeEdge, setResizeEdge] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -339,7 +345,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       willChange: isDragging || isResizing ? "transform" : "auto",
       backfaceVisibility: "hidden" as const,
       transition:
-        isResizing || isDragging
+        reduceMotion || isResizing || isDragging
           ? "none"
           : isVisible
             ? "transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.15s ease-out"

@@ -102,6 +102,10 @@ export function CreateTerminal(arg1, arg2) {
   return window['go']['main']['App']['CreateTerminal'](arg1, arg2);
 }
 
+export function CreateTerminalForProject(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CreateTerminalForProject'](arg1, arg2, arg3);
+}
+
 export function DBSeed(arg1) {
   return window['go']['main']['App']['DBSeed'](arg1);
 }

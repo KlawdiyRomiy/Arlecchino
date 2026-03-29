@@ -29,24 +29,25 @@ import (
 )
 
 type App struct {
-	ctx              context.Context
-	cmp              *composer.ComposerManager
-	sys              *system.SystemManager
-	projectManager   *project.ProjectManager
-	welcomeScreen    *welcome.WelcomeScreen
-	coreEngine       *core.Engine
-	brain            completionBrain
-	lspManager       *lsp.Manager
-	lspInstaller     *lspinstaller.Installer
-	plugins          *plugins.Registry
-	termManager      *terminal.Manager
-	carapaceProvider *terminal.CarapaceProvider
-	langDetector     *brain.LangDetector
-	projectPath      string
-	lastRequestID    atomic.Value
-	mcpBridgeServer  *mcp.IDEBridgeServer
-	mcpBridgeMu      sync.Mutex
-	managerMu        sync.Mutex
+	ctx               context.Context
+	cmp               *composer.ComposerManager
+	sys               *system.SystemManager
+	projectManager    *project.ProjectManager
+	welcomeScreen     *welcome.WelcomeScreen
+	coreEngine        *core.Engine
+	brain             completionBrain
+	lspManager        *lsp.Manager
+	lspInstaller      *lspinstaller.Installer
+	plugins           *plugins.Registry
+	termManager       *terminal.Manager
+	carapaceProvider  *terminal.CarapaceProvider
+	langDetector      *brain.LangDetector
+	projectPath       string
+	projectGeneration atomic.Uint64
+	lastRequestID     atomic.Value
+	mcpBridgeServer   *mcp.IDEBridgeServer
+	mcpBridgeMu       sync.Mutex
+	managerMu         sync.Mutex
 
 	projectCtx    context.Context
 	projectCancel context.CancelFunc
@@ -131,9 +132,10 @@ func (a *App) SelectDirectory(title string) (string, error) {
 
 func (a *App) OpenProject(path string) error {
 	if a.projectPath != "" {
-		_ = a.CloseProject()
+		_ = a.closeProject(false)
 	}
 
+	projectGeneration := a.projectGeneration.Add(1)
 	a.projectPath = path
 	a.projectCtx, a.projectCancel = context.WithCancel(context.Background())
 
@@ -196,7 +198,13 @@ func (a *App) OpenProject(path string) error {
 		// Initialize LSP manager for all languages
 		a.lspManager = lsp.NewManager(path)
 		a.lspManager.SetDiagnosticsCallback(func(language, filePath string, diagnostics []lsp.Diagnostic) {
-			a.emitEvent("lsp:diagnostics", newLSPDiagnosticsEvent(language, filePath, diagnostics))
+			if a.projectGeneration.Load() != projectGeneration {
+				return
+			}
+			a.emitEvent(
+				"lsp:diagnostics",
+				newLSPDiagnosticsEvent(path, projectGeneration, language, filePath, diagnostics),
+			)
 		})
 		lspManager = a.lspManager
 
@@ -280,14 +288,16 @@ func (a *App) OpenProject(path string) error {
 				default:
 				}
 
-				a.LSPPreloadProjectDiagnostics(path)
+				a.lspPreloadProjectDiagnostics(path, projectGeneration)
 				return nil
 			},
 		},
 	)
 
 	a.emitEvent("lsp:ready", map[string]interface{}{
-		"message": "LSP servers are starting...",
+		"message":     "LSP servers are starting...",
+		"projectPath": path,
+		"generation":  projectGeneration,
 	})
 
 	return nil
@@ -318,13 +328,19 @@ func (a *App) startDeferredProjectWarmup(steps ...projectWarmupStep) {
 }
 
 func (a *App) CloseProject() error {
+	return a.closeProject(true)
+}
+
+func (a *App) closeProject(closeTerminals bool) error {
 	if a.projectCancel != nil {
 		a.projectCancel()
 	}
 
 	a.wg.Wait()
 
-	a.termManager.CloseAll()
+	if closeTerminals && a.termManager != nil {
+		a.termManager.CloseAll()
+	}
 
 	if a.plugins != nil {
 		a.plugins.CloseAll()

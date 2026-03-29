@@ -139,3 +139,7 @@ failsafeTimer = setTimeout(() => {
 export function useIndexingProgress(): IndexingState {
   return useSyncExternalStore(subscribe, getSnapshot);
 }
+
+export function useIndexingPhase(): IndexingPhase {
+  return useSyncExternalStore(subscribe, () => getSnapshot().phase);
+}

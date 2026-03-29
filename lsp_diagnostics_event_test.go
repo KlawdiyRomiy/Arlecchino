@@ -42,7 +42,7 @@ func TestConvertLSPDiagnostics(t *testing.T) {
 }
 
 func TestNewLSPDiagnosticsEvent(t *testing.T) {
-	got := newLSPDiagnosticsEvent("go", "/tmp/test.go", []indexerlsp.Diagnostic{{
+	got := newLSPDiagnosticsEvent("/tmp", 12, "go", "/tmp/test.go", []indexerlsp.Diagnostic{{
 		Range: indexerlsp.Range{
 			Start: indexerlsp.Position{Line: 0, Character: 1},
 			End:   indexerlsp.Position{Line: 0, Character: 5},
@@ -56,6 +56,12 @@ func TestNewLSPDiagnosticsEvent(t *testing.T) {
 	}
 	if got.FilePath != "/tmp/test.go" {
 		t.Fatalf("expected file path /tmp/test.go, got %q", got.FilePath)
+	}
+	if got.ProjectPath != "/tmp" {
+		t.Fatalf("expected project path /tmp, got %q", got.ProjectPath)
+	}
+	if got.Generation != 12 {
+		t.Fatalf("expected generation 12, got %d", got.Generation)
 	}
 	if got.URI != "file:///tmp/test.go" {
 		t.Fatalf("expected uri file:///tmp/test.go, got %q", got.URI)

@@ -30,7 +30,6 @@ import {
   RecordCommandExecution,
   WriteTerminal,
   GetCurrentProjectID,
-  GetCurrentWorkDir,
 } from "../../wailsjs/go/main/App";
 import {
   ClipboardGetText,
@@ -76,22 +75,31 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   const containerRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const projectIDRef = useRef<string>("");
   const workDirRef = useRef<string>("");
+  const activeProjectPath = useTerminalStore(
+    (state) => state.activeProjectPath,
+  );
 
   useEffect(() => {
-    const loadContext = async () => {
+    let disposed = false;
+    workDirRef.current = activeProjectPath ?? "";
+    projectIDRef.current = "";
+
+    const loadProjectID = async () => {
       try {
-        const [pid, wd] = await Promise.all([
-          GetCurrentProjectID(),
-          GetCurrentWorkDir(),
-        ]);
-        projectIDRef.current = pid;
-        workDirRef.current = wd;
+        const pid = await GetCurrentProjectID();
+        if (!disposed && workDirRef.current === (activeProjectPath ?? "")) {
+          projectIDRef.current = pid;
+        }
       } catch (err) {
         console.error("[TerminalPrediction] Failed to load context:", err);
       }
     };
-    loadContext();
-  }, []);
+    void loadProjectID();
+
+    return () => {
+      disposed = true;
+    };
+  }, [activeProjectPath]);
 
   const {
     sessions,
@@ -417,13 +425,19 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       if (data === "\r" || data === "\n" || data === "\x03") {
         const finalInput = inputBufferRef.current.trim();
         if (data === "\r" && finalInput) {
-          RecordCommandExecution(
-            projectIDRef.current,
-            finalInput,
-            workDirRef.current,
-          ).catch((err) => {
-            console.error("[TerminalPrediction] Record failed:", err);
-          });
+          GetCurrentProjectID()
+            .catch(() => projectIDRef.current)
+            .then((projectID) => {
+              projectIDRef.current = projectID;
+              return RecordCommandExecution(
+                projectID,
+                finalInput,
+                workDirRef.current,
+              );
+            })
+            .catch((err) => {
+              console.error("[TerminalPrediction] Record failed:", err);
+            });
         }
         inputBufferRef.current = "";
         setGhostTextWithRef("");

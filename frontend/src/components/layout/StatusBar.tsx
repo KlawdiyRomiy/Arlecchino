@@ -4,7 +4,11 @@ import { DiagnosticsCompactIndicator } from "../problems/DiagnosticsCompactIndic
 import { useDiagnosticsStore } from "../../stores/diagnosticsStore";
 import { useEditorStore } from "../../stores/editorStore";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
+import {
+  resolveDiagnosticsProjectPath,
+  useWorkspaceStore,
+} from "../../stores/workspaceStore";
+import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
 
 interface StatusBarProps {
   onToggleProblems: () => void;
@@ -17,11 +21,15 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
   const showCompactDiagnostics = useEditorSettingsStore(
     (state) => state.showCompactDiagnostics,
   );
-  const activeProjectPath = useWorkspaceStore(
-    (state) =>
-      state.projects.find((project) => project.id === state.activeId)?.path ??
-      null,
+  const activeProjectPath = useWorkspaceStore((state) =>
+    resolveDiagnosticsProjectPath(
+      state.projects,
+      state.activeId,
+      state.pendingId,
+      state.switchSourceId,
+    ),
   );
+  const diagnosticsPreload = useProjectDiagnosticsPreload();
   const projectSummary = useMemo(
     () => useDiagnosticsStore.getState().getProjectSummary(activeProjectPath),
     [activeProjectPath, byFile],
@@ -69,6 +77,27 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
   const positionLabel = statusFile.path
     ? `Ln ${cursorPosition.line}, Col ${cursorPosition.col}`
     : "Ln -, Col -";
+  const diagnosticsIndicatorState = useMemo(() => {
+    if (projectSummary.total > 0) {
+      return "default" as const;
+    }
+    if (
+      diagnosticsPreload.active &&
+      diagnosticsPreload.projectPath === activeProjectPath
+    ) {
+      return "scanning" as const;
+    }
+    if (
+      diagnosticsPreload.projectPath === activeProjectPath &&
+      (diagnosticsPreload.bounded ||
+        (diagnosticsPreload.totalCandidates > 0 &&
+          diagnosticsPreload.selectedCandidates <
+            diagnosticsPreload.totalCandidates))
+    ) {
+      return "partial" as const;
+    }
+    return "default" as const;
+  }, [activeProjectPath, diagnosticsPreload, projectSummary.total]);
 
   return (
     <div className="h-6 bg-[var(--bg-secondary)] border-t border-[var(--border-subtle)] flex items-center px-4 text-[10px] select-none font-mono z-50">
@@ -77,6 +106,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
           <DiagnosticsCompactIndicator
             summary={projectSummary}
             onClick={onToggleProblems}
+            state={diagnosticsIndicatorState}
           />
         ) : null}
 

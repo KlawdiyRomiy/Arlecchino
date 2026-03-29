@@ -1,5 +1,8 @@
 import React, { useRef } from "react";
 import { useTransition, animated } from "@react-spring/web";
+import { useIndexingPhase } from "../../hooks/useIndexingProgress";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
 
 interface Props {
   layoutKey: string;
@@ -14,6 +17,12 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
 }) => {
   const childrenMap = useRef<Record<string, React.ReactNode>>({});
   childrenMap.current[layoutKey] = children;
+  const indexingPhase = useIndexingPhase();
+  const diagnosticsPreload = useProjectDiagnosticsPreload();
+  const switchPending = useWorkspaceStore((state) => state.pendingId !== null);
+  const reduceMotion =
+    !switchPending &&
+    (indexingPhase === "indexing" || diagnosticsPreload.active);
 
   const dirRef = useRef(direction);
   dirRef.current = direction;
@@ -35,6 +44,7 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
       friction: 35,
       clamp: true,
     },
+    immediate: reduceMotion,
   });
 
   return (
@@ -53,7 +63,6 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
     >
       {transitions((style, item) => {
         const renderedChildren = childrenMap.current[item];
-        const isCurrent = item === layoutKey;
         const { x, ...restStyle } = style;
 
         return (

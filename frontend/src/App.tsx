@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { startTransition, useState } from "react";
 import WelcomeScreen from "./components/WelcomeScreen";
 import { MainLayout } from "./components/layout/MainLayout";
 import { ProjectSwitchTransition } from "./components/layout/ProjectSwitchTransition";
@@ -11,7 +11,9 @@ import {
   resolveProjectSwitchDirection,
   useWorkspaceStore,
 } from "./stores/workspaceStore";
+import { useTerminalStore } from "./stores/terminalStore";
 import {
+  activateProjectScope,
   preloadProjectDiagnostics,
   resetProjectBoundStores,
 } from "./utils/projectBoundState";
@@ -36,14 +38,25 @@ const App: React.FC = () => {
   };
 
   const handleProjectOpen = async (projectPath: string) => {
+    const outgoingProjectPath =
+      useWorkspaceStore
+        .getState()
+        .projects.find(
+          (project) => project.id === useWorkspaceStore.getState().activeId,
+        )?.path ?? null;
+
     try {
-      await AppFunctions.OpenProject(projectPath);
       resetProjectBoundStores();
+      activateProjectScope(projectPath);
+      await AppFunctions.OpenProject(projectPath);
       useWorkspaceStore.getState().addProject(projectPath);
+      useTerminalStore.getState().setActiveProject(projectPath);
       await syncCurrentFramework();
       await preloadProjectDiagnostics(projectPath);
       setFileToOpen(null);
     } catch (error) {
+      useTerminalStore.getState().setActiveProject(outgoingProjectPath);
+      resetProjectBoundStores();
       console.error("Error opening project:", error);
       alert(`Error while opening project: ${error}`);
     }
@@ -60,16 +73,25 @@ const App: React.FC = () => {
       return;
     }
 
+    const outgoingProjectPath =
+      state.projects.find((item) => item.id === state.activeId)?.path ?? null;
     state.beginProjectSwitch(id, direction);
 
     try {
-      await AppFunctions.OpenProject(project.path);
-      resetProjectBoundStores();
-      await syncCurrentFramework();
+      activateProjectScope(project.path);
+      const openProjectRequest = AppFunctions.OpenProject(project.path);
       useWorkspaceStore.getState().confirmProjectSwitch(id);
+      useTerminalStore.getState().setActiveProject(project.path);
+      await openProjectRequest;
+      await syncCurrentFramework();
       await preloadProjectDiagnostics(project.path);
-      setFileToOpen(null);
+      startTransition(() => {
+        useWorkspaceStore.getState().completeProjectSwitch(id);
+        setFileToOpen(null);
+      });
     } catch (error) {
+      activateProjectScope(outgoingProjectPath);
+      useTerminalStore.getState().setActiveProject(outgoingProjectPath);
       useWorkspaceStore.getState().cancelProjectSwitch(id);
       console.error("Error switching project:", error);
       alert(`Error while switching project: ${error}`);
@@ -96,6 +118,7 @@ const App: React.FC = () => {
       resetProjectBoundStores();
       useWorkspaceStore.getState().removeProject(currentId);
       useWorkspaceStore.getState().setActiveFramework(null);
+      useTerminalStore.getState().setActiveProject(null);
       setFileToOpen(null);
     } catch (error) {
       console.error("Error returning to welcome:", error);
@@ -122,6 +145,7 @@ const App: React.FC = () => {
         resetProjectBoundStores();
         useWorkspaceStore.getState().removeProject(id);
         useWorkspaceStore.getState().setActiveFramework(null);
+        useTerminalStore.getState().setActiveProject(null);
         setFileToOpen(null);
       } catch (error) {
         console.error("Error closing last project:", error);
@@ -135,18 +159,28 @@ const App: React.FC = () => {
       id,
       nextProject.id,
     );
+    const outgoingProjectPath =
+      state.projects.find((project) => project.id === state.activeId)?.path ??
+      null;
     state.beginProjectSwitch(nextProject.id, direction);
 
     try {
-      await AppFunctions.OpenProject(nextProject.path);
-      resetProjectBoundStores();
+      activateProjectScope(nextProject.path);
+      const openProjectRequest = AppFunctions.OpenProject(nextProject.path);
+      useWorkspaceStore.getState().confirmProjectSwitch(nextProject.id);
+      useTerminalStore.getState().setActiveProject(nextProject.path);
+      await openProjectRequest;
       await syncCurrentFramework();
-      const workspace = useWorkspaceStore.getState();
-      workspace.confirmProjectSwitch(nextProject.id);
-      workspace.removeProject(id);
       await preloadProjectDiagnostics(nextProject.path);
-      setFileToOpen(null);
+      startTransition(() => {
+        const workspace = useWorkspaceStore.getState();
+        workspace.completeProjectSwitch(nextProject.id);
+        workspace.removeProject(id);
+        setFileToOpen(null);
+      });
     } catch (error) {
+      activateProjectScope(outgoingProjectPath);
+      useTerminalStore.getState().setActiveProject(outgoingProjectPath);
       useWorkspaceStore.getState().cancelProjectSwitch(nextProject.id);
       console.error("Error switching after close:", error);
       alert(`Error while switching project: ${error}`);

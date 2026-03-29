@@ -27,6 +27,7 @@ export interface TerminalAccessDecision {
 export interface TerminalSession {
   id: string;
   name: string;
+  projectPath: string;
   terminal: Terminal;
   fitAddon: FitAddon;
   searchAddon: SearchAddon;
