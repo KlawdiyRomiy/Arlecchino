@@ -308,6 +308,33 @@ func UpdateUser() {}
 	}
 }
 
+func TestLocalCompletions_DropsExactPrefixEcho(t *testing.T) {
+	lc := NewLocalCompletions()
+	defer lc.Close()
+
+	goContent := []byte(`package main
+
+type Config struct{}
+type ConfigBuilder struct{}
+func UpdateUser() {}
+`)
+
+	symbols := lc.GetCompletions("test.go", goContent, 5, 5, "Config")
+	if len(symbols) == 0 {
+		t.Fatal("expected non-empty completions for extended prefix")
+	}
+
+	for _, s := range symbols {
+		if s.Name == "Config" {
+			t.Fatalf("expected exact prefix echo to be filtered out, got %+v", s)
+		}
+	}
+
+	if len(symbols) != 1 || symbols[0].Name != "ConfigBuilder" {
+		t.Fatalf("expected only CreateUserFactory, got %+v", symbols)
+	}
+}
+
 func TestLocalCompletions_EmptyFile(t *testing.T) {
 	lc := NewLocalCompletions()
 	defer lc.Close()

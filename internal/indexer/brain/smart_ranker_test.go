@@ -57,3 +57,20 @@ func TestSmartRanker_PackageKindScore(t *testing.T) {
 		t.Errorf("package kind score (%.2f) should be higher than function (%.2f)", packageScore, functionScore)
 	}
 }
+
+func TestSmartRanker_DemotesLocalExactEcho(t *testing.T) {
+	ranker := NewSmartRanker(nil, nil)
+	s := &Suggestion{
+		Text:       "Lang",
+		InsertText: "Lang",
+		Source:     core.SourceLocal,
+	}
+
+	score := ranker.matchScore(s, "Lang")
+	if score >= 0.5 {
+		t.Fatalf("expected exact local echo to be heavily demoted, got %.2f", score)
+	}
+	if s.MatchResult == nil || s.MatchResult.Type != 0 {
+		t.Fatalf("expected exact local echo to avoid exact-match tagging, got %+v", s.MatchResult)
+	}
+}

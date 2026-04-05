@@ -149,7 +149,7 @@ func (s *Server) handleRequest(method string, params json.RawMessage) (any, *rpc
 				"name":    "arlecchino-mcp",
 				"version": "0.1.0",
 			},
-			"instructions": "Use ide_control.* and change_journal.* for safe file operations, audit, and approval flow. When live bridge is available, use ide_backend.* for backend control and ide_ui.* for instant UI hot-switch without IDE restart.",
+			"instructions": s.service.InitializeInstructions(),
 		}, nil
 	case "initialized", "notifications/initialized":
 		return map[string]any{}, nil

@@ -45,6 +45,31 @@ type EnhancedPlaceholderResolver struct {
 	relationships   *FileRelationshipAnalyzer
 }
 
+type ResolutionStats struct {
+	PluginHits  int
+	IndexHits   int
+	BasicHits   int
+	DefaultHits int
+}
+
+func (s ResolutionStats) HasResolvedData() bool {
+	return s.PluginHits+s.IndexHits+s.BasicHits > 0
+}
+
+func (s ResolutionStats) UsesFallbackDefaults() bool {
+	return s.DefaultHits > 0
+}
+
+type resolutionSource uint8
+
+const (
+	resolutionSourceNone resolutionSource = iota
+	resolutionSourcePlugin
+	resolutionSourceIndex
+	resolutionSourceBasic
+	resolutionSourceDefault
+)
+
 func NewEnhancedPlaceholderResolver() *EnhancedPlaceholderResolver {
 	r := &EnhancedPlaceholderResolver{
 		basicResolvers:  make(map[string]func(*FileContext) string),
@@ -79,52 +104,77 @@ func (r *EnhancedPlaceholderResolver) RegisterPluginResolver(placeholder string,
 }
 
 func (r *EnhancedPlaceholderResolver) ResolvePlaceholders(template string, ctx *FileContext) string {
+	resolved, _ := r.ResolvePlaceholdersWithStats(template, ctx)
+	return resolved
+}
+
+func (r *EnhancedPlaceholderResolver) ResolvePlaceholdersWithStats(template string, ctx *FileContext) (string, ResolutionStats) {
 	if ctx == nil {
-		return template
+		return template, ResolutionStats{}
 	}
 
 	r.mu.RLock()
 	sp := r.symbolProvider
 	r.mu.RUnlock()
 
-	return placeholderRegex.ReplaceAllStringFunc(template, func(match string) string {
+	stats := ResolutionStats{}
+	resolved := placeholderRegex.ReplaceAllStringFunc(template, func(match string) string {
 		placeholder := strings.TrimPrefix(match, "$")
-		return r.resolveOne(placeholder, ctx, sp)
+		value, source := r.resolveOneWithSource(placeholder, ctx, sp)
+		switch source {
+		case resolutionSourcePlugin:
+			stats.PluginHits++
+		case resolutionSourceIndex:
+			stats.IndexHits++
+		case resolutionSourceBasic:
+			stats.BasicHits++
+		case resolutionSourceDefault:
+			stats.DefaultHits++
+		}
+		return value
 	})
+
+	return resolved, stats
 }
 
 func (r *EnhancedPlaceholderResolver) ResolveOne(placeholder string, ctx *FileContext) string {
 	r.mu.RLock()
 	sp := r.symbolProvider
 	r.mu.RUnlock()
-	return r.resolveOne(placeholder, ctx, sp)
+	value, _ := r.resolveOneWithSource(placeholder, ctx, sp)
+	return value
 }
 
 func (r *EnhancedPlaceholderResolver) resolveOne(placeholder string, ctx *FileContext, sp SymbolProvider) string {
+	value, _ := r.resolveOneWithSource(placeholder, ctx, sp)
+	return value
+}
+
+func (r *EnhancedPlaceholderResolver) resolveOneWithSource(placeholder string, ctx *FileContext, sp SymbolProvider) (string, resolutionSource) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	if resolver, ok := r.pluginResolvers[placeholder]; ok {
 		if value := resolver(ctx, sp); value != "" {
-			return value
+			return value, resolutionSourcePlugin
 		}
 	}
 
 	if sp != nil {
 		if resolver, ok := r.indexResolvers[placeholder]; ok {
 			if value := resolver(ctx, sp); value != "" {
-				return value
+				return value, resolutionSourceIndex
 			}
 		}
 	}
 
 	if resolver, ok := r.basicResolvers[placeholder]; ok {
 		if value := resolver(ctx); value != "" {
-			return value
+			return value, resolutionSourceBasic
 		}
 	}
 
-	return defaultValue(placeholder)
+	return defaultValue(placeholder), resolutionSourceDefault
 }
 
 func (r *EnhancedPlaceholderResolver) registerBuiltinResolvers() {

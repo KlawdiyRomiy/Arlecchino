@@ -37,7 +37,7 @@ func (a *AutocompleteAdapter) Complete(filePath string, content []byte, line, co
 			Source:     string(s.Source),
 			FilePath:   s.FilePath,
 			Line:       s.Line,
-			IsSnippet:  s.Snippet != "",
+			IsSnippet:  s.IsSnippet,
 			Snippet:    s.Snippet,
 			Extra:      s.Extra,
 		})

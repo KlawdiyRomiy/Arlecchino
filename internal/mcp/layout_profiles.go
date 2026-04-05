@@ -176,9 +176,9 @@ func defaultLayoutProfiles() []LayoutProfile {
 		{
 			Name: "terminal_focus",
 			Actions: []LayoutAction{
-				{Event: "ide:panel:open", Payload: "terminal"},
+				{Event: "ide:panel:open", Payload: map[string]any{"panel": "terminal", "position": "bottom", "mode": "snapped"}},
 				{Event: "ide:tui:enter"},
-				{Event: "ide:tui:assist:open"},
+				{Event: "ide:tui:assist:open", Payload: map[string]any{"panel": "explorer", "anchor": "right"}},
 			},
 		},
 		{
@@ -194,7 +194,7 @@ func defaultLayoutProfiles() []LayoutProfile {
 			Actions: []LayoutAction{
 				{Event: "ide:panel:open", Payload: "git"},
 				{Event: "ide:editor:split", Payload: "horizontal"},
-				{Event: "ide:tui:assist:open"},
+				{Event: "ide:tui:assist:open", Payload: map[string]any{"panel": "git", "anchor": "right"}},
 			},
 		},
 	}

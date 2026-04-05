@@ -80,7 +80,7 @@ func (e *Engine) Predict(filePath, content string, line, column int) []Suggestio
 	}
 	suggestions := make([]Suggestion, 0, len(patterns))
 	for _, pattern := range patterns {
-		code := e.generator.Generate(ctx, pattern)
+		code, metadata := e.generator.GenerateWithMetadata(ctx, pattern)
 		if code != "" {
 			// Use Name if Description is empty
 			displayText := pattern.Description
@@ -92,13 +92,15 @@ func (e *Engine) Predict(filePath, content string, line, column int) []Suggestio
 			}
 
 			suggestions = append(suggestions, Suggestion{
-				Text:        code,
-				DisplayText: displayText,
-				Score:       float64(pattern.Priority),
-				Pattern:     pattern,
-				IsScaffold:  pattern.IsSkeleton,
-				InsertText:  code,
-				Source:      core.SourcePredictive,
+				Text:                 code,
+				DisplayText:          displayText,
+				Score:                float64(pattern.Priority),
+				Pattern:              pattern,
+				IsScaffold:           pattern.IsSkeleton,
+				HasResolvedData:      metadata.HasResolvedData,
+				UsesFallbackDefaults: metadata.UsesFallbackDefaults,
+				InsertText:           code,
+				Source:               core.SourcePredictive,
 			})
 		}
 	}
@@ -448,20 +450,27 @@ func (e *Engine) GetCompletions(filePath, content string, line, column int, limi
 		suggestions = suggestions[:limit]
 	}
 
-	results := make([]CompletionResult, len(suggestions))
-	for i, s := range suggestions {
-		kind := "completion"
+	results := make([]CompletionResult, 0, len(suggestions))
+	for _, s := range suggestions {
 		if s.IsScaffold {
-			kind = "scaffold"
+			continue
+		}
+		if s.Pattern != nil && (!s.HasResolvedData || s.UsesFallbackDefaults) {
+			continue
 		}
 
-		results[i] = CompletionResult{
+		kind := "completion"
+		results = append(results, CompletionResult{
 			Text:       s.Text,
 			Label:      s.DisplayText,
 			Priority:   int(s.Score),
 			Kind:       kind,
 			IsSkeleton: s.IsScaffold,
-		}
+		})
+	}
+
+	if len(results) == 0 {
+		return nil
 	}
 
 	return results

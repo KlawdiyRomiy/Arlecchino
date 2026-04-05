@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -21,6 +22,24 @@ import (
 	lspregistry "arlecchino/internal/lsp"
 	"arlecchino/internal/predictive"
 )
+
+var shortPrefixExternalLanguages = map[string]struct{}{
+	"bash":  {},
+	"go":    {},
+	"shell": {},
+	"sh":    {},
+	"zsh":   {},
+}
+
+func externalCompletionMinPrefixRunes(ctx CompletionContext) int {
+	if ctx.InImport {
+		return 0
+	}
+	if _, ok := shortPrefixExternalLanguages[strings.ToLower(ctx.Language)]; ok {
+		return 1
+	}
+	return 2
+}
 
 func shouldSkipLSP(ctx CompletionContext) bool {
 	if ctx.AccessChain != "" {
@@ -43,7 +62,7 @@ func shouldSkipLSP(ctx CompletionContext) bool {
 			}
 		}
 	}
-	return utf8.RuneCountInString(ctx.Prefix) < 2
+	return utf8.RuneCountInString(ctx.Prefix) < externalCompletionMinPrefixRunes(ctx)
 }
 
 func shouldSkipIndexGroup(ctx CompletionContext) bool {
@@ -281,6 +300,7 @@ type PredictionBrain struct {
 	ghostFilter       *GhostTextFilter
 	userBehavior      *UserBehavior
 	providerManager   *ProviderManager
+	lastTrace         atomic.Value
 }
 
 type BrainConfig struct {
@@ -334,6 +354,7 @@ func (s *Suggestion) MatchType() predictive.MatchType {
 type CompletionContext struct {
 	FilePath         string
 	Content          []byte
+	FullContent      []byte
 	Line             int
 	Column           int
 	Prefix           string
@@ -355,6 +376,31 @@ type CompletionContext struct {
 	ResolvedNamespace string
 	IsMethodCall      bool
 	IsStaticCall      bool
+}
+
+type CompletionTrace struct {
+	RequestID          string            `json:"requestId"`
+	FilePath           string            `json:"filePath"`
+	Language           string            `json:"language"`
+	Prefix             string            `json:"prefix"`
+	AccessChain        string            `json:"accessChain"`
+	ResolvedNamespace  string            `json:"resolvedNamespace"`
+	CacheHit           bool              `json:"cacheHit"`
+	BeforeFilter       int               `json:"beforeFilter"`
+	AfterPrefixFilter  int               `json:"afterPrefixFilter"`
+	AfterContextFilter int               `json:"afterContextFilter"`
+	AfterDedup         int               `json:"afterDedup"`
+	ResultCount        int               `json:"resultCount"`
+	SourceCounts       map[string]int    `json:"sourceCounts"`
+	TopSuggestions     []TraceSuggestion `json:"topSuggestions"`
+}
+
+type TraceSuggestion struct {
+	Text      string            `json:"text"`
+	Source    core.SymbolSource `json:"source"`
+	Kind      core.SymbolKind   `json:"kind"`
+	Namespace string            `json:"namespace,omitempty"`
+	Score     float64           `json:"score"`
 }
 
 func (b *PredictionBrain) HasARLELanguageSupport(language string) bool {
@@ -392,6 +438,110 @@ func isCanceled(ctx CompletionContext) bool {
 		return false
 	}
 	return ctx.Ctx.Err() != nil
+}
+
+var fillAllBlockedCallTargets = map[string]struct{}{
+	"if":     {},
+	"for":    {},
+	"switch": {},
+	"while":  {},
+	"catch":  {},
+	"func":   {},
+	"return": {},
+}
+
+func isCallTargetChar(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') ||
+		(ch >= 'A' && ch <= 'Z') ||
+		(ch >= '0' && ch <= '9') ||
+		ch == '_' || ch == '.' || ch == ':' || ch == '>' || ch == '$'
+}
+
+func extractCallTargetSuffix(beforeCursor string) string {
+	end := len(beforeCursor)
+	for end > 0 && beforeCursor[end-1] == ' ' {
+		end--
+	}
+	start := end
+	for start > 0 && isCallTargetChar(beforeCursor[start-1]) {
+		start--
+	}
+	return strings.TrimSpace(beforeCursor[start:end])
+}
+
+func shouldOfferFillAll(ctx CompletionContext) bool {
+	if strings.TrimSpace(ctx.Prefix) != "" {
+		return false
+	}
+
+	line := contentLine(ctx)
+	if line <= 0 {
+		return false
+	}
+
+	lines := strings.Split(string(ctx.Content), "\n")
+	if line > len(lines) {
+		return false
+	}
+
+	lineText := lines[line-1]
+	column := ctx.Column
+	if column < 0 {
+		column = 0
+	}
+	if column > len(lineText) {
+		column = len(lineText)
+	}
+
+	beforeCursor := lineText[:column]
+	parenIdx := strings.LastIndex(beforeCursor, "(")
+	if parenIdx == -1 {
+		return false
+	}
+	if strings.TrimSpace(beforeCursor[parenIdx+1:]) != "" {
+		return false
+	}
+
+	target := extractCallTargetSuffix(beforeCursor[:parenIdx])
+	if target == "" {
+		return false
+	}
+	if _, blocked := fillAllBlockedCallTargets[strings.ToLower(target)]; blocked {
+		return false
+	}
+	return true
+}
+
+func suggestionAddsUsefulCompletion(s Suggestion, prefix string) bool {
+	if len(s.AdditionalTextEdits) > 0 {
+		return true
+	}
+
+	insertText := strings.TrimSpace(s.InsertText)
+	if insertText == "" {
+		insertText = strings.TrimSpace(s.Text)
+	}
+	if insertText == "" || prefix == "" {
+		return false
+	}
+
+	insertLower := strings.ToLower(insertText)
+	prefixLower := strings.ToLower(prefix)
+	if insertLower == prefixLower {
+		return false
+	}
+
+	return strings.HasPrefix(insertLower, prefixLower) && len(insertText) > len(prefix)
+}
+
+func isExactSelfEchoSuggestion(s Suggestion, prefix string) bool {
+	if prefix == "" {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(s.Text), strings.TrimSpace(prefix)) {
+		return false
+	}
+	return !suggestionAddsUsefulCompletion(s, prefix)
 }
 
 func NewPredictionBrain(engine *core.Engine, config BrainConfig) *PredictionBrain {
@@ -448,7 +598,15 @@ func NewPredictionBrain(engine *core.Engine, config BrainConfig) *PredictionBrai
 		docEnricher = NewDocEnricher(engine.ProjectRoot())
 	}
 
+	importCompletions := NewImportCompletionProvider(engine)
+
 	stubProvider := NewStubProviderWithBuiltins()
+	if engine != nil {
+		stubProvider.SetProjectRoot(engine.ProjectRoot())
+	}
+	if importCompletions != nil && importCompletions.catalog != nil {
+		stubProvider.SetPackageResolver(importCompletions.catalog.ResolveLibraryByOwner)
+	}
 	stubProvider.LoadStubs()
 
 	completionCache := NewCompletionCache(1000, 5*time.Minute)
@@ -472,7 +630,7 @@ func NewPredictionBrain(engine *core.Engine, config BrainConfig) *PredictionBrai
 		langDetector:      langDetector,
 		autoImporter:      NewAutoImporter(),
 		stringCompletions: NewStringCompletionProvider(engine),
-		importCompletions: NewImportCompletionProvider(engine),
+		importCompletions: importCompletions,
 		crossFile:         crossFile,
 		importResolver:    importResolver,
 		recentSymbols:     make([]string, 0, 10),
@@ -690,6 +848,19 @@ func (b *PredictionBrain) collectExternalGroup(
 }
 
 func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
+	trace := CompletionTrace{
+		RequestID:         ctx.RequestID,
+		FilePath:          ctx.FilePath,
+		Language:          ctx.Language,
+		Prefix:            ctx.Prefix,
+		AccessChain:       ctx.AccessChain,
+		ResolvedNamespace: ctx.ResolvedNamespace,
+		SourceCounts:      map[string]int{},
+	}
+	defer func() {
+		b.lastTrace.Store(trace)
+	}()
+
 	debugLogf("[Complete] START lang=%s prefix='%s' line=%d col=%d chain='%s'",
 		ctx.Language, ctx.Prefix, ctx.Line, ctx.Column, ctx.AccessChain)
 
@@ -705,6 +876,9 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 
 	if b.completionCache != nil {
 		if cached, ok := b.completionCache.Get(ctx); ok {
+			trace.CacheHit = true
+			trace.ResultCount = len(cached)
+			trace.TopSuggestions = buildTraceSuggestions(cached)
 			debugLogf("[Complete] CACHE HIT: %d items", len(cached))
 			return cached
 		}
@@ -799,6 +973,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	}
 	mergeCounts(counts, externalGroup.counts)
 	suggestions = append(suggestions, externalGroup.suggestions...)
+	trace.SourceCounts = cloneCounts(counts)
 
 	debugLogf("[Complete] SOURCES: fillAll=%d local=%d predictive=%d index=%d crossFile=%d facade=%d lsp=%d virtual=%d spec=%d stubs=%d kw=%d",
 		counts["fillAll"], counts["local"], counts["predictive"], counts["index"],
@@ -813,6 +988,11 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	suggestions = b.deduplicate(suggestions)
 	afterDedup := len(suggestions)
 	suggestions = b.rank(ctx, suggestions)
+	trace.ResolvedNamespace = ctx.ResolvedNamespace
+	trace.BeforeFilter = beforeFilter
+	trace.AfterPrefixFilter = afterPrefixFilter
+	trace.AfterContextFilter = afterContextFilter
+	trace.AfterDedup = afterDedup
 
 	debugLogf("[Complete] FILTER: before=%d afterPrefix=%d afterContext=%d afterDedup=%d",
 		beforeFilter, afterPrefixFilter, afterContextFilter, afterDedup)
@@ -830,9 +1010,47 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	if b.completionCache != nil && len(suggestions) > 0 {
 		b.completionCache.Set(ctx, suggestions)
 	}
+	trace.ResultCount = len(suggestions)
+	trace.TopSuggestions = buildTraceSuggestions(suggestions)
 
 	debugLogf("[Complete] RESULT: %d suggestions for lang=%s", len(suggestions), ctx.Language)
 	return suggestions
+}
+
+func buildTraceSuggestions(suggestions []Suggestion) []TraceSuggestion {
+	limit := len(suggestions)
+	if limit > 8 {
+		limit = 8
+	}
+	result := make([]TraceSuggestion, 0, limit)
+	for i := 0; i < limit; i++ {
+		s := suggestions[i]
+		result = append(result, TraceSuggestion{
+			Text:      s.Text,
+			Source:    s.Source,
+			Kind:      s.Kind,
+			Namespace: s.Namespace,
+			Score:     s.Score,
+		})
+	}
+	return result
+}
+
+func cloneCounts(counts map[string]int) map[string]int {
+	cloned := make(map[string]int, len(counts))
+	for k, v := range counts {
+		cloned[k] = v
+	}
+	return cloned
+}
+
+func (b *PredictionBrain) LastCompletionTrace() CompletionTrace {
+	if value := b.lastTrace.Load(); value != nil {
+		if trace, ok := value.(CompletionTrace); ok {
+			return trace
+		}
+	}
+	return CompletionTrace{}
 }
 
 // fromPredictive generates suggestions from the Predictive AST engine
@@ -861,8 +1079,7 @@ func (b *PredictionBrain) fromPredictive(ctx CompletionContext) []Suggestion {
 
 	suggestions := make([]Suggestion, 0, len(results))
 	for _, r := range results {
-		// Determine kind based on result type
-		kind := core.SymbolKindSnippet
+		kind := b.mapKeywordKind(r.Kind)
 		if r.IsSkeleton {
 			kind = core.SymbolKindClass // Use class icon for scaffolds
 		}
@@ -885,7 +1102,6 @@ func (b *PredictionBrain) fromPredictive(ctx CompletionContext) []Suggestion {
 			Score:       float64(r.Priority) / 10.0,
 			Detail:      r.Kind,
 			InsertText:  insertText,
-			Snippet:     insertText,
 			IsSnippet:   false,
 			Extra:       extra,
 		})
@@ -938,7 +1154,7 @@ func (b *PredictionBrain) fromLocal(ctx CompletionContext) []Suggestion {
 		}
 
 		// Boost exact prefix match
-		if strings.ToLower(sym.Name) == strings.ToLower(ctx.Prefix) {
+		if strings.ToLower(sym.Name) == strings.ToLower(ctx.Prefix) && (sym.Kind == "function" || sym.Kind == "method") {
 			score += 1.0
 		}
 
@@ -965,6 +1181,9 @@ func (b *PredictionBrain) fromLocal(ctx CompletionContext) []Suggestion {
 
 func (b *PredictionBrain) fromFillAll(ctx CompletionContext) []Suggestion {
 	if b.fillAll == nil {
+		return nil
+	}
+	if !shouldOfferFillAll(ctx) {
 		return nil
 	}
 	if isCanceled(ctx) {
@@ -1001,12 +1220,13 @@ func (b *PredictionBrain) fromFillAll(ctx CompletionContext) []Suggestion {
 		signature = b.getSignatureFromIndex(ctx)
 	}
 
-	if signature == nil || len(signature.Parameters) == 0 {
-		return nil
-	}
-
 	line := contentLine(ctx)
-	fills := b.fillAll.GetFillSuggestionsWithSignature(ctx.FilePath, ctx.Content, line, ctx.Column, ctx.Language, signature)
+	var fills []predictive.FillSuggestion
+	if signature != nil && len(signature.Parameters) > 0 {
+		fills = b.fillAll.GetFillSuggestionsWithSignature(ctx.FilePath, ctx.Content, line, ctx.Column, ctx.Language, signature)
+	} else {
+		fills = b.fillAll.GetFillSuggestions(ctx.FilePath, ctx.Content, line, ctx.Column, ctx.Language)
+	}
 	if len(fills) == 0 {
 		return nil
 	}
@@ -1029,10 +1249,10 @@ func (b *PredictionBrain) fromFillAll(ctx CompletionContext) []Suggestion {
 		suggestions = append(suggestions, Suggestion{
 			Text:        display,
 			DisplayText: display,
-			Kind:        core.SymbolKindSnippet,
+			Kind:        core.SymbolKindText,
 			Source:      core.SourceFillAll,
 			Score:       fill.Score / 10.0,
-			Detail:      "Fill all parameters",
+			Detail:      "Fill arguments",
 			InsertText:  insertText,
 			IsSnippet:   false,
 		})
@@ -1275,14 +1495,27 @@ func (b *PredictionBrain) ResolveAccessChain(ctx *CompletionContext) {
 	}
 
 	resolved := ""
+	resolveContent := ctx.Content
+	if len(ctx.FullContent) > 0 {
+		resolveContent = ctx.FullContent
+	}
 	if b.importResolver != nil {
-		resolved = b.importResolver.ResolveClassName(ctx.FilePath, ctx.Content, reference, ctx.Language)
+		resolved = b.importResolver.ResolveClassName(ctx.FilePath, resolveContent, reference, ctx.Language)
 	}
 	if resolved == "" && b.stubProvider != nil {
 		stubLanguage := normalizeStubLanguage(ctx.Language, ctx.FilePath)
 		if stubLanguage != "" {
 			resolved = b.stubProvider.ResolvePackage(reference, stubLanguage)
+			if resolved == "" {
+				resolved = b.stubProvider.resolvePackageFromCatalog(stubLanguage, reference)
+				if resolved != "" {
+					b.stubProvider.RememberPackage(stubLanguage, reference, resolved)
+				}
+			}
 		}
+	}
+	if resolved == "" && b.importCompletions != nil && b.importCompletions.catalog != nil {
+		resolved = b.importCompletions.catalog.ResolveLibraryByOwner(ctx.Language, reference)
 	}
 	if resolved != "" {
 		ctx.ResolvedNamespace = resolved
@@ -2029,7 +2262,7 @@ func (b *PredictionBrain) detectCSSValueContext(ctx CompletionContext) bool {
 func (b *PredictionBrain) mapKeywordKind(kind string) core.SymbolKind {
 	switch kind {
 	case "keyword":
-		return core.SymbolKindSnippet
+		return core.SymbolKindText
 	case "function":
 		return core.SymbolKindFunction
 	case "method":
@@ -2049,7 +2282,7 @@ func (b *PredictionBrain) mapKeywordKind(kind string) core.SymbolKind {
 	case "namespace":
 		return core.SymbolKindNamespace
 	default:
-		return core.SymbolKindSnippet
+		return core.SymbolKindText
 	}
 }
 
@@ -2200,6 +2433,9 @@ func (b *PredictionBrain) filterByPrefix(prefix, language string, suggestions []
 		}
 
 		if matchResult.Matched {
+			if isExactSelfEchoSuggestion(*s, normalizedPrefix) {
+				continue
+			}
 			s.MatchResult = &matchResult
 			result = append(result, *s)
 		}
@@ -3393,7 +3629,7 @@ func (b *PredictionBrain) CompleteWithAI(ctx CompletionContext) ([]Suggestion, e
 		suggestions = append(suggestions, Suggestion{
 			Text:        c,
 			DisplayText: c,
-			Kind:        core.SymbolKindSnippet,
+			Kind:        core.SymbolKindText,
 			Source:      core.SourcePredictive,
 			Score:       1.0 - float64(i)*0.1,
 			InsertText:  c,

@@ -89,6 +89,36 @@ func (c *dependencyCatalog) Suggestions(language, prefix string) []Suggestion {
 	return suggestions
 }
 
+func (c *dependencyCatalog) ResolveLibraryByOwner(language, owner string) string {
+	owner = strings.ToLower(strings.TrimSpace(owner))
+	if owner == "" {
+		return ""
+	}
+
+	for _, entry := range c.entriesForLanguage(language) {
+		name := strings.TrimSpace(entry.Name)
+		if name == "" {
+			continue
+		}
+
+		if strings.ToLower(name) == owner {
+			return name
+		}
+
+		if packageSuggestionIdentifier(name, language) == owner {
+			return name
+		}
+
+		if idx := strings.LastIndex(name, "/"); idx >= 0 {
+			if strings.ToLower(name[idx+1:]) == owner {
+				return name
+			}
+		}
+	}
+
+	return ""
+}
+
 func (c *dependencyCatalog) entriesForLanguage(language string) []dependencyEntry {
 	files := c.manifestFiles(language)
 	fingerprint := c.manifestFingerprint(files)

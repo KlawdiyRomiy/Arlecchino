@@ -160,6 +160,11 @@ func (r *SmartRanker) matchScore(s *Suggestion, prefix string) float64 {
 	textLower := strings.ToLower(s.Text)
 	prefixLower := strings.ToLower(prefix)
 
+	if isExactSelfEchoSuggestion(*s, prefix) {
+		r.updateMatchResult(s, predictive.MatchNone, 0.05, nil)
+		return 0.05
+	}
+
 	if s.Text == prefix {
 		r.updateMatchResult(s, predictive.MatchExact, 1.0, nil)
 		return 1.0

@@ -17,6 +17,11 @@ import (
 
 // Completions & Predictions - Editor autocomplete and command suggestions
 
+const (
+	editorCompletionTimeout            = 325 * time.Millisecond
+	editorAccessChainCompletionTimeout = 650 * time.Millisecond
+)
+
 // CommandSuggestion represents a terminal command suggestion
 type CommandSuggestion struct {
 	Text        string `json:"text"`
@@ -156,9 +161,6 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 	ctx.RequestID = requestID
 	a.lastRequestID.Store(requestID)
 
-	requestCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-
 	textBeforeShort := ctx.TextBefore
 	if len(textBeforeShort) > 30 {
 		textBeforeShort = textBeforeShort[len(textBeforeShort)-30:]
@@ -175,6 +177,14 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 	if prefix == "" && ctx.TextBefore != "" && prefixInfo.AccessChain == "" {
 		prefix = predictive.ExtractCurrentPrefixWithLanguage(ctx.TextBefore, ctx.Language)
 	}
+
+	timeout := editorCompletionTimeout
+	if prefixInfo.AccessChain != "" && prefix == "" {
+		timeout = editorAccessChainCompletionTimeout
+	}
+
+	requestCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	if !prefixInfo.InString && ctx.TextBefore != "" {
 		inString, stringValue, stringContext := predictive.DetectStringContextFromText(ctx.TextBefore)
@@ -199,6 +209,7 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 	brainCtx := brain.CompletionContext{
 		FilePath:          ctx.FilePath,
 		Content:           []byte(contentWindow),
+		FullContent:       []byte(ctx.FullText),
 		Line:              ctx.Line,
 		Column:            ctx.Column,
 		Prefix:            prefix,

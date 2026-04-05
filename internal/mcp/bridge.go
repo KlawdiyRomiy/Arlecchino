@@ -188,7 +188,7 @@ func (c *SocketIDEBridgeClient) Call(method string, params map[string]any) (any,
 		if strings.TrimSpace(response.Error) == "" {
 			return nil, fmt.Errorf("bridge call failed")
 		}
-		return nil, fmt.Errorf(response.Error)
+		return nil, fmt.Errorf("%s", response.Error)
 	}
 
 	return response.Result, nil

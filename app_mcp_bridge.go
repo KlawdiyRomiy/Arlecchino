@@ -68,7 +68,7 @@ func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, er
 		}
 		return map[string]any{"opened": true, "path": path}, nil
 	case "project.close":
-		if err := a.CloseProject(); err != nil {
+		if err := a.closeProject(false); err != nil {
 			return nil, err
 		}
 		return map[string]any{"closed": true}, nil
@@ -148,10 +148,22 @@ func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, er
 		if strings.TrimSpace(name) == "" {
 			name = "Terminal"
 		}
+		command := bridgeOptionalString(params, "command")
 		if err := a.CreateTerminal(id, name); err != nil {
 			return nil, err
 		}
-		return map[string]any{"id": id, "created": true}, nil
+		if command != "" {
+			if err := a.WriteTerminal(id, command+"\n"); err != nil {
+				return nil, err
+			}
+		}
+		runtime.EventsEmit(a.ctx, "ide:panel:open", map[string]any{
+			"panel":    "terminal",
+			"focus":    true,
+			"position": "bottom",
+			"mode":     "snapped",
+		})
+		return map[string]any{"id": id, "created": true, "commandWritten": command != ""}, nil
 	case "terminal.write":
 		id, err := bridgeRequiredString(params, "id")
 		if err != nil {

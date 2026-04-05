@@ -8,6 +8,13 @@ import (
 	sitter "github.com/smacker/go-tree-sitter"
 )
 
+var (
+	fillAllPHPParamPattern   = regexp.MustCompile(`^(\??\w+(?:\|\w+)*)\s+\$(\w+)`)
+	fillAllGoParamPattern    = regexp.MustCompile(`^(\w+)\s+(\S+)$`)
+	fillAllTypedParamPattern = regexp.MustCompile(`^(\w+)\s*:\s*(\S+)`)
+	fillAllEmptyCallPattern  = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*$`)
+)
+
 type FillAllFields struct {
 	safeParser *SafeParser
 }
@@ -116,23 +123,19 @@ func (f *FillAllFields) convertSignatureParams(sig *SignatureInfo) []FunctionPar
 func (f *FillAllFields) parseParameterLabel(label string) (name, paramType string) {
 	label = strings.TrimSpace(label)
 
-	phpPattern := regexp.MustCompile(`^(\??\w+(?:\|\w+)*)\s+\$(\w+)`)
-	if m := phpPattern.FindStringSubmatch(label); m != nil {
+	if m := fillAllPHPParamPattern.FindStringSubmatch(label); m != nil {
 		return m[2], m[1]
 	}
 
-	goPattern := regexp.MustCompile(`^(\w+)\s+(\S+)$`)
-	if m := goPattern.FindStringSubmatch(label); m != nil {
+	if m := fillAllGoParamPattern.FindStringSubmatch(label); m != nil {
 		return m[1], m[2]
 	}
 
-	tsPattern := regexp.MustCompile(`^(\w+)\s*:\s*(\S+)`)
-	if m := tsPattern.FindStringSubmatch(label); m != nil {
+	if m := fillAllTypedParamPattern.FindStringSubmatch(label); m != nil {
 		return m[1], m[2]
 	}
 
-	pyPattern := regexp.MustCompile(`^(\w+)\s*:\s*(\S+)`)
-	if m := pyPattern.FindStringSubmatch(label); m != nil {
+	if m := fillAllTypedParamPattern.FindStringSubmatch(label); m != nil {
 		return m[1], m[2]
 	}
 
@@ -190,8 +193,7 @@ func extractFunctionNameAtCursor(content []byte, line, column int) string {
 	}
 
 	left := lineText[:column]
-	matcher := regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*\([^()]*$`)
-	match := matcher.FindStringSubmatch(left)
+	match := fillAllEmptyCallPattern.FindStringSubmatch(left)
 	if len(match) < 2 {
 		return ""
 	}

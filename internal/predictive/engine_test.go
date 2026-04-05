@@ -76,6 +76,36 @@ class UserController extends Controller
 	}
 }
 
+func TestEngine_GetCompletions_SkipsScaffoldsInPopup(t *testing.T) {
+	engine := NewEngine()
+	results := engine.GetCompletions(
+		"/app/Http/Controllers/UserController.php",
+		"<?php\n\n",
+		2,
+		1,
+		20,
+	)
+
+	if len(results) != 0 {
+		t.Fatalf("expected popup completions to skip scaffolds, got %#v", results)
+	}
+}
+
+func TestEngine_GetCompletions_DropsGenericTemplatesWithoutResolvedData(t *testing.T) {
+	engine := NewEngine()
+	results := engine.GetCompletions(
+		"/service/user.go",
+		"package service\n\nfunc",
+		3,
+		5,
+		20,
+	)
+
+	if len(results) != 0 {
+		t.Fatalf("expected generic func template to be hidden without resolved data, got %#v", results)
+	}
+}
+
 func TestEngine_NeedsScaffold(t *testing.T) {
 	engine := NewEngine()
 

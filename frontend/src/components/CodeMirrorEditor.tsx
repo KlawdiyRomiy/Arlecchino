@@ -28,9 +28,8 @@ import {
   CompletionContext,
   CompletionResult,
   Completion,
-  snippet,
-  completeAnyWord,
   startCompletion,
+  closeCompletion,
   completionStatus,
 } from "@codemirror/autocomplete";
 import { search, searchKeymap } from "@codemirror/search";
@@ -129,257 +128,12 @@ const GHOST_DEBOUNCE_MS = 50;
 const GHOST_IDLE_DELAY_MS = 900;
 
 type CompletionWithInsertText = Completion & { __insertText: string };
-
-const makeKeywordCompletion = (keyword: string): CompletionWithInsertText => ({
-  label: keyword,
-  type: "keyword",
-  apply: keyword,
-  boost: -0.6,
-  __insertText: keyword,
-});
-
-const KEYWORD_COMPLETIONS: Record<string, CompletionWithInsertText[]> = {
-  __generic: ["true", "false", "null", "undefined"].map(makeKeywordCompletion),
-  javascript: [
-    "async",
-    "await",
-    "break",
-    "case",
-    "catch",
-    "class",
-    "const",
-    "continue",
-    "default",
-    "do",
-    "else",
-    "export",
-    "extends",
-    "finally",
-    "for",
-    "function",
-    "if",
-    "import",
-    "let",
-    "new",
-    "return",
-    "super",
-    "switch",
-    "this",
-    "throw",
-    "try",
-    "typeof",
-    "var",
-    "while",
-    "yield",
-  ].map(makeKeywordCompletion),
-  typescript: [
-    "as",
-    "asserts",
-    "async",
-    "await",
-    "break",
-    "case",
-    "catch",
-    "class",
-    "const",
-    "continue",
-    "declare",
-    "default",
-    "do",
-    "else",
-    "enum",
-    "export",
-    "extends",
-    "finally",
-    "for",
-    "function",
-    "if",
-    "implements",
-    "import",
-    "interface",
-    "keyof",
-    "let",
-    "namespace",
-    "new",
-    "private",
-    "protected",
-    "public",
-    "readonly",
-    "return",
-    "satisfies",
-    "static",
-    "super",
-    "switch",
-    "this",
-    "throw",
-    "try",
-    "type",
-    "typeof",
-    "unknown",
-    "var",
-    "while",
-    "yield",
-  ].map(makeKeywordCompletion),
-  php: [
-    "abstract",
-    "and",
-    "array",
-    "as",
-    "break",
-    "case",
-    "catch",
-    "class",
-    "const",
-    "continue",
-    "declare",
-    "default",
-    "do",
-    "else",
-    "elseif",
-    "extends",
-    "final",
-    "finally",
-    "for",
-    "foreach",
-    "function",
-    "if",
-    "implements",
-    "include",
-    "instanceof",
-    "interface",
-    "match",
-    "namespace",
-    "new",
-    "null",
-    "or",
-    "private",
-    "protected",
-    "public",
-    "readonly",
-    "return",
-    "static",
-    "switch",
-    "throw",
-    "trait",
-    "try",
-    "true",
-    "use",
-    "while",
-    "yield",
-  ].map(makeKeywordCompletion),
-  python: [
-    "and",
-    "as",
-    "assert",
-    "async",
-    "await",
-    "break",
-    "class",
-    "continue",
-    "def",
-    "elif",
-    "else",
-    "except",
-    "False",
-    "finally",
-    "for",
-    "from",
-    "global",
-    "if",
-    "import",
-    "in",
-    "is",
-    "lambda",
-    "None",
-    "not",
-    "or",
-    "pass",
-    "raise",
-    "return",
-    "True",
-    "try",
-    "while",
-    "with",
-    "yield",
-  ].map(makeKeywordCompletion),
-  go: [
-    "break",
-    "case",
-    "chan",
-    "const",
-    "continue",
-    "default",
-    "defer",
-    "else",
-    "fallthrough",
-    "for",
-    "func",
-    "go",
-    "goto",
-    "if",
-    "import",
-    "interface",
-    "map",
-    "package",
-    "range",
-    "return",
-    "select",
-    "struct",
-    "switch",
-    "type",
-    "var",
-  ].map(makeKeywordCompletion),
-  bash: [
-    "case",
-    "do",
-    "done",
-    "elif",
-    "else",
-    "esac",
-    "export",
-    "false",
-    "fi",
-    "for",
-    "function",
-    "if",
-    "in",
-    "local",
-    "return",
-    "then",
-    "true",
-    "while",
-  ].map(makeKeywordCompletion),
-  rust: [
-    "async",
-    "await",
-    "break",
-    "const",
-    "continue",
-    "crate",
-    "else",
-    "enum",
-    "fn",
-    "for",
-    "if",
-    "impl",
-    "let",
-    "loop",
-    "match",
-    "mod",
-    "mut",
-    "pub",
-    "return",
-    "self",
-    "struct",
-    "super",
-    "trait",
-    "use",
-    "while",
-  ].map(makeKeywordCompletion),
+type CompletionPayload = {
+  label?: string;
+  text?: string;
+  insertText?: string;
+  additionalTextEdits?: MainModels.TextEditJSON[];
 };
-
-const getKeywordCompletions = (language: string): CompletionWithInsertText[] =>
-  KEYWORD_COMPLETIONS[language] || KEYWORD_COMPLETIONS.__generic;
 const SIGNATURE_HIDE_MS = 2400;
 const COMPLETION_CACHE_TTL_MS = 2000;
 
@@ -462,19 +216,10 @@ const trimToTokenLimit = (text: string, limit: number): string => {
   return text.startsWith(" ") ? ` ${slice}` : slice;
 };
 
-const areCompletionOptionsEqual = (
-  left: readonly Completion[],
-  right: readonly Completion[],
-): boolean => {
-  if (left.length !== right.length) return false;
-  for (let i = 0; i < left.length; i += 1) {
-    const a = left[i];
-    const b = right[i];
-    if (a.label !== b.label) return false;
-    if (a.detail !== b.detail) return false;
-    if (a.type !== b.type) return false;
-  }
-  return true;
+const isThenable = (value: unknown): value is PromiseLike<unknown> => {
+  if (typeof value !== "object" || value === null) return false;
+  const then = (value as { then?: unknown }).then;
+  return typeof then === "function";
 };
 
 const blackprintTheme = createTheme({
@@ -550,15 +295,6 @@ const editorStyles = EditorView.theme({
   ".cm-activeLine": {
     backgroundColor: "#0a0a0a",
   },
-  ".cm-cursorLayer": {
-    overflow: "visible",
-  },
-  ".cm-cursor": {
-    borderLeftColor: "#fff",
-    borderLeftWidth: "2px",
-    height: "1.35em",
-    marginTop: "0.05em",
-  },
   ".cm-selectionBackground, .cm-content ::selection": {
     backgroundColor: "#264f78 !important",
   },
@@ -595,6 +331,10 @@ const editorStyles = EditorView.theme({
     width: "fit-content",
     maxHeight: "400px",
     padding: "8px",
+    opacity: "1",
+    transform: "translateY(0) translateZ(0)",
+    willChange: "transform, opacity",
+    transition: "opacity 80ms ease-out, transform 80ms ease-out",
     zIndex: String(CODEMIRROR_TOOLTIP_Z_INDEX),
   },
   ".cm-tooltip-autocomplete > ul": {
@@ -609,6 +349,10 @@ const editorStyles = EditorView.theme({
     scrollbarWidth: "thin",
     scrollbarColor: "#3a3f46 transparent",
     paddingBottom: "4px",
+    transform: "translateZ(0)",
+    willChange: "transform",
+    contain: "content",
+    overscrollBehavior: "contain",
   },
   ".cm-tooltip-autocomplete > ul::-webkit-scrollbar": {
     width: "8px",
@@ -635,7 +379,8 @@ const editorStyles = EditorView.theme({
     overflow: "hidden",
     textOverflow: "ellipsis",
     cursor: "pointer",
-    transition: "background-color 0.1s ease, border-color 0.1s ease",
+    transform: "translateZ(0)",
+    contain: "layout style paint",
   },
   ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
     backgroundColor: "#1a1a1a",
@@ -990,6 +735,48 @@ function snippetToPlainText(snippetText: string): string {
   );
 }
 
+function completionAddsUsefulText(
+  prefix: string,
+  insertText: string,
+  additionalTextEdits?: MainModels.TextEditJSON[],
+): boolean {
+  if (additionalTextEdits && additionalTextEdits.length > 0) {
+    return true;
+  }
+  if (!prefix) {
+    return insertText.trim().length > 0;
+  }
+
+  const prefixLower = prefix.toLowerCase();
+  const insertLower = insertText.toLowerCase();
+  if (!insertLower.startsWith(prefixLower)) {
+    return insertLower.length > 0 && insertLower !== prefixLower;
+  }
+
+  return insertText.length > prefix.length;
+}
+
+function isExactSelfEchoCompletion(
+  item: CompletionPayload,
+  prefix: string,
+  insertText: string,
+): boolean {
+  if (!prefix) {
+    return false;
+  }
+
+  const labelLower = (item.label || item.text || "").toLowerCase();
+  if (labelLower !== prefix.toLowerCase()) {
+    return false;
+  }
+
+  return !completionAddsUsefulText(
+    prefix,
+    insertText,
+    item.additionalTextEdits,
+  );
+}
+
 function getWordAtLinePosition(
   lineText: string,
   column: number,
@@ -1032,20 +819,22 @@ function buildCompletionContext(fullText: string, lineNumber: number) {
   return { currentClass, currentMethod, imports };
 }
 
-function detectSemanticContext(state: EditorState, pos: number): string {
-  const lineNumber = state.doc.lineAt(pos).number;
-  const { currentClass, currentMethod } = buildCompletionContext(
-    state.doc.toString(),
+function buildCompletionCacheKey(
+  lineNumber: number,
+  accessChain: string | null,
+  inStringContext: boolean,
+  inBraceContext: boolean,
+) {
+  return [
     lineNumber,
-  );
+    accessChain || "-",
+    inStringContext ? "string" : "plain",
+    inBraceContext ? "brace" : "flow",
+  ].join("|");
+}
 
-  if (currentMethod) {
-    return `method:${currentMethod}|class:${currentClass || "-"}`;
-  }
-  if (currentClass) {
-    return `class:${currentClass}`;
-  }
-  return "global";
+function endsWithAccessTrigger(text: string) {
+  return text.endsWith(".") || text.endsWith("->") || text.endsWith("::");
 }
 
 function buildDefinitionContext(
@@ -1268,55 +1057,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const notifyChangeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  const snippetCompletionsRef = useRef<Record<string, Completion[]>>({});
-
-  useEffect(() => {
-    const stored = localStorage.getItem("custom-snippets");
-    if (!stored) return;
-
-    try {
-      const snippets = JSON.parse(stored) as Array<{
-        language: string;
-        prefix: string;
-        body: string[];
-        description?: string;
-        name?: string;
-      }>;
-      const map: Record<string, Completion[]> = {};
-      snippets.forEach((snippetItem) => {
-        const bodyText = snippetItem.body.join("\n");
-        const plainText = snippetToPlainText(bodyText) || snippetItem.prefix;
-        const completion: CompletionWithInsertText = {
-          label: snippetItem.prefix,
-          detail: snippetItem.name || snippetItem.description || "",
-          type: "snippet",
-          apply: (
-            view: EditorView,
-            _completionToApply: Completion,
-            from: number,
-            to: number,
-          ) => {
-            view.dispatch({
-              changes: {
-                from,
-                to,
-                insert: plainText,
-              },
-            });
-            RecordCompletionUsage(snippetItem.prefix).catch(() => {});
-          },
-          __insertText: plainText,
-        };
-        if (!map[snippetItem.language]) {
-          map[snippetItem.language] = [];
-        }
-        map[snippetItem.language].push(completion);
-      });
-      snippetCompletionsRef.current = map;
-    } catch (error) {
-      console.error("Failed to load custom snippets:", error);
-    }
-  }, []);
 
   useEffect(() => {
     if (!filePath || !language) return;
@@ -1531,15 +1271,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     [filePath],
   );
 
-  const orchestrator = useMemo(
-    () =>
-      createCompletionOrchestrator({
-        onCancel: () => {
-          completionCacheRef.current.invalidate();
-        },
-      }),
-    [],
-  );
+  const orchestrator = useMemo(() => createCompletionOrchestrator({}), []);
 
   const ghost = useMemo(
     () =>
@@ -1720,7 +1452,12 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
                 ? line.from + prefixMatch.startColumn - 1
                 : pos;
 
-      const semanticKey = detectSemanticContext(context.state, pos);
+      const cacheKey = buildCompletionCacheKey(
+        lineNumber,
+        accessInfo?.accessChain ?? null,
+        stringPrefix !== null,
+        inBraceContext,
+      );
       const requestVersion = documentVersionRef.current;
 
       const buildCompletionResult = async (
@@ -1761,11 +1498,17 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         if (context.aborted || orchestrator.isStale(requestId)) return null;
         if (versionAtRequest !== documentVersionRef.current) return null;
 
-        const snippetItems = snippetCompletionsRef.current[language] || [];
-        const completions: Completion[] = result.items.map((item) => {
+        const completions: Completion[] = result.items.flatMap((item) => {
           let insertText = item.insertText || item.text || item.label || "";
           if (shouldStripDollar && insertText.startsWith("$")) {
             insertText = insertText.slice(1);
+          }
+          const resolvedInsertText =
+            snippetToPlainText(insertText) || insertText;
+          if (
+            isExactSelfEchoCompletion(item, currentPrefix, resolvedInsertText)
+          ) {
+            return [];
           }
           const kind = item.kind || "text";
           const source = item.source || "index";
@@ -1779,21 +1522,16 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             from: number,
             to: number,
           ) => {
-            if (item.isSnippet) {
-              const applySnippet = snippet(insertText);
-              applySnippet(view, completionToApply, from, to);
-            } else {
-              view.dispatch({
-                changes: {
-                  from,
-                  to,
-                  insert: insertText,
-                },
-              });
-            }
+            const changes = [
+              {
+                from,
+                to,
+                insert: resolvedInsertText,
+              },
+            ];
 
             if (item.additionalTextEdits?.length) {
-              const changes = item.additionalTextEdits
+              const additionalChanges = item.additionalTextEdits
                 .map((edit) => {
                   const startLine = view.state.doc.line(edit.startLine);
                   const endLine = view.state.doc.line(edit.endLine);
@@ -1804,8 +1542,15 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
                   };
                 })
                 .sort((a, b) => a.from - b.from);
-              view.dispatch({ changes });
+
+              changes.push(...additionalChanges);
             }
+
+            const primaryInsertEnd = from + resolvedInsertText.length;
+            view.dispatch({
+              changes: changes.sort((a, b) => a.from - b.from),
+              selection: { anchor: primaryInsertEnd },
+            });
 
             metrics.recordCompletionAccepted(completionToApply);
           };
@@ -1814,8 +1559,14 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           let matchBonus = 0;
           const labelLower = (item.label || "").toLowerCase();
           const prefixLower = currentPrefix.toLowerCase();
+          const hasUsefulCompletion = completionAddsUsefulText(
+            currentPrefix,
+            resolvedInsertText,
+            item.additionalTextEdits,
+          );
           if (prefixLower) {
-            if (labelLower === prefixLower) matchBonus = 200;
+            if (labelLower === prefixLower)
+              matchBonus = hasUsefulCompletion ? 120 : -200;
             else if (labelLower.startsWith(prefixLower)) matchBonus = 150;
             else if (labelLower.includes(prefixLower)) matchBonus = 50;
           }
@@ -1828,15 +1579,15 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             type: mapCompletionKindString(kind),
             apply: applyCompletion,
             boost: effectivePriority / 500,
-            __insertText: insertText,
+            __insertText: resolvedInsertText,
           };
           (completion as unknown as Record<string, unknown>).__source =
             sourceLabel;
 
-          return completion;
+          return [completion];
         });
 
-        const allOptions = [...pendingItems, ...snippetItems, ...completions];
+        const allOptions = [...pendingItems, ...completions];
         if (context.aborted || orchestrator.isStale(requestId)) return null;
         if (versionAtRequest !== documentVersionRef.current) return null;
 
@@ -1845,7 +1596,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           prefix: currentPrefix,
           timestamp: Date.now(),
           filePath,
-          semanticKey,
+          semanticKey: cacheKey,
         });
         metrics.recordCompletionList(allOptions);
         orchestrator.markResponse(requestId);
@@ -1863,13 +1614,16 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
       const cachedItems = completionCacheRef.current.get(
         filePath,
-        semanticKey,
+        cacheKey,
         currentPrefix,
       );
       if (cachedItems && cachedItems.length > 0) {
         metrics.recordCacheHit();
+        if (accessInfo?.accessChain && currentPrefix.length === 0) {
+          metrics.recordAccessChainWarmHit();
+        }
         metrics.recordCompletionList(cachedItems);
-        const cachedResult: CompletionResult = {
+        return {
           from,
           options: cachedItems,
           validFor: getValidForRegex(
@@ -1878,37 +1632,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             inBraceContext,
           ),
         };
-
-        if (context.view) {
-          const view = context.view;
-          const preloadRequestId = orchestrator.nextRequestId();
-          const preloadVersion = documentVersionRef.current;
-          setTimeout(() => {
-            void buildCompletionResult(preloadRequestId, preloadVersion).then(
-              (fresh) => {
-                if (!fresh || !view) return;
-                if (completionStatus(view.state) !== "active") return;
-                if (!areCompletionOptionsEqual(cachedItems, fresh.options)) {
-                  startCompletion(view);
-                }
-              },
-            );
-          }, 0);
-        }
-
-        return cachedResult;
       }
 
       metrics.recordCacheMiss();
 
-      const isThenable = (value: unknown): value is Promise<unknown> => {
-        if (typeof value !== "object" || value === null) return false;
-        if (!("then" in value)) return false;
-        const then = (value as { then?: unknown }).then;
-        return typeof then === "function";
-      };
-
-      const view = context.view;
       const requestId = orchestrator.nextRequestId();
       const promise = buildCompletionResult(requestId, requestVersion).catch(
         (err) => {
@@ -1916,51 +1643,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           return null;
         },
       );
-
-      const anyWordResult = completeAnyWord(context);
-      const anyWordOptions =
-        anyWordResult && !isThenable(anyWordResult)
-          ? anyWordResult.options
-          : [];
-
-      const snippetItems = snippetCompletionsRef.current[language] || [];
-      const keywordItems = getKeywordCompletions(language);
-      const prefixLower = currentPrefix.toLowerCase();
-      const instantOptions = [
-        ...snippetItems,
-        ...keywordItems,
-        ...anyWordOptions,
-      ]
-        .filter((opt) => {
-          if (!prefixLower) return true;
-          const label = (opt.label || "").toLowerCase();
-          return label.startsWith(prefixLower);
-        })
-        .slice(0, 50);
-
-      if (instantOptions.length > 0) {
-        metrics.recordInstantFallbackUsed();
-        metrics.recordCompletionList(instantOptions);
-        if (view) {
-          void promise.then((fresh) => {
-            if (!fresh) return;
-            if (completionStatus(view.state) !== "active") return;
-            if (!areCompletionOptionsEqual(instantOptions, fresh.options)) {
-              startCompletion(view);
-            }
-          });
-        }
-
-        return {
-          from,
-          options: instantOptions,
-          validFor: getValidForRegex(
-            language,
-            stringPrefix !== null,
-            inBraceContext,
-          ),
-        };
-      }
 
       return promise;
     },
@@ -2345,7 +2027,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     }),
     EditorView.updateListener.of((update) => {
       if (!update.docChanged) return;
-      if (completionStatus(update.state) !== null) return;
       if (update.view.composing || update.view.compositionStarted) return;
 
       let insertedNonWhitespace = false;
@@ -2370,13 +2051,26 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
       if (!insertedNonWhitespace) return;
 
+      const currentPos = update.state.selection.main.head;
+      const recentText = update.state.doc.sliceString(
+        Math.max(0, currentPos - 2),
+        currentPos,
+      );
+      const isAccessTrigger = endsWithAccessTrigger(recentText);
+
+      if (completionStatus(update.state) !== null && !isAccessTrigger) return;
+
       const view = update.view;
       const docSnapshot = update.state.doc;
 
       queueMicrotask(() => {
         if (view.state.doc !== docSnapshot) return;
-        if (completionStatus(view.state) !== null) return;
+        const status = completionStatus(view.state);
+        if (status !== null && !isAccessTrigger) return;
         if (view.composing || view.compositionStarted) return;
+        if (isAccessTrigger && status !== null) {
+          closeCompletion(view);
+        }
         metrics.recordAutocompleteRequested();
         startCompletion(view);
       });

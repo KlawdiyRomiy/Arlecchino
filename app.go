@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -235,7 +236,10 @@ func (a *App) OpenProject(path string) error {
 		projectWarmupStep{
 			name: "agent guide",
 			run: func(context.Context) error {
-				_, _, err := terminal.EnsureAgentGuideFile(path)
+				if _, _, err := terminal.EnsureAgentGuideFile(path); err != nil {
+					return err
+				}
+				_, err := mcp.EnsureAgentContextFile(path)
 				return err
 			},
 		},
@@ -299,6 +303,7 @@ func (a *App) OpenProject(path string) error {
 		"projectPath": path,
 		"generation":  projectGeneration,
 	})
+	a.startProjectFilesystemWatcher(path, projectGeneration)
 
 	return nil
 }
@@ -418,9 +423,31 @@ func (a *App) GetCurrentProjectFramework() string {
 	return a.projectManager.CurrentProject.Framework
 }
 
-// CreateNewProject creates a new project via plugin system
-// framework: "laravel", "django", "rails", etc.
 func (a *App) CreateNewProject(name string, directory string, framework string) (string, error) {
+	name = strings.TrimSpace(name)
+	directory = strings.TrimSpace(directory)
+	framework = strings.TrimSpace(framework)
+	if name == "" {
+		return "", fmt.Errorf("project name is required")
+	}
+	if directory == "" {
+		return "", fmt.Errorf("project directory is required")
+	}
+
+	projectPath := filepath.Join(directory, name)
+	if _, err := os.Stat(projectPath); err == nil {
+		return "", fmt.Errorf("project already exists: %s", projectPath)
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	if framework == "" {
+		if err := os.MkdirAll(projectPath, 0o755); err != nil {
+			return "", err
+		}
+		return projectPath, nil
+	}
+
 	if a.plugins == nil {
 		return "", fmt.Errorf("plugin system not initialized")
 	}

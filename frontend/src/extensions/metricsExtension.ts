@@ -25,6 +25,7 @@ type MetricsCallbacks = {
     cacheHits: number;
     cacheMisses: number;
     instantFallbacks: number;
+    accessChainWarmHits: number;
   }) => void;
 };
 
@@ -39,6 +40,7 @@ export type MetricsHandle = {
   recordCacheHit: () => void;
   recordCacheMiss: () => void;
   recordInstantFallbackUsed: () => void;
+  recordAccessChainWarmHit: () => void;
 };
 
 export function metricsExtension(
@@ -59,6 +61,7 @@ export function metricsExtension(
   let cacheHits = 0;
   let cacheMisses = 0;
   let instantFallbacks = 0;
+  let accessChainWarmHits = 0;
 
   const percentile = (values: number[], p: number): number => {
     if (values.length === 0) return 0;
@@ -134,6 +137,7 @@ export function metricsExtension(
       cacheHits,
       cacheMisses,
       instantFallbacks,
+      accessChainWarmHits,
     });
   };
 
@@ -165,6 +169,13 @@ export function metricsExtension(
     }
   };
 
+  const recordAccessChainWarmHit = () => {
+    accessChainWarmHits += 1;
+    if (accessChainWarmHits % 10 === 0) {
+      emitPressureUpdate();
+    }
+  };
+
   return {
     extension,
     recordGhostShown,
@@ -176,5 +187,6 @@ export function metricsExtension(
     recordCacheHit,
     recordCacheMiss,
     recordInstantFallbackUsed,
+    recordAccessChainWarmHit,
   };
 }

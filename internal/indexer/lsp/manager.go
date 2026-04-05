@@ -1152,7 +1152,7 @@ func (s *Server) initialize() error {
 			"textDocument": map[string]any{
 				"completion": map[string]any{
 					"completionItem": map[string]any{
-						"snippetSupport": true,
+						"snippetSupport": false,
 						"resolveSupport": map[string]any{
 							"properties": []string{"additionalTextEdits", "detail", "documentation"},
 						},

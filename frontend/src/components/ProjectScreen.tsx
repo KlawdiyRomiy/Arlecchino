@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { EditorTabs, Tab } from "./EditorTabs";
-import { SnippetsManager } from "./SnippetsManager";
 import QuickLookModal from "./QuickLookModal";
 import * as AppFunctions from "../../wailsjs/go/main/App";
-import { shortcuts, isShortcut } from "../utils/keyboard";
+import { shortcuts } from "../utils/keyboard";
 import {
   PROJECT_SWITCH_BLOCKERS,
   blockProjectSwitch,
@@ -82,7 +81,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     undefined,
   );
   const [closedTabs, setClosedTabs] = useState<Tab[]>([]);
-  const [showSnippetsManager, setShowSnippetsManager] = useState(false);
   const [splitDirection, setSplitDirection] = useState<SplitDirection>(null);
   const [secondaryActiveTab, setSecondaryActiveTab] = useState<string | null>(
     null,
@@ -99,16 +97,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     content: "",
     language: "plaintext",
   });
-
-  const openSnippetsManager = () => {
-    blockProjectSwitch(PROJECT_SWITCH_BLOCKERS.snippets);
-    setShowSnippetsManager(true);
-  };
-
-  const closeSnippetsManager = () => {
-    unblockProjectSwitch(PROJECT_SWITCH_BLOCKERS.snippets);
-    setShowSnippetsManager(false);
-  };
 
   const closeQuickLook = () => {
     unblockProjectSwitch(PROJECT_SWITCH_BLOCKERS.quickLook);
@@ -193,15 +181,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const isAnyModalOpen = showSnippetsManager || quickLook.isOpen;
-
-      // Ctrl+Shift+S (Open Snippets Manager)
-      if (isShortcut(e, "ctrl+shift+s")) {
-        e.preventDefault();
-        e.stopPropagation();
-        openSnippetsManager();
-        return;
-      }
+      const isAnyModalOpen = quickLook.isOpen;
 
       if (isAnyModalOpen) {
         return;
@@ -272,7 +252,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     tabs,
     fileContents,
     closedTabs,
-    showSnippetsManager,
     quickLook.isOpen,
     splitDirection,
   ]);
@@ -745,6 +724,44 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     [splitDirection, activeTab, tabs],
   );
 
+  useEffect(() => {
+    const handleExternalEditorSplit = (event: Event) => {
+      const detail = (event as CustomEvent<{ direction?: SplitDirection }>)
+        .detail;
+      const direction = detail?.direction;
+      if (direction !== "horizontal" && direction !== "vertical") {
+        return;
+      }
+
+      if (splitDirection === direction && secondaryActiveTab) {
+        return;
+      }
+
+      if (!activeTab) {
+        return;
+      }
+
+      setSplitDirection(direction);
+      if (tabs.length > 1) {
+        const otherTab = tabs.find((tab) => tab.id !== activeTab);
+        setSecondaryActiveTab(otherTab?.id || activeTab);
+        return;
+      }
+
+      setSecondaryActiveTab(activeTab);
+    };
+
+    window.addEventListener(
+      "arlecchino:editor-split",
+      handleExternalEditorSplit as EventListener,
+    );
+    return () =>
+      window.removeEventListener(
+        "arlecchino:editor-split",
+        handleExternalEditorSplit as EventListener,
+      );
+  }, [activeTab, secondaryActiveTab, splitDirection, tabs]);
+
   const handleCloseSplit = () => {
     setSplitDirection(null);
     setSecondaryActiveTab(null);
@@ -896,14 +913,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           Saving...
         </div>
       )}
-
-      <SnippetsManager
-        isOpen={showSnippetsManager}
-        onClose={closeSnippetsManager}
-        onSave={(snippet) => {
-          console.log("Snippet saved:", snippet);
-        }}
-      />
 
       <QuickLookModal
         isOpen={quickLook.isOpen}

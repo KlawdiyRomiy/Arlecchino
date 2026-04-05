@@ -10,12 +10,12 @@ import {
   ChevronDown,
   ChevronUp,
   GitBranch,
-  Clock,
 } from "lucide-react";
 import * as App from "../../wailsjs/go/main/App";
 import { welcome } from "../../wailsjs/go/models";
-import { Button, ThemeToggle, WindowControls } from "./ui";
-import { useTheme } from "../hooks/useTheme";
+import { ThemeToggle, WindowControls } from "./ui";
+import { CreateProjectDialog } from "./CreateProjectDialog";
+import { shortcuts } from "../utils/keyboard";
 
 interface Project {
   id: number;
@@ -39,12 +39,8 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
   const [loading, setLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showToolsPanel, setShowToolsPanel] = useState(false);
-  const [projectName, setProjectName] = useState("");
-  const [selectedDir, setSelectedDir] = useState("");
-  const [creating, setCreating] = useState(false);
   const [installing, setInstalling] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const { isDark } = useTheme();
 
   useEffect(() => {
     loadRecentProjects();
@@ -58,6 +54,24 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
 
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (shortcuts.openProject(event) && !showCreateDialog) {
+        event.preventDefault();
+        void handleOpenProject();
+        return;
+      }
+
+      if (shortcuts.newProject(event) && !showCreateDialog) {
+        event.preventDefault();
+        setShowCreateDialog(true);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [showCreateDialog]);
 
   const loadRecentProjects = async () => {
     try {
@@ -116,41 +130,6 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
 
   const handleOpenRecentProject = (projectPath: string) => {
     onProjectOpen(projectPath);
-  };
-
-  const handleSelectDirectory = async () => {
-    try {
-      const path = await App.SelectDirectory(
-        "Select parent directory for new project",
-      );
-      if (path) {
-        setSelectedDir(path);
-      }
-    } catch (error) {
-      console.error("Error selecting directory:", error);
-    }
-  };
-
-  const handleCreateProject = async () => {
-    if (!projectName || !selectedDir) {
-      alert("Please enter project name and select directory");
-      return;
-    }
-
-    setCreating(true);
-    try {
-      await App.CreateNewProject(projectName, selectedDir, "laravel");
-      const projectPath = `${selectedDir}/${projectName}`;
-      setShowCreateDialog(false);
-      setProjectName("");
-      setSelectedDir("");
-      onProjectOpen(projectPath);
-    } catch (error) {
-      console.error("Error creating project:", error);
-      alert(`Failed to create project: ${error}`);
-    } finally {
-      setCreating(false);
-    }
   };
 
   const formatTime = (date: Date) => {
@@ -497,83 +476,11 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
         </motion.div>
       )}
 
-      {showCreateDialog && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-[var(--bg-secondary)] rounded-xl shadow-2xl p-6 w-full max-w-md border border-[var(--border-subtle)]"
-          >
-            <h2 className="text-2xl font-bold text-[var(--text-primary)] mb-6">
-              Create New Project
-            </h2>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-[13px] font-medium text-[var(--text-secondary)] mb-2">
-                  Project Name
-                </label>
-                <input
-                  type="text"
-                  value={projectName}
-                  onChange={(e) => setProjectName(e.target.value)}
-                  placeholder="my-awesome-project"
-                  className="w-full px-4 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] text-[var(--text-primary)] focus:ring-2 focus:ring-white/20 focus:border-transparent outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[13px] font-medium text-[var(--text-secondary)] mb-2">
-                  Parent Directory
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={selectedDir}
-                    readOnly
-                    placeholder="Select directory..."
-                    className="flex-1 px-4 py-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] text-[var(--text-primary)]"
-                  />
-                  <button
-                    onClick={handleSelectDirectory}
-                    className="px-4 py-2 rounded-lg bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] transition-colors"
-                  >
-                    Browse
-                  </button>
-                </div>
-              </div>
-
-              <div className="text-[11px] text-[var(--text-muted)]">
-                Project will be created at:{" "}
-                {selectedDir && projectName
-                  ? `${selectedDir}/${projectName}`
-                  : "..."}
-              </div>
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={handleCreateProject}
-                disabled={!projectName || !selectedDir || creating}
-                className="flex-1 px-4 py-2 rounded-lg bg-white text-black hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-              >
-                {creating ? "Creating..." : "Create Project"}
-              </button>
-              <button
-                onClick={() => {
-                  setShowCreateDialog(false);
-                  setProjectName("");
-                  setSelectedDir("");
-                }}
-                disabled={creating}
-                className="px-4 py-2 rounded-lg bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </motion.div>
-        </div>
-      )}
+      <CreateProjectDialog
+        open={showCreateDialog}
+        onOpenChange={setShowCreateDialog}
+        onProjectOpen={onProjectOpen}
+      />
     </div>
   );
 };

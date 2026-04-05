@@ -9,6 +9,7 @@ import { Extension, StateEffect, StateField } from "@codemirror/state";
 import { indentMore, indentWithTab } from "@codemirror/commands";
 import {
   acceptCompletion,
+  closeCompletion,
   completionStatus,
   startCompletion,
   Completion,
@@ -334,7 +335,7 @@ export function ghostExtension(
         clearGhostText(view, false);
         return;
       }
-      if (!forceIdle && popupGhostStableCount < 2) {
+      if (!forceIdle && popupGhostStableCount < 1) {
         clearGhostText(view, false);
         return;
       }
@@ -605,8 +606,13 @@ export function ghostExtension(
       key: "Enter",
       run: (view) => {
         if (completionStatus(view.state) === "active") {
-          clearGhostText(view, false);
-          return acceptCompletion(view);
+          if (acceptCompletion(view)) {
+            clearGhostText(view, false);
+            return true;
+          }
+        }
+        if (ghostState.isVisible) {
+          return applyGhostText(view, "all");
         }
         return false;
       },
@@ -624,10 +630,25 @@ export function ghostExtension(
       key: "Escape",
       run: (view) => {
         cancelTimers();
+        const popupActive = completionStatus(view.state) === "active";
+
         if (ghostState.isVisible) {
           clearGhostText(view, true);
+          if (popupActive) {
+            closeCompletion(view);
+            options.onEscape?.();
+            return true;
+          }
+          options.onEscape?.();
           return true;
         }
+
+        if (popupActive) {
+          closeCompletion(view);
+          options.onEscape?.();
+          return true;
+        }
+
         options.onEscape?.();
         return false;
       },

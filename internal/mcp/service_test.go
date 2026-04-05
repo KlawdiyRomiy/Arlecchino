@@ -283,6 +283,107 @@ func TestToolService_SearchFilesHidesSensitivePathsWithoutApproval(t *testing.T)
 	}
 }
 
+func TestToolService_CheckpointsPersistAcrossServiceRecreation(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "src", "main.go")
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "checkpoint-persist")
+
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("before"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	service, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+	checkpoint, err := service.CreateCheckpoint("src/main.go", "persist-me")
+	if err != nil {
+		t.Fatalf("CreateCheckpoint() error = %v", err)
+	}
+
+	if err := os.WriteFile(filePath, []byte("after"), 0o644); err != nil {
+		t.Fatalf("WriteFile(after) error = %v", err)
+	}
+
+	reloaded, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService(reloaded) error = %v", err)
+	}
+
+	items, err := reloaded.ListCheckpoints("src/main.go", 10)
+	if err != nil {
+		t.Fatalf("ListCheckpoints() error = %v", err)
+	}
+	if len(items) != 1 || items[0].ID != checkpoint.ID {
+		t.Fatalf("ListCheckpoints() = %+v, want checkpoint %q", items, checkpoint.ID)
+	}
+
+	if _, err := reloaded.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "checkpoint-persist",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	if _, err := reloaded.RollbackCheckpoint(checkpoint.ID); err != nil {
+		t.Fatalf("RollbackCheckpoint() error = %v", err)
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(content) != "before" {
+		t.Fatalf("rollback content = %q, want %q", string(content), "before")
+	}
+}
+
+func TestToolService_AgentMemoryPersistsAcrossServiceRecreation(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+
+	entry, err := service.SaveAgentMemory(
+		"decision",
+		[]string{"mcp", "terminal"},
+		"Persist session context for terminal orchestration.",
+		8,
+	)
+	if err != nil {
+		t.Fatalf("SaveAgentMemory() error = %v", err)
+	}
+	if entry.ID == "" {
+		t.Fatalf("SaveAgentMemory() should return entry id")
+	}
+
+	reloaded, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService(reloaded) error = %v", err)
+	}
+
+	items := reloaded.SearchAgentMemory("terminal orchestration", nil, 10)
+	if len(items) != 1 {
+		t.Fatalf("SearchAgentMemory() len = %d, want 1", len(items))
+	}
+	if items[0].Content != entry.Content {
+		t.Fatalf("SearchAgentMemory() content = %q, want %q", items[0].Content, entry.Content)
+	}
+
+	contextPath := AgentContextFilePath(root)
+	contextBody, err := os.ReadFile(contextPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", contextPath, err)
+	}
+	if !strings.Contains(string(contextBody), entry.Content) {
+		t.Fatalf("context file should contain saved memory content")
+	}
+}
+
 func TestToolService_SearchContentHidesSensitiveContentWithoutApproval(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "content-sensitive")

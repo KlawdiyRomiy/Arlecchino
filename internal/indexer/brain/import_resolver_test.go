@@ -84,6 +84,12 @@ func TestImportChainResolver_TypeScript(t *testing.T) {
 			shortName: "UserType",
 			want:      "./models",
 		},
+		{
+			name:      "namespace import alias",
+			content:   `import * as React from 'react';`,
+			shortName: "React",
+			want:      "react",
+		},
 	}
 
 	for _, tt := range tests {
@@ -122,6 +128,12 @@ func TestImportChainResolver_Python(t *testing.T) {
 			content:   `from typing import List, Dict, Optional`,
 			shortName: "Dict",
 			want:      "typing.Dict",
+		},
+		{
+			name:      "module alias",
+			content:   `import requests as req`,
+			shortName: "req",
+			want:      "requests",
 		},
 	}
 
@@ -174,6 +186,24 @@ import (
 				t.Errorf("ResolveClassName() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestImportChainResolver_InvalidatesCacheWhenContentChanges(t *testing.T) {
+	r := NewImportChainResolver()
+	filePath := "test.ts"
+
+	first := []byte(`import React from 'react';`)
+	second := []byte(`import Axios from 'axios';`)
+
+	if got := r.ResolveClassName(filePath, first, "React", "typescript"); got != "react" {
+		t.Fatalf("expected initial import resolution, got %q", got)
+	}
+	if got := r.ResolveClassName(filePath, second, "Axios", "typescript"); got != "axios" {
+		t.Fatalf("expected cache to invalidate on content change, got %q", got)
+	}
+	if got := r.ResolveClassName(filePath, second, "React", "typescript"); got != "" {
+		t.Fatalf("expected stale import to be dropped after content change, got %q", got)
 	}
 }
 

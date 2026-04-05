@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type FileEntry struct {
@@ -43,7 +45,49 @@ func (a *App) ReadFile(filePath string) (string, error) {
 }
 
 func (a *App) WriteFile(filePath string, content string) error {
-	return os.WriteFile(filePath, []byte(content), 0644)
+	_, statErr := os.Stat(filePath)
+	created := os.IsNotExist(statErr)
+	if statErr != nil && !created {
+		return statErr
+	}
+
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		return err
+	}
+
+	if a != nil && a.ctx != nil {
+		eventName := "file:changed"
+		if created {
+			eventName = "file:created"
+		}
+		runtime.EventsEmit(a.ctx, eventName, filePath)
+	}
+
+	return nil
+}
+
+func (a *App) CreateDirectory(dirPath string) error {
+	dirPath = strings.TrimSpace(dirPath)
+	if dirPath == "" {
+		return fmt.Errorf("directory path is required")
+	}
+
+	if _, err := os.Stat(dirPath); err == nil {
+		return fmt.Errorf("directory already exists: %s", dirPath)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+		return err
+	}
+
+	a.emitEvent("project:entry:created", projectEntryCreatedEvent{
+		Path:        dirPath,
+		IsDirectory: true,
+	})
+
+	return nil
 }
 
 // FindFileByName searches for a file by name in a directory recursively

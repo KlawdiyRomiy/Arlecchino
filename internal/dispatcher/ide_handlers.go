@@ -33,6 +33,8 @@ func (e *IDEEventEmitter) RegisterHandlers(d *Dispatcher) {
 	d.RegisterHandler("panel.terminal", e.handleOpenTerminal)
 	d.RegisterHandler("panel.explorer", e.handleOpenExplorer)
 	d.RegisterHandler("panel.search", e.handleOpenSearch)
+	d.RegisterHandler("panel.run", e.handleOpenRun)
+	d.RegisterHandler("panel.debug", e.handleOpenDebug)
 
 	d.RegisterHandler("toggle.sidebar", e.handleToggleSidebar)
 	d.RegisterHandler("toggle.terminal", e.handleToggleTerminal)
@@ -112,7 +114,15 @@ func (e *IDEEventEmitter) handleOpenExplorer(_ *IDEAction) error {
 }
 
 func (e *IDEEventEmitter) handleOpenSearch(_ *IDEAction) error {
-	return e.emit("ide:panel:open", "search")
+	return e.emit("ide:toggle", "search")
+}
+
+func (e *IDEEventEmitter) handleOpenRun(_ *IDEAction) error {
+	return e.emit("ide:app:run", "run")
+}
+
+func (e *IDEEventEmitter) handleOpenDebug(_ *IDEAction) error {
+	return e.emit("ide:app:run", "debug")
 }
 
 func (e *IDEEventEmitter) handleToggleSidebar(_ *IDEAction) error {

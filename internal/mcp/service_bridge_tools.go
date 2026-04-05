@@ -92,8 +92,9 @@ func bridgeBackendToolDefinitions() []ToolDefinition {
 			Name:        "ide_backend.terminal_create",
 			Description: "Create terminal session in IDE",
 			InputSchema: objectSchema([]string{"id"}, map[string]any{
-				"id":   map[string]any{"type": "string"},
-				"name": map[string]any{"type": "string"},
+				"id":      map[string]any{"type": "string"},
+				"name":    map[string]any{"type": "string"},
+				"command": map[string]any{"type": "string"},
 			}),
 		},
 		{
@@ -194,10 +195,16 @@ func bridgeUIToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "ide_ui.preview_open",
-			Description: "Open browser preview via canonical preview window flow",
+			Description: "Open IDE preview window via canonical preview flow",
 			InputSchema: objectSchema(nil, map[string]any{
 				"id":       map[string]any{"type": "string"},
+				"surface":  map[string]any{"type": "string"},
 				"url":      map[string]any{"type": "string"},
+				"path":     map[string]any{"type": "string"},
+				"content":  map[string]any{"type": "string"},
+				"line":     map[string]any{"type": "number"},
+				"language": map[string]any{"type": "string"},
+				"html":     map[string]any{"type": "string"},
 				"title":    map[string]any{"type": "string"},
 				"mode":     map[string]any{"type": "string"},
 				"position": map[string]any{"type": "string"},
@@ -337,10 +344,16 @@ func (s *ToolService) Capabilities() map[string]any {
 		"bridgeAvailable":     bridgeAvailable,
 		"sensitivePatterns":   append([]string(nil), s.sensitivePaths...),
 		"auditDiskPath":       s.audit.diskFilePath(),
+		"checkpointDiskPath":  projectStateFilePath(s.projectRoot, changeJournalStateFileName),
+		"layoutDiskPath":      projectStateFilePath(s.projectRoot, layoutStateFileName),
+		"memoryDiskPath":      s.memory.DiskFilePath(),
+		"memoryContextPath":   s.memory.ContextFilePath(),
+		"sessionID":           s.sessionID,
 		"runtimeHotSwitch":    true,
 		"supportsLayoutV1":    true,
 		"supportsBackendV1":   true,
 		"supportsUIControlV1": true,
+		"supportsMemoryV1":    true,
 	}
 }
 
@@ -548,14 +561,18 @@ func (s *ToolService) bridgeLSPSignature(filePath, content string, line, charact
 	})
 }
 
-func (s *ToolService) bridgeTerminalCreate(id, name string) (any, error) {
+func (s *ToolService) bridgeTerminalCreate(id, name, command string) (any, error) {
 	if err := s.requireUserApproval("ide_backend.terminal_create"); err != nil {
 		return nil, err
 	}
 	if err := s.requireUserApproval("ide_backend.terminal_create"); err != nil {
 		return nil, err
 	}
-	return s.bridgeCall("ide_backend.terminal_create", "terminal.create", map[string]any{"id": id, "name": name})
+	params := map[string]any{"id": id, "name": name}
+	if strings.TrimSpace(command) != "" {
+		params["command"] = command
+	}
+	return s.bridgeCall("ide_backend.terminal_create", "terminal.create", params)
 }
 
 func (s *ToolService) bridgeTerminalWrite(id, data string) (any, error) {
@@ -675,7 +692,11 @@ func (s *ToolService) bridgeEmitUIEvent(eventName string, payload any) (any, err
 }
 
 func (s *ToolService) bridgePreviewOpen(args map[string]any) (any, error) {
-	payload := map[string]any{"surface": "browser"}
+	surface := optionalStringArg(args, "surface")
+	if surface == "" {
+		surface = "browser"
+	}
+	payload := map[string]any{"surface": surface}
 	if id := optionalStringArg(args, "id"); id != "" {
 		payload["id"] = id
 	}
@@ -694,10 +715,51 @@ func (s *ToolService) bridgePreviewOpen(args map[string]any) (any, error) {
 	if pinned, ok := args["pinned"].(bool); ok {
 		payload["pinned"] = pinned
 	}
+	nestedPayload := map[string]any{}
 	if url := optionalStringArg(args, "url"); url != "" {
-		payload["payload"] = map[string]any{"url": url}
+		nestedPayload["url"] = url
+	}
+	if path := optionalStringArg(args, "path"); path != "" {
+		nestedPayload["path"] = path
+	}
+	if content := optionalStringArg(args, "content"); content != "" {
+		nestedPayload["content"] = content
+	}
+	if language := optionalStringArg(args, "language"); language != "" {
+		nestedPayload["language"] = language
+	}
+	if html := optionalStringArg(args, "html"); html != "" {
+		nestedPayload["htmlContent"] = html
+	}
+	if line, ok := optionalNumericArg(args, "line"); ok {
+		nestedPayload["line"] = line
+	}
+	if len(nestedPayload) > 0 {
+		payload["payload"] = nestedPayload
 	}
 	return s.bridgeEmitUIEvent("ide:window:open", payload)
+}
+
+func optionalNumericArg(args map[string]any, key string) (int, bool) {
+	value, ok := args[key]
+	if !ok {
+		return 0, false
+	}
+
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int32:
+		return int(typed), true
+	case int64:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	case float32:
+		return int(typed), true
+	default:
+		return 0, false
+	}
 }
 
 func (s *ToolService) bridgePreviewNavigate(id, url string, title string, focus bool) (any, error) {
@@ -741,6 +803,9 @@ func (s *ToolService) registerLayoutProfile(name string, actions []LayoutAction)
 	if err != nil {
 		return nil, err
 	}
+	if err := s.persistLayouts(); err != nil {
+		return nil, err
+	}
 
 	return map[string]any{"profile": profile}, nil
 }
@@ -779,6 +844,9 @@ func (s *ToolService) applyLayoutProfile(name string) (any, error) {
 	}
 
 	snapshot := s.layouts.createSnapshot(profile.Name, "layout-profile", profile.Actions)
+	if err := s.persistLayouts(); err != nil {
+		return nil, err
+	}
 
 	return map[string]any{
 		"profile":        profile.Name,
@@ -822,6 +890,9 @@ func (s *ToolService) applyHotSwitch(actions []LayoutAction, label string) (any,
 	}
 
 	snapshot := s.layouts.createSnapshot(label, "hot-switch", actions)
+	if err := s.persistLayouts(); err != nil {
+		return nil, err
+	}
 
 	return map[string]any{
 		"label":          strings.TrimSpace(label),
@@ -871,6 +942,9 @@ func (s *ToolService) applyLayoutSnapshot(snapshotID string) (any, error) {
 	}
 
 	reapplied := s.layouts.createSnapshot(snapshot.Label, "layout-snapshot-reapply", snapshot.Actions)
+	if err := s.persistLayouts(); err != nil {
+		return nil, err
+	}
 
 	return map[string]any{
 		"snapshot":       reapplied,

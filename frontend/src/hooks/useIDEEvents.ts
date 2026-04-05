@@ -2,7 +2,9 @@ import { useEffect, useCallback } from "react";
 import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime";
 
 interface UseIDEEventsProps {
-  onOpenPanel?: (panel: string) => void;
+  onOpenPanel?: (payload: unknown) => void;
+  onClosePanel?: (payload: unknown) => void;
+  onMovePanel?: (payload: unknown) => void;
   onToggle?: (element: string) => void;
   onWindowOpen?: (payload: unknown) => void;
   onWindowUpdate?: (payload: unknown) => void;
@@ -17,11 +19,12 @@ interface UseIDEEventsProps {
   onAppearancePreviewCancel?: () => void;
   onTUIEnter?: () => void;
   onTUIExit?: () => void;
-  onTUIAssistOpenPanel?: (panel: string) => void;
+  onTUIAssistOpenPanel?: (payload: unknown) => void;
   onTUIAssistClose?: () => void;
   onTUIAssistSwap?: () => void;
   onTUIAssistRatio?: (ratio: number) => void;
-  onEditorSplit?: (direction: string) => void;
+  onEditorOpen?: (payload: unknown) => void;
+  onEditorSplit?: (payload: unknown) => void;
   onEditorClose?: (target: string) => void;
   onEditorFormat?: () => void;
   onEditorGoto?: (target: string) => void;
@@ -31,6 +34,7 @@ interface UseIDEEventsProps {
   onFileSaveAll?: () => void;
   onViewZoom?: (action: string) => void;
   onAppSettings?: () => void;
+  onAppRun?: (mode: unknown) => void;
   onAppKeybindings?: () => void;
   onAppReload?: () => void;
   onGitStatus?: () => void;
@@ -42,6 +46,8 @@ interface UseIDEEventsProps {
 export function useIDEEvents(handlers: UseIDEEventsProps) {
   const {
     onOpenPanel,
+    onClosePanel,
+    onMovePanel,
     onToggle,
     onWindowOpen,
     onWindowUpdate,
@@ -60,6 +66,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     onTUIAssistClose,
     onTUIAssistSwap,
     onTUIAssistRatio,
+    onEditorOpen,
     onEditorSplit,
     onEditorClose,
     onEditorFormat,
@@ -70,6 +77,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     onFileSaveAll,
     onViewZoom,
     onAppSettings,
+    onAppRun,
     onAppKeybindings,
     onAppReload,
     onGitStatus,
@@ -102,6 +110,18 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     if (onOpenPanelWrapped) {
       EventsOn("ide:panel:open", onOpenPanelWrapped);
       listeners.push(() => EventsOff("ide:panel:open"));
+    }
+
+    const onClosePanelWrapped = wrapHandler(onClosePanel);
+    if (onClosePanelWrapped) {
+      EventsOn("ide:panel:close", onClosePanelWrapped);
+      listeners.push(() => EventsOff("ide:panel:close"));
+    }
+
+    const onMovePanelWrapped = wrapHandler(onMovePanel);
+    if (onMovePanelWrapped) {
+      EventsOn("ide:panel:move", onMovePanelWrapped);
+      listeners.push(() => EventsOff("ide:panel:move"));
     }
 
     const onToggleWrapped = wrapHandler(onToggle);
@@ -230,6 +250,12 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
       listeners.push(() => EventsOff("ide:tui:assist:ratio"));
     }
 
+    const onEditorOpenWrapped = wrapHandler(onEditorOpen);
+    if (onEditorOpenWrapped) {
+      EventsOn("ide:editor:open", onEditorOpenWrapped);
+      listeners.push(() => EventsOff("ide:editor:open"));
+    }
+
     const onEditorSplitWrapped = wrapHandler(onEditorSplit);
     if (onEditorSplitWrapped) {
       EventsOn("ide:editor:split", onEditorSplitWrapped);
@@ -290,6 +316,12 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
       listeners.push(() => EventsOff("ide:app:settings"));
     }
 
+    const onAppRunWrapped = wrapHandler(onAppRun);
+    if (onAppRunWrapped) {
+      EventsOn("ide:app:run", onAppRunWrapped);
+      listeners.push(() => EventsOff("ide:app:run"));
+    }
+
     const onAppKeybindingsWrapped = wrapHandler(onAppKeybindings);
     if (onAppKeybindingsWrapped) {
       EventsOn("ide:app:keybindings", onAppKeybindingsWrapped);
@@ -332,6 +364,8 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     };
   }, [
     onOpenPanel,
+    onClosePanel,
+    onMovePanel,
     onToggle,
     onWindowOpen,
     onWindowUpdate,
@@ -350,6 +384,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     onTUIAssistClose,
     onTUIAssistSwap,
     onTUIAssistRatio,
+    onEditorOpen,
     onEditorSplit,
     onEditorClose,
     onEditorFormat,
@@ -360,6 +395,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     onFileSaveAll,
     onViewZoom,
     onAppSettings,
+    onAppRun,
     onAppKeybindings,
     onAppReload,
     onGitStatus,

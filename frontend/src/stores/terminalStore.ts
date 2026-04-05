@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { recordTerminalPerf } from "../utils/terminalPerf";
+import { normalizeTUIAssistAnchor } from "../utils/terminalLayout";
 import {
   CreateTerminal,
   WriteTerminal,
@@ -124,7 +125,23 @@ const DEFAULT_TUI_ASSIST: TUIAssistState = {
   active: false,
   panel: null,
   ratio: 0.4,
-  swapped: false,
+  anchor: "right",
+};
+
+const normalizeTUIAssistState = (
+  assist: (Partial<TUIAssistState> & { swapped?: boolean }) | undefined,
+): TUIAssistState => {
+  const fallbackAnchor = assist?.swapped ? "left" : DEFAULT_TUI_ASSIST.anchor;
+
+  return {
+    active: assist?.active ?? DEFAULT_TUI_ASSIST.active,
+    panel: assist?.panel ?? DEFAULT_TUI_ASSIST.panel,
+    ratio:
+      typeof assist?.ratio === "number"
+        ? Math.max(0.2, Math.min(0.8, assist.ratio))
+        : DEFAULT_TUI_ASSIST.ratio,
+    anchor: normalizeTUIAssistAnchor(assist?.anchor, fallbackAnchor),
+  };
 };
 
 interface PendingSemanticEntry {
@@ -333,9 +350,9 @@ const createProjectState = (
     activePaneId: overrides?.activePaneId ?? layout.activePaneId,
     splitDirection: overrides?.splitDirection ?? layout.splitDirection,
     closedTabsStack: [...(overrides?.closedTabsStack ?? [])],
-    tuiAssist: overrides?.tuiAssist
-      ? { ...overrides.tuiAssist }
-      : { ...DEFAULT_TUI_ASSIST },
+    tuiAssist: normalizeTUIAssistState(
+      overrides?.tuiAssist as Partial<TUIAssistState> & { swapped?: boolean },
+    ),
   };
 };
 
@@ -380,7 +397,9 @@ const sanitizeProjectState = (
     activePaneId,
     splitDirection,
     closedTabsStack: [...projectState.closedTabsStack],
-    tuiAssist: { ...projectState.tuiAssist },
+    tuiAssist: normalizeTUIAssistState(
+      projectState.tuiAssist as Partial<TUIAssistState> & { swapped?: boolean },
+    ),
   };
 };
 
@@ -1330,15 +1349,20 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
 
     setTUIAssist: (assist) => {
       set((state) => {
-        const ratio =
-          typeof assist.ratio === "number"
-            ? Math.max(0.2, Math.min(0.8, assist.ratio))
-            : state.tuiAssist.ratio;
+        const fallbackAnchor =
+          typeof (assist as { swapped?: boolean }).swapped === "boolean"
+            ? (assist as { swapped?: boolean }).swapped
+              ? "left"
+              : "right"
+            : state.tuiAssist.anchor;
         const nextTuiAssist = {
           active: assist.active ?? state.tuiAssist.active,
           panel: assist.panel ?? state.tuiAssist.panel,
-          swapped: assist.swapped ?? state.tuiAssist.swapped,
-          ratio,
+          ratio:
+            typeof assist.ratio === "number"
+              ? Math.max(0.2, Math.min(0.8, assist.ratio))
+              : state.tuiAssist.ratio,
+          anchor: normalizeTUIAssistAnchor(assist.anchor, fallbackAnchor),
         };
 
         return {

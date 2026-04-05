@@ -14,6 +14,11 @@ type Generator struct {
 
 type GeneratorFunc func(ctx *FileContext, pattern *Pattern) string
 
+type GenerationMetadata struct {
+	HasResolvedData      bool
+	UsesFallbackDefaults bool
+}
+
 func NewGenerator() *Generator {
 	g := &Generator{
 		generators: make(map[string]GeneratorFunc),
@@ -39,6 +44,11 @@ func (g *Generator) Register(id string, fn GeneratorFunc) {
 
 // Generate generates code for a pattern
 func (g *Generator) Generate(ctx *FileContext, pattern *Pattern) string {
+	code, _ := g.GenerateWithMetadata(ctx, pattern)
+	return code
+}
+
+func (g *Generator) GenerateWithMetadata(ctx *FileContext, pattern *Pattern) (string, GenerationMetadata) {
 	// If pattern has a template, use it directly
 	if pattern.Template != "" {
 		return g.processTemplate(pattern.Template, ctx, pattern)
@@ -46,13 +56,13 @@ func (g *Generator) Generate(ctx *FileContext, pattern *Pattern) string {
 
 	// Otherwise, use a registered generator
 	if fn, ok := g.generators[pattern.Generator]; ok {
-		return fn(ctx, pattern)
+		return fn(ctx, pattern), GenerationMetadata{}
 	}
 
-	return ""
+	return "", GenerationMetadata{}
 }
 
-func (g *Generator) processTemplate(template string, ctx *FileContext, pattern *Pattern) string {
+func (g *Generator) processTemplate(template string, ctx *FileContext, pattern *Pattern) (string, GenerationMetadata) {
 	result := template
 
 	className := ctx.ClassName
@@ -76,9 +86,12 @@ func (g *Generator) processTemplate(template string, ctx *FileContext, pattern *
 		result = strings.ReplaceAll(result, "${"+key+"}", value)
 	}
 
-	result = g.smartfill.ResolvePlaceholders(result, ctx)
+	result, stats := g.smartfill.ResolvePlaceholdersWithStats(result, ctx)
 
-	return result
+	return result, GenerationMetadata{
+		HasResolvedData:      stats.HasResolvedData(),
+		UsesFallbackDefaults: stats.UsesFallbackDefaults(),
+	}
 }
 
 // classNameFromPath extracts class name from file path

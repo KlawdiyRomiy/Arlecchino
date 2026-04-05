@@ -48,12 +48,25 @@ func (lc *LocalCompletions) GetCompletions(filePath string, content []byte, line
 	prefixLower := strings.ToLower(prefix)
 	var filtered []LocalSymbol
 	for _, s := range symbols {
-		if prefix == "" || strings.HasPrefix(strings.ToLower(s.Name), prefixLower) {
-			filtered = append(filtered, s)
+		if prefix != "" && !strings.HasPrefix(strings.ToLower(s.Name), prefixLower) {
+			continue
 		}
+		if prefix != "" && strings.EqualFold(s.Name, prefix) && !localSymbolAddsUsefulSuffix(s) {
+			continue
+		}
+		filtered = append(filtered, s)
 	}
 
 	return filtered
+}
+
+func localSymbolAddsUsefulSuffix(symbol LocalSymbol) bool {
+	switch symbol.Kind {
+	case "function", "method":
+		return true
+	default:
+		return false
+	}
 }
 
 func (lc *LocalCompletions) detectLanguage(filePath string) string {

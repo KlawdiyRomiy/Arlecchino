@@ -87,6 +87,40 @@ func TestHandleRequestInitialize_DefaultProtocolVersionWhenMissing(t *testing.T)
 	}
 }
 
+func TestHandleRequestInitialize_IncludesProjectMemoryInstructions(t *testing.T) {
+	service, err := NewToolService(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+
+	if _, err := service.SaveAgentMemory(
+		"decision",
+		[]string{"mcp"},
+		"Remember project-local MCP continuity.",
+		7,
+	); err != nil {
+		t.Fatalf("SaveAgentMemory() error = %v", err)
+	}
+
+	server := NewServer(service, strings.NewReader(""), io.Discard, io.Discard)
+	result, rpcErr := server.handleRequest("initialize", nil)
+	if rpcErr != nil {
+		t.Fatalf("handleRequest(initialize) unexpected error = %+v", rpcErr)
+	}
+
+	resultObject, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("handleRequest(initialize) result type = %T, want map[string]any", result)
+	}
+	instructions, ok := resultObject["instructions"].(string)
+	if !ok {
+		t.Fatalf("initialize instructions type = %T, want string", resultObject["instructions"])
+	}
+	if !strings.Contains(instructions, "Remember project-local MCP continuity.") {
+		t.Fatalf("initialize instructions should include saved project memory, got %q", instructions)
+	}
+}
+
 func TestReadFramedMessage_RejectsOversizedBody(t *testing.T) {
 	input := fmt.Sprintf("Content-Length: %d\r\n\r\n{}", maxBodySize+1)
 	reader := bufio.NewReader(strings.NewReader(input))

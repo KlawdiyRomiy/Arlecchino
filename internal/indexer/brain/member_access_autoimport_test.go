@@ -51,6 +51,32 @@ func TestFilterByContext_MethodCall_DropsUnresolvedLibraryNoise(t *testing.T) {
 	}
 }
 
+func TestFilterByContext_MethodCall_DropsPackageNoiseWhenMembersExist(t *testing.T) {
+	brain := &PredictionBrain{}
+	ctx := CompletionContext{
+		Language:          "typescript",
+		AccessChain:       "HTTP.",
+		IsMethodCall:      true,
+		ResolvedNamespace: "axios",
+	}
+
+	suggestions := []Suggestion{
+		{Text: "axios", Kind: core.SymbolKindModule, Source: core.SourceLibrary, Namespace: "axios"},
+		{Text: "create", Kind: core.SymbolKindFunction, Source: core.SourceLibrary, Namespace: "axios"},
+		{Text: "interceptors", Kind: core.SymbolKindProperty, Source: core.SourceLibrary, Namespace: "axios"},
+	}
+
+	filtered := brain.filterByContext(ctx, suggestions)
+	if len(filtered) != 2 {
+		t.Fatalf("expected only member suggestions, got %#v", filtered)
+	}
+	for _, suggestion := range filtered {
+		if suggestion.Kind == core.SymbolKindModule || suggestion.Kind == core.SymbolKindPackage {
+			t.Fatalf("expected module/package noise to be dropped, got %#v", filtered)
+		}
+	}
+}
+
 func TestStubProvider_GetContextCompletions_GoUnresolvedEmptyPrefixSkipsDynamicBuild(t *testing.T) {
 	provider := NewStubProvider()
 	called := false
@@ -77,6 +103,156 @@ func main() {
 	}
 	if len(suggestions) != 0 {
 		t.Fatalf("expected no suggestions, got %#v", suggestions)
+	}
+}
+
+func TestResolveAccessChain_FallsBackToDependencyCatalog(t *testing.T) {
+	brain := NewPredictionBrain(nil, BrainConfig{MaxSuggestions: 50, MinConfidence: 0.1})
+	brain.stubProvider = NewStubProvider()
+	brain.importCompletions = &ImportCompletionProvider{
+		catalog: &dependencyCatalog{
+			cache: map[string]dependencyCacheEntry{
+				"go": {
+					fingerprint: "",
+					entries: []dependencyEntry{{
+						Name:   "github.com/bytedance/sonic",
+						Kind:   core.SymbolKindPackage,
+						Source: core.SourceLibrary,
+					}},
+				},
+				"php": {
+					fingerprint: "",
+					entries: []dependencyEntry{{
+						Name:   "nesbot/carbon",
+						Kind:   core.SymbolKindPackage,
+						Source: core.SourceLibrary,
+					}},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		language string
+		access   string
+		content  []byte
+		want     string
+		filePath string
+	}{
+		{
+			name:     "go short import owner",
+			language: "go",
+			access:   "sonic.",
+			content:  []byte("package main\n\nfunc main() {\n\tsonic.\n}\n"),
+			want:     "github.com/bytedance/sonic",
+			filePath: "main.go",
+		},
+		{
+			name:     "php static owner last segment",
+			language: "php",
+			access:   "Carbon::",
+			content:  []byte("<?php\n\nCarbon::\n"),
+			want:     "nesbot/carbon",
+			filePath: "test.php",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := CompletionContext{
+				FilePath:    tt.filePath,
+				Language:    tt.language,
+				AccessChain: tt.access,
+				Content:     tt.content,
+			}
+
+			brain.ResolveAccessChain(&ctx)
+			if ctx.ResolvedNamespace != tt.want {
+				t.Fatalf("expected resolved namespace %q, got %q", tt.want, ctx.ResolvedNamespace)
+			}
+		})
+	}
+}
+
+func TestStubProvider_GetContextCompletions_GoResolvedNamespaceBypassesEmptyPrefixGuard(t *testing.T) {
+	provider := NewStubProvider()
+	var commandArgs []string
+	provider.runner = func(name string, args ...string) ([]byte, error) {
+		commandArgs = append([]string{name}, args...)
+		return []byte("func Marshal(v any) ([]byte, error)\n"), nil
+	}
+
+	ctx := CompletionContext{
+		Language:          "go",
+		Prefix:            "",
+		AccessChain:       "sonic.",
+		ResolvedNamespace: "github.com/bytedance/sonic",
+		Content: []byte(`package main
+
+func main() {
+	sonic.
+}
+`),
+	}
+
+	suggestions := provider.GetContextCompletions(ctx)
+	if len(commandArgs) == 0 {
+		t.Fatal("expected dynamic go doc lookup to run for manifest-resolved package")
+	}
+	if got := commandArgs[len(commandArgs)-1]; got != "github.com/bytedance/sonic" {
+		t.Fatalf("expected go doc to use full import path, got args %#v", commandArgs)
+	}
+	if len(suggestions) == 0 {
+		t.Fatalf("expected suggestions, got %#v", suggestions)
+	}
+	if suggestions[0].Namespace != "github.com/bytedance/sonic" {
+		t.Fatalf("expected full namespace on suggestions, got %#v", suggestions)
+	}
+}
+
+func TestStubProvider_GetContextCompletions_GoResolverFallbackUsesFullImportPath(t *testing.T) {
+	provider := NewStubProvider()
+	provider.SetPackageResolver(func(language, reference string) string {
+		if language == "go" && reference == "sse" {
+			return "github.com/gin-contrib/sse"
+		}
+		return ""
+	})
+
+	var commandArgs []string
+	provider.runner = func(name string, args ...string) ([]byte, error) {
+		commandArgs = append([]string{name}, args...)
+		return []byte("func Encode(w any, event any) error\nfunc Decode(data []byte) (Event, error)\n"), nil
+	}
+
+	ctx := CompletionContext{
+		Language:    "go",
+		Prefix:      "",
+		AccessChain: "sse.",
+		Content: []byte(`package main
+
+func main() {
+	sse.
+}
+`),
+	}
+
+	suggestions := provider.GetContextCompletions(ctx)
+	if len(commandArgs) == 0 {
+		t.Fatal("expected dynamic go doc lookup to run for resolver fallback package")
+	}
+	if got := commandArgs[len(commandArgs)-1]; got != "github.com/gin-contrib/sse" {
+		t.Fatalf("expected go doc to use resolver fallback import path, got args %#v", commandArgs)
+	}
+	if len(suggestions) == 0 {
+		t.Fatalf("expected suggestions, got %#v", suggestions)
+	}
+	if suggestions[0].Namespace != "github.com/gin-contrib/sse" {
+		t.Fatalf("expected full namespace on suggestions, got %#v", suggestions)
+	}
+	if got := provider.ResolvePackage("sse", "go"); got != "github.com/gin-contrib/sse" {
+		t.Fatalf("expected resolver fallback to be memoized, got %q", got)
 	}
 }
 
@@ -116,6 +292,152 @@ func main() {
 	}
 	if got := target.AdditionalTextEdits[0].Text; got != "import \"strings\"\n" {
 		t.Fatalf("expected go import edit, got %q", got)
+	}
+}
+
+func TestPredictionBrain_Complete_UnresolvedGoLibraryAccessUsesResolverNamespace(t *testing.T) {
+	brain := NewPredictionBrain(nil, BrainConfig{
+		MaxSuggestions:    50,
+		MinConfidence:     0.1,
+		EnableLSP:         false,
+		EnableVirtual:     false,
+		EnableSpeculative: false,
+		EnablePredictive:  false,
+	})
+	brain.stubProvider = NewStubProvider()
+	brain.stubProvider.SetPackageResolver(func(language, reference string) string {
+		if language == "go" && reference == "sse" {
+			return "github.com/gin-contrib/sse"
+		}
+		return ""
+	})
+	brain.stubProvider.runner = func(name string, args ...string) ([]byte, error) {
+		return []byte("func Encode(w any, event any) error\nfunc Decode(data []byte) (Event, error)\n"), nil
+	}
+
+	ctx := CompletionContext{
+		FilePath:     "main.go",
+		Language:     "go",
+		Prefix:       "",
+		AccessChain:  "sse.",
+		IsMethodCall: true,
+		Content: []byte(`package main
+
+func main() {
+	sse.
+}
+`),
+		Line:   4,
+		Column: 5,
+	}
+
+	suggestions := brain.Complete(ctx)
+	assertHasSuggestion(t, suggestions, "Encode", core.SourceLibrary)
+	assertHasSuggestion(t, suggestions, "Decode", core.SourceLibrary)
+}
+
+func TestPredictionBrain_Complete_ImportedGoLibraryAccessReturnsMembers(t *testing.T) {
+	brain := NewPredictionBrain(nil, BrainConfig{
+		MaxSuggestions:    50,
+		MinConfidence:     0.1,
+		EnableLSP:         false,
+		EnableVirtual:     false,
+		EnableSpeculative: false,
+		EnablePredictive:  false,
+	})
+	brain.stubProvider = NewStubProvider()
+	brain.stubProvider.runner = func(name string, args ...string) ([]byte, error) {
+		return []byte("func Encode(w any, event any) error\nfunc Decode(data []byte) (Event, error)\n"), nil
+	}
+
+	ctx := CompletionContext{
+		FilePath:     "main.go",
+		Language:     "go",
+		Prefix:       "",
+		AccessChain:  "sse.",
+		IsMethodCall: true,
+		Content: []byte(`package main
+
+import sse "github.com/gin-contrib/sse"
+
+func main() {
+	sse.
+}
+`),
+		Line:   6,
+		Column: 5,
+	}
+
+	suggestions := brain.Complete(ctx)
+	assertHasSuggestion(t, suggestions, "Encode", core.SourceLibrary)
+	assertHasSuggestion(t, suggestions, "Decode", core.SourceLibrary)
+}
+
+func TestPredictionBrain_Complete_UsesFullContentForGoAliasOutsideWindow(t *testing.T) {
+	brain := NewPredictionBrain(nil, BrainConfig{
+		MaxSuggestions:    50,
+		MinConfidence:     0.1,
+		EnableLSP:         false,
+		EnableVirtual:     false,
+		EnableSpeculative: false,
+		EnablePredictive:  false,
+	})
+	brain.stubProvider = NewStubProvider()
+	brain.stubProvider.runner = func(name string, args ...string) ([]byte, error) {
+		return []byte("func Send(recipient any, what any, opts ...any) error\nfunc StopPoller()\n"), nil
+	}
+
+	fullContent := []byte(`package main
+
+import tele "gopkg.in/telebot.v3"
+
+func main() {
+	tele.
+}
+`)
+
+	ctx := CompletionContext{
+		FilePath:     "main.go",
+		Language:     "go",
+		Prefix:       "",
+		AccessChain:  "tele.",
+		IsMethodCall: true,
+		Content: []byte(`func main() {
+	tele.
+}
+`),
+		FullContent: fullContent,
+		Line:        6,
+		Column:      6,
+	}
+
+	suggestions := brain.Complete(ctx)
+	assertHasSuggestion(t, suggestions, "Send", core.SourceLibrary)
+	assertHasSuggestion(t, suggestions, "StopPoller", core.SourceLibrary)
+}
+
+func TestResolveAccessChain_UsesFullContentForTypeScriptNamespaceAlias(t *testing.T) {
+	brain := NewPredictionBrain(nil, BrainConfig{MaxSuggestions: 50, MinConfidence: 0.1})
+	brain.stubProvider = NewStubProvider()
+	ctx := CompletionContext{
+		FilePath:    "component.tsx",
+		Language:    "typescript",
+		AccessChain: "React.",
+		Content: []byte(`function Demo() {
+	return React.
+}
+`),
+		FullContent: []byte(`import * as React from 'react';
+
+function Demo() {
+	return React.
+}
+`),
+	}
+
+	brain.ResolveAccessChain(&ctx)
+	if ctx.ResolvedNamespace != "react" {
+		t.Fatalf("expected React alias to resolve to react, got %q", ctx.ResolvedNamespace)
 	}
 }
 
@@ -187,6 +509,16 @@ func TestResolveAccessChain_UsesStubAliasNamespace(t *testing.T) {
 	if ctx.ResolvedNamespace != "zod" {
 		t.Fatalf("expected z alias to resolve to zod, got %q", ctx.ResolvedNamespace)
 	}
+}
+
+func assertHasSuggestion(t *testing.T, suggestions []Suggestion, wantText string, wantSource core.SymbolSource) {
+	t.Helper()
+	for _, suggestion := range suggestions {
+		if suggestion.Text == wantText && suggestion.Source == wantSource {
+			return
+		}
+	}
+	t.Fatalf("expected suggestion %q from %s, got %#v", wantText, wantSource, suggestions)
 }
 
 func TestStubProvider_GetContextCompletions_UsesAliases(t *testing.T) {

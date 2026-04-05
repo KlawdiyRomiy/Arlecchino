@@ -13,12 +13,14 @@ import (
 )
 
 type StubProvider struct {
-	mu       sync.RWMutex
-	stubs    map[string]*PackageStub
-	aliases  map[string]string
-	stubsDir string
-	loaded   bool
-	runner   func(name string, args ...string) ([]byte, error)
+	mu              sync.RWMutex
+	stubs           map[string]*PackageStub
+	aliases         map[string]string
+	stubsDir        string
+	projectRoot     string
+	loaded          bool
+	runner          func(name string, args ...string) ([]byte, error)
+	packageResolver func(language, reference string) string
 }
 
 type PackageStub struct {
@@ -50,16 +52,24 @@ func NewStubProvider() *StubProvider {
 	homeDir, _ := os.UserHomeDir()
 	stubsDir := filepath.Join(homeDir, ".arlecchino", "stubs")
 
-	return &StubProvider{
+	provider := &StubProvider{
 		stubs:    make(map[string]*PackageStub),
 		aliases:  make(map[string]string),
 		stubsDir: stubsDir,
-		runner:   defaultStubCommandRunner,
 	}
+	provider.runner = provider.defaultStubCommandRunner
+	return provider
 }
 
-func defaultStubCommandRunner(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).Output()
+func (p *StubProvider) defaultStubCommandRunner(name string, args ...string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
+	p.mu.RLock()
+	projectRoot := p.projectRoot
+	p.mu.RUnlock()
+	if projectRoot != "" {
+		cmd.Dir = projectRoot
+	}
+	return cmd.Output()
 }
 
 func (p *StubProvider) SetStubsDir(dir string) {
@@ -67,6 +77,18 @@ func (p *StubProvider) SetStubsDir(dir string) {
 	defer p.mu.Unlock()
 	p.stubsDir = dir
 	p.loaded = false
+}
+
+func (p *StubProvider) SetProjectRoot(root string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.projectRoot = strings.TrimSpace(root)
+}
+
+func (p *StubProvider) SetPackageResolver(resolver func(language, reference string) string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.packageResolver = resolver
 }
 
 func (p *StubProvider) LoadStubs() error {
@@ -200,6 +222,28 @@ func (p *StubProvider) ResolvePackage(reference, language string) string {
 	return ""
 }
 
+func (p *StubProvider) resolvePackageFromCatalog(language, reference string) string {
+	p.mu.RLock()
+	resolver := p.packageResolver
+	p.mu.RUnlock()
+	if resolver == nil {
+		return ""
+	}
+	return strings.TrimSpace(resolver(language, reference))
+}
+
+func (p *StubProvider) RememberPackage(language, reference, packageName string) {
+	reference = strings.TrimSpace(reference)
+	packageName = strings.TrimSpace(packageName)
+	if reference == "" || packageName == "" {
+		return
+	}
+
+	p.mu.Lock()
+	p.aliases[stubReferenceKey(language, reference)] = packageName
+	p.mu.Unlock()
+}
+
 func trimReferenceOwner(reference string) string {
 	ref := strings.TrimSpace(strings.TrimSuffix(reference, "()"))
 	if ref == "" {
@@ -232,8 +276,25 @@ func (p *StubProvider) GetContextCompletions(ctx CompletionContext) []Suggestion
 		return nil
 	}
 
-	resolvedPackage := p.resolveImportPath(ctx.Language, reference, ctx.Content)
+	resolveContent := ctx.Content
+	if len(ctx.FullContent) > 0 {
+		resolveContent = ctx.FullContent
+	}
+
+	resolvedPackage := p.resolveImportPath(ctx.Language, reference, resolveContent)
 	packageName := resolvedPackage
+	if packageName == "" {
+		if ctx.ResolvedNamespace != "" {
+			packageName = ctx.ResolvedNamespace
+		}
+	}
+	if packageName == "" {
+		packageName = p.resolvePackageFromCatalog(ctx.Language, reference)
+		if packageName != "" {
+			ctx.ResolvedNamespace = packageName
+			p.RememberPackage(ctx.Language, reference, packageName)
+		}
+	}
 	if packageName == "" {
 		packageName = p.ResolvePackage(reference, ctx.Language)
 		if packageName == "" {
@@ -242,7 +303,9 @@ func (p *StubProvider) GetContextCompletions(ctx CompletionContext) []Suggestion
 	}
 
 	if ctx.Language == "go" && resolvedPackage == "" && strings.TrimSpace(ctx.Prefix) == "" && !p.HasPackage(packageName, ctx.Language) {
-		return nil
+		if ctx.ResolvedNamespace == "" {
+			return nil
+		}
 	}
 
 	if ctx.Language == "go" && p.GetCompletions(packageName, ctx.Prefix, ctx.Language) == nil {
@@ -274,10 +337,11 @@ func buildStubSuggestions(stub *PackageStub, prefix string) []Suggestion {
 		}
 
 		insertText := name
-		isSnippet := false
 		if export.Scaffold != "" {
-			insertText = export.Scaffold
-			isSnippet = strings.Contains(export.Scaffold, "${") || strings.Contains(export.Scaffold, "$0")
+			insertText = sanitizeInsertText(export.Scaffold)
+			if insertText == "" {
+				insertText = name
+			}
 		}
 
 		suggestions = append(suggestions, Suggestion{
@@ -289,8 +353,6 @@ func buildStubSuggestions(stub *PackageStub, prefix string) []Suggestion {
 			Detail:        export.Signature,
 			Documentation: export.Description,
 			InsertText:    insertText,
-			IsSnippet:     isSnippet,
-			Snippet:       insertText,
 			Namespace:     stub.Package,
 		})
 	}

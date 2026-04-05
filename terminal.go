@@ -1,6 +1,7 @@
 package main
 
 import (
+	"arlecchino/internal/mcp"
 	"arlecchino/internal/terminal"
 	"encoding/base64"
 	"fmt"
@@ -165,7 +166,14 @@ func (a *App) tryInjectAgentGuide(session *terminal.Session, sessionID string) {
 		return
 	}
 
-	bootstrapMessage := terminal.BuildAgentGuideBootstrapMessage(guidePath)
+	contextPath, contextErr := mcp.EnsureAgentContextFile(projectRoot)
+	if contextErr != nil {
+		session.RollbackAgentGuideInjection()
+		runtime.LogWarningf(a.ctx, "[Terminal] agent context ensure failed for session %s: %v", sessionID, contextErr)
+		return
+	}
+
+	bootstrapMessage := terminal.BuildAgentGuideBootstrapMessage(guidePath, contextPath)
 	if bootstrapMessage == "" {
 		session.RollbackAgentGuideInjection()
 		runtime.LogWarningf(a.ctx, "[Terminal] agent guide bootstrap is empty for session %s", sessionID)

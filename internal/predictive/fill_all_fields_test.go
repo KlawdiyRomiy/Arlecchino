@@ -95,6 +95,32 @@ func test() {
 }`,
 			shouldHave: false,
 		},
+		{
+			name:     "call already has first argument",
+			language: "go",
+			content: `package main
+
+func consume(name string, count int) {}
+
+func test() {
+	name := "alice"
+	count := 5
+	consume(name, |)
+}`,
+			shouldHave: false,
+		},
+		{
+			name:     "call already has expression argument",
+			language: "typescript",
+			content: `function updateUser(user: string, count: number): void {}
+
+function test(): void {
+	const user = "alice";
+	const count = 2;
+	updateUser(user.trim(), |);
+}`,
+			shouldHave: false,
+		},
 	}
 
 	fill := NewFillAllFields()

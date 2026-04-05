@@ -164,16 +164,18 @@ const (
 
 // Suggestion represents a generated code suggestion
 type Suggestion struct {
-	Text        string          // full text to insert
-	DisplayText string          // text to show in UI
-	Kind        core.SymbolKind // kind for icon
-	Source      core.SymbolSource
-	Score       float64
-	Detail      string       // additional info
-	Pattern     *Pattern     // pattern that generated this
-	IsScaffold  bool         // true if this is a full file scaffold
-	InsertText  string       // snippet with $1, $2 placeholders
-	Range       *InsertRange // where to insert (nil = at cursor)
+	Text                 string          // full text to insert
+	DisplayText          string          // text to show in UI
+	Kind                 core.SymbolKind // kind for icon
+	Source               core.SymbolSource
+	Score                float64
+	Detail               string       // additional info
+	Pattern              *Pattern     // pattern that generated this
+	IsScaffold           bool         // true if this is a full file scaffold
+	HasResolvedData      bool         // true if non-default placeholder data was resolved
+	UsesFallbackDefaults bool         // true if template still used default placeholder values
+	InsertText           string       // snippet with $1, $2 placeholders
+	Range                *InsertRange // where to insert (nil = at cursor)
 }
 
 // InsertRange defines where to insert the suggestion

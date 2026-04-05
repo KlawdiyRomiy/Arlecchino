@@ -1,6 +1,8 @@
 package brain
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"regexp"
 	"strings"
 	"sync"
@@ -16,6 +18,7 @@ type ImportChainResolver struct {
 	phpUsePattern   *regexp.Regexp
 	phpAliasPattern *regexp.Regexp
 	tsImportPattern *regexp.Regexp
+	pyImportPattern *regexp.Regexp
 	pyFromPattern   *regexp.Regexp
 	goImportPattern *regexp.Regexp
 	rustUsePattern  *regexp.Regexp
@@ -23,8 +26,13 @@ type ImportChainResolver struct {
 
 type importCache struct {
 	imports    map[string]string
-	contentMD5 string
+	contentKey string
 	cachedAt   time.Time
+}
+
+func importContentKey(content []byte) string {
+	sum := sha1.Sum(content)
+	return hex.EncodeToString(sum[:])
 }
 
 func NewImportChainResolver() *ImportChainResolver {
@@ -34,7 +42,8 @@ func NewImportChainResolver() *ImportChainResolver {
 		cacheTTL:        2 * time.Minute,
 		phpUsePattern:   regexp.MustCompile(`^\s*use\s+([^\s;]+?)(?:\s+as\s+(\w+))?\s*;`),
 		phpAliasPattern: regexp.MustCompile(`^\s*use\s+([^\s{;]+)\s*\{([^}]+)\}`),
-		tsImportPattern: regexp.MustCompile(`^\s*import\s+(?:\{([^}]+)\}|(\w+))\s+from\s+['"]([^'"]+)['"]`),
+		tsImportPattern: regexp.MustCompile(`^\s*import\s+(?:\{([^}]+)\}|\*\s+as\s+(\w+)|(\w+))\s+from\s+['"]([^'"]+)['"]`),
+		pyImportPattern: regexp.MustCompile(`^\s*import\s+(\S+)(?:\s+as\s+(\w+))?`),
 		pyFromPattern:   regexp.MustCompile(`^\s*from\s+(\S+)\s+import\s+(.+)`),
 		goImportPattern: regexp.MustCompile(`^\s*(?:import\s+)?(?:(\w+)\s+)?["']([^"']+)["']`),
 		rustUsePattern:  regexp.MustCompile(`^\s*use\s+([^;]+);`),
@@ -54,8 +63,9 @@ func (r *ImportChainResolver) ParseImports(filePath string, content []byte, lang
 	cached, ok := r.cache[filePath]
 	r.mu.RUnlock()
 
+	contentKey := importContentKey(content)
 	contentStr := string(content)
-	if ok && time.Since(cached.cachedAt) < r.cacheTTL && len(contentStr) == len(cached.contentMD5) {
+	if ok && time.Since(cached.cachedAt) < r.cacheTTL && cached.contentKey == contentKey {
 		return cached.imports
 	}
 
@@ -64,7 +74,7 @@ func (r *ImportChainResolver) ParseImports(filePath string, content []byte, lang
 	r.mu.Lock()
 	r.cache[filePath] = &importCache{
 		imports:    imports,
-		contentMD5: contentStr[:min(100, len(contentStr))],
+		contentKey: contentKey,
 		cachedAt:   time.Now(),
 	}
 	r.cleanupCacheLocked()
@@ -142,8 +152,8 @@ func (r *ImportChainResolver) parseTSImports(content string) map[string]string {
 	lines := strings.Split(content, "\n")
 
 	for _, line := range lines {
-		if matches := r.tsImportPattern.FindStringSubmatch(line); len(matches) >= 4 {
-			modulePath := matches[3]
+		if matches := r.tsImportPattern.FindStringSubmatch(line); len(matches) >= 5 {
+			modulePath := matches[4]
 			if matches[1] != "" {
 				for _, name := range strings.Split(matches[1], ",") {
 					name = strings.TrimSpace(name)
@@ -157,6 +167,8 @@ func (r *ImportChainResolver) parseTSImports(content string) map[string]string {
 				}
 			} else if matches[2] != "" {
 				imports[matches[2]] = modulePath
+			} else if matches[3] != "" {
+				imports[matches[3]] = modulePath
 			}
 		}
 	}
@@ -182,6 +194,19 @@ func (r *ImportChainResolver) parsePythonImports(content string) map[string]stri
 				}
 				imports[shortName] = modulePath + "." + originalName
 			}
+			continue
+		}
+
+		if matches := r.pyImportPattern.FindStringSubmatch(line); len(matches) >= 2 {
+			modulePath := strings.TrimSpace(matches[1])
+			shortName := modulePath
+			if idx := strings.LastIndex(modulePath, "."); idx >= 0 {
+				shortName = modulePath[idx+1:]
+			}
+			if len(matches) > 2 && strings.TrimSpace(matches[2]) != "" {
+				shortName = strings.TrimSpace(matches[2])
+			}
+			imports[shortName] = modulePath
 		}
 	}
 
@@ -296,11 +321,4 @@ func (r *ImportChainResolver) cleanupCacheLocked() {
 		}
 		delete(r.cache, oldestKey)
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

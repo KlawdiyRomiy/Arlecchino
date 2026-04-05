@@ -33,8 +33,39 @@ func TestEnsureAgentGuideFile_CreatesMissingFile(t *testing.T) {
 	}
 
 	text := string(data)
-	if !strings.Contains(text, AgentGuideAckMarker) {
-		t.Fatalf("guide file should contain ack marker %q", AgentGuideAckMarker)
+	if strings.Contains(text, AgentGuideAckMarker) {
+		t.Fatalf("guide file should not expose ack marker in file content")
+	}
+}
+
+func TestEnsureAgentGuideFile_CreatesGuideWithoutVisibleVersionOrAckInstruction(t *testing.T) {
+	projectRoot := t.TempDir()
+
+	guidePath, _, err := EnsureAgentGuideFile(projectRoot)
+	if err != nil {
+		t.Fatalf("EnsureAgentGuideFile() error = %v", err)
+	}
+
+	data, err := os.ReadFile(guidePath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", guidePath, err)
+	}
+
+	text := string(data)
+	if strings.Contains(text, "V2") {
+		t.Fatalf("guide file should not expose visible version markers")
+	}
+	if strings.Contains(text, "After reading this file reply exactly:") {
+		t.Fatalf("guide file should not instruct explicit ack replies")
+	}
+	if strings.Contains(text, "IDE_GUIDE_LOADED") {
+		t.Fatalf("guide file should not expose ack marker in file content")
+	}
+	if strings.Contains(text, "Work only inside the current project root.") {
+		t.Fatalf("guide file should avoid rigid current-root wording")
+	}
+	if !strings.Contains(text, "IDE control tools:") {
+		t.Fatalf("guide file should include IDE tool sections")
 	}
 }
 
@@ -72,18 +103,81 @@ func TestEnsureAgentGuideFile_PreservesExistingFile(t *testing.T) {
 	}
 }
 
+func TestEnsureAgentGuideFile_RefreshesManagedLegacyGuide(t *testing.T) {
+	projectRoot := t.TempDir()
+	guideDir := filepath.Join(projectRoot, ".arlecchino")
+	guidePath := filepath.Join(guideDir, "AGENT_GUIDE.md")
+
+	if err := os.MkdirAll(guideDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	legacy := strings.TrimSpace(`
+# Arlecchino Terminal Agent Guide
+
+You are operating inside Arlecchino IDE terminal mode.
+
+Required reads:
+1. AGENTS.md in repository root.
+2. This file.
+
+Operating rules:
+- Keep changes focused and reversible.
+- Prefer narrow checks before broad suites.
+- Avoid destructive git operations unless the user explicitly asks.
+- Work only inside the current project root.
+
+After reading this file reply exactly:
+IDE_GUIDE_LOADED
+`) + "\n"
+
+	if err := os.WriteFile(guidePath, []byte(legacy), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	gotPath, created, err := EnsureAgentGuideFile(projectRoot)
+	if err != nil {
+		t.Fatalf("EnsureAgentGuideFile() error = %v", err)
+	}
+	if created {
+		t.Fatalf("expected created=false for refreshed managed guide")
+	}
+	if gotPath != guidePath {
+		t.Fatalf("EnsureAgentGuideFile() path = %q, want %q", gotPath, guidePath)
+	}
+
+	data, err := os.ReadFile(guidePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "IDE control tools:") {
+		t.Fatalf("refreshed guide should contain MCP tool sections")
+	}
+	if !strings.Contains(text, ".arlecchino/AGENT_CONTEXT.md when present.") {
+		t.Fatalf("refreshed guide should mention AGENT_CONTEXT.md")
+	}
+	if strings.Contains(text, "Operating rules:") {
+		t.Fatalf("refreshed guide should not preserve legacy operating rules section")
+	}
+}
+
 func TestBuildAgentGuideBootstrapMessage_IncludesPathAndMarker(t *testing.T) {
 	guidePath := "/tmp/project/.arlecchino/AGENT_GUIDE.md"
+	contextPath := "/tmp/project/.arlecchino/AGENT_CONTEXT.md"
 
-	message := BuildAgentGuideBootstrapMessage(guidePath)
+	message := BuildAgentGuideBootstrapMessage(guidePath, contextPath)
 	if message == "" {
 		t.Fatalf("bootstrap message should not be empty")
 	}
 	if !strings.Contains(message, guidePath) {
 		t.Fatalf("bootstrap message should contain guide path")
 	}
-	if !strings.Contains(message, AgentGuideAckMarker) {
-		t.Fatalf("bootstrap message should contain ack marker")
+	if !strings.Contains(message, contextPath) {
+		t.Fatalf("bootstrap message should contain context path")
+	}
+	if strings.Contains(message, AgentGuideAckMarker) {
+		t.Fatalf("bootstrap message should not require explicit ack marker")
 	}
 }
 

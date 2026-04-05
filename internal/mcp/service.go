@@ -49,6 +49,8 @@ type ToolService struct {
 	bridge           IDEBridge
 	audit            *auditLogger
 	layouts          *layoutRegistry
+	memory           *agentMemoryStore
+	sessionID        string
 	approvalRequired bool
 	approvalCode     string
 	approvalExpires  time.Time
@@ -141,13 +143,30 @@ func NewToolServiceWithOptions(projectRoot string, options ToolServiceOptions) (
 		return nil, err
 	}
 
+	journal, err := loadChangeJournal(absRoot, defaultJournalCapacity)
+	if err != nil {
+		return nil, err
+	}
+
+	layouts, err := loadLayoutRegistry(absRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	memory, err := loadAgentMemoryStore(absRoot, defaultAgentMemoryLimit)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ToolService{
 		projectRoot:      absRoot,
 		search:           dispatcher.NewSearchEngine(absRoot),
-		journal:          newChangeJournal(defaultJournalCapacity),
+		journal:          journal,
 		bridge:           bridge,
 		audit:            audit,
-		layouts:          newLayoutRegistry(),
+		layouts:          layouts,
+		memory:           memory,
+		sessionID:        fmt.Sprintf("sess-%d", time.Now().UTC().UnixMilli()),
 		approvalRequired: parseBooleanEnvDefaultFalse(os.Getenv(envMCPRequireApproval)),
 		approvalCode:     strings.TrimSpace(os.Getenv(envMCPApprovalCode)),
 		sensitivePaths:   append([]string(nil), defaultSensitivePathPatterns...),
@@ -233,6 +252,39 @@ func (s *ToolService) ToolDefinitions() []ToolDefinition {
 			Description: "Rollback file content to checkpoint state",
 			InputSchema: objectSchema([]string{"id"}, map[string]any{
 				"id": map[string]any{"type": "string"},
+			}),
+		},
+		{
+			Name:        "agent_memory.save",
+			Description: "Save project-local agent memory entry",
+			InputSchema: objectSchema([]string{"content"}, map[string]any{
+				"content":    map[string]any{"type": "string"},
+				"type":       map[string]any{"type": "string"},
+				"tags":       map[string]any{"type": "array"},
+				"importance": map[string]any{"type": "number"},
+			}),
+		},
+		{
+			Name:        "agent_memory.search",
+			Description: "Search project-local agent memory",
+			InputSchema: objectSchema(nil, map[string]any{
+				"query": map[string]any{"type": "string"},
+				"tags":  map[string]any{"type": "array"},
+				"limit": map[string]any{"type": "number"},
+			}),
+		},
+		{
+			Name:        "agent_memory.list",
+			Description: "List recent project-local agent memory entries",
+			InputSchema: objectSchema(nil, map[string]any{
+				"limit": map[string]any{"type": "number"},
+			}),
+		},
+		{
+			Name:        "agent_memory.context",
+			Description: "Get compact project-local memory context summary",
+			InputSchema: objectSchema(nil, map[string]any{
+				"max_chars": map[string]any{"type": "number"},
 			}),
 		},
 	}
@@ -326,6 +378,9 @@ func (s *ToolService) CreateCheckpoint(path, label string) (Checkpoint, error) {
 	}
 
 	checkpoint := s.journal.add(relPath, absPath, strings.TrimSpace(label), beforeData, existed)
+	if err := s.persistJournal(); err != nil {
+		return Checkpoint{}, err
+	}
 	return checkpoint, nil
 }
 
@@ -453,6 +508,26 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 			return nil, err
 		}
 		return s.RollbackCheckpoint(id)
+	case "agent_memory.save":
+		content, err := requiredStringArg(args, "content")
+		if err != nil {
+			return nil, err
+		}
+		entryType := optionalStringArg(args, "type")
+		tags := optionalStringSliceArg(args, "tags")
+		importance := optionalIntArg(args, "importance", 5)
+		return s.SaveAgentMemory(entryType, tags, content, importance)
+	case "agent_memory.search":
+		query := optionalStringArg(args, "query")
+		tags := optionalStringSliceArg(args, "tags")
+		limit := optionalIntArg(args, "limit", 25)
+		return map[string]any{"items": s.SearchAgentMemory(query, tags, limit)}, nil
+	case "agent_memory.list":
+		limit := optionalIntArg(args, "limit", 50)
+		return map[string]any{"items": s.ListAgentMemory(limit)}, nil
+	case "agent_memory.context":
+		maxChars := optionalIntArg(args, "max_chars", defaultAgentContextChars)
+		return map[string]any{"summary": s.AgentMemoryContext(maxChars)}, nil
 	case "ide_backend.project_open":
 		path, err := requiredStringArg(args, "path")
 		if err != nil {
@@ -524,7 +599,8 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 		if strings.TrimSpace(name) == "" {
 			name = "Terminal"
 		}
-		return s.bridgeTerminalCreate(id, name)
+		command := optionalStringArg(args, "command")
+		return s.bridgeTerminalCreate(id, name, command)
 	case "ide_backend.terminal_write":
 		id, err := requiredStringArg(args, "id")
 		if err != nil {
@@ -944,7 +1020,17 @@ func isPathWithinRoot(rootAbs, targetAbs string) bool {
 }
 
 func toRelativePath(rootAbs, targetAbs string) string {
-	rel, err := filepath.Rel(rootAbs, targetAbs)
+	resolvedRoot, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		resolvedRoot = rootAbs
+	}
+
+	resolvedTarget, err := resolveSymlinkAwareTarget(targetAbs)
+	if err != nil {
+		resolvedTarget = targetAbs
+	}
+
+	rel, err := filepath.Rel(resolvedRoot, resolvedTarget)
 	if err != nil {
 		return targetAbs
 	}
@@ -1002,6 +1088,35 @@ func optionalStringArg(args map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(stringValue)
+}
+
+func optionalStringSliceArg(args map[string]any, key string) []string {
+	value, ok := args[key]
+	if !ok {
+		return []string{}
+	}
+
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			stringValue, ok := item.(string)
+			if !ok {
+				continue
+			}
+			result = append(result, stringValue)
+		}
+		return result
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return []string{}
+		}
+		return []string{typed}
+	default:
+		return []string{}
+	}
 }
 
 func optionalBoolArg(args map[string]any, key string) bool {

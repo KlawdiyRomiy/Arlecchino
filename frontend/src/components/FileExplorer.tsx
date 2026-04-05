@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ChevronDown, Folder, FolderOpen } from "lucide-react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import {
+  ChevronDown,
+  FilePlus,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Plus,
+} from "lucide-react";
 import * as App from "../../wailsjs/go/main/App";
+import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { colors, getThemeColors } from "../styles/colors";
 import { useTheme } from "../hooks/useTheme";
 import { useFileRelations } from "../hooks/useFileRelations";
@@ -10,6 +19,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useExplorerStore } from "../stores/explorerStore";
 import { FileContextMenu } from "./ui/FileContextMenu";
 import { buildFileNodes } from "../utils/fileTreeHelpers";
+import { shortcuts } from "../utils/keyboard";
 import {
   PROJECT_SWITCH_BLOCKERS,
   blockProjectSwitch,
@@ -37,6 +47,21 @@ interface Breadcrumb {
   node: FileNode;
 }
 
+interface CreatedEntryEvent {
+  path?: string;
+  isDirectory?: boolean;
+}
+
+type AppBindingWindow = Window & {
+  go?: {
+    main?: {
+      App?: {
+        CreateDirectory?: (dirPath: string) => Promise<void>;
+      };
+    };
+  };
+};
+
 export interface FileExplorerProps {
   onFileOpen?: (
     path: string,
@@ -57,6 +82,16 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   onPerspectiveOpen,
   onPerspectiveClose,
 }) => {
+  const createDirectory = (dirPath: string) => {
+    const binding = (window as AppBindingWindow).go?.main?.App?.CreateDirectory;
+    if (!binding) {
+      return Promise.reject(
+        new Error("CreateDirectory binding is not available"),
+      );
+    }
+    return binding(dirPath);
+  };
+
   const { isDark } = useTheme();
   const theme = getThemeColors(isDark);
   const {
@@ -82,13 +117,24 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   }>({ isOpen: false, x: 0, y: 0 });
   const [treeOpen, setTreeOpen] = useState(false);
   const [highlightedPath, setHighlightedPath] = useState<string | null>(null);
+  const [createEntryType, setCreateEntryType] = useState<
+    "file" | "folder" | null
+  >(null);
+  const [createEntryName, setCreateEntryName] = useState("");
+  const [creatingEntry, setCreatingEntry] = useState(false);
   const explorerRef = useRef<HTMLDivElement>(null);
   const filesRef = useRef<FileNode[]>([]);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recentCreatedPathsRef = useRef<Map<string, number>>(new Map());
+  const expandedPathsRef = useRef(expandedPaths);
+  const projectPathRef = useRef(projectPath);
+  const onFileOpenRef = useRef(onFileOpen);
   const relations = useFileRelations(perspectiveTarget || "");
-  // Latest tree snapshot for async reveal/expand flows.
   filesRef.current = files;
+  expandedPathsRef.current = expandedPaths;
+  projectPathRef.current = projectPath;
+  onFileOpenRef.current = onFileOpen;
 
   // Синхронизируем isExpanded из store в файлы
   const getIsExpanded = (path: string): boolean => expandedPaths.has(path);
@@ -109,6 +155,38 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     const content = await readPromise;
     if (onFileOpen)
       onFileOpen(path, content, path.split("/").pop() || "", line);
+  };
+
+  const closeCreateEntryDialog = () => {
+    if (creatingEntry) {
+      return;
+    }
+    setCreateEntryType(null);
+    setCreateEntryName("");
+  };
+
+  const handleCreateEntry = async () => {
+    const trimmedName = createEntryName.trim();
+    if (!createEntryType || !trimmedName || !projectPathRef.current) {
+      return;
+    }
+
+    setCreatingEntry(true);
+    try {
+      const targetPath = `${projectPathRef.current}/${trimmedName}`;
+      if (createEntryType === "file") {
+        await App.WriteFile(targetPath, "");
+      } else {
+        await createDirectory(targetPath);
+      }
+      setCreateEntryType(null);
+      setCreateEntryName("");
+    } catch (error) {
+      console.error(`Error creating ${createEntryType}:`, error);
+      alert(`Failed to create ${createEntryType}: ${error}`);
+    } finally {
+      setCreatingEntry(false);
+    }
   };
 
   const renderPerspectiveOverlays = () => (
@@ -149,6 +227,34 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!createEntryType) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (shortcuts.escape(event)) {
+        event.preventDefault();
+        closeCreateEntryDialog();
+        return;
+      }
+
+      if (shortcuts.enter(event) && !creatingEntry) {
+        const target = event.target;
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement
+        ) {
+          event.preventDefault();
+          void handleCreateEntry();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [createEntryType, creatingEntry, createEntryName]);
 
   const expandToPath = async (targetPath: string) => {
     if (!targetPath || !projectPath) return;
@@ -303,7 +409,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     const result: FileNode[] = [];
 
     for (const node of nodes) {
-      if (node.isDirectory && expandedPaths.has(node.path)) {
+      if (node.isDirectory && expandedPathsRef.current.has(node.path)) {
         // Эта папка была открыта — загружаем её содержимое
         const children = await loadFolderChildren(node.path);
         // Рекурсивно восстанавливаем вложенные папки
@@ -358,6 +464,168 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       console.error("Error reading directory:", error);
     }
   };
+
+  const refreshDirectoryPath = async (dirPath: string) => {
+    if (!dirPath) return;
+
+    try {
+      const entries: FileEntry[] = await App.ReadDirectory(dirPath);
+      let nextChildren = buildFileNodes(entries, expandedPathsRef.current);
+
+      if (expandedPathsRef.current.size > 0) {
+        nextChildren = await restoreExpandedFolders(nextChildren);
+      }
+
+      if (dirPath === projectPathRef.current) {
+        filesRef.current = nextChildren;
+        setFiles(nextChildren);
+        return;
+      }
+
+      const updateDirectory = (nodes: FileNode[]): FileNode[] =>
+        nodes.map((node) => {
+          if (node.path === dirPath) {
+            return {
+              ...node,
+              isLoaded: true,
+              isExpanded: true,
+              children: nextChildren,
+            };
+          }
+          if (!node.children) {
+            return node;
+          }
+          return { ...node, children: updateDirectory(node.children) };
+        });
+
+      const updatedFiles = updateDirectory(filesRef.current);
+      filesRef.current = updatedFiles;
+      setFiles(updatedFiles);
+      setExpanded(dirPath, true);
+    } catch (error) {
+      console.error("Error refreshing directory:", dirPath, error);
+    }
+  };
+
+  const normalizeProjectPath = (path: string) =>
+    path.endsWith("/") ? path.slice(0, -1) : path;
+
+  const wasRecentlyHandled = (path: string, isDirectory: boolean) => {
+    const key = `${isDirectory ? "dir" : "file"}:${path}`;
+    const now = Date.now();
+    const lastHandledAt = recentCreatedPathsRef.current.get(key) ?? 0;
+
+    for (const [entryKey, handledAt] of recentCreatedPathsRef.current) {
+      if (now - handledAt > 1500) {
+        recentCreatedPathsRef.current.delete(entryKey);
+      }
+    }
+
+    if (now - lastHandledAt < 1500) {
+      return true;
+    }
+
+    recentCreatedPathsRef.current.set(key, now);
+    return false;
+  };
+
+  const openCreatedFile = async (createdPath: string) => {
+    const fileName = createdPath.split("/").pop() || "";
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const content = await App.ReadFile(createdPath);
+        onFileOpenRef.current?.(createdPath, content, fileName);
+        return;
+      } catch (error) {
+        if (attempt === 1) {
+          console.error("Error opening created file:", error);
+          return;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 120));
+      }
+    }
+  };
+
+  const refreshPathChain = async (targetPath: string, isDirectory: boolean) => {
+    const currentProjectPath = normalizeProjectPath(projectPathRef.current);
+    if (!currentProjectPath) {
+      return;
+    }
+
+    const targetDirectory = isDirectory
+      ? targetPath
+      : targetPath.slice(0, targetPath.lastIndexOf("/")) || currentProjectPath;
+
+    await refreshDirectoryPath(currentProjectPath);
+
+    if (targetDirectory === currentProjectPath) {
+      return;
+    }
+
+    const relativePath = targetDirectory.startsWith(`${currentProjectPath}/`)
+      ? targetDirectory.slice(currentProjectPath.length + 1)
+      : "";
+
+    if (!relativePath) {
+      return;
+    }
+
+    let currentPath = currentProjectPath;
+    for (const segment of relativePath.split("/").filter(Boolean)) {
+      currentPath += `/${segment}`;
+      await refreshDirectoryPath(currentPath);
+    }
+  };
+
+  useEffect(() => {
+    const handleCreatedEntry = async (payload: string | CreatedEntryEvent) => {
+      const createdPath =
+        typeof payload === "string" ? payload : (payload.path ?? "");
+      const isDirectory =
+        typeof payload === "string" ? false : Boolean(payload.isDirectory);
+      const currentProjectPath = normalizeProjectPath(projectPathRef.current);
+
+      if (!createdPath || !currentProjectPath) {
+        return;
+      }
+
+      if (
+        createdPath !== currentProjectPath &&
+        !createdPath.startsWith(`${currentProjectPath}/`)
+      ) {
+        return;
+      }
+
+      if (wasRecentlyHandled(createdPath, isDirectory)) {
+        return;
+      }
+
+      await refreshPathChain(createdPath, isDirectory);
+      await revealPath(createdPath);
+
+      if (isDirectory) {
+        return;
+      }
+
+      await openCreatedFile(createdPath);
+    };
+
+    const unsubscribeFileCreated = EventsOn("file:created", (createdPath) => {
+      void handleCreatedEntry(createdPath as string);
+    });
+    const unsubscribeProjectEntryCreated = EventsOn(
+      "project:entry:created",
+      (event) => {
+        void handleCreatedEntry(event as CreatedEntryEvent);
+      },
+    );
+
+    return () => {
+      unsubscribeFileCreated();
+      unsubscribeProjectEntryCreated();
+    };
+  }, []);
 
   // ========================================
   // INLINE EXTENSION STYLE - Unique Arlecchino file icons
@@ -1122,7 +1390,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
   const headerStyle: React.CSSProperties = {
     padding: "8px 12px",
-    borderBottom: `1px solid ${theme.border}`,
+    position: "relative",
   };
 
   const projectNameStyle: React.CSSProperties = {
@@ -1134,18 +1402,144 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   };
 
   return (
-    <div ref={explorerRef} style={{ height: "100%", overflow: "auto" }}>
-      <div style={headerStyle}>
-        <div style={projectNameStyle}>{projectName}</div>
+    <>
+      <div ref={explorerRef} style={{ height: "100%", overflow: "auto" }}>
+        <div
+          style={{
+            ...headerStyle,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+          }}
+        >
+          <div style={projectNameStyle}>{projectName}</div>
+
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                type="button"
+                title="Create"
+                style={{
+                  width: "24px",
+                  height: "24px",
+                  borderRadius: "6px",
+                  border: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: theme.textMuted,
+                  background: "transparent",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                <Plus size={14} />
+              </button>
+            </DropdownMenu.Trigger>
+
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={8}
+                className="z-[100] min-w-[220px] overflow-hidden rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] shadow-2xl animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
+              >
+                <DropdownMenu.Item
+                  onSelect={() => setCreateEntryType("file")}
+                  className="flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                >
+                  <FilePlus size={16} />
+                  Create file
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onSelect={() => setCreateEntryType("folder")}
+                  className="flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                >
+                  <FolderPlus size={16} />
+                  Create folder
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: -3,
+              borderBottom: `1px solid ${theme.border}`,
+            }}
+          />
+        </div>
+
+        <div style={{ padding: "4px 0" }}>
+          {files.map((node, index) =>
+            renderFileNode(node, 0, index === files.length - 1, []),
+          )}
+        </div>
+
+        {renderPerspectiveOverlays()}
       </div>
 
-      <div style={{ padding: "4px 0" }}>
-        {files.map((node, index) =>
-          renderFileNode(node, 0, index === files.length - 1, []),
-        )}
-      </div>
+      {createEntryType && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.97 }}
+            className="w-full max-w-sm rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-5 shadow-2xl"
+          >
+            <h2 className="mb-4 text-lg font-semibold text-[var(--text-primary)]">
+              {createEntryType === "file" ? "Create file" : "Create folder"}
+            </h2>
 
-      {renderPerspectiveOverlays()}
-    </div>
+            <div className="space-y-3">
+              <div>
+                <label className="mb-2 block text-[13px] font-medium text-[var(--text-secondary)]">
+                  Name
+                </label>
+                <input
+                  type="text"
+                  value={createEntryName}
+                  onChange={(event) => setCreateEntryName(event.target.value)}
+                  placeholder={
+                    createEntryType === "file" ? "notes.txt" : "new-folder"
+                  }
+                  className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 py-2 text-[var(--text-primary)] outline-none focus:border-transparent focus:ring-2 focus:ring-white/20"
+                />
+              </div>
+
+              <div className="text-[11px] text-[var(--text-muted)]">
+                {projectPathRef.current}/{createEntryName.trim() || "..."}
+              </div>
+            </div>
+
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={handleCreateEntry}
+                disabled={!createEntryName.trim() || creatingEntry}
+                className="flex-1 rounded-lg bg-white px-4 py-2 font-medium text-black transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {creatingEntry
+                  ? "Creating..."
+                  : createEntryType === "file"
+                    ? "Create File"
+                    : "Create Folder"}
+              </button>
+              <button
+                type="button"
+                onClick={closeCreateEntryDialog}
+                disabled={creatingEntry}
+                className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-4 py-2 text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </>
   );
 };

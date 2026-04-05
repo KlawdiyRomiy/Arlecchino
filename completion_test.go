@@ -62,6 +62,10 @@ func (f *fakeBrain) Complete(ctx brain.CompletionContext) []brain.Suggestion {
 	return []brain.Suggestion{{Text: "foo", InsertText: "foo"}}
 }
 
+func (f *fakeBrain) LastCompletionTrace() brain.CompletionTrace {
+	return brain.CompletionTrace{}
+}
+
 func (f *fakeBrain) SelectGhostTextWithContext(ctx brain.CompletionContext, suggestions []brain.Suggestion, prefix, accessChain string) brain.GhostTextResult {
 	return brain.GhostTextResult{ShouldShow: false}
 }

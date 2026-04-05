@@ -60,3 +60,35 @@ test("tui terminal config expands to fullscreen overlay", async ({ page }) => {
   expect(configState.x).toBe(0);
   expect(configState.y).toBe(0);
 });
+
+test("tui assist helpers support all four anchors", async ({ page }) => {
+  await page.goto("/");
+
+  const helperState = await page.evaluate(async () => {
+    const {
+      flipTUIAssistAnchor,
+      getTUIAssistFlexDirection,
+      normalizeTUIAssistAnchor,
+    } = await import("/src/utils/terminalLayout.ts");
+
+    return {
+      normalizedTop: normalizeTUIAssistAnchor("top"),
+      fallbackAnchor: normalizeTUIAssistAnchor("invalid", "bottom"),
+      flippedLeft: flipTUIAssistAnchor("left"),
+      flippedTop: flipTUIAssistAnchor("top"),
+      rightDirection: getTUIAssistFlexDirection("right"),
+      leftDirection: getTUIAssistFlexDirection("left"),
+      topDirection: getTUIAssistFlexDirection("top"),
+      bottomDirection: getTUIAssistFlexDirection("bottom"),
+    };
+  });
+
+  expect(helperState.normalizedTop).toBe("top");
+  expect(helperState.fallbackAnchor).toBe("bottom");
+  expect(helperState.flippedLeft).toBe("right");
+  expect(helperState.flippedTop).toBe("bottom");
+  expect(helperState.rightDirection).toBe("row");
+  expect(helperState.leftDirection).toBe("row-reverse");
+  expect(helperState.topDirection).toBe("column-reverse");
+  expect(helperState.bottomDirection).toBe("column");
+});

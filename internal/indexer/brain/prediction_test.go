@@ -2,6 +2,7 @@ package brain
 
 import (
 	"arlecchino/internal/indexer/core"
+	"strings"
 	"testing"
 )
 
@@ -140,6 +141,8 @@ func TestPredictionBrain_TypeScriptCompletions(t *testing.T) {
 func TestShouldSkipLSP(t *testing.T) {
 	tests := []struct {
 		name        string
+		language    string
+		inImport    bool
 		prefix      string
 		trigger     string
 		accessChain string
@@ -148,6 +151,9 @@ func TestShouldSkipLSP(t *testing.T) {
 		{name: "empty prefix no trigger no chain", prefix: "", trigger: "", accessChain: "", want: true},
 		{name: "one rune prefix no trigger no chain", prefix: "a", trigger: "", accessChain: "", want: true},
 		{name: "two rune prefix no trigger no chain", prefix: "ab", trigger: "", accessChain: "", want: false},
+		{name: "go one rune prefix", language: "go", prefix: "a", trigger: "", accessChain: "", want: false},
+		{name: "bash one rune prefix", language: "bash", prefix: "a", trigger: "", accessChain: "", want: false},
+		{name: "import prefix bypass", language: "php", prefix: "a", trigger: "", accessChain: "", inImport: true, want: false},
 		{name: "one rune prefix with trigger", prefix: "a", trigger: ".", accessChain: "", want: false},
 		{name: "one rune prefix with alpha trigger", prefix: "a", trigger: "a", accessChain: "", want: true},
 		{name: "empty prefix with '<' trigger", prefix: "", trigger: "<", accessChain: "", want: false},
@@ -158,7 +164,7 @@ func TestShouldSkipLSP(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := CompletionContext{Prefix: tt.prefix, TriggerChar: tt.trigger, AccessChain: tt.accessChain}
+			ctx := CompletionContext{Prefix: tt.prefix, TriggerChar: tt.trigger, AccessChain: tt.accessChain, Language: tt.language, InImport: tt.inImport}
 			got := shouldSkipLSP(ctx)
 			if got != tt.want {
 				t.Fatalf("shouldSkipLSP(prefix=%q trigger=%q chain=%q)=%v want=%v",
@@ -246,6 +252,68 @@ func TestShouldSkipPatternGroup(t *testing.T) {
 				t.Fatalf("shouldSkipPatternGroup(ctx)=%v want=%v (ctx=%+v)", got, tt.wantSkip, tt.ctx)
 			}
 		})
+	}
+}
+
+func TestShouldOfferFillAll(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{name: "empty function call", content: "package main\n\nfunc test() {\n\tconsume(|)\n}", want: true},
+		{name: "whitespace inside empty call", content: "package main\n\nfunc test() {\n\tconsume(   |\n}", want: true},
+		{name: "existing first argument", content: "package main\n\nfunc test() {\n\tconsume(name, |)\n}", want: false},
+		{name: "control keyword", content: "package main\n\nfunc test() {\n\tif (|\n}", want: false},
+		{name: "method call", content: "<?php\nfunction test() {\n\t$this->create(|);\n}", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, line, column := removePredictionCursorMarker(tt.content)
+			ctx := CompletionContext{Content: content, Line: line, Column: column}
+			got := shouldOfferFillAll(ctx)
+			if got != tt.want {
+				t.Fatalf("shouldOfferFillAll()=%v want=%v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPredictionBrain_LastCompletionTrace(t *testing.T) {
+	brain := NewPredictionBrain(nil, BrainConfig{MaxSuggestions: 10, MinConfidence: 0.1, EnablePredictive: false, EnableLSP: false})
+	brain.stubProvider = NewStubProvider()
+	brain.stubProvider.runner = func(name string, args ...string) ([]byte, error) {
+		return []byte("func Encode(w any, event any) error\nfunc Decode(data []byte) (Event, error)\n"), nil
+	}
+	brain.stubProvider.SetPackageResolver(func(language, reference string) string {
+		if language == "go" && reference == "sse" {
+			return "github.com/gin-contrib/sse"
+		}
+		return ""
+	})
+
+	suggestions := brain.Complete(CompletionContext{
+		RequestID:    "trace-1",
+		FilePath:     "main.go",
+		Language:     "go",
+		Content:      []byte("package main\n\nfunc main() {\n\tsse.\n}\n"),
+		FullContent:  []byte("package main\n\nfunc main() {\n\tsse.\n}\n"),
+		AccessChain:  "sse.",
+		IsMethodCall: true,
+	})
+	if len(suggestions) == 0 {
+		t.Fatalf("expected suggestions")
+	}
+	trace := brain.LastCompletionTrace()
+	if trace.RequestID != "trace-1" {
+		t.Fatalf("expected request trace to be stored, got %#v", trace)
+	}
+	if trace.ResolvedNamespace != "github.com/gin-contrib/sse" {
+		t.Fatalf("expected resolved namespace in trace, got %#v", trace)
+	}
+	if trace.ResultCount == 0 || len(trace.TopSuggestions) == 0 {
+		t.Fatalf("expected trace to include result summary, got %#v", trace)
 	}
 }
 
@@ -356,6 +424,24 @@ func TestFilterByContext_DropsScaffoldInMethodCall(t *testing.T) {
 	if found["class"] {
 		t.Fatal("keyword suggestion should be filtered in method call")
 	}
+}
+
+func removePredictionCursorMarker(input string) ([]byte, int, int) {
+	idx := strings.Index(input, "|")
+	if idx < 0 {
+		panic("cursor marker not found")
+	}
+
+	before := input[:idx]
+	line := strings.Count(before, "\n") + 1
+	lastNewline := strings.LastIndex(before, "\n")
+	column := idx
+	if lastNewline >= 0 {
+		column = idx - lastNewline - 1
+	}
+
+	clean := input[:idx] + input[idx+1:]
+	return []byte(clean), line, column
 }
 
 func TestPredictionBrain_GoCompletions(t *testing.T) {

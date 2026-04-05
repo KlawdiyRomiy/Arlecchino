@@ -11,7 +11,6 @@ import { PreviewWindowLayer } from "./PreviewWindowLayer";
 import { ExecutionDialog } from "../ExecutionDialog";
 import { LaravelPlugin } from "../../plugins/LaravelPlugin";
 import { SettingsModal } from "../SettingsModal";
-import { SnippetsManager } from "../SnippetsManager";
 import { CommandDispatcher } from "../CommandDispatcher";
 import { useDispatcher } from "../../hooks/useDispatcher";
 import { useEditorStore } from "../../stores/editorStore";
@@ -55,8 +54,12 @@ import {
 } from "../../utils/terminalFocus";
 import { isProjectSwitchBlocked } from "../../utils/priorityUI";
 import {
+  flipTUIAssistAnchor,
+  getTUIAssistFlexDirection,
   getTUIFloatingTerminalConfig,
   getTUIPanelVisibility,
+  normalizeTUIAssistAnchor,
+  type TUIAssistAnchor,
 } from "../../utils/terminalLayout";
 import { ReadFile, WriteTerminal } from "../../../wailsjs/go/main/App";
 import {
@@ -94,6 +97,182 @@ type PanelVisibility = Record<PanelId, boolean>;
 
 type PanelConfigs = Record<PanelId, PanelConfig>;
 
+interface PanelOpenRequest {
+  panel: string;
+  position?: PanelPosition;
+  mode?: "snapped" | "floating";
+  width?: number;
+  height?: number;
+  x?: number;
+  y?: number;
+  ratio?: number;
+  anchor?: TUIAssistAnchor;
+  command?: string;
+  terminalName?: string;
+  focus?: boolean;
+}
+
+type AppSurfaceAction =
+  | { kind: "panel"; panelId: PanelId }
+  | { kind: "dispatcher" }
+  | { kind: "settings" }
+  | { kind: "run"; mode: "run" | "debug" };
+
+const PANEL_ID_ALIASES: Record<string, PanelId> = {
+  git: "git",
+  scm: "git",
+  ai: "aiChat",
+  aichat: "aiChat",
+  assistant: "aiChat",
+  chat: "aiChat",
+  terminal: "terminal",
+  console: "terminal",
+  shell: "terminal",
+  explorer: "explorer",
+  sidebar: "explorer",
+  files: "explorer",
+  problems: "problems",
+  diagnostics: "problems",
+};
+
+const APP_SURFACE_ALIASES: Record<string, AppSurfaceAction> = {
+  search: { kind: "dispatcher" },
+  find: { kind: "dispatcher" },
+  commandpalette: { kind: "dispatcher" },
+  palette: { kind: "dispatcher" },
+  output: { kind: "panel", panelId: "terminal" },
+  logs: { kind: "panel", panelId: "terminal" },
+  run: { kind: "run", mode: "run" },
+  debug: { kind: "run", mode: "debug" },
+  extensions: { kind: "settings" },
+  settings: { kind: "settings" },
+  preferences: { kind: "settings" },
+};
+
+const normalizePanelSizeForPosition = (
+  position: PanelPosition,
+  currentSize: PanelSize,
+): PanelSize => {
+  if (position === "bottom" || position === "top") {
+    return {
+      width: 0,
+      height: Math.min(currentSize.height > 0 ? currentSize.height : 220, 400),
+    };
+  }
+
+  return {
+    width: Math.min(currentSize.width > 0 ? currentSize.width : 280, 500),
+    height: 0,
+  };
+};
+
+const resolvePanelId = (panelName: string): PanelId | null => {
+  const normalized = panelName.trim().toLowerCase();
+  return PANEL_ID_ALIASES[normalized] ?? null;
+};
+
+const resolveAppSurfaceAction = (
+  panelName: string,
+): AppSurfaceAction | null => {
+  const normalized = panelName.trim().toLowerCase();
+  return APP_SURFACE_ALIASES[normalized] ?? null;
+};
+
+const unwrapEventPayload = (value: unknown): unknown => {
+  if (Array.isArray(value) && value.length === 1) {
+    return unwrapEventPayload(value[0]);
+  }
+
+  return value;
+};
+
+const getViewportSafeFloatingConfig = (
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+) => {
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const safeWidth = Math.max(220, Math.min(width, viewportWidth));
+  const safeHeight = Math.max(140, Math.min(height, viewportHeight));
+  const maxX = Math.max(0, viewportWidth - safeWidth);
+  const maxY = Math.max(32, viewportHeight - safeHeight);
+
+  return {
+    width: safeWidth,
+    height: safeHeight,
+    x: Math.max(0, Math.min(x, maxX)),
+    y: Math.max(32, Math.min(y, maxY)),
+  };
+};
+
+const buildPanelConfigForOpen = (
+  panelId: PanelId,
+  request: PanelOpenRequest,
+  currentConfig: PanelConfig,
+): PanelConfig => {
+  const defaultConfig = DEFAULT_PANEL_CONFIGS[panelId];
+  const hasExplicitFloatingPlacement =
+    typeof request.x === "number" || typeof request.y === "number";
+  const hasExplicitPlacement =
+    request.position !== undefined ||
+    request.mode !== undefined ||
+    hasExplicitFloatingPlacement ||
+    typeof request.width === "number" ||
+    typeof request.height === "number";
+
+  const baseConfig = currentConfig;
+  const position = request.position ?? currentConfig.position;
+  const mode =
+    request.mode ??
+    (request.position
+      ? "snapped"
+      : hasExplicitFloatingPlacement
+        ? "floating"
+        : currentConfig.mode);
+
+  if (mode === "snapped") {
+    const baseSize = normalizePanelSizeForPosition(position, {
+      width: request.width ?? baseConfig.size.width ?? defaultConfig.size.width,
+      height:
+        request.height ?? baseConfig.size.height ?? defaultConfig.size.height,
+    });
+
+    return {
+      position,
+      mode,
+      x: 0,
+      y: 0,
+      size: {
+        width: request.width ?? baseSize.width,
+        height: request.height ?? baseSize.height,
+      },
+    };
+  }
+
+  const safeFloating = getViewportSafeFloatingConfig(
+    request.width ?? baseConfig.size.width ?? defaultConfig.size.width ?? 320,
+    request.height ??
+      baseConfig.size.height ??
+      defaultConfig.size.height ??
+      240,
+    request.x ?? baseConfig.x,
+    request.y ?? baseConfig.y,
+  );
+
+  return {
+    position,
+    mode,
+    x: safeFloating.x,
+    y: safeFloating.y,
+    size: {
+      width: safeFloating.width,
+      height: safeFloating.height,
+    },
+  };
+};
+
 import { useIDEEvents } from "../../hooks/useIDEEvents";
 import { useBrowserPreviewBridge } from "../../hooks/useBrowserPreviewBridge";
 import { usePreviewableContext } from "../../hooks/usePreviewableContext";
@@ -127,6 +306,124 @@ const getBooleanFromRecord = (
 ): boolean | undefined => {
   const value = source[key];
   return typeof value === "boolean" ? value : undefined;
+};
+
+const parsePanelPosition = (value: unknown): PanelPosition | undefined => {
+  switch (value) {
+    case "left":
+    case "right":
+    case "top":
+    case "bottom":
+      return value;
+    default:
+      return undefined;
+  }
+};
+
+const parsePanelMode = (value: unknown): "snapped" | "floating" | undefined => {
+  switch (value) {
+    case "snapped":
+    case "floating":
+      return value;
+    default:
+      return undefined;
+  }
+};
+
+const parsePanelOpenRequest = (value: unknown): PanelOpenRequest | null => {
+  const normalizedValue = unwrapEventPayload(value);
+
+  if (typeof normalizedValue === "string") {
+    const panel = normalizedValue.trim().toLowerCase();
+    return panel ? { panel } : null;
+  }
+
+  if (!isRecord(normalizedValue)) {
+    return null;
+  }
+
+  const panel =
+    getStringFromRecord(normalizedValue, "panel") ||
+    getStringFromRecord(normalizedValue, "target") ||
+    getStringFromRecord(normalizedValue, "id") ||
+    getStringFromRecord(normalizedValue, "name");
+  if (!panel) {
+    return null;
+  }
+
+  const position =
+    parsePanelPosition(normalizedValue.position) ||
+    parsePanelPosition(normalizedValue.side);
+
+  return {
+    panel: panel.toLowerCase(),
+    position,
+    mode: parsePanelMode(normalizedValue.mode),
+    width: getNumberFromRecord(normalizedValue, "width"),
+    height: getNumberFromRecord(normalizedValue, "height"),
+    x: getNumberFromRecord(normalizedValue, "x"),
+    y: getNumberFromRecord(normalizedValue, "y"),
+    ratio: getNumberFromRecord(normalizedValue, "ratio"),
+    anchor: normalizeTUIAssistAnchor(
+      getStringFromRecord(normalizedValue, "anchor") ?? position,
+      "right",
+    ),
+    command:
+      getStringFromRecord(normalizedValue, "command") ||
+      getStringFromRecord(normalizedValue, "input"),
+    terminalName:
+      getStringFromRecord(normalizedValue, "terminalName") ||
+      getStringFromRecord(normalizedValue, "sessionName") ||
+      getStringFromRecord(normalizedValue, "title"),
+    focus: getBooleanFromRecord(normalizedValue, "focus") ?? false,
+  };
+};
+
+const parseEditorOpenRequest = (
+  value: unknown,
+): { path: string; line?: number } | null => {
+  const normalizedValue = unwrapEventPayload(value);
+
+  if (typeof normalizedValue === "string") {
+    const path = normalizedValue.trim();
+    return path ? { path } : null;
+  }
+
+  if (!isRecord(normalizedValue)) {
+    return null;
+  }
+
+  const path =
+    getStringFromRecord(normalizedValue, "path") ||
+    getStringFromRecord(normalizedValue, "file") ||
+    getStringFromRecord(normalizedValue, "filePath");
+  if (!path) {
+    return null;
+  }
+
+  return {
+    path,
+    line: getNumberFromRecord(normalizedValue, "line"),
+  };
+};
+
+const parseEditorSplitDirection = (
+  value: unknown,
+): "horizontal" | "vertical" | null => {
+  const normalizedValue = unwrapEventPayload(value);
+
+  if (normalizedValue === "horizontal" || normalizedValue === "vertical") {
+    return normalizedValue;
+  }
+
+  if (!isRecord(normalizedValue)) {
+    return null;
+  }
+
+  const direction = getStringFromRecord(normalizedValue, "direction");
+  return direction === "horizontal" || direction === "vertical"
+    ? direction
+    : null;
 };
 
 const toPreviewSurface = (value: unknown): PreviewSurfaceType | null => {
@@ -191,25 +488,27 @@ const toPreviewWindowPayload = (value: unknown): PreviewWindowPayload => {
 const parseOpenPreviewInput = (
   value: unknown,
 ): OpenPreviewWindowInput | null => {
-  if (typeof value === "string") {
-    const surface = toPreviewSurface(value);
+  const normalizedValue = unwrapEventPayload(value);
+
+  if (typeof normalizedValue === "string") {
+    const surface = toPreviewSurface(normalizedValue);
     if (surface) {
       return { surface };
     }
 
     return {
       surface: "file",
-      title: value.split("/").pop() || "file preview",
-      payload: { path: value },
+      title: normalizedValue.split("/").pop() || "file preview",
+      payload: { path: normalizedValue },
     };
   }
 
-  if (!isRecord(value)) {
+  if (!isRecord(normalizedValue)) {
     return null;
   }
 
-  const directPayload = toPreviewWindowPayload(value);
-  const nestedPayload = toPreviewWindowPayload(value.payload);
+  const directPayload = toPreviewWindowPayload(normalizedValue);
+  const nestedPayload = toPreviewWindowPayload(normalizedValue.payload);
   const payload: PreviewWindowPayload = {
     ...directPayload,
     ...nestedPayload,
@@ -226,9 +525,14 @@ const parseOpenPreviewInput = (
   delete payload.pinned;
 
   const surfaceCandidate =
-    toPreviewSurface(value.surface) ||
-    toPreviewSurface(value.kind) ||
-    toPreviewSurface(value.type) ||
+    toPreviewSurface(normalizedValue.surface) ||
+    toPreviewSurface(
+      isRecord(normalizedValue.payload)
+        ? normalizedValue.payload.surface
+        : undefined,
+    ) ||
+    toPreviewSurface(normalizedValue.kind) ||
+    toPreviewSurface(normalizedValue.type) ||
     (payload.url ? "browser" : null) ||
     (payload.path ? "file" : null);
 
@@ -236,55 +540,66 @@ const parseOpenPreviewInput = (
     return null;
   }
 
-  const modeCandidate = getStringFromRecord(value, "mode");
-  const positionCandidate = getStringFromRecord(value, "position");
-  const sideCandidate = getStringFromRecord(value, "side");
+  const modeCandidate = getStringFromRecord(normalizedValue, "mode");
+  const positionCandidate = getStringFromRecord(normalizedValue, "position");
+  const sideCandidate = getStringFromRecord(normalizedValue, "side");
 
   const mode =
     modeCandidate === "floating" || modeCandidate === "snapped"
       ? modeCandidate
-      : undefined;
+      : modeCandidate === "tab" || modeCandidate === "side"
+        ? "snapped"
+        : undefined;
   const position =
     positionCandidate === "left" ||
     positionCandidate === "right" ||
     positionCandidate === "top" ||
     positionCandidate === "bottom"
       ? positionCandidate
-      : undefined;
+      : modeCandidate === "side" && sideCandidate === "left"
+        ? "left"
+        : modeCandidate === "side" && sideCandidate === "right"
+          ? "right"
+          : undefined;
   const side =
     sideCandidate === "left" || sideCandidate === "right"
       ? sideCandidate
       : undefined;
 
   return {
-    id: getStringFromRecord(value, "id"),
+    id: getStringFromRecord(normalizedValue, "id"),
     surface: surfaceCandidate,
-    title: getStringFromRecord(value, "title"),
+    title: getStringFromRecord(normalizedValue, "title"),
     payload,
     mode,
     position,
     side,
-    width: getNumberFromRecord(value, "width"),
-    height: getNumberFromRecord(value, "height"),
-    x: getNumberFromRecord(value, "x"),
-    y: getNumberFromRecord(value, "y"),
-    pinned: getBooleanFromRecord(value, "pinned"),
+    width: getNumberFromRecord(normalizedValue, "width"),
+    height: getNumberFromRecord(normalizedValue, "height"),
+    x: getNumberFromRecord(normalizedValue, "x"),
+    y: getNumberFromRecord(normalizedValue, "y"),
+    pinned: getBooleanFromRecord(normalizedValue, "pinned"),
   };
 };
 
 const parseWindowIdFromPayload = (value: unknown): string | null => {
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value.trim();
+  const normalizedValue = unwrapEventPayload(value);
+
+  if (
+    typeof normalizedValue === "string" &&
+    normalizedValue.trim().length > 0
+  ) {
+    return normalizedValue.trim();
   }
 
-  if (!isRecord(value)) {
+  if (!isRecord(normalizedValue)) {
     return null;
   }
 
   return (
-    getStringFromRecord(value, "id") ||
-    getStringFromRecord(value, "windowId") ||
-    getStringFromRecord(value, "checkpointId") ||
+    getStringFromRecord(normalizedValue, "id") ||
+    getStringFromRecord(normalizedValue, "windowId") ||
+    getStringFromRecord(normalizedValue, "checkpointId") ||
     null
   );
 };
@@ -296,29 +611,33 @@ const parseUpdatePreviewInput = (
   input: UpdatePreviewWindowInput;
   focusRequested: boolean;
 } | null => {
-  if (!isRecord(value)) {
+  const normalizedValue = unwrapEventPayload(value);
+
+  if (!isRecord(normalizedValue)) {
     return null;
   }
 
-  const id = parseWindowIdFromPayload(value);
+  const id = parseWindowIdFromPayload(normalizedValue);
   if (!id) {
     return null;
   }
 
-  const payload = toPreviewWindowPayload(value.payload);
-  const modeCandidate = getStringFromRecord(value, "mode");
-  const positionCandidate = getStringFromRecord(value, "position");
+  const payload = toPreviewWindowPayload(normalizedValue.payload);
+  const modeCandidate = getStringFromRecord(normalizedValue, "mode");
+  const positionCandidate = getStringFromRecord(normalizedValue, "position");
   const focusRequested =
-    getBooleanFromRecord(value, "focus") ??
-    getBooleanFromRecord(value, "activate") ??
+    getBooleanFromRecord(normalizedValue, "focus") ??
+    getBooleanFromRecord(normalizedValue, "activate") ??
     false;
   const input: UpdatePreviewWindowInput = {
-    title: getStringFromRecord(value, "title"),
+    title: getStringFromRecord(normalizedValue, "title"),
     payload: Object.keys(payload).length > 0 ? payload : undefined,
     mode:
       modeCandidate === "floating" || modeCandidate === "snapped"
         ? modeCandidate
-        : undefined,
+        : modeCandidate === "tab" || modeCandidate === "side"
+          ? "snapped"
+          : undefined,
     position:
       positionCandidate === "left" ||
       positionCandidate === "right" ||
@@ -326,11 +645,11 @@ const parseUpdatePreviewInput = (
       positionCandidate === "bottom"
         ? positionCandidate
         : undefined,
-    width: getNumberFromRecord(value, "width"),
-    height: getNumberFromRecord(value, "height"),
-    x: getNumberFromRecord(value, "x"),
-    y: getNumberFromRecord(value, "y"),
-    pinned: getBooleanFromRecord(value, "pinned"),
+    width: getNumberFromRecord(normalizedValue, "width"),
+    height: getNumberFromRecord(normalizedValue, "height"),
+    x: getNumberFromRecord(normalizedValue, "x"),
+    y: getNumberFromRecord(normalizedValue, "y"),
+    pinned: getBooleanFromRecord(normalizedValue, "pinned"),
   };
 
   return { id, input, focusRequested };
@@ -691,10 +1010,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         };
       });
 
-      setTUIAssist({ active: false, panel: null, swapped: false });
+      setTUIAssist({ active: false, panel: null, anchor: "right" });
     } else {
       const shouldHideTerminalPanel = forceHideTerminalAfterTUIExitRef.current;
-      setTUIAssist({ active: false, panel: null, swapped: false });
+      setTUIAssist({ active: false, panel: null, anchor: "right" });
 
       if (tuiLayoutSnapshot) {
         setPanels(
@@ -732,7 +1051,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [dropTargetPosition, setDropTargetPosition] =
     useState<PanelPosition | null>(null);
 
-  const [showSnippetsManager, setShowSnippetsManager] = useState(false);
   const [notification, setNotification] = useState<{
     type: "success" | "error";
     message: string;
@@ -907,12 +1225,47 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     return activePane?.activeTabId || null;
   }, []);
 
+  const ensureActiveTerminalSessionId = useCallback(
+    async (terminalName = "Terminal"): Promise<string | null> => {
+      const state = useTerminalStore.getState();
+      state.initialize();
+
+      const existingSessionId = getActiveTerminalSessionId();
+      if (existingSessionId) {
+        return existingSessionId;
+      }
+
+      let activePane = state.panes.find(
+        (pane) => pane.id === state.activePaneId,
+      );
+      if (!activePane && state.panes.length > 0) {
+        activePane = state.panes[0];
+        state.setActivePane(activePane.id);
+      }
+      if (!activePane) {
+        showNotification("error", "[Terminal] Terminal pane is not available");
+        return null;
+      }
+
+      try {
+        return await state.createTerminal(activePane.id, isDark, terminalName);
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unable to create terminal session";
+        showNotification("error", `[Terminal] ${message}`);
+        return null;
+      }
+    },
+    [getActiveTerminalSessionId, isDark, showNotification],
+  );
+
   const resolveAssistPanelId = useCallback(
     (panel: string): AssistPanelId | null => {
       switch (panel) {
         case "explorer":
         case "sidebar":
-        case "search":
           return "explorer";
         case "ai":
         case "aichat":
@@ -928,22 +1281,52 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [],
   );
 
-  const openTUIAssistPanel = useCallback(
-    (panel: string) => {
-      const assistPanel = resolveAssistPanelId(panel);
-      if (!assistPanel) {
-        return;
-      }
+  const resolveDefaultTUIAssistPanel = useCallback((): AssistPanelId => {
+    const snapshotPanels = tuiLayoutSnapshot?.panels;
 
+    if (snapshotPanels?.git || panelsRef.current.git) {
+      return "git";
+    }
+    if (snapshotPanels?.aiChat || panelsRef.current.aiChat) {
+      return "aiChat";
+    }
+    if (snapshotPanels?.explorer || panelsRef.current.explorer) {
+      return "explorer";
+    }
+
+    return "explorer";
+  }, [tuiLayoutSnapshot]);
+
+  const openTUIAssistPanel = useCallback(
+    (payload: unknown) => {
+      const request = parsePanelOpenRequest(payload);
       const state = useTerminalStore.getState();
       if (!state.tuiModeActive) {
         return;
       }
 
-      state.setTUIAssist({ active: true, panel: assistPanel });
+      const assistPanel = request?.panel
+        ? resolveAssistPanelId(request.panel)
+        : resolveDefaultTUIAssistPanel();
+      if (!assistPanel) {
+        return;
+      }
+
+      state.setTUIAssist({
+        active: true,
+        panel: assistPanel,
+        anchor: normalizeTUIAssistAnchor(
+          request?.anchor ?? request?.position,
+          state.tuiAssist.anchor,
+        ),
+        ratio:
+          typeof request?.ratio === "number"
+            ? request.ratio
+            : state.tuiAssist.ratio,
+      });
       setTimeout(() => state.focusActiveTerminal(), 80);
     },
-    [resolveAssistPanelId],
+    [resolveAssistPanelId, resolveDefaultTUIAssistPanel],
   );
 
   const toggleTUIAssistPanel = useCallback((panel: AssistPanelId) => {
@@ -957,6 +1340,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     state.setTUIAssist({
       active: !isSamePanel,
       panel: isSamePanel ? null : panel,
+      anchor: state.tuiAssist.anchor,
     });
 
     if (!isSamePanel) {
@@ -966,7 +1350,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const closeTUIAssistPanel = useCallback(() => {
     const state = useTerminalStore.getState();
-    state.setTUIAssist({ active: false, panel: null });
+    state.setTUIAssist({
+      active: false,
+      panel: null,
+      anchor: state.tuiAssist.anchor,
+    });
+    setTimeout(() => state.focusActiveTerminal(), 80);
   }, []);
 
   const setTUIAssistRatio = useCallback((value: unknown) => {
@@ -992,7 +1381,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       return;
     }
 
-    state.setTUIAssist({ active: true, ratio });
+    state.setTUIAssist({ active: true, ratio, anchor: state.tuiAssist.anchor });
   }, []);
 
   useEffect(() => {
@@ -1064,6 +1453,28 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
+      if (shortcuts.openProject(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        window.dispatchEvent(new Event("arlecchino:open-project"));
+        return;
+      }
+
+      if (shortcuts.newProject(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        window.dispatchEvent(new Event("arlecchino:new-project"));
+        return;
+      }
+
       // Toggle Sidebar: Cmd+B
       if (shortcuts.toggleSidebar(e) && !e.shiftKey) {
         if (isTerminalShortcutContext) {
@@ -1084,10 +1495,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       // Switch Project: Cmd+` (next) / Cmd+Shift+` (prev)
       if (shortcuts.switchProjectNext(e) || shortcuts.switchProjectPrev(e)) {
         const localProjectSwitchBlocked =
-          dispatcher.isOpen ||
-          showSnippetsManager ||
-          activeModal !== null ||
-          isPerspectiveOpen;
+          dispatcher.isOpen || activeModal !== null || isPerspectiveOpen;
 
         if (
           isTerminalShortcutContext ||
@@ -1718,6 +2126,351 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [restorePreviewCheckpoint],
   );
 
+  const closeTerminalPanel = useCallback(() => {
+    const terminalState = useTerminalStore.getState();
+
+    if (!terminalState.tuiModeActive) {
+      setPanels((previous) => ({ ...previous, terminal: false }));
+      return;
+    }
+
+    const activePane = terminalState.panes.find(
+      (pane) => pane.id === terminalState.activePaneId,
+    );
+    const activeSessionId =
+      terminalState.tuiActiveSessionId ?? activePane?.activeTabId ?? null;
+
+    forceHideTerminalAfterTUIExitRef.current = true;
+
+    if (activePane && activeSessionId) {
+      void terminalState.closeTerminal(activePane.id, activeSessionId);
+      return;
+    }
+
+    if (terminalState.tuiActiveSessionId) {
+      terminalState.exitTUIMode(
+        terminalState.tuiActiveSessionId,
+        "panel-close",
+      );
+    }
+  }, []);
+
+  const applyPanelOpenState = useCallback(
+    (panelId: PanelId, request: PanelOpenRequest) => {
+      const currentConfig = panelConfigsRef.current[panelId];
+      const nextConfig = buildPanelConfigForOpen(
+        panelId,
+        request,
+        currentConfig,
+      );
+
+      setPanelConfigs((previous) => ({
+        ...previous,
+        [panelId]: nextConfig,
+      }));
+
+      setPanels((previous) => {
+        const nextPanels = { ...previous };
+        if (nextConfig.mode === "snapped") {
+          (Object.keys(panelConfigsRef.current) as PanelId[]).forEach((id) => {
+            if (id === panelId || !nextPanels[id]) {
+              return;
+            }
+
+            const otherConfig = panelConfigsRef.current[id];
+            if (
+              otherConfig.mode === "snapped" &&
+              otherConfig.position === nextConfig.position
+            ) {
+              nextPanels[id] = false;
+            }
+          });
+        }
+
+        nextPanels[panelId] = true;
+        return nextPanels;
+      });
+
+      return nextConfig;
+    },
+    [],
+  );
+
+  const executeAppSurfaceAction = useCallback(
+    (action: AppSurfaceAction) => {
+      switch (action.kind) {
+        case "dispatcher":
+          openCommandDispatcher();
+          return;
+        case "settings":
+          openSettings();
+          return;
+        case "run":
+          if (action.mode === "debug") {
+            openDebugDialog();
+            return;
+          }
+          openRunDialog();
+          return;
+        case "panel":
+          applyPanelOpenState(action.panelId, { panel: action.panelId });
+          if (action.panelId === "terminal") {
+            setTimeout(
+              () => useTerminalStore.getState().focusActiveTerminal(),
+              80,
+            );
+          }
+          return;
+      }
+    },
+    [
+      applyPanelOpenState,
+      openCommandDispatcher,
+      openDebugDialog,
+      openRunDialog,
+      openSettings,
+    ],
+  );
+
+  const handlePanelCloseEvent = useCallback(
+    (payload: unknown) => {
+      const request = parsePanelOpenRequest(payload);
+      if (!request) {
+        return;
+      }
+
+      const appAction = resolveAppSurfaceAction(request.panel);
+      if (appAction?.kind === "dispatcher") {
+        dispatcher.close();
+        return;
+      }
+      if (appAction?.kind === "settings") {
+        closeSettings();
+        return;
+      }
+      if (appAction?.kind === "run") {
+        closeExecutionDialog();
+        return;
+      }
+      if (appAction?.kind === "panel") {
+        if (
+          appAction.panelId === "terminal" &&
+          useTerminalStore.getState().tuiModeActive
+        ) {
+          closeTerminalPanel();
+          return;
+        }
+        setPanels((previous) => ({ ...previous, [appAction.panelId]: false }));
+        return;
+      }
+
+      const panelId = resolvePanelId(request.panel);
+      if (!panelId) {
+        return;
+      }
+
+      const terminalState = useTerminalStore.getState();
+      if (terminalState.tuiModeActive) {
+        if (panelId === "terminal") {
+          closeTerminalPanel();
+          return;
+        }
+
+        if (
+          terminalState.tuiAssist.active &&
+          terminalState.tuiAssist.panel === panelId
+        ) {
+          closeTUIAssistPanel();
+        }
+        return;
+      }
+
+      setPanels((previous) => ({ ...previous, [panelId]: false }));
+    },
+    [
+      closeExecutionDialog,
+      closeSettings,
+      closeTUIAssistPanel,
+      closeTerminalPanel,
+      dispatcher,
+    ],
+  );
+
+  const handlePanelMoveEvent = useCallback(
+    (payload: unknown) => {
+      const request = parsePanelOpenRequest(payload);
+      if (!request || (!request.position && !request.mode)) {
+        return;
+      }
+
+      const appAction = resolveAppSurfaceAction(request.panel);
+      if (appAction?.kind === "panel") {
+        applyPanelOpenState(appAction.panelId, {
+          ...request,
+          panel: appAction.panelId,
+        });
+        return;
+      }
+
+      const panelId = resolvePanelId(request.panel);
+      if (!panelId) {
+        return;
+      }
+
+      const terminalState = useTerminalStore.getState();
+      if (terminalState.tuiModeActive) {
+        if (panelId === "terminal") {
+          if (request.position || request.anchor) {
+            terminalState.setTUIAssist({
+              active: false,
+              panel: null,
+              anchor: normalizeTUIAssistAnchor(
+                request.anchor ?? request.position,
+                terminalState.tuiAssist.anchor,
+              ),
+            });
+          }
+          return;
+        }
+
+        const assistPanelId = resolveAssistPanelId(request.panel);
+        if (!assistPanelId) {
+          return;
+        }
+
+        terminalState.setTUIAssist({
+          active: true,
+          panel: assistPanelId,
+          anchor: normalizeTUIAssistAnchor(
+            request.anchor ?? request.position,
+            terminalState.tuiAssist.anchor,
+          ),
+          ratio:
+            typeof request.ratio === "number"
+              ? request.ratio
+              : terminalState.tuiAssist.ratio,
+        });
+        return;
+      }
+
+      applyPanelOpenState(panelId, request);
+    },
+    [applyPanelOpenState, resolveAssistPanelId],
+  );
+
+  const handlePanelOpenEvent = useCallback(
+    (payload: unknown) => {
+      const request = parsePanelOpenRequest(payload);
+      if (!request) {
+        return;
+      }
+
+      if (request.panel === "browser" || request.panel === "web") {
+        openCanonicalBrowserPreviewRef.current();
+        return;
+      }
+
+      const appAction = resolveAppSurfaceAction(request.panel);
+      if (appAction) {
+        if (appAction.kind === "panel") {
+          applyPanelOpenState(appAction.panelId, {
+            ...request,
+            panel: appAction.panelId,
+          });
+          if (appAction.panelId === "terminal") {
+            setTimeout(
+              () => useTerminalStore.getState().focusActiveTerminal(),
+              80,
+            );
+          }
+          return;
+        }
+        executeAppSurfaceAction(appAction);
+        return;
+      }
+
+      const panelId = resolvePanelId(request.panel);
+      if (!panelId) {
+        return;
+      }
+
+      const terminalState = useTerminalStore.getState();
+      if (panelId === "terminal" && request.command) {
+        applyPanelOpenState(panelId, {
+          ...request,
+          position: request.position ?? "bottom",
+          mode: request.mode ?? "snapped",
+        });
+        void submitTerminalCommand(
+          request.command,
+          request.terminalName ?? "Terminal",
+        );
+        return;
+      }
+
+      if (terminalState.tuiModeActive) {
+        if (panelId === "terminal") {
+          terminalState.setTUIAssist({
+            active: false,
+            panel: null,
+            anchor: terminalState.tuiAssist.anchor,
+          });
+          setPanelConfigs((previous) => ({
+            ...previous,
+            terminal: {
+              ...previous.terminal,
+              ...getTUIFloatingTerminalConfig({
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight,
+              }),
+            },
+          }));
+          setTimeout(() => terminalState.focusActiveTerminal(), 80);
+          return;
+        }
+
+        openTUIAssistPanel(request);
+        return;
+      }
+
+      applyPanelOpenState(panelId, request);
+
+      if (panelId === "terminal") {
+        setTimeout(() => useTerminalStore.getState().focusActiveTerminal(), 80);
+      }
+    },
+    [
+      applyPanelOpenState,
+      executeAppSurfaceAction,
+      openTUIAssistPanel,
+      submitTerminalCommand,
+    ],
+  );
+
+  const handleEditorOpenEvent = useCallback(
+    (payload: unknown) => {
+      const request = parseEditorOpenRequest(payload);
+      if (!request) {
+        return;
+      }
+      void openFileFromPath(request.path, request.line);
+    },
+    [openFileFromPath],
+  );
+
+  const handleEditorSplitEvent = useCallback((payload: unknown) => {
+    const direction = parseEditorSplitDirection(payload);
+    if (!direction) {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("arlecchino:editor-split", {
+        detail: { direction },
+      }),
+    );
+  }, []);
+
   const togglePanel = (panel: keyof PanelVisibility) => {
     setPanels((p) => ({ ...p, [panel]: !p[panel] }));
   };
@@ -1733,46 +2486,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   // Handle IDE events from Go backend (via dispatcher)
   useIDEEvents({
-    onOpenPanel: useCallback(
-      (panel: string) => {
-        if (panel === "browser" || panel === "web") {
-          openCanonicalBrowserPreviewRef.current();
-          return;
-        }
-
-        if (panel === "search") {
-          openCommandDispatcher();
-          return;
-        }
-
-        const panelMap: Record<string, PanelId> = {
-          git: "git",
-          ai: "aiChat",
-          terminal: "terminal",
-          explorer: "explorer",
-          problems: "problems",
-        };
-        const panelId = panelMap[panel];
-        if (!panelId) {
-          return;
-        }
-
-        const state = useTerminalStore.getState();
-        if (state.tuiModeActive) {
-          if (panelId === "terminal") {
-            state.setTUIAssist({ active: false, panel: null });
-            setTimeout(() => state.focusActiveTerminal(), 80);
-            return;
-          }
-
-          openTUIAssistPanel(panelId);
-          return;
-        }
-
-        setPanels((p) => ({ ...p, [panelId]: true }));
-      },
-      [openCommandDispatcher, openTUIAssistPanel],
-    ),
+    onOpenPanel: handlePanelOpenEvent,
+    onClosePanel: handlePanelCloseEvent,
+    onMovePanel: handlePanelMoveEvent,
     onToggle: useCallback(
       (element: string) => {
         const state = useTerminalStore.getState();
@@ -1792,6 +2508,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         }
 
         switch (element) {
+          case "search":
+            openCommandDispatcher();
+            break;
           case "sidebar":
             togglePanelAtPosition("left");
             break;
@@ -1803,7 +2522,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             break;
         }
       },
-      [closeTUIAssistPanel, togglePanelAtPosition, toggleTUIAssistPanel],
+      [
+        closeTUIAssistPanel,
+        openCommandDispatcher,
+        togglePanelAtPosition,
+        toggleTUIAssistPanel,
+      ],
     ),
     onWindowOpen: handlePreviewWindowOpenEvent,
     onWindowUpdate: handlePreviewWindowUpdateEvent,
@@ -1817,11 +2541,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     onAppearancePreviewApply: handleAppearancePreviewApplyEvent,
     onAppearancePreviewCancel: handleAppearancePreviewCancelEvent,
     onTUIEnter: useCallback(() => {
-      const activeSessionId = getActiveTerminalSessionId();
-      if (activeSessionId) {
-        enterTUIMode(activeSessionId, "ide-event");
-      }
-    }, [enterTUIMode, getActiveTerminalSessionId]),
+      void ensureActiveTerminalSessionId("Terminal").then((activeSessionId) => {
+        if (activeSessionId) {
+          enterTUIMode(activeSessionId, "ide-event");
+        }
+      });
+    }, [ensureActiveTerminalSessionId, enterTUIMode]),
     onTUIExit: useCallback(() => {
       const activeSessionId = getActiveTerminalSessionId();
       if (activeSessionId) {
@@ -1829,8 +2554,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
     }, [exitTUIMode, getActiveTerminalSessionId]),
     onTUIAssistOpenPanel: useCallback(
-      (panel: string) => {
-        openTUIAssistPanel(panel);
+      (payload: unknown) => {
+        openTUIAssistPanel(payload);
       },
       [openTUIAssistPanel],
     ),
@@ -1843,7 +2568,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      state.setTUIAssist({ active: true, swapped: !state.tuiAssist.swapped });
+      state.setTUIAssist({
+        active: true,
+        anchor: flipTUIAssistAnchor(state.tuiAssist.anchor),
+      });
     }, []),
     onTUIAssistRatio: useCallback(
       (ratio: number) => {
@@ -1851,6 +2579,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       },
       [setTUIAssistRatio],
     ),
+    onEditorOpen: handleEditorOpenEvent,
+    onEditorSplit: handleEditorSplitEvent,
     onViewZoom: useCallback((action: string) => {
       const terminalState = useTerminalStore.getState();
       const applyTerminalZoom = () => {
@@ -1913,9 +2643,19 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
     }, []),
     onAppSettings: openSettings,
+    onAppRun: useCallback(
+      (mode: unknown) => {
+        if (mode === "debug") {
+          openDebugDialog();
+          return;
+        }
+        openRunDialog();
+      },
+      [openDebugDialog, openRunDialog],
+    ),
     onGitStatus: useCallback(() => {
-      setPanels((p) => ({ ...p, git: true }));
-    }, []),
+      applyPanelOpenState("git", { panel: "git" });
+    }, [applyPanelOpenState]),
   });
 
   const isPanelVisibleAtPosition = (position: PanelPosition): boolean => {
@@ -1947,24 +2687,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const getSizeForPosition = (
     position: PanelPosition,
     currentSize: PanelSize,
-  ): PanelSize => {
-    if (position === "bottom" || position === "top") {
-      // For top/bottom, use a reasonable height (not the width from left/right)
-      // Default to 200px, or use existing height if already set
-      const height = currentSize.height > 0 ? currentSize.height : 200;
-      return {
-        width: 0,
-        height: Math.min(height, 400), // Cap at 400px max
-      };
-    } else {
-      // For left/right, use width
-      const width = currentSize.width > 0 ? currentSize.width : 260;
-      return {
-        width: Math.min(width, 500), // Cap at 500px max
-        height: 0,
-      };
-    }
-  };
+  ): PanelSize => normalizePanelSizeForPosition(position, currentSize);
 
   const handleDragEnd = (
     panelId: string,
@@ -2208,35 +2931,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       adjacentPanels: getAdjacentPanels(),
     };
 
-    const handleTerminalPanelClose = () => {
-      const terminalState = useTerminalStore.getState();
-
-      if (!terminalState.tuiModeActive) {
-        togglePanel("terminal");
-        return;
-      }
-
-      const activePane = terminalState.panes.find(
-        (pane) => pane.id === terminalState.activePaneId,
-      );
-      const activeSessionId =
-        terminalState.tuiActiveSessionId ?? activePane?.activeTabId ?? null;
-
-      forceHideTerminalAfterTUIExitRef.current = true;
-
-      if (activePane && activeSessionId) {
-        void terminalState.closeTerminal(activePane.id, activeSessionId);
-        return;
-      }
-
-      if (terminalState.tuiActiveSessionId) {
-        terminalState.exitTUIMode(
-          terminalState.tuiActiveSessionId,
-          "panel-close",
-        );
-      }
-    };
-
     switch (panelId) {
       case "explorer":
         return (
@@ -2270,10 +2964,32 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             minSize={150}
             maxSize={800}
             {...panelProps}
-            onClose={handleTerminalPanelClose}
+            onClose={closeTerminalPanel}
             useViewportPositioning={tuiModeActive}
             zIndex={tuiModeActive ? zIndex.tooltip + 10 : undefined}
             onFullscreen={() => {
+              if (tuiModeActive) {
+                terminalPreFullscreenRef.current = null;
+                const terminalState = useTerminalStore.getState();
+                setTUIAssist({
+                  active: false,
+                  panel: null,
+                  anchor: terminalState.tuiAssist.anchor,
+                });
+                setPanelConfigs((previous) => ({
+                  ...previous,
+                  terminal: {
+                    ...previous.terminal,
+                    ...getTUIFloatingTerminalConfig({
+                      viewportWidth: window.innerWidth,
+                      viewportHeight: window.innerHeight,
+                    }),
+                  },
+                }));
+                setTimeout(() => terminalState.focusActiveTerminal(), 80);
+                return;
+              }
+
               const cur = panelConfigs.terminal;
               const isFullscreen =
                 cur.mode === "floating" &&
@@ -2318,14 +3034,95 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               }
             }}
           >
-            <TerminalPanelContent
-              onOpenFileRef={(path, line) => {
-                void openFileFromPath(path, line);
-              }}
-              onOpenPreviewUrl={(url, sessionId) => {
-                openPreviewFromTerminal({ url, sessionId, forceOpen: true });
-              }}
-            />
+            {tuiModeActive ? (
+              <div style={tuiWorkspaceInnerStyle}>
+                <div style={tuiTerminalPaneStyle}>
+                  <TerminalPanelContent
+                    onOpenFileRef={(path, line) => {
+                      void openFileFromPath(path, line);
+                    }}
+                    onOpenPreviewUrl={(url, sessionId) => {
+                      openPreviewFromTerminal({
+                        url,
+                        sessionId,
+                        forceOpen: true,
+                      });
+                    }}
+                  />
+                </div>
+                {assistPanelActive && tuiAssist.panel ? (
+                  <div style={tuiAssistPaneStyle}>
+                    <div style={tuiAssistHeaderStyle}>
+                      <span>
+                        {assistPanelTitle[tuiAssist.panel as AssistPanelId]}
+                      </span>
+                      <div style={tuiAssistControlsStyle}>
+                        {(
+                          [
+                            "left",
+                            "right",
+                            "top",
+                            "bottom",
+                          ] as TUIAssistAnchor[]
+                        ).map((anchor) => (
+                          <button
+                            key={anchor}
+                            style={{
+                              ...tuiAssistButtonStyle,
+                              background:
+                                tuiAssist.anchor === anchor
+                                  ? isDark
+                                    ? "rgba(255,255,255,0.16)"
+                                    : "rgba(0,0,0,0.12)"
+                                  : tuiAssistButtonStyle.background,
+                            }}
+                            onClick={() =>
+                              setTUIAssist({
+                                active: true,
+                                anchor,
+                                panel: tuiAssist.panel,
+                              })
+                            }
+                          >
+                            {anchor.slice(0, 1).toUpperCase()}
+                          </button>
+                        ))}
+                        <button
+                          style={tuiAssistButtonStyle}
+                          onClick={() =>
+                            setTUIAssist({
+                              active: true,
+                              anchor: flipTUIAssistAnchor(tuiAssist.anchor),
+                              panel: tuiAssist.panel,
+                            })
+                          }
+                        >
+                          Flip
+                        </button>
+                        <button
+                          style={tuiAssistButtonStyle}
+                          onClick={closeTUIAssistPanel}
+                        >
+                          Close
+                        </button>
+                      </div>
+                    </div>
+                    <div style={tuiAssistBodyStyle}>
+                      {renderAssistPanelContent()}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <TerminalPanelContent
+                onOpenFileRef={(path, line) => {
+                  void openFileFromPath(path, line);
+                }}
+                onOpenPreviewUrl={(url, sessionId) => {
+                  openPreviewFromTerminal({ url, sessionId, forceOpen: true });
+                }}
+              />
+            )}
           </FloatingPanel>
         );
       case "aiChat":
@@ -2386,6 +3183,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const assistPanelActive =
     tuiModeActive && tuiAssist.active && !!tuiAssist.panel;
   const clampedAssistRatio = Math.max(0.2, Math.min(0.8, tuiAssist.ratio));
+  const tuiAssistFlexDirection = getTUIAssistFlexDirection(tuiAssist.anchor);
   const assistPanelTitle: Record<AssistPanelId, string> = {
     explorer: "Explorer",
     aiChat: "AI Assistant",
@@ -2403,7 +3201,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           <FileExplorer
             projectPath={activeProjectPath}
             onFileOpen={handleFileOpen}
-            isHorizontal={false}
+            isHorizontal={
+              tuiAssist.anchor === "top" || tuiAssist.anchor === "bottom"
+            }
             onPerspectiveOpen={handlePerspectiveOpen}
             onPerspectiveClose={handlePerspectiveClose}
           />
@@ -2460,11 +3260,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     width: "100%",
     height: "100%",
     display: "flex",
-    flexDirection: assistPanelActive
-      ? tuiAssist.swapped
-        ? "row-reverse"
-        : "row"
-      : "row",
+    flexDirection: assistPanelActive ? tuiAssistFlexDirection : "row",
     gap: assistPanelActive ? 1 : 0,
     backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.08)",
   };
@@ -2486,13 +3282,25 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     flexDirection: "column",
     backgroundColor: isDark ? "var(--bg-secondary)" : colors.light.bgSecondary,
     borderLeft:
-      assistPanelActive && !tuiAssist.swapped
+      assistPanelActive && tuiAssist.anchor === "right"
         ? isDark
           ? "1px solid rgba(255,255,255,0.08)"
           : "1px solid rgba(0,0,0,0.12)"
         : "none",
     borderRight:
-      assistPanelActive && tuiAssist.swapped
+      assistPanelActive && tuiAssist.anchor === "left"
+        ? isDark
+          ? "1px solid rgba(255,255,255,0.08)"
+          : "1px solid rgba(0,0,0,0.12)"
+        : "none",
+    borderTop:
+      assistPanelActive && tuiAssist.anchor === "bottom"
+        ? isDark
+          ? "1px solid rgba(255,255,255,0.08)"
+          : "1px solid rgba(0,0,0,0.12)"
+        : "none",
+    borderBottom:
+      assistPanelActive && tuiAssist.anchor === "top"
         ? isDark
           ? "1px solid rgba(255,255,255,0.08)"
           : "1px solid rgba(0,0,0,0.12)"
@@ -2594,12 +3402,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           panels={{
             explorer: tuiModeActive
               ? tuiAssist.active && tuiAssist.panel === "explorer"
-              : isPanelVisibleAtPosition("left"),
-            terminal: tuiModeActive ? true : isPanelVisibleAtPosition("bottom"),
+              : panels.explorer,
+            terminal: tuiModeActive ? true : panels.terminal,
             aiChat: tuiModeActive
               ? tuiAssist.active && tuiAssist.panel === "aiChat"
-              : isPanelVisibleAtPosition("right"),
-            git: isPanelVisibleAtPosition("left") && panels.git,
+              : panels.aiChat,
+            git: panels.git,
           }}
           projectPath={activeProjectPath}
           previewEnabled={previewButtonState.enabled}
@@ -2713,15 +3521,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         closeDispatcher={dispatcher.close}
         onSuccess={handlePluginCommandSuccess}
         onError={handlePluginCommandError}
-      />
-
-      <SnippetsManager
-        isOpen={showSnippetsManager}
-        onClose={() => setShowSnippetsManager(false)}
-        onSave={(snippet) => {
-          console.log("Snippet saved:", snippet);
-          showNotification("success", `Snippet "${snippet.name}" saved`);
-        }}
       />
 
       <SettingsModal isOpen={isSettingsOpen} onClose={closeSettings} />

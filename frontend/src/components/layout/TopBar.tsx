@@ -222,7 +222,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             <DropdownMenu.Content
               align="end"
               sideOffset={8}
-              className="min-w-[200px] bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-2xl overflow-hidden z-[100] animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
+              className="min-w-[200px] overflow-hidden rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] shadow-2xl z-[100] animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
             >
               <DropdownMenu.Label className="px-3 py-2 text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wider">
                 Panels

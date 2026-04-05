@@ -4,7 +4,6 @@ export const PROJECT_SWITCH_BLOCKERS = {
   filePerspective: "file-perspective",
   pluginModal: "plugin-modal",
   quickLook: "quick-look",
-  snippets: "snippets-manager",
 } as const;
 
 export const blockProjectSwitch = (key: string) => {

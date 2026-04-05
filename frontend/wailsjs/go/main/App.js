@@ -46,6 +46,10 @@ export function CreateController(arg1, arg2) {
   return window['go']['main']['App']['CreateController'](arg1, arg2);
 }
 
+export function CreateDirectory(arg1) {
+  return window['go']['main']['App']['CreateDirectory'](arg1);
+}
+
 export function CreateEnum(arg1, arg2) {
   return window['go']['main']['App']['CreateEnum'](arg1, arg2);
 }
@@ -170,6 +174,10 @@ export function GetDependencyGraph(arg1, arg2) {
   return window['go']['main']['App']['GetDependencyGraph'](arg1, arg2);
 }
 
+export function GetDependencySyncPlan(arg1) {
+  return window['go']['main']['App']['GetDependencySyncPlan'](arg1);
+}
+
 export function GetDevToolsStatus() {
   return window['go']['main']['App']['GetDevToolsStatus']();
 }
@@ -256,6 +264,10 @@ export function GetLanguageForFile(arg1) {
 
 export function GetLaravelVersion(arg1) {
   return window['go']['main']['App']['GetLaravelVersion'](arg1);
+}
+
+export function GetLastAutocompleteTrace() {
+  return window['go']['main']['App']['GetLastAutocompleteTrace']();
 }
 
 export function GetMiddlewareList() {
@@ -580,6 +592,10 @@ export function StorageLink() {
 
 export function SuggestCommand(arg1) {
   return window['go']['main']['App']['SuggestCommand'](arg1);
+}
+
+export function SyncProjectDependencies(arg1) {
+  return window['go']['main']['App']['SyncProjectDependencies'](arg1);
 }
 
 export function Tinker() {

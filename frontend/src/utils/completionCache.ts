@@ -10,15 +10,40 @@ export interface CachedCompletion {
   semanticKey: string;
 }
 
+const DEFAULT_COMPLETION_CACHE_CAPACITY = 24;
+
 export class CompletionCache {
-  private cache: CachedCompletion | null = null;
+  private cache = new Map<string, CachedCompletion>();
 
   constructor(
     private readonly ttlMs: number = DEFAULT_COMPLETION_CACHE_TTL_MS,
+    private readonly capacity: number = DEFAULT_COMPLETION_CACHE_CAPACITY,
   ) {}
 
+  private entryKey(filePath: string, semanticKey: string): string {
+    return `${filePath}::${semanticKey}`;
+  }
+
+  private prune(now: number): void {
+    for (const [key, entry] of this.cache) {
+      if (now - entry.timestamp > this.ttlMs) {
+        this.cache.delete(key);
+      }
+    }
+
+    while (this.cache.size > this.capacity) {
+      const oldestKey = this.cache.keys().next().value;
+      if (!oldestKey) break;
+      this.cache.delete(oldestKey);
+    }
+  }
+
   set(data: CachedCompletion): void {
-    this.cache = data;
+    const now = Date.now();
+    const key = this.entryKey(data.filePath, data.semanticKey);
+    this.cache.delete(key);
+    this.cache.set(key, { ...data, timestamp: now });
+    this.prune(now);
   }
 
   get(
@@ -26,37 +51,39 @@ export class CompletionCache {
     semanticKey: string,
     prefix: string,
   ): Completion[] | null {
-    if (!this.cache) return null;
-
     const now = Date.now();
-    const isExpired = now - this.cache.timestamp > this.ttlMs;
-    const isSameLocation =
-      this.cache.filePath === filePath &&
-      this.cache.semanticKey === semanticKey;
+    this.prune(now);
 
-    if (isExpired || !isSameLocation) {
-      this.cache = null;
+    const key = this.entryKey(filePath, semanticKey);
+    const entry = this.cache.get(key);
+    if (!entry) {
       return null;
     }
 
-    const cachedPrefix = this.cache.prefix.toLowerCase();
+    const cachedPrefix = entry.prefix.toLowerCase();
     const newPrefix = prefix.toLowerCase();
 
-    if (!newPrefix.startsWith(cachedPrefix) || this.cache.items.length === 0) {
+    if (!newPrefix.startsWith(cachedPrefix) || entry.items.length === 0) {
       return null;
     }
 
-    return this.cache.items.filter((item) => {
+    this.cache.delete(key);
+    this.cache.set(key, entry);
+
+    return entry.items.filter((item) => {
       const filterText = (item.label || "").toLowerCase();
       return filterText.startsWith(newPrefix);
     });
   }
 
   invalidate(): void {
-    this.cache = null;
+    this.cache.clear();
   }
 }
 
-export function createCompletionCache(ttlMs?: number): CompletionCache {
-  return new CompletionCache(ttlMs);
+export function createCompletionCache(
+  ttlMs?: number,
+  capacity?: number,
+): CompletionCache {
+  return new CompletionCache(ttlMs, capacity);
 }

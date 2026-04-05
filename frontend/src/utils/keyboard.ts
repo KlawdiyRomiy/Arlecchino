@@ -117,6 +117,9 @@ export function isShortcut(e: KeyboardEvent, shortcut: string): boolean {
   return isKey(e, key);
 }
 
+const isMacPlatform = (): boolean =>
+  typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+
 /**
  * Shorthand helpers for common shortcuts
  */
@@ -124,6 +127,10 @@ export const shortcuts = {
   // Navigation & UI
   unifiedSearch: (e: KeyboardEvent) =>
     isShortcut(e, "cmd+f") || isShortcut(e, "ctrl+f"),
+  openProject: (e: KeyboardEvent) =>
+    isShortcut(e, "cmd+o") || isShortcut(e, "ctrl+o"),
+  newProject: (e: KeyboardEvent) =>
+    isShortcut(e, "cmd+n") || isShortcut(e, "ctrl+n"),
   quickOpen: (e: KeyboardEvent) =>
     isShortcut(e, "cmd+p") || isShortcut(e, "ctrl+p"),
   toggleSidebar: (e: KeyboardEvent) =>
@@ -208,11 +215,13 @@ export const shortcuts = {
     isShortcut(e, "ctrl+shift+g") ||
     (isKey(e, "f3") && e.shiftKey),
   terminalNewTab: (e: KeyboardEvent) =>
-    isShortcut(e, "cmd+t") || isShortcut(e, "ctrl+t"),
+    isMacPlatform() ? isShortcut(e, "cmd+t") : isShortcut(e, "ctrl+t"),
   terminalCloseTab: (e: KeyboardEvent) =>
     isShortcut(e, "cmd+w") || isShortcut(e, "ctrl+w"),
   terminalReopenTab: (e: KeyboardEvent) =>
-    isShortcut(e, "cmd+shift+t") || isShortcut(e, "ctrl+shift+t"),
+    isMacPlatform()
+      ? isShortcut(e, "cmd+shift+t")
+      : isShortcut(e, "ctrl+shift+t"),
   terminalClearLine: (e: KeyboardEvent) =>
     isShortcut(e, "cmd+backspace") ||
     isShortcut(e, "cmd+delete") ||

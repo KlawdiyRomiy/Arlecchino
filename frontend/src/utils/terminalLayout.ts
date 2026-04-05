@@ -1,3 +1,5 @@
+export type TUIAssistAnchor = "left" | "right" | "top" | "bottom";
+
 interface FloatingViewportInput {
   viewportWidth: number;
   viewportHeight: number;
@@ -21,6 +23,51 @@ interface FloatingTerminalConfig {
     height: number;
   };
 }
+
+export const normalizeTUIAssistAnchor = (
+  value: unknown,
+  fallback: TUIAssistAnchor = "right",
+): TUIAssistAnchor => {
+  switch (value) {
+    case "left":
+    case "right":
+    case "top":
+    case "bottom":
+      return value;
+    default:
+      return fallback;
+  }
+};
+
+export const flipTUIAssistAnchor = (
+  anchor: TUIAssistAnchor,
+): TUIAssistAnchor => {
+  switch (anchor) {
+    case "left":
+      return "right";
+    case "right":
+      return "left";
+    case "top":
+      return "bottom";
+    case "bottom":
+      return "top";
+  }
+};
+
+export const getTUIAssistFlexDirection = (
+  anchor: TUIAssistAnchor,
+): "row" | "row-reverse" | "column" | "column-reverse" => {
+  switch (anchor) {
+    case "left":
+      return "row-reverse";
+    case "right":
+      return "row";
+    case "top":
+      return "column-reverse";
+    case "bottom":
+      return "column";
+  }
+};
 
 export const getTUIFloatingTerminalConfig = ({
   viewportWidth,

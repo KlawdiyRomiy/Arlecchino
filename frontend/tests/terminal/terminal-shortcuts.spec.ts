@@ -85,3 +85,59 @@ test("terminal shortcuts recognize Ctrl+F and terminal search input bypasses glo
   expect(result.ctrlFindRecognized).toBe(true);
   expect(result.terminalSearchBypassesGlobal).toBe(true);
 });
+
+test("terminal tab shortcuts on macOS require cmd modifiers", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    Object.defineProperty(window.navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
+
+    const { shortcuts } = await import("/src/utils/keyboard.ts");
+
+    const cmdNewTabEvent = new KeyboardEvent("keydown", {
+      key: "t",
+      code: "KeyT",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    const ctrlNewTabEvent = new KeyboardEvent("keydown", {
+      key: "t",
+      code: "KeyT",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    const cmdReopenEvent = new KeyboardEvent("keydown", {
+      key: "T",
+      code: "KeyT",
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    const ctrlReopenEvent = new KeyboardEvent("keydown", {
+      key: "T",
+      code: "KeyT",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    return {
+      cmdNewTab: shortcuts.terminalNewTab(cmdNewTabEvent),
+      ctrlNewTab: shortcuts.terminalNewTab(ctrlNewTabEvent),
+      cmdReopen: shortcuts.terminalReopenTab(cmdReopenEvent),
+      ctrlReopen: shortcuts.terminalReopenTab(ctrlReopenEvent),
+    };
+  });
+
+  expect(result.cmdNewTab).toBe(true);
+  expect(result.ctrlNewTab).toBe(false);
+  expect(result.cmdReopen).toBe(true);
+  expect(result.ctrlReopen).toBe(false);
+});

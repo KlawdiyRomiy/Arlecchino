@@ -84,6 +84,8 @@ func TestToolService_ToolDefinitionsAlwaysIncludeBridgeTools(t *testing.T) {
 		"ide_backend.lsp_status",
 		"ide_backend.terminal_create",
 		"ide_backend.git_status",
+		"agent_memory.save",
+		"agent_memory.context",
 		"ide_ui.emit_event",
 		"ide_ui.preview_open",
 		"ide_ui.preview_navigate",
@@ -282,6 +284,24 @@ func TestToolService_PreviewToolsEmitCanonicalWindowEvents(t *testing.T) {
 				"surface": "browser",
 				"title":   "Preview",
 				"payload": map[string]any{"url": "http://localhost:3000"},
+			},
+		},
+		{
+			name:     "open file surface",
+			toolName: "ide_ui.preview_open",
+			args: map[string]any{
+				"id":      "preview-file",
+				"surface": "file",
+				"path":    "README.md",
+				"line":    12,
+				"title":   "README preview",
+			},
+			wantEvent: "ide:window:open",
+			wantPayload: map[string]any{
+				"id":      "preview-file",
+				"surface": "file",
+				"title":   "README preview",
+				"payload": map[string]any{"path": "README.md", "line": 12},
 			},
 		},
 		{
@@ -556,6 +576,144 @@ func TestToolService_HotSwitchCreatesSnapshotAndReapplyWorks(t *testing.T) {
 	eventCalls := bridge.methodCalls("ui.emit_event")
 	if len(eventCalls) < 4 {
 		t.Fatalf("ui.emit_event calls = %d, want >= 4 after hot_switch + snapshot apply", len(eventCalls))
+	}
+}
+
+func TestToolService_LayoutSnapshotsPersistAcrossServiceRecreation(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "layout-persist")
+
+	bridge := newFakeBridge()
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "layout-persist",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_ui.hot_switch", map[string]any{
+		"actions": []map[string]any{{
+			"event":   "ide:panel:open",
+			"payload": "git",
+		}},
+		"label": "persisted-layout",
+	})
+	if err != nil {
+		t.Fatalf("hot_switch error = %v", err)
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("hot_switch result type = %T, want map[string]any", result)
+	}
+	snapshot, ok := resultMap["snapshot"].(LayoutSnapshot)
+	if !ok {
+		t.Fatalf("hot_switch snapshot type = %T, want LayoutSnapshot", resultMap["snapshot"])
+	}
+
+	reloaded, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions(reloaded) error = %v", err)
+	}
+
+	if _, err := reloaded.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "layout-persist",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission(reloaded) error = %v", err)
+	}
+
+	listResult, err := reloaded.CallTool("ide_ui.list_layout_snapshots", map[string]any{"limit": 10})
+	if err != nil {
+		t.Fatalf("list_layout_snapshots error = %v", err)
+	}
+	listMap, ok := listResult.(map[string]any)
+	if !ok {
+		t.Fatalf("list_layout_snapshots result type = %T, want map[string]any", listResult)
+	}
+	items, ok := listMap["items"].([]LayoutSnapshot)
+	if !ok {
+		t.Fatalf("list_layout_snapshots items type = %T, want []LayoutSnapshot", listMap["items"])
+	}
+	if len(items) == 0 || items[0].ID != snapshot.ID {
+		t.Fatalf("list_layout_snapshots first item = %+v, want %q", items, snapshot.ID)
+	}
+
+	if _, err := reloaded.CallTool("ide_ui.apply_layout_snapshot", map[string]any{"id": snapshot.ID}); err != nil {
+		t.Fatalf("apply_layout_snapshot(reloaded) error = %v", err)
+	}
+}
+
+func TestToolService_TerminalCreateAcceptsCommand(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "terminal-command")
+
+	bridge := newFakeBridge()
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "terminal-command",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_backend.terminal_create", map[string]any{
+		"id":      "term-1",
+		"name":    "Terminal",
+		"command": "npm test",
+	}); err != nil {
+		t.Fatalf("terminal_create error = %v", err)
+	}
+
+	calls := bridge.methodCalls("terminal.create")
+	if len(calls) != 1 {
+		t.Fatalf("terminal.create calls = %d, want 1", len(calls))
+	}
+	if calls[0].Params["command"] != "npm test" {
+		t.Fatalf("terminal.create command = %#v, want %q", calls[0].Params["command"], "npm test")
+	}
+}
+
+func TestDefaultLayoutProfiles_TerminalFocusOpensTerminalBeforeTUIAssist(t *testing.T) {
+	profiles := defaultLayoutProfiles()
+	var terminalFocus *LayoutProfile
+	for index := range profiles {
+		if profiles[index].Name == "terminal_focus" {
+			terminalFocus = &profiles[index]
+			break
+		}
+	}
+	if terminalFocus == nil {
+		t.Fatalf("terminal_focus profile not found")
+	}
+	if len(terminalFocus.Actions) != 3 {
+		t.Fatalf("terminal_focus actions len = %d, want 3", len(terminalFocus.Actions))
+	}
+	if terminalFocus.Actions[0].Event != "ide:panel:open" {
+		t.Fatalf("first action = %q, want ide:panel:open", terminalFocus.Actions[0].Event)
+	}
+	payload, ok := terminalFocus.Actions[0].Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("first action payload type = %T, want map[string]any", terminalFocus.Actions[0].Payload)
+	}
+	if payload["panel"] != "terminal" || payload["position"] != "bottom" || payload["mode"] != "snapped" {
+		t.Fatalf("terminal_focus panel payload = %#v, want terminal bottom snapped", payload)
+	}
+	assistPayload, ok := terminalFocus.Actions[2].Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("assist payload type = %T, want map[string]any", terminalFocus.Actions[2].Payload)
+	}
+	if assistPayload["panel"] != "explorer" {
+		t.Fatalf("assist payload = %#v, want explorer panel", assistPayload)
 	}
 }
 

@@ -50,11 +50,14 @@ const statusLabels: Record<string, string> = {
   renamed: "R",
 };
 
-export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) => {
+export const GitPanel: React.FC<GitPanelProps> = ({
+  projectPath,
+  onFileOpen,
+}) => {
   const { isDark } = useTheme();
   const theme = getThemeColors(isDark);
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
-  
+
   // Scale helper for font sizes
   const scaled = (size: number) => Math.round(size * uiScale);
 
@@ -75,47 +78,62 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
   const [showDiff, setShowDiff] = useState(false);
 
   const allChangedFiles = [...stagedFiles, ...unstagedFiles];
-  const selectedFileIndex = selectedFile ? allChangedFiles.findIndex(f => f.path === selectedFile.path) : -1;
+  const selectedFileIndex = selectedFile
+    ? allChangedFiles.findIndex((f) => f.path === selectedFile.path)
+    : -1;
 
-  const parseGitStatus = useCallback((output: string): { staged: GitFile[]; unstaged: GitFile[] } => {
-    const staged: GitFile[] = [];
-    const unstaged: GitFile[] = [];
+  const parseGitStatus = useCallback(
+    (output: string): { staged: GitFile[]; unstaged: GitFile[] } => {
+      const staged: GitFile[] = [];
+      const unstaged: GitFile[] = [];
 
-    output.split("\n").forEach((line) => {
-      if (!line.trim() || line.length < 3) return;
+      output.split("\n").forEach((line) => {
+        if (!line.trim() || line.length < 3) return;
 
-      const indexStatus = line[0];
-      const workTreeStatus = line[1];
-      let path = line.slice(3).trim();
+        const indexStatus = line[0];
+        const workTreeStatus = line[1];
+        let path = line.slice(3).trim();
 
-      if (path.includes(" -> ")) {
-        path = path.split(" -> ")[1];
-      }
-
-      if (!path) return;
-
-      const getStatus = (code: string): GitFile["status"] => {
-        switch (code) {
-          case "M": return "modified";
-          case "A": return "added";
-          case "D": return "deleted";
-          case "R": return "renamed";
-          case "?": return "untracked";
-          default: return "modified";
+        if (path.includes(" -> ")) {
+          path = path.split(" -> ")[1];
         }
-      };
 
-      if (indexStatus !== " " && indexStatus !== "?") {
-        staged.push({ path, status: getStatus(indexStatus), staged: true });
-      }
+        if (!path) return;
 
-      if (workTreeStatus !== " ") {
-        unstaged.push({ path, status: getStatus(workTreeStatus === "?" ? "?" : workTreeStatus), staged: false });
-      }
-    });
+        const getStatus = (code: string): GitFile["status"] => {
+          switch (code) {
+            case "M":
+              return "modified";
+            case "A":
+              return "added";
+            case "D":
+              return "deleted";
+            case "R":
+              return "renamed";
+            case "?":
+              return "untracked";
+            default:
+              return "modified";
+          }
+        };
 
-    return { staged, unstaged };
-  }, []);
+        if (indexStatus !== " " && indexStatus !== "?") {
+          staged.push({ path, status: getStatus(indexStatus), staged: true });
+        }
+
+        if (workTreeStatus !== " ") {
+          unstaged.push({
+            path,
+            status: getStatus(workTreeStatus === "?" ? "?" : workTreeStatus),
+            staged: false,
+          });
+        }
+      });
+
+      return { staged, unstaged };
+    },
+    [],
+  );
 
   const refresh = useCallback(async () => {
     if (!projectPath) {
@@ -189,7 +207,8 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
 
   const navigateDiff = (direction: "prev" | "next") => {
     if (selectedFileIndex === -1) return;
-    const newIndex = direction === "prev" ? selectedFileIndex - 1 : selectedFileIndex + 1;
+    const newIndex =
+      direction === "prev" ? selectedFileIndex - 1 : selectedFileIndex + 1;
     if (newIndex >= 0 && newIndex < allChangedFiles.length) {
       viewFileDiff(allChangedFiles[newIndex]);
     }
@@ -243,13 +262,20 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
         borderRadius: radius.sm,
         cursor: "pointer",
         transition: transitions.fast,
-        background: selectedFile?.path === file.path ? (isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)") : "transparent",
+        background:
+          selectedFile?.path === file.path
+            ? isDark
+              ? "rgba(255,255,255,0.08)"
+              : "rgba(0,0,0,0.05)"
+            : "transparent",
       }}
       onMouseEnter={(e) => {
-        if (selectedFile?.path !== file.path) e.currentTarget.style.background = theme.bgSecondary;
+        if (selectedFile?.path !== file.path)
+          e.currentTarget.style.background = theme.bgSecondary;
       }}
       onMouseLeave={(e) => {
-        if (selectedFile?.path !== file.path) e.currentTarget.style.background = "transparent";
+        if (selectedFile?.path !== file.path)
+          e.currentTarget.style.background = "transparent";
       }}
       onDoubleClick={() => onFileOpen?.(file.path)}
     >
@@ -265,15 +291,38 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
         {statusLabels[file.status]}
       </span>
       <FileText size={14} style={{ color: theme.textMuted, flexShrink: 0 }} />
-      <span style={{ color: theme.text, fontSize: 12, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <span
+        style={{
+          color: theme.text,
+          fontSize: 12,
+          flex: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
         {file.path.split("/").pop() || file.path}
       </span>
-      <span style={{ color: theme.textMuted, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 100 }}>
-        {file.path.includes("/") ? file.path.substring(0, file.path.lastIndexOf("/")) : ""}
+      <span
+        style={{
+          color: theme.textMuted,
+          fontSize: 10,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          maxWidth: 100,
+        }}
+      >
+        {file.path.includes("/")
+          ? file.path.substring(0, file.path.lastIndexOf("/"))
+          : ""}
       </span>
       <div style={{ display: "flex", gap: 2 }}>
         <button
-          onClick={(e) => { e.stopPropagation(); viewFileDiff(file); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            viewFileDiff(file);
+          }}
           style={{
             background: "transparent",
             border: "none",
@@ -288,7 +337,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
         </button>
         {file.staged ? (
           <button
-            onClick={(e) => { e.stopPropagation(); unstageFile(file.path); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              unstageFile(file.path);
+            }}
             style={{
               background: "transparent",
               border: "none",
@@ -304,7 +356,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
         ) : (
           <>
             <button
-              onClick={(e) => { e.stopPropagation(); stageFile(file.path); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                stageFile(file.path);
+              }}
               style={{
                 background: "transparent",
                 border: "none",
@@ -318,7 +373,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
               <Plus size={14} style={{ color: theme.textMuted }} />
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); discardFile(file.path); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                discardFile(file.path);
+              }}
               style={{
                 background: "transparent",
                 border: "none",
@@ -343,27 +401,49 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
         diff={diffContent}
         fileName={selectedFile?.path || "Commit diff"}
         onClose={() => setShowDiff(false)}
-        onPrevFile={selectedFile && selectedFileIndex > 0 ? () => navigateDiff("prev") : undefined}
-        onNextFile={selectedFile && selectedFileIndex < allChangedFiles.length - 1 ? () => navigateDiff("next") : undefined}
+        onPrevFile={
+          selectedFile && selectedFileIndex > 0
+            ? () => navigateDiff("prev")
+            : undefined
+        }
+        onNextFile={
+          selectedFile && selectedFileIndex < allChangedFiles.length - 1
+            ? () => navigateDiff("next")
+            : undefined
+        }
         hasPrev={selectedFile !== null && selectedFileIndex > 0}
-        hasNext={selectedFile !== null && selectedFileIndex < allChangedFiles.length - 1}
+        hasNext={
+          selectedFile !== null &&
+          selectedFileIndex < allChangedFiles.length - 1
+        }
       />
     );
   }
 
   if (error) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", height: "100%", color: theme.text }}>
-        <div style={{
+      <div
+        style={{
           display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "8px 12px",
-          borderBottom: `1px solid ${theme.border}`,
-        }}>
+          flexDirection: "column",
+          height: "100%",
+          color: theme.text,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "10px 12px",
+            borderBottom: `1px solid ${theme.border}`,
+          }}
+        >
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <GitBranch size={14} style={{ color: theme.textMuted }} />
-            <span style={{ fontSize: 12, color: theme.textMuted }}>{error}</span>
+            <span style={{ fontSize: 12, color: theme.textMuted }}>
+              {error}
+            </span>
           </div>
           <button
             onClick={refresh}
@@ -377,16 +457,43 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
               display: "flex",
             }}
           >
-            <RefreshCw size={14} style={{ color: theme.textMuted, animation: isLoading ? "spin 1s linear infinite" : "none" }} />
+            <RefreshCw
+              size={14}
+              style={{
+                color: theme.textMuted,
+                animation: isLoading ? "spin 1s linear infinite" : "none",
+              }}
+            />
           </button>
         </div>
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+            textAlign: "center",
+          }}
+        >
           <div style={{ color: theme.textMuted, fontSize: 12 }}>
             {error === "Not a git repository" ? (
               <>
                 <div style={{ fontSize: 32, marginBottom: 12 }}>📁</div>
                 <div>This folder is not a git repository</div>
-                <div style={{ marginTop: 8, opacity: 0.7 }}>Run <code style={{ background: theme.bgSecondary, padding: "2px 6px", borderRadius: 4 }}>git init</code> to initialize</div>
+                <div style={{ marginTop: 8, opacity: 0.7 }}>
+                  Run{" "}
+                  <code
+                    style={{
+                      background: theme.bgSecondary,
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                    }}
+                  >
+                    git init
+                  </code>{" "}
+                  to initialize
+                </div>
               </>
             ) : (
               <div>{error}</div>
@@ -404,15 +511,32 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", color: theme.text, fontSize: scaled(14) }}>
-      <div style={{
+    <div
+      style={{
         display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "8px 12px",
-        borderBottom: `1px solid ${theme.border}`,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
+        flexDirection: "column",
+        height: "100%",
+        color: theme.text,
+        fontSize: scaled(14),
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "8px 12px",
+          borderBottom: `1px solid ${theme.border}`,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            position: "relative",
+          }}
+        >
           <GitBranch size={14} style={{ color: "#22C55E" }} />
           <button
             onClick={() => setShowBranchDropdown(!showBranchDropdown)}
@@ -429,8 +553,12 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
               padding: "2px 6px",
               borderRadius: radius.sm,
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = theme.bgSecondary)}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.background = theme.bgSecondary)
+            }
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.background = "transparent")
+            }
           >
             {branch || "No branch"}
             <ChevronDown size={12} style={{ color: theme.textMuted }} />
@@ -463,17 +591,25 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
                     gap: 8,
                     width: "100%",
                     padding: "6px 12px",
-                    background: b === branch ? theme.bgSecondary : "transparent",
+                    background:
+                      b === branch ? theme.bgSecondary : "transparent",
                     border: "none",
                     cursor: "pointer",
                     color: theme.text,
                     fontSize: 12,
                     textAlign: "left",
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = theme.bgSecondary)}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = b === branch ? theme.bgSecondary : "transparent")}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background = theme.bgSecondary)
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background =
+                      b === branch ? theme.bgSecondary : "transparent")
+                  }
                 >
-                  {b === branch && <Check size={12} style={{ color: "#22C55E" }} />}
+                  {b === branch && (
+                    <Check size={12} style={{ color: "#22C55E" }} />
+                  )}
                   <span style={{ marginLeft: b === branch ? 0 : 20 }}>{b}</span>
                 </button>
               ))}
@@ -492,22 +628,38 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
             display: "flex",
           }}
         >
-          <RefreshCw size={14} style={{ color: theme.textMuted, animation: isLoading ? "spin 1s linear infinite" : "none" }} />
+          <RefreshCw
+            size={14}
+            style={{
+              color: theme.textMuted,
+              animation: isLoading ? "spin 1s linear infinite" : "none",
+            }}
+          />
         </button>
       </div>
 
-      <div style={{
-        display: "flex",
-        borderBottom: `1px solid ${theme.border}`,
-      }}>
+      <div
+        style={{
+          display: "flex",
+          borderBottom: `1px solid ${theme.border}`,
+        }}
+      >
         <button
           onClick={() => setActiveTab("changes")}
           style={{
             flex: 1,
             padding: "8px 12px",
-            background: activeTab === "changes" ? (isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.03)") : "transparent",
+            background:
+              activeTab === "changes"
+                ? isDark
+                  ? "rgba(255,255,255,0.05)"
+                  : "rgba(0,0,0,0.03)"
+                : "transparent",
             border: "none",
-            borderBottom: activeTab === "changes" ? `2px solid ${theme.textPrimary}` : "2px solid transparent",
+            borderBottom:
+              activeTab === "changes"
+                ? `2px solid ${theme.textPrimary}`
+                : "2px solid transparent",
             cursor: "pointer",
             display: "flex",
             alignItems: "center",
@@ -520,14 +672,18 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
         >
           <GitCommit size={14} />
           Changes
-          {(stagedFiles.length + unstagedFiles.length) > 0 && (
-            <span style={{
-              background: isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.1)",
-              color: theme.text,
-              fontSize: 10,
-              padding: "1px 5px",
-              borderRadius: 10,
-            }}>
+          {stagedFiles.length + unstagedFiles.length > 0 && (
+            <span
+              style={{
+                background: isDark
+                  ? "rgba(255,255,255,0.15)"
+                  : "rgba(0,0,0,0.1)",
+                color: theme.text,
+                fontSize: 10,
+                padding: "1px 5px",
+                borderRadius: 10,
+              }}
+            >
               {stagedFiles.length + unstagedFiles.length}
             </span>
           )}
@@ -537,9 +693,17 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
           style={{
             flex: 1,
             padding: "8px 12px",
-            background: activeTab === "history" ? (isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.03)") : "transparent",
+            background:
+              activeTab === "history"
+                ? isDark
+                  ? "rgba(255,255,255,0.05)"
+                  : "rgba(0,0,0,0.03)"
+                : "transparent",
             border: "none",
-            borderBottom: activeTab === "history" ? `2px solid ${theme.textPrimary}` : "2px solid transparent",
+            borderBottom:
+              activeTab === "history"
+                ? `2px solid ${theme.textPrimary}`
+                : "2px solid transparent",
             cursor: "pointer",
             display: "flex",
             alignItems: "center",
@@ -557,7 +721,12 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
 
       {activeTab === "changes" ? (
         <>
-          <div style={{ padding: "8px 12px", borderBottom: `1px solid ${theme.border}` }}>
+          <div
+            style={{
+              padding: "8px 12px",
+              borderBottom: `1px solid ${theme.border}`,
+            }}
+          >
             <div style={{ display: "flex", gap: 8 }}>
               <input
                 type="text"
@@ -584,13 +753,19 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
                 onClick={commit}
                 disabled={!commitMessage.trim() || stagedFiles.length === 0}
                 style={{
-                  background: stagedFiles.length > 0 && commitMessage.trim() ? "#22C55E" : theme.border,
+                  background:
+                    stagedFiles.length > 0 && commitMessage.trim()
+                      ? "#22C55E"
+                      : theme.border,
                   border: "none",
                   borderRadius: radius.sm,
                   padding: "6px 12px",
                   fontSize: 12,
                   color: "#fff",
-                  cursor: stagedFiles.length > 0 && commitMessage.trim() ? "pointer" : "not-allowed",
+                  cursor:
+                    stagedFiles.length > 0 && commitMessage.trim()
+                      ? "pointer"
+                      : "not-allowed",
                   display: "flex",
                   alignItems: "center",
                   gap: 4,
@@ -615,13 +790,27 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
                 }}
                 onClick={() => setStagedExpanded(!stagedExpanded)}
               >
-                {stagedExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: theme.textMuted }}>
+                {stagedExpanded ? (
+                  <ChevronDown size={14} />
+                ) : (
+                  <ChevronRight size={14} />
+                )}
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    color: theme.textMuted,
+                  }}
+                >
                   Staged ({stagedFiles.length})
                 </span>
                 {stagedFiles.length > 0 && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); unstageAll(); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      unstageAll();
+                    }}
                     style={{
                       marginLeft: "auto",
                       background: "transparent",
@@ -635,7 +824,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
                   </button>
                 )}
               </div>
-              {stagedExpanded && stagedFiles.map((f) => <FileRow key={f.path + "-staged"} file={f} />)}
+              {stagedExpanded &&
+                stagedFiles.map((f) => (
+                  <FileRow key={f.path + "-staged"} file={f} />
+                ))}
             </div>
 
             <div>
@@ -650,13 +842,27 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
                 }}
                 onClick={() => setUnstagedExpanded(!unstagedExpanded)}
               >
-                {unstagedExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: theme.textMuted }}>
+                {unstagedExpanded ? (
+                  <ChevronDown size={14} />
+                ) : (
+                  <ChevronRight size={14} />
+                )}
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    color: theme.textMuted,
+                  }}
+                >
                   Changes ({unstagedFiles.length})
                 </span>
                 {unstagedFiles.length > 0 && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); stageAll(); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      stageAll();
+                    }}
                     style={{
                       marginLeft: "auto",
                       background: "transparent",
@@ -670,14 +876,15 @@ export const GitPanel: React.FC<GitPanelProps> = ({ projectPath, onFileOpen }) =
                   </button>
                 )}
               </div>
-              {unstagedExpanded && unstagedFiles.map((f) => <FileRow key={f.path + "-unstaged"} file={f} />)}
+              {unstagedExpanded &&
+                unstagedFiles.map((f) => (
+                  <FileRow key={f.path + "-unstaged"} file={f} />
+                ))}
             </div>
           </div>
         </>
       ) : (
-        <GitHistory
-          onViewDiff={viewCommitDiff}
-        />
+        <GitHistory onViewDiff={viewCommitDiff} />
       )}
 
       <style>{`

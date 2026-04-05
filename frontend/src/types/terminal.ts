@@ -4,12 +4,13 @@ import { Terminal } from "@xterm/xterm";
 
 export type TerminalMode = "shell" | "tui" | "agent_cli" | "agent_tui";
 export type TerminalPowerProfile = "normal" | "soft_pause" | "hard_pause";
+export type TUIAssistAnchor = "left" | "right" | "top" | "bottom";
 
 export interface TUIAssistState {
   active: boolean;
   panel: "explorer" | "aiChat" | "git" | "browser" | null;
   ratio: number;
-  swapped: boolean;
+  anchor: TUIAssistAnchor;
 }
 
 export interface TerminalSecurityPolicy {

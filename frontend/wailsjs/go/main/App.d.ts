@@ -4,8 +4,10 @@ import {system} from '../models';
 import {plugins} from '../models';
 import {main} from '../models';
 import {indexer} from '../models';
+import {depsync} from '../models';
 import {welcome} from '../models';
 import {lsp} from '../models';
+import {brain} from '../models';
 import {project} from '../models';
 import {composer} from '../models';
 
@@ -30,6 +32,8 @@ export function ConfirmPrediction(arg1:string):Promise<void>;
 export function CreateComponent(arg1:string,arg2:plugins.ComponentOptions):Promise<void>;
 
 export function CreateController(arg1:string,arg2:plugins.ControllerOptions):Promise<void>;
+
+export function CreateDirectory(arg1:string):Promise<void>;
 
 export function CreateEnum(arg1:string,arg2:plugins.EnumClassOptions):Promise<void>;
 
@@ -93,6 +97,8 @@ export function GetCurrentWorkDir():Promise<string>;
 
 export function GetDependencyGraph(arg1:string,arg2:number):Promise<indexer.DependencyGraph>;
 
+export function GetDependencySyncPlan(arg1:string):Promise<depsync.Plan>;
+
 export function GetDevToolsStatus():Promise<Array<welcome.ToolStatus>>;
 
 export function GetDispatcherPinned():Promise<Array<main.ResultItemJS>>;
@@ -136,6 +142,8 @@ export function GetLSPStatus():Promise<Array<lsp.ServerStatus>>;
 export function GetLanguageForFile(arg1:string):Promise<main.LanguageInfoResult>;
 
 export function GetLaravelVersion(arg1:string):Promise<string>;
+
+export function GetLastAutocompleteTrace():Promise<brain.CompletionTrace>;
 
 export function GetMiddlewareList():Promise<any>;
 
@@ -298,6 +306,8 @@ export function ShowPackageInfo(arg1:string):Promise<string>;
 export function StorageLink():Promise<string>;
 
 export function SuggestCommand(arg1:string):Promise<Array<main.CommandSuggestion>>;
+
+export function SyncProjectDependencies(arg1:string):Promise<Record<string, string>>;
 
 export function Tinker():Promise<void>;
 

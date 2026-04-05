@@ -1014,6 +1014,11 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     transition: `all ${transitions.fast}`,
   };
 
+  const addTabBtnStyle: React.CSSProperties = {
+    ...actionBtnStyle,
+    color: isDark ? "#FFFFFF" : "var(--text-primary)",
+  };
+
   const renderPane = (pane: (typeof panes)[0]) => {
     const activeTabId = pane.activeTabId;
     const semanticEntries = activeTabId
@@ -1072,7 +1077,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
             );
           })}
           <button
-            style={actionBtnStyle}
+            style={addTabBtnStyle}
             onClick={() => createTerminal(pane.id, isDark)}
             title="New Terminal"
           >
