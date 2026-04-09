@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,7 +24,7 @@ func (a *App) ReadDirectory(dirPath string) ([]FileEntry, error) {
 		return nil, err
 	}
 
-	var result []FileEntry
+	result := make([]FileEntry, 0, len(entries))
 	for _, entry := range entries {
 		fullPath := filepath.Join(dirPath, entry.Name())
 		result = append(result, FileEntry{
@@ -416,13 +417,31 @@ func (a *App) RunGitCommand(args []string) (string, error) {
 
 	cmd := exec.Command("git", args...)
 	cmd.Dir = projectPath
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
-	output, err := cmd.CombinedOutput()
+	err := cmd.Run()
 	if err != nil {
-		return string(output), fmt.Errorf("git error: %s - %v", string(output), err)
+		errText := strings.TrimSpace(stderr.String())
+		if errText == "" {
+			errText = strings.TrimSpace(stdout.String())
+		}
+
+		normalized := strings.ToLower(errText)
+		if strings.Contains(normalized, "not a git repository") {
+			return "", fmt.Errorf("not a git repository")
+		}
+
+		if errText == "" {
+			return "", fmt.Errorf("git command failed: %w", err)
+		}
+
+		return "", fmt.Errorf("git error: %s", errText)
 	}
 
-	return string(output), nil
+	return stdout.String(), nil
 }
 
 // GetGitBranch returns the current git branch name

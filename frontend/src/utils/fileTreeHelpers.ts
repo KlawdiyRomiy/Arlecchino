@@ -32,10 +32,12 @@ export function sortFileNodes(a: FileTreeNode, b: FileTreeNode): number {
 }
 
 export function buildFileNodes(
-  entries: FileTreeEntry[],
+  entries: FileTreeEntry[] | null | undefined,
   expandedPaths?: ReadonlySet<string>,
 ): FileTreeNode[] {
-  return entries
+  const safeEntries = Array.isArray(entries) ? entries : [];
+
+  return safeEntries
     .filter((entry) => !shouldIgnoreEntry(entry.name))
     .map((entry) => ({
       name: entry.name,

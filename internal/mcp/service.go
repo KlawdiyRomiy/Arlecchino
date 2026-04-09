@@ -519,9 +519,20 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 		return s.SaveAgentMemory(entryType, tags, content, importance)
 	case "agent_memory.search":
 		query := optionalStringArg(args, "query")
+		if strings.TrimSpace(query) == "" {
+			query = optionalStringArg(args, "content")
+		}
+		if strings.TrimSpace(query) == "" {
+			query = optionalStringArg(args, "term")
+		}
 		tags := optionalStringSliceArg(args, "tags")
 		limit := optionalIntArg(args, "limit", 25)
-		return map[string]any{"items": s.SearchAgentMemory(query, tags, limit)}, nil
+		return map[string]any{
+			"items":               s.SearchAgentMemory(query, tags, limit),
+			"query":               strings.TrimSpace(query),
+			"memory_disk_path":    s.memory.DiskFilePath(),
+			"memory_context_path": s.memory.ContextFilePath(),
+		}, nil
 	case "agent_memory.list":
 		limit := optionalIntArg(args, "limit", 50)
 		return map[string]any{"items": s.ListAgentMemory(limit)}, nil

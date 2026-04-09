@@ -127,15 +127,11 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   const activeSession = activePane
     ? sessions.get(activePane.activeTabId)
     : undefined;
-  const isAgentTerminalMode =
-    activeSession?.mode === "tui" ||
-    activeSession?.mode === "agent_cli" ||
-    activeSession?.mode === "agent_tui";
   const isActiveSessionInTUI =
     !!activeSession &&
-    isAgentTerminalMode &&
     tuiModeActive &&
-    tuiActiveSessionId === activeSession.id;
+    (tuiActiveSessionId === null || tuiActiveSessionId === activeSession.id);
+  const panesForRender = tuiModeActive && activePane ? [activePane] : panes;
 
   const inputBufferRef = useRef("");
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -946,6 +942,38 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     };
   }, [sessions, panes]);
 
+  useEffect(() => {
+    if (!tuiModeActive) {
+      return;
+    }
+
+    const raf = requestAnimationFrame(() => {
+      panesForRender.forEach((pane) => {
+        const tabId = pane.activeTabId;
+        if (!tabId) {
+          return;
+        }
+
+        const session = sessions.get(tabId);
+        const container = containerRefs.current.get(tabId);
+        if (
+          !session ||
+          !container ||
+          container.offsetWidth <= 0 ||
+          container.offsetHeight <= 0
+        ) {
+          return;
+        }
+
+        session.fitAddon.fit();
+      });
+    });
+
+    return () => {
+      cancelAnimationFrame(raf);
+    };
+  }, [panesForRender, sessions, tuiModeActive]);
+
   const handleCloseTab = async (paneId: string, tabId: string) => {
     await closeTerminal(paneId, tabId);
   };
@@ -1036,11 +1064,11 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           minHeight: 0,
           minWidth: 0,
           borderLeft:
-            panes.indexOf(pane) > 0 && splitDirection === "vertical"
+            panesForRender.indexOf(pane) > 0 && splitDirection === "vertical"
               ? `1px solid ${theme.border}`
               : undefined,
           borderTop:
-            panes.indexOf(pane) > 0 && splitDirection === "horizontal"
+            panesForRender.indexOf(pane) > 0 && splitDirection === "horizontal"
               ? `1px solid ${theme.border}`
               : undefined,
         }}
@@ -1083,7 +1111,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           >
             <Plus size={14} />
           </button>
-          {panes.length === 1 && (
+          {panesForRender.length === 1 && (
             <>
               <button
                 style={actionBtnStyle}
@@ -1140,7 +1168,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           )}
         </div>
 
-        {visibleSemanticEntries.length > 0 && (
+        {!tuiModeActive && visibleSemanticEntries.length > 0 && (
           <div
             style={{
               borderTop: `1px solid ${theme.border}`,
@@ -1359,7 +1387,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           {error}
         </div>
       )}
-      {panes.map(renderPane)}
+      {panesForRender.map(renderPane)}
       {!isActiveSessionInTUI &&
         !isArlePaused &&
         ghostText &&

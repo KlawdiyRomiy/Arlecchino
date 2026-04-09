@@ -87,6 +87,11 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 		})
 	})
 
+	runtime.EventsEmit(a.ctx, "terminal:created", map[string]interface{}{
+		"id":   id,
+		"name": name,
+	})
+
 	return nil
 }
 

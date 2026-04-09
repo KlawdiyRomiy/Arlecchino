@@ -33,6 +33,7 @@ func (a *App) InitDispatcherForProject() {
 
 func (a *App) SearchFiles(pattern string) []ResultItemJS {
 	initDispatcher()
+	a.InitDispatcherForProject()
 	if globalDispatcher == nil {
 		return nil
 	}
@@ -42,6 +43,7 @@ func (a *App) SearchFiles(pattern string) []ResultItemJS {
 
 func (a *App) SearchContent(query string) []ResultItemJS {
 	initDispatcher()
+	a.InitDispatcherForProject()
 	if globalDispatcher == nil {
 		return nil
 	}
@@ -51,6 +53,7 @@ func (a *App) SearchContent(query string) []ResultItemJS {
 
 func (a *App) SearchSymbols(query string) []ResultItemJS {
 	initDispatcher()
+	a.InitDispatcherForProject()
 	if globalDispatcher == nil {
 		return nil
 	}

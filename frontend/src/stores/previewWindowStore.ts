@@ -5,6 +5,7 @@ import type { Theme } from "../types/theme";
 
 export type PreviewSurfaceType =
   | "file"
+  | "code"
   | "browser"
   | "git"
   | "chat"

@@ -468,12 +468,12 @@ func (a *App) GetLSPStatus() []lsp.ServerStatus {
 	return a.lspManager.HealthCheck()
 }
 
-// RestartLSPServer restarts a specific LSP server if it's unhealthy
+// RestartLSPServer force-restarts a specific LSP server.
 func (a *App) RestartLSPServer(language string) (bool, error) {
 	if a.lspManager == nil {
 		return false, nil
 	}
-	return a.lspManager.CheckAndRestart(language)
+	return a.lspManager.ForceRestart(language)
 }
 
 // GetDevToolsStatus returns installation status of development tools (PHP, Go, Node, etc.)

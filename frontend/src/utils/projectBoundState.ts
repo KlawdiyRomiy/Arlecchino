@@ -46,6 +46,8 @@ let diagnosticsPreloadState: DiagnosticsPreloadState = {
   selectedLanguages: 0,
 };
 let diagnosticsPreloadEventsBound = false;
+let diagnosticsPreloadBindTimer: ReturnType<typeof window.setTimeout> | null =
+  null;
 let latestProjectRuntime: ProjectScopeState = {
   generation: 0,
   projectPath: null,
@@ -141,9 +143,48 @@ const resolveMatchingProjectScope = (
   return null;
 };
 
+const hasWailsRuntimeEvents = () => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const runtimeWindow = window as typeof window & {
+    runtime?: {
+      EventsOnMultiple?: unknown;
+    };
+  };
+
+  return typeof runtimeWindow.runtime?.EventsOnMultiple === "function";
+};
+
+const scheduleDiagnosticsPreloadBind = () => {
+  if (
+    diagnosticsPreloadEventsBound ||
+    typeof window === "undefined" ||
+    diagnosticsPreloadBindTimer
+  ) {
+    return;
+  }
+
+  diagnosticsPreloadBindTimer = window.setTimeout(() => {
+    diagnosticsPreloadBindTimer = null;
+    bindDiagnosticsPreloadEvents();
+  }, 50);
+};
+
 const bindDiagnosticsPreloadEvents = () => {
   if (diagnosticsPreloadEventsBound || typeof window === "undefined") {
     return;
+  }
+
+  if (!hasWailsRuntimeEvents()) {
+    scheduleDiagnosticsPreloadBind();
+    return;
+  }
+
+  if (diagnosticsPreloadBindTimer) {
+    window.clearTimeout(diagnosticsPreloadBindTimer);
+    diagnosticsPreloadBindTimer = null;
   }
 
   diagnosticsPreloadEventsBound = true;

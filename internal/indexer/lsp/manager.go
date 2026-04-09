@@ -478,6 +478,15 @@ func (m *Manager) HealthCheck() []ServerStatus {
 // CheckAndRestart checks server health and restarts if needed
 // Returns true if server was restarted
 func (m *Manager) CheckAndRestart(language string) (bool, error) {
+	return m.restartServer(language, false)
+}
+
+// ForceRestart restarts server regardless of current health state.
+func (m *Manager) ForceRestart(language string) (bool, error) {
+	return m.restartServer(language, true)
+}
+
+func (m *Manager) restartServer(language string, force bool) (bool, error) {
 	m.mu.RLock()
 	server, hasServer := m.servers[language]
 	cfg, hasConfig := m.configs[language]
@@ -487,8 +496,8 @@ func (m *Manager) CheckAndRestart(language string) (bool, error) {
 		return false, fmt.Errorf("no config for language: %s", language)
 	}
 
-	// Server not started or process died
-	needsRestart := !hasServer || (hasServer && !server.isProcessAlive())
+	// Server not started, process died, or explicit force restart.
+	needsRestart := force || !hasServer || (hasServer && !server.isProcessAlive())
 	if !needsRestart {
 		return false, nil
 	}

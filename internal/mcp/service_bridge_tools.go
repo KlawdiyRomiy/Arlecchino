@@ -692,9 +692,14 @@ func (s *ToolService) bridgeEmitUIEvent(eventName string, payload any) (any, err
 }
 
 func (s *ToolService) bridgePreviewOpen(args map[string]any) (any, error) {
+	modeArg := optionalStringArg(args, "mode")
 	surface := optionalStringArg(args, "surface")
 	if surface == "" {
-		surface = "browser"
+		if modeArg == "code" || modeArg == "editor" {
+			surface = "code"
+		} else {
+			surface = "browser"
+		}
 	}
 	payload := map[string]any{"surface": surface}
 	if id := optionalStringArg(args, "id"); id != "" {
@@ -703,7 +708,16 @@ func (s *ToolService) bridgePreviewOpen(args map[string]any) (any, error) {
 	if title := optionalStringArg(args, "title"); title != "" {
 		payload["title"] = title
 	}
-	if mode := optionalStringArg(args, "mode"); mode == "floating" || mode == "snapped" {
+	if modeArg == "floating" || modeArg == "snapped" {
+		payload["mode"] = modeArg
+	}
+	if modeArg == "tab" || modeArg == "side" {
+		payload["mode"] = "snapped"
+	}
+	if modeArg == "code" || modeArg == "editor" {
+		payload["surface"] = "code"
+	}
+	if mode := optionalStringArg(args, "window_mode"); mode == "floating" || mode == "snapped" {
 		payload["mode"] = mode
 	}
 	if position := optionalStringArg(args, "position"); position == "left" || position == "right" || position == "top" || position == "bottom" {

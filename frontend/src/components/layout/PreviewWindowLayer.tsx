@@ -23,13 +23,13 @@ import { emitPerfMetric, nowPerf } from "../../utils/perf";
 interface PreviewWindowLayerProps {
   isDark: boolean;
   windows: PreviewWindow[];
+  layerZIndex?: number;
   appearancePreview: AppearancePreviewState | null;
   currentTheme: Theme;
   currentUiScale: number;
   onUpdateWindow: (id: string, input: UpdatePreviewWindowInput) => boolean;
   onCloseWindow: (id: string) => void;
   onFocusWindow: (id: string) => void;
-  onPinWindow: (id: string, pinned: boolean) => void;
   onAppearancePatch: (patch: { theme?: Theme; uiScale?: number }) => void;
   onAppearanceApply: () => void;
   onAppearanceCancel: () => void;
@@ -39,6 +39,13 @@ interface PreviewWindowLayerProps {
     name: string,
     line?: number,
   ) => void;
+  occupiedSlots?: Partial<Record<PreviewWindowPosition, boolean>>;
+  mainSnappedPanels?: {
+    left?: number;
+    right?: number;
+    bottom?: number;
+    top?: number;
+  };
 }
 
 const getWindowIcon = (surface: PreviewWindow["surface"]) => {
@@ -76,17 +83,19 @@ const normalizeSnappedSize = (
 export const PreviewWindowLayer: React.FC<PreviewWindowLayerProps> = ({
   isDark,
   windows,
+  layerZIndex = zIndex.dropdown,
   appearancePreview,
   currentTheme,
   currentUiScale,
   onUpdateWindow,
   onCloseWindow,
   onFocusWindow,
-  onPinWindow,
   onAppearancePatch,
   onAppearanceApply,
   onAppearanceCancel,
   onFileOpen,
+  occupiedSlots,
+  mainSnappedPanels,
 }) => {
   const palette = getThemeColors(isDark);
   const resizeFrameIdByWindowRef = useRef<Map<string, number>>(new Map());
@@ -99,11 +108,11 @@ export const PreviewWindowLayer: React.FC<PreviewWindowLayerProps> = ({
     () => ({
       position: "absolute",
       inset: 0,
-      zIndex: zIndex.dropdown,
+      zIndex: layerZIndex,
       pointerEvents: "none",
       contain: "layout style",
     }),
-    [],
+    [layerZIndex],
   );
 
   const flushResizeUpdate = useCallback(
@@ -202,6 +211,19 @@ export const PreviewWindowLayer: React.FC<PreviewWindowLayerProps> = ({
       top?: number;
     } = {};
 
+    if (typeof mainSnappedPanels?.left === "number") {
+      adjacent.left = mainSnappedPanels.left;
+    }
+    if (typeof mainSnappedPanels?.right === "number") {
+      adjacent.right = mainSnappedPanels.right;
+    }
+    if (typeof mainSnappedPanels?.bottom === "number") {
+      adjacent.bottom = mainSnappedPanels.bottom;
+    }
+    if (typeof mainSnappedPanels?.top === "number") {
+      adjacent.top = mainSnappedPanels.top;
+    }
+
     sortedWindows.forEach((windowState) => {
       if (windowState.id === windowId || windowState.mode !== "snapped") {
         return;
@@ -245,10 +267,8 @@ export const PreviewWindowLayer: React.FC<PreviewWindowLayerProps> = ({
             maxSize={1400}
             isVisible={true}
             isDropTarget={false}
-            isPinned={windowState.isPinned}
             zIndex={windowState.zIndex}
             adjacentPanels={getAdjacentPanels(windowState.id)}
-            onPin={() => onPinWindow(windowState.id, !windowState.isPinned)}
             onClose={() => {
               cleanupWindowResizeState(windowState.id);
               onCloseWindow(windowState.id);
@@ -266,6 +286,26 @@ export const PreviewWindowLayer: React.FC<PreviewWindowLayerProps> = ({
             }}
             onDragEnd={(_, targetPosition, dropX, dropY) => {
               if (targetPosition) {
+                const isBlockedByMainPanel = Boolean(
+                  occupiedSlots?.[targetPosition],
+                );
+                if (
+                  isBlockedByMainPanel &&
+                  (windowState.mode !== "snapped" ||
+                    windowState.position !== targetPosition)
+                ) {
+                  if (typeof dropX === "number" && typeof dropY === "number") {
+                    onUpdateWindow(windowState.id, {
+                      mode: "floating",
+                      x: dropX,
+                      y: dropY,
+                      width: windowState.width,
+                      height: windowState.height,
+                    });
+                  }
+                  return;
+                }
+
                 const normalizedSize = normalizeSnappedSize(
                   targetPosition,
                   windowState,

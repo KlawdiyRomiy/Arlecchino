@@ -126,7 +126,21 @@ func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, er
 		}
 		line := bridgeOptionalInt(params, "line", 0)
 		character := bridgeOptionalInt(params, "character", 0)
-		return a.LSPHover(filePath, content, line, character)
+		hover, err := a.LSPHover(filePath, content, line, character)
+		if err != nil {
+			return nil, err
+		}
+		trimmed := strings.TrimSpace(hover)
+		return map[string]any{
+			"hover":      hover,
+			"hasContent": trimmed != "",
+			"emptyReason": func() string {
+				if trimmed == "" {
+					return "no symbol hover at requested position"
+				}
+				return ""
+			}(),
+		}, nil
 	case "lsp.signature":
 		filePath, err := bridgeRequiredString(params, "file_path")
 		if err != nil {

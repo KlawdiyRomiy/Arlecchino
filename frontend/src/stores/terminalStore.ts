@@ -57,6 +57,7 @@ interface TerminalActions {
     isDark: boolean,
     terminalName?: string,
   ) => Promise<string>;
+  registerExternalSession: (id: string, name?: string) => void;
   closeTerminal: (paneId: string, tabId: string) => Promise<void>;
   setActiveTab: (paneId: string, tabId: string) => void;
   setActivePane: (paneId: string) => void;
@@ -210,6 +211,55 @@ const createTerminalBackendSession = async (
   }
 
   await CreateTerminal(id, name);
+};
+
+const createLocalTerminalSession = (
+  id: string,
+  name: string,
+  isDark: boolean,
+  terminalFontSize: number,
+  projectPath: string,
+): TerminalSession => {
+  const terminal = new Terminal({
+    cursorBlink: true,
+    fontSize: terminalFontSize,
+    fontFamily:
+      "'MesloLGS NF', 'Hack Nerd Font', 'FiraCode Nerd Font', 'JetBrains Mono', 'SF Mono', Monaco, Consolas, monospace",
+    theme: getTerminalTheme(isDark),
+    allowProposedApi: true,
+  });
+
+  const fitAddon = new FitAddon();
+  const searchAddon = new SearchAddon();
+  terminal.loadAddon(fitAddon);
+  terminal.loadAddon(searchAddon);
+  terminal.loadAddon(new WebLinksAddon());
+
+  terminal.onData((data) => {
+    const bytes = new TextEncoder().encode(data);
+    const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join("");
+    WriteTerminal(id, btoa(binary));
+  });
+
+  terminal.onResize(({ rows, cols }) => {
+    ResizeTerminal(id, rows, cols);
+  });
+
+  return {
+    id,
+    name,
+    projectPath,
+    terminal,
+    fitAddon,
+    searchAddon,
+    streamDecoder: new TextDecoder(),
+    isAttached: false,
+    mode: "shell",
+    modeReason: "init",
+    modeConfidence: 1,
+    modeSourceSignals: ["init:shell"],
+    modeUpdatedAt: Date.now(),
+  };
 };
 
 const createDefaultPanes = (): TerminalPane[] => [
@@ -857,6 +907,19 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       );
 
       EventsOn(
+        "terminal:created",
+        (event: {
+          id: string;
+          name?: string;
+        }) => {
+          if (!event?.id) {
+            return;
+          }
+          get().registerExternalSession(event.id, event.name);
+        },
+      );
+
+      EventsOn(
         "terminal:semantic",
         (event: {
           id: string;
@@ -880,49 +943,13 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       const state = get();
       const terminalFontSize = state.terminalFontSize;
       const projectPath = state.activeProjectPath ?? "";
-
-      const terminal = new Terminal({
-        cursorBlink: true,
-        fontSize: terminalFontSize,
-        fontFamily:
-          "'MesloLGS NF', 'Hack Nerd Font', 'FiraCode Nerd Font', 'JetBrains Mono', 'SF Mono', Monaco, Consolas, monospace",
-        theme: getTerminalTheme(isDark),
-        allowProposedApi: true,
-      });
-
-      const fitAddon = new FitAddon();
-      const searchAddon = new SearchAddon();
-      terminal.loadAddon(fitAddon);
-      terminal.loadAddon(searchAddon);
-      terminal.loadAddon(new WebLinksAddon());
-
-      terminal.onData((data) => {
-        const bytes = new TextEncoder().encode(data);
-        const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join(
-          "",
-        );
-        WriteTerminal(id, btoa(binary));
-      });
-
-      terminal.onResize(({ rows, cols }) => {
-        ResizeTerminal(id, rows, cols);
-      });
-
-      const session: TerminalSession = {
+      const session = createLocalTerminalSession(
         id,
         name,
+        isDark,
+        terminalFontSize,
         projectPath,
-        terminal,
-        fitAddon,
-        searchAddon,
-        streamDecoder: new TextDecoder(),
-        isAttached: false,
-        mode: "shell",
-        modeReason: "init",
-        modeConfidence: 1,
-        modeSourceSignals: ["init:shell"],
-        modeUpdatedAt: Date.now(),
-      };
+      );
 
       set((state) => {
         const newSessions = new Map(state.sessions);
@@ -952,7 +979,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       try {
         await createTerminalBackendSession(id, name, projectPath);
       } catch (error) {
-        terminal.dispose();
+        session.terminal.dispose();
         set((state) => {
           const newSessions = new Map(state.sessions);
           newSessions.delete(id);
@@ -983,6 +1010,86 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       }
 
       return id;
+    },
+
+    registerExternalSession: (id: string, name?: string) => {
+      const normalizedID = id.trim();
+      if (normalizedID === "") {
+        return;
+      }
+
+      const state = get();
+      if (state.sessions.has(normalizedID)) {
+        return;
+      }
+
+      const isDark =
+        typeof window !== "undefined"
+          ? window.document.documentElement.classList.contains("dark") ||
+            window.matchMedia("(prefers-color-scheme: dark)").matches
+          : true;
+
+      const session = createLocalTerminalSession(
+        normalizedID,
+        name?.trim() || "Terminal",
+        isDark,
+        state.terminalFontSize,
+        state.activeProjectPath ?? "",
+      );
+
+      set((current) => {
+        if (current.sessions.has(normalizedID)) {
+          session.terminal.dispose();
+          return {};
+        }
+
+        const nextSessions = new Map(current.sessions);
+        nextSessions.set(normalizedID, session);
+
+        const panes =
+          current.panes.length > 0 ? current.panes : createDefaultPanes();
+        const targetPaneID =
+          panes.some((pane) => pane.id === current.activePaneId)
+            ? current.activePaneId
+            : panes[0].id;
+
+        const nextPanes = panes.map((pane) => {
+          if (pane.id !== targetPaneID) {
+            return pane;
+          }
+
+          if (pane.tabIds.includes(normalizedID)) {
+            return { ...pane, activeTabId: normalizedID };
+          }
+
+          return {
+            ...pane,
+            tabIds: [...pane.tabIds, normalizedID],
+            activeTabId: normalizedID,
+          };
+        });
+
+        persistLayoutSnapshot(
+          nextPanes,
+          targetPaneID,
+          current.splitDirection,
+          current.activeProjectPath,
+        );
+
+        const nextTuiSessionID = resolveProjectTUISessionId(
+          nextPanes,
+          nextSessions,
+          targetPaneID,
+        );
+
+        return {
+          sessions: nextSessions,
+          panes: nextPanes,
+          activePaneId: targetPaneID,
+          tuiActiveSessionId: nextTuiSessionID,
+          tuiModeActive: nextTuiSessionID !== null,
+        };
+      });
     },
 
     closeTerminal: async (paneId: string, tabId: string) => {

@@ -72,6 +72,11 @@ func (t *TerminalService) Create(id, name string, workingDir string) error {
 		})
 	})
 
+	runtime.EventsEmit(t.ctx, "terminal:created", map[string]interface{}{
+		"id":   id,
+		"name": name,
+	})
+
 	return nil
 }
 

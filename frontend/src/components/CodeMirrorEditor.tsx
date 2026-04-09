@@ -115,8 +115,10 @@ import {
 } from "../../wailsjs/go/main/App";
 import { createCompletionOrchestrator } from "../extensions/completionOrchestrator";
 import { createDiagnosticsExtension } from "../extensions/diagnosticsExtension";
+import { createGitGutterExtension } from "../extensions/gitGutterExtension";
 import { ghostExtension } from "../extensions/ghostExtension";
 import { metricsExtension } from "../extensions/metricsExtension";
+import { useGitStore } from "../stores/gitStore";
 import { createCompletionCache } from "../utils/completionCache";
 import {
   CODEMIRROR_TOOLTIP_Z_INDEX,
@@ -1034,6 +1036,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const showMinimapSetting = useEditorSettingsStore(
     (state) => state.showMinimap,
   );
+  const gitMarkers = useGitStore((state) => state.fileMarkers[filePath] ?? []);
+  const refreshFileMarkers = useGitStore((state) => state.refreshFileMarkers);
+  const clearFileMarkers = useGitStore((state) => state.clearFileMarkers);
   const setCursorPosition = useEditorStore((state) => state.setCursorPosition);
   const diagnosticsExtension = useMemo(
     () =>
@@ -1258,6 +1263,33 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     () => showMinimapSetting && shouldEnableCodeMirrorMinimap(content),
     [content, showMinimapSetting],
   );
+
+  const gitGutterExtension = useMemo(
+    () => createGitGutterExtension({ markers: gitMarkers }),
+    [gitMarkers],
+  );
+
+  useEffect(() => {
+    if (!filePath) return;
+
+    const timer = window.setTimeout(() => {
+      void refreshFileMarkers(filePath);
+    }, 320);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [content, filePath, refreshFileMarkers]);
+
+  useEffect(
+    () => () => {
+      if (filePath) {
+        clearFileMarkers(filePath);
+      }
+    },
+    [clearFileMarkers, filePath],
+  );
+
   const syncCursorPosition = useCallback(
     (state: EditorState) => {
       const head = state.selection.main.head;
@@ -2005,6 +2037,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     blackprintTheme,
     editorStyles,
     fontSizeExtension,
+    gitGutterExtension,
     ghost.ghostField,
     highlightLineField,
     ghost.extension,

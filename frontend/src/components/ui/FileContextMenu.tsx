@@ -10,6 +10,7 @@ import {
   ExternalLink,
   FilePlus,
   FolderPlus,
+  PanelRightOpen,
 } from "lucide-react";
 
 interface FileContextMenuProps {
@@ -17,6 +18,7 @@ interface FileContextMenuProps {
   isDirectory: boolean;
   filePath: string;
   onOpen?: () => void;
+  onOpenInPanel?: () => void;
   onReveal?: () => void;
   onCopyPath?: () => void;
   onRename?: () => void;
@@ -30,6 +32,7 @@ export const FileContextMenu: React.FC<FileContextMenuProps> = ({
   isDirectory,
   filePath,
   onOpen,
+  onOpenInPanel,
   onReveal,
   onCopyPath,
   onRename,
@@ -67,6 +70,19 @@ export const FileContextMenu: React.FC<FileContextMenuProps> = ({
                         <File size={14} />
                       )}
                       Open
+                    </motion.button>
+                  </ContextMenu.Item>
+                )}
+
+                {!isDirectory && onOpenInPanel && (
+                  <ContextMenu.Item asChild>
+                    <motion.button
+                      whileHover={{ backgroundColor: "var(--bg-tertiary)" }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer outline-none"
+                      onClick={onOpenInPanel}
+                    >
+                      <PanelRightOpen size={14} />
+                      Open in Panel
                     </motion.button>
                   </ContextMenu.Item>
                 )}

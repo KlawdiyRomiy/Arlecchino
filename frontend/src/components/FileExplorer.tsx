@@ -69,6 +69,12 @@ export interface FileExplorerProps {
     name: string,
     line?: number,
   ) => void;
+  onFileOpenInPanel?: (
+    path: string,
+    content: string,
+    name: string,
+    line?: number,
+  ) => void;
   projectPath?: string;
   isHorizontal?: boolean;
   onPerspectiveOpen?: () => void;
@@ -77,6 +83,7 @@ export interface FileExplorerProps {
 
 export const FileExplorer: React.FC<FileExplorerProps> = ({
   onFileOpen,
+  onFileOpenInPanel,
   projectPath: initialProjectPath = "",
   isHorizontal = false,
   onPerspectiveOpen,
@@ -130,11 +137,13 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   const expandedPathsRef = useRef(expandedPaths);
   const projectPathRef = useRef(projectPath);
   const onFileOpenRef = useRef(onFileOpen);
+  const onFileOpenInPanelRef = useRef(onFileOpenInPanel);
   const relations = useFileRelations(perspectiveTarget || "");
   filesRef.current = files;
   expandedPathsRef.current = expandedPaths;
   projectPathRef.current = projectPath;
   onFileOpenRef.current = onFileOpen;
+  onFileOpenInPanelRef.current = onFileOpenInPanel;
 
   // Синхронизируем isExpanded из store в файлы
   const getIsExpanded = (path: string): boolean => expandedPaths.has(path);
@@ -155,6 +164,11 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     const content = await readPromise;
     if (onFileOpen)
       onFileOpen(path, content, path.split("/").pop() || "", line);
+  };
+
+  const handleFileOpenInPanel = async (path: string, name: string) => {
+    const content = await App.ReadFile(path);
+    onFileOpenInPanelRef.current?.(path, content, name);
   };
 
   const closeCreateEntryDialog = () => {
@@ -1206,6 +1220,13 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
           isDirectory={node.isDirectory}
           filePath={node.path}
           onOpen={() => handleNodeClick(node)}
+          onOpenInPanel={
+            node.isDirectory
+              ? undefined
+              : () => {
+                  void handleFileOpenInPanel(node.path, node.name);
+                }
+          }
           onCopyPath={handleCopyPath}
         >
           <div

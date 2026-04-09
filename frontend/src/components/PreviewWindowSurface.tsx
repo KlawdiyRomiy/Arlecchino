@@ -9,6 +9,7 @@ import { getThemeColors } from "../styles/colors";
 import type { Theme } from "../types/theme";
 import { AIChatPanelContent } from "./AIChatPanel";
 import { BrowserPreview } from "./BrowserPreview";
+import { CodePanelSurface } from "./CodePanelSurface";
 import { GitPanel } from "./GitPanel";
 import type {
   AppearancePreviewState,
@@ -37,23 +38,6 @@ const codePreviewContainerStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   minHeight: 0,
-};
-
-const codePreviewHeaderStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  padding: "8px 12px",
-  borderBottom: "1px solid var(--border-subtle)",
-  gap: 8,
-};
-
-const codePreviewPathStyle: React.CSSProperties = {
-  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-  fontSize: 11,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
 };
 
 const codePreviewBodyStyle: React.CSSProperties = {
@@ -126,6 +110,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
   );
   const activePaneId = useEditorStore((state) => state.activePaneId);
   const activeTab = useEditorStore((state) => state.getActiveTab(activePaneId));
+  const tabs = useEditorStore((state) => state.tabs);
   const [loadedFileContent, setLoadedFileContent] = useState<string | null>(
     null,
   );
@@ -138,7 +123,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
   useEffect(() => {
     let cancelled = false;
 
-    if (window.surface !== "file") {
+    if (window.surface !== "file" && window.surface !== "code") {
       setLoadedFileContent(null);
       setIsLoadingFile(false);
       setFileError(null);
@@ -191,11 +176,18 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
   }, [activeTab?.content, filePath, window.payload.content, window.surface]);
 
   const previewCode = useMemo(() => {
+    const matchedTab = filePath
+      ? Array.from(tabs.values()).find((tab) => tab.path === filePath)
+      : null;
+
     if (
       typeof window.payload.content === "string" &&
       window.payload.content.length > 0
     ) {
       return window.payload.content;
+    }
+    if (matchedTab?.content) {
+      return matchedTab.content;
     }
     if (typeof loadedFileContent === "string") {
       return loadedFileContent;
@@ -204,7 +196,23 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
       return activeTab.content;
     }
     return "";
-  }, [activeTab?.content, loadedFileContent, window.payload.content]);
+  }, [
+    activeTab?.content,
+    filePath,
+    loadedFileContent,
+    tabs,
+    window.payload.content,
+  ]);
+
+  const codeLanguage = useMemo(() => {
+    if (typeof window.payload.language === "string") {
+      return window.payload.language;
+    }
+    if (filePath.includes(".")) {
+      return filePath.split(".").pop() || "";
+    }
+    return activeTab?.language || "";
+  }, [activeTab?.language, filePath, window.payload.language]);
 
   const appearanceTheme = appearancePreview?.theme ?? currentTheme;
   const appearanceScale = appearancePreview?.uiScale ?? currentUiScale;
@@ -361,39 +369,61 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
     );
   }
 
+  if (window.surface === "code" || window.surface === "file") {
+    if (!filePath) {
+      return (
+        <pre
+          style={{
+            ...codePreviewBodyStyle,
+            color: palette.textPrimary,
+            background: "transparent",
+          }}
+        >
+          {previewCode || "No file content available"}
+        </pre>
+      );
+    }
+
+    if (isLoadingFile) {
+      return (
+        <pre
+          style={{
+            ...codePreviewBodyStyle,
+            color: palette.textSecondary,
+            background: "transparent",
+          }}
+        >
+          Loading file preview...
+        </pre>
+      );
+    }
+
+    if (fileError) {
+      return (
+        <pre
+          style={{
+            ...codePreviewBodyStyle,
+            color: palette.textPrimary,
+            background: "transparent",
+          }}
+        >
+          {`Failed to load file: ${fileError}`}
+        </pre>
+      );
+    }
+
+    return (
+      <CodePanelSurface
+        path={filePath}
+        name={filePath.split("/").pop() || filePath}
+        language={codeLanguage}
+        initialContent={previewCode}
+      />
+    );
+  }
+
   return (
     <div style={codePreviewContainerStyle}>
-      <div style={codePreviewHeaderStyle}>
-        <div style={codePreviewPathStyle}>
-          {filePath || activeTab?.path || "Untitled"}
-        </div>
-        {filePath && (
-          <button
-            onClick={() => {
-              onFileOpen?.(
-                filePath,
-                previewCode,
-                filePath.split("/").pop() || filePath,
-                typeof window.payload.line === "number"
-                  ? window.payload.line
-                  : undefined,
-              );
-            }}
-            style={{
-              border: "1px solid var(--border-subtle)",
-              background: "var(--bg-secondary)",
-              color: palette.textPrimary,
-              borderRadius: 8,
-              padding: "6px 8px",
-              cursor: "pointer",
-              fontSize: 11,
-            }}
-          >
-            Open in editor
-          </button>
-        )}
-      </div>
-
       <pre
         style={{
           ...codePreviewBodyStyle,

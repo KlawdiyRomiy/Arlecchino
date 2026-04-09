@@ -41,6 +41,8 @@ export interface FloatingPanelProps {
     targetPosition: PanelPosition | null,
     dropX?: number,
     dropY?: number,
+    dropWidth?: number,
+    dropHeight?: number,
   ) => void;
   headerExtra?: React.ReactNode;
   isDropTarget?: boolean;
@@ -282,7 +284,14 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
         const dropY =
           startRef.current.panelY + (e.clientY - startRef.current.y);
 
-        onDragEnd?.(id, targetZone, dropX, dropY);
+        onDragEnd?.(
+          id,
+          targetZone,
+          dropX,
+          dropY,
+          startRef.current.width,
+          startRef.current.height,
+        );
       }
     },
     [isDragging, id, onDragEnd, detectDropZone],

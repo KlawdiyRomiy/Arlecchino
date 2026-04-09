@@ -19,9 +19,16 @@ export type LayoutMargins = {
   marginTop: number;
 };
 
+export type LayoutSnappedSurface = {
+  position: LayoutPanelPosition;
+  width: number;
+  height: number;
+};
+
 export function calculatePanelMargins(
   panels: LayoutPanelVisibility,
   panelConfigs: LayoutPanelConfigs,
+  snappedSurfaces: LayoutSnappedSurface[] = [],
 ): LayoutMargins {
   let marginLeft = 0;
   let marginRight = 0;
@@ -38,10 +45,33 @@ export function calculatePanelMargins(
       return;
     }
 
-    if (config.position === "left") marginLeft = config.size.width;
-    if (config.position === "right") marginRight = config.size.width;
-    if (config.position === "bottom") marginBottom = config.size.height;
-    if (config.position === "top") marginTop = config.size.height;
+    if (config.position === "left") {
+      marginLeft = Math.max(marginLeft, config.size.width);
+    }
+    if (config.position === "right") {
+      marginRight = Math.max(marginRight, config.size.width);
+    }
+    if (config.position === "bottom") {
+      marginBottom = Math.max(marginBottom, config.size.height);
+    }
+    if (config.position === "top") {
+      marginTop = Math.max(marginTop, config.size.height);
+    }
+  });
+
+  snappedSurfaces.forEach((surface) => {
+    if (surface.position === "left") {
+      marginLeft = Math.max(marginLeft, surface.width);
+    }
+    if (surface.position === "right") {
+      marginRight = Math.max(marginRight, surface.width);
+    }
+    if (surface.position === "bottom") {
+      marginBottom = Math.max(marginBottom, surface.height);
+    }
+    if (surface.position === "top") {
+      marginTop = Math.max(marginTop, surface.height);
+    }
   });
 
   return { marginLeft, marginRight, marginBottom, marginTop };

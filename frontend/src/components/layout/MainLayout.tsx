@@ -7,6 +7,7 @@ import { TerminalPanelContent } from "../TerminalPanel";
 import { AIChatPanelContent } from "../AIChatPanel";
 import { GitPanel } from "../GitPanel";
 import { ProblemsPanel } from "../problems/ProblemsPanel";
+import { CodePanelSurface } from "../CodePanelSurface";
 import { PreviewWindowLayer } from "./PreviewWindowLayer";
 import { ExecutionDialog } from "../ExecutionDialog";
 import { LaravelPlugin } from "../../plugins/LaravelPlugin";
@@ -23,6 +24,7 @@ import {
   Sparkles,
   GitBranch,
   Globe,
+  FileText,
 } from "lucide-react";
 
 import {
@@ -91,8 +93,8 @@ interface PanelConfig {
   y: number;
 }
 
-type PanelId = "explorer" | "terminal" | "aiChat" | "git" | "problems";
-type AssistPanelId = Exclude<PanelId, "terminal" | "problems">;
+type PanelId = "explorer" | "terminal" | "aiChat" | "git" | "problems" | "code";
+type AssistPanelId = Exclude<PanelId, "terminal" | "problems" | "code">;
 type PanelVisibility = Record<PanelId, boolean>;
 
 type PanelConfigs = Record<PanelId, PanelConfig>;
@@ -133,6 +135,8 @@ const PANEL_ID_ALIASES: Record<string, PanelId> = {
   files: "explorer",
   problems: "problems",
   diagnostics: "problems",
+  code: "code",
+  editor: "code",
 };
 
 const APP_SURFACE_ALIASES: Record<string, AppSurfaceAction> = {
@@ -433,9 +437,10 @@ const toPreviewSurface = (value: unknown): PreviewSurfaceType | null => {
 
   switch (value.trim().toLowerCase()) {
     case "file":
+      return "file";
     case "code":
     case "editor":
-      return "file";
+      return "code";
     case "browser":
     case "web":
     case "url":
@@ -700,6 +705,7 @@ const DEFAULT_PANELS: PanelVisibility = {
   aiChat: false,
   git: false,
   problems: false,
+  code: false,
 };
 
 const DEFAULT_PANEL_CONFIGS: PanelConfigs = {
@@ -738,7 +744,41 @@ const DEFAULT_PANEL_CONFIGS: PanelConfigs = {
     x: 96,
     y: 96,
   },
+  code: {
+    position: "right",
+    size: { width: 620, height: 0 },
+    mode: "snapped",
+    x: 0,
+    y: 0,
+  },
 };
+
+const cloneDefaultPanelConfigs = (): PanelConfigs => ({
+  explorer: {
+    ...DEFAULT_PANEL_CONFIGS.explorer,
+    size: { ...DEFAULT_PANEL_CONFIGS.explorer.size },
+  },
+  terminal: {
+    ...DEFAULT_PANEL_CONFIGS.terminal,
+    size: { ...DEFAULT_PANEL_CONFIGS.terminal.size },
+  },
+  aiChat: {
+    ...DEFAULT_PANEL_CONFIGS.aiChat,
+    size: { ...DEFAULT_PANEL_CONFIGS.aiChat.size },
+  },
+  git: {
+    ...DEFAULT_PANEL_CONFIGS.git,
+    size: { ...DEFAULT_PANEL_CONFIGS.git.size },
+  },
+  problems: {
+    ...DEFAULT_PANEL_CONFIGS.problems,
+    size: { ...DEFAULT_PANEL_CONFIGS.problems.size },
+  },
+  code: {
+    ...DEFAULT_PANEL_CONFIGS.code,
+    size: { ...DEFAULT_PANEL_CONFIGS.code.size },
+  },
+});
 
 export const MainLayout: React.FC<MainLayoutProps> = ({
   children,
@@ -770,6 +810,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const activeEditorTab = useEditorStore((state) =>
     state.getActiveTab(state.activePaneId),
   );
+  const activePaneId = useEditorStore((state) => state.activePaneId);
+  const openEditorTab = useEditorStore((state) => state.openTab);
   const {
     tuiModeActive,
     tuiAssist,
@@ -865,12 +907,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   });
 
   const [panelConfigs, setPanelConfigs] = useState<PanelConfigs>(() => {
-    if (!panelStorageKey) return structuredClone(DEFAULT_PANEL_CONFIGS);
+    if (!panelStorageKey) return cloneDefaultPanelConfigs();
     try {
       const raw = localStorage.getItem(panelStorageKey);
-      if (!raw) return structuredClone(DEFAULT_PANEL_CONFIGS);
+      if (!raw) return cloneDefaultPanelConfigs();
       const { panelConfigs: saved } = JSON.parse(raw);
-      if (!saved) return structuredClone(DEFAULT_PANEL_CONFIGS);
+      if (!saved) return cloneDefaultPanelConfigs();
       const { browser: _, ...rest } = saved;
       return {
         explorer: {
@@ -913,9 +955,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             ...(rest.problems?.size ?? {}),
           },
         },
+        code: {
+          ...DEFAULT_PANEL_CONFIGS.code,
+          ...(rest.code ?? {}),
+          size: {
+            ...DEFAULT_PANEL_CONFIGS.code.size,
+            ...(rest.code?.size ?? {}),
+          },
+        },
       };
     } catch {
-      return structuredClone(DEFAULT_PANEL_CONFIGS);
+      return cloneDefaultPanelConfigs();
     }
   });
   const [tuiLayoutSnapshot, setTuiLayoutSnapshot] = useState<{
@@ -948,6 +998,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         aiChat: { ...source.aiChat, size: { ...source.aiChat.size } },
         git: { ...source.git, size: { ...source.git.size } },
         problems: { ...source.problems, size: { ...source.problems.size } },
+        code: { ...source.code, size: { ...source.code.size } },
       };
     },
     [],
@@ -1054,6 +1105,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [notification, setNotification] = useState<{
     type: "success" | "error";
     message: string;
+  } | null>(null);
+  const [codePanelSource, setCodePanelSource] = useState<{
+    path: string;
+    name: string;
+    content: string;
+    language: string;
+    line?: number;
   } | null>(null);
 
   const showNotification = useCallback(
@@ -1746,6 +1804,61 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onFileOpen(path, content, name, line);
     }
   };
+
+  const handleFileOpenInPanel = useCallback(
+    (path: string, content: string, name: string, line?: number) => {
+      const language = path.includes(".")
+        ? path.split(".").pop() || "text"
+        : "text";
+
+      setCodePanelSource({
+        path,
+        name,
+        content,
+        language,
+        line,
+      });
+
+      openEditorTab(activePaneId, path, name, content, language);
+
+      const nextConfig = buildPanelConfigForOpen(
+        "code",
+        {
+          panel: "code",
+          mode: "snapped",
+          position: "right",
+          width: 560,
+        },
+        panelConfigsRef.current.code,
+      );
+
+      setPanelConfigs((previous) => ({
+        ...previous,
+        code: nextConfig,
+      }));
+
+      setPanels((previous) => {
+        const nextPanels = { ...previous };
+        (Object.keys(panelConfigsRef.current) as PanelId[]).forEach((id) => {
+          if (id === "code" || !nextPanels[id]) {
+            return;
+          }
+
+          const otherConfig = panelConfigsRef.current[id];
+          if (
+            otherConfig.mode === "snapped" &&
+            otherConfig.position === "right"
+          ) {
+            nextPanels[id] = false;
+          }
+        });
+
+        nextPanels.code = true;
+        return nextPanels;
+      });
+    },
+    [activePaneId, openEditorTab],
+  );
 
   const openFileFromPath = useCallback(
     async (path: string, line?: number) => {
@@ -2946,6 +3059,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             <FileExplorer
               projectPath={activeProjectPath}
               onFileOpen={handleFileOpen}
+              onFileOpenInPanel={handleFileOpenInPanel}
               isHorizontal={
                 config.position === "bottom" || config.position === "top"
               }
@@ -3173,6 +3287,31 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               activeFilePath={activeEditorTab?.path ?? null}
               onNavigate={(path, line, _column) => openFileFromPath(path, line)}
             />
+          </FloatingPanel>
+        );
+      case "code":
+        return (
+          <FloatingPanel
+            key="code"
+            id="code"
+            title={codePanelSource ? `${codePanelSource.name} (Code)` : "Code"}
+            icon={<FileText size={16} />}
+            minSize={320}
+            maxSize={900}
+            {...panelProps}
+          >
+            {codePanelSource ? (
+              <CodePanelSurface
+                path={codePanelSource.path}
+                name={codePanelSource.name}
+                initialContent={codePanelSource.content}
+                language={codePanelSource.language}
+              />
+            ) : (
+              <div className="h-full w-full flex items-center justify-center text-sm text-[var(--text-muted)]">
+                Open file from Explorer to start editing in panel
+              </div>
+            )}
           </FloatingPanel>
         );
       default:
@@ -3447,6 +3586,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           {renderPanel("git")}
           {renderPanel("aiChat")}
           {renderPanel("problems")}
+          {renderPanel("code")}
           {!tuiModeActive && renderPanel("terminal")}
 
           <div style={editorAreaStyle}>
