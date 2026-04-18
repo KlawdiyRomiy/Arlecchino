@@ -98,6 +98,13 @@ type AssistPanelId = Exclude<PanelId, "terminal" | "problems" | "code">;
 type PanelVisibility = Record<PanelId, boolean>;
 
 type PanelConfigs = Record<PanelId, PanelConfig>;
+type RememberedSnappedPositions = Record<PanelId, PanelPosition>;
+
+interface HydratedPanelLayoutState {
+  panels: PanelVisibility;
+  panelConfigs: PanelConfigs;
+  rememberedSnappedPositions: RememberedSnappedPositions;
+}
 
 interface PanelOpenRequest {
   panel: string;
@@ -119,6 +126,22 @@ type AppSurfaceAction =
   | { kind: "dispatcher" }
   | { kind: "settings" }
   | { kind: "run"; mode: "run" | "debug" };
+
+const SNAPPED_PANEL_POSITIONS: readonly PanelPosition[] = [
+  "left",
+  "right",
+  "bottom",
+  "top",
+];
+
+const PANEL_POSITION_PREFERENCES: Record<PanelId, readonly PanelPosition[]> = {
+  explorer: ["left", "right", "bottom", "top"],
+  terminal: ["bottom", "right", "left", "top"],
+  aiChat: ["right", "left", "bottom", "top"],
+  git: ["left", "right", "bottom", "top"],
+  problems: ["bottom", "right", "left", "top"],
+  code: ["right", "left", "bottom", "top"],
+};
 
 const PANEL_ID_ALIASES: Record<string, PanelId> = {
   git: "git",
@@ -169,6 +192,12 @@ const normalizePanelSizeForPosition = (
     height: 0,
   };
 };
+
+const isPanelPosition = (value: unknown): value is PanelPosition =>
+  value === "left" ||
+  value === "right" ||
+  value === "top" ||
+  value === "bottom";
 
 const resolvePanelId = (panelName: string): PanelId | null => {
   const normalized = panelName.trim().toLowerCase();
@@ -275,6 +304,187 @@ const buildPanelConfigForOpen = (
       height: safeFloating.height,
     },
   };
+};
+
+const hasExplicitPanelPlacement = (request: PanelOpenRequest): boolean =>
+  request.position !== undefined ||
+  request.mode !== undefined ||
+  typeof request.x === "number" ||
+  typeof request.y === "number";
+
+const getOccupiedSnappedPositions = (
+  panelId: PanelId,
+  panels: PanelVisibility,
+  panelConfigs: PanelConfigs,
+): Set<PanelPosition> => {
+  const occupied = new Set<PanelPosition>();
+
+  (Object.keys(panelConfigs) as PanelId[]).forEach((id) => {
+    if (id === panelId || !panels[id]) {
+      return;
+    }
+
+    const config = panelConfigs[id];
+    if (config.mode === "snapped") {
+      occupied.add(config.position);
+    }
+  });
+
+  return occupied;
+};
+
+const resolveSmartSnappedPosition = (
+  panelId: PanelId,
+  rememberedPosition: PanelPosition,
+  panels: PanelVisibility,
+  panelConfigs: PanelConfigs,
+): PanelPosition | null => {
+  const occupiedPositions = getOccupiedSnappedPositions(
+    panelId,
+    panels,
+    panelConfigs,
+  );
+
+  if (
+    isPanelPosition(rememberedPosition) &&
+    !occupiedPositions.has(rememberedPosition)
+  ) {
+    return rememberedPosition;
+  }
+
+  const preferredPositions = PANEL_POSITION_PREFERENCES[panelId];
+  const orderedPositions = [
+    rememberedPosition,
+    ...preferredPositions,
+    ...SNAPPED_PANEL_POSITIONS,
+  ].filter(
+    (position, index, all): position is PanelPosition =>
+      isPanelPosition(position) && all.indexOf(position) === index,
+  );
+
+  for (const position of orderedPositions) {
+    if (!occupiedPositions.has(position)) {
+      return position;
+    }
+  }
+
+  return null;
+};
+
+const buildCenteredFloatingOpenRequest = (
+  panelId: PanelId,
+  request: PanelOpenRequest,
+  currentConfig: PanelConfig,
+): PanelOpenRequest => {
+  const defaultConfig = DEFAULT_PANEL_CONFIGS[panelId];
+  const fallbackWidth =
+    currentConfig.size.width || defaultConfig.size.width || 420;
+  const fallbackHeight =
+    currentConfig.size.height || defaultConfig.size.height || 320;
+  const maxWidth = Math.max(320, window.innerWidth - 96);
+  const maxHeight = Math.max(220, window.innerHeight - 128);
+  const width = Math.min(request.width ?? fallbackWidth, maxWidth);
+  const height = Math.min(request.height ?? fallbackHeight, maxHeight);
+
+  return {
+    ...request,
+    mode: "floating",
+    width,
+    height,
+    x: Math.max(0, Math.round((window.innerWidth - width) / 2)),
+    y: Math.max(32, Math.round((window.innerHeight - height) / 2)),
+  };
+};
+
+const resolvePanelOpenRequest = (
+  panelId: PanelId,
+  request: PanelOpenRequest,
+  rememberedPosition: PanelPosition,
+  currentConfig: PanelConfig,
+  panels: PanelVisibility,
+  panelConfigs: PanelConfigs,
+): PanelOpenRequest => {
+  if (hasExplicitPanelPlacement(request)) {
+    return request;
+  }
+
+  const defaultConfig = DEFAULT_PANEL_CONFIGS[panelId];
+  const mode =
+    request.mode ??
+    (defaultConfig.mode === "snapped" ? "snapped" : currentConfig.mode);
+  if (mode !== "snapped") {
+    return request;
+  }
+
+  const resolvedPosition = resolveSmartSnappedPosition(
+    panelId,
+    rememberedPosition,
+    panels,
+    panelConfigs,
+  );
+  if (!resolvedPosition) {
+    return buildCenteredFloatingOpenRequest(panelId, request, currentConfig);
+  }
+
+  return {
+    ...request,
+    position: resolvedPosition,
+  };
+};
+
+const computeNextPanelOpenState = (
+  panelId: PanelId,
+  request: PanelOpenRequest,
+  panels: PanelVisibility,
+  panelConfigs: PanelConfigs,
+  rememberedSnappedPositions: RememberedSnappedPositions,
+): {
+  nextPanels: PanelVisibility;
+  nextConfig: PanelConfig;
+  nextRememberedSnappedPositions: RememberedSnappedPositions;
+} => {
+  const currentConfig = panelConfigs[panelId];
+  const resolvedRequest = resolvePanelOpenRequest(
+    panelId,
+    request,
+    rememberedSnappedPositions[panelId],
+    currentConfig,
+    panels,
+    panelConfigs,
+  );
+  const nextConfig = buildPanelConfigForOpen(
+    panelId,
+    resolvedRequest,
+    currentConfig,
+  );
+  const nextPanels = { ...panels };
+  const nextRememberedSnappedPositions = { ...rememberedSnappedPositions };
+
+  if (
+    nextConfig.mode === "snapped" &&
+    (request.position !== undefined || request.mode === "snapped")
+  ) {
+    nextRememberedSnappedPositions[panelId] = nextConfig.position;
+  }
+
+  if (nextConfig.mode === "snapped") {
+    (Object.keys(panelConfigs) as PanelId[]).forEach((id) => {
+      if (id === panelId || !nextPanels[id]) {
+        return;
+      }
+
+      const otherConfig = panelConfigs[id];
+      if (
+        otherConfig.mode === "snapped" &&
+        otherConfig.position === nextConfig.position
+      ) {
+        nextPanels[id] = false;
+      }
+    });
+  }
+
+  nextPanels[panelId] = true;
+  return { nextPanels, nextConfig, nextRememberedSnappedPositions };
 };
 
 import { useIDEEvents } from "../../hooks/useIDEEvents";
@@ -780,6 +990,221 @@ const cloneDefaultPanelConfigs = (): PanelConfigs => ({
   },
 });
 
+const createDefaultRememberedSnappedPositions =
+  (): RememberedSnappedPositions => ({
+    explorer: DEFAULT_PANEL_CONFIGS.explorer.position,
+    terminal: DEFAULT_PANEL_CONFIGS.terminal.position,
+    aiChat: DEFAULT_PANEL_CONFIGS.aiChat.position,
+    git: DEFAULT_PANEL_CONFIGS.git.position,
+    problems: DEFAULT_PANEL_CONFIGS.problems.position,
+    code: DEFAULT_PANEL_CONFIGS.code.position,
+  });
+
+const clonePanelConfigsValue = (source: PanelConfigs): PanelConfigs => ({
+  explorer: { ...source.explorer, size: { ...source.explorer.size } },
+  terminal: { ...source.terminal, size: { ...source.terminal.size } },
+  aiChat: { ...source.aiChat, size: { ...source.aiChat.size } },
+  git: { ...source.git, size: { ...source.git.size } },
+  problems: { ...source.problems, size: { ...source.problems.size } },
+  code: { ...source.code, size: { ...source.code.size } },
+});
+
+const cloneRememberedSnappedPositionsValue = (
+  source: RememberedSnappedPositions,
+): RememberedSnappedPositions => ({
+  explorer: source.explorer,
+  terminal: source.terminal,
+  aiChat: source.aiChat,
+  git: source.git,
+  problems: source.problems,
+  code: source.code,
+});
+
+const normalizeHydratedPanelLayoutState = (
+  panels: PanelVisibility,
+  panelConfigs: PanelConfigs,
+  rememberedSnappedPositions: RememberedSnappedPositions,
+): HydratedPanelLayoutState => {
+  const nextPanels = { ...panels };
+  const nextPanelConfigs = clonePanelConfigsValue(panelConfigs);
+  const nextRememberedSnappedPositions = cloneRememberedSnappedPositionsValue(
+    rememberedSnappedPositions,
+  );
+  const occupiedPositions = new Set<PanelPosition>();
+
+  // Keep a single visible snapped owner per side during hydration.
+  (Object.keys(nextPanels) as PanelId[]).forEach((panelId) => {
+    if (!nextPanels[panelId]) {
+      return;
+    }
+
+    const config = nextPanelConfigs[panelId];
+    if (config.mode !== "snapped") {
+      return;
+    }
+
+    if (occupiedPositions.has(config.position)) {
+      nextPanels[panelId] = false;
+      return;
+    }
+
+    occupiedPositions.add(config.position);
+  });
+
+  return {
+    panels: nextPanels,
+    panelConfigs: nextPanelConfigs,
+    rememberedSnappedPositions: nextRememberedSnappedPositions,
+  };
+};
+
+const resolveStoredPanelConfig = (
+  savedPanelConfig: unknown,
+  defaultConfig: PanelConfig,
+): PanelConfig => {
+  const configRecord =
+    typeof savedPanelConfig === "object" && savedPanelConfig !== null
+      ? (savedPanelConfig as Record<string, unknown>)
+      : null;
+  const sizeRecord =
+    typeof configRecord?.size === "object" && configRecord.size !== null
+      ? (configRecord.size as Record<string, unknown>)
+      : null;
+
+  return {
+    ...defaultConfig,
+    ...(configRecord ?? {}),
+    size: {
+      ...defaultConfig.size,
+      ...(sizeRecord ?? {}),
+    },
+  };
+};
+
+const resolveStoredPanelConfigs = (
+  savedPanelConfigs: unknown,
+): PanelConfigs => {
+  if (typeof savedPanelConfigs !== "object" || savedPanelConfigs === null) {
+    return cloneDefaultPanelConfigs();
+  }
+
+  const { browser: _browser, ...rest } = savedPanelConfigs as Record<
+    string,
+    unknown
+  >;
+  return {
+    explorer: resolveStoredPanelConfig(
+      rest.explorer,
+      DEFAULT_PANEL_CONFIGS.explorer,
+    ),
+    terminal: resolveStoredPanelConfig(
+      rest.terminal,
+      DEFAULT_PANEL_CONFIGS.terminal,
+    ),
+    aiChat: resolveStoredPanelConfig(rest.aiChat, DEFAULT_PANEL_CONFIGS.aiChat),
+    git: resolveStoredPanelConfig(rest.git, DEFAULT_PANEL_CONFIGS.git),
+    problems: resolveStoredPanelConfig(
+      rest.problems,
+      DEFAULT_PANEL_CONFIGS.problems,
+    ),
+    code: resolveStoredPanelConfig(rest.code, DEFAULT_PANEL_CONFIGS.code),
+  };
+};
+
+const loadPersistedPanelLayoutState = (
+  panelStorageKey: string | null,
+): HydratedPanelLayoutState => {
+  if (!panelStorageKey) {
+    return normalizeHydratedPanelLayoutState(
+      { ...DEFAULT_PANELS },
+      cloneDefaultPanelConfigs(),
+      createDefaultRememberedSnappedPositions(),
+    );
+  }
+
+  try {
+    const raw = localStorage.getItem(panelStorageKey);
+    if (!raw) {
+      return normalizeHydratedPanelLayoutState(
+        { ...DEFAULT_PANELS },
+        cloneDefaultPanelConfigs(),
+        createDefaultRememberedSnappedPositions(),
+      );
+    }
+
+    const parsed = JSON.parse(raw) as {
+      panels?: unknown;
+      panelConfigs?: unknown;
+      rememberedSnappedPositions?: unknown;
+    };
+    const savedPanels =
+      typeof parsed.panels === "object" && parsed.panels !== null
+        ? (parsed.panels as Record<string, unknown>)
+        : null;
+    const { browser: _browser, ...restPanels } = savedPanels ?? {};
+    const panels: PanelVisibility = {
+      ...DEFAULT_PANELS,
+      ...(restPanels as Partial<PanelVisibility>),
+    };
+    const panelConfigs = resolveStoredPanelConfigs(parsed.panelConfigs);
+    const rememberedSnappedPositions = resolveRememberedSnappedPositions(
+      parsed.panelConfigs,
+      parsed.rememberedSnappedPositions,
+    );
+
+    return normalizeHydratedPanelLayoutState(
+      panels,
+      panelConfigs,
+      rememberedSnappedPositions,
+    );
+  } catch {
+    return normalizeHydratedPanelLayoutState(
+      { ...DEFAULT_PANELS },
+      cloneDefaultPanelConfigs(),
+      createDefaultRememberedSnappedPositions(),
+    );
+  }
+};
+
+const resolveRememberedSnappedPositions = (
+  savedPanelConfigs: unknown,
+  savedRememberedPositions: unknown,
+): RememberedSnappedPositions => {
+  const nextPositions = createDefaultRememberedSnappedPositions();
+  const rememberedRecord =
+    typeof savedRememberedPositions === "object" &&
+    savedRememberedPositions !== null
+      ? (savedRememberedPositions as Record<string, unknown>)
+      : null;
+  const configsRecord =
+    typeof savedPanelConfigs === "object" && savedPanelConfigs !== null
+      ? (savedPanelConfigs as Record<string, unknown>)
+      : null;
+
+  (Object.keys(nextPositions) as PanelId[]).forEach((panelId) => {
+    const rememberedPosition = rememberedRecord?.[panelId];
+    if (isPanelPosition(rememberedPosition)) {
+      nextPositions[panelId] = rememberedPosition;
+      return;
+    }
+
+    const savedConfig = configsRecord?.[panelId];
+    if (typeof savedConfig !== "object" || savedConfig === null) {
+      return;
+    }
+
+    const configRecord = savedConfig as Record<string, unknown>;
+    if (
+      configRecord.mode === "snapped" &&
+      isPanelPosition(configRecord.position)
+    ) {
+      nextPositions[panelId] = configRecord.position;
+    }
+  });
+
+  return nextPositions;
+};
+
 export const MainLayout: React.FC<MainLayoutProps> = ({
   children,
   onFileOpen,
@@ -891,91 +1316,36 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const panelStorageKey = activeProjectId
     ? `panelState:${activeProjectId}`
     : null;
+  const initialPanelLayoutState = React.useMemo(
+    () => loadPersistedPanelLayoutState(panelStorageKey),
+    [panelStorageKey],
+  );
 
   const [panels, setPanels] = useState<PanelVisibility>(() => {
-    if (!panelStorageKey) return { ...DEFAULT_PANELS };
-    try {
-      const raw = localStorage.getItem(panelStorageKey);
-      if (!raw) return { ...DEFAULT_PANELS };
-      const { panels: saved } = JSON.parse(raw);
-      if (!saved) return { ...DEFAULT_PANELS };
-      const { browser: _, ...rest } = saved;
-      return { ...DEFAULT_PANELS, ...(rest as Partial<PanelVisibility>) };
-    } catch {
-      return { ...DEFAULT_PANELS };
-    }
+    return { ...initialPanelLayoutState.panels };
   });
 
   const [panelConfigs, setPanelConfigs] = useState<PanelConfigs>(() => {
-    if (!panelStorageKey) return cloneDefaultPanelConfigs();
-    try {
-      const raw = localStorage.getItem(panelStorageKey);
-      if (!raw) return cloneDefaultPanelConfigs();
-      const { panelConfigs: saved } = JSON.parse(raw);
-      if (!saved) return cloneDefaultPanelConfigs();
-      const { browser: _, ...rest } = saved;
-      return {
-        explorer: {
-          ...DEFAULT_PANEL_CONFIGS.explorer,
-          ...(rest.explorer ?? {}),
-          size: {
-            ...DEFAULT_PANEL_CONFIGS.explorer.size,
-            ...(rest.explorer?.size ?? {}),
-          },
-        },
-        terminal: {
-          ...DEFAULT_PANEL_CONFIGS.terminal,
-          ...(rest.terminal ?? {}),
-          size: {
-            ...DEFAULT_PANEL_CONFIGS.terminal.size,
-            ...(rest.terminal?.size ?? {}),
-          },
-        },
-        aiChat: {
-          ...DEFAULT_PANEL_CONFIGS.aiChat,
-          ...(rest.aiChat ?? {}),
-          size: {
-            ...DEFAULT_PANEL_CONFIGS.aiChat.size,
-            ...(rest.aiChat?.size ?? {}),
-          },
-        },
-        git: {
-          ...DEFAULT_PANEL_CONFIGS.git,
-          ...(rest.git ?? {}),
-          size: {
-            ...DEFAULT_PANEL_CONFIGS.git.size,
-            ...(rest.git?.size ?? {}),
-          },
-        },
-        problems: {
-          ...DEFAULT_PANEL_CONFIGS.problems,
-          ...(rest.problems ?? {}),
-          size: {
-            ...DEFAULT_PANEL_CONFIGS.problems.size,
-            ...(rest.problems?.size ?? {}),
-          },
-        },
-        code: {
-          ...DEFAULT_PANEL_CONFIGS.code,
-          ...(rest.code ?? {}),
-          size: {
-            ...DEFAULT_PANEL_CONFIGS.code.size,
-            ...(rest.code?.size ?? {}),
-          },
-        },
-      };
-    } catch {
-      return cloneDefaultPanelConfigs();
-    }
+    return clonePanelConfigsValue(initialPanelLayoutState.panelConfigs);
   });
+  const [rememberedSnappedPositions, setRememberedSnappedPositions] =
+    useState<RememberedSnappedPositions>(() => {
+      return cloneRememberedSnappedPositionsValue(
+        initialPanelLayoutState.rememberedSnappedPositions,
+      );
+    });
   const [tuiLayoutSnapshot, setTuiLayoutSnapshot] = useState<{
     panels: PanelVisibility;
     panelConfigs: PanelConfigs;
+    rememberedSnappedPositions: RememberedSnappedPositions;
   } | null>(null);
   const wasTUIActiveRef = React.useRef(false);
   const forceHideTerminalAfterTUIExitRef = React.useRef(false);
   const panelsRef = React.useRef(panels);
   const panelConfigsRef = React.useRef(panelConfigs);
+  const rememberedSnappedPositionsRef = React.useRef(
+    rememberedSnappedPositions,
+  );
   const appearanceSessionRef = React.useRef<string | null>(null);
   const previewUpdateQueueRef = React.useRef<
     Map<
@@ -1004,6 +1374,48 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [],
   );
 
+  const cloneRememberedSnappedPositions = useCallback(
+    (source: RememberedSnappedPositions): RememberedSnappedPositions => ({
+      explorer: source.explorer,
+      terminal: source.terminal,
+      aiChat: source.aiChat,
+      git: source.git,
+      problems: source.problems,
+      code: source.code,
+    }),
+    [],
+  );
+
+  const applyPanelsState = useCallback((nextPanels: PanelVisibility) => {
+    panelsRef.current = nextPanels;
+    setPanels(nextPanels);
+  }, []);
+
+  const updatePanelsState = useCallback(
+    (updater: (previous: PanelVisibility) => PanelVisibility) => {
+      const nextPanels = updater(panelsRef.current);
+      applyPanelsState(nextPanels);
+      return nextPanels;
+    },
+    [applyPanelsState],
+  );
+
+  const applyPanelConfigsState = useCallback(
+    (nextPanelConfigs: PanelConfigs) => {
+      panelConfigsRef.current = nextPanelConfigs;
+      setPanelConfigs(nextPanelConfigs);
+    },
+    [],
+  );
+
+  const applyRememberedSnappedPositionsState = useCallback(
+    (nextRememberedSnappedPositions: RememberedSnappedPositions) => {
+      rememberedSnappedPositionsRef.current = nextRememberedSnappedPositions;
+      setRememberedSnappedPositions(nextRememberedSnappedPositions);
+    },
+    [],
+  );
+
   useEffect(() => {
     panelsRef.current = panels;
   }, [panels]);
@@ -1013,16 +1425,30 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, [panelConfigs]);
 
   useEffect(() => {
+    rememberedSnappedPositionsRef.current = rememberedSnappedPositions;
+  }, [rememberedSnappedPositions]);
+
+  useEffect(() => {
     try {
       if (tuiModeActive || !panelStorageKey) return;
       localStorage.setItem(
         panelStorageKey,
-        JSON.stringify({ panels, panelConfigs }),
+        JSON.stringify({
+          panels,
+          panelConfigs,
+          rememberedSnappedPositions,
+        }),
       );
     } catch {
       /* quota */
     }
-  }, [panels, panelConfigs, tuiModeActive, panelStorageKey]);
+  }, [
+    panelConfigs,
+    panelStorageKey,
+    panels,
+    rememberedSnappedPositions,
+    tuiModeActive,
+  ]);
 
   useEffect(() => {
     setPowerProfile(tuiModeActive ? "hard_pause" : "normal");
@@ -1038,6 +1464,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setTuiLayoutSnapshot({
         panels: { ...panels },
         panelConfigs: clonePanelConfigs(panelConfigs),
+        rememberedSnappedPositions: cloneRememberedSnappedPositions(
+          rememberedSnappedPositions,
+        ),
       });
 
       const floatingTerminalConfig = getTUIFloatingTerminalConfig({
@@ -1052,7 +1481,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         },
       }));
 
-      setPanels((prev) => {
+      updatePanelsState((prev) => {
         const nextPanels = getTUIPanelVisibility({ ...prev, browser: false });
         const { browser: _browser, ...rest } = nextPanels;
         return {
@@ -1067,15 +1496,21 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setTUIAssist({ active: false, panel: null, anchor: "right" });
 
       if (tuiLayoutSnapshot) {
-        setPanels(
+        const normalizedSnapshot = normalizeHydratedPanelLayoutState(
           shouldHideTerminalPanel
             ? { ...tuiLayoutSnapshot.panels, terminal: false }
             : tuiLayoutSnapshot.panels,
+          tuiLayoutSnapshot.panelConfigs,
+          tuiLayoutSnapshot.rememberedSnappedPositions,
         );
-        setPanelConfigs(tuiLayoutSnapshot.panelConfigs);
+        applyPanelsState(normalizedSnapshot.panels);
+        applyPanelConfigsState(normalizedSnapshot.panelConfigs);
+        applyRememberedSnappedPositionsState(
+          normalizedSnapshot.rememberedSnappedPositions,
+        );
         setTuiLayoutSnapshot(null);
       } else if (shouldHideTerminalPanel) {
-        setPanels((prev) => ({ ...prev, terminal: false }));
+        updatePanelsState((prev) => ({ ...prev, terminal: false }));
       }
 
       forceHideTerminalAfterTUIExitRef.current = false;
@@ -1083,12 +1518,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
     wasTUIActiveRef.current = tuiModeActive;
   }, [
+    applyPanelConfigsState,
+    applyPanelsState,
+    applyRememberedSnappedPositionsState,
     clonePanelConfigs,
+    cloneRememberedSnappedPositions,
     panelConfigs,
     panels,
+    rememberedSnappedPositions,
     setTUIAssist,
     tuiLayoutSnapshot,
     tuiModeActive,
+    updatePanelsState,
   ]);
 
   const terminalPreFullscreenRef = React.useRef<{
@@ -1201,7 +1642,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
       try {
         await WriteTerminal(targetSessionId, btoa(binary));
-        setPanels((previous) => ({ ...previous, terminal: true }));
+        updatePanelsState((previous) => ({ ...previous, terminal: true }));
         setTimeout(() => useTerminalStore.getState().focusActiveTerminal(), 80);
         return true;
       } catch (error) {
@@ -1213,7 +1654,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return false;
       }
     },
-    [isDark, showNotification],
+    [isDark, showNotification, updatePanelsState],
   );
 
   const executeExecutionProfile = useCallback(
@@ -1541,12 +1982,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
         e.preventDefault();
 
-        const leftPanel = (Object.keys(configs) as PanelId[]).find(
-          (id) => configs[id].position === "left",
-        );
-        if (leftPanel) {
-          setPanels((p) => ({ ...p, [leftPanel]: !p[leftPanel] }));
-        }
+        toggleNamedPanel("explorer");
         return;
       }
 
@@ -1584,18 +2020,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
         e.preventDefault();
 
-        const bottomPanel = (Object.keys(configs) as PanelId[]).find(
-          (id) => configs[id].position === "bottom",
-        );
-        if (bottomPanel) {
-          setPanels((p) => {
-            const willBeOpen = !p[bottomPanel];
-            if (willBeOpen) {
-              setTimeout(() => terminalState.focusActiveTerminal(), 100);
-            }
-            return { ...p, [bottomPanel]: willBeOpen };
-          });
-        }
+        toggleNamedPanel("terminal");
         return;
       }
 
@@ -1607,12 +2032,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
         e.preventDefault();
 
-        const rightPanel = (Object.keys(configs) as PanelId[]).find(
-          (id) => configs[id].position === "right",
-        );
-        if (rightPanel) {
-          setPanels((p) => ({ ...p, [rightPanel]: !p[rightPanel] }));
-        }
+        toggleNamedPanel("aiChat");
         return;
       }
 
@@ -1637,7 +2057,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         }
 
         e.preventDefault();
-        setPanels((p) => ({ ...p, git: !p.git }));
+        toggleNamedPanel("git");
         return;
       }
 
@@ -1831,33 +2251,42 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         },
         panelConfigsRef.current.code,
       );
-
-      setPanelConfigs((previous) => ({
-        ...previous,
+      const nextPanelConfigs = {
+        ...panelConfigsRef.current,
         code: nextConfig,
-      }));
+      };
+      const nextRememberedSnappedPositions = {
+        ...rememberedSnappedPositionsRef.current,
+        code: nextConfig.position,
+      };
+      const nextPanels = { ...panelsRef.current };
 
-      setPanels((previous) => {
-        const nextPanels = { ...previous };
-        (Object.keys(panelConfigsRef.current) as PanelId[]).forEach((id) => {
-          if (id === "code" || !nextPanels[id]) {
-            return;
-          }
+      (Object.keys(panelConfigsRef.current) as PanelId[]).forEach((id) => {
+        if (id === "code" || !nextPanels[id]) {
+          return;
+        }
 
-          const otherConfig = panelConfigsRef.current[id];
-          if (
-            otherConfig.mode === "snapped" &&
-            otherConfig.position === "right"
-          ) {
-            nextPanels[id] = false;
-          }
-        });
-
-        nextPanels.code = true;
-        return nextPanels;
+        const otherConfig = panelConfigsRef.current[id];
+        if (
+          otherConfig.mode === "snapped" &&
+          otherConfig.position === "right"
+        ) {
+          nextPanels[id] = false;
+        }
       });
+
+      nextPanels.code = true;
+      applyPanelsState(nextPanels);
+      applyPanelConfigsState(nextPanelConfigs);
+      applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
     },
-    [activePaneId, openEditorTab],
+    [
+      activePaneId,
+      applyPanelConfigsState,
+      applyPanelsState,
+      applyRememberedSnappedPositionsState,
+      openEditorTab,
+    ],
   );
 
   const openFileFromPath = useCallback(
@@ -2243,7 +2672,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     const terminalState = useTerminalStore.getState();
 
     if (!terminalState.tuiModeActive) {
-      setPanels((previous) => ({ ...previous, terminal: false }));
+      updatePanelsState((previous) => ({ ...previous, terminal: false }));
       return;
     }
 
@@ -2266,47 +2695,34 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         "panel-close",
       );
     }
-  }, []);
+  }, [updatePanelsState]);
 
   const applyPanelOpenState = useCallback(
     (panelId: PanelId, request: PanelOpenRequest) => {
-      const currentConfig = panelConfigsRef.current[panelId];
-      const nextConfig = buildPanelConfigForOpen(
-        panelId,
-        request,
-        currentConfig,
-      );
-
-      setPanelConfigs((previous) => ({
-        ...previous,
+      const { nextPanels, nextConfig, nextRememberedSnappedPositions } =
+        computeNextPanelOpenState(
+          panelId,
+          request,
+          panelsRef.current,
+          panelConfigsRef.current,
+          rememberedSnappedPositionsRef.current,
+        );
+      const nextPanelConfigs = {
+        ...panelConfigsRef.current,
         [panelId]: nextConfig,
-      }));
+      };
 
-      setPanels((previous) => {
-        const nextPanels = { ...previous };
-        if (nextConfig.mode === "snapped") {
-          (Object.keys(panelConfigsRef.current) as PanelId[]).forEach((id) => {
-            if (id === panelId || !nextPanels[id]) {
-              return;
-            }
-
-            const otherConfig = panelConfigsRef.current[id];
-            if (
-              otherConfig.mode === "snapped" &&
-              otherConfig.position === nextConfig.position
-            ) {
-              nextPanels[id] = false;
-            }
-          });
-        }
-
-        nextPanels[panelId] = true;
-        return nextPanels;
-      });
+      applyPanelsState(nextPanels);
+      applyPanelConfigsState(nextPanelConfigs);
+      applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
 
       return nextConfig;
     },
-    [],
+    [
+      applyPanelConfigsState,
+      applyPanelsState,
+      applyRememberedSnappedPositionsState,
+    ],
   );
 
   const executeAppSurfaceAction = useCallback(
@@ -2373,7 +2789,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           closeTerminalPanel();
           return;
         }
-        setPanels((previous) => ({ ...previous, [appAction.panelId]: false }));
+        updatePanelsState((previous) => ({
+          ...previous,
+          [appAction.panelId]: false,
+        }));
         return;
       }
 
@@ -2398,7 +2817,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      setPanels((previous) => ({ ...previous, [panelId]: false }));
+      updatePanelsState((previous) => ({ ...previous, [panelId]: false }));
     },
     [
       closeExecutionDialog,
@@ -2406,6 +2825,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       closeTUIAssistPanel,
       closeTerminalPanel,
       dispatcher,
+      updatePanelsState,
     ],
   );
 
@@ -2585,17 +3005,36 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, []);
 
   const togglePanel = (panel: keyof PanelVisibility) => {
-    setPanels((p) => ({ ...p, [panel]: !p[panel] }));
+    updatePanelsState((previous) => ({
+      ...previous,
+      [panel]: !previous[panel],
+    }));
   };
 
-  const togglePanelAtPosition = (position: PanelPosition) => {
-    const panelAtPosition = (Object.keys(panelConfigs) as PanelId[]).find(
-      (id) => panelConfigs[id].position === position,
-    );
-    if (panelAtPosition) {
-      togglePanel(panelAtPosition);
-    }
-  };
+  const toggleNamedPanel = useCallback(
+    (panelId: PanelId) => {
+      const isVisible = panelsRef.current[panelId];
+      if (isVisible) {
+        if (
+          panelId === "terminal" &&
+          useTerminalStore.getState().tuiModeActive
+        ) {
+          closeTerminalPanel();
+          return;
+        }
+
+        updatePanelsState((previous) => ({ ...previous, [panelId]: false }));
+        return;
+      }
+
+      applyPanelOpenState(panelId, { panel: panelId });
+
+      if (panelId === "terminal") {
+        setTimeout(() => useTerminalStore.getState().focusActiveTerminal(), 80);
+      }
+    },
+    [applyPanelOpenState, closeTerminalPanel, updatePanelsState],
+  );
 
   // Handle IDE events from Go backend (via dispatcher)
   useIDEEvents({
@@ -2625,20 +3064,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             openCommandDispatcher();
             break;
           case "sidebar":
-            togglePanelAtPosition("left");
+            toggleNamedPanel("explorer");
             break;
           case "terminal":
-            togglePanelAtPosition("bottom");
+            toggleNamedPanel("terminal");
             break;
           case "ai":
-            togglePanelAtPosition("right");
+            toggleNamedPanel("aiChat");
             break;
         }
       },
       [
         closeTUIAssistPanel,
         openCommandDispatcher,
-        togglePanelAtPosition,
+        toggleNamedPanel,
         toggleTUIAssistPanel,
       ],
     ),
@@ -2829,52 +3268,65 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           // SWAP: Exchange positions between the two panels
           const targetConfig = panelConfigs[panelAtTarget];
           const targetPanelSize = targetConfig.size;
-
-          setPanelConfigs((prev) => ({
-            ...prev,
-            // Move current panel to target position
+          const nextRememberedSnappedPositions = {
+            ...rememberedSnappedPositionsRef.current,
+            [currentPanel]: targetPosition,
+            [panelAtTarget]: currentPosition,
+          };
+          const nextPanelConfigs = {
+            ...panelConfigsRef.current,
             [currentPanel]: {
-              ...prev[currentPanel],
-              mode: "snapped",
+              ...panelConfigsRef.current[currentPanel],
+              mode: "snapped" as const,
               position: targetPosition,
               size: getSizeForPosition(targetPosition, currentPanelSize),
             },
-            // Move target panel to current panel's old position
             [panelAtTarget]: {
-              ...prev[panelAtTarget],
-              mode: "snapped",
+              ...panelConfigsRef.current[panelAtTarget],
+              mode: "snapped" as const,
               position: currentPosition,
               size: getSizeForPosition(currentPosition, targetPanelSize),
             },
-          }));
+          };
+
+          applyPanelConfigsState(nextPanelConfigs);
+          applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
         } else {
           // No panel at target - just move there
-          setPanelConfigs((prev) => ({
-            ...prev,
+          const nextRememberedSnappedPositions = {
+            ...rememberedSnappedPositionsRef.current,
+            [currentPanel]: targetPosition,
+          };
+          const nextPanelConfigs = {
+            ...panelConfigsRef.current,
             [currentPanel]: {
-              ...prev[currentPanel],
-              mode: "snapped",
+              ...panelConfigsRef.current[currentPanel],
+              mode: "snapped" as const,
               position: targetPosition,
               size: getSizeForPosition(targetPosition, currentPanelSize),
             },
-          }));
+          };
+
+          applyPanelConfigsState(nextPanelConfigs);
+          applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
         }
       } else if (dropX !== undefined && dropY !== undefined) {
         // Dropped in free space -> Floating
         const currentSize = panelConfigs[currentPanel].size;
         const width = currentSize.width || 300;
         const height = currentSize.height || 400;
-
-        setPanelConfigs((prev) => ({
-          ...prev,
+        const nextPanelConfigs = {
+          ...panelConfigsRef.current,
           [currentPanel]: {
-            ...prev[currentPanel],
-            mode: "floating",
+            ...panelConfigsRef.current[currentPanel],
+            mode: "floating" as const,
             x: dropX,
             y: dropY,
             size: { width, height },
           },
-        }));
+        };
+
+        applyPanelConfigsState(nextPanelConfigs);
       }
     }
 
@@ -3039,16 +3491,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }) => handlePanelResize(panelId, updates),
       onDragStart: handleDragStart,
       onDragEnd: handleDragEnd,
-      onClose: () => togglePanel(panelId),
+      onClose: () => toggleNamedPanel(panelId),
       isDropTarget,
       adjacentPanels: getAdjacentPanels(),
     };
+    const panelRenderKey = `${panelId}:${config.mode}:${config.position}`;
 
     switch (panelId) {
       case "explorer":
         return (
           <FloatingPanel
-            key="explorer"
+            key={panelRenderKey}
             id="explorer"
             title="Explorer"
             icon={<FolderTree size={16} />}
@@ -3071,7 +3524,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       case "terminal":
         return (
           <FloatingPanel
-            key="terminal"
+            key={panelRenderKey}
             id="terminal"
             title="Terminal"
             icon={<Terminal size={16} />}
@@ -3242,7 +3695,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       case "aiChat":
         return (
           <FloatingPanel
-            key="aiChat"
+            key={panelRenderKey}
             id="aiChat"
             title="AI Assistant"
             icon={<Sparkles size={16} />}
@@ -3256,7 +3709,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       case "git":
         return (
           <FloatingPanel
-            key="git"
+            key={panelRenderKey}
             id="git"
             title="Git"
             icon={<GitBranch size={16} />}
@@ -3275,7 +3728,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       case "problems":
         return (
           <FloatingPanel
-            key="problems"
+            key={panelRenderKey}
             id="problems"
             title="Problems"
             icon={<AlertCircle size={16} />}
@@ -3292,7 +3745,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       case "code":
         return (
           <FloatingPanel
-            key="code"
+            key={panelRenderKey}
             id="code"
             title={codePanelSource ? `${codePanelSource.name} (Code)` : "Code"}
             icon={<FileText size={16} />}
@@ -3504,7 +3957,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               toggleTUIAssistPanel("explorer");
               return;
             }
-            togglePanelAtPosition("left");
+            toggleNamedPanel("explorer");
           }}
           onToggleTerminal={() => {
             if (tuiModeActive) {
@@ -3515,21 +3968,21 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               );
               return;
             }
-            togglePanelAtPosition("bottom");
+            toggleNamedPanel("terminal");
           }}
           onToggleAIChat={() => {
             if (tuiModeActive) {
               toggleTUIAssistPanel("aiChat");
               return;
             }
-            togglePanelAtPosition("right");
+            toggleNamedPanel("aiChat");
           }}
           onToggleGit={() => {
             if (tuiModeActive) {
               toggleTUIAssistPanel("git");
               return;
             }
-            setPanels((previous) => ({ ...previous, git: !previous.git }));
+            toggleNamedPanel("git");
           }}
           onRun={openRunDialog}
           onOpenDebug={openDebugDialog}
