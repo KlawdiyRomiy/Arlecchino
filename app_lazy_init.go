@@ -13,7 +13,11 @@ var (
 )
 
 func (a *App) ensureComposerManager() (*composer.ComposerManager, error) {
-	if a == nil || a.projectPath == "" {
+	if a == nil {
+		return nil, fmt.Errorf("no project opened")
+	}
+	projectPath := a.currentProjectPath()
+	if projectPath == "" {
 		return nil, fmt.Errorf("no project opened")
 	}
 
@@ -23,7 +27,7 @@ func (a *App) ensureComposerManager() (*composer.ComposerManager, error) {
 		return a.cmp, nil
 	}
 
-	cmp, err := newComposerManager(a.projectPath)
+	cmp, err := newComposerManager(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +36,11 @@ func (a *App) ensureComposerManager() (*composer.ComposerManager, error) {
 }
 
 func (a *App) ensureSystemManager() (*system.SystemManager, error) {
-	if a == nil || a.projectPath == "" {
+	if a == nil {
+		return nil, fmt.Errorf("no project opened")
+	}
+	projectPath := a.currentProjectPath()
+	if projectPath == "" {
 		return nil, fmt.Errorf("no project opened")
 	}
 
@@ -42,7 +50,7 @@ func (a *App) ensureSystemManager() (*system.SystemManager, error) {
 		return a.sys, nil
 	}
 
-	sys, err := newSystemManager(a.projectPath)
+	sys, err := newSystemManager(projectPath)
 	if err != nil {
 		return nil, err
 	}

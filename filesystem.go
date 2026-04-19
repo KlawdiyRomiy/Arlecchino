@@ -2,15 +2,56 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+const (
+	gitFieldSeparator  = "\x00"
+	gitRecordSeparator = "\x1e"
+)
+
+var gitAllowedSubcommands = map[string]struct{}{
+	"add":          {},
+	"blame":        {},
+	"branch":       {},
+	"checkout":     {},
+	"commit":       {},
+	"diff":         {},
+	"fetch":        {},
+	"log":          {},
+	"pull":         {},
+	"push":         {},
+	"remote":       {},
+	"reset":        {},
+	"show":         {},
+	"stash":        {},
+	"status":       {},
+	"symbolic-ref": {},
+}
+
+func gitCommandTimeout(args []string) time.Duration {
+	if len(args) == 0 {
+		return 10 * time.Second
+	}
+
+	switch args[0] {
+	case "fetch", "pull", "push":
+		return 90 * time.Second
+	case "blame", "log", "show", "diff":
+		return 20 * time.Second
+	default:
+		return 15 * time.Second
+	}
+}
 
 type FileEntry struct {
 	Name        string `json:"name"`
@@ -414,8 +455,17 @@ func (a *App) RunGitCommand(args []string) (string, error) {
 	if projectPath == "" {
 		return "", fmt.Errorf("no project open")
 	}
+	if len(args) == 0 {
+		return "", fmt.Errorf("git command is required")
+	}
+	if _, ok := gitAllowedSubcommands[args[0]]; !ok {
+		return "", fmt.Errorf("git command not allowed: %s", args[0])
+	}
 
-	cmd := exec.Command("git", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout(args))
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = projectPath
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -424,6 +474,9 @@ func (a *App) RunGitCommand(args []string) (string, error) {
 
 	err := cmd.Run()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("git command timed out")
+		}
 		errText := strings.TrimSpace(stderr.String())
 		if errText == "" {
 			errText = strings.TrimSpace(stdout.String())
@@ -455,7 +508,11 @@ func (a *App) GetGitBranch() (string, error) {
 			return "", err
 		}
 	}
-	return strings.TrimSpace(output), nil
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return "HEAD (detached)", nil
+	}
+	return trimmed, nil
 }
 
 // GetGitStatus returns git status in porcelain format
@@ -465,7 +522,7 @@ func (a *App) GetGitStatus() (string, error) {
 
 // GetGitBranches returns list of all local branches
 func (a *App) GetGitBranches() ([]string, error) {
-	output, err := a.RunGitCommand([]string{"branch", "--list", "--format=%(refname:short)"})
+	output, err := a.RunGitCommand([]string{"branch", "--list", "--sort=-committerdate", "--format=%(refname:short)"})
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +538,7 @@ func (a *App) GetGitBranches() ([]string, error) {
 
 // GetGitDiff returns diff for a specific file or all changes
 func (a *App) GetGitDiff(filePath string, staged bool) (string, error) {
-	args := []string{"diff", "--no-color"}
+	args := []string{"diff", "--no-color", "--diff-algorithm=histogram"}
 	if staged {
 		args = append(args, "--cached")
 	}
@@ -509,7 +566,16 @@ func (a *App) GetGitLog(limit int, filePath string) ([]GitCommitInfo, error) {
 		limit = 50
 	}
 
-	format := "%H|%h|%an|%ae|%ai|%s|%b|%P"
+	format := strings.Join([]string{
+		"%H",
+		"%h",
+		"%an",
+		"%ae",
+		"%ai",
+		"%s",
+		"%b",
+		"%P",
+	}, gitFieldSeparator) + gitRecordSeparator
 	args := []string{"log", fmt.Sprintf("-n%d", limit), fmt.Sprintf("--format=%s", format)}
 
 	if filePath != "" {
@@ -522,12 +588,12 @@ func (a *App) GetGitLog(limit int, filePath string) ([]GitCommitInfo, error) {
 	}
 
 	var commits []GitCommitInfo
-	for _, line := range strings.Split(output, "\n") {
-		if line == "" {
+	for _, record := range strings.Split(output, gitRecordSeparator) {
+		if record == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 8)
-		if len(parts) < 6 {
+		parts := strings.Split(record, gitFieldSeparator)
+		if len(parts) < 8 {
 			continue
 		}
 		commit := GitCommitInfo{
@@ -538,12 +604,8 @@ func (a *App) GetGitLog(limit int, filePath string) ([]GitCommitInfo, error) {
 			Date:        parts[4],
 			Subject:     parts[5],
 		}
-		if len(parts) > 6 {
-			commit.Body = parts[6]
-		}
-		if len(parts) > 7 {
-			commit.Parents = parts[7]
-		}
+		commit.Body = strings.TrimSpace(parts[6])
+		commit.Parents = strings.TrimSpace(parts[7])
 		commits = append(commits, commit)
 	}
 	return commits, nil
@@ -575,5 +637,5 @@ func (a *App) GetGitFileAtCommit(filePath, commitHash string) (string, error) {
 
 // GetGitBlame returns blame info for a file
 func (a *App) GetGitBlame(filePath string) (string, error) {
-	return a.RunGitCommand([]string{"blame", "--line-porcelain", filePath})
+	return a.RunGitCommand([]string{"blame", "--no-progress", "--line-porcelain", filePath})
 }

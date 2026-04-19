@@ -16,6 +16,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	lspregistry "arlecchino/internal/lsp"
 )
 
 type Manager struct {
@@ -46,6 +48,70 @@ var languageIDOverrides = map[string]string{
 	"bash":       "shellscript",
 	"blade":      "html",
 	"objectivec": "objective-c",
+}
+
+var configLanguageAliases = map[string][]string{
+	"tsx":             {"typescriptreact", "typescript"},
+	"jsx":             {"javascriptreact", "javascript"},
+	"typescriptreact": {"typescript", "tsx"},
+	"javascriptreact": {"javascript", "jsx"},
+	"ts":              {"typescript"},
+	"js":              {"javascript"},
+	"mjs":             {"javascript"},
+	"cjs":             {"javascript"},
+	"shell":           {"bash"},
+	"shellscript":     {"bash"},
+	"sh":              {"bash"},
+	"zsh":             {"bash"},
+	"fish":            {"bash"},
+	"py":              {"python"},
+	"rb":              {"ruby"},
+	"rs":              {"rust"},
+	"objective-c":     {"objectivec"},
+	"objc":            {"objectivec"},
+	"c#":              {"csharp"},
+}
+
+func normalizeConfigLanguage(language string) string {
+	normalized := strings.TrimSpace(strings.ToLower(language))
+	return strings.TrimPrefix(normalized, ".")
+}
+
+func addConfigLanguageCandidate(candidates []string, seen map[string]struct{}, language string) []string {
+	normalized := normalizeConfigLanguage(language)
+	if normalized == "" {
+		return candidates
+	}
+	if _, ok := seen[normalized]; ok {
+		return candidates
+	}
+	seen[normalized] = struct{}{}
+	return append(candidates, normalized)
+}
+
+func configLanguageCandidates(language string) []string {
+	seen := make(map[string]struct{}, 12)
+	candidates := make([]string, 0, 12)
+
+	normalized := normalizeConfigLanguage(language)
+	candidates = addConfigLanguageCandidate(candidates, seen, normalized)
+
+	for _, alias := range configLanguageAliases[normalized] {
+		candidates = addConfigLanguageCandidate(candidates, seen, alias)
+	}
+
+	if info := lspregistry.GetLanguageByExtension(normalized); info != nil {
+		candidates = addConfigLanguageCandidate(candidates, seen, info.ID)
+		for _, alias := range configLanguageAliases[normalizeConfigLanguage(info.ID)] {
+			candidates = addConfigLanguageCandidate(candidates, seen, alias)
+		}
+	}
+
+	if info := lspregistry.GetLanguageByID(normalized); info != nil {
+		candidates = addConfigLanguageCandidate(candidates, seen, info.ID)
+	}
+
+	return candidates
 }
 
 func normalizeLanguageID(language string) string {
@@ -241,20 +307,56 @@ func (m *Manager) SetDiagnosticsCallback(callback func(language, filePath string
 	m.diagnosticsMu.Unlock()
 }
 
-func (m *Manager) HasConfig(language string) bool {
+func (m *Manager) resolveConfiguredLanguage(language string) (string, bool) {
+	candidates := configLanguageCandidates(language)
+	if len(candidates) == 0 {
+		return "", false
+	}
+
 	m.mu.RLock()
-	_, ok := m.configs[language]
-	m.mu.RUnlock()
+	defer m.mu.RUnlock()
+	for _, candidate := range candidates {
+		if _, ok := m.configs[candidate]; ok {
+			return candidate, true
+		}
+	}
+
+	return "", false
+}
+
+func (m *Manager) resolveServerLanguage(language string) (string, bool) {
+	candidates := configLanguageCandidates(language)
+	if len(candidates) == 0 {
+		return "", false
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, candidate := range candidates {
+		if _, ok := m.servers[candidate]; ok {
+			return candidate, true
+		}
+	}
+
+	return "", false
+}
+
+func (m *Manager) HasConfig(language string) bool {
+	_, ok := m.resolveConfiguredLanguage(language)
 	return ok
 }
 
 func (m *Manager) logNoConfig(language string) {
+	key := normalizeConfigLanguage(language)
+	if key == "" {
+		key = language
+	}
 	m.startMu.Lock()
-	if m.noConfigLogged[language] {
+	if m.noConfigLogged[key] {
 		m.startMu.Unlock()
 		return
 	}
-	m.noConfigLogged[language] = true
+	m.noConfigLogged[key] = true
 	m.startMu.Unlock()
 	log.Printf("[LSP-MGR] No config for language: %s", language)
 }
@@ -280,13 +382,29 @@ func (m *Manager) endStart(language string, ch chan struct{}) {
 }
 
 func (m *Manager) RegisterServer(cfg ServerConfig) {
+	cfg.Language = normalizeConfigLanguage(cfg.Language)
+	if cfg.Language == "" {
+		return
+	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.configs[cfg.Language] = cfg
+	m.mu.Unlock()
+
+	m.startMu.Lock()
+	delete(m.noConfigLogged, cfg.Language)
+	m.startMu.Unlock()
+
 	log.Printf("[LSP-MGR] Registered server for lang=%s cmd=%s", cfg.Language, cfg.Command)
 }
 
 func (m *Manager) ensureStarted(language string) (*Server, error) {
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
+		m.logNoConfig(language)
+		return nil, fmt.Errorf("no config for language: %s", language)
+	}
+	language = resolvedLanguage
+
 	m.mu.RLock()
 	server, ok := m.servers[language]
 	m.mu.RUnlock()
@@ -296,11 +414,6 @@ func (m *Manager) ensureStarted(language string) (*Server, error) {
 	}
 	if ok && (!server.running || !server.isProcessAlive()) {
 		m.cleanupServer(language, server)
-	}
-
-	if !m.HasConfig(language) {
-		m.logNoConfig(language)
-		return nil, fmt.Errorf("no config for language: %s", language)
 	}
 
 	ch, shouldStart := m.beginStart(language)
@@ -330,6 +443,12 @@ func (m *Manager) ensureStarted(language string) (*Server, error) {
 }
 
 func (m *Manager) Start(language string) error {
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
+		return fmt.Errorf("no config for language: %s", language)
+	}
+	language = resolvedLanguage
+
 	m.mu.RLock()
 	server, ok := m.servers[language]
 	if ok && server.running && server.isProcessAlive() {
@@ -344,7 +463,6 @@ func (m *Manager) Start(language string) error {
 	m.mu.Lock()
 	cfg, ok := m.configs[language]
 	m.mu.Unlock()
-
 	if !ok {
 		return fmt.Errorf("no config for language: %s", language)
 	}
@@ -374,6 +492,12 @@ func (m *Manager) Start(language string) error {
 }
 
 func (m *Manager) Stop(language string) error {
+	if resolvedLanguage, ok := m.resolveConfiguredLanguage(language); ok {
+		language = resolvedLanguage
+	} else {
+		language = normalizeConfigLanguage(language)
+	}
+
 	m.mu.Lock()
 	if timer, ok := m.idleTimers[language]; ok {
 		timer.Stop()
@@ -487,6 +611,12 @@ func (m *Manager) ForceRestart(language string) (bool, error) {
 }
 
 func (m *Manager) restartServer(language string, force bool) (bool, error) {
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
+		return false, fmt.Errorf("no config for language: %s", language)
+	}
+	language = resolvedLanguage
+
 	m.mu.RLock()
 	server, hasServer := m.servers[language]
 	cfg, hasConfig := m.configs[language]
@@ -531,10 +661,14 @@ func (m *Manager) restartServer(language string, force bool) (bool, error) {
 
 // IsServerHealthy returns true if the server is running and responsive
 func (m *Manager) IsServerHealthy(language string) bool {
-	m.mu.RLock()
-	server, ok := m.servers[language]
-	m.mu.RUnlock()
+	resolvedLanguage, ok := m.resolveServerLanguage(language)
+	if !ok {
+		return false
+	}
 
+	m.mu.RLock()
+	server, ok := m.servers[resolvedLanguage]
+	m.mu.RUnlock()
 	if !ok {
 		return false
 	}
@@ -550,10 +684,12 @@ func (m *Manager) CompleteWithContext(ctx context.Context, language, filePath st
 		ctx = context.Background()
 	}
 
-	if !m.HasConfig(language) {
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
 		m.logNoConfig(language)
 		return nil, nil
 	}
+	language = resolvedLanguage
 	select {
 	case <-ctx.Done():
 		return nil, nil
@@ -643,18 +779,28 @@ func (m *Manager) getAvailableLanguages() []string {
 }
 
 func (m *Manager) GetServer(language string) (*Server, bool) {
+	resolvedLanguage, ok := m.resolveServerLanguage(language)
+	if !ok {
+		resolvedLanguage, ok = m.resolveConfiguredLanguage(language)
+		if !ok {
+			return nil, false
+		}
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	server, ok := m.servers[language]
+	server, ok := m.servers[resolvedLanguage]
 	return server, ok
 }
 
 // DidOpen notifies the LSP server that a file has been opened
 func (m *Manager) DidOpen(language, filePath, content string) error {
-	if !m.HasConfig(language) {
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
 		m.logNoConfig(language)
 		return nil
 	}
+	language = resolvedLanguage
 	if m.isDocOpen(language, filePath) {
 		return nil
 	}
@@ -675,10 +821,12 @@ func (m *Manager) DidOpen(language, filePath, content string) error {
 
 // DidChange notifies the LSP server that a file has been modified
 func (m *Manager) DidChange(language, filePath string, version int, content string) error {
-	if !m.HasConfig(language) {
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
 		m.logNoConfig(language)
 		return nil
 	}
+	language = resolvedLanguage
 	if !m.isDocOpen(language, filePath) {
 		return m.DidOpen(language, filePath, content)
 	}
@@ -698,10 +846,12 @@ func (m *Manager) DidChange(language, filePath string, version int, content stri
 
 // DidClose notifies the LSP server that a file has been closed
 func (m *Manager) DidClose(language, filePath string) error {
-	if !m.HasConfig(language) {
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
 		m.clearDiagnostics(language, filePath)
 		return nil
 	}
+	language = resolvedLanguage
 	m.mu.RLock()
 	server, ok := m.servers[language]
 	m.mu.RUnlock()
@@ -722,29 +872,39 @@ func (m *Manager) DidClose(language, filePath string) error {
 }
 
 func (m *Manager) GetDiagnostics(language, filePath string) []Diagnostic {
+	candidates := configLanguageCandidates(language)
+	if len(candidates) == 0 {
+		return nil
+	}
+
 	m.diagnosticsMu.RLock()
 	defer m.diagnosticsMu.RUnlock()
+	for _, candidate := range candidates {
+		langDiagnostics := m.diagnostics[candidate]
+		if langDiagnostics == nil {
+			continue
+		}
 
-	langDiagnostics := m.diagnostics[language]
-	if langDiagnostics == nil {
-		return nil
+		diagnostics := langDiagnostics[filePath]
+		if len(diagnostics) == 0 {
+			continue
+		}
+
+		result := make([]Diagnostic, len(diagnostics))
+		copy(result, diagnostics)
+		return result
 	}
 
-	diagnostics := langDiagnostics[filePath]
-	if len(diagnostics) == 0 {
-		return nil
-	}
-
-	result := make([]Diagnostic, len(diagnostics))
-	copy(result, diagnostics)
-	return result
+	return nil
 }
 
 func (m *Manager) CodeAction(language, filePath string, line, column int, diagnostics []Diagnostic) ([]CodeAction, error) {
-	if !m.HasConfig(language) {
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
 		m.logNoConfig(language)
 		return nil, nil
 	}
+	language = resolvedLanguage
 
 	server, err := m.ensureStarted(language)
 	if err != nil {
@@ -913,7 +1073,12 @@ func fileURIToPath(uri string) string {
 }
 
 func (m *Manager) IsDocOpen(language, filePath string) bool {
-	return m.isDocOpen(language, filePath)
+	for _, candidate := range configLanguageCandidates(language) {
+		if m.isDocOpen(candidate, filePath) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) isDocOpen(language, filePath string) bool {
@@ -1072,8 +1237,16 @@ func (m *Manager) cleanupCompletionCacheLocked() {
 
 // GoToDefinition finds the definition of a symbol at the given position
 func (m *Manager) GoToDefinition(language, filePath string, line, column int) ([]Location, error) {
+	resolvedLanguage, ok := m.resolveServerLanguage(language)
+	if !ok {
+		resolvedLanguage, ok = m.resolveConfiguredLanguage(language)
+		if !ok {
+			return nil, nil
+		}
+	}
+
 	m.mu.RLock()
-	server, ok := m.servers[language]
+	server, ok := m.servers[resolvedLanguage]
 	m.mu.RUnlock()
 
 	if !ok {
@@ -1085,8 +1258,16 @@ func (m *Manager) GoToDefinition(language, filePath string, line, column int) ([
 
 // Hover returns hover information for a symbol at the given position
 func (m *Manager) Hover(language, filePath string, line, column int) (string, error) {
+	resolvedLanguage, ok := m.resolveServerLanguage(language)
+	if !ok {
+		resolvedLanguage, ok = m.resolveConfiguredLanguage(language)
+		if !ok {
+			return "", nil
+		}
+	}
+
 	m.mu.RLock()
-	server, ok := m.servers[language]
+	server, ok := m.servers[resolvedLanguage]
 	m.mu.RUnlock()
 
 	if !ok {
@@ -1112,8 +1293,16 @@ func (m *Manager) SignatureHelpWithContext(ctx context.Context, language, filePa
 	default:
 	}
 
+	resolvedLanguage, ok := m.resolveServerLanguage(language)
+	if !ok {
+		resolvedLanguage, ok = m.resolveConfiguredLanguage(language)
+		if !ok {
+			return nil, nil
+		}
+	}
+
 	m.mu.RLock()
-	server, ok := m.servers[language]
+	server, ok := m.servers[resolvedLanguage]
 	m.mu.RUnlock()
 
 	if !ok {

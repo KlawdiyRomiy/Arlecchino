@@ -25,12 +25,17 @@ type PluginCommandDefJS struct {
 }
 
 func (a *App) GetPluginCommands() []PluginCommandDefJS {
-	if a == nil || a.plugins == nil || a.projectPath == "" {
+	if a == nil || a.plugins == nil {
+		return nil
+	}
+
+	projectPath := a.currentProjectPath()
+	if projectPath == "" {
 		return nil
 	}
 
 	commands := make([]PluginCommandDefJS, 0)
-	for _, p := range a.plugins.GetApplicable(a.projectPath) {
+	for _, p := range a.plugins.GetApplicable(projectPath) {
 		provider, ok := p.(plugins.CommandsProvider)
 		if !ok {
 			continue

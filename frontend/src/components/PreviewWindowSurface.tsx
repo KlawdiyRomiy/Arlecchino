@@ -253,6 +253,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
     return (
       <GitPanel
         projectPath={projectPath}
+        panelPosition={window.position}
         onFileOpen={(path) => {
           onFileOpen?.(path, "", path.split("/").pop() || path);
         }}

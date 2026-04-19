@@ -645,9 +645,9 @@ func (a *App) lspPreloadProjectDiagnostics(
 	a.managerMu.Lock()
 	mgr := a.lspManager
 	engine := a.coreEngine
-	currentProjectPath := a.projectPath
 	projectCtx := a.projectCtx
 	a.managerMu.Unlock()
+	currentProjectPath := a.currentProjectPath()
 
 	if mgr == nil {
 		return false

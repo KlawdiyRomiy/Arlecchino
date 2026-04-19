@@ -19,10 +19,16 @@ import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 import { createTheme } from "thememirror";
 
-import { WriteFile } from "../../wailsjs/go/main/App";
+import {
+  NotifyFileChanged,
+  NotifyFileClosed,
+  NotifyFileOpened,
+  WriteFile,
+} from "../../wailsjs/go/main/App";
 import { createGitGutterExtension } from "../extensions/gitGutterExtension";
 import { useEditorStore } from "../stores/editorStore";
 import { useGitStore } from "../stores/gitStore";
+import type { GitLineMarker } from "../utils/git";
 
 interface CodePanelSurfaceProps {
   path: string;
@@ -32,6 +38,8 @@ interface CodePanelSurfaceProps {
 }
 
 const autoSaveDelayMs = 500;
+const diagnosticsSyncDelayMs = 150;
+const EMPTY_GIT_MARKERS: readonly GitLineMarker[] = Object.freeze([]);
 
 const blackprintTheme = createTheme({
   variant: "dark",
@@ -188,10 +196,14 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   const markTabDirty = useEditorStore((state) => state.markTabDirty);
   const tabID = useMemo(() => makeTabID(path), [path]);
   const tab = useEditorStore((state) => state.tabs.get(tabID));
-  const gitMarkers = useGitStore((state) => state.fileMarkers[path] ?? []);
+  const gitMarkers = useGitStore(
+    (state) => state.fileMarkers[path] ?? EMPTY_GIT_MARKERS,
+  );
   const refreshFileMarkers = useGitStore((state) => state.refreshFileMarkers);
   const clearFileMarkers = useGitStore((state) => state.clearFileMarkers);
   const saveTimeoutRef = useRef<number | null>(null);
+  const diagnosticsTimeoutRef = useRef<number | null>(null);
+  const diagnosticsVersionRef = useRef(1);
 
   const gitGutterExtension = useMemo(
     () => createGitGutterExtension({ markers: gitMarkers }),
@@ -203,9 +215,25 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   }, [activePaneID, initialContent, language, name, openTab, path]);
 
   useEffect(() => {
+    diagnosticsVersionRef.current = 1;
+    void NotifyFileOpened(path, language, initialContent).catch(console.warn);
+
+    return () => {
+      if (diagnosticsTimeoutRef.current !== null) {
+        window.clearTimeout(diagnosticsTimeoutRef.current);
+        diagnosticsTimeoutRef.current = null;
+      }
+      void NotifyFileClosed(path, language).catch(console.warn);
+    };
+  }, [initialContent, language, path]);
+
+  useEffect(() => {
     return () => {
       if (saveTimeoutRef.current !== null) {
         window.clearTimeout(saveTimeoutRef.current);
+      }
+      if (diagnosticsTimeoutRef.current !== null) {
+        window.clearTimeout(diagnosticsTimeoutRef.current);
       }
     };
   }, []);
@@ -226,6 +254,19 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
 
   const handleChange = (value: string) => {
     updateTabContent(tabID, value);
+
+    if (diagnosticsTimeoutRef.current !== null) {
+      window.clearTimeout(diagnosticsTimeoutRef.current);
+    }
+
+    const diagnosticsVersion = diagnosticsVersionRef.current + 1;
+    diagnosticsVersionRef.current = diagnosticsVersion;
+    diagnosticsTimeoutRef.current = window.setTimeout(() => {
+      void NotifyFileChanged(path, language, diagnosticsVersion, value).catch(
+        console.warn,
+      );
+      diagnosticsTimeoutRef.current = null;
+    }, diagnosticsSyncDelayMs);
 
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current);

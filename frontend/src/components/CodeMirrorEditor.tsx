@@ -124,10 +124,12 @@ import {
   CODEMIRROR_TOOLTIP_Z_INDEX,
   shouldEnableCodeMirrorMinimap,
 } from "../utils/codeMirrorDisplay";
+import type { GitLineMarker } from "../utils/git";
 import { createLatestRequestGuard } from "../utils/latestRequestGuard";
 
 const GHOST_DEBOUNCE_MS = 50;
 const GHOST_IDLE_DELAY_MS = 900;
+const EMPTY_GIT_MARKERS: readonly GitLineMarker[] = Object.freeze([]);
 
 type CompletionWithInsertText = Completion & { __insertText: string };
 type CompletionPayload = {
@@ -1036,7 +1038,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const showMinimapSetting = useEditorSettingsStore(
     (state) => state.showMinimap,
   );
-  const gitMarkers = useGitStore((state) => state.fileMarkers[filePath] ?? []);
+  const gitMarkers = useGitStore(
+    (state) => state.fileMarkers[filePath] ?? EMPTY_GIT_MARKERS,
+  );
   const refreshFileMarkers = useGitStore((state) => state.refreshFileMarkers);
   const clearFileMarkers = useGitStore((state) => state.clearFileMarkers);
   const setCursorPosition = useEditorStore((state) => state.setCursorPosition);

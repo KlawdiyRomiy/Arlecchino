@@ -279,7 +279,37 @@ const normalizeGeneration = (generation: number | undefined): number => {
   return generation > 0 ? Math.trunc(generation) : 0;
 };
 
+const hasWailsRuntimeEvents = () => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const runtimeWindow = window as typeof window & {
+    runtime?: {
+      EventsOnMultiple?: unknown;
+    };
+  };
+
+  return typeof runtimeWindow.runtime?.EventsOnMultiple === "function";
+};
+
 let diagnosticsEventsBound = false;
+let diagnosticsEventsBindTimer: number | null = null;
+
+const scheduleDiagnosticsEventsBind = () => {
+  if (
+    diagnosticsEventsBound ||
+    typeof window === "undefined" ||
+    diagnosticsEventsBindTimer
+  ) {
+    return;
+  }
+
+  diagnosticsEventsBindTimer = window.setTimeout(() => {
+    diagnosticsEventsBindTimer = null;
+    bindDiagnosticsEvents();
+  }, 50);
+};
 
 export const useDiagnosticsStore = create<DiagnosticsState>()(
   subscribeWithSelector((set, get) => ({
@@ -323,11 +353,15 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
       if (
         currentGeneration > 0 &&
         eventGeneration > 0 &&
-        eventGeneration !== currentGeneration
+        eventGeneration < currentGeneration
       ) {
         return;
       }
-      if (activeProjectPath && currentGeneration === 0 && eventGeneration > 0) {
+      if (
+        activeProjectPath &&
+        eventGeneration > 0 &&
+        (currentGeneration === 0 || eventGeneration > currentGeneration)
+      ) {
         get().setProjectScope(activeProjectPath, eventGeneration);
       }
 
@@ -411,6 +445,16 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
 const bindDiagnosticsEvents = () => {
   if (diagnosticsEventsBound || typeof window === "undefined") {
     return;
+  }
+
+  if (!hasWailsRuntimeEvents()) {
+    scheduleDiagnosticsEventsBind();
+    return;
+  }
+
+  if (diagnosticsEventsBindTimer) {
+    window.clearTimeout(diagnosticsEventsBindTimer);
+    diagnosticsEventsBindTimer = null;
   }
 
   diagnosticsEventsBound = true;

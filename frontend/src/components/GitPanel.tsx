@@ -5,8 +5,9 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronsRight,
   Eye,
-  FileText,
+  FolderGit2,
   GitBranch,
   GitCommit,
   History,
@@ -14,22 +15,72 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Send,
+  Sparkles,
+  Workflow,
+  X,
 } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
+
 import * as AppFunctions from "../../wailsjs/go/main/App";
 import { useTheme } from "../hooks/useTheme";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
-import { useGitStore } from "../stores/gitStore";
+import { GitStashEntry, useGitStore } from "../stores/gitStore";
 import { getThemeColors, radius, transitions } from "../styles/colors";
 import type { GitFileEntry, GitFileStatus } from "../utils/git";
+import type { PanelPosition } from "./ui/FloatingPanel";
 import { GitDiffViewer } from "./GitDiffViewer";
 import { GitHistory } from "./GitHistory";
 
 interface GitPanelProps {
   projectPath: string;
   onFileOpen?: (path: string) => void;
+  panelPosition?: PanelPosition;
 }
 
-type TabType = "changes" | "history" | "pull_requests";
+type DetailTab = "commit" | "history" | "pull_requests" | "stash" | "diff";
+
+interface DiffState {
+  title: string;
+  content: string;
+  selectedPath: string | null;
+}
+
+interface FileRowProps {
+  file: GitFileEntry;
+  selected: boolean;
+  onOpen?: (path: string) => void;
+  onViewDiff: (file: GitFileEntry) => void;
+  onStage: (path: string) => void;
+  onUnstage: (path: string) => void;
+  onDiscard: (path: string) => void;
+}
+
+interface FileSectionProps {
+  title: string;
+  files: GitFileEntry[];
+  open: boolean;
+  onToggle: () => void;
+  bulkActionLabel?: string;
+  onBulkAction?: () => void;
+  emptyLabel: string;
+  selectedPath: string | null;
+  onOpen?: (path: string) => void;
+  onViewDiff: (file: GitFileEntry) => void;
+  onStage: (path: string) => void;
+  onUnstage: (path: string) => void;
+  onDiscard: (path: string) => void;
+}
+
+interface StashSectionProps {
+  entries: GitStashEntry[];
+  loading: boolean;
+  message: string;
+  onMessageChange: (value: string) => void;
+  onCreate: () => void;
+  onPop: (ref?: string) => void;
+  onDrop: (ref: string) => void;
+}
 
 const statusColors: Record<GitFileStatus, string> = {
   modified: "#f59e0b",
@@ -52,207 +103,410 @@ const statusLabels: Record<GitFileStatus, string> = {
 };
 
 const toHumanError = (error: string | null): string | null => {
-  if (!error) return null;
+  if (!error) {
+    return null;
+  }
   const normalized = error.toLowerCase();
   if (normalized.includes("not a git repository")) {
-    return "This folder is not a git repository";
+    return "This folder is not a git repository.";
   }
   if (normalized.includes("no project open")) {
-    return "No project open";
+    return "No project is open.";
+  }
+  if (normalized.includes("timed out")) {
+    return "Git operation timed out. Try again or use the terminal for a long-running command.";
   }
   return error;
 };
 
+const inputStyle = (
+  theme: ReturnType<typeof getThemeColors>,
+): React.CSSProperties => ({
+  border: `1px solid ${theme.border}`,
+  borderRadius: radius.sm,
+  background: theme.bgSecondary,
+  color: theme.text,
+  fontSize: 12,
+  padding: "8px 10px",
+  outline: "none",
+  width: "100%",
+});
+
+const buttonStyle = (
+  theme: ReturnType<typeof getThemeColors>,
+  variant: "default" | "accent" | "danger" = "default",
+): React.CSSProperties => ({
+  border: `1px solid ${variant === "accent" ? "#22c55e" : theme.border}`,
+  background: variant === "accent" ? theme.bgSecondary : theme.bgSecondary,
+  color:
+    variant === "accent"
+      ? "#22c55e"
+      : variant === "danger"
+        ? "#ef4444"
+        : theme.textMuted,
+  borderRadius: radius.sm,
+  padding: "6px 9px",
+  fontSize: 11,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 5,
+  cursor: "pointer",
+  transition: transitions.fast,
+});
+
+const FileRow = React.memo<FileRowProps>(
+  ({ file, selected, onOpen, onViewDiff, onStage, onUnstage, onDiscard }) => (
+    <div
+      className="group grid grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-2 py-2 transition-colors"
+      style={{
+        borderColor: selected ? "var(--git-border-strong)" : "transparent",
+        background: selected ? "var(--git-row-active)" : "transparent",
+      }}
+      onDoubleClick={() => onOpen?.(file.path)}
+      title={file.path}
+    >
+      <span
+        className="text-center text-[11px] font-semibold"
+        style={{ color: statusColors[file.status] }}
+      >
+        {statusLabels[file.status]}
+      </span>
+
+      <div className="min-w-0">
+        <div className="truncate text-[12px] text-[var(--git-text)]">
+          {file.path}
+        </div>
+        <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
+          {file.staged
+            ? "staged"
+            : file.status === "conflicted"
+              ? "conflict"
+              : "working tree"}
+        </div>
+      </div>
+
+      <div
+        className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+        style={{ opacity: selected ? 1 : undefined }}
+      >
+        <button
+          type="button"
+          onClick={() => onViewDiff(file)}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)]"
+          title="View diff"
+        >
+          <Eye size={13} />
+        </button>
+
+        {file.staged ? (
+          <button
+            type="button"
+            onClick={() => onUnstage(file.path)}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)]"
+            title="Unstage file"
+          >
+            <Minus size={13} />
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => onStage(file.path)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[#22c55e] hover:text-[#22c55e]"
+              title="Stage file"
+            >
+              <Plus size={13} />
+            </button>
+            {file.status !== "conflicted" && (
+              <button
+                type="button"
+                onClick={() => onDiscard(file.path)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[#ef4444] hover:text-[#ef4444]"
+                title="Discard changes"
+              >
+                <RotateCcw size={13} />
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  ),
+);
+
+FileRow.displayName = "FileRow";
+
+const FileSection = React.memo<FileSectionProps>(
+  ({
+    title,
+    files,
+    open,
+    onToggle,
+    bulkActionLabel,
+    onBulkAction,
+    emptyLabel,
+    selectedPath,
+    onOpen,
+    onViewDiff,
+    onStage,
+    onUnstage,
+    onDiscard,
+  }) => (
+    <section className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)]">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="inline-flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <ChevronRight
+            size={13}
+            className="shrink-0 text-[var(--git-text-secondary)] transition-transform"
+            style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}
+          />
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
+            {title}
+          </span>
+          <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5 text-[10px] text-[var(--git-text-secondary)]">
+            {files.length}
+          </span>
+        </button>
+
+        {files.length > 0 && bulkActionLabel && onBulkAction && (
+          <button
+            type="button"
+            onClick={onBulkAction}
+            className="inline-flex items-center rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)] transition-colors hover:text-[var(--git-text)]"
+          >
+            {bulkActionLabel}
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="border-t border-[var(--git-border)] px-2 py-2">
+          {files.length === 0 ? (
+            <div className="rounded-md border border-dashed border-[var(--git-border)] px-3 py-4 text-[12px] text-[var(--git-text-secondary)]">
+              {emptyLabel}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1">
+              {files.map((file) => (
+                <FileRow
+                  key={`${file.path}:${file.staged ? "staged" : "unstaged"}:${file.status}`}
+                  file={file}
+                  selected={selectedPath === file.path}
+                  onOpen={onOpen}
+                  onViewDiff={onViewDiff}
+                  onStage={onStage}
+                  onUnstage={onUnstage}
+                  onDiscard={onDiscard}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  ),
+);
+
+FileSection.displayName = "FileSection";
+
+const StashSection = React.memo<StashSectionProps>(
+  ({ entries, loading, message, onMessageChange, onCreate, onPop, onDrop }) => (
+    <section className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)]">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Sparkles size={13} className="text-[var(--git-text-secondary)]" />
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
+            Stashes
+          </span>
+          <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5 text-[10px] text-[var(--git-text-secondary)]">
+            {entries.length}
+          </span>
+        </div>
+      </div>
+
+      <div className="border-t border-[var(--git-border)] px-3 py-3">
+        <div className="flex gap-2">
+          <input
+            value={message}
+            onChange={(event) => onMessageChange(event.target.value)}
+            placeholder="Optional stash message"
+            className="w-full rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 py-2 text-[12px] text-[var(--git-text)] outline-none placeholder:text-[var(--git-text-secondary)]"
+          />
+          <button
+            type="button"
+            onClick={onCreate}
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 py-2 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)] disabled:cursor-wait disabled:opacity-60"
+            disabled={loading}
+          >
+            <Plus size={13} />
+            Stash
+          </button>
+        </div>
+
+        <div className="mt-3 flex flex-col gap-2">
+          {entries.length === 0 ? (
+            <div className="rounded-md border border-dashed border-[var(--git-border)] px-3 py-4 text-[12px] text-[var(--git-text-secondary)]">
+              No saved stashes.
+            </div>
+          ) : (
+            entries.map((entry) => (
+              <div
+                key={entry.ref}
+                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-[12px] text-[var(--git-text)]">
+                    {entry.message || entry.ref}
+                  </div>
+                  <div className="mt-0.5 flex items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
+                    <span>{entry.ref}</span>
+                    <span>{entry.relativeDate}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onPop(entry.ref)}
+                    className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] px-2 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[#22c55e] hover:text-[#22c55e]"
+                  >
+                    Apply
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDrop(entry.ref)}
+                    className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] px-2 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[#ef4444] hover:text-[#ef4444]"
+                  >
+                    Drop
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </section>
+  ),
+);
+
+StashSection.displayName = "StashSection";
+
 export const GitPanel: React.FC<GitPanelProps> = ({
   projectPath,
   onFileOpen,
+  panelPosition = "right",
 }) => {
   const { isDark } = useTheme();
   const theme = getThemeColors(isDark);
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
-
-  const loading = useGitStore((state) => state.loading);
-  const busy = useGitStore((state) => state.busy);
-  const error = useGitStore((state) => state.error);
-  const expanded = useGitStore((state) => state.expanded);
-  const branch = useGitStore((state) => state.branch);
-  const branches = useGitStore((state) => state.branches);
-  const remotes = useGitStore((state) => state.remotes);
-  const selectedRemote = useGitStore((state) => state.selectedRemote);
-  const stagedFiles = useGitStore((state) => state.stagedFiles);
-  const unstagedFiles = useGitStore((state) => state.unstagedFiles);
-  const conflictedFiles = useGitStore((state) => state.conflictedFiles);
-  const setProjectPath = useGitStore((state) => state.setProjectPath);
-  const toggleExpanded = useGitStore((state) => state.toggleExpanded);
-  const setSelectedRemote = useGitStore((state) => state.setSelectedRemote);
-  const refresh = useGitStore((state) => state.refresh);
-  const stageFile = useGitStore((state) => state.stageFile);
-  const unstageFile = useGitStore((state) => state.unstageFile);
-  const stageAll = useGitStore((state) => state.stageAll);
-  const unstageAll = useGitStore((state) => state.unstageAll);
-  const discardFile = useGitStore((state) => state.discardFile);
-  const commit = useGitStore((state) => state.commit);
-  const switchBranch = useGitStore((state) => state.switchBranch);
-  const createBranch = useGitStore((state) => state.createBranch);
-  const fetchRemote = useGitStore((state) => state.fetchRemote);
-  const pullRemote = useGitStore((state) => state.pullRemote);
-  const pushRemote = useGitStore((state) => state.pushRemote);
-  const getPullRequestUrl = useGitStore((state) => state.getPullRequestUrl);
-  const openPullRequest = useGitStore((state) => state.openPullRequest);
+  const git = useGitStore(
+    useShallow((state) => ({
+      loading: state.loading,
+      busy: state.busy,
+      error: state.error,
+      branch: state.branch,
+      branches: state.branches,
+      remotes: state.remotes,
+      selectedRemote: state.selectedRemote,
+      stagedFiles: state.stagedFiles,
+      unstagedFiles: state.unstagedFiles,
+      conflictedFiles: state.conflictedFiles,
+      historyCommits: state.historyCommits,
+      historyLoading: state.historyLoading,
+      stashEntries: state.stashEntries,
+      stashLoading: state.stashLoading,
+      setProjectPath: state.setProjectPath,
+      setSelectedRemote: state.setSelectedRemote,
+      refresh: state.refresh,
+      loadHistory: state.loadHistory,
+      stageFile: state.stageFile,
+      unstageFile: state.unstageFile,
+      stageAll: state.stageAll,
+      unstageAll: state.unstageAll,
+      discardFile: state.discardFile,
+      commit: state.commit,
+      switchBranch: state.switchBranch,
+      createBranch: state.createBranch,
+      fetchRemote: state.fetchRemote,
+      pullRemote: state.pullRemote,
+      pushRemote: state.pushRemote,
+      createStash: state.createStash,
+      popStash: state.popStash,
+      dropStash: state.dropStash,
+      getPullRequestUrl: state.getPullRequestUrl,
+      openPullRequest: state.openPullRequest,
+    })),
+  );
 
   const scaled = useCallback(
     (size: number): number => Math.max(10, Math.round(size * uiScale)),
     [uiScale],
   );
 
-  const [activeTab, setActiveTab] = useState<TabType>("changes");
   const [commitMessage, setCommitMessage] = useState("");
+  const [stashMessage, setStashMessage] = useState("");
   const [showBranchDropdown, setShowBranchDropdown] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
-  const [showDiff, setShowDiff] = useState(false);
-  const [diffContent, setDiffContent] = useState("");
-  const [selectedFile, setSelectedFile] = useState<GitFileEntry | null>(null);
-  const [stagedExpanded, setStagedExpanded] = useState(true);
-  const [unstagedExpanded, setUnstagedExpanded] = useState(true);
-  const [conflictedExpanded, setConflictedExpanded] = useState(true);
-  const [prBaseBranch, setPrBaseBranch] = useState("");
+  const [diffState, setDiffState] = useState<DiffState | null>(null);
+  const [diffReturnTab, setDiffReturnTab] = useState<DetailTab | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailTab, setDetailTab] = useState<DetailTab>("commit");
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [stagedOpen, setStagedOpen] = useState(true);
+  const [unstagedOpen, setUnstagedOpen] = useState(true);
+  const [conflictedOpen, setConflictedOpen] = useState(true);
+  const [prBaseOverride, setPrBaseOverride] = useState("");
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
 
+  useEffect(() => {
+    git.setProjectPath(projectPath);
+  }, [git, projectPath]);
+
   const allChangedFiles = useMemo(
-    () => [...conflictedFiles, ...stagedFiles, ...unstagedFiles],
-    [conflictedFiles, stagedFiles, unstagedFiles],
+    () => [...git.conflictedFiles, ...git.stagedFiles, ...git.unstagedFiles],
+    [git.conflictedFiles, git.stagedFiles, git.unstagedFiles],
   );
 
   const selectedFileIndex = useMemo(() => {
-    if (!selectedFile) return -1;
-    return allChangedFiles.findIndex((item) => item.path === selectedFile.path);
-  }, [allChangedFiles, selectedFile]);
+    if (!selectedPath) {
+      return -1;
+    }
+    return allChangedFiles.findIndex((file) => file.path === selectedPath);
+  }, [allChangedFiles, selectedPath]);
 
-  const changedCount =
-    stagedFiles.length + unstagedFiles.length + conflictedFiles.length;
-  const humanError = toHumanError(error) || localError;
   const inferredBaseBranch = useMemo(() => {
-    if (branch.upstream.includes("/")) {
-      return branch.upstream.split("/").slice(1).join("/");
+    if (git.branch.upstream.includes("/")) {
+      return git.branch.upstream.split("/").slice(1).join("/");
     }
     return "main";
-  }, [branch.upstream]);
+  }, [git.branch.upstream]);
 
-  useEffect(() => {
-    setProjectPath(projectPath);
-  }, [projectPath, setProjectPath]);
+  const effectivePrBase = prBaseOverride.trim() || inferredBaseBranch;
+  const changedCount =
+    git.stagedFiles.length +
+    git.unstagedFiles.length +
+    git.conflictedFiles.length;
+  const humanError = toHumanError(git.error) || localError;
 
-  useEffect(() => {
-    if (!projectPath) return;
-    void refresh();
-  }, [projectPath, refresh]);
-
-  useEffect(() => {
-    if (!projectPath) return;
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, 4500);
-    return () => window.clearInterval(timer);
-  }, [projectPath, refresh]);
-
-  useEffect(() => {
-    if (!prBaseBranch) {
-      setPrBaseBranch(inferredBaseBranch);
-    }
-  }, [inferredBaseBranch, prBaseBranch]);
-
-  const withErrorGuard = useCallback(async (action: () => Promise<void>) => {
-    setLocalError(null);
-    try {
-      await action();
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
-  const handleCommit = useCallback(async () => {
-    if (!commitMessage.trim()) return;
-    await withErrorGuard(async () => {
-      await commit(commitMessage);
-      setCommitMessage("");
-    });
-  }, [commit, commitMessage, withErrorGuard]);
-
-  const handleCreateBranch = useCallback(async () => {
-    const branchName = newBranchName.trim();
-    if (!branchName) return;
-    await withErrorGuard(async () => {
-      await createBranch(branchName, branch.current || undefined);
-      setNewBranchName("");
-      setShowBranchDropdown(false);
-    });
-  }, [branch.current, createBranch, newBranchName, withErrorGuard]);
-
-  const viewFileDiff = useCallback(async (file: GitFileEntry) => {
-    setSelectedFile(file);
-    setLocalError(null);
-    try {
-      const diff = await AppFunctions.GetGitDiff(file.path, file.staged);
-      setDiffContent(diff || "");
-      setShowDiff(true);
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
-  const viewCommitDiff = useCallback(async (hash: string) => {
-    setSelectedFile(null);
-    setLocalError(null);
-    try {
-      const diff = await AppFunctions.GetGitCommitDiff(hash);
-      setDiffContent(diff || "");
-      setShowDiff(true);
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
-  const navigateDiff = useCallback(
-    (direction: "prev" | "next") => {
-      if (selectedFileIndex === -1) return;
-      const nextIndex =
-        direction === "prev" ? selectedFileIndex - 1 : selectedFileIndex + 1;
-      if (nextIndex < 0 || nextIndex >= allChangedFiles.length) return;
-      void viewFileDiff(allChangedFiles[nextIndex]);
-    },
-    [allChangedFiles, selectedFileIndex, viewFileDiff],
-  );
-
-  const previewPullRequestUrl = useCallback(async () => {
-    setLocalError(null);
-    const url = await getPullRequestUrl(prBaseBranch || inferredBaseBranch);
-    if (!url) {
-      setLocalError(
-        "Unable to build PR URL. Ensure GitHub remote is configured.",
-      );
-      return;
-    }
-    setPrUrl(url);
-  }, [getPullRequestUrl, inferredBaseBranch, prBaseBranch]);
-
-  const openPullRequestUrl = useCallback(async () => {
-    setLocalError(null);
-    const url = await openPullRequest(prBaseBranch || inferredBaseBranch);
-    if (!url) {
-      setLocalError(
-        "Unable to open PR URL. Ensure GitHub remote is configured.",
-      );
-      return;
-    }
-    setPrUrl(url);
-  }, [inferredBaseBranch, openPullRequest, prBaseBranch]);
-
-  const runPanelAction = useCallback(
-    async (action: () => Promise<void>) => {
-      await withErrorGuard(action);
-    },
-    [withErrorGuard],
+  const panelVars = useMemo(
+    () =>
+      ({
+        "--git-bg": theme.bg,
+        "--git-surface": theme.bgSecondary,
+        "--git-bg-tertiary": isDark ? "#1a1a1a" : "#f3f4f6",
+        "--git-border": theme.border,
+        "--git-border-strong": isDark ? "#3a3a3a" : "#d1d5db",
+        "--git-row-active": isDark
+          ? "rgba(255,255,255,0.04)"
+          : "rgba(0,0,0,0.04)",
+        "--git-text": theme.text,
+        "--git-text-secondary": theme.textMuted,
+      }) as React.CSSProperties,
+    [isDark, theme],
   );
 
   const resolvePathForOpen = useCallback(
@@ -265,775 +519,788 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     [projectPath],
   );
 
-  const actionButtonStyle: React.CSSProperties = {
-    border: `1px solid ${theme.border}`,
-    background: theme.bgSecondary,
-    color: theme.text,
-    borderRadius: radius.sm,
-    padding: "5px 8px",
-    fontSize: 11,
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 4,
-    cursor: busy ? "wait" : "pointer",
-    opacity: busy ? 0.7 : 1,
-    transition: transitions.fast,
-  };
+  const withErrorGuard = useCallback(async (action: () => Promise<void>) => {
+    setLocalError(null);
+    try {
+      await action();
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
 
-  const fileRow = (file: GitFileEntry): React.ReactElement => (
-    <div
-      key={`${file.path}:${file.staged ? "staged" : "unstaged"}:${file.status}`}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "16px 1fr auto",
-        alignItems: "center",
-        gap: 8,
-        padding: "4px 8px",
-        borderRadius: radius.sm,
-        background:
-          selectedFile?.path === file.path
-            ? isDark
-              ? "rgba(255,255,255,0.08)"
-              : "rgba(0,0,0,0.05)"
-            : "transparent",
-        transition: transitions.fast,
-      }}
-      onDoubleClick={() => onFileOpen?.(resolvePathForOpen(file.path))}
-    >
-      <span
-        style={{
-          color: statusColors[file.status],
-          fontWeight: 700,
-          fontSize: 11,
-          textAlign: "center",
-        }}
-      >
-        {statusLabels[file.status]}
-      </span>
-
-      <div
-        style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 6 }}
-      >
-        <FileText size={12} style={{ color: theme.textMuted, flexShrink: 0 }} />
-        <span
-          style={{
-            color: theme.text,
-            fontSize: 12,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-          title={file.path}
-        >
-          {file.path}
-        </span>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-        <button
-          title="View diff"
-          style={{ ...actionButtonStyle, padding: "4px 6px" }}
-          onClick={() => {
-            void viewFileDiff(file);
-          }}
-        >
-          <Eye size={12} />
-        </button>
-
-        {file.staged ? (
-          <button
-            title="Unstage"
-            style={{ ...actionButtonStyle, padding: "4px 6px" }}
-            onClick={() => {
-              void runPanelAction(() => unstageFile(file.path));
-            }}
-          >
-            <Minus size={12} />
-          </button>
-        ) : (
-          <>
-            <button
-              title="Stage"
-              style={{ ...actionButtonStyle, padding: "4px 6px" }}
-              onClick={() => {
-                void runPanelAction(() => stageFile(file.path));
-              }}
-            >
-              <Plus size={12} />
-            </button>
-            <button
-              title="Discard"
-              style={{
-                ...actionButtonStyle,
-                padding: "4px 6px",
-                color: "#ef4444",
-              }}
-              onClick={() => {
-                void runPanelAction(() => discardFile(file.path));
-              }}
-            >
-              <RotateCcw size={12} />
-            </button>
-          </>
-        )}
-      </div>
-    </div>
+  const runPanelAction = useCallback(
+    async (action: () => Promise<void>) => {
+      await withErrorGuard(action);
+    },
+    [withErrorGuard],
   );
 
-  const renderSection = (
-    label: string,
-    files: GitFileEntry[],
-    expandedState: boolean,
-    toggle: () => void,
-    actionLabel?: string,
-    action?: () => void,
-  ): React.ReactElement => (
-    <div style={{ marginBottom: 10 }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "4px 8px",
-          cursor: "pointer",
-          userSelect: "none",
-        }}
-        onClick={toggle}
-      >
-        {expandedState ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
-            color: theme.textMuted,
-          }}
-        >
-          {label} ({files.length})
-        </span>
-
-        {files.length > 0 && actionLabel && action && (
-          <button
-            style={{
-              marginLeft: "auto",
-              background: "transparent",
-              border: "none",
-              cursor: busy ? "wait" : "pointer",
-              color: theme.textMuted,
-              fontSize: 10,
-            }}
-            onClick={(event) => {
-              event.stopPropagation();
-              action();
-            }}
-          >
-            {actionLabel}
-          </button>
-        )}
-      </div>
-      {expandedState && files.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {files.map(fileRow)}
-        </div>
-      )}
-    </div>
+  const openDetail = useCallback(
+    (tab: DetailTab) => {
+      setDetailOpen(true);
+      setDetailTab(tab);
+      if (tab === "history") {
+        void git.loadHistory();
+      }
+    },
+    [git],
   );
 
-  if (showDiff) {
-    return (
-      <GitDiffViewer
-        diff={diffContent}
-        fileName={selectedFile?.path || "Commit diff"}
-        onClose={() => setShowDiff(false)}
-        onPrevFile={
-          selectedFile && selectedFileIndex > 0
-            ? () => navigateDiff("prev")
-            : undefined
-        }
-        onNextFile={
-          selectedFile && selectedFileIndex < allChangedFiles.length - 1
-            ? () => navigateDiff("next")
-            : undefined
-        }
-        hasPrev={selectedFile !== null && selectedFileIndex > 0}
-        hasNext={
-          selectedFile !== null &&
-          selectedFileIndex < allChangedFiles.length - 1
-        }
-      />
-    );
-  }
+  const handleCommit = useCallback(async () => {
+    if (!commitMessage.trim()) {
+      return;
+    }
+    await withErrorGuard(async () => {
+      await git.commit(commitMessage);
+      setCommitMessage("");
+    });
+  }, [commitMessage, git, withErrorGuard]);
+
+  const handleCreateBranch = useCallback(async () => {
+    const branchName = newBranchName.trim();
+    if (!branchName) {
+      return;
+    }
+    await withErrorGuard(async () => {
+      await git.createBranch(branchName, git.branch.current || undefined);
+      setNewBranchName("");
+      setShowBranchDropdown(false);
+    });
+  }, [git, newBranchName, withErrorGuard]);
+
+  const handleCreateStash = useCallback(async () => {
+    await withErrorGuard(async () => {
+      await git.createStash(stashMessage);
+      setStashMessage("");
+    });
+  }, [git, stashMessage, withErrorGuard]);
+
+  const viewFileDiff = useCallback(async (file: GitFileEntry) => {
+    setSelectedPath(file.path);
+    setLocalError(null);
+    try {
+      const diff = await AppFunctions.GetGitDiff(file.path, file.staged);
+      setDiffReturnTab(detailOpen ? detailTab : null);
+      setDiffState({
+        title: file.path,
+        content: diff || "",
+        selectedPath: file.path,
+      });
+      setDetailOpen(true);
+      setDetailTab("diff");
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+
+  const viewCommitDiff = useCallback(async (hash: string) => {
+    setSelectedPath(null);
+    setLocalError(null);
+    try {
+      const diff = await AppFunctions.GetGitCommitDiff(hash);
+      setDiffReturnTab(detailOpen ? detailTab : null);
+      setDiffState({
+        title: `Commit ${hash.slice(0, 7)}`,
+        content: diff || "",
+        selectedPath: null,
+      });
+      setDetailOpen(true);
+      setDetailTab("diff");
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+
+  const closeDiff = useCallback(() => {
+    setDiffState(null);
+    if (diffReturnTab) {
+      setDetailTab(diffReturnTab);
+      setDetailOpen(true);
+    } else {
+      setDetailOpen(false);
+    }
+    setDiffReturnTab(null);
+  }, [diffReturnTab]);
+
+  const navigateDiff = useCallback(
+    (direction: "prev" | "next") => {
+      if (selectedFileIndex === -1) {
+        return;
+      }
+      const nextIndex =
+        direction === "prev" ? selectedFileIndex - 1 : selectedFileIndex + 1;
+      if (nextIndex < 0 || nextIndex >= allChangedFiles.length) {
+        return;
+      }
+      void viewFileDiff(allChangedFiles[nextIndex]);
+    },
+    [allChangedFiles, selectedFileIndex, viewFileDiff],
+  );
+
+  const previewPullRequestUrl = useCallback(async () => {
+    setLocalError(null);
+    const url = await git.getPullRequestUrl(effectivePrBase);
+    if (!url) {
+      setLocalError(
+        "Unable to build PR URL. Make sure a GitHub remote is configured.",
+      );
+      return;
+    }
+    setPrUrl(url);
+  }, [effectivePrBase, git]);
+
+  const openPullRequestUrl = useCallback(async () => {
+    setLocalError(null);
+    const url = await git.openPullRequest(effectivePrBase);
+    if (!url) {
+      setLocalError(
+        "Unable to open PR URL. Make sure a GitHub remote is configured.",
+      );
+      return;
+    }
+    setPrUrl(url);
+  }, [effectivePrBase, git]);
+
+  const selectedRemoteLabel =
+    git.selectedRemote || git.remotes[0] || "no remote";
+
+  const detailDirection = useMemo(() => {
+    switch (panelPosition) {
+      case "left":
+        return {
+          closedTransform: "translate3d(-100%, 0, 0)",
+          border: "1px solid var(--git-border)",
+          boxShadow: isDark
+            ? "18px 0 38px rgba(0,0,0,0.42)"
+            : "18px 0 34px rgba(0,0,0,0.12)",
+        };
+      case "top":
+        return {
+          closedTransform: "translate3d(0, -100%, 0)",
+          border: "1px solid var(--git-border)",
+          boxShadow: isDark
+            ? "0 18px 38px rgba(0,0,0,0.42)"
+            : "0 18px 34px rgba(0,0,0,0.12)",
+        };
+      case "bottom":
+        return {
+          closedTransform: "translate3d(0, 100%, 0)",
+          border: "1px solid var(--git-border)",
+          boxShadow: isDark
+            ? "0 -18px 38px rgba(0,0,0,0.42)"
+            : "0 -18px 34px rgba(0,0,0,0.12)",
+        };
+      case "right":
+      default:
+        return {
+          closedTransform: "translate3d(100%, 0, 0)",
+          border: "1px solid var(--git-border)",
+          boxShadow: isDark
+            ? "-18px 0 38px rgba(0,0,0,0.42)"
+            : "-18px 0 34px rgba(0,0,0,0.12)",
+        };
+    }
+  }, [isDark, panelPosition]);
+
+  const detailTabs = useMemo(
+    () =>
+      [
+        ["commit", "Commit", GitCommit],
+        ["history", "History", History],
+        ["pull_requests", "PR", GitBranch],
+        ["stash", "Stash", Sparkles],
+        ["diff", "Diff", Eye],
+      ] as const satisfies ReadonlyArray<
+        readonly [
+          DetailTab,
+          string,
+          React.ComponentType<{ size?: number; className?: string }>,
+        ]
+      >,
+    [],
+  );
 
   return (
     <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        color: theme.text,
-        fontSize: scaled(12),
-      }}
+      style={{ ...panelVars, fontSize: scaled(12) }}
+      className="relative flex h-full min-h-0 flex-col bg-[var(--git-bg)] text-[var(--git-text)]"
     >
-      <div
-        style={{
-          padding: "8px 10px",
-          borderBottom: `1px solid ${theme.border}`,
-          background: isDark ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.015)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <GitBranch size={14} style={{ color: "#22c55e", flexShrink: 0 }} />
-
-          <button
-            onClick={() => setShowBranchDropdown((prev) => !prev)}
-            style={{
-              border: "none",
-              background: "transparent",
-              color: theme.text,
-              cursor: "pointer",
-              padding: "2px 4px",
-              borderRadius: radius.sm,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-              fontSize: 12,
-              fontWeight: 600,
-            }}
-          >
-            {branch.current || "No branch"}
-            <ChevronDown size={12} style={{ color: theme.textMuted }} />
-          </button>
-
-          <span style={{ color: theme.textMuted, fontSize: 11 }}>
-            {branch.upstream ? branch.upstream : "no upstream"}
-          </span>
-
-          <span
-            style={{
-              marginLeft: "auto",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              color: theme.textMuted,
-              fontSize: 11,
-            }}
-          >
-            <ArrowUp size={12} style={{ color: "#22c55e" }} />
-            {branch.ahead}
-            <ArrowDown size={12} style={{ color: "#f59e0b" }} />
-            {branch.behind}
-          </span>
-        </div>
-
-        {showBranchDropdown && (
-          <div
-            style={{
-              marginTop: 8,
-              border: `1px solid ${theme.border}`,
-              borderRadius: radius.md,
-              background: theme.bg,
-              boxShadow: isDark
-                ? "0 12px 24px rgba(0,0,0,0.35)"
-                : "0 10px 20px rgba(0,0,0,0.12)",
-              overflow: "hidden",
-            }}
-          >
-            <div style={{ maxHeight: 160, overflowY: "auto" }}>
-              {branches.map((candidate) => (
-                <button
-                  key={candidate}
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    border: "none",
-                    background:
-                      candidate === branch.current
-                        ? theme.bgSecondary
-                        : "transparent",
-                    color: theme.text,
-                    padding: "6px 10px",
-                    fontSize: 12,
-                    cursor: busy ? "wait" : "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                  }}
-                  onClick={() => {
-                    void runPanelAction(() => switchBranch(candidate));
-                    setShowBranchDropdown(false);
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background:
-                        candidate === branch.current
-                          ? "#22c55e"
-                          : "transparent",
-                      border: `1px solid ${theme.border}`,
-                    }}
-                  />
-                  {candidate}
-                </button>
-              ))}
-            </div>
-
-            <div
-              style={{
-                borderTop: `1px solid ${theme.border}`,
-                padding: 8,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <input
-                value={newBranchName}
-                onChange={(event) => setNewBranchName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    void handleCreateBranch();
-                  }
-                }}
-                placeholder="new branch"
-                style={{
-                  flex: 1,
-                  border: `1px solid ${theme.border}`,
-                  borderRadius: radius.sm,
-                  background: theme.bgSecondary,
-                  color: theme.text,
-                  fontSize: 11,
-                  padding: "5px 8px",
-                  outline: "none",
-                }}
-              />
-              <button
-                style={{ ...actionButtonStyle, padding: "5px 8px" }}
-                onClick={() => {
-                  void handleCreateBranch();
-                }}
-              >
-                <Plus size={12} />
-              </button>
-            </div>
+      <div className="border-b border-[var(--git-border)] px-3 py-3">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] text-[#22c55e]">
+            <FolderGit2 size={15} />
           </div>
-        )}
 
-        <div
-          style={{
-            marginTop: 8,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <select
-            value={selectedRemote}
-            onChange={(event) => setSelectedRemote(event.target.value)}
-            style={{
-              border: `1px solid ${theme.border}`,
-              borderRadius: radius.sm,
-              background: theme.bgSecondary,
-              color: theme.text,
-              padding: "4px 8px",
-              fontSize: 11,
-              minWidth: 88,
-            }}
-          >
-            {remotes.length === 0 && <option value="">no remote</option>}
-            {remotes.map((remote) => (
-              <option key={remote} value={remote}>
-                {remote}
-              </option>
-            ))}
-          </select>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowBranchDropdown((value) => !value)}
+                className="inline-flex max-w-full items-center gap-2 rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--git-text)] transition-colors hover:border-[var(--git-border-strong)]"
+              >
+                <GitBranch size={13} className="shrink-0 text-[#22c55e]" />
+                <span className="truncate">
+                  {git.branch.current || "Detached HEAD"}
+                </span>
+                <ChevronDown
+                  size={12}
+                  className="shrink-0 text-[var(--git-text-secondary)]"
+                />
+              </button>
 
-          <button
-            style={actionButtonStyle}
-            onClick={() => {
-              void runPanelAction(fetchRemote);
-            }}
-          >
-            Fetch
-          </button>
+              <div className="ml-auto flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
+                <span className="inline-flex items-center gap-1 text-[#22c55e]">
+                  <ArrowUp size={11} />
+                  {git.branch.ahead}
+                </span>
+                <span className="inline-flex items-center gap-1 text-[#f59e0b]">
+                  <ArrowDown size={11} />
+                  {git.branch.behind}
+                </span>
+              </div>
+            </div>
 
-          <button
-            style={actionButtonStyle}
-            onClick={() => {
-              void runPanelAction(pullRemote);
-            }}
-          >
-            Pull
-          </button>
-
-          <button
-            style={{
-              ...actionButtonStyle,
-              borderColor: branch.ahead > 0 ? "#22c55e" : theme.border,
-              color: branch.ahead > 0 ? "#22c55e" : theme.text,
-            }}
-            onClick={() => {
-              void runPanelAction(() => pushRemote(false));
-            }}
-          >
-            Push
-          </button>
-
-          <button
-            style={actionButtonStyle}
-            onClick={() => {
-              void runPanelAction(refresh);
-            }}
-            title="Refresh git status"
-          >
-            <RefreshCw
-              size={12}
-              style={{
-                animation: loading ? "spin 1s linear infinite" : "none",
-              }}
-            />
-          </button>
-
-          <button
-            style={{ ...actionButtonStyle, marginLeft: "auto" }}
-            onClick={() => {
-              toggleExpanded();
-            }}
-            title={expanded ? "Collapse" : "Expand"}
-          >
-            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            {expanded ? "Compact" : "Expand"}
-          </button>
-        </div>
-      </div>
-
-      <div
-        style={{
-          padding: "8px 10px",
-          borderBottom: `1px solid ${theme.border}`,
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          background: isDark ? "rgba(255,255,255,0.01)" : "rgba(0,0,0,0.01)",
-        }}
-      >
-        <GitCommit size={13} style={{ color: theme.textMuted }} />
-        <input
-          type="text"
-          value={commitMessage}
-          placeholder="Commit message"
-          onChange={(event) => setCommitMessage(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              void handleCommit();
-            }
-          }}
-          style={{
-            flex: 1,
-            border: `1px solid ${theme.border}`,
-            borderRadius: radius.sm,
-            background: theme.bgSecondary,
-            color: theme.text,
-            fontSize: 12,
-            padding: "5px 8px",
-            outline: "none",
-          }}
-        />
-        <button
-          style={{
-            ...actionButtonStyle,
-            color:
-              commitMessage.trim().length > 0 && stagedFiles.length > 0
-                ? "#22c55e"
-                : theme.textMuted,
-            borderColor:
-              commitMessage.trim().length > 0 && stagedFiles.length > 0
-                ? "#22c55e"
-                : theme.border,
-          }}
-          disabled={
-            commitMessage.trim().length === 0 || stagedFiles.length === 0
-          }
-          onClick={() => {
-            void handleCommit();
-          }}
-        >
-          <Check size={12} />
-          Commit
-        </button>
-      </div>
-
-      <div
-        style={{
-          padding: "8px 10px",
-          borderBottom: `1px solid ${theme.border}`,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            fontSize: 11,
-          }}
-        >
-          <span style={{ color: theme.textMuted }}>Changes:</span>
-          <span style={{ color: "#22c55e" }}>staged {stagedFiles.length}</span>
-          <span style={{ color: "#f59e0b" }}>
-            unstaged {unstagedFiles.length}
-          </span>
-          <span style={{ color: "#f97316" }}>
-            conflicts {conflictedFiles.length}
-          </span>
-          <span style={{ marginLeft: "auto", color: theme.textMuted }}>
-            total {changedCount}
-          </span>
-        </div>
-      </div>
-
-      <div
-        style={{
-          maxHeight: expanded ? 1200 : 184,
-          opacity: expanded ? 1 : 0.96,
-          transform: expanded ? "translateY(0)" : "translateY(-2px)",
-          transition:
-            "max-height 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease, transform 180ms ease",
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-          minHeight: 0,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            borderBottom: `1px solid ${theme.border}`,
-            marginTop: expanded ? 0 : 6,
-          }}
-        >
-          <button
-            style={{
-              flex: 1,
-              border: "none",
-              borderBottom:
-                activeTab === "changes"
-                  ? `2px solid ${theme.textPrimary}`
-                  : "2px solid transparent",
-              background: "transparent",
-              color: activeTab === "changes" ? theme.text : theme.textMuted,
-              fontSize: 11,
-              padding: "8px 4px",
-              cursor: "pointer",
-              display: "inline-flex",
-              justifyContent: "center",
-              alignItems: "center",
-              gap: 4,
-            }}
-            onClick={() => setActiveTab("changes")}
-          >
-            <GitCommit size={12} />
-            Changes
-          </button>
-
-          <button
-            style={{
-              flex: 1,
-              border: "none",
-              borderBottom:
-                activeTab === "history"
-                  ? `2px solid ${theme.textPrimary}`
-                  : "2px solid transparent",
-              background: "transparent",
-              color: activeTab === "history" ? theme.text : theme.textMuted,
-              fontSize: 11,
-              padding: "8px 4px",
-              cursor: "pointer",
-              display: "inline-flex",
-              justifyContent: "center",
-              alignItems: "center",
-              gap: 4,
-            }}
-            onClick={() => setActiveTab("history")}
-          >
-            <History size={12} />
-            History
-          </button>
-
-          <button
-            style={{
-              flex: 1,
-              border: "none",
-              borderBottom:
-                activeTab === "pull_requests"
-                  ? `2px solid ${theme.textPrimary}`
-                  : "2px solid transparent",
-              background: "transparent",
-              color:
-                activeTab === "pull_requests" ? theme.text : theme.textMuted,
-              fontSize: 11,
-              padding: "8px 4px",
-              cursor: "pointer",
-            }}
-            onClick={() => setActiveTab("pull_requests")}
-          >
-            PR
-          </button>
-        </div>
-
-        {activeTab === "changes" && (
-          <div style={{ flex: 1, overflow: "auto", padding: 8 }}>
-            {conflictedFiles.length > 0 &&
-              renderSection(
-                "Conflicts",
-                conflictedFiles,
-                conflictedExpanded,
-                () => setConflictedExpanded((prev) => !prev),
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--git-text-secondary)]">
+              {git.branch.upstream && (
+                <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5 uppercase tracking-[0.14em]">
+                  {git.branch.upstream}
+                </span>
               )}
-
-            {renderSection(
-              "Staged",
-              stagedFiles,
-              stagedExpanded,
-              () => setStagedExpanded((prev) => !prev),
-              "Unstage all",
-              () => {
-                void runPanelAction(unstageAll);
-              },
-            )}
-
-            {renderSection(
-              "Working tree",
-              unstagedFiles,
-              unstagedExpanded,
-              () => setUnstagedExpanded((prev) => !prev),
-              "Stage all",
-              () => {
-                void runPanelAction(stageAll);
-              },
-            )}
-          </div>
-        )}
-
-        {activeTab === "history" && <GitHistory onViewDiff={viewCommitDiff} />}
-
-        {activeTab === "pull_requests" && (
-          <div
-            style={{
-              flex: 1,
-              overflow: "auto",
-              padding: 12,
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-            }}
-          >
-            <div style={{ fontSize: 12, color: theme.textMuted }}>
-              GitHub compare URL workflow.
+              <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5 uppercase tracking-[0.14em]">
+                {changedCount} changed
+              </span>
+              <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5 uppercase tracking-[0.14em]">
+                {selectedRemoteLabel}
+              </span>
             </div>
 
-            <label
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                fontSize: 11,
-                color: theme.textMuted,
-              }}
-            >
-              Base branch
-              <input
-                value={prBaseBranch}
-                onChange={(event) => setPrBaseBranch(event.target.value)}
-                style={{
-                  border: `1px solid ${theme.border}`,
-                  borderRadius: radius.sm,
-                  background: theme.bgSecondary,
-                  color: theme.text,
-                  padding: "6px 8px",
-                  fontSize: 12,
-                  outline: "none",
-                }}
-              />
-            </label>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              <button
-                style={actionButtonStyle}
-                onClick={() => {
-                  void runPanelAction(() => pushRemote(true));
-                }}
-              >
-                Push -u
-              </button>
-              <button
-                style={actionButtonStyle}
-                onClick={() => {
-                  void previewPullRequestUrl();
-                }}
-              >
-                Preview PR URL
-              </button>
-              <button
-                style={{
-                  ...actionButtonStyle,
-                  borderColor: "#22c55e",
-                  color: "#22c55e",
-                }}
-                onClick={() => {
-                  void openPullRequestUrl();
-                }}
-              >
-                Open Pull Request
-              </button>
-            </div>
-
-            {prUrl && (
+            {showBranchDropdown && (
               <div
+                className="mt-3 overflow-hidden rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)]"
                 style={{
-                  border: `1px solid ${theme.border}`,
-                  background: theme.bgSecondary,
-                  borderRadius: radius.sm,
-                  padding: 8,
-                  fontSize: 11,
-                  color: theme.textMuted,
-                  wordBreak: "break-all",
+                  boxShadow: isDark
+                    ? "0 16px 28px rgba(0,0,0,0.34)"
+                    : "0 14px 24px rgba(0,0,0,0.12)",
                 }}
               >
-                {prUrl}
+                <div className="max-h-48 overflow-y-auto p-1">
+                  {git.branches.map((candidate) => {
+                    const isCurrent = candidate === git.branch.current;
+                    return (
+                      <button
+                        key={candidate}
+                        type="button"
+                        onClick={() => {
+                          void runPanelAction(() =>
+                            git.switchBranch(candidate),
+                          );
+                          setShowBranchDropdown(false);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[12px] transition-colors hover:bg-[var(--git-row-active)]"
+                        style={{
+                          background: isCurrent
+                            ? "var(--git-row-active)"
+                            : "transparent",
+                        }}
+                      >
+                        <span
+                          className="h-2 w-2 rounded-full border border-[var(--git-border)]"
+                          style={{
+                            background: isCurrent ? "#22c55e" : "transparent",
+                          }}
+                        />
+                        <span className="truncate text-[var(--git-text)]">
+                          {candidate}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="border-t border-[var(--git-border)] p-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={newBranchName}
+                      onChange={(event) => setNewBranchName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          void handleCreateBranch();
+                        }
+                      }}
+                      placeholder="Create branch"
+                      style={inputStyle(theme)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleCreateBranch();
+                      }}
+                      style={buttonStyle(theme)}
+                      title="Create branch"
+                    >
+                      <Plus size={13} />
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
+          </div>
+        </div>
 
-            <div style={{ fontSize: 11, color: theme.textMuted }}>
-              Target remote: {selectedRemote || "none"}. Ahead {branch.ahead},
-              behind {branch.behind}.
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--git-border)] pt-3 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
+          <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5">
+            {git.conflictedFiles.length} conflicts
+          </span>
+          <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5">
+            {git.stagedFiles.length} staged
+          </span>
+          <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5">
+            {git.unstagedFiles.length} working
+          </span>
+          <button
+            type="button"
+            style={buttonStyle(theme)}
+            onClick={() => void runPanelAction(git.refresh)}
+            title="Refresh status"
+          >
+            <RefreshCw
+              size={13}
+              className={git.loading ? "animate-spin" : ""}
+            />
+          </button>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="flex h-full min-h-0 flex-col overflow-y-auto px-3 py-3">
+          <div className="mb-3 flex items-center gap-2 rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] px-3 py-2 text-[11px] text-[var(--git-text-secondary)]">
+            <Workflow size={13} className="text-[#22c55e]" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[12px] font-medium text-[var(--git-text)]">
+                Compact source control
+              </div>
+              <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
+                Review files here. Commit, history, diff and PR stay in details.
+              </div>
             </div>
           </div>
-        )}
+
+          {git.conflictedFiles.length > 0 && (
+            <FileSection
+              title="Conflicts"
+              files={git.conflictedFiles}
+              open={conflictedOpen}
+              onToggle={() => setConflictedOpen((value) => !value)}
+              emptyLabel="No conflicted files."
+              selectedPath={selectedPath}
+              onOpen={
+                onFileOpen
+                  ? (path) => onFileOpen(resolvePathForOpen(path))
+                  : undefined
+              }
+              onViewDiff={viewFileDiff}
+              onStage={(path) => void runPanelAction(() => git.stageFile(path))}
+              onUnstage={(path) =>
+                void runPanelAction(() => git.unstageFile(path))
+              }
+              onDiscard={(path) =>
+                void runPanelAction(() => git.discardFile(path))
+              }
+            />
+          )}
+
+          <div className="mt-3 flex min-h-0 flex-1 flex-col gap-3">
+            <FileSection
+              title="Staged"
+              files={git.stagedFiles}
+              open={stagedOpen}
+              onToggle={() => setStagedOpen((value) => !value)}
+              bulkActionLabel="Unstage all"
+              onBulkAction={() => void runPanelAction(git.unstageAll)}
+              emptyLabel="Nothing is staged yet."
+              selectedPath={selectedPath}
+              onOpen={
+                onFileOpen
+                  ? (path) => onFileOpen(resolvePathForOpen(path))
+                  : undefined
+              }
+              onViewDiff={viewFileDiff}
+              onStage={(path) => void runPanelAction(() => git.stageFile(path))}
+              onUnstage={(path) =>
+                void runPanelAction(() => git.unstageFile(path))
+              }
+              onDiscard={(path) =>
+                void runPanelAction(() => git.discardFile(path))
+              }
+            />
+
+            <FileSection
+              title="Working tree"
+              files={git.unstagedFiles}
+              open={unstagedOpen}
+              onToggle={() => setUnstagedOpen((value) => !value)}
+              bulkActionLabel="Stage all"
+              onBulkAction={() => void runPanelAction(git.stageAll)}
+              emptyLabel="Working tree is clean."
+              selectedPath={selectedPath}
+              onOpen={
+                onFileOpen
+                  ? (path) => onFileOpen(resolvePathForOpen(path))
+                  : undefined
+              }
+              onViewDiff={viewFileDiff}
+              onStage={(path) => void runPanelAction(() => git.stageFile(path))}
+              onUnstage={(path) =>
+                void runPanelAction(() => git.unstageFile(path))
+              }
+              onDiscard={(path) =>
+                void runPanelAction(() => git.discardFile(path))
+              }
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-[var(--git-border)] px-3 py-3">
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => openDetail("commit")}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] px-3 text-[12px] font-medium text-[var(--git-text)] transition-colors hover:border-[#22c55e] hover:text-[#22c55e]"
+          >
+            <GitCommit size={14} />
+            Commit...
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              openDetail(detailTab === "diff" ? "commit" : detailTab)
+            }
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 text-[12px] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)]"
+          >
+            <ChevronsRight size={14} />
+            Open details
+          </button>
+        </div>
       </div>
 
       {humanError && (
-        <div
-          style={{
-            borderTop: `1px solid ${theme.border}`,
-            background: isDark ? "rgba(239,68,68,0.1)" : "rgba(239,68,68,0.08)",
-            color: theme.text,
-            fontSize: 11,
-            padding: "8px 10px",
-          }}
-        >
+        <div className="border-t border-[var(--git-border)] bg-[rgba(239,68,68,0.10)] px-3 py-2 text-[11px] text-[var(--git-text)]">
           {humanError}
         </div>
       )}
 
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
+      <div
+        aria-hidden={!detailOpen}
+        className="absolute inset-0 z-20 flex flex-col bg-[var(--git-bg)]"
+        style={{
+          opacity: detailOpen ? 1 : 0,
+          pointerEvents: detailOpen ? "auto" : "none",
+          transform: detailOpen
+            ? "translate3d(0, 0, 0)"
+            : detailDirection.closedTransform,
+          transition:
+            "transform 280ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease",
+          willChange: "transform, opacity",
+          contain: "layout paint",
+          border: detailDirection.border,
+          boxShadow: detailOpen ? detailDirection.boxShadow : "none",
+        }}
+      >
+        <div className="border-b border-[var(--git-border)] px-3 py-3">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] text-[#22c55e]">
+              <FolderGit2 size={15} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <div className="truncate text-[12px] font-semibold text-[var(--git-text)]">
+                  Source control details
+                </div>
+                <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
+                  {git.branch.current || "detached"}
+                </span>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
+                <span>{selectedRemoteLabel}</span>
+                <span className="text-[#22c55e]">↑ {git.branch.ahead}</span>
+                <span className="text-[#f59e0b]">↓ {git.branch.behind}</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDetailOpen(false)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)]"
+              title="Close details"
+            >
+              <X size={15} />
+            </button>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {detailTabs.map(([value, label, Icon]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => openDetail(value)}
+                className="inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-[11px] transition-colors"
+                style={{
+                  borderColor:
+                    detailTab === value ? "#22c55e" : "var(--git-border)",
+                  background:
+                    detailTab === value
+                      ? isDark
+                        ? "rgba(34,197,94,0.12)"
+                        : "rgba(34,197,94,0.08)"
+                      : "var(--git-surface)",
+                  color:
+                    detailTab === value
+                      ? "#22c55e"
+                      : "var(--git-text-secondary)",
+                }}
+              >
+                <Icon size={13} />
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {detailTab === "commit" && (
+            <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-3 py-3">
+              <div className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] p-3">
+                <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
+                  <span className="inline-flex items-center gap-1">
+                    <GitCommit size={12} />
+                    Commit
+                  </span>
+                  <span>{git.stagedFiles.length} staged</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={commitMessage}
+                    onChange={(event) => setCommitMessage(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (
+                        (event.metaKey || event.ctrlKey) &&
+                        event.key === "Enter"
+                      ) {
+                        void handleCommit();
+                      }
+                    }}
+                    placeholder="Commit message"
+                    style={inputStyle(theme)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleCommit()}
+                    disabled={
+                      !commitMessage.trim() ||
+                      git.stagedFiles.length === 0 ||
+                      git.busy
+                    }
+                    style={buttonStyle(
+                      theme,
+                      commitMessage.trim() && git.stagedFiles.length > 0
+                        ? "accent"
+                        : "default",
+                    )}
+                  >
+                    <Check size={13} />
+                    Commit
+                  </button>
+                </div>
+                <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
+                  Ctrl/Cmd + Enter to commit
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] p-3">
+                <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
+                  <span>Sync</span>
+                  <span>{selectedRemoteLabel}</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {git.remotes.length > 1 && (
+                    <select
+                      value={git.selectedRemote}
+                      onChange={(event) =>
+                        git.setSelectedRemote(event.target.value)
+                      }
+                      style={{
+                        ...inputStyle(theme),
+                        width: 132,
+                        padding: "6px 8px",
+                      }}
+                    >
+                      {git.remotes.map((remote) => (
+                        <option key={remote} value={remote}>
+                          {remote}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    type="button"
+                    style={buttonStyle(theme)}
+                    onClick={() => void runPanelAction(git.fetchRemote)}
+                  >
+                    Fetch
+                  </button>
+                  <button
+                    type="button"
+                    style={buttonStyle(theme)}
+                    onClick={() => void runPanelAction(git.pullRemote)}
+                  >
+                    Pull
+                  </button>
+                  <button
+                    type="button"
+                    style={buttonStyle(
+                      theme,
+                      git.branch.ahead > 0 ? "accent" : "default",
+                    )}
+                    onClick={() =>
+                      void runPanelAction(() => git.pushRemote(false))
+                    }
+                  >
+                    <Send size={13} />
+                    Push
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {detailTab === "history" && (
+            <GitHistory
+              commits={git.historyCommits}
+              loading={git.historyLoading}
+              onRefresh={() => void git.loadHistory()}
+              onViewDiff={viewCommitDiff}
+            />
+          )}
+
+          {detailTab === "pull_requests" && (
+            <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-3 py-3">
+              <div className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] p-3">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
+                  Pull request flow
+                </div>
+                <div className="mt-2 text-[12px] text-[var(--git-text-secondary)]">
+                  Build a GitHub compare URL from the current branch and open it
+                  in the browser.
+                </div>
+                <div className="mt-3 grid gap-3">
+                  <label className="grid gap-1 text-[11px] text-[var(--git-text-secondary)]">
+                    Base branch
+                    <input
+                      value={prBaseOverride}
+                      onChange={(event) =>
+                        setPrBaseOverride(event.target.value)
+                      }
+                      placeholder={inferredBaseBranch}
+                      style={inputStyle(theme)}
+                    />
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      style={buttonStyle(theme)}
+                      onClick={() =>
+                        void runPanelAction(() => git.pushRemote(true))
+                      }
+                    >
+                      Push -u
+                    </button>
+                    <button
+                      type="button"
+                      style={buttonStyle(theme)}
+                      onClick={() => void previewPullRequestUrl()}
+                    >
+                      Preview URL
+                    </button>
+                    <button
+                      type="button"
+                      style={buttonStyle(theme, "accent")}
+                      onClick={() => void openPullRequestUrl()}
+                    >
+                      Open PR
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] p-3 text-[12px] text-[var(--git-text-secondary)]">
+                <div>
+                  Base branch:{" "}
+                  <span className="text-[var(--git-text)]">
+                    {effectivePrBase}
+                  </span>
+                </div>
+                <div className="mt-1">
+                  Source branch:{" "}
+                  <span className="text-[var(--git-text)]">
+                    {git.branch.current || "detached"}
+                  </span>
+                </div>
+              </div>
+
+              {prUrl && (
+                <div className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] p-3 break-all text-[12px] text-[var(--git-text-secondary)]">
+                  {prUrl}
+                </div>
+              )}
+            </div>
+          )}
+
+          {detailTab === "stash" && (
+            <div className="h-full min-h-0 overflow-y-auto px-3 py-3">
+              <StashSection
+                entries={git.stashEntries}
+                loading={git.stashLoading || git.busy}
+                message={stashMessage}
+                onMessageChange={setStashMessage}
+                onCreate={() => void handleCreateStash()}
+                onPop={(ref) => void runPanelAction(() => git.popStash(ref))}
+                onDrop={(ref) => void runPanelAction(() => git.dropStash(ref))}
+              />
+            </div>
+          )}
+
+          {detailTab === "diff" &&
+            (diffState ? (
+              <GitDiffViewer
+                diff={diffState.content}
+                fileName={diffState.title}
+                onClose={closeDiff}
+                onPrevFile={
+                  diffState.selectedPath && selectedFileIndex > 0
+                    ? () => navigateDiff("prev")
+                    : undefined
+                }
+                onNextFile={
+                  diffState.selectedPath &&
+                  selectedFileIndex < allChangedFiles.length - 1
+                    ? () => navigateDiff("next")
+                    : undefined
+                }
+                hasPrev={
+                  diffState.selectedPath !== null && selectedFileIndex > 0
+                }
+                hasNext={
+                  diffState.selectedPath !== null &&
+                  selectedFileIndex >= 0 &&
+                  selectedFileIndex < allChangedFiles.length - 1
+                }
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center px-4 text-center text-[12px] text-[var(--git-text-secondary)]">
+                Select a file or a commit to inspect its diff here.
+              </div>
+            ))}
+        </div>
+      </div>
     </div>
   );
 };

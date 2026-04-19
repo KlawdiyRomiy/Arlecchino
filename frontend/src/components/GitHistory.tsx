@@ -1,28 +1,33 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { GitCommit, User, Clock, ChevronDown, ChevronRight, FileText, RefreshCw } from "lucide-react";
-import { getThemeColors, radius, transitions } from "../styles/colors";
-import { useTheme } from "../hooks/useTheme";
-import { useEditorSettingsStore } from "../stores/editorSettingsStore";
-import * as AppFunctions from "../../wailsjs/go/main/App";
+import React, { useMemo, useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Clock3,
+  FileSearch,
+  GitCommit,
+  RefreshCw,
+  Search,
+  User,
+} from "lucide-react";
 
-interface CommitInfo {
-  hash: string;
-  shortHash: string;
-  author: string;
-  authorEmail: string;
-  date: string;
-  subject: string;
-  body: string;
-  parents: string;
+import * as AppFunctions from "../../wailsjs/go/main/App";
+import { main } from "../../wailsjs/go/models";
+import { useTheme } from "../hooks/useTheme";
+import { radius, transitions, zIndex } from "../styles/colors";
+
+interface ParsedCommitStat {
+  path: string;
+  summary: string;
 }
 
 interface GitHistoryProps {
-  onCommitSelect?: (hash: string) => void;
+  commits: main.GitCommitInfo[];
+  loading: boolean;
+  onRefresh: () => void;
   onViewDiff?: (hash: string) => void;
-  selectedCommit?: string | null;
 }
 
-function formatDate(dateStr: string): string {
+const formatDate = (dateStr: string): string => {
   const date = new Date(dateStr);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -31,306 +36,291 @@ function formatDate(dateStr: string): string {
   if (diffDays === 0) {
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
     if (diffHours === 0) {
-      const diffMinutes = Math.floor(diffMs / (1000 * 60));
-      return `${diffMinutes}m ago`;
+      return `${Math.max(1, Math.floor(diffMs / (1000 * 60)))}m ago`;
     }
     return `${diffHours}h ago`;
   }
   if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
 
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+};
 
-function getInitials(name: string): string {
-  return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
-}
+const getInitials = (name: string): string =>
+  name
+    .split(" ")
+    .map((value) => value[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 
-function hashToColor(hash: string): string {
+const hashToColor = (hash: string): string => {
   let h = 0;
-  for (let i = 0; i < hash.length; i++) {
+  for (let i = 0; i < hash.length; i += 1) {
     h = hash.charCodeAt(i) + ((h << 5) - h);
   }
-  const hue = h % 360;
-  return `hsl(${hue}, 60%, 50%)`;
-}
+  return `hsl(${Math.abs(h) % 360}, 58%, 48%)`;
+};
+
+const parseCommitStats = (output: string): ParsedCommitStat[] =>
+  output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line.includes(" | ") &&
+        !line.startsWith("commit ") &&
+        !line.startsWith("Author:") &&
+        !line.startsWith("Date:"),
+    )
+    .map((line) => {
+      const [path, summary] = line.split(" | ");
+      return {
+        path: path?.trim() ?? "",
+        summary: summary?.trim() ?? "",
+      } satisfies ParsedCommitStat;
+    })
+    .filter((line) => line.path);
 
 export const GitHistory: React.FC<GitHistoryProps> = ({
-  onCommitSelect,
+  commits,
+  loading,
+  onRefresh,
   onViewDiff,
-  selectedCommit,
 }) => {
   const { isDark } = useTheme();
-  const theme = getThemeColors(isDark);
-  const uiScale = useEditorSettingsStore((state) => state.uiScale);
-  
-  // Scale helper
-  const scaled = (size: number) => Math.round(size * uiScale);
-  
-  const [commits, setCommits] = useState<CommitInfo[]>([]);
-  const [loading, setLoading] = useState(true);
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
   const [commitStats, setCommitStats] = useState<Record<string, string>>({});
+  const [search, setSearch] = useState("");
 
-  const loadCommits = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await AppFunctions.GetGitLog(100, "");
-      setCommits(result || []);
-    } catch (err) {
-      console.error("[GitHistory] Failed to load commits:", err);
+  const panelVars = useMemo(
+    () =>
+      ({
+        "--git-bg": isDark ? "#0a0a0a" : "#ffffff",
+        "--git-bg-secondary": isDark ? "#111111" : "#f9fafb",
+        "--git-bg-tertiary": isDark ? "#1a1a1a" : "#f3f4f6",
+        "--git-bg-hover": isDark
+          ? "rgba(255,255,255,0.04)"
+          : "rgba(0,0,0,0.035)",
+        "--git-border": isDark ? "#2a2a2a" : "#e5e7eb",
+        "--git-text": isDark ? "#ffffff" : "#111827",
+        "--git-text-secondary": isDark ? "#888888" : "#6b7280",
+      }) as React.CSSProperties,
+    [isDark],
+  );
+
+  const filteredCommits = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) {
+      return commits;
     }
-    setLoading(false);
-  }, []);
 
-  useEffect(() => {
-    loadCommits();
-  }, [loadCommits]);
+    return commits.filter((commit) => {
+      const haystack = [
+        commit.subject,
+        commit.body,
+        commit.author,
+        commit.shortHash,
+        commit.hash,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [commits, search]);
 
   const toggleExpand = async (hash: string) => {
     if (expandedCommit === hash) {
       setExpandedCommit(null);
       return;
     }
+
     setExpandedCommit(hash);
-    if (!commitStats[hash]) {
-      try {
-        const stats = await AppFunctions.GetGitShow(hash);
-        setCommitStats(prev => ({ ...prev, [hash]: stats }));
-      } catch (err) {
-        console.error("[GitHistory] Failed to load commit stats:", err);
-      }
+    if (commitStats[hash]) {
+      return;
+    }
+
+    try {
+      const stats = await AppFunctions.GetGitShow(hash);
+      setCommitStats((prev) => ({ ...prev, [hash]: stats }));
+    } catch {
+      setCommitStats((prev) => ({ ...prev, [hash]: "" }));
     }
   };
 
-  const CommitRow: React.FC<{ commit: CommitInfo; isFirst: boolean; isLast: boolean }> = ({ commit, isFirst, isLast }) => {
-    const isExpanded = expandedCommit === commit.hash;
-    const isSelected = selectedCommit === commit.hash;
-    const avatarColor = hashToColor(commit.authorEmail);
-
-    return (
-      <div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 12,
-            padding: "10px 12px",
-            cursor: "pointer",
-            background: isSelected ? (isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)") : "transparent",
-            borderLeft: isSelected ? `2px solid #EF4444` : "2px solid transparent",
-            transition: `background ${transitions.fast}`,
-          }}
-          onClick={() => {
-            onCommitSelect?.(commit.hash);
-            toggleExpand(commit.hash);
-          }}
-          onMouseEnter={(e) => {
-            if (!isSelected) e.currentTarget.style.background = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)";
-          }}
-          onMouseLeave={(e) => {
-            if (!isSelected) e.currentTarget.style.background = "transparent";
-          }}
-        >
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 20 }}>
-            <div style={{
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              background: isFirst ? "#EF4444" : "#6B7280",
-              border: `2px solid ${theme.bg}`,
-              zIndex: 1,
-            }} />
-            {!isLast && (
-              <div style={{
-                width: 2,
-                flex: 1,
-                minHeight: 30,
-                background: isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)",
-                marginTop: -2,
-              }} />
-            )}
+  return (
+    <div
+      style={panelVars}
+      className="flex h-full min-h-0 flex-col bg-[var(--git-bg)] text-[var(--git-text)]"
+    >
+      <div className="border-b border-[var(--git-border)] px-3 py-2">
+        <div className="flex items-center gap-2">
+          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
+            <GitCommit size={13} />
+            History
           </div>
-
-          <div style={{
-            width: 28,
-            height: 28,
-            borderRadius: "50%",
-            background: avatarColor,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 10,
-            fontWeight: 600,
-            color: "#fff",
-            flexShrink: 0,
-          }}>
-            {getInitials(commit.author)}
+          <div className="ml-auto rounded-full border border-[var(--git-border)] px-2 py-0.5 text-[10px] text-[var(--git-text-secondary)]">
+            {filteredCommits.length}
           </div>
-
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {isExpanded ? <ChevronDown size={12} style={{ color: theme.textMuted }} /> : <ChevronRight size={12} style={{ color: theme.textMuted }} />}
-              <span style={{
-                fontSize: 13,
-                fontWeight: 500,
-                color: theme.text,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}>
-                {commit.subject}
-              </span>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-              <span style={{
-                fontSize: 11,
-                color: "#EF4444",
-                fontFamily: "monospace",
-                background: isDark ? "rgba(239, 68, 68, 0.1)" : "rgba(239, 68, 68, 0.08)",
-                padding: "1px 6px",
-                borderRadius: radius.sm,
-                flexShrink: 0,
-              }}>
-                {commit.shortHash}
-              </span>
-              <span style={{ fontSize: 11, color: theme.textMuted, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                <User size={10} /> {commit.author}
-              </span>
-              <span style={{ fontSize: 11, color: theme.textMuted, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                <Clock size={10} /> {formatDate(commit.date)}
-              </span>
-            </div>
-          </div>
-
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onViewDiff?.(commit.hash);
-            }}
-            style={{
-              background: "transparent",
-              border: `1px solid ${theme.border}`,
-              borderRadius: radius.sm,
-              padding: "4px 8px",
-              fontSize: 11,
-              color: theme.textMuted,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              transition: `all ${transitions.fast}`,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = "#EF4444";
-              e.currentTarget.style.color = "#EF4444";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = theme.border;
-              e.currentTarget.style.color = theme.textMuted;
-            }}
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-bg-secondary)] text-[var(--git-text-secondary)] transition-colors hover:bg-[var(--git-bg-hover)] hover:text-[var(--git-text)] disabled:cursor-wait disabled:opacity-60"
+            title="Refresh history"
           >
-            <FileText size={12} /> View
+            <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
           </button>
         </div>
 
-        {isExpanded && (
-          <div style={{
-            marginLeft: 44,
-            padding: "8px 12px",
-            background: isDark ? "rgba(0,0,0,0.2)" : "rgba(0,0,0,0.03)",
-            borderRadius: radius.sm,
-            marginRight: 12,
-            marginBottom: 8,
-          }}>
-            {commit.body && (
-              <div style={{
-                fontSize: 12,
-                color: theme.textMuted,
-                marginBottom: 8,
-                whiteSpace: "pre-wrap",
-              }}>
-                {commit.body}
-              </div>
-            )}
-            {commitStats[commit.hash] && (
-              <pre style={{
-                fontSize: 11,
-                color: theme.textMuted,
-                fontFamily: "monospace",
-                margin: 0,
-                whiteSpace: "pre-wrap",
-                overflow: "auto",
-                maxHeight: 200,
-              }}>
-                {commitStats[commit.hash].split("\n").slice(0, 30).join("\n")}
-              </pre>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", color: theme.text, fontSize: scaled(14) }}>
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "8px 12px",
-        borderBottom: `1px solid ${theme.border}`,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <GitCommit size={14} style={{ color: theme.textMuted }} />
-          <span style={{ fontSize: 12, fontWeight: 500 }}>Commit History</span>
-          <span style={{ fontSize: 11, color: theme.textMuted }}>({commits.length})</span>
+        <div className="mt-2 flex items-center gap-2 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-2.5 py-2 text-[12px] text-[var(--git-text-secondary)]">
+          <Search size={13} />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search commits"
+            className="w-full bg-transparent text-[var(--git-text)] outline-none placeholder:text-[var(--git-text-secondary)]"
+          />
         </div>
-        <button
-          onClick={loadCommits}
-          disabled={loading}
-          style={{
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-            padding: 4,
-            borderRadius: radius.sm,
-            display: "flex",
-          }}
-        >
-          <RefreshCw size={14} style={{ color: theme.textMuted, animation: loading ? "spin 1s linear infinite" : "none" }} />
-        </button>
       </div>
 
-      <div style={{ flex: 1, overflow: "auto" }}>
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {loading ? (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: theme.textMuted }}>
-            Loading...
+          <div className="flex h-full items-center justify-center px-4 text-[12px] text-[var(--git-text-secondary)]">
+            Loading history...
           </div>
-        ) : commits.length === 0 ? (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: theme.textMuted, fontSize: 13 }}>
-            No commits yet
+        ) : filteredCommits.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-[12px] text-[var(--git-text-secondary)]">
+            <FileSearch size={18} />
+            <div>No commits matched this view.</div>
           </div>
         ) : (
-          commits.map((commit, idx) => (
-            <CommitRow
-              key={commit.hash}
-              commit={commit}
-              isFirst={idx === 0}
-              isLast={idx === commits.length - 1}
-            />
-          ))
+          <div className="px-2 py-2">
+            {filteredCommits.map((commit, index) => {
+              const isExpanded = expandedCommit === commit.hash;
+              const stats = parseCommitStats(commitStats[commit.hash] ?? "");
+              return (
+                <div key={commit.hash} className="pb-2 last:pb-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void toggleExpand(commit.hash);
+                    }}
+                    className="group grid w-full grid-cols-[18px_28px_1fr_auto] items-start gap-3 rounded-lg border border-transparent px-2 py-2 text-left transition-colors hover:border-[var(--git-border)] hover:bg-[var(--git-bg-hover)]"
+                  >
+                    <div className="flex h-full flex-col items-center pt-1">
+                      <div className="h-2.5 w-2.5 rounded-full bg-[#ef4444] ring-2 ring-[var(--git-bg)]/100" />
+                      {index < filteredCommits.length - 1 && (
+                        <div className="mt-1 h-full w-px bg-[var(--git-border)]" />
+                      )}
+                    </div>
+
+                    <div
+                      className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                      style={{
+                        background: hashToColor(
+                          commit.authorEmail || commit.hash,
+                        ),
+                      }}
+                    >
+                      {getInitials(commit.author || "?")}
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        {isExpanded ? (
+                          <ChevronDown
+                            size={13}
+                            className="text-[var(--git-text-secondary)]"
+                          />
+                        ) : (
+                          <ChevronRight
+                            size={13}
+                            className="text-[var(--git-text-secondary)]"
+                          />
+                        )}
+                        <div className="truncate text-[12px] font-medium text-[var(--git-text)]">
+                          {commit.subject || "No subject"}
+                        </div>
+                      </div>
+
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--git-text-secondary)]">
+                        <span className="rounded-full border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-2 py-0.5 font-mono text-[#ef4444]">
+                          {commit.shortHash}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <User size={11} />
+                          {commit.author}
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <Clock3 size={11} />
+                          {formatDate(commit.date)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-0.5 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onViewDiff?.(commit.hash);
+                        }}
+                        className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-2.5 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[#ef4444] hover:text-[#ef4444]"
+                      >
+                        View
+                      </button>
+                    </div>
+                  </button>
+
+                  {isExpanded && (
+                    <div
+                      className="ml-11 rounded-lg border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-3 py-3 text-[12px]"
+                      style={{
+                        marginTop: radius.sm,
+                        position: "relative",
+                        zIndex: zIndex.base,
+                      }}
+                    >
+                      {commit.body && (
+                        <div className="mb-3 whitespace-pre-wrap text-[var(--git-text-secondary)]">
+                          {commit.body}
+                        </div>
+                      )}
+
+                      {stats.length > 0 && (
+                        <div className="space-y-1.5">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
+                            Changed files
+                          </div>
+                          {stats.slice(0, 8).map((entry) => (
+                            <div
+                              key={`${commit.hash}:${entry.path}`}
+                              className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-2"
+                            >
+                              <div className="truncate text-[11px] text-[var(--git-text)]">
+                                {entry.path}
+                              </div>
+                              <div className="text-[10px] text-[var(--git-text-secondary)]">
+                                {entry.summary}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
-
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
 };

@@ -389,7 +389,8 @@ func (a *App) LSPApplyWorkspaceEdit(edit *LSPWorkspaceEdit) error {
 		return nil
 	}
 
-	if strings.TrimSpace(a.projectPath) == "" {
+	projectPath := strings.TrimSpace(a.currentProjectPath())
+	if projectPath == "" {
 		return fmt.Errorf("project path is required for workspace edits")
 	}
 
@@ -402,7 +403,7 @@ func (a *App) LSPApplyWorkspaceEdit(edit *LSPWorkspaceEdit) error {
 			continue
 		}
 
-		withinRoot, err := isPathWithinRoot(a.projectPath, path)
+		withinRoot, err := isPathWithinRoot(projectPath, path)
 		if err != nil {
 			return fmt.Errorf("failed to validate workspace edit path %s: %w", path, err)
 		}

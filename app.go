@@ -44,6 +44,7 @@ type App struct {
 	carapaceProvider  *terminal.CarapaceProvider
 	langDetector      *brain.LangDetector
 	projectPath       string
+	pathMu            sync.RWMutex
 	projectGeneration atomic.Uint64
 	lastRequestID     atomic.Value
 	mcpBridgeServer   *mcp.IDEBridgeServer
@@ -53,6 +54,18 @@ type App struct {
 	projectCtx    context.Context
 	projectCancel context.CancelFunc
 	wg            sync.WaitGroup
+}
+
+func (a *App) setProjectPath(path string) {
+	a.pathMu.Lock()
+	a.projectPath = path
+	a.pathMu.Unlock()
+}
+
+func (a *App) currentProjectPath() string {
+	a.pathMu.RLock()
+	defer a.pathMu.RUnlock()
+	return a.projectPath
 }
 
 type projectWarmupStep struct {
@@ -132,12 +145,12 @@ func (a *App) SelectDirectory(title string) (string, error) {
 }
 
 func (a *App) OpenProject(path string) error {
-	if a.projectPath != "" {
+	if a.currentProjectPath() != "" {
 		_ = a.closeProject(false)
 	}
 
 	projectGeneration := a.projectGeneration.Add(1)
-	a.projectPath = path
+	a.setProjectPath(path)
 	a.projectCtx, a.projectCancel = context.WithCancel(context.Background())
 
 	if a.projectManager != nil {
@@ -209,6 +222,12 @@ func (a *App) OpenProject(path string) error {
 		})
 		lspManager = a.lspManager
 
+		defaultConfigs := lsp.DefaultConfigs(path)
+		installerConfigs := lsp.ConfigsFromInstaller(path, lspInstaller)
+		for _, cfg := range lsp.MergeConfigs(defaultConfigs, installerConfigs) {
+			lspManager.RegisterServer(cfg)
+		}
+
 		// Initialize prediction brain
 		a.brain = brain.NewPredictionBrain(coreEngine, brain.BrainConfig{
 			MaxSuggestions:    50,
@@ -241,33 +260,6 @@ func (a *App) OpenProject(path string) error {
 				}
 				_, err := mcp.EnsureAgentContextFile(path)
 				return err
-			},
-		},
-		projectWarmupStep{
-			name: "lsp configs",
-			run: func(ctx context.Context) error {
-				if lspManager == nil {
-					return nil
-				}
-
-				select {
-				case <-ctx.Done():
-					return nil
-				default:
-				}
-
-				defaultConfigs := lsp.DefaultConfigs(path)
-				installerConfigs := lsp.ConfigsFromInstaller(path, lspInstaller)
-				for _, cfg := range lsp.MergeConfigs(defaultConfigs, installerConfigs) {
-					select {
-					case <-ctx.Done():
-						return nil
-					default:
-					}
-					lspManager.RegisterServer(cfg)
-				}
-
-				return nil
 			},
 		},
 		projectWarmupStep{
@@ -370,7 +362,7 @@ func (a *App) closeProject(closeTerminals bool) error {
 	a.cmp = nil
 	a.sys = nil
 	a.managerMu.Unlock()
-	a.projectPath = ""
+	a.setProjectPath("")
 	a.projectCtx = nil
 	a.projectCancel = nil
 
@@ -389,7 +381,7 @@ func (a *App) GetCurrentProjectID() string {
 }
 
 func (a *App) GetCurrentWorkDir() string {
-	return a.projectPath
+	return a.currentProjectPath()
 }
 
 func (a *App) GetRecentProjects(limit int) ([]project.Project, error) {
@@ -412,7 +404,7 @@ func (a *App) ValidateEnvironment() map[string]bool {
 
 // GetCurrentProjectPath returns the current project root path
 func (a *App) GetCurrentProjectPath() string {
-	return a.projectPath
+	return a.currentProjectPath()
 }
 
 func (a *App) GetCurrentProjectFramework() string {

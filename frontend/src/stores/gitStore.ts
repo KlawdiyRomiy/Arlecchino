@@ -4,9 +4,12 @@ import {
   GetGitBranch,
   GetGitBranches,
   GetGitDiff,
+  GetGitLog,
   GetGitStatus,
   RunGitCommand,
 } from "../../wailsjs/go/main/App";
+import { main } from "../../wailsjs/go/models";
+import { EventsOn } from "../../wailsjs/runtime/runtime";
 import {
   GitBranchInfo,
   GitFileEntry,
@@ -19,6 +22,16 @@ import {
   parseRemoteNameList,
   parseUnifiedDiffLineMarkers,
 } from "../utils/git";
+
+const fileRefreshDebounceMs = 320;
+const fallbackPollIntervalMs = 15000;
+
+export interface GitStashEntry {
+  ref: string;
+  relativeDate: string;
+  message: string;
+  hash: string;
+}
 
 interface GitStoreState {
   projectPath: string;
@@ -33,6 +46,11 @@ interface GitStoreState {
   stagedFiles: GitFileEntry[];
   unstagedFiles: GitFileEntry[];
   conflictedFiles: GitFileEntry[];
+  historyCommits: main.GitCommitInfo[];
+  historyLoading: boolean;
+  historyFilePath: string;
+  stashEntries: GitStashEntry[];
+  stashLoading: boolean;
   fileMarkers: Record<string, GitLineMarker[]>;
   markerUpdatedAt: Record<string, number>;
   markerLoading: Record<string, boolean>;
@@ -41,6 +59,8 @@ interface GitStoreState {
   toggleExpanded: () => void;
   setSelectedRemote: (remote: string) => void;
   refresh: () => Promise<void>;
+  loadHistory: (filePath?: string) => Promise<void>;
+  loadStashes: () => Promise<void>;
   stageFile: (path: string) => Promise<void>;
   unstageFile: (path: string) => Promise<void>;
   stageAll: () => Promise<void>;
@@ -52,6 +72,9 @@ interface GitStoreState {
   fetchRemote: () => Promise<void>;
   pullRemote: () => Promise<void>;
   pushRemote: (setUpstream?: boolean) => Promise<void>;
+  createStash: (message?: string) => Promise<void>;
+  popStash: (stashRef?: string) => Promise<void>;
+  dropStash: (stashRef?: string) => Promise<void>;
   openPullRequest: (baseBranch?: string) => Promise<string | null>;
   getPullRequestUrl: (baseBranch?: string) => Promise<string | null>;
   refreshFileMarkers: (filePath: string, force?: boolean) => Promise<void>;
@@ -86,8 +109,94 @@ const dedupeAndSortFiles = (files: GitFileEntry[]): GitFileEntry[] => {
   return Array.from(seen.values()).sort((a, b) => a.path.localeCompare(b.path));
 };
 
+const parseStashEntries = (output: string): GitStashEntry[] =>
+  output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [ref = "", relativeDate = "", message = "", hash = ""] =
+        line.split("\u0000");
+      return {
+        ref,
+        relativeDate,
+        message,
+        hash,
+      } satisfies GitStashEntry;
+    })
+    .filter((entry) => entry.ref);
+
 const readStatus = async (): Promise<string> =>
   RunGitCommand(["status", "-b", "--porcelain=v2"]);
+
+let stopGitSync: (() => void) | null = null;
+let refreshTimer: number | null = null;
+let fallbackPollTimer: number | null = null;
+
+const clearGitSync = (): void => {
+  if (stopGitSync) {
+    stopGitSync();
+    stopGitSync = null;
+  }
+  if (refreshTimer !== null) {
+    window.clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+  if (fallbackPollTimer !== null) {
+    window.clearInterval(fallbackPollTimer);
+    fallbackPollTimer = null;
+  }
+};
+
+const scheduleRefresh = (get: () => GitStoreState): void => {
+  if (refreshTimer !== null) {
+    window.clearTimeout(refreshTimer);
+  }
+  refreshTimer = window.setTimeout(() => {
+    refreshTimer = null;
+    void get().refresh();
+  }, fileRefreshDebounceMs);
+};
+
+const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
+  clearGitSync();
+
+  const shouldRefreshForPath = (value: unknown): boolean => {
+    if (typeof value !== "string") {
+      return false;
+    }
+    const activeProject = get().projectPath;
+    return activeProject === projectPath && value.startsWith(projectPath);
+  };
+
+  const unsubscribeFileChanged = EventsOn("file:changed", (value) => {
+    if (shouldRefreshForPath(value)) {
+      scheduleRefresh(get);
+    }
+  });
+
+  const unsubscribeFileCreated = EventsOn("file:created", (value) => {
+    if (shouldRefreshForPath(value)) {
+      scheduleRefresh(get);
+    }
+  });
+
+  const unsubscribeGitStatus = EventsOn("ide:git:status", () => {
+    scheduleRefresh(get);
+  });
+
+  fallbackPollTimer = window.setInterval(() => {
+    if (get().projectPath === projectPath) {
+      void get().refresh();
+    }
+  }, fallbackPollIntervalMs);
+
+  stopGitSync = () => {
+    unsubscribeFileChanged();
+    unsubscribeFileCreated();
+    unsubscribeGitStatus();
+  };
+};
 
 const executeGitAction = async (
   get: () => GitStoreState,
@@ -101,7 +210,7 @@ const executeGitAction = async (
   set({ busy: true, error: null });
   try {
     await action();
-    await get().refresh();
+    await Promise.all([get().refresh(), get().loadStashes()]);
   } catch (error) {
     set({ error: toErrorMessage(error) });
     throw error;
@@ -123,25 +232,49 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   stagedFiles: [],
   unstagedFiles: [],
   conflictedFiles: [],
+  historyCommits: [],
+  historyLoading: false,
+  historyFilePath: "",
+  stashEntries: [],
+  stashLoading: false,
   fileMarkers: {},
   markerUpdatedAt: {},
   markerLoading: {},
 
   setProjectPath: (projectPath) => {
-    if (projectPath === get().projectPath) return;
+    const nextProjectPath = projectPath.trim();
+    if (nextProjectPath === get().projectPath) {
+      return;
+    }
+
+    clearGitSync();
+
     set({
-      projectPath,
+      projectPath: nextProjectPath,
       branch: emptyBranchInfo(),
       branches: [],
       remotes: [],
+      selectedRemote: "origin",
       stagedFiles: [],
       unstagedFiles: [],
       conflictedFiles: [],
+      historyCommits: [],
+      historyLoading: false,
+      historyFilePath: "",
+      stashEntries: [],
+      stashLoading: false,
       error: null,
       fileMarkers: {},
       markerUpdatedAt: {},
       markerLoading: {},
     });
+
+    if (!nextProjectPath) {
+      return;
+    }
+
+    startGitSync(nextProjectPath, get);
+    void Promise.all([get().refresh(), get().loadStashes()]);
   },
 
   setExpanded: (expanded) => set({ expanded }),
@@ -217,9 +350,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
       set({
         loading: false,
         branch: parsed.branch,
-        branches: Array.from(new Set(branchList)).sort((a, b) =>
-          a.localeCompare(b),
-        ),
+        branches: Array.from(new Set(branchList)),
         remotes,
         selectedRemote,
         stagedFiles: dedupeAndSortFiles(parsed.staged),
@@ -237,6 +368,51 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
         unstagedFiles: [],
         conflictedFiles: [],
       });
+    }
+  },
+
+  loadHistory: async (filePath = "") => {
+    if (!get().projectPath) {
+      set({
+        historyCommits: [],
+        historyLoading: false,
+        historyFilePath: filePath,
+      });
+      return;
+    }
+
+    set({ historyLoading: true, historyFilePath: filePath });
+    try {
+      const commits = await GetGitLog(100, filePath);
+      set({ historyCommits: commits ?? [], historyLoading: false });
+    } catch (error) {
+      set({ historyLoading: false, error: toErrorMessage(error) });
+    }
+  },
+
+  loadStashes: async () => {
+    if (!get().projectPath) {
+      set({ stashEntries: [], stashLoading: false });
+      return;
+    }
+
+    set({ stashLoading: true });
+    try {
+      const output = await RunGitCommand([
+        "stash",
+        "list",
+        "--format=%gd%x00%cr%x00%gs%x00%H",
+      ]).catch((error) => {
+        const message = toErrorMessage(error).toLowerCase();
+        if (message.includes("no stash entries found")) {
+          return "";
+        }
+        throw error;
+      });
+
+      set({ stashEntries: parseStashEntries(output), stashLoading: false });
+    } catch (error) {
+      set({ stashLoading: false, error: toErrorMessage(error) });
     }
   },
 
@@ -285,23 +461,35 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
 
   commit: async (message) => {
     const normalizedMessage = message.trim();
-    if (!normalizedMessage) return;
+    if (!normalizedMessage) {
+      return;
+    }
 
     await executeGitAction(get, set, () =>
       RunGitCommand(["commit", "-m", normalizedMessage]).then(() => undefined),
     );
+    if (get().historyFilePath) {
+      await get().loadHistory(get().historyFilePath);
+    } else {
+      await get().loadHistory();
+    }
   },
 
   switchBranch: async (branch) => {
-    if (!branch.trim()) return;
+    if (!branch.trim()) {
+      return;
+    }
     await executeGitAction(get, set, () =>
       RunGitCommand(["checkout", branch]).then(() => undefined),
     );
+    await get().loadHistory(get().historyFilePath);
   },
 
   createBranch: async (name, fromBranch) => {
     const branchName = name.trim();
-    if (!branchName) return;
+    if (!branchName) {
+      return;
+    }
 
     const args = ["checkout", "-b", branchName];
     if (fromBranch && fromBranch.trim()) {
@@ -311,6 +499,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     await executeGitAction(get, set, () =>
       RunGitCommand(args).then(() => undefined),
     );
+    await get().loadHistory(get().historyFilePath);
   },
 
   fetchRemote: async () => {
@@ -329,6 +518,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     await executeGitAction(get, set, () =>
       RunGitCommand(args).then(() => undefined),
     );
+    await get().loadHistory(get().historyFilePath);
   },
 
   pushRemote: async (setUpstream = false) => {
@@ -346,15 +536,45 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     );
   },
 
+  createStash: async (message) => {
+    const args = ["stash", "push", "-u"];
+    if (message?.trim()) {
+      args.push("-m", message.trim());
+    }
+    await executeGitAction(get, set, () =>
+      RunGitCommand(args).then(() => undefined),
+    );
+  },
+
+  popStash: async (stashRef) => {
+    const args = stashRef ? ["stash", "pop", stashRef] : ["stash", "pop"];
+    await executeGitAction(get, set, () =>
+      RunGitCommand(args).then(() => undefined),
+    );
+  },
+
+  dropStash: async (stashRef) => {
+    if (!stashRef) {
+      return;
+    }
+    await executeGitAction(get, set, () =>
+      RunGitCommand(["stash", "drop", stashRef]).then(() => undefined),
+    );
+  },
+
   getPullRequestUrl: async (baseBranch) => {
     const { branch, selectedRemote } = get();
-    if (!branch.current) return null;
+    if (!branch.current) {
+      return null;
+    }
 
     try {
       const remoteName = selectedRemote || "origin";
       const remoteUrl = await RunGitCommand(["remote", "get-url", remoteName]);
       const webRoot = normalizeGitHubRemoteToWeb(remoteUrl);
-      if (!webRoot) return null;
+      if (!webRoot) {
+        return null;
+      }
 
       const upstreamBranch = branch.upstream.includes("/")
         ? branch.upstream.split("/").slice(1).join("/")
@@ -362,7 +582,9 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
 
       const targetBase = (baseBranch || upstreamBranch || "main").trim();
       const sourceBranch = branch.current.trim();
-      if (!targetBase || !sourceBranch) return null;
+      if (!targetBase || !sourceBranch) {
+        return null;
+      }
 
       return `${webRoot}/compare/${encodeURIComponent(targetBase)}...${encodeURIComponent(sourceBranch)}?expand=1`;
     } catch {
@@ -372,7 +594,9 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
 
   openPullRequest: async (baseBranch) => {
     const url = await get().getPullRequestUrl(baseBranch);
-    if (!url) return null;
+    if (!url) {
+      return null;
+    }
 
     window.open(url, "_blank", "noopener,noreferrer");
     return url;

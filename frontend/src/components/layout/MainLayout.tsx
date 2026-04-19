@@ -63,7 +63,11 @@ import {
   normalizeTUIAssistAnchor,
   type TUIAssistAnchor,
 } from "../../utils/terminalLayout";
-import { ReadFile, WriteTerminal } from "../../../wailsjs/go/main/App";
+import {
+  GetLanguageForFile,
+  ReadFile,
+  WriteTerminal,
+} from "../../../wailsjs/go/main/App";
 import {
   type ExecutionProfile,
   resolveExecutionProfiles,
@@ -2227,58 +2231,78 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const handleFileOpenInPanel = useCallback(
     (path: string, content: string, name: string, line?: number) => {
-      const language = path.includes(".")
-        ? path.split(".").pop() || "text"
-        : "text";
+      const fallbackLanguage = (() => {
+        const normalizedPath = path.trim();
+        const fileName = normalizedPath.split("/").pop()?.toLowerCase() ?? "";
+        if (fileName === "dockerfile") {
+          return "dockerfile";
+        }
+        if (!normalizedPath.includes(".")) {
+          return "text";
+        }
+        return normalizedPath.split(".").pop()?.toLowerCase() || "text";
+      })();
 
-      setCodePanelSource({
-        path,
-        name,
-        content,
-        language,
-        line,
-      });
-
-      openEditorTab(activePaneId, path, name, content, language);
-
-      const nextConfig = buildPanelConfigForOpen(
-        "code",
-        {
-          panel: "code",
-          mode: "snapped",
-          position: "right",
-          width: 560,
-        },
-        panelConfigsRef.current.code,
-      );
-      const nextPanelConfigs = {
-        ...panelConfigsRef.current,
-        code: nextConfig,
-      };
-      const nextRememberedSnappedPositions = {
-        ...rememberedSnappedPositionsRef.current,
-        code: nextConfig.position,
-      };
-      const nextPanels = { ...panelsRef.current };
-
-      (Object.keys(panelConfigsRef.current) as PanelId[]).forEach((id) => {
-        if (id === "code" || !nextPanels[id]) {
-          return;
+      void (async () => {
+        let language = fallbackLanguage;
+        try {
+          const languageInfo = await GetLanguageForFile(path);
+          if (languageInfo?.id) {
+            language = languageInfo.id;
+          }
+        } catch {
+          language = fallbackLanguage;
         }
 
-        const otherConfig = panelConfigsRef.current[id];
-        if (
-          otherConfig.mode === "snapped" &&
-          otherConfig.position === "right"
-        ) {
-          nextPanels[id] = false;
-        }
-      });
+        setCodePanelSource({
+          path,
+          name,
+          content,
+          language,
+          line,
+        });
 
-      nextPanels.code = true;
-      applyPanelsState(nextPanels);
-      applyPanelConfigsState(nextPanelConfigs);
-      applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+        openEditorTab(activePaneId, path, name, content, language);
+
+        const nextConfig = buildPanelConfigForOpen(
+          "code",
+          {
+            panel: "code",
+            mode: "snapped",
+            position: "right",
+            width: 560,
+          },
+          panelConfigsRef.current.code,
+        );
+        const nextPanelConfigs = {
+          ...panelConfigsRef.current,
+          code: nextConfig,
+        };
+        const nextRememberedSnappedPositions = {
+          ...rememberedSnappedPositionsRef.current,
+          code: nextConfig.position,
+        };
+        const nextPanels = { ...panelsRef.current };
+
+        (Object.keys(panelConfigsRef.current) as PanelId[]).forEach((id) => {
+          if (id === "code" || !nextPanels[id]) {
+            return;
+          }
+
+          const otherConfig = panelConfigsRef.current[id];
+          if (
+            otherConfig.mode === "snapped" &&
+            otherConfig.position === "right"
+          ) {
+            nextPanels[id] = false;
+          }
+        });
+
+        nextPanels.code = true;
+        applyPanelsState(nextPanels);
+        applyPanelConfigsState(nextPanelConfigs);
+        applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+      })();
     },
     [
       activePaneId,
@@ -3719,6 +3743,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           >
             <GitPanel
               projectPath={activeProjectPath}
+              panelPosition={config.position}
               onFileOpen={(path) =>
                 handleFileOpen(path, "", path.split("/").pop() || "")
               }
@@ -3806,6 +3831,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return (
           <GitPanel
             projectPath={activeProjectPath}
+            panelPosition={tuiAssist.anchor}
             onFileOpen={(path) =>
               handleFileOpen(path, "", path.split("/").pop() || "")
             }
