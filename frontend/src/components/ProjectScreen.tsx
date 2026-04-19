@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { EditorTabs, Tab } from "./EditorTabs";
+import { TabSwitcherOverlay } from "./TabSwitcherOverlay";
 import QuickLookModal from "./QuickLookModal";
 import * as AppFunctions from "../../wailsjs/go/main/App";
 import { shortcuts } from "../utils/keyboard";
@@ -29,6 +30,18 @@ interface ProjectScreenProps {
 }
 
 const AUTO_SAVE_DELAY = 1500;
+
+const getWrappedTabIndex = (
+  currentIndex: number,
+  direction: 1 | -1,
+  total: number,
+): number => {
+  if (total <= 0) {
+    return -1;
+  }
+
+  return (currentIndex + direction + total) % total;
+};
 
 const makeTabId = (filePath: string) =>
   `tab-${filePath.replace(/[^a-zA-Z0-9]/g, "-")}`;
@@ -106,6 +119,62 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tabsRef = useRef<Tab[]>([]);
   const fileContentsRef = useRef<Record<string, string>>({});
+  const tabSwitcherSelectionRef = useRef<string | null>(null);
+  const [isTabSwitcherOpen, setIsTabSwitcherOpen] = useState(false);
+  const [tabSwitcherSelection, setTabSwitcherSelectionState] = useState<
+    string | null
+  >(null);
+
+  const setTabSwitcherSelection = useCallback((tabId: string | null) => {
+    tabSwitcherSelectionRef.current = tabId;
+    setTabSwitcherSelectionState(tabId);
+  }, []);
+
+  const closeTabSwitcher = useCallback(() => {
+    setIsTabSwitcherOpen(false);
+    setTabSwitcherSelection(null);
+  }, [setTabSwitcherSelection]);
+
+  const commitTabSwitcher = useCallback(() => {
+    const nextTabId = tabSwitcherSelectionRef.current;
+    if (nextTabId) {
+      setActiveTab(nextTabId);
+    }
+    closeTabSwitcher();
+  }, [closeTabSwitcher]);
+
+  const cancelTabSwitcher = useCallback(() => {
+    closeTabSwitcher();
+  }, [closeTabSwitcher]);
+
+  const cycleTabSwitcher = useCallback(
+    (direction: 1 | -1) => {
+      if (tabs.length < 2) {
+        return;
+      }
+
+      const anchorTabId =
+        (isTabSwitcherOpen ? tabSwitcherSelectionRef.current : activeTab) ??
+        tabs[0]?.id ??
+        null;
+      const anchorIndex = tabs.findIndex((tab) => tab.id === anchorTabId);
+      const nextIndex =
+        anchorIndex >= 0
+          ? getWrappedTabIndex(anchorIndex, direction, tabs.length)
+          : direction > 0
+            ? 0
+            : tabs.length - 1;
+      const nextTab = tabs[nextIndex];
+
+      if (!nextTab) {
+        return;
+      }
+
+      setIsTabSwitcherOpen(true);
+      setTabSwitcherSelection(nextTab.id);
+    },
+    [activeTab, isTabSwitcherOpen, setTabSwitcherSelection, tabs],
+  );
 
   useEffect(() => {
     if (tabs.length === 0) return;
@@ -187,6 +256,30 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         return;
       }
 
+      if (isTabSwitcherOpen && shortcuts.escape(e)) {
+        e.preventDefault();
+        cancelTabSwitcher();
+        return;
+      }
+
+      if (isTabSwitcherOpen && shortcuts.enter(e)) {
+        e.preventDefault();
+        commitTabSwitcher();
+        return;
+      }
+
+      if (shortcuts.switchEditorTabNext(e)) {
+        e.preventDefault();
+        cycleTabSwitcher(1);
+        return;
+      }
+
+      if (shortcuts.switchEditorTabPrev(e)) {
+        e.preventDefault();
+        cycleTabSwitcher(-1);
+        return;
+      }
+
       // Cmd+Shift+T (Reopen Closed Tab)
       if (shortcuts.reopenTab(e)) {
         e.preventDefault();
@@ -249,12 +342,43 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     activeTab,
-    tabs,
-    fileContents,
+    cancelTabSwitcher,
     closedTabs,
+    commitTabSwitcher,
+    cycleTabSwitcher,
     quickLook.isOpen,
     splitDirection,
+    tabs,
   ]);
+
+  useEffect(() => {
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (!isTabSwitcherOpen) {
+        return;
+      }
+
+      if (
+        e.key === "Control" ||
+        e.code === "ControlLeft" ||
+        e.code === "ControlRight"
+      ) {
+        commitTabSwitcher();
+      }
+    };
+
+    const handleWindowBlur = () => {
+      if (isTabSwitcherOpen) {
+        commitTabSwitcher();
+      }
+    };
+
+    window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("blur", handleWindowBlur);
+    return () => {
+      window.removeEventListener("keyup", handleKeyUp, true);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, [commitTabSwitcher, isTabSwitcherOpen]);
 
   const getLanguageFromPath = (path: string): string => {
     const lowerPath = path.toLowerCase();
@@ -526,6 +650,35 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
+
+  useEffect(() => {
+    if (!isTabSwitcherOpen) {
+      return;
+    }
+
+    if (tabs.length < 2) {
+      cancelTabSwitcher();
+      return;
+    }
+
+    if (tabSwitcherSelectionRef.current) {
+      const selectedTabStillExists = tabs.some(
+        (tab) => tab.id === tabSwitcherSelectionRef.current,
+      );
+      if (selectedTabStillExists) {
+        return;
+      }
+    }
+
+    const fallbackTabId = activeTab ?? tabs[0]?.id ?? null;
+    setTabSwitcherSelection(fallbackTabId);
+  }, [
+    activeTab,
+    cancelTabSwitcher,
+    isTabSwitcherOpen,
+    setTabSwitcherSelection,
+    tabs,
+  ]);
 
   useEffect(() => {
     fileContentsRef.current = fileContents;
@@ -913,6 +1066,15 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           Saving...
         </div>
       )}
+
+      {isTabSwitcherOpen ? (
+        <TabSwitcherOverlay
+          tabs={tabs}
+          selectedTabId={tabSwitcherSelection}
+          activeTabId={activeTab}
+          projectPath={projectPath}
+        />
+      ) : null}
 
       <QuickLookModal
         isOpen={quickLook.isOpen}

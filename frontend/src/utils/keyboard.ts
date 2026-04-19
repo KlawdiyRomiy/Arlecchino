@@ -149,6 +149,10 @@ export const shortcuts = {
     isShortcut(e, "cmd+w") || isShortcut(e, "ctrl+w"),
   reopenTab: (e: KeyboardEvent) =>
     isShortcut(e, "cmd+shift+t") || isShortcut(e, "ctrl+shift+t"),
+  switchEditorTabNext: (e: KeyboardEvent) =>
+    e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && isKey(e, "tab"),
+  switchEditorTabPrev: (e: KeyboardEvent) =>
+    e.ctrlKey && !e.metaKey && !e.altKey && e.shiftKey && isKey(e, "tab"),
 
   // Zoom
   zoomIn: (e: KeyboardEvent) => {
