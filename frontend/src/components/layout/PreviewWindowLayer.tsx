@@ -19,6 +19,7 @@ import {
 import { FloatingPanel } from "../ui/FloatingPanel";
 import { PreviewWindowSurface } from "../PreviewWindowSurface";
 import { emitPerfMetric, nowPerf } from "../../utils/perf";
+import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 
 interface PreviewWindowLayerProps {
   isDark: boolean;
@@ -230,16 +231,28 @@ export const PreviewWindowLayer: React.FC<PreviewWindowLayerProps> = ({
       }
 
       if (windowState.position === "left") {
-        adjacent.left = Math.max(adjacent.left ?? 0, windowState.width);
+        adjacent.left = Math.max(
+          adjacent.left ?? 0,
+          windowState.width + SNAPPED_PANEL_OUTER_GAP,
+        );
       }
       if (windowState.position === "right") {
-        adjacent.right = Math.max(adjacent.right ?? 0, windowState.width);
+        adjacent.right = Math.max(
+          adjacent.right ?? 0,
+          windowState.width + SNAPPED_PANEL_OUTER_GAP,
+        );
       }
       if (windowState.position === "bottom") {
-        adjacent.bottom = Math.max(adjacent.bottom ?? 0, windowState.height);
+        adjacent.bottom = Math.max(
+          adjacent.bottom ?? 0,
+          windowState.height + SNAPPED_PANEL_OUTER_GAP,
+        );
       }
       if (windowState.position === "top") {
-        adjacent.top = Math.max(adjacent.top ?? 0, windowState.height);
+        adjacent.top = Math.max(
+          adjacent.top ?? 0,
+          windowState.height + SNAPPED_PANEL_OUTER_GAP,
+        );
       }
     });
 

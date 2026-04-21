@@ -25,6 +25,8 @@ export type LayoutSnappedSurface = {
   height: number;
 };
 
+export const SNAPPED_PANEL_OUTER_GAP = 0;
+
 export function calculatePanelMargins(
   panels: LayoutPanelVisibility,
   panelConfigs: LayoutPanelConfigs,
@@ -46,31 +48,52 @@ export function calculatePanelMargins(
     }
 
     if (config.position === "left") {
-      marginLeft = Math.max(marginLeft, config.size.width);
+      marginLeft = Math.max(
+        marginLeft,
+        config.size.width + SNAPPED_PANEL_OUTER_GAP,
+      );
     }
     if (config.position === "right") {
-      marginRight = Math.max(marginRight, config.size.width);
+      marginRight = Math.max(
+        marginRight,
+        config.size.width + SNAPPED_PANEL_OUTER_GAP,
+      );
     }
     if (config.position === "bottom") {
-      marginBottom = Math.max(marginBottom, config.size.height);
+      marginBottom = Math.max(
+        marginBottom,
+        config.size.height + SNAPPED_PANEL_OUTER_GAP,
+      );
     }
     if (config.position === "top") {
-      marginTop = Math.max(marginTop, config.size.height);
+      marginTop = Math.max(
+        marginTop,
+        config.size.height + SNAPPED_PANEL_OUTER_GAP,
+      );
     }
   });
 
   snappedSurfaces.forEach((surface) => {
     if (surface.position === "left") {
-      marginLeft = Math.max(marginLeft, surface.width);
+      marginLeft = Math.max(
+        marginLeft,
+        surface.width + SNAPPED_PANEL_OUTER_GAP,
+      );
     }
     if (surface.position === "right") {
-      marginRight = Math.max(marginRight, surface.width);
+      marginRight = Math.max(
+        marginRight,
+        surface.width + SNAPPED_PANEL_OUTER_GAP,
+      );
     }
     if (surface.position === "bottom") {
-      marginBottom = Math.max(marginBottom, surface.height);
+      marginBottom = Math.max(
+        marginBottom,
+        surface.height + SNAPPED_PANEL_OUTER_GAP,
+      );
     }
     if (surface.position === "top") {
-      marginTop = Math.max(marginTop, surface.height);
+      marginTop = Math.max(marginTop, surface.height + SNAPPED_PANEL_OUTER_GAP);
     }
   });
 

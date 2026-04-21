@@ -50,10 +50,10 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button
-            className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)]"
+            className="shell-control h-11 w-11 px-0 text-[var(--text-secondary)]"
             title="Add project"
           >
-            <Plus size={14} strokeWidth={2} />
+            <Plus size={18} strokeWidth={2} />
           </button>
         </DropdownMenu.Trigger>
 
@@ -61,35 +61,31 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
           <DropdownMenu.Content
             align="start"
             sideOffset={8}
-            className="z-[100] min-w-[240px] overflow-hidden rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] shadow-2xl animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
+            className="shell-menu-content min-w-[240px] animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
           >
             <DropdownMenu.Item
               onSelect={handleOpenProject}
-              className="flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+              className="shell-menu-item cursor-pointer text-[13px]"
             >
               <FolderOpen size={16} />
               <span className="flex-1">Open Project</span>
-              <span className="rounded-md bg-[var(--bg-tertiary)] px-2 py-1 font-mono text-[10px] text-[var(--text-muted)]">
-                ⌘O
-              </span>
+              <span className="shell-kbd font-mono">⌘O</span>
             </DropdownMenu.Item>
 
             <DropdownMenu.Item
               onSelect={() => setShowCreateDialog(true)}
-              className="flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+              className="shell-menu-item cursor-pointer text-[13px]"
             >
               <Sparkles size={16} />
               <span className="flex-1">New Project</span>
-              <span className="rounded-md bg-[var(--bg-tertiary)] px-2 py-1 font-mono text-[10px] text-[var(--text-muted)]">
-                ⌘N
-              </span>
+              <span className="shell-kbd font-mono">⌘N</span>
             </DropdownMenu.Item>
 
-            <DropdownMenu.Separator className="my-1 h-px bg-[var(--border-subtle)]" />
+            <DropdownMenu.Separator className="my-1 h-px bg-[var(--shell-inline-divider)]" />
 
             <DropdownMenu.Item
               disabled
-              className="flex items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-muted)] outline-none"
+              className="shell-menu-item text-[13px] text-[var(--text-muted)]"
             >
               <GitBranch size={16} />
               Clone Repository

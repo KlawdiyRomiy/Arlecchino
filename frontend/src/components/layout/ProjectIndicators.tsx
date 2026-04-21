@@ -93,13 +93,13 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
                   onSwitch(p.id);
                   stopTimer();
                 }}
-                className={`group flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] whitespace-nowrap transition-colors ${
+                className={`group flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-2 text-[12px] transition-colors ${
                   activeId === p.id
-                    ? "border border-[var(--border-subtle)] text-[var(--text-primary)]"
-                    : "border border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+                    ? "border-[var(--shell-border-strong)] bg-[var(--surface-active)] text-[var(--text-primary)] shadow-[inset_0_1px_0_var(--shell-inner-highlight)]"
+                    : "border-transparent text-[var(--text-muted)] hover:border-[var(--shell-border)] hover:bg-[var(--surface-active)] hover:text-[var(--text-secondary)]"
                 }`}
               >
-                <FolderOpen size={13} className="shrink-0 opacity-60" />
+                <FolderOpen size={15} className="shrink-0 opacity-80" />
                 <span>{p.name}</span>
                 <span
                   role="button"
@@ -109,9 +109,9 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
                     onClose(p.id);
                     stopTimer();
                   }}
-                  className="shrink-0 ml-0.5 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity cursor-pointer"
+                  className="ml-0.5 shrink-0 cursor-pointer rounded-full p-0.5 opacity-0 transition-all group-hover:bg-black/10 group-hover:opacity-70 hover:!opacity-100"
                 >
-                  <X size={10} />
+                  <X size={11} />
                 </span>
               </button>
             ))}

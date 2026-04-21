@@ -11,21 +11,24 @@ export const WindowControls: React.FC = () => {
   const handleMaximize = useCallback(() => WindowToggleMaximise(), []);
 
   return (
-    <div className="flex items-center gap-0 pl-3 ml-1 border-l border-[var(--border-subtle)] h-full">
-      <div className="flex items-center gap-[7px] px-2">
+    <div
+      className="ml-1 flex items-center"
+      style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}
+    >
+      <div className="shell-cluster px-2.5 py-1.5">
         <button
           onClick={handleClose}
-          className="w-[13px] h-[13px] rounded-full bg-[#585858] hover:bg-[#ff5f57] transition-colors"
+          className="h-[13px] w-[13px] rounded-full bg-[#595959] transition-colors hover:bg-[#ff5f57]"
           title="Close"
         />
         <button
           onClick={handleMinimize}
-          className="w-[13px] h-[13px] rounded-full bg-[#484848] hover:bg-[#febc2e] transition-colors"
+          className="h-[13px] w-[13px] rounded-full bg-[#4f4f4f] transition-colors hover:bg-[#febc2e]"
           title="Minimize"
         />
         <button
           onClick={handleMaximize}
-          className="w-[13px] h-[13px] rounded-full bg-[#3a3a3a] hover:bg-[#28c840] transition-colors"
+          className="h-[13px] w-[13px] rounded-full bg-[#474747] transition-colors hover:bg-[#28c840]"
           title="Maximize"
         />
       </div>

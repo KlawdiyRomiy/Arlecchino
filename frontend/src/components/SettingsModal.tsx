@@ -78,14 +78,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     maxFontSize,
     showInlineDiagnostics,
     showCompactDiagnostics,
-    showDiagnosticsDonut,
     showMinimap,
     setUiScale,
     setEditorFontSize,
     resetZoom,
     setShowInlineDiagnostics,
     setShowCompactDiagnostics,
-    setShowDiagnosticsDonut,
     setShowMinimap,
   } = useEditorSettingsStore();
   const {
@@ -312,12 +310,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       description="Keep the project-wide problems badge visible in the status bar."
                       checked={showCompactDiagnostics}
                       onCheckedChange={setShowCompactDiagnostics}
-                    />
-                    <SwitchRow
-                      title="Show file donut indicator"
-                      description="Display the per-file donut near the editor minimap and view chrome."
-                      checked={showDiagnosticsDonut}
-                      onCheckedChange={setShowDiagnosticsDonut}
                     />
                   </div>
                 </div>

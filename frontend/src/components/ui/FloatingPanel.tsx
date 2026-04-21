@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from "react";
 import { X, Pin, Maximize2 } from "lucide-react";
 import { useIndexingProgress } from "../../hooks/useIndexingProgress";
 import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
+import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 
 export type PanelPosition = "left" | "right" | "bottom" | "top";
 
@@ -53,6 +54,7 @@ export interface FloatingPanelProps {
   isVisible?: boolean;
   zIndex?: number;
   useViewportPositioning?: boolean;
+  hostMode?: "overlay" | "flow";
 }
 
 export const FloatingPanel: React.FC<FloatingPanelProps> = ({
@@ -81,6 +83,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   isVisible = true,
   zIndex: customZIndex,
   useViewportPositioning = false,
+  hostMode = "overlay",
 }) => {
   const indexing = useIndexingProgress();
   const diagnosticsPreload = useProjectDiagnosticsPreload();
@@ -303,46 +306,37 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
 
   const getContainerStyle = (): React.CSSProperties => {
     const isSnapped = mode === "snapped";
+    const isFlowHosted = isSnapped && hostMode === "flow" && !isDragging;
     const isActivePanel =
       isDragging ||
       isResizing ||
       isDropTarget ||
       mode === "floating" ||
       isPinned;
+    const panelFrameRadius = "var(--radius-lg)";
     const base: React.CSSProperties = {
-      position: useViewportPositioning
-        ? "fixed"
-        : isDragging
+      position: isFlowHosted
+        ? "relative"
+        : useViewportPositioning
           ? "fixed"
-          : "absolute",
+          : isDragging
+            ? "fixed"
+            : "absolute",
       display: "flex",
       flexDirection: "column",
-      backgroundColor: "var(--surface-1)",
-      border: isSnapped ? "none" : "1px solid var(--border-default)",
-      borderRight:
-        isSnapped && position === "left"
-          ? "1px solid var(--border-subtle)"
-          : undefined,
-      borderLeft:
-        isSnapped && position === "right"
-          ? "1px solid var(--border-subtle)"
-          : undefined,
-      borderTop:
-        isSnapped && position === "bottom"
-          ? "1px solid var(--border-subtle)"
-          : undefined,
-      borderBottom:
-        isSnapped && position === "top"
-          ? "1px solid var(--border-subtle)"
-          : undefined,
-      borderRadius: isSnapped ? 0 : "var(--radius-lg)",
+      background:
+        "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 97%, transparent), color-mix(in srgb, var(--surface-shell-panel) 99%, transparent))",
+      border: "1px solid var(--shell-border)",
+      borderRadius: panelFrameRadius,
       boxShadow: isSnapped
-        ? "none"
+        ? isActivePanel
+          ? "var(--shell-shadow-active)"
+          : "var(--shell-shadow)"
         : isDragging
           ? "var(--shadow-drag)"
           : isResizing || isActivePanel
-            ? "var(--shadow-overlay)"
-            : "var(--shadow-soft)",
+            ? "var(--shell-shadow-active)"
+            : "var(--shell-shadow)",
       zIndex: isDragging
         ? 140
         : (customZIndex ?? (mode === "floating" ? 90 : 50)),
@@ -365,8 +359,10 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       base.border = "1px solid var(--accent-brand)";
       base.boxShadow =
         "inset 0 0 0 1px var(--accent-brand), inset 0 0 0 999px color-mix(in srgb, var(--accent-brand) 6%, transparent), var(--shadow-overlay)";
-    } else if (!isSnapped && !isActivePanel) {
-      base.border = "1px solid var(--border-subtle)";
+    } else if (!isActivePanel) {
+      base.border = "1px solid var(--shell-border)";
+    } else {
+      base.border = "1px solid var(--shell-border-strong)";
     }
 
     if (isDragging) {
@@ -391,9 +387,17 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
       };
     }
 
-    const gap = 0;
-    const bottomPanelHeight = adjacentPanels.bottom || 0;
-    const topPanelHeight = adjacentPanels.top || 0;
+    if (isFlowHosted) {
+      return {
+        ...base,
+        width: "100%",
+        height: "100%",
+        minWidth: 0,
+        minHeight: 0,
+      };
+    }
+
+    const gap = SNAPPED_PANEL_OUTER_GAP;
     const leftPanelWidth = adjacentPanels.left || 0;
     const rightPanelWidth = adjacentPanels.right || 0;
 
@@ -523,7 +527,6 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
     }
   };
 
-  const isSnappedPanel = mode === "snapped";
   const panelState = isDragging
     ? "dragging"
     : isResizing
@@ -539,30 +542,26 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    height: "38px",
-    padding: "0 16px",
-    backgroundColor: "var(--surface-panel-header)",
-    borderBottom: "1px solid var(--border-subtle)",
-    borderTopLeftRadius: isSnappedPanel ? 0 : 14,
-    borderTopRightRadius: isSnappedPanel ? 0 : 14,
+    height: "40px",
+    padding: "0 14px",
+    background:
+      "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-strong) 95%, transparent), color-mix(in srgb, var(--surface-shell) 98%, transparent))",
+    borderBottom: "1px solid var(--shell-border)",
     userSelect: "none",
     flexShrink: 0,
-    cursor:
-      mode === "floating" ? (isDragging ? "grabbing" : "grab") : "default",
-    boxShadow: isSnappedPanel
-      ? "inset 0 -1px 0 rgba(255,255,255,0.02)"
-      : "inset 0 1px 0 rgba(255,255,255,0.02)",
+    cursor: isDragging ? "grabbing" : "grab",
+    boxShadow: "inset 0 1px 0 var(--shell-inner-highlight)",
   };
 
   const titleStyle: React.CSSProperties = {
     display: "flex",
     alignItems: "center",
     gap: "8px",
-    fontSize: "10px",
+    fontSize: "11px",
     fontWeight: 600,
     color: "var(--text-secondary)",
     textTransform: "uppercase",
-    letterSpacing: "0.16em",
+    letterSpacing: "0.12em",
     pointerEvents: "none",
   };
 
@@ -578,10 +577,10 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
     justifyContent: "center",
     width: "28px",
     height: "28px",
-    borderRadius: 6,
-    border: "1px solid var(--border-subtle)",
+    borderRadius: 9999,
+    border: "1px solid transparent",
     backgroundColor: "transparent",
-    color: "var(--text-muted)",
+    color: "var(--text-secondary)",
     cursor: "pointer",
     transition:
       "background-color 150ms ease, color 150ms ease, transform 120ms ease, border-color 150ms ease",
@@ -598,7 +597,6 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
     <div
       ref={panelRef}
       style={getContainerStyle()}
-      className={mode === "floating" ? "backdrop-blur-panel" : undefined}
       data-testid={`panel-${id}`}
       data-panel-id={id}
       data-panel-position={position}
@@ -668,10 +666,7 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
         </>
       )}
 
-      <div
-        style={headerStyle}
-        onMouseDown={mode === "floating" ? handleDragStartInternal : undefined}
-      >
+      <div style={headerStyle} onMouseDown={handleDragStartInternal}>
         <div style={titleStyle}>
           {icon}
           <span>{title}</span>

@@ -470,6 +470,8 @@ export const codeEditorStyles = EditorView.theme(
 export const codeEditorSurfaceClassName =
   "h-full rounded-none border-0 bg-transparent shadow-none";
 
+export const editorCanvasBackground = editorPalette.background;
+
 export const codeEditorChromeStyle = {
   background:
     "radial-gradient(circle at top, rgba(255,255,255,0.03), transparent 24%), #050505",

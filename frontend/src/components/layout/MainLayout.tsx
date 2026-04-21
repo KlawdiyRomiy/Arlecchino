@@ -48,7 +48,7 @@ import {
 } from "../../stores/previewWindowStore";
 import type { Theme } from "../../types/theme";
 import { shortcuts, isShortcut } from "../../utils/keyboard";
-import { calculatePanelMargins } from "../../utils/layoutHelpers";
+import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 import { emitPerfMetric, measurePerf, nowPerf } from "../../utils/perf";
 import {
   isTerminalFocusedElement,
@@ -1386,6 +1386,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const forceHideTerminalAfterTUIExitRef = React.useRef(false);
   const panelsRef = React.useRef(panels);
   const panelConfigsRef = React.useRef(panelConfigs);
+  const gitDiffBaselineWidthRef = React.useRef<number | null>(null);
   const rememberedSnappedPositionsRef = React.useRef(
     rememberedSnappedPositions,
   );
@@ -3354,6 +3355,91 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }));
   };
 
+  const handleGitDiffFocusChange = useCallback((active: boolean) => {
+    const gitConfig = panelConfigsRef.current.git;
+    const isEligibleHost =
+      gitConfig.mode === "snapped" &&
+      (gitConfig.position === "left" || gitConfig.position === "right");
+
+    if (!active) {
+      const baselineWidth = gitDiffBaselineWidthRef.current;
+      gitDiffBaselineWidthRef.current = null;
+
+      if (!isEligibleHost || baselineWidth === null) {
+        return;
+      }
+
+      setPanelConfigs((previous) => {
+        const currentGit = previous.git;
+        if (
+          currentGit.mode !== "snapped" ||
+          (currentGit.position !== "left" && currentGit.position !== "right")
+        ) {
+          return previous;
+        }
+
+        if (currentGit.size.width === baselineWidth) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          git: {
+            ...currentGit,
+            size: {
+              ...currentGit.size,
+              width: baselineWidth,
+            },
+          },
+        };
+      });
+      return;
+    }
+
+    if (!isEligibleHost) {
+      return;
+    }
+
+    const currentWidth = gitConfig.size.width;
+    if (currentWidth >= 560) {
+      return;
+    }
+
+    if (gitDiffBaselineWidthRef.current === null) {
+      gitDiffBaselineWidthRef.current = currentWidth;
+    }
+
+    const targetWidth = Math.min(Math.max(currentWidth, 560), 720);
+    if (targetWidth === currentWidth) {
+      return;
+    }
+
+    setPanelConfigs((previous) => {
+      const currentGit = previous.git;
+      if (
+        currentGit.mode !== "snapped" ||
+        (currentGit.position !== "left" && currentGit.position !== "right")
+      ) {
+        return previous;
+      }
+
+      if (currentGit.size.width >= targetWidth) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+        git: {
+          ...currentGit,
+          size: {
+            ...currentGit.size,
+            width: targetWidth,
+          },
+        },
+      };
+    });
+  }, []);
+
   const handleDragStart = (panelId: string) => {
     setDraggingPanel(panelId as PanelId);
   };
@@ -3461,12 +3547,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   ): PanelId | null => {
     return (
       (Object.keys(panelConfigs) as PanelId[]).find(
-        (id) => panelConfigs[id].position === position && panels[id],
+        (id) =>
+          !(tuiModeActive && id === "terminal") &&
+          panelConfigs[id].mode === "snapped" &&
+          panelConfigs[id].position === position &&
+          panels[id],
       ) || null
     );
   };
-
-  const margins = calculatePanelMargins(panels, panelConfigs);
 
   const containerStyle: React.CSSProperties = {
     display: "flex",
@@ -3474,8 +3562,22 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     height: "100vh",
     width: "100vw",
     overflow: "hidden",
+    padding: "8px",
+    boxSizing: "border-box",
     backgroundColor: isDark ? "var(--bg-blackprint)" : colors.light.bg,
     color: isDark ? "var(--text-primary)" : colors.light.text,
+  };
+
+  const shellFrameStyle: React.CSSProperties = {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+    minWidth: 0,
+    overflow: "hidden",
+    borderRadius: "var(--radius-shell)",
+    backgroundColor: isDark ? "var(--surface-canvas)" : colors.light.bg,
+    boxShadow: "var(--shell-shadow)",
   };
 
   const mainAreaStyle: React.CSSProperties = {
@@ -3484,7 +3586,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     position: "relative",
     overflow: "clip",
     minHeight: 0,
-    backgroundColor: isDark ? "var(--bg-secondary)" : colors.light.bg,
+    backgroundColor: isDark ? "var(--bg-blackprint)" : colors.light.bg,
   };
 
   const editorAreaStyle: React.CSSProperties = {
@@ -3492,14 +3594,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
-    marginLeft: margins.marginLeft,
-    marginRight: margins.marginRight,
-    marginBottom: margins.marginBottom,
-    marginTop: margins.marginTop,
+    minWidth: 0,
     overflow: "hidden",
     position: "relative",
-    backgroundColor: "var(--bg-secondary)",
-    transition: "margin 0.18s cubic-bezier(0.25, 0.8, 0.25, 1)",
+    backgroundColor: isDark ? "var(--bg-blackprint)" : colors.light.bg,
   };
 
   const notificationStyle: React.CSSProperties = {
@@ -3563,7 +3661,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }
   };
 
-  const renderPanel = (panelId: PanelId) => {
+  const renderPanel = (
+    panelId: PanelId,
+    hostMode: "overlay" | "flow" = "overlay",
+  ) => {
     const isVisible = panels[panelId];
     const config = panelConfigs[panelId];
     const isDropTarget =
@@ -3584,13 +3685,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           const otherConfig = panelConfigs[id];
           if (otherConfig.mode === "snapped") {
             if (otherConfig.position === "left")
-              adjacent.left = otherConfig.size.width;
+              adjacent.left = otherConfig.size.width + SNAPPED_PANEL_OUTER_GAP;
             if (otherConfig.position === "right")
-              adjacent.right = otherConfig.size.width;
+              adjacent.right = otherConfig.size.width + SNAPPED_PANEL_OUTER_GAP;
             if (otherConfig.position === "bottom")
-              adjacent.bottom = otherConfig.size.height;
+              adjacent.bottom =
+                otherConfig.size.height + SNAPPED_PANEL_OUTER_GAP;
             if (otherConfig.position === "top")
-              adjacent.top = otherConfig.size.height;
+              adjacent.top = otherConfig.size.height + SNAPPED_PANEL_OUTER_GAP;
           }
         }
       });
@@ -3602,6 +3704,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       position: config.position,
       size: config.size,
       mode: config.mode,
+      hostMode,
       x: config.x,
       y: config.y,
       isVisible,
@@ -3836,12 +3939,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             title="Git"
             icon={<GitBranch size={16} />}
             minSize={200}
-            maxSize={400}
+            maxSize={720}
             {...panelProps}
           >
             <GitPanel
               projectPath={activeProjectPath}
               panelPosition={config.position}
+              onDiffFocusChange={handleGitDiffFocusChange}
               onFileOpen={(path) =>
                 handleFileOpen(path, "", path.split("/").pop() || "")
               }
@@ -3959,11 +4063,41 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     width: "100%",
     height: "100%",
     display: "flex",
-    flexDirection: "column",
+    flexDirection: "row",
     minHeight: 0,
+    minWidth: 0,
     opacity: 1,
     pointerEvents: "auto",
   };
+
+  const centerWorkspaceStyle: React.CSSProperties = {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+    minWidth: 0,
+    position: "relative",
+  };
+
+  const getVerticalSlotStyle = (width: number): React.CSSProperties => ({
+    width,
+    minWidth: width,
+    maxWidth: width,
+    height: "100%",
+    minHeight: 0,
+    flexShrink: 0,
+    position: "relative",
+  });
+
+  const getHorizontalSlotStyle = (height: number): React.CSSProperties => ({
+    height,
+    minHeight: height,
+    maxHeight: height,
+    width: "100%",
+    minWidth: 0,
+    flexShrink: 0,
+    position: "relative",
+  });
 
   const tuiOverlayStyle: React.CSSProperties = {
     position: "fixed",
@@ -4061,146 +4195,199 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     overflow: "hidden",
   };
 
+  const isPanelHostedInMainWorkspace = (panelId: PanelId) =>
+    !(tuiModeActive && panelId === "terminal");
+
+  const leftSnappedPanel = getActivePanelsAtPosition("left");
+  const rightSnappedPanel = getActivePanelsAtPosition("right");
+  const topSnappedPanel = getActivePanelsAtPosition("top");
+  const bottomSnappedPanel = getActivePanelsAtPosition("bottom");
+  const floatingPanelIds = (Object.keys(panelConfigs) as PanelId[]).filter(
+    (panelId) =>
+      panels[panelId] &&
+      panelConfigs[panelId].mode === "floating" &&
+      isPanelHostedInMainWorkspace(panelId),
+  );
+
   return (
     <div
       style={containerStyle}
       data-testid="main-layout"
       data-tui-session-id={tuiActiveSessionId || ""}
     >
-      <div style={topChromeStyle}>
-        <TopBar
-          onCommandPaletteOpen={() => {
-            if (!tuiModeActive && !isDispatcherPaused) {
-              dispatcher.open();
-            }
-          }}
-          onOpenSearch={openCommandDispatcher}
-          onOpenSettings={openSettings}
-          onToggleExplorer={() => {
-            if (tuiModeActive) {
-              toggleTUIAssistPanel("explorer");
-              return;
-            }
-            toggleNamedPanel("explorer");
-          }}
-          onToggleTerminal={() => {
-            if (tuiModeActive) {
-              closeTUIAssistPanel();
-              setTimeout(
-                () => useTerminalStore.getState().focusActiveTerminal(),
-                80,
-              );
-              return;
-            }
-            toggleNamedPanel("terminal");
-          }}
-          onToggleAIChat={() => {
-            if (tuiModeActive) {
-              toggleTUIAssistPanel("aiChat");
-              return;
-            }
-            toggleNamedPanel("aiChat");
-          }}
-          onToggleGit={() => {
-            if (tuiModeActive) {
-              toggleTUIAssistPanel("git");
-              return;
-            }
-            toggleNamedPanel("git");
-          }}
-          onRun={openRunDialog}
-          onOpenDebug={openDebugDialog}
-          onOpenPreview={openCanonicalBrowserPreview}
-          onOpenDependencyPolicy={openDependencyPolicy}
-          onBackToWelcome={onBackToWelcome}
-          onProjectOpen={onProjectOpen}
-          onSwitchProject={onSwitchProject}
-          onCloseProject={onCloseProject}
-          panels={{
-            explorer: tuiModeActive
-              ? tuiAssist.active && tuiAssist.panel === "explorer"
-              : panels.explorer,
-            terminal: tuiModeActive ? true : panels.terminal,
-            aiChat: tuiModeActive
-              ? tuiAssist.active && tuiAssist.panel === "aiChat"
-              : panels.aiChat,
-            git: panels.git,
-          }}
-          projectPath={activeProjectPath}
-          previewEnabled={previewButtonState.enabled}
-          previewActive={previewButtonState.active}
-          previewTitle={previewButtonState.buttonTitle}
-        />
-      </div>
-
-      <div style={mainAreaStyle}>
-        <div style={normalWorkspaceStyle}>
-          {draggingPanel && (
-            <>
-              <div
-                style={dropZoneStyle("left")}
-                onMouseEnter={() => setDropTargetPosition("left")}
-                onMouseLeave={() => setDropTargetPosition(null)}
-              />
-              <div
-                style={dropZoneStyle("right")}
-                onMouseEnter={() => setDropTargetPosition("right")}
-                onMouseLeave={() => setDropTargetPosition(null)}
-              />
-              <div
-                style={dropZoneStyle("bottom")}
-                onMouseEnter={() => setDropTargetPosition("bottom")}
-                onMouseLeave={() => setDropTargetPosition(null)}
-              />
-              <div
-                style={dropZoneStyle("top")}
-                onMouseEnter={() => setDropTargetPosition("top")}
-                onMouseLeave={() => setDropTargetPosition(null)}
-              />
-            </>
-          )}
-
-          {renderPanel("explorer")}
-          {renderPanel("git")}
-          {renderPanel("aiChat")}
-          {renderPanel("problems")}
-          {renderPanel("code")}
-          {!tuiModeActive && renderPanel("terminal")}
-
-          <div style={editorAreaStyle}>
-            {React.cloneElement(
-              children as React.ReactElement<{
-                onToggleProblems?: () => void;
-                onPerspectiveOpen?: () => void;
-                onPerspectiveClose?: () => void;
-              }>,
-              {
-                onToggleProblems: () => togglePanel("problems"),
-                onPerspectiveOpen: handlePerspectiveOpen,
-                onPerspectiveClose: handlePerspectiveClose,
-              },
-            )}
-          </div>
+      <div style={shellFrameStyle}>
+        <div style={topChromeStyle}>
+          <TopBar
+            onCommandPaletteOpen={() => {
+              if (!tuiModeActive && !isDispatcherPaused) {
+                dispatcher.open();
+              }
+            }}
+            onOpenSearch={openCommandDispatcher}
+            onOpenSettings={openSettings}
+            onToggleExplorer={() => {
+              if (tuiModeActive) {
+                toggleTUIAssistPanel("explorer");
+                return;
+              }
+              toggleNamedPanel("explorer");
+            }}
+            onToggleTerminal={() => {
+              if (tuiModeActive) {
+                closeTUIAssistPanel();
+                setTimeout(
+                  () => useTerminalStore.getState().focusActiveTerminal(),
+                  80,
+                );
+                return;
+              }
+              toggleNamedPanel("terminal");
+            }}
+            onToggleAIChat={() => {
+              if (tuiModeActive) {
+                toggleTUIAssistPanel("aiChat");
+                return;
+              }
+              toggleNamedPanel("aiChat");
+            }}
+            onToggleGit={() => {
+              if (tuiModeActive) {
+                toggleTUIAssistPanel("git");
+                return;
+              }
+              toggleNamedPanel("git");
+            }}
+            onRun={openRunDialog}
+            onOpenDebug={openDebugDialog}
+            onOpenPreview={openCanonicalBrowserPreview}
+            onOpenDependencyPolicy={openDependencyPolicy}
+            onBackToWelcome={onBackToWelcome}
+            onProjectOpen={onProjectOpen}
+            onSwitchProject={onSwitchProject}
+            onCloseProject={onCloseProject}
+            panels={{
+              explorer: tuiModeActive
+                ? tuiAssist.active && tuiAssist.panel === "explorer"
+                : panels.explorer,
+              terminal: tuiModeActive ? true : panels.terminal,
+              aiChat: tuiModeActive
+                ? tuiAssist.active && tuiAssist.panel === "aiChat"
+                : panels.aiChat,
+              git: panels.git,
+            }}
+            projectPath={activeProjectPath}
+            previewEnabled={previewButtonState.enabled}
+            previewActive={previewButtonState.active}
+            previewTitle={previewButtonState.buttonTitle}
+          />
         </div>
 
-        <PreviewWindowLayer
-          isDark={isDark}
-          windows={previewWindows}
-          appearancePreview={appearancePreview}
-          currentTheme={currentTheme}
-          currentUiScale={uiScale}
-          onUpdateWindow={updatePreviewWindow}
-          onCloseWindow={closePreviewWindow}
-          onFocusWindow={focusPreviewWindow}
-          onAppearancePatch={handleAppearancePreviewPatchEvent}
-          onAppearanceApply={handleAppearancePreviewApplyEvent}
-          onAppearanceCancel={handleAppearancePreviewCancelEvent}
-          onFileOpen={handleFileOpen}
-        />
-      </div>
+        <div style={mainAreaStyle}>
+          <div style={normalWorkspaceStyle}>
+            {draggingPanel && (
+              <>
+                <div
+                  style={dropZoneStyle("left")}
+                  onMouseEnter={() => setDropTargetPosition("left")}
+                  onMouseLeave={() => setDropTargetPosition(null)}
+                />
+                <div
+                  style={dropZoneStyle("right")}
+                  onMouseEnter={() => setDropTargetPosition("right")}
+                  onMouseLeave={() => setDropTargetPosition(null)}
+                />
+                <div
+                  style={dropZoneStyle("bottom")}
+                  onMouseEnter={() => setDropTargetPosition("bottom")}
+                  onMouseLeave={() => setDropTargetPosition(null)}
+                />
+                <div
+                  style={dropZoneStyle("top")}
+                  onMouseEnter={() => setDropTargetPosition("top")}
+                  onMouseLeave={() => setDropTargetPosition(null)}
+                />
+              </>
+            )}
 
-      <div style={bottomChromeStyle}>
-        <StatusBar onToggleProblems={() => togglePanel("problems")} />
+            {leftSnappedPanel ? (
+              <div
+                style={getVerticalSlotStyle(
+                  panelConfigs[leftSnappedPanel].size.width,
+                )}
+              >
+                {renderPanel(leftSnappedPanel, "flow")}
+              </div>
+            ) : null}
+
+            <div style={centerWorkspaceStyle}>
+              {topSnappedPanel ? (
+                <div
+                  style={getHorizontalSlotStyle(
+                    panelConfigs[topSnappedPanel].size.height,
+                  )}
+                >
+                  {renderPanel(topSnappedPanel, "flow")}
+                </div>
+              ) : null}
+
+              <div style={editorAreaStyle}>
+                {React.cloneElement(
+                  children as React.ReactElement<{
+                    onToggleProblems?: () => void;
+                    onPerspectiveOpen?: () => void;
+                    onPerspectiveClose?: () => void;
+                  }>,
+                  {
+                    onToggleProblems: () => togglePanel("problems"),
+                    onPerspectiveOpen: handlePerspectiveOpen,
+                    onPerspectiveClose: handlePerspectiveClose,
+                  },
+                )}
+              </div>
+
+              {bottomSnappedPanel ? (
+                <div
+                  style={getHorizontalSlotStyle(
+                    panelConfigs[bottomSnappedPanel].size.height,
+                  )}
+                >
+                  {renderPanel(bottomSnappedPanel, "flow")}
+                </div>
+              ) : null}
+            </div>
+
+            {rightSnappedPanel ? (
+              <div
+                style={getVerticalSlotStyle(
+                  panelConfigs[rightSnappedPanel].size.width,
+                )}
+              >
+                {renderPanel(rightSnappedPanel, "flow")}
+              </div>
+            ) : null}
+
+            {floatingPanelIds.map((panelId) => renderPanel(panelId))}
+          </div>
+
+          <PreviewWindowLayer
+            isDark={isDark}
+            windows={previewWindows}
+            appearancePreview={appearancePreview}
+            currentTheme={currentTheme}
+            currentUiScale={uiScale}
+            onUpdateWindow={updatePreviewWindow}
+            onCloseWindow={closePreviewWindow}
+            onFocusWindow={focusPreviewWindow}
+            onAppearancePatch={handleAppearancePreviewPatchEvent}
+            onAppearanceApply={handleAppearancePreviewApplyEvent}
+            onAppearanceCancel={handleAppearancePreviewCancelEvent}
+            onFileOpen={handleFileOpen}
+          />
+        </div>
+
+        <div style={bottomChromeStyle}>
+          <StatusBar onToggleProblems={() => togglePanel("problems")} />
+        </div>
       </div>
 
       <div style={tuiOverlayStyle} data-testid="tui-overlay">

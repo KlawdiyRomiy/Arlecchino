@@ -185,6 +185,7 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
   const listRef = useRef<HTMLDivElement>(null);
 
   const mode = getModeFromInput(input);
+  const hasResults = items.length > 0;
 
   const isTerminalMode = mode === "tag" && /^@t\s/i.test(input);
   const activeModeLabel = isTerminalMode ? "Terminal" : modeLabels[mode];
@@ -747,16 +748,13 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-[110] flex items-start justify-center bg-black/45 px-4 pt-[18vh] backdrop-blur-[8px]"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-[110] bg-black/52" onClick={onClose}>
       <div
-        className="flex w-full max-w-[720px] flex-col items-center"
+        className="absolute left-1/2 top-[43%] flex w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col items-center"
         onClick={(e) => e.stopPropagation()}
       >
         {(preview || isExecuting || executionResult) && (
-          <div className="mb-2 w-full rounded-[16px] border border-[var(--border-default)] bg-[var(--surface-overlay)] p-4 shadow-[var(--shadow-overlay)]">
+          <div className="shell-overlay-card mb-3 w-full p-4">
             <div className="mb-3 flex items-center justify-between border-b border-[var(--border-subtle)] pb-2 text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
               <span>
                 {executionResult ? "Execution preview" : "Expanded command"}
@@ -821,79 +819,86 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
           </div>
         )}
 
-        <div className="w-full overflow-hidden rounded-[18px] border border-[var(--border-default)] bg-[var(--surface-overlay)] shadow-[var(--shadow-overlay)]">
-          <div className="flex items-center gap-3 border-b border-[var(--border-subtle)] bg-[var(--surface-2)] px-5 py-4">
-            <Search size={18} className="shrink-0 text-[var(--text-muted)]" />
-            <div className="relative flex-1">
-              <input
-                ref={inputRef}
-                type="text"
-                value={input}
-                onChange={(e) => {
-                  setInput(e.target.value);
-                  if (historyIndex !== -1) {
-                    setHistoryIndex(-1);
-                  }
-                }}
-                onKeyDown={handleKeyDown}
-                placeholder="Search..."
-                className="w-full border-none bg-transparent text-[15px] font-normal text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
-              />
-              {isTerminalMode && ghostText && (
-                <span className="pointer-events-none absolute left-0 top-0 whitespace-pre text-[15px] font-normal text-transparent">
-                  {input}
-                  <span className="text-[var(--text-muted)]">{ghostText}</span>
+        <div className="shell-overlay-card w-full overflow-hidden rounded-[30px] p-3">
+          <div
+            className={`flex items-center gap-3 px-2 ${
+              hasResults
+                ? "border-b border-[var(--shell-inline-divider)] pb-3"
+                : ""
+            }`}
+          >
+            <div className="shell-cluster flex-1 px-4">
+              <Search size={18} className="shrink-0 text-[var(--text-muted)]" />
+              <div className="relative flex-1 py-2">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    if (historyIndex !== -1) {
+                      setHistoryIndex(-1);
+                    }
+                  }}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Search..."
+                  className="w-full border-none bg-transparent text-[15px] font-normal text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+                />
+                {isTerminalMode && ghostText && (
+                  <span className="pointer-events-none absolute left-0 top-0 whitespace-pre py-2 text-[15px] font-normal text-transparent">
+                    {input}
+                    <span className="text-[var(--text-muted)]">
+                      {ghostText}
+                    </span>
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="shell-cluster-soft flex shrink-0 items-center gap-2 px-3 py-1.5">
+              {!isTerminalMode && (
+                <span className="shell-pill">
+                  {activeModeLabel}
+                  {modeHints[mode] ? (
+                    <span className="text-[var(--text-muted)]">
+                      {modeHints[mode]}
+                    </span>
+                  ) : null}
                 </span>
               )}
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="interactive-chip border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)]">
-                {activeModeLabel}
-                {modeHints[mode] ? (
-                  <span className="text-[var(--text-muted)]">
-                    {modeHints[mode]}
-                  </span>
-                ) : null}
-              </span>
               {isTerminalMode && (
                 <>
-                  {ghostText && (
-                    <span className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                      Tab
-                    </span>
-                  )}
-                  <span className="rounded-full border border-[color:var(--status-success)]/25 bg-[color:var(--status-success)]/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--status-success)]">
+                  {ghostText && <span className="shell-kbd">Tab</span>}
+                  <span className="shell-pill border-[color:var(--status-success)]/25 bg-[color:var(--status-success)]/10 text-[var(--status-success)]">
                     Terminal
                   </span>
                 </>
               )}
-              <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                Esc to close
-              </span>
             </div>
           </div>
 
-          {items.length > 0 && (
-            <div ref={listRef} className="max-h-[420px] overflow-y-auto">
+          {hasResults && (
+            <div
+              ref={listRef}
+              className="max-h-[420px] overflow-y-auto px-2 py-3"
+            >
               {items.map((item, index) => (
                 <div
                   key={item.id}
                   onClick={() => executeItem(item)}
                   onMouseEnter={() => setSelectedIndex(index)}
-                  className={`flex cursor-pointer items-center gap-3 border-t border-[var(--border-subtle)] px-5 py-3 transition-colors ${
+                  className={`mb-2 flex cursor-pointer items-center gap-3 rounded-[20px] border px-4 py-3 transition-colors ${
                     index === selectedIndex
-                      ? "bg-[var(--surface-active)]"
-                      : "bg-transparent hover:bg-[var(--surface-hover)]"
+                      ? "border-[var(--shell-border-strong)] bg-[var(--surface-active)] shadow-[inset_0_1px_0_var(--shell-inner-highlight)]"
+                      : "border-transparent bg-transparent hover:border-[var(--shell-border)] hover:bg-[var(--surface-hover)]"
                   }`}
                 >
-                  <span
-                    className={`h-8 w-[2px] rounded-full transition-colors ${
+                  <div
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-[var(--text-secondary)] ${
                       index === selectedIndex
-                        ? "bg-[var(--accent-brand)]"
-                        : "bg-transparent"
+                        ? "border-[var(--shell-border-strong)] bg-[var(--surface-shell-soft)] text-[var(--text-primary)]"
+                        : "border-[var(--shell-border)] bg-[var(--surface-shell)]"
                     }`}
-                  />
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)]">
+                  >
                     {item.icon}
                   </div>
                   <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -907,27 +912,9 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
                         </div>
                       )}
                     </div>
-                    <div className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                      Enter
-                    </div>
                   </div>
                 </div>
               ))}
-            </div>
-          )}
-          {items.length === 0 && !isTerminalMode && (
-            <div className="border-t border-[var(--border-subtle)] px-5 py-5 text-sm text-[var(--text-muted)]">
-              {mode === "default"
-                ? "Start typing to search files, content, symbols, or IDE actions."
-                : mode === "ide"
-                  ? "Run an IDE action or jump to a command."
-                  : mode === "file"
-                    ? "Search project files by name."
-                    : mode === "grep"
-                      ? "Search content inside the current workspace."
-                      : mode === "symbol"
-                        ? "Jump to a symbol in the current workspace."
-                        : "No results yet for the current mode."}
             </div>
           )}
         </div>

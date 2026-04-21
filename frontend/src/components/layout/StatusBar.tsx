@@ -34,9 +34,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
     () => useDiagnosticsStore.getState().getProjectSummary(activeProjectPath),
     [activeProjectPath, byFile],
   );
-  const statusTextClass = "text-[var(--text-secondary)]";
+  const statusTextClass = "text-[11px] text-[var(--text-secondary)]";
   const chipClass =
-    "flex items-center gap-1.5 rounded-[8px] border border-transparent px-2 py-1 transition-colors hover:border-[var(--border-subtle)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]";
+    "shell-cluster-soft flex min-h-[32px] items-center gap-1.5 px-3 transition-colors hover:border-[var(--shell-border-strong)] hover:text-[var(--text-primary)]";
   const activeProjectLabel = useMemo(() => {
     if (!activeProjectPath) {
       return "No project";
@@ -118,27 +118,25 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
   }, [activeProjectPath, diagnosticsPreload, projectSummary.total]);
 
   return (
-    <div className="z-50 flex h-7 select-none items-center border-t border-[var(--border-subtle)] bg-[var(--surface-overlay)] px-3 font-mono text-[10px] uppercase tracking-[0.08em]">
-      <div className="flex items-center gap-4">
-        {showCompactDiagnostics ? (
-          <DiagnosticsCompactIndicator
-            summary={projectSummary}
-            onClick={onToggleProblems}
-            state={diagnosticsIndicatorState}
-          />
-        ) : null}
-
-        {showCompactDiagnostics ? (
-          <div className="h-3 w-px bg-[var(--border-subtle)]" />
-        ) : null}
+    <div className="z-50 flex h-10 select-none items-center rounded-t-[18px] border-t border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3 py-1.5 font-mono tracking-[0.08em]">
+      <div className="flex items-center gap-2">
+        <div className="shell-cluster-soft min-h-[32px] px-2.5">
+          {showCompactDiagnostics ? (
+            <DiagnosticsCompactIndicator
+              summary={projectSummary}
+              onClick={onToggleProblems}
+              state={diagnosticsIndicatorState}
+            />
+          ) : (
+            <span className={statusTextClass}>Diagnostics hidden</span>
+          )}
+        </div>
 
         <div className={chipClass}>
           <span data-testid="statusbar-language" className={statusTextClass}>
             {activeLanguageLabel}
           </span>
         </div>
-
-        <div className="h-3 w-px bg-[var(--border-subtle)]" />
 
         <div className={chipClass}>
           <span className={statusTextClass}>{activeProjectLabel}</span>
@@ -147,17 +145,17 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
 
       <div className="flex-1" />
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2">
         <div
           data-testid="statusbar-file"
-          className="max-w-[340px] overflow-hidden whitespace-nowrap font-mono text-[10px]"
+          className="shell-cluster-soft max-w-[360px] overflow-hidden whitespace-nowrap px-3 font-mono text-[11px]"
         >
           {activeFileSegments.directory ? (
             <>
-              <span className="text-[var(--text-muted)]">
+              <span className="truncate text-[var(--text-muted)]">
                 {activeFileSegments.directory}
               </span>
-              <span className="text-[var(--text-primary)]">
+              <span className="truncate text-[var(--text-primary)]">
                 {activeFileSegments.fileName}
               </span>
             </>
@@ -168,15 +166,15 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
           )}
         </div>
 
-        <div className="h-3 w-px bg-[var(--border-subtle)]" />
-
-        <div data-testid="statusbar-position" className={statusTextClass}>
-          {positionLabel}
+        <div className={chipClass}>
+          <span data-testid="statusbar-position" className={statusTextClass}>
+            {positionLabel}
+          </span>
         </div>
 
-        <div className="h-3 w-px bg-[var(--border-subtle)]" />
-
-        <div className={statusTextClass}>UTF-8</div>
+        <div className="shell-cluster-soft min-h-[32px] px-3 text-[11px] text-[var(--text-secondary)]">
+          UTF-8
+        </div>
       </div>
     </div>
   );

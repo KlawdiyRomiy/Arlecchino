@@ -8,7 +8,6 @@ interface EditorSettingsState {
   maxFontSize: number;
   showInlineDiagnostics: boolean;
   showCompactDiagnostics: boolean;
-  showDiagnosticsDonut: boolean;
   showMinimap: boolean;
   zoomIn: () => void;
   zoomOut: () => void;
@@ -17,7 +16,6 @@ interface EditorSettingsState {
   setUiScale: (scale: number) => void;
   setShowInlineDiagnostics: (value: boolean) => void;
   setShowCompactDiagnostics: (value: boolean) => void;
-  setShowDiagnosticsDonut: (value: boolean) => void;
   setShowMinimap: (value: boolean) => void;
 }
 
@@ -31,7 +29,6 @@ const SCALE_STEP = 0.05;
 const FONT_ZOOM_STEP = 1;
 const DEFAULT_SHOW_INLINE_DIAGNOSTICS = true;
 const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
-const DEFAULT_SHOW_DIAGNOSTICS_DONUT = true;
 const DEFAULT_SHOW_MINIMAP = true;
 
 export const useEditorSettingsStore = create<EditorSettingsState>()(
@@ -43,7 +40,6 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       maxFontSize: MAX_FONT_SIZE,
       showInlineDiagnostics: DEFAULT_SHOW_INLINE_DIAGNOSTICS,
       showCompactDiagnostics: DEFAULT_SHOW_COMPACT_DIAGNOSTICS,
-      showDiagnosticsDonut: DEFAULT_SHOW_DIAGNOSTICS_DONUT,
       showMinimap: DEFAULT_SHOW_MINIMAP,
 
       zoomIn: () =>
@@ -88,9 +84,6 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setShowCompactDiagnostics: (value: boolean) =>
         set(() => ({ showCompactDiagnostics: value })),
-
-      setShowDiagnosticsDonut: (value: boolean) =>
-        set(() => ({ showDiagnosticsDonut: value })),
 
       setShowMinimap: (value: boolean) => set(() => ({ showMinimap: value })),
     }),

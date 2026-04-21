@@ -17,7 +17,6 @@ import {
   RotateCcw,
   Send,
   Sparkles,
-  Workflow,
   X,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
@@ -36,6 +35,7 @@ interface GitPanelProps {
   projectPath: string;
   onFileOpen?: (path: string) => void;
   panelPosition?: PanelPosition;
+  onDiffFocusChange?: (active: boolean) => void;
 }
 
 type DetailTab = "commit" | "history" | "pull_requests" | "stash" | "diff";
@@ -101,6 +101,13 @@ const statusLabels: Record<GitFileStatus, string> = {
   copied: "C",
   conflicted: "!",
 };
+
+const gitSectionClass =
+  "overflow-hidden rounded-[18px] border border-[var(--git-border)] bg-[var(--git-surface)]";
+const gitPillClass =
+  "inline-flex items-center rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]";
+const gitBubbleIconButtonClass =
+  "inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]";
 
 const toHumanError = (error: string | null): string | null => {
   if (!error) {
@@ -262,8 +269,8 @@ const FileSection = React.memo<FileSectionProps>(
     onUnstage,
     onDiscard,
   }) => (
-    <section className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)]">
-      <div className="flex items-center gap-2 px-3 py-2">
+    <section className={gitSectionClass}>
+      <div className="flex items-center gap-2 px-3 py-2.5">
         <button
           type="button"
           onClick={onToggle}
@@ -277,16 +284,14 @@ const FileSection = React.memo<FileSectionProps>(
           <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
             {title}
           </span>
-          <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5 text-[10px] text-[var(--git-text-secondary)]">
-            {files.length}
-          </span>
+          <span className={gitPillClass}>{files.length}</span>
         </button>
 
         {files.length > 0 && bulkActionLabel && onBulkAction && (
           <button
             type="button"
             onClick={onBulkAction}
-            className="inline-flex items-center rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)] transition-colors hover:text-[var(--git-text)]"
+            className={`${gitPillClass} transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)]`}
           >
             {bulkActionLabel}
           </button>
@@ -296,7 +301,7 @@ const FileSection = React.memo<FileSectionProps>(
       {open && (
         <div className="border-t border-[var(--git-border)] px-2 py-2">
           {files.length === 0 ? (
-            <div className="rounded-md border border-dashed border-[var(--git-border)] px-3 py-4 text-[12px] text-[var(--git-text-secondary)]">
+            <div className="rounded-[14px] border border-dashed border-[var(--git-border)] px-3 py-4 text-[12px] text-[var(--git-text-secondary)]">
               {emptyLabel}
             </div>
           ) : (
@@ -325,16 +330,14 @@ FileSection.displayName = "FileSection";
 
 const StashSection = React.memo<StashSectionProps>(
   ({ entries, loading, message, onMessageChange, onCreate, onPop, onDrop }) => (
-    <section className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)]">
-      <div className="flex items-center gap-2 px-3 py-2">
+    <section className={gitSectionClass}>
+      <div className="flex items-center gap-2 px-3 py-2.5">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <Sparkles size={13} className="text-[var(--git-text-secondary)]" />
           <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
             Stashes
           </span>
-          <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5 text-[10px] text-[var(--git-text-secondary)]">
-            {entries.length}
-          </span>
+          <span className={gitPillClass}>{entries.length}</span>
         </div>
       </div>
 
@@ -408,6 +411,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   projectPath,
   onFileOpen,
   panelPosition = "right",
+  onDiffFocusChange,
 }) => {
   const { isDark } = useTheme();
   const theme = getThemeColors(isDark);
@@ -471,10 +475,21 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   const [prBaseOverride, setPrBaseOverride] = useState("");
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const isDiffFocused = detailOpen && detailTab === "diff";
 
   useEffect(() => {
     git.setProjectPath(projectPath);
   }, [git, projectPath]);
+
+  useEffect(() => {
+    onDiffFocusChange?.(isDiffFocused);
+  }, [isDiffFocused, onDiffFocusChange]);
+
+  useEffect(() => {
+    return () => {
+      onDiffFocusChange?.(false);
+    };
+  }, [onDiffFocusChange]);
 
   const allChangedFiles = useMemo(
     () => [...git.conflictedFiles, ...git.stagedFiles, ...git.unstagedFiles],
@@ -726,18 +741,18 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       className="relative flex h-full min-h-0 flex-col bg-[var(--git-bg)] text-[var(--git-text)]"
     >
       <div className="border-b border-[var(--git-border)] px-3 py-3">
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--status-success)]">
-            <FolderGit2 size={15} />
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <div className="shell-cluster-soft min-w-0 flex-1 px-1.5 py-1">
               <button
                 type="button"
                 onClick={() => setShowBranchDropdown((value) => !value)}
-                className="inline-flex max-w-full items-center gap-2 rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--git-text)] transition-colors hover:border-[var(--git-border-strong)]"
+                className="shell-control h-9 min-w-0 flex-1 justify-start gap-2 px-3 text-[var(--git-text)] hover:text-[var(--git-text)]"
               >
+                <FolderGit2
+                  size={14}
+                  className="shrink-0 text-[var(--status-success)]"
+                />
                 <GitBranch
                   size={13}
                   className="shrink-0 text-[var(--status-success)]"
@@ -747,146 +762,119 @@ export const GitPanel: React.FC<GitPanelProps> = ({
                 </span>
                 <ChevronDown
                   size={12}
-                  className="shrink-0 text-[var(--git-text-secondary)]"
+                  className="ml-auto shrink-0 text-[var(--git-text-secondary)]"
                 />
               </button>
-
-              <div className="ml-auto flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
-                <span className="inline-flex items-center gap-1 text-[var(--status-success)]">
-                  <ArrowUp size={11} />
-                  {git.branch.ahead}
-                </span>
-                <span className="inline-flex items-center gap-1 text-[var(--status-warning)]">
-                  <ArrowDown size={11} />
-                  {git.branch.behind}
-                </span>
-              </div>
             </div>
 
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[var(--git-text-secondary)]">
-              {git.branch.upstream && (
-                <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5 uppercase tracking-[0.14em]">
-                  {git.branch.upstream}
-                </span>
-              )}
-              <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5 uppercase tracking-[0.14em]">
-                {changedCount} changed
+            <div className="shell-cluster-soft shrink-0 px-1.5 py-1">
+              <span className="inline-flex items-center gap-1 rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--status-success)]">
+                <ArrowUp size={11} />
+                {git.branch.ahead}
               </span>
-              <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5 uppercase tracking-[0.14em]">
-                {selectedRemoteLabel}
+              <span className="inline-flex items-center gap-1 rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--status-warning)]">
+                <ArrowDown size={11} />
+                {git.branch.behind}
               </span>
-            </div>
-
-            {showBranchDropdown && (
-              <div
-                className="mt-3 overflow-hidden rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)]"
-                style={{
-                  boxShadow: "var(--shadow-overlay)",
-                }}
+              <button
+                type="button"
+                className={gitBubbleIconButtonClass}
+                onClick={() => void runPanelAction(git.refresh)}
+                title="Refresh status"
               >
-                <div className="max-h-48 overflow-y-auto p-1">
-                  {git.branches.map((candidate) => {
-                    const isCurrent = candidate === git.branch.current;
-                    return (
-                      <button
-                        key={candidate}
-                        type="button"
-                        onClick={() => {
-                          void runPanelAction(() =>
-                            git.switchBranch(candidate),
-                          );
-                          setShowBranchDropdown(false);
-                        }}
-                        className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[12px] transition-colors hover:bg-[var(--git-row-active)]"
-                        style={{
-                          background: isCurrent
-                            ? "var(--git-row-active)"
-                            : "transparent",
-                        }}
-                      >
-                        <span
-                          className="h-2 w-2 rounded-full border border-[var(--git-border)]"
-                          style={{
-                            background: isCurrent
-                              ? "var(--status-success)"
-                              : "transparent",
-                          }}
-                        />
-                        <span className="truncate text-[var(--git-text)]">
-                          {candidate}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="border-t border-[var(--git-border)] p-2">
-                  <div className="flex items-center gap-2">
-                    <input
-                      value={newBranchName}
-                      onChange={(event) => setNewBranchName(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          void handleCreateBranch();
-                        }
-                      }}
-                      placeholder="Create branch"
-                      style={inputStyle(theme)}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleCreateBranch();
-                      }}
-                      style={buttonStyle(theme)}
-                      title="Create branch"
-                    >
-                      <Plus size={13} />
-                    </button>
-                  </div>
-                </div>
-              </div>
+                <RefreshCw
+                  size={14}
+                  className={git.loading ? "animate-spin" : ""}
+                />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {git.branch.upstream && (
+              <span className={gitPillClass}>{git.branch.upstream}</span>
+            )}
+            <span className={gitPillClass}>{selectedRemoteLabel}</span>
+            <span className={gitPillClass}>{changedCount} changed</span>
+            {git.conflictedFiles.length > 0 && (
+              <span className={`${gitPillClass} text-[var(--status-warning)]`}>
+                {git.conflictedFiles.length} conflicts
+              </span>
             )}
           </div>
-        </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--git-border)] pt-3 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
-          <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5">
-            {git.conflictedFiles.length} conflicts
-          </span>
-          <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5">
-            {git.stagedFiles.length} staged
-          </span>
-          <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5">
-            {git.unstagedFiles.length} working
-          </span>
-          <button
-            type="button"
-            style={buttonStyle(theme)}
-            onClick={() => void runPanelAction(git.refresh)}
-            title="Refresh status"
-          >
-            <RefreshCw
-              size={13}
-              className={git.loading ? "animate-spin" : ""}
-            />
-          </button>
+          {showBranchDropdown && (
+            <div
+              className="overflow-hidden rounded-[18px] border border-[var(--git-border)] bg-[var(--git-surface)]"
+              style={{
+                boxShadow: "var(--shadow-overlay)",
+              }}
+            >
+              <div className="max-h-48 overflow-y-auto p-1.5">
+                {git.branches.map((candidate) => {
+                  const isCurrent = candidate === git.branch.current;
+                  return (
+                    <button
+                      key={candidate}
+                      type="button"
+                      onClick={() => {
+                        void runPanelAction(() => git.switchBranch(candidate));
+                        setShowBranchDropdown(false);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-[14px] px-3 py-2 text-left text-[12px] transition-colors hover:bg-[var(--git-row-active)]"
+                      style={{
+                        background: isCurrent
+                          ? "var(--git-row-active)"
+                          : "transparent",
+                      }}
+                    >
+                      <span
+                        className="h-2 w-2 rounded-full border border-[var(--git-border)]"
+                        style={{
+                          background: isCurrent
+                            ? "var(--status-success)"
+                            : "transparent",
+                        }}
+                      />
+                      <span className="truncate text-[var(--git-text)]">
+                        {candidate}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="border-t border-[var(--git-border)] p-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    value={newBranchName}
+                    onChange={(event) => setNewBranchName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        void handleCreateBranch();
+                      }
+                    }}
+                    placeholder="Create branch"
+                    style={inputStyle(theme)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleCreateBranch();
+                    }}
+                    className={gitBubbleIconButtonClass}
+                    title="Create branch"
+                  >
+                    <Plus size={13} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
         <div className="flex h-full min-h-0 flex-col overflow-y-auto px-3 py-3">
-          <div className="mb-3 flex items-center gap-2 rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] px-3 py-2 text-[11px] text-[var(--git-text-secondary)]">
-            <Workflow size={13} className="text-[var(--status-success)]" />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[12px] font-medium text-[var(--git-text)]">
-                Compact source control
-              </div>
-              <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
-                Review files here. Commit, history, diff and PR stay in details.
-              </div>
-            </div>
-          </div>
-
           {git.conflictedFiles.length > 0 && (
             <FileSection
               title="Conflicts"
@@ -911,7 +899,11 @@ export const GitPanel: React.FC<GitPanelProps> = ({
             />
           )}
 
-          <div className="mt-3 flex min-h-0 flex-1 flex-col gap-3">
+          <div
+            className={`flex min-h-0 flex-1 flex-col gap-3 ${
+              git.conflictedFiles.length > 0 ? "mt-3" : ""
+            }`}
+          >
             <FileSection
               title="Staged"
               files={git.stagedFiles}
@@ -964,11 +956,11 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       </div>
 
       <div className="border-t border-[var(--git-border)] px-3 py-3">
-        <div className="grid grid-cols-2 gap-2">
+        <div className="shell-cluster-soft w-full gap-2 px-1.5 py-1.5">
           <button
             type="button"
             onClick={() => openDetail("commit")}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] px-3 text-[12px] font-medium text-[var(--git-text)] transition-colors hover:border-[var(--status-success)] hover:text-[var(--status-success)]"
+            className="shell-control h-10 min-w-0 flex-1 justify-center gap-2 px-4 text-[var(--git-text)] hover:border-[var(--status-success)] hover:text-[var(--status-success)]"
           >
             <GitCommit size={14} />
             Commit...
@@ -978,7 +970,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
             onClick={() =>
               openDetail(detailTab === "diff" ? "commit" : detailTab)
             }
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 text-[12px] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)]"
+            className="shell-control h-10 min-w-0 justify-center gap-2 px-4 text-[var(--git-text-secondary)]"
           >
             <ChevronsRight size={14} />
             Open details
@@ -1010,33 +1002,25 @@ export const GitPanel: React.FC<GitPanelProps> = ({
         }}
       >
         <div className="border-b border-[var(--git-border)] px-3 py-3">
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--status-success)]">
-              <FolderGit2 size={15} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <div className="truncate text-[12px] font-semibold text-[var(--git-text)]">
+          <div className="flex items-start gap-2">
+            <div className="shell-cluster-soft min-w-0 flex-1 px-1.5 py-1">
+              <div className="shell-control h-9 min-w-0 flex-1 justify-start gap-2 px-3 text-[var(--git-text)]">
+                <FolderGit2
+                  size={14}
+                  className="shrink-0 text-[var(--status-success)]"
+                />
+                <span className="truncate text-[12px] font-medium">
                   Source control details
-                </div>
-                <span className="rounded-full border border-[var(--git-border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
-                  {git.branch.current || "detached"}
                 </span>
               </div>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
-                <span>{selectedRemoteLabel}</span>
-                <span className="text-[var(--status-success)]">
-                  ↑ {git.branch.ahead}
-                </span>
-                <span className="text-[var(--status-warning)]">
-                  ↓ {git.branch.behind}
-                </span>
-              </div>
+              <span className={gitPillClass}>
+                {git.branch.current || "detached"}
+              </span>
             </div>
             <button
               type="button"
               onClick={() => setDetailOpen(false)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)]"
+              className={gitBubbleIconButtonClass}
               title="Close details"
             >
               <X size={15} />
@@ -1044,31 +1028,37 @@ export const GitPanel: React.FC<GitPanelProps> = ({
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {detailTabs.map(([value, label, Icon]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => openDetail(value)}
-                className="inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-[11px] transition-colors"
-                style={{
-                  borderColor:
-                    detailTab === value
-                      ? "var(--accent-brand)"
-                      : "var(--git-border)",
-                  background:
-                    detailTab === value
-                      ? "var(--accent-brand-soft)"
-                      : "var(--git-surface)",
-                  color:
-                    detailTab === value
-                      ? "var(--accent-brand)"
-                      : "var(--git-text-secondary)",
-                }}
-              >
-                <Icon size={13} />
-                {label}
-              </button>
-            ))}
+            <span className={gitPillClass}>{selectedRemoteLabel}</span>
+            <span className="inline-flex items-center gap-1 rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--status-success)]">
+              <ArrowUp size={11} />
+              {git.branch.ahead}
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--status-warning)]">
+              <ArrowDown size={11} />
+              {git.branch.behind}
+            </span>
+          </div>
+
+          <div className="mt-3 min-w-0">
+            <div className="shell-mini-x-scroll w-full min-w-0 overflow-x-scroll overflow-y-hidden pb-1">
+              <div className="shell-cluster-soft inline-flex min-w-max px-1.5 py-1">
+                {detailTabs.map(([value, label, Icon]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => openDetail(value)}
+                    className={`shell-control h-8 gap-2 px-3 text-[11px] ${
+                      detailTab === value
+                        ? "border-[var(--accent-brand)] bg-[var(--accent-brand-soft)] text-[var(--accent-brand)]"
+                        : "text-[var(--git-text-secondary)]"
+                    }`}
+                  >
+                    <Icon size={13} />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 

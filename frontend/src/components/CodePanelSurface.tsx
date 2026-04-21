@@ -25,7 +25,6 @@ import {
 } from "../../wailsjs/go/main/App";
 import { createDiagnosticsExtension } from "../extensions/diagnosticsExtension";
 import { createGitGutterExtension } from "../extensions/gitGutterExtension";
-import { DiagnosticsDonutIndicator } from "./problems/DiagnosticsDonutIndicator";
 import { useEditorStore } from "../stores/editorStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { useGitStore } from "../stores/gitStore";
@@ -237,7 +236,6 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
       className="relative w-full h-full min-h-0 overflow-hidden"
       style={codeEditorChromeStyle}
     >
-      <DiagnosticsDonutIndicator filePath={path} fileName={name} />
       <CodeMirror
         value={content}
         extensions={extensions}

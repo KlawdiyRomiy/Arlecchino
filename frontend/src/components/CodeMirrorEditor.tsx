@@ -98,7 +98,6 @@ import {
   DefinitionChooserMenu,
   DefinitionItem as MenuDefinitionItem,
 } from "./DefinitionChooserMenu";
-import { DiagnosticsDonutIndicator } from "./problems/DiagnosticsDonutIndicator";
 import { main as MainModels } from "../../wailsjs/go/models";
 import {
   GetEditorCompletions,
@@ -120,7 +119,7 @@ import { useGitStore } from "../stores/gitStore";
 import { createCompletionCache } from "../utils/completionCache";
 import { shouldEnableCodeMirrorMinimap } from "../utils/codeMirrorDisplay";
 import {
-  codeEditorChromeStyle,
+  editorCanvasBackground,
   codeEditorStyles,
   codeEditorSurfaceClassName,
   codeEditorTheme,
@@ -144,6 +143,10 @@ type CompletionPayload = {
 };
 const SIGNATURE_HIDE_MS = 2400;
 const COMPLETION_CACHE_TTL_MS = 2000;
+const editorCanvasStyle = {
+  background: editorCanvasBackground,
+  boxShadow: "none",
+} as const;
 
 const SOURCE_LABELS: Record<string, string> = {
   lsp: "LSP",
@@ -1843,15 +1846,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   return (
     <div
       className="relative h-full w-full overflow-hidden"
-      style={codeEditorChromeStyle}
+      style={editorCanvasStyle}
     >
-      <DiagnosticsDonutIndicator
-        filePath={filePath}
-        fileName={fileName}
-        rightOffset={shouldShowMinimap ? 74 : 12}
-        onClick={onToggleProblems}
-      />
-
       <CodeMirror
         ref={editorRef}
         value={content}

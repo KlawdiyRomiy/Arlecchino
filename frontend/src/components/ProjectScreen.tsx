@@ -12,6 +12,7 @@ import {
 } from "../utils/priorityUI";
 import { useTheme } from "../hooks/useTheme";
 import { useEditorStore } from "../stores/editorStore";
+import { editorCanvasBackground } from "../utils/codeMirrorTheme";
 
 type SplitDirection = "horizontal" | "vertical" | null;
 
@@ -55,7 +56,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   onPerspectiveClose,
 }) => {
   const { isDark } = useTheme();
-  const editorBgColor = isDark ? "#1e1e1e" : "#ffffff";
+  const editorBgColor = isDark ? editorCanvasBackground : "#ffffff";
   const setStatusFile = useEditorStore((state) => state.setStatusFile);
 
   const tabStorageKey = `editorTabs:${projectPath}`;
@@ -1004,8 +1005,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           activeTab={activeTab}
           onTabClick={setActiveTab}
           onTabClose={handleTabClose}
-          onSplitHorizontal={() => handleSplit("horizontal")}
-          onSplitVertical={() => handleSplit("vertical")}
+          onSplitHorizontal={() => handleSplit("vertical")}
+          onSplitVertical={() => handleSplit("horizontal")}
         />
       )}
 

@@ -12,6 +12,10 @@
   --surface-3: #1d1d1d;
   --surface-elevated: rgba(24, 24, 24, 0.96);
   --surface-overlay: rgba(17, 17, 17, 0.92);
+  --surface-shell: #101010;
+  --surface-shell-soft: rgba(18, 18, 18, 0.96);
+  --surface-shell-strong: #161616;
+  --surface-shell-panel: #0f0f0f;
   --surface-hover: #232323;
   --surface-active: #2b2b2b;
   --bg-secondary: #111111;
@@ -42,6 +46,16 @@
   --status-error: #ef4444;
   --status-info: #3b82f6;
   --surface-panel-header: var(--surface-2);
+  --shell-border: rgba(255, 255, 255, 0.08);
+  --shell-border-strong: rgba(255, 255, 255, 0.14);
+  --shell-inline-divider: rgba(255, 255, 255, 0.08);
+  --shell-inner-highlight: rgba(255, 255, 255, 0.06);
+  --shell-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.02), 0 10px 30px -18px rgba(0, 0, 0, 0.62),
+    0 24px 52px -36px rgba(0, 0, 0, 0.72);
+  --shell-shadow-active:
+    0 0 0 1px rgba(255, 255, 255, 0.04), 0 18px 44px -20px rgba(0, 0, 0, 0.72),
+    0 30px 90px -34px rgba(0, 0, 0, 0.82);
 
   /* Shadows */
   --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.28);
@@ -60,6 +74,9 @@
   --radius-md: 10px;
   --radius-lg: 14px;
   --radius-xl: 20px;
+  --radius-panel: 24px;
+  --radius-shell: 28px;
+  --radius-control: 9999px;
 
   /* Spacing */
   --space-xs: 4px;
@@ -169,16 +186,162 @@ html.dark #root {
   box-shadow: var(--shadow-soft);
 }
 
+.shell-cluster,
+.shell-cluster-soft {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--shell-border);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-shell-strong) 92%, transparent),
+    color-mix(in srgb, var(--surface-shell) 96%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 var(--shell-inner-highlight),
+    var(--shell-shadow);
+}
+
+.shell-cluster-soft {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-shell-soft) 96%, transparent),
+    color-mix(in srgb, var(--surface-shell) 98%, transparent)
+  );
+}
+
+.shell-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 6px 0;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    var(--shell-inline-divider),
+    transparent
+  );
+}
+
+.shell-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  transition:
+    transform 120ms ease,
+    background-color 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.shell-control:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-active) 78%, transparent);
+  border-color: var(--shell-border);
+  color: var(--text-primary);
+}
+
+.shell-control:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.shell-control:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 1px var(--focus-ring),
+    0 0 0 3px var(--focus-ring-strong);
+}
+
+.shell-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  border: 1px solid var(--shell-border);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--surface-shell-soft) 98%, transparent);
+  padding: 0 12px;
+  color: var(--text-secondary);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.shell-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  border-radius: 9999px;
+  border: 1px solid var(--shell-border);
+  background: color-mix(in srgb, var(--surface-1) 96%, transparent);
+  padding: 0 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+}
+
+.shell-menu-content {
+  z-index: 100;
+  overflow: hidden;
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--shell-border-strong);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-shell-soft) 97%, transparent),
+    color-mix(in srgb, var(--surface-shell) 99%, transparent)
+  );
+  padding: 8px;
+  box-shadow: var(--shadow-overlay);
+}
+
+.shell-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-radius: 16px;
+  padding: 10px 12px;
+  color: var(--text-secondary);
+  outline: none;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease;
+}
+
+.shell-menu-item:hover,
+.shell-menu-item:focus {
+  background: color-mix(in srgb, var(--surface-active) 74%, transparent);
+  color: var(--text-primary);
+}
+
+.shell-overlay-card {
+  border: 1px solid var(--shell-border-strong);
+  border-radius: 28px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-shell-soft) 97%, transparent),
+    color-mix(in srgb, var(--surface-shell) 99%, transparent)
+  );
+  box-shadow: var(--shell-shadow-active);
+}
+
 .panel-control-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   height: 28px;
   width: 28px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle);
+  border-radius: 9999px;
+  border: 1px solid transparent;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   transition:
     transform 120ms ease,
     background-color 150ms ease,
@@ -188,8 +351,8 @@ html.dark #root {
 }
 
 .panel-control-button:hover:not(:disabled) {
-  background: var(--surface-1);
-  border-color: var(--border-default);
+  background: color-mix(in srgb, var(--surface-active) 76%, transparent);
+  border-color: var(--shell-border);
   color: var(--text-primary);
 }
 
@@ -206,7 +369,7 @@ html.dark #root {
 
 .panel-control-button-danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--status-error) 14%, transparent);
-  border-color: color-mix(in srgb, var(--status-error) 28%, transparent);
+  border-color: color-mix(in srgb, var(--status-error) 32%, transparent);
   color: var(--text-primary);
 }
 
@@ -234,10 +397,10 @@ html.dark #root {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--shell-border);
   border-radius: 9999px;
-  background: var(--surface-1);
-  padding: 4px 10px;
+  background: color-mix(in srgb, var(--surface-shell-soft) 98%, transparent);
+  padding: 6px 12px;
   color: var(--text-secondary);
   font-size: 10px;
   font-weight: 500;
@@ -251,8 +414,8 @@ html.dark #root {
 }
 
 .interactive-chip:hover {
-  border-color: var(--border-default);
-  background: var(--surface-2);
+  border-color: var(--shell-border-strong);
+  background: color-mix(in srgb, var(--surface-active) 74%, transparent);
   color: var(--text-primary);
 }
 
@@ -272,7 +435,7 @@ html.dark #root {
 }
 
 .topbar-control-button:hover:not(:disabled) {
-  transform: translateY(-1px);
+  transform: translateY(-1px) scale(1.01);
 }
 
 .topbar-control-button:active:not(:disabled) {
@@ -333,6 +496,28 @@ html.dark #root {
 
 .project-indicators-expanded::-webkit-scrollbar {
   display: none;
+}
+
+.shell-mini-x-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(84 84 84) transparent;
+}
+
+.shell-mini-x-scroll::-webkit-scrollbar {
+  height: 5px;
+}
+
+.shell-mini-x-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.shell-mini-x-scroll::-webkit-scrollbar-thumb {
+  background: rgb(84 84 84);
+  border-radius: 9999px;
+}
+
+.shell-mini-x-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(108 108 108);
 }
 
 @keyframes fileExplorerFlash {
