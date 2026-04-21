@@ -28,20 +28,20 @@ interface ProblemsPanelProps {
 }
 
 const filterButtonClass = (active: boolean) =>
-  `rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
+  `rounded-full border px-3 py-1 text-[10px] font-medium uppercase tracking-[0.14em] transition-colors ${
     active
-      ? "border-[var(--accent-primary)] bg-[var(--accent-primary)]/15 text-[var(--text-primary)]"
-      : "border-[var(--border-subtle)] bg-[var(--bg-primary)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]"
+      ? "border-[var(--border-default)] bg-[var(--surface-2)] text-[var(--text-primary)]"
+      : "border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)] hover:border-[var(--border-default)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
   }`;
 
 const renderSeverityIcon = (problem: DiagnosticsProblem) => {
   if (problem.severityLabel === "error") {
-    return <AlertCircle size={14} className="text-[#EF4444]" />;
+    return <AlertCircle size={14} className="text-[var(--status-error)]" />;
   }
   if (problem.severityLabel === "warning") {
-    return <AlertTriangle size={14} className="text-[#F59E0B]" />;
+    return <AlertTriangle size={14} className="text-[var(--status-warning)]" />;
   }
-  return <CircleDot size={14} className="text-[#3B82F6]" />;
+  return <CircleDot size={14} className="text-[var(--status-info)]" />;
 };
 
 const summarizeLabel = (group: DiagnosticsFileGroup) => {
@@ -169,8 +169,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     () => useDiagnosticsStore.getState().getProjectSummary(activeProjectPath),
     [activeProjectPath, byFile],
   );
-  const isIndexingActive =
-    indexing.phase === "indexing" || indexing.phase === "complete";
+  const isIndexingActive = indexing.phase === "indexing";
   const isDiagnosticsPreloadActive =
     diagnosticsPreload.active &&
     diagnosticsPreload.projectPath === activeProjectPath;
@@ -191,9 +190,9 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   return (
     <div
       data-testid="problems-panel"
-      className="flex h-full min-h-0 flex-col bg-[var(--bg-secondary)] text-[var(--text-primary)]"
+      className="flex h-full min-h-0 flex-col bg-[var(--surface-1)] text-[var(--text-primary)]"
     >
-      <div className="border-b border-[var(--border-subtle)] px-4 py-3">
+      <div className="border-b border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -231,15 +230,19 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
           </button>
         </div>
 
-        <div className="mt-3 flex items-center gap-4 text-[11px] text-[var(--text-secondary)]">
+        <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] text-[var(--text-secondary)]">
           <span>{projectSummary.total} total</span>
-          <span className="text-[#EF4444]">{projectSummary.errors} errors</span>
-          <span className="text-[#F59E0B]">
+          <span className="text-[var(--status-error)]">
+            {projectSummary.errors} errors
+          </span>
+          <span className="text-[var(--status-warning)]">
             {projectSummary.warnings} warnings
           </span>
-          <span className="text-[#3B82F6]">{projectSummary.infos} info</span>
+          <span className="text-[var(--status-info)]">
+            {projectSummary.infos} info
+          </span>
           {isPartialWorkspaceDiagnostics ? (
-            <span className="rounded-full border border-[var(--border-subtle)] px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-[#F59E0B]">
+            <span className="rounded-full border border-[var(--border-subtle)] px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-[var(--status-warning)]">
               Partial results
             </span>
           ) : null}
@@ -256,7 +259,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
                 transition={{ duration: 0.22 }}
-                className="flex items-center gap-3 rounded-full border border-[var(--border-subtle)] bg-[var(--bg-primary)] px-4 py-2"
+                className="flex items-center gap-3 rounded-full border border-[var(--border-subtle)] bg-[var(--surface-2)] px-4 py-2"
               >
                 <div className="relative h-6 w-6">
                   <motion.svg
@@ -283,7 +286,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
                       cy="12"
                       r="10"
                       fill="none"
-                      stroke="#ffffff"
+                      stroke="var(--text-primary)"
                       strokeWidth="2"
                       strokeLinecap="round"
                       strokeDasharray="22 44"
@@ -334,27 +337,27 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
           </AnimatePresence>
         </div>
       ) : (
-        <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+        <div className="flex-1 overflow-y-auto px-3 py-3">
           {displayedGroups.map((group) => (
             <section
               key={group.filePath}
-              className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-primary)]/80 p-3"
+              className="overflow-hidden rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-1)]"
             >
-              <div className="mb-3 flex items-start justify-between gap-4 border-b border-[var(--border-subtle)] pb-3">
+              <div className="flex items-start justify-between gap-4 border-b border-[var(--border-subtle)] bg-[var(--surface-2)] px-4 py-3">
                 <div>
                   <div className="text-sm font-semibold text-[var(--text-primary)]">
                     {group.fileName}
                   </div>
-                  <div className="mt-1 text-[11px] text-[var(--text-muted)]">
+                  <div className="mt-1 font-mono text-[11px] text-[var(--text-muted)]">
                     {group.filePath}
                   </div>
                 </div>
-                <div className="rounded-full border border-[var(--border-subtle)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--text-secondary)]">
+                <div className="rounded-full border border-[var(--border-subtle)] bg-[var(--surface-1)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--text-secondary)]">
                   {summarizeLabel(group)}
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="divide-y divide-[var(--border-subtle)]">
                 {group.items.map((problem) => (
                   <button
                     key={problem.id}
@@ -362,26 +365,34 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
                     onClick={() =>
                       onNavigate(problem.filePath, problem.line, problem.column)
                     }
-                    className="flex w-full items-start gap-3 rounded-xl border border-transparent px-3 py-2.5 text-left transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-secondary)]"
+                    className="group flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)] focus:bg-[var(--surface-2)] focus:outline-none focus-visible:shadow-[inset_2px_0_0_var(--border-focus)]"
                   >
-                    <div className="mt-0.5 flex-shrink-0">
+                    <div className="mt-0.5 flex w-4 flex-shrink-0 justify-center">
                       {renderSeverityIcon(problem)}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-[var(--text-primary)]">
+                      <div className="line-clamp-2 text-sm font-medium text-[var(--text-primary)]">
                         {problem.message}
                       </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--text-muted)]">
-                        <span>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                        <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--surface-1)] px-2 py-0.5">
                           Ln {problem.line}, Col {problem.column}
                         </span>
-                        {problem.source ? <span>{problem.source}</span> : null}
-                        {problem.code ? <span>{problem.code}</span> : null}
+                        {problem.source ? (
+                          <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--surface-1)] px-2 py-0.5">
+                            {problem.source}
+                          </span>
+                        ) : null}
+                        {problem.code ? (
+                          <span className="rounded-full border border-[var(--border-subtle)] bg-[var(--surface-1)] px-2 py-0.5 text-[var(--text-secondary)]">
+                            {problem.code}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                     <ChevronRight
                       size={14}
-                      className="mt-0.5 flex-shrink-0 text-[var(--text-muted)]"
+                      className="mt-0.5 flex-shrink-0 text-[var(--text-muted)] transition-transform group-hover:translate-x-0.5"
                     />
                   </button>
                 ))}

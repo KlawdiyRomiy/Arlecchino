@@ -1,8 +1,6 @@
 package brain
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 
 	"arlecchino/internal/indexer/core"
@@ -36,8 +34,6 @@ func (p *ImportCompletionProvider) GetCompletions(ctx CompletionContext) []Sugge
 	switch ctx.Language {
 	case "go":
 		suggestions = append(suggestions, p.getGoProjectPackageCompletions(ctx)...)
-	case "typescript", "javascript", "typescriptreact", "javascriptreact", "vue", "svelte", "astro", "css", "scss", "sass", "less":
-		suggestions = append(suggestions, p.getInstalledNodeModuleCompletions(ctx)...)
 	case "php":
 		suggestions = append(suggestions, p.getPHPNamespaceCompletions(ctx)...)
 	}
@@ -84,50 +80,6 @@ func (p *ImportCompletionProvider) getGoProjectPackageCompletions(ctx Completion
 		}
 	}
 
-	return suggestions
-}
-
-func (p *ImportCompletionProvider) getInstalledNodeModuleCompletions(ctx CompletionContext) []Suggestion {
-	if p.projectRoot == "" {
-		return nil
-	}
-
-	prefix := strings.ToLower(ctx.Prefix)
-	nodeModulesPath := filepath.Join(p.projectRoot, "node_modules")
-	entries, err := os.ReadDir(nodeModulesPath)
-	if err != nil {
-		return nil
-	}
-
-	suggestions := make([]Suggestion, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		name := entry.Name()
-		if strings.HasPrefix(name, "@") {
-			scopedPath := filepath.Join(nodeModulesPath, name)
-			scopedEntries, err := os.ReadDir(scopedPath)
-			if err != nil {
-				continue
-			}
-			for _, scopedEntry := range scopedEntries {
-				if !scopedEntry.IsDir() {
-					continue
-				}
-				fullName := name + "/" + scopedEntry.Name()
-				if prefix != "" && !strings.HasPrefix(strings.ToLower(fullName), prefix) && !strings.Contains(strings.ToLower(fullName), prefix) {
-					continue
-				}
-				suggestions = append(suggestions, Suggestion{Text: fullName, DisplayText: fullName, Kind: core.SymbolKindModule, Source: core.SourceLocal, Score: 0.88, Detail: "installed package", InsertText: quoteImportLiteral(fullName, ctx.Language)})
-			}
-			continue
-		}
-		if prefix != "" && !strings.HasPrefix(strings.ToLower(name), prefix) && !strings.Contains(strings.ToLower(name), prefix) {
-			continue
-		}
-		suggestions = append(suggestions, Suggestion{Text: name, DisplayText: name, Kind: core.SymbolKindModule, Source: core.SourceLocal, Score: 0.88, Detail: "installed package", InsertText: quoteImportLiteral(name, ctx.Language)})
-	}
 	return suggestions
 }
 

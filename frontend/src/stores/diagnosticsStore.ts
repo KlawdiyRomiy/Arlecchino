@@ -295,6 +295,17 @@ const hasWailsRuntimeEvents = () => {
 
 let diagnosticsEventsBound = false;
 let diagnosticsEventsBindTimer: number | null = null;
+let diagnosticsEventsBoundWaiters: Array<() => void> = [];
+
+const resolveDiagnosticsEventsBound = () => {
+  if (diagnosticsEventsBoundWaiters.length === 0) {
+    return;
+  }
+
+  const waiters = diagnosticsEventsBoundWaiters;
+  diagnosticsEventsBoundWaiters = [];
+  waiters.forEach((resolve) => resolve());
+};
 
 const scheduleDiagnosticsEventsBind = () => {
   if (
@@ -442,6 +453,22 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
   })),
 );
 
+export const ensureDiagnosticsEventsBound = (): Promise<void> => {
+  if (diagnosticsEventsBound || typeof window === "undefined") {
+    return Promise.resolve();
+  }
+
+  bindDiagnosticsEvents();
+  if (diagnosticsEventsBound) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    diagnosticsEventsBoundWaiters.push(resolve);
+    scheduleDiagnosticsEventsBind();
+  });
+};
+
 const bindDiagnosticsEvents = () => {
   if (diagnosticsEventsBound || typeof window === "undefined") {
     return;
@@ -458,6 +485,7 @@ const bindDiagnosticsEvents = () => {
   }
 
   diagnosticsEventsBound = true;
+  resolveDiagnosticsEventsBound();
   EventsOn("lsp:diagnostics", (event: DiagnosticsEventPayload) => {
     useDiagnosticsStore.getState().ingestDiagnosticsEvent(event);
   });

@@ -1,16 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { X, Pin, Maximize2 } from "lucide-react";
-import {
-  colors,
-  getThemeColors,
-  radius,
-  shadows,
-  transitions,
-  zIndex,
-} from "../../styles/colors";
 import { useIndexingProgress } from "../../hooks/useIndexingProgress";
 import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
-import { useTheme } from "../../hooks/useTheme";
 
 export type PanelPosition = "left" | "right" | "bottom" | "top";
 
@@ -91,10 +82,8 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   zIndex: customZIndex,
   useViewportPositioning = false,
 }) => {
-  const { isDark } = useTheme();
   const indexing = useIndexingProgress();
   const diagnosticsPreload = useProjectDiagnosticsPreload();
-  const theme = getThemeColors(isDark);
   const reduceMotion =
     indexing.phase === "indexing" || diagnosticsPreload.active;
   const [isResizing, setIsResizing] = useState(false);
@@ -314,6 +303,12 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
 
   const getContainerStyle = (): React.CSSProperties => {
     const isSnapped = mode === "snapped";
+    const isActivePanel =
+      isDragging ||
+      isResizing ||
+      isDropTarget ||
+      mode === "floating" ||
+      isPinned;
     const base: React.CSSProperties = {
       position: useViewportPositioning
         ? "fixed"
@@ -322,10 +317,8 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
           : "absolute",
       display: "flex",
       flexDirection: "column",
-      backgroundColor: isDark ? "var(--bg-secondary)" : colors.light.bg,
-      border: isSnapped
-        ? "none"
-        : `1px solid ${isDark ? "var(--border-subtle)" : "rgba(0,0,0,0.1)"}`,
+      backgroundColor: "var(--surface-1)",
+      border: isSnapped ? "none" : "1px solid var(--border-default)",
       borderRight:
         isSnapped && position === "left"
           ? "1px solid var(--border-subtle)"
@@ -342,11 +335,17 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
         isSnapped && position === "top"
           ? "1px solid var(--border-subtle)"
           : undefined,
-      borderRadius: isSnapped ? 0 : radius.lg,
-      boxShadow: isSnapped ? "none" : shadows.panel,
+      borderRadius: isSnapped ? 0 : "var(--radius-lg)",
+      boxShadow: isSnapped
+        ? "none"
+        : isDragging
+          ? "var(--shadow-drag)"
+          : isResizing || isActivePanel
+            ? "var(--shadow-overlay)"
+            : "var(--shadow-soft)",
       zIndex: isDragging
-        ? zIndex.modal
-        : (customZIndex ?? zIndex.floatingPanel),
+        ? 140
+        : (customZIndex ?? (mode === "floating" ? 90 : 50)),
       overflow: "hidden",
       pointerEvents: isVisible ? "auto" : "none",
       visibility: isVisible ? "visible" : "hidden",
@@ -357,14 +356,17 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
         reduceMotion || isResizing || isDragging
           ? "none"
           : isVisible
-            ? "transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.15s ease-out"
-            : "transform 0.18s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.12s ease-in, visibility 0s linear 0.18s",
+            ? "transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.15s ease-out, box-shadow 0.18s ease, border-color 0.18s ease"
+            : "transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.12s ease-in, visibility 0s linear 0.18s",
       ...getSlideOffset(),
     };
 
     if (isDropTarget) {
-      base.border = `1px dashed #444`;
-      base.opacity = 0.8;
+      base.border = "1px solid var(--accent-brand)";
+      base.boxShadow =
+        "inset 0 0 0 1px var(--accent-brand), inset 0 0 0 999px color-mix(in srgb, var(--accent-brand) 6%, transparent), var(--shadow-overlay)";
+    } else if (!isSnapped && !isActivePanel) {
+      base.border = "1px solid var(--border-subtle)";
     }
 
     if (isDragging) {
@@ -522,51 +524,67 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
   };
 
   const isSnappedPanel = mode === "snapped";
+  const panelState = isDragging
+    ? "dragging"
+    : isResizing
+      ? "resizing"
+      : isDropTarget
+        ? "drop-target"
+        : isVisible
+          ? mode === "floating"
+            ? "floating"
+            : "docked"
+          : "hidden";
   const headerStyle: React.CSSProperties = {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    height: "36px",
+    height: "38px",
     padding: "0 16px",
-    backgroundColor: isDark ? "var(--bg-tertiary)" : "transparent",
-    borderBottom: `1px solid ${isDark ? "var(--border-subtle)" : "rgba(0,0,0,0.06)"}`,
-    borderTopLeftRadius: isSnappedPanel ? 0 : radius.lg,
-    borderTopRightRadius: isSnappedPanel ? 0 : radius.lg,
+    backgroundColor: "var(--surface-panel-header)",
+    borderBottom: "1px solid var(--border-subtle)",
+    borderTopLeftRadius: isSnappedPanel ? 0 : 14,
+    borderTopRightRadius: isSnappedPanel ? 0 : 14,
     userSelect: "none",
     flexShrink: 0,
-    cursor: "grab",
+    cursor:
+      mode === "floating" ? (isDragging ? "grabbing" : "grab") : "default",
+    boxShadow: isSnappedPanel
+      ? "inset 0 -1px 0 rgba(255,255,255,0.02)"
+      : "inset 0 1px 0 rgba(255,255,255,0.02)",
   };
 
   const titleStyle: React.CSSProperties = {
     display: "flex",
     alignItems: "center",
-    gap: "6px",
+    gap: "8px",
     fontSize: "10px",
     fontWeight: 600,
-    color: isDark ? colors.blackprint.textSecondary : "rgba(0,0,0,0.5)",
+    color: "var(--text-secondary)",
     textTransform: "uppercase",
-    letterSpacing: "1px",
+    letterSpacing: "0.16em",
     pointerEvents: "none",
   };
 
   const controlsStyle: React.CSSProperties = {
     display: "flex",
     alignItems: "center",
-    gap: "4px",
+    gap: "6px",
   };
 
   const closeButtonStyle: React.CSSProperties = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    width: "22px",
-    height: "22px",
-    borderRadius: radius.sm,
-    border: "none",
+    width: "28px",
+    height: "28px",
+    borderRadius: 6,
+    border: "1px solid var(--border-subtle)",
     backgroundColor: "transparent",
-    color: isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)",
+    color: "var(--text-muted)",
     cursor: "pointer",
-    transition: `background-color ${transitions.fast}, color ${transitions.fast}, transform ${transitions.fast}`,
+    transition:
+      "background-color 150ms ease, color 150ms ease, transform 120ms ease, border-color 150ms ease",
   };
 
   const contentStyle: React.CSSProperties = {
@@ -580,9 +598,11 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
     <div
       ref={panelRef}
       style={getContainerStyle()}
+      className={mode === "floating" ? "backdrop-blur-panel" : undefined}
       data-testid={`panel-${id}`}
       data-panel-id={id}
       data-panel-position={position}
+      data-panel-state={panelState}
     >
       {mode === "floating" ? (
         <>
@@ -648,7 +668,10 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
         </>
       )}
 
-      <div style={headerStyle} onMouseDown={handleDragStartInternal}>
+      <div
+        style={headerStyle}
+        onMouseDown={mode === "floating" ? handleDragStartInternal : undefined}
+      >
         <div style={titleStyle}>
           {icon}
           <span>{title}</span>
@@ -660,19 +683,12 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
           {onFullscreen && (
             <button
               style={closeButtonStyle}
+              className="panel-control-button topbar-control-button"
               onClick={(e) => {
                 e.stopPropagation();
                 onFullscreen();
               }}
               onMouseDown={(e) => e.stopPropagation()}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = theme.bgTertiary;
-                e.currentTarget.style.color = theme.text;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "transparent";
-                e.currentTarget.style.color = theme.textMuted;
-              }}
               title="Полный экран"
             >
               <Maximize2 size={14} />
@@ -683,26 +699,16 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
             <button
               style={{
                 ...closeButtonStyle,
-                color: isPinned ? colors.laravel.orange : theme.textMuted,
-                transform: isPinned ? "rotate(45deg)" : "none",
+                transform: isPinned ? "rotate(45deg)" : undefined,
               }}
+              className={`panel-control-button topbar-control-button ${
+                isPinned ? "panel-control-button-accent" : ""
+              }`}
               onClick={(e) => {
                 e.stopPropagation();
                 onPin();
               }}
               onMouseDown={(e) => e.stopPropagation()}
-              onMouseEnter={(e) => {
-                if (!isPinned) {
-                  e.currentTarget.style.backgroundColor = theme.bgTertiary;
-                  e.currentTarget.style.color = colors.laravel.orange;
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!isPinned) {
-                  e.currentTarget.style.backgroundColor = "transparent";
-                  e.currentTarget.style.color = theme.textMuted;
-                }
-              }}
               title={isPinned ? "Открепить панель" : "Закрепить панель"}
             >
               <Pin size={14} />
@@ -712,19 +718,13 @@ export const FloatingPanel: React.FC<FloatingPanelProps> = ({
           {onClose && (
             <button
               style={closeButtonStyle}
+              className="panel-control-button panel-control-button-danger topbar-control-button"
               onClick={(e) => {
                 e.stopPropagation();
                 onClose();
               }}
               onMouseDown={(e) => e.stopPropagation()}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = "#EF4444";
-                e.currentTarget.style.color = "#FFFFFF";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "transparent";
-                e.currentTarget.style.color = theme.textMuted;
-              }}
+              title="Закрыть панель"
             >
               <X size={14} />
             </button>

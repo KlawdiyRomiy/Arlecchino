@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"arlecchino/internal/composer"
+	"arlecchino/internal/execution"
 	"arlecchino/internal/indexer/adapters"
 	"arlecchino/internal/indexer/brain"
 	"arlecchino/internal/indexer/core"
@@ -42,6 +43,7 @@ type App struct {
 	plugins           *plugins.Registry
 	termManager       *terminal.Manager
 	carapaceProvider  *terminal.CarapaceProvider
+	executionService  *execution.Service
 	langDetector      *brain.LangDetector
 	projectPath       string
 	pathMu            sync.RWMutex
@@ -93,6 +95,7 @@ func NewApp() *App {
 		termManager:      termManager,
 		carapaceProvider: terminal.NewCarapaceProvider(),
 		plugins:          pluginRegistry,
+		executionService: execution.NewService(pluginRegistry),
 	}
 }
 func (a *App) startup(ctx context.Context) {

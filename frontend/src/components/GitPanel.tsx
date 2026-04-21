@@ -83,13 +83,13 @@ interface StashSectionProps {
 }
 
 const statusColors: Record<GitFileStatus, string> = {
-  modified: "#f59e0b",
-  added: "#22c55e",
-  deleted: "#ef4444",
-  untracked: "#3b82f6",
-  renamed: "#8b5cf6",
-  copied: "#06b6d4",
-  conflicted: "#f97316",
+  modified: "var(--status-warning)",
+  added: "var(--status-success)",
+  deleted: "var(--status-error)",
+  untracked: "var(--status-info)",
+  renamed: "var(--accent-primary)",
+  copied: "var(--status-info)",
+  conflicted: "var(--status-warning)",
 };
 
 const statusLabels: Record<GitFileStatus, string> = {
@@ -136,13 +136,19 @@ const buttonStyle = (
   theme: ReturnType<typeof getThemeColors>,
   variant: "default" | "accent" | "danger" = "default",
 ): React.CSSProperties => ({
-  border: `1px solid ${variant === "accent" ? "#22c55e" : theme.border}`,
-  background: variant === "accent" ? theme.bgSecondary : theme.bgSecondary,
+  border: `1px solid ${
+    variant === "accent"
+      ? "var(--status-success)"
+      : variant === "danger"
+        ? "var(--status-error)"
+        : theme.border
+  }`,
+  background: "var(--surface-1)",
   color:
     variant === "accent"
-      ? "#22c55e"
+      ? "var(--status-success)"
       : variant === "danger"
-        ? "#ef4444"
+        ? "var(--status-error)"
         : theme.textMuted,
   borderRadius: radius.sm,
   padding: "6px 9px",
@@ -157,7 +163,7 @@ const buttonStyle = (
 const FileRow = React.memo<FileRowProps>(
   ({ file, selected, onOpen, onViewDiff, onStage, onUnstage, onDiscard }) => (
     <div
-      className="group grid grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-2 py-2 transition-colors"
+      className="group grid grid-cols-[2px_16px_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-2 py-2 transition-colors"
       style={{
         borderColor: selected ? "var(--git-border-strong)" : "transparent",
         background: selected ? "var(--git-row-active)" : "transparent",
@@ -165,6 +171,10 @@ const FileRow = React.memo<FileRowProps>(
       onDoubleClick={() => onOpen?.(file.path)}
       title={file.path}
     >
+      <span
+        className="h-8 rounded-full"
+        style={{ background: selected ? "var(--accent-brand)" : "transparent" }}
+      />
       <span
         className="text-center text-[11px] font-semibold"
         style={{ color: statusColors[file.status] }}
@@ -192,7 +202,7 @@ const FileRow = React.memo<FileRowProps>(
         <button
           type="button"
           onClick={() => onViewDiff(file)}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)]"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
           title="View diff"
         >
           <Eye size={13} />
@@ -202,7 +212,7 @@ const FileRow = React.memo<FileRowProps>(
           <button
             type="button"
             onClick={() => onUnstage(file.path)}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)]"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
             title="Unstage file"
           >
             <Minus size={13} />
@@ -212,7 +222,7 @@ const FileRow = React.memo<FileRowProps>(
             <button
               type="button"
               onClick={() => onStage(file.path)}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[#22c55e] hover:text-[#22c55e]"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--status-success)] hover:text-[var(--status-success)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
               title="Stage file"
             >
               <Plus size={13} />
@@ -221,7 +231,7 @@ const FileRow = React.memo<FileRowProps>(
               <button
                 type="button"
                 onClick={() => onDiscard(file.path)}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[#ef4444] hover:text-[#ef4444]"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--status-error)] hover:text-[var(--status-error)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
                 title="Discard changes"
               >
                 <RotateCcw size={13} />
@@ -371,14 +381,14 @@ const StashSection = React.memo<StashSectionProps>(
                   <button
                     type="button"
                     onClick={() => onPop(entry.ref)}
-                    className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] px-2 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[#22c55e] hover:text-[#22c55e]"
+                    className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] px-2 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--status-success)] hover:text-[var(--status-success)]"
                   >
                     Apply
                   </button>
                   <button
                     type="button"
                     onClick={() => onDrop(entry.ref)}
-                    className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] px-2 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[#ef4444] hover:text-[#ef4444]"
+                    className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] px-2 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--status-error)] hover:text-[var(--status-error)]"
                   >
                     Drop
                   </button>
@@ -496,17 +506,15 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     () =>
       ({
         "--git-bg": theme.bg,
-        "--git-surface": theme.bgSecondary,
-        "--git-bg-tertiary": isDark ? "#1a1a1a" : "#f3f4f6",
+        "--git-surface": "var(--surface-1)",
+        "--git-bg-tertiary": "var(--surface-2)",
         "--git-border": theme.border,
-        "--git-border-strong": isDark ? "#3a3a3a" : "#d1d5db",
-        "--git-row-active": isDark
-          ? "rgba(255,255,255,0.04)"
-          : "rgba(0,0,0,0.04)",
+        "--git-border-strong": "var(--border-default)",
+        "--git-row-active": "var(--surface-active)",
         "--git-text": theme.text,
         "--git-text-secondary": theme.textMuted,
       }) as React.CSSProperties,
-    [isDark, theme],
+    [theme],
   );
 
   const resolvePathForOpen = useCallback(
@@ -670,34 +678,26 @@ export const GitPanel: React.FC<GitPanelProps> = ({
         return {
           closedTransform: "translate3d(-100%, 0, 0)",
           border: "1px solid var(--git-border)",
-          boxShadow: isDark
-            ? "18px 0 38px rgba(0,0,0,0.42)"
-            : "18px 0 34px rgba(0,0,0,0.12)",
+          boxShadow: "var(--shadow-overlay)",
         };
       case "top":
         return {
           closedTransform: "translate3d(0, -100%, 0)",
           border: "1px solid var(--git-border)",
-          boxShadow: isDark
-            ? "0 18px 38px rgba(0,0,0,0.42)"
-            : "0 18px 34px rgba(0,0,0,0.12)",
+          boxShadow: "var(--shadow-overlay)",
         };
       case "bottom":
         return {
           closedTransform: "translate3d(0, 100%, 0)",
           border: "1px solid var(--git-border)",
-          boxShadow: isDark
-            ? "0 -18px 38px rgba(0,0,0,0.42)"
-            : "0 -18px 34px rgba(0,0,0,0.12)",
+          boxShadow: "var(--shadow-overlay)",
         };
       case "right":
       default:
         return {
           closedTransform: "translate3d(100%, 0, 0)",
           border: "1px solid var(--git-border)",
-          boxShadow: isDark
-            ? "-18px 0 38px rgba(0,0,0,0.42)"
-            : "-18px 0 34px rgba(0,0,0,0.12)",
+          boxShadow: "var(--shadow-overlay)",
         };
     }
   }, [isDark, panelPosition]);
@@ -727,7 +727,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     >
       <div className="border-b border-[var(--git-border)] px-3 py-3">
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] text-[#22c55e]">
+          <div className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--status-success)]">
             <FolderGit2 size={15} />
           </div>
 
@@ -738,7 +738,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({
                 onClick={() => setShowBranchDropdown((value) => !value)}
                 className="inline-flex max-w-full items-center gap-2 rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--git-text)] transition-colors hover:border-[var(--git-border-strong)]"
               >
-                <GitBranch size={13} className="shrink-0 text-[#22c55e]" />
+                <GitBranch
+                  size={13}
+                  className="shrink-0 text-[var(--status-success)]"
+                />
                 <span className="truncate">
                   {git.branch.current || "Detached HEAD"}
                 </span>
@@ -749,11 +752,11 @@ export const GitPanel: React.FC<GitPanelProps> = ({
               </button>
 
               <div className="ml-auto flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
-                <span className="inline-flex items-center gap-1 text-[#22c55e]">
+                <span className="inline-flex items-center gap-1 text-[var(--status-success)]">
                   <ArrowUp size={11} />
                   {git.branch.ahead}
                 </span>
-                <span className="inline-flex items-center gap-1 text-[#f59e0b]">
+                <span className="inline-flex items-center gap-1 text-[var(--status-warning)]">
                   <ArrowDown size={11} />
                   {git.branch.behind}
                 </span>
@@ -778,9 +781,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
               <div
                 className="mt-3 overflow-hidden rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)]"
                 style={{
-                  boxShadow: isDark
-                    ? "0 16px 28px rgba(0,0,0,0.34)"
-                    : "0 14px 24px rgba(0,0,0,0.12)",
+                  boxShadow: "var(--shadow-overlay)",
                 }}
               >
                 <div className="max-h-48 overflow-y-auto p-1">
@@ -806,7 +807,9 @@ export const GitPanel: React.FC<GitPanelProps> = ({
                         <span
                           className="h-2 w-2 rounded-full border border-[var(--git-border)]"
                           style={{
-                            background: isCurrent ? "#22c55e" : "transparent",
+                            background: isCurrent
+                              ? "var(--status-success)"
+                              : "transparent",
                           }}
                         />
                         <span className="truncate text-[var(--git-text)]">
@@ -873,7 +876,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       <div className="min-h-0 flex-1 overflow-hidden">
         <div className="flex h-full min-h-0 flex-col overflow-y-auto px-3 py-3">
           <div className="mb-3 flex items-center gap-2 rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] px-3 py-2 text-[11px] text-[var(--git-text-secondary)]">
-            <Workflow size={13} className="text-[#22c55e]" />
+            <Workflow size={13} className="text-[var(--status-success)]" />
             <div className="min-w-0 flex-1">
               <div className="truncate text-[12px] font-medium text-[var(--git-text)]">
                 Compact source control
@@ -965,7 +968,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
           <button
             type="button"
             onClick={() => openDetail("commit")}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] px-3 text-[12px] font-medium text-[var(--git-text)] transition-colors hover:border-[#22c55e] hover:text-[#22c55e]"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] px-3 text-[12px] font-medium text-[var(--git-text)] transition-colors hover:border-[var(--status-success)] hover:text-[var(--status-success)]"
           >
             <GitCommit size={14} />
             Commit...
@@ -984,7 +987,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       </div>
 
       {humanError && (
-        <div className="border-t border-[var(--git-border)] bg-[rgba(239,68,68,0.10)] px-3 py-2 text-[11px] text-[var(--git-text)]">
+        <div className="border-t border-[var(--git-border)] bg-[color:var(--status-error)]/10 px-3 py-2 text-[11px] text-[var(--git-text)]">
           {humanError}
         </div>
       )}
@@ -1008,7 +1011,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       >
         <div className="border-b border-[var(--git-border)] px-3 py-3">
           <div className="flex items-start gap-3">
-            <div className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] text-[#22c55e]">
+            <div className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--status-success)]">
               <FolderGit2 size={15} />
             </div>
             <div className="min-w-0 flex-1">
@@ -1022,8 +1025,12 @@ export const GitPanel: React.FC<GitPanelProps> = ({
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
                 <span>{selectedRemoteLabel}</span>
-                <span className="text-[#22c55e]">↑ {git.branch.ahead}</span>
-                <span className="text-[#f59e0b]">↓ {git.branch.behind}</span>
+                <span className="text-[var(--status-success)]">
+                  ↑ {git.branch.ahead}
+                </span>
+                <span className="text-[var(--status-warning)]">
+                  ↓ {git.branch.behind}
+                </span>
               </div>
             </div>
             <button
@@ -1045,16 +1052,16 @@ export const GitPanel: React.FC<GitPanelProps> = ({
                 className="inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-[11px] transition-colors"
                 style={{
                   borderColor:
-                    detailTab === value ? "#22c55e" : "var(--git-border)",
+                    detailTab === value
+                      ? "var(--accent-brand)"
+                      : "var(--git-border)",
                   background:
                     detailTab === value
-                      ? isDark
-                        ? "rgba(34,197,94,0.12)"
-                        : "rgba(34,197,94,0.08)"
+                      ? "var(--accent-brand-soft)"
                       : "var(--git-surface)",
                   color:
                     detailTab === value
-                      ? "#22c55e"
+                      ? "var(--accent-brand)"
                       : "var(--git-text-secondary)",
                 }}
               >

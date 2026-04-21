@@ -111,6 +111,11 @@ func builtInPackageStubs() []builtInStubSpec {
 			"Deserialize": {Signature: "trait Deserialize<'de>", Kind: "type"},
 			"json":        {Signature: "mod json", Kind: "module"},
 		}}},
+		{language: "rust", packageName: "serde_json", stub: PackageStub{Aliases: []string{"serde_json"}, Exports: map[string]StubExport{
+			"from_str":  {Signature: "fn from_str<'a, T>(s: &'a str) -> Result<T>", Kind: "function"},
+			"to_string": {Signature: "fn to_string<T>(value: &T) -> Result<String>", Kind: "function"},
+			"Value":     {Signature: "enum Value", Kind: "type"},
+		}}},
 		{language: "java", packageName: "java.lang.System.out", stub: PackageStub{Aliases: []string{"System.out"}, Exports: map[string]StubExport{
 			"print":   {Signature: "print(String value)", Kind: "method"},
 			"println": {Signature: "println(String value)", Kind: "method"},
@@ -129,6 +134,11 @@ func builtInPackageStubs() []builtInStubSpec {
 			"upload":   {Signature: "upload(_ data: Data, to: URLConvertible)", Kind: "method"},
 			"download": {Signature: "download(_ convertible: URLConvertible)", Kind: "method"},
 		}}},
+		{language: "swift", packageName: "URLSession", stub: PackageStub{Aliases: []string{"URLSession"}, Exports: map[string]StubExport{
+			"shared":        {Signature: "class var shared: URLSession", Kind: "property"},
+			"configuration": {Signature: "var configuration: URLSessionConfiguration", Kind: "property"},
+			"dataTask":      {Signature: "func dataTask(with request: URLRequest)", Kind: "method"},
+		}}},
 		{language: "kotlin", packageName: "io.ktor.client", stub: PackageStub{Aliases: []string{"Ktor"}, Exports: map[string]StubExport{
 			"get":    {Signature: "get(url: String)", Kind: "method"},
 			"post":   {Signature: "post(url: String)", Kind: "method"},
@@ -145,6 +155,11 @@ func builtInPackageStubs() []builtInStubSpec {
 			"post":   {Signature: "post(String path)", Kind: "method"},
 			"put":    {Signature: "put(String path)", Kind: "method"},
 			"delete": {Signature: "delete(String path)", Kind: "method"},
+		}}},
+		{language: "dart", packageName: "http", stub: PackageStub{Aliases: []string{"http"}, Exports: map[string]StubExport{
+			"get":    {Signature: "Future<Response> get(Uri url)", Kind: "function"},
+			"post":   {Signature: "Future<Response> post(Uri url)", Kind: "function"},
+			"Client": {Signature: "class Client", Kind: "class"},
 		}}},
 		{language: "cpp", packageName: "std::string", stub: PackageStub{Aliases: []string{"std::string"}, Exports: map[string]StubExport{
 			"size":   {Signature: "size() const", Kind: "method"},

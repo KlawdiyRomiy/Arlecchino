@@ -17,10 +17,12 @@ const (
 )
 
 type Command struct {
-	Label      string `json:"label"`
-	Executable string `json:"executable"`
-	Args       string `json:"args"`
-	Safe       bool   `json:"safe"`
+	Label        string               `json:"label"`
+	Executable   string               `json:"executable"`
+	Args         string               `json:"args"`
+	Safe         bool                 `json:"safe"`
+	Capability   DependencyCapability `json:"capability,omitempty"`
+	MutationRisk MutationRisk         `json:"mutationRisk,omitempty"`
 }
 
 type Manager struct {
@@ -94,10 +96,71 @@ func (e *Executor) Execute(projectPath string, mode Mode) (map[string]string, er
 }
 
 func splitArgs(args string) []string {
-	if strings.TrimSpace(args) == "" {
+	trimmed := strings.TrimSpace(args)
+	if trimmed == "" {
 		return nil
 	}
-	return strings.Fields(args)
+
+	parts := make([]string, 0, 8)
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		parts = append(parts, current.String())
+		current.Reset()
+	}
+
+	for _, r := range trimmed {
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+
+		if inSingle {
+			if r == '\'' {
+				inSingle = false
+			} else {
+				current.WriteRune(r)
+			}
+			continue
+		}
+
+		if inDouble {
+			if r == '"' {
+				inDouble = false
+			} else if r == '\\' {
+				escaped = true
+			} else {
+				current.WriteRune(r)
+			}
+			continue
+		}
+
+		switch r {
+		case '\\':
+			escaped = true
+		case '\'':
+			inSingle = true
+		case '"':
+			inDouble = true
+		case ' ', '\t', '\n', '\r':
+			flush()
+		default:
+			current.WriteRune(r)
+		}
+	}
+
+	if escaped {
+		current.WriteRune('\\')
+	}
+	flush()
+	return parts
 }
 
 func commandAvailable(projectPath, executable string) bool {
@@ -113,80 +176,7 @@ func commandAvailable(projectPath, executable string) bool {
 }
 
 func detectManagers(projectPath string, mode Mode) []Manager {
-	managers := make([]Manager, 0, 8)
-	appendIf := func(manifest, ecosystem, tool string, commands []Command) {
-		if _, err := os.Stat(filepath.Join(projectPath, manifest)); err == nil {
-			managers = append(managers, Manager{
-				Ecosystem: ecosystem,
-				Tool:      tool,
-				Manifest:  manifest,
-				Commands:  commandsForMode(commands, mode),
-			})
-		}
-	}
-
-	nodeTool := detectNodeTool(projectPath)
-	if nodeTool != "" {
-		appendIf("package.json", "node", nodeTool, []Command{
-			{Label: "install", Executable: nodeTool, Args: nodeInstallArgs(nodeTool), Safe: true},
-			{Label: "update", Executable: nodeTool, Args: nodeUpdateArgs(nodeTool), Safe: false},
-		})
-	}
-	appendIf("go.mod", "go", "go", []Command{
-		{Label: "tidy", Executable: "go", Args: "mod tidy", Safe: true},
-		{Label: "update", Executable: "sh", Args: "-c go get -u ./... && go mod tidy", Safe: false},
-	})
-	appendIf("composer.json", "php", "composer", []Command{
-		{Label: "install", Executable: "composer", Args: "install", Safe: true},
-		{Label: "update", Executable: "composer", Args: "update", Safe: false},
-	})
-	appendIf("Cargo.toml", "rust", "cargo", []Command{
-		{Label: "fetch", Executable: "cargo", Args: "fetch", Safe: true},
-		{Label: "update", Executable: "cargo", Args: "update", Safe: false},
-	})
-	appendIf("Gemfile", "ruby", "bundle", []Command{
-		{Label: "install", Executable: "bundle", Args: "install", Safe: true},
-		{Label: "update", Executable: "bundle", Args: "update", Safe: false},
-	})
-	appendIf("pubspec.yaml", "dart", "dart", []Command{
-		{Label: "pub-get", Executable: "dart", Args: "pub get", Safe: true},
-		{Label: "pub-upgrade", Executable: "dart", Args: "pub upgrade", Safe: false},
-	})
-	appendIf("Package.swift", "swift", "swift", []Command{
-		{Label: "resolve", Executable: "swift", Args: "package resolve", Safe: true},
-		{Label: "update", Executable: "swift", Args: "package update", Safe: false},
-	})
-	appendIf("requirements.txt", "python", "pip", []Command{
-		{Label: "install", Executable: "python3", Args: "-m pip install -r requirements.txt", Safe: true},
-	})
-	appendIf("pyproject.toml", "python", detectPythonTool(projectPath), []Command{
-		{Label: "install", Executable: detectPythonExec(projectPath), Args: detectPythonArgs(projectPath, true), Safe: true},
-		{Label: "update", Executable: detectPythonExec(projectPath), Args: detectPythonArgs(projectPath, false), Safe: false},
-	})
-	appendIf("pom.xml", "jvm", "maven", []Command{
-		{Label: "resolve", Executable: "mvn", Args: "dependency:resolve", Safe: true},
-		{Label: "update", Executable: "mvn", Args: "versions:use-latest-releases", Safe: false},
-	})
-	if hasGradle(projectPath) {
-		managers = append(managers, Manager{
-			Ecosystem: "jvm",
-			Tool:      detectGradleTool(projectPath),
-			Manifest:  detectGradleManifest(projectPath),
-			Commands: commandsForMode([]Command{
-				{Label: "dependencies", Executable: detectGradleTool(projectPath), Args: "dependencies", Safe: true},
-				{Label: "refresh", Executable: detectGradleTool(projectPath), Args: "--refresh-dependencies", Safe: false},
-			}, mode),
-		})
-	}
-	appendIf("packages.config", "dotnet", "nuget", []Command{
-		{Label: "restore", Executable: "dotnet", Args: "restore", Safe: true},
-	})
-	appendIf(".terraform.lock.hcl", "terraform", "terraform", []Command{
-		{Label: "init", Executable: "terraform", Args: "init -backend=false", Safe: true},
-		{Label: "upgrade", Executable: "terraform", Args: "init -upgrade -backend=false", Safe: false},
-	})
-
-	return managers
+	return defaultRegistry().Detect(projectPath, mode)
 }
 
 func commandsForMode(commands []Command, mode Mode) []Command {
@@ -201,103 +191,4 @@ func commandsForMode(commands []Command, mode Mode) []Command {
 		filtered = append(filtered, cmd)
 	}
 	return filtered
-}
-
-func detectNodeTool(projectPath string) string {
-	for _, pair := range []struct{ file, tool string }{{"pnpm-lock.yaml", "pnpm"}, {"yarn.lock", "yarn"}, {"package-lock.json", "npm"}, {"bun.lockb", "bun"}} {
-		if _, err := os.Stat(filepath.Join(projectPath, pair.file)); err == nil {
-			return pair.tool
-		}
-	}
-	if _, err := os.Stat(filepath.Join(projectPath, "package.json")); err == nil {
-		return "npm"
-	}
-	return ""
-}
-
-func nodeInstallArgs(tool string) string {
-	switch tool {
-	case "pnpm", "yarn", "bun":
-		return "install"
-	default:
-		return "install"
-	}
-}
-
-func nodeUpdateArgs(tool string) string {
-	switch tool {
-	case "pnpm":
-		return "update --latest"
-	case "yarn":
-		return "upgrade"
-	case "bun":
-		return "update"
-	default:
-		return "update"
-	}
-}
-
-func detectPythonTool(projectPath string) string {
-	data, err := os.ReadFile(filepath.Join(projectPath, "pyproject.toml"))
-	if err != nil {
-		return "python3"
-	}
-	content := string(data)
-	if strings.Contains(content, "[tool.poetry]") {
-		return "poetry"
-	}
-	if strings.Contains(content, "[tool.uv") || strings.Contains(content, "uv]") {
-		return "uv"
-	}
-	return "python3"
-}
-
-func detectPythonExec(projectPath string) string {
-	tool := detectPythonTool(projectPath)
-	if tool == "poetry" || tool == "uv" {
-		return tool
-	}
-	return "python3"
-}
-
-func detectPythonArgs(projectPath string, safe bool) string {
-	switch detectPythonTool(projectPath) {
-	case "poetry":
-		if safe {
-			return "install"
-		}
-		return "update"
-	case "uv":
-		if safe {
-			return "sync"
-		}
-		return "lock --upgrade"
-	default:
-		if safe {
-			return "-m pip install -e ."
-		}
-		return "-m pip install --upgrade -e ."
-	}
-}
-
-func hasGradle(projectPath string) bool {
-	return detectGradleManifest(projectPath) != ""
-}
-
-func detectGradleManifest(projectPath string) string {
-	for _, name := range []string{"build.gradle.kts", "build.gradle"} {
-		if _, err := os.Stat(filepath.Join(projectPath, name)); err == nil {
-			return name
-		}
-	}
-	return ""
-}
-
-func detectGradleTool(projectPath string) string {
-	for _, name := range []string{"gradlew", "gradlew.bat"} {
-		if _, err := os.Stat(filepath.Join(projectPath, name)); err == nil {
-			return "./" + name
-		}
-	}
-	return "gradle"
 }

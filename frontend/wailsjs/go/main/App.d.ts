@@ -6,6 +6,7 @@ import {main} from '../models';
 import {indexer} from '../models';
 import {depsync} from '../models';
 import {welcome} from '../models';
+import {execution} from '../models';
 import {lsp} from '../models';
 import {brain} from '../models';
 import {project} from '../models';
@@ -16,6 +17,8 @@ export function AnalyzeModels(arg1:string):Promise<any>;
 export function CacheClear(arg1:system.CacheOptions):Promise<string>;
 
 export function CancelPrediction():Promise<void>;
+
+export function ClearApprovedDependencyActions():Promise<void>;
 
 export function ClearCompiled():Promise<string>;
 
@@ -97,6 +100,8 @@ export function GetCurrentWorkDir():Promise<string>;
 
 export function GetDependencyGraph(arg1:string,arg2:number):Promise<indexer.DependencyGraph>;
 
+export function GetDependencyPolicyPlan(arg1:string):Promise<depsync.PolicyPlan>;
+
 export function GetDependencySyncPlan(arg1:string):Promise<depsync.Plan>;
 
 export function GetDevToolsStatus():Promise<Array<welcome.ToolStatus>>;
@@ -108,6 +113,8 @@ export function GetDispatcherRecent():Promise<Array<main.ResultItemJS>>;
 export function GetDispatcherSuggestions(arg1:string):Promise<Array<main.ResultItemJS>>;
 
 export function GetEditorCompletions(arg1:main.EditorCompletionContext):Promise<main.EditorCompletionResult>;
+
+export function GetExecutionProfiles(arg1:main.ExecutionProfilesRequest):Promise<execution.ProfileSet>;
 
 export function GetGitBlame(arg1:string):Promise<string>;
 
@@ -217,6 +224,8 @@ export function LSPPreloadProjectDiagnostics(arg1:string):Promise<boolean>;
 
 export function LSPSignatureHelp(arg1:string,arg2:string,arg3:number,arg4:number):Promise<main.SignatureHelpResult>;
 
+export function ListApprovedDependencyActions():Promise<Array<string>>;
+
 export function ListInstalledPackages():Promise<string>;
 
 export function ListTerminalSessions():Promise<Array<string>>;
@@ -278,6 +287,8 @@ export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void
 export function RestartLSPServer(arg1:string):Promise<boolean>;
 
 export function RouteCache():Promise<string>;
+
+export function RunDependencyPolicySync(arg1:depsync.ExecuteRequest):Promise<depsync.ExecuteResult>;
 
 export function RunGitCommand(arg1:Array<string>):Promise<string>;
 

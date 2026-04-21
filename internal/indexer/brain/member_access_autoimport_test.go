@@ -77,6 +77,21 @@ func TestFilterByContext_MethodCall_DropsPackageNoiseWhenMembersExist(t *testing
 	}
 }
 
+func TestSourceBonus_UnresolvedMemberAccessPrefersLibraryOverLSP(t *testing.T) {
+	brain := &PredictionBrain{}
+	ctx := CompletionContext{
+		Language:     "swift",
+		AccessChain:  "URLSession.",
+		IsMethodCall: true,
+	}
+
+	lspBonus := brain.sourceBonus(core.SourceLSP, ctx)
+	libraryBonus := brain.sourceBonus(core.SourceLibrary, ctx)
+	if lspBonus >= libraryBonus {
+		t.Fatalf("expected unresolved member access to prefer library over LSP, got lsp=%v library=%v", lspBonus, libraryBonus)
+	}
+}
+
 func TestStubProvider_GetContextCompletions_GoUnresolvedEmptyPrefixSkipsDynamicBuild(t *testing.T) {
 	provider := NewStubProvider()
 	called := false

@@ -1,21 +1,22 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
-  FolderOpen,
   CheckCircle,
-  XCircle,
-  Sparkles,
-  Download,
-  Loader2,
   ChevronDown,
   ChevronUp,
+  Download,
+  FolderOpen,
   GitBranch,
+  Loader2,
+  Sparkles,
+  XCircle,
 } from "lucide-react";
+
 import * as App from "../../wailsjs/go/main/App";
 import { welcome } from "../../wailsjs/go/models";
-import { ThemeToggle, WindowControls } from "./ui";
-import { CreateProjectDialog } from "./CreateProjectDialog";
 import { shortcuts } from "../utils/keyboard";
+import { CreateProjectDialog } from "./CreateProjectDialog";
+import { ThemeToggle, WindowControls } from "./ui";
 
 interface Project {
   id: number;
@@ -40,19 +41,19 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showToolsPanel, setShowToolsPanel] = useState(false);
   const [installing, setInstalling] = useState<string | null>(null);
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadRecentProjects();
-    validateEnvironment();
-    loadToolsStatus();
-    setLoading(false);
+    const bootstrap = async () => {
+      await Promise.all([
+        loadRecentProjects(),
+        validateEnvironment(),
+        loadToolsStatus(),
+      ]);
+      setLoading(false);
+    };
 
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-
-    return () => clearInterval(timer);
+    void bootstrap();
   }, []);
 
   useEffect(() => {
@@ -104,12 +105,17 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
 
   const handleInstallTool = async (toolName: string) => {
     setInstalling(toolName);
+    setInstallError(null);
     try {
       await App.InstallDevTool(toolName);
       await loadToolsStatus();
     } catch (error) {
       console.error(`Error installing ${toolName}:`, error);
-      alert(`Failed to install ${toolName}: ${error}`);
+      setInstallError(
+        error instanceof Error
+          ? error.message
+          : `Failed to install ${toolName}`,
+      );
     } finally {
       setInstalling(null);
     }
@@ -128,49 +134,58 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
     }
   };
 
-  const handleOpenRecentProject = (projectPath: string) => {
-    onProjectOpen(projectPath);
-  };
-
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-  };
-
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString("en-US", {
-      weekday: "long",
-      month: "short",
-      day: "numeric",
-    });
-  };
+  const environmentEntries = useMemo(
+    () => Object.entries(envStatus),
+    [envStatus],
+  );
+  const readyEnvironmentCount = useMemo(
+    () => environmentEntries.filter(([, ready]) => ready).length,
+    [environmentEntries],
+  );
+  const missingToolsCount = useMemo(
+    () =>
+      devTools.filter((tool) => !tool.available).length +
+      lspServers.filter((server) => !server.available).length,
+    [devTools, lspServers],
+  );
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-[var(--bg-blackprint)]">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-          className="w-8 h-8 border-4 border-white border-t-transparent rounded-full"
-        />
+      <div className="flex h-screen items-center justify-center bg-[var(--surface-canvas)] px-6">
+        <div className="w-full max-w-[1120px] overflow-hidden rounded-[22px] border border-[var(--border-default)] bg-[var(--surface-elevated)] shadow-[var(--shadow-overlay)]">
+          <div className="border-b border-[var(--border-subtle)] bg-[var(--surface-2)] px-6 py-5">
+            <div className="h-3 w-28 animate-pulse rounded-full bg-white/8" />
+            <div className="mt-4 h-8 w-80 animate-pulse rounded-full bg-white/8" />
+          </div>
+          <div className="grid gap-6 px-6 py-6 lg:grid-cols-[minmax(0,1.2fr)_320px]">
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="h-24 animate-pulse rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)]" />
+                <div className="h-24 animate-pulse rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)]" />
+              </div>
+              <div className="h-64 animate-pulse rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)]" />
+            </div>
+            <div className="flex items-center justify-center rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-muted)]">
+              <Loader2 size={20} className="animate-spin" />
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="relative flex flex-col items-center justify-center h-screen overflow-hidden">
-      <div className="fixed inset-0 bg-[var(--bg-blackprint)] z-0" />
+    <div className="relative flex h-screen flex-col overflow-hidden bg-[var(--surface-canvas)]">
+      <div className="fixed inset-0 z-0 bg-[var(--surface-canvas)]" />
       <div className="grid-bg" />
+      <div className="blackprint-bg" />
 
       <div
-        className="absolute top-0 left-0 right-0 h-12 z-40"
+        className="absolute left-0 right-0 top-0 z-40 h-12"
         style={{ "--wails-draggable": "drag" } as React.CSSProperties}
       />
       <div
-        className="absolute top-6 right-6 flex items-center gap-2 z-50"
+        className="absolute right-6 top-6 z-50 flex items-center gap-2"
         style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}
       >
         <ThemeToggle />
@@ -178,303 +193,347 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
       </div>
 
       <motion.div
-        initial={{ opacity: 0, y: -20 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="absolute top-20 left-16 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] shadow-2xl z-10 w-[200px]"
-        style={{
-          borderRadius: "var(--radius-lg)",
-          boxShadow: "var(--shadow-panel)",
-        }}
+        transition={{ duration: 0.24 }}
+        className="relative z-20 mx-auto flex h-full w-full max-w-[1120px] flex-1 items-center px-6 pb-10 pt-20"
       >
-        <div
-          className="px-4 py-2 bg-[var(--bg-tertiary)] border-b border-[var(--border-subtle)] cursor-grab active:cursor-grabbing"
-          style={{ borderRadius: "var(--radius-lg) var(--radius-lg) 0 0" }}
-        >
-          <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">
-            ~/arlecchino/clock
-          </div>
-        </div>
-        <div className="p-4">
-          <div className="text-4xl font-semibold font-mono text-[var(--text-primary)] text-center">
-            {formatTime(currentTime)}
-          </div>
-          <div className="text-[11px] text-[var(--text-secondary)] text-center mt-1">
-            {formatDate(currentTime)}
-          </div>
-        </div>
-      </motion.div>
+        <div className="grid w-full grid-cols-[minmax(0,1.2fr)_360px] gap-6">
+          <div className="rounded-[22px] border border-[var(--border-default)] bg-[var(--surface-elevated)] shadow-[var(--shadow-overlay)]">
+            <div className="border-b border-[var(--border-subtle)] bg-[var(--surface-2)] px-6 py-5">
+              <div className="mb-2 text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                Workspace
+              </div>
+              <h1 className="text-[28px] font-semibold tracking-[-0.02em] text-[var(--text-primary)]">
+                Open, create, and return to work.
+              </h1>
+              <p className="mt-2 max-w-[560px] text-sm text-[var(--text-secondary)]">
+                Arlecchino starts with a calm, keyboard-first surface: open a
+                folder, create a new project, or jump back into a recent
+                workspace.
+              </p>
+            </div>
 
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, delay: 0.1 }}
-        className="absolute top-20 right-16 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] shadow-2xl z-10 w-[280px]"
-        style={{
-          borderRadius: "var(--radius-lg)",
-          boxShadow: "var(--shadow-panel)",
-        }}
-      >
-        <div
-          className="px-4 py-2 bg-[var(--bg-tertiary)] border-b border-[var(--border-subtle)] cursor-grab active:cursor-grabbing"
-          style={{ borderRadius: "var(--radius-lg) var(--radius-lg) 0 0" }}
-        >
-          <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">
-            ~/arlecchino/recentProjects
-          </div>
-        </div>
-        <div className="p-4">
-          {recentProjects.length > 0 ? (
-            recentProjects.slice(0, 3).map((project) => (
-              <div
-                key={project.id}
-                onClick={() => handleOpenRecentProject(project.path)}
-                className="flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--bg-tertiary)] cursor-pointer transition-colors mb-1"
-              >
-                <div className="w-8 h-8 bg-[var(--bg-elevated)] rounded-lg flex items-center justify-center text-sm">
-                  ◆
+            <div className="px-6 py-6">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  onClick={handleOpenProject}
+                  className="flex items-center gap-3 rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-4 text-left transition-colors hover:border-[var(--border-default)] hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
+                >
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-primary)]">
+                    <FolderOpen size={18} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-[var(--text-primary)]">
+                      Open Project
+                    </div>
+                    <div className="mt-1 text-xs text-[var(--text-muted)]">
+                      Select a directory and load it into the workspace.
+                    </div>
+                  </div>
+                  <span className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-2)] px-2 py-1 font-mono text-[10px] text-[var(--text-muted)]">
+                    ⌘O
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setShowCreateDialog(true)}
+                  className="flex items-center gap-3 rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-4 text-left transition-colors hover:border-[var(--border-default)] hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
+                >
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-primary)]">
+                    <Sparkles size={18} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-[var(--text-primary)]">
+                      New Project
+                    </div>
+                    <div className="mt-1 text-xs text-[var(--text-muted)]">
+                      Create a fresh workspace with the current defaults.
+                    </div>
+                  </div>
+                  <span className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-2)] px-2 py-1 font-mono text-[10px] text-[var(--text-muted)]">
+                    ⌘N
+                  </span>
+                </button>
+              </div>
+
+              <div className="mt-6">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                      Recent Projects
+                    </div>
+                    <div className="mt-1 text-sm text-[var(--text-secondary)]">
+                      Continue with the last workspaces you opened.
+                    </div>
+                  </div>
+                  <div className="text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                    Enter to open
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-medium text-[var(--text-primary)] truncate">
-                    {project.name}
-                  </div>
-                  <div className="text-[10px] font-mono text-[var(--text-muted)] truncate">
-                    {project.path}
-                  </div>
+
+                <div className="overflow-hidden rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)]">
+                  {recentProjects.length > 0 ? (
+                    recentProjects.map((project) => (
+                      <button
+                        key={project.id}
+                        onClick={() => onProjectOpen(project.path)}
+                        className="flex w-full items-center gap-3 border-b border-[var(--border-subtle)] px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--focus-ring)] last:border-b-0"
+                      >
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-2)] font-mono text-[11px] text-[var(--text-primary)]">
+                          {project.name.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium text-[var(--text-primary)]">
+                            {project.name}
+                          </div>
+                          <div className="mt-1 truncate font-mono text-[11px] text-[var(--text-muted)]">
+                            {project.path}
+                          </div>
+                        </div>
+                        <div className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                          {project.version || "project"}
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="px-4 py-6 text-sm text-[var(--text-muted)]">
+                      No recent projects yet.
+                    </div>
+                  )}
                 </div>
               </div>
-            ))
-          ) : (
-            <div className="text-[12px] text-[var(--text-secondary)] text-center py-4">
-              No recent projects
             </div>
-          )}
-        </div>
-      </motion.div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, delay: 0.2 }}
-        className="absolute bottom-20 left-16 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] shadow-2xl z-10 w-[320px]"
-        style={{
-          borderRadius: "var(--radius-lg)",
-          boxShadow: "var(--shadow-panel)",
-        }}
-      >
-        <div
-          className="px-4 py-2 bg-[var(--bg-tertiary)] border-b border-[var(--border-subtle)] cursor-grab active:cursor-grabbing"
-          style={{ borderRadius: "var(--radius-lg) var(--radius-lg) 0 0" }}
-        >
-          <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">
-            ~/arlecchino/gitChanges
           </div>
-        </div>
-        <div className="p-4">
-          <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--bg-tertiary)] cursor-pointer transition-colors mb-1">
-            <div className="w-2 h-2 rounded-sm bg-[#e0a040]" />
-            <div className="flex-1 text-[12px] text-[var(--text-secondary)]">
-              redesign/v4.html
-            </div>
-            <div className="text-[10px] text-[var(--text-muted)]">2m ago</div>
-          </div>
-          <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--bg-tertiary)] cursor-pointer transition-colors mb-1">
-            <div className="w-2 h-2 rounded-sm bg-[#50a050]" />
-            <div className="flex-1 text-[12px] text-[var(--text-secondary)]">
-              internal/predictive/ast.go
-            </div>
-            <div className="text-[10px] text-[var(--text-muted)]">15m ago</div>
-          </div>
-          <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--bg-tertiary)] cursor-pointer transition-colors">
-            <div className="w-2 h-2 rounded-sm bg-[#e0a040]" />
-            <div className="flex-1 text-[12px] text-[var(--text-secondary)]">
-              frontend/src/App.tsx
-            </div>
-            <div className="text-[10px] text-[var(--text-muted)]">1h ago</div>
-          </div>
-        </div>
-      </motion.div>
 
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.5, delay: 0.3 }}
-        className="relative z-20 flex flex-col items-center max-w-[500px]"
-      >
-        <div className="flex flex-col gap-2 w-full">
-          <button
-            onClick={handleOpenProject}
-            className="flex items-center gap-4 px-6 py-3.5 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-primary)] text-[13px] font-medium cursor-pointer transition-all hover:bg-[var(--bg-tertiary)] hover:border-[var(--border-default)] hover:-translate-y-0.5 relative overflow-hidden group"
-            style={{ borderRadius: "var(--radius-lg)" }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.boxShadow = "var(--shadow-panel)")
-            }
-            onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}
-          >
-            <FolderOpen size={18} className="opacity-60" />
-            <span className="flex-1 text-left">Open Project</span>
-            <span className="text-[10px] font-mono text-[var(--text-muted)] px-2 py-1 bg-[var(--bg-tertiary)] rounded-md">
-              ⌘O
-            </span>
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
-          </button>
+          <div className="flex flex-col gap-4">
+            <div className="rounded-[20px] border border-[var(--border-default)] bg-[var(--surface-elevated)] shadow-[var(--shadow-overlay)]">
+              <div className="border-b border-[var(--border-subtle)] bg-[var(--surface-2)] px-5 py-4">
+                <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                  Readiness
+                </div>
+              </div>
 
-          <button
-            onClick={() => setShowCreateDialog(true)}
-            className="flex items-center gap-4 px-6 py-3.5 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-primary)] text-[13px] font-medium cursor-pointer transition-all hover:bg-[var(--bg-tertiary)] hover:border-[var(--border-default)] hover:-translate-y-0.5 relative overflow-hidden group"
-            style={{ borderRadius: "var(--radius-lg)" }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.boxShadow = "var(--shadow-panel)")
-            }
-            onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}
-          >
-            <Sparkles size={18} className="opacity-60" />
-            <span className="flex-1 text-left">New Project</span>
-            <span className="text-[10px] font-mono text-[var(--text-muted)] px-2 py-1 bg-[var(--bg-tertiary)] rounded-md">
-              ⌘N
-            </span>
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
-          </button>
+              <div className="space-y-4 px-5 py-5">
+                <div className="rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-3">
+                  <div className="text-sm font-medium text-[var(--text-primary)]">
+                    Environment checks
+                  </div>
+                  <div className="mt-1 text-xs text-[var(--text-muted)]">
+                    {readyEnvironmentCount}/{environmentEntries.length || 0}{" "}
+                    startup checks ready
+                  </div>
+                  {environmentEntries.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {environmentEntries.map(([name, ready]) => (
+                        <span
+                          key={name}
+                          className={`rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${
+                            ready
+                              ? "border-[color:var(--status-success)]/25 bg-[color:var(--status-success)]/10 text-[var(--status-success)]"
+                              : "border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-muted)]"
+                          }`}
+                        >
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-          <button
-            className="flex items-center gap-4 px-6 py-3.5 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-primary)] text-[13px] font-medium cursor-pointer transition-all hover:bg-[var(--bg-tertiary)] hover:border-[var(--border-default)] hover:-translate-y-0.5 relative overflow-hidden group"
-            style={{ borderRadius: "var(--radius-lg)" }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.boxShadow = "var(--shadow-panel)")
-            }
-            onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}
-          >
-            <GitBranch size={18} className="opacity-60" />
-            <span className="flex-1 text-left">Clone Repository</span>
-            <span className="text-[10px] font-mono text-[var(--text-muted)] px-2 py-1 bg-[var(--bg-tertiary)] rounded-md">
-              ⇧⌘G
-            </span>
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
-          </button>
-        </div>
+                <div className="rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-[var(--text-primary)]">
+                        Tooling and language servers
+                      </div>
+                      <div className="mt-1 text-xs text-[var(--text-muted)]">
+                        Install missing dependencies without leaving the startup
+                        surface.
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowToolsPanel((value) => !value)}
+                      className="inline-flex h-8 items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 text-[11px] uppercase tracking-[0.14em] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)]"
+                    >
+                      {showToolsPanel ? (
+                        <ChevronUp size={14} />
+                      ) : (
+                        <ChevronDown size={14} />
+                      )}
+                      {showToolsPanel ? "Hide" : "Show"}
+                    </button>
+                  </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.5 }}
-          className="mt-8"
-        >
-          <button
-            onClick={() => setShowToolsPanel(!showToolsPanel)}
-            className="flex items-center gap-2 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-          >
-            {showToolsPanel ? (
-              <ChevronUp size={16} />
-            ) : (
-              <ChevronDown size={16} />
-            )}
-            <span>Development Tools & LSP Servers</span>
-            {devTools.filter((t) => !t.available).length +
-              lspServers.filter((t) => !t.available).length >
-              0 && (
-              <span className="px-2 py-0.5 bg-yellow-900/30 text-yellow-400 text-[11px] rounded-full">
-                {devTools.filter((t) => !t.available).length +
-                  lspServers.filter((t) => !t.available).length}{" "}
-                missing
-              </span>
-            )}
-          </button>
-        </motion.div>
-      </motion.div>
-
-      {showToolsPanel && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: "auto" }}
-          exit={{ opacity: 0, height: 0 }}
-          className="absolute bottom-8 w-full max-w-4xl grid grid-cols-2 gap-6 px-8 z-20"
-        >
-          <div className="bg-[var(--bg-secondary)] rounded-xl p-4 border border-[var(--border-subtle)]">
-            <h3 className="text-[13px] font-semibold text-[var(--text-primary)] mb-3 flex items-center gap-2">
-              <Sparkles size={16} className="text-blue-500" />
-              Development Tools
-            </h3>
-            <div className="space-y-2">
-              {devTools.map((tool) => (
-                <div
-                  key={tool.name}
-                  className="flex items-center justify-between py-2 px-3 rounded-lg bg-[var(--bg-tertiary)]"
-                >
-                  <div className="flex items-center gap-2">
-                    {tool.available ? (
-                      <CheckCircle size={16} className="text-green-500" />
-                    ) : (
-                      <XCircle size={16} className="text-gray-400" />
-                    )}
-                    <span className="text-[13px] text-[var(--text-primary)]">
-                      {tool.name}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="rounded-full border border-[var(--border-subtle)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                      {devTools.length} dev tools
                     </span>
-                    {tool.version && (
-                      <span className="text-[11px] text-[var(--text-secondary)]">
-                        {tool.version}
+                    <span className="rounded-full border border-[var(--border-subtle)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                      {lspServers.length} LSP servers
+                    </span>
+                    {missingToolsCount > 0 && (
+                      <span className="rounded-full border border-[color:var(--status-warning)]/25 bg-[color:var(--status-warning)]/10 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--status-warning)]">
+                        {missingToolsCount} missing
                       </span>
                     )}
                   </div>
-                  {!tool.available && (
-                    <button
-                      onClick={() => handleInstallTool(tool.name.toLowerCase())}
-                      disabled={installing !== null}
-                      className="flex items-center gap-1 px-2 py-1 text-[11px] bg-blue-500 hover:bg-blue-600 text-white rounded transition-colors disabled:opacity-50"
-                    >
-                      {installing === tool.name.toLowerCase() ? (
-                        <Loader2 size={12} className="animate-spin" />
-                      ) : (
-                        <Download size={12} />
-                      )}
-                      Install
-                    </button>
-                  )}
                 </div>
-              ))}
-            </div>
-          </div>
 
-          <div className="bg-[var(--bg-secondary)] rounded-xl p-4 border border-[var(--border-subtle)]">
-            <h3 className="text-[13px] font-semibold text-[var(--text-primary)] mb-3 flex items-center gap-2">
-              <Sparkles size={16} className="text-purple-500" />
-              LSP Servers
-            </h3>
-            <div className="space-y-2">
-              {lspServers.map((server) => (
-                <div
-                  key={server.name}
-                  className="flex items-center justify-between py-2 px-3 rounded-lg bg-[var(--bg-tertiary)]"
-                >
-                  <div className="flex items-center gap-2">
-                    {server.available ? (
-                      <CheckCircle size={16} className="text-green-500" />
-                    ) : (
-                      <XCircle size={16} className="text-gray-400" />
-                    )}
-                    <span className="text-[13px] text-[var(--text-primary)] font-mono">
-                      {server.name}
-                    </span>
+                <div className="rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-3">
+                  <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                    Shortcuts
                   </div>
-                  {!server.available && (
-                    <button
-                      onClick={() => handleInstallTool(server.name)}
-                      disabled={installing !== null}
-                      className="flex items-center gap-1 px-2 py-1 text-[11px] bg-purple-500 hover:bg-purple-600 text-white rounded transition-colors disabled:opacity-50"
-                    >
-                      {installing === server.name ? (
-                        <Loader2 size={12} className="animate-spin" />
-                      ) : (
-                        <Download size={12} />
-                      )}
-                      Install
-                    </button>
-                  )}
+                  <div className="space-y-2 font-mono text-[11px] text-[var(--text-secondary)]">
+                    <div className="flex items-center justify-between">
+                      <span>Open project</span>
+                      <span>⌘O</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>New project</span>
+                      <span>⌘N</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span>Source control</span>
+                      <span>⇧⌘G</span>
+                    </div>
+                  </div>
                 </div>
-              ))}
+              </div>
             </div>
+
+            {showToolsPanel && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.18 }}
+                className="rounded-[20px] border border-[var(--border-default)] bg-[var(--surface-elevated)] shadow-[var(--shadow-overlay)]"
+              >
+                <div className="border-b border-[var(--border-subtle)] bg-[var(--surface-2)] px-5 py-4">
+                  <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                    Tool Status
+                  </div>
+                </div>
+
+                <div className="max-h-[40vh] space-y-5 overflow-y-auto px-5 py-5">
+                  {installError && (
+                    <div className="rounded-xl border border-[color:var(--status-error)]/25 bg-[color:var(--status-error)]/10 px-3 py-2 text-sm text-[var(--status-error)]">
+                      {installError}
+                    </div>
+                  )}
+
+                  <div>
+                    <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
+                      <Sparkles
+                        size={15}
+                        className="text-[var(--accent-primary)]"
+                      />
+                      Development Tools
+                    </div>
+                    <div className="overflow-hidden rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-1)]">
+                      {devTools.map((tool) => (
+                        <div
+                          key={tool.name}
+                          className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-4 py-3 last:border-b-0"
+                        >
+                          <div className="min-w-0 flex items-center gap-3">
+                            {tool.available ? (
+                              <CheckCircle
+                                size={16}
+                                className="text-[var(--status-success)]"
+                              />
+                            ) : (
+                              <XCircle
+                                size={16}
+                                className="text-[var(--text-muted)]"
+                              />
+                            )}
+                            <div className="min-w-0">
+                              <div className="truncate text-sm text-[var(--text-primary)]">
+                                {tool.name}
+                              </div>
+                              {tool.version && (
+                                <div className="truncate text-[11px] text-[var(--text-muted)]">
+                                  {tool.version}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          {!tool.available && (
+                            <button
+                              onClick={() =>
+                                handleInstallTool(tool.name.toLowerCase())
+                              }
+                              disabled={installing !== null}
+                              className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 text-[11px] uppercase tracking-[0.14em] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                            >
+                              {installing === tool.name.toLowerCase() ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <Download size={12} />
+                              )}
+                              Install
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
+                      <GitBranch
+                        size={15}
+                        className="text-[var(--status-info)]"
+                      />
+                      LSP Servers
+                    </div>
+                    <div className="overflow-hidden rounded-[14px] border border-[var(--border-subtle)] bg-[var(--surface-1)]">
+                      {lspServers.map((server) => (
+                        <div
+                          key={server.name}
+                          className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-4 py-3 last:border-b-0"
+                        >
+                          <div className="min-w-0 flex items-center gap-3">
+                            {server.available ? (
+                              <CheckCircle
+                                size={16}
+                                className="text-[var(--status-success)]"
+                              />
+                            ) : (
+                              <XCircle
+                                size={16}
+                                className="text-[var(--text-muted)]"
+                              />
+                            )}
+                            <div className="truncate font-mono text-sm text-[var(--text-primary)]">
+                              {server.name}
+                            </div>
+                          </div>
+                          {!server.available && (
+                            <button
+                              onClick={() => handleInstallTool(server.name)}
+                              disabled={installing !== null}
+                              className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-2)] px-3 text-[11px] uppercase tracking-[0.14em] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] disabled:opacity-50"
+                            >
+                              {installing === server.name ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <Download size={12} />
+                              )}
+                              Install
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
           </div>
-        </motion.div>
-      )}
+        </div>
+      </motion.div>
 
       <CreateProjectDialog
         open={showCreateDialog}

@@ -79,8 +79,6 @@ import { java } from "@codemirror/lang-java";
 import { sql } from "@codemirror/lang-sql";
 import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
-import { tags as t } from "@lezer/highlight";
-import { createTheme } from "thememirror";
 import rainbowBrackets from "rainbowbrackets";
 import { showMinimap } from "@replit/codemirror-minimap";
 import prettier from "prettier/standalone";
@@ -120,10 +118,13 @@ import { ghostExtension } from "../extensions/ghostExtension";
 import { metricsExtension } from "../extensions/metricsExtension";
 import { useGitStore } from "../stores/gitStore";
 import { createCompletionCache } from "../utils/completionCache";
+import { shouldEnableCodeMirrorMinimap } from "../utils/codeMirrorDisplay";
 import {
-  CODEMIRROR_TOOLTIP_Z_INDEX,
-  shouldEnableCodeMirrorMinimap,
-} from "../utils/codeMirrorDisplay";
+  codeEditorChromeStyle,
+  codeEditorStyles,
+  codeEditorSurfaceClassName,
+  codeEditorTheme,
+} from "../utils/codeMirrorTheme";
 import type { GitLineMarker } from "../utils/git";
 import { createLatestRequestGuard } from "../utils/latestRequestGuard";
 
@@ -131,7 +132,10 @@ const GHOST_DEBOUNCE_MS = 50;
 const GHOST_IDLE_DELAY_MS = 900;
 const EMPTY_GIT_MARKERS: readonly GitLineMarker[] = Object.freeze([]);
 
-type CompletionWithInsertText = Completion & { __insertText: string };
+type CompletionWithInsertText = Completion & {
+  __insertText: string;
+  __hasAdditionalTextEdits: boolean;
+};
 type CompletionPayload = {
   label?: string;
   text?: string;
@@ -140,44 +144,6 @@ type CompletionPayload = {
 };
 const SIGNATURE_HIDE_MS = 2400;
 const COMPLETION_CACHE_TTL_MS = 2000;
-
-const KIND_ICONS: Record<string, string> = {
-  method: "M",
-  function: "ƒ",
-  property: "P",
-  variable: "V",
-  class: "C",
-  interface: "I",
-  module: "N",
-  keyword: "K",
-  snippet: "S",
-  text: "T",
-  field: "F",
-  constant: "c",
-  enum: "E",
-  "enum-member": "e",
-  event: "⚡",
-  operator: "O",
-  unit: "U",
-  value: "=",
-  constructor: "C",
-  file: "📄",
-  folder: "📁",
-  reference: "R",
-  "type-parameter": "T",
-  route: "⟿",
-  view: "V",
-  config: "⚙",
-  model: "M",
-  controller: "C",
-  middleware: "→",
-  migration: "↓",
-  component: "◇",
-  type: "T",
-  struct: "S",
-  package: "P",
-  namespace: "N",
-};
 
 const SOURCE_LABELS: Record<string, string> = {
   lsp: "LSP",
@@ -190,19 +156,6 @@ const SOURCE_LABELS: Record<string, string> = {
   speculative: "Spec",
   snippet: "Snippet",
   arle: "ARLE",
-};
-
-const SOURCE_PRIORITY: Record<string, number> = {
-  lsp: 100,
-  local: 90,
-  predictive: 80,
-  arle: 75,
-  index: 70,
-  fill_all: 65,
-  virtual: 60,
-  ast: 50,
-  speculative: 40,
-  snippet: 30,
 };
 
 const firstWordOrToken = (text: string): string => {
@@ -225,262 +178,6 @@ const isThenable = (value: unknown): value is PromiseLike<unknown> => {
   const then = (value as { then?: unknown }).then;
   return typeof then === "function";
 };
-
-const blackprintTheme = createTheme({
-  variant: "dark",
-  settings: {
-    background: "#000000",
-    foreground: "#e0e0e0",
-    caret: "#ffffff",
-    selection: "#264f78",
-    lineHighlight: "#0a0a0a",
-    gutterBackground: "#000000",
-    gutterForeground: "#555555",
-  },
-  styles: [
-    { tag: t.comment, color: "#6a737d" },
-    { tag: t.lineComment, color: "#6a737d" },
-    { tag: t.blockComment, color: "#6a737d" },
-    { tag: t.docComment, color: "#6a737d" },
-    { tag: t.string, color: "#98c379" },
-    { tag: t.special(t.string), color: "#98c379" },
-    { tag: t.number, color: "#d19a66" },
-    { tag: t.bool, color: "#d19a66" },
-    { tag: t.null, color: "#d19a66" },
-    { tag: t.keyword, color: "#61afef" },
-    { tag: t.operator, color: "#abb2bf" },
-    { tag: t.className, color: "#e5c07b" },
-    { tag: t.definition(t.typeName), color: "#e5c07b" },
-    { tag: t.typeName, color: "#e5c07b" },
-    { tag: t.tagName, color: "#e06c75" },
-    { tag: t.attributeName, color: "#d19a66" },
-    { tag: t.propertyName, color: "#e06c75" },
-    { tag: t.function(t.variableName), color: "#61afef" },
-    { tag: t.definition(t.variableName), color: "#e06c75" },
-    { tag: t.variableName, color: "#e0e0e0" },
-    { tag: t.constant(t.variableName), color: "#d19a66" },
-    { tag: t.labelName, color: "#e06c75" },
-    { tag: t.namespace, color: "#e5c07b" },
-    { tag: t.macroName, color: "#61afef" },
-    { tag: t.literal, color: "#98c379" },
-    { tag: t.punctuation, color: "#abb2bf" },
-    { tag: t.paren, color: "#abb2bf" },
-    { tag: t.squareBracket, color: "#abb2bf" },
-    { tag: t.brace, color: "#abb2bf" },
-    { tag: t.derefOperator, color: "#abb2bf" },
-    { tag: t.self, color: "#e06c75" },
-  ],
-});
-
-const editorStyles = EditorView.theme({
-  "&": {
-    height: "100%",
-    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-    backgroundColor: "#000",
-  },
-  ".cm-scroller": {
-    backgroundColor: "#000",
-    overflow: "auto",
-  },
-  ".cm-content": {
-    padding: "8px 8px",
-    caretColor: "#fff",
-    backgroundColor: "#000",
-  },
-  ".cm-gutters": {
-    backgroundColor: "#000",
-    borderRight: "1px solid #1a1a1a",
-    color: "#555",
-  },
-  ".cm-activeLineGutter": {
-    backgroundColor: "transparent",
-    color: "#d4a520",
-  },
-  ".cm-activeLine": {
-    backgroundColor: "#0a0a0a",
-  },
-  ".cm-selectionBackground, .cm-content ::selection": {
-    backgroundColor: "#264f78 !important",
-  },
-  "&.cm-focused .cm-selectionBackground, &.cm-focused .cm-content ::selection":
-    {
-      backgroundColor: "#264f78 !important",
-    },
-  "& .cm-selectionLayer .cm-selectionBackground": {
-    backgroundColor: "#264f78 !important",
-  },
-  "&:not(.cm-focused) .cm-selectionBackground": {
-    backgroundColor: "#264f78 !important",
-  },
-  ".cm-line": {
-    padding: "0",
-  },
-  ".cm-foldGutter": {
-    width: "12px",
-  },
-  ".cm-tooltip": {
-    backgroundColor: "#000000",
-    border: "1px solid #2a2f36",
-    borderRadius: "8px",
-    boxShadow: "0 10px 24px rgba(0,0,0,0.8)",
-    zIndex: String(CODEMIRROR_TOOLTIP_Z_INDEX),
-  },
-  ".cm-tooltip-autocomplete": {
-    backgroundColor: "#000000",
-    border: "1px solid #333333",
-    borderRadius: "8px",
-    boxShadow: "0 16px 40px rgba(0, 0, 0, 0.8), 0 4px 12px rgba(0, 0, 0, 0.6)",
-    minWidth: "400px",
-    maxWidth: "800px",
-    width: "fit-content",
-    maxHeight: "400px",
-    padding: "8px",
-    opacity: "1",
-    transform: "translateY(0) translateZ(0)",
-    willChange: "transform, opacity",
-    transition: "opacity 80ms ease-out, transform 80ms ease-out",
-    zIndex: String(CODEMIRROR_TOOLTIP_Z_INDEX),
-  },
-  ".cm-tooltip-autocomplete > ul": {
-    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-    fontSize: "16px",
-    lineHeight: "1.6",
-    maxHeight: "380px",
-    maxWidth: "none",
-    minWidth: "100%",
-    overflowY: "auto",
-    overflowX: "hidden",
-    scrollbarWidth: "thin",
-    scrollbarColor: "#3a3f46 transparent",
-    paddingBottom: "4px",
-    transform: "translateZ(0)",
-    willChange: "transform",
-    contain: "content",
-    overscrollBehavior: "contain",
-  },
-  ".cm-tooltip-autocomplete > ul::-webkit-scrollbar": {
-    width: "8px",
-  },
-  ".cm-tooltip-autocomplete > ul::-webkit-scrollbar-track": {
-    background: "#141414",
-  },
-  ".cm-tooltip-autocomplete > ul::-webkit-scrollbar-thumb": {
-    background: "#3a3f46",
-    borderRadius: "6px",
-  },
-  ".cm-tooltip-autocomplete > ul::-webkit-scrollbar-thumb:hover": {
-    background: "#4a5058",
-  },
-  ".cm-tooltip-autocomplete > ul > li": {
-    padding: "8px 14px 8px 12px",
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    minHeight: "34px",
-    borderRadius: "6px",
-    borderLeft: "3px solid transparent",
-    letterSpacing: "0.2px",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    cursor: "pointer",
-    transform: "translateZ(0)",
-    contain: "layout style paint",
-  },
-  ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
-    backgroundColor: "#1a1a1a",
-    borderLeftColor: "#ffffff",
-  },
-  ".cm-tooltip-autocomplete > ul > li:hover:not([aria-selected])": {
-    backgroundColor: "#111111",
-  },
-  ".cm-completionIcon": {
-    width: "20px",
-    minWidth: "20px",
-    marginRight: "8px",
-    textAlign: "center",
-    fontSize: "16px",
-    color: "#999999",
-  },
-  ".cm-completionIcon-method, .cm-completionIcon-function": {
-    color: "#8b949e",
-  },
-  ".cm-completionIcon-class, .cm-completionIcon-constructor": {
-    color: "#8b949e",
-  },
-  ".cm-completionIcon-interface, .cm-completionIcon-type": {
-    color: "#8b949e",
-  },
-  ".cm-completionIcon-variable, .cm-completionIcon-field, .cm-completionIcon-property":
-    {
-      color: "#8b949e",
-    },
-  ".cm-completionIcon-constant, .cm-completionIcon-enum, .cm-completionIcon-enum-member":
-    {
-      color: "#8b949e",
-    },
-  ".cm-completionIcon-keyword": {
-    color: "#8b949e",
-  },
-  ".cm-completionIcon-snippet": {
-    color: "#8b949e",
-  },
-  ".cm-completionIcon-module, .cm-completionIcon-file, .cm-completionIcon-folder":
-    {
-      color: "#8b949e",
-    },
-  ".cm-completionLabel": {
-    color: "#e2e8f0",
-    flex: "0 1 auto",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  ".cm-completionMatchedText": {
-    color: "#ffffff",
-    fontWeight: "bold",
-  },
-  ".cm-completionDetail": {
-    color: "#8b949e",
-    flex: "1 1 auto",
-    paddingLeft: "12px",
-    fontSize: "14px",
-    fontStyle: "italic",
-    opacity: "0.85",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-  },
-  ".cm-completionSource": {
-    color: "#8b949e",
-    backgroundColor: "#141414",
-    border: "1px solid #2a2f36",
-    borderRadius: "10px",
-    padding: "2px 8px",
-    fontSize: "12px",
-    flexShrink: "0",
-    minWidth: "max-content",
-    textAlign: "right",
-    whiteSpace: "nowrap",
-    marginLeft: "12px",
-    overflow: "hidden",
-  },
-  ".cm-completionInfo": {
-    padding: "12px 14px",
-    borderTop: "1px solid #333333",
-    backgroundColor: "#141414",
-    fontSize: "13px",
-    color: "#cccccc",
-    maxHeight: "180px",
-    overflowY: "auto",
-  },
-  ".cm-completionInfo code": {
-    backgroundColor: "#0a0a0a",
-    padding: "3px 7px",
-    borderRadius: "4px",
-    fontFamily: '"JetBrains Mono", monospace',
-    fontSize: "12px",
-  },
-});
 
 const setDefinitionLinkEffect = StateEffect.define<{
   from: number;
@@ -1534,94 +1231,83 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         if (context.aborted || orchestrator.isStale(requestId)) return null;
         if (versionAtRequest !== documentVersionRef.current) return null;
 
-        const completions: Completion[] = result.items.flatMap((item) => {
-          let insertText = item.insertText || item.text || item.label || "";
-          if (shouldStripDollar && insertText.startsWith("$")) {
-            insertText = insertText.slice(1);
-          }
-          const resolvedInsertText =
-            snippetToPlainText(insertText) || insertText;
-          if (
-            isExactSelfEchoCompletion(item, currentPrefix, resolvedInsertText)
-          ) {
-            return [];
-          }
-          const kind = item.kind || "text";
-          const source = item.source || "index";
-          const kindIcon = KIND_ICONS[mapCompletionKindString(kind)] || "•";
-          const sourceLabel = SOURCE_LABELS[source] || source;
-          const sourceBoost = SOURCE_PRIORITY[source] || 0;
-
-          const applyCompletion = (
-            view: EditorView,
-            completionToApply: Completion,
-            from: number,
-            to: number,
-          ) => {
-            const changes = [
-              {
-                from,
-                to,
-                insert: resolvedInsertText,
-              },
-            ];
-
-            if (item.additionalTextEdits?.length) {
-              const additionalChanges = item.additionalTextEdits
-                .map((edit) => {
-                  const startLine = view.state.doc.line(edit.startLine);
-                  const endLine = view.state.doc.line(edit.endLine);
-                  return {
-                    from: startLine.from + edit.startColumn - 1,
-                    to: endLine.from + edit.endColumn - 1,
-                    insert: edit.text,
-                  };
-                })
-                .sort((a, b) => a.from - b.from);
-
-              changes.push(...additionalChanges);
+        const completions: Completion[] = result.items.flatMap(
+          (item, itemIndex) => {
+            let insertText = item.insertText || item.text || item.label || "";
+            if (shouldStripDollar && insertText.startsWith("$")) {
+              insertText = insertText.slice(1);
             }
+            const resolvedInsertText =
+              snippetToPlainText(insertText) || insertText;
+            if (
+              isExactSelfEchoCompletion(item, currentPrefix, resolvedInsertText)
+            ) {
+              return [];
+            }
+            const kind = item.kind || "text";
+            const source = item.source || "index";
+            const sourceLabel = SOURCE_LABELS[source] || source;
 
-            const primaryInsertEnd = from + resolvedInsertText.length;
-            view.dispatch({
-              changes: changes.sort((a, b) => a.from - b.from),
-              selection: { anchor: primaryInsertEnd },
-            });
+            const applyCompletion = (
+              view: EditorView,
+              completionToApply: Completion,
+              from: number,
+              to: number,
+            ) => {
+              const changes = [
+                {
+                  from,
+                  to,
+                  insert: resolvedInsertText,
+                },
+              ];
 
-            metrics.recordCompletionAccepted(completionToApply);
-          };
+              if (item.additionalTextEdits?.length) {
+                const additionalChanges = item.additionalTextEdits
+                  .map((edit) => {
+                    const startLine = view.state.doc.line(edit.startLine);
+                    const endLine = view.state.doc.line(edit.endLine);
+                    return {
+                      from: startLine.from + edit.startColumn - 1,
+                      to: endLine.from + edit.endColumn - 1,
+                      insert: edit.text,
+                    };
+                  })
+                  .sort((a, b) => a.from - b.from);
 
-          const basePriority = item.priority || 0;
-          let matchBonus = 0;
-          const labelLower = (item.label || "").toLowerCase();
-          const prefixLower = currentPrefix.toLowerCase();
-          const hasUsefulCompletion = completionAddsUsefulText(
-            currentPrefix,
-            resolvedInsertText,
-            item.additionalTextEdits,
-          );
-          if (prefixLower) {
-            if (labelLower === prefixLower)
-              matchBonus = hasUsefulCompletion ? 120 : -200;
-            else if (labelLower.startsWith(prefixLower)) matchBonus = 150;
-            else if (labelLower.includes(prefixLower)) matchBonus = 50;
-          }
-          const effectivePriority = basePriority + sourceBoost + matchBonus;
+                changes.push(...additionalChanges);
+              }
 
-          const completion: CompletionWithInsertText = {
-            label: item.label || "",
-            detail: item.detail || kind,
-            info: item.documentation || undefined,
-            type: mapCompletionKindString(kind),
-            apply: applyCompletion,
-            boost: effectivePriority / 500,
-            __insertText: resolvedInsertText,
-          };
-          (completion as unknown as Record<string, unknown>).__source =
-            sourceLabel;
+              const primaryInsertEnd = from + resolvedInsertText.length;
+              view.dispatch({
+                changes: changes.sort((a, b) => a.from - b.from),
+                selection: { anchor: primaryInsertEnd },
+              });
 
-          return [completion];
-        });
+              metrics.recordCompletionAccepted(completionToApply);
+            };
+
+            const hasAdditionalTextEdits =
+              (item.additionalTextEdits?.length || 0) > 0;
+            const backendPriority = item.priority || 0;
+            const stableIndexTiebreak = -itemIndex / 100000;
+
+            const completion: CompletionWithInsertText = {
+              label: item.label || "",
+              detail: item.detail || kind,
+              info: item.documentation || undefined,
+              type: mapCompletionKindString(kind),
+              apply: applyCompletion,
+              boost: backendPriority / 1000 + stableIndexTiebreak,
+              __insertText: resolvedInsertText,
+              __hasAdditionalTextEdits: hasAdditionalTextEdits,
+            };
+            (completion as unknown as Record<string, unknown>).__source =
+              sourceLabel;
+
+            return [completion];
+          },
+        );
 
         const allOptions = [...pendingItems, ...completions];
         if (context.aborted || orchestrator.isStale(requestId)) return null;
@@ -2038,8 +1724,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   }, [requestSignatureHelp, clearSignatureHelp]);
 
   const extensions: Extension[] = [
-    blackprintTheme,
-    editorStyles,
+    codeEditorTheme,
+    codeEditorStyles,
     fontSizeExtension,
     gitGutterExtension,
     ghost.ghostField,
@@ -2155,7 +1841,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   extensions.push(...definitionLinkExtension, ...signatureHelpExtension);
 
   return (
-    <div className="relative h-full w-full overflow-hidden">
+    <div
+      className="relative h-full w-full overflow-hidden"
+      style={codeEditorChromeStyle}
+    >
       <DiagnosticsDonutIndicator
         filePath={filePath}
         fileName={fileName}
@@ -2186,7 +1875,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           tabSize: 4,
         }}
         theme="none"
-        className="h-full"
+        className={codeEditorSurfaceClassName}
         onCreateEditor={(view) => {
           syncCursorPosition(view.state);
         }}

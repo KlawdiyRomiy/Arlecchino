@@ -66,6 +66,38 @@ func (a *App) GoToDefinition(filePath string, content string, line int, column i
 	}
 
 	var results []DefinitionResult
+	tryLSPDefinition := func() bool {
+		if a.lspManager == nil {
+			return false
+		}
+
+		lspLine := line
+		if lspLine > 0 {
+			lspLine--
+		}
+		if lspLine < 0 {
+			lspLine = 0
+		}
+		lspColumn := column
+		if lspColumn < 0 {
+			lspColumn = 0
+		}
+
+		lspResults, err := a.LSPGoToDefinition(filePath, content, lspLine, lspColumn)
+		if err != nil || len(lspResults) == 0 {
+			return false
+		}
+
+		for _, r := range lspResults {
+			results = append(results, DefinitionResult{
+				Path:        r.Path,
+				Line:        r.Line,
+				Context:     "LSP Definition",
+				DisplayPath: getDisplayPath(r.Path, projectPath),
+			})
+		}
+		return len(results) > 0
+	}
 
 	// 0. Check PHP use statements: use App\Models\User; or use Laravel\Socialite\Facades\Socialite;
 	// Handle both partial click (on word) and full namespace
@@ -251,6 +283,10 @@ func (a *App) GoToDefinition(filePath string, content string, line int, column i
 		}
 	}
 
+	if tryLSPDefinition() {
+		return results, nil
+	}
+
 	// 4. Check model static calls: User::find(), User::where()
 	if matchesPattern(afterWord, `^::`) && !matchesPattern(afterWord, `^::class`) {
 		models := a.modelEntries()
@@ -368,21 +404,6 @@ func (a *App) GoToDefinition(filePath string, content string, line int, column i
 				DisplayPath: getDisplayPath(resolvedPath, projectPath),
 			})
 			return results, nil
-		}
-	}
-
-	// 7. Fallback to LSP if available
-	if a.lspManager != nil && len(results) == 0 {
-		lspResults, err := a.LSPGoToDefinition(filePath, content, line, column)
-		if err == nil && len(lspResults) > 0 {
-			for _, r := range lspResults {
-				results = append(results, DefinitionResult{
-					Path:        r.Path,
-					Line:        r.Line,
-					Context:     "LSP Definition",
-					DisplayPath: getDisplayPath(r.Path, projectPath),
-				})
-			}
 		}
 	}
 

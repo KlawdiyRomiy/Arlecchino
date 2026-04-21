@@ -481,3 +481,145 @@ test("project scope activated before runtime events preserves diagnostics", asyn
     totalLanguages: 0,
   });
 });
+
+test("preload waits for runtime listeners before backend diagnostics publish", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+
+    const eventHandlers = new Map<string, Array<(payload: unknown) => void>>();
+    let eventsOnMultipleReady = false;
+
+    window.setTimeout(() => {
+      eventsOnMultipleReady = true;
+    }, 10);
+
+    const runtimeBridge = new Proxy(
+      {},
+      {
+        get: (_target, property: string) => {
+          if (property === "EventsOnMultiple") {
+            if (!eventsOnMultipleReady) {
+              return undefined;
+            }
+
+            return (
+              eventName: string,
+              callback: (payload: unknown) => void,
+            ) => {
+              const handlers = eventHandlers.get(eventName) ?? [];
+              handlers.push(callback);
+              eventHandlers.set(eventName, handlers);
+              return `${eventName}-${handlers.length}`;
+            };
+          }
+
+          if (property === "EventsOff") {
+            return () => undefined;
+          }
+
+          return () => undefined;
+        },
+      },
+    );
+
+    const emit = (eventName: string, payload: unknown) => {
+      const handlers = eventHandlers.get(eventName) ?? [];
+      handlers.forEach((handler) => handler(payload));
+    };
+
+    const appBridge = new Proxy(
+      {},
+      {
+        get: (_target, property: string) => {
+          if (property === "LSPPreloadProjectDiagnostics") {
+            return async () => {
+              emit("lsp:ready", {
+                generation: 5,
+                projectPath: "/projects/race",
+              });
+              emit("lsp:diagnostics:preload:start", {
+                generation: 5,
+                projectPath: "/projects/race",
+              });
+              emit("lsp:diagnostics", {
+                generation: 5,
+                projectPath: "/projects/race",
+                filePath: "/projects/race/src/main.go",
+                language: "go",
+                items: [
+                  {
+                    range: {
+                      start: { line: 0, character: 0 },
+                      end: { line: 0, character: 4 },
+                    },
+                    severity: 1,
+                    message: "race diagnostic",
+                  },
+                ],
+              });
+              emit("lsp:diagnostics:preload:complete", {
+                generation: 5,
+                projectPath: "/projects/race",
+              });
+              return true;
+            };
+          }
+
+          return async () => null;
+        },
+      },
+    );
+
+    Object.assign(window, {
+      go: { main: { App: appBridge } },
+      runtime: runtimeBridge,
+    });
+  });
+
+  await page.reload();
+
+  const result = await page.evaluate(async () => {
+    const diagnostics = await import("/src/stores/diagnosticsStore.ts");
+    const projectState = await import("/src/utils/projectBoundState.ts");
+
+    projectState.resetProjectBoundStores();
+    projectState.activateProjectScope("/projects/race");
+
+    const preloadResult =
+      await projectState.preloadProjectDiagnostics("/projects/race");
+    const state = diagnostics.useDiagnosticsStore.getState() as {
+      byFile: Map<string, { summary: { total: number } }>;
+      activeProjectPath?: string | null;
+      currentGeneration?: number;
+    };
+
+    return {
+      preloadResult,
+      activeProjectPath: state.activeProjectPath ?? null,
+      currentGeneration: state.currentGeneration ?? 0,
+      files: Array.from(state.byFile.keys()),
+      totals: Array.from(state.byFile.values()).map(
+        (group) => group.summary.total,
+      ),
+      preload: projectState.getProjectDiagnosticsPreloadSnapshot(),
+    };
+  });
+
+  expect(result.preloadResult).toBe(true);
+  expect(result.activeProjectPath).toBe("/projects/race");
+  expect(result.currentGeneration).toBe(5);
+  expect(result.files).toEqual(["/projects/race/src/main.go"]);
+  expect(result.totals).toEqual([1]);
+  expect(result.preload).toEqual({
+    active: false,
+    bounded: false,
+    generation: 5,
+    projectPath: "/projects/race",
+    selectedCandidates: 0,
+    selectedLanguages: 0,
+    totalCandidates: 0,
+    totalLanguages: 0,
+  });
+});

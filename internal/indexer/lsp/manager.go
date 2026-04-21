@@ -44,81 +44,12 @@ type Manager struct {
 	rootPath        string
 }
 
-var languageIDOverrides = map[string]string{
-	"bash":       "shellscript",
-	"blade":      "html",
-	"objectivec": "objective-c",
-}
-
-var configLanguageAliases = map[string][]string{
-	"tsx":             {"typescriptreact", "typescript"},
-	"jsx":             {"javascriptreact", "javascript"},
-	"typescriptreact": {"typescript", "tsx"},
-	"javascriptreact": {"javascript", "jsx"},
-	"ts":              {"typescript"},
-	"js":              {"javascript"},
-	"mjs":             {"javascript"},
-	"cjs":             {"javascript"},
-	"shell":           {"bash"},
-	"shellscript":     {"bash"},
-	"sh":              {"bash"},
-	"zsh":             {"bash"},
-	"fish":            {"bash"},
-	"py":              {"python"},
-	"rb":              {"ruby"},
-	"rs":              {"rust"},
-	"objective-c":     {"objectivec"},
-	"objc":            {"objectivec"},
-	"c#":              {"csharp"},
-}
-
-func normalizeConfigLanguage(language string) string {
-	normalized := strings.TrimSpace(strings.ToLower(language))
-	return strings.TrimPrefix(normalized, ".")
-}
-
-func addConfigLanguageCandidate(candidates []string, seen map[string]struct{}, language string) []string {
-	normalized := normalizeConfigLanguage(language)
-	if normalized == "" {
-		return candidates
-	}
-	if _, ok := seen[normalized]; ok {
-		return candidates
-	}
-	seen[normalized] = struct{}{}
-	return append(candidates, normalized)
-}
-
 func configLanguageCandidates(language string) []string {
-	seen := make(map[string]struct{}, 12)
-	candidates := make([]string, 0, 12)
-
-	normalized := normalizeConfigLanguage(language)
-	candidates = addConfigLanguageCandidate(candidates, seen, normalized)
-
-	for _, alias := range configLanguageAliases[normalized] {
-		candidates = addConfigLanguageCandidate(candidates, seen, alias)
-	}
-
-	if info := lspregistry.GetLanguageByExtension(normalized); info != nil {
-		candidates = addConfigLanguageCandidate(candidates, seen, info.ID)
-		for _, alias := range configLanguageAliases[normalizeConfigLanguage(info.ID)] {
-			candidates = addConfigLanguageCandidate(candidates, seen, alias)
-		}
-	}
-
-	if info := lspregistry.GetLanguageByID(normalized); info != nil {
-		candidates = addConfigLanguageCandidate(candidates, seen, info.ID)
-	}
-
-	return candidates
+	return lspregistry.LanguageCandidates(language)
 }
 
 func normalizeLanguageID(language string) string {
-	if override, ok := languageIDOverrides[language]; ok {
-		return override
-	}
-	return language
+	return lspregistry.TextDocumentLanguageID(language)
 }
 
 type completionResult struct {
@@ -347,7 +278,7 @@ func (m *Manager) HasConfig(language string) bool {
 }
 
 func (m *Manager) logNoConfig(language string) {
-	key := normalizeConfigLanguage(language)
+	key := lspregistry.NormalizeLanguageToken(language)
 	if key == "" {
 		key = language
 	}
@@ -382,7 +313,7 @@ func (m *Manager) endStart(language string, ch chan struct{}) {
 }
 
 func (m *Manager) RegisterServer(cfg ServerConfig) {
-	cfg.Language = normalizeConfigLanguage(cfg.Language)
+	cfg.Language = lspregistry.NormalizeLanguageToken(cfg.Language)
 	if cfg.Language == "" {
 		return
 	}
@@ -495,7 +426,7 @@ func (m *Manager) Stop(language string) error {
 	if resolvedLanguage, ok := m.resolveConfiguredLanguage(language); ok {
 		language = resolvedLanguage
 	} else {
-		language = normalizeConfigLanguage(language)
+		language = lspregistry.NormalizeLanguageToken(language)
 	}
 
 	m.mu.Lock()
@@ -1239,18 +1170,23 @@ func (m *Manager) cleanupCompletionCacheLocked() {
 func (m *Manager) GoToDefinition(language, filePath string, line, column int) ([]Location, error) {
 	resolvedLanguage, ok := m.resolveServerLanguage(language)
 	if !ok {
-		resolvedLanguage, ok = m.resolveConfiguredLanguage(language)
-		if !ok {
+		server, err := m.ensureStarted(language)
+		if err != nil {
 			return nil, nil
 		}
+		return server.GoToDefinition(filePath, line, column)
 	}
 
 	m.mu.RLock()
 	server, ok := m.servers[resolvedLanguage]
 	m.mu.RUnlock()
 
-	if !ok {
-		return nil, nil
+	if !ok || server == nil || !server.running || !server.isProcessAlive() {
+		started, err := m.ensureStarted(resolvedLanguage)
+		if err != nil {
+			return nil, nil
+		}
+		server = started
 	}
 
 	return server.GoToDefinition(filePath, line, column)
@@ -1260,18 +1196,23 @@ func (m *Manager) GoToDefinition(language, filePath string, line, column int) ([
 func (m *Manager) Hover(language, filePath string, line, column int) (string, error) {
 	resolvedLanguage, ok := m.resolveServerLanguage(language)
 	if !ok {
-		resolvedLanguage, ok = m.resolveConfiguredLanguage(language)
-		if !ok {
+		server, err := m.ensureStarted(language)
+		if err != nil {
 			return "", nil
 		}
+		return server.Hover(filePath, line, column)
 	}
 
 	m.mu.RLock()
 	server, ok := m.servers[resolvedLanguage]
 	m.mu.RUnlock()
 
-	if !ok {
-		return "", nil
+	if !ok || server == nil || !server.running || !server.isProcessAlive() {
+		started, err := m.ensureStarted(resolvedLanguage)
+		if err != nil {
+			return "", nil
+		}
+		server = started
 	}
 
 	return server.Hover(filePath, line, column)
@@ -1295,18 +1236,23 @@ func (m *Manager) SignatureHelpWithContext(ctx context.Context, language, filePa
 
 	resolvedLanguage, ok := m.resolveServerLanguage(language)
 	if !ok {
-		resolvedLanguage, ok = m.resolveConfiguredLanguage(language)
-		if !ok {
+		server, err := m.ensureStarted(language)
+		if err != nil {
 			return nil, nil
 		}
+		return server.SignatureHelpWithContext(ctx, filePath, line, column)
 	}
 
 	m.mu.RLock()
 	server, ok := m.servers[resolvedLanguage]
 	m.mu.RUnlock()
 
-	if !ok {
-		return nil, nil
+	if !ok || server == nil || !server.running || !server.isProcessAlive() {
+		started, err := m.ensureStarted(resolvedLanguage)
+		if err != nil {
+			return nil, nil
+		}
+		server = started
 	}
 
 	return server.SignatureHelpWithContext(ctx, filePath, line, column)

@@ -1,4 +1,4 @@
-import { GoToDefinition } from "../../wailsjs/go/main/App";
+import { GoToDefinition, LSPGoToDefinition } from "../../wailsjs/go/main/App";
 
 export interface DefinitionItem {
   path: string;
@@ -21,30 +21,81 @@ export async function findDefinitions(
   line: number,
   column: number,
 ): Promise<DefinitionItem[]> {
+  const lowerFilePath = filePath.toLowerCase();
+  const prefersLegacyDefinition =
+    lowerFilePath.endsWith(".php") ||
+    lowerFilePath.endsWith(".blade.php") ||
+    isLaravelDefinitionContext(beforeWord, afterWord);
+
   try {
-    const results = await GoToDefinition(
+    if (prefersLegacyDefinition) {
+      const legacyResults = await GoToDefinition(
+        filePath,
+        content,
+        line,
+        column,
+        wordText,
+        beforeWord,
+        afterWord,
+      );
+
+      if (legacyResults && legacyResults.length > 0) {
+        return legacyResults.map((r) => ({
+          path: r.path,
+          line: r.line,
+          context: r.context,
+          displayPath: r.displayPath,
+        }));
+      }
+    }
+  } catch (error) {
+    console.warn("Legacy GoToDefinition error:", error);
+  }
+
+  try {
+    const lspLine = line > 0 ? line - 1 : 0;
+    const lspColumn = column < 0 ? 0 : column;
+    const lspResults = await LSPGoToDefinition(
       filePath,
       content,
-      line,
-      column,
-      wordText,
-      beforeWord,
-      afterWord,
+      lspLine,
+      lspColumn,
     );
-
-    if (results && results.length > 0) {
-      return results.map((r) => ({
+    if (lspResults && lspResults.length > 0) {
+      return lspResults.map((r) => ({
         path: r.path,
         line: r.line,
-        context: r.context,
-        displayPath: r.displayPath,
+        context: "LSP Definition",
+        displayPath: r.path,
       }));
     }
   } catch (error) {
-    console.error("GoToDefinition error:", error);
+    console.warn("LSPGoToDefinition error:", error);
   }
 
   return [];
+}
+
+function isLaravelDefinitionContext(
+  beforeWord: string,
+  afterWord: string,
+): boolean {
+  return (
+    /\buse\s+[\w\\]*\\?$/.test(beforeWord) ||
+    /middleware\s*\(\s*\[?\s*['"]/.test(beforeWord) ||
+    /['"]\s*,\s*['"]$/.test(beforeWord) ||
+    /->name\s*\(\s*['"]/.test(beforeWord) ||
+    /route\(['"]/.test(beforeWord) ||
+    /(view|@extends|@include|@includeIf|@includeWhen|@component)\s*\(\s*['"]/.test(
+      beforeWord,
+    ) ||
+    /config\s*\(\s*['"]/.test(beforeWord) ||
+    /env\s*\(\s*['"]/.test(beforeWord) ||
+    /\$this->(hasMany|hasOne|belongsTo|belongsToMany|morphTo|morphMany)\s*\(/.test(
+      beforeWord,
+    ) ||
+    /::class/.test(afterWord)
+  );
 }
 
 /**
@@ -57,7 +108,7 @@ export function checkIfHasDefinition(
   afterWord: string,
 ): boolean {
   // =============== PHP / Laravel ===============
-  
+
   // PHP use statements: use App\Models\User
   if (beforeWord.match(/\buse\s+[\w\\]*\\?$/)) {
     return true;
@@ -130,13 +181,16 @@ export function checkIfHasDefinition(
   const combined = beforeWord + wordText + afterWord;
   const componentMatch = combined.match(/<\/?x-([a-zA-Z0-9._-]+)/);
   if (componentMatch && !componentMatch[1].startsWith("slot")) {
-    if (beforeWord.match(/<\/?x-/) || beforeWord.match(/<\/?x-[a-zA-Z0-9._-]*$/)) {
+    if (
+      beforeWord.match(/<\/?x-/) ||
+      beforeWord.match(/<\/?x-[a-zA-Z0-9._-]*$/)
+    ) {
       return true;
     }
   }
 
   // =============== Python / Django ===============
-  
+
   // Django imports: from django.views import View
   if (beforeWord.match(/\bfrom\s+[\w.]+\s+import\s*$/)) {
     return true;
@@ -144,26 +198,35 @@ export function checkIfHasDefinition(
   if (beforeWord.match(/\bimport\s+[\w.]*$/)) {
     return true;
   }
-  
+
   // Django URLs: path('name/', views.func), reverse('name')
   if (beforeWord.match(/reverse\(['"]/) && afterWord.match(/^['"]/)) {
     return true;
   }
-  
+
   // Django templates: {% include 'template.html' %}, {% extends 'base.html' %}
-  if (beforeWord.match(/{%\s*(include|extends)\s+['"]/) && afterWord.match(/^['"]/)) {
+  if (
+    beforeWord.match(/{%\s*(include|extends)\s+['"]/) &&
+    afterWord.match(/^['"]/)
+  ) {
     return true;
   }
-  
+
   // Django model fields: ForeignKey(Model), models.ForeignKey('Model')
-  if (beforeWord.match(/ForeignKey\s*\(\s*['"]?/) && (afterWord.match(/^['"]?\s*[,)]/) || afterWord.match(/^['"]/))) {
+  if (
+    beforeWord.match(/ForeignKey\s*\(\s*['"]?/) &&
+    (afterWord.match(/^['"]?\s*[,)]/) || afterWord.match(/^['"]/))
+  ) {
     return true;
   }
 
   // =============== JavaScript / TypeScript / React / Vue ===============
-  
+
   // ES imports: import X from 'module', import { X } from 'module'
-  if (beforeWord.match(/\bimport\s+.*\bfrom\s+['"]/) && afterWord.match(/^['"]/)) {
+  if (
+    beforeWord.match(/\bimport\s+.*\bfrom\s+['"]/) &&
+    afterWord.match(/^['"]/)
+  ) {
     return true;
   }
   if (beforeWord.match(/\bimport\s*\(\s*['"]/) && afterWord.match(/^['"]/)) {
@@ -172,58 +235,64 @@ export function checkIfHasDefinition(
   if (beforeWord.match(/\brequire\s*\(\s*['"]/) && afterWord.match(/^['"]/)) {
     return true;
   }
-  
+
   // React/Vue components: <Component, </Component
   if (beforeWord.match(/<\/?$/) && wordText.match(/^[A-Z]/)) {
     return true;
   }
-  
+
   // Object property access: obj.method()
   if (beforeWord.match(/\.\s*$/) && afterWord.match(/^\s*\(/)) {
     return true;
   }
 
   // =============== Ruby / Rails ===============
-  
+
   // Rails routes: redirect_to root_path, link_to 'name', path
-  if (beforeWord.match(/(?:redirect_to|link_to|url_for)\s+/) && wordText.match(/_path$|_url$/)) {
+  if (
+    beforeWord.match(/(?:redirect_to|link_to|url_for)\s+/) &&
+    wordText.match(/_path$|_url$/)
+  ) {
     return true;
   }
-  
+
   // Rails render: render 'partial', render partial: 'name'
   if (beforeWord.match(/render\s+['":]*/) && afterWord.match(/^['"]/)) {
     return true;
   }
-  
+
   // Ruby require/require_relative
-  if (beforeWord.match(/require(?:_relative)?\s+['"]/) && afterWord.match(/^['"]/)) {
+  if (
+    beforeWord.match(/require(?:_relative)?\s+['"]/) &&
+    afterWord.match(/^['"]/)
+  ) {
     return true;
   }
 
   // =============== Go ===============
-  
+
   // Go imports: import "package"
   if (beforeWord.match(/import\s+["']/) && afterWord.match(/^["']/)) {
     return true;
   }
-  
+
   // Go package.Function calls
   if (beforeWord.match(/\w+\.\s*$/) && afterWord.match(/^\s*\(/)) {
     return true;
   }
 
   // =============== Universal: Any identifier likely has definition ===============
-  
+
   // Function/method calls
   if (afterWord.match(/^\s*\(/)) {
     return true;
   }
-  
+
   // Type annotations (TypeScript, Python, Go, etc.)
   if (beforeWord.match(/:\s*$/) && wordText.match(/^[A-Z]/)) {
     return true;
   }
-  
+
   // Class instantiation: new ClassName
   if (beforeWord.match(/new\s+$/)) {
     return true;

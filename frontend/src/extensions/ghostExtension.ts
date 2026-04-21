@@ -349,11 +349,17 @@ export function ghostExtension(
 
       const c = selected as unknown as {
         __insertText?: unknown;
+        __hasAdditionalTextEdits?: unknown;
         label?: unknown;
       };
       const label = typeof c.label === "string" ? c.label : "";
       const rawInsertText =
         typeof c.__insertText === "string" ? c.__insertText : "";
+      const hasAdditionalTextEdits = c.__hasAdditionalTextEdits === true;
+      if (hasAdditionalTextEdits) {
+        clearGhostText(view, false);
+        return;
+      }
       if (!label || !rawInsertText) {
         clearGhostText(view, false);
         return;
@@ -555,13 +561,15 @@ export function ghostExtension(
         selectedCompletion(update.state) || currentCompletions(update.state)[0];
       const c = selected as unknown as {
         __insertText?: unknown;
+        __hasAdditionalTextEdits?: unknown;
         label?: unknown;
       };
       const label = typeof c.label === "string" ? c.label : "";
       const insertText =
         typeof c.__insertText === "string" ? c.__insertText : "";
+      const hasAdditionalTextEdits = c.__hasAdditionalTextEdits === true;
       if (label && insertText) {
-        const key = `${label}\n${insertText}`;
+        const key = `${label}\n${insertText}\nae:${hasAdditionalTextEdits ? "1" : "0"}`;
         if (key === lastPopupGhostKey) {
           popupGhostStableCount += 1;
         } else {

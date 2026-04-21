@@ -124,11 +124,45 @@ export namespace composer {
 
 export namespace depsync {
 	
+	export class Action {
+	    id: string;
+	    ecosystem: string;
+	    tool: string;
+	    manifest: string;
+	    label: string;
+	    executable: string;
+	    args: string;
+	    safe: boolean;
+	    capability: string;
+	    mutationRisk: string;
+	    requiresConsent: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Action(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.ecosystem = source["ecosystem"];
+	        this.tool = source["tool"];
+	        this.manifest = source["manifest"];
+	        this.label = source["label"];
+	        this.executable = source["executable"];
+	        this.args = source["args"];
+	        this.safe = source["safe"];
+	        this.capability = source["capability"];
+	        this.mutationRisk = source["mutationRisk"];
+	        this.requiresConsent = source["requiresConsent"];
+	    }
+	}
 	export class Command {
 	    label: string;
 	    executable: string;
 	    args: string;
 	    safe: boolean;
+	    capability?: string;
+	    mutationRisk?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Command(source);
@@ -140,6 +174,72 @@ export namespace depsync {
 	        this.executable = source["executable"];
 	        this.args = source["args"];
 	        this.safe = source["safe"];
+	        this.capability = source["capability"];
+	        this.mutationRisk = source["mutationRisk"];
+	    }
+	}
+	export class Policy {
+	    consentMode: string;
+	    autoApproveLowRisk: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Policy(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.consentMode = source["consentMode"];
+	        this.autoApproveLowRisk = source["autoApproveLowRisk"];
+	    }
+	}
+	export class ExecuteRequest {
+	    policy: Policy;
+	    approvedActionIds: string[];
+	    persistApprovals: boolean;
+	    dryRun: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExecuteRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.policy = this.convertValues(source["policy"], Policy);
+	        this.approvedActionIds = source["approvedActionIds"];
+	        this.persistApprovals = source["persistApprovals"];
+	        this.dryRun = source["dryRun"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ExecuteResult {
+	    results: Record<string, string>;
+	    blocked: Record<string, string>;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExecuteResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.results = source["results"];
+	        this.blocked = source["blocked"];
 	    }
 	}
 	export class Manager {
@@ -192,6 +292,116 @@ export namespace depsync {
 	        this.projectPath = source["projectPath"];
 	        this.mode = source["mode"];
 	        this.managers = this.convertValues(source["managers"], Manager);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	export class PolicyPlan {
+	    projectPath: string;
+	    policy: Policy;
+	    actions: Action[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PolicyPlan(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectPath = source["projectPath"];
+	        this.policy = this.convertValues(source["policy"], Policy);
+	        this.actions = this.convertValues(source["actions"], Action);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace execution {
+	
+	export class Profile {
+	    id: string;
+	    label: string;
+	    description: string;
+	    kind: string;
+	    mode: string;
+	    command: string;
+	    workingDirectory?: string;
+	    language?: string;
+	    framework?: string;
+	    origin?: string;
+	    confidence?: number;
+	    requiredTools?: string[];
+	    missingTools?: string[];
+	    env?: Record<string, string>;
+	
+	    static createFrom(source: any = {}) {
+	        return new Profile(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.label = source["label"];
+	        this.description = source["description"];
+	        this.kind = source["kind"];
+	        this.mode = source["mode"];
+	        this.command = source["command"];
+	        this.workingDirectory = source["workingDirectory"];
+	        this.language = source["language"];
+	        this.framework = source["framework"];
+	        this.origin = source["origin"];
+	        this.confidence = source["confidence"];
+	        this.requiredTools = source["requiredTools"];
+	        this.missingTools = source["missingTools"];
+	        this.env = source["env"];
+	    }
+	}
+	export class ProfileSet {
+	    runProfiles: Profile[];
+	    debugProfiles: Profile[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfileSet(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.runProfiles = this.convertValues(source["runProfiles"], Profile);
+	        this.debugProfiles = this.convertValues(source["debugProfiles"], Profile);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -643,6 +853,26 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class ExecutionProfilesRequest {
+	    projectPath: string;
+	    activeFilePath: string;
+	    activeFileName: string;
+	    activeFileContent: string;
+	    activeFileLanguage: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExecutionProfilesRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.projectPath = source["projectPath"];
+	        this.activeFilePath = source["activeFilePath"];
+	        this.activeFileName = source["activeFileName"];
+	        this.activeFileContent = source["activeFileContent"];
+	        this.activeFileLanguage = source["activeFileLanguage"];
+	    }
 	}
 	export class FileEntry {
 	    name: string;

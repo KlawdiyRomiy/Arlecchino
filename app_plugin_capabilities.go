@@ -11,6 +11,13 @@ func (a *App) getDefinitionProvider() plugins.DefinitionProvider {
 		return nil
 	}
 	p := a.plugins.Get("laravel")
+	if p == nil {
+		return nil
+	}
+	projectPath := a.GetCurrentProjectPath()
+	if projectPath == "" || !p.IsApplicable(projectPath) {
+		return nil
+	}
 	provider, ok := p.(plugins.DefinitionProvider)
 	if !ok {
 		return nil

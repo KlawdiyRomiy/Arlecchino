@@ -98,3 +98,78 @@ func TestStubProvider_HasPackage(t *testing.T) {
 		})
 	}
 }
+
+func TestStubProvider_LoadStubs_IncludesDartAndSwift(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "dart", "http.stub.json"), `{
+		"package":"http",
+		"exports":{"get":{"signature":"get(Uri url)","kind":"function"}}
+	}`)
+	writeTestFile(t, filepath.Join(root, "swift", "URLSession.stub.json"), `{
+		"package":"URLSession",
+		"exports":{"shared":{"signature":"class var shared: URLSession","kind":"property"}}
+	}`)
+
+	provider := NewStubProvider()
+	provider.SetStubsDir(root)
+	if err := provider.LoadStubs(); err != nil {
+		t.Fatalf("LoadStubs() failed: %v", err)
+	}
+
+	if !provider.HasPackage("http", "dart") {
+		t.Fatal("expected dart disk stub to be loaded")
+	}
+	if !provider.HasPackage("URLSession", "swift") {
+		t.Fatal("expected swift disk stub to be loaded")
+	}
+}
+
+func TestStubProvider_GetContextCompletions_BuiltinsCoverRustDartSwift(t *testing.T) {
+	provider := NewStubProviderWithBuiltins()
+	provider.SetPackageResolver(func(language, reference string) string {
+		switch language + ":" + reference {
+		case "rust:serde_json":
+			return "serde_json"
+		case "dart:http":
+			return "http"
+		}
+		return ""
+	})
+
+	tests := []struct {
+		name       string
+		ctx        CompletionContext
+		wantSymbol string
+	}{
+		{
+			name: "rust serde_json members",
+			ctx: CompletionContext{Language: "rust", AccessChain: "serde_json."},
+			wantSymbol: "from_str",
+		},
+		{
+			name: "dart http members",
+			ctx: CompletionContext{Language: "dart", AccessChain: "http."},
+			wantSymbol: "get",
+		},
+		{
+			name: "swift URLSession members",
+			ctx: CompletionContext{Language: "swift", AccessChain: "URLSession."},
+			wantSymbol: "shared",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			suggestions := provider.GetContextCompletions(tt.ctx)
+			if len(suggestions) == 0 {
+				t.Fatalf("expected suggestions, got %#v", suggestions)
+			}
+			for _, suggestion := range suggestions {
+				if suggestion.Text == tt.wantSymbol {
+					return
+				}
+			}
+			t.Fatalf("expected symbol %q in %#v", tt.wantSymbol, suggestions)
+		})
+	}
+}

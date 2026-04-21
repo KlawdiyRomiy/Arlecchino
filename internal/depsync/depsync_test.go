@@ -105,6 +105,19 @@ func TestExecute_ContinuesAfterCommandFailure(t *testing.T) {
 	}
 }
 
+func TestSplitArgs_ParsesQuotes(t *testing.T) {
+	args := splitArgs(`-c "go get -u ./... && go mod tidy"`)
+	if len(args) != 2 {
+		t.Fatalf("expected 2 args, got %d (%#v)", len(args), args)
+	}
+	if args[0] != "-c" {
+		t.Fatalf("expected first arg -c, got %q", args[0])
+	}
+	if args[1] != "go get -u ./... && go mod tidy" {
+		t.Fatalf("unexpected script arg: %q", args[1])
+	}
+}
+
 type assertErr string
 
 func (e assertErr) Error() string { return string(e) }

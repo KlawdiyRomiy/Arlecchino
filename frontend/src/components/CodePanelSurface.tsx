@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { tags as t } from "@lezer/highlight";
 import { javascript } from "@codemirror/lang-javascript";
 import { php } from "@codemirror/lang-php";
 import { go } from "@codemirror/lang-go";
@@ -17,7 +16,6 @@ import { java } from "@codemirror/lang-java";
 import { sql } from "@codemirror/lang-sql";
 import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
-import { createTheme } from "thememirror";
 
 import {
   NotifyFileChanged,
@@ -25,9 +23,18 @@ import {
   NotifyFileOpened,
   WriteFile,
 } from "../../wailsjs/go/main/App";
+import { createDiagnosticsExtension } from "../extensions/diagnosticsExtension";
 import { createGitGutterExtension } from "../extensions/gitGutterExtension";
+import { DiagnosticsDonutIndicator } from "./problems/DiagnosticsDonutIndicator";
 import { useEditorStore } from "../stores/editorStore";
+import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { useGitStore } from "../stores/gitStore";
+import {
+  codeEditorChromeStyle,
+  codeEditorStyles,
+  codeEditorSurfaceClassName,
+  codeEditorTheme,
+} from "../utils/codeMirrorTheme";
 import type { GitLineMarker } from "../utils/git";
 
 interface CodePanelSurfaceProps {
@@ -40,100 +47,6 @@ interface CodePanelSurfaceProps {
 const autoSaveDelayMs = 500;
 const diagnosticsSyncDelayMs = 150;
 const EMPTY_GIT_MARKERS: readonly GitLineMarker[] = Object.freeze([]);
-
-const blackprintTheme = createTheme({
-  variant: "dark",
-  settings: {
-    background: "#000000",
-    foreground: "#e0e0e0",
-    caret: "#ffffff",
-    selection: "#264f78",
-    lineHighlight: "#0a0a0a",
-    gutterBackground: "#000000",
-    gutterForeground: "#555555",
-  },
-  styles: [
-    { tag: t.comment, color: "#6a737d" },
-    { tag: t.lineComment, color: "#6a737d" },
-    { tag: t.blockComment, color: "#6a737d" },
-    { tag: t.docComment, color: "#6a737d" },
-    { tag: t.string, color: "#98c379" },
-    { tag: t.special(t.string), color: "#98c379" },
-    { tag: t.number, color: "#d19a66" },
-    { tag: t.bool, color: "#d19a66" },
-    { tag: t.null, color: "#d19a66" },
-    { tag: t.keyword, color: "#61afef" },
-    { tag: t.operator, color: "#abb2bf" },
-    { tag: t.className, color: "#e5c07b" },
-    { tag: t.definition(t.typeName), color: "#e5c07b" },
-    { tag: t.typeName, color: "#e5c07b" },
-    { tag: t.tagName, color: "#e06c75" },
-    { tag: t.attributeName, color: "#d19a66" },
-    { tag: t.propertyName, color: "#e06c75" },
-    { tag: t.function(t.variableName), color: "#61afef" },
-    { tag: t.definition(t.variableName), color: "#e06c75" },
-    { tag: t.variableName, color: "#e0e0e0" },
-    { tag: t.constant(t.variableName), color: "#d19a66" },
-    { tag: t.labelName, color: "#e06c75" },
-    { tag: t.namespace, color: "#e5c07b" },
-    { tag: t.macroName, color: "#61afef" },
-    { tag: t.literal, color: "#98c379" },
-    { tag: t.punctuation, color: "#abb2bf" },
-    { tag: t.paren, color: "#abb2bf" },
-    { tag: t.squareBracket, color: "#abb2bf" },
-    { tag: t.brace, color: "#abb2bf" },
-    { tag: t.derefOperator, color: "#abb2bf" },
-    { tag: t.self, color: "#e06c75" },
-  ],
-});
-
-const editorStyles = EditorView.theme({
-  "&": {
-    height: "100%",
-    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-    backgroundColor: "#000",
-  },
-  ".cm-scroller": {
-    backgroundColor: "#000",
-    overflow: "auto",
-  },
-  ".cm-content": {
-    padding: "8px 8px",
-    caretColor: "#fff",
-    backgroundColor: "#000",
-  },
-  ".cm-gutters": {
-    backgroundColor: "#000",
-    borderRight: "1px solid #1a1a1a",
-    color: "#555",
-  },
-  ".cm-activeLineGutter": {
-    backgroundColor: "transparent",
-    color: "#d4a520",
-  },
-  ".cm-activeLine": {
-    backgroundColor: "#0a0a0a",
-  },
-  ".cm-selectionBackground, .cm-content ::selection": {
-    backgroundColor: "#264f78 !important",
-  },
-  "&.cm-focused .cm-selectionBackground, &.cm-focused .cm-content ::selection":
-    {
-      backgroundColor: "#264f78 !important",
-    },
-  "& .cm-selectionLayer .cm-selectionBackground": {
-    backgroundColor: "#264f78 !important",
-  },
-  "&:not(.cm-focused) .cm-selectionBackground": {
-    backgroundColor: "#264f78 !important",
-  },
-  ".cm-line": {
-    padding: "0",
-  },
-  ".cm-foldGutter": {
-    width: "12px",
-  },
-});
 
 const makeTabID = (path: string): string =>
   `tab-${path.replace(/[^a-zA-Z0-9]/g, "-")}`;
@@ -196,6 +109,9 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   const markTabDirty = useEditorStore((state) => state.markTabDirty);
   const tabID = useMemo(() => makeTabID(path), [path]);
   const tab = useEditorStore((state) => state.tabs.get(tabID));
+  const showInlineDiagnostics = useEditorSettingsStore(
+    (state) => state.showInlineDiagnostics,
+  );
   const gitMarkers = useGitStore(
     (state) => state.fileMarkers[path] ?? EMPTY_GIT_MARKERS,
   );
@@ -208,6 +124,15 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   const gitGutterExtension = useMemo(
     () => createGitGutterExtension({ markers: gitMarkers }),
     [gitMarkers],
+  );
+  const diagnosticsExtension = useMemo(
+    () =>
+      createDiagnosticsExtension({
+        filePath: path,
+        language,
+        enabled: showInlineDiagnostics,
+      }),
+    [language, path, showInlineDiagnostics],
   );
 
   useEffect(() => {
@@ -240,17 +165,18 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
 
   const extensions = useMemo(() => {
     const result: Extension[] = [
-      blackprintTheme,
-      editorStyles,
+      codeEditorTheme,
+      codeEditorStyles,
       gitGutterExtension,
       EditorView.lineWrapping,
+      ...diagnosticsExtension,
     ];
     const langExt = resolveLanguageExtension(language);
     if (langExt) {
       result.push(langExt);
     }
     return result;
-  }, [gitGutterExtension, language]);
+  }, [diagnosticsExtension, gitGutterExtension, language]);
 
   const handleChange = (value: string) => {
     updateTabContent(tabID, value);
@@ -307,7 +233,11 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   );
 
   return (
-    <div className="w-full h-full min-h-0">
+    <div
+      className="relative w-full h-full min-h-0 overflow-hidden"
+      style={codeEditorChromeStyle}
+    >
+      <DiagnosticsDonutIndicator filePath={path} fileName={name} />
       <CodeMirror
         value={content}
         extensions={extensions}
@@ -330,7 +260,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
           tabSize: 4,
         }}
         theme="none"
-        className="h-full"
+        className={codeEditorSurfaceClassName}
       />
     </div>
   );

@@ -43,7 +43,7 @@ test("execution profiles surface preview and Go run/debug actions", async ({
       await import("/src/utils/executionProfiles.ts");
 
     return {
-      html: resolveExecutionProfiles({
+      html: await resolveExecutionProfiles({
         projectPath: "/workspace",
         activeTab: {
           id: "tab-index-html",
@@ -54,7 +54,7 @@ test("execution profiles surface preview and Go run/debug actions", async ({
           language: "html",
         },
       }),
-      go: resolveExecutionProfiles({
+      go: await resolveExecutionProfiles({
         projectPath: "/workspace",
         activeTab: {
           id: "tab-main-go",
@@ -78,4 +78,42 @@ test("execution profiles surface preview and Go run/debug actions", async ({
   expect(profiles.go.debugProfiles[0].command).toBe(
     'dlv debug "/workspace/cmd/api"',
   );
+
+  const backendProfiles = await page.evaluate(async () => {
+    const runtimeWindow = window as unknown as {
+      go?: {
+        main?: {
+          App?: {
+            GetExecutionProfiles?: () => Promise<unknown>;
+          };
+        };
+      };
+    };
+
+    if (runtimeWindow.go?.main?.App) {
+      runtimeWindow.go.main.App.GetExecutionProfiles = async () => ({
+        runProfiles: [
+          {
+            id: "backend:run",
+            label: "Backend Run",
+            description: "from backend",
+            kind: "terminal",
+            mode: "run",
+            command: "npm run dev",
+          },
+        ],
+        debugProfiles: [],
+      });
+    }
+
+    const { resolveExecutionProfiles } =
+      await import("/src/utils/executionProfiles.ts");
+
+    return await resolveExecutionProfiles({
+      projectPath: "/workspace",
+      activeTab: null,
+    });
+  });
+
+  expect(backendProfiles.runProfiles[0]?.id).toBe("backend:run");
 });

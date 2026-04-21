@@ -120,21 +120,22 @@ func (c *dependencyCatalog) ResolveLibraryByOwner(language, owner string) string
 }
 
 func (c *dependencyCatalog) entriesForLanguage(language string) []dependencyEntry {
-	files := c.manifestFiles(language)
+	normalizedLanguage := normalizeDependencyLanguage(language)
+	files := c.manifestFiles(normalizedLanguage)
 	fingerprint := c.manifestFingerprint(files)
 
 	c.mu.RLock()
-	if cached, ok := c.cache[language]; ok && cached.fingerprint == fingerprint {
+	if cached, ok := c.cache[normalizedLanguage]; ok && cached.fingerprint == fingerprint {
 		entries := append([]dependencyEntry(nil), cached.entries...)
 		c.mu.RUnlock()
 		return entries
 	}
 	c.mu.RUnlock()
 
-	entries := c.loadEntries(language)
+	entries := c.loadEntries(normalizedLanguage)
 
 	c.mu.Lock()
-	c.cache[language] = dependencyCacheEntry{
+	c.cache[normalizedLanguage] = dependencyCacheEntry{
 		fingerprint: fingerprint,
 		entries:     append([]dependencyEntry(nil), entries...),
 		loadedAt:    time.Now(),
@@ -151,25 +152,25 @@ func (c *dependencyCatalog) manifestFiles(language string) []string {
 
 	switch normalizeDependencyLanguage(language) {
 	case "go":
-		return []string{filepath.Join(c.root, "go.mod")}
+		return []string{filepath.Join(c.root, "go.mod"), filepath.Join(c.root, "go.sum")}
 	case "node":
-		return []string{filepath.Join(c.root, "package.json")}
+		return []string{filepath.Join(c.root, "package.json"), filepath.Join(c.root, "package-lock.json"), filepath.Join(c.root, "pnpm-lock.yaml"), filepath.Join(c.root, "yarn.lock"), filepath.Join(c.root, "bun.lockb")}
 	case "python":
-		return []string{filepath.Join(c.root, "requirements.txt"), filepath.Join(c.root, "pyproject.toml")}
+		return []string{filepath.Join(c.root, "requirements.txt"), filepath.Join(c.root, "pyproject.toml"), filepath.Join(c.root, "poetry.lock"), filepath.Join(c.root, "Pipfile.lock"), filepath.Join(c.root, "uv.lock")}
 	case "php":
-		return []string{filepath.Join(c.root, "composer.json")}
+		return []string{filepath.Join(c.root, "composer.json"), filepath.Join(c.root, "composer.lock")}
 	case "rust":
-		return []string{filepath.Join(c.root, "Cargo.toml")}
+		return []string{filepath.Join(c.root, "Cargo.toml"), filepath.Join(c.root, "Cargo.lock")}
 	case "ruby":
 		return []string{filepath.Join(c.root, "Gemfile"), filepath.Join(c.root, "Gemfile.lock")}
 	case "jvm":
-		return []string{filepath.Join(c.root, "pom.xml"), filepath.Join(c.root, "build.gradle"), filepath.Join(c.root, "build.gradle.kts")}
+		return []string{filepath.Join(c.root, "pom.xml"), filepath.Join(c.root, "build.gradle"), filepath.Join(c.root, "build.gradle.kts"), filepath.Join(c.root, "gradle.lockfile"), filepath.Join(c.root, "gradle", "libs.versions.toml")}
 	case "dotnet":
-		return []string{filepath.Join(c.root, "packages.config")}
+		return []string{filepath.Join(c.root, "packages.config"), filepath.Join(c.root, "packages.lock.json")}
 	case "dart":
-		return []string{filepath.Join(c.root, "pubspec.yaml")}
+		return []string{filepath.Join(c.root, "pubspec.yaml"), filepath.Join(c.root, "pubspec.lock")}
 	case "swift":
-		return []string{filepath.Join(c.root, "Package.swift")}
+		return []string{filepath.Join(c.root, "Package.swift"), filepath.Join(c.root, "Package.resolved")}
 	case "terraform":
 		return []string{filepath.Join(c.root, ".terraform.lock.hcl")}
 	default:
@@ -197,8 +198,43 @@ func (c *dependencyCatalog) manifestFingerprint(files []string) string {
 func (c *dependencyCatalog) loadEntries(language string) []dependencyEntry {
 	entries := make([]dependencyEntry, 0, 32)
 	entries = append(entries, c.loadManifestEntries(language)...)
+	entries = append(entries, c.loadLockfileEntries(language)...)
 	entries = append(entries, c.loadInstalledEntries(language)...)
 	return dedupeDependencyEntries(entries)
+}
+
+func (c *dependencyCatalog) loadLockfileEntries(language string) []dependencyEntry {
+	if c.root == "" {
+		return nil
+	}
+
+	switch normalizeDependencyLanguage(language) {
+	case "node":
+		entries := make([]dependencyEntry, 0, 16)
+		entries = append(entries, c.loadNpmLockEntries()...)
+		entries = append(entries, c.loadPnpmLockEntries()...)
+		entries = append(entries, c.loadYarnLockEntries()...)
+		return dedupeDependencyEntries(entries)
+	case "python":
+		entries := make([]dependencyEntry, 0, 12)
+		entries = append(entries, c.loadPoetryLockEntries()...)
+		entries = append(entries, c.loadPipfileLockEntries()...)
+		return dedupeDependencyEntries(entries)
+	case "php":
+		return c.loadComposerLockEntries()
+	case "rust":
+		return c.loadCargoLockEntries()
+	case "ruby":
+		return c.loadGemfileLockEntries()
+	case "dart":
+		return c.loadPubspecLockEntries()
+	case "swift":
+		return c.loadSwiftResolvedEntries()
+	case "dotnet":
+		return c.loadDotNetLockEntries()
+	default:
+		return nil
+	}
 }
 
 func (c *dependencyCatalog) loadManifestEntries(language string) []dependencyEntry {
@@ -238,10 +274,20 @@ func (c *dependencyCatalog) loadInstalledEntries(language string) []dependencyEn
 	if c.root == "" {
 		return nil
 	}
-	if normalizeDependencyLanguage(language) != "node" {
+
+	switch normalizeDependencyLanguage(language) {
+	case "node":
+		return c.loadInstalledNodeEntries(language)
+	case "php":
+		return c.loadInstalledPHPEntries()
+	case "python":
+		return c.loadInstalledPythonEntries()
+	default:
 		return nil
 	}
+}
 
+func (c *dependencyCatalog) loadInstalledNodeEntries(language string) []dependencyEntry {
 	nodeModulesPath := filepath.Join(c.root, "node_modules")
 	entries, err := os.ReadDir(nodeModulesPath)
 	if err != nil {
@@ -286,6 +332,568 @@ func (c *dependencyCatalog) loadInstalledEntries(language string) []dependencyEn
 	}
 
 	return modules
+}
+
+func (c *dependencyCatalog) loadInstalledPHPEntries() []dependencyEntry {
+	vendorPath := filepath.Join(c.root, "vendor")
+	vendors, err := os.ReadDir(vendorPath)
+	if err != nil {
+		return nil
+	}
+
+	entries := make([]dependencyEntry, 0, 32)
+	for _, vendor := range vendors {
+		if !vendor.IsDir() || strings.HasPrefix(vendor.Name(), ".") {
+			continue
+		}
+		vendorDir := filepath.Join(vendorPath, vendor.Name())
+		packages, err := os.ReadDir(vendorDir)
+		if err != nil {
+			continue
+		}
+		for _, pkg := range packages {
+			if !pkg.IsDir() {
+				continue
+			}
+			name := vendor.Name() + "/" + pkg.Name()
+			entries = append(entries, dependencyEntry{
+				Name:   name,
+				Detail: "installed composer package",
+				Kind:   core.SymbolKindModule,
+				Source: core.SourceLocal,
+				Insert: name,
+			})
+		}
+	}
+
+	return entries
+}
+
+func (c *dependencyCatalog) loadInstalledPythonEntries() []dependencyEntry {
+	venvCandidates := []string{".venv", "venv"}
+	entries := make([]dependencyEntry, 0, 64)
+
+	for _, venv := range venvCandidates {
+		sitePackagesRoots := c.findPythonSitePackages(filepath.Join(c.root, venv))
+		for _, sitePackages := range sitePackagesRoots {
+			items, err := os.ReadDir(sitePackages)
+			if err != nil {
+				continue
+			}
+			for _, item := range items {
+				name := pythonImportName(item)
+				if name == "" {
+					continue
+				}
+				entries = append(entries, dependencyEntry{
+					Name:   name,
+					Detail: "installed python module",
+					Kind:   core.SymbolKindModule,
+					Source: core.SourceLocal,
+					Insert: name,
+				})
+			}
+		}
+	}
+
+	return entries
+}
+
+func (c *dependencyCatalog) findPythonSitePackages(venvPath string) []string {
+	roots := make([]string, 0, 4)
+	libPath := filepath.Join(venvPath, "lib")
+	if dirs, err := os.ReadDir(libPath); err == nil {
+		for _, dir := range dirs {
+			if !dir.IsDir() || !strings.HasPrefix(dir.Name(), "python") {
+				continue
+			}
+			sitePackages := filepath.Join(libPath, dir.Name(), "site-packages")
+			if fileExists(sitePackages) {
+				roots = append(roots, sitePackages)
+			}
+		}
+	}
+
+	windowsSitePackages := filepath.Join(venvPath, "Lib", "site-packages")
+	if fileExists(windowsSitePackages) {
+		roots = append(roots, windowsSitePackages)
+	}
+
+	return roots
+}
+
+func pythonImportName(entry os.DirEntry) string {
+	name := entry.Name()
+	if name == "" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "__") {
+		return ""
+	}
+	if strings.HasSuffix(name, ".dist-info") || strings.HasSuffix(name, ".egg-info") {
+		return ""
+	}
+
+	if entry.IsDir() {
+		return name
+	}
+
+	if !strings.HasSuffix(name, ".py") {
+		return ""
+	}
+	base := strings.TrimSuffix(name, ".py")
+	if base == "" || base == "__init__" {
+		return ""
+	}
+	return base
+}
+
+func (c *dependencyCatalog) loadNpmLockEntries() []dependencyEntry {
+	path := filepath.Join(c.root, "package-lock.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var lock struct {
+		Dependencies map[string]struct {
+			Version string `json:"version"`
+		} `json:"dependencies"`
+	}
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return nil
+	}
+
+	entries := make([]dependencyEntry, 0, len(lock.Dependencies))
+	for name, dep := range lock.Dependencies {
+		entries = append(entries, dependencyEntry{
+			Name:    name,
+			Version: dep.Version,
+			Detail:  versionDetail("lock", dep.Version),
+			Kind:    core.SymbolKindModule,
+			Source:  core.SourceLocal,
+			Insert:  quoteImportLiteral(name, "typescript"),
+		})
+	}
+	return entries
+}
+
+func (c *dependencyCatalog) loadPnpmLockEntries() []dependencyEntry {
+	path := filepath.Join(c.root, "pnpm-lock.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	entries := make([]dependencyEntry, 0, 32)
+	inPackages := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "packages:" {
+			inPackages = true
+			continue
+		}
+		if !inPackages {
+			continue
+		}
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "  ") {
+			break
+		}
+		if !strings.HasSuffix(trimmed, ":") {
+			continue
+		}
+		key := strings.TrimSuffix(trimmed, ":")
+		key = strings.Trim(key, "'\"")
+		if !strings.HasPrefix(key, "/") {
+			continue
+		}
+		name := lockPackageNameFromPath(key[1:])
+		if name == "" {
+			continue
+		}
+		entries = append(entries, dependencyEntry{
+			Name:   name,
+			Detail: "pnpm lock",
+			Kind:   core.SymbolKindModule,
+			Source: core.SourceLocal,
+			Insert: quoteImportLiteral(name, "typescript"),
+		})
+	}
+
+	return entries
+}
+
+func (c *dependencyCatalog) loadYarnLockEntries() []dependencyEntry {
+	path := filepath.Join(c.root, "yarn.lock")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	entries := make([]dependencyEntry, 0, 32)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "__") {
+			continue
+		}
+		if strings.HasPrefix(line, "version ") || strings.HasPrefix(line, "resolved ") || strings.HasPrefix(line, "integrity ") {
+			continue
+		}
+		if !strings.HasSuffix(line, ":") {
+			continue
+		}
+
+		line = strings.TrimSuffix(line, ":")
+		for _, part := range strings.Split(line, ",") {
+			entry := strings.TrimSpace(strings.Trim(part, "\""))
+			name := lockPackageNameFromPath(entry)
+			if name == "" {
+				continue
+			}
+			entries = append(entries, dependencyEntry{
+				Name:   name,
+				Detail: "yarn lock",
+				Kind:   core.SymbolKindModule,
+				Source: core.SourceLocal,
+				Insert: quoteImportLiteral(name, "typescript"),
+			})
+		}
+	}
+
+	return entries
+}
+
+func (c *dependencyCatalog) loadPoetryLockEntries() []dependencyEntry {
+	path := filepath.Join(c.root, "poetry.lock")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	entries := make([]dependencyEntry, 0, 16)
+	currentName := ""
+	currentVersion := ""
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "[[package]]" {
+			if currentName != "" {
+				entries = append(entries, dependencyEntry{
+					Name:    currentName,
+					Version: currentVersion,
+					Detail:  versionDetail("poetry lock", currentVersion),
+					Kind:    core.SymbolKindModule,
+					Source:  core.SourceLocal,
+					Insert:  currentName,
+				})
+			}
+			currentName = ""
+			currentVersion = ""
+			continue
+		}
+		if strings.HasPrefix(line, "name = ") {
+			currentName = strings.Trim(strings.TrimPrefix(line, "name = "), "\"")
+			continue
+		}
+		if strings.HasPrefix(line, "version = ") {
+			currentVersion = strings.Trim(strings.TrimPrefix(line, "version = "), "\"")
+		}
+	}
+	if currentName != "" {
+		entries = append(entries, dependencyEntry{
+			Name:    currentName,
+			Version: currentVersion,
+			Detail:  versionDetail("poetry lock", currentVersion),
+			Kind:    core.SymbolKindModule,
+			Source:  core.SourceLocal,
+			Insert:  currentName,
+		})
+	}
+
+	return entries
+}
+
+func (c *dependencyCatalog) loadPipfileLockEntries() []dependencyEntry {
+	path := filepath.Join(c.root, "Pipfile.lock")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var lock struct {
+		Default map[string]map[string]any `json:"default"`
+		Develop map[string]map[string]any `json:"develop"`
+	}
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return nil
+	}
+
+	entries := make([]dependencyEntry, 0, len(lock.Default)+len(lock.Develop))
+	appendGroup := func(group map[string]map[string]any, detailPrefix string) {
+		for name, metadata := range group {
+			version := ""
+			if raw, ok := metadata["version"].(string); ok {
+				version = raw
+			}
+			entries = append(entries, dependencyEntry{
+				Name:    name,
+				Version: version,
+				Detail:  versionDetail(detailPrefix, version),
+				Kind:    core.SymbolKindModule,
+				Source:  core.SourceLocal,
+				Insert:  name,
+			})
+		}
+	}
+	appendGroup(lock.Default, "pipfile")
+	appendGroup(lock.Develop, "pipfile-dev")
+	return entries
+}
+
+func (c *dependencyCatalog) loadComposerLockEntries() []dependencyEntry {
+	path := filepath.Join(c.root, "composer.lock")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var lock struct {
+		Packages    []struct{ Name, Version string } `json:"packages"`
+		PackagesDev []struct{ Name, Version string } `json:"packages-dev"`
+	}
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return nil
+	}
+
+	entries := make([]dependencyEntry, 0, len(lock.Packages)+len(lock.PackagesDev))
+	for _, pkg := range lock.Packages {
+		entries = append(entries, dependencyEntry{Name: pkg.Name, Version: pkg.Version, Detail: versionDetail("composer lock", pkg.Version), Kind: core.SymbolKindModule, Source: core.SourceLocal, Insert: pkg.Name})
+	}
+	for _, pkg := range lock.PackagesDev {
+		entries = append(entries, dependencyEntry{Name: pkg.Name, Version: pkg.Version, Detail: versionDetail("composer lock dev", pkg.Version), Kind: core.SymbolKindModule, Source: core.SourceLocal, Insert: pkg.Name})
+	}
+	return entries
+}
+
+func (c *dependencyCatalog) loadCargoLockEntries() []dependencyEntry {
+	path := filepath.Join(c.root, "Cargo.lock")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	entries := make([]dependencyEntry, 0, 16)
+	name := ""
+	version := ""
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "[[package]]" {
+			if name != "" {
+				entries = append(entries, dependencyEntry{Name: name, Version: version, Detail: versionDetail("cargo lock", version), Kind: core.SymbolKindModule, Source: core.SourceLocal, Insert: name})
+			}
+			name = ""
+			version = ""
+			continue
+		}
+		if strings.HasPrefix(line, "name = ") {
+			name = strings.Trim(strings.TrimPrefix(line, "name = "), "\"")
+			continue
+		}
+		if strings.HasPrefix(line, "version = ") {
+			version = strings.Trim(strings.TrimPrefix(line, "version = "), "\"")
+		}
+	}
+	if name != "" {
+		entries = append(entries, dependencyEntry{Name: name, Version: version, Detail: versionDetail("cargo lock", version), Kind: core.SymbolKindModule, Source: core.SourceLocal, Insert: name})
+	}
+
+	return entries
+}
+
+func (c *dependencyCatalog) loadGemfileLockEntries() []dependencyEntry {
+	path := filepath.Join(c.root, "Gemfile.lock")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	entries := make([]dependencyEntry, 0, 16)
+	inSpecs := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "specs:" {
+			inSpecs = true
+			continue
+		}
+		if !inSpecs {
+			continue
+		}
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "    ") {
+			if strings.HasSuffix(trimmed, ":") {
+				inSpecs = false
+			}
+			continue
+		}
+		if strings.Contains(trimmed, "(") {
+			name := strings.TrimSpace(trimmed[:strings.Index(trimmed, "(")])
+			version := strings.TrimSpace(strings.TrimSuffix(trimmed[strings.Index(trimmed, "(")+1:], ")"))
+			if name == "" {
+				continue
+			}
+			entries = append(entries, dependencyEntry{Name: name, Version: version, Detail: versionDetail("gem lock", version), Kind: core.SymbolKindModule, Source: core.SourceLocal, Insert: name})
+		}
+	}
+	return entries
+}
+
+func (c *dependencyCatalog) loadPubspecLockEntries() []dependencyEntry {
+	path := filepath.Join(c.root, "pubspec.lock")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	entries := make([]dependencyEntry, 0, 16)
+	inPackages := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "packages:" {
+			inPackages = true
+			continue
+		}
+		if !inPackages {
+			continue
+		}
+		if !strings.HasPrefix(line, "  ") {
+			break
+		}
+		if strings.HasPrefix(line, "  ") && strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "dependency:") && !strings.HasPrefix(trimmed, "description:") {
+			name := strings.TrimSuffix(trimmed, ":")
+			if name == "" || strings.Contains(name, " ") {
+				continue
+			}
+			entries = append(entries, dependencyEntry{Name: name, Detail: "pub lock", Kind: core.SymbolKindModule, Source: core.SourceLocal, Insert: name})
+		}
+	}
+	return entries
+}
+
+func (c *dependencyCatalog) loadSwiftResolvedEntries() []dependencyEntry {
+	path := filepath.Join(c.root, "Package.resolved")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var lock map[string]any
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return nil
+	}
+
+	pins := extractSwiftPins(lock)
+	entries := make([]dependencyEntry, 0, len(pins))
+	for _, pin := range pins {
+		name := strings.TrimSpace(pin["identity"])
+		if name == "" {
+			name = strings.TrimSpace(pin["package"])
+		}
+		if name == "" {
+			name = strings.TrimSpace(pin["name"])
+		}
+		if name == "" {
+			continue
+		}
+		entries = append(entries, dependencyEntry{Name: name, Detail: "swift lock", Kind: core.SymbolKindModule, Source: core.SourceLocal, Insert: name})
+	}
+	return entries
+}
+
+func extractSwiftPins(lock map[string]any) []map[string]string {
+	results := make([]map[string]string, 0, 8)
+	if obj, ok := lock["object"].(map[string]any); ok {
+		if pins, ok := obj["pins"].([]any); ok {
+			for _, raw := range pins {
+				if pin, ok := raw.(map[string]any); ok {
+					results = append(results, mapAnyToString(pin))
+				}
+			}
+		}
+	}
+	if pins, ok := lock["pins"].([]any); ok {
+		for _, raw := range pins {
+			if pin, ok := raw.(map[string]any); ok {
+				results = append(results, mapAnyToString(pin))
+			}
+		}
+	}
+	return results
+}
+
+func mapAnyToString(input map[string]any) map[string]string {
+	result := make(map[string]string, len(input))
+	for key, value := range input {
+		if str, ok := value.(string); ok {
+			result[key] = str
+		}
+	}
+	return result
+}
+
+func (c *dependencyCatalog) loadDotNetLockEntries() []dependencyEntry {
+	path := filepath.Join(c.root, "packages.lock.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	var lock struct {
+		Dependencies map[string]map[string]struct {
+			Resolved string `json:"resolved"`
+		} `json:"dependencies"`
+	}
+	if err := json.Unmarshal(data, &lock); err != nil {
+		return nil
+	}
+
+	entries := make([]dependencyEntry, 0, 16)
+	for _, frameworkDeps := range lock.Dependencies {
+		for name, dep := range frameworkDeps {
+			entries = append(entries, dependencyEntry{Name: name, Version: dep.Resolved, Detail: versionDetail("nuget lock", dep.Resolved), Kind: core.SymbolKindModule, Source: core.SourceLocal, Insert: name})
+		}
+	}
+	return entries
+}
+
+func lockPackageNameFromPath(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+
+	if value[0] == '@' {
+		idx := strings.LastIndex(value, "@")
+		if idx > 0 {
+			return value[:idx]
+		}
+		return value
+	}
+
+	idx := strings.Index(value, "@")
+	if idx > 0 {
+		return value[:idx]
+	}
+	return value
 }
 
 func (c *dependencyCatalog) loadGoManifestEntries() []dependencyEntry {
@@ -876,4 +1484,9 @@ func firstQuotedValue(line string) string {
 		return line[start+1 : start+1+end]
 	}
 	return ""
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

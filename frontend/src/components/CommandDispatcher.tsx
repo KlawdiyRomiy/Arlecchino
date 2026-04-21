@@ -17,8 +17,6 @@ import {
   Database,
   Navigation,
 } from "lucide-react";
-import { useTheme } from "../hooks/useTheme";
-import { zIndex } from "../styles/colors";
 import {
   SearchFiles,
   SearchContent,
@@ -139,6 +137,25 @@ const getModeFromInput = (input: string): InputMode => {
   return "default";
 };
 
+const modeLabels: Record<InputMode, string> = {
+  default: "Search",
+  ide: "Command",
+  file: "Files",
+  grep: "Grep",
+  symbol: "Symbols",
+  ai: "Agent",
+  tag: "Tag",
+};
+
+const modeHints: Partial<Record<InputMode, string>> = {
+  ide: "> command",
+  file: ">> files",
+  grep: '" text',
+  symbol: "# symbol",
+  ai: "@ai",
+  tag: "@ tag",
+};
+
 export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
   isOpen,
   onClose,
@@ -149,8 +166,6 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
   recentItems = [],
   projectPath = "",
 }) => {
-  const { isDark } = useTheme();
-
   const [input, setInput] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [items, setItems] = useState<DispatcherItem[]>([]);
@@ -172,6 +187,7 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
   const mode = getModeFromInput(input);
 
   const isTerminalMode = mode === "tag" && /^@t\s/i.test(input);
+  const activeModeLabel = isTerminalMode ? "Terminal" : modeLabels[mode];
   const terminalCommand = isTerminalMode
     ? input.replace(/^@t\s+/i, "").trim()
     : "";
@@ -732,89 +748,35 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
 
   return (
     <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "center",
-        paddingTop: "35vh",
-        backgroundColor: "transparent",
-        zIndex: zIndex.modal,
-      }}
+      className="fixed inset-0 z-[110] flex items-start justify-center bg-black/45 px-4 pt-[18vh] backdrop-blur-[8px]"
       onClick={onClose}
     >
       <div
-        style={{
-          width: "100%",
-          maxWidth: "640px",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-        }}
+        className="flex w-full max-w-[720px] flex-col items-center"
         onClick={(e) => e.stopPropagation()}
       >
         {(preview || isExecuting || executionResult) && (
-          <div
-            style={{
-              width: "100%",
-              marginBottom: "8px",
-              animation: "bubbleIn 0.2s ease-out",
-            }}
-          >
-            <style>{`
-              @keyframes bubbleIn {
-                from { opacity: 0; transform: translateY(8px); }
-                to { opacity: 1; transform: translateY(0); }
-              }
-              @keyframes pulse {
-                0%, 100% { opacity: 1; }
-                50% { opacity: 0.5; }
-              }
-            `}</style>
-            <div
-              style={{
-                position: "relative",
-                backgroundColor: "#0d0d0d",
-                borderRadius: "12px",
-                boxShadow:
-                  "0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.08)",
-                padding: "12px 16px",
-                maxHeight: "200px",
-                overflowY: "auto",
-                fontFamily:
-                  "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, 'Cascadia Code', monospace",
-                fontSize: "13px",
-                lineHeight: 1.5,
-                color: "#e5e5e5",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                borderLeft: executionResult
-                  ? `3px solid ${executionResult.success ? "#22c55e" : "#888888"}`
-                  : "none",
-              }}
-            >
+          <div className="mb-2 w-full rounded-[16px] border border-[var(--border-default)] bg-[var(--surface-overlay)] p-4 shadow-[var(--shadow-overlay)]">
+            <div className="mb-3 flex items-center justify-between border-b border-[var(--border-subtle)] pb-2 text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
+              <span>
+                {executionResult ? "Execution preview" : "Expanded command"}
+              </span>
+              <span>{executionResult ? "Any key to close" : "Preview"}</span>
+            </div>
+            <div className="max-h-[220px] overflow-y-auto font-mono text-[13px] leading-6 text-[var(--text-primary)] whitespace-pre-wrap break-words">
               {isExecuting ? (
-                <div style={{ animation: "pulse 1.2s ease-in-out infinite" }}>
-                  <span style={{ color: "#06b6d4", marginRight: "8px" }}>
-                    $
-                  </span>
-                  <span style={{ color: "#e5e5e5" }}>
-                    {preview.split("\n")[0]}
-                  </span>
-                  <div style={{ color: "#737373", marginTop: "4px" }}>
+                <div className="animate-pulse">
+                  <span className="mr-2 text-[var(--status-info)]">$</span>
+                  <span>{preview.split("\n")[0]}</span>
+                  <div className="mt-1 text-[var(--text-muted)]">
                     Executing...
                   </div>
                 </div>
               ) : executionResult ? (
                 <>
-                  <div style={{ marginBottom: "8px" }}>
-                    <span style={{ color: "#06b6d4", marginRight: "8px" }}>
-                      $
-                    </span>
-                    <span style={{ color: "#e5e5e5" }}>
-                      {executionResult.command}
-                    </span>
+                  <div className="mb-2">
+                    <span className="mr-2 text-[var(--status-info)]">$</span>
+                    <span>{executionResult.command}</span>
                   </div>
                   {executionResult.success ? (
                     parseAnsi(executionResult.output).map((span, i) => (
@@ -829,29 +791,19 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
                       </span>
                     ))
                   ) : (
-                    <span style={{ color: "#888888" }}>
+                    <span className="text-[var(--status-error)]">
                       {executionResult.error ||
                         executionResult.output ||
                         "Command failed"}
                     </span>
                   )}
-                  <div
-                    style={{
-                      color: "#525252",
-                      fontSize: "11px",
-                      marginTop: "8px",
-                      borderTop: "1px solid #262626",
-                      paddingTop: "8px",
-                    }}
-                  >
+                  <div className="mt-3 border-t border-[var(--border-subtle)] pt-2 text-[11px] text-[var(--text-muted)]">
                     Press any key to close
                   </div>
                 </>
               ) : (
                 <>
-                  <span style={{ color: "#06b6d4", marginRight: "8px" }}>
-                    $
-                  </span>
+                  <span className="mr-2 text-[var(--status-info)]">$</span>
                   {parseAnsi(preview).map((span, i) => (
                     <span
                       key={i}
@@ -866,44 +818,13 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
                 </>
               )}
             </div>
-            <div
-              style={{
-                width: 0,
-                height: 0,
-                margin: "0 auto",
-                borderLeft: "10px solid transparent",
-                borderRight: "10px solid transparent",
-                borderTop: "10px solid #0d0d0d",
-              }}
-            />
           </div>
         )}
 
-        <div
-          style={{
-            width: "100%",
-            backgroundColor: isDark ? "#1a1a1a" : "#fff",
-            borderRadius: "12px",
-            boxShadow: isDark
-              ? "0 16px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.1)"
-              : "0 16px 64px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.1)",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "12px",
-              padding: "16px 20px",
-              position: "relative",
-            }}
-          >
-            <Search
-              size={18}
-              style={{ color: isDark ? "#666" : "#999", flexShrink: 0 }}
-            />
-            <div style={{ position: "relative", flex: 1 }}>
+        <div className="w-full overflow-hidden rounded-[18px] border border-[var(--border-default)] bg-[var(--surface-overlay)] shadow-[var(--shadow-overlay)]">
+          <div className="flex items-center gap-3 border-b border-[var(--border-subtle)] bg-[var(--surface-2)] px-5 py-4">
+            <Search size={18} className="shrink-0 text-[var(--text-muted)]" />
+            <div className="relative flex-1">
               <input
                 ref={inputRef}
                 type="text"
@@ -916,146 +837,97 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
                 }}
                 onKeyDown={handleKeyDown}
                 placeholder="Search..."
-                style={{
-                  width: "100%",
-                  border: "none",
-                  outline: "none",
-                  backgroundColor: "transparent",
-                  fontSize: "16px",
-                  color: isDark ? "#fff" : "#000",
-                  fontWeight: 400,
-                }}
+                className="w-full border-none bg-transparent text-[15px] font-normal text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
               />
-              {/* Ghost text for terminal mode */}
               {isTerminalMode && ghostText && (
-                <span
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    top: 0,
-                    pointerEvents: "none",
-                    fontSize: "16px",
-                    fontWeight: 400,
-                    color: "transparent",
-                    whiteSpace: "pre",
-                  }}
-                >
+                <span className="pointer-events-none absolute left-0 top-0 whitespace-pre text-[15px] font-normal text-transparent">
                   {input}
-                  <span style={{ color: isDark ? "#555" : "#aaa" }}>
-                    {ghostText}
-                  </span>
+                  <span className="text-[var(--text-muted)]">{ghostText}</span>
                 </span>
               )}
             </div>
-            {/* Terminal mode indicator */}
-            {isTerminalMode && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  flexShrink: 0,
-                }}
-              >
-                {ghostText && (
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      color: isDark ? "#555" : "#aaa",
-                      padding: "2px 6px",
-                      backgroundColor: isDark ? "#333" : "#eee",
-                      borderRadius: "4px",
-                    }}
-                  >
-                    Tab
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="interactive-chip border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)]">
+                {activeModeLabel}
+                {modeHints[mode] ? (
+                  <span className="text-[var(--text-muted)]">
+                    {modeHints[mode]}
                   </span>
-                )}
-                <span
-                  style={{
-                    fontSize: "11px",
-                    color: "#22c55e",
-                    fontWeight: 500,
-                  }}
-                >
-                  Terminal
-                </span>
-              </div>
-            )}
+                ) : null}
+              </span>
+              {isTerminalMode && (
+                <>
+                  {ghostText && (
+                    <span className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                      Tab
+                    </span>
+                  )}
+                  <span className="rounded-full border border-[color:var(--status-success)]/25 bg-[color:var(--status-success)]/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--status-success)]">
+                    Terminal
+                  </span>
+                </>
+              )}
+              <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                Esc to close
+              </span>
+            </div>
           </div>
 
           {items.length > 0 && (
-            <div
-              ref={listRef}
-              style={{
-                maxHeight: "400px",
-                overflowY: "auto",
-                borderTop: `1px solid ${isDark ? "#333" : "#eee"}`,
-              }}
-            >
+            <div ref={listRef} className="max-h-[420px] overflow-y-auto">
               {items.map((item, index) => (
                 <div
                   key={item.id}
                   onClick={() => executeItem(item)}
                   onMouseEnter={() => setSelectedIndex(index)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "16px",
-                    padding: "12px 20px",
-                    cursor: "pointer",
-                    backgroundColor:
-                      index === selectedIndex
-                        ? isDark
-                          ? "rgba(255,255,255,0.08)"
-                          : "rgba(0,0,0,0.05)"
-                        : "transparent",
-                  }}
+                  className={`flex cursor-pointer items-center gap-3 border-t border-[var(--border-subtle)] px-5 py-3 transition-colors ${
+                    index === selectedIndex
+                      ? "bg-[var(--surface-active)]"
+                      : "bg-transparent hover:bg-[var(--surface-hover)]"
+                  }`}
                 >
-                  <div
-                    style={{
-                      color: isDark ? "#888" : "#666",
-                      flexShrink: 0,
-                    }}
-                  >
+                  <span
+                    className={`h-8 w-[2px] rounded-full transition-colors ${
+                      index === selectedIndex
+                        ? "bg-[var(--accent-brand)]"
+                        : "bg-transparent"
+                    }`}
+                  />
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)]">
                     {item.icon}
                   </div>
-                  <div
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: "14px",
-                        fontWeight: 500,
-                        color: isDark ? "#fff" : "#000",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {item.title}
-                    </span>
-                    {item.subtitle && (
-                      <span
-                        style={{
-                          fontSize: "14px",
-                          color: isDark ? "#666" : "#999",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        — {item.subtitle}
-                      </span>
-                    )}
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[14px] font-medium text-[var(--text-primary)]">
+                        {item.title}
+                      </div>
+                      {item.subtitle && (
+                        <div className="truncate text-[12px] text-[var(--text-muted)]">
+                          {item.subtitle}
+                        </div>
+                      )}
+                    </div>
+                    <div className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                      Enter
+                    </div>
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+          {items.length === 0 && !isTerminalMode && (
+            <div className="border-t border-[var(--border-subtle)] px-5 py-5 text-sm text-[var(--text-muted)]">
+              {mode === "default"
+                ? "Start typing to search files, content, symbols, or IDE actions."
+                : mode === "ide"
+                  ? "Run an IDE action or jump to a command."
+                  : mode === "file"
+                    ? "Search project files by name."
+                    : mode === "grep"
+                      ? "Search content inside the current workspace."
+                      : mode === "symbol"
+                        ? "Jump to a symbol in the current workspace."
+                        : "No results yet for the current mode."}
             </div>
           )}
         </div>

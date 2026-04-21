@@ -1,7 +1,10 @@
 import { useSyncExternalStore } from "react";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 
-import { useDiagnosticsStore } from "../stores/diagnosticsStore";
+import {
+  ensureDiagnosticsEventsBound,
+  useDiagnosticsStore,
+} from "../stores/diagnosticsStore";
 
 type ProjectAppBridge = {
   LSPPreloadProjectDiagnostics?: (projectPath: string) => Promise<unknown>;
@@ -48,6 +51,8 @@ let diagnosticsPreloadState: DiagnosticsPreloadState = {
 let diagnosticsPreloadEventsBound = false;
 let diagnosticsPreloadBindTimer: ReturnType<typeof window.setTimeout> | null =
   null;
+let diagnosticsPreloadBoundWaiters: Array<() => void> = [];
+const diagnosticsBindingsWaitTimeoutMs = 300;
 let latestProjectRuntime: ProjectScopeState = {
   generation: 0,
   projectPath: null,
@@ -70,6 +75,17 @@ const subscribeDiagnosticsPreload = (listener: () => void) => {
 };
 
 const getDiagnosticsPreloadSnapshot = () => diagnosticsPreloadState;
+
+const preloadStateIdle: DiagnosticsPreloadState = {
+  active: false,
+  generation: 0,
+  projectPath: null,
+  bounded: false,
+  totalCandidates: 0,
+  selectedCandidates: 0,
+  totalLanguages: 0,
+  selectedLanguages: 0,
+};
 
 const normalizeGeneration = (generation?: number) => {
   if (typeof generation !== "number" || !Number.isFinite(generation)) {
@@ -105,6 +121,16 @@ const syncProjectScopeToDiagnosticsStore = () => {
 
 const setDiagnosticsPreloadState = (next: DiagnosticsPreloadState) => {
   emitDiagnosticsPreloadState(next);
+};
+
+const resolveDiagnosticsPreloadEventsBound = () => {
+  if (diagnosticsPreloadBoundWaiters.length === 0) {
+    return;
+  }
+
+  const waiters = diagnosticsPreloadBoundWaiters;
+  diagnosticsPreloadBoundWaiters = [];
+  waiters.forEach((resolve) => resolve());
 };
 
 const getPreloadMetadata = (payload: DiagnosticsPreloadEventPayload) => ({
@@ -188,6 +214,7 @@ const bindDiagnosticsPreloadEvents = () => {
   }
 
   diagnosticsPreloadEventsBound = true;
+  resolveDiagnosticsPreloadEventsBound();
   EventsOn("lsp:ready", (payload: LSPReadyEventPayload) => {
     const projectPath = normalizeProjectPath(payload);
     const generation = normalizeGeneration(payload.generation);
@@ -276,6 +303,36 @@ const bindDiagnosticsPreloadEvents = () => {
   );
 };
 
+const ensureDiagnosticsPreloadEventsBound = (): Promise<void> => {
+  if (diagnosticsPreloadEventsBound || typeof window === "undefined") {
+    return Promise.resolve();
+  }
+
+  bindDiagnosticsPreloadEvents();
+  if (diagnosticsPreloadEventsBound) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    diagnosticsPreloadBoundWaiters.push(resolve);
+    scheduleDiagnosticsPreloadBind();
+  });
+};
+
+const waitForDiagnosticsBindingsReady = async () => {
+  const waitForBindings = Promise.all([
+    ensureDiagnosticsEventsBound(),
+    ensureDiagnosticsPreloadEventsBound(),
+  ]);
+
+  await Promise.race([
+    waitForBindings,
+    new Promise<void>((resolve) => {
+      window.setTimeout(resolve, diagnosticsBindingsWaitTimeoutMs);
+    }),
+  ]);
+};
+
 const getProjectAppBridge = (): ProjectAppBridge | null => {
   if (typeof window === "undefined") {
     return null;
@@ -295,16 +352,7 @@ const getProjectAppBridge = (): ProjectAppBridge | null => {
 export const resetProjectBoundStores = () => {
   latestProjectRuntime = { generation: 0, projectPath: null };
   currentProjectScope = { generation: 0, projectPath: null };
-  setDiagnosticsPreloadState({
-    active: false,
-    generation: 0,
-    projectPath: null,
-    bounded: false,
-    totalCandidates: 0,
-    selectedCandidates: 0,
-    totalLanguages: 0,
-    selectedLanguages: 0,
-  });
+  setDiagnosticsPreloadState(preloadStateIdle);
   useDiagnosticsStore.getState().reset();
 };
 
@@ -366,20 +414,12 @@ export const preloadProjectDiagnostics = async (projectPath: string) => {
   }
 
   try {
+    await waitForDiagnosticsBindingsReady();
     await bridge.LSPPreloadProjectDiagnostics(projectPath);
     return true;
   } catch (error) {
     console.debug("[diagnostics] project preload failed", error);
-    emitDiagnosticsPreloadState({
-      active: false,
-      generation: 0,
-      projectPath: null,
-      bounded: false,
-      totalCandidates: 0,
-      selectedCandidates: 0,
-      totalLanguages: 0,
-      selectedLanguages: 0,
-    });
+    emitDiagnosticsPreloadState(preloadStateIdle);
     return false;
   }
 };

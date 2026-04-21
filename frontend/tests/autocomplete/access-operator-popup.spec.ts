@@ -34,6 +34,36 @@ const completionsByPrefix: Record<
     { label: "create", source: "library", kind: "method" },
     { label: "now", source: "library", kind: "method" },
   ],
+  json: [{ label: "json", source: "library", kind: "module" }],
+  "json.": [
+    { label: "loads", source: "library", kind: "function" },
+    { label: "dumps", source: "library", kind: "function" },
+  ],
+  JSON: [{ label: "JSON", source: "library", kind: "module" }],
+  "JSON.": [
+    { label: "parse", source: "library", kind: "function" },
+    { label: "generate", source: "library", kind: "function" },
+  ],
+  serde_json: [{ label: "serde_json", source: "library", kind: "module" }],
+  "serde_json.": [
+    { label: "from_str", source: "library", kind: "function" },
+    { label: "to_string", source: "library", kind: "function" },
+  ],
+  Console: [{ label: "Console", source: "library", kind: "class" }],
+  "Console.": [
+    { label: "WriteLine", source: "library", kind: "method" },
+    { label: "ReadLine", source: "library", kind: "method" },
+  ],
+  URLSession: [{ label: "URLSession", source: "library", kind: "class" }],
+  "URLSession.": [
+    { label: "shared", source: "library", kind: "property" },
+    { label: "configuration", source: "library", kind: "property" },
+  ],
+  http: [{ label: "http", source: "library", kind: "module" }],
+  "http.": [
+    { label: "get", source: "library", kind: "function" },
+    { label: "post", source: "library", kind: "function" },
+  ],
   sse: [{ label: "sse", source: "library", kind: "module" }],
   "sse.": [
     { label: "Decode", source: "library", kind: "function" },
@@ -110,9 +140,9 @@ test.beforeEach(async ({ page }) => {
         RecordCompletionUsage: async () => true,
         GetEditorCompletions: async (ctx?: Record<string, unknown>) => {
           const textBefore = String(ctx?.textBefore || "");
-          const suffix = Object.keys(completionsByPrefix).find((candidate) =>
-            textBefore.endsWith(candidate),
-          );
+          const suffix = Object.keys(completionsByPrefix)
+            .filter((candidate) => textBefore.endsWith(candidate))
+            .sort((a, b) => b.length - a.length)[0];
           const items = suffix ? completionsByPrefix[suffix] : [];
           return {
             primary: items[0] ? normalizeItems([items[0]])[0] : null,
@@ -259,6 +289,25 @@ async function waitForCompletionLabel(page: Page, label: string) {
   });
 }
 
+async function assertAccessPopupScenario(
+  page: Page,
+  fixture: EditorFixture,
+  token: string,
+  operator: string,
+  expectedLabels: [string, string],
+) {
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, token);
+  await page.keyboard.type(operator);
+  await waitForCompletionLabel(page, expectedLabels[0]);
+  await expect(
+    page
+      .locator(".cm-tooltip-autocomplete")
+      .locator(".cm-completionLabel", { hasText: expectedLabels[1] })
+      .first(),
+  ).toBeVisible();
+}
+
 test("dot access restarts popup immediately for imported Go alias", async ({
   page,
 }) => {
@@ -348,4 +397,68 @@ test("unresolved package member popup appears immediately after dot", async ({
       .locator(".cm-completionLabel", { hasText: "Encode" })
       .first(),
   ).toBeVisible();
+});
+
+test("dot access works for Python standard library module", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.py`,
+    language: "python",
+    content: "import json\n\ndef run():\n    json\n",
+  } satisfies EditorFixture;
+
+  await assertAccessPopupScenario(page, fixture, "json", ".", [
+    "loads",
+    "dumps",
+  ]);
+});
+
+test("dot access works for Ruby JSON module", async ({ page }) => {
+  const fixture = {
+    filePath: `${projectPath}/main.rb`,
+    language: "ruby",
+    content: "def run\n  JSON\nend\n",
+  } satisfies EditorFixture;
+
+  await assertAccessPopupScenario(page, fixture, "JSON", ".", [
+    "parse",
+    "generate",
+  ]);
+});
+
+test("dot access works for Rust serde_json module", async ({ page }) => {
+  const fixture = {
+    filePath: `${projectPath}/main.rs`,
+    language: "rust",
+    content: "fn main() {\n    serde_json\n}\n",
+  } satisfies EditorFixture;
+
+  await assertAccessPopupScenario(page, fixture, "serde_json", ".", [
+    "from_str",
+    "to_string",
+  ]);
+});
+
+test("dot access works for Swift URLSession type", async ({ page }) => {
+  const fixture = {
+    filePath: `${projectPath}/main.swift`,
+    language: "swift",
+    content: "func run() {\n    URLSession\n}\n",
+  } satisfies EditorFixture;
+
+  await assertAccessPopupScenario(page, fixture, "URLSession", ".", [
+    "shared",
+    "configuration",
+  ]);
+});
+
+test("dot access works for Dart http package", async ({ page }) => {
+  const fixture = {
+    filePath: `${projectPath}/main.dart`,
+    language: "dart",
+    content: "void main() {\n  http\n}\n",
+  } satisfies EditorFixture;
+
+  await assertAccessPopupScenario(page, fixture, "http", ".", ["get", "post"]);
 });

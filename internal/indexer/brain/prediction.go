@@ -900,11 +900,11 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	debugLogf("[Complete] Components: lspManager=%v local=%v predictive=%v fillAll=%v",
 		lspManager != nil, local != nil, predictiveEngine != nil, fillAll != nil)
 
+	var importSuggestions []Suggestion
 	if ctx.InImport && importCompletions != nil {
-		impSuggestions := importCompletions.GetCompletions(ctx)
-		if len(impSuggestions) > 0 {
-			debugLogf("[Complete] IMPORT: %d items", len(impSuggestions))
-			return impSuggestions
+		importSuggestions = importCompletions.GetCompletions(ctx)
+		if len(importSuggestions) > 0 {
+			debugLogf("[Complete] IMPORT: %d items", len(importSuggestions))
 		}
 	}
 
@@ -950,17 +950,22 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 		}
 	}()
 
-	localGroup := b.collectLocalGroup(ctx, config, fillAll, local, virtualStore)
-	mergeCounts(counts, localGroup.counts)
-	suggestions = append(suggestions, localGroup.suggestions...)
+	if len(importSuggestions) > 0 {
+		counts["import"] = len(importSuggestions)
+		suggestions = append(suggestions, importSuggestions...)
+	} else {
+		localGroup := b.collectLocalGroup(ctx, config, fillAll, local, virtualStore)
+		mergeCounts(counts, localGroup.counts)
+		suggestions = append(suggestions, localGroup.suggestions...)
 
-	patternGroup := b.collectPatternGroup(ctx, predictiveEngine)
-	mergeCounts(counts, patternGroup.counts)
-	suggestions = append(suggestions, patternGroup.suggestions...)
+		patternGroup := b.collectPatternGroup(ctx, predictiveEngine)
+		mergeCounts(counts, patternGroup.counts)
+		suggestions = append(suggestions, patternGroup.suggestions...)
 
-	indexGroup := b.collectIndexGroup(ctx)
-	mergeCounts(counts, indexGroup.counts)
-	suggestions = append(suggestions, indexGroup.suggestions...)
+		indexGroup := b.collectIndexGroup(ctx)
+		mergeCounts(counts, indexGroup.counts)
+		suggestions = append(suggestions, indexGroup.suggestions...)
+	}
 
 	externalGroup := providerGroupResult{counts: map[string]int{"lsp": -3}}
 	select {
@@ -972,11 +977,14 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 		externalGroup.counts = map[string]int{}
 	}
 	mergeCounts(counts, externalGroup.counts)
+	if ctx.InImport {
+		externalGroup.suggestions = stripAdditionalTextEdits(externalGroup.suggestions)
+	}
 	suggestions = append(suggestions, externalGroup.suggestions...)
 	trace.SourceCounts = cloneCounts(counts)
 
-	debugLogf("[Complete] SOURCES: fillAll=%d local=%d predictive=%d index=%d crossFile=%d facade=%d lsp=%d virtual=%d spec=%d stubs=%d kw=%d",
-		counts["fillAll"], counts["local"], counts["predictive"], counts["index"],
+	debugLogf("[Complete] SOURCES: import=%d fillAll=%d local=%d predictive=%d index=%d crossFile=%d facade=%d lsp=%d virtual=%d spec=%d stubs=%d kw=%d",
+		counts["import"], counts["fillAll"], counts["local"], counts["predictive"], counts["index"],
 		counts["crossFile"], counts["facade"], counts["lsp"], counts["virtual"],
 		counts["speculative"], counts["stubs"], counts["keywords"])
 
@@ -1042,6 +1050,18 @@ func cloneCounts(counts map[string]int) map[string]int {
 		cloned[k] = v
 	}
 	return cloned
+}
+
+func stripAdditionalTextEdits(suggestions []Suggestion) []Suggestion {
+	if len(suggestions) == 0 {
+		return suggestions
+	}
+	for i := range suggestions {
+		if len(suggestions[i].AdditionalTextEdits) > 0 {
+			suggestions[i].AdditionalTextEdits = nil
+		}
+	}
+	return suggestions
 }
 
 func (b *PredictionBrain) LastCompletionTrace() CompletionTrace {
@@ -2692,6 +2712,12 @@ func (b *PredictionBrain) sourceBonus(source core.SymbolSource, ctx CompletionCo
 		if ctx.ResolvedNamespace != "" {
 			if source == core.SourceLSP {
 				bonus = 0.85
+			} else if source == core.SourceLibrary {
+				bonus = 1.0
+			}
+		} else if ctx.AccessChain != "" {
+			if source == core.SourceLSP {
+				bonus = 0.75
 			} else if source == core.SourceLibrary {
 				bonus = 1.0
 			}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -103,7 +104,19 @@ func (p *StubProvider) LoadStubs() error {
 		return nil
 	}
 
-	languages := []string{"javascript", "typescript", "python", "php", "go", "ruby", "java", "rust", "csharp"}
+	entries, err := os.ReadDir(p.stubsDir)
+	if err != nil {
+		return nil
+	}
+
+	languages := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			languages = append(languages, entry.Name())
+		}
+	}
+	sort.Strings(languages)
+
 	for _, lang := range languages {
 		langDir := filepath.Join(p.stubsDir, lang)
 		if _, err := os.Stat(langDir); os.IsNotExist(err) {

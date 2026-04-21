@@ -5,6 +5,34 @@ import (
 	"strings"
 )
 
+var languageAliases = map[string][]string{
+	"tsx":             {"typescriptreact", "typescript"},
+	"jsx":             {"javascriptreact", "javascript"},
+	"typescriptreact": {"typescript", "tsx"},
+	"javascriptreact": {"javascript", "jsx"},
+	"ts":              {"typescript"},
+	"js":              {"javascript"},
+	"mjs":             {"javascript"},
+	"cjs":             {"javascript"},
+	"shell":           {"bash"},
+	"shellscript":     {"bash"},
+	"sh":              {"bash"},
+	"zsh":             {"bash"},
+	"fish":            {"bash"},
+	"py":              {"python"},
+	"rb":              {"ruby"},
+	"rs":              {"rust"},
+	"objective-c":     {"objectivec"},
+	"objc":            {"objectivec"},
+	"c#":              {"csharp"},
+}
+
+var textDocumentLanguageIDOverrides = map[string]string{
+	"bash":       "shellscript",
+	"blade":      "html",
+	"objectivec": "objective-c",
+}
+
 type LanguageInfo struct {
 	ID            string
 	Name          string
@@ -187,4 +215,56 @@ func GetARLESupportedLanguages() []*LanguageInfo {
 		}
 	}
 	return result
+}
+
+func NormalizeLanguageToken(token string) string {
+	normalized := strings.TrimSpace(strings.ToLower(token))
+	return strings.TrimPrefix(normalized, ".")
+}
+
+func LanguageCandidates(token string) []string {
+	normalized := NormalizeLanguageToken(token)
+	if normalized == "" {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, 12)
+	candidates := make([]string, 0, 12)
+	add := func(value string) {
+		candidate := NormalizeLanguageToken(value)
+		if candidate == "" {
+			return
+		}
+		if _, ok := seen[candidate]; ok {
+			return
+		}
+		seen[candidate] = struct{}{}
+		candidates = append(candidates, candidate)
+	}
+
+	add(normalized)
+	for _, alias := range languageAliases[normalized] {
+		add(alias)
+	}
+
+	if info := GetLanguageByExtension(normalized); info != nil {
+		add(info.ID)
+		for _, alias := range languageAliases[NormalizeLanguageToken(info.ID)] {
+			add(alias)
+		}
+	}
+
+	if info := GetLanguageByID(normalized); info != nil {
+		add(info.ID)
+	}
+
+	return candidates
+}
+
+func TextDocumentLanguageID(language string) string {
+	canonical := NormalizeLanguageToken(language)
+	if override, ok := textDocumentLanguageIDOverrides[canonical]; ok {
+		return override
+	}
+	return canonical
 }

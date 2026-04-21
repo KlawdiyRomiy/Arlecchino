@@ -7,7 +7,7 @@ import {
   SplitSquareVertical,
 } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
-import { colors, getThemeColors, radius, transitions } from "../styles/colors";
+import { getThemeColors } from "../styles/colors";
 import { useTheme } from "../hooks/useTheme";
 import { useTerminalStore } from "../stores/terminalStore";
 import { shortcuts } from "../utils/keyboard";
@@ -296,7 +296,6 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     }
 
     const setGhostTextWithRef = (text: string) => {
-      console.log("[GhostText] Setting ghost text:", text);
       ghostTextValueRef.current = text;
       setGhostText(text);
 
@@ -324,12 +323,6 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           projectID: projectIDRef.current,
         });
 
-        console.log(
-          "[GhostText] Predictions for",
-          input,
-          ":",
-          response.predictions,
-        );
         if (response.predictions && response.predictions.length > 0) {
           const prediction = response.predictions[0];
 
@@ -359,7 +352,6 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     };
 
     const updateGhostText = async (input: string) => {
-      console.log("[GhostText] updateGhostText called with:", input);
       const suffix = await getCompletionSuffix(input);
       setGhostTextWithRef(suffix);
     };
@@ -405,7 +397,6 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
 
       // Tab is handled by customKeyHandler - if we still see it here, it leaked to PTY
       if (data === "\t") {
-        console.warn("[Tab] onData received TAB (should be blocked)");
         return;
       }
 
@@ -633,10 +624,6 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
         // Only intercept Tab if we have ghost text to complete
         // Otherwise, let it pass through to shell for native completion (cd, files, etc.)
         if (ghostTextValueRef.current) {
-          console.debug(
-            "[Tab] intercepted keydown, applying ghost completion:",
-            ghostTextValueRef.current,
-          );
           e.preventDefault();
           e.stopPropagation();
 
@@ -661,7 +648,6 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           const newInput = inputBufferRef.current.trim();
           setTimeout(async () => {
             const suffix = await getCompletionSuffix(newInput);
-            console.debug("[Tab] new suffix after completion:", suffix);
             ghostTextValueRef.current = suffix;
             setGhostText(suffix);
           }, 150);
@@ -670,9 +656,6 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
         }
 
         // No ghost text - let Tab pass through to shell for native completion
-        console.debug(
-          "[Tab] no ghost text, passing to shell for native completion",
-        );
         return true;
       }
 
@@ -987,7 +970,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     alignItems: "center",
     gap: "4px",
     padding: "6px 12px",
-    backgroundColor: isDark ? "var(--bg-tertiary)" : "rgba(0,0,0,0.03)",
+    backgroundColor: "var(--surface-2)",
     borderBottom: `1px solid var(--border-subtle)`,
     overflowX: "auto",
   };
@@ -1001,15 +984,12 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     fontFamily: "'JetBrains Mono', monospace",
     fontWeight: isActive ? 500 : 400,
     color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
-    backgroundColor: isActive
-      ? isDark
-        ? "var(--bg-elevated)"
-        : "rgba(0,0,0,0.05)"
-      : "transparent",
-    borderRadius: radius.md,
+    backgroundColor: isActive ? "var(--surface-1)" : "transparent",
+    borderRadius: 10,
     cursor: "pointer",
-    transition: `all ${transitions.fast}`,
-    border: "none",
+    transition:
+      "background-color 150ms ease, color 150ms ease, border-color 150ms ease",
+    border: `1px solid ${isActive ? "var(--border-default)" : "transparent"}`,
   });
 
   const closeTabBtnStyle: React.CSSProperties = {
@@ -1020,10 +1000,11 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     height: "16px",
     borderRadius: "4px",
     backgroundColor: "transparent",
-    border: "none",
+    border: "1px solid transparent",
     color: "var(--text-muted)",
     cursor: "pointer",
-    transition: `all ${transitions.fast}`,
+    transition:
+      "background-color 150ms ease, color 150ms ease, opacity 150ms ease",
     opacity: 0.6,
   };
 
@@ -1033,18 +1014,19 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     justifyContent: "center",
     width: "28px",
     height: "28px",
-    borderRadius: radius.sm,
-    backgroundColor: "transparent",
-    border: "none",
+    borderRadius: 6,
+    backgroundColor: "var(--surface-1)",
+    border: `1px solid var(--border-subtle)`,
     color: "var(--text-secondary)",
     cursor: "pointer",
     marginLeft: "4px",
-    transition: `all ${transitions.fast}`,
+    transition:
+      "background-color 150ms ease, color 150ms ease, border-color 150ms ease",
   };
 
   const addTabBtnStyle: React.CSSProperties = {
     ...actionBtnStyle,
-    color: isDark ? "#FFFFFF" : "var(--text-primary)",
+    color: "var(--text-primary)",
   };
 
   const renderPane = (pane: (typeof panes)[0]) => {
@@ -1135,7 +1117,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           style={{
             flex: 1,
             minHeight: 0,
-            backgroundColor: isDark ? "var(--bg-blackprint)" : "#fafafa",
+            backgroundColor: "var(--surface-canvas)",
             display: pane.tabIds.length > 0 ? "block" : "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -1162,8 +1144,18 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
             />
           ))}
           {pane.tabIds.length === 0 && (
-            <div style={{ color: theme.textMuted, fontSize: "13px" }}>
-              No terminal. Click + to create one.
+            <div className="flex flex-col items-center gap-3 text-[var(--text-muted)]">
+              <div style={{ fontSize: "13px" }}>
+                No terminal session in this pane.
+              </div>
+              <button
+                type="button"
+                onClick={() => createTerminal(pane.id, isDark)}
+                style={addTabBtnStyle}
+              >
+                <Plus size={13} />
+                New terminal
+              </button>
             </div>
           )}
         </div>
@@ -1172,9 +1164,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           <div
             style={{
               borderTop: `1px solid ${theme.border}`,
-              backgroundColor: isDark
-                ? "rgba(255,255,255,0.02)"
-                : "rgba(0,0,0,0.02)",
+              backgroundColor: "var(--surface-1)",
               padding: "6px 10px",
               display: "flex",
               flexDirection: "column",
@@ -1192,9 +1182,9 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
               const columnLabel = entry.column > 0 ? `:${entry.column}` : "";
               const severityColor =
                 entry.severity === "error"
-                  ? "#ef4444"
+                  ? "var(--status-error)"
                   : entry.severity === "warning"
-                    ? "#f59e0b"
+                    ? "var(--status-warning)"
                     : theme.textMuted;
 
               return (
@@ -1212,10 +1202,16 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
                     onOpenPreviewUrl(entry.message, activeSession.id);
                   }}
                   style={{
-                    border: "none",
-                    background: "transparent",
+                    border:
+                      isFileRef || isPreviewUrl
+                        ? "1px solid var(--border-subtle)"
+                        : "1px solid transparent",
+                    background:
+                      isFileRef || isPreviewUrl
+                        ? "var(--surface-2)"
+                        : "transparent",
                     textAlign: "left",
-                    padding: 0,
+                    padding: "6px 8px",
                     margin: 0,
                     color: theme.textSecondary,
                     cursor: isFileRef || isPreviewUrl ? "pointer" : "default",
@@ -1232,13 +1228,10 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
                   <span
                     style={{
                       color: isFileRef
-                        ? colors.status.info
+                        ? "var(--status-info)"
                         : isPreviewUrl
-                          ? colors.status.info
+                          ? "var(--status-info)"
                           : theme.textSecondary,
-                      textDecoration:
-                        isFileRef || isPreviewUrl ? "underline" : "none",
-                      textUnderlineOffset: "2px",
                       whiteSpace: "nowrap",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
@@ -1261,9 +1254,16 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
                         maxHeight: "52px",
                         objectFit: "contain",
                         borderRadius: "4px",
-                        border: `1px solid ${theme.border}`,
+                        border: `1px solid var(--border-subtle)`,
                       }}
                     />
+                  )}
+                  {(isFileRef || isPreviewUrl) && (
+                    <span
+                      style={{ color: "var(--text-muted)", marginLeft: "auto" }}
+                    >
+                      Open
+                    </span>
                   )}
                 </button>
               );
@@ -1332,7 +1332,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
         top: `${top}px`,
         height: `${cellH}px`,
         lineHeight: `${cellH}px`,
-        color: isDark ? "#9ca3af" : "#6b7280",
+        color: "var(--text-muted)",
         backgroundColor: "transparent",
         fontFamily: fontFamily,
         fontSize: `${fontSize}px`,
@@ -1358,18 +1358,8 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
         ? "no matches"
         : `${searchState.currentMatch}/${searchState.totalMatches}`;
   const searchStatusColor = searchState.noMatches
-    ? colors.status.error
+    ? "var(--status-error)"
     : theme.textSecondary;
-
-  // Debug log for ghost text rendering
-  if (ghostText) {
-    console.log(
-      "[GhostText] Rendering ghost text:",
-      ghostText,
-      "style:",
-      ghost ? "OK" : "NULL",
-    );
-  }
 
   return (
     <div
@@ -1383,7 +1373,13 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       }}
     >
       {error && (
-        <div style={{ color: "#888888", padding: "6px 8px", fontSize: "12px" }}>
+        <div
+          style={{
+            color: "var(--text-muted)",
+            padding: "6px 8px",
+            fontSize: "12px",
+          }}
+        >
           {error}
         </div>
       )}
@@ -1400,7 +1396,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
                 marginLeft: "4px",
                 fontSize: "9px",
                 opacity: 0.5,
-                color: "#888",
+                color: "var(--text-muted)",
               }}
             >
               ⇥
@@ -1431,12 +1427,10 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
             alignItems: "center",
             gap: "6px",
             padding: "6px",
-            borderRadius: radius.sm,
-            border: `1px solid ${theme.border}`,
-            backgroundColor: isDark ? "#171717" : "#ffffff",
-            boxShadow: isDark
-              ? "0 6px 24px rgba(0,0,0,0.35)"
-              : "0 6px 24px rgba(0,0,0,0.12)",
+            borderRadius: 6,
+            border: `1px solid var(--border-default)`,
+            backgroundColor: "var(--surface-overlay)",
+            boxShadow: "var(--shadow-overlay)",
           }}
         >
           <input
@@ -1469,9 +1463,9 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
             style={{
               width: "220px",
               height: "30px",
-              borderRadius: radius.sm,
-              border: `1px solid ${theme.border}`,
-              backgroundColor: isDark ? "#111827" : "#f9fafb",
+              borderRadius: 6,
+              border: `1px solid var(--border-subtle)`,
+              backgroundColor: "var(--surface-1)",
               color: theme.textPrimary,
               padding: "0 10px",
               fontSize: "12px",

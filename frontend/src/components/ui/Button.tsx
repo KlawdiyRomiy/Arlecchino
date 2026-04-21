@@ -1,42 +1,48 @@
-import React from 'react';
-import { motion, HTMLMotionProps } from 'framer-motion';
+import React from "react";
+import { motion, HTMLMotionProps } from "framer-motion";
 
 interface ButtonProps {
-  variant?: 'primary' | 'secondary' | 'ghost';
-  size?: 'sm' | 'md' | 'lg';
+  variant?: "primary" | "secondary" | "ghost";
+  size?: "sm" | "md" | "lg";
   children: React.ReactNode;
   className?: string;
   disabled?: boolean;
   onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
-  type?: 'button' | 'submit' | 'reset';
+  type?: "button" | "submit" | "reset";
   style?: React.CSSProperties;
 }
 
 export const Button: React.FC<ButtonProps> = ({
-  variant = 'primary',
-  size = 'md',
+  variant = "primary",
+  size = "md",
   children,
-  className = '',
+  className = "",
   disabled = false,
   onClick,
-  type = 'button',
+  type = "button",
   style,
 }) => {
-  const baseClasses = 'rounded-lg font-medium transition-smooth focus:outline-none focus:ring-2 focus:ring-white/20 focus:ring-offset-2 dark:focus:ring-offset-black';
-  
+  const baseClasses =
+    "rounded-[10px] border font-medium transition-smooth focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]";
+
   const variantClasses = {
-    primary: 'bg-[#111111] dark:bg-[#111111] text-white dark:text-white border border-[#2a2a2a] hover:bg-[#1a1a1a] hover:border-[#333333] active:scale-98',
-    secondary: 'bg-[#111111] dark:bg-[#111111] text-white dark:text-white border border-[#2a2a2a] hover:bg-[#1a1a1a] hover:border-[#333333]',
-    ghost: 'bg-transparent hover:bg-[#1a1a1a] dark:hover:bg-[#1a1a1a] text-[#888888] dark:text-[#888888] hover:text-white dark:hover:text-white',
+    primary:
+      "border-[var(--border-default)] bg-[var(--surface-2)] text-[var(--text-primary)] hover:border-[var(--border-strong)] hover:bg-[var(--surface-3)] active:translate-y-px",
+    secondary:
+      "border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)] hover:border-[var(--border-default)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]",
+    ghost:
+      "border-transparent bg-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]",
   };
 
   const sizeClasses = {
-    sm: 'px-3 py-1.5 text-sm',
-    md: 'px-4 py-2 text-base',
-    lg: 'px-6 py-3 text-lg',
+    sm: "min-h-8 px-3 text-sm",
+    md: "min-h-9 px-4 text-sm",
+    lg: "min-h-10 px-5 text-base",
   };
 
-  const disabledClasses = disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer';
+  const disabledClasses = disabled
+    ? "cursor-not-allowed opacity-45"
+    : "cursor-pointer";
 
   return (
     <motion.button

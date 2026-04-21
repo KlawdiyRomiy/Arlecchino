@@ -34,7 +34,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
     () => useDiagnosticsStore.getState().getProjectSummary(activeProjectPath),
     [activeProjectPath, byFile],
   );
-  const statusTextClass = "text-[rgba(248,250,252,0.82)]";
+  const statusTextClass = "text-[var(--text-secondary)]";
+  const chipClass =
+    "flex items-center gap-1.5 rounded-[8px] border border-transparent px-2 py-1 transition-colors hover:border-[var(--border-subtle)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]";
   const activeProjectLabel = useMemo(() => {
     if (!activeProjectPath) {
       return "No project";
@@ -74,6 +76,22 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
 
     return statusFile.name || statusFile.path;
   }, [activeProjectPath, statusFile.name, statusFile.path]);
+  const activeFileSegments = useMemo(() => {
+    if (!statusFile.path) {
+      return { directory: "", fileName: "No file" };
+    }
+
+    const normalized = activeFileDisplay.replace(/\\/g, "/");
+    const splitIndex = normalized.lastIndexOf("/");
+    if (splitIndex === -1) {
+      return { directory: "", fileName: normalized };
+    }
+
+    return {
+      directory: normalized.slice(0, splitIndex + 1),
+      fileName: normalized.slice(splitIndex + 1),
+    };
+  }, [activeFileDisplay, statusFile.path]);
   const positionLabel = statusFile.path
     ? `Ln ${cursorPosition.line}, Col ${cursorPosition.col}`
     : "Ln -, Col -";
@@ -100,7 +118,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
   }, [activeProjectPath, diagnosticsPreload, projectSummary.total]);
 
   return (
-    <div className="h-6 bg-[var(--bg-secondary)] border-t border-[var(--border-subtle)] flex items-center px-4 text-[10px] select-none font-mono z-50">
+    <div className="z-50 flex h-7 select-none items-center border-t border-[var(--border-subtle)] bg-[var(--surface-overlay)] px-3 font-mono text-[10px] uppercase tracking-[0.08em]">
       <div className="flex items-center gap-4">
         {showCompactDiagnostics ? (
           <DiagnosticsCompactIndicator
@@ -111,18 +129,18 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
         ) : null}
 
         {showCompactDiagnostics ? (
-          <div className="w-px h-3 bg-[var(--border-subtle)]" />
+          <div className="h-3 w-px bg-[var(--border-subtle)]" />
         ) : null}
 
-        <div className="flex items-center gap-1.5 hover:text-[var(--text-secondary)] px-2 py-0.5 rounded cursor-pointer transition-colors">
+        <div className={chipClass}>
           <span data-testid="statusbar-language" className={statusTextClass}>
             {activeLanguageLabel}
           </span>
         </div>
 
-        <div className="w-px h-3 bg-[var(--border-subtle)]" />
+        <div className="h-3 w-px bg-[var(--border-subtle)]" />
 
-        <div className="flex items-center gap-1.5 hover:text-[var(--text-secondary)] px-2 py-0.5 rounded cursor-pointer transition-colors">
+        <div className={chipClass}>
           <span className={statusTextClass}>{activeProjectLabel}</span>
         </div>
       </div>
@@ -132,18 +150,31 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
       <div className="flex items-center gap-4">
         <div
           data-testid="statusbar-file"
-          className={`${statusTextClass} max-w-[300px] overflow-hidden text-ellipsis whitespace-nowrap`}
+          className="max-w-[340px] overflow-hidden whitespace-nowrap font-mono text-[10px]"
         >
-          {activeFileDisplay}
+          {activeFileSegments.directory ? (
+            <>
+              <span className="text-[var(--text-muted)]">
+                {activeFileSegments.directory}
+              </span>
+              <span className="text-[var(--text-primary)]">
+                {activeFileSegments.fileName}
+              </span>
+            </>
+          ) : (
+            <span className={statusTextClass}>
+              {activeFileSegments.fileName}
+            </span>
+          )}
         </div>
 
-        <div className="w-px h-3 bg-[var(--border-subtle)]" />
+        <div className="h-3 w-px bg-[var(--border-subtle)]" />
 
         <div data-testid="statusbar-position" className={statusTextClass}>
           {positionLabel}
         </div>
 
-        <div className="w-px h-3 bg-[var(--border-subtle)]" />
+        <div className="h-3 w-px bg-[var(--border-subtle)]" />
 
         <div className={statusTextClass}>UTF-8</div>
       </div>

@@ -10,6 +10,7 @@ import { ProblemsPanel } from "../problems/ProblemsPanel";
 import { CodePanelSurface } from "../CodePanelSurface";
 import { PreviewWindowLayer } from "./PreviewWindowLayer";
 import { ExecutionDialog } from "../ExecutionDialog";
+import { DependencyPolicyModal } from "../DependencyPolicyModal";
 import { LaravelPlugin } from "../../plugins/LaravelPlugin";
 import { SettingsModal } from "../SettingsModal";
 import { CommandDispatcher } from "../CommandDispatcher";
@@ -70,6 +71,7 @@ import {
 } from "../../../wailsjs/go/main/App";
 import {
   type ExecutionProfile,
+  type ExecutionProfileSet,
   resolveExecutionProfiles,
 } from "../../utils/executionProfiles";
 
@@ -124,6 +126,18 @@ interface PanelOpenRequest {
   terminalName?: string;
   focus?: boolean;
 }
+
+const getNextWrappedIndex = (
+  currentIndex: number,
+  direction: 1 | -1,
+  total: number,
+): number => {
+  if (total <= 0) {
+    return -1;
+  }
+
+  return (currentIndex + direction + total) % total;
+};
 
 type AppSurfaceAction =
   | { kind: "panel"; panelId: PanelId }
@@ -1209,6 +1223,32 @@ const resolveRememberedSnappedPositions = (
   return nextPositions;
 };
 
+const quoteShellPath = (value: string): string => {
+  const escaped = value.replace(/'/g, `'"'"'`);
+  return `'${escaped}'`;
+};
+
+const commandWithWorkingDirectory = (
+  command: string,
+  workingDirectory?: string,
+): string => {
+  const trimmedCommand = command.trim();
+  const trimmedDirectory = workingDirectory?.trim();
+
+  if (!trimmedCommand) {
+    return "";
+  }
+
+  if (!trimmedDirectory) {
+    return trimmedCommand;
+  }
+
+  return `cd ${quoteShellPath(trimmedDirectory)} && ${trimmedCommand}`;
+};
+
+const hasMissingTools = (profile: ExecutionProfile): boolean =>
+  Array.isArray(profile.missingTools) && profile.missingTools.length > 0;
+
 export const MainLayout: React.FC<MainLayoutProps> = ({
   children,
   onFileOpen,
@@ -1223,9 +1263,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const theme = getThemeColors(isDark);
   const [isPerspectiveOpen, setIsPerspectiveOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isDependencyPolicyOpen, setIsDependencyPolicyOpen] = useState(false);
   const [executionDialogMode, setExecutionDialogMode] = useState<
     "run" | "debug" | null
   >(null);
+  const [executionProfiles, setExecutionProfiles] =
+    useState<ExecutionProfileSet>({
+      runProfiles: [],
+      debugProfiles: [],
+    });
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const setUiScale = useEditorSettingsStore((state) => state.setUiScale);
   const activeProjectId = useWorkspaceStore((s) => s.activeId);
@@ -1269,9 +1315,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const focusPreviewWindow = usePreviewWindowStore(
     (state) => state.focusWindow,
   );
-  const setPreviewWindowPinned = usePreviewWindowStore(
-    (state) => state.setPinned,
-  );
   const createPreviewCheckpoint = usePreviewWindowStore(
     (state) => state.createCheckpoint,
   );
@@ -1299,10 +1342,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const cancelAppearancePreview = usePreviewWindowStore(
     (state) => state.cancelAppearancePreview,
   );
-  const executionProfiles = resolveExecutionProfiles({
-    projectPath: activeProjectPath,
-    activeTab: activeEditorTab,
-  });
   const dispatcher = useDispatcher();
   const { activeModal, closeModal } = usePluginModal();
 
@@ -1363,6 +1402,29 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   >(new Map());
   const previewUpdateFrameRef = React.useRef<number | null>(null);
   const openCanonicalBrowserPreviewRef = React.useRef<() => void>(() => {});
+  const executionProfilesRequestRef = React.useRef(0);
+
+  useEffect(() => {
+    const requestID = executionProfilesRequestRef.current + 1;
+    executionProfilesRequestRef.current = requestID;
+
+    void resolveExecutionProfiles({
+      projectPath: activeProjectPath,
+      activeTab: activeEditorTab,
+    })
+      .then((nextProfiles) => {
+        if (executionProfilesRequestRef.current !== requestID) {
+          return;
+        }
+        setExecutionProfiles(nextProfiles);
+      })
+      .catch(() => {
+        if (executionProfilesRequestRef.current !== requestID) {
+          return;
+        }
+        setExecutionProfiles({ runProfiles: [], debugProfiles: [] });
+      });
+  }, [activeEditorTab, activeProjectPath]);
 
   const clonePanelConfigs = useCallback(
     (source: PanelConfigs): PanelConfigs => {
@@ -1487,10 +1549,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
       updatePanelsState((prev) => {
         const nextPanels = getTUIPanelVisibility({ ...prev, browser: false });
-        const { browser: _browser, ...rest } = nextPanels;
         return {
-          ...rest,
+          explorer: nextPanels.explorer,
+          terminal: nextPanels.terminal,
+          aiChat: nextPanels.aiChat,
+          git: nextPanels.git,
           problems: prev.problems,
+          code: prev.code,
         };
       });
 
@@ -1604,7 +1669,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, [dispatcher, isDispatcherPaused, tuiModeActive]);
 
   const submitTerminalCommand = useCallback(
-    async (command: string, terminalName = "Terminal") => {
+    async (
+      command: string,
+      terminalName = "Terminal",
+      workingDirectory?: string,
+    ) => {
+      const commandToExecute = commandWithWorkingDirectory(
+        command,
+        workingDirectory,
+      );
+      if (!commandToExecute) {
+        showNotification("error", "[Run] Command is empty");
+        return false;
+      }
+
       const state = useTerminalStore.getState();
       state.initialize();
       let activePane = state.panes.find(
@@ -1639,7 +1717,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         }
       }
 
-      const bytes = new TextEncoder().encode(command + "\n");
+      const bytes = new TextEncoder().encode(commandToExecute + "\n");
       const binary = Array.from(bytes, (byte) =>
         String.fromCharCode(byte),
       ).join("");
@@ -1663,6 +1741,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const executeExecutionProfile = useCallback(
     async (profile: ExecutionProfile) => {
+      if (hasMissingTools(profile)) {
+        const missing = profile.missingTools?.join(", ") ?? "required tools";
+        showNotification(
+          "error",
+          `[Run] Missing tools for profile "${profile.label}": ${missing}`,
+        );
+        return false;
+      }
+
       if (profile.kind === "preview") {
         openCanonicalBrowserPreviewRef.current();
         return true;
@@ -1671,13 +1758,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       return submitTerminalCommand(
         profile.command,
         profile.mode === "debug" ? "Debug" : "Run",
+        profile.workingDirectory,
       );
     },
-    [submitTerminalCommand],
+    [showNotification, submitTerminalCommand],
   );
 
   const openRunDialog = useCallback(() => {
-    const primaryProfile = executionProfiles.runProfiles[0];
+    const primaryProfile = executionProfiles.runProfiles.find(
+      (profile) => !hasMissingTools(profile),
+    );
     if (primaryProfile) {
       void executeExecutionProfile(primaryProfile);
       return;
@@ -1696,6 +1786,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const closeSettings = useCallback(() => {
     setIsSettingsOpen(false);
+  }, []);
+
+  const openDependencyPolicy = useCallback(() => {
+    setIsDependencyPolicyOpen(true);
+  }, []);
+
+  const closeDependencyPolicy = useCallback(() => {
+    setIsDependencyPolicyOpen(false);
   }, []);
 
   const closeExecutionDialog = useCallback(() => {
@@ -4013,6 +4111,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           onRun={openRunDialog}
           onOpenDebug={openDebugDialog}
           onOpenPreview={openCanonicalBrowserPreview}
+          onOpenDependencyPolicy={openDependencyPolicy}
           onBackToWelcome={onBackToWelcome}
           onProjectOpen={onProjectOpen}
           onSwitchProject={onSwitchProject}
@@ -4093,7 +4192,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           onUpdateWindow={updatePreviewWindow}
           onCloseWindow={closePreviewWindow}
           onFocusWindow={focusPreviewWindow}
-          onPinWindow={setPreviewWindowPinned}
           onAppearancePatch={handleAppearancePreviewPatchEvent}
           onAppearanceApply={handleAppearancePreviewApplyEvent}
           onAppearanceCancel={handleAppearancePreviewCancelEvent}
@@ -4143,6 +4241,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       />
 
       <SettingsModal isOpen={isSettingsOpen} onClose={closeSettings} />
+      <DependencyPolicyModal
+        isOpen={isDependencyPolicyOpen}
+        onClose={closeDependencyPolicy}
+        onNotify={showNotification}
+      />
       <ExecutionDialog
         isOpen={executionDialogMode !== null}
         mode={executionDialogMode}

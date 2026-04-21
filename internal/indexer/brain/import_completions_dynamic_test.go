@@ -50,6 +50,36 @@ func TestImportCompletionProvider_GetNodeModuleCompletions_FromPackageJSON(t *te
 	assertSuggestionInsertText(t, suggestions, "@tanstack/react-query", "'@tanstack/react-query'")
 }
 
+func TestImportCompletionProvider_GetNodeModuleCompletions_FromPackageLockOnly(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "package-lock.json"), `{
+		"dependencies": {
+			"@tanstack/react-query": {"version":"5.59.0"}
+		}
+	}`)
+
+	provider := &ImportCompletionProvider{catalog: NewDependencyCatalog(root), projectRoot: root}
+	ctx := CompletionContext{InImport: true, Language: "typescript", Prefix: "@tan"}
+
+	suggestions := provider.GetCompletions(ctx)
+	assertSuggestionText(t, suggestions, "@tanstack/react-query")
+	assertSuggestionSource(t, suggestions, "@tanstack/react-query", core.SourceLocal)
+}
+
+func TestImportCompletionProvider_GetPHPCompletions_FromComposerLockOnly(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "composer.lock"), `{
+		"packages": [{"name":"nesbot/carbon","version":"3.8.0"}]
+	}`)
+
+	provider := &ImportCompletionProvider{catalog: NewDependencyCatalog(root), projectRoot: root}
+	ctx := CompletionContext{InImport: true, Language: "php", Prefix: "nes"}
+
+	suggestions := provider.GetCompletions(ctx)
+	assertSuggestionText(t, suggestions, "nesbot/carbon")
+	assertSuggestionSource(t, suggestions, "nesbot/carbon", core.SourceLocal)
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

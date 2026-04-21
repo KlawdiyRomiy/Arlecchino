@@ -14,6 +14,10 @@ export function CancelPrediction() {
   return window['go']['main']['App']['CancelPrediction']();
 }
 
+export function ClearApprovedDependencyActions() {
+  return window['go']['main']['App']['ClearApprovedDependencyActions']();
+}
+
 export function ClearCompiled() {
   return window['go']['main']['App']['ClearCompiled']();
 }
@@ -174,6 +178,10 @@ export function GetDependencyGraph(arg1, arg2) {
   return window['go']['main']['App']['GetDependencyGraph'](arg1, arg2);
 }
 
+export function GetDependencyPolicyPlan(arg1) {
+  return window['go']['main']['App']['GetDependencyPolicyPlan'](arg1);
+}
+
 export function GetDependencySyncPlan(arg1) {
   return window['go']['main']['App']['GetDependencySyncPlan'](arg1);
 }
@@ -196,6 +204,10 @@ export function GetDispatcherSuggestions(arg1) {
 
 export function GetEditorCompletions(arg1) {
   return window['go']['main']['App']['GetEditorCompletions'](arg1);
+}
+
+export function GetExecutionProfiles(arg1) {
+  return window['go']['main']['App']['GetExecutionProfiles'](arg1);
 }
 
 export function GetGitBlame(arg1) {
@@ -414,6 +426,10 @@ export function LSPSignatureHelp(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['LSPSignatureHelp'](arg1, arg2, arg3, arg4);
 }
 
+export function ListApprovedDependencyActions() {
+  return window['go']['main']['App']['ListApprovedDependencyActions']();
+}
+
 export function ListInstalledPackages() {
   return window['go']['main']['App']['ListInstalledPackages']();
 }
@@ -536,6 +552,10 @@ export function RestartLSPServer(arg1) {
 
 export function RouteCache() {
   return window['go']['main']['App']['RouteCache']();
+}
+
+export function RunDependencyPolicySync(arg1) {
+  return window['go']['main']['App']['RunDependencyPolicySync'](arg1);
 }
 
 export function RunGitCommand(arg1) {

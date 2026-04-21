@@ -2,6 +2,7 @@ import type { EditorTab } from "../stores/editorStore";
 
 export type ExecutionProfileKind = "terminal" | "preview";
 export type ExecutionProfileMode = "run" | "debug";
+export type ExecutionProfileOrigin = "auto" | "plugin" | "imported" | "user";
 
 export interface ExecutionProfile {
   id: string;
@@ -11,6 +12,13 @@ export interface ExecutionProfile {
   mode: ExecutionProfileMode;
   command: string;
   workingDirectory?: string;
+  language?: string;
+  framework?: string;
+  origin?: ExecutionProfileOrigin;
+  confidence?: number;
+  requiredTools?: string[];
+  missingTools?: string[];
+  env?: Record<string, string>;
 }
 
 export interface ExecutionProfileSet {
@@ -21,6 +29,20 @@ export interface ExecutionProfileSet {
 interface ResolveExecutionProfilesInput {
   projectPath?: string;
   activeTab?: EditorTab | null;
+}
+
+interface ExecutionProfilesRequest {
+  projectPath: string;
+  activeFilePath: string;
+  activeFileName: string;
+  activeFileContent: string;
+  activeFileLanguage: string;
+}
+
+interface ExecutionAppBridge {
+  GetExecutionProfiles?: (
+    input: ExecutionProfilesRequest,
+  ) => Promise<ExecutionProfileSet | null>;
 }
 
 const quotePath = (value: string) => `"${value.replace(/"/g, '\\"')}"`;
@@ -55,10 +77,61 @@ const buildProfile = (
   mode,
 });
 
-export function resolveExecutionProfiles({
+const getExecutionAppBridge = (): ExecutionAppBridge | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const maybeWindow = window as unknown as {
+    go?: {
+      main?: {
+        App?: ExecutionAppBridge;
+      };
+    };
+  };
+
+  return maybeWindow.go?.main?.App ?? null;
+};
+
+const sanitizeProfile = (value: ExecutionProfile): ExecutionProfile | null => {
+  if (!value.id || !value.label || !value.mode || !value.kind) {
+    return null;
+  }
+
+  return {
+    ...value,
+    requiredTools: value.requiredTools ?? [],
+    missingTools: value.missingTools ?? [],
+    env: value.env ?? {},
+  };
+};
+
+const normalizeProfileSet = (
+  value: ExecutionProfileSet | null | undefined,
+): ExecutionProfileSet | null => {
+  if (!value) {
+    return null;
+  }
+
+  const runProfiles = Array.isArray(value.runProfiles)
+    ? value.runProfiles
+        .map((profile) => sanitizeProfile(profile))
+        .filter((profile): profile is ExecutionProfile => profile !== null)
+    : [];
+
+  const debugProfiles = Array.isArray(value.debugProfiles)
+    ? value.debugProfiles
+        .map((profile) => sanitizeProfile(profile))
+        .filter((profile): profile is ExecutionProfile => profile !== null)
+    : [];
+
+  return { runProfiles, debugProfiles };
+};
+
+const resolveExecutionProfilesLocally = ({
   projectPath = "",
   activeTab,
-}: ResolveExecutionProfilesInput): ExecutionProfileSet {
+}: ResolveExecutionProfilesInput): ExecutionProfileSet => {
   if (!activeTab) {
     return { runProfiles: [], debugProfiles: [] };
   }
@@ -78,6 +151,8 @@ export function resolveExecutionProfiles({
           kind: "preview",
           command: "",
           workingDirectory,
+          origin: "auto",
+          confidence: 0.9,
         }),
       ],
       debugProfiles: [],
@@ -94,6 +169,10 @@ export function resolveExecutionProfiles({
           kind: "terminal",
           command: `go run ${quotePath(filePath)}`,
           workingDirectory: directoryPath,
+          language: "go",
+          origin: "auto",
+          confidence: 0.95,
+          requiredTools: ["go"],
         }),
       ],
       debugProfiles: [
@@ -104,10 +183,42 @@ export function resolveExecutionProfiles({
           kind: "terminal",
           command: `dlv debug ${quotePath(directoryPath)}`,
           workingDirectory: directoryPath,
+          language: "go",
+          origin: "auto",
+          confidence: 0.9,
+          requiredTools: ["dlv"],
         }),
       ],
     };
   }
 
   return { runProfiles: [], debugProfiles: [] };
+};
+
+export async function resolveExecutionProfiles({
+  projectPath = "",
+  activeTab,
+}: ResolveExecutionProfilesInput): Promise<ExecutionProfileSet> {
+  const appBridge = getExecutionAppBridge();
+  if (appBridge && typeof appBridge.GetExecutionProfiles === "function") {
+    const request: ExecutionProfilesRequest = {
+      projectPath,
+      activeFilePath: activeTab?.path ?? "",
+      activeFileName: activeTab?.name ?? "",
+      activeFileContent: activeTab?.content ?? "",
+      activeFileLanguage: activeTab?.language ?? "",
+    };
+
+    try {
+      const resolved = await appBridge.GetExecutionProfiles(request);
+      const normalized = normalizeProfileSet(resolved);
+      if (normalized) {
+        return normalized;
+      }
+    } catch {
+      // local fallback below
+    }
+  }
+
+  return resolveExecutionProfilesLocally({ projectPath, activeTab });
 }
