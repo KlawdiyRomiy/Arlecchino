@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { Copy, ExternalLink, X } from "lucide-react";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { EditorTabs, Tab } from "./EditorTabs";
 import { TabSwitcherOverlay } from "./TabSwitcherOverlay";
 import QuickLookModal from "./QuickLookModal";
 import * as AppFunctions from "../../wailsjs/go/main/App";
+import { EventsOn } from "../../wailsjs/runtime/runtime";
+import { useProjectEntryActions } from "../contexts/ProjectEntryActionsContext";
 import { shortcuts } from "../utils/keyboard";
 import {
   PROJECT_SWITCH_BLOCKERS,
@@ -11,8 +14,15 @@ import {
   unblockProjectSwitch,
 } from "../utils/priorityUI";
 import { useTheme } from "../hooks/useTheme";
-import { useEditorStore } from "../stores/editorStore";
+import { makeEditorTabId, useEditorStore } from "../stores/editorStore";
 import { editorCanvasBackground } from "../utils/codeMirrorTheme";
+import { type ContextActionMenuItem } from "./ui/ContextActionMenu";
+import {
+  getProjectPathBasename,
+  isSameOrChildPath,
+  normalizeProjectPath,
+  remapProjectPathPrefix,
+} from "../utils/projectPaths";
 
 type SplitDirection = "horizontal" | "vertical" | null;
 
@@ -44,8 +54,16 @@ const getWrappedTabIndex = (
   return (currentIndex + direction + total) % total;
 };
 
-const makeTabId = (filePath: string) =>
-  `tab-${filePath.replace(/[^a-zA-Z0-9]/g, "-")}`;
+interface ProjectEntryRenamedEvent {
+  oldPath?: string;
+  newPath?: string;
+  isDirectory?: boolean;
+}
+
+interface ProjectEntryDeletedEvent {
+  path?: string;
+  isDirectory?: boolean;
+}
 
 const ProjectScreen: React.FC<ProjectScreenProps> = ({
   projectPath,
@@ -58,6 +76,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const { isDark } = useTheme();
   const editorBgColor = isDark ? editorCanvasBackground : "#ffffff";
   const setStatusFile = useEditorStore((state) => state.setStatusFile);
+  const { copyAbsolutePath, revealEntry } = useProjectEntryActions();
 
   const tabStorageKey = `editorTabs:${projectPath}`;
 
@@ -68,7 +87,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       const { tabs: saved } = JSON.parse(raw);
       return Array.isArray(saved)
         ? saved.map((t: { path: string; label: string }) => ({
-            id: makeTabId(t.path),
+            id: makeEditorTabId(t.path),
             label: t.label,
             path: t.path,
             isDirty: false,
@@ -120,6 +139,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tabsRef = useRef<Tab[]>([]);
   const fileContentsRef = useRef<Record<string, string>>({});
+  const activeTabRef = useRef<string | null>(activeTab);
+  const secondaryActiveTabRef = useRef<string | null>(secondaryActiveTab);
   const tabSwitcherSelectionRef = useRef<string | null>(null);
   const [isTabSwitcherOpen, setIsTabSwitcherOpen] = useState(false);
   const [tabSwitcherSelection, setTabSwitcherSelectionState] = useState<
@@ -594,7 +615,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       }
 
       // Create new tab
-      const tabId = makeTabId(filePath);
+      const tabId = makeEditorTabId(filePath);
       const newTab: Tab = {
         id: tabId,
         label: fileName,
@@ -633,6 +654,29 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
   };
 
+  const handleCloseOtherTabs = useCallback((tabId: string) => {
+    const retainedTab = tabsRef.current.find((tab) => tab.id === tabId);
+    if (!retainedTab) {
+      return;
+    }
+
+    setTabs([retainedTab]);
+    setFileContents((previous) =>
+      previous[tabId] !== undefined ? { [tabId]: previous[tabId] } : {},
+    );
+    setActiveTab(tabId);
+    setSecondaryActiveTab(null);
+    setSplitDirection(null);
+  }, []);
+
+  const handleCloseAllTabs = useCallback(() => {
+    setTabs([]);
+    setFileContents({});
+    setActiveTab(null);
+    setSecondaryActiveTab(null);
+    setSplitDirection(null);
+  }, []);
+
   const handleReopenClosedTab = async () => {
     if (closedTabs.length === 0) return;
 
@@ -651,6 +695,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    secondaryActiveTabRef.current = secondaryActiveTab;
+  }, [secondaryActiveTab]);
 
   useEffect(() => {
     if (!isTabSwitcherOpen) {
@@ -817,6 +869,251 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
   };
 
+  const applyRenamedProjectEntry = useCallback(
+    (oldPath: string, newPath: string) => {
+      const currentTabs = tabsRef.current;
+      const nextTabs = currentTabs.map((tab) => {
+        const remappedPath = remapProjectPathPrefix(tab.path, oldPath, newPath);
+        if (!remappedPath || remappedPath === tab.path) {
+          return tab;
+        }
+
+        return {
+          ...tab,
+          id: makeEditorTabId(remappedPath),
+          label: getProjectPathBasename(remappedPath),
+          path: remappedPath,
+        };
+      });
+
+      const changed = nextTabs.some((tab, index) => tab !== currentTabs[index]);
+      if (!changed) {
+        return;
+      }
+
+      const tabIdMap = new Map(
+        currentTabs.map((tab, index) => [
+          tab.id,
+          nextTabs[index]?.id ?? tab.id,
+        ]),
+      );
+
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
+      setFileContents((previous) => {
+        const next: Record<string, string> = {};
+        Object.entries(previous).forEach(([tabId, content]) => {
+          next[tabIdMap.get(tabId) ?? tabId] = content;
+        });
+        return next;
+      });
+      setActiveTab((previous) =>
+        previous ? (tabIdMap.get(previous) ?? previous) : previous,
+      );
+      setSecondaryActiveTab((previous) =>
+        previous ? (tabIdMap.get(previous) ?? previous) : previous,
+      );
+      setClosedTabs((previous) =>
+        previous.map((tab) => {
+          const remappedPath = remapProjectPathPrefix(
+            tab.path,
+            oldPath,
+            newPath,
+          );
+          if (!remappedPath || remappedPath === tab.path) {
+            return tab;
+          }
+
+          return {
+            ...tab,
+            id: makeEditorTabId(remappedPath),
+            label: getProjectPathBasename(remappedPath),
+            path: remappedPath,
+          };
+        }),
+      );
+      setQuickLook((previous) => {
+        if (!previous.isOpen) {
+          return previous;
+        }
+
+        const remappedPath = remapProjectPathPrefix(
+          previous.filePath,
+          oldPath,
+          newPath,
+        );
+        if (!remappedPath || remappedPath === previous.filePath) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          filePath: remappedPath,
+        };
+      });
+    },
+    [],
+  );
+
+  const applyDeletedProjectEntry = useCallback((deletedPath: string) => {
+    const currentTabs = tabsRef.current;
+    const removedTabIds = new Set(
+      currentTabs
+        .filter((tab) => isSameOrChildPath(tab.path, deletedPath))
+        .map((tab) => tab.id),
+    );
+
+    if (removedTabIds.size === 0) {
+      setClosedTabs((previous) =>
+        previous.filter((tab) => !isSameOrChildPath(tab.path, deletedPath)),
+      );
+      setQuickLook((previous) =>
+        previous.isOpen && isSameOrChildPath(previous.filePath, deletedPath)
+          ? (unblockProjectSwitch(PROJECT_SWITCH_BLOCKERS.quickLook),
+            {
+              ...previous,
+              isOpen: false,
+            })
+          : previous,
+      );
+      return;
+    }
+
+    const nextTabs = currentTabs.filter((tab) => !removedTabIds.has(tab.id));
+    const fallbackActiveTabId = nextTabs[nextTabs.length - 1]?.id ?? null;
+    const nextPrimaryTabId =
+      activeTabRef.current && !removedTabIds.has(activeTabRef.current)
+        ? activeTabRef.current
+        : fallbackActiveTabId;
+
+    tabsRef.current = nextTabs;
+    setTabs(nextTabs);
+    setFileContents((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(([tabId]) => !removedTabIds.has(tabId)),
+      ),
+    );
+    setClosedTabs((previous) =>
+      previous.filter((tab) => !isSameOrChildPath(tab.path, deletedPath)),
+    );
+    setActiveTab(nextPrimaryTabId);
+
+    if (nextTabs.length <= 1) {
+      setSecondaryActiveTab(null);
+      setSplitDirection(null);
+    } else {
+      setSecondaryActiveTab((previous) => {
+        if (previous && !removedTabIds.has(previous)) {
+          return previous;
+        }
+
+        const fallbackSecondary = nextTabs.find(
+          (tab) => tab.id !== nextPrimaryTabId,
+        );
+        return fallbackSecondary?.id ?? null;
+      });
+    }
+
+    setQuickLook((previous) =>
+      previous.isOpen && isSameOrChildPath(previous.filePath, deletedPath)
+        ? (unblockProjectSwitch(PROJECT_SWITCH_BLOCKERS.quickLook),
+          {
+            ...previous,
+            isOpen: false,
+          })
+        : previous,
+    );
+  }, []);
+
+  useEffect(() => {
+    const normalizedProjectPath = normalizeProjectPath(projectPath);
+    if (!normalizedProjectPath) {
+      return;
+    }
+
+    const unsubscribeRenamed = EventsOn(
+      "project:entry:renamed",
+      (event: ProjectEntryRenamedEvent) => {
+        const oldPath = normalizeProjectPath(event?.oldPath ?? "");
+        const newPath = normalizeProjectPath(event?.newPath ?? "");
+        if (
+          !oldPath ||
+          !newPath ||
+          (!isSameOrChildPath(oldPath, normalizedProjectPath) &&
+            !isSameOrChildPath(newPath, normalizedProjectPath))
+        ) {
+          return;
+        }
+
+        applyRenamedProjectEntry(oldPath, newPath);
+      },
+    );
+
+    const unsubscribeDeleted = EventsOn(
+      "project:entry:deleted",
+      (event: ProjectEntryDeletedEvent) => {
+        const deletedPath = normalizeProjectPath(event?.path ?? "");
+        if (
+          !deletedPath ||
+          !isSameOrChildPath(deletedPath, normalizedProjectPath)
+        ) {
+          return;
+        }
+
+        applyDeletedProjectEntry(deletedPath);
+      },
+    );
+
+    return () => {
+      unsubscribeRenamed();
+      unsubscribeDeleted();
+    };
+  }, [applyDeletedProjectEntry, applyRenamedProjectEntry, projectPath]);
+
+  const buildTabContextMenuItems = useCallback(
+    (tab: Tab): ContextActionMenuItem[] => [
+      {
+        label: "Close",
+        icon: <X size={14} />,
+        onSelect: () => handleTabClose(tab.id),
+      },
+      {
+        label: "Close Others",
+        icon: <X size={14} />,
+        disabled: tabs.length <= 1,
+        onSelect: () => handleCloseOtherTabs(tab.id),
+      },
+      {
+        label: "Close All",
+        icon: <X size={14} />,
+        disabled: tabs.length === 0,
+        onSelect: () => handleCloseAllTabs(),
+      },
+      { separator: true },
+      {
+        label: "Copy Absolute Path",
+        icon: <Copy size={14} />,
+        onSelect: () => {
+          void copyAbsolutePath(tab.path);
+        },
+      },
+      {
+        label: "Reveal in File Manager",
+        icon: <ExternalLink size={14} />,
+        onSelect: () => {
+          void revealEntry(tab.path);
+        },
+      },
+    ],
+    [
+      copyAbsolutePath,
+      handleCloseAllTabs,
+      handleCloseOtherTabs,
+      revealEntry,
+      tabs.length,
+    ],
+  );
+
   const handleQuickLookRequest = async (path: string, line?: number) => {
     try {
       let fullPath = path;
@@ -858,8 +1155,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
   };
 
+  const notifyEditorSplitTransition = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("arlecchino:editor-split-transition"));
+  }, []);
+
   const handleSplit = useCallback(
     (direction: "horizontal" | "vertical") => {
+      notifyEditorSplitTransition();
+
       if (splitDirection) {
         // Close split
         setSplitDirection(null);
@@ -875,7 +1178,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         setSecondaryActiveTab(activeTab);
       }
     },
-    [splitDirection, activeTab, tabs],
+    [activeTab, notifyEditorSplitTransition, splitDirection, tabs],
   );
 
   useEffect(() => {
@@ -895,6 +1198,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         return;
       }
 
+      notifyEditorSplitTransition();
       setSplitDirection(direction);
       if (tabs.length > 1) {
         const otherTab = tabs.find((tab) => tab.id !== activeTab);
@@ -914,7 +1218,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         "arlecchino:editor-split",
         handleExternalEditorSplit as EventListener,
       );
-  }, [activeTab, secondaryActiveTab, splitDirection, tabs]);
+  }, [
+    activeTab,
+    notifyEditorSplitTransition,
+    secondaryActiveTab,
+    splitDirection,
+    tabs,
+  ]);
 
   const handleCloseSplit = () => {
     setSplitDirection(null);
@@ -937,38 +1247,17 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   // Track if split is animating in
   const [splitReady, setSplitReady] = useState(false);
 
-  // Debug logging for split view
-  console.log("[SplitView] State:", {
-    splitDirection,
-    splitReady,
-    activeTab,
-    secondaryActiveTab,
-    hasActiveTabData: !!activeTabData,
-    hasSecondaryTabData: !!secondaryTabData,
-  });
-
   useEffect(() => {
-    console.log(
-      "[SplitView] useEffect triggered - splitDirection:",
-      splitDirection,
-      "secondaryTabData:",
-      !!secondaryTabData,
-    );
     if (splitDirection && secondaryTabData) {
       // Delay showing split pane to let Monaco initialize
-      console.log(
-        "[SplitView] Setting splitReady to false, will set to true in 50ms",
-      );
       setSplitReady(false);
       const timer = setTimeout(() => {
-        console.log("[SplitView] Timer fired - setting splitReady to true");
         setSplitReady(true);
       }, 50);
       return () => clearTimeout(timer);
-    } else {
-      console.log("[SplitView] No split or no secondary tab data");
-      setSplitReady(false);
     }
+
+    setSplitReady(false);
   }, [splitDirection, secondaryTabData]);
 
   const renderEditor = (tabData: Tab, content: string, isSecondary = false) => (
@@ -1007,6 +1296,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           onTabClose={handleTabClose}
           onSplitHorizontal={() => handleSplit("vertical")}
           onSplitVertical={() => handleSplit("horizontal")}
+          getTabContextMenuItems={buildTabContextMenuItems}
         />
       )}
 

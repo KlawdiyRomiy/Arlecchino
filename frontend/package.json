@@ -75,6 +75,7 @@
   "devDependencies": {
     "@playwright/test": "^1.50.1",
     "@prettier/plugin-php": "^0.24.0",
+    "@rolldown/pluginutils": "^1.0.0-rc.7",
     "@tailwindcss/postcss": "^4.1.17",
     "@types/dagre": "^0.7.54",
     "@types/react": "^19.2.0",

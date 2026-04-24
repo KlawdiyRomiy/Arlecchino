@@ -1257,6 +1257,20 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class ProjectEntryRenameResult {
+	    newPath: string;
+	    isDirectory: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProjectEntryRenameResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.newPath = source["newPath"];
+	        this.isDirectory = source["isDirectory"];
+	    }
+	}
 	
 	export class SearchResult {
 	    file: string;

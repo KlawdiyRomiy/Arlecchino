@@ -282,9 +282,13 @@ export function RecordTypingActivity(arg1:number):Promise<void>;
 
 export function RemovePackage(arg1:string,arg2:composer.RemoveOptions):Promise<void>;
 
+export function RenameProjectEntry(arg1:string,arg2:string):Promise<main.ProjectEntryRenameResult>;
+
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function RestartLSPServer(arg1:string):Promise<boolean>;
+
+export function RevealProjectEntry(arg1:string):Promise<void>;
 
 export function RouteCache():Promise<string>;
 
@@ -321,6 +325,8 @@ export function SuggestCommand(arg1:string):Promise<Array<main.CommandSuggestion
 export function SyncProjectDependencies(arg1:string):Promise<Record<string, string>>;
 
 export function Tinker():Promise<void>;
+
+export function TrashProjectEntry(arg1:string):Promise<void>;
 
 export function UnpinCommand(arg1:string):Promise<void>;
 

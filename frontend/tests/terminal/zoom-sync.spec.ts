@@ -85,7 +85,9 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("terminal zoom is independent from editor zoom state", async ({ page }) => {
+test("terminal zoom is independent from global UI zoom state", async ({
+  page,
+}) => {
   await page.goto("/");
 
   const zoomState = await page.evaluate(async () => {
@@ -120,9 +122,12 @@ test("terminal zoom is independent from editor zoom state", async ({ page }) => 
       terminalZoomApi.terminalZoomIn?.();
     }
     const afterTerminalZoom = session?.terminal.options.fontSize ?? -1;
+    editorStore.zoomOut();
 
-    const editorFontAfterEditorZoom =
-      useEditorSettingsStore.getState().editorFontSize;
+    const {
+      editorFontSize: editorFontAfterZoomCycle,
+      uiScale: uiScaleAfterZoomCycle,
+    } = useEditorSettingsStore.getState();
 
     await terminalStore.closeTerminal("pane-1", terminalId);
 
@@ -131,7 +136,8 @@ test("terminal zoom is independent from editor zoom state", async ({ page }) => 
       beforeZoom,
       afterEditorZoom,
       afterTerminalZoom,
-      editorFontAfterEditorZoom,
+      editorFontAfterZoomCycle,
+      uiScaleAfterZoomCycle,
     };
   });
 
@@ -139,5 +145,6 @@ test("terminal zoom is independent from editor zoom state", async ({ page }) => 
   expect(zoomState.beforeZoom).toBeGreaterThan(0);
   expect(zoomState.afterEditorZoom).toBe(zoomState.beforeZoom);
   expect(zoomState.afterTerminalZoom).toBeGreaterThan(zoomState.beforeZoom);
-  expect(zoomState.editorFontAfterEditorZoom).toBeGreaterThan(14);
+  expect(zoomState.editorFontAfterZoomCycle).toBe(14);
+  expect(zoomState.uiScaleAfterZoomCycle).toBe(1);
 });

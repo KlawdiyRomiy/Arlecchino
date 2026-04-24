@@ -1,4 +1,9 @@
 import { create } from "zustand";
+import {
+  getProjectPathBasename,
+  isSameOrChildPath,
+  remapProjectPathPrefix,
+} from "../utils/projectPaths";
 
 export interface EditorTab {
   id: string;
@@ -59,12 +64,86 @@ interface EditorActions {
     name: string | null,
     language: string | null,
   ) => void;
+  renamePath: (oldPath: string, newPath: string) => void;
+  renamePathPrefix: (oldPrefix: string, newPrefix: string) => void;
+  closePath: (path: string) => void;
+  closePathPrefix: (pathPrefix: string) => void;
   getTab: (id: string) => EditorTab | undefined;
   getActiveTab: (paneId: string) => EditorTab | undefined;
 }
 
-const generateTabId = (path: string) =>
+export const makeEditorTabId = (path: string) =>
   `tab-${path.replace(/[^a-zA-Z0-9]/g, "-")}`;
+
+const remapStateTabs = (
+  tabs: Map<string, EditorTab>,
+  oldPrefix: string,
+  newPrefix: string,
+): Map<string, EditorTab> => {
+  const nextTabs = new Map<string, EditorTab>();
+
+  tabs.forEach((tab) => {
+    const nextPath = remapProjectPathPrefix(tab.path, oldPrefix, newPrefix);
+    if (!nextPath) {
+      nextTabs.set(tab.id, tab);
+      return;
+    }
+
+    if (nextPath === tab.path) {
+      nextTabs.set(tab.id, tab);
+      return;
+    }
+
+    const nextId = makeEditorTabId(nextPath);
+    nextTabs.set(nextId, {
+      ...tab,
+      id: nextId,
+      path: nextPath,
+      name: getProjectPathBasename(nextPath),
+    });
+  });
+
+  return nextTabs;
+};
+
+const remapPaneTabIds = (
+  panes: EditorPane[],
+  tabs: Map<string, EditorTab>,
+  oldPrefix: string,
+  newPrefix: string,
+): EditorPane[] =>
+  panes.map((pane) => {
+    const tabIds = pane.tabIds.map((tabId) => {
+      const tab = tabs.get(tabId);
+      if (!tab) {
+        return tabId;
+      }
+      const remappedPath = remapProjectPathPrefix(
+        tab.path,
+        oldPrefix,
+        newPrefix,
+      );
+      if (!remappedPath || remappedPath === tab.path) {
+        return tabId;
+      }
+      return makeEditorTabId(remappedPath);
+    });
+
+    const activeTab = tabs.get(pane.activeTabId);
+    const remappedActivePath = activeTab
+      ? remapProjectPathPrefix(activeTab.path, oldPrefix, newPrefix)
+      : null;
+    const activeTabId =
+      activeTab && remappedActivePath && remappedActivePath !== activeTab.path
+        ? makeEditorTabId(remappedActivePath)
+        : pane.activeTabId;
+
+    return {
+      ...pane,
+      tabIds,
+      activeTabId,
+    };
+  });
 
 export const useEditorStore = create<EditorState & EditorActions>(
   (set, get) => ({
@@ -76,7 +155,7 @@ export const useEditorStore = create<EditorState & EditorActions>(
     statusFile: { path: null, name: null, language: null },
 
     openTab: (paneId, path, name, content, language) => {
-      const id = generateTabId(path);
+      const id = makeEditorTabId(path);
       const state = get();
 
       // If tab already exists, just activate it
@@ -248,6 +327,83 @@ export const useEditorStore = create<EditorState & EditorActions>(
 
     setStatusFile: (path, name, language) => {
       set({ statusFile: { path, name, language } });
+    },
+
+    renamePath: (oldPath, newPath) => {
+      get().renamePathPrefix(oldPath, newPath);
+    },
+
+    renamePathPrefix: (oldPrefix, newPrefix) => {
+      set((state) => {
+        const nextTabs = remapStateTabs(state.tabs, oldPrefix, newPrefix);
+        const nextPanes = remapPaneTabIds(
+          state.panes,
+          state.tabs,
+          oldPrefix,
+          newPrefix,
+        );
+        const nextStatusPath = remapProjectPathPrefix(
+          state.statusFile.path,
+          oldPrefix,
+          newPrefix,
+        );
+
+        return {
+          tabs: nextTabs,
+          panes: nextPanes,
+          statusFile:
+            nextStatusPath && nextStatusPath !== state.statusFile.path
+              ? {
+                  ...state.statusFile,
+                  path: nextStatusPath,
+                  name: getProjectPathBasename(nextStatusPath),
+                }
+              : state.statusFile,
+        };
+      });
+    },
+
+    closePath: (path) => {
+      get().closePathPrefix(path);
+    },
+
+    closePathPrefix: (pathPrefix) => {
+      set((state) => {
+        const removedTabIds = new Set(
+          Array.from(state.tabs.values())
+            .filter((tab) => isSameOrChildPath(tab.path, pathPrefix))
+            .map((tab) => tab.id),
+        );
+
+        if (removedTabIds.size === 0) {
+          return state;
+        }
+
+        const nextTabs = new Map(state.tabs);
+        removedTabIds.forEach((tabId) => nextTabs.delete(tabId));
+
+        const nextPanes = state.panes.map((pane) => {
+          const tabIds = pane.tabIds.filter((tabId) => !removedTabIds.has(tabId));
+          const activeTabId = removedTabIds.has(pane.activeTabId)
+            ? tabIds[tabIds.length - 1] || ""
+            : pane.activeTabId;
+          return {
+            ...pane,
+            tabIds,
+            activeTabId,
+          };
+        });
+
+        return {
+          tabs: nextTabs,
+          panes: nextPanes,
+          statusFile:
+            state.statusFile.path &&
+            isSameOrChildPath(state.statusFile.path, pathPrefix)
+              ? { path: null, name: null, language: null }
+              : state.statusFile,
+        };
+      });
     },
 
     getTab: (id) => get().tabs.get(id),

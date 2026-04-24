@@ -12,7 +12,6 @@ import {
 
 import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
 import { useTheme } from "../hooks/useTheme";
-import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import {
   isAllowedPreviewUrl,
   useBrowserPreviewStore,
@@ -50,14 +49,12 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
 }) => {
   const { isDark } = useTheme();
   const theme = getThemeColors(isDark);
-  const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const allowedOrigins = useBrowserPreviewStore((s) => s.allowedOrigins);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const initialInlineDocumentRef = useRef<string | null>(
     normalizeInlinePreviewDocument(htmlContent),
   );
 
-  const scaled = (size: number) => Math.round(size * uiScale);
   const initialInlineDocument = normalizeInlinePreviewDocument(htmlContent);
   const startsWithInlineDocument = initialInlineDocument !== null;
 
@@ -234,12 +231,13 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
 
   return (
     <div
+      data-testid="browser-preview-root"
       style={{
         display: "flex",
         flexDirection: "column",
         height: "100%",
         background: theme.bg,
-        fontSize: scaled(14),
+        fontSize: 14,
       }}
     >
       <div

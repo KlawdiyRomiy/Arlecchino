@@ -5,8 +5,8 @@
 <h1 align="center">Arlecchino</h1>
 
 <p align="center">
-  A new interface for building software.<br>
-    Floating panels, search bar/terminal dispatcher, autocomplete, builtin MCP server.<br>
+  A bubble-shell desktop IDE for building software.<br>
+  Go backend, React frontend, floating tools, built-in MCP server.
 </p>
 
 <p align="center">
@@ -14,231 +14,234 @@
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React 19">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/Wails-v2.12-EB4034" alt="Wails v2.12">
-  <img src="https://img.shields.io/badge/Platform-macOS-000000?logo=apple&logoColor=white" alt="macOS">
+  <img src="https://img.shields.io/badge/Platform-macOS%20alpha-000000?logo=apple&logoColor=white" alt="macOS alpha">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License">
 </p>
 
-<!-- GIF: Full IDE overview — editor with open file, terminal at bottom, explorer on left -->
+---
+
+## Alpha Status
+
+Arlecchino is currently a **source alpha**, built on **Wails v2.12**.
+
+Wails v3 is still being explored as a separate shell track.
 
 ---
 
-## What Is This
+## What Ships In Alpha Now
 
-Arlecchino is a native desktop IDE where every panel floats, the terminal predicts your commands, and files know about each other. It's built as a single binary - Go handles the backend (indexing, LSP, terminal, predictions), React handles the UI, and they talk through Wails bindings.
+### Bubble Shell On Wails v2
 
-There's also a full MCP server baked in, so AI coding agents (Claude Code, Codex, OpenCode) can control the IDE programmatically — open files, run terminal commands, manage layout, all through a secure protocol with audit logging.
+- Rounded shell chrome with a calmer, darker bubble-style interface
+- Floating and snapped panels for Explorer, Terminal, Git, Problems
+- Per-project panel layouts and workspace state
+- A serious dense IDE layout, not a generic web dashboard
 
-The MCP server and autocomplete engine is still in active development. The features marked "In Development" are not finished yet.
+### Command Palette And Terminal Dispatcher
 
----
+- `Cmd+F` opens the command palette / search bar
+- Plain search for files
+- `>` for IDE commands
+- `@t ` for terminal-mode command dispatch with ghost text prediction
+- TUI-aware terminal flow for tools like `vim`, `htop`, and `less`
 
-## Features
+### Editor And Navigation
 
-### Floating Panels
+- CodeMirror 6 editor
+- Multi-language editing with LSP integration
+- Inline diagnostics, hover, signature help, minimap, split views
+- Quick file relations and dependency graph flows
+- Multi-project workspace and tab history
 
-Every panel in the IDE — Explorer, Terminal, Git, Problems — is a floating panel that operates in two modes:
+### Built-In IDE Tools
 
-- **Snapped**: docked to a screen edge, no border radius, integrated into the layout
-- **Floating**: free-positioned window with rounded corners, drop shadow, and 8-direction resize handles
-
-Drag any panel by its header and drop it near a screen edge to snap it. Drop it anywhere else and it floats. Eight translucent drop zones light up at screen edges while you drag, so you always know where it'll land.
-
-Panel layouts are saved per-project. Switch between projects and each one remembers where you left everything.
-
-<!-- GIF: Dragging a panel from snapped position to floating, then snapping it to a different edge -->
-
----
-
-### Perspective Mode
-
-Most editors let you open a file. Arlecchino lets you see what that file is connected to.
-
-- **Alt+Click** any file → a searchable dropdown of every related file. Filtered by type, searchable by name.
-- **Cmd+Click** any file → a full interactive dependency graph. Animated nodes showing symbols per file, bezier-curved edges labeled by relationship kind, a minimap for navigation.
-
-<!-- GIF: Alt+Click showing QuickRelationsMenu, then Cmd+Click opening the full dependency graph -->
-
----
-
-### Command Dispatcher
-
-One search bar, eight modes. Hit `Cmd+F` and start typing:
-
-| Prefix | What it does |
-|--------|-------------|
-| *(none)* | Fuzzy file search across the project |
-| `>` | IDE actions (toggle panels, change theme, etc.) |
-| `@t ` | Terminal command mode with ghost text prediction |
-
-In terminal mode (`@t`), you type a command and the dispatcher shows a ghost text prediction of what comes next. Tab accepts it, Enter runs the command directly.
-
-<!-- GIF: Typing in Command Dispatcher — switching between file search, grep mode, and @t terminal prediction -->
-
----
-
-### TUI Mode
-
-When you run `vim`, `htop`, `less`, or any other TUI program in the terminal, the IDE detects it and takes action:
-
-1. Saves your current panel layout
-2. Hides everything except the terminal
-3. Gives the terminal full screen space with elevated z-index
-
-When you exit the TUI program, everything snaps back to exactly where it was.
-
-<!-- GIF: Running vim in terminal — IDE enters TUI mode, then showing TUI Assist with Explorer alongside -->
-
----
-
-### Terminal
-
-The terminal is built on xterm.js with full PTY management. It does more than you'd expect:
-
-**Multiple tabs and split panes** — up to 2 panes (horizontal or vertical), multiple tabs per pane. Per-project layout persistence.
-
-**Agent detection** — when you launch `claude`, `codex`, `aider`, or other AI agents from the terminal, the IDE detects it and can optionally inject an `AGENT_GUIDE.md` with IDE-specific instructions.
-
-<!-- GIF: Terminal with ghost text predictions, accepting with Tab, and clicking a file:line reference -->
-
----
+- Explorer
+- Problems panel
+- Git panel with details and diff views
+- Browser Preview
+- Status bar, settings, project switching
 
 ### MCP Integration
 
-Arlecchino ships with a built-in [MCP](https://modelcontextprotocol.io/) server — 47 tools that let AI agents control the IDE programmatically.
+Arlecchino ships with a built-in MCP server so external coding agents can interact with the IDE through a controlled protocol surface.
 
-**What agents can do:**
-- **File operations**: read, write, search — with automatic checkpoint/rollback
-- **IDE backend**: open/close projects, query LSP, create terminals, run commands, read git status/diff/log
-- **IDE UI**: emit events, control browser preview, manage layout profiles, take snapshots, hot-switch panels
+That includes:
 
-**Security is not an afterthought:**
-- Sensitive file detection (`.env`, `.ssh`, `*.pem`, `*credentials*`) requires explicit approval
-- Time-limited permissions (5 min default, 1 hour max)
-- Constant-time token comparison, 30-minute token rotation
-- Audit logging with risk classification (read-only, mutating, sensitive-access, boundary-crossing)
-- Rate limiting at 50 events/second
-
-**Bootstrap**: run `arlecchino mcp-bootstrap` to generate config files for Claude Code, Codex CLI, and OpenCode. The MCP server communicates over stdio or Unix sockets.
-
-<!-- GIF: An AI agent creating a file and opening it in the editor through MCP -->
+- file operations
+- terminal orchestration
+- project and layout control
+- preview and panel control
+- audit-aware sensitive access boundaries
 
 ---
 
-## Code Editor
+## Experimental / Partial
 
-The editor is built on CodeMirror 6.
+These parts exist, but they should not be described as fully finished yet:
 
-- **57 languages** with syntax highlighting, Tree-sitter parsing, and LSP integration
-  - Tier 1 (18): JavaScript, TypeScript, Go, PHP, Python, Rust, C/C++, Java, C#, HTML, CSS, SQL, and more
-  - Tier 2 (13): Kotlin, Ruby, Dart, Swift, Lua, R, and more
-  - Tier 3 (17): Elixir, Scala, Haskell, Zig, OCaml, COBOL, and more
-  - Plus data formats (JSON, YAML, TOML, XML), web frameworks (Vue, Svelte, Astro), and extras (GraphQL, Terraform, Solidity)
-- **Go-to-definition** via `Cmd+Click` — with a multi-definition chooser when there are several matches. Laravel gets 15+ specialized patterns (routes, views, models, controllers, middleware, config, env, Blade templates)
-- **Inline diagnostics** — squiggles, line emphasis, inline messages, and a diagnostics donut visualization
-- **Signature help and hover info** from LSP
-- **Rainbow brackets**, minimap (toggleable), code folding, bracket matching
-- **Auto-save** after 1.5 seconds of idle time
-- **Format-on-save** via built-in Prettier (Babel, TypeScript, HTML, PostCSS, PHP)
-- **Custom snippets** from localStorage
+- **Predictive autocomplete / ARLE brain**
+  The ranking and suggestion pipeline is real, but consistency still varies by language and project shape.
+
+- **AI chat panel**
+  Currently unavailable.
 
 ---
 
-## Navigation & Files
+## Quick Start (macOS alpha)
 
-**File Explorer** — tree with a distinctive visual style.
+### Prerequisite 0
 
-**Multi-project workspace** — open multiple projects simultaneously. Animated switch transitions with directional slides. Each project keeps its own panel layout, tab state, and terminal sessions. 
+You should already have:
 
-**Tab management** — drag-and-drop reorder (Framer Motion), dirty indicator (`●`), close on hover. Split view (right or down). Reopen last closed tab with `Cmd+Shift+T` (keeps 10 in history).
+- Xcode Command Line Tools
+- Homebrew
 
-**Welcome screen** — recent projects, environment validation (checks for Node, Go, PHP, Composer), dev tools status, LSP server installation. Missing tools can be installed directly from the welcome screen.
+If either one is missing, install it first and then come back.
+
+### Clone
+
+```bash
+git clone https://github.com/KlawdiyRomiy/Arlecchino.git
+cd Arlecchino
+```
+
+### Bootstrap
+
+```bash
+./scripts/bootstrap-dev-macos.sh
+```
+
+What the bootstrap does:
+
+- installs the core dev toolchain needed for local alpha development
+- installs recommended extras for a better alpha experience
+- runs `go mod download`
+- runs `npm ci` inside `frontend/`
+- prints a summary of what is installed, already present, or optional
+
+### Run
+
+```bash
+./scripts/wails-dev-macos.sh
+```
+
+This is the canonical alpha dev path on `main`.
+
+`./scripts/wails-dev-macos.sh` wraps `wails dev` and also keeps the macOS app bundle icon assets in sync (`Assets.car`, `appicon.icns`) so the Dock icon stays correct on newer macOS builds.
+
+The wrapper builds the dev app into `/tmp/Arlecchino-wails-build` instead of the cloned workspace. This avoids `codesign` detritus and File Provider issues when the repo lives inside `Documents`, iCloud Drive, or another synced folder.
+
+This is an **early technical alpha** path:
+
+- source checkout only
+- no Apple Developer signing
+- no notarization
+- no polished installer or DMG flow yet
+
+### Build A Local Alpha Bundle
+
+```bash
+./scripts/wails-build-macos.sh
+```
+
+This creates a local macOS app bundle at:
+
+```bash
+/tmp/Arlecchino-wails-build/bin/Arlecchino.app
+```
+
+Like the dev wrapper, the build wrapper keeps icon assets in sync and avoids File Provider / `codesign` detritus by building outside the cloned workspace.
 
 ---
 
-## Developer Tools
+## Dependency Model
 
-**Git Panel** — staged/unstaged changes with file status colors (modified, added, deleted, untracked, renamed). Inline diff viewer. Commit history. Branch display.
+### Required For App Boot
 
-**Browser Preview** — embedded iframe with URL bar and navigation controls. Auto-detects dev server URLs from terminal output (localhost/loopback only). Auto-refreshes on file save. Settings: auto-open, reuse session window, close on exit. MCP-controllable — agents can open, navigate, and close preview windows.
+These are the dependencies the bootstrap treats as required:
 
-**Framework Plugins** — auto-detection based on project markers:
-- **Laravel**: artisan file → artisan command suggestions, route/model/controller/view/middleware/config/env/Blade go-to-definition
-- **Django**: manage.py → management command suggestions
-- **Rails**: Gemfile with rails → rails/rake/rspec suggestions
-- **Common**: git integration for all projects
+- `go`
+- `node@22`
+- `npm`
+- `wails` (`v2.12`)
+- `go mod download`
+- `frontend/npm ci`
 
-**Problems Panel** — real-time LSP diagnostics. Inline diagnostics in the editor. Compact mode for the status bar. Diagnostics donut visualization per file.
+If one of these cannot be installed or resolved, the bootstrap exits with a clear instruction instead of pretending everything is fine.
+
+Arlecchino's alpha toolchain intentionally prefers **Node.js 22 LTS** instead of the newest Homebrew `node`. That keeps `npm ci`, `vite`, and Wails frontend packaging reproducible for this repo.
+
+### Recommended Extras Installed By Bootstrap
+
+These are not hard blockers for app boot, but they make the alpha feel closer to the intended experience:
+
+- `carapace`
+- `onnxruntime`
+- `gopls`
+- `typescript-language-server`
+- `pyright`
+- `vscode-langservers-extracted`
+- `yaml-language-server`
+- `bash-language-server`
+- `dockerfile-language-server-nodejs`
+
+### Optional / Later
+
+These stay outside the default alpha bootstrap:
+
+- `php`, `composer`, `phpactor`
+- Rust toolchain and Rust analyzers
+- Ruby / Solargraph
+- Terraform, Lua, Kotlin, Scala, and other language-specific chains
+
+Some of these can still be installed later from Arlecchino's language server flows or manually through your own environment.
+
+### ONNX Runtime Note
+
+`onnxruntime` is **not** a hard blocker for starting Arlecchino.
+
+If it is missing, the app still boots and falls back away from the ONNX-backed path. Installing it simply gives the autocomplete stack access to the faster ML backend where available.
 
 ---
 
-## UI & System
+## Future Shell Track (Wails v3 spike)
 
-**Theme system** — three modes: Dark (Blackprint), Light, System (follows OS). Persisted in localStorage. Synchronized across editor, terminal, and all panels.
+Wails v3 is **not** the default alpha path for Arlecchino today.
 
-**Keyboard shortcuts** — layout-independent, using physical key positions (`KeyboardEvent.code`). Works correctly with any keyboard layout (Russian, German, etc.). 25+ shortcuts for file operations, navigation, terminal, and split views. Context-aware: TUI mode reroutes shortcuts to assist panel toggles.
+The current strategy is:
 
-(добавить в последствии разработки еще настройки)**Settings** — 4 tabs: Appearance (theme), Editor (font size, UI scale 80–140%), Diagnostics (minimap, inline, compact, donut), Browser Preview (auto-open, reuse, close-on-exit).
+- keep `main` on **Wails v2.12**
+- keep the current bubble shell evolving on `main`
+- explore **Wails v3** separately in `feature/wails3-shell-spike`
 
-TUI mode automatically triggers hard pause. When you exit, everything resumes.
+That v3 track exists to evaluate future shell capabilities such as:
 
-**Status bar** — diagnostics count, language, project name, relative file path, cursor position (Ln/Col), encoding.
+- multi-window applets
+- detached terminal / chat / preview windows
+- native menus and context menus
+- tray and notifications
+- single-instance handling
+- custom protocols and file associations
+- updater / release plumbing
+- future material backends such as Liquid Glass on supported macOS
 
----
-
-## In Development
-
-These features exist and partially work, but they're not finished. Shipping them as "ready" would be dishonest.
-
-### Autocomplete Engine
-
-The autocomplete system has a 3,500-line prediction brain that aggregates completions from five sources: LSP, predictive patterns, SQLite symbol index, local file symbols, and virtual (pending) symbols. It includes a custom ONNX neural network (INT8 quantized) called ARLE that handles completion ranking (60% deterministic + 40% ML score blending), ghost text generation (up to 20 tokens), and 51-language detection.
-
-There's a SmartMatcher with five cascade levels (exact → prefix → word-boundary → subsequence → contains), pattern matching with placeholder resolution, a project learner that tracks accepted completions, and language-specific confidence thresholds.
-
-It works. Sometimes it works well. But it's not consistent enough to call "done."
-
-### AI Chat
-
-The chat panel UI is built and persists conversation history. The backend is a placeholder — responses are hardcoded after a delay. The architecture is ready for an AI service, but no AI dependency has been added. By design, not by accident.
+See [docs/wails-v3-spike.md](docs/wails-v3-spike.md) for the shell-spike scope and migration gate.
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | Go 1.26 |
+| Layer    | Technology                    |
+| -------- | ----------------------------- |
+| Backend  | Go 1.26                       |
 | Frontend | React 19, TypeScript (strict) |
-| Editor | CodeMirror 6 |
-| Desktop | Wails v2.12 |
-| Database | SQLite with GORM, WAL mode |
-| Parsing | Tree-sitter (Go bindings) |
-| Terminal | xterm.js + PTY (creack/pty) |
-| ML | ONNX Runtime (INT8 quantized model) |
-| Styling | Tailwind CSS v4 |
-| State | Zustand |
-
----
-
-## Keyboard Shortcuts
-
-| Action | macOS |
-|--------|-------|
-| Search / Command Palette | `Cmd+F` |
-| Quick Open | `Cmd+P` |
-| Toggle Sidebar | `Cmd+B` |
-| Toggle Terminal | `` Ctrl+` `` |
-| Toggle AI Panel | `Cmd+R` |
-| Settings | `Cmd+,` |
-| Open Project | `Cmd+O` |
-| New Project | `Cmd+N` |
-| Save | `Cmd+S` |
-| Close Tab | `Cmd+W` |
-| Reopen Tab | `Cmd+Shift+T` |
-| Split Right | `Cmd+\` |
-| New Terminal Tab | `Cmd+T` |
-| Zoom In / Out / Reset | `Cmd+=` / `Cmd+-` / `Cmd+0` |
-| Switch Project | `` Cmd+` `` |
+| Editor   | CodeMirror 6                  |
+| Desktop  | Wails v2.12                   |
+| Database | SQLite with GORM              |
+| Parsing  | Tree-sitter                   |
+| Terminal | xterm.js + PTY                |
+| Styling  | Tailwind CSS v4               |
+| State    | Zustand                       |
 
 ---
 

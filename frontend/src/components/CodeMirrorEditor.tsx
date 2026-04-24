@@ -31,6 +31,7 @@ import {
   startCompletion,
   closeCompletion,
   completionStatus,
+  completionKeymap,
 } from "@codemirror/autocomplete";
 import { search, searchKeymap } from "@codemirror/search";
 import { lintGutter } from "@codemirror/lint";
@@ -129,7 +130,10 @@ import { createLatestRequestGuard } from "../utils/latestRequestGuard";
 
 const GHOST_DEBOUNCE_MS = 50;
 const GHOST_IDLE_DELAY_MS = 900;
-const EMPTY_GIT_MARKERS: readonly GitLineMarker[] = Object.freeze([]);
+const EMPTY_GIT_MARKERS: GitLineMarker[] = [];
+const COMPLETION_KEYMAP_WITHOUT_ESCAPE = completionKeymap.filter(
+  (binding) => binding.key !== "Escape",
+);
 
 type CompletionWithInsertText = Completion & {
   __insertText: string;
@@ -724,6 +728,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 }) => {
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const documentVersionRef = useRef<number>(0);
+  const completionDismissedVersionRef = useRef<number | null>(null);
+  const autoStartedCompletionVersionRef = useRef<number | null>(null);
   const initialDocLengthRef = useRef(content.length);
   const completionCacheRef = useRef(
     createCompletionCache(COMPLETION_CACHE_TTL_MS),
@@ -771,6 +777,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     if (!filePath || !language) return;
 
     documentVersionRef.current = 1;
+    completionDismissedVersionRef.current = null;
+    autoStartedCompletionVersionRef.current = null;
     completionCacheRef.current.invalidate();
     signatureRequestGuardRef.current.next();
     NotifyFileOpened(filePath, language, content).catch(console.warn);
@@ -1009,6 +1017,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   const orchestrator = useMemo(() => createCompletionOrchestrator({}), []);
 
+  const handleEditorEscape = useCallback(() => {
+    completionDismissedVersionRef.current = documentVersionRef.current;
+    autoStartedCompletionVersionRef.current = null;
+    orchestrator.cancelPending();
+    clearSignatureHelp();
+  }, [clearSignatureHelp, orchestrator]);
+
   const ghost = useMemo(
     () =>
       ghostExtension({
@@ -1027,7 +1042,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           if (!label) return;
           metrics.recordCompletionAccepted({ label } as Completion);
         },
-        onEscape: clearSignatureHelp,
+        onEscape: handleEditorEscape,
         helpers: {
           firstWordOrToken,
           trimToTokenLimit,
@@ -1038,10 +1053,31 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           extractKeywordPrefix,
         },
       }),
-    [clearSignatureHelp, filePath, language, metrics],
+    [filePath, handleEditorEscape, language, metrics],
   );
 
   useEffect(() => () => ghost.cleanup(), [ghost]);
+
+  useEffect(() => {
+    const handleAutocompleteEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" && event.key !== "Esc") return;
+
+      const view = editorRef.current?.view;
+      if (!view?.hasFocus) return;
+      if (completionStatus(view.state) === null) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+
+      handleEditorEscape();
+      closeCompletion(view);
+    };
+
+    window.addEventListener("keydown", handleAutocompleteEscape, true);
+    return () =>
+      window.removeEventListener("keydown", handleAutocompleteEscape, true);
+  }, [handleEditorEscape]);
 
   const fetchPendingClassCompletions = useCallback(
     async (context: CompletionContext): Promise<Completion[]> => {
@@ -1195,6 +1231,12 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         inBraceContext,
       );
       const requestVersion = documentVersionRef.current;
+      const wasAutoStartedForVersion =
+        autoStartedCompletionVersionRef.current === requestVersion;
+      const isDismissedForVersion = (version: number) =>
+        completionDismissedVersionRef.current === version &&
+        (!context.explicit || wasAutoStartedForVersion);
+      if (isDismissedForVersion(requestVersion)) return null;
 
       const buildCompletionResult = async (
         requestId: number,
@@ -1227,12 +1269,14 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
         if (context.aborted || orchestrator.isStale(requestId)) return null;
         if (versionAtRequest !== documentVersionRef.current) return null;
+        if (isDismissedForVersion(versionAtRequest)) return null;
         if (result && "stale" in result && result.stale) return null;
         if (!result?.items?.length) return null;
 
         const pendingItems = await fetchPendingClassCompletions(context);
         if (context.aborted || orchestrator.isStale(requestId)) return null;
         if (versionAtRequest !== documentVersionRef.current) return null;
+        if (isDismissedForVersion(versionAtRequest)) return null;
 
         const completions: Completion[] = result.items.flatMap(
           (item, itemIndex) => {
@@ -1315,6 +1359,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         const allOptions = [...pendingItems, ...completions];
         if (context.aborted || orchestrator.isStale(requestId)) return null;
         if (versionAtRequest !== documentVersionRef.current) return null;
+        if (isDismissedForVersion(versionAtRequest)) return null;
 
         completionCacheRef.current.set({
           items: allOptions,
@@ -1379,6 +1424,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       onChange(value);
 
       documentVersionRef.current += 1;
+      completionDismissedVersionRef.current = null;
+      autoStartedCompletionVersionRef.current = null;
       const version = documentVersionRef.current;
 
       if (notifyChangeDebounceRef.current) {
@@ -1744,6 +1791,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     lintGutter(),
     search(),
     Prec.highest(ghost.keymap),
+    Prec.highest(keymap.of(COMPLETION_KEYMAP_WITHOUT_ESCAPE)),
     keymap.of([...defaultKeymap, ...searchKeymap, indentWithTab]),
     saveKeymap,
     formatKeymap,
@@ -1791,6 +1839,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
       queueMicrotask(() => {
         if (view.state.doc !== docSnapshot) return;
+        const version = documentVersionRef.current;
+        if (completionDismissedVersionRef.current === version) return;
         const status = completionStatus(view.state);
         if (status !== null && !isAccessTrigger) return;
         if (view.composing || view.compositionStarted) return;
@@ -1798,6 +1848,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           closeCompletion(view);
         }
         metrics.recordAutocompleteRequested();
+        autoStartedCompletionVersionRef.current = version;
         startCompletion(view);
       });
     }),
@@ -1807,7 +1858,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       activateOnTypingDelay: 0,
       updateSyncTime: 0,
       maxRenderedOptions: 50,
-      defaultKeymap: true,
+      defaultKeymap: false,
       closeOnBlur: true,
       interactionDelay: 0,
       addToOptions: [

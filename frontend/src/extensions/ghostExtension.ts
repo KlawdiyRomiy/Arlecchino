@@ -638,11 +638,11 @@ export function ghostExtension(
       key: "Escape",
       run: (view) => {
         cancelTimers();
-        const popupActive = completionStatus(view.state) === "active";
+        const popupOpen = completionStatus(view.state) !== null;
 
         if (ghostState.isVisible) {
           clearGhostText(view, true);
-          if (popupActive) {
+          if (popupOpen) {
             closeCompletion(view);
             options.onEscape?.();
             return true;
@@ -651,7 +651,7 @@ export function ghostExtension(
           return true;
         }
 
-        if (popupActive) {
+        if (popupOpen) {
           closeCompletion(view);
           options.onEscape?.();
           return true;

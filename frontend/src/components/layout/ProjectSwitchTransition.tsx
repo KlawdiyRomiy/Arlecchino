@@ -50,10 +50,10 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
   return (
     <div
       style={{
-        position: "fixed",
+        position: "absolute",
         inset: 0,
-        width: "100vw",
-        height: "100vh",
+        width: "100%",
+        height: "100%",
         overflow: "hidden",
         contain: "strict",
         clipPath: "inset(0)",
@@ -70,11 +70,11 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
             key={item}
             style={{
               ...restStyle,
-              transform: x.to((v) => `translate3d(${v}vw, 0, 0)`),
-              position: "fixed",
+              transform: x.to((v) => `translate3d(${v}%, 0, 0)`),
+              position: "absolute",
               inset: 0,
-              width: "100vw",
-              height: "100vh",
+              width: "100%",
+              height: "100%",
               contain: "strict",
               willChange: "transform",
               backgroundColor: "var(--bg-blackprint, #0a0a0a)",

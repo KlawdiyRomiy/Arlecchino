@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import { AnimatePresence, LayoutGroup } from "framer-motion";
 import {
   Code,
   Globe,
@@ -18,6 +19,7 @@ import {
 } from "../../stores/previewWindowStore";
 import { FloatingPanel } from "../ui/FloatingPanel";
 import { PreviewWindowSurface } from "../PreviewWindowSurface";
+import { getLogicalViewportSize } from "../../utils/logicalViewport";
 import { emitPerfMetric, nowPerf } from "../../utils/perf";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 
@@ -104,6 +106,11 @@ export const PreviewWindowLayer: React.FC<PreviewWindowLayerProps> = ({
     Map<string, Pick<UpdatePreviewWindowInput, "width" | "height" | "x" | "y">>
   >(new Map());
   const lastAppliedResizeByWindowRef = useRef<Map<string, string>>(new Map());
+  const logicalViewport = useMemo(
+    () => getLogicalViewportSize(currentUiScale),
+    [currentUiScale],
+  );
+  const previousLogicalViewportRef = useRef(logicalViewport);
 
   const layerStyle = useMemo<React.CSSProperties>(
     () => ({
@@ -199,6 +206,36 @@ export const PreviewWindowLayer: React.FC<PreviewWindowLayerProps> = ({
     [],
   );
 
+  useEffect(() => {
+    const previousViewport = previousLogicalViewportRef.current;
+    previousLogicalViewportRef.current = logicalViewport;
+
+    if (
+      Math.abs(previousViewport.width - logicalViewport.width) < 0.5 &&
+      Math.abs(previousViewport.height - logicalViewport.height) < 0.5
+    ) {
+      return;
+    }
+
+    windows.forEach((windowState) => {
+      const wasFullscreen =
+        windowState.mode === "floating" &&
+        windowState.x === 0 &&
+        windowState.y === 0 &&
+        windowState.width >= previousViewport.width - 1 &&
+        windowState.height >= previousViewport.height - 1;
+
+      if (!wasFullscreen) {
+        return;
+      }
+
+      onUpdateWindow(windowState.id, {
+        width: logicalViewport.width,
+        height: logicalViewport.height,
+      });
+    });
+  }, [logicalViewport, onUpdateWindow, windows]);
+
   const sortedWindows = useMemo(
     () => windows.slice().sort((left, right) => left.zIndex - right.zIndex),
     [windows],
@@ -265,104 +302,111 @@ export const PreviewWindowLayer: React.FC<PreviewWindowLayerProps> = ({
 
   return (
     <div style={layerStyle} data-testid="preview-window-layer">
-      {sortedWindows.map((windowState) => (
-        <div key={windowState.id} style={{ pointerEvents: "auto" }}>
-          <FloatingPanel
-            id={windowState.id}
-            title={windowState.title}
-            icon={getWindowIcon(windowState.surface)}
-            position={windowState.position}
-            mode={windowState.mode}
-            size={{ width: windowState.width, height: windowState.height }}
-            x={windowState.x}
-            y={windowState.y}
-            minSize={220}
-            maxSize={1400}
-            isVisible={true}
-            isDropTarget={false}
-            zIndex={windowState.zIndex}
-            adjacentPanels={getAdjacentPanels(windowState.id)}
-            onClose={() => {
-              cleanupWindowResizeState(windowState.id);
-              onCloseWindow(windowState.id);
-            }}
-            onResize={(updates) => {
-              scheduleResizeUpdate(windowState.id, {
-                width: updates.width,
-                height: updates.height,
-                x: updates.x,
-                y: updates.y,
-              });
-            }}
-            onDragStart={() => {
-              onFocusWindow(windowState.id);
-            }}
-            onDragEnd={(_, targetPosition, dropX, dropY) => {
-              if (targetPosition) {
-                const isBlockedByMainPanel = Boolean(
-                  occupiedSlots?.[targetPosition],
-                );
-                if (
-                  isBlockedByMainPanel &&
-                  (windowState.mode !== "snapped" ||
-                    windowState.position !== targetPosition)
-                ) {
-                  if (typeof dropX === "number" && typeof dropY === "number") {
-                    onUpdateWindow(windowState.id, {
-                      mode: "floating",
-                      x: dropX,
-                      y: dropY,
-                      width: windowState.width,
-                      height: windowState.height,
-                    });
+      <LayoutGroup id="preview-window-panels">
+        <AnimatePresence initial={false}>
+          {sortedWindows.map((windowState) => (
+            <FloatingPanel
+              key={windowState.id}
+              id={windowState.id}
+              title={windowState.title}
+              icon={getWindowIcon(windowState.surface)}
+              position={windowState.position}
+              mode={windowState.mode}
+              size={{ width: windowState.width, height: windowState.height }}
+              x={windowState.x}
+              y={windowState.y}
+              minSize={220}
+              maxSize={1400}
+              isVisible={true}
+              isDropTarget={false}
+              zIndex={windowState.zIndex}
+              adjacentPanels={getAdjacentPanels(windowState.id)}
+              uiScale={currentUiScale}
+              onClose={() => {
+                cleanupWindowResizeState(windowState.id);
+                onCloseWindow(windowState.id);
+              }}
+              onResize={(updates) => {
+                scheduleResizeUpdate(windowState.id, {
+                  width: updates.width,
+                  height: updates.height,
+                  x: updates.x,
+                  y: updates.y,
+                });
+              }}
+              onDragStart={() => {
+                onFocusWindow(windowState.id);
+              }}
+              onDragEnd={(_, targetPosition, dropX, dropY) => {
+                if (targetPosition) {
+                  const isBlockedByMainPanel = Boolean(
+                    occupiedSlots?.[targetPosition],
+                  );
+                  if (
+                    isBlockedByMainPanel &&
+                    (windowState.mode !== "snapped" ||
+                      windowState.position !== targetPosition)
+                  ) {
+                    if (
+                      typeof dropX === "number" &&
+                      typeof dropY === "number"
+                    ) {
+                      onUpdateWindow(windowState.id, {
+                        mode: "floating",
+                        x: dropX,
+                        y: dropY,
+                        width: windowState.width,
+                        height: windowState.height,
+                      });
+                    }
+                    return;
                   }
+
+                  const normalizedSize = normalizeSnappedSize(
+                    targetPosition,
+                    windowState,
+                  );
+                  onUpdateWindow(windowState.id, {
+                    mode: "snapped",
+                    position: targetPosition,
+                    width: normalizedSize.width,
+                    height: normalizedSize.height,
+                  });
                   return;
                 }
 
-                const normalizedSize = normalizeSnappedSize(
-                  targetPosition,
-                  windowState,
-                );
-                onUpdateWindow(windowState.id, {
-                  mode: "snapped",
-                  position: targetPosition,
-                  width: normalizedSize.width,
-                  height: normalizedSize.height,
-                });
-                return;
-              }
-
-              if (typeof dropX === "number" && typeof dropY === "number") {
-                onUpdateWindow(windowState.id, {
-                  mode: "floating",
-                  x: dropX,
-                  y: dropY,
-                  width: windowState.width,
-                  height: windowState.height,
-                });
-              }
-            }}
-          >
-            <div
-              style={{
-                height: "100%",
-                backgroundColor: palette.bgSecondary,
+                if (typeof dropX === "number" && typeof dropY === "number") {
+                  onUpdateWindow(windowState.id, {
+                    mode: "floating",
+                    x: dropX,
+                    y: dropY,
+                    width: windowState.width,
+                    height: windowState.height,
+                  });
+                }
               }}
             >
-              <PreviewWindowSurface
-                window={windowState}
-                appearancePreview={appearancePreview}
-                currentTheme={currentTheme}
-                currentUiScale={currentUiScale}
-                onAppearancePatch={onAppearancePatch}
-                onAppearanceApply={onAppearanceApply}
-                onAppearanceCancel={onAppearanceCancel}
-                onFileOpen={onFileOpen}
-              />
-            </div>
-          </FloatingPanel>
-        </div>
-      ))}
+              <div
+                style={{
+                  height: "100%",
+                  backgroundColor: palette.bgSecondary,
+                }}
+              >
+                <PreviewWindowSurface
+                  window={windowState}
+                  appearancePreview={appearancePreview}
+                  currentTheme={currentTheme}
+                  currentUiScale={currentUiScale}
+                  onAppearancePatch={onAppearancePatch}
+                  onAppearanceApply={onAppearanceApply}
+                  onAppearanceCancel={onAppearanceCancel}
+                  onFileOpen={onFileOpen}
+                />
+              </div>
+            </FloatingPanel>
+          ))}
+        </AnimatePresence>
+      </LayoutGroup>
     </div>
   );
 };

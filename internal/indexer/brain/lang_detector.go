@@ -150,7 +150,9 @@ func (ld *LangDetector) loadModel() error {
 	defer ld.mu.Unlock()
 
 	if err := ort.InitializeEnvironment(); err != nil {
-		return err
+		if err.Error() != "The onnxruntime has already been initialized" {
+			return err
+		}
 	}
 
 	// Model expects: input [batch, seq_len] -> output [batch, num_classes]

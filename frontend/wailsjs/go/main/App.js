@@ -542,12 +542,20 @@ export function RemovePackage(arg1, arg2) {
   return window['go']['main']['App']['RemovePackage'](arg1, arg2);
 }
 
+export function RenameProjectEntry(arg1, arg2) {
+  return window['go']['main']['App']['RenameProjectEntry'](arg1, arg2);
+}
+
 export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeTerminal'](arg1, arg2, arg3);
 }
 
 export function RestartLSPServer(arg1) {
   return window['go']['main']['App']['RestartLSPServer'](arg1);
+}
+
+export function RevealProjectEntry(arg1) {
+  return window['go']['main']['App']['RevealProjectEntry'](arg1);
 }
 
 export function RouteCache() {
@@ -620,6 +628,10 @@ export function SyncProjectDependencies(arg1) {
 
 export function Tinker() {
   return window['go']['main']['App']['Tinker']();
+}
+
+export function TrashProjectEntry(arg1) {
+  return window['go']['main']['App']['TrashProjectEntry'](arg1);
 }
 
 export function UnpinCommand(arg1) {

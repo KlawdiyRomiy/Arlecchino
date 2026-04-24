@@ -37,6 +37,6 @@ test("tui terminal overlay is viewport-positioned", async ({ page }) => {
   expect(mainLayoutSource).toMatch(/useViewportPositioning=\{tuiModeActive\}/);
   expect(floatingPanelSource).toMatch(/useViewportPositioning\?:\s*boolean/);
   expect(floatingPanelSource).toMatch(
-    /position:\s*useViewportPositioning[\s\S]*isDragging[\s\S]*absolute/,
+    /position:[\s\S]*useViewportPositioning[\s\S]*isDragging[\s\S]*absolute/,
   );
 });

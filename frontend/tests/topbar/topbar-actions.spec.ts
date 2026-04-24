@@ -3,6 +3,16 @@ import { expect, test } from "@playwright/test";
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.clear();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        readText: async () =>
+          (window as unknown as { __copiedText?: string }).__copiedText ?? "",
+        writeText: async (text: string) => {
+          (window as unknown as { __copiedText?: string }).__copiedText = text;
+        },
+      },
+    });
 
     const appBridge = new Proxy(
       {},
@@ -37,8 +47,8 @@ test.beforeEach(async ({ page }) => {
       {},
       {
         get: (_target, property: string) => {
-          if (property === "EventsOnMultiple") {
-            return () => "sub-id";
+          if (property === "EventsOn" || property === "EventsOnMultiple") {
+            return () => () => undefined;
           }
           if (property === "EventsOff") {
             return () => undefined;
@@ -201,4 +211,109 @@ test("preview shortcut uses latest active tab context", async ({ page }) => {
   expect(previewPayload?.sourceLabel).toBe("index.html");
   expect(previewPayload?.htmlContent).toContain("Preview shortcut");
   expect(previewPayload?.url).toBe("");
+});
+
+test("panel shortcuts open compact panels", async ({ page }) => {
+  await mountProjectUI(page);
+
+  await page.keyboard.press("Meta+E");
+  await expect(page.getByTestId("panel-explorer")).toBeVisible();
+
+  await page.keyboard.press("Meta+G");
+  await expect(page.getByTestId("panel-git")).toBeVisible();
+
+  await page.keyboard.press("Meta+P");
+  await expect(page.getByTestId("panel-problems")).toBeVisible();
+});
+
+test("fullscreen panel shortcuts use expanded panel frames", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.keyboard.press("Meta+Shift+G");
+  const gitFrame = await page.getByTestId("panel-git").boundingBox();
+  expect(gitFrame?.width ?? 0).toBeGreaterThan(900);
+  expect(gitFrame?.height ?? 0).toBeGreaterThan(500);
+
+  await page.keyboard.press("Meta+Shift+G");
+  await expect(page.getByTestId("panel-git")).toBeHidden();
+
+  await page.keyboard.press("Meta+Shift+G");
+  await expect(page.getByTestId("panel-git")).toBeVisible();
+
+  await page.keyboard.press("Meta+G");
+  const compactGitFrame = await page.getByTestId("panel-git").boundingBox();
+  expect(compactGitFrame?.width ?? 0).toBeLessThan(gitFrame?.width ?? 0);
+
+  await page.keyboard.press("Meta+Shift+P");
+  const problemsFrame = await page.getByTestId("panel-problems").boundingBox();
+  expect(problemsFrame?.width ?? 0).toBeGreaterThan(900);
+  expect(problemsFrame?.height ?? 0).toBeGreaterThan(500);
+
+  await page.keyboard.press("Meta+Shift+P");
+  await expect(page.getByTestId("panel-problems")).toBeHidden();
+});
+
+test("Cmd+Shift+C copies project path with topbar confirmation", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.keyboard.press("Meta+Shift+C");
+
+  const confirmation = page.getByTestId("project-path-copy-confirmation");
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText("Project path copied");
+  await expect(confirmation).not.toContainText("cmd+shift+c");
+
+  const confirmationBox = await confirmation.boundingBox();
+  const topbarBox = await page.getByTestId("topbar").boundingBox();
+  const projectPathBox = await page
+    .getByTestId("topbar-project-path")
+    .boundingBox();
+  const viewportWidth = await page.evaluate(() => window.innerWidth);
+  const confirmationCenter =
+    (confirmationBox?.x ?? 0) + (confirmationBox?.width ?? 0) / 2;
+
+  expect(confirmationBox?.height ?? 0).toBeGreaterThan(28);
+  expect(Math.abs(confirmationCenter - viewportWidth / 2)).toBeLessThan(24);
+  expect(confirmationBox?.y ?? 0).toBeGreaterThan(
+    (topbarBox?.y ?? 0) + (topbarBox?.height ?? 0),
+  );
+  expect(confirmationBox?.y ?? 0).toBeGreaterThan(
+    (projectPathBox?.y ?? 0) + (projectPathBox?.height ?? 0),
+  );
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { __copiedText?: string }).__copiedText,
+      ),
+    )
+    .toBe("/workspace");
+});
+
+test("Cmd+Shift+C does not copy project path from terminal focus", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(() => {
+    const input = document.createElement("textarea");
+    input.className = "xterm-helper-textarea";
+    document.body.appendChild(input);
+    input.focus();
+  });
+
+  await page.keyboard.press("Meta+Shift+C");
+
+  await expect(page.getByTestId("project-path-copy-confirmation")).toHaveCount(
+    0,
+  );
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __copiedText?: string }).__copiedText,
+    ),
+  ).toBeUndefined();
 });

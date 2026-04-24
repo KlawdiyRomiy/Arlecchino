@@ -2,6 +2,7 @@
 
 :root {
   --ui-scale: 1;
+  --ui-inverse-scale: 1;
   --ui-font-size: 14px;
 
   /* BLACKPRINT Color Scheme */
@@ -76,6 +77,7 @@
   --radius-xl: 20px;
   --radius-panel: 24px;
   --radius-shell: 28px;
+  --radius-window: 18px;
   --radius-control: 9999px;
 
   /* Spacing */
@@ -98,6 +100,7 @@ body,
   padding: 0;
   height: 100%;
   overflow: hidden;
+  background: transparent;
   font-family:
     "Inter",
     "SF Pro",
@@ -114,6 +117,23 @@ html.dark body,
 html.dark #root {
   background: transparent;
   color: white;
+}
+
+body > [data-radix-portal] {
+  position: fixed;
+  inset: 0;
+  width: calc(100% * var(--ui-inverse-scale));
+  height: calc(100% * var(--ui-inverse-scale));
+  transform: scale(var(--ui-scale));
+  transform-origin: top left;
+  overflow: hidden;
+  border-radius: var(--radius-window);
+  clip-path: inset(0 round var(--radius-window));
+  pointer-events: none;
+}
+
+body > [data-radix-portal] > * {
+  pointer-events: auto;
 }
 
 ::-webkit-scrollbar {
@@ -576,21 +596,32 @@ body,
 }
 
 .monaco-editor .suggest-widget {
-  background-color: #ffffff !important;
-  border: 1px solid #e5e7eb !important;
-  border-radius: 8px !important;
+  background: linear-gradient(
+    180deg,
+    rgba(18, 18, 18, 0.99),
+    rgba(13, 13, 13, 0.995)
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.105) !important;
+  border-radius: 22px !important;
   box-shadow:
-    0 10px 25px -5px rgba(0, 0, 0, 0.1),
-    0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
+    inset 0 1px 0 rgba(255, 255, 255, 0.035),
+    0 18px 40px -24px rgba(0, 0, 0, 0.84),
+    0 28px 72px -42px rgba(0, 0, 0, 0.78) !important;
   overflow: hidden !important;
+  padding: 8px !important;
 }
 
 .dark .monaco-editor .suggest-widget {
-  background-color: #181818 !important;
-  border: 1px solid #2d2d2d !important;
+  background: linear-gradient(
+    180deg,
+    rgba(18, 18, 18, 0.99),
+    rgba(13, 13, 13, 0.995)
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.105) !important;
   box-shadow:
-    0 10px 25px -5px rgba(0, 0, 0, 0.4),
-    0 8px 10px -6px rgba(0, 0, 0, 0.3) !important;
+    inset 0 1px 0 rgba(255, 255, 255, 0.035),
+    0 18px 40px -24px rgba(0, 0, 0, 0.84),
+    0 28px 72px -42px rgba(0, 0, 0, 0.78) !important;
 }
 
 .monaco-editor .suggest-widget .monaco-list {
@@ -598,25 +629,60 @@ body,
 }
 
 .monaco-editor .suggest-widget .monaco-list .monaco-list-row {
-  padding: 4px 8px !important;
-  border-radius: 4px !important;
-  margin: 2px 4px !important;
-  transition: background-color 150ms ease !important;
+  margin: 0 0 4px !important;
+  border: 1px solid transparent !important;
+  border-radius: 17px !important;
+  padding: 8px 10px !important;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease !important;
 }
 
 .monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused {
-  background-color: rgba(59, 130, 246, 0.15) !important;
+  position: relative !important;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.07),
+    rgba(255, 255, 255, 0.048)
+  ) !important;
+  border-color: rgba(255, 255, 255, 0.13) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045) !important;
+}
+
+.monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused::after {
+  content: "Enter";
+  display: inline-flex;
+  min-width: 58px;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 9999px;
+  background: rgba(17, 17, 17, 0.96);
+  padding: 0 11px;
+  color: #66758a;
+  font-family: "JetBrains Mono", "SF Mono", monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
 }
 
 .dark .monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused {
-  background-color: rgba(59, 130, 246, 0.25) !important;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.07),
+    rgba(255, 255, 255, 0.048)
+  ) !important;
 }
 
 .monaco-editor
   .suggest-widget
   .monaco-list
   .monaco-list-row:hover:not(.focused) {
-  background-color: rgba(0, 0, 0, 0.04) !important;
+  background-color: rgba(255, 255, 255, 0.032) !important;
+  border-color: rgba(255, 255, 255, 0.055) !important;
 }
 
 .dark
@@ -624,29 +690,29 @@ body,
   .suggest-widget
   .monaco-list
   .monaco-list-row:hover:not(.focused) {
-  background-color: rgba(255, 255, 255, 0.04) !important;
+  background-color: rgba(255, 255, 255, 0.032) !important;
 }
 
 .monaco-editor .suggest-widget .suggest-status-bar {
-  background-color: #f9fafb !important;
-  border-top: 1px solid #e5e7eb !important;
-  padding: 4px 8px !important;
+  background-color: rgba(13, 13, 13, 0.99) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+  padding: 6px 10px !important;
 }
 
 .dark .monaco-editor .suggest-widget .suggest-status-bar {
-  background-color: #141414 !important;
-  border-top: 1px solid #2d2d2d !important;
+  background-color: rgba(13, 13, 13, 0.99) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
 }
 
 .monaco-editor .suggest-widget .details {
-  background-color: #ffffff !important;
-  border-left: 1px solid #e5e7eb !important;
-  border-radius: 0 8px 8px 0 !important;
+  background-color: rgba(13, 13, 13, 0.99) !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 0 16px 16px 0 !important;
 }
 
 .dark .monaco-editor .suggest-widget .details {
-  background-color: #181818 !important;
-  border-left: 1px solid #2d2d2d !important;
+  background-color: rgba(13, 13, 13, 0.99) !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.08) !important;
 }
 
 .monaco-editor .suggest-widget .details .monaco-scrollable-element {
@@ -701,7 +767,25 @@ body,
 }
 
 .monaco-editor .suggest-widget .monaco-list .monaco-list-row .icon {
-  margin-right: 6px !important;
+  display: inline-flex !important;
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 24px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-right: 0 !important;
+  border-radius: 12px !important;
+  color: transparent !important;
+  font-size: 0 !important;
+}
+
+.monaco-editor .suggest-widget .monaco-list .monaco-list-row .icon::after {
+  content: "fn";
+  color: #8f98a6;
+  font-family: "JetBrains Mono", "SF Mono", monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .monaco-editor
@@ -723,7 +807,7 @@ body,
   .main
   .left
   .label-name {
-  color: #1d4ed8 !important;
+  color: #f2f4f8 !important;
 }
 
 .dark
@@ -735,7 +819,7 @@ body,
   .main
   .left
   .label-name {
-  color: #60a5fa !important;
+  color: #f2f4f8 !important;
 }
 
 .monaco-editor
@@ -746,11 +830,11 @@ body,
   .main
   .left
   .qualifier-label {
-  color: #a78bfa !important;
+  color: #9aa4b2 !important;
   font-size: 10px !important;
   margin-left: 6px !important;
   padding: 1px 4px !important;
-  background-color: rgba(167, 139, 250, 0.1) !important;
+  background-color: rgba(255, 255, 255, 0.04) !important;
   border-radius: 3px !important;
 }
 
@@ -763,7 +847,7 @@ body,
   .main
   .left
   .qualifier-label {
-  background-color: rgba(167, 139, 250, 0.15) !important;
+  background-color: rgba(255, 255, 255, 0.04) !important;
 }
 
 .monaco-editor .parameter-hints-widget {
@@ -845,7 +929,7 @@ body,
 
 /* BLACKPRINT Background with vignette */
 .blackprint-bg {
-  position: fixed;
+  position: absolute;
   inset: 0;
   background:
     radial-gradient(
@@ -859,7 +943,7 @@ body,
 
 /* Grid pattern - square grid */
 .grid-bg {
-  position: fixed;
+  position: absolute;
   inset: 0;
   background-image:
     linear-gradient(var(--grid-line) 1px, transparent 1px),

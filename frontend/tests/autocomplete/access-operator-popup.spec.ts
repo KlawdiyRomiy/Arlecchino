@@ -331,6 +331,26 @@ test("dot access restarts popup immediately for imported Go alias", async ({
   ).toBeVisible();
 });
 
+test("escape closes active autocomplete popup", async ({ page }) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content:
+      'package main\n\nimport tele "gopkg.in/telebot.v3"\n\nfunc main() {\n    tele\n}\n',
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "tele");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Send");
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".cm-tooltip-autocomplete")).toBeHidden();
+  await page.waitForTimeout(250);
+  await expect(page.locator(".cm-tooltip-autocomplete")).toBeHidden();
+});
+
 test("dot access restarts popup immediately for TypeScript namespace alias", async ({
   page,
 }) => {

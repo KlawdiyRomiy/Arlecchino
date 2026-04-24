@@ -1,0 +1,682 @@
+import { expect, test } from "@playwright/test";
+
+const installBaseBridges = async (
+  page: Parameters<typeof test>[0]["page"],
+): Promise<void> => {
+  await page.addInitScript(() => {
+    localStorage.clear();
+
+    const eventHandlers = new Map<string, Array<(payload: unknown) => void>>();
+
+    const appBridge = new Proxy(
+      {},
+      {
+        get: (_target, property: string) => {
+          return async (..._args: unknown[]) => {
+            switch (property) {
+              case "GetCurrentProjectFramework":
+                return null;
+              case "GetRecentProjects":
+                return [];
+              case "GetDevToolsStatus":
+                return [];
+              case "OpenProject":
+              case "CreateTerminal":
+              case "WriteTerminal":
+              case "SendTerminalText":
+              case "CloseTerminal":
+              case "ResizeTerminal":
+                return true;
+              case "ListFiles":
+                return [];
+              case "GetGitStatus":
+                return "";
+              case "GetGitBranch":
+                return "main";
+              case "GetGitBranches":
+                return ["main"];
+              case "GetGitLog":
+              case "GetGitDiff":
+              case "GetGitCommitDiff":
+              case "RunGitCommand":
+                return "";
+              default:
+                return null;
+            }
+          };
+        },
+      },
+    );
+
+    const runtimeBridge = new Proxy(
+      {},
+      {
+        get: (_target, property: string) => {
+          if (property === "EventsOn" || property === "EventsOnMultiple") {
+            return (
+              eventName: string,
+              callback: (payload: unknown) => void,
+            ) => {
+              const handlers = eventHandlers.get(eventName) ?? [];
+              handlers.push(callback);
+              eventHandlers.set(eventName, handlers);
+              return () => undefined;
+            };
+          }
+          if (property === "EventsOff") {
+            return () => undefined;
+          }
+          if (property === "BrowserOpenURL") {
+            return async () => undefined;
+          }
+          return async () => undefined;
+        },
+      },
+    );
+
+    Object.assign(window, {
+      go: { main: { App: appBridge } },
+      runtime: runtimeBridge,
+    });
+
+    localStorage.setItem(
+      "workspace-storage",
+      JSON.stringify({
+        state: {
+          projects: [
+            {
+              id: "/workspace",
+              path: "/workspace",
+              name: "workspace",
+              openedAt: 1,
+            },
+          ],
+          activeId: "/workspace",
+          switchDirection: 1,
+        },
+        version: 0,
+      }),
+    );
+  });
+};
+
+const mountProjectUI = async (
+  page: Parameters<typeof test>[0]["page"],
+): Promise<void> => {
+  await installBaseBridges(page);
+  await page.goto("/");
+
+  await page.evaluate(async () => {
+    const { useWorkspaceStore } = await import("/src/stores/workspaceStore.ts");
+    const { useExplorerStore } = await import("/src/stores/explorerStore.ts");
+    const { useEditorStore } = await import("/src/stores/editorStore.ts");
+    const { usePreviewWindowStore } =
+      await import("/src/stores/previewWindowStore.ts");
+
+    useWorkspaceStore.setState({
+      projects: [
+        {
+          id: "/workspace",
+          path: "/workspace",
+          name: "workspace",
+          openedAt: 1,
+        },
+      ],
+      activeId: "/workspace",
+      activeFramework: null,
+      pendingId: null,
+      ready: true,
+      switchDirection: 1,
+      uiBlockers: [],
+    });
+
+    useExplorerStore.getState().setProjectPath("/workspace");
+    useEditorStore
+      .getState()
+      .openTab(
+        "pane-main",
+        "/workspace/index.html",
+        "index.html",
+        "<html><body>Zoom preview</body></html>",
+        "html",
+      );
+
+    usePreviewWindowStore.getState().openWindow({
+      id: "zoom-browser",
+      surface: "browser",
+      title: "Browser Preview",
+      payload: {
+        htmlContent: "<html><body>Zoom preview</body></html>",
+        sourceLabel: "index.html",
+      },
+      width: 420,
+      height: 320,
+    });
+    usePreviewWindowStore.getState().openWindow({
+      id: "zoom-git",
+      surface: "git",
+      title: "Git Preview",
+      width: 420,
+      height: 320,
+      x: 120,
+      y: 120,
+    });
+  });
+
+  await expect(page.getByTitle("Search")).toBeVisible();
+};
+
+const dispatchShortcut = async (
+  page: Parameters<typeof test>[0]["page"],
+  payload: { key: string; code: string; metaKey?: boolean; ctrlKey?: boolean },
+): Promise<void> => {
+  await page.evaluate((eventInit) => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        ...eventInit,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }, payload);
+};
+
+test("legacy coupled zoom state resets editor font size during migration", async ({
+  page,
+}) => {
+  await installBaseBridges(page);
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "editor-settings",
+      JSON.stringify({
+        state: {
+          uiScale: 1.1,
+          editorFontSize: 16,
+        },
+        version: 0,
+      }),
+    );
+  });
+
+  await page.goto("/");
+
+  const state = await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    const current = useEditorSettingsStore.getState();
+
+    return {
+      uiScale: current.uiScale,
+      editorFontSize: current.editorFontSize,
+    };
+  });
+
+  expect(state.uiScale).toBe(1.1);
+  expect(state.editorFontSize).toBe(14);
+});
+
+test("custom editor font size survives zoom migration", async ({ page }) => {
+  await installBaseBridges(page);
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "editor-settings",
+      JSON.stringify({
+        state: {
+          uiScale: 1.1,
+          editorFontSize: 18,
+        },
+        version: 0,
+      }),
+    );
+  });
+
+  await page.goto("/");
+
+  const state = await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    const current = useEditorSettingsStore.getState();
+
+    return {
+      uiScale: current.uiScale,
+      editorFontSize: current.editorFontSize,
+    };
+  });
+
+  expect(state.uiScale).toBe(1.1);
+  expect(state.editorFontSize).toBe(18);
+});
+
+test("keyboard zoom shortcuts update the global UI zoom state", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        getComputedStyle(document.documentElement)
+          .getPropertyValue("--ui-scale")
+          .trim(),
+      ),
+    )
+    .toBe("1");
+
+  await dispatchShortcut(page, {
+    key: "=",
+    code: "Equal",
+    metaKey: true,
+  });
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        getComputedStyle(document.documentElement)
+          .getPropertyValue("--ui-scale")
+          .trim(),
+      ),
+    )
+    .toBe("1.05");
+
+  await dispatchShortcut(page, {
+    key: "-",
+    code: "Minus",
+    metaKey: true,
+  });
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        getComputedStyle(document.documentElement)
+          .getPropertyValue("--ui-scale")
+          .trim(),
+      ),
+    )
+    .toBe("1");
+
+  await dispatchShortcut(page, {
+    key: "=",
+    code: "Equal",
+    metaKey: true,
+  });
+
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useEditorSettingsStore } =
+          await import("/src/stores/editorSettingsStore.ts");
+        return useEditorSettingsStore.getState().uiScale;
+      }),
+    )
+    .toBe(1.05);
+
+  await dispatchShortcut(page, {
+    key: "0",
+    code: "Digit0",
+    metaKey: true,
+  });
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        getComputedStyle(document.documentElement)
+          .getPropertyValue("--ui-scale")
+          .trim(),
+      ),
+    )
+    .toBe("1");
+});
+
+test("fullscreen problems panel tracks ui scale changes without clipping or shrinking", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.getByTestId("diagnostics-compact-indicator").click();
+
+  const problemsPanel = page.getByTestId("panel-problems");
+  await expect(problemsPanel).toBeVisible();
+  await problemsPanel.getByTitle("Полный экран").click();
+
+  const readPanelGeometry = () =>
+    page.evaluate(() => {
+      const panel = document.querySelector<HTMLElement>(
+        '[data-testid="panel-problems"]',
+      );
+      const rect = panel?.getBoundingClientRect();
+
+      return {
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        width: rect?.width ?? 0,
+        height: rect?.height ?? 0,
+      };
+    });
+
+  await expect
+    .poll(async () => {
+      const geometry = await readPanelGeometry();
+      return Math.abs(geometry.width - geometry.viewportWidth);
+    })
+    .toBeLessThanOrEqual(2);
+
+  await expect
+    .poll(async () => {
+      const geometry = await readPanelGeometry();
+      return Math.abs(geometry.height - geometry.viewportHeight);
+    })
+    .toBeLessThanOrEqual(2);
+
+  await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setUiScale(0.7);
+  });
+
+  await expect
+    .poll(async () => {
+      const geometry = await readPanelGeometry();
+      return Math.abs(geometry.width - geometry.viewportWidth);
+    })
+    .toBeLessThanOrEqual(2);
+
+  await expect
+    .poll(async () => {
+      const geometry = await readPanelGeometry();
+      return Math.abs(geometry.height - geometry.viewportHeight);
+    })
+    .toBeLessThanOrEqual(2);
+
+  await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setUiScale(1.25);
+  });
+
+  await expect
+    .poll(async () => {
+      const geometry = await readPanelGeometry();
+      return Math.abs(geometry.width - geometry.viewportWidth);
+    })
+    .toBeLessThanOrEqual(2);
+
+  await expect
+    .poll(async () => {
+      const geometry = await readPanelGeometry();
+      return Math.abs(geometry.height - geometry.viewportHeight);
+    })
+    .toBeLessThanOrEqual(2);
+});
+
+test("app shell clips the interface to a rounded outer viewport", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  const styles = await page.evaluate(() => {
+    const appShell = document.querySelector<HTMLElement>(
+      '[data-testid="app-shell"]',
+    );
+    const blackprintBackground =
+      document.querySelector<HTMLElement>(".blackprint-bg");
+
+    return {
+      shellRadius: appShell
+        ? getComputedStyle(appShell).borderTopLeftRadius
+        : "",
+      shellOverflow: appShell ? getComputedStyle(appShell).overflow : "",
+      shellClipPath: appShell ? getComputedStyle(appShell).clipPath : "",
+      shellBackground: appShell
+        ? getComputedStyle(appShell).backgroundColor
+        : "",
+      backgroundPosition: blackprintBackground
+        ? getComputedStyle(blackprintBackground).position
+        : "",
+    };
+  });
+
+  expect(styles.shellRadius).toBe("18px");
+  expect(styles.shellOverflow).toBe("hidden");
+  expect(styles.shellClipPath).toContain("round");
+  expect(styles.shellBackground).toBe("rgba(0, 0, 0, 0)");
+  expect(styles.backgroundPosition).toBe("absolute");
+});
+
+test("global UI zoom scales the interface uniformly without transform-based root shifting or double-scaling browser and git surfaces", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  const appShell = page.getByTestId("app-shell");
+  const browserRoot = page.getByTestId("browser-preview-root");
+  const gitRoot = page.getByTestId("git-panel-root");
+  const browserInput = page.getByPlaceholder("http://localhost:8000");
+
+  await expect(appShell).toBeVisible();
+  await expect(browserRoot).toBeVisible();
+  await expect(gitRoot).toBeVisible();
+
+  const beforeScale = await page.evaluate(() => {
+    const shell = document.querySelector<HTMLElement>(
+      '[data-testid="app-shell"]',
+    );
+    const scaledSurface = document.querySelector<HTMLElement>(
+      '[data-testid="app-scaled-surface"]',
+    );
+    const mainLayout = document.querySelector<HTMLElement>(
+      '[data-testid="main-layout"]',
+    );
+    const search = document.querySelector<HTMLElement>('[title="Search"]');
+    const browserInputElement = document.querySelector<HTMLInputElement>(
+      'input[placeholder="http://localhost:8000"]',
+    );
+    const shellRect = shell?.getBoundingClientRect();
+    const surfaceRect = scaledSurface?.getBoundingClientRect();
+    const mainLayoutRect = mainLayout?.getBoundingClientRect();
+
+    return {
+      shellTransform: shell ? getComputedStyle(shell).transform : "",
+      surfaceTransform: scaledSurface
+        ? getComputedStyle(scaledSurface).transform
+        : "",
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      shellWidth: shellRect?.width ?? 0,
+      shellHeight: shellRect?.height ?? 0,
+      shellLeft: shellRect?.left ?? 0,
+      shellTop: shellRect?.top ?? 0,
+      surfaceWidth: surfaceRect?.width ?? 0,
+      surfaceHeight: surfaceRect?.height ?? 0,
+      surfaceLeft: surfaceRect?.left ?? 0,
+      surfaceTop: surfaceRect?.top ?? 0,
+      mainLayoutWidth: mainLayoutRect?.width ?? 0,
+      mainLayoutHeight: mainLayoutRect?.height ?? 0,
+      mainLayoutLeft: mainLayoutRect?.left ?? 0,
+      mainLayoutTop: mainLayoutRect?.top ?? 0,
+      searchHeight: search?.getBoundingClientRect().height ?? 0,
+      browserInputHeight:
+        browserInputElement?.getBoundingClientRect().height ?? 0,
+    };
+  });
+
+  await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setUiScale(1.25);
+  });
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        getComputedStyle(document.documentElement)
+          .getPropertyValue("--ui-scale")
+          .trim(),
+      ),
+    )
+    .toBe("1.25");
+
+  const afterScale = await page.evaluate(() => {
+    const shell = document.querySelector<HTMLElement>(
+      '[data-testid="app-shell"]',
+    );
+    const scaledSurface = document.querySelector<HTMLElement>(
+      '[data-testid="app-scaled-surface"]',
+    );
+    const mainLayout = document.querySelector<HTMLElement>(
+      '[data-testid="main-layout"]',
+    );
+    const search = document.querySelector<HTMLElement>('[title="Search"]');
+    const browserInputElement = document.querySelector<HTMLInputElement>(
+      'input[placeholder="http://localhost:8000"]',
+    );
+    const browser = document.querySelector<HTMLElement>(
+      '[data-testid="browser-preview-root"]',
+    );
+    const git = document.querySelector<HTMLElement>(
+      '[data-testid="git-panel-root"]',
+    );
+    const shellRect = shell?.getBoundingClientRect();
+    const surfaceRect = scaledSurface?.getBoundingClientRect();
+    const mainLayoutRect = mainLayout?.getBoundingClientRect();
+
+    return {
+      shellTransform: shell ? getComputedStyle(shell).transform : "",
+      surfaceTransform: scaledSurface
+        ? getComputedStyle(scaledSurface).transform
+        : "",
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      shellWidth: shellRect?.width ?? 0,
+      shellHeight: shellRect?.height ?? 0,
+      shellLeft: shellRect?.left ?? 0,
+      shellTop: shellRect?.top ?? 0,
+      surfaceWidth: surfaceRect?.width ?? 0,
+      surfaceHeight: surfaceRect?.height ?? 0,
+      surfaceLeft: surfaceRect?.left ?? 0,
+      surfaceTop: surfaceRect?.top ?? 0,
+      mainLayoutWidth: mainLayoutRect?.width ?? 0,
+      mainLayoutHeight: mainLayoutRect?.height ?? 0,
+      mainLayoutLeft: mainLayoutRect?.left ?? 0,
+      mainLayoutTop: mainLayoutRect?.top ?? 0,
+      searchHeight: search?.getBoundingClientRect().height ?? 0,
+      browserInputHeight:
+        browserInputElement?.getBoundingClientRect().height ?? 0,
+      browserFontSize: browser ? getComputedStyle(browser).fontSize : "",
+      gitFontSize: git ? getComputedStyle(git).fontSize : "",
+    };
+  });
+
+  const searchRatio = afterScale.searchHeight / beforeScale.searchHeight;
+  const browserInputRatio =
+    afterScale.browserInputHeight / beforeScale.browserInputHeight;
+
+  expect(beforeScale.shellTransform).toBe("none");
+  expect(afterScale.shellTransform).toBe("none");
+  expect(beforeScale.surfaceTransform).toBe("matrix(1, 0, 0, 1, 0, 0)");
+  expect(afterScale.surfaceTransform).not.toBe("none");
+  expect(
+    Math.abs(beforeScale.shellWidth - beforeScale.viewportWidth),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(beforeScale.shellHeight - beforeScale.viewportHeight),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(afterScale.shellWidth - afterScale.viewportWidth),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(afterScale.shellHeight - afterScale.viewportHeight),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(afterScale.mainLayoutWidth - afterScale.viewportWidth),
+  ).toBeLessThanOrEqual(2);
+  expect(
+    Math.abs(afterScale.mainLayoutHeight - afterScale.viewportHeight),
+  ).toBeLessThanOrEqual(2);
+  expect(Math.abs(afterScale.mainLayoutLeft)).toBeLessThanOrEqual(2);
+  expect(Math.abs(afterScale.mainLayoutTop)).toBeLessThanOrEqual(2);
+  expect(searchRatio).toBeGreaterThan(1.2);
+  expect(searchRatio).toBeLessThan(1.3);
+  expect(browserInputRatio).toBeGreaterThan(1.2);
+  expect(browserInputRatio).toBeLessThan(1.3);
+  expect(Math.abs(searchRatio - browserInputRatio)).toBeLessThan(0.03);
+  expect(afterScale.browserFontSize).toBe("14px");
+  expect(afterScale.gitFontSize).toBe("14px");
+  await expect(browserInput).toBeVisible();
+});
+
+test("zooming out keeps the main workspace pinned to the viewport instead of shrinking into the top-left corner", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  const beforeScale = await page.evaluate(() => {
+    const mainLayout = document.querySelector<HTMLElement>(
+      '[data-testid="main-layout"]',
+    );
+    const search = document.querySelector<HTMLElement>('[title="Search"]');
+    const mainLayoutRect = mainLayout?.getBoundingClientRect();
+
+    return {
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      mainLayoutWidth: mainLayoutRect?.width ?? 0,
+      mainLayoutHeight: mainLayoutRect?.height ?? 0,
+      mainLayoutLeft: mainLayoutRect?.left ?? 0,
+      mainLayoutTop: mainLayoutRect?.top ?? 0,
+      searchHeight: search?.getBoundingClientRect().height ?? 0,
+    };
+  });
+
+  await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setUiScale(0.7);
+  });
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() =>
+        getComputedStyle(document.documentElement)
+          .getPropertyValue("--ui-scale")
+          .trim(),
+      ),
+    )
+    .toBe("0.7");
+
+  const afterScale = await page.evaluate(() => {
+    const mainLayout = document.querySelector<HTMLElement>(
+      '[data-testid="main-layout"]',
+    );
+    const search = document.querySelector<HTMLElement>('[title="Search"]');
+    const mainLayoutRect = mainLayout?.getBoundingClientRect();
+
+    return {
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      mainLayoutWidth: mainLayoutRect?.width ?? 0,
+      mainLayoutHeight: mainLayoutRect?.height ?? 0,
+      mainLayoutLeft: mainLayoutRect?.left ?? 0,
+      mainLayoutTop: mainLayoutRect?.top ?? 0,
+      searchHeight: search?.getBoundingClientRect().height ?? 0,
+    };
+  });
+
+  const searchRatio = afterScale.searchHeight / beforeScale.searchHeight;
+
+  expect(
+    Math.abs(beforeScale.mainLayoutWidth - beforeScale.viewportWidth),
+  ).toBeLessThanOrEqual(2);
+  expect(
+    Math.abs(beforeScale.mainLayoutHeight - beforeScale.viewportHeight),
+  ).toBeLessThanOrEqual(2);
+  expect(
+    Math.abs(afterScale.mainLayoutWidth - afterScale.viewportWidth),
+  ).toBeLessThanOrEqual(2);
+  expect(
+    Math.abs(afterScale.mainLayoutHeight - afterScale.viewportHeight),
+  ).toBeLessThanOrEqual(2);
+  expect(Math.abs(afterScale.mainLayoutLeft)).toBeLessThanOrEqual(2);
+  expect(Math.abs(afterScale.mainLayoutTop)).toBeLessThanOrEqual(2);
+  expect(searchRatio).toBeGreaterThan(0.65);
+  expect(searchRatio).toBeLessThan(0.75);
+});

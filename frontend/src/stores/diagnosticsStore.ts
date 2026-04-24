@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
+import {
+  getProjectPathBasename,
+  isSameOrChildPath,
+  remapProjectPathPrefix,
+} from "../utils/projectPaths";
 
 export type DiagnosticsSeverity = "error" | "warning" | "info";
 export type DiagnosticsSeverityFilter = "all" | DiagnosticsSeverity;
@@ -80,6 +85,9 @@ interface DiagnosticsState {
     items: DiagnosticsEventItem[],
   ) => void;
   clearFileDiagnostics: (filePath: string) => void;
+  renameFileDiagnostics: (oldPath: string, newPath: string) => void;
+  renamePathDiagnostics: (oldPrefix: string, newPrefix: string) => void;
+  prunePathDiagnostics: (pathPrefix: string) => void;
   reset: () => void;
   getProjectSummary: (projectPath?: string | null) => DiagnosticsSummary;
   getFileSummary: (filePath?: string | null) => DiagnosticsSummary;
@@ -249,6 +257,33 @@ const createFileGroup = (
   };
 };
 
+const remapFileGroup = (
+  group: DiagnosticsFileGroup,
+  oldPrefix: string,
+  newPrefix: string,
+): DiagnosticsFileGroup => {
+  const nextFilePath =
+    remapProjectPathPrefix(group.filePath, oldPrefix, newPrefix) ??
+    group.filePath;
+
+  if (nextFilePath === group.filePath) {
+    return group;
+  }
+
+  const items = group.items.map((item) => ({
+    ...item,
+    id: `${nextFilePath}:${item.line}:${item.column}:${item.code}:${item.message}`,
+    filePath: nextFilePath,
+  }));
+
+  return {
+    ...group,
+    filePath: nextFilePath,
+    fileName: getProjectPathBasename(nextFilePath),
+    items,
+  };
+};
+
 const filterGroupItems = (
   group: DiagnosticsFileGroup,
   severity: DiagnosticsSeverityFilter,
@@ -397,6 +432,38 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
       set((state) => {
         const next = new Map(state.byFile);
         next.delete(filePath);
+        return { byFile: next };
+      });
+    },
+
+    renameFileDiagnostics: (oldPath, newPath) => {
+      get().renamePathDiagnostics(oldPath, newPath);
+    },
+
+    renamePathDiagnostics: (oldPrefix, newPrefix) => {
+      set((state) => {
+        const next = new Map<string, DiagnosticsFileGroup>();
+
+        state.byFile.forEach((group, filePath) => {
+          const nextFilePath =
+            remapProjectPathPrefix(filePath, oldPrefix, newPrefix) ?? filePath;
+          next.set(nextFilePath, remapFileGroup(group, oldPrefix, newPrefix));
+        });
+
+        return { byFile: next };
+      });
+    },
+
+    prunePathDiagnostics: (pathPrefix) => {
+      set((state) => {
+        const next = new Map<string, DiagnosticsFileGroup>();
+
+        state.byFile.forEach((group, filePath) => {
+          if (!isSameOrChildPath(filePath, pathPrefix)) {
+            next.set(filePath, group);
+          }
+        });
+
         return { byFile: next };
       });
     },

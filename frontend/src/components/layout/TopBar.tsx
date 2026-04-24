@@ -15,6 +15,7 @@ import {
   Keyboard,
   Info,
   RefreshCw,
+  CheckCircle2,
 } from "lucide-react";
 import { WindowControls } from "../ui";
 import { useIndexingProgress } from "../../hooks/useIndexingProgress";
@@ -49,6 +50,7 @@ interface TopBarProps {
   previewEnabled?: boolean;
   previewActive?: boolean;
   previewTitle?: string;
+  projectPathCopied?: boolean;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -71,6 +73,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   previewEnabled = false,
   previewActive = false,
   previewTitle = "Preview unavailable for the current context.",
+  projectPathCopied = false,
 }) => {
   const indexing = useIndexingProgress();
   const projectName = projectPath
@@ -80,14 +83,14 @@ export const TopBar: React.FC<TopBarProps> = ({
     ? projectPath.substring(0, projectPath.lastIndexOf("/") + 1)
     : "";
   const topBarButtonClass =
-    "topbar-control-button shell-control h-11 w-11 px-0";
+    "topbar-control-button shell-control h-12 w-12 px-0";
   const topBarActionClass = `${topBarButtonClass} text-[var(--text-secondary)]`;
   const menuItemClass = "shell-menu-item text-[13px]";
   const centerChipClass = "shell-pill font-mono text-[10px] tracking-[0.14em]";
   const topBarGroupClass =
-    "relative -translate-y-px flex self-center items-center gap-2";
-  const topBarIconSize = 20;
-  const menuIconSize = 15;
+    "relative flex h-full -translate-y-[2px] items-center gap-2";
+  const topBarIconSize = 25;
+  const menuIconSize = 16;
   const isIndexingActive =
     Boolean(projectPath) && indexing.phase === "indexing";
   const blurTransition = { duration: 0.35, ease: "easeInOut" } as const;
@@ -104,8 +107,9 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   return (
     <div
-      className="z-50 flex h-14 items-center gap-2 rounded-b-[18px] border-b border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3"
+      className="relative z-50 flex h-14 items-center gap-2 rounded-b-[18px] border-b border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3"
       style={{ "--wails-draggable": "drag" } as React.CSSProperties}
+      data-testid="topbar"
     >
       <div
         className={topBarGroupClass}
@@ -154,7 +158,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
       </div>
 
-      <div className="relative -translate-y-px flex flex-1 items-center justify-center px-2">
+      <div className="relative flex h-full -translate-y-[2px] flex-1 items-center justify-center px-2">
         <div className="flex max-w-[860px] flex-1 items-center justify-center gap-2 overflow-hidden">
           <AnimatePresence mode="wait">
             {projectPath ? (
@@ -195,6 +199,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                       exit={blurInitial}
                       transition={blurTransition}
                       className={contextPathRootClass}
+                      data-testid="topbar-project-path"
                     >
                       <span className={contextPathParentClass}>
                         {projectParent}
@@ -228,6 +233,25 @@ export const TopBar: React.FC<TopBarProps> = ({
             <span className={centerChipClass}>Preview Ready</span>
           ) : null}
         </div>
+        <AnimatePresence>
+          {projectPathCopied && projectPath ? (
+            <motion.div
+              key="project-path-copy-confirmation"
+              initial={{ opacity: 0, x: "-50%", y: -4, scale: 0.98 }}
+              animate={{ opacity: 1, x: "-50%", y: 0, scale: 1 }}
+              exit={{ opacity: 0, x: "-50%", y: -4, scale: 0.98 }}
+              transition={{ duration: 0.16, ease: "easeOut" }}
+              className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-[80] inline-flex items-center gap-2 rounded-[18px] border border-[var(--shell-border-strong)] bg-[var(--surface-shell-strong)] px-3 py-2 text-[12px] font-medium text-[var(--text-primary)] shadow-[var(--shadow-overlay)]"
+              data-testid="project-path-copy-confirmation"
+            >
+              <CheckCircle2
+                size={14}
+                className="text-[var(--status-success)]"
+              />
+              <span>Project path copied</span>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
       </div>
 
       <div

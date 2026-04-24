@@ -27,6 +27,7 @@ firebase-debug.log
 
 # Build artifacts
 build/bin/
+.wails-build/
 frontend/dist/
 dist/
 *.exe
@@ -51,7 +52,8 @@ mid-*.png
 perspective-*.png
 
 # Legacy/scratch directories
-docs/
+docs/*
+!docs/wails-v3-spike.md
 redesign/
 logo*/
 twitter_media/

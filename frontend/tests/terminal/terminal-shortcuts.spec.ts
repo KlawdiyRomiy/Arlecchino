@@ -141,3 +141,65 @@ test("terminal tab shortcuts on macOS require cmd modifiers", async ({
   expect(result.cmdReopen).toBe(true);
   expect(result.ctrlReopen).toBe(false);
 });
+
+test("terminal and global copy shortcuts can share Cmd+Shift+C in separate scopes", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { shortcuts } = await import("/src/utils/keyboard.ts");
+
+    const copyEvent = new KeyboardEvent("keydown", {
+      key: "C",
+      code: "KeyC",
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    return {
+      terminalCopy: shortcuts.terminalCopy(copyEvent),
+      projectPathCopy: shortcuts.copyProjectPath(copyEvent),
+    };
+  });
+
+  expect(result.terminalCopy).toBe(true);
+  expect(result.projectPathCopy).toBe(true);
+});
+
+test("shortcut matching is exact for compact and fullscreen panel shortcuts", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { shortcuts } = await import("/src/utils/keyboard.ts");
+
+    const gitFullscreenEvent = new KeyboardEvent("keydown", {
+      key: "G",
+      code: "KeyG",
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    const gitCompactEvent = new KeyboardEvent("keydown", {
+      key: "g",
+      code: "KeyG",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    return {
+      fullscreenMatchesFullscreen:
+        shortcuts.toggleGitFullscreen(gitFullscreenEvent),
+      fullscreenMatchesCompact: shortcuts.toggleGit(gitFullscreenEvent),
+      compactMatchesCompact: shortcuts.toggleGit(gitCompactEvent),
+      compactMatchesFullscreen: shortcuts.toggleGitFullscreen(gitCompactEvent),
+    };
+  });
+
+  expect(result.fullscreenMatchesFullscreen).toBe(true);
+  expect(result.fullscreenMatchesCompact).toBe(false);
+  expect(result.compactMatchesCompact).toBe(true);
+  expect(result.compactMatchesFullscreen).toBe(false);
+});

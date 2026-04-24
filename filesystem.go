@@ -7,11 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
@@ -38,6 +37,11 @@ var gitAllowedSubcommands = map[string]struct{}{
 	"symbolic-ref": {},
 }
 
+var (
+	trashProjectEntry  = moveProjectEntryToTrash
+	revealProjectEntry = revealProjectEntryInFileManager
+)
+
 func gitCommandTimeout(args []string) time.Duration {
 	if len(args) == 0 {
 		return 10 * time.Second
@@ -55,6 +59,22 @@ func gitCommandTimeout(args []string) time.Duration {
 
 type FileEntry struct {
 	Name        string `json:"name"`
+	Path        string `json:"path"`
+	IsDirectory bool   `json:"isDirectory"`
+}
+
+type ProjectEntryRenameResult struct {
+	NewPath     string `json:"newPath"`
+	IsDirectory bool   `json:"isDirectory"`
+}
+
+type projectEntryRenamedEvent struct {
+	OldPath     string `json:"oldPath"`
+	NewPath     string `json:"newPath"`
+	IsDirectory bool   `json:"isDirectory"`
+}
+
+type projectEntryDeletedEvent struct {
 	Path        string `json:"path"`
 	IsDirectory bool   `json:"isDirectory"`
 }
@@ -97,21 +117,19 @@ func (a *App) WriteFile(filePath string, content string) error {
 		return err
 	}
 
-	if a != nil && a.ctx != nil {
-		eventName := "file:changed"
-		if created {
-			eventName = "file:created"
-		}
-		runtime.EventsEmit(a.ctx, eventName, filePath)
+	eventName := "file:changed"
+	if created {
+		eventName = "file:created"
 	}
+	a.emitEvent(eventName, filePath)
 
 	return nil
 }
 
 func (a *App) CreateDirectory(dirPath string) error {
-	dirPath = strings.TrimSpace(dirPath)
-	if dirPath == "" {
-		return fmt.Errorf("directory path is required")
+	dirPath, err := normalizeRequiredPath(dirPath, "directory path")
+	if err != nil {
+		return err
 	}
 
 	if _, err := os.Stat(dirPath); err == nil {
@@ -130,6 +148,224 @@ func (a *App) CreateDirectory(dirPath string) error {
 	})
 
 	return nil
+}
+
+func (a *App) RenameProjectEntry(path string, newName string) (ProjectEntryRenameResult, error) {
+	entryPath, projectPath, err := a.resolveProjectEntryPath(path)
+	if err != nil {
+		return ProjectEntryRenameResult{}, err
+	}
+
+	info, err := os.Stat(entryPath)
+	if err != nil {
+		return ProjectEntryRenameResult{}, err
+	}
+
+	sanitizedName, err := sanitizeProjectEntryName(newName)
+	if err != nil {
+		return ProjectEntryRenameResult{}, err
+	}
+
+	targetPath := filepath.Clean(filepath.Join(filepath.Dir(entryPath), sanitizedName))
+	if targetPath != entryPath {
+		if err := ensurePathWithinProject(projectPath, targetPath); err != nil {
+			return ProjectEntryRenameResult{}, err
+		}
+		if _, err := os.Stat(targetPath); err == nil {
+			return ProjectEntryRenameResult{}, fmt.Errorf("entry already exists: %s", targetPath)
+		} else if !os.IsNotExist(err) {
+			return ProjectEntryRenameResult{}, err
+		}
+	}
+
+	if err := os.Rename(entryPath, targetPath); err != nil {
+		return ProjectEntryRenameResult{}, fmt.Errorf("rename project entry: %w", err)
+	}
+
+	result := ProjectEntryRenameResult{
+		NewPath:     targetPath,
+		IsDirectory: info.IsDir(),
+	}
+	a.emitEvent("project:entry:renamed", projectEntryRenamedEvent{
+		OldPath:     entryPath,
+		NewPath:     targetPath,
+		IsDirectory: info.IsDir(),
+	})
+	return result, nil
+}
+
+func (a *App) TrashProjectEntry(path string) error {
+	entryPath, _, err := a.resolveProjectEntryPath(path)
+	if err != nil {
+		return err
+	}
+
+	info, err := os.Stat(entryPath)
+	if err != nil {
+		return err
+	}
+
+	if err := trashProjectEntry(entryPath, info.IsDir()); err != nil {
+		return err
+	}
+
+	a.emitEvent("project:entry:deleted", projectEntryDeletedEvent{
+		Path:        entryPath,
+		IsDirectory: info.IsDir(),
+	})
+	return nil
+}
+
+func (a *App) RevealProjectEntry(path string) error {
+	entryPath, _, err := a.resolveProjectEntryPath(path)
+	if err != nil {
+		return err
+	}
+
+	return revealProjectEntry(entryPath)
+}
+
+func normalizeRequiredPath(rawPath string, fieldName string) (string, error) {
+	trimmed := strings.TrimSpace(rawPath)
+	if trimmed == "" {
+		return "", fmt.Errorf("%s is required", fieldName)
+	}
+
+	absolutePath, err := filepath.Abs(trimmed)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Clean(absolutePath), nil
+}
+
+func sanitizeProjectEntryName(name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", fmt.Errorf("new name is required")
+	}
+	if trimmed == "." || trimmed == ".." {
+		return "", fmt.Errorf("new name is invalid: %s", trimmed)
+	}
+	if strings.ContainsRune(trimmed, '/') || strings.ContainsRune(trimmed, '\\') {
+		return "", fmt.Errorf("new name must not contain path separators")
+	}
+
+	return trimmed, nil
+}
+
+func ensurePathWithinProject(projectPath string, entryPath string) error {
+	cleanProject := filepath.Clean(projectPath)
+	cleanEntry := filepath.Clean(entryPath)
+	if cleanProject == "" || cleanProject == "." {
+		return fmt.Errorf("project path is required")
+	}
+	if cleanEntry == cleanProject {
+		return nil
+	}
+
+	prefix := cleanProject + string(os.PathSeparator)
+	if strings.HasPrefix(cleanEntry, prefix) {
+		return nil
+	}
+
+	return fmt.Errorf("path is outside current project: %s", cleanEntry)
+}
+
+func (a *App) resolveProjectEntryPath(path string) (entryPath string, projectPath string, err error) {
+	entryPath, err = normalizeRequiredPath(path, "path")
+	if err != nil {
+		return "", "", err
+	}
+
+	projectPath, err = normalizeRequiredPath(a.currentProjectPath(), "project path")
+	if err != nil {
+		return "", "", fmt.Errorf("no project opened")
+	}
+
+	if err := ensurePathWithinProject(projectPath, entryPath); err != nil {
+		return "", "", err
+	}
+
+	return entryPath, projectPath, nil
+}
+
+func moveProjectEntryToTrash(path string, isDirectory bool) error {
+	switch goruntime.GOOS {
+	case "darwin":
+		script := fmt.Sprintf(`tell application "Finder" to delete POSIX file %q`, path)
+		output, err := exec.Command("osascript", "-e", script).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("move to Trash failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	case "windows":
+		command := buildWindowsTrashCommand(path, isDirectory)
+		output, err := exec.Command(
+			"powershell",
+			"-NoProfile",
+			"-NonInteractive",
+			"-Command",
+			command,
+		).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("move to Recycle Bin failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	default:
+		output, err := exec.Command("gio", "trash", path).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("move to trash failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	}
+}
+
+func revealProjectEntryInFileManager(path string) error {
+	pathToReveal := filepath.Clean(path)
+	if _, err := os.Stat(pathToReveal); err != nil {
+		if os.IsNotExist(err) {
+			pathToReveal = filepath.Dir(pathToReveal)
+		} else {
+			return err
+		}
+	}
+
+	switch goruntime.GOOS {
+	case "darwin":
+		output, err := exec.Command("open", "-R", pathToReveal).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("reveal in Finder failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	case "windows":
+		output, err := exec.Command("explorer", "/select,"+pathToReveal).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("reveal in Explorer failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	default:
+		output, err := exec.Command("xdg-open", filepath.Dir(pathToReveal)).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("reveal in file manager failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	}
+}
+
+func buildWindowsTrashCommand(path string, isDirectory bool) string {
+	quotedPath := strings.ReplaceAll(path, "'", "''")
+	if isDirectory {
+		return fmt.Sprintf(
+			`Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('%s', 'OnlyErrorDialogs', 'SendToRecycleBin')`,
+			quotedPath,
+		)
+	}
+
+	return fmt.Sprintf(
+		`Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile('%s', 'OnlyErrorDialogs', 'SendToRecycleBin')`,
+		quotedPath,
+	)
 }
 
 // FindFileByName searches for a file by name in a directory recursively

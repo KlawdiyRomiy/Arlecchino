@@ -99,7 +99,7 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
                     : "border-transparent text-[var(--text-muted)] hover:border-[var(--shell-border)] hover:bg-[var(--surface-active)] hover:text-[var(--text-secondary)]"
                 }`}
               >
-                <FolderOpen size={15} className="shrink-0 opacity-80" />
+                <FolderOpen size={20} className="shrink-0 opacity-80" />
                 <span>{p.name}</span>
                 <span
                   role="button"
@@ -111,7 +111,7 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
                   }}
                   className="ml-0.5 shrink-0 cursor-pointer rounded-full p-0.5 opacity-0 transition-all group-hover:bg-black/10 group-hover:opacity-70 hover:!opacity-100"
                 >
-                  <X size={11} />
+                  <X size={12} />
                 </span>
               </button>
             ))}

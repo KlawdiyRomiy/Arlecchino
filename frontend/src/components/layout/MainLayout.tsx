@@ -1,6 +1,19 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
+import {
+  AnimatePresence,
+  LayoutGroup,
+  motion,
+  useReducedMotion,
+} from "framer-motion";
 import { TopBar } from "./TopBar";
 import { StatusBar } from "./StatusBar";
+import { useIndexingPhase } from "../../hooks/useIndexingProgress";
 import { useTheme } from "../../hooks/useTheme";
 import { FileExplorer } from "../FileExplorer";
 import { TerminalPanelContent } from "../TerminalPanel";
@@ -15,9 +28,22 @@ import { LaravelPlugin } from "../../plugins/LaravelPlugin";
 import { SettingsModal } from "../SettingsModal";
 import { CommandDispatcher } from "../CommandDispatcher";
 import { useDispatcher } from "../../hooks/useDispatcher";
+import {
+  ProjectEntryActionsProvider,
+  type ProjectEntryActionTarget,
+  type ProjectEntryTrashRequest,
+} from "../../contexts/ProjectEntryActionsContext";
 import { useEditorStore } from "../../stores/editorStore";
 import { useTerminalStore } from "../../stores/terminalStore";
-import { FloatingPanel, PanelPosition, PanelSize } from "../ui/FloatingPanel";
+import { useExplorerStore } from "../../stores/explorerStore";
+import { useDiagnosticsStore } from "../../stores/diagnosticsStore";
+import {
+  FloatingPanel,
+  FLOATING_PANEL_LAYOUT_TRANSITION,
+  FLOATING_PANEL_LAYOUT_TRANSITION_MS,
+  PanelPosition,
+  PanelSize,
+} from "../ui/FloatingPanel";
 import {
   AlertCircle,
   FolderTree,
@@ -39,6 +65,7 @@ import {
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { usePluginModal } from "../../contexts/PluginModalContext";
+import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
 import {
   usePreviewWindowStore,
   type OpenPreviewWindowInput,
@@ -47,9 +74,20 @@ import {
   type UpdatePreviewWindowInput,
 } from "../../stores/previewWindowStore";
 import type { Theme } from "../../types/theme";
-import { shortcuts, isShortcut } from "../../utils/keyboard";
+import { shortcuts } from "../../utils/keyboard";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
+import {
+  getLogicalViewportSize,
+  screenToLogicalPixels,
+} from "../../utils/logicalViewport";
 import { emitPerfMetric, measurePerf, nowPerf } from "../../utils/perf";
+import {
+  getProjectPathBasename,
+  normalizeProjectPath,
+  relativeProjectPath,
+  remapProjectPathPrefix,
+  isSameOrChildPath,
+} from "../../utils/projectPaths";
 import {
   isTerminalFocusedElement,
   isTerminalShortcutContext as hasTerminalShortcutContext,
@@ -64,11 +102,18 @@ import {
   normalizeTUIAssistAnchor,
   type TUIAssistAnchor,
 } from "../../utils/terminalLayout";
+import { writeClipboardTextWithFallback } from "../../utils/clipboard";
 import {
+  CreateDirectory,
   GetLanguageForFile,
   ReadFile,
+  RenameProjectEntry,
+  RevealProjectEntry,
+  TrashProjectEntry,
+  WriteFile,
   WriteTerminal,
 } from "../../../wailsjs/go/main/App";
+import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import {
   type ExecutionProfile,
   type ExecutionProfileSet,
@@ -102,6 +147,8 @@ interface PanelConfig {
 type PanelId = "explorer" | "terminal" | "aiChat" | "git" | "problems" | "code";
 type AssistPanelId = Exclude<PanelId, "terminal" | "problems" | "code">;
 type PanelVisibility = Record<PanelId, boolean>;
+type PanelFullscreenSnapshot = Pick<PanelConfig, "mode" | "x" | "y" | "size">;
+type SnappedSlotSnapshot = { panelId: PanelId; size: PanelSize };
 
 type PanelConfigs = Record<PanelId, PanelConfig>;
 type RememberedSnappedPositions = Record<PanelId, PanelPosition>;
@@ -126,6 +173,31 @@ interface PanelOpenRequest {
   terminalName?: string;
   focus?: boolean;
 }
+
+interface ProjectEntryCreateDialogState {
+  type: "file" | "folder";
+  directoryPath: string;
+}
+
+interface ProjectEntryRenameDialogState extends ProjectEntryActionTarget {
+  name: string;
+}
+
+interface ProjectEntryDeletedEvent {
+  path?: string;
+  isDirectory?: boolean;
+}
+
+interface ProjectEntryRenamedEvent {
+  oldPath?: string;
+  newPath?: string;
+  isDirectory?: boolean;
+}
+
+const joinProjectEntryPath = (
+  directoryPath: string,
+  entryName: string,
+): string => `${normalizeProjectPath(directoryPath)}/${entryName}`;
 
 const getNextWrappedIndex = (
   currentIndex: number,
@@ -243,8 +315,8 @@ const getViewportSafeFloatingConfig = (
   x: number,
   y: number,
 ) => {
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
+  const { width: viewportWidth, height: viewportHeight } =
+    getLogicalViewportSize();
   const safeWidth = Math.max(220, Math.min(width, viewportWidth));
   const safeHeight = Math.max(140, Math.min(height, viewportHeight));
   const maxX = Math.max(0, viewportWidth - safeWidth);
@@ -399,8 +471,10 @@ const buildCenteredFloatingOpenRequest = (
     currentConfig.size.width || defaultConfig.size.width || 420;
   const fallbackHeight =
     currentConfig.size.height || defaultConfig.size.height || 320;
-  const maxWidth = Math.max(320, window.innerWidth - 96);
-  const maxHeight = Math.max(220, window.innerHeight - 128);
+  const { width: viewportWidth, height: viewportHeight } =
+    getLogicalViewportSize();
+  const maxWidth = Math.max(320, viewportWidth - 96);
+  const maxHeight = Math.max(220, viewportHeight - 128);
   const width = Math.min(request.width ?? fallbackWidth, maxWidth);
   const height = Math.min(request.height ?? fallbackHeight, maxHeight);
 
@@ -409,8 +483,8 @@ const buildCenteredFloatingOpenRequest = (
     mode: "floating",
     width,
     height,
-    x: Math.max(0, Math.round((window.innerWidth - width) / 2)),
-    y: Math.max(32, Math.round((window.innerHeight - height) / 2)),
+    x: Math.max(0, Math.round((viewportWidth - width) / 2)),
+    y: Math.max(32, Math.round((viewportHeight - height) / 2)),
   };
 };
 
@@ -1260,6 +1334,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   onPerspectiveClose: externalPerspectiveClose,
 }) => {
   const { isDark, theme: currentTheme, setTheme } = useTheme();
+  const indexingPhase = useIndexingPhase();
+  const diagnosticsPreload = useProjectDiagnosticsPreload();
+  const prefersReducedMotion = useReducedMotion();
+  const reducePanelMotion =
+    prefersReducedMotion ||
+    indexingPhase === "indexing" ||
+    diagnosticsPreload.active;
+  const panelLayoutTransition = reducePanelMotion
+    ? { duration: 0 }
+    : FLOATING_PANEL_LAYOUT_TRANSITION;
   const theme = getThemeColors(isDark);
   const [isPerspectiveOpen, setIsPerspectiveOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1274,6 +1358,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     });
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const setUiScale = useEditorSettingsStore((state) => state.setUiScale);
+  const logicalViewport = React.useMemo(
+    () => getLogicalViewportSize(uiScale),
+    [uiScale],
+  );
   const activeProjectId = useWorkspaceStore((s) => s.activeId);
   const workspaceProjectPath = useWorkspaceStore((state) => {
     const activeProject = state.projects.find(
@@ -1285,8 +1373,25 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const activeEditorTab = useEditorStore((state) =>
     state.getActiveTab(state.activePaneId),
   );
+  const activeStatusFilePath = useEditorStore((state) => state.statusFile.path);
   const activePaneId = useEditorStore((state) => state.activePaneId);
   const openEditorTab = useEditorStore((state) => state.openTab);
+  const renameEditorTabPaths = useEditorStore(
+    (state) => state.renamePathPrefix,
+  );
+  const closeEditorTabPaths = useEditorStore((state) => state.closePathPrefix);
+  const remapExplorerPathPrefix = useExplorerStore(
+    (state) => state.remapPathPrefix,
+  );
+  const pruneExplorerPathPrefix = useExplorerStore(
+    (state) => state.prunePathPrefix,
+  );
+  const renamePathDiagnostics = useDiagnosticsStore(
+    (state) => state.renamePathDiagnostics,
+  );
+  const prunePathDiagnostics = useDiagnosticsStore(
+    (state) => state.prunePathDiagnostics,
+  );
   const {
     tuiModeActive,
     tuiAssist,
@@ -1344,17 +1449,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
   const dispatcher = useDispatcher();
   const { activeModal, closeModal } = usePluginModal();
-
-  // Apply UI scale to CSS variable for font sizing
-  useEffect(() => {
-    const baseFontSize = 14;
-    const scaledFontSize = Math.round(baseFontSize * uiScale);
-    document.documentElement.style.setProperty("--ui-scale", String(uiScale));
-    document.documentElement.style.setProperty(
-      "--ui-font-size",
-      `${scaledFontSize}px`,
-    );
-  }, [uiScale]);
 
   const panelStorageKey = activeProjectId
     ? `panelState:${activeProjectId}`
@@ -1537,8 +1631,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       });
 
       const floatingTerminalConfig = getTUIFloatingTerminalConfig({
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
+        viewportWidth: logicalViewport.width,
+        viewportHeight: logicalViewport.height,
       });
       setPanelConfigs((prev) => ({
         ...prev,
@@ -1593,6 +1687,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     applyRememberedSnappedPositionsState,
     clonePanelConfigs,
     cloneRememberedSnappedPositions,
+    logicalViewport.height,
+    logicalViewport.width,
     panelConfigs,
     panels,
     rememberedSnappedPositions,
@@ -1602,21 +1698,331 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     updatePanelsState,
   ]);
 
-  const terminalPreFullscreenRef = React.useRef<{
-    mode: string;
-    x: number;
-    y: number;
-    size: { width: number; height: number };
-  } | null>(null);
+  const terminalPreFullscreenRef = React.useRef<PanelFullscreenSnapshot | null>(
+    null,
+  );
+  const gitPreFullscreenRef = React.useRef<PanelFullscreenSnapshot | null>(
+    null,
+  );
+  const problemsPreFullscreenRef = React.useRef<PanelFullscreenSnapshot | null>(
+    null,
+  );
+  const panelWorkspaceRef = React.useRef<HTMLDivElement | null>(null);
+  const [panelWorkspaceSize, setPanelWorkspaceSize] =
+    React.useState(logicalViewport);
+  const previousPanelWorkspaceSizeRef = React.useRef(panelWorkspaceSize);
 
   const [draggingPanel, setDraggingPanel] = useState<PanelId | null>(null);
   const [dropTargetPosition, setDropTargetPosition] =
     useState<PanelPosition | null>(null);
+  const [floatingPresenceVersion, setFloatingPresenceVersion] = useState(0);
+  const [closingSnappedSlots, setClosingSnappedSlots] = useState<
+    Partial<Record<PanelPosition, SnappedSlotSnapshot>>
+  >({});
+  const closingSnappedSlotTimersRef = useRef<
+    Partial<Record<PanelPosition, ReturnType<typeof setTimeout>>>
+  >({});
+  const previousSnappedSlotsRef = useRef<
+    Partial<Record<PanelPosition, SnappedSlotSnapshot>>
+  >({});
 
   const [notification, setNotification] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
+  const [projectPathCopiedVisible, setProjectPathCopiedVisible] =
+    useState(false);
+  const projectPathCopiedTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+
+  const isLogicalFullscreenPanel = useCallback(
+    (config: PanelConfig) =>
+      config.mode === "floating" &&
+      config.x === 0 &&
+      config.y === 0 &&
+      config.size.width >= panelWorkspaceSize.width - 1 &&
+      config.size.height >= panelWorkspaceSize.height - 1,
+    [panelWorkspaceSize.height, panelWorkspaceSize.width],
+  );
+
+  const restoreOrEnterPanelFullscreen = useCallback(
+    (
+      panelId: "terminal" | "git" | "problems",
+      snapshotRef: React.MutableRefObject<PanelFullscreenSnapshot | null>,
+    ) => {
+      const currentConfig = panelConfigsRef.current[panelId];
+      const isFullscreenConfig = isLogicalFullscreenPanel(currentConfig);
+      const shouldRestore =
+        isFullscreenConfig ||
+        (snapshotRef.current !== null &&
+          currentConfig.mode === "floating" &&
+          currentConfig.x === 0 &&
+          currentConfig.y === 0);
+
+      if (shouldRestore) {
+        const saved = snapshotRef.current;
+        snapshotRef.current = null;
+        setFloatingPresenceVersion((version) => version + 1);
+        const fallbackPosition =
+          resolveSmartSnappedPosition(
+            panelId,
+            rememberedSnappedPositionsRef.current[panelId],
+            panelsRef.current,
+            panelConfigsRef.current,
+          ) ?? rememberedSnappedPositionsRef.current[panelId];
+        const fallbackSize = normalizePanelSizeForPosition(
+          fallbackPosition,
+          DEFAULT_PANEL_CONFIGS[panelId].size,
+        );
+
+        setPanelConfigs((prev) => ({
+          ...prev,
+          [panelId]: {
+            ...prev[panelId],
+            mode: saved?.mode ?? "snapped",
+            position: saved ? prev[panelId].position : fallbackPosition,
+            x: saved?.x ?? 0,
+            y: saved?.y ?? 0,
+            size: saved?.size ?? fallbackSize,
+          },
+        }));
+        return;
+      }
+
+      snapshotRef.current = {
+        mode: currentConfig.mode,
+        x: currentConfig.x,
+        y: currentConfig.y,
+        size: { ...currentConfig.size },
+      };
+      setPanelConfigs((prev) => ({
+        ...prev,
+        [panelId]: {
+          ...prev[panelId],
+          mode: "floating",
+          x: 0,
+          y: 0,
+          size: {
+            width: panelWorkspaceSize.width,
+            height: panelWorkspaceSize.height,
+          },
+        },
+      }));
+    },
+    [
+      isLogicalFullscreenPanel,
+      panelWorkspaceSize.height,
+      panelWorkspaceSize.width,
+    ],
+  );
+
+  function togglePanelCompactFromShortcut(
+    panelId: PanelId,
+    snapshotRef?: React.MutableRefObject<PanelFullscreenSnapshot | null>,
+  ) {
+    const currentConfig = panelConfigsRef.current[panelId];
+    const looksFullscreen =
+      currentConfig.mode === "floating" &&
+      currentConfig.x === 0 &&
+      currentConfig.y === 0 &&
+      (isLogicalFullscreenPanel(currentConfig) ||
+        snapshotRef?.current !== null);
+
+    if (snapshotRef && panelsRef.current[panelId] && looksFullscreen) {
+      const restorePosition = currentConfig.position;
+      restoreOrEnterPanelFullscreen(
+        panelId as "terminal" | "git" | "problems",
+        snapshotRef,
+      );
+      updatePanelsState((previous) => {
+        let changed = false;
+        const nextPanels = { ...previous };
+
+        (Object.keys(panelConfigsRef.current) as PanelId[]).forEach((id) => {
+          if (id === panelId || !nextPanels[id]) {
+            return;
+          }
+
+          const otherConfig = panelConfigsRef.current[id];
+          if (
+            otherConfig.mode === "snapped" &&
+            otherConfig.position === restorePosition
+          ) {
+            nextPanels[id] = false;
+            changed = true;
+          }
+        });
+
+        return changed ? nextPanels : previous;
+      });
+      return;
+    }
+
+    toggleNamedPanel(panelId);
+  }
+
+  function closePanelFullscreenFromShortcut(
+    panelId: "git" | "problems",
+    snapshotRef: React.MutableRefObject<PanelFullscreenSnapshot | null>,
+  ): boolean {
+    const currentConfig = panelConfigsRef.current[panelId];
+    const looksFullscreen =
+      panelsRef.current[panelId] &&
+      currentConfig.mode === "floating" &&
+      currentConfig.x === 0 &&
+      currentConfig.y === 0 &&
+      (isLogicalFullscreenPanel(currentConfig) || snapshotRef.current !== null);
+
+    if (!looksFullscreen) {
+      return false;
+    }
+
+    const saved = snapshotRef.current;
+    snapshotRef.current = null;
+    setFloatingPresenceVersion((version) => version + 1);
+
+    const fallbackPosition =
+      resolveSmartSnappedPosition(
+        panelId,
+        rememberedSnappedPositionsRef.current[panelId],
+        panelsRef.current,
+        panelConfigsRef.current,
+      ) ?? rememberedSnappedPositionsRef.current[panelId];
+    const fallbackSize = normalizePanelSizeForPosition(
+      fallbackPosition,
+      DEFAULT_PANEL_CONFIGS[panelId].size,
+    );
+
+    applyPanelConfigsState({
+      ...panelConfigsRef.current,
+      [panelId]: {
+        ...currentConfig,
+        mode: saved?.mode ?? "snapped",
+        position: saved ? currentConfig.position : fallbackPosition,
+        x: saved?.x ?? 0,
+        y: saved?.y ?? 0,
+        size: saved?.size ?? fallbackSize,
+      },
+    });
+    applyPanelsState({ ...panelsRef.current, [panelId]: false });
+    return true;
+  }
+
+  function togglePanelFullscreenFromShortcut(
+    panelId: "git" | "problems",
+    snapshotRef: React.MutableRefObject<PanelFullscreenSnapshot | null>,
+  ) {
+    if (closePanelFullscreenFromShortcut(panelId, snapshotRef)) {
+      return;
+    }
+
+    const currentConfig = panelConfigsRef.current[panelId];
+    if (panelsRef.current[panelId] && isLogicalFullscreenPanel(currentConfig)) {
+      restoreOrEnterPanelFullscreen(panelId, snapshotRef);
+      return;
+    }
+
+    snapshotRef.current = {
+      mode: currentConfig.mode,
+      x: currentConfig.x,
+      y: currentConfig.y,
+      size: { ...currentConfig.size },
+    };
+
+    applyPanelsState({ ...panelsRef.current, [panelId]: true });
+    applyPanelConfigsState({
+      ...panelConfigsRef.current,
+      [panelId]: {
+        ...currentConfig,
+        mode: "floating",
+        x: 0,
+        y: 0,
+        size: {
+          width: panelWorkspaceSize.width,
+          height: panelWorkspaceSize.height,
+        },
+      },
+    });
+  }
+
+  useEffect(() => {
+    const workspace = panelWorkspaceRef.current;
+    if (!workspace) {
+      setPanelWorkspaceSize(logicalViewport);
+      return;
+    }
+
+    const updatePanelWorkspaceSize = () => {
+      const rect = workspace.getBoundingClientRect();
+      const nextSize = {
+        width: screenToLogicalPixels(rect.width, uiScale),
+        height: screenToLogicalPixels(rect.height, uiScale),
+      };
+
+      setPanelWorkspaceSize((currentSize) => {
+        if (
+          Math.abs(currentSize.width - nextSize.width) < 0.5 &&
+          Math.abs(currentSize.height - nextSize.height) < 0.5
+        ) {
+          return currentSize;
+        }
+
+        return nextSize;
+      });
+    };
+
+    updatePanelWorkspaceSize();
+
+    const resizeObserver = new ResizeObserver(updatePanelWorkspaceSize);
+    resizeObserver.observe(workspace);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [logicalViewport, uiScale]);
+
+  useEffect(() => {
+    const previousViewport = previousPanelWorkspaceSizeRef.current;
+    previousPanelWorkspaceSizeRef.current = panelWorkspaceSize;
+
+    if (
+      Math.abs(previousViewport.width - panelWorkspaceSize.width) < 0.5 &&
+      Math.abs(previousViewport.height - panelWorkspaceSize.height) < 0.5
+    ) {
+      return;
+    }
+
+    setPanelConfigs((currentConfigs) => {
+      let changed = false;
+      const nextConfigs = { ...currentConfigs };
+
+      (Object.keys(currentConfigs) as PanelId[]).forEach((panelId) => {
+        const config = currentConfigs[panelId];
+        const wasFullscreen =
+          config.mode === "floating" &&
+          config.x === 0 &&
+          config.y === 0 &&
+          config.size.width >= previousViewport.width - 1 &&
+          config.size.height >= previousViewport.height - 1;
+
+        if (!wasFullscreen) {
+          return;
+        }
+
+        changed = true;
+        nextConfigs[panelId] = {
+          ...config,
+          size: {
+            width: panelWorkspaceSize.width,
+            height: panelWorkspaceSize.height,
+          },
+        };
+      });
+
+      return changed ? nextConfigs : currentConfigs;
+    });
+  }, [panelWorkspaceSize]);
   const [codePanelSource, setCodePanelSource] = useState<{
     path: string;
     name: string;
@@ -1624,6 +2030,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     language: string;
     line?: number;
   } | null>(null);
+  const [createEntryDialog, setCreateEntryDialog] =
+    useState<ProjectEntryCreateDialogState | null>(null);
+  const [createEntryName, setCreateEntryName] = useState("");
+  const [createEntryBusy, setCreateEntryBusy] = useState(false);
+  const [renameEntryDialog, setRenameEntryDialog] =
+    useState<ProjectEntryRenameDialogState | null>(null);
+  const [renameEntryName, setRenameEntryName] = useState("");
+  const [renameEntryBusy, setRenameEntryBusy] = useState(false);
+  const [trashEntryDialog, setTrashEntryDialog] =
+    useState<ProjectEntryTrashRequest | null>(null);
+  const [trashEntryBusy, setTrashEntryBusy] = useState(false);
 
   const showNotification = useCallback(
     (type: "success" | "error", message: string) => {
@@ -1632,6 +2049,361 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setTimeout(() => setNotification(null), timeout);
     },
     [],
+  );
+
+  const ensureProjectEntryAccess = useCallback(
+    (path: string, mode: "read" | "write"): boolean => {
+      if (!path) {
+        showNotification("error", "[Files] Path is empty");
+        return false;
+      }
+
+      if (!tuiModeActive) {
+        return true;
+      }
+
+      const accessDecision = canAccessPath(path, mode);
+      if (!accessDecision.allowed) {
+        showNotification("error", `[Security] ${accessDecision.reason}`);
+        return false;
+      }
+
+      return true;
+    },
+    [canAccessPath, showNotification, tuiModeActive],
+  );
+
+  const closeCreateEntryDialog = useCallback(() => {
+    if (createEntryBusy) {
+      return;
+    }
+
+    setCreateEntryDialog(null);
+    setCreateEntryName("");
+  }, [createEntryBusy]);
+
+  const closeRenameEntryDialog = useCallback(() => {
+    if (renameEntryBusy) {
+      return;
+    }
+
+    setRenameEntryDialog(null);
+    setRenameEntryName("");
+  }, [renameEntryBusy]);
+
+  const closeTrashEntryDialog = useCallback(() => {
+    if (trashEntryBusy) {
+      return;
+    }
+
+    setTrashEntryDialog(null);
+  }, [trashEntryBusy]);
+
+  const copyText = useCallback(
+    async (text: string, successMessage = "Copied to clipboard") => {
+      if (!text.trim()) {
+        showNotification("error", "[Clipboard] Nothing to copy");
+        return false;
+      }
+
+      const copied = await writeClipboardTextWithFallback(text);
+      if (!copied) {
+        showNotification("error", "[Clipboard] Failed to write to clipboard");
+        return false;
+      }
+
+      showNotification("success", successMessage);
+      return true;
+    },
+    [showNotification],
+  );
+
+  const getRelativePath = useCallback(
+    (path: string) => relativeProjectPath(path, activeProjectPath),
+    [activeProjectPath],
+  );
+
+  const copyAbsolutePath = useCallback(
+    async (path: string) => {
+      if (!ensureProjectEntryAccess(path, "read")) {
+        return false;
+      }
+      return copyText(path, "Absolute path copied");
+    },
+    [copyText, ensureProjectEntryAccess],
+  );
+
+  const copyRelativePath = useCallback(
+    async (path: string) => {
+      if (!ensureProjectEntryAccess(path, "read")) {
+        return false;
+      }
+
+      return copyText(getRelativePath(path), "Relative path copied");
+    },
+    [copyText, ensureProjectEntryAccess, getRelativePath],
+  );
+
+  const copyProjectPath = useCallback(async () => {
+    if (!activeProjectPath) {
+      showNotification("error", "[Files] No project opened");
+      return false;
+    }
+
+    if (!ensureProjectEntryAccess(activeProjectPath, "read")) {
+      return false;
+    }
+
+    return copyText(activeProjectPath, "Project path copied");
+  }, [activeProjectPath, copyText, ensureProjectEntryAccess, showNotification]);
+
+  const showProjectPathCopiedConfirmation = useCallback(() => {
+    if (projectPathCopiedTimerRef.current) {
+      clearTimeout(projectPathCopiedTimerRef.current);
+    }
+
+    setProjectPathCopiedVisible(true);
+    projectPathCopiedTimerRef.current = setTimeout(() => {
+      setProjectPathCopiedVisible(false);
+      projectPathCopiedTimerRef.current = null;
+    }, 1600);
+  }, []);
+
+  const copyProjectPathFromShortcut = useCallback(async () => {
+    if (!activeProjectPath) {
+      showNotification("error", "[Files] No project opened");
+      return false;
+    }
+
+    if (!ensureProjectEntryAccess(activeProjectPath, "read")) {
+      return false;
+    }
+
+    const copied = await writeClipboardTextWithFallback(activeProjectPath);
+    if (!copied) {
+      showNotification("error", "[Clipboard] Failed to write to clipboard");
+      return false;
+    }
+
+    showProjectPathCopiedConfirmation();
+    return true;
+  }, [
+    activeProjectPath,
+    ensureProjectEntryAccess,
+    showNotification,
+    showProjectPathCopiedConfirmation,
+  ]);
+
+  useEffect(
+    () => () => {
+      if (projectPathCopiedTimerRef.current) {
+        clearTimeout(projectPathCopiedTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  const revealEntry = useCallback(
+    async (path: string) => {
+      if (!ensureProjectEntryAccess(path, "read")) {
+        return false;
+      }
+
+      try {
+        await RevealProjectEntry(path);
+        return true;
+      } catch (error) {
+        showNotification(
+          "error",
+          `[Files] ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return false;
+      }
+    },
+    [ensureProjectEntryAccess, showNotification],
+  );
+
+  const requestCreateEntry = useCallback(
+    (type: "file" | "folder", directoryPath = activeProjectPath) => {
+      const normalizedDirectory = normalizeProjectPath(directoryPath);
+      if (!normalizedDirectory) {
+        showNotification("error", "[Files] No project opened");
+        return;
+      }
+
+      if (!ensureProjectEntryAccess(normalizedDirectory, "write")) {
+        return;
+      }
+
+      setCreateEntryDialog({
+        type,
+        directoryPath: normalizedDirectory,
+      });
+      setCreateEntryName("");
+    },
+    [activeProjectPath, ensureProjectEntryAccess, showNotification],
+  );
+
+  const requestRenameEntry = useCallback(
+    (entry: ProjectEntryActionTarget) => {
+      if (!ensureProjectEntryAccess(entry.path, "write")) {
+        return;
+      }
+
+      const currentName = getProjectPathBasename(entry.path);
+      setRenameEntryDialog({
+        ...entry,
+        name: currentName,
+      });
+      setRenameEntryName(currentName);
+    },
+    [ensureProjectEntryAccess],
+  );
+
+  const requestTrashEntry = useCallback(
+    (entry: ProjectEntryTrashRequest) => {
+      if (!ensureProjectEntryAccess(entry.path, "write")) {
+        return;
+      }
+
+      setTrashEntryDialog(entry);
+    },
+    [ensureProjectEntryAccess],
+  );
+
+  const handleCreateEntrySubmit = useCallback(async () => {
+    if (!createEntryDialog) {
+      return;
+    }
+
+    const entryName = createEntryName.trim();
+    if (!entryName) {
+      showNotification("error", "[Files] Name is required");
+      return;
+    }
+
+    const targetPath = joinProjectEntryPath(
+      createEntryDialog.directoryPath,
+      entryName,
+    );
+    if (!ensureProjectEntryAccess(targetPath, "write")) {
+      return;
+    }
+
+    setCreateEntryBusy(true);
+    try {
+      if (createEntryDialog.type === "file") {
+        await WriteFile(targetPath, "");
+      } else {
+        await CreateDirectory(targetPath);
+      }
+
+      showNotification(
+        "success",
+        `${createEntryDialog.type === "file" ? "File" : "Folder"} created`,
+      );
+      setCreateEntryDialog(null);
+      setCreateEntryName("");
+    } catch (error) {
+      showNotification(
+        "error",
+        `[Files] ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      setCreateEntryBusy(false);
+    }
+  }, [
+    createEntryDialog,
+    createEntryName,
+    ensureProjectEntryAccess,
+    showNotification,
+  ]);
+
+  const handleRenameEntrySubmit = useCallback(async () => {
+    if (!renameEntryDialog) {
+      return;
+    }
+
+    const nextName = renameEntryName.trim();
+    if (!nextName) {
+      showNotification("error", "[Files] Name is required");
+      return;
+    }
+
+    if (!ensureProjectEntryAccess(renameEntryDialog.path, "write")) {
+      return;
+    }
+
+    setRenameEntryBusy(true);
+    try {
+      await RenameProjectEntry(renameEntryDialog.path, nextName);
+      showNotification("success", "Entry renamed");
+      setRenameEntryDialog(null);
+      setRenameEntryName("");
+    } catch (error) {
+      showNotification(
+        "error",
+        `[Files] ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      setRenameEntryBusy(false);
+    }
+  }, [
+    ensureProjectEntryAccess,
+    renameEntryDialog,
+    renameEntryName,
+    showNotification,
+  ]);
+
+  const handleTrashEntrySubmit = useCallback(async () => {
+    if (!trashEntryDialog) {
+      return;
+    }
+
+    if (!ensureProjectEntryAccess(trashEntryDialog.path, "write")) {
+      return;
+    }
+
+    setTrashEntryBusy(true);
+    try {
+      await TrashProjectEntry(trashEntryDialog.path);
+      showNotification("success", "Moved to trash");
+      setTrashEntryDialog(null);
+    } catch (error) {
+      showNotification(
+        "error",
+        `[Files] ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      setTrashEntryBusy(false);
+    }
+  }, [ensureProjectEntryAccess, showNotification, trashEntryDialog]);
+
+  const projectEntryActions = useMemo(
+    () => ({
+      projectPath: activeProjectPath,
+      getRelativePath,
+      copyText,
+      copyAbsolutePath,
+      copyRelativePath,
+      copyProjectPath,
+      revealEntry,
+      requestCreateEntry,
+      requestRenameEntry,
+      requestTrashEntry,
+    }),
+    [
+      activeProjectPath,
+      copyAbsolutePath,
+      copyProjectPath,
+      copyRelativePath,
+      copyText,
+      getRelativePath,
+      requestCreateEntry,
+      requestRenameEntry,
+      requestTrashEntry,
+      revealEntry,
+    ],
   );
 
   const handlePluginCommandSuccess = useCallback(
@@ -2077,15 +2849,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      // Toggle Sidebar: Cmd+B
-      if (shortcuts.toggleSidebar(e) && !e.shiftKey) {
+      // Toggle Explorer: Cmd+E
+      if (shortcuts.toggleExplorer(e)) {
         if (isTerminalShortcutContext) {
           return;
         }
 
         e.preventDefault();
 
-        toggleNamedPanel("explorer");
+        togglePanelCompactFromShortcut("explorer");
         return;
       }
 
@@ -2153,18 +2925,62 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      // Toggle Git: Cmd+Shift+G
-      if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "g") {
+      if (shortcuts.copyProjectPath(e)) {
         if (isTerminalShortcutContext) {
           return;
         }
 
         e.preventDefault();
-        toggleNamedPanel("git");
+        e.stopPropagation();
+        void copyProjectPathFromShortcut();
         return;
       }
 
-      if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "b") {
+      // Toggle Git fullscreen: Cmd+Shift+G
+      if (shortcuts.toggleGitFullscreen(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        togglePanelFullscreenFromShortcut("git", gitPreFullscreenRef);
+        return;
+      }
+
+      // Toggle Git compact: Cmd+G
+      if (shortcuts.toggleGit(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        togglePanelCompactFromShortcut("git", gitPreFullscreenRef);
+        return;
+      }
+
+      // Toggle Problems fullscreen: Cmd+Shift+P
+      if (shortcuts.toggleProblemsFullscreen(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        togglePanelFullscreenFromShortcut("problems", problemsPreFullscreenRef);
+        return;
+      }
+
+      // Toggle Problems compact: Cmd+P
+      if (shortcuts.toggleProblems(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        togglePanelCompactFromShortcut("problems", problemsPreFullscreenRef);
+        return;
+      }
+
+      if (shortcuts.openBrowserPreview(e)) {
         if (isTerminalShortcutContext) {
           return;
         }
@@ -2296,17 +3112,25 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [
     activeModal,
+    applyPanelConfigsState,
+    applyPanelsState,
     closePreviewWindow,
     closeModal,
     closeTUIAssistPanel,
+    copyProjectPathFromShortcut,
     dispatcher,
     getActiveTerminalSessionId,
+    isLogicalFullscreenPanel,
     isSettingsOpen,
     isDark,
     openSettings,
     closeSettings,
+    panelWorkspaceSize.height,
+    panelWorkspaceSize.width,
+    restoreOrEnterPanelFullscreen,
     toggleCommandDispatcher,
     toggleTUIAssistPanel,
+    updatePanelsState,
   ]);
 
   const handleFileOpen = (
@@ -2329,7 +3153,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   };
 
   const handleFileOpenInPanel = useCallback(
-    (path: string, content: string, name: string, line?: number) => {
+    (path: string, name: string, line?: number) => {
       const fallbackLanguage = (() => {
         const normalizedPath = path.trim();
         const fileName = normalizedPath.split("/").pop()?.toLowerCase() ?? "";
@@ -2343,7 +3167,23 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       })();
 
       void (async () => {
+        if (!ensureProjectEntryAccess(path, "read")) {
+          return;
+        }
+
         let language = fallbackLanguage;
+        let content = "";
+
+        try {
+          content = await ReadFile(path);
+        } catch (error) {
+          showNotification(
+            "error",
+            `[Files] ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return;
+        }
+
         try {
           const languageInfo = await GetLanguageForFile(path);
           if (languageInfo?.id) {
@@ -2408,7 +3248,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       applyPanelConfigsState,
       applyPanelsState,
       applyRememberedSnappedPositionsState,
+      ensureProjectEntryAccess,
       openEditorTab,
+      showNotification,
     ],
   );
 
@@ -2432,6 +3274,174 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     },
     [canAccessPath, onFileOpen, showNotification, tuiModeActive],
   );
+
+  useEffect(() => {
+    const normalizedProjectPath = normalizeProjectPath(activeProjectPath);
+    if (!normalizedProjectPath) {
+      return;
+    }
+
+    const unsubscribeRenamed = EventsOn(
+      "project:entry:renamed",
+      (payload: ProjectEntryRenamedEvent) => {
+        const oldPath = normalizeProjectPath(payload?.oldPath ?? "");
+        const newPath = normalizeProjectPath(payload?.newPath ?? "");
+        if (!oldPath || !newPath) {
+          return;
+        }
+
+        if (
+          !isSameOrChildPath(oldPath, normalizedProjectPath) &&
+          !isSameOrChildPath(newPath, normalizedProjectPath)
+        ) {
+          return;
+        }
+
+        remapExplorerPathPrefix(oldPath, newPath);
+        renameEditorTabPaths(oldPath, newPath);
+        renamePathDiagnostics(oldPath, newPath);
+
+        setCodePanelSource((current) => {
+          if (!current) {
+            return current;
+          }
+
+          const remappedPath = remapProjectPathPrefix(
+            current.path,
+            oldPath,
+            newPath,
+          );
+          if (!remappedPath || remappedPath === current.path) {
+            return current;
+          }
+
+          return {
+            ...current,
+            path: remappedPath,
+            name: getProjectPathBasename(remappedPath),
+          };
+        });
+
+        setCreateEntryDialog((current) => {
+          if (!current) {
+            return current;
+          }
+
+          const remappedDirectory = remapProjectPathPrefix(
+            current.directoryPath,
+            oldPath,
+            newPath,
+          );
+          if (
+            !remappedDirectory ||
+            remappedDirectory === current.directoryPath
+          ) {
+            return current;
+          }
+
+          return {
+            ...current,
+            directoryPath: remappedDirectory,
+          };
+        });
+
+        setRenameEntryDialog((current) => {
+          if (!current) {
+            return current;
+          }
+
+          const remappedPath = remapProjectPathPrefix(
+            current.path,
+            oldPath,
+            newPath,
+          );
+          if (!remappedPath || remappedPath === current.path) {
+            return current;
+          }
+
+          const nextName = getProjectPathBasename(remappedPath);
+          setRenameEntryName(nextName);
+          return {
+            ...current,
+            path: remappedPath,
+            name: nextName,
+          };
+        });
+
+        setTrashEntryDialog((current) => {
+          if (!current) {
+            return current;
+          }
+
+          const remappedPath = remapProjectPathPrefix(
+            current.path,
+            oldPath,
+            newPath,
+          );
+          if (!remappedPath || remappedPath === current.path) {
+            return current;
+          }
+
+          return {
+            ...current,
+            path: remappedPath,
+            displayName: getProjectPathBasename(remappedPath),
+          };
+        });
+      },
+    );
+
+    const unsubscribeDeleted = EventsOn(
+      "project:entry:deleted",
+      (payload: ProjectEntryDeletedEvent) => {
+        const deletedPath = normalizeProjectPath(payload?.path ?? "");
+        if (
+          !deletedPath ||
+          !isSameOrChildPath(deletedPath, normalizedProjectPath)
+        ) {
+          return;
+        }
+
+        pruneExplorerPathPrefix(deletedPath);
+        closeEditorTabPaths(deletedPath);
+        prunePathDiagnostics(deletedPath);
+
+        setCodePanelSource((current) =>
+          current && isSameOrChildPath(current.path, deletedPath)
+            ? null
+            : current,
+        );
+        setCreateEntryDialog((current) =>
+          current && isSameOrChildPath(current.directoryPath, deletedPath)
+            ? null
+            : current,
+        );
+        setRenameEntryDialog((current) =>
+          current && isSameOrChildPath(current.path, deletedPath)
+            ? null
+            : current,
+        );
+        setTrashEntryDialog((current) =>
+          current && isSameOrChildPath(current.path, deletedPath)
+            ? null
+            : current,
+        );
+      },
+    );
+
+    return () => {
+      unsubscribeRenamed();
+      unsubscribeDeleted();
+    };
+  }, [
+    activeProjectPath,
+    closeEditorTabPaths,
+    pruneExplorerPathPrefix,
+    prunePathDiagnostics,
+    remapExplorerPathPrefix,
+    renameEditorTabPaths,
+    renamePathDiagnostics,
+  ]);
 
   const handlePerspectiveOpen = useCallback(() => {
     setIsPerspectiveOpen(true);
@@ -3076,8 +4086,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             terminal: {
               ...previous.terminal,
               ...getTUIFloatingTerminalConfig({
-                viewportWidth: window.innerWidth,
-                viewportHeight: window.innerHeight,
+                viewportWidth: logicalViewport.width,
+                viewportHeight: logicalViewport.height,
               }),
             },
           }));
@@ -3559,8 +4569,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const containerStyle: React.CSSProperties = {
     display: "flex",
     flexDirection: "column",
-    height: "100vh",
-    width: "100vw",
+    height: "100%",
+    width: "100%",
     overflow: "hidden",
     padding: "8px",
     boxSizing: "border-box",
@@ -3671,6 +4681,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       draggingPanel !== null &&
       draggingPanel !== panelId &&
       dropTargetPosition === config.position;
+    const isFullscreen = isLogicalFullscreenPanel(config);
 
     const getAdjacentPanels = () => {
       const adjacent: {
@@ -3718,15 +4729,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onDragEnd: handleDragEnd,
       onClose: () => toggleNamedPanel(panelId),
       isDropTarget,
+      activeDropTargetPosition:
+        draggingPanel === panelId ? dropTargetPosition : null,
       adjacentPanels: getAdjacentPanels(),
+      uiScale,
+      isFullscreen,
     };
-    const panelRenderKey = `${panelId}:${config.mode}:${config.position}`;
 
     switch (panelId) {
       case "explorer":
         return (
           <FloatingPanel
-            key={panelRenderKey}
+            key={panelId}
             id="explorer"
             title="Explorer"
             icon={<FolderTree size={16} />}
@@ -3749,7 +4763,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       case "terminal":
         return (
           <FloatingPanel
-            key={panelRenderKey}
+            key={panelId}
             id="terminal"
             title="Terminal"
             icon={<Terminal size={16} />}
@@ -3773,8 +4787,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                   terminal: {
                     ...previous.terminal,
                     ...getTUIFloatingTerminalConfig({
-                      viewportWidth: window.innerWidth,
-                      viewportHeight: window.innerHeight,
+                      viewportWidth: logicalViewport.width,
+                      viewportHeight: logicalViewport.height,
                     }),
                   },
                 }));
@@ -3782,48 +4796,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 return;
               }
 
-              const cur = panelConfigs.terminal;
-              const isFullscreen =
-                cur.mode === "floating" &&
-                cur.x === 0 &&
-                cur.y === 0 &&
-                cur.size.width >= window.innerWidth - 1 &&
-                cur.size.height >= window.innerHeight - 1;
-
-              if (isFullscreen && terminalPreFullscreenRef.current) {
-                const saved = terminalPreFullscreenRef.current;
-                terminalPreFullscreenRef.current = null;
-                setPanelConfigs((prev) => ({
-                  ...prev,
-                  terminal: {
-                    ...prev.terminal,
-                    mode: saved.mode as typeof prev.terminal.mode,
-                    x: saved.x,
-                    y: saved.y,
-                    size: saved.size,
-                  },
-                }));
-              } else {
-                terminalPreFullscreenRef.current = {
-                  mode: cur.mode,
-                  x: cur.x,
-                  y: cur.y,
-                  size: { ...cur.size },
-                };
-                setPanelConfigs((prev) => ({
-                  ...prev,
-                  terminal: {
-                    ...prev.terminal,
-                    mode: "floating",
-                    x: 0,
-                    y: 0,
-                    size: {
-                      width: window.innerWidth,
-                      height: window.innerHeight,
-                    },
-                  },
-                }));
-              }
+              restoreOrEnterPanelFullscreen(
+                "terminal",
+                terminalPreFullscreenRef,
+              );
             }}
           >
             {tuiModeActive ? (
@@ -3920,7 +4896,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       case "aiChat":
         return (
           <FloatingPanel
-            key={panelRenderKey}
+            key={panelId}
             id="aiChat"
             title="AI Assistant"
             icon={<Sparkles size={16} />}
@@ -3934,45 +4910,58 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       case "git":
         return (
           <FloatingPanel
-            key={panelRenderKey}
+            key={panelId}
             id="git"
             title="Git"
             icon={<GitBranch size={16} />}
             minSize={200}
-            maxSize={720}
+            maxSize={1400}
             {...panelProps}
+            onFullscreen={() =>
+              restoreOrEnterPanelFullscreen("git", gitPreFullscreenRef)
+            }
           >
             <GitPanel
               projectPath={activeProjectPath}
               panelPosition={config.position}
               onDiffFocusChange={handleGitDiffFocusChange}
-              onFileOpen={(path) =>
-                handleFileOpen(path, "", path.split("/").pop() || "")
-              }
+              presentationMode={isFullscreen ? "expanded" : "compact"}
+              onFileOpen={(path) => {
+                void openFileFromPath(path);
+              }}
             />
           </FloatingPanel>
         );
       case "problems":
         return (
           <FloatingPanel
-            key={panelRenderKey}
+            key={panelId}
             id="problems"
             title="Problems"
             icon={<AlertCircle size={16} />}
             minSize={320}
-            maxSize={760}
+            maxSize={1400}
             {...panelProps}
+            onFullscreen={() =>
+              restoreOrEnterPanelFullscreen(
+                "problems",
+                problemsPreFullscreenRef,
+              )
+            }
           >
             <ProblemsPanel
-              activeFilePath={activeEditorTab?.path ?? null}
+              activeFilePath={
+                activeStatusFilePath ?? activeEditorTab?.path ?? null
+              }
               onNavigate={(path, line, _column) => openFileFromPath(path, line)}
+              presentationMode={isFullscreen ? "expanded" : "compact"}
             />
           </FloatingPanel>
         );
       case "code":
         return (
           <FloatingPanel
-            key={panelRenderKey}
+            key={panelId}
             id="code"
             title={codePanelSource ? `${codePanelSource.name} (Code)` : "Code"}
             icon={<FileText size={16} />}
@@ -3982,6 +4971,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           >
             {codePanelSource ? (
               <CodePanelSurface
+                key={codePanelSource.path}
                 path={codePanelSource.path}
                 name={codePanelSource.name}
                 initialContent={codePanelSource.content}
@@ -4034,9 +5024,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           <GitPanel
             projectPath={activeProjectPath}
             panelPosition={tuiAssist.anchor}
-            onFileOpen={(path) =>
-              handleFileOpen(path, "", path.split("/").pop() || "")
-            }
+            onFileOpen={(path) => {
+              void openFileFromPath(path);
+            }}
           />
         );
       default:
@@ -4047,8 +5037,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const topChromeStyle: React.CSSProperties = {
     maxHeight: 72,
     opacity: 1,
-    overflow: "hidden",
+    overflow: "visible",
     pointerEvents: "auto",
+    position: "relative",
+    zIndex: zIndex.tooltip + 2,
   };
 
   const bottomChromeStyle: React.CSSProperties = {
@@ -4079,25 +5071,51 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     position: "relative",
   };
 
-  const getVerticalSlotStyle = (width: number): React.CSSProperties => ({
-    width,
-    minWidth: width,
-    maxWidth: width,
-    height: "100%",
-    minHeight: 0,
-    flexShrink: 0,
-    position: "relative",
-  });
+  const getVerticalSlotStyle = (
+    width: number,
+    isActive: boolean,
+  ): React.CSSProperties => {
+    const transition =
+      reducePanelMotion || draggingPanel !== null
+        ? "none"
+        : `width ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1), min-width ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1), max-width ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
 
-  const getHorizontalSlotStyle = (height: number): React.CSSProperties => ({
-    height,
-    minHeight: height,
-    maxHeight: height,
-    width: "100%",
-    minWidth: 0,
-    flexShrink: 0,
-    position: "relative",
-  });
+    return {
+      width,
+      minWidth: width,
+      maxWidth: width,
+      height: "100%",
+      minHeight: 0,
+      flexShrink: 0,
+      position: "relative",
+      overflow: "visible",
+      pointerEvents: isActive ? "auto" : "none",
+      transition,
+    };
+  };
+
+  const getHorizontalSlotStyle = (
+    height: number,
+    isActive: boolean,
+  ): React.CSSProperties => {
+    const transition =
+      reducePanelMotion || draggingPanel !== null
+        ? "none"
+        : `height ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1), min-height ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1), max-height ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+
+    return {
+      height,
+      minHeight: height,
+      maxHeight: height,
+      width: "100%",
+      minWidth: 0,
+      flexShrink: 0,
+      position: "relative",
+      overflow: "visible",
+      pointerEvents: isActive ? "auto" : "none",
+      transition,
+    };
+  };
 
   const tuiOverlayStyle: React.CSSProperties = {
     position: "fixed",
@@ -4202,283 +5220,619 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const rightSnappedPanel = getActivePanelsAtPosition("right");
   const topSnappedPanel = getActivePanelsAtPosition("top");
   const bottomSnappedPanel = getActivePanelsAtPosition("bottom");
+  const leftSlotWidth = leftSnappedPanel
+    ? panelConfigs[leftSnappedPanel].size.width
+    : 0;
+  const rightSlotWidth = rightSnappedPanel
+    ? panelConfigs[rightSnappedPanel].size.width
+    : 0;
+  const topSlotHeight = topSnappedPanel
+    ? panelConfigs[topSnappedPanel].size.height
+    : 0;
+  const bottomSlotHeight = bottomSnappedPanel
+    ? panelConfigs[bottomSnappedPanel].size.height
+    : 0;
   const floatingPanelIds = (Object.keys(panelConfigs) as PanelId[]).filter(
     (panelId) =>
       panels[panelId] &&
       panelConfigs[panelId].mode === "floating" &&
       isPanelHostedInMainWorkspace(panelId),
   );
+  const activeSnappedSlots = React.useMemo<
+    Partial<Record<PanelPosition, SnappedSlotSnapshot>>
+  >(
+    () => ({
+      left: leftSnappedPanel
+        ? {
+            panelId: leftSnappedPanel,
+            size: panelConfigs[leftSnappedPanel].size,
+          }
+        : undefined,
+      right: rightSnappedPanel
+        ? {
+            panelId: rightSnappedPanel,
+            size: panelConfigs[rightSnappedPanel].size,
+          }
+        : undefined,
+      top: topSnappedPanel
+        ? { panelId: topSnappedPanel, size: panelConfigs[topSnappedPanel].size }
+        : undefined,
+      bottom: bottomSnappedPanel
+        ? {
+            panelId: bottomSnappedPanel,
+            size: panelConfigs[bottomSnappedPanel].size,
+          }
+        : undefined,
+    }),
+    [
+      bottomSnappedPanel,
+      leftSnappedPanel,
+      panelConfigs,
+      rightSnappedPanel,
+      topSnappedPanel,
+    ],
+  );
+  const shouldSuppressSnappedExitForPosition = (position: PanelPosition) =>
+    floatingPanelIds.some((panelId) => {
+      const config = panelConfigs[panelId];
+      return config.position === position && isLogicalFullscreenPanel(config);
+    });
+  const fullscreenSnappedExitSuppression = React.useMemo(
+    () => ({
+      left: shouldSuppressSnappedExitForPosition("left"),
+      right: shouldSuppressSnappedExitForPosition("right"),
+      top: shouldSuppressSnappedExitForPosition("top"),
+      bottom: shouldSuppressSnappedExitForPosition("bottom"),
+    }),
+    [floatingPanelIds, isLogicalFullscreenPanel, panelConfigs],
+  );
+
+  React.useLayoutEffect(() => {
+    const positions: PanelPosition[] = ["left", "right", "top", "bottom"];
+
+    positions.forEach((position) => {
+      const activeSlot = activeSnappedSlots[position];
+      const previousSlot = previousSnappedSlotsRef.current[position];
+
+      if (activeSlot) {
+        previousSnappedSlotsRef.current[position] = activeSlot;
+        if (closingSnappedSlotTimersRef.current[position]) {
+          clearTimeout(closingSnappedSlotTimersRef.current[position]);
+          delete closingSnappedSlotTimersRef.current[position];
+        }
+        setClosingSnappedSlots((current) => {
+          if (!current[position]) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[position];
+          return next;
+        });
+        return;
+      }
+
+      if (!previousSlot) {
+        return;
+      }
+
+      delete previousSnappedSlotsRef.current[position];
+      if (fullscreenSnappedExitSuppression[position]) {
+        return;
+      }
+
+      setClosingSnappedSlots((current) => ({
+        ...current,
+        [position]: previousSlot,
+      }));
+
+      if (closingSnappedSlotTimersRef.current[position]) {
+        clearTimeout(closingSnappedSlotTimersRef.current[position]);
+      }
+      closingSnappedSlotTimersRef.current[position] = setTimeout(() => {
+        setClosingSnappedSlots((current) => {
+          const slot = current[position];
+          if (!slot || slot.panelId !== previousSlot.panelId) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[position];
+          return next;
+        });
+        delete closingSnappedSlotTimersRef.current[position];
+      }, FLOATING_PANEL_LAYOUT_TRANSITION_MS);
+    });
+  }, [activeSnappedSlots, fullscreenSnappedExitSuppression]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(closingSnappedSlotTimersRef.current).forEach((timer) => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+      });
+    };
+  }, []);
+
+  const effectiveLeftSlotWidth = fullscreenSnappedExitSuppression.left
+    ? 0
+    : leftSlotWidth || closingSnappedSlots.left?.size.width || 0;
+  const effectiveRightSlotWidth = fullscreenSnappedExitSuppression.right
+    ? 0
+    : rightSlotWidth || closingSnappedSlots.right?.size.width || 0;
+  const effectiveTopSlotHeight = fullscreenSnappedExitSuppression.top
+    ? 0
+    : topSlotHeight || closingSnappedSlots.top?.size.height || 0;
+  const effectiveBottomSlotHeight = fullscreenSnappedExitSuppression.bottom
+    ? 0
+    : bottomSlotHeight || closingSnappedSlots.bottom?.size.height || 0;
+  // Framer layout scales slot descendants here, which makes panels expand
+  // instead of sliding. Slot size uses explicit CSS transitions instead.
+  const workspaceLayoutMotionEnabled = false;
 
   return (
-    <div
-      style={containerStyle}
-      data-testid="main-layout"
-      data-tui-session-id={tuiActiveSessionId || ""}
-    >
-      <div style={shellFrameStyle}>
-        <div style={topChromeStyle}>
-          <TopBar
-            onCommandPaletteOpen={() => {
-              if (!tuiModeActive && !isDispatcherPaused) {
-                dispatcher.open();
+    <ProjectEntryActionsProvider value={projectEntryActions}>
+      <div
+        style={containerStyle}
+        data-testid="main-layout"
+        data-tui-session-id={tuiActiveSessionId || ""}
+      >
+        <div style={shellFrameStyle}>
+          <div style={topChromeStyle}>
+            <TopBar
+              onCommandPaletteOpen={() => {
+                if (!tuiModeActive && !isDispatcherPaused) {
+                  dispatcher.open();
+                }
+              }}
+              onOpenSearch={openCommandDispatcher}
+              onOpenSettings={openSettings}
+              onToggleExplorer={() => {
+                if (tuiModeActive) {
+                  toggleTUIAssistPanel("explorer");
+                  return;
+                }
+                toggleNamedPanel("explorer");
+              }}
+              onToggleTerminal={() => {
+                if (tuiModeActive) {
+                  closeTUIAssistPanel();
+                  setTimeout(
+                    () => useTerminalStore.getState().focusActiveTerminal(),
+                    80,
+                  );
+                  return;
+                }
+                toggleNamedPanel("terminal");
+              }}
+              onToggleAIChat={() => {
+                if (tuiModeActive) {
+                  toggleTUIAssistPanel("aiChat");
+                  return;
+                }
+                toggleNamedPanel("aiChat");
+              }}
+              onToggleGit={() => {
+                if (tuiModeActive) {
+                  toggleTUIAssistPanel("git");
+                  return;
+                }
+                toggleNamedPanel("git");
+              }}
+              onRun={openRunDialog}
+              onOpenDebug={openDebugDialog}
+              onOpenPreview={openCanonicalBrowserPreview}
+              onOpenDependencyPolicy={openDependencyPolicy}
+              onBackToWelcome={onBackToWelcome}
+              onProjectOpen={onProjectOpen}
+              onSwitchProject={onSwitchProject}
+              onCloseProject={onCloseProject}
+              projectPathCopied={projectPathCopiedVisible}
+              panels={{
+                explorer: tuiModeActive
+                  ? tuiAssist.active && tuiAssist.panel === "explorer"
+                  : panels.explorer,
+                terminal: tuiModeActive ? true : panels.terminal,
+                aiChat: tuiModeActive
+                  ? tuiAssist.active && tuiAssist.panel === "aiChat"
+                  : panels.aiChat,
+                git: panels.git,
+              }}
+              projectPath={activeProjectPath}
+              previewEnabled={previewButtonState.enabled}
+              previewActive={previewButtonState.active}
+              previewTitle={previewButtonState.buttonTitle}
+            />
+          </div>
+
+          <div style={mainAreaStyle}>
+            <LayoutGroup id="main-floating-panels">
+              <motion.div
+                ref={panelWorkspaceRef}
+                layout={workspaceLayoutMotionEnabled}
+                transition={panelLayoutTransition}
+                style={normalWorkspaceStyle}
+              >
+                {draggingPanel && (
+                  <>
+                    <div
+                      style={dropZoneStyle("top")}
+                      onMouseEnter={() => setDropTargetPosition("top")}
+                      onMouseLeave={() => setDropTargetPosition(null)}
+                    />
+                    <div
+                      style={dropZoneStyle("bottom")}
+                      onMouseEnter={() => setDropTargetPosition("bottom")}
+                      onMouseLeave={() => setDropTargetPosition(null)}
+                    />
+                    <div
+                      style={dropZoneStyle("left")}
+                      onMouseEnter={() => setDropTargetPosition("left")}
+                      onMouseLeave={() => setDropTargetPosition(null)}
+                    />
+                    <div
+                      style={dropZoneStyle("right")}
+                      onMouseEnter={() => setDropTargetPosition("right")}
+                      onMouseLeave={() => setDropTargetPosition(null)}
+                    />
+                  </>
+                )}
+
+                <motion.div
+                  layout={workspaceLayoutMotionEnabled}
+                  transition={panelLayoutTransition}
+                  style={getVerticalSlotStyle(
+                    effectiveLeftSlotWidth,
+                    !!leftSnappedPanel,
+                  )}
+                >
+                  {fullscreenSnappedExitSuppression.left ? null : (
+                    <AnimatePresence initial={false}>
+                      {leftSnappedPanel
+                        ? renderPanel(leftSnappedPanel, "flow")
+                        : null}
+                    </AnimatePresence>
+                  )}
+                </motion.div>
+
+                <motion.div
+                  layout={workspaceLayoutMotionEnabled}
+                  transition={panelLayoutTransition}
+                  style={centerWorkspaceStyle}
+                >
+                  <motion.div
+                    layout={workspaceLayoutMotionEnabled}
+                    transition={panelLayoutTransition}
+                    style={getHorizontalSlotStyle(
+                      effectiveTopSlotHeight,
+                      !!topSnappedPanel,
+                    )}
+                  >
+                    {fullscreenSnappedExitSuppression.top ? null : (
+                      <AnimatePresence initial={false}>
+                        {topSnappedPanel
+                          ? renderPanel(topSnappedPanel, "flow")
+                          : null}
+                      </AnimatePresence>
+                    )}
+                  </motion.div>
+
+                  <div style={editorAreaStyle}>
+                    {React.cloneElement(
+                      children as React.ReactElement<{
+                        onToggleProblems?: () => void;
+                        onPerspectiveOpen?: () => void;
+                        onPerspectiveClose?: () => void;
+                      }>,
+                      {
+                        onToggleProblems: () => togglePanel("problems"),
+                        onPerspectiveOpen: handlePerspectiveOpen,
+                        onPerspectiveClose: handlePerspectiveClose,
+                      },
+                    )}
+                  </div>
+
+                  <motion.div
+                    layout={workspaceLayoutMotionEnabled}
+                    transition={panelLayoutTransition}
+                    style={getHorizontalSlotStyle(
+                      effectiveBottomSlotHeight,
+                      !!bottomSnappedPanel,
+                    )}
+                  >
+                    {fullscreenSnappedExitSuppression.bottom ? null : (
+                      <AnimatePresence initial={false}>
+                        {bottomSnappedPanel
+                          ? renderPanel(bottomSnappedPanel, "flow")
+                          : null}
+                      </AnimatePresence>
+                    )}
+                  </motion.div>
+                </motion.div>
+
+                <motion.div
+                  layout={workspaceLayoutMotionEnabled}
+                  transition={panelLayoutTransition}
+                  style={getVerticalSlotStyle(
+                    effectiveRightSlotWidth,
+                    !!rightSnappedPanel,
+                  )}
+                >
+                  {fullscreenSnappedExitSuppression.right ? null : (
+                    <AnimatePresence initial={false}>
+                      {rightSnappedPanel
+                        ? renderPanel(rightSnappedPanel, "flow")
+                        : null}
+                    </AnimatePresence>
+                  )}
+                </motion.div>
+
+                <AnimatePresence key={floatingPresenceVersion} initial={false}>
+                  {floatingPanelIds.map((panelId) => renderPanel(panelId))}
+                </AnimatePresence>
+              </motion.div>
+            </LayoutGroup>
+
+            <PreviewWindowLayer
+              isDark={isDark}
+              windows={previewWindows}
+              appearancePreview={appearancePreview}
+              currentTheme={currentTheme}
+              currentUiScale={uiScale}
+              onUpdateWindow={updatePreviewWindow}
+              onCloseWindow={closePreviewWindow}
+              onFocusWindow={focusPreviewWindow}
+              onAppearancePatch={handleAppearancePreviewPatchEvent}
+              onAppearanceApply={handleAppearancePreviewApplyEvent}
+              onAppearanceCancel={handleAppearancePreviewCancelEvent}
+              onFileOpen={handleFileOpen}
+            />
+          </div>
+
+          <div style={bottomChromeStyle}>
+            <StatusBar onToggleProblems={() => togglePanel("problems")} />
+          </div>
+        </div>
+
+        <div style={tuiOverlayStyle} data-testid="tui-overlay">
+          {tuiModeActive && renderPanel("terminal")}
+        </div>
+
+        {!tuiModeActive && !isDispatcherPaused && (
+          <CommandDispatcher
+            isOpen={dispatcher.isOpen}
+            onClose={dispatcher.close}
+            onExecute={async (input) => {
+              const result = await dispatcher.execute(input);
+              if (result) {
+                if (!result.success && result.error) {
+                  showNotification("error", `[Dispatcher] ${result.error}`);
+                } else if (result.output) {
+                  showNotification("success", `[Dispatcher] ${result.output}`);
+                }
+              }
+              if (result?.shouldClose) {
+                dispatcher.close();
               }
             }}
-            onOpenSearch={openCommandDispatcher}
-            onOpenSettings={openSettings}
-            onToggleExplorer={() => {
-              if (tuiModeActive) {
-                toggleTUIAssistPanel("explorer");
-                return;
-              }
-              toggleNamedPanel("explorer");
+            onOpenFile={(path, line) => openFileFromPath(path, line)}
+            onTerminalCommand={(command) => {
+              void submitTerminalCommand(command);
             }}
-            onToggleTerminal={() => {
-              if (tuiModeActive) {
-                closeTUIAssistPanel();
-                setTimeout(
-                  () => useTerminalStore.getState().focusActiveTerminal(),
-                  80,
-                );
-                return;
-              }
-              toggleNamedPanel("terminal");
-            }}
-            onToggleAIChat={() => {
-              if (tuiModeActive) {
-                toggleTUIAssistPanel("aiChat");
-                return;
-              }
-              toggleNamedPanel("aiChat");
-            }}
-            onToggleGit={() => {
-              if (tuiModeActive) {
-                toggleTUIAssistPanel("git");
-                return;
-              }
-              toggleNamedPanel("git");
-            }}
-            onRun={openRunDialog}
-            onOpenDebug={openDebugDialog}
-            onOpenPreview={openCanonicalBrowserPreview}
-            onOpenDependencyPolicy={openDependencyPolicy}
-            onBackToWelcome={onBackToWelcome}
-            onProjectOpen={onProjectOpen}
-            onSwitchProject={onSwitchProject}
-            onCloseProject={onCloseProject}
-            panels={{
-              explorer: tuiModeActive
-                ? tuiAssist.active && tuiAssist.panel === "explorer"
-                : panels.explorer,
-              terminal: tuiModeActive ? true : panels.terminal,
-              aiChat: tuiModeActive
-                ? tuiAssist.active && tuiAssist.panel === "aiChat"
-                : panels.aiChat,
-              git: panels.git,
-            }}
+            pinnedItems={dispatcher.pinnedItems}
+            recentItems={dispatcher.recentItems}
             projectPath={activeProjectPath}
-            previewEnabled={previewButtonState.enabled}
-            previewActive={previewButtonState.active}
-            previewTitle={previewButtonState.buttonTitle}
           />
-        </div>
+        )}
 
-        <div style={mainAreaStyle}>
-          <div style={normalWorkspaceStyle}>
-            {draggingPanel && (
-              <>
-                <div
-                  style={dropZoneStyle("left")}
-                  onMouseEnter={() => setDropTargetPosition("left")}
-                  onMouseLeave={() => setDropTargetPosition(null)}
-                />
-                <div
-                  style={dropZoneStyle("right")}
-                  onMouseEnter={() => setDropTargetPosition("right")}
-                  onMouseLeave={() => setDropTargetPosition(null)}
-                />
-                <div
-                  style={dropZoneStyle("bottom")}
-                  onMouseEnter={() => setDropTargetPosition("bottom")}
-                  onMouseLeave={() => setDropTargetPosition(null)}
-                />
-                <div
-                  style={dropZoneStyle("top")}
-                  onMouseEnter={() => setDropTargetPosition("top")}
-                  onMouseLeave={() => setDropTargetPosition(null)}
-                />
-              </>
-            )}
-
-            {leftSnappedPanel ? (
-              <div
-                style={getVerticalSlotStyle(
-                  panelConfigs[leftSnappedPanel].size.width,
-                )}
-              >
-                {renderPanel(leftSnappedPanel, "flow")}
-              </div>
-            ) : null}
-
-            <div style={centerWorkspaceStyle}>
-              {topSnappedPanel ? (
-                <div
-                  style={getHorizontalSlotStyle(
-                    panelConfigs[topSnappedPanel].size.height,
-                  )}
-                >
-                  {renderPanel(topSnappedPanel, "flow")}
-                </div>
-              ) : null}
-
-              <div style={editorAreaStyle}>
-                {React.cloneElement(
-                  children as React.ReactElement<{
-                    onToggleProblems?: () => void;
-                    onPerspectiveOpen?: () => void;
-                    onPerspectiveClose?: () => void;
-                  }>,
-                  {
-                    onToggleProblems: () => togglePanel("problems"),
-                    onPerspectiveOpen: handlePerspectiveOpen,
-                    onPerspectiveClose: handlePerspectiveClose,
-                  },
-                )}
-              </div>
-
-              {bottomSnappedPanel ? (
-                <div
-                  style={getHorizontalSlotStyle(
-                    panelConfigs[bottomSnappedPanel].size.height,
-                  )}
-                >
-                  {renderPanel(bottomSnappedPanel, "flow")}
-                </div>
-              ) : null}
-            </div>
-
-            {rightSnappedPanel ? (
-              <div
-                style={getVerticalSlotStyle(
-                  panelConfigs[rightSnappedPanel].size.width,
-                )}
-              >
-                {renderPanel(rightSnappedPanel, "flow")}
-              </div>
-            ) : null}
-
-            {floatingPanelIds.map((panelId) => renderPanel(panelId))}
-          </div>
-
-          <PreviewWindowLayer
-            isDark={isDark}
-            windows={previewWindows}
-            appearancePreview={appearancePreview}
-            currentTheme={currentTheme}
-            currentUiScale={uiScale}
-            onUpdateWindow={updatePreviewWindow}
-            onCloseWindow={closePreviewWindow}
-            onFocusWindow={focusPreviewWindow}
-            onAppearancePatch={handleAppearancePreviewPatchEvent}
-            onAppearanceApply={handleAppearancePreviewApplyEvent}
-            onAppearanceCancel={handleAppearancePreviewCancelEvent}
-            onFileOpen={handleFileOpen}
-          />
-        </div>
-
-        <div style={bottomChromeStyle}>
-          <StatusBar onToggleProblems={() => togglePanel("problems")} />
-        </div>
-      </div>
-
-      <div style={tuiOverlayStyle} data-testid="tui-overlay">
-        {tuiModeActive && renderPanel("terminal")}
-      </div>
-
-      {!tuiModeActive && !isDispatcherPaused && (
-        <CommandDispatcher
-          isOpen={dispatcher.isOpen}
-          onClose={dispatcher.close}
-          onExecute={async (input) => {
-            const result = await dispatcher.execute(input);
-            if (result) {
-              if (!result.success && result.error) {
-                showNotification("error", `[Dispatcher] ${result.error}`);
-              } else if (result.output) {
-                showNotification("success", `[Dispatcher] ${result.output}`);
-              }
-            }
-            if (result?.shouldClose) {
-              dispatcher.close();
-            }
-          }}
-          onOpenFile={(path, line) => openFileFromPath(path, line)}
-          onTerminalCommand={(command) => {
-            void submitTerminalCommand(command);
-          }}
-          pinnedItems={dispatcher.pinnedItems}
-          recentItems={dispatcher.recentItems}
-          projectPath={activeProjectPath}
+        <LaravelPlugin
+          closeDispatcher={dispatcher.close}
+          onSuccess={handlePluginCommandSuccess}
+          onError={handlePluginCommandError}
         />
-      )}
 
-      <LaravelPlugin
-        closeDispatcher={dispatcher.close}
-        onSuccess={handlePluginCommandSuccess}
-        onError={handlePluginCommandError}
-      />
+        <SettingsModal isOpen={isSettingsOpen} onClose={closeSettings} />
+        <DependencyPolicyModal
+          isOpen={isDependencyPolicyOpen}
+          onClose={closeDependencyPolicy}
+          onNotify={showNotification}
+        />
+        <ExecutionDialog
+          isOpen={executionDialogMode !== null}
+          mode={executionDialogMode}
+          profiles={[
+            ...executionProfiles.runProfiles,
+            ...executionProfiles.debugProfiles,
+          ]}
+          activeFileName={activeEditorTab?.name}
+          onClose={closeExecutionDialog}
+          onExecuteProfile={async (profile) => {
+            const executed = await executeExecutionProfile(profile);
+            if (executed) {
+              closeExecutionDialog();
+            }
+          }}
+          onExecuteCustomCommand={(command, mode) => {
+            void executeCustomCommand(command, mode);
+          }}
+        />
 
-      <SettingsModal isOpen={isSettingsOpen} onClose={closeSettings} />
-      <DependencyPolicyModal
-        isOpen={isDependencyPolicyOpen}
-        onClose={closeDependencyPolicy}
-        onNotify={showNotification}
-      />
-      <ExecutionDialog
-        isOpen={executionDialogMode !== null}
-        mode={executionDialogMode}
-        profiles={[
-          ...executionProfiles.runProfiles,
-          ...executionProfiles.debugProfiles,
-        ]}
-        activeFileName={activeEditorTab?.name}
-        onClose={closeExecutionDialog}
-        onExecuteProfile={async (profile) => {
-          const executed = await executeExecutionProfile(profile);
-          if (executed) {
-            closeExecutionDialog();
-          }
-        }}
-        onExecuteCustomCommand={(command, mode) => {
-          void executeCustomCommand(command, mode);
-        }}
-      />
+        {createEntryDialog ? (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-5 shadow-2xl">
+              <div className="text-lg font-semibold text-[var(--text-primary)]">
+                {createEntryDialog.type === "file" ? "New File" : "New Folder"}
+              </div>
+              <div className="mt-2 text-[12px] text-[var(--text-secondary)]">
+                Create inside {getRelativePath(createEntryDialog.directoryPath)}
+              </div>
 
-      {notification && (
-        <div style={notificationStyle}>
-          <div
-            style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}
-          >
-            <span style={{ flexShrink: 0 }}>
-              {notification.type === "success" ? "✓" : "✕"}
-            </span>
-            <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-              {notification.message}
+              <div className="mt-4">
+                <label className="mb-2 block text-[12px] font-medium text-[var(--text-secondary)]">
+                  Name
+                </label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={createEntryName}
+                  onChange={(event) => setCreateEntryName(event.target.value)}
+                  placeholder={
+                    createEntryDialog.type === "file"
+                      ? "notes.txt"
+                      : "new-folder"
+                  }
+                  className="w-full rounded-[12px] border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 py-2.5 text-[var(--text-primary)] outline-none focus:border-[var(--border-strong)]"
+                />
+                <div className="mt-2 break-all text-[11px] text-[var(--text-muted)]">
+                  {joinProjectEntryPath(
+                    createEntryDialog.directoryPath,
+                    createEntryName.trim() || "...",
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeCreateEntryDialog}
+                  disabled={createEntryBusy}
+                  className="rounded-[12px] border border-[var(--border-subtle)] px-4 py-2 text-[13px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCreateEntrySubmit()}
+                  disabled={!createEntryName.trim() || createEntryBusy}
+                  className="rounded-[12px] bg-white px-4 py-2 text-[13px] font-medium text-black transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {createEntryBusy
+                    ? "Creating..."
+                    : createEntryDialog.type === "file"
+                      ? "Create File"
+                      : "Create Folder"}
+                </button>
+              </div>
             </div>
           </div>
-          <button
-            onClick={() => setNotification(null)}
-            style={closeNotificationStyle}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = "#FFFFFF";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = "rgba(255,255,255,0.7)";
-            }}
-          >
-            ×
-          </button>
-        </div>
-      )}
-    </div>
+        ) : null}
+
+        {renameEntryDialog ? (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-5 shadow-2xl">
+              <div className="text-lg font-semibold text-[var(--text-primary)]">
+                Rename {renameEntryDialog.isDirectory ? "Folder" : "File"}
+              </div>
+              <div className="mt-2 break-all text-[12px] text-[var(--text-secondary)]">
+                {getRelativePath(renameEntryDialog.path)}
+              </div>
+
+              <div className="mt-4">
+                <label className="mb-2 block text-[12px] font-medium text-[var(--text-secondary)]">
+                  New name
+                </label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={renameEntryName}
+                  onChange={(event) => setRenameEntryName(event.target.value)}
+                  className="w-full rounded-[12px] border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 py-2.5 text-[var(--text-primary)] outline-none focus:border-[var(--border-strong)]"
+                />
+              </div>
+
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeRenameEntryDialog}
+                  disabled={renameEntryBusy}
+                  className="rounded-[12px] border border-[var(--border-subtle)] px-4 py-2 text-[13px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleRenameEntrySubmit()}
+                  disabled={!renameEntryName.trim() || renameEntryBusy}
+                  className="rounded-[12px] bg-white px-4 py-2 text-[13px] font-medium text-black transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {renameEntryBusy ? "Renaming..." : "Rename"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {trashEntryDialog ? (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-5 shadow-2xl">
+              <div className="text-lg font-semibold text-[var(--text-primary)]">
+                Move to Trash
+              </div>
+              <div className="mt-3 text-[13px] text-[var(--text-secondary)]">
+                Move{" "}
+                <span className="font-medium text-[var(--text-primary)]">
+                  {trashEntryDialog.displayName ||
+                    getProjectPathBasename(trashEntryDialog.path)}
+                </span>{" "}
+                to Trash?
+              </div>
+              <div className="mt-2 text-[12px] text-[var(--text-muted)]">
+                Unsaved changes in open editors may be lost.
+              </div>
+              <div className="mt-3 break-all text-[11px] text-[var(--text-muted)]">
+                {getRelativePath(trashEntryDialog.path)}
+              </div>
+
+              <div className="mt-5 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeTrashEntryDialog}
+                  disabled={trashEntryBusy}
+                  className="rounded-[12px] border border-[var(--border-subtle)] px-4 py-2 text-[13px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleTrashEntrySubmit()}
+                  disabled={trashEntryBusy}
+                  className="rounded-[12px] bg-red-500 px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {trashEntryBusy ? "Moving..." : "Move to Trash"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {notification && (
+          <div style={notificationStyle}>
+            <div
+              style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}
+            >
+              <span style={{ flexShrink: 0 }}>
+                {notification.type === "success" ? "✓" : "✕"}
+              </span>
+              <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {notification.message}
+              </div>
+            </div>
+            <button
+              onClick={() => setNotification(null)}
+              style={closeNotificationStyle}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "#FFFFFF";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "rgba(255,255,255,0.7)";
+              }}
+            >
+              ×
+            </button>
+          </div>
+        )}
+      </div>
+    </ProjectEntryActionsProvider>
   );
 };

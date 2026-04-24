@@ -2,8 +2,8 @@
 
 ## Purpose
 
-- Этот файл задает короткую исполняемую политику для агентов в репозитории Arlecchino.
-- Держи его как рабочий набор правил, а не как энциклопедию.
+- This file defines a short, executable policy for agents working in this repository.
+- Keep it practical. Prefer rules that change behavior over long background explanations.
 
 ## Priority Order
 
@@ -11,164 +11,144 @@
 2. Direct user instructions.
 3. Default mode: one-shot complete implementation.
 4. Verification before claiming success.
-5. Style and preferences.
+5. Style and local conventions.
 
-Если правила конфликтуют:
-- предпочитай доступные инструменты недоступным;
-- предпочитай узкие проверки тяжелым full-suite прогонам;
-- задай один короткий вопрос только если неоднозначность меняет результат.
+If rules conflict:
 
-## Commands (Start Here)
+- prefer available tools over unavailable tools;
+- prefer narrow checks over heavy full-suite runs;
+- ask one short question only when ambiguity changes the outcome.
 
-### Fast, file-scoped checks (prefer these)
+## Commands
+
+### Prefer narrow, file-scoped commands
+
 ```bash
-# Go (from project root)
+# Go
 go fmt ./path/to/file.go
-go vet ./internal/indexer/brain/...
-go test ./internal/predictive/...
-go test -run TestName ./internal/predictive/
+go test ./path/to/package/...
+go test -run TestName ./path/to/package/...
+go vet ./path/to/package/...
 
-# Frontend (from frontend/)
-npx prettier --check "src/path/to/file.tsx"
-npx prettier --write "src/path/to/file.tsx"
-npx playwright test tests/smoke.spec.ts
+# Frontend
+npx prettier --check "path/to/file.tsx"
+npx prettier --write "path/to/file.tsx"
+npx playwright test path/to/test.spec.ts
 ```
 
-### Full project commands (only when explicitly requested)
-```bash
-# Development (from project root)
-wails dev
-wails build
+### Full project commands (ask first or use only when clearly necessary)
 
-# Go (from project root)
-go test ./internal/...
+```bash
+# Go
+go test ./...
 go vet ./...
 go fmt ./...
 
-# Frontend (from frontend/)
+# Frontend
 npm run dev
 npm run build
-npm run test:smoke
-npx prettier --check "src/**/*.{ts,tsx}"
-npx prettier --write "src/**/*.{ts,tsx}"
+npm test
+npx prettier --check "**/*.{js,ts,tsx,md}"
 ```
 
-Rule: prefer fast, file-scoped commands. Full builds/tests only when explicitly requested or when broad final verification is actually needed.
+Rule: prefer fast, scoped commands. Use broad builds or full suites only when explicitly requested or when broad verification is genuinely needed.
 
 ## Default Mode: One-Shot
 
-- Если задача ясна и локальна, выполняй ее одним цельным implementation pass.
-- Сначала быстро прочитай релевантные файлы и существующий паттерн.
-- Затем сделай минимальное, но полностью законченное end-to-end изменение.
-- Не останавливайся на scaffolding, если оставшаяся работа очевидна и выполнима сейчас.
-- Не оставляй placeholder logic, TODO-only patches или наполовину подключенное поведение.
-- Не сообщай об успехе без релевантной проверки.
+- If the task is clear and local, complete it in one implementation pass.
+- Read the relevant files and existing patterns first.
+- Make the smallest complete change that solves the task end-to-end.
+- Do not stop at scaffolding when the remaining work is obvious and feasible now.
+- Do not leave TODO-only patches, placeholders, or half-wired behavior.
+- Do not report success without relevant verification.
 
 ### One-shot means
 
-- один законченный diff, а не серия полу-правок;
-- functional completeness, а не подготовка заготовок;
-- минимальный change set, а не разрастание scope;
-- проверка до финального ответа.
+- one finished diff, not a chain of partial edits;
+- functional completeness, not setup-only work;
+- minimal scope, not speculative architecture;
+- verification before the final answer.
 
 ## Execution Flow
 
-1. Прочитай релевантные файлы и посмотри текущие изменения в затронутой области.
-2. Проверь, не попадает ли задача в `Ask First`.
-3. Если задача простая и ясная, реализуй ее сразу в one-shot режиме.
-4. Если задача нетривиальная, составь короткий план; используй todo tool, если он доступен, и спрашивай пользователя только если без этого меняется решение.
-5. Запусти самые узкие релевантные проверки.
-6. Коротко отчитайся: что изменено, что проверено, какие риски остались.
-7. Сохраняй долгоживущие решения, багфиксы и полезные паттерны в `mnemonic`.
+1. Read the relevant files and inspect nearby existing patterns.
+2. Check whether the task falls under `Ask First`.
+3. If the task is clear, implement it directly.
+4. If the task is non-trivial, make a short plan and proceed.
+5. Run the narrowest relevant checks.
+6. Report briefly: what changed, what was verified, what risks remain.
 
 ## Ask First
 
-- Add or upgrade dependencies (`go get`, `npm install`).
-- Change database schema or persistence contracts.
-- Modify `wails.json`, `go.mod`, `go.sum`, release config, or CI config.
-- Regenerate Wails bindings.
+- Add, remove, or upgrade dependencies.
+- Change schemas, persistence contracts, or public APIs.
+- Modify build config, release config, CI config, or environment contracts.
+- Regenerate generated artifacts when a regeneration flow exists.
 - Delete or move files.
-- Run full build/test suites.
+- Run full build or full test suites.
 - Perform git write operations (`git add`, `commit`, `push`, `pull`, `merge`, `rebase`).
 
 ## Never Do
 
-- Edit `frontend/wailsjs/**` manually.
-- Touch `node_modules/`, `vendor/`, or `.git/`.
-- Add AI/LLM dependencies.
-- Use `as any`, `@ts-ignore`, or `@ts-expect-error`.
-- Delete failing tests to make the suite pass.
-- Commit secrets (`.env`, credentials, tokens).
-- Invent APIs or guess uncertain external signatures when docs are available.
-- Ignore error handling when validation or propagation is needed.
-- Leave partial implementation when the local task can be finished now.
+- Edit generated artifacts manually if a regeneration path exists.
+- Touch dependency directories, vendor directories, or `.git/`.
+- Add secrets, credentials, API keys, or tokens to the repo.
+- Use `as any`, `@ts-ignore`, or `@ts-expect-error` without unavoidable, documented cause.
+- Delete failing tests just to make the suite pass.
+- Invent APIs or guess external signatures when docs or source are available.
+- Ignore error handling where validation or propagation is needed.
+- Leave partial implementation when the task can be finished now.
 - Claim completion without relevant verification.
-- Use `useEffect` for derived state or local bookkeeping. Use it only to synchronize with external systems.
 
 ## Bug Fix Rule
 
-- Если пользователь сообщает о баге, сначала воспроизведи его focused test-ом, когда это практически возможно.
-- Затем исправь root cause и докажи фикс проходящим тестом.
-- Используй subagents выборочно: для неясной root cause или шумного multi-file investigation, если они доступны.
+- When a user reports a bug, reproduce it with the narrowest practical check when possible.
+- Fix the root cause, not just the symptom.
+- Prove the fix with the closest passing test or focused verification.
 
 ## Tool Preferences
 
-- Prefer `Read`, `Grep`, and `Glob` for file reading and search.
+- Prefer dedicated file and search tools over ad-hoc shell pipelines.
 - Prefer file-scoped and package-scoped commands over repo-wide commands.
-- Use Context7 for unfamiliar external APIs when available.
-- Use Tree-sitter, SQLite, and Playwright only when задача действительно выигрывает от них.
-- Use subagents for self-contained side investigations; не превращай их в ритуал.
-- Avoid `cat`, `head`, `tail`, `find`, and `grep` via bash when dedicated tools exist.
+- Use documentation tools for unfamiliar or fast-moving external APIs.
+- Use browser or UI automation tools for visible regressions when available.
+- Use subagents only for self-contained side investigations, not by default.
 
 ## Verification
 
-- Всегда запускай самые узкие релевантные проверки для затронутых файлов или пакетов.
-- `internal/predictive/**`: run `go test ./internal/predictive/...`.
-- `internal/indexer/**`: run `go test ./internal/indexer/...` or narrower.
-- `frontend/src/**`: from `frontend/`, run `npx prettier --check` for changed files.
-- Visible UI changes: verify with Playwright or screenshot evidence if the app is running and the change affects visible behavior.
-- Unfamiliar external APIs: verify docs before coding when a docs tool is available.
-- Если tools for diagnostics are available, use them; не делай недоступный инструмент обязательным блокером.
-- Перед завершением задачи обязательно дай diff summary: files changed, intent, checks run, remaining risks.
-
-## Critical Files
-
-- `app.go`
-- `completion.go`
-- `internal/indexer/core/store.go`
-- `internal/indexer/brain/prediction.go`
-- `frontend/src/components/CodeEditor.tsx`
-- `frontend/src/hooks/useSmartComplete.ts`
-
-If you touch these files:
-- explain why in the final report;
-- run narrow relevant checks;
-- record a significant decision, bug fix, or pattern in `mnemonic`.
+- Always run the narrowest relevant checks for the touched files or packages.
+- For frontend changes, run formatting or type checks on changed files when practical.
+- For visible UI changes, verify with screenshots, automation, or a direct smoke check when feasible.
+- For backend or protocol changes, verify the closest affected package or user-facing path.
+- In the final response include:
+  - files changed;
+  - what was verified;
+  - any remaining risks or unverified areas.
 
 ## Communication Style
 
-- Язык: русский.
-- По умолчанию отвечай кратко, прямо и по делу.
-- Если пользователь просит объяснение или изменение рискованное, объясняй подробнее и с причинами.
-- Без пустых фраз и лишнего ритуала.
-- Сам код должен быть самодокументируемым; комментарии оставляй редкими и полезными.
+- Respond in the user's language unless they ask otherwise.
+- Be direct, concise, and factual by default.
+- Explain more only when the task is risky, subtle, or the user asks for detail.
+- Avoid filler and ceremony.
+- Prefer self-documenting code; add comments only when they genuinely reduce ambiguity.
 
 ## Code Style Defaults
 
 - Keep diffs minimal and localized to the task.
-- Prefer existing adapters, plugins, and project patterns before adding new abstractions.
+- Prefer existing repository patterns before introducing new abstractions.
 - Write deterministic code and avoid speculative architecture.
-- Think about edge cases, performance, and security, but не раздувай diff без необходимости.
-- TypeScript must stay strict; avoid `any` unless there is a documented, unavoidable reason.
-- For hot paths and proven bottlenecks, prefer fewer allocations, explicit slice capacities, and straightforward data flow.
+- Think about edge cases, performance, and security, but do not expand scope without need.
+- Preserve strict typing where the project uses it.
 
 ## UI Defaults
 
-- Prefer fast, clear interactions, visible loading states, larger hit targets, minimal tooltips, and honest cancel paths.
+- Prefer clear interactions, visible loading states, large enough hit targets, and honest cancel paths.
 - Preserve the existing product style unless the user explicitly asks for redesign.
 
-## Project Notes
+## Permissions And Integrations
 
-- Arlecchino is a Wails desktop IDE: Go backend + React frontend + SQLite + Tree-sitter.
-- Predictive and indexing flows are sensitive; prefer minimal changes in `completion.go`, `internal/indexer/**`, and `internal/predictive/**`.
-- Generated frontend bindings live in `frontend/wailsjs/**`.
+- Prefer official OAuth-backed integrations over copied bearer tokens when supported.
+- Treat external services and MCP servers as privileged integrations.
+- Do not lower sandbox or approval discipline just to make something work.
+- Keep secrets out of repo files, logs, screenshots, and final reports.

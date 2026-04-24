@@ -45,7 +45,7 @@ interface CodePanelSurfaceProps {
 
 const autoSaveDelayMs = 500;
 const diagnosticsSyncDelayMs = 150;
-const EMPTY_GIT_MARKERS: readonly GitLineMarker[] = Object.freeze([]);
+const EMPTY_GIT_MARKERS: GitLineMarker[] = [];
 
 const makeTabID = (path: string): string =>
   `tab-${path.replace(/[^a-zA-Z0-9]/g, "-")}`;

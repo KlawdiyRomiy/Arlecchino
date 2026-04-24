@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import type { Theme } from "../types/theme";
+import { getLogicalViewportSize } from "../utils/logicalViewport";
+import { clampUiScale } from "../utils/uiScale";
 
 export type PreviewSurfaceType =
   | "file"
@@ -125,8 +127,6 @@ const PREVIEW_MAX_CHECKPOINTS = 24;
 const MIN_WINDOW_SIZE = 220;
 const MAX_WINDOW_WIDTH = 1400;
 const MAX_WINDOW_HEIGHT = 1200;
-const MIN_UI_SCALE = 0.7;
-const MAX_UI_SCALE = 2;
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(Math.max(value, min), max);
@@ -143,11 +143,9 @@ const sanitizeSize = (
   };
 };
 
-const getViewportWidth = (): number =>
-  typeof window === "undefined" ? 1600 : window.innerWidth;
+const getViewportWidth = (): number => getLogicalViewportSize().width;
 
-const getViewportHeight = (): number =>
-  typeof window === "undefined" ? 900 : window.innerHeight;
+const getViewportHeight = (): number => getLogicalViewportSize().height;
 
 const createWindowId = (): string => {
   const random = Math.random().toString(36).slice(2, 8);
@@ -484,7 +482,7 @@ export const usePreviewWindowStore = create<PreviewWindowStoreState>()(
         }
 
         const nextCheckpointId = checkpointId ?? `appearance-${Date.now()}`;
-        const clampedUiScale = clamp(baseUiScale, MIN_UI_SCALE, MAX_UI_SCALE);
+        const clampedUiScale = clampUiScale(baseUiScale);
         const nextAppearancePreview: AppearancePreviewState = {
           checkpointId: nextCheckpointId,
           baseTheme,
@@ -507,7 +505,7 @@ export const usePreviewWindowStore = create<PreviewWindowStoreState>()(
           theme: patch.theme ?? current.theme,
           uiScale:
             typeof patch.uiScale === "number"
-              ? clamp(patch.uiScale, MIN_UI_SCALE, MAX_UI_SCALE)
+              ? clampUiScale(patch.uiScale)
               : current.uiScale,
         };
 

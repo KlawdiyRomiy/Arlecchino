@@ -50,10 +50,10 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button
-            className="shell-control h-11 w-11 px-0 text-[var(--text-secondary)]"
+            className="shell-control h-12 w-12 px-0 text-[var(--text-secondary)]"
             title="Add project"
           >
-            <Plus size={18} strokeWidth={2} />
+            <Plus size={23} strokeWidth={2} />
           </button>
         </DropdownMenu.Trigger>
 

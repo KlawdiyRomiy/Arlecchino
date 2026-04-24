@@ -53,5 +53,3 @@ require (
 	gorm.io/driver/sqlite v1.5.0
 	gorm.io/gorm v1.25.4
 )
-
-// replace github.com/wailsapp/wails/v2 v2.12.0 => /Users/a1/go/pkg/mod

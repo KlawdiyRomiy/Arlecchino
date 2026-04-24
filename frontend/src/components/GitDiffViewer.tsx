@@ -8,7 +8,7 @@ import React, {
 import { Check, ChevronLeft, ChevronRight, Copy, X } from "lucide-react";
 
 import { useTheme } from "../hooks/useTheme";
-import { radius, transitions } from "../styles/colors";
+import { radius } from "../styles/colors";
 
 interface DiffLine {
   type: "add" | "remove" | "context" | "header" | "hunk";
@@ -257,12 +257,12 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
 
   const theme = useMemo(
     () => ({
-      bg: isDark ? "#0a0a0a" : "#ffffff",
-      bgSecondary: isDark ? "#111111" : "#f9fafb",
-      bgTertiary: isDark ? "#1a1a1a" : "#f3f4f6",
-      border: isDark ? "#2a2a2a" : "#e5e7eb",
+      bg: isDark ? "#0c0c0d" : "#ffffff",
+      bgSecondary: isDark ? "#151517" : "#f8fafc",
+      bgTertiary: isDark ? "#1c1d20" : "#f1f5f9",
+      border: isDark ? "#33353a" : "#dbe4ee",
       text: isDark ? "#ffffff" : "#111827",
-      textMuted: isDark ? "#888888" : "#6b7280",
+      textMuted: isDark ? "#a5a8b1" : "#667085",
     }),
     [isDark],
   );
@@ -338,11 +338,12 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
 
   return (
     <div
+      data-testid="git-diff-viewer"
       style={viewerVars}
       className="flex h-full min-h-0 flex-col bg-[var(--git-diff-bg)] text-[var(--git-diff-text)]"
     >
       <div
-        className="flex items-center gap-3 border-b px-3 py-2"
+        className="flex items-center gap-3 border-b px-4 py-3"
         style={{
           borderColor: theme.border,
           background: theme.bgSecondary,
@@ -354,7 +355,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
               type="button"
               onClick={onPrevFile}
               disabled={!hasPrev}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)] disabled:cursor-not-allowed disabled:opacity-35"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[14px] border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)] disabled:cursor-not-allowed disabled:opacity-35"
               style={{
                 borderColor: theme.border,
                 background: theme.bgTertiary,
@@ -367,7 +368,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
               type="button"
               onClick={onNextFile}
               disabled={!hasNext}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)] disabled:cursor-not-allowed disabled:opacity-35"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[14px] border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)] disabled:cursor-not-allowed disabled:opacity-35"
               style={{
                 borderColor: theme.border,
                 background: theme.bgTertiary,
@@ -379,8 +380,8 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
           </div>
 
           <div className="min-w-0">
-            <div className="truncate text-[12px] font-medium">{fileName}</div>
-            <div className="mt-0.5 flex items-center gap-3 text-[10px] uppercase tracking-[0.14em] text-[var(--git-diff-muted)]">
+            <div className="truncate text-[13px] font-medium">{fileName}</div>
+            <div className="mt-1 flex items-center gap-3 text-[11px] text-[var(--git-diff-muted)]">
               <span>{viewMode}</span>
               <span className="text-[#22c55e]">+{stats.additions}</span>
               <span className="text-[#ef4444]">-{stats.deletions}</span>
@@ -389,7 +390,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
         </div>
 
         <div
-          className="inline-flex rounded-md border p-1"
+          className="inline-flex rounded-[16px] border p-1"
           style={{ borderColor: theme.border, background: theme.bgTertiary }}
         >
           {(["unified", "split"] as const).map((mode) => (
@@ -397,7 +398,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
               key={mode}
               type="button"
               onClick={() => setViewMode(mode)}
-              className="rounded px-2.5 py-1 text-[11px] capitalize transition-colors"
+              className="rounded-[12px] px-3 py-1.5 text-[11px] capitalize transition-colors"
               style={{
                 background:
                   viewMode === mode ? theme.bgSecondary : "transparent",
@@ -412,7 +413,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
         <button
           type="button"
           onClick={copyDiff}
-          className="inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-[11px] text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)]"
+          className="inline-flex h-8 items-center gap-1 rounded-[14px] border px-3 text-[11px] text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)]"
           style={{ borderColor: theme.border, background: theme.bgTertiary }}
           title="Copy diff"
         >
@@ -427,7 +428,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
         <button
           type="button"
           onClick={onClose}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)]"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-[14px] border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)]"
           style={{ borderColor: theme.border, background: theme.bgTertiary }}
           title="Close diff"
         >
@@ -441,11 +442,11 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
             No changes in this diff.
           </div>
         ) : viewMode === "unified" ? (
-          <div className="min-w-max px-2 py-2">
+          <div className="min-w-max px-3 py-3">
             {hunks.map((hunk) => (
               <div
                 key={hunk.header}
-                className="overflow-hidden rounded-lg border"
+                className="overflow-hidden rounded-[20px] border"
                 style={{
                   borderColor: theme.border,
                   background: theme.bgSecondary,
@@ -505,9 +506,9 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
             ))}
           </div>
         ) : (
-          <div className="min-w-max px-2 py-2">
+          <div className="min-w-max px-3 py-3">
             <div
-              className="overflow-hidden rounded-lg border"
+              className="overflow-hidden rounded-[20px] border"
               style={{
                 borderColor: theme.border,
                 background: theme.bgSecondary,

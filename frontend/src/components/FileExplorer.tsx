@@ -2,14 +2,25 @@ import React, { useState, useEffect, useRef } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ChevronDown,
+  Copy,
+  Edit3,
+  ExternalLink,
+  File,
   FilePlus,
   Folder,
   FolderOpen,
   FolderPlus,
+  PanelRightOpen,
   Plus,
+  RefreshCw,
+  Trash2,
 } from "lucide-react";
 import * as App from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
+import {
+  useProjectEntryActions,
+  type ProjectEntryActionTarget,
+} from "../contexts/ProjectEntryActionsContext";
 import { colors, getThemeColors } from "../styles/colors";
 import { useTheme } from "../hooks/useTheme";
 import { useFileRelations } from "../hooks/useFileRelations";
@@ -17,7 +28,10 @@ import { QuickRelationsMenu } from "./QuickRelationsMenu";
 import { DependencyTree } from "./DependencyTree";
 import { AnimatePresence, motion } from "framer-motion";
 import { useExplorerStore } from "../stores/explorerStore";
-import { FileContextMenu } from "./ui/FileContextMenu";
+import {
+  ContextActionMenu,
+  type ContextActionMenuItem,
+} from "./ui/ContextActionMenu";
 import { buildFileNodes } from "../utils/fileTreeHelpers";
 import { shortcuts } from "../utils/keyboard";
 import {
@@ -25,6 +39,12 @@ import {
   blockProjectSwitch,
   unblockProjectSwitch,
 } from "../utils/priorityUI";
+import {
+  getProjectPathBasename,
+  getProjectPathDirname,
+  isSameOrChildPath,
+  normalizeProjectPath,
+} from "../utils/projectPaths";
 
 interface FileEntry {
   name: string;
@@ -52,15 +72,16 @@ interface CreatedEntryEvent {
   isDirectory?: boolean;
 }
 
-type AppBindingWindow = Window & {
-  go?: {
-    main?: {
-      App?: {
-        CreateDirectory?: (dirPath: string) => Promise<void>;
-      };
-    };
-  };
-};
+interface RenamedEntryEvent {
+  oldPath?: string;
+  newPath?: string;
+  isDirectory?: boolean;
+}
+
+interface DeletedEntryEvent {
+  path?: string;
+  isDirectory?: boolean;
+}
 
 export interface FileExplorerProps {
   onFileOpen?: (
@@ -71,7 +92,6 @@ export interface FileExplorerProps {
   ) => void;
   onFileOpenInPanel?: (
     path: string,
-    content: string,
     name: string,
     line?: number,
   ) => void;
@@ -89,18 +109,18 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   onPerspectiveOpen,
   onPerspectiveClose,
 }) => {
-  const createDirectory = (dirPath: string) => {
-    const binding = (window as AppBindingWindow).go?.main?.App?.CreateDirectory;
-    if (!binding) {
-      return Promise.reject(
-        new Error("CreateDirectory binding is not available"),
-      );
-    }
-    return binding(dirPath);
-  };
-
   const { isDark } = useTheme();
   const theme = getThemeColors(isDark);
+  const {
+    projectPath: contextProjectPath,
+    copyAbsolutePath,
+    copyRelativePath,
+    copyProjectPath,
+    revealEntry,
+    requestCreateEntry,
+    requestRenameEntry,
+    requestTrashEntry,
+  } = useProjectEntryActions();
   const {
     expandedPaths,
     toggleExpanded,
@@ -124,11 +144,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   }>({ isOpen: false, x: 0, y: 0 });
   const [treeOpen, setTreeOpen] = useState(false);
   const [highlightedPath, setHighlightedPath] = useState<string | null>(null);
-  const [createEntryType, setCreateEntryType] = useState<
-    "file" | "folder" | null
-  >(null);
-  const [createEntryName, setCreateEntryName] = useState("");
-  const [creatingEntry, setCreatingEntry] = useState(false);
   const explorerRef = useRef<HTMLDivElement>(null);
   const filesRef = useRef<FileNode[]>([]);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -167,40 +182,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   };
 
   const handleFileOpenInPanel = async (path: string, name: string) => {
-    const content = await App.ReadFile(path);
-    onFileOpenInPanelRef.current?.(path, content, name);
-  };
-
-  const closeCreateEntryDialog = () => {
-    if (creatingEntry) {
-      return;
-    }
-    setCreateEntryType(null);
-    setCreateEntryName("");
-  };
-
-  const handleCreateEntry = async () => {
-    const trimmedName = createEntryName.trim();
-    if (!createEntryType || !trimmedName || !projectPathRef.current) {
-      return;
-    }
-
-    setCreatingEntry(true);
-    try {
-      const targetPath = `${projectPathRef.current}/${trimmedName}`;
-      if (createEntryType === "file") {
-        await App.WriteFile(targetPath, "");
-      } else {
-        await createDirectory(targetPath);
-      }
-      setCreateEntryType(null);
-      setCreateEntryName("");
-    } catch (error) {
-      console.error(`Error creating ${createEntryType}:`, error);
-      alert(`Failed to create ${createEntryType}: ${error}`);
-    } finally {
-      setCreatingEntry(false);
-    }
+    onFileOpenInPanelRef.current?.(path, name);
   };
 
   const renderPerspectiveOverlays = () => (
@@ -241,34 +223,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       }
     };
   }, []);
-
-  useEffect(() => {
-    if (!createEntryType) {
-      return;
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (shortcuts.escape(event)) {
-        event.preventDefault();
-        closeCreateEntryDialog();
-        return;
-      }
-
-      if (shortcuts.enter(event) && !creatingEntry) {
-        const target = event.target;
-        if (
-          target instanceof HTMLInputElement ||
-          target instanceof HTMLTextAreaElement
-        ) {
-          event.preventDefault();
-          void handleCreateEntry();
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [createEntryType, creatingEntry, createEntryName]);
 
   const expandToPath = async (targetPath: string) => {
     if (!targetPath || !projectPath) return;
@@ -640,6 +594,70 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       unsubscribeProjectEntryCreated();
     };
   }, []);
+
+  useEffect(() => {
+    const reloadExplorerTree = async (focusPath?: string) => {
+      const currentProjectPath = normalizeProjectPath(projectPathRef.current);
+      if (!currentProjectPath) {
+        return;
+      }
+
+      setBreadcrumbs([]);
+      await loadDirectory(currentProjectPath);
+      if (focusPath) {
+        await revealPath(focusPath);
+      }
+    };
+
+    const unsubscribeRenamed = EventsOn(
+      "project:entry:renamed",
+      (event: RenamedEntryEvent) => {
+        const oldPath = normalizeProjectPath(event?.oldPath ?? "");
+        const newPath = normalizeProjectPath(event?.newPath ?? "");
+        const currentProjectPath = normalizeProjectPath(projectPathRef.current);
+
+        if (
+          !oldPath ||
+          !newPath ||
+          !currentProjectPath ||
+          (!isSameOrChildPath(oldPath, currentProjectPath) &&
+            !isSameOrChildPath(newPath, currentProjectPath))
+        ) {
+          return;
+        }
+
+        void reloadExplorerTree(newPath);
+      },
+    );
+
+    const unsubscribeDeleted = EventsOn(
+      "project:entry:deleted",
+      (event: DeletedEntryEvent) => {
+        const deletedPath = normalizeProjectPath(event?.path ?? "");
+        const currentProjectPath = normalizeProjectPath(projectPathRef.current);
+
+        if (
+          !deletedPath ||
+          !currentProjectPath ||
+          !isSameOrChildPath(deletedPath, currentProjectPath)
+        ) {
+          return;
+        }
+
+        if (highlightedPath && isSameOrChildPath(highlightedPath, deletedPath)) {
+          setHighlightedPath(null);
+          setStoreHighlightedPath(null);
+        }
+
+        void reloadExplorerTree();
+      },
+    );
+
+    return () => {
+      unsubscribeRenamed();
+      unsubscribeDeleted();
+    };
+  }, [highlightedPath, setStoreHighlightedPath]);
 
   // ========================================
   // INLINE EXTENSION STYLE - Unique Arlecchino file icons
@@ -1092,6 +1110,126 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     }
   };
 
+  const buildNodeContextActions = (
+    node: FileNode,
+  ): ContextActionMenuItem[] => {
+    const target: ProjectEntryActionTarget = {
+      path: node.path,
+      isDirectory: node.isDirectory,
+    };
+
+    return [
+      {
+        label: node.isDirectory ? "Open / Expand" : "Open",
+        icon: node.isDirectory ? <FolderOpen size={14} /> : <File size={14} />,
+        onSelect: () => {
+          void handleNodeClick(node);
+        },
+      },
+      !node.isDirectory
+        ? {
+            label: "Open in Panel",
+            icon: <PanelRightOpen size={14} />,
+            onSelect: () => {
+              void handleFileOpenInPanel(node.path, node.name);
+            },
+          }
+        : { hidden: true },
+      node.isDirectory
+        ? {
+            label: "New File",
+            icon: <FilePlus size={14} />,
+            onSelect: () => requestCreateEntry("file", node.path),
+          }
+        : { hidden: true },
+      node.isDirectory
+        ? {
+            label: "New Folder",
+            icon: <FolderPlus size={14} />,
+            onSelect: () => requestCreateEntry("folder", node.path),
+          }
+        : { hidden: true },
+      {
+        label: "Rename",
+        icon: <Edit3 size={14} />,
+        onSelect: () => requestRenameEntry(target),
+      },
+      { separator: true },
+      {
+        label: "Copy Relative Path",
+        icon: <Copy size={14} />,
+        onSelect: () => {
+          void copyRelativePath(node.path);
+        },
+      },
+      {
+        label: "Copy Absolute Path",
+        icon: <Copy size={14} />,
+        onSelect: () => {
+          void copyAbsolutePath(node.path);
+        },
+      },
+      {
+        label: "Reveal in File Manager",
+        icon: <ExternalLink size={14} />,
+        onSelect: () => {
+          void revealEntry(node.path);
+        },
+      },
+      { separator: true },
+      {
+        label: "Move to Trash",
+        icon: <Trash2 size={14} />,
+        danger: true,
+        onSelect: () =>
+          requestTrashEntry({
+            ...target,
+            displayName: node.name,
+          }),
+      },
+    ];
+  };
+
+  const rootContextActions: ContextActionMenuItem[] = [
+    {
+      label: "New File",
+      icon: <FilePlus size={14} />,
+      onSelect: () =>
+        requestCreateEntry("file", projectPathRef.current || contextProjectPath),
+    },
+    {
+      label: "New Folder",
+      icon: <FolderPlus size={14} />,
+      onSelect: () =>
+        requestCreateEntry(
+          "folder",
+          projectPathRef.current || contextProjectPath,
+        ),
+    },
+    { separator: true },
+    {
+      label: "Copy Project Path",
+      icon: <Copy size={14} />,
+      onSelect: () => {
+        void copyProjectPath();
+      },
+    },
+    {
+      label: "Reveal Project Root",
+      icon: <ExternalLink size={14} />,
+      onSelect: () => {
+        void revealEntry(projectPathRef.current || contextProjectPath);
+      },
+    },
+    {
+      label: "Refresh",
+      icon: <RefreshCw size={14} />,
+      onSelect: () => {
+        void loadDirectory(projectPathRef.current || contextProjectPath);
+      },
+    },
+  ];
+
   const renderFileNode = (
     node: FileNode,
     level: number = 0,
@@ -1208,27 +1346,11 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       fontWeight: node.isDirectory ? 500 : 400,
     };
 
-    const handleCopyPath = () => {
-      navigator.clipboard.writeText(node.path);
-    };
-
     const childGuides = [...parentGuides, !isLast];
 
     return (
       <div key={node.path}>
-        <FileContextMenu
-          isDirectory={node.isDirectory}
-          filePath={node.path}
-          onOpen={() => handleNodeClick(node)}
-          onOpenInPanel={
-            node.isDirectory
-              ? undefined
-              : () => {
-                  void handleFileOpenInPanel(node.path, node.name);
-                }
-          }
-          onCopyPath={handleCopyPath}
-        >
+        <ContextActionMenu items={buildNodeContextActions(node)}>
           <div
             style={nodeStyle}
             className={`file-explorer-node${
@@ -1294,7 +1416,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
               </span>
             )}
           </div>
-        </FileContextMenu>
+        </ContextActionMenu>
 
         <AnimatePresence initial={false}>
           {node.isDirectory && isNodeExpanded && node.children && (
@@ -1345,31 +1467,33 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     const projectNameStyle: React.CSSProperties = {
       fontSize: "11px",
       fontWeight: 600,
-      color: "var(--text-muted)",
+      color: "var(--text-secondary)",
       textTransform: "uppercase",
       letterSpacing: "0.5px",
     };
 
     return (
-      <div
-        ref={explorerRef}
-        style={{
-          height: "100%",
-          overflow: "auto",
-        }}
-      >
-        <div style={headerStyle}>
-          <div style={projectNameStyle}>{projectName}</div>
-        </div>
+      <ContextActionMenu items={rootContextActions}>
+        <div
+          ref={explorerRef}
+          style={{
+            height: "100%",
+            overflow: "auto",
+          }}
+        >
+          <div style={headerStyle}>
+            <div style={projectNameStyle}>{projectName}</div>
+          </div>
 
-        <div style={{ padding: "4px 0" }}>
-          {files.map((node, index) =>
-            renderFileNode(node, 0, index === files.length - 1, []),
-          )}
-        </div>
+          <div style={{ padding: "4px 0" }}>
+            {files.map((node, index) =>
+              renderFileNode(node, 0, index === files.length - 1, []),
+            )}
+          </div>
 
-        {renderPerspectiveOverlays()}
-      </div>
+          {renderPerspectiveOverlays()}
+        </div>
+      </ContextActionMenu>
     );
   };
 
@@ -1417,150 +1541,103 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   const projectNameStyle: React.CSSProperties = {
     fontSize: "11px",
     fontWeight: 500,
-    color: theme.textMuted,
+    color: theme.textSecondary,
     textTransform: "uppercase",
     letterSpacing: "0.5px",
   };
 
   return (
     <>
-      <div ref={explorerRef} style={{ height: "100%", overflow: "auto" }}>
-        <div
-          style={{
-            ...headerStyle,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "12px",
-          }}
-        >
-          <div style={projectNameStyle}>{projectName}</div>
-
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button
-                type="button"
-                title="Create"
-                style={{
-                  width: "24px",
-                  height: "24px",
-                  borderRadius: "6px",
-                  border: "none",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: theme.textMuted,
-                  background: "transparent",
-                  cursor: "pointer",
-                  padding: 0,
-                }}
-              >
-                <Plus size={14} />
-              </button>
-            </DropdownMenu.Trigger>
-
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                align="end"
-                sideOffset={8}
-                className="z-[100] min-w-[220px] overflow-hidden rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] shadow-2xl animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
-              >
-                <DropdownMenu.Item
-                  onSelect={() => setCreateEntryType("file")}
-                  className="flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-                >
-                  <FilePlus size={16} />
-                  Create file
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  onSelect={() => setCreateEntryType("folder")}
-                  className="flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-                >
-                  <FolderPlus size={16} />
-                  Create folder
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-
+      <ContextActionMenu items={rootContextActions}>
+        <div ref={explorerRef} style={{ height: "100%", overflow: "auto" }}>
           <div
             style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: -3,
-              borderBottom: `1px solid ${theme.border}`,
+              ...headerStyle,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "12px",
             }}
-          />
-        </div>
-
-        <div style={{ padding: "4px 0" }}>
-          {files.map((node, index) =>
-            renderFileNode(node, 0, index === files.length - 1, []),
-          )}
-        </div>
-
-        {renderPerspectiveOverlays()}
-      </div>
-
-      {createEntryType && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.97 }}
-            className="w-full max-w-sm rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-5 shadow-2xl"
           >
-            <h2 className="mb-4 text-lg font-semibold text-[var(--text-primary)]">
-              {createEntryType === "file" ? "Create file" : "Create folder"}
-            </h2>
+            <div style={projectNameStyle}>{projectName}</div>
 
-            <div className="space-y-3">
-              <div>
-                <label className="mb-2 block text-[13px] font-medium text-[var(--text-secondary)]">
-                  Name
-                </label>
-                <input
-                  type="text"
-                  value={createEntryName}
-                  onChange={(event) => setCreateEntryName(event.target.value)}
-                  placeholder={
-                    createEntryType === "file" ? "notes.txt" : "new-folder"
-                  }
-                  className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 py-2 text-[var(--text-primary)] outline-none focus:border-transparent focus:ring-2 focus:ring-white/20"
-                />
-              </div>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  type="button"
+                  title="Create"
+                  style={{
+                    width: "24px",
+                    height: "24px",
+                    borderRadius: "6px",
+                    border: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: theme.textMuted,
+                    background: "transparent",
+                    cursor: "pointer",
+                    padding: 0,
+                  }}
+                >
+                  <Plus size={14} />
+                </button>
+              </DropdownMenu.Trigger>
 
-              <div className="text-[11px] text-[var(--text-muted)]">
-                {projectPathRef.current}/{createEntryName.trim() || "..."}
-              </div>
-            </div>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  align="end"
+                  sideOffset={8}
+                  className="z-[100] min-w-[220px] overflow-hidden rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] shadow-2xl animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
+                >
+                  <DropdownMenu.Item
+                    onSelect={() =>
+                      requestCreateEntry(
+                        "file",
+                        projectPathRef.current || contextProjectPath,
+                      )
+                    }
+                    className="flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                  >
+                    <FilePlus size={16} />
+                    New File
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    onSelect={() =>
+                      requestCreateEntry(
+                        "folder",
+                        projectPathRef.current || contextProjectPath,
+                      )
+                    }
+                    className="flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                  >
+                    <FolderPlus size={16} />
+                    New Folder
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
 
-            <div className="mt-5 flex gap-3">
-              <button
-                type="button"
-                onClick={handleCreateEntry}
-                disabled={!createEntryName.trim() || creatingEntry}
-                className="flex-1 rounded-lg bg-white px-4 py-2 font-medium text-black transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {creatingEntry
-                  ? "Creating..."
-                  : createEntryType === "file"
-                    ? "Create File"
-                    : "Create Folder"}
-              </button>
-              <button
-                type="button"
-                onClick={closeCreateEntryDialog}
-                disabled={creatingEntry}
-                className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-4 py-2 text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </motion.div>
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: -3,
+                borderBottom: `1px solid ${theme.border}`,
+              }}
+            />
+          </div>
+
+          <div style={{ padding: "4px 0" }}>
+            {files.map((node, index) =>
+              renderFileNode(node, 0, index === files.length - 1, []),
+            )}
+          </div>
+
+          {renderPerspectiveOverlays()}
         </div>
-      )}
+      </ContextActionMenu>
     </>
   );
 };

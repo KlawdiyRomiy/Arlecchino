@@ -22,6 +22,7 @@ import {
   parseRemoteNameList,
   parseUnifiedDiffLineMarkers,
 } from "../utils/git";
+import { isSameOrChildPath } from "../utils/projectPaths";
 
 const fileRefreshDebounceMs = 320;
 const fallbackPollIntervalMs = 15000;
@@ -161,25 +162,70 @@ const scheduleRefresh = (get: () => GitStoreState): void => {
 const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
   clearGitSync();
 
-  const shouldRefreshForPath = (value: unknown): boolean => {
-    if (typeof value !== "string") {
+  const shouldRefreshForPath = (value: string): boolean => {
+    const activeProject = get().projectPath;
+    return activeProject === projectPath && isSameOrChildPath(value, projectPath);
+  };
+
+  const shouldRefreshForEvent = (value: unknown): boolean => {
+    if (typeof value === "string") {
+      return shouldRefreshForPath(value);
+    }
+
+    if (!value || typeof value !== "object") {
       return false;
     }
-    const activeProject = get().projectPath;
-    return activeProject === projectPath && value.startsWith(projectPath);
+
+    const payload = value as {
+      path?: unknown;
+      oldPath?: unknown;
+      newPath?: unknown;
+    };
+
+    return [payload.path, payload.oldPath, payload.newPath].some(
+      (candidate) =>
+        typeof candidate === "string" && shouldRefreshForPath(candidate),
+    );
   };
 
   const unsubscribeFileChanged = EventsOn("file:changed", (value) => {
-    if (shouldRefreshForPath(value)) {
+    if (typeof value === "string" && shouldRefreshForPath(value)) {
       scheduleRefresh(get);
     }
   });
 
   const unsubscribeFileCreated = EventsOn("file:created", (value) => {
-    if (shouldRefreshForPath(value)) {
+    if (typeof value === "string" && shouldRefreshForPath(value)) {
       scheduleRefresh(get);
     }
   });
+
+  const unsubscribeProjectEntryCreated = EventsOn(
+    "project:entry:created",
+    (value) => {
+      if (shouldRefreshForEvent(value)) {
+        scheduleRefresh(get);
+      }
+    },
+  );
+
+  const unsubscribeProjectEntryRenamed = EventsOn(
+    "project:entry:renamed",
+    (value) => {
+      if (shouldRefreshForEvent(value)) {
+        scheduleRefresh(get);
+      }
+    },
+  );
+
+  const unsubscribeProjectEntryDeleted = EventsOn(
+    "project:entry:deleted",
+    (value) => {
+      if (shouldRefreshForEvent(value)) {
+        scheduleRefresh(get);
+      }
+    },
+  );
 
   const unsubscribeGitStatus = EventsOn("ide:git:status", () => {
     scheduleRefresh(get);
@@ -194,6 +240,9 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
   stopGitSync = () => {
     unsubscribeFileChanged();
     unsubscribeFileCreated();
+    unsubscribeProjectEntryCreated();
+    unsubscribeProjectEntryRenamed();
+    unsubscribeProjectEntryDeleted();
     unsubscribeGitStatus();
   };
 };

@@ -12,7 +12,7 @@ export const WindowControls: React.FC = () => {
 
   return (
     <div
-      className="ml-1 flex items-center"
+      className="ml-1 flex h-full -translate-y-[2px] items-center"
       style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}
     >
       <div className="shell-cluster px-2.5 py-1.5">

@@ -2,6 +2,8 @@ package main
 
 import "github.com/wailsapp/wails/v2/pkg/runtime"
 
+var runtimeEventsEmit = runtime.EventsEmit
+
 func (a *App) safeRuntimeCall(call func()) {
 	if a == nil || a.ctx == nil {
 		return
@@ -26,6 +28,6 @@ func (a *App) logWarning(message string) {
 
 func (a *App) emitEvent(name string, data ...any) {
 	a.safeRuntimeCall(func() {
-		runtime.EventsEmit(a.ctx, name, data...)
+		runtimeEventsEmit(a.ctx, name, data...)
 	})
 }

@@ -6,7 +6,10 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsRight,
+  Copy,
   Eye,
+  ExternalLink,
+  File,
   FolderGit2,
   GitBranch,
   GitCommit,
@@ -22,20 +25,31 @@ import {
 import { useShallow } from "zustand/react/shallow";
 
 import * as AppFunctions from "../../wailsjs/go/main/App";
+import { useProjectEntryActions } from "../contexts/ProjectEntryActionsContext";
 import { useTheme } from "../hooks/useTheme";
-import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { GitStashEntry, useGitStore } from "../stores/gitStore";
-import { getThemeColors, radius, transitions } from "../styles/colors";
+import { getThemeColors, transitions } from "../styles/colors";
 import type { GitFileEntry, GitFileStatus } from "../utils/git";
+import {
+  getProjectPathDirname,
+  normalizeProjectPath,
+} from "../utils/projectPaths";
 import type { PanelPosition } from "./ui/FloatingPanel";
 import { GitDiffViewer } from "./GitDiffViewer";
 import { GitHistory } from "./GitHistory";
+import {
+  ContextActionMenu,
+  type ContextActionMenuItem,
+} from "./ui/ContextActionMenu";
+
+type GitPresentationMode = "compact" | "expanded";
 
 interface GitPanelProps {
   projectPath: string;
   onFileOpen?: (path: string) => void;
   panelPosition?: PanelPosition;
   onDiffFocusChange?: (active: boolean) => void;
+  presentationMode?: GitPresentationMode;
 }
 
 type DetailTab = "commit" | "history" | "pull_requests" | "stash" | "diff";
@@ -49,17 +63,20 @@ interface DiffState {
 interface FileRowProps {
   file: GitFileEntry;
   selected: boolean;
+  presentationMode: GitPresentationMode;
   onOpen?: (path: string) => void;
   onViewDiff: (file: GitFileEntry) => void;
   onStage: (path: string) => void;
   onUnstage: (path: string) => void;
   onDiscard: (path: string) => void;
+  contextMenuItems?: ContextActionMenuItem[];
 }
 
 interface FileSectionProps {
   title: string;
   files: GitFileEntry[];
   open: boolean;
+  presentationMode: GitPresentationMode;
   onToggle: () => void;
   bulkActionLabel?: string;
   onBulkAction?: () => void;
@@ -70,6 +87,7 @@ interface FileSectionProps {
   onStage: (path: string) => void;
   onUnstage: (path: string) => void;
   onDiscard: (path: string) => void;
+  getContextMenuItems?: (file: GitFileEntry) => ContextActionMenuItem[];
 }
 
 interface StashSectionProps {
@@ -103,11 +121,37 @@ const statusLabels: Record<GitFileStatus, string> = {
 };
 
 const gitSectionClass =
-  "overflow-hidden rounded-[18px] border border-[var(--git-border)] bg-[var(--git-surface)]";
+  "overflow-hidden rounded-[24px] border border-[var(--git-border)] bg-[var(--git-surface)] shadow-[var(--git-surface-shadow)]";
+const gitInsetSectionClass =
+  "overflow-hidden rounded-[22px] border border-[var(--git-border)] bg-[var(--git-bg-tertiary)]";
 const gitPillClass =
-  "inline-flex items-center rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]";
+  "inline-flex items-center rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 py-1.5 text-[11px] font-medium text-[var(--git-text-secondary)]";
+const gitActionPillClass =
+  "inline-flex items-center rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 py-1.5 text-[11px] font-medium text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]";
 const gitBubbleIconButtonClass =
-  "inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]";
+  "inline-flex h-9 w-9 items-center justify-center rounded-[18px] border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]";
+const gitMiniIconButtonClass =
+  "inline-flex h-8 w-8 items-center justify-center rounded-[14px] border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]";
+const gitSegmentButtonClass =
+  "inline-flex h-9 items-center gap-2 rounded-[18px] border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 text-[12px] font-medium text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]";
+
+const splitDisplayPath = (
+  path: string,
+): { fileName: string; directory: string } => {
+  const normalized = path.replace(/\\/g, "/");
+  const segments = normalized.split("/");
+  const fileName = segments.pop() || normalized;
+  return {
+    fileName,
+    directory: segments.join("/"),
+  };
+};
+
+const statusBadgeStyle = (status: GitFileStatus): React.CSSProperties => ({
+  color: statusColors[status],
+  borderColor: `color-mix(in srgb, ${statusColors[status]} 24%, var(--git-border))`,
+  background: `color-mix(in srgb, ${statusColors[status]} 12%, var(--git-bg-tertiary))`,
+});
 
 const toHumanError = (error: string | null): string | null => {
   if (!error) {
@@ -130,13 +174,22 @@ const inputStyle = (
   theme: ReturnType<typeof getThemeColors>,
 ): React.CSSProperties => ({
   border: `1px solid ${theme.border}`,
-  borderRadius: radius.sm,
-  background: theme.bgSecondary,
+  borderRadius: 18,
+  background: "var(--git-bg-tertiary)",
   color: theme.text,
   fontSize: 12,
-  padding: "8px 10px",
+  padding: "10px 14px",
   outline: "none",
   width: "100%",
+});
+
+const textAreaStyle = (
+  theme: ReturnType<typeof getThemeColors>,
+): React.CSSProperties => ({
+  ...inputStyle(theme),
+  minHeight: 88,
+  resize: "vertical",
+  lineHeight: 1.45,
 });
 
 const buttonStyle = (
@@ -145,21 +198,23 @@ const buttonStyle = (
 ): React.CSSProperties => ({
   border: `1px solid ${
     variant === "accent"
-      ? "var(--status-success)"
+      ? "color-mix(in srgb, var(--accent-brand) 44%, var(--git-border))"
       : variant === "danger"
-        ? "var(--status-error)"
+        ? "color-mix(in srgb, var(--status-error) 44%, var(--git-border))"
         : theme.border
   }`,
-  background: "var(--surface-1)",
+  background:
+    variant === "accent" ? "var(--accent-brand)" : "var(--git-bg-tertiary)",
   color:
     variant === "accent"
-      ? "var(--status-success)"
+      ? "#fff3f0"
       : variant === "danger"
         ? "var(--status-error)"
-        : theme.textMuted,
-  borderRadius: radius.sm,
-  padding: "6px 9px",
-  fontSize: 11,
+        : theme.textSecondary,
+  borderRadius: 18,
+  padding: "9px 14px",
+  fontSize: 12,
+  fontWeight: 500,
   display: "inline-flex",
   alignItems: "center",
   gap: 5,
@@ -168,87 +223,129 @@ const buttonStyle = (
 });
 
 const FileRow = React.memo<FileRowProps>(
-  ({ file, selected, onOpen, onViewDiff, onStage, onUnstage, onDiscard }) => (
-    <div
-      className="group grid grid-cols-[2px_16px_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-2 py-2 transition-colors"
-      style={{
-        borderColor: selected ? "var(--git-border-strong)" : "transparent",
-        background: selected ? "var(--git-row-active)" : "transparent",
-      }}
-      onDoubleClick={() => onOpen?.(file.path)}
-      title={file.path}
-    >
-      <span
-        className="h-8 rounded-full"
-        style={{ background: selected ? "var(--accent-brand)" : "transparent" }}
-      />
-      <span
-        className="text-center text-[11px] font-semibold"
-        style={{ color: statusColors[file.status] }}
-      >
-        {statusLabels[file.status]}
-      </span>
+  ({
+    file,
+    selected,
+    presentationMode,
+    onOpen,
+    onViewDiff,
+    onStage,
+    onUnstage,
+    onDiscard,
+    contextMenuItems,
+  }) => {
+    const { fileName, directory } = splitDisplayPath(
+      file.originalPath || file.path,
+    );
+    const subtitle = file.staged
+      ? "Staged"
+      : file.status === "conflicted"
+        ? "Conflict"
+        : "Working tree";
 
-      <div className="min-w-0">
-        <div className="truncate text-[12px] text-[var(--git-text)]">
-          {file.path}
-        </div>
-        <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
-          {file.staged
-            ? "staged"
-            : file.status === "conflicted"
-              ? "conflict"
-              : "working tree"}
-        </div>
-      </div>
-
+    const row = (
       <div
-        className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-        style={{ opacity: selected ? 1 : undefined }}
+        className={`group grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[18px] border px-3 transition-colors ${
+          presentationMode === "expanded" ? "py-3.5" : "py-2.5"
+        }`}
+        style={{
+          borderColor: selected
+            ? "var(--git-border-strong)"
+            : "var(--git-border)",
+          background: selected
+            ? "var(--git-row-active)"
+            : "var(--git-bg-tertiary)",
+        }}
+        onClick={() => onViewDiff(file)}
+        onDoubleClick={() => onOpen?.(file.path)}
+        title={file.path}
       >
-        <button
-          type="button"
-          onClick={() => onViewDiff(file)}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
-          title="View diff"
+        <span
+          className="inline-flex h-9 w-9 items-center justify-center rounded-[12px] border text-[12px] font-semibold"
+          style={statusBadgeStyle(file.status)}
         >
-          <Eye size={13} />
-        </button>
+          {statusLabels[file.status]}
+        </span>
 
-        {file.staged ? (
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-medium text-[var(--git-text)]">
+            {fileName}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--git-text-tertiary)]">
+            <span className="truncate">{directory || "Project root"}</span>
+            <span className="h-1 w-1 rounded-full bg-[var(--git-border-strong)]" />
+            <span className="text-[var(--git-text-secondary)]">{subtitle}</span>
+          </div>
+        </div>
+
+        <div
+          className="flex items-center gap-1 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+          style={{
+            opacity: selected || presentationMode === "expanded" ? 1 : 0,
+          }}
+        >
           <button
             type="button"
-            onClick={() => onUnstage(file.path)}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
-            title="Unstage file"
+            onClick={(event) => {
+              event.stopPropagation();
+              onViewDiff(file);
+            }}
+            className={gitMiniIconButtonClass}
+            title="View diff"
           >
-            <Minus size={13} />
+            <Eye size={13} />
           </button>
-        ) : (
-          <>
+
+          {file.staged ? (
             <button
               type="button"
-              onClick={() => onStage(file.path)}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--status-success)] hover:text-[var(--status-success)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
-              title="Stage file"
+              onClick={(event) => {
+                event.stopPropagation();
+                onUnstage(file.path);
+              }}
+              className={gitMiniIconButtonClass}
+              title="Unstage file"
             >
-              <Plus size={13} />
+              <Minus size={13} />
             </button>
-            {file.status !== "conflicted" && (
+          ) : (
+            <>
               <button
                 type="button"
-                onClick={() => onDiscard(file.path)}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--status-error)] hover:text-[var(--status-error)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
-                title="Discard changes"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onStage(file.path);
+                }}
+                className={`${gitMiniIconButtonClass} hover:border-[var(--status-success)] hover:text-[var(--status-success)]`}
+                title="Stage file"
               >
-                <RotateCcw size={13} />
+                <Plus size={13} />
               </button>
-            )}
-          </>
-        )}
+              {file.status !== "conflicted" && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDiscard(file.path);
+                  }}
+                  className={`${gitMiniIconButtonClass} hover:border-[var(--status-error)] hover:text-[var(--status-error)]`}
+                  title="Discard changes"
+                >
+                  <RotateCcw size={13} />
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
-    </div>
-  ),
+    );
+
+    if (!contextMenuItems || contextMenuItems.length === 0) {
+      return row;
+    }
+
+    return <ContextActionMenu items={contextMenuItems}>{row}</ContextActionMenu>;
+  },
 );
 
 FileRow.displayName = "FileRow";
@@ -258,6 +355,7 @@ const FileSection = React.memo<FileSectionProps>(
     title,
     files,
     open,
+    presentationMode,
     onToggle,
     bulkActionLabel,
     onBulkAction,
@@ -268,20 +366,21 @@ const FileSection = React.memo<FileSectionProps>(
     onStage,
     onUnstage,
     onDiscard,
+    getContextMenuItems,
   }) => (
     <section className={gitSectionClass}>
-      <div className="flex items-center gap-2 px-3 py-2.5">
+      <div className="flex items-center gap-2 px-4 py-3.5">
         <button
           type="button"
           onClick={onToggle}
           className="inline-flex min-w-0 flex-1 items-center gap-2 text-left"
         >
           <ChevronRight
-            size={13}
+            size={14}
             className="shrink-0 text-[var(--git-text-secondary)] transition-transform"
             style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}
           />
-          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
+          <span className="text-[13px] font-semibold text-[var(--git-text)]">
             {title}
           </span>
           <span className={gitPillClass}>{files.length}</span>
@@ -291,7 +390,7 @@ const FileSection = React.memo<FileSectionProps>(
           <button
             type="button"
             onClick={onBulkAction}
-            className={`${gitPillClass} transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)]`}
+            className={gitActionPillClass}
           >
             {bulkActionLabel}
           </button>
@@ -299,23 +398,25 @@ const FileSection = React.memo<FileSectionProps>(
       </div>
 
       {open && (
-        <div className="border-t border-[var(--git-border)] px-2 py-2">
+        <div className="border-t border-[var(--git-border)] px-3 pb-3 pt-3">
           {files.length === 0 ? (
-            <div className="rounded-[14px] border border-dashed border-[var(--git-border)] px-3 py-4 text-[12px] text-[var(--git-text-secondary)]">
+            <div className="rounded-[18px] border border-dashed border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-4 py-5 text-[12px] text-[var(--git-text-secondary)]">
               {emptyLabel}
             </div>
           ) : (
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-2">
               {files.map((file) => (
                 <FileRow
                   key={`${file.path}:${file.staged ? "staged" : "unstaged"}:${file.status}`}
                   file={file}
                   selected={selectedPath === file.path}
+                  presentationMode={presentationMode}
                   onOpen={onOpen}
                   onViewDiff={onViewDiff}
                   onStage={onStage}
                   onUnstage={onUnstage}
                   onDiscard={onDiscard}
+                  contextMenuItems={getContextMenuItems?.(file)}
                 />
               ))}
             </div>
@@ -331,28 +432,28 @@ FileSection.displayName = "FileSection";
 const StashSection = React.memo<StashSectionProps>(
   ({ entries, loading, message, onMessageChange, onCreate, onPop, onDrop }) => (
     <section className={gitSectionClass}>
-      <div className="flex items-center gap-2 px-3 py-2.5">
+      <div className="flex items-center gap-2 px-4 py-3.5">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <Sparkles size={13} className="text-[var(--git-text-secondary)]" />
-          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
+          <span className="text-[13px] font-semibold text-[var(--git-text)]">
             Stashes
           </span>
           <span className={gitPillClass}>{entries.length}</span>
         </div>
       </div>
 
-      <div className="border-t border-[var(--git-border)] px-3 py-3">
+      <div className="border-t border-[var(--git-border)] px-4 py-4">
         <div className="flex gap-2">
           <input
             value={message}
             onChange={(event) => onMessageChange(event.target.value)}
             placeholder="Optional stash message"
-            className="w-full rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 py-2 text-[12px] text-[var(--git-text)] outline-none placeholder:text-[var(--git-text-secondary)]"
+            className="w-full rounded-[18px] border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-4 py-2.5 text-[12px] text-[var(--git-text)] outline-none placeholder:text-[var(--git-text-tertiary)]"
           />
           <button
             type="button"
             onClick={onCreate}
-            className="inline-flex items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 py-2 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--git-border-strong)] hover:text-[var(--git-text)] disabled:cursor-wait disabled:opacity-60"
+            className={`${gitSegmentButtonClass} shrink-0 disabled:cursor-wait disabled:opacity-60`}
             disabled={loading}
           >
             <Plus size={13} />
@@ -362,20 +463,20 @@ const StashSection = React.memo<StashSectionProps>(
 
         <div className="mt-3 flex flex-col gap-2">
           {entries.length === 0 ? (
-            <div className="rounded-md border border-dashed border-[var(--git-border)] px-3 py-4 text-[12px] text-[var(--git-text-secondary)]">
+            <div className="rounded-[18px] border border-dashed border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-4 py-5 text-[12px] text-[var(--git-text-secondary)]">
               No saved stashes.
             </div>
           ) : (
             entries.map((entry) => (
               <div
                 key={entry.ref}
-                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-3 py-2"
+                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[18px] border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-4 py-3"
               >
                 <div className="min-w-0">
-                  <div className="truncate text-[12px] text-[var(--git-text)]">
+                  <div className="truncate text-[13px] font-medium text-[var(--git-text)]">
                     {entry.message || entry.ref}
                   </div>
-                  <div className="mt-0.5 flex items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
+                  <div className="mt-1 flex items-center gap-2 text-[11px] text-[var(--git-text-tertiary)]">
                     <span>{entry.ref}</span>
                     <span>{entry.relativeDate}</span>
                   </div>
@@ -384,14 +485,14 @@ const StashSection = React.memo<StashSectionProps>(
                   <button
                     type="button"
                     onClick={() => onPop(entry.ref)}
-                    className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] px-2 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--status-success)] hover:text-[var(--status-success)]"
+                    className={`${gitSegmentButtonClass} h-8 hover:border-[var(--status-success)] hover:text-[var(--status-success)]`}
                   >
                     Apply
                   </button>
                   <button
                     type="button"
                     onClick={() => onDrop(entry.ref)}
-                    className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-surface)] px-2 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[var(--status-error)] hover:text-[var(--status-error)]"
+                    className={`${gitSegmentButtonClass} h-8 hover:border-[var(--status-error)] hover:text-[var(--status-error)]`}
                   >
                     Drop
                   </button>
@@ -412,10 +513,14 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   onFileOpen,
   panelPosition = "right",
   onDiffFocusChange,
+  presentationMode = "compact",
 }) => {
   const { isDark } = useTheme();
+  const { copyAbsolutePath, copyRelativePath, revealEntry } =
+    useProjectEntryActions();
   const theme = getThemeColors(isDark);
-  const uiScale = useEditorSettingsStore((state) => state.uiScale);
+  const isExpanded = presentationMode === "expanded";
+  const layoutMode = isExpanded ? "split" : "stacked";
   const git = useGitStore(
     useShallow((state) => ({
       loading: state.loading,
@@ -455,11 +560,6 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     })),
   );
 
-  const scaled = useCallback(
-    (size: number): number => Math.max(10, Math.round(size * uiScale)),
-    [uiScale],
-  );
-
   const [commitMessage, setCommitMessage] = useState("");
   const [stashMessage, setStashMessage] = useState("");
   const [showBranchDropdown, setShowBranchDropdown] = useState(false);
@@ -475,7 +575,8 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   const [prBaseOverride, setPrBaseOverride] = useState("");
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
-  const isDiffFocused = detailOpen && detailTab === "diff";
+  const isDiffFocused =
+    presentationMode === "compact" && detailOpen && detailTab === "diff";
 
   useEffect(() => {
     git.setProjectPath(projectPath);
@@ -521,13 +622,19 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     () =>
       ({
         "--git-bg": theme.bg,
-        "--git-surface": "var(--surface-1)",
-        "--git-bg-tertiary": "var(--surface-2)",
+        "--git-surface":
+          "color-mix(in srgb, var(--surface-1) 98%, transparent)",
+        "--git-bg-tertiary":
+          "color-mix(in srgb, var(--surface-2) 96%, transparent)",
         "--git-border": theme.border,
-        "--git-border-strong": "var(--border-default)",
-        "--git-row-active": "var(--surface-active)",
+        "--git-border-strong": "var(--border-strong)",
+        "--git-row-active":
+          "color-mix(in srgb, var(--surface-active) 88%, transparent)",
         "--git-text": theme.text,
-        "--git-text-secondary": theme.textMuted,
+        "--git-text-secondary": theme.textSecondary,
+        "--git-text-tertiary": theme.textMuted,
+        "--git-surface-shadow":
+          "inset 0 1px 0 rgba(255,255,255,0.03), 0 10px 24px -22px rgba(0,0,0,0.85)",
       }) as React.CSSProperties,
     [theme],
   );
@@ -540,6 +647,19 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       return `${projectPath}/${path}`;
     },
     [projectPath],
+  );
+
+  const resolvePathForReveal = useCallback(
+    (file: GitFileEntry): string => {
+      const resolvedPath = normalizeProjectPath(resolvePathForOpen(file.path));
+      if (file.status === "deleted") {
+        return normalizeProjectPath(
+          getProjectPathDirname(resolvedPath) || projectPath,
+        );
+      }
+      return resolvedPath;
+    },
+    [projectPath, resolvePathForOpen],
   );
 
   const withErrorGuard = useCallback(async (action: () => Promise<void>) => {
@@ -560,13 +680,15 @@ export const GitPanel: React.FC<GitPanelProps> = ({
 
   const openDetail = useCallback(
     (tab: DetailTab) => {
-      setDetailOpen(true);
       setDetailTab(tab);
+      if (presentationMode === "compact") {
+        setDetailOpen(true);
+      }
       if (tab === "history") {
         void git.loadHistory();
       }
     },
-    [git],
+    [git, presentationMode],
   );
 
   const handleCommit = useCallback(async () => {
@@ -598,52 +720,156 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     });
   }, [git, stashMessage, withErrorGuard]);
 
-  const viewFileDiff = useCallback(async (file: GitFileEntry) => {
-    setSelectedPath(file.path);
-    setLocalError(null);
-    try {
-      const diff = await AppFunctions.GetGitDiff(file.path, file.staged);
-      setDiffReturnTab(detailOpen ? detailTab : null);
-      setDiffState({
-        title: file.path,
-        content: diff || "",
-        selectedPath: file.path,
-      });
-      setDetailOpen(true);
-      setDetailTab("diff");
-    } catch (error) {
-      setLocalError(error instanceof Error ? error.message : String(error));
-    }
-  }, []);
+  const viewFileDiff = useCallback(
+    async (file: GitFileEntry) => {
+      setSelectedPath(file.path);
+      setLocalError(null);
+      try {
+        const diff = await AppFunctions.GetGitDiff(file.path, file.staged);
+        setDiffReturnTab(
+          presentationMode === "expanded" || detailOpen ? detailTab : null,
+        );
+        setDiffState({
+          title: file.path,
+          content: diff || "",
+          selectedPath: file.path,
+        });
+        if (presentationMode === "compact") {
+          setDetailOpen(true);
+        }
+        setDetailTab("diff");
+      } catch (error) {
+        setLocalError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [detailOpen, detailTab, presentationMode],
+  );
 
-  const viewCommitDiff = useCallback(async (hash: string) => {
-    setSelectedPath(null);
-    setLocalError(null);
-    try {
-      const diff = await AppFunctions.GetGitCommitDiff(hash);
-      setDiffReturnTab(detailOpen ? detailTab : null);
-      setDiffState({
-        title: `Commit ${hash.slice(0, 7)}`,
-        content: diff || "",
-        selectedPath: null,
-      });
-      setDetailOpen(true);
-      setDetailTab("diff");
-    } catch (error) {
-      setLocalError(error instanceof Error ? error.message : String(error));
-    }
-  }, []);
+  const viewCommitDiff = useCallback(
+    async (hash: string) => {
+      setSelectedPath(null);
+      setLocalError(null);
+      try {
+        const diff = await AppFunctions.GetGitCommitDiff(hash);
+        setDiffReturnTab(
+          presentationMode === "expanded" || detailOpen ? detailTab : null,
+        );
+        setDiffState({
+          title: `Commit ${hash.slice(0, 7)}`,
+          content: diff || "",
+          selectedPath: null,
+        });
+        if (presentationMode === "compact") {
+          setDetailOpen(true);
+        }
+        setDetailTab("diff");
+      } catch (error) {
+        setLocalError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [detailOpen, detailTab, presentationMode],
+  );
+
+  const buildFileContextMenuItems = useCallback(
+    (file: GitFileEntry): ContextActionMenuItem[] => {
+      const absolutePath = resolvePathForOpen(file.path);
+      const revealPath = resolvePathForReveal(file);
+
+      return [
+        {
+          label: "Open File",
+          icon: <File size={14} />,
+          disabled: file.status === "deleted" || !onFileOpen,
+          onSelect: () => {
+            if (onFileOpen && file.status !== "deleted") {
+              onFileOpen(absolutePath);
+            }
+          },
+        },
+        {
+          label: "View Diff",
+          icon: <Eye size={14} />,
+          onSelect: () => {
+            void viewFileDiff(file);
+          },
+        },
+        file.staged
+          ? {
+              label: "Unstage",
+              icon: <Minus size={14} />,
+              onSelect: () => {
+                void runPanelAction(() => git.unstageFile(file.path));
+              },
+            }
+          : {
+              label: "Stage",
+              icon: <Plus size={14} />,
+              onSelect: () => {
+                void runPanelAction(() => git.stageFile(file.path));
+              },
+            },
+        !file.staged && file.status !== "conflicted"
+          ? {
+              label: "Discard Changes",
+              icon: <RotateCcw size={14} />,
+              danger: true,
+              onSelect: () => {
+                void runPanelAction(() => git.discardFile(file.path));
+              },
+            }
+          : { hidden: true },
+        { separator: true },
+        {
+          label: "Copy Relative Path",
+          icon: <Copy size={14} />,
+          onSelect: () => {
+            void copyRelativePath(absolutePath);
+          },
+        },
+        {
+          label: "Copy Absolute Path",
+          icon: <Copy size={14} />,
+          onSelect: () => {
+            void copyAbsolutePath(absolutePath);
+          },
+        },
+        {
+          label: "Reveal in File Manager",
+          icon: <ExternalLink size={14} />,
+          onSelect: () => {
+            void revealEntry(revealPath);
+          },
+        },
+      ];
+    },
+    [
+      copyAbsolutePath,
+      copyRelativePath,
+      git,
+      onFileOpen,
+      resolvePathForOpen,
+      resolvePathForReveal,
+      revealEntry,
+      runPanelAction,
+      viewFileDiff,
+    ],
+  );
 
   const closeDiff = useCallback(() => {
     setDiffState(null);
     if (diffReturnTab) {
       setDetailTab(diffReturnTab);
-      setDetailOpen(true);
+      if (presentationMode === "compact") {
+        setDetailOpen(true);
+      }
     } else {
-      setDetailOpen(false);
+      setDetailTab("commit");
+      if (presentationMode === "compact") {
+        setDetailOpen(false);
+      }
     }
     setDiffReturnTab(null);
-  }, [diffReturnTab]);
+  }, [diffReturnTab, presentationMode]);
 
   const navigateDiff = useCallback(
     (direction: "prev" | "next") => {
@@ -715,7 +941,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
           boxShadow: "var(--shadow-overlay)",
         };
     }
-  }, [isDark, panelPosition]);
+  }, [panelPosition]);
 
   const detailTabs = useMemo(
     () =>
@@ -735,151 +961,242 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     [],
   );
 
-  return (
-    <div
-      style={{ ...panelVars, fontSize: scaled(12) }}
-      className="relative flex h-full min-h-0 flex-col bg-[var(--git-bg)] text-[var(--git-text)]"
-    >
-      <div className="border-b border-[var(--git-border)] px-3 py-3">
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2">
-            <div className="shell-cluster-soft min-w-0 flex-1 px-1.5 py-1">
-              <button
-                type="button"
-                onClick={() => setShowBranchDropdown((value) => !value)}
-                className="shell-control h-9 min-w-0 flex-1 justify-start gap-2 px-3 text-[var(--git-text)] hover:text-[var(--git-text)]"
-              >
-                <FolderGit2
-                  size={14}
-                  className="shrink-0 text-[var(--status-success)]"
-                />
-                <GitBranch
-                  size={13}
-                  className="shrink-0 text-[var(--status-success)]"
-                />
-                <span className="truncate">
-                  {git.branch.current || "Detached HEAD"}
-                </span>
-                <ChevronDown
-                  size={12}
-                  className="ml-auto shrink-0 text-[var(--git-text-secondary)]"
-                />
-              </button>
-            </div>
-
-            <div className="shell-cluster-soft shrink-0 px-1.5 py-1">
-              <span className="inline-flex items-center gap-1 rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--status-success)]">
-                <ArrowUp size={11} />
-                {git.branch.ahead}
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--status-warning)]">
-                <ArrowDown size={11} />
-                {git.branch.behind}
-              </span>
-              <button
-                type="button"
-                className={gitBubbleIconButtonClass}
-                onClick={() => void runPanelAction(git.refresh)}
-                title="Refresh status"
-              >
-                <RefreshCw
-                  size={14}
-                  className={git.loading ? "animate-spin" : ""}
-                />
-              </button>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {git.branch.upstream && (
-              <span className={gitPillClass}>{git.branch.upstream}</span>
-            )}
-            <span className={gitPillClass}>{selectedRemoteLabel}</span>
-            <span className={gitPillClass}>{changedCount} changed</span>
-            {git.conflictedFiles.length > 0 && (
-              <span className={`${gitPillClass} text-[var(--status-warning)]`}>
-                {git.conflictedFiles.length} conflicts
-              </span>
-            )}
-          </div>
-
-          {showBranchDropdown && (
-            <div
-              className="overflow-hidden rounded-[18px] border border-[var(--git-border)] bg-[var(--git-surface)]"
-              style={{
-                boxShadow: "var(--shadow-overlay)",
-              }}
+  const renderBranchCluster = (carded: boolean): React.ReactNode => (
+    <div className={carded ? `${gitSectionClass} p-4` : ""}>
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <div className="shell-cluster-soft min-w-0 flex-1 px-1.5 py-1">
+            <button
+              type="button"
+              onClick={() => setShowBranchDropdown((value) => !value)}
+              className="shell-control h-10 min-w-0 flex-1 justify-start gap-2 px-3 text-[var(--git-text)] hover:text-[var(--git-text)]"
             >
-              <div className="max-h-48 overflow-y-auto p-1.5">
-                {git.branches.map((candidate) => {
-                  const isCurrent = candidate === git.branch.current;
-                  return (
-                    <button
-                      key={candidate}
-                      type="button"
-                      onClick={() => {
-                        void runPanelAction(() => git.switchBranch(candidate));
-                        setShowBranchDropdown(false);
-                      }}
-                      className="flex w-full items-center gap-2 rounded-[14px] px-3 py-2 text-left text-[12px] transition-colors hover:bg-[var(--git-row-active)]"
-                      style={{
-                        background: isCurrent
-                          ? "var(--git-row-active)"
-                          : "transparent",
-                      }}
-                    >
-                      <span
-                        className="h-2 w-2 rounded-full border border-[var(--git-border)]"
-                        style={{
-                          background: isCurrent
-                            ? "var(--status-success)"
-                            : "transparent",
-                        }}
-                      />
-                      <span className="truncate text-[var(--git-text)]">
-                        {candidate}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="border-t border-[var(--git-border)] p-2">
-                <div className="flex items-center gap-2">
-                  <input
-                    value={newBranchName}
-                    onChange={(event) => setNewBranchName(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        void handleCreateBranch();
-                      }
-                    }}
-                    placeholder="Create branch"
-                    style={inputStyle(theme)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void handleCreateBranch();
-                    }}
-                    className={gitBubbleIconButtonClass}
-                    title="Create branch"
-                  >
-                    <Plus size={13} />
-                  </button>
-                </div>
-              </div>
-            </div>
+              <FolderGit2
+                size={14}
+                className="shrink-0 text-[var(--status-success)]"
+              />
+              <GitBranch
+                size={13}
+                className="shrink-0 text-[var(--status-success)]"
+              />
+              <span className="truncate text-[13px] font-medium">
+                {git.branch.current || "Detached HEAD"}
+              </span>
+              <ChevronDown
+                size={12}
+                className="ml-auto shrink-0 text-[var(--git-text-secondary)]"
+              />
+            </button>
+          </div>
+
+          <div className="shell-cluster-soft shrink-0 px-1.5 py-1">
+            <span
+              className={gitPillClass}
+              style={{ color: "var(--status-success)" }}
+            >
+              <ArrowUp size={11} />
+              {git.branch.ahead}
+            </span>
+            <span
+              className={gitPillClass}
+              style={{ color: "var(--status-warning)" }}
+            >
+              <ArrowDown size={11} />
+              {git.branch.behind}
+            </span>
+            <button
+              type="button"
+              className={gitBubbleIconButtonClass}
+              onClick={() => void runPanelAction(git.refresh)}
+              title="Refresh status"
+            >
+              <RefreshCw
+                size={14}
+                className={git.loading ? "animate-spin" : ""}
+              />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {git.branch.upstream && (
+            <span className={gitPillClass}>{git.branch.upstream}</span>
+          )}
+          <span className={gitPillClass}>{selectedRemoteLabel}</span>
+          <span className={gitPillClass}>{changedCount} changed</span>
+          {git.conflictedFiles.length > 0 && (
+            <span
+              className={gitPillClass}
+              style={{ color: "var(--status-warning)" }}
+            >
+              {git.conflictedFiles.length} conflicts
+            </span>
           )}
         </div>
-      </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <div className="flex h-full min-h-0 flex-col overflow-y-auto px-3 py-3">
+        {showBranchDropdown && (
+          <div
+            className={`${gitInsetSectionClass} overflow-hidden`}
+            style={{ boxShadow: "var(--shadow-overlay)" }}
+          >
+            <div className="max-h-52 overflow-y-auto p-2">
+              {git.branches.map((candidate) => {
+                const isCurrent = candidate === git.branch.current;
+                return (
+                  <button
+                    key={candidate}
+                    type="button"
+                    onClick={() => {
+                      void runPanelAction(() => git.switchBranch(candidate));
+                      setShowBranchDropdown(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-[16px] px-3 py-2.5 text-left text-[12px] transition-colors hover:bg-[var(--git-row-active)]"
+                    style={{
+                      background: isCurrent
+                        ? "var(--git-row-active)"
+                        : "transparent",
+                    }}
+                  >
+                    <span
+                      className="h-2.5 w-2.5 rounded-full border border-[var(--git-border)]"
+                      style={{
+                        background: isCurrent
+                          ? "var(--status-success)"
+                          : "transparent",
+                      }}
+                    />
+                    <span className="truncate text-[var(--git-text)]">
+                      {candidate}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="border-t border-[var(--git-border)] p-3">
+              <div className="flex items-center gap-2">
+                <input
+                  value={newBranchName}
+                  onChange={(event) => setNewBranchName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      void handleCreateBranch();
+                    }
+                  }}
+                  placeholder="Create branch"
+                  style={inputStyle(theme)}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleCreateBranch();
+                  }}
+                  className={gitBubbleIconButtonClass}
+                  title="Create branch"
+                >
+                  <Plus size={13} />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderCompactSections = (): React.ReactNode => (
+    <div
+      data-testid="git-compact-scroll-region"
+      className="min-h-0 flex-1 overflow-y-auto"
+    >
+      <div className="flex min-h-full flex-col gap-3 px-3 py-3">
+        {git.conflictedFiles.length > 0 && (
+          <FileSection
+            title="Conflicts"
+            files={git.conflictedFiles}
+            open={conflictedOpen}
+            presentationMode="compact"
+            onToggle={() => setConflictedOpen((value) => !value)}
+            emptyLabel="No conflicted files."
+            selectedPath={selectedPath}
+            onOpen={
+              onFileOpen
+                ? (path) => onFileOpen(resolvePathForOpen(path))
+                : undefined
+            }
+            onViewDiff={viewFileDiff}
+            onStage={(path) => void runPanelAction(() => git.stageFile(path))}
+            onUnstage={(path) =>
+              void runPanelAction(() => git.unstageFile(path))
+            }
+            onDiscard={(path) =>
+              void runPanelAction(() => git.discardFile(path))
+            }
+            getContextMenuItems={buildFileContextMenuItems}
+          />
+        )}
+
+        <FileSection
+          title="Staged"
+          files={git.stagedFiles}
+          open={stagedOpen}
+          presentationMode="compact"
+          onToggle={() => setStagedOpen((value) => !value)}
+          bulkActionLabel="Unstage all"
+          onBulkAction={() => void runPanelAction(git.unstageAll)}
+          emptyLabel="Nothing is staged yet."
+          selectedPath={selectedPath}
+          onOpen={
+            onFileOpen
+              ? (path) => onFileOpen(resolvePathForOpen(path))
+              : undefined
+          }
+          onViewDiff={viewFileDiff}
+          onStage={(path) => void runPanelAction(() => git.stageFile(path))}
+          onUnstage={(path) => void runPanelAction(() => git.unstageFile(path))}
+          onDiscard={(path) => void runPanelAction(() => git.discardFile(path))}
+          getContextMenuItems={buildFileContextMenuItems}
+        />
+
+        <FileSection
+          title="Working Tree"
+          files={git.unstagedFiles}
+          open={unstagedOpen}
+          presentationMode="compact"
+          onToggle={() => setUnstagedOpen((value) => !value)}
+          bulkActionLabel="Stage all"
+          onBulkAction={() => void runPanelAction(git.stageAll)}
+          emptyLabel="Working tree is clean."
+          selectedPath={selectedPath}
+          onOpen={
+            onFileOpen
+              ? (path) => onFileOpen(resolvePathForOpen(path))
+              : undefined
+          }
+          onViewDiff={viewFileDiff}
+          onStage={(path) => void runPanelAction(() => git.stageFile(path))}
+          onUnstage={(path) => void runPanelAction(() => git.unstageFile(path))}
+          onDiscard={(path) => void runPanelAction(() => git.discardFile(path))}
+          getContextMenuItems={buildFileContextMenuItems}
+        />
+      </div>
+    </div>
+  );
+
+  const renderExpandedSections = (): React.ReactNode => (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div
+        data-testid="git-expanded-scroll-region"
+        className="min-h-0 flex-1 overflow-y-auto pr-1"
+      >
+        <div className="flex min-h-full flex-col gap-4">
+          {renderBranchCluster(true)}
+
           {git.conflictedFiles.length > 0 && (
             <FileSection
               title="Conflicts"
               files={git.conflictedFiles}
               open={conflictedOpen}
+              presentationMode="expanded"
               onToggle={() => setConflictedOpen((value) => !value)}
               emptyLabel="No conflicted files."
               selectedPath={selectedPath}
@@ -896,127 +1213,419 @@ export const GitPanel: React.FC<GitPanelProps> = ({
               onDiscard={(path) =>
                 void runPanelAction(() => git.discardFile(path))
               }
+              getContextMenuItems={buildFileContextMenuItems}
             />
           )}
 
-          <div
-            className={`flex min-h-0 flex-1 flex-col gap-3 ${
-              git.conflictedFiles.length > 0 ? "mt-3" : ""
+          <FileSection
+            title="Staged"
+            files={git.stagedFiles}
+            open={stagedOpen}
+            presentationMode="expanded"
+            onToggle={() => setStagedOpen((value) => !value)}
+            bulkActionLabel="Unstage all"
+            onBulkAction={() => void runPanelAction(git.unstageAll)}
+            emptyLabel="Nothing is staged yet."
+            selectedPath={selectedPath}
+            onOpen={
+              onFileOpen
+                ? (path) => onFileOpen(resolvePathForOpen(path))
+                : undefined
+            }
+            onViewDiff={viewFileDiff}
+            onStage={(path) => void runPanelAction(() => git.stageFile(path))}
+            onUnstage={(path) =>
+              void runPanelAction(() => git.unstageFile(path))
+            }
+            onDiscard={(path) =>
+              void runPanelAction(() => git.discardFile(path))
+            }
+            getContextMenuItems={buildFileContextMenuItems}
+          />
+
+          <FileSection
+            title="Working Tree"
+            files={git.unstagedFiles}
+            open={unstagedOpen}
+            presentationMode="expanded"
+            onToggle={() => setUnstagedOpen((value) => !value)}
+            bulkActionLabel="Stage all"
+            onBulkAction={() => void runPanelAction(git.stageAll)}
+            emptyLabel="Working tree is clean."
+            selectedPath={selectedPath}
+            onOpen={
+              onFileOpen
+                ? (path) => onFileOpen(resolvePathForOpen(path))
+                : undefined
+            }
+            onViewDiff={viewFileDiff}
+            onStage={(path) => void runPanelAction(() => git.stageFile(path))}
+            onUnstage={(path) =>
+              void runPanelAction(() => git.unstageFile(path))
+            }
+            onDiscard={(path) =>
+              void runPanelAction(() => git.discardFile(path))
+            }
+            getContextMenuItems={buildFileContextMenuItems}
+          />
+
+          <section className={gitSectionClass}>
+            <div className="border-b border-[var(--git-border)] px-4 py-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[13px] font-semibold text-[var(--git-text)]">
+                  Commit
+                </span>
+                <span className={gitPillClass}>
+                  {git.stagedFiles.length} staged
+                </span>
+              </div>
+            </div>
+            <div className="space-y-3 px-4 py-4">
+              <textarea
+                value={commitMessage}
+                onChange={(event) => setCommitMessage(event.target.value)}
+                onKeyDown={(event) => {
+                  if (
+                    (event.metaKey || event.ctrlKey) &&
+                    event.key === "Enter"
+                  ) {
+                    void handleCommit();
+                  }
+                }}
+                placeholder="feat(git): redesign git panel with wide diff view"
+                style={textAreaStyle(theme)}
+              />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className={`${gitPillClass} max-w-full`}>
+                  Commit to {git.branch.current || "detached"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleCommit()}
+                  disabled={
+                    !commitMessage.trim() ||
+                    git.stagedFiles.length === 0 ||
+                    git.busy
+                  }
+                  style={buttonStyle(
+                    theme,
+                    commitMessage.trim() && git.stagedFiles.length > 0
+                      ? "accent"
+                      : "default",
+                  )}
+                >
+                  <Check size={13} />
+                  Commit
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderDetailTabs = (): React.ReactNode => (
+    <div className="shell-mini-x-scroll w-full min-w-0 overflow-x-scroll overflow-y-hidden pb-1">
+      <div className="shell-cluster-soft inline-flex min-w-max px-1.5 py-1">
+        {detailTabs.map(([value, label, Icon]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => openDetail(value)}
+            className={`shell-control h-9 gap-2 rounded-[18px] px-3 text-[11px] ${
+              detailTab === value
+                ? "border-[var(--accent-brand)] bg-[var(--accent-brand-soft)] text-[var(--accent-brand)]"
+                : "text-[var(--git-text-secondary)]"
             }`}
           >
-            <FileSection
-              title="Staged"
-              files={git.stagedFiles}
-              open={stagedOpen}
-              onToggle={() => setStagedOpen((value) => !value)}
-              bulkActionLabel="Unstage all"
-              onBulkAction={() => void runPanelAction(git.unstageAll)}
-              emptyLabel="Nothing is staged yet."
-              selectedPath={selectedPath}
-              onOpen={
-                onFileOpen
-                  ? (path) => onFileOpen(resolvePathForOpen(path))
-                  : undefined
-              }
-              onViewDiff={viewFileDiff}
-              onStage={(path) => void runPanelAction(() => git.stageFile(path))}
-              onUnstage={(path) =>
-                void runPanelAction(() => git.unstageFile(path))
-              }
-              onDiscard={(path) =>
-                void runPanelAction(() => git.discardFile(path))
-              }
-            />
+            <Icon size={13} />
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 
-            <FileSection
-              title="Working tree"
-              files={git.unstagedFiles}
-              open={unstagedOpen}
-              onToggle={() => setUnstagedOpen((value) => !value)}
-              bulkActionLabel="Stage all"
-              onBulkAction={() => void runPanelAction(git.stageAll)}
-              emptyLabel="Working tree is clean."
-              selectedPath={selectedPath}
-              onOpen={
-                onFileOpen
-                  ? (path) => onFileOpen(resolvePathForOpen(path))
-                  : undefined
+  const renderCommitDetail = (): React.ReactNode => (
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-4">
+      <div className={`${gitInsetSectionClass} p-4`}>
+        <div className="mb-3 flex items-center justify-between text-[11px] text-[var(--git-text-secondary)]">
+          <span className="inline-flex items-center gap-1 font-medium text-[var(--git-text)]">
+            <GitCommit size={12} />
+            Commit
+          </span>
+          <span>{git.stagedFiles.length} staged</span>
+        </div>
+        <div className="space-y-3">
+          <textarea
+            value={commitMessage}
+            onChange={(event) => setCommitMessage(event.target.value)}
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                void handleCommit();
               }
-              onViewDiff={viewFileDiff}
-              onStage={(path) => void runPanelAction(() => git.stageFile(path))}
-              onUnstage={(path) =>
-                void runPanelAction(() => git.unstageFile(path))
+            }}
+            placeholder="Commit message"
+            style={textAreaStyle(theme)}
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[11px] text-[var(--git-text-tertiary)]">
+              Ctrl/Cmd + Enter to commit
+            </span>
+            <button
+              type="button"
+              onClick={() => void handleCommit()}
+              disabled={
+                !commitMessage.trim() ||
+                git.stagedFiles.length === 0 ||
+                git.busy
               }
-              onDiscard={(path) =>
-                void runPanelAction(() => git.discardFile(path))
-              }
-            />
+              style={buttonStyle(
+                theme,
+                commitMessage.trim() && git.stagedFiles.length > 0
+                  ? "accent"
+                  : "default",
+              )}
+            >
+              <Check size={13} />
+              Commit
+            </button>
           </div>
         </div>
       </div>
 
-      <div className="border-t border-[var(--git-border)] px-3 py-3">
-        <div className="shell-cluster-soft w-full gap-2 px-1.5 py-1.5">
+      <div className={`${gitInsetSectionClass} p-4`}>
+        <div className="mb-3 flex items-center justify-between text-[11px] text-[var(--git-text-secondary)]">
+          <span className="font-medium text-[var(--git-text)]">Sync</span>
+          <span>{selectedRemoteLabel}</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {git.remotes.length > 1 && (
+            <select
+              value={git.selectedRemote}
+              onChange={(event) => git.setSelectedRemote(event.target.value)}
+              style={{
+                ...inputStyle(theme),
+                width: 144,
+                padding: "8px 12px",
+              }}
+            >
+              {git.remotes.map((remote) => (
+                <option key={remote} value={remote}>
+                  {remote}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             type="button"
-            onClick={() => openDetail("commit")}
-            className="shell-control h-10 min-w-0 flex-1 justify-center gap-2 px-4 text-[var(--git-text)] hover:border-[var(--status-success)] hover:text-[var(--status-success)]"
+            style={buttonStyle(theme)}
+            onClick={() => void runPanelAction(git.fetchRemote)}
           >
-            <GitCommit size={14} />
-            Commit...
+            Fetch
           </button>
           <button
             type="button"
-            onClick={() =>
-              openDetail(detailTab === "diff" ? "commit" : detailTab)
-            }
-            className="shell-control h-10 min-w-0 justify-center gap-2 px-4 text-[var(--git-text-secondary)]"
+            style={buttonStyle(theme)}
+            onClick={() => void runPanelAction(git.pullRemote)}
           >
-            <ChevronsRight size={14} />
-            Open details
+            Pull
+          </button>
+          <button
+            type="button"
+            style={buttonStyle(
+              theme,
+              git.branch.ahead > 0 ? "accent" : "default",
+            )}
+            onClick={() => void runPanelAction(() => git.pushRemote(false))}
+          >
+            <Send size={13} />
+            Push
           </button>
         </div>
       </div>
+    </div>
+  );
 
-      {humanError && (
-        <div className="border-t border-[var(--git-border)] bg-[color:var(--status-error)]/10 px-3 py-2 text-[11px] text-[var(--git-text)]">
-          {humanError}
+  const renderPullRequestDetail = (): React.ReactNode => (
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-4">
+      <div className={`${gitInsetSectionClass} p-4`}>
+        <div className="text-[13px] font-semibold text-[var(--git-text)]">
+          Pull request flow
         </div>
-      )}
+        <div className="mt-2 text-[12px] text-[var(--git-text-secondary)]">
+          Build a GitHub compare URL from the current branch and open it in the
+          browser.
+        </div>
+        <div className="mt-4 grid gap-3">
+          <label className="grid gap-1 text-[11px] text-[var(--git-text-secondary)]">
+            Base branch
+            <input
+              value={prBaseOverride}
+              onChange={(event) => setPrBaseOverride(event.target.value)}
+              placeholder={inferredBaseBranch}
+              style={inputStyle(theme)}
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              style={buttonStyle(theme)}
+              onClick={() => void runPanelAction(() => git.pushRemote(true))}
+            >
+              Push -u
+            </button>
+            <button
+              type="button"
+              style={buttonStyle(theme)}
+              onClick={() => void previewPullRequestUrl()}
+            >
+              Preview URL
+            </button>
+            <button
+              type="button"
+              style={buttonStyle(theme, "accent")}
+              onClick={() => void openPullRequestUrl()}
+            >
+              Open PR
+            </button>
+          </div>
+        </div>
+      </div>
 
       <div
-        aria-hidden={!detailOpen}
-        className="absolute inset-0 z-20 flex flex-col bg-[var(--git-bg)]"
-        style={{
-          opacity: detailOpen ? 1 : 0,
-          pointerEvents: detailOpen ? "auto" : "none",
-          transform: detailOpen
-            ? "translate3d(0, 0, 0)"
-            : detailDirection.closedTransform,
-          transition:
-            "transform 280ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease",
-          willChange: "transform, opacity",
-          contain: "layout paint",
-          border: detailDirection.border,
-          boxShadow: detailOpen ? detailDirection.boxShadow : "none",
-        }}
+        className={`${gitInsetSectionClass} p-4 text-[12px] text-[var(--git-text-secondary)]`}
       >
-        <div className="border-b border-[var(--git-border)] px-3 py-3">
-          <div className="flex items-start gap-2">
-            <div className="shell-cluster-soft min-w-0 flex-1 px-1.5 py-1">
-              <div className="shell-control h-9 min-w-0 flex-1 justify-start gap-2 px-3 text-[var(--git-text)]">
+        <div>
+          Base branch:{" "}
+          <span className="text-[var(--git-text)]">{effectivePrBase}</span>
+        </div>
+        <div className="mt-1">
+          Source branch:{" "}
+          <span className="text-[var(--git-text)]">
+            {git.branch.current || "detached"}
+          </span>
+        </div>
+      </div>
+
+      {prUrl && (
+        <div
+          className={`${gitInsetSectionClass} break-all p-4 text-[12px] text-[var(--git-text-secondary)]`}
+        >
+          {prUrl}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderDetailBody = (): React.ReactNode => {
+    if (detailTab === "commit") {
+      return renderCommitDetail();
+    }
+
+    if (detailTab === "history") {
+      return (
+        <GitHistory
+          commits={git.historyCommits}
+          loading={git.historyLoading}
+          onRefresh={() => void git.loadHistory()}
+          onViewDiff={viewCommitDiff}
+        />
+      );
+    }
+
+    if (detailTab === "pull_requests") {
+      return renderPullRequestDetail();
+    }
+
+    if (detailTab === "stash") {
+      return (
+        <div className="h-full min-h-0 overflow-y-auto px-4 py-4">
+          <StashSection
+            entries={git.stashEntries}
+            loading={git.stashLoading || git.busy}
+            message={stashMessage}
+            onMessageChange={setStashMessage}
+            onCreate={() => void handleCreateStash()}
+            onPop={(ref) => void runPanelAction(() => git.popStash(ref))}
+            onDrop={(ref) => void runPanelAction(() => git.dropStash(ref))}
+          />
+        </div>
+      );
+    }
+
+    return diffState ? (
+      <GitDiffViewer
+        diff={diffState.content}
+        fileName={diffState.title}
+        onClose={closeDiff}
+        onPrevFile={
+          diffState.selectedPath && selectedFileIndex > 0
+            ? () => navigateDiff("prev")
+            : undefined
+        }
+        onNextFile={
+          diffState.selectedPath &&
+          selectedFileIndex < allChangedFiles.length - 1
+            ? () => navigateDiff("next")
+            : undefined
+        }
+        hasPrev={diffState.selectedPath !== null && selectedFileIndex > 0}
+        hasNext={
+          diffState.selectedPath !== null &&
+          selectedFileIndex >= 0 &&
+          selectedFileIndex < allChangedFiles.length - 1
+        }
+      />
+    ) : (
+      <div className="flex h-full items-center justify-center px-6 text-center text-[12px] text-[var(--git-text-secondary)]">
+        Select a file or a commit to inspect its diff here.
+      </div>
+    );
+  };
+
+  const renderDetailWorkspace = (
+    showCloseButton: boolean,
+    testId: string,
+  ): React.ReactNode => (
+    <section
+      data-testid={testId}
+      className={`${gitSectionClass} flex h-full min-h-0 flex-col`}
+    >
+      <div className="border-b border-[var(--git-border)] px-4 py-4">
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-4 text-[13px] font-medium text-[var(--git-text)]">
                 <FolderGit2
                   size={14}
-                  className="shrink-0 text-[var(--status-success)]"
+                  className="text-[var(--status-success)]"
                 />
-                <span className="truncate text-[12px] font-medium">
-                  Source control details
-                </span>
-              </div>
+                Source control workspace
+              </span>
               <span className={gitPillClass}>
                 {git.branch.current || "detached"}
               </span>
+              <span className={gitPillClass}>{selectedRemoteLabel}</span>
+              <span
+                className={gitPillClass}
+                style={{ color: "var(--status-success)" }}
+              >
+                <ArrowUp size={11} />
+                {git.branch.ahead}
+              </span>
+              <span
+                className={gitPillClass}
+                style={{ color: "var(--status-warning)" }}
+              >
+                <ArrowDown size={11} />
+                {git.branch.behind}
+              </span>
             </div>
+            <div className="mt-3 min-w-0">{renderDetailTabs()}</div>
+          </div>
+          {showCloseButton && (
             <button
               type="button"
               onClick={() => setDetailOpen(false)}
@@ -1025,279 +1634,102 @@ export const GitPanel: React.FC<GitPanelProps> = ({
             >
               <X size={15} />
             </button>
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className={gitPillClass}>{selectedRemoteLabel}</span>
-            <span className="inline-flex items-center gap-1 rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--status-success)]">
-              <ArrowUp size={11} />
-              {git.branch.ahead}
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-full border border-[var(--git-border)] bg-[var(--git-bg-tertiary)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[var(--status-warning)]">
-              <ArrowDown size={11} />
-              {git.branch.behind}
-            </span>
-          </div>
-
-          <div className="mt-3 min-w-0">
-            <div className="shell-mini-x-scroll w-full min-w-0 overflow-x-scroll overflow-y-hidden pb-1">
-              <div className="shell-cluster-soft inline-flex min-w-max px-1.5 py-1">
-                {detailTabs.map(([value, label, Icon]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => openDetail(value)}
-                    className={`shell-control h-8 gap-2 px-3 text-[11px] ${
-                      detailTab === value
-                        ? "border-[var(--accent-brand)] bg-[var(--accent-brand-soft)] text-[var(--accent-brand)]"
-                        : "text-[var(--git-text-secondary)]"
-                    }`}
-                  >
-                    <Icon size={13} />
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-hidden">
-          {detailTab === "commit" && (
-            <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-3 py-3">
-              <div className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] p-3">
-                <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
-                  <span className="inline-flex items-center gap-1">
-                    <GitCommit size={12} />
-                    Commit
-                  </span>
-                  <span>{git.stagedFiles.length} staged</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    value={commitMessage}
-                    onChange={(event) => setCommitMessage(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (
-                        (event.metaKey || event.ctrlKey) &&
-                        event.key === "Enter"
-                      ) {
-                        void handleCommit();
-                      }
-                    }}
-                    placeholder="Commit message"
-                    style={inputStyle(theme)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleCommit()}
-                    disabled={
-                      !commitMessage.trim() ||
-                      git.stagedFiles.length === 0 ||
-                      git.busy
-                    }
-                    style={buttonStyle(
-                      theme,
-                      commitMessage.trim() && git.stagedFiles.length > 0
-                        ? "accent"
-                        : "default",
-                    )}
-                  >
-                    <Check size={13} />
-                    Commit
-                  </button>
-                </div>
-                <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-[var(--git-text-secondary)]">
-                  Ctrl/Cmd + Enter to commit
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] p-3">
-                <div className="mb-3 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
-                  <span>Sync</span>
-                  <span>{selectedRemoteLabel}</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {git.remotes.length > 1 && (
-                    <select
-                      value={git.selectedRemote}
-                      onChange={(event) =>
-                        git.setSelectedRemote(event.target.value)
-                      }
-                      style={{
-                        ...inputStyle(theme),
-                        width: 132,
-                        padding: "6px 8px",
-                      }}
-                    >
-                      {git.remotes.map((remote) => (
-                        <option key={remote} value={remote}>
-                          {remote}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  <button
-                    type="button"
-                    style={buttonStyle(theme)}
-                    onClick={() => void runPanelAction(git.fetchRemote)}
-                  >
-                    Fetch
-                  </button>
-                  <button
-                    type="button"
-                    style={buttonStyle(theme)}
-                    onClick={() => void runPanelAction(git.pullRemote)}
-                  >
-                    Pull
-                  </button>
-                  <button
-                    type="button"
-                    style={buttonStyle(
-                      theme,
-                      git.branch.ahead > 0 ? "accent" : "default",
-                    )}
-                    onClick={() =>
-                      void runPanelAction(() => git.pushRemote(false))
-                    }
-                  >
-                    <Send size={13} />
-                    Push
-                  </button>
-                </div>
-              </div>
-            </div>
           )}
-
-          {detailTab === "history" && (
-            <GitHistory
-              commits={git.historyCommits}
-              loading={git.historyLoading}
-              onRefresh={() => void git.loadHistory()}
-              onViewDiff={viewCommitDiff}
-            />
-          )}
-
-          {detailTab === "pull_requests" && (
-            <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-3 py-3">
-              <div className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] p-3">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--git-text-secondary)]">
-                  Pull request flow
-                </div>
-                <div className="mt-2 text-[12px] text-[var(--git-text-secondary)]">
-                  Build a GitHub compare URL from the current branch and open it
-                  in the browser.
-                </div>
-                <div className="mt-3 grid gap-3">
-                  <label className="grid gap-1 text-[11px] text-[var(--git-text-secondary)]">
-                    Base branch
-                    <input
-                      value={prBaseOverride}
-                      onChange={(event) =>
-                        setPrBaseOverride(event.target.value)
-                      }
-                      placeholder={inferredBaseBranch}
-                      style={inputStyle(theme)}
-                    />
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      style={buttonStyle(theme)}
-                      onClick={() =>
-                        void runPanelAction(() => git.pushRemote(true))
-                      }
-                    >
-                      Push -u
-                    </button>
-                    <button
-                      type="button"
-                      style={buttonStyle(theme)}
-                      onClick={() => void previewPullRequestUrl()}
-                    >
-                      Preview URL
-                    </button>
-                    <button
-                      type="button"
-                      style={buttonStyle(theme, "accent")}
-                      onClick={() => void openPullRequestUrl()}
-                    >
-                      Open PR
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] p-3 text-[12px] text-[var(--git-text-secondary)]">
-                <div>
-                  Base branch:{" "}
-                  <span className="text-[var(--git-text)]">
-                    {effectivePrBase}
-                  </span>
-                </div>
-                <div className="mt-1">
-                  Source branch:{" "}
-                  <span className="text-[var(--git-text)]">
-                    {git.branch.current || "detached"}
-                  </span>
-                </div>
-              </div>
-
-              {prUrl && (
-                <div className="rounded-lg border border-[var(--git-border)] bg-[var(--git-surface)] p-3 break-all text-[12px] text-[var(--git-text-secondary)]">
-                  {prUrl}
-                </div>
-              )}
-            </div>
-          )}
-
-          {detailTab === "stash" && (
-            <div className="h-full min-h-0 overflow-y-auto px-3 py-3">
-              <StashSection
-                entries={git.stashEntries}
-                loading={git.stashLoading || git.busy}
-                message={stashMessage}
-                onMessageChange={setStashMessage}
-                onCreate={() => void handleCreateStash()}
-                onPop={(ref) => void runPanelAction(() => git.popStash(ref))}
-                onDrop={(ref) => void runPanelAction(() => git.dropStash(ref))}
-              />
-            </div>
-          )}
-
-          {detailTab === "diff" &&
-            (diffState ? (
-              <GitDiffViewer
-                diff={diffState.content}
-                fileName={diffState.title}
-                onClose={closeDiff}
-                onPrevFile={
-                  diffState.selectedPath && selectedFileIndex > 0
-                    ? () => navigateDiff("prev")
-                    : undefined
-                }
-                onNextFile={
-                  diffState.selectedPath &&
-                  selectedFileIndex < allChangedFiles.length - 1
-                    ? () => navigateDiff("next")
-                    : undefined
-                }
-                hasPrev={
-                  diffState.selectedPath !== null && selectedFileIndex > 0
-                }
-                hasNext={
-                  diffState.selectedPath !== null &&
-                  selectedFileIndex >= 0 &&
-                  selectedFileIndex < allChangedFiles.length - 1
-                }
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center px-4 text-center text-[12px] text-[var(--git-text-secondary)]">
-                Select a file or a commit to inspect its diff here.
-              </div>
-            ))}
         </div>
       </div>
+
+      <div className="min-h-0 flex-1 overflow-hidden">{renderDetailBody()}</div>
+    </section>
+  );
+
+  return (
+    <div
+      data-testid="git-panel-root"
+      data-git-mode={presentationMode}
+      data-git-layout={layoutMode}
+      style={panelVars}
+      className="relative flex h-full min-h-0 flex-col bg-[var(--git-bg)] text-[var(--git-text)]"
+    >
+      {isExpanded ? (
+        <div className="min-h-0 flex-1 overflow-hidden px-4 py-4">
+          <div
+            data-testid="git-expanded-workspace"
+            className="grid h-full min-h-0 grid-cols-[minmax(320px,0.35fr)_minmax(0,0.65fr)] gap-4"
+          >
+            <div
+              data-testid="git-expanded-sidebar"
+              className="min-h-0 h-full overflow-hidden"
+            >
+              {renderExpandedSections()}
+            </div>
+            <div className="min-h-0 h-full overflow-hidden">
+              {renderDetailWorkspace(false, "git-detail-pane")}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="border-b border-[var(--git-border)] px-3 py-3">
+            {renderBranchCluster(false)}
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            {renderCompactSections()}
+          </div>
+
+          <div className="border-t border-[var(--git-border)] px-3 py-3">
+            <div className="shell-cluster-soft w-full gap-2 px-1.5 py-1.5">
+              <button
+                type="button"
+                onClick={() => openDetail("commit")}
+                className="shell-control h-10 min-w-0 flex-1 justify-center gap-2 px-4 text-[var(--git-text)] hover:border-[var(--accent-brand)] hover:text-[var(--accent-brand)]"
+              >
+                <GitCommit size={14} />
+                Commit...
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  openDetail(detailTab === "diff" ? "commit" : detailTab)
+                }
+                className="shell-control h-10 min-w-0 justify-center gap-2 px-4 text-[var(--git-text-secondary)]"
+              >
+                <ChevronsRight size={14} />
+                Open details
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {humanError && (
+        <div className="border-t border-[var(--git-border)] bg-[color:var(--status-error)]/10 px-3 py-2 text-[11px] text-[var(--git-text)]">
+          {humanError}
+        </div>
+      )}
+
+      {!isExpanded && (
+        <div
+          aria-hidden={!detailOpen}
+          data-testid="git-compact-detail-overlay"
+          className="absolute inset-0 z-20 flex min-h-0 flex-col bg-[var(--git-bg)] p-3"
+          style={{
+            opacity: detailOpen ? 1 : 0,
+            pointerEvents: detailOpen ? "auto" : "none",
+            transform: detailOpen
+              ? "translate3d(0, 0, 0)"
+              : detailDirection.closedTransform,
+            transition:
+              "transform 280ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease",
+            willChange: "transform, opacity",
+            contain: "layout paint",
+            border: detailDirection.border,
+            boxShadow: detailOpen ? detailDirection.boxShadow : "none",
+          }}
+        >
+          {renderDetailWorkspace(true, "git-compact-detail-workspace")}
+        </div>
+      )}
     </div>
   );
 };

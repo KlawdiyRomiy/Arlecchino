@@ -1,5 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import {
+  isSameOrChildPath,
+  remapProjectPathPrefix,
+} from '../utils/projectPaths';
 
 interface ExplorerState {
   expandedPaths: Set<string>;
@@ -13,6 +17,8 @@ interface ExplorerState {
   requestRevealFile: (path: string) => void;
   clearRevealRequest: () => void;
   setProjectPath: (path: string) => void;
+  remapPathPrefix: (oldPrefix: string, newPrefix: string) => void;
+  prunePathPrefix: (pathPrefix: string) => void;
 }
 
 export const useExplorerStore = create<ExplorerState>()(
@@ -65,6 +71,61 @@ export const useExplorerStore = create<ExplorerState>()(
 
       setProjectPath: (path: string) => {
         set({ projectPath: path });
+      },
+
+      remapPathPrefix: (oldPrefix: string, newPrefix: string) => {
+        set((state) => {
+          const remappedExpandedPaths = new Set<string>();
+          state.expandedPaths.forEach((path) => {
+            const remappedPath = remapProjectPathPrefix(
+              path,
+              oldPrefix,
+              newPrefix,
+            );
+            if (remappedPath) {
+              remappedExpandedPaths.add(remappedPath);
+            }
+          });
+
+          return {
+            expandedPaths: remappedExpandedPaths,
+            highlightedPath: remapProjectPathPrefix(
+              state.highlightedPath,
+              oldPrefix,
+              newPrefix,
+            ),
+            revealRequestPath: remapProjectPathPrefix(
+              state.revealRequestPath,
+              oldPrefix,
+              newPrefix,
+            ),
+          };
+        });
+      },
+
+      prunePathPrefix: (pathPrefix: string) => {
+        set((state) => {
+          const nextExpandedPaths = new Set<string>();
+          state.expandedPaths.forEach((path) => {
+            if (!isSameOrChildPath(path, pathPrefix)) {
+              nextExpandedPaths.add(path);
+            }
+          });
+
+          return {
+            expandedPaths: nextExpandedPaths,
+            highlightedPath:
+              state.highlightedPath &&
+              isSameOrChildPath(state.highlightedPath, pathPrefix)
+                ? null
+                : state.highlightedPath,
+            revealRequestPath:
+              state.revealRequestPath &&
+              isSameOrChildPath(state.revealRequestPath, pathPrefix)
+                ? null
+                : state.revealRequestPath,
+          };
+        });
       },
     }),
     {

@@ -12,6 +12,7 @@ export type CompletionOrchestrator = {
   nextRequestId: () => number;
   isStale: (requestId: number) => boolean;
   markResponse: (requestId: number) => void;
+  cancelPending: () => void;
 };
 
 export function createCompletionOrchestrator(
@@ -39,5 +40,10 @@ export function createCompletionOrchestrator(
     }
   };
 
-  return { extension, nextRequestId, isStale, markResponse };
+  const cancelPending = () => {
+    activeRequestId += 1;
+    options.onCancel?.(activeRequestId);
+  };
+
+  return { extension, nextRequestId, isStale, markResponse, cancelPending };
 }

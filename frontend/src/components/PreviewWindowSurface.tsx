@@ -7,6 +7,7 @@ import { useExplorerStore } from "../stores/explorerStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { getThemeColors } from "../styles/colors";
 import type { Theme } from "../types/theme";
+import { MAX_UI_SCALE, MIN_UI_SCALE, UI_SCALE_STEP } from "../utils/uiScale";
 import { AIChatPanelContent } from "./AIChatPanel";
 import { BrowserPreview } from "./BrowserPreview";
 import { CodePanelSurface } from "./CodePanelSurface";
@@ -328,9 +329,9 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
           </label>
           <input
             type="range"
-            min={0.7}
-            max={2}
-            step={0.05}
+            min={MIN_UI_SCALE}
+            max={MAX_UI_SCALE}
+            step={UI_SCALE_STEP}
             value={appearanceScale}
             onChange={(event) => {
               onAppearancePatch({ uiScale: Number(event.currentTarget.value) });

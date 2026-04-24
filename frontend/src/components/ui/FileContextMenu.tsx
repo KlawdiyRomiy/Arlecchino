@@ -1,17 +1,20 @@
 import React from "react";
-import * as ContextMenu from "@radix-ui/react-context-menu";
-import { motion, AnimatePresence } from "framer-motion";
 import {
-  File,
-  FolderOpen,
   Copy,
-  Trash2,
   Edit3,
   ExternalLink,
+  File,
   FilePlus,
+  FolderOpen,
   FolderPlus,
   PanelRightOpen,
+  Trash2,
 } from "lucide-react";
+
+import {
+  ContextActionMenu,
+  type ContextActionMenuItem,
+} from "./ContextActionMenu";
 
 interface FileContextMenuProps {
   children: React.ReactNode;
@@ -30,7 +33,6 @@ interface FileContextMenuProps {
 export const FileContextMenu: React.FC<FileContextMenuProps> = ({
   children,
   isDirectory,
-  filePath,
   onOpen,
   onOpenInPanel,
   onReveal,
@@ -40,148 +42,69 @@ export const FileContextMenu: React.FC<FileContextMenuProps> = ({
   onNewFile,
   onNewFolder,
 }) => {
-  const [open, setOpen] = React.useState(false);
+  const items: ContextActionMenuItem[] = [
+    onOpen
+      ? {
+          label: "Open",
+          icon: isDirectory ? <FolderOpen size={14} /> : <File size={14} />,
+          onSelect: onOpen,
+        }
+      : { hidden: true },
+    !isDirectory && onOpenInPanel
+      ? {
+          label: "Open in Panel",
+          icon: <PanelRightOpen size={14} />,
+          onSelect: onOpenInPanel,
+        }
+      : { hidden: true },
+    onReveal
+      ? {
+          label: "Reveal in File Manager",
+          icon: <ExternalLink size={14} />,
+          onSelect: onReveal,
+        }
+      : { hidden: true },
+    { separator: true },
+    isDirectory && onNewFile
+      ? {
+          label: "New File",
+          icon: <FilePlus size={14} />,
+          onSelect: onNewFile,
+        }
+      : { hidden: true },
+    isDirectory && onNewFolder
+      ? {
+          label: "New Folder",
+          icon: <FolderPlus size={14} />,
+          onSelect: onNewFolder,
+        }
+      : { hidden: true },
+    onCopyPath
+      ? {
+          label: "Copy Path",
+          icon: <Copy size={14} />,
+          onSelect: onCopyPath,
+        }
+      : { hidden: true },
+    onRename
+      ? {
+          label: "Rename",
+          icon: <Edit3 size={14} />,
+          onSelect: onRename,
+        }
+      : { hidden: true },
+    onDelete ? { separator: true } : { hidden: true },
+    onDelete
+      ? {
+          label: "Move to Trash",
+          icon: <Trash2 size={14} />,
+          danger: true,
+          onSelect: onDelete,
+        }
+      : { hidden: true },
+  ];
 
-  return (
-    <ContextMenu.Root onOpenChange={setOpen}>
-      <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
-
-      <AnimatePresence>
-        {open && (
-          <ContextMenu.Portal forceMount>
-            <ContextMenu.Content asChild>
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: -5 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                transition={{ duration: 0.12, ease: "easeOut" }}
-                className="z-50 min-w-[180px] bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl overflow-hidden py-1"
-              >
-                {onOpen && (
-                  <ContextMenu.Item asChild>
-                    <motion.button
-                      whileHover={{ backgroundColor: "var(--bg-tertiary)" }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer outline-none"
-                      onClick={onOpen}
-                    >
-                      {isDirectory ? (
-                        <FolderOpen size={14} />
-                      ) : (
-                        <File size={14} />
-                      )}
-                      Open
-                    </motion.button>
-                  </ContextMenu.Item>
-                )}
-
-                {!isDirectory && onOpenInPanel && (
-                  <ContextMenu.Item asChild>
-                    <motion.button
-                      whileHover={{ backgroundColor: "var(--bg-tertiary)" }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer outline-none"
-                      onClick={onOpenInPanel}
-                    >
-                      <PanelRightOpen size={14} />
-                      Open in Panel
-                    </motion.button>
-                  </ContextMenu.Item>
-                )}
-
-                {onReveal && (
-                  <ContextMenu.Item asChild>
-                    <motion.button
-                      whileHover={{ backgroundColor: "var(--bg-tertiary)" }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer outline-none"
-                      onClick={onReveal}
-                    >
-                      <ExternalLink size={14} />
-                      Reveal in Finder
-                    </motion.button>
-                  </ContextMenu.Item>
-                )}
-
-                <ContextMenu.Separator className="h-px bg-[var(--border-subtle)] my-1" />
-
-                {isDirectory && onNewFile && (
-                  <ContextMenu.Item asChild>
-                    <motion.button
-                      whileHover={{ backgroundColor: "var(--bg-tertiary)" }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer outline-none"
-                      onClick={onNewFile}
-                    >
-                      <FilePlus size={14} />
-                      New File
-                    </motion.button>
-                  </ContextMenu.Item>
-                )}
-
-                {isDirectory && onNewFolder && (
-                  <ContextMenu.Item asChild>
-                    <motion.button
-                      whileHover={{ backgroundColor: "var(--bg-tertiary)" }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer outline-none"
-                      onClick={onNewFolder}
-                    >
-                      <FolderPlus size={14} />
-                      New Folder
-                    </motion.button>
-                  </ContextMenu.Item>
-                )}
-
-                {isDirectory && (onNewFile || onNewFolder) && (
-                  <ContextMenu.Separator className="h-px bg-[var(--border-subtle)] my-1" />
-                )}
-
-                {onCopyPath && (
-                  <ContextMenu.Item asChild>
-                    <motion.button
-                      whileHover={{ backgroundColor: "var(--bg-tertiary)" }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer outline-none"
-                      onClick={onCopyPath}
-                    >
-                      <Copy size={14} />
-                      Copy Path
-                    </motion.button>
-                  </ContextMenu.Item>
-                )}
-
-                {onRename && (
-                  <ContextMenu.Item asChild>
-                    <motion.button
-                      whileHover={{ backgroundColor: "var(--bg-tertiary)" }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer outline-none"
-                      onClick={onRename}
-                    >
-                      <Edit3 size={14} />
-                      Rename
-                    </motion.button>
-                  </ContextMenu.Item>
-                )}
-
-                {onDelete && (
-                  <>
-                    <ContextMenu.Separator className="h-px bg-[var(--border-subtle)] my-1" />
-                    <ContextMenu.Item asChild>
-                      <motion.button
-                        whileHover={{
-                          backgroundColor: "rgba(239, 68, 68, 0.1)",
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-1.5 text-[13px] text-red-400 hover:text-red-300 cursor-pointer outline-none"
-                        onClick={onDelete}
-                      >
-                        <Trash2 size={14} />
-                        Delete
-                      </motion.button>
-                    </ContextMenu.Item>
-                  </>
-                )}
-              </motion.div>
-            </ContextMenu.Content>
-          </ContextMenu.Portal>
-        )}
-      </AnimatePresence>
-    </ContextMenu.Root>
-  );
+  return <ContextActionMenu items={items}>{children}</ContextActionMenu>;
 };
 
 export default FileContextMenu;

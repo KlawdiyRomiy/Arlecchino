@@ -68,7 +68,7 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 10, G: 10, B: 10, A: 255},
+		BackgroundColour: &options.RGBA{R: 10, G: 10, B: 10, A: 0},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
 		Mac: &mac.Options{
@@ -80,7 +80,7 @@ func main() {
 				UseToolbar:                 false,
 				HideToolbarSeparator:       true,
 			},
-			WebviewIsTransparent: false,
+			WebviewIsTransparent: true,
 			WindowIsTranslucent:  false,
 			About: &mac.AboutInfo{
 				Title:   "Arlecchino",

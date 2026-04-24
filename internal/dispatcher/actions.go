@@ -44,9 +44,9 @@ func (r *ActionRegistry) registerDefaults() {
 		{Name: "Toggle word wrap", Description: "Toggle line wrapping", Icon: "wrap-text", Handler: "editor.toggleWordWrap"},
 		{Name: "Toggle minimap", Description: "Show/hide minimap", Icon: "map", Handler: "editor.toggleMinimap"},
 
-		{Name: "Zoom in", Description: "Increase font size", Icon: "zoom-in", Handler: "view.zoomIn", Keybinding: "cmd+="},
-		{Name: "Zoom out", Description: "Decrease font size", Icon: "zoom-out", Handler: "view.zoomOut", Keybinding: "cmd+-"},
-		{Name: "Reset zoom", Description: "Reset font size", Icon: "maximize", Handler: "view.zoomReset", Keybinding: "cmd+0"},
+		{Name: "Zoom in", Description: "Increase UI zoom", Icon: "zoom-in", Handler: "view.zoomIn", Keybinding: "cmd+="},
+		{Name: "Zoom out", Description: "Decrease UI zoom", Icon: "zoom-out", Handler: "view.zoomOut", Keybinding: "cmd+-"},
+		{Name: "Reset zoom", Description: "Reset UI zoom", Icon: "maximize", Handler: "view.zoomReset", Keybinding: "cmd+0"},
 
 		{Name: "Open settings", Description: "Open settings", Icon: "settings", Handler: "app.settings", Keybinding: "cmd+,"},
 		{Name: "Show keybindings", Description: "Show keyboard shortcuts", Icon: "keyboard", Handler: "app.keybindings"},

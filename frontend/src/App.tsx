@@ -6,20 +6,45 @@ import ProjectScreen from "./components/ProjectScreen";
 import { CommandRegistryProvider } from "./contexts/CommandRegistryContext";
 import { PluginModalProvider } from "./contexts/PluginModalContext";
 import * as AppFunctions from "../wailsjs/go/main/App";
+import { useEditorSettingsStore } from "./stores/editorSettingsStore";
 import {
   getAdjacentProject,
   resolveProjectSwitchDirection,
   useWorkspaceStore,
 } from "./stores/workspaceStore";
 import { useTerminalStore } from "./stores/terminalStore";
+import { clampUiScale } from "./utils/uiScale";
 import {
   activateProjectScope,
   preloadProjectDiagnostics,
   resetProjectBoundStores,
 } from "./utils/projectBoundState";
 
+const buildScaledSurfaceStyle = (uiScale: number): React.CSSProperties => ({
+  position: "absolute",
+  top: 0,
+  left: 0,
+  width: `${100 / uiScale}%`,
+  height: `${100 / uiScale}%`,
+  transform: `scale(${uiScale})`,
+  transformOrigin: "top left",
+  overflow: "hidden",
+  background: "transparent",
+});
+
+const appShellStyle: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  overflow: "hidden",
+  overscrollBehavior: "none",
+  borderRadius: "var(--radius-window)",
+  clipPath: "inset(0 round var(--radius-window))",
+  background: "transparent",
+};
+
 const App: React.FC = () => {
   const activeId = useWorkspaceStore((state) => state.activeId);
+  const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const activeProject = useWorkspaceStore((state) =>
     state.projects.find((project) => project.id === state.activeId),
   );
@@ -31,6 +56,24 @@ const App: React.FC = () => {
     name: string;
     line?: number;
   } | null>(null);
+  const effectiveUiScale = clampUiScale(uiScale);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--ui-scale",
+      String(effectiveUiScale),
+    );
+    document.documentElement.style.setProperty(
+      "--ui-inverse-scale",
+      String(1 / effectiveUiScale),
+    );
+
+    return () => {
+      document.documentElement.style.removeProperty("--ui-scale");
+      document.documentElement.style.removeProperty("--ui-inverse-scale");
+    };
+  }, [effectiveUiScale]);
+
   const syncCurrentFramework = async () => {
     const framework = await AppFunctions.GetCurrentProjectFramework();
     useWorkspaceStore.getState().setActiveFramework(framework || null);
@@ -187,54 +230,64 @@ const App: React.FC = () => {
   };
 
   if (!ready) {
-    return <div className="blackprint-bg" />;
+    return (
+      <div data-testid="app-shell" style={appShellStyle}>
+        <div
+          data-testid="app-scaled-surface"
+          style={buildScaledSurfaceStyle(effectiveUiScale)}
+        >
+          <div className="blackprint-bg" />
+        </div>
+      </div>
+    );
   }
 
   if (activeId && activeProject) {
     return (
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          width: "100vw",
-          height: "100vh",
-          overflow: "hidden",
-          overscrollBehavior: "none",
-        }}
-      >
-        <div className="blackprint-bg" />
-        <ProjectSwitchTransition
-          layoutKey={activeProject.path}
-          direction={switchDirection}
+      <div data-testid="app-shell" style={appShellStyle}>
+        <div
+          data-testid="app-scaled-surface"
+          style={buildScaledSurfaceStyle(effectiveUiScale)}
         >
-          <PluginModalProvider key={activeProject.path}>
-            <CommandRegistryProvider>
-              <MainLayout
-                key={activeProject.path}
-                onFileOpen={handleFileOpen}
-                onBackToWelcome={handleBackToWelcome}
-                onProjectOpen={handleProjectOpen}
-                onSwitchProject={handleSwitchProject}
-                onCloseProject={handleCloseProject}
-              >
-                <ProjectScreen
-                  projectPath={activeProject.path}
-                  fileToOpen={fileToOpen}
-                  onFileOpened={() => setFileToOpen(null)}
-                />
-              </MainLayout>
-            </CommandRegistryProvider>
-          </PluginModalProvider>
-        </ProjectSwitchTransition>
+          <div className="blackprint-bg" />
+          <ProjectSwitchTransition
+            layoutKey={activeProject.path}
+            direction={switchDirection}
+          >
+            <PluginModalProvider key={activeProject.path}>
+              <CommandRegistryProvider>
+                <MainLayout
+                  key={activeProject.path}
+                  onFileOpen={handleFileOpen}
+                  onBackToWelcome={handleBackToWelcome}
+                  onProjectOpen={handleProjectOpen}
+                  onSwitchProject={handleSwitchProject}
+                  onCloseProject={handleCloseProject}
+                >
+                  <ProjectScreen
+                    projectPath={activeProject.path}
+                    fileToOpen={fileToOpen}
+                    onFileOpened={() => setFileToOpen(null)}
+                  />
+                </MainLayout>
+              </CommandRegistryProvider>
+            </PluginModalProvider>
+          </ProjectSwitchTransition>
+        </div>
       </div>
     );
   }
 
   return (
-    <>
-      <div className="blackprint-bg" />
-      <WelcomeScreen onProjectOpen={handleProjectOpen} />
-    </>
+    <div data-testid="app-shell" style={appShellStyle}>
+      <div
+        data-testid="app-scaled-surface"
+        style={buildScaledSurfaceStyle(effectiveUiScale)}
+      >
+        <div className="blackprint-bg" />
+        <WelcomeScreen onProjectOpen={handleProjectOpen} />
+      </div>
+    </div>
   );
 };
 
