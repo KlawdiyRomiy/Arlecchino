@@ -76,6 +76,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const { isDark } = useTheme();
   const editorBgColor = isDark ? editorCanvasBackground : "#ffffff";
   const setStatusFile = useEditorStore((state) => state.setStatusFile);
+  const activeEditorPaneId = useEditorStore((state) => state.activePaneId);
+  const openEditorStoreTab = useEditorStore((state) => state.openTab);
+  const setEditorStoreActiveTab = useEditorStore((state) => state.setActiveTab);
+  const updateEditorStoreTabContent = useEditorStore(
+    (state) => state.updateTabContent,
+  );
+  const markEditorStoreTabDirty = useEditorStore((state) => state.markTabDirty);
+  const closeEditorStoreTabPath = useEditorStore((state) => state.closePath);
   const { copyAbsolutePath, revealEntry } = useProjectEntryActions();
 
   const tabStorageKey = `editorTabs:${projectPath}`;
@@ -598,12 +606,37 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       return;
     }
 
-    setStatusFile(
+    const language = getLanguageFromPath(statusTab.path);
+    setStatusFile(statusTab.path, statusTab.label, language);
+
+    const content = fileContents[statusTab.id];
+    if (content === undefined) {
+      return;
+    }
+
+    const editorTabId = makeEditorTabId(statusTab.path);
+    openEditorStoreTab(
+      activeEditorPaneId,
       statusTab.path,
       statusTab.label,
-      getLanguageFromPath(statusTab.path),
+      content,
+      language,
     );
-  }, [activeTab, secondaryActiveTab, setStatusFile, tabs]);
+    updateEditorStoreTabContent(editorTabId, content);
+    markEditorStoreTabDirty(editorTabId, statusTab.isDirty === true);
+    setEditorStoreActiveTab(activeEditorPaneId, editorTabId);
+  }, [
+    activeEditorPaneId,
+    activeTab,
+    fileContents,
+    markEditorStoreTabDirty,
+    openEditorStoreTab,
+    secondaryActiveTab,
+    setEditorStoreActiveTab,
+    setStatusFile,
+    tabs,
+    updateEditorStoreTabContent,
+  ]);
 
   const handleFileOpen = useCallback(
     async (filePath: string, content: string, fileName: string) => {
@@ -639,6 +672,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     if (closedTab) {
       // Save to closed tabs history (keep last 10)
       setClosedTabs((prev) => [closedTab, ...prev].slice(0, 10));
+      closeEditorStoreTabPath(closedTab.path);
     }
 
     const updatedTabs = tabs.filter((tab) => tab.id !== tabId);
@@ -670,12 +704,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   }, []);
 
   const handleCloseAllTabs = useCallback(() => {
+    tabsRef.current.forEach((tab) => closeEditorStoreTabPath(tab.path));
     setTabs([]);
     setFileContents({});
     setActiveTab(null);
     setSecondaryActiveTab(null);
     setSplitDirection(null);
-  }, []);
+  }, [closeEditorStoreTabPath]);
 
   const handleReopenClosedTab = async () => {
     if (closedTabs.length === 0) return;

@@ -224,14 +224,6 @@ export const TopBar: React.FC<TopBarProps> = ({
               </motion.div>
             )}
           </AnimatePresence>
-
-          {previewActive ? (
-            <span className="interactive-chip border-[color:var(--status-success)]/25 bg-[color:var(--status-success)]/10 text-[var(--status-success)]">
-              Preview Live
-            </span>
-          ) : previewEnabled && !isIndexingActive ? (
-            <span className={centerChipClass}>Preview Ready</span>
-          ) : null}
         </div>
         <AnimatePresence>
           {projectPathCopied && projectPath ? (

@@ -519,25 +519,11 @@ body > [data-radix-portal] > * {
 }
 
 .shell-mini-x-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: rgb(84 84 84) transparent;
+  scrollbar-width: none;
 }
 
 .shell-mini-x-scroll::-webkit-scrollbar {
-  height: 5px;
-}
-
-.shell-mini-x-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.shell-mini-x-scroll::-webkit-scrollbar-thumb {
-  background: rgb(84 84 84);
-  border-radius: 9999px;
-}
-
-.shell-mini-x-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgb(108 108 108);
+  display: none;
 }
 
 @keyframes fileExplorerFlash {

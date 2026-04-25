@@ -102,7 +102,7 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: -5 }}
                 transition={{ duration: 0.12, ease: "easeOut" }}
-                className="z-50 min-w-[196px] overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-secondary)] py-1 shadow-xl"
+                className="z-[120] min-w-[196px] overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-secondary)] py-1 shadow-xl"
               >
                 {visibleItems.map((item, index) => {
                   if (item.separator) {

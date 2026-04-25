@@ -1,26 +1,59 @@
 import { expect, test } from "@playwright/test";
 
+interface MountProjectUIOptions {
+  panelLayoutState?: unknown;
+}
+
 const openGitPanel = async (
   page: Parameters<typeof test>[0]["page"],
 ): Promise<void> => {
   await page.evaluate(() => {
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "G",
-        code: "KeyG",
-        metaKey: true,
-        shiftKey: true,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
+    const eventInit = {
+      key: "g",
+      code: "KeyG",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    window.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+    window.dispatchEvent(new KeyboardEvent("keyup", eventInit));
   });
+};
+
+const moveHeldPanelShortcut = async (
+  page: Parameters<typeof test>[0]["page"],
+  shortcut: {
+    key: string;
+    code: string;
+    metaKey?: boolean;
+    ctrlKey?: boolean;
+    shiftKey?: boolean;
+  },
+  arrow: { key: string; code: string },
+): Promise<void> => {
+  const modifiers: string[] = [];
+  if (shortcut.metaKey) modifiers.push("Meta");
+  if (shortcut.ctrlKey) modifiers.push("Control");
+  if (shortcut.shiftKey) modifiers.push("Shift");
+
+  for (const modifier of modifiers) {
+    await page.keyboard.down(modifier);
+  }
+
+  await page.keyboard.down(shortcut.key);
+  await page.keyboard.press(arrow.key);
+  await page.keyboard.up(shortcut.key);
+
+  for (const modifier of modifiers.reverse()) {
+    await page.keyboard.up(modifier);
+  }
 };
 
 const installBaseBridges = async (
   page: Parameters<typeof test>[0]["page"],
+  options: MountProjectUIOptions = {},
 ): Promise<void> => {
-  await page.addInitScript(() => {
+  await page.addInitScript(({ panelLayoutState }: MountProjectUIOptions) => {
     localStorage.clear();
 
     const appBridge = new Proxy(
@@ -117,13 +150,21 @@ const installBaseBridges = async (
         version: 0,
       }),
     );
-  });
+
+    if (panelLayoutState) {
+      localStorage.setItem(
+        "panelState:/workspace",
+        JSON.stringify(panelLayoutState),
+      );
+    }
+  }, options);
 };
 
 const mountProjectUI = async (
   page: Parameters<typeof test>[0]["page"],
+  options: MountProjectUIOptions = {},
 ): Promise<void> => {
-  await installBaseBridges(page);
+  await installBaseBridges(page, options);
   await page.goto("/");
 
   await page.evaluate(async () => {
@@ -244,6 +285,58 @@ const expectDirectionalSlide = (
   }
 };
 
+const expectNoBoxOverlap = (
+  first: { x: number; y: number; width: number; height: number } | null,
+  second: { x: number; y: number; width: number; height: number } | null,
+) => {
+  expect(first).not.toBeNull();
+  expect(second).not.toBeNull();
+
+  const firstRight = (first?.x ?? 0) + (first?.width ?? 0);
+  const firstBottom = (first?.y ?? 0) + (first?.height ?? 0);
+  const secondRight = (second?.x ?? 0) + (second?.width ?? 0);
+  const secondBottom = (second?.y ?? 0) + (second?.height ?? 0);
+
+  const overlaps =
+    (first?.x ?? 0) < secondRight &&
+    firstRight > (second?.x ?? 0) &&
+    (first?.y ?? 0) < secondBottom &&
+    firstBottom > (second?.y ?? 0);
+  expect(overlaps).toBe(false);
+};
+
+const boxesOverlap = (
+  first: { x: number; y: number; width: number; height: number } | null,
+  second: { x: number; y: number; width: number; height: number } | null,
+): boolean => {
+  if (!first || !second) {
+    return true;
+  }
+
+  const firstRight = first.x + first.width;
+  const firstBottom = first.y + first.height;
+  const secondRight = second.x + second.width;
+  const secondBottom = second.y + second.height;
+
+  return (
+    first.x < secondRight &&
+    firstRight > second.x &&
+    first.y < secondBottom &&
+    firstBottom > second.y
+  );
+};
+
+const waitForPanelSettled = async (
+  page: Parameters<typeof test>[0]["page"],
+  testId: string,
+): Promise<void> => {
+  await expect
+    .poll(async () =>
+      page.getByTestId(testId).last().getAttribute("data-panel-motion"),
+    )
+    .toBe("settled");
+};
+
 test("snapped floating panel uses slide-only motion for open and close", async ({
   page,
 }) => {
@@ -350,6 +443,451 @@ test("fullscreen floating panel closes without a sideways slide under ui scale",
   await expect(page.locator('[data-testid="panel-git"]')).toHaveCount(0);
 });
 
+test("panel shortcuts open hidden panels on keydown without waiting for hold", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  const panel = page.locator('[data-testid="panel-git"]');
+  await expect(panel).toHaveCount(0);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "g",
+        code: "KeyG",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+
+  await expect(panel).toBeVisible();
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        key: "g",
+        code: "KeyG",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+
+  await expect(panel).toBeVisible();
+});
+
+test("panel shortcut ignores auto-repeat keydown until keyup", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  const panel = page.locator('[data-testid="panel-explorer"]');
+  await expect(panel).toBeVisible();
+
+  await page.evaluate(() => {
+    const firstPress = {
+      key: "e",
+      code: "KeyE",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    const repeatedPress = { ...firstPress, repeat: true };
+    window.dispatchEvent(new KeyboardEvent("keydown", firstPress));
+    window.dispatchEvent(new KeyboardEvent("keydown", repeatedPress));
+    window.dispatchEvent(new KeyboardEvent("keydown", repeatedPress));
+  });
+
+  await expect(panel).toBeVisible();
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        key: "e",
+        code: "KeyE",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+
+  await expect(panel).toHaveCount(0);
+});
+
+test("panel shortcut retaps while command remains held", async ({ page }) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: true,
+      },
+    },
+  });
+
+  const panel = page.locator('[data-testid="panel-explorer"]');
+  await expect(panel).toHaveCount(0);
+
+  await page.evaluate(() => {
+    const eventInit = {
+      key: "e",
+      code: "KeyE",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    window.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+  });
+
+  await expect(panel).toBeVisible();
+
+  await page.evaluate(() => {
+    const eventInit = {
+      key: "e",
+      code: "KeyE",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    window.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+    window.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+  });
+
+  await expect(panel).toBeVisible();
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        key: "e",
+        code: "KeyE",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+
+  await expect(panel).toHaveCount(0);
+});
+
+test("panel shortcut closes when command is released before trigger key", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  const panel = page.locator('[data-testid="panel-explorer"]');
+  await expect(panel).toBeVisible();
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "e",
+        code: "KeyE",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    window.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        key: "Meta",
+        code: "MetaLeft",
+        metaKey: false,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+
+  await expect(panel).toHaveCount(0);
+});
+
+test("repeated native menu explorer shortcut opens only once while held", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: true,
+      },
+    },
+  });
+
+  const panel = page.locator('[data-testid="panel-explorer"]');
+  await expect(panel).toHaveCount(0);
+
+  await page.evaluate(() => {
+    const emitMenuAction = () => {
+      window.dispatchEvent(
+        new CustomEvent("arlecchino:application-menu-action", {
+          detail: { actionId: "explorer.toggle" },
+        }),
+      );
+    };
+
+    emitMenuAction();
+    emitMenuAction();
+    emitMenuAction();
+  });
+
+  await expect(panel).toBeVisible();
+});
+
+test("repeated native menu explorer shortcut closes only once while held", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  const panel = page.locator('[data-testid="panel-explorer"]');
+  await expect(panel).toBeVisible();
+
+  await page.evaluate(() => {
+    const emitMenuAction = () => {
+      window.dispatchEvent(
+        new CustomEvent("arlecchino:application-menu-action", {
+          detail: { actionId: "explorer.toggle" },
+        }),
+      );
+    };
+
+    emitMenuAction();
+    emitMenuAction();
+    emitMenuAction();
+  });
+
+  await expect(panel).toHaveCount(0);
+});
+
+test("opened panel stays open while shortcut key repeats", async ({ page }) => {
+  await mountProjectUI(page);
+
+  const panel = page.locator('[data-testid="panel-git"]');
+  await expect(panel).toHaveCount(0);
+
+  await page.evaluate(() => {
+    const eventInit = {
+      key: "g",
+      code: "KeyG",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    window.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { ...eventInit, repeat: true }),
+    );
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { ...eventInit, repeat: true }),
+    );
+    window.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+  });
+
+  await expect(panel).toBeVisible();
+});
+
+test("terminal shortcut repeat does not spam open and close", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  const panel = page.locator('[data-testid="panel-terminal"]');
+  await expect(panel).toHaveCount(0);
+
+  await page.evaluate(() => {
+    const eventInit = {
+      key: "j",
+      code: "KeyJ",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    window.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { ...eventInit, repeat: true }),
+    );
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { ...eventInit, repeat: true }),
+    );
+  });
+
+  await expect(panel).toBeVisible();
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        key: "j",
+        code: "KeyJ",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+
+  await expect(panel).toBeVisible();
+});
+
+test("panel arrows ignore stale shortcut state when only the modifier remains held", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await openGitPanel(page);
+
+  const explorerPanel = page.locator('[data-testid="panel-explorer"]').last();
+  const gitPanel = page.locator('[data-testid="panel-git"]').last();
+  await expect(explorerPanel).toHaveAttribute("data-panel-position", "left");
+  await expect(gitPanel).toHaveAttribute("data-panel-position", "right");
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "e",
+        code: "KeyE",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    window.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        key: "e",
+        code: "KeyE",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  await page.waitForTimeout(800);
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        code: "ArrowRight",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+
+  await expect(explorerPanel).toHaveCount(0);
+  await expect(gitPanel).toHaveAttribute("data-panel-position", "right");
+});
+
+test("held panel shortcut keeps moving with arrows until trigger keyup", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await openGitPanel(page);
+
+  const explorerPanel = page.locator('[data-testid="panel-explorer"]').last();
+  const gitPanel = page.locator('[data-testid="panel-git"]').last();
+  await expect(explorerPanel).toHaveAttribute("data-panel-position", "left");
+  await expect(gitPanel).toHaveAttribute("data-panel-position", "right");
+
+  await page.evaluate(() => {
+    const shortcutInit = {
+      key: "e",
+      code: "KeyE",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    window.dispatchEvent(new KeyboardEvent("keydown", shortcutInit));
+  });
+
+  await expect(explorerPanel).toBeVisible();
+  await expect(explorerPanel).toHaveAttribute("data-panel-position", "left");
+
+  await page.waitForTimeout(800);
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        code: "ArrowRight",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+
+  await expect(page.getByTestId("panel-workspace")).toHaveAttribute(
+    "data-panel-drop-settling",
+    "true",
+  );
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-explorer"]')
+        .last()
+        .getAttribute("data-panel-relocating"),
+    )
+    .toBe("true");
+
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-explorer"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("right");
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-git"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("left");
+
+  await page.waitForTimeout(800);
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "ArrowDown",
+        code: "ArrowDown",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    window.dispatchEvent(
+      new KeyboardEvent("keyup", {
+        key: "e",
+        code: "KeyE",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-explorer"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("bottom");
+});
+
 test("dragging a snapped panel tracks the pointer and snaps cleanly", async ({
   page,
 }) => {
@@ -358,11 +896,9 @@ test("dragging a snapped panel tracks the pointer and snaps cleanly", async ({
   const explorerPanel = page.locator('[data-testid="panel-explorer"]');
   await expect(explorerPanel).toBeVisible();
 
-  const header = explorerPanel.locator("div").filter({
-    has: page.locator("span", { hasText: "Explorer" }),
-  });
+  const header = page.getByTestId("panel-explorer-drag-handle");
   const startRect = await explorerPanel.boundingBox();
-  const headerRect = await header.first().boundingBox();
+  const headerRect = await header.boundingBox();
   expect(startRect).not.toBeNull();
   expect(headerRect).not.toBeNull();
 
@@ -404,4 +940,735 @@ test("dragging a snapped panel tracks the pointer and snaps cleanly", async ({
   await expect
     .poll(async () => dockedExplorerPanel.getAttribute("data-panel-state"))
     .toBe("docked");
+});
+
+test("dragging a snapped panel stays under the pointer with ui scale", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setUiScale(1.2);
+  });
+  await nextAnimationFrame(page);
+
+  const explorerPanel = page.locator('[data-testid="panel-explorer"]');
+  const header = page.getByTestId("panel-explorer-drag-handle");
+  await expect(explorerPanel).toBeVisible();
+
+  const startRect = await explorerPanel.boundingBox();
+  const headerRect = await header.boundingBox();
+  expect(startRect).not.toBeNull();
+  expect(headerRect).not.toBeNull();
+
+  const grabPoint = {
+    x: (headerRect?.x ?? 0) + (headerRect?.width ?? 0) / 2,
+    y: (headerRect?.y ?? 0) + (headerRect?.height ?? 0) / 2,
+  };
+  const midPoint = {
+    x: grabPoint.x + 360,
+    y: grabPoint.y + 72,
+  };
+
+  await page.mouse.move(grabPoint.x, grabPoint.y);
+  await page.mouse.down();
+  await page.mouse.move(midPoint.x, midPoint.y, { steps: 2 });
+  await nextAnimationFrame(page);
+
+  const dragRect = await explorerPanel.boundingBox();
+  expect(dragRect).not.toBeNull();
+  expect(
+    Math.abs((dragRect?.x ?? 0) - ((startRect?.x ?? 0) + 360)),
+  ).toBeLessThan(24);
+  expect(
+    Math.abs((dragRect?.y ?? 0) - ((startRect?.y ?? 0) + 72)),
+  ).toBeLessThan(24);
+  await expect(explorerPanel).toHaveAttribute("data-panel-state", "dragging");
+  await page.mouse.up();
+});
+
+test("dragging onto an occupied edge shows swap feedback from the expanded hit area", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await openGitPanel(page);
+
+  const explorerPanel = page.locator('[data-testid="panel-explorer"]');
+  const gitPanel = page.locator('[data-testid="panel-git"]');
+  await expect(explorerPanel).toBeVisible();
+  await expect(gitPanel).toBeVisible();
+  await expect(gitPanel).toHaveAttribute("data-panel-position", "right");
+
+  const headerRect = await page
+    .getByTestId("panel-explorer-drag-handle")
+    .boundingBox();
+  const viewport = page.viewportSize();
+  expect(headerRect).not.toBeNull();
+  expect(viewport).not.toBeNull();
+
+  const grabPoint = {
+    x: (headerRect?.x ?? 0) + (headerRect?.width ?? 0) / 2,
+    y: (headerRect?.y ?? 0) + (headerRect?.height ?? 0) / 2,
+  };
+  const swapPoint = {
+    x: (viewport?.width ?? 0) - 190,
+    y: (viewport?.height ?? 0) / 2,
+  };
+
+  await page.mouse.move(grabPoint.x, grabPoint.y);
+  await page.mouse.down();
+  await page.mouse.move(swapPoint.x, swapPoint.y, { steps: 10 });
+  await nextAnimationFrame(page);
+
+  const rightDropZone = page.getByTestId("panel-drop-zone-right");
+  await expect(rightDropZone).toHaveAttribute("data-drop-active", "true");
+  await expect(rightDropZone).toHaveAttribute("data-drop-action", "swap");
+  const rightDropZoneBox = await rightDropZone.boundingBox();
+  expect(rightDropZoneBox).not.toBeNull();
+  expect(swapPoint.x).toBeLessThan(rightDropZoneBox?.x ?? 0);
+  await expect(gitPanel).toHaveAttribute("data-panel-state", "drop-target");
+
+  await page.mouse.up();
+  await expect(page.getByTestId("panel-workspace")).toHaveAttribute(
+    "data-panel-drop-settling",
+    "true",
+  );
+  const swappedExplorerPanel = page
+    .locator('[data-testid="panel-explorer"]')
+    .last();
+  const swappedGitPanel = page.locator('[data-testid="panel-git"]').last();
+  await expect
+    .poll(async () => swappedExplorerPanel.getAttribute("data-panel-position"))
+    .toBe("right");
+  await expect
+    .poll(async () => swappedGitPanel.getAttribute("data-panel-position"))
+    .toBe("left");
+});
+
+test("held panel shortcuts swap occupied horizontal edges with arrows", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await openGitPanel(page);
+
+  const explorerPanel = page.locator('[data-testid="panel-explorer"]').last();
+  const gitPanel = page.locator('[data-testid="panel-git"]').last();
+  await expect(explorerPanel).toHaveAttribute("data-panel-position", "left");
+  await expect(gitPanel).toHaveAttribute("data-panel-position", "right");
+
+  await moveHeldPanelShortcut(
+    page,
+    { key: "e", code: "KeyE", metaKey: true },
+    { key: "ArrowRight", code: "ArrowRight" },
+  );
+
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-explorer"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("right");
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-git"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("left");
+});
+
+test("lateral panel relocation does not promote occupied top and bottom slots", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: true,
+        terminal: false,
+        aiChat: true,
+        git: true,
+        problems: false,
+        code: false,
+      },
+      panelConfigs: {
+        explorer: {
+          position: "left",
+          size: { width: 260, height: 0 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+        git: {
+          position: "top",
+          size: { width: 0, height: 180 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+        aiChat: {
+          position: "bottom",
+          size: { width: 0, height: 220 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+      },
+      rememberedSnappedPositions: {
+        explorer: "left",
+        git: "top",
+        aiChat: "bottom",
+      },
+    },
+  });
+
+  await expect(
+    page.locator('[data-testid="panel-git"]').last(),
+  ).toHaveAttribute("data-panel-position", "top");
+  await expect(
+    page.locator('[data-testid="panel-aiChat"]').last(),
+  ).toHaveAttribute("data-panel-position", "bottom");
+
+  await page.keyboard.down("Meta");
+  await page.keyboard.down("e");
+  await page.keyboard.press("ArrowRight");
+  await nextAnimationFrame(page);
+
+  await expect(page.getByTestId("panel-workspace")).toHaveAttribute(
+    "data-panel-drop-settling",
+    "true",
+  );
+
+  const slotStyles = await page.evaluate(() => {
+    const readSlotStyle = (testId: string) => {
+      const panels = Array.from(
+        document.querySelectorAll<HTMLElement>(`[data-testid="${testId}"]`),
+      );
+      const panel = panels.at(-1);
+      const slot = panel?.parentElement;
+      if (!slot) {
+        return null;
+      }
+      const styles = window.getComputedStyle(slot);
+      return {
+        overflow: styles.overflow,
+        willChange: styles.willChange,
+      };
+    };
+
+    return {
+      explorer: readSlotStyle("panel-explorer"),
+      git: readSlotStyle("panel-git"),
+      aiChat: readSlotStyle("panel-aiChat"),
+    };
+  });
+
+  expect(slotStyles.explorer).toEqual({
+    overflow: "visible",
+    willChange: "transform, opacity",
+  });
+  expect(slotStyles.git).toEqual({
+    overflow: "hidden",
+    willChange: "auto",
+  });
+  expect(slotStyles.aiChat).toEqual({
+    overflow: "hidden",
+    willChange: "auto",
+  });
+
+  await page.evaluate(() => {
+    const panels = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="panel-explorer"]'),
+    );
+    (
+      window as Window & { __relocatedExplorerPanel?: HTMLElement | null }
+    ).__relocatedExplorerPanel = panels.at(-1) ?? null;
+  });
+
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-explorer"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("right");
+
+  await expect(page.getByTestId("panel-workspace")).toHaveAttribute(
+    "data-panel-drop-settling",
+    "false",
+  );
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const panels = Array.from(
+          document.querySelectorAll<HTMLElement>(
+            '[data-testid="panel-explorer"]',
+          ),
+        );
+        return (
+          (window as Window & { __relocatedExplorerPanel?: HTMLElement | null })
+            .__relocatedExplorerPanel === (panels.at(-1) ?? null)
+        );
+      }),
+    )
+    .toBe(true);
+
+  await page.keyboard.up("e");
+  await page.keyboard.up("Meta");
+});
+
+test("held browser preview shortcut swaps occupied edges with arrows", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await expect(
+    page.locator('[data-testid="panel-explorer"]').last(),
+  ).toHaveAttribute("data-panel-position", "left");
+
+  await moveHeldPanelShortcut(
+    page,
+    { key: "b", code: "KeyB", metaKey: true },
+    { key: "ArrowLeft", code: "ArrowLeft" },
+  );
+
+  const previewPanel = page
+    .locator('[data-testid="panel-preview-browser-default"]')
+    .last();
+  await expect(previewPanel).toBeVisible();
+  await expect
+    .poll(async () => previewPanel.getAttribute("data-panel-position"))
+    .toBe("left");
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-explorer"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("right");
+
+  const browserPreviewPosition = await page.evaluate(async () => {
+    const { usePreviewWindowStore } =
+      await import("/src/stores/previewWindowStore.ts");
+    return usePreviewWindowStore
+      .getState()
+      .windows.find(
+        (windowState) => windowState.id === "preview-browser-default",
+      )?.position;
+  });
+  expect(browserPreviewPosition).toBe("left");
+});
+
+test("browser preview avoids top snapped panels", async ({ page }) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: true,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+      },
+      panelConfigs: {
+        explorer: {
+          position: "top",
+          size: { width: 0, height: 260 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+      },
+      rememberedSnappedPositions: {
+        explorer: "top",
+      },
+    },
+  });
+
+  await page.keyboard.press("Meta+B");
+
+  const explorerBox = await page
+    .locator('[data-testid="panel-explorer"]')
+    .last()
+    .boundingBox();
+  const previewBox = await page
+    .locator('[data-testid="panel-preview-browser-default"]')
+    .last()
+    .boundingBox();
+
+  expect(explorerBox).not.toBeNull();
+  expect(previewBox).not.toBeNull();
+  expectNoBoxOverlap(explorerBox, previewBox);
+});
+
+test("browser preview resizes from the inner edge across iframe content", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.keyboard.press("Meta+B");
+  const previewPanel = page
+    .locator('[data-testid="panel-preview-browser-default"]')
+    .last();
+  await expect(previewPanel).toBeVisible();
+  await waitForPanelSettled(page, "panel-preview-browser-default");
+
+  const startBox = await previewPanel.boundingBox();
+  const resizeHandle = page.getByTestId(
+    "panel-preview-browser-default-resize-w",
+  );
+  const handleBox = await resizeHandle.boundingBox();
+  expect(startBox).not.toBeNull();
+  expect(handleBox).not.toBeNull();
+
+  const grabPoint = {
+    x: (handleBox?.x ?? 0) + (handleBox?.width ?? 0) / 2,
+    y: (handleBox?.y ?? 0) + (handleBox?.height ?? 0) / 2,
+  };
+
+  await page.mouse.move(grabPoint.x, grabPoint.y);
+  await page.mouse.down();
+  await nextAnimationFrame(page);
+  await page.mouse.move(grabPoint.x + 120, grabPoint.y, { steps: 12 });
+  await page.mouse.up();
+
+  await expect
+    .poll(async () => {
+      const nextBox = await previewPanel.boundingBox();
+      return nextBox?.width ?? 0;
+    })
+    .toBeLessThan((startBox?.width ?? 0) - 60);
+});
+
+test("browser preview uses real layout slots on every edge", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+      },
+    },
+  });
+
+  await page.keyboard.press("Meta+B");
+  const previewPanel = page
+    .locator('[data-testid="panel-preview-browser-default"]')
+    .last();
+  const editorArea = page.getByTestId("editor-area");
+  await expect(previewPanel).toBeVisible();
+  await expect(page.getByTestId("preview-window-layer")).toHaveCount(0);
+
+  const assertPreviewEdge = async (
+    position: "left" | "right" | "top" | "bottom",
+  ) => {
+    await expect
+      .poll(async () => previewPanel.getAttribute("data-panel-position"))
+      .toBe(position);
+
+    await expect
+      .poll(async () => {
+        const previewBox = await previewPanel.boundingBox();
+        const editorBox = await editorArea.boundingBox();
+        return boxesOverlap(previewBox, editorBox) ? "overlap" : "separate";
+      })
+      .toBe("separate");
+
+    const previewBox = await previewPanel.boundingBox();
+    const editorBox = await editorArea.boundingBox();
+
+    if (position === "left") {
+      expect(
+        (previewBox?.x ?? 0) + (previewBox?.width ?? 0),
+      ).toBeLessThanOrEqual((editorBox?.x ?? 0) + 1);
+    } else if (position === "right") {
+      expect(editorBox?.x ?? 0).toBeLessThan(previewBox?.x ?? 0);
+      expect((editorBox?.x ?? 0) + (editorBox?.width ?? 0)).toBeLessThanOrEqual(
+        (previewBox?.x ?? 0) + 1,
+      );
+    } else if (position === "top") {
+      expect(
+        (previewBox?.y ?? 0) + (previewBox?.height ?? 0),
+      ).toBeLessThanOrEqual((editorBox?.y ?? 0) + 1);
+    } else {
+      expect(
+        (editorBox?.y ?? 0) + (editorBox?.height ?? 0),
+      ).toBeLessThanOrEqual((previewBox?.y ?? 0) + 1);
+    }
+  };
+
+  await assertPreviewEdge("right");
+
+  await moveHeldPanelShortcut(
+    page,
+    { key: "b", code: "KeyB", metaKey: true },
+    { key: "ArrowLeft", code: "ArrowLeft" },
+  );
+  await assertPreviewEdge("left");
+
+  await moveHeldPanelShortcut(
+    page,
+    { key: "b", code: "KeyB", metaKey: true },
+    { key: "ArrowUp", code: "ArrowUp" },
+  );
+  await assertPreviewEdge("top");
+
+  await moveHeldPanelShortcut(
+    page,
+    { key: "b", code: "KeyB", metaKey: true },
+    { key: "ArrowDown", code: "ArrowDown" },
+  );
+  await assertPreviewEdge("bottom");
+});
+
+test("dragging browser preview swaps with occupied edges", async ({ page }) => {
+  await mountProjectUI(page);
+
+  await page.keyboard.press("Meta+B");
+  const previewPanel = page
+    .locator('[data-testid="panel-preview-browser-default"]')
+    .last();
+  await expect(previewPanel).toBeVisible();
+  await expect(previewPanel).toHaveAttribute("data-panel-position", "right");
+  await waitForPanelSettled(page, "panel-preview-browser-default");
+
+  const headerRect = await page
+    .getByTestId("panel-preview-browser-default-drag-handle")
+    .boundingBox();
+  const viewport = page.viewportSize();
+  expect(headerRect).not.toBeNull();
+  expect(viewport).not.toBeNull();
+
+  const grabPoint = {
+    x: (headerRect?.x ?? 0) + (headerRect?.width ?? 0) / 2,
+    y: (headerRect?.y ?? 0) + (headerRect?.height ?? 0) / 2,
+  };
+  const swapPoint = {
+    x: 72,
+    y: (viewport?.height ?? 0) / 2,
+  };
+
+  await page.mouse.move(grabPoint.x, grabPoint.y);
+  await page.mouse.down();
+  await page.mouse.move(swapPoint.x, swapPoint.y, { steps: 10 });
+  await nextAnimationFrame(page);
+
+  const leftDropZone = page.getByTestId("panel-drop-zone-left");
+  await expect(leftDropZone).toHaveAttribute("data-drop-active", "true");
+  await expect(leftDropZone).toHaveAttribute("data-drop-action", "swap");
+  await expect(
+    page.locator('[data-testid="panel-explorer"]').last(),
+  ).toHaveAttribute("data-panel-state", "drop-target");
+
+  await page.mouse.up();
+  await expect
+    .poll(async () => previewPanel.getAttribute("data-panel-position"))
+    .toBe("left");
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-explorer"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("right");
+});
+
+test("held panel shortcuts swap occupied vertical edges with arrows", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: true,
+        aiChat: false,
+        git: false,
+        problems: true,
+        code: false,
+      },
+      panelConfigs: {
+        terminal: {
+          position: "bottom",
+          size: { width: 0, height: 220 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+        problems: {
+          position: "top",
+          size: { width: 0, height: 260 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+      },
+      rememberedSnappedPositions: {
+        terminal: "bottom",
+        problems: "top",
+      },
+    },
+  });
+
+  await expect(
+    page.locator('[data-testid="panel-terminal"]').last(),
+  ).toHaveAttribute("data-panel-position", "bottom");
+  await expect(
+    page.locator('[data-testid="panel-problems"]').last(),
+  ).toHaveAttribute("data-panel-position", "top");
+
+  await moveHeldPanelShortcut(
+    page,
+    { key: "j", code: "KeyJ", metaKey: true },
+    { key: "ArrowUp", code: "ArrowUp" },
+  );
+
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-terminal"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("top");
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-problems"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("bottom");
+});
+
+test("held problems fullscreen shortcut does not swap occupied edges", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: true,
+        aiChat: false,
+        git: false,
+        problems: true,
+        code: false,
+      },
+      panelConfigs: {
+        terminal: {
+          position: "bottom",
+          size: { width: 0, height: 220 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+        problems: {
+          position: "top",
+          size: { width: 0, height: 260 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+      },
+      rememberedSnappedPositions: {
+        terminal: "bottom",
+        problems: "top",
+      },
+    },
+  });
+
+  await moveHeldPanelShortcut(
+    page,
+    { key: "i", code: "KeyI", metaKey: true, shiftKey: true },
+    { key: "ArrowDown", code: "ArrowDown" },
+  );
+
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-terminal"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("bottom");
+  await expect(
+    page.locator('[data-testid="panel-problems"]').last(),
+  ).toHaveAttribute("data-panel-position", "top");
+});
+
+test("held compact problems shortcut swaps occupied vertical edges", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: true,
+        aiChat: false,
+        git: false,
+        problems: true,
+        code: false,
+      },
+      panelConfigs: {
+        terminal: {
+          position: "bottom",
+          size: { width: 0, height: 220 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+        problems: {
+          position: "top",
+          size: { width: 0, height: 260 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+      },
+      rememberedSnappedPositions: {
+        terminal: "bottom",
+        problems: "top",
+      },
+    },
+  });
+
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  });
+
+  await moveHeldPanelShortcut(
+    page,
+    { key: "i", code: "KeyI", metaKey: true },
+    { key: "ArrowDown", code: "ArrowDown" },
+  );
+
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-problems"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("bottom");
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-terminal"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("top");
 });

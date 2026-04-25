@@ -75,72 +75,88 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
       return;
     }
 
+    document.body.dataset.shellModalOpen = "true";
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (shortcuts.escape(event)) {
         event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
         close();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
+    return () => {
+      delete document.body.dataset.shellModalOpen;
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
   }, [open, creating, projectName, selectedDir]);
 
   if (typeof document === "undefined") {
     return null;
   }
 
+  const labelClass =
+    "mb-2 block text-[15px] font-semibold text-[var(--text-secondary)]";
+  const inputClass =
+    "min-h-12 w-full rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 text-[16px] text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-muted)] hover:border-[var(--border-default)] focus:border-[var(--border-strong)]";
+  const secondaryButtonClass =
+    "inline-flex min-h-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-transparent px-6 text-[16px] font-medium text-[var(--text-primary)] transition-colors hover:border-[var(--border-default)] hover:bg-[var(--bg-hover)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50";
+
   return createPortal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5 backdrop-blur-sm">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.97 }}
-            className="w-full max-w-md rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-6 shadow-2xl"
+            transition={{ duration: 0.14, ease: "easeOut" }}
+            className="w-[min(620px,100%)] rounded-[28px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-8 shadow-2xl outline-none"
           >
-            <h2 className="mb-6 text-2xl font-bold text-[var(--text-primary)]">
-              Create New Project
-            </h2>
+            <div>
+              <h2 className="text-[28px] font-semibold text-[var(--text-primary)]">
+                Create New Project
+              </h2>
+              <div className="mt-2 text-[16px] text-[var(--text-secondary)]">
+                Choose a name and parent directory.
+              </div>
+            </div>
 
-            <div className="space-y-4">
+            <div className="mt-8 space-y-5">
               <div>
-                <label className="mb-2 block text-[13px] font-medium text-[var(--text-secondary)]">
-                  Project Name
-                </label>
+                <label className={labelClass}>Project Name</label>
                 <input
                   type="text"
                   value={projectName}
                   onChange={(event) => setProjectName(event.target.value)}
                   placeholder="my-awesome-project"
-                  className="w-full rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 py-2 text-[var(--text-primary)] outline-none focus:border-transparent focus:ring-2 focus:ring-white/20"
+                  className={inputClass}
                 />
               </div>
 
               <div>
-                <label className="mb-2 block text-[13px] font-medium text-[var(--text-secondary)]">
-                  Parent Directory
-                </label>
-                <div className="flex gap-2">
+                <label className={labelClass}>Parent Directory</label>
+                <div className="flex flex-col gap-3 sm:flex-row">
                   <input
                     type="text"
                     value={selectedDir}
                     readOnly
                     placeholder="Select directory..."
-                    className="flex-1 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-4 py-2 text-[var(--text-primary)]"
+                    className={`${inputClass} min-w-0 flex-1`}
                   />
                   <button
                     onClick={handleSelectDirectory}
                     disabled={creating}
-                    className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-4 py-2 text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                    className={`${secondaryButtonClass} shrink-0`}
                   >
                     Browse
                   </button>
                 </div>
               </div>
 
-              <div className="text-[11px] text-[var(--text-muted)]">
+              <div className="break-all text-[13px] text-[var(--text-muted)]">
                 Project will be created at:{" "}
                 {selectedDir && projectName.trim()
                   ? `${selectedDir}/${projectName.trim()}`
@@ -148,18 +164,18 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
               </div>
             </div>
 
-            <div className="mt-6 flex gap-3">
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
               <button
                 onClick={handleCreateProject}
                 disabled={!projectName.trim() || !selectedDir || creating}
-                className="flex-1 rounded-lg bg-white px-4 py-2 font-medium text-black transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-12 rounded-[18px] bg-white px-8 text-[16px] font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-2"
               >
                 {creating ? "Creating..." : "Create Project"}
               </button>
               <button
                 onClick={close}
                 disabled={creating}
-                className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-4 py-2 text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                className={`${secondaryButtonClass} shrink-0 sm:order-1`}
               >
                 Cancel
               </button>

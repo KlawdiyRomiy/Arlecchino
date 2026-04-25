@@ -22,6 +22,7 @@ import { GitPanel } from "../GitPanel";
 import { ProblemsPanel } from "../problems/ProblemsPanel";
 import { CodePanelSurface } from "../CodePanelSurface";
 import { PreviewWindowLayer } from "./PreviewWindowLayer";
+import { PreviewWindowSurface } from "../PreviewWindowSurface";
 import { ExecutionDialog } from "../ExecutionDialog";
 import { DependencyPolicyModal } from "../DependencyPolicyModal";
 import { LaravelPlugin } from "../../plugins/LaravelPlugin";
@@ -45,6 +46,8 @@ import {
   PanelSize,
 } from "../ui/FloatingPanel";
 import {
+  ArrowLeftRight,
+  ArrowUpDown,
   AlertCircle,
   FolderTree,
   Terminal,
@@ -70,11 +73,16 @@ import {
   usePreviewWindowStore,
   type OpenPreviewWindowInput,
   type PreviewSurfaceType,
+  type PreviewWindow,
   type PreviewWindowPayload,
   type UpdatePreviewWindowInput,
 } from "../../stores/previewWindowStore";
 import type { Theme } from "../../types/theme";
-import { shortcuts } from "../../utils/keyboard";
+import { shortcuts, type ShortcutActionId } from "../../utils/keyboard";
+import {
+  APPLICATION_MENU_ACTION_EVENT,
+  type ApplicationMenuActionDetail,
+} from "../../utils/applicationMenu";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 import {
   getLogicalViewportSize,
@@ -103,6 +111,7 @@ import {
   type TUIAssistAnchor,
 } from "../../utils/terminalLayout";
 import { writeClipboardTextWithFallback } from "../../utils/clipboard";
+import { toggleWindowFullscreen } from "../../utils/windowFullscreen";
 import {
   CreateDirectory,
   GetLanguageForFile,
@@ -148,7 +157,24 @@ type PanelId = "explorer" | "terminal" | "aiChat" | "git" | "problems" | "code";
 type AssistPanelId = Exclude<PanelId, "terminal" | "problems" | "code">;
 type PanelVisibility = Record<PanelId, boolean>;
 type PanelFullscreenSnapshot = Pick<PanelConfig, "mode" | "x" | "y" | "size">;
-type SnappedSlotSnapshot = { panelId: PanelId; size: PanelSize };
+
+type HeldPanelShortcutTarget =
+  | { kind: "panel"; panelId: PanelId }
+  | { kind: "preview"; windowId?: string };
+
+interface HeldPanelShortcut {
+  target: HeldPanelShortcutTarget;
+  triggerCode: string;
+  modifiers: {
+    meta: boolean;
+    ctrl: boolean;
+    alt: boolean;
+    shift: boolean;
+  };
+  runTapAction: () => void;
+  tapActionRun: boolean;
+  moved: boolean;
+}
 
 type PanelConfigs = Record<PanelId, PanelConfig>;
 type RememberedSnappedPositions = Record<PanelId, PanelPosition>;
@@ -169,9 +195,23 @@ interface PanelOpenRequest {
   y?: number;
   ratio?: number;
   anchor?: TUIAssistAnchor;
+  path?: string;
+  title?: string;
+  name?: string;
+  language?: string;
+  content?: string;
+  line?: number;
   command?: string;
   terminalName?: string;
   focus?: boolean;
+}
+
+interface CodePanelTab {
+  path: string;
+  name: string;
+  content: string;
+  language: string;
+  line?: number;
 }
 
 interface ProjectEntryCreateDialogState {
@@ -211,6 +251,11 @@ const getNextWrappedIndex = (
   return (currentIndex + direction + total) % total;
 };
 
+const getCodePanelTabTestId = (path: string): string => {
+  const normalized = path.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `code-panel-tab-${normalized || "file"}`;
+};
+
 type AppSurfaceAction =
   | { kind: "panel"; panelId: PanelId }
   | { kind: "dispatcher" }
@@ -223,6 +268,25 @@ const SNAPPED_PANEL_POSITIONS: readonly PanelPosition[] = [
   "bottom",
   "top",
 ];
+const PANEL_SHORTCUT_MOVE_POSITIONS: readonly PanelPosition[] = [
+  "left",
+  "right",
+  "top",
+  "bottom",
+];
+const APPLICATION_MENU_REPEAT_SUPPRESSION_MS = 700;
+
+const uniquePanelPositions = (
+  positions: Array<PanelPosition | null | undefined>,
+): PanelPosition[] => {
+  const unique = new Set<PanelPosition>();
+  positions.forEach((position) => {
+    if (position) {
+      unique.add(position);
+    }
+  });
+  return Array.from(unique);
+};
 
 const PANEL_POSITION_PREFERENCES: Record<PanelId, readonly PanelPosition[]> = {
   explorer: ["left", "right", "bottom", "top"],
@@ -279,6 +343,23 @@ const normalizePanelSizeForPosition = (
 
   return {
     width: Math.min(currentSize.width > 0 ? currentSize.width : 280, 500),
+    height: 0,
+  };
+};
+
+const normalizePreviewWindowSizeForPosition = (
+  position: PanelPosition,
+  windowState: Pick<PreviewWindow, "width" | "height">,
+): { width: number; height: number } => {
+  if (position === "bottom" || position === "top") {
+    return {
+      width: 0,
+      height: Math.min(windowState.height > 0 ? windowState.height : 260, 520),
+    };
+  }
+
+  return {
+    width: Math.min(windowState.width > 0 ? windowState.width : 380, 720),
     height: 0,
   };
 };
@@ -674,6 +755,15 @@ const parsePanelOpenRequest = (value: unknown): PanelOpenRequest | null => {
       getStringFromRecord(normalizedValue, "anchor") ?? position,
       "right",
     ),
+    path:
+      getStringFromRecord(normalizedValue, "path") ||
+      getStringFromRecord(normalizedValue, "file") ||
+      getStringFromRecord(normalizedValue, "filePath"),
+    title: getStringFromRecord(normalizedValue, "title"),
+    name: getStringFromRecord(normalizedValue, "name"),
+    language: getStringFromRecord(normalizedValue, "language"),
+    content: getStringFromRecord(normalizedValue, "content"),
+    line: getNumberFromRecord(normalizedValue, "line"),
     command:
       getStringFromRecord(normalizedValue, "command") ||
       getStringFromRecord(normalizedValue, "input"),
@@ -1436,6 +1526,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     (state) => state.patchAppearancePreview,
   );
   const previewButtonState = usePreviewableContext();
+  const browserPreviewWindows = useMemo(
+    () =>
+      previewWindows.filter((windowState) => windowState.surface === "browser"),
+    [previewWindows],
+  );
+  const layeredPreviewWindows = useMemo(
+    () =>
+      previewWindows.filter((windowState) => windowState.surface !== "browser"),
+    [previewWindows],
+  );
   const { openPreviewFromTerminal } = useBrowserPreviewBridge({
     openPreviewWindow,
     focusPreviewWindow,
@@ -1484,6 +1584,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const rememberedSnappedPositionsRef = React.useRef(
     rememberedSnappedPositions,
   );
+  const heldPanelShortcutRef = React.useRef<HeldPanelShortcut | null>(null);
+  const pressedShortcutCodesRef = React.useRef<Set<string>>(new Set());
+  const shortcutActionSuppressionRef = React.useRef<{
+    actionId: ShortcutActionId;
+    until: number;
+  } | null>(null);
+  const applicationMenuRepeatRef = React.useRef<{
+    actionId: ShortcutActionId;
+    lastAt: number;
+  } | null>(null);
   const appearanceSessionRef = React.useRef<string | null>(null);
   const previewUpdateQueueRef = React.useRef<
     Map<
@@ -1497,6 +1607,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   >(new Map());
   const previewUpdateFrameRef = React.useRef<number | null>(null);
   const openCanonicalBrowserPreviewRef = React.useRef<() => void>(() => {});
+  const toggleCanonicalBrowserPreviewRef = React.useRef<() => void>(() => {});
   const executionProfilesRequestRef = React.useRef(0);
 
   useEffect(() => {
@@ -1713,23 +1824,49 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const previousPanelWorkspaceSizeRef = React.useRef(panelWorkspaceSize);
 
   const [draggingPanel, setDraggingPanel] = useState<PanelId | null>(null);
+  const [draggingPreviewWindowId, setDraggingPreviewWindowId] = useState<
+    string | null
+  >(null);
+  const [resizingPanel, setResizingPanel] = useState<PanelId | null>(null);
+  const [resizingPreviewWindowId, setResizingPreviewWindowId] = useState<
+    string | null
+  >(null);
   const [dropTargetPosition, setDropTargetPosition] =
     useState<PanelPosition | null>(null);
+  const [panelDropSettling, setPanelDropSettling] = useState(false);
+  const panelDropSettlingTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const [relocatingPanelIds, setRelocatingPanelIds] = useState<PanelId[]>([]);
+  const [relocatingPreviewWindowIds, setRelocatingPreviewWindowIds] = useState<
+    string[]
+  >([]);
+  const [panelDropSettlingPositions, setPanelDropSettlingPositions] = useState<
+    PanelPosition[]
+  >([]);
+  const [panelPresenceBypassPositions, setPanelPresenceBypassPositions] =
+    useState<PanelPosition[]>([]);
   const [floatingPresenceVersion, setFloatingPresenceVersion] = useState(0);
-  const [closingSnappedSlots, setClosingSnappedSlots] = useState<
-    Partial<Record<PanelPosition, SnappedSlotSnapshot>>
-  >({});
-  const closingSnappedSlotTimersRef = useRef<
-    Partial<Record<PanelPosition, ReturnType<typeof setTimeout>>>
-  >({});
-  const previousSnappedSlotsRef = useRef<
-    Partial<Record<PanelPosition, SnappedSlotSnapshot>>
-  >({});
 
   const [notification, setNotification] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (panelDropSettlingTimerRef.current) {
+        clearTimeout(panelDropSettlingTimerRef.current);
+      }
+      setRelocatingPanelIds([]);
+      setRelocatingPreviewWindowIds([]);
+      setPanelDropSettlingPositions([]);
+      setPanelPresenceBypassPositions([]);
+      heldPanelShortcutRef.current = null;
+      pressedShortcutCodesRef.current.clear();
+    };
+  }, []);
+
   const [projectPathCopiedVisible, setProjectPathCopiedVisible] =
     useState(false);
   const projectPathCopiedTimerRef = useRef<ReturnType<
@@ -1863,7 +2000,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }
 
   function closePanelFullscreenFromShortcut(
-    panelId: "git" | "problems",
+    panelId: "terminal" | "git" | "problems",
     snapshotRef: React.MutableRefObject<PanelFullscreenSnapshot | null>,
   ): boolean {
     const currentConfig = panelConfigsRef.current[panelId];
@@ -1907,6 +2044,27 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     });
     applyPanelsState({ ...panelsRef.current, [panelId]: false });
     return true;
+  }
+
+  function closeActiveFullscreenPanelFromShortcut(): boolean {
+    if (closePanelFullscreenFromShortcut("git", gitPreFullscreenRef)) {
+      return true;
+    }
+
+    if (
+      closePanelFullscreenFromShortcut("problems", problemsPreFullscreenRef)
+    ) {
+      return true;
+    }
+
+    if (
+      !useTerminalStore.getState().tuiModeActive &&
+      closePanelFullscreenFromShortcut("terminal", terminalPreFullscreenRef)
+    ) {
+      return true;
+    }
+
+    return false;
   }
 
   function togglePanelFullscreenFromShortcut(
@@ -2023,13 +2181,42 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       return changed ? nextConfigs : currentConfigs;
     });
   }, [panelWorkspaceSize]);
-  const [codePanelSource, setCodePanelSource] = useState<{
-    path: string;
-    name: string;
-    content: string;
-    language: string;
-    line?: number;
-  } | null>(null);
+  const [codePanelTabs, setCodePanelTabs] = useState<CodePanelTab[]>([]);
+  const [activeCodePanelPath, setActiveCodePanelPath] = useState<string | null>(
+    null,
+  );
+  const activeCodePanelTab = useMemo(
+    () =>
+      codePanelTabs.find((tab) => tab.path === activeCodePanelPath) ??
+      codePanelTabs[0] ??
+      null,
+    [activeCodePanelPath, codePanelTabs],
+  );
+  const activateAdjacentCodePanelTab = useCallback(
+    (direction: 1 | -1): boolean => {
+      if (codePanelTabs.length < 2) {
+        return false;
+      }
+
+      const activeIndex = Math.max(
+        0,
+        codePanelTabs.findIndex((tab) => tab.path === activeCodePanelTab?.path),
+      );
+      const nextIndex = getNextWrappedIndex(
+        activeIndex,
+        direction,
+        codePanelTabs.length,
+      );
+      const nextTab = codePanelTabs[nextIndex];
+      if (!nextTab) {
+        return false;
+      }
+
+      setActiveCodePanelPath(nextTab.path);
+      return true;
+    },
+    [activeCodePanelTab?.path, codePanelTabs],
+  );
   const [createEntryDialog, setCreateEntryDialog] =
     useState<ProjectEntryCreateDialogState | null>(null);
   const [createEntryName, setCreateEntryName] = useState("");
@@ -2052,7 +2239,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const ensureProjectEntryAccess = useCallback(
-    (path: string, mode: "read" | "write"): boolean => {
+    (
+      path: string,
+      mode: "read" | "write",
+      options?: { userInitiatedWrite?: boolean },
+    ): boolean => {
       if (!path) {
         showNotification("error", "[Files] Path is empty");
         return false;
@@ -2063,6 +2254,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
 
       const accessDecision = canAccessPath(path, mode);
+      if (
+        mode === "write" &&
+        options?.userInitiatedWrite &&
+        !accessDecision.allowed &&
+        accessDecision.reason === "write requires explicit user approval"
+      ) {
+        return true;
+      }
       if (!accessDecision.allowed) {
         showNotification("error", `[Security] ${accessDecision.reason}`);
         return false;
@@ -2121,6 +2320,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const getRelativePath = useCallback(
     (path: string) => relativeProjectPath(path, activeProjectPath),
     [activeProjectPath],
+  );
+
+  const getCreateEntryDirectoryLabel = useCallback(
+    (path: string) => {
+      const relativePath = getRelativePath(path);
+      return relativePath === "." ? path : relativePath;
+    },
+    [getRelativePath],
   );
 
   const copyAbsolutePath = useCallback(
@@ -2231,7 +2438,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      if (!ensureProjectEntryAccess(normalizedDirectory, "write")) {
+      if (
+        !ensureProjectEntryAccess(normalizedDirectory, "write", {
+          userInitiatedWrite: true,
+        })
+      ) {
         return;
       }
 
@@ -2286,7 +2497,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       createEntryDialog.directoryPath,
       entryName,
     );
-    if (!ensureProjectEntryAccess(targetPath, "write")) {
+    if (
+      !ensureProjectEntryAccess(targetPath, "write", {
+        userInitiatedWrite: true,
+      })
+    ) {
       return;
     }
 
@@ -2671,6 +2886,44 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     return "explorer";
   }, [tuiLayoutSnapshot]);
 
+  const openTUIFloatingPanel = useCallback(
+    (panelId: AssistPanelId, request?: Partial<PanelOpenRequest> | null) => {
+      const state = useTerminalStore.getState();
+      const position = normalizeTUIAssistAnchor(
+        request?.anchor ?? request?.position,
+        state.tuiAssist.anchor,
+      );
+      const normalizedRequest: PanelOpenRequest = {
+        ...request,
+        panel: panelId,
+        position,
+        mode: request?.mode ?? "snapped",
+      };
+      const { nextPanels, nextConfig, nextRememberedSnappedPositions } =
+        computeNextPanelOpenState(
+          panelId,
+          normalizedRequest,
+          panelsRef.current,
+          panelConfigsRef.current,
+          rememberedSnappedPositionsRef.current,
+        );
+
+      applyPanelsState(nextPanels);
+      applyPanelConfigsState({
+        ...panelConfigsRef.current,
+        [panelId]: nextConfig,
+      });
+      applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+      state.setTUIAssist({ active: false, panel: null, anchor: position });
+      setTimeout(() => state.focusActiveTerminal(), 80);
+    },
+    [
+      applyPanelConfigsState,
+      applyPanelsState,
+      applyRememberedSnappedPositionsState,
+    ],
+  );
+
   const openTUIAssistPanel = useCallback(
     (payload: unknown) => {
       const request = parsePanelOpenRequest(payload);
@@ -2686,41 +2939,34 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      state.setTUIAssist({
-        active: true,
-        panel: assistPanel,
-        anchor: normalizeTUIAssistAnchor(
-          request?.anchor ?? request?.position,
-          state.tuiAssist.anchor,
-        ),
-        ratio:
-          typeof request?.ratio === "number"
-            ? request.ratio
-            : state.tuiAssist.ratio,
-      });
-      setTimeout(() => state.focusActiveTerminal(), 80);
+      openTUIFloatingPanel(assistPanel, request);
     },
-    [resolveAssistPanelId, resolveDefaultTUIAssistPanel],
+    [openTUIFloatingPanel, resolveAssistPanelId, resolveDefaultTUIAssistPanel],
   );
 
-  const toggleTUIAssistPanel = useCallback((panel: AssistPanelId) => {
-    const state = useTerminalStore.getState();
-    if (!state.tuiModeActive) {
-      return;
-    }
+  const toggleTUIAssistPanel = useCallback(
+    (panel: AssistPanelId) => {
+      const state = useTerminalStore.getState();
+      if (!state.tuiModeActive) {
+        return;
+      }
 
-    const isSamePanel =
-      state.tuiAssist.active && state.tuiAssist.panel === panel;
-    state.setTUIAssist({
-      active: !isSamePanel,
-      panel: isSamePanel ? null : panel,
-      anchor: state.tuiAssist.anchor,
-    });
+      const isVisible = panelsRef.current[panel];
+      if (isVisible) {
+        applyPanelsState({ ...panelsRef.current, [panel]: false });
+        state.setTUIAssist({ active: false, panel: null });
+        setTimeout(() => state.focusActiveTerminal(), 80);
+        return;
+      }
 
-    if (!isSamePanel) {
-      setTimeout(() => state.focusActiveTerminal(), 80);
-    }
-  }, []);
+      openTUIFloatingPanel(panel, {
+        panel,
+        position: state.tuiAssist.anchor,
+        mode: "snapped",
+      });
+    },
+    [applyPanelsState, openTUIFloatingPanel],
+  );
 
   const closeTUIAssistPanel = useCallback(() => {
     const state = useTerminalStore.getState();
@@ -2758,8 +3004,651 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     state.setTUIAssist({ active: true, ratio, anchor: state.tuiAssist.anchor });
   }, []);
 
+  const startPanelDropSettling = useCallback(
+    (
+      options: {
+        panels?: PanelId[];
+        previewWindows?: string[];
+        positions?: PanelPosition[];
+      } = {},
+    ) => {
+      if (panelDropSettlingTimerRef.current) {
+        clearTimeout(panelDropSettlingTimerRef.current);
+      }
+
+      setPanelDropSettling(true);
+      setRelocatingPanelIds(options.panels ?? []);
+      setRelocatingPreviewWindowIds(options.previewWindows ?? []);
+      setPanelDropSettlingPositions(options.positions ?? []);
+      setPanelPresenceBypassPositions((currentPositions) =>
+        uniquePanelPositions([
+          ...currentPositions,
+          ...(options.positions ?? []),
+        ]),
+      );
+      panelDropSettlingTimerRef.current = setTimeout(() => {
+        panelDropSettlingTimerRef.current = null;
+        setPanelDropSettling(false);
+        setRelocatingPanelIds([]);
+        setRelocatingPreviewWindowIds([]);
+        setPanelDropSettlingPositions([]);
+      }, FLOATING_PANEL_LAYOUT_TRANSITION_MS + 120);
+    },
+    [],
+  );
+
+  const getShortcutEventCode = (event: KeyboardEvent): string =>
+    event.code || event.key.toLowerCase();
+
+  const getPanelShortcutMovePosition = (
+    event: KeyboardEvent,
+  ): PanelPosition | null => {
+    if (shortcuts.arrowLeft(event)) {
+      return "left";
+    }
+    if (shortcuts.arrowRight(event)) {
+      return "right";
+    }
+    if (shortcuts.arrowUp(event)) {
+      return "top";
+    }
+    if (shortcuts.arrowDown(event)) {
+      return "bottom";
+    }
+    return null;
+  };
+
+  const findVisibleSnappedPanelAtPosition = (
+    position: PanelPosition,
+    options: { exclude?: PanelId[] } = {},
+  ): PanelId | null => {
+    const excludedPanels = new Set(options.exclude ?? []);
+    return (
+      (Object.keys(panelConfigsRef.current) as PanelId[]).find((id) => {
+        if (excludedPanels.has(id) || !panelsRef.current[id]) {
+          return false;
+        }
+
+        const config = panelConfigsRef.current[id];
+        return config.mode === "snapped" && config.position === position;
+      }) ?? null
+    );
+  };
+
+  const findSnappedPreviewWindowAtPosition = (
+    position: PanelPosition,
+    options: { excludeWindowIds?: string[] } = {},
+  ): PreviewWindow | null => {
+    const excludedWindowIds = new Set(options.excludeWindowIds ?? []);
+    return (
+      usePreviewWindowStore
+        .getState()
+        .windows.find(
+          (windowState) =>
+            !excludedWindowIds.has(windowState.id) &&
+            windowState.mode === "snapped" &&
+            windowState.position === position,
+        ) ?? null
+    );
+  };
+
+  const isSnappedPositionOccupied = (
+    position: PanelPosition,
+    options: {
+      exclude?: PanelId[];
+      excludeWindowIds?: string[];
+    } = {},
+  ): boolean =>
+    Boolean(findVisibleSnappedPanelAtPosition(position, options)) ||
+    Boolean(findSnappedPreviewWindowAtPosition(position, options));
+
+  const findAvailablePanelPosition = (
+    options: {
+      preferred?: PanelPosition;
+      exclude?: PanelId[];
+      excludePositions?: PanelPosition[];
+      excludeWindowIds?: string[];
+    } = {},
+  ): PanelPosition | null => {
+    const excludedPositions = new Set(options.excludePositions ?? []);
+    const orderedPositions = [
+      options.preferred,
+      ...PANEL_SHORTCUT_MOVE_POSITIONS,
+    ].filter(
+      (position, index, all): position is PanelPosition =>
+        isPanelPosition(position) && all.indexOf(position) === index,
+    );
+
+    for (const position of orderedPositions) {
+      if (excludedPositions.has(position)) {
+        continue;
+      }
+      if (!isSnappedPositionOccupied(position, options)) {
+        return position;
+      }
+    }
+
+    return null;
+  };
+
+  const snapPreviewWindowToPosition = (
+    windowState: PreviewWindow,
+    position: PanelPosition,
+  ): boolean => {
+    const normalizedSize = normalizePreviewWindowSizeForPosition(
+      position,
+      windowState,
+    );
+    return updatePreviewWindow(windowState.id, {
+      mode: "snapped",
+      position,
+      width: normalizedSize.width,
+      height: normalizedSize.height,
+    });
+  };
+
+  const movePreviewWindowToPosition = (
+    windowId: string,
+    targetPosition: PanelPosition,
+  ): boolean => {
+    if (useTerminalStore.getState().tuiModeActive) {
+      return false;
+    }
+
+    const previewWindow = usePreviewWindowStore
+      .getState()
+      .windows.find((windowState) => windowState.id === windowId);
+    if (!previewWindow) {
+      return false;
+    }
+
+    const sourcePosition = previewWindow.position;
+    const targetPanel = findVisibleSnappedPanelAtPosition(targetPosition);
+    const targetPreviewWindow = targetPanel
+      ? null
+      : findSnappedPreviewWindowAtPosition(targetPosition, {
+          excludeWindowIds: [windowId],
+        });
+    const relocatingPanels: PanelId[] = [];
+    const relocatingPreviewWindows = [windowId];
+    const settlingPositions: Array<PanelPosition | null | undefined> = [
+      targetPosition,
+      previewWindow.mode === "snapped" ? sourcePosition : null,
+    ];
+
+    if (
+      previewWindow.mode === "snapped" &&
+      sourcePosition === targetPosition &&
+      !targetPanel &&
+      !targetPreviewWindow
+    ) {
+      return true;
+    }
+
+    if (targetPanel) {
+      relocatingPanels.push(targetPanel);
+      const fallbackPosition =
+        sourcePosition !== targetPosition &&
+        !isSnappedPositionOccupied(sourcePosition, {
+          exclude: [targetPanel],
+          excludeWindowIds: [windowId],
+        })
+          ? sourcePosition
+          : findAvailablePanelPosition({
+              preferred: rememberedSnappedPositionsRef.current[targetPanel],
+              exclude: [targetPanel],
+              excludeWindowIds: [windowId],
+              excludePositions: [targetPosition],
+            });
+
+      if (!fallbackPosition) {
+        return false;
+      }
+      settlingPositions.push(fallbackPosition);
+
+      const targetConfig = panelConfigsRef.current[targetPanel];
+      const nextPanelConfigs = clonePanelConfigs(panelConfigsRef.current);
+      const nextRememberedSnappedPositions = cloneRememberedSnappedPositions(
+        rememberedSnappedPositionsRef.current,
+      );
+      nextPanelConfigs[targetPanel] = {
+        ...nextPanelConfigs[targetPanel],
+        mode: "snapped",
+        position: fallbackPosition,
+        x: 0,
+        y: 0,
+        size: normalizePanelSizeForPosition(
+          fallbackPosition,
+          targetConfig.size,
+        ),
+      };
+      nextRememberedSnappedPositions[targetPanel] = fallbackPosition;
+
+      applyPanelConfigsState(nextPanelConfigs);
+      applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+    } else if (targetPreviewWindow) {
+      relocatingPreviewWindows.push(targetPreviewWindow.id);
+      const fallbackPosition =
+        sourcePosition !== targetPosition &&
+        !isSnappedPositionOccupied(sourcePosition, {
+          excludeWindowIds: [windowId, targetPreviewWindow.id],
+        })
+          ? sourcePosition
+          : findAvailablePanelPosition({
+              preferred: targetPreviewWindow.position,
+              excludeWindowIds: [windowId, targetPreviewWindow.id],
+              excludePositions: [targetPosition],
+            });
+
+      if (!fallbackPosition) {
+        return false;
+      }
+      settlingPositions.push(fallbackPosition);
+
+      if (!snapPreviewWindowToPosition(targetPreviewWindow, fallbackPosition)) {
+        return false;
+      }
+    }
+
+    startPanelDropSettling({
+      panels: relocatingPanels,
+      previewWindows: relocatingPreviewWindows,
+      positions: uniquePanelPositions(settlingPositions),
+    });
+    return snapPreviewWindowToPosition(previewWindow, targetPosition);
+  };
+
+  const resolveBrowserPreviewOpenInput = (
+    input: OpenPreviewWindowInput,
+  ): OpenPreviewWindowInput => {
+    if (input.surface !== "browser") {
+      return input;
+    }
+
+    const existingWindow = input.id
+      ? usePreviewWindowStore
+          .getState()
+          .windows.find((windowState) => windowState.id === input.id)
+      : null;
+    if (existingWindow && input.position === undefined) {
+      return input;
+    }
+
+    const requestedPosition: PanelPosition =
+      input.position ?? (input.side === "left" ? "left" : "right");
+    const requestedSnapped =
+      input.mode === "snapped" ||
+      input.position !== undefined ||
+      input.side !== undefined;
+
+    if (!requestedSnapped) {
+      return input;
+    }
+
+    const resolvedPosition = !isSnappedPositionOccupied(requestedPosition)
+      ? requestedPosition
+      : findAvailablePanelPosition({ preferred: requestedPosition });
+
+    if (!resolvedPosition) {
+      return {
+        ...input,
+        mode: "floating",
+        position: requestedPosition,
+        side: undefined,
+      };
+    }
+
+    return {
+      ...input,
+      mode: "snapped",
+      position: resolvedPosition,
+      side: undefined,
+    };
+  };
+
+  const movePanelFromHeldShortcut = (
+    panelId: PanelId,
+    targetPosition: PanelPosition,
+  ): boolean => {
+    if (useTerminalStore.getState().tuiModeActive) {
+      return false;
+    }
+
+    const currentPanels = panelsRef.current;
+    const currentConfigs = panelConfigsRef.current;
+    const currentConfig = currentConfigs[panelId];
+    const isPanelVisible = currentPanels[panelId];
+    const sourcePosition =
+      currentConfig.mode === "snapped"
+        ? currentConfig.position
+        : rememberedSnappedPositionsRef.current[panelId];
+
+    if (
+      isPanelVisible &&
+      currentConfig.mode === "snapped" &&
+      sourcePosition === targetPosition
+    ) {
+      return true;
+    }
+
+    const targetPanel = findVisibleSnappedPanelAtPosition(targetPosition, {
+      exclude: [panelId],
+    });
+    const targetPreviewWindow = targetPanel
+      ? null
+      : findSnappedPreviewWindowAtPosition(targetPosition);
+    const relocatingPanels = [panelId];
+    const relocatingPreviewWindows: string[] = [];
+    const settlingPositions: Array<PanelPosition | null | undefined> = [
+      targetPosition,
+      currentConfig.mode === "snapped" ? sourcePosition : null,
+    ];
+    const nextPanels = { ...currentPanels, [panelId]: true };
+    const nextPanelConfigs = clonePanelConfigs(panelConfigsRef.current);
+    const nextRememberedSnappedPositions = cloneRememberedSnappedPositions(
+      rememberedSnappedPositionsRef.current,
+    );
+
+    if (targetPanel) {
+      relocatingPanels.push(targetPanel);
+      const fallbackPosition =
+        sourcePosition !== targetPosition &&
+        !isSnappedPositionOccupied(sourcePosition, {
+          exclude: [panelId, targetPanel],
+        })
+          ? sourcePosition
+          : findAvailablePanelPosition({
+              preferred: rememberedSnappedPositionsRef.current[targetPanel],
+              exclude: [panelId, targetPanel],
+              excludePositions: [targetPosition],
+            });
+
+      if (!fallbackPosition) {
+        return false;
+      }
+      settlingPositions.push(fallbackPosition);
+
+      const targetConfig = panelConfigsRef.current[targetPanel];
+      nextPanelConfigs[targetPanel] = {
+        ...nextPanelConfigs[targetPanel],
+        mode: "snapped",
+        position: fallbackPosition,
+        x: 0,
+        y: 0,
+        size: normalizePanelSizeForPosition(
+          fallbackPosition,
+          targetConfig.size,
+        ),
+      };
+      nextRememberedSnappedPositions[targetPanel] = fallbackPosition;
+      nextPanels[targetPanel] = true;
+    } else if (targetPreviewWindow) {
+      relocatingPreviewWindows.push(targetPreviewWindow.id);
+      const fallbackPosition =
+        sourcePosition !== targetPosition &&
+        !isSnappedPositionOccupied(sourcePosition, {
+          exclude: [panelId],
+          excludeWindowIds: [targetPreviewWindow.id],
+        })
+          ? sourcePosition
+          : findAvailablePanelPosition({
+              preferred: targetPreviewWindow.position,
+              exclude: [panelId],
+              excludeWindowIds: [targetPreviewWindow.id],
+              excludePositions: [targetPosition],
+            });
+
+      if (!fallbackPosition) {
+        return false;
+      }
+      settlingPositions.push(fallbackPosition);
+
+      if (!snapPreviewWindowToPosition(targetPreviewWindow, fallbackPosition)) {
+        return false;
+      }
+    }
+
+    nextPanelConfigs[panelId] = {
+      ...nextPanelConfigs[panelId],
+      mode: "snapped",
+      position: targetPosition,
+      x: 0,
+      y: 0,
+      size: normalizePanelSizeForPosition(targetPosition, currentConfig.size),
+    };
+    nextRememberedSnappedPositions[panelId] = targetPosition;
+
+    if (isPanelVisible && currentConfig.mode === "floating") {
+      setFloatingPresenceVersion((version) => version + 1);
+    }
+
+    startPanelDropSettling({
+      panels: relocatingPanels,
+      previewWindows: relocatingPreviewWindows,
+      positions: uniquePanelPositions(settlingPositions),
+    });
+    applyPanelsState(nextPanels);
+    applyPanelConfigsState(nextPanelConfigs);
+    applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+    return true;
+  };
+
+  const clearHeldPanelShortcut = (runTapAction: boolean) => {
+    const heldShortcut = heldPanelShortcutRef.current;
+    heldPanelShortcutRef.current = null;
+
+    if (
+      runTapAction &&
+      heldShortcut &&
+      !heldShortcut.tapActionRun &&
+      !heldShortcut.moved
+    ) {
+      heldShortcut.runTapAction();
+    }
+  };
+
+  const areHeldPanelShortcutTargetsEqual = (
+    left: HeldPanelShortcutTarget,
+    right: HeldPanelShortcutTarget,
+  ): boolean => {
+    if (left.kind !== right.kind) {
+      return false;
+    }
+
+    if (left.kind === "panel" && right.kind === "panel") {
+      return left.panelId === right.panelId;
+    }
+
+    if (left.kind === "preview" && right.kind === "preview") {
+      return left.windowId === right.windowId;
+    }
+
+    return false;
+  };
+
+  const getBrowserPreviewWindowForShortcut = (): PreviewWindow | null => {
+    const state = usePreviewWindowStore.getState();
+    const activeWindow = state.activeWindowId
+      ? state.windows.find(
+          (windowState) => windowState.id === state.activeWindowId,
+        )
+      : undefined;
+    if (activeWindow?.surface === "browser") {
+      return activeWindow;
+    }
+
+    return (
+      state.windows
+        .slice()
+        .sort((left, right) => right.zIndex - left.zIndex)
+        .find((windowState) => windowState.surface === "browser") ?? null
+    );
+  };
+
+  const beginHeldPanelShortcut = (
+    event: KeyboardEvent,
+    target: HeldPanelShortcutTarget,
+    runTapAction: () => void,
+    options: { runTapActionImmediately?: boolean } = {},
+  ) => {
+    const triggerCode = getShortcutEventCode(event);
+    const currentHeldShortcut = heldPanelShortcutRef.current;
+
+    if (
+      currentHeldShortcut &&
+      areHeldPanelShortcutTargetsEqual(currentHeldShortcut.target, target) &&
+      currentHeldShortcut.triggerCode === triggerCode
+    ) {
+      if (event.repeat) {
+        return;
+      }
+      clearHeldPanelShortcut(false);
+    }
+
+    clearHeldPanelShortcut(true);
+    const tapActionRun = options.runTapActionImmediately === true;
+    if (tapActionRun) {
+      runTapAction();
+    }
+
+    heldPanelShortcutRef.current = {
+      target,
+      triggerCode,
+      modifiers: {
+        meta: event.metaKey,
+        ctrl: event.ctrlKey,
+        alt: event.altKey,
+        shift: event.shiftKey,
+      },
+      runTapAction,
+      tapActionRun,
+      moved: false,
+    };
+  };
+
+  const markShortcutActionHandled = (actionId: ShortcutActionId) => {
+    shortcutActionSuppressionRef.current = {
+      actionId,
+      until: performance.now() + APPLICATION_MENU_REPEAT_SUPPRESSION_MS,
+    };
+  };
+
+  const shouldSuppressApplicationMenuAction = (
+    actionId: ShortcutActionId,
+  ): boolean => {
+    const now = performance.now();
+    const shortcutSuppression = shortcutActionSuppressionRef.current;
+    if (
+      shortcutSuppression &&
+      shortcutSuppression.actionId === actionId &&
+      now <= shortcutSuppression.until
+    ) {
+      shortcutSuppression.until =
+        now + APPLICATION_MENU_REPEAT_SUPPRESSION_MS;
+      return true;
+    }
+
+    const repeat = applicationMenuRepeatRef.current;
+    if (
+      repeat &&
+      repeat.actionId === actionId &&
+      now - repeat.lastAt <= APPLICATION_MENU_REPEAT_SUPPRESSION_MS
+    ) {
+      repeat.lastAt = now;
+      return true;
+    }
+
+    applicationMenuRepeatRef.current = { actionId, lastAt: now };
+    return false;
+  };
+
+  const isHeldPanelShortcutActive = (
+    event: KeyboardEvent,
+    heldShortcut: HeldPanelShortcut,
+  ): boolean => {
+    if (!pressedShortcutCodesRef.current.has(heldShortcut.triggerCode)) {
+      return false;
+    }
+
+    const { modifiers } = heldShortcut;
+    if (modifiers.meta && !event.metaKey) {
+      return false;
+    }
+    if (modifiers.ctrl && !event.ctrlKey) {
+      return false;
+    }
+    if (modifiers.alt && !event.altKey) {
+      return false;
+    }
+    if (modifiers.shift && !event.shiftKey) {
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleHeldPanelShortcutMove = (event: KeyboardEvent): boolean => {
+    const targetPosition = getPanelShortcutMovePosition(event);
+    const heldShortcut = heldPanelShortcutRef.current;
+    if (!targetPosition || !heldShortcut) {
+      return false;
+    }
+
+    if (!isHeldPanelShortcutActive(event, heldShortcut)) {
+      return false;
+    }
+
+    if (heldShortcut.target.kind === "panel") {
+      if (
+        !movePanelFromHeldShortcut(heldShortcut.target.panelId, targetPosition)
+      ) {
+        return false;
+      }
+    } else {
+      const previewTarget = heldShortcut.target;
+      const previewWindow =
+        previewTarget.windowId !== undefined
+          ? usePreviewWindowStore
+              .getState()
+              .windows.find(
+                (windowState) => windowState.id === previewTarget.windowId,
+              )
+          : getBrowserPreviewWindowForShortcut();
+      if (
+        !previewWindow ||
+        !movePreviewWindowToPosition(previewWindow.id, targetPosition)
+      ) {
+        return false;
+      }
+    }
+
+    heldShortcut.moved = true;
+    return true;
+  };
+
+  const finishHeldPanelShortcutOnKeyUp = (event: KeyboardEvent) => {
+    const heldShortcut = heldPanelShortcutRef.current;
+    if (!heldShortcut) {
+      return;
+    }
+
+    if (getShortcutEventCode(event) === heldShortcut.triggerCode) {
+      clearHeldPanelShortcut(true);
+      return;
+    }
+
+    if (!isHeldPanelShortcutActive(event, heldShortcut)) {
+      clearHeldPanelShortcut(true);
+    }
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const eventCode = getShortcutEventCode(e);
+      if (eventCode) {
+        pressedShortcutCodesRef.current.add(eventCode);
+      }
+
       const terminalState = useTerminalStore.getState();
       const isTUIActive = terminalState.tuiModeActive;
       const configs = panelConfigsRef.current;
@@ -2779,6 +3668,43 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
       if (shouldBypassGlobalFindShortcuts(e, activeElement)) {
         return;
+      }
+
+      if (handleHeldPanelShortcutMove(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      if (
+        shortcuts.toggleWindowFullscreen(e) &&
+        document.body.dataset.shortcutRecording !== "true"
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        void toggleWindowFullscreen();
+        return;
+      }
+
+      if (shortcuts.closeFullscreenPanel(e)) {
+        if (closeActiveFullscreenPanelFromShortcut()) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+      }
+
+      if (
+        isTUIActive &&
+        panelState.code &&
+        (shortcuts.switchEditorTabNext(e) || shortcuts.switchEditorTabPrev(e))
+      ) {
+        const direction = shortcuts.switchEditorTabPrev(e) ? -1 : 1;
+        if (activateAdjacentCodePanelTab(direction)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
       }
 
       if (shortcuts.terminalNewTab(e)) {
@@ -2855,9 +3781,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           return;
         }
 
+        markShortcutActionHandled("explorer.toggle");
         e.preventDefault();
+        e.stopPropagation();
 
-        togglePanelCompactFromShortcut("explorer");
+        beginHeldPanelShortcut(
+          e,
+          { kind: "panel", panelId: "explorer" },
+          () => togglePanelCompactFromShortcut("explorer"),
+          { runTapActionImmediately: !panelsRef.current.explorer },
+        );
         return;
       }
 
@@ -2887,27 +3820,44 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      // Toggle Terminal: Ctrl+`
+      // Toggle Terminal: Cmd+J
       if (shortcuts.toggleTerminal(e)) {
-        if (isTerminalShortcutContext) {
-          return;
-        }
-
+        markShortcutActionHandled("terminal.toggle");
         e.preventDefault();
+        e.stopPropagation();
 
-        toggleNamedPanel("terminal");
+        beginHeldPanelShortcut(
+          e,
+          { kind: "panel", panelId: "terminal" },
+          () => {
+            if (!isTerminalShortcutContext) {
+              toggleNamedPanel("terminal");
+            }
+          },
+          {
+            runTapActionImmediately:
+              !isTerminalShortcutContext && !panelsRef.current.terminal,
+          },
+        );
         return;
       }
 
-      // Toggle AI: Cmd+Shift+I
+      // Toggle AI: Cmd+R / Ctrl+R
       if (shortcuts.toggleAI(e)) {
         if (isTerminalShortcutContext) {
           return;
         }
 
+        markShortcutActionHandled("ai.toggle");
         e.preventDefault();
+        e.stopPropagation();
 
-        toggleNamedPanel("aiChat");
+        beginHeldPanelShortcut(
+          e,
+          { kind: "panel", panelId: "aiChat" },
+          () => toggleNamedPanel("aiChat"),
+          { runTapActionImmediately: !panelsRef.current.aiChat },
+        );
         return;
       }
 
@@ -2943,6 +3893,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         }
 
         e.preventDefault();
+        e.stopPropagation();
         togglePanelFullscreenFromShortcut("git", gitPreFullscreenRef);
         return;
       }
@@ -2953,30 +3904,49 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           return;
         }
 
+        markShortcutActionHandled("git.toggle");
         e.preventDefault();
-        togglePanelCompactFromShortcut("git", gitPreFullscreenRef);
+        e.stopPropagation();
+        beginHeldPanelShortcut(
+          e,
+          { kind: "panel", panelId: "git" },
+          () => togglePanelCompactFromShortcut("git", gitPreFullscreenRef),
+          { runTapActionImmediately: !panelsRef.current.git },
+        );
         return;
       }
 
-      // Toggle Problems fullscreen: Cmd+Shift+P
+      // Toggle Problems fullscreen: Cmd+Shift+I
       if (shortcuts.toggleProblemsFullscreen(e)) {
         if (isTerminalShortcutContext) {
           return;
         }
 
         e.preventDefault();
+        e.stopPropagation();
         togglePanelFullscreenFromShortcut("problems", problemsPreFullscreenRef);
         return;
       }
 
-      // Toggle Problems compact: Cmd+P
+      // Toggle Problems compact: Cmd+I
       if (shortcuts.toggleProblems(e)) {
         if (isTerminalShortcutContext) {
           return;
         }
 
+        markShortcutActionHandled("problems.toggle");
         e.preventDefault();
-        togglePanelCompactFromShortcut("problems", problemsPreFullscreenRef);
+        e.stopPropagation();
+        beginHeldPanelShortcut(
+          e,
+          { kind: "panel", panelId: "problems" },
+          () =>
+            togglePanelCompactFromShortcut(
+              "problems",
+              problemsPreFullscreenRef,
+            ),
+          { runTapActionImmediately: !panelsRef.current.problems },
+        );
         return;
       }
 
@@ -2986,7 +3956,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         }
 
         e.preventDefault();
-        openCanonicalBrowserPreviewRef.current();
+        e.stopPropagation();
+        beginHeldPanelShortcut(
+          e,
+          { kind: "preview" },
+          () => toggleCanonicalBrowserPreviewRef.current(),
+          {
+            runTapActionImmediately:
+              getBrowserPreviewWindowForShortcut() === null,
+          },
+        );
         return;
       }
 
@@ -2997,6 +3976,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         }
 
         e.preventDefault();
+        e.stopPropagation();
+        if (document.body.dataset.shellModalOpen === "true") {
+          return;
+        }
+
+        if (createEntryDialog) {
+          closeCreateEntryDialog();
+          return;
+        }
+
         if (terminalState.tuiAssist.active) {
           closeTUIAssistPanel();
           return;
@@ -3011,6 +4000,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
         if (isSettingsOpen) {
           closeSettings();
+          return;
+        }
+
+        if (executionDialogMode !== null) {
+          closeExecutionDialog();
           return;
         }
 
@@ -3108,18 +4102,46 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
     };
 
+    const handleKeyUp = (event: KeyboardEvent) => {
+      const eventCode = getShortcutEventCode(event);
+      if (eventCode) {
+        pressedShortcutCodesRef.current.delete(eventCode);
+      }
+
+      applicationMenuRepeatRef.current = null;
+      finishHeldPanelShortcutOnKeyUp(event);
+    };
+
+    const handleWindowBlur = () => {
+      clearHeldPanelShortcut(false);
+      pressedShortcutCodesRef.current.clear();
+      shortcutActionSuppressionRef.current = null;
+      applicationMenuRepeatRef.current = null;
+    };
+
     window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("blur", handleWindowBlur);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("keyup", handleKeyUp, true);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
   }, [
     activeModal,
+    activateAdjacentCodePanelTab,
     applyPanelConfigsState,
     applyPanelsState,
     closePreviewWindow,
+    closeExecutionDialog,
+    closeCreateEntryDialog,
     closeModal,
     closeTUIAssistPanel,
     copyProjectPathFromShortcut,
     dispatcher,
     getActiveTerminalSessionId,
+    createEntryDialog,
+    executionDialogMode,
     isLogicalFullscreenPanel,
     isSettingsOpen,
     isDark,
@@ -3133,27 +4155,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     updatePanelsState,
   ]);
 
-  const handleFileOpen = (
-    path: string,
-    content: string,
-    name: string,
-    line?: number,
-  ) => {
-    if (tuiModeActive) {
-      const accessDecision = canAccessPath(path, "read");
-      if (!accessDecision.allowed) {
-        showNotification("error", `[Security] ${accessDecision.reason}`);
-        return;
-      }
-    }
-
-    if (onFileOpen) {
-      onFileOpen(path, content, name, line);
-    }
-  };
-
   const handleFileOpenInPanel = useCallback(
-    (path: string, name: string, line?: number) => {
+    async (
+      path: string,
+      name: string,
+      line?: number,
+      request?: Partial<PanelOpenRequest>,
+    ) => {
       const fallbackLanguage = (() => {
         const normalizedPath = path.trim();
         const fileName = normalizedPath.split("/").pop()?.toLowerCase() ?? "";
@@ -3166,14 +4174,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return normalizedPath.split(".").pop()?.toLowerCase() || "text";
       })();
 
-      void (async () => {
-        if (!ensureProjectEntryAccess(path, "read")) {
-          return;
-        }
+      if (!ensureProjectEntryAccess(path, "read")) {
+        return;
+      }
 
-        let language = fallbackLanguage;
-        let content = "";
+      let language = request?.language ?? fallbackLanguage;
+      let content = typeof request?.content === "string" ? request.content : "";
 
+      if (typeof request?.content !== "string") {
         try {
           content = await ReadFile(path);
         } catch (error) {
@@ -3183,7 +4191,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           );
           return;
         }
+      }
 
+      if (!request?.language) {
         try {
           const languageInfo = await GetLanguageForFile(path);
           if (languageInfo?.id) {
@@ -3192,56 +4202,70 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         } catch {
           language = fallbackLanguage;
         }
+      }
 
-        setCodePanelSource({
-          path,
-          name,
-          content,
-          language,
-          line,
-        });
+      const nextTab: CodePanelTab = {
+        path,
+        name,
+        content,
+        language,
+        line,
+      };
+      setCodePanelTabs((currentTabs) => {
+        const existingIndex = currentTabs.findIndex((tab) => tab.path === path);
+        if (existingIndex === -1) {
+          return [...currentTabs, nextTab];
+        }
 
-        openEditorTab(activePaneId, path, name, content, language);
+        const updatedTabs = [...currentTabs];
+        updatedTabs[existingIndex] = nextTab;
+        return updatedTabs;
+      });
+      setActiveCodePanelPath(path);
 
-        const nextConfig = buildPanelConfigForOpen(
-          "code",
-          {
-            panel: "code",
-            mode: "snapped",
-            position: "right",
-            width: 560,
-          },
-          panelConfigsRef.current.code,
-        );
-        const nextPanelConfigs = {
-          ...panelConfigsRef.current,
-          code: nextConfig,
-        };
-        const nextRememberedSnappedPositions = {
-          ...rememberedSnappedPositionsRef.current,
-          code: nextConfig.position,
-        };
-        const nextPanels = { ...panelsRef.current };
+      openEditorTab(activePaneId, path, name, content, language);
 
-        (Object.keys(panelConfigsRef.current) as PanelId[]).forEach((id) => {
-          if (id === "code" || !nextPanels[id]) {
-            return;
-          }
+      const nextConfig = buildPanelConfigForOpen(
+        "code",
+        {
+          panel: "code",
+          mode: request?.mode ?? "snapped",
+          position: request?.position ?? "right",
+          width: request?.width ?? 560,
+          height: request?.height,
+          x: request?.x,
+          y: request?.y,
+        },
+        panelConfigsRef.current.code,
+      );
+      const nextPanelConfigs = {
+        ...panelConfigsRef.current,
+        code: nextConfig,
+      };
+      const nextRememberedSnappedPositions = {
+        ...rememberedSnappedPositionsRef.current,
+        code: nextConfig.position,
+      };
+      const nextPanels = { ...panelsRef.current };
 
-          const otherConfig = panelConfigsRef.current[id];
-          if (
-            otherConfig.mode === "snapped" &&
-            otherConfig.position === "right"
-          ) {
-            nextPanels[id] = false;
-          }
-        });
+      (Object.keys(panelConfigsRef.current) as PanelId[]).forEach((id) => {
+        if (id === "code" || !nextPanels[id]) {
+          return;
+        }
 
-        nextPanels.code = true;
-        applyPanelsState(nextPanels);
-        applyPanelConfigsState(nextPanelConfigs);
-        applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
-      })();
+        const otherConfig = panelConfigsRef.current[id];
+        if (
+          otherConfig.mode === "snapped" &&
+          otherConfig.position === nextConfig.position
+        ) {
+          nextPanels[id] = false;
+        }
+      });
+
+      nextPanels.code = true;
+      applyPanelsState(nextPanels);
+      applyPanelConfigsState(nextPanelConfigs);
+      applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
     },
     [
       activePaneId,
@@ -3251,6 +4275,30 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       ensureProjectEntryAccess,
       openEditorTab,
       showNotification,
+    ],
+  );
+
+  const handleFileOpen = useCallback(
+    (path: string, content: string, name: string, line?: number) => {
+      if (tuiModeActive) {
+        const accessDecision = canAccessPath(path, "read");
+        if (!accessDecision.allowed) {
+          showNotification("error", `[Security] ${accessDecision.reason}`);
+          return;
+        }
+
+        void handleFileOpenInPanel(path, name, line, { content });
+        return;
+      }
+
+      onFileOpen?.(path, content, name, line);
+    },
+    [
+      canAccessPath,
+      handleFileOpenInPanel,
+      onFileOpen,
+      showNotification,
+      tuiModeActive,
     ],
   );
 
@@ -3265,6 +4313,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
 
       try {
+        if (tuiModeActive) {
+          const name = path.split("/").pop() || path;
+          await handleFileOpenInPanel(path, name, line);
+          return;
+        }
+
         const content = await ReadFile(path);
         const name = path.split("/").pop() || path;
         onFileOpen?.(path, content, name, line);
@@ -3272,7 +4326,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         console.error("[MainLayout] Failed to open file:", error);
       }
     },
-    [canAccessPath, onFileOpen, showNotification, tuiModeActive],
+    [
+      canAccessPath,
+      handleFileOpenInPanel,
+      onFileOpen,
+      showNotification,
+      tuiModeActive,
+    ],
   );
 
   useEffect(() => {
@@ -3301,25 +4361,32 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         renameEditorTabPaths(oldPath, newPath);
         renamePathDiagnostics(oldPath, newPath);
 
-        setCodePanelSource((current) => {
-          if (!current) {
-            return current;
+        setCodePanelTabs((currentTabs) =>
+          currentTabs.map((tab) => {
+            const remappedPath = remapProjectPathPrefix(
+              tab.path,
+              oldPath,
+              newPath,
+            );
+            if (!remappedPath || remappedPath === tab.path) {
+              return tab;
+            }
+
+            return {
+              ...tab,
+              path: remappedPath,
+              name: getProjectPathBasename(remappedPath),
+            };
+          }),
+        );
+        setActiveCodePanelPath((currentPath) => {
+          if (!currentPath) {
+            return currentPath;
           }
 
-          const remappedPath = remapProjectPathPrefix(
-            current.path,
-            oldPath,
-            newPath,
+          return (
+            remapProjectPathPrefix(currentPath, oldPath, newPath) ?? currentPath
           );
-          if (!remappedPath || remappedPath === current.path) {
-            return current;
-          }
-
-          return {
-            ...current,
-            path: remappedPath,
-            name: getProjectPathBasename(remappedPath),
-          };
         });
 
         setCreateEntryDialog((current) => {
@@ -3406,10 +4473,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         closeEditorTabPaths(deletedPath);
         prunePathDiagnostics(deletedPath);
 
-        setCodePanelSource((current) =>
-          current && isSameOrChildPath(current.path, deletedPath)
+        setCodePanelTabs((currentTabs) =>
+          currentTabs.filter(
+            (tab) => !isSameOrChildPath(tab.path, deletedPath),
+          ),
+        );
+        setActiveCodePanelPath((currentPath) =>
+          currentPath && isSameOrChildPath(currentPath, deletedPath)
             ? null
-            : current,
+            : currentPath,
         );
         setCreateEntryDialog((current) =>
           current && isSameOrChildPath(current.directoryPath, deletedPath)
@@ -3669,13 +4741,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
+      const resolvedInput = resolveBrowserPreviewOpenInput(input);
       const openResult = measurePerf(
         "preview",
         "window.open",
-        () => openPreviewWindow(input),
+        () => openPreviewWindow(resolvedInput),
         {
-          surface: input.surface,
-          mode: input.mode ?? null,
+          surface: resolvedInput.surface,
+          mode: resolvedInput.mode ?? null,
         },
       );
       if (!openResult.opened) {
@@ -3685,9 +4758,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      if (input.surface === "appearance") {
+      if (resolvedInput.surface === "appearance") {
         ensureAppearancePreviewSession();
-        const patch = parseAppearancePatch(input.payload);
+        const patch = parseAppearancePatch(resolvedInput.payload);
         if (patch.theme || typeof patch.uiScale === "number") {
           const stagedAppearance = patchAppearancePreview(patch);
           if (stagedAppearance) {
@@ -3707,7 +4780,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           () => focusPreviewWindow(openedWindowId),
           {
             windowId: openedWindowId,
-            surface: input.surface,
+            surface: resolvedInput.surface,
           },
         );
       }
@@ -3718,6 +4791,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       focusPreviewWindow,
       openPreviewWindow,
       patchAppearancePreview,
+      resolveBrowserPreviewOpenInput,
       showNotification,
     ],
   );
@@ -3748,6 +4822,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   useEffect(() => {
     openCanonicalBrowserPreviewRef.current = openCanonicalBrowserPreview;
   }, [openCanonicalBrowserPreview]);
+
+  const toggleCanonicalBrowserPreview = useCallback(() => {
+    const existingPreviewWindow = getBrowserPreviewWindowForShortcut();
+    if (existingPreviewWindow) {
+      closePreviewWindow(existingPreviewWindow.id);
+      return;
+    }
+
+    openCanonicalBrowserPreviewRef.current();
+  }, [closePreviewWindow]);
+
+  useEffect(() => {
+    toggleCanonicalBrowserPreviewRef.current = toggleCanonicalBrowserPreview;
+  }, [toggleCanonicalBrowserPreview]);
 
   const handlePreviewWindowUpdateEvent = useCallback(
     (payload: unknown) => {
@@ -3941,11 +5029,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           return;
         }
 
-        if (
-          terminalState.tuiAssist.active &&
-          terminalState.tuiAssist.panel === panelId
-        ) {
-          closeTUIAssistPanel();
+        updatePanelsState((previous) => ({ ...previous, [panelId]: false }));
+        if (terminalState.tuiAssist.panel === panelId) {
+          terminalState.setTUIAssist({ active: false, panel: null });
         }
         return;
       }
@@ -3999,29 +5085,21 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           return;
         }
 
-        const assistPanelId = resolveAssistPanelId(request.panel);
-        if (!assistPanelId) {
-          return;
-        }
-
+        applyPanelOpenState(panelId, request);
         terminalState.setTUIAssist({
-          active: true,
-          panel: assistPanelId,
+          active: false,
+          panel: null,
           anchor: normalizeTUIAssistAnchor(
             request.anchor ?? request.position,
             terminalState.tuiAssist.anchor,
           ),
-          ratio:
-            typeof request.ratio === "number"
-              ? request.ratio
-              : terminalState.tuiAssist.ratio,
         });
         return;
       }
 
       applyPanelOpenState(panelId, request);
     },
-    [applyPanelOpenState, resolveAssistPanelId],
+    [applyPanelOpenState],
   );
 
   const handlePanelOpenEvent = useCallback(
@@ -4060,6 +5138,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
+      if (panelId === "code" && request.path) {
+        const fileName =
+          request.title ||
+          request.name ||
+          getProjectPathBasename(request.path) ||
+          request.path;
+        return handleFileOpenInPanel(request.path, fileName, request.line, {
+          ...request,
+          panel: "code",
+        });
+      }
+
       const terminalState = useTerminalStore.getState();
       if (panelId === "terminal" && request.command) {
         applyPanelOpenState(panelId, {
@@ -4095,7 +5185,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           return;
         }
 
-        openTUIAssistPanel(request);
+        applyPanelOpenState(panelId, request);
+        terminalState.setTUIAssist({ active: false, panel: null });
         return;
       }
 
@@ -4108,6 +5199,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [
       applyPanelOpenState,
       executeAppSurfaceAction,
+      handleFileOpenInPanel,
       openTUIAssistPanel,
       submitTerminalCommand,
     ],
@@ -4169,6 +5261,95 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [applyPanelOpenState, closeTerminalPanel, updatePanelsState],
   );
 
+  const executeApplicationMenuAction = useCallback(
+    (actionId: ShortcutActionId) => {
+      if (shouldSuppressApplicationMenuAction(actionId)) {
+        return;
+      }
+
+      switch (actionId) {
+        case "search.toggle":
+          if (!useTerminalStore.getState().isDispatcherPaused) {
+            openCommandDispatcher();
+          }
+          return;
+        case "explorer.toggle":
+          togglePanelCompactFromShortcut("explorer");
+          return;
+        case "terminal.toggle":
+          toggleNamedPanel("terminal");
+          return;
+        case "ai.toggle":
+          toggleNamedPanel("aiChat");
+          return;
+        case "settings.toggle":
+          if (isSettingsOpen) {
+            closeSettings();
+          } else {
+            openSettings();
+          }
+          return;
+        case "project.copyPath":
+          void copyProjectPathFromShortcut();
+          return;
+        case "git.fullscreen":
+          togglePanelFullscreenFromShortcut("git", gitPreFullscreenRef);
+          return;
+        case "git.toggle":
+          togglePanelCompactFromShortcut("git", gitPreFullscreenRef);
+          return;
+        case "problems.fullscreen":
+          togglePanelFullscreenFromShortcut(
+            "problems",
+            problemsPreFullscreenRef,
+          );
+          return;
+        case "problems.toggle":
+          togglePanelCompactFromShortcut("problems", problemsPreFullscreenRef);
+          return;
+        case "panel.closeFullscreen":
+          closeActiveFullscreenPanelFromShortcut();
+          return;
+        case "browser.preview":
+          toggleCanonicalBrowserPreviewRef.current();
+          return;
+        case "window.toggleFullscreen":
+          void toggleWindowFullscreen();
+          return;
+      }
+    },
+    [
+      closeSettings,
+      copyProjectPathFromShortcut,
+      isSettingsOpen,
+      openCommandDispatcher,
+      openSettings,
+      toggleNamedPanel,
+    ],
+  );
+
+  useEffect(() => {
+    const handleApplicationMenuAction = (event: Event) => {
+      const actionId = (event as CustomEvent<ApplicationMenuActionDetail>)
+        .detail?.actionId;
+      if (!actionId) {
+        return;
+      }
+
+      executeApplicationMenuAction(actionId);
+    };
+
+    window.addEventListener(
+      APPLICATION_MENU_ACTION_EVENT,
+      handleApplicationMenuAction,
+    );
+    return () =>
+      window.removeEventListener(
+        APPLICATION_MENU_ACTION_EVENT,
+        handleApplicationMenuAction,
+      );
+  }, [executeApplicationMenuAction]);
+
   // Handle IDE events from Go backend (via dispatcher)
   useIDEEvents({
     onOpenPanel: handlePanelOpenEvent,
@@ -4180,14 +5361,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         if (state.tuiModeActive) {
           switch (element) {
             case "sidebar":
-              toggleTUIAssistPanel("explorer");
+              toggleNamedPanel("explorer");
               return;
             case "terminal":
               closeTUIAssistPanel();
               setTimeout(() => state.focusActiveTerminal(), 80);
               return;
             case "ai":
-              toggleTUIAssistPanel("aiChat");
+              toggleNamedPanel("aiChat");
               return;
           }
         }
@@ -4207,12 +5388,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             break;
         }
       },
-      [
-        closeTUIAssistPanel,
-        openCommandDispatcher,
-        toggleNamedPanel,
-        toggleTUIAssistPanel,
-      ],
+      [closeTUIAssistPanel, openCommandDispatcher, toggleNamedPanel],
     ),
     onWindowOpen: handlePreviewWindowOpenEvent,
     onWindowUpdate: handlePreviewWindowUpdateEvent,
@@ -4354,15 +5530,30 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     panelId: PanelId,
     updates: { width: number; height: number; x?: number; y?: number },
   ) => {
-    setPanelConfigs((prev) => ({
-      ...prev,
-      [panelId]: {
-        ...prev[panelId],
-        size: { width: updates.width, height: updates.height },
-        x: updates.x !== undefined ? updates.x : prev[panelId].x,
-        y: updates.y !== undefined ? updates.y : prev[panelId].y,
-      },
-    }));
+    setPanelConfigs((prev) => {
+      const current = prev[panelId];
+      const nextX = updates.x !== undefined ? updates.x : current.x;
+      const nextY = updates.y !== undefined ? updates.y : current.y;
+
+      if (
+        current.size.width === updates.width &&
+        current.size.height === updates.height &&
+        current.x === nextX &&
+        current.y === nextY
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [panelId]: {
+          ...current,
+          size: { width: updates.width, height: updates.height },
+          x: nextX,
+          y: nextY,
+        },
+      };
+    });
   };
 
   const handleGitDiffFocusChange = useCallback((active: boolean) => {
@@ -4451,8 +5642,89 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, []);
 
   const handleDragStart = (panelId: string) => {
+    if (panelDropSettlingTimerRef.current) {
+      clearTimeout(panelDropSettlingTimerRef.current);
+      panelDropSettlingTimerRef.current = null;
+    }
+    setPanelDropSettling(false);
+    setRelocatingPanelIds([]);
+    setRelocatingPreviewWindowIds([]);
+    setDraggingPreviewWindowId(null);
     setDraggingPanel(panelId as PanelId);
   };
+
+  const handleDragMove = useCallback(
+    (_panelId: string, targetPosition: PanelPosition | null) => {
+      setDropTargetPosition((current) =>
+        current === targetPosition ? current : targetPosition,
+      );
+    },
+    [],
+  );
+
+  const handlePreviewWindowDragStart = useCallback(
+    (windowId: string) => {
+      if (panelDropSettlingTimerRef.current) {
+        clearTimeout(panelDropSettlingTimerRef.current);
+        panelDropSettlingTimerRef.current = null;
+      }
+      setPanelDropSettling(false);
+      setRelocatingPanelIds([]);
+      setRelocatingPreviewWindowIds([]);
+      setDraggingPanel(null);
+      setDraggingPreviewWindowId(windowId);
+      focusPreviewWindow(windowId);
+    },
+    [focusPreviewWindow],
+  );
+
+  const handlePreviewWindowDragMove = useCallback(
+    (_windowId: string, targetPosition: PanelPosition | null) => {
+      setDropTargetPosition((current) =>
+        current === targetPosition ? current : targetPosition,
+      );
+    },
+    [],
+  );
+
+  const handlePreviewWindowDragEnd = useCallback(
+    (
+      windowId: string,
+      targetPosition: PanelPosition | null,
+      dropX?: number,
+      dropY?: number,
+      dropWidth?: number,
+      dropHeight?: number,
+    ): boolean => {
+      setDraggingPreviewWindowId(null);
+      setDropTargetPosition(null);
+
+      if (!targetPosition) {
+        return false;
+      }
+
+      if (movePreviewWindowToPosition(windowId, targetPosition)) {
+        return true;
+      }
+
+      const previewWindow = usePreviewWindowStore
+        .getState()
+        .windows.find((windowState) => windowState.id === windowId);
+      if (!previewWindow) {
+        return true;
+      }
+
+      updatePreviewWindow(windowId, {
+        mode: "floating",
+        x: dropX ?? previewWindow.x,
+        y: dropY ?? previewWindow.y,
+        width: dropWidth ?? previewWindow.width,
+        height: dropHeight ?? previewWindow.height,
+      });
+      return true;
+    },
+    [startPanelDropSettling, updatePreviewWindow],
+  );
 
   const getSizeForPosition = (
     position: PanelPosition,
@@ -4477,10 +5749,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             panelConfigs[id].mode === "snapped" &&
             panels[id],
         );
+        const previewWindowAtTarget = panelAtTarget
+          ? null
+          : findSnappedPreviewWindowAtPosition(targetPosition);
 
         const currentConfig = panelConfigs[currentPanel];
         const currentPanelSize = currentConfig.size;
         const currentPosition = currentConfig.position;
+        const wasFloatingPanel = currentConfig.mode === "floating";
 
         if (panelAtTarget) {
           // SWAP: Exchange positions between the two panels
@@ -4507,6 +5783,72 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             },
           };
 
+          if (wasFloatingPanel) {
+            setFloatingPresenceVersion((version) => version + 1);
+          }
+          startPanelDropSettling({
+            panels: [currentPanel, panelAtTarget],
+            positions: uniquePanelPositions([targetPosition, currentPosition]),
+          });
+          applyPanelConfigsState(nextPanelConfigs);
+          applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+        } else if (previewWindowAtTarget) {
+          const fallbackPosition =
+            currentConfig.mode === "snapped" &&
+            currentPosition !== targetPosition &&
+            !isSnappedPositionOccupied(currentPosition, {
+              exclude: [currentPanel],
+              excludeWindowIds: [previewWindowAtTarget.id],
+            })
+              ? currentPosition
+              : findAvailablePanelPosition({
+                  preferred: previewWindowAtTarget.position,
+                  exclude: [currentPanel],
+                  excludeWindowIds: [previewWindowAtTarget.id],
+                  excludePositions: [targetPosition],
+                });
+
+          if (fallbackPosition) {
+            snapPreviewWindowToPosition(
+              previewWindowAtTarget,
+              fallbackPosition,
+            );
+          } else {
+            updatePreviewWindow(previewWindowAtTarget.id, {
+              mode: "floating",
+              x: previewWindowAtTarget.x,
+              y: previewWindowAtTarget.y,
+              width: previewWindowAtTarget.width,
+              height: previewWindowAtTarget.height,
+            });
+          }
+
+          const nextRememberedSnappedPositions = {
+            ...rememberedSnappedPositionsRef.current,
+            [currentPanel]: targetPosition,
+          };
+          const nextPanelConfigs = {
+            ...panelConfigsRef.current,
+            [currentPanel]: {
+              ...panelConfigsRef.current[currentPanel],
+              mode: "snapped" as const,
+              position: targetPosition,
+              size: getSizeForPosition(targetPosition, currentPanelSize),
+            },
+          };
+
+          if (wasFloatingPanel) {
+            setFloatingPresenceVersion((version) => version + 1);
+          }
+          startPanelDropSettling({
+            panels: [currentPanel],
+            previewWindows: [previewWindowAtTarget.id],
+            positions: uniquePanelPositions([
+              targetPosition,
+              currentConfig.mode === "snapped" ? currentPosition : null,
+              fallbackPosition,
+            ]),
+          });
           applyPanelConfigsState(nextPanelConfigs);
           applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
         } else {
@@ -4525,6 +5867,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             },
           };
 
+          if (wasFloatingPanel) {
+            setFloatingPresenceVersion((version) => version + 1);
+          }
+          startPanelDropSettling({
+            panels: [currentPanel],
+            positions: uniquePanelPositions([
+              targetPosition,
+              currentConfig.mode === "snapped" ? currentPosition : null,
+            ]),
+          });
           applyPanelConfigsState(nextPanelConfigs);
           applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
         }
@@ -4549,6 +5901,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }
 
     setDraggingPanel(null);
+    setDraggingPreviewWindowId(null);
     setDropTargetPosition(null);
   };
 
@@ -4565,6 +5918,25 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       ) || null
     );
   };
+
+  const getActivePreviewWindowAtPosition = (
+    position: PanelPosition,
+    excludeWindowId?: string | null,
+  ): PreviewWindow | null =>
+    previewWindows.find(
+      (windowState) =>
+        windowState.id !== excludeWindowId &&
+        windowState.mode === "snapped" &&
+        windowState.position === position,
+    ) ?? null;
+
+  const getBrowserPreviewWindowAtPosition = (
+    position: PanelPosition,
+  ): PreviewWindow | null =>
+    browserPreviewWindows.find(
+      (windowState) =>
+        windowState.mode === "snapped" && windowState.position === position,
+    ) ?? null;
 
   const containerStyle: React.CSSProperties = {
     display: "flex",
@@ -4607,6 +5979,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     minWidth: 0,
     overflow: "hidden",
     position: "relative",
+    zIndex: 0,
     backgroundColor: isDark ? "var(--bg-blackprint)" : colors.light.bg,
   };
 
@@ -4640,21 +6013,50 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   };
 
   const dropZoneStyle = (position: PanelPosition): React.CSSProperties => {
-    const isActive = draggingPanel !== null && dropTargetPosition === position;
+    const isPanelDragActive =
+      draggingPanel !== null || draggingPreviewWindowId !== null;
+    const isActive = isPanelDragActive && dropTargetPosition === position;
+    const targetPanel = getActivePanelsAtPosition(position);
+    const targetPreviewWindow = getActivePreviewWindowAtPosition(
+      position,
+      draggingPreviewWindowId,
+    );
+    const isSwapTarget =
+      isActive &&
+      ((targetPanel !== null && targetPanel !== draggingPanel) ||
+        targetPreviewWindow !== null);
+    const activeBorder = isSwapTarget
+      ? "var(--accent-brand)"
+      : "var(--shell-border-strong)";
+    const inactiveBorder = isDark
+      ? "rgba(255,255,255,0.1)"
+      : "rgba(0,0,0,0.12)";
     const base: React.CSSProperties = {
       position: "absolute",
-      backgroundColor: isActive
-        ? isDark
-          ? "rgba(255,255,255,0.08)"
-          : "rgba(0,0,0,0.06)"
-        : "transparent",
-      border: isActive
-        ? `2px dashed ${isDark ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.2)"}`
-        : "2px dashed transparent",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: isActive
+        ? isSwapTarget
+          ? "linear-gradient(180deg, color-mix(in srgb, var(--accent-brand) 18%, transparent), color-mix(in srgb, var(--accent-brand) 8%, transparent))"
+          : isDark
+            ? "rgba(255,255,255,0.08)"
+            : "rgba(0,0,0,0.06)"
+        : isDark
+          ? "rgba(255,255,255,0.025)"
+          : "rgba(0,0,0,0.025)",
+      border: `1px solid ${isActive ? activeBorder : inactiveBorder}`,
       borderRadius: radius.lg,
-      transition: `all ${transitions.fast}`,
-      pointerEvents: draggingPanel ? "auto" : "none",
-      zIndex: zIndex.floatingPanel - 1,
+      boxShadow: isActive
+        ? isSwapTarget
+          ? "inset 0 0 0 1px var(--accent-brand), 0 0 0 1px color-mix(in srgb, var(--accent-brand) 34%, transparent), 0 18px 48px color-mix(in srgb, var(--accent-brand) 18%, transparent)"
+          : "inset 0 0 0 1px var(--shell-border-strong), var(--shell-shadow)"
+        : "none",
+      opacity: isPanelDragActive ? (isActive ? 1 : 0.52) : 0,
+      transform: isActive ? "scale(1)" : "scale(0.985)",
+      transition: `opacity ${transitions.fast}, transform ${transitions.fast}, background ${transitions.fast}, border-color ${transitions.fast}, box-shadow ${transitions.fast}`,
+      pointerEvents: "none",
+      zIndex: 139,
     };
 
     switch (position) {
@@ -4671,6 +6073,57 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }
   };
 
+  const renderDropZone = (position: PanelPosition) => {
+    const isPanelDragActive =
+      draggingPanel !== null || draggingPreviewWindowId !== null;
+    const isActive = isPanelDragActive && dropTargetPosition === position;
+    const targetPanel = getActivePanelsAtPosition(position);
+    const targetPreviewWindow = getActivePreviewWindowAtPosition(
+      position,
+      draggingPreviewWindowId,
+    );
+    const isSwapTarget =
+      isActive &&
+      ((targetPanel !== null && targetPanel !== draggingPanel) ||
+        targetPreviewWindow !== null);
+    const ZoneIcon =
+      position === "left" || position === "right"
+        ? ArrowLeftRight
+        : ArrowUpDown;
+
+    return (
+      <div
+        data-testid={`panel-drop-zone-${position}`}
+        data-drop-action={isSwapTarget ? "swap" : "snap"}
+        data-drop-active={isActive ? "true" : "false"}
+        aria-label={isSwapTarget ? "Swap panel target" : "Snap panel target"}
+        style={dropZoneStyle(position)}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 34,
+            height: 34,
+            borderRadius: 9999,
+            border: "1px solid var(--shell-border-strong)",
+            backgroundColor: isSwapTarget
+              ? "var(--accent-brand-soft)"
+              : "color-mix(in srgb, var(--surface-shell-strong) 92%, transparent)",
+            color: isSwapTarget
+              ? "var(--accent-brand)"
+              : "var(--text-secondary)",
+            opacity: isActive ? 1 : 0.64,
+            boxShadow: isActive ? "var(--shadow-overlay)" : "none",
+          }}
+        >
+          <ZoneIcon size={16} strokeWidth={2.2} />
+        </div>
+      </div>
+    );
+  };
+
   const renderPanel = (
     panelId: PanelId,
     hostMode: "overlay" | "flow" = "overlay",
@@ -4678,9 +6131,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     const isVisible = panels[panelId];
     const config = panelConfigs[panelId];
     const isDropTarget =
-      draggingPanel !== null &&
-      draggingPanel !== panelId &&
-      dropTargetPosition === config.position;
+      config.mode === "snapped" &&
+      dropTargetPosition === config.position &&
+      ((draggingPanel !== null && draggingPanel !== panelId) ||
+        draggingPreviewWindowId !== null);
     const isFullscreen = isLogicalFullscreenPanel(config);
 
     const getAdjacentPanels = () => {
@@ -4708,6 +6162,37 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         }
       });
 
+      previewWindows.forEach((windowState) => {
+        if (windowState.mode !== "snapped") {
+          return;
+        }
+
+        if (windowState.position === "left") {
+          adjacent.left = Math.max(
+            adjacent.left ?? 0,
+            windowState.width + SNAPPED_PANEL_OUTER_GAP,
+          );
+        }
+        if (windowState.position === "right") {
+          adjacent.right = Math.max(
+            adjacent.right ?? 0,
+            windowState.width + SNAPPED_PANEL_OUTER_GAP,
+          );
+        }
+        if (windowState.position === "bottom") {
+          adjacent.bottom = Math.max(
+            adjacent.bottom ?? 0,
+            windowState.height + SNAPPED_PANEL_OUTER_GAP,
+          );
+        }
+        if (windowState.position === "top") {
+          adjacent.top = Math.max(
+            adjacent.top ?? 0,
+            windowState.height + SNAPPED_PANEL_OUTER_GAP,
+          );
+        }
+      });
+
       return adjacent;
     };
 
@@ -4725,7 +6210,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         x?: number;
         y?: number;
       }) => handlePanelResize(panelId, updates),
+      onResizeStart: () => setResizingPanel(panelId),
+      onResizeEnd: () =>
+        setResizingPanel((current) => (current === panelId ? null : current)),
       onDragStart: handleDragStart,
+      onDragMove: handleDragMove,
       onDragEnd: handleDragEnd,
       onClose: () => toggleNamedPanel(panelId),
       isDropTarget,
@@ -4734,6 +6223,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       adjacentPanels: getAdjacentPanels(),
       uiScale,
       isFullscreen,
+      isRelocating: relocatingPanelIds.includes(panelId),
     };
 
     switch (panelId) {
@@ -4803,83 +6293,19 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             }}
           >
             {tuiModeActive ? (
-              <div style={tuiWorkspaceInnerStyle}>
-                <div style={tuiTerminalPaneStyle}>
-                  <TerminalPanelContent
-                    onOpenFileRef={(path, line) => {
-                      void openFileFromPath(path, line);
-                    }}
-                    onOpenPreviewUrl={(url, sessionId) => {
-                      openPreviewFromTerminal({
-                        url,
-                        sessionId,
-                        forceOpen: true,
-                      });
-                    }}
-                  />
-                </div>
-                {assistPanelActive && tuiAssist.panel ? (
-                  <div style={tuiAssistPaneStyle}>
-                    <div style={tuiAssistHeaderStyle}>
-                      <span>
-                        {assistPanelTitle[tuiAssist.panel as AssistPanelId]}
-                      </span>
-                      <div style={tuiAssistControlsStyle}>
-                        {(
-                          [
-                            "left",
-                            "right",
-                            "top",
-                            "bottom",
-                          ] as TUIAssistAnchor[]
-                        ).map((anchor) => (
-                          <button
-                            key={anchor}
-                            style={{
-                              ...tuiAssistButtonStyle,
-                              background:
-                                tuiAssist.anchor === anchor
-                                  ? isDark
-                                    ? "rgba(255,255,255,0.16)"
-                                    : "rgba(0,0,0,0.12)"
-                                  : tuiAssistButtonStyle.background,
-                            }}
-                            onClick={() =>
-                              setTUIAssist({
-                                active: true,
-                                anchor,
-                                panel: tuiAssist.panel,
-                              })
-                            }
-                          >
-                            {anchor.slice(0, 1).toUpperCase()}
-                          </button>
-                        ))}
-                        <button
-                          style={tuiAssistButtonStyle}
-                          onClick={() =>
-                            setTUIAssist({
-                              active: true,
-                              anchor: flipTUIAssistAnchor(tuiAssist.anchor),
-                              panel: tuiAssist.panel,
-                            })
-                          }
-                        >
-                          Flip
-                        </button>
-                        <button
-                          style={tuiAssistButtonStyle}
-                          onClick={closeTUIAssistPanel}
-                        >
-                          Close
-                        </button>
-                      </div>
-                    </div>
-                    <div style={tuiAssistBodyStyle}>
-                      {renderAssistPanelContent()}
-                    </div>
-                  </div>
-                ) : null}
+              <div style={tuiTerminalPaneStyle}>
+                <TerminalPanelContent
+                  onOpenFileRef={(path, line) => {
+                    void openFileFromPath(path, line);
+                  }}
+                  onOpenPreviewUrl={(url, sessionId) => {
+                    openPreviewFromTerminal({
+                      url,
+                      sessionId,
+                      forceOpen: true,
+                    });
+                  }}
+                />
               </div>
             ) : (
               <TerminalPanelContent
@@ -4963,20 +6389,59 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           <FloatingPanel
             key={panelId}
             id="code"
-            title={codePanelSource ? `${codePanelSource.name} (Code)` : "Code"}
+            title={
+              activeCodePanelTab ? `${activeCodePanelTab.name} (Code)` : "Code"
+            }
             icon={<FileText size={16} />}
             minSize={320}
             maxSize={900}
             {...panelProps}
           >
-            {codePanelSource ? (
-              <CodePanelSurface
-                key={codePanelSource.path}
-                path={codePanelSource.path}
-                name={codePanelSource.name}
-                initialContent={codePanelSource.content}
-                language={codePanelSource.language}
-              />
+            {activeCodePanelTab ? (
+              <div className="flex h-full min-h-0 w-full flex-col">
+                {codePanelTabs.length > 1 ? (
+                  <div
+                    data-testid="code-panel-tabs"
+                    className="flex h-9 min-h-9 items-center gap-1 overflow-x-auto border-b border-[var(--shell-border-subtle)] bg-[color-mix(in_srgb,var(--surface-shell)_88%,transparent)] px-2"
+                  >
+                    {codePanelTabs.map((tab) => {
+                      const isActive = tab.path === activeCodePanelTab.path;
+                      return (
+                        <button
+                          key={tab.path}
+                          type="button"
+                          data-testid={getCodePanelTabTestId(tab.path)}
+                          title={tab.path}
+                          className="h-7 max-w-48 min-w-0 flex-shrink-0 truncate rounded-md border px-2.5 text-left text-xs font-medium transition-colors"
+                          style={{
+                            borderColor: isActive
+                              ? "var(--shell-border-strong)"
+                              : "transparent",
+                            backgroundColor: isActive
+                              ? "var(--surface-hover)"
+                              : "transparent",
+                            color: isActive
+                              ? "var(--text-primary)"
+                              : "var(--text-secondary)",
+                          }}
+                          onClick={() => setActiveCodePanelPath(tab.path)}
+                        >
+                          {tab.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                <div className="min-h-0 flex-1">
+                  <CodePanelSurface
+                    key={activeCodePanelTab.path}
+                    path={activeCodePanelTab.path}
+                    name={activeCodePanelTab.name}
+                    initialContent={activeCodePanelTab.content}
+                    language={activeCodePanelTab.language}
+                  />
+                </div>
+              </div>
             ) : (
               <div className="h-full w-full flex items-center justify-center text-sm text-[var(--text-muted)]">
                 Open file from Explorer to start editing in panel
@@ -4987,6 +6452,158 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       default:
         return null;
     }
+  };
+
+  const getPreviewWindowAdjacentPanels = (windowId: string) => {
+    const adjacent: {
+      left?: number;
+      right?: number;
+      bottom?: number;
+      top?: number;
+    } = {};
+
+    (Object.keys(panelConfigs) as PanelId[]).forEach((id) => {
+      if (!panels[id]) {
+        return;
+      }
+
+      const config = panelConfigs[id];
+      if (config.mode !== "snapped") {
+        return;
+      }
+
+      if (config.position === "left") {
+        adjacent.left = Math.max(
+          adjacent.left ?? 0,
+          config.size.width + SNAPPED_PANEL_OUTER_GAP,
+        );
+      }
+      if (config.position === "right") {
+        adjacent.right = Math.max(
+          adjacent.right ?? 0,
+          config.size.width + SNAPPED_PANEL_OUTER_GAP,
+        );
+      }
+      if (config.position === "bottom") {
+        adjacent.bottom = Math.max(
+          adjacent.bottom ?? 0,
+          config.size.height + SNAPPED_PANEL_OUTER_GAP,
+        );
+      }
+      if (config.position === "top") {
+        adjacent.top = Math.max(
+          adjacent.top ?? 0,
+          config.size.height + SNAPPED_PANEL_OUTER_GAP,
+        );
+      }
+    });
+
+    previewWindows.forEach((windowState) => {
+      if (windowState.id === windowId || windowState.mode !== "snapped") {
+        return;
+      }
+
+      if (windowState.position === "left") {
+        adjacent.left = Math.max(
+          adjacent.left ?? 0,
+          windowState.width + SNAPPED_PANEL_OUTER_GAP,
+        );
+      }
+      if (windowState.position === "right") {
+        adjacent.right = Math.max(
+          adjacent.right ?? 0,
+          windowState.width + SNAPPED_PANEL_OUTER_GAP,
+        );
+      }
+      if (windowState.position === "bottom") {
+        adjacent.bottom = Math.max(
+          adjacent.bottom ?? 0,
+          windowState.height + SNAPPED_PANEL_OUTER_GAP,
+        );
+      }
+      if (windowState.position === "top") {
+        adjacent.top = Math.max(
+          adjacent.top ?? 0,
+          windowState.height + SNAPPED_PANEL_OUTER_GAP,
+        );
+      }
+    });
+
+    return adjacent;
+  };
+
+  const renderPreviewWindowPanel = (
+    windowState: PreviewWindow,
+    hostMode: "overlay" | "flow" = "overlay",
+  ) => {
+    const isDropTarget =
+      windowState.mode === "snapped" &&
+      dropTargetPosition === windowState.position &&
+      ((draggingPanel !== null && draggingPreviewWindowId !== windowState.id) ||
+        (draggingPreviewWindowId !== null &&
+          draggingPreviewWindowId !== windowState.id));
+
+    return (
+      <FloatingPanel
+        key={windowState.id}
+        id={windowState.id}
+        title={windowState.title}
+        icon={<Globe size={16} />}
+        position={windowState.position}
+        mode={windowState.mode}
+        hostMode={hostMode}
+        size={{ width: windowState.width, height: windowState.height }}
+        x={windowState.x}
+        y={windowState.y}
+        minSize={220}
+        maxSize={1400}
+        isVisible={true}
+        isDropTarget={isDropTarget}
+        activeDropTargetPosition={
+          draggingPreviewWindowId === windowState.id ? dropTargetPosition : null
+        }
+        isRelocating={relocatingPreviewWindowIds.includes(windowState.id)}
+        zIndex={windowState.zIndex}
+        adjacentPanels={getPreviewWindowAdjacentPanels(windowState.id)}
+        uiScale={uiScale}
+        onClose={() => closePreviewWindow(windowState.id)}
+        onResize={(updates) => {
+          updatePreviewWindow(windowState.id, {
+            width: updates.width,
+            height: updates.height,
+            x: updates.x,
+            y: updates.y,
+          });
+        }}
+        onResizeStart={() => setResizingPreviewWindowId(windowState.id)}
+        onResizeEnd={() =>
+          setResizingPreviewWindowId((current) =>
+            current === windowState.id ? null : current,
+          )
+        }
+        onDragStart={handlePreviewWindowDragStart}
+        onDragMove={handlePreviewWindowDragMove}
+        onDragEnd={handlePreviewWindowDragEnd}
+      >
+        <div
+          style={{
+            height: "100%",
+            backgroundColor: theme.bgSecondary,
+          }}
+        >
+          <PreviewWindowSurface
+            window={windowState}
+            appearancePreview={appearancePreview}
+            currentTheme={currentTheme}
+            currentUiScale={uiScale}
+            onAppearancePatch={handleAppearancePreviewPatchEvent}
+            onAppearanceApply={handleAppearancePreviewApplyEvent}
+            onAppearanceCancel={handleAppearancePreviewCancelEvent}
+            onFileOpen={handleFileOpen}
+          />
+        </div>
+      </FloatingPanel>
+    );
   };
 
   const assistPanelActive =
@@ -5040,6 +6657,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     overflow: "visible",
     pointerEvents: "auto",
     position: "relative",
+    transform: "translateY(2px)",
     zIndex: zIndex.tooltip + 2,
   };
 
@@ -5060,6 +6678,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     minWidth: 0,
     opacity: 1,
     pointerEvents: "auto",
+    isolation: panelDropSettling ? "isolate" : undefined,
   };
 
   const centerWorkspaceStyle: React.CSSProperties = {
@@ -5069,16 +6688,24 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     minHeight: 0,
     minWidth: 0,
     position: "relative",
+    zIndex: panelDropSettling ? 0 : undefined,
   };
 
   const getVerticalSlotStyle = (
+    position: PanelPosition,
     width: number,
     isActive: boolean,
+    isResizingSlot: boolean,
   ): React.CSSProperties => {
+    const isSettlingSlot = panelDropSettlingPositions.includes(position);
+    const slotTransitionSuspended =
+      draggingPanel !== null ||
+      draggingPreviewWindowId !== null ||
+      isResizingSlot;
     const transition =
-      reducePanelMotion || draggingPanel !== null
+      reducePanelMotion || slotTransitionSuspended
         ? "none"
-        : `width ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1), min-width ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1), max-width ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+        : `width ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1), min-width ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1), max-width ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`;
 
     return {
       width,
@@ -5088,20 +6715,29 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       minHeight: 0,
       flexShrink: 0,
       position: "relative",
-      overflow: "visible",
+      overflow: isSettlingSlot ? "visible" : "hidden",
+      zIndex: isSettlingSlot && isActive ? 120 : undefined,
       pointerEvents: isActive ? "auto" : "none",
       transition,
+      willChange: isSettlingSlot ? "transform, opacity" : "auto",
     };
   };
 
   const getHorizontalSlotStyle = (
+    position: PanelPosition,
     height: number,
     isActive: boolean,
+    isResizingSlot: boolean,
   ): React.CSSProperties => {
+    const isSettlingSlot = panelDropSettlingPositions.includes(position);
+    const slotTransitionSuspended =
+      draggingPanel !== null ||
+      draggingPreviewWindowId !== null ||
+      isResizingSlot;
     const transition =
-      reducePanelMotion || draggingPanel !== null
+      reducePanelMotion || slotTransitionSuspended
         ? "none"
-        : `height ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1), min-height ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1), max-height ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+        : `height ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1), min-height ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1), max-height ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`;
 
     return {
       height,
@@ -5111,17 +6747,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       minWidth: 0,
       flexShrink: 0,
       position: "relative",
-      overflow: "visible",
+      overflow: isSettlingSlot ? "visible" : "hidden",
+      zIndex: isSettlingSlot && isActive ? 120 : undefined,
       pointerEvents: isActive ? "auto" : "none",
       transition,
+      willChange: isSettlingSlot ? "transform, opacity" : "auto",
     };
-  };
-
-  const tuiOverlayStyle: React.CSSProperties = {
-    position: "fixed",
-    inset: 0,
-    zIndex: zIndex.tooltip + 5,
-    pointerEvents: "none",
   };
 
   const tuiWorkspaceInnerStyle: React.CSSProperties = {
@@ -5134,7 +6765,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   };
 
   const tuiTerminalPaneStyle: React.CSSProperties = {
-    flex: assistPanelActive ? clampedAssistRatio : 1,
+    flex: 1,
     minWidth: 0,
     minHeight: 0,
     display: "flex",
@@ -5220,57 +6851,47 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const rightSnappedPanel = getActivePanelsAtPosition("right");
   const topSnappedPanel = getActivePanelsAtPosition("top");
   const bottomSnappedPanel = getActivePanelsAtPosition("bottom");
+  const leftSnappedPreviewWindow = getBrowserPreviewWindowAtPosition("left");
+  const rightSnappedPreviewWindow = getBrowserPreviewWindowAtPosition("right");
+  const topSnappedPreviewWindow = getBrowserPreviewWindowAtPosition("top");
+  const bottomSnappedPreviewWindow =
+    getBrowserPreviewWindowAtPosition("bottom");
   const leftSlotWidth = leftSnappedPanel
     ? panelConfigs[leftSnappedPanel].size.width
-    : 0;
+    : leftSnappedPreviewWindow
+      ? leftSnappedPreviewWindow.width
+      : 0;
   const rightSlotWidth = rightSnappedPanel
     ? panelConfigs[rightSnappedPanel].size.width
-    : 0;
+    : rightSnappedPreviewWindow
+      ? rightSnappedPreviewWindow.width
+      : 0;
   const topSlotHeight = topSnappedPanel
     ? panelConfigs[topSnappedPanel].size.height
-    : 0;
+    : topSnappedPreviewWindow
+      ? topSnappedPreviewWindow.height
+      : 0;
   const bottomSlotHeight = bottomSnappedPanel
     ? panelConfigs[bottomSnappedPanel].size.height
-    : 0;
+    : bottomSnappedPreviewWindow
+      ? bottomSnappedPreviewWindow.height
+      : 0;
+  const leftSlotActive = Boolean(leftSnappedPanel || leftSnappedPreviewWindow);
+  const rightSlotActive = Boolean(
+    rightSnappedPanel || rightSnappedPreviewWindow,
+  );
+  const topSlotActive = Boolean(topSnappedPanel || topSnappedPreviewWindow);
+  const bottomSlotActive = Boolean(
+    bottomSnappedPanel || bottomSnappedPreviewWindow,
+  );
   const floatingPanelIds = (Object.keys(panelConfigs) as PanelId[]).filter(
     (panelId) =>
       panels[panelId] &&
       panelConfigs[panelId].mode === "floating" &&
       isPanelHostedInMainWorkspace(panelId),
   );
-  const activeSnappedSlots = React.useMemo<
-    Partial<Record<PanelPosition, SnappedSlotSnapshot>>
-  >(
-    () => ({
-      left: leftSnappedPanel
-        ? {
-            panelId: leftSnappedPanel,
-            size: panelConfigs[leftSnappedPanel].size,
-          }
-        : undefined,
-      right: rightSnappedPanel
-        ? {
-            panelId: rightSnappedPanel,
-            size: panelConfigs[rightSnappedPanel].size,
-          }
-        : undefined,
-      top: topSnappedPanel
-        ? { panelId: topSnappedPanel, size: panelConfigs[topSnappedPanel].size }
-        : undefined,
-      bottom: bottomSnappedPanel
-        ? {
-            panelId: bottomSnappedPanel,
-            size: panelConfigs[bottomSnappedPanel].size,
-          }
-        : undefined,
-    }),
-    [
-      bottomSnappedPanel,
-      leftSnappedPanel,
-      panelConfigs,
-      rightSnappedPanel,
-      topSnappedPanel,
-    ],
+  const floatingBrowserPreviewWindows = browserPreviewWindows.filter(
+    (windowState) => windowState.mode === "floating",
   );
   const shouldSuppressSnappedExitForPosition = (position: PanelPosition) =>
     floatingPanelIds.some((panelId) => {
@@ -5286,90 +6907,31 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }),
     [floatingPanelIds, isLogicalFullscreenPanel, panelConfigs],
   );
-
-  React.useLayoutEffect(() => {
-    const positions: PanelPosition[] = ["left", "right", "top", "bottom"];
-
-    positions.forEach((position) => {
-      const activeSlot = activeSnappedSlots[position];
-      const previousSlot = previousSnappedSlotsRef.current[position];
-
-      if (activeSlot) {
-        previousSnappedSlotsRef.current[position] = activeSlot;
-        if (closingSnappedSlotTimersRef.current[position]) {
-          clearTimeout(closingSnappedSlotTimersRef.current[position]);
-          delete closingSnappedSlotTimersRef.current[position];
-        }
-        setClosingSnappedSlots((current) => {
-          if (!current[position]) {
-            return current;
-          }
-
-          const next = { ...current };
-          delete next[position];
-          return next;
-        });
-        return;
-      }
-
-      if (!previousSlot) {
-        return;
-      }
-
-      delete previousSnappedSlotsRef.current[position];
-      if (fullscreenSnappedExitSuppression[position]) {
-        return;
-      }
-
-      setClosingSnappedSlots((current) => ({
-        ...current,
-        [position]: previousSlot,
-      }));
-
-      if (closingSnappedSlotTimersRef.current[position]) {
-        clearTimeout(closingSnappedSlotTimersRef.current[position]);
-      }
-      closingSnappedSlotTimersRef.current[position] = setTimeout(() => {
-        setClosingSnappedSlots((current) => {
-          const slot = current[position];
-          if (!slot || slot.panelId !== previousSlot.panelId) {
-            return current;
-          }
-
-          const next = { ...current };
-          delete next[position];
-          return next;
-        });
-        delete closingSnappedSlotTimersRef.current[position];
-      }, FLOATING_PANEL_LAYOUT_TRANSITION_MS);
-    });
-  }, [activeSnappedSlots, fullscreenSnappedExitSuppression]);
-
-  useEffect(() => {
-    return () => {
-      Object.values(closingSnappedSlotTimersRef.current).forEach((timer) => {
-        if (timer) {
-          clearTimeout(timer);
-        }
-      });
-    };
-  }, []);
-
-  const effectiveLeftSlotWidth = fullscreenSnappedExitSuppression.left
-    ? 0
-    : leftSlotWidth || closingSnappedSlots.left?.size.width || 0;
-  const effectiveRightSlotWidth = fullscreenSnappedExitSuppression.right
-    ? 0
-    : rightSlotWidth || closingSnappedSlots.right?.size.width || 0;
-  const effectiveTopSlotHeight = fullscreenSnappedExitSuppression.top
-    ? 0
-    : topSlotHeight || closingSnappedSlots.top?.size.height || 0;
-  const effectiveBottomSlotHeight = fullscreenSnappedExitSuppression.bottom
-    ? 0
-    : bottomSlotHeight || closingSnappedSlots.bottom?.size.height || 0;
   // Framer layout scales slot descendants here, which makes panels expand
   // instead of sliding. Slot size uses explicit CSS transitions instead.
   const workspaceLayoutMotionEnabled = false;
+  const renderSnappedSlotContent = (
+    panelId: PanelId | null,
+    previewWindow: PreviewWindow | null,
+  ) =>
+    panelId
+      ? renderPanel(panelId, "flow")
+      : previewWindow
+        ? renderPreviewWindowPanel(previewWindow, "flow")
+        : null;
+  const renderSnappedSlotPresence = (
+    position: PanelPosition,
+    panelId: PanelId | null,
+    previewWindow: PreviewWindow | null,
+  ) => {
+    const content = renderSnappedSlotContent(panelId, previewWindow);
+
+    if (panelPresenceBypassPositions.includes(position)) {
+      return content;
+    }
+
+    return <AnimatePresence initial={false}>{content}</AnimatePresence>;
+  };
 
   return (
     <ProjectEntryActionsProvider value={projectEntryActions}>
@@ -5390,7 +6952,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               onOpenSettings={openSettings}
               onToggleExplorer={() => {
                 if (tuiModeActive) {
-                  toggleTUIAssistPanel("explorer");
+                  toggleNamedPanel("explorer");
                   return;
                 }
                 toggleNamedPanel("explorer");
@@ -5408,14 +6970,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               }}
               onToggleAIChat={() => {
                 if (tuiModeActive) {
-                  toggleTUIAssistPanel("aiChat");
+                  toggleNamedPanel("aiChat");
                   return;
                 }
                 toggleNamedPanel("aiChat");
               }}
               onToggleGit={() => {
                 if (tuiModeActive) {
-                  toggleTUIAssistPanel("git");
+                  toggleNamedPanel("git");
                   return;
                 }
                 toggleNamedPanel("git");
@@ -5430,13 +6992,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               onCloseProject={onCloseProject}
               projectPathCopied={projectPathCopiedVisible}
               panels={{
-                explorer: tuiModeActive
-                  ? tuiAssist.active && tuiAssist.panel === "explorer"
-                  : panels.explorer,
+                explorer: panels.explorer,
                 terminal: tuiModeActive ? true : panels.terminal,
-                aiChat: tuiModeActive
-                  ? tuiAssist.active && tuiAssist.panel === "aiChat"
-                  : panels.aiChat,
+                aiChat: panels.aiChat,
                 git: panels.git,
               }}
               projectPath={activeProjectPath}
@@ -5453,29 +7011,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 layout={workspaceLayoutMotionEnabled}
                 transition={panelLayoutTransition}
                 style={normalWorkspaceStyle}
+                data-testid="panel-workspace"
+                data-panel-drop-settling={panelDropSettling ? "true" : "false"}
               >
-                {draggingPanel && (
+                {(draggingPanel || draggingPreviewWindowId) && (
                   <>
-                    <div
-                      style={dropZoneStyle("top")}
-                      onMouseEnter={() => setDropTargetPosition("top")}
-                      onMouseLeave={() => setDropTargetPosition(null)}
-                    />
-                    <div
-                      style={dropZoneStyle("bottom")}
-                      onMouseEnter={() => setDropTargetPosition("bottom")}
-                      onMouseLeave={() => setDropTargetPosition(null)}
-                    />
-                    <div
-                      style={dropZoneStyle("left")}
-                      onMouseEnter={() => setDropTargetPosition("left")}
-                      onMouseLeave={() => setDropTargetPosition(null)}
-                    />
-                    <div
-                      style={dropZoneStyle("right")}
-                      onMouseEnter={() => setDropTargetPosition("right")}
-                      onMouseLeave={() => setDropTargetPosition(null)}
-                    />
+                    {renderDropZone("top")}
+                    {renderDropZone("bottom")}
+                    {renderDropZone("left")}
+                    {renderDropZone("right")}
                   </>
                 )}
 
@@ -5483,16 +7027,19 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                   layout={workspaceLayoutMotionEnabled}
                   transition={panelLayoutTransition}
                   style={getVerticalSlotStyle(
-                    effectiveLeftSlotWidth,
-                    !!leftSnappedPanel,
+                    "left",
+                    leftSlotWidth,
+                    leftSlotActive,
+                    resizingPanel === leftSnappedPanel ||
+                      resizingPreviewWindowId === leftSnappedPreviewWindow?.id,
                   )}
                 >
                   {fullscreenSnappedExitSuppression.left ? null : (
-                    <AnimatePresence initial={false}>
-                      {leftSnappedPanel
-                        ? renderPanel(leftSnappedPanel, "flow")
-                        : null}
-                    </AnimatePresence>
+                    renderSnappedSlotPresence(
+                      "left",
+                      leftSnappedPanel,
+                      leftSnappedPreviewWindow,
+                    )
                   )}
                 </motion.div>
 
@@ -5505,31 +7052,56 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                     layout={workspaceLayoutMotionEnabled}
                     transition={panelLayoutTransition}
                     style={getHorizontalSlotStyle(
-                      effectiveTopSlotHeight,
-                      !!topSnappedPanel,
+                      "top",
+                      topSlotHeight,
+                      topSlotActive,
+                      resizingPanel === topSnappedPanel ||
+                        resizingPreviewWindowId === topSnappedPreviewWindow?.id,
                     )}
                   >
                     {fullscreenSnappedExitSuppression.top ? null : (
-                      <AnimatePresence initial={false}>
-                        {topSnappedPanel
-                          ? renderPanel(topSnappedPanel, "flow")
-                          : null}
-                      </AnimatePresence>
+                      renderSnappedSlotPresence(
+                        "top",
+                        topSnappedPanel,
+                        topSnappedPreviewWindow,
+                      )
                     )}
                   </motion.div>
 
-                  <div style={editorAreaStyle}>
-                    {React.cloneElement(
-                      children as React.ReactElement<{
-                        onToggleProblems?: () => void;
-                        onPerspectiveOpen?: () => void;
-                        onPerspectiveClose?: () => void;
-                      }>,
-                      {
-                        onToggleProblems: () => togglePanel("problems"),
-                        onPerspectiveOpen: handlePerspectiveOpen,
-                        onPerspectiveClose: handlePerspectiveClose,
-                      },
+                  <div
+                    style={editorAreaStyle}
+                    data-testid={
+                      tuiModeActive ? "tui-center-terminal" : "editor-area"
+                    }
+                  >
+                    {tuiModeActive ? (
+                      <div style={tuiTerminalPaneStyle}>
+                        <TerminalPanelContent
+                          onOpenFileRef={(path, line) => {
+                            void openFileFromPath(path, line);
+                          }}
+                          onOpenPreviewUrl={(url, sessionId) => {
+                            openPreviewFromTerminal({
+                              url,
+                              sessionId,
+                              forceOpen: true,
+                            });
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      React.cloneElement(
+                        children as React.ReactElement<{
+                          onToggleProblems?: () => void;
+                          onPerspectiveOpen?: () => void;
+                          onPerspectiveClose?: () => void;
+                        }>,
+                        {
+                          onToggleProblems: () => togglePanel("problems"),
+                          onPerspectiveOpen: handlePerspectiveOpen,
+                          onPerspectiveClose: handlePerspectiveClose,
+                        },
+                      )
                     )}
                   </div>
 
@@ -5537,16 +7109,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                     layout={workspaceLayoutMotionEnabled}
                     transition={panelLayoutTransition}
                     style={getHorizontalSlotStyle(
-                      effectiveBottomSlotHeight,
-                      !!bottomSnappedPanel,
+                      "bottom",
+                      bottomSlotHeight,
+                      bottomSlotActive,
+                      resizingPanel === bottomSnappedPanel ||
+                        resizingPreviewWindowId ===
+                          bottomSnappedPreviewWindow?.id,
                     )}
                   >
                     {fullscreenSnappedExitSuppression.bottom ? null : (
-                      <AnimatePresence initial={false}>
-                        {bottomSnappedPanel
-                          ? renderPanel(bottomSnappedPanel, "flow")
-                          : null}
-                      </AnimatePresence>
+                      renderSnappedSlotPresence(
+                        "bottom",
+                        bottomSnappedPanel,
+                        bottomSnappedPreviewWindow,
+                      )
                     )}
                   </motion.div>
                 </motion.div>
@@ -5555,28 +7131,34 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                   layout={workspaceLayoutMotionEnabled}
                   transition={panelLayoutTransition}
                   style={getVerticalSlotStyle(
-                    effectiveRightSlotWidth,
-                    !!rightSnappedPanel,
+                    "right",
+                    rightSlotWidth,
+                    rightSlotActive,
+                    resizingPanel === rightSnappedPanel ||
+                      resizingPreviewWindowId === rightSnappedPreviewWindow?.id,
                   )}
                 >
                   {fullscreenSnappedExitSuppression.right ? null : (
-                    <AnimatePresence initial={false}>
-                      {rightSnappedPanel
-                        ? renderPanel(rightSnappedPanel, "flow")
-                        : null}
-                    </AnimatePresence>
+                    renderSnappedSlotPresence(
+                      "right",
+                      rightSnappedPanel,
+                      rightSnappedPreviewWindow,
+                    )
                   )}
                 </motion.div>
 
                 <AnimatePresence key={floatingPresenceVersion} initial={false}>
                   {floatingPanelIds.map((panelId) => renderPanel(panelId))}
+                  {floatingBrowserPreviewWindows.map((windowState) =>
+                    renderPreviewWindowPanel(windowState),
+                  )}
                 </AnimatePresence>
               </motion.div>
             </LayoutGroup>
 
             <PreviewWindowLayer
               isDark={isDark}
-              windows={previewWindows}
+              windows={layeredPreviewWindows}
               appearancePreview={appearancePreview}
               currentTheme={currentTheme}
               currentUiScale={uiScale}
@@ -5587,16 +7169,30 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               onAppearanceApply={handleAppearancePreviewApplyEvent}
               onAppearanceCancel={handleAppearancePreviewCancelEvent}
               onFileOpen={handleFileOpen}
+              occupiedSlots={{
+                left: leftSlotActive,
+                right: rightSlotActive,
+                top: topSlotActive,
+                bottom: bottomSlotActive,
+              }}
+              mainSnappedPanels={{
+                left: leftSlotWidth || undefined,
+                right: rightSlotWidth || undefined,
+                top: topSlotHeight || undefined,
+                bottom: bottomSlotHeight || undefined,
+              }}
+              draggingWindowId={draggingPreviewWindowId}
+              activeDropTargetPosition={dropTargetPosition}
+              isExternalPanelDragActive={draggingPanel !== null}
+              onPreviewDragStart={handlePreviewWindowDragStart}
+              onPreviewDragMove={handlePreviewWindowDragMove}
+              onPreviewDragEnd={handlePreviewWindowDragEnd}
             />
           </div>
 
           <div style={bottomChromeStyle}>
             <StatusBar onToggleProblems={() => togglePanel("problems")} />
           </div>
-        </div>
-
-        <div style={tuiOverlayStyle} data-testid="tui-overlay">
-          {tuiModeActive && renderPanel("terminal")}
         </div>
 
         {!tuiModeActive && !isDispatcherPaused && (
@@ -5658,65 +7254,88 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           }}
         />
 
-        {createEntryDialog ? (
-          <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm">
-            <div className="w-full max-w-md rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-5 shadow-2xl">
-              <div className="text-lg font-semibold text-[var(--text-primary)]">
-                {createEntryDialog.type === "file" ? "New File" : "New Folder"}
-              </div>
-              <div className="mt-2 text-[12px] text-[var(--text-secondary)]">
-                Create inside {getRelativePath(createEntryDialog.directoryPath)}
-              </div>
-
-              <div className="mt-4">
-                <label className="mb-2 block text-[12px] font-medium text-[var(--text-secondary)]">
-                  Name
-                </label>
-                <input
-                  autoFocus
-                  type="text"
-                  value={createEntryName}
-                  onChange={(event) => setCreateEntryName(event.target.value)}
-                  placeholder={
-                    createEntryDialog.type === "file"
-                      ? "notes.txt"
-                      : "new-folder"
-                  }
-                  className="w-full rounded-[12px] border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 py-2.5 text-[var(--text-primary)] outline-none focus:border-[var(--border-strong)]"
-                />
-                <div className="mt-2 break-all text-[11px] text-[var(--text-muted)]">
-                  {joinProjectEntryPath(
-                    createEntryDialog.directoryPath,
-                    createEntryName.trim() || "...",
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-5 flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={closeCreateEntryDialog}
-                  disabled={createEntryBusy}
-                  className="rounded-[12px] border border-[var(--border-subtle)] px-4 py-2 text-[13px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+        <AnimatePresence>
+          {createEntryDialog ? (
+            <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5 backdrop-blur-sm">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.97 }}
+                transition={{ duration: 0.14, ease: "easeOut" }}
+                className="w-[min(620px,100%)] rounded-[28px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-8 shadow-2xl outline-none"
+              >
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleCreateEntrySubmit();
+                  }}
                 >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleCreateEntrySubmit()}
-                  disabled={!createEntryName.trim() || createEntryBusy}
-                  className="rounded-[12px] bg-white px-4 py-2 text-[13px] font-medium text-black transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {createEntryBusy
-                    ? "Creating..."
-                    : createEntryDialog.type === "file"
-                      ? "Create File"
-                      : "Create Folder"}
-                </button>
-              </div>
+                  <div>
+                    <div className="text-[28px] font-semibold text-[var(--text-primary)]">
+                      {createEntryDialog.type === "file"
+                        ? "New File"
+                        : "New Folder"}
+                    </div>
+                    <div className="mt-2 text-[16px] text-[var(--text-secondary)]">
+                      Create inside{" "}
+                      {getCreateEntryDirectoryLabel(
+                        createEntryDialog.directoryPath,
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-8">
+                    <label className="mb-2 block text-[15px] font-semibold text-[var(--text-secondary)]">
+                      Name
+                    </label>
+                    <input
+                      autoFocus
+                      type="text"
+                      value={createEntryName}
+                      onChange={(event) =>
+                        setCreateEntryName(event.target.value)
+                      }
+                      placeholder={
+                        createEntryDialog.type === "file"
+                          ? "notes.txt"
+                          : "new-folder"
+                      }
+                      className="min-h-12 w-full rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 text-[16px] text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-muted)] hover:border-[var(--border-default)] focus:border-[var(--border-strong)]"
+                    />
+                    <div className="mt-4 break-all text-[13px] text-[var(--text-muted)]">
+                      {joinProjectEntryPath(
+                        createEntryDialog.directoryPath,
+                        createEntryName.trim() || "...",
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={closeCreateEntryDialog}
+                      disabled={createEntryBusy}
+                      className="inline-flex min-h-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-transparent px-6 text-[16px] font-medium text-[var(--text-primary)] transition-colors hover:border-[var(--border-default)] hover:bg-[var(--bg-hover)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-1"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={!createEntryName.trim() || createEntryBusy}
+                      className="min-h-12 rounded-[18px] bg-white px-8 text-[16px] font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-2"
+                    >
+                      {createEntryBusy
+                        ? "Creating..."
+                        : createEntryDialog.type === "file"
+                          ? "Create File"
+                          : "Create Folder"}
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
             </div>
-          </div>
-        ) : null}
+          ) : null}
+        </AnimatePresence>
 
         {renameEntryDialog ? (
           <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm">

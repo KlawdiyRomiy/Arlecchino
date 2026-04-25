@@ -37,14 +37,24 @@ interface PanelBounds {
 }
 
 export const FLOATING_PANEL_LAYOUT_TRANSITION = {
-  type: "tween",
-  duration: 0.24,
-  ease: [0.22, 1, 0.36, 1],
+  type: "spring",
+  stiffness: 520,
+  damping: 46,
+  mass: 0.7,
+  restDelta: 0.4,
+  restSpeed: 0.4,
 } as const;
 
-export const FLOATING_PANEL_LAYOUT_TRANSITION_MS = 240;
+export const FLOATING_PANEL_LAYOUT_TRANSITION_MS = 300;
 const FLOATING_PANEL_FLOATING_SLIDE_OFFSET = 32;
 const FLOATING_PANEL_NO_MOTION_TRANSITION = { duration: 0 } as const;
+const FLOATING_PANEL_DROP_PREVIEW_WIDTH = 150;
+const FLOATING_PANEL_DROP_PREVIEW_HEIGHT = 100;
+const FLOATING_PANEL_DROP_HIT_EXPANSION = 72;
+const FLOATING_PANEL_DROP_HIT_WIDTH =
+  FLOATING_PANEL_DROP_PREVIEW_WIDTH + FLOATING_PANEL_DROP_HIT_EXPANSION;
+const FLOATING_PANEL_DROP_HIT_HEIGHT =
+  FLOATING_PANEL_DROP_PREVIEW_HEIGHT + FLOATING_PANEL_DROP_HIT_EXPANSION;
 
 const getSlideVectorForEdge = (
   edge: PanelPosition,
@@ -110,7 +120,10 @@ export interface FloatingPanelProps {
     x?: number;
     y?: number;
   }) => void;
+  onResizeStart?: (id: string) => void;
+  onResizeEnd?: (id: string) => void;
   onDragStart?: (id: string) => void;
+  onDragMove?: (id: string, targetPosition: PanelPosition | null) => void;
   onDragEnd?: (
     id: string,
     targetPosition: PanelPosition | null,
@@ -141,6 +154,7 @@ export interface FloatingPanelProps {
   uiScale?: number;
   isFullscreen?: boolean;
   activeDropTargetPosition?: PanelPosition | null;
+  isRelocating?: boolean;
 }
 
 export const FloatingPanel = React.forwardRef<
@@ -159,7 +173,10 @@ export const FloatingPanel = React.forwardRef<
       maxSize = 1200,
       onClose,
       onResize,
+      onResizeStart,
+      onResizeEnd,
       onDragStart,
+      onDragMove,
       onDragEnd,
       headerExtra,
       isDropTarget = false,
@@ -178,6 +195,7 @@ export const FloatingPanel = React.forwardRef<
       uiScale,
       isFullscreen = false,
       activeDropTargetPosition = null,
+      isRelocating = false,
     },
     forwardedRef,
   ) => {
@@ -197,6 +215,16 @@ export const FloatingPanel = React.forwardRef<
     const panelRef = useRef<HTMLDivElement>(null);
     const latestBoundsRef = useRef<PanelBounds | null>(null);
     const latestDragOffsetRef = useRef({ x: 0, y: 0 });
+    const resizeFrameRef = useRef<number | null>(null);
+    const pendingResizeRef = useRef<{
+      width: number;
+      height: number;
+      x?: number;
+      y?: number;
+    } | null>(null);
+    const onResizeRef = useRef(onResize);
+    const onResizeStartRef = useRef(onResizeStart);
+    const onResizeEndRef = useRef(onResizeEnd);
     const dragX = useMotionValue(0);
     const dragY = useMotionValue(0);
     const startRef = useRef({
@@ -213,6 +241,12 @@ export const FloatingPanel = React.forwardRef<
         setHasEntered(true);
       }
     }, [reduceMotion]);
+
+    useEffect(() => {
+      onResizeRef.current = onResize;
+      onResizeStartRef.current = onResizeStart;
+      onResizeEndRef.current = onResizeEnd;
+    }, [onResize, onResizeEnd, onResizeStart]);
 
     useLayoutEffect(() => {
       if (isDragging || isResizing) {
@@ -323,6 +357,30 @@ export const FloatingPanel = React.forwardRef<
       y,
     ]);
 
+    const flushResizeUpdate = useCallback(() => {
+      resizeFrameRef.current = null;
+      const pendingResize = pendingResizeRef.current;
+      pendingResizeRef.current = null;
+
+      if (pendingResize) {
+        onResizeRef.current?.(pendingResize);
+      }
+    }, []);
+
+    const scheduleResizeUpdate = useCallback(
+      (updates: { width: number; height: number; x?: number; y?: number }) => {
+        pendingResizeRef.current = updates;
+
+        if (resizeFrameRef.current !== null) {
+          return;
+        }
+
+        resizeFrameRef.current =
+          window.requestAnimationFrame(flushResizeUpdate);
+      },
+      [flushResizeUpdate],
+    );
+
     const handleResizeStart = useCallback(
       (e: React.MouseEvent, edge: string) => {
         e.preventDefault();
@@ -331,6 +389,9 @@ export const FloatingPanel = React.forwardRef<
         setResizeEdge(edge);
 
         const rect = panelRef.current?.getBoundingClientRect();
+        panelRef.current
+          ?.querySelector<HTMLElement>('[data-panel-content="true"]')
+          ?.style.setProperty("pointer-events", "none");
 
         startRef.current = {
           ...startRef.current,
@@ -344,8 +405,9 @@ export const FloatingPanel = React.forwardRef<
           panelX: rect?.left || logicalToScreenPixels(x, effectiveUiScale),
           panelY: rect?.top || logicalToScreenPixels(y, effectiveUiScale),
         };
+        onResizeStartRef.current?.(id);
       },
-      [effectiveUiScale, size, x, y],
+      [effectiveUiScale, id, size, x, y],
     );
 
     const handleResizeMove = useCallback(
@@ -403,7 +465,7 @@ export const FloatingPanel = React.forwardRef<
           );
         }
 
-        onResize?.({
+        scheduleResizeUpdate({
           width: screenToLogicalPixels(newWidth, effectiveUiScale),
           height: screenToLogicalPixels(newHeight, effectiveUiScale),
           x:
@@ -416,12 +478,35 @@ export const FloatingPanel = React.forwardRef<
               : undefined,
         });
       },
-      [effectiveUiScale, isResizing, maxSize, minSize, onResize, resizeEdge],
+      [
+        effectiveUiScale,
+        isResizing,
+        maxSize,
+        minSize,
+        resizeEdge,
+        scheduleResizeUpdate,
+      ],
     );
 
     const handleResizeEnd = useCallback(() => {
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current);
+        flushResizeUpdate();
+      }
       setIsResizing(false);
       setResizeEdge(null);
+      panelRef.current
+        ?.querySelector<HTMLElement>('[data-panel-content="true"]')
+        ?.style.removeProperty("pointer-events");
+      onResizeEndRef.current?.(id);
+    }, [flushResizeUpdate, id]);
+
+    useEffect(() => {
+      return () => {
+        if (resizeFrameRef.current !== null) {
+          window.cancelAnimationFrame(resizeFrameRef.current);
+        }
+      };
     }, []);
 
     useEffect(() => {
@@ -456,13 +541,14 @@ export const FloatingPanel = React.forwardRef<
           ...startRef.current,
           x: e.clientX,
           y: e.clientY,
-          panelX: rect?.left || logicalToScreenPixels(x, effectiveUiScale),
-          panelY: rect?.top || logicalToScreenPixels(y, effectiveUiScale),
-          width:
-            rect?.width || logicalToScreenPixels(size.width, effectiveUiScale),
-          height:
-            rect?.height ||
-            logicalToScreenPixels(size.height, effectiveUiScale),
+          panelX: rect ? screenToLogicalPixels(rect.left, effectiveUiScale) : x,
+          panelY: rect ? screenToLogicalPixels(rect.top, effectiveUiScale) : y,
+          width: rect
+            ? screenToLogicalPixels(rect.width, effectiveUiScale)
+            : size.width,
+          height: rect
+            ? screenToLogicalPixels(rect.height, effectiveUiScale)
+            : size.height,
         };
         setIsDragging(true);
         latestDragOffsetRef.current = { x: 0, y: 0 };
@@ -485,23 +571,20 @@ export const FloatingPanel = React.forwardRef<
       ],
     );
 
-    const handleDragMove = useCallback(
-      (e: MouseEvent) => {
-        if (!isDragging) return;
-        const dx = e.clientX - startRef.current.x;
-        const dy = e.clientY - startRef.current.y;
-        latestDragOffsetRef.current = { x: dx, y: dy };
-        dragX.set(dx);
-        dragY.set(dy);
-      },
-      [dragX, dragY, isDragging],
-    );
-
     const detectDropZone = useCallback(
       (x: number, y: number): PanelPosition | null => {
-        const horizontalThreshold = 150;
-        const verticalThreshold = 100;
-        const edgeGap = SNAPPED_PANEL_OUTER_GAP;
+        const horizontalThreshold = logicalToScreenPixels(
+          FLOATING_PANEL_DROP_HIT_WIDTH,
+          effectiveUiScale,
+        );
+        const verticalThreshold = logicalToScreenPixels(
+          FLOATING_PANEL_DROP_HIT_HEIGHT,
+          effectiveUiScale,
+        );
+        const edgeGap = logicalToScreenPixels(
+          SNAPPED_PANEL_OUTER_GAP,
+          effectiveUiScale,
+        );
         const windowWidth = window.innerWidth;
         const windowHeight = window.innerHeight;
         const candidates: Array<{
@@ -525,24 +608,50 @@ export const FloatingPanel = React.forwardRef<
         candidates.sort((left, right) => left.distance - right.distance);
         return candidates[0]?.position ?? null;
       },
-      [],
+      [effectiveUiScale],
+    );
+
+    const handleDragMove = useCallback(
+      (e: MouseEvent) => {
+        if (!isDragging) return;
+        const dx = screenToLogicalPixels(
+          e.clientX - startRef.current.x,
+          effectiveUiScale,
+        );
+        const dy = screenToLogicalPixels(
+          e.clientY - startRef.current.y,
+          effectiveUiScale,
+        );
+        latestDragOffsetRef.current = { x: dx, y: dy };
+        dragX.set(dx);
+        dragY.set(dy);
+        onDragMove?.(id, detectDropZone(e.clientX, e.clientY));
+      },
+      [
+        detectDropZone,
+        dragX,
+        dragY,
+        effectiveUiScale,
+        id,
+        isDragging,
+        onDragMove,
+      ],
     );
 
     const handleDragEndInternal = useCallback(
       (e: MouseEvent) => {
         if (isDragging) {
-          const targetZone =
-            activeDropTargetPosition ?? detectDropZone(e.clientX, e.clientY);
+          const targetZone = detectDropZone(e.clientX, e.clientY);
           const dropX = startRef.current.panelX + latestDragOffsetRef.current.x;
           const dropY = startRef.current.panelY + latestDragOffsetRef.current.y;
 
           onDragEnd?.(
             id,
             targetZone,
-            screenToLogicalPixels(dropX, effectiveUiScale),
-            screenToLogicalPixels(dropY, effectiveUiScale),
-            screenToLogicalPixels(startRef.current.width, effectiveUiScale),
-            screenToLogicalPixels(startRef.current.height, effectiveUiScale),
+            dropX,
+            dropY,
+            startRef.current.width,
+            startRef.current.height,
           );
 
           latestDragOffsetRef.current = { x: 0, y: 0 };
@@ -554,16 +663,7 @@ export const FloatingPanel = React.forwardRef<
           window.dispatchEvent(new CustomEvent("panel-drag-end"));
         }
       },
-      [
-        detectDropZone,
-        activeDropTargetPosition,
-        dragX,
-        dragY,
-        effectiveUiScale,
-        id,
-        isDragging,
-        onDragEnd,
-      ],
+      [detectDropZone, dragX, dragY, id, isDragging, onDragEnd],
     );
 
     useEffect(() => {
@@ -571,6 +671,7 @@ export const FloatingPanel = React.forwardRef<
         document.addEventListener("mousemove", handleDragMove);
         document.addEventListener("mouseup", handleDragEndInternal);
         document.body.style.cursor = "grabbing";
+        document.body.style.userSelect = "none";
       }
       return () => {
         document.removeEventListener("mousemove", handleDragMove);
@@ -578,6 +679,7 @@ export const FloatingPanel = React.forwardRef<
         if (!isResizing) {
           document.body.style.cursor = "";
         }
+        document.body.style.userSelect = "";
       };
     }, [isDragging, handleDragMove, handleDragEndInternal, isResizing]);
 
@@ -588,6 +690,7 @@ export const FloatingPanel = React.forwardRef<
         isDragging ||
         isResizing ||
         isDropTarget ||
+        isRelocating ||
         mode === "floating" ||
         isPinned;
       const shouldPromoteForMotion =
@@ -618,13 +721,18 @@ export const FloatingPanel = React.forwardRef<
               : "var(--shell-shadow)",
         zIndex: isDragging
           ? 140
-          : (customZIndex ?? (mode === "floating" ? 90 : 50)),
+          : isRelocating
+            ? 130
+            : (customZIndex ?? (mode === "floating" ? 90 : 50)),
         overflow: "hidden",
+        isolation: "isolate",
         pointerEvents: isPresent && isVisible ? "auto" : "none",
         willChange: isDragging
           ? "transform"
           : isResizing
             ? "width, height"
+            : isRelocating
+              ? "transform, opacity"
             : shouldPromoteForMotion
               ? "transform"
               : "auto",
@@ -744,22 +852,24 @@ export const FloatingPanel = React.forwardRef<
       const gap = SNAPPED_PANEL_OUTER_GAP;
       const leftPanelWidth = adjacentPanels.left || 0;
       const rightPanelWidth = adjacentPanels.right || 0;
+      const topPanelHeight = adjacentPanels.top || 0;
+      const bottomPanelHeight = adjacentPanels.bottom || 0;
 
       switch (position) {
         case "left":
           return {
             ...base,
             left: gap,
-            top: gap,
-            bottom: gap,
+            top: topPanelHeight > 0 ? topPanelHeight : gap,
+            bottom: bottomPanelHeight > 0 ? bottomPanelHeight : gap,
             width: size.width,
           };
         case "right":
           return {
             ...base,
             right: gap,
-            top: gap,
-            bottom: gap,
+            top: topPanelHeight > 0 ? topPanelHeight : gap,
+            bottom: bottomPanelHeight > 0 ? bottomPanelHeight : gap,
             width: size.width,
           };
         case "bottom":
@@ -784,8 +894,10 @@ export const FloatingPanel = React.forwardRef<
     const edgeStyle = (edge: string): React.CSSProperties => {
       const base: React.CSSProperties = {
         position: "absolute",
-        zIndex: 10,
+        zIndex: 30,
         backgroundColor: "transparent",
+        pointerEvents: "auto",
+        touchAction: "none",
       };
 
       const isFloating = mode === "floating";
@@ -874,11 +986,13 @@ export const FloatingPanel = React.forwardRef<
     const interactionMotionDisabled = isDragging || isResizing;
     const slideMotionEnabled = !reduceMotion && !interactionMotionDisabled;
     const shouldResolveSlideVector =
-      slideMotionEnabled && (!isPresent || !hasEntered);
+      slideMotionEnabled && !isRelocating && (!isPresent || !hasEntered);
     const slideVector = shouldResolveSlideVector
       ? getSlideVector()
       : { x: 0, y: 0 };
-    const panelMotionState = !isPresent
+    const panelMotionState = isRelocating
+      ? "relocating"
+      : !isPresent
       ? "exit"
       : slideMotionEnabled && !hasEntered
         ? "enter"
@@ -898,9 +1012,18 @@ export const FloatingPanel = React.forwardRef<
       ? FLOATING_PANEL_LAYOUT_TRANSITION
       : FLOATING_PANEL_NO_MOTION_TRANSITION;
     const slideMotionTarget = { x: 0, y: 0 };
-    const slideMotionExit = slideMotionEnabled
-      ? { x: slideVector.x, y: slideVector.y }
-      : slideMotionTarget;
+    const slideMotionExit = isRelocating
+      ? {
+          opacity: 0,
+          x: 0,
+          y: 0,
+          transition: FLOATING_PANEL_NO_MOTION_TRANSITION,
+        }
+      : slideMotionEnabled
+        ? { x: slideVector.x, y: slideVector.y }
+        : slideMotionTarget;
+    const flowLayoutMotionEnabled =
+      mode === "snapped" && hostMode === "flow" && !isDragging && !isResizing;
     const containerMotionStyle: MotionStyle = isDragging
       ? {
           ...(getContainerStyle() as MotionStyle),
@@ -919,6 +1042,8 @@ export const FloatingPanel = React.forwardRef<
       borderBottom: "1px solid var(--shell-border)",
       userSelect: "none",
       flexShrink: 0,
+      position: "relative",
+      zIndex: 20,
       cursor: isDragging ? "grabbing" : "grab",
       boxShadow: "inset 0 1px 0 var(--shell-inner-highlight)",
     };
@@ -961,14 +1086,27 @@ export const FloatingPanel = React.forwardRef<
       overflow: "hidden",
       minHeight: 0,
       minWidth: 0,
+      position: "relative",
+      zIndex: 0,
+      pointerEvents: isResizing ? "none" : "auto",
     };
+
+    const renderResizeHandle = (edge: string) => (
+      <div
+        key={edge}
+        data-testid={`panel-${id}-resize-${edge}`}
+        style={edgeStyle(edge)}
+        onMouseDown={(e) => handleResizeStart(e, edge)}
+      />
+    );
 
     return (
       <motion.div
         ref={setPanelNode}
-        layout={false}
+        layout={flowLayoutMotionEnabled ? "position" : false}
+        layoutId={flowLayoutMotionEnabled ? `floating-panel-${id}` : undefined}
         initial={
-          slideMotionEnabled
+          slideMotionEnabled && !isRelocating
             ? {
                 x: slideVector.x,
                 y: slideVector.y,
@@ -989,72 +1127,28 @@ export const FloatingPanel = React.forwardRef<
         data-panel-position={position}
         data-panel-state={panelState}
         data-panel-motion={panelMotionState}
+        data-panel-relocating={isRelocating ? "true" : "false"}
       >
         {mode === "floating" ? (
           <>
-            <div
-              style={edgeStyle("n")}
-              onMouseDown={(e) => handleResizeStart(e, "n")}
-            />
-            <div
-              style={edgeStyle("s")}
-              onMouseDown={(e) => handleResizeStart(e, "s")}
-            />
-            <div
-              style={edgeStyle("e")}
-              onMouseDown={(e) => handleResizeStart(e, "e")}
-            />
-            <div
-              style={edgeStyle("w")}
-              onMouseDown={(e) => handleResizeStart(e, "w")}
-            />
-            <div
-              style={edgeStyle("ne")}
-              onMouseDown={(e) => handleResizeStart(e, "ne")}
-            />
-            <div
-              style={edgeStyle("nw")}
-              onMouseDown={(e) => handleResizeStart(e, "nw")}
-            />
-            <div
-              style={edgeStyle("se")}
-              onMouseDown={(e) => handleResizeStart(e, "se")}
-            />
-            <div
-              style={edgeStyle("sw")}
-              onMouseDown={(e) => handleResizeStart(e, "sw")}
-            />
+            {["n", "s", "e", "w", "ne", "nw", "se", "sw"].map(
+              renderResizeHandle,
+            )}
           </>
         ) : (
           <>
-            {position === "left" && (
-              <div
-                style={edgeStyle("e")}
-                onMouseDown={(e) => handleResizeStart(e, "e")}
-              />
-            )}
-            {position === "right" && (
-              <div
-                style={edgeStyle("w")}
-                onMouseDown={(e) => handleResizeStart(e, "w")}
-              />
-            )}
-            {position === "top" && (
-              <div
-                style={edgeStyle("s")}
-                onMouseDown={(e) => handleResizeStart(e, "s")}
-              />
-            )}
-            {position === "bottom" && (
-              <div
-                style={edgeStyle("n")}
-                onMouseDown={(e) => handleResizeStart(e, "n")}
-              />
-            )}
+            {position === "left" && renderResizeHandle("e")}
+            {position === "right" && renderResizeHandle("w")}
+            {position === "top" && renderResizeHandle("s")}
+            {position === "bottom" && renderResizeHandle("n")}
           </>
         )}
 
-        <div style={headerStyle} onMouseDown={handleDragStartInternal}>
+        <div
+          style={headerStyle}
+          onMouseDown={handleDragStartInternal}
+          data-testid={`panel-${id}-drag-handle`}
+        >
           <div style={titleStyle}>
             {icon}
             <span>{title}</span>
@@ -1115,7 +1209,9 @@ export const FloatingPanel = React.forwardRef<
           </div>
         </div>
 
-        <div style={contentStyle}>{children}</div>
+        <div style={contentStyle} data-panel-content="true">
+          {children}
+        </div>
       </motion.div>
     );
   },

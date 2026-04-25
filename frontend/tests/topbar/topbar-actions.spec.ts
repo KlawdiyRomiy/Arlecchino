@@ -189,7 +189,7 @@ test("settings button opens settings modal", async ({ page }) => {
 test("preview shortcut uses latest active tab context", async ({ page }) => {
   await mountProjectUI(page);
 
-  await page.keyboard.press("Meta+Shift+B");
+  await page.keyboard.press("Meta+B");
   await page.waitForTimeout(100);
 
   const previewPayload = await page.evaluate(async () => {
@@ -213,6 +213,20 @@ test("preview shortcut uses latest active tab context", async ({ page }) => {
   expect(previewPayload?.url).toBe("");
 });
 
+test("preview shortcut closes an existing browser preview", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.keyboard.press("Meta+B");
+  await expect(page.getByTestId("panel-preview-browser-default")).toBeVisible();
+
+  await page.keyboard.press("Meta+B");
+  await expect(page.getByTestId("panel-preview-browser-default")).toHaveCount(
+    0,
+  );
+});
+
 test("panel shortcuts open compact panels", async ({ page }) => {
   await mountProjectUI(page);
 
@@ -222,8 +236,11 @@ test("panel shortcuts open compact panels", async ({ page }) => {
   await page.keyboard.press("Meta+G");
   await expect(page.getByTestId("panel-git")).toBeVisible();
 
-  await page.keyboard.press("Meta+P");
+  await page.keyboard.press("Meta+I");
   await expect(page.getByTestId("panel-problems")).toBeVisible();
+
+  await page.keyboard.press("Meta+J");
+  await expect(page.getByTestId("panel-terminal")).toBeVisible();
 });
 
 test("fullscreen panel shortcuts use expanded panel frames", async ({
@@ -246,13 +263,40 @@ test("fullscreen panel shortcuts use expanded panel frames", async ({
   const compactGitFrame = await page.getByTestId("panel-git").boundingBox();
   expect(compactGitFrame?.width ?? 0).toBeLessThan(gitFrame?.width ?? 0);
 
-  await page.keyboard.press("Meta+Shift+P");
+  await page.keyboard.press("Meta+Shift+I");
   const problemsFrame = await page.getByTestId("panel-problems").boundingBox();
   expect(problemsFrame?.width ?? 0).toBeGreaterThan(900);
   expect(problemsFrame?.height ?? 0).toBeGreaterThan(500);
 
-  await page.keyboard.press("Meta+Shift+P");
+  await page.keyboard.press("Meta+Shift+I");
   await expect(page.getByTestId("panel-problems")).toBeHidden();
+});
+
+test("Option+W closes fullscreen Git, Problems, and Terminal panels", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.keyboard.press("Meta+Shift+G");
+  await expect(page.getByTestId("panel-git")).toBeVisible();
+  await page.keyboard.press("Alt+W");
+  await expect(page.getByTestId("panel-git")).toBeHidden();
+
+  await page.keyboard.press("Meta+Shift+I");
+  await expect(page.getByTestId("panel-problems")).toBeVisible();
+  await page.keyboard.press("Alt+W");
+  await expect(page.getByTestId("panel-problems")).toBeHidden();
+
+  await page.getByTitle("More").click();
+  await page.getByRole("menuitem", { name: /Terminal/ }).click();
+  const terminalPanel = page.getByTestId("panel-terminal");
+  await expect(terminalPanel).toBeVisible();
+  await terminalPanel.locator('button[title="Полный экран"]').click();
+  const terminalFrame = await terminalPanel.boundingBox();
+  expect(terminalFrame?.width ?? 0).toBeGreaterThan(900);
+
+  await page.keyboard.press("Alt+W");
+  await expect(terminalPanel).toBeHidden();
 });
 
 test("Cmd+Shift+C copies project path with topbar confirmation", async ({

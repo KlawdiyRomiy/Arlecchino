@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useCallback, useState, useEffect, useRef } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ChevronDown,
@@ -163,14 +163,35 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   // Синхронизируем isExpanded из store в файлы
   const getIsExpanded = (path: string): boolean => expandedPaths.has(path);
 
-  const closePerspective = () => {
+  const closePerspective = useCallback(() => {
     document.body.removeAttribute("data-perspective-open");
     setQuickMenu((prev) => ({ ...prev, isOpen: false }));
     setTreeOpen(false);
     setPerspectiveTarget(null);
     unblockProjectSwitch(PROJECT_SWITCH_BLOCKERS.filePerspective);
     onPerspectiveClose?.();
-  };
+  }, [onPerspectiveClose]);
+
+  useEffect(() => {
+    if (!perspectiveTarget) {
+      return;
+    }
+
+    const handlePerspectiveEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" && event.key !== "Esc") {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      closePerspective();
+    };
+
+    window.addEventListener("keydown", handlePerspectiveEscape, true);
+    return () => {
+      window.removeEventListener("keydown", handlePerspectiveEscape, true);
+    };
+  }, [closePerspective, perspectiveTarget]);
 
   const handlePerspectiveFileSelect = async (path: string, line?: number) => {
     const readPromise = App.ReadFile(path);
