@@ -74,9 +74,34 @@ func TestToolService_WriteAndRollback(t *testing.T) {
 	}
 }
 
+func TestToolService_CallToolWriteFilePreservesRawContent(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_REQUIRE_APPROVAL", "false")
+
+	service, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+
+	const rawContent = "first line\nsecond line\n\n"
+	if _, err := service.CallTool("ide_control.write_file", map[string]any{
+		"path":    "notes.txt",
+		"content": rawContent,
+	}); err != nil {
+		t.Fatalf("CallTool(write_file) error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "notes.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile(notes.txt) error = %v", err)
+	}
+	if string(data) != rawContent {
+		t.Fatalf("write_file content = %q, want %q", string(data), rawContent)
+	}
+}
+
 func TestToolService_WriteFileRequiresUserApproval(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("ARLECCHINO_MCP_REQUIRE_APPROVAL", "true")
 	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "approval-secret")
 
 	service, err := NewToolService(root)
@@ -90,6 +115,41 @@ func TestToolService_WriteFileRequiresUserApproval(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "requires user approval") {
 		t.Fatalf("WriteFile() error = %v, want contains %q", err, "requires user approval")
+	}
+}
+
+func TestToolService_DefaultRequiresUserApproval(t *testing.T) {
+	root := t.TempDir()
+
+	service, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+
+	status := service.PermissionStatus()
+	if !status.Required {
+		t.Fatalf("PermissionStatus().Required = false, want true by default")
+	}
+	if status.Granted {
+		t.Fatalf("PermissionStatus().Granted = true, want false before approval")
+	}
+}
+
+func TestToolService_ApprovalCanBeDisabledByEnv(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_REQUIRE_APPROVAL", "false")
+
+	service, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+
+	status := service.PermissionStatus()
+	if status.Required {
+		t.Fatalf("PermissionStatus().Required = true, want false when disabled by env")
+	}
+	if !status.Granted {
+		t.Fatalf("PermissionStatus().Granted = false, want true when disabled by env")
 	}
 }
 
@@ -110,6 +170,23 @@ func TestToolService_RequestPermissionRejectsInvalidApprovalCode(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid approval code") {
 		t.Fatalf("CallTool(request_permission) error = %v, want contains %q", err, "invalid approval code")
+	}
+}
+
+func TestToolService_RequestPermissionRequiresLiveApprovalWithoutCode(t *testing.T) {
+	root := t.TempDir()
+
+	service, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+
+	_, err = service.CallTool("ide_control.request_permission", map[string]any{})
+	if err == nil {
+		t.Fatalf("CallTool(request_permission) should fail without approval code or live UI")
+	}
+	if !strings.Contains(err.Error(), "live IDE approval is unavailable") {
+		t.Fatalf("CallTool(request_permission) error = %v, want live IDE approval error", err)
 	}
 }
 
@@ -343,9 +420,17 @@ func TestToolService_CheckpointsPersistAcrossServiceRecreation(t *testing.T) {
 
 func TestToolService_AgentMemoryPersistsAcrossServiceRecreation(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "memory-persist-code")
+
 	service, err := NewToolService(root)
 	if err != nil {
 		t.Fatalf("NewToolService() error = %v", err)
+	}
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "memory-persist-code",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
 	}
 
 	entry, err := service.SaveAgentMemory(
@@ -438,6 +523,37 @@ func TestToolService_SearchContentHidesSensitiveContentWithoutApproval(t *testin
 	}
 }
 
+func TestToolService_SearchContentNoMatchesReturnsEmptyItems(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(main.go) error = %v", err)
+	}
+
+	service, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_control.search_content", map[string]any{"query": "missing-value"})
+	if err != nil {
+		t.Fatalf("CallTool(search_content) error = %v", err)
+	}
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("search_content result type = %T, want map[string]any", result)
+	}
+	items, ok := resultMap["items"].([]dispatcher.ResultItem)
+	if !ok {
+		t.Fatalf("search_content items type = %T, want []dispatcher.ResultItem", resultMap["items"])
+	}
+	if items == nil {
+		t.Fatal("search_content items = nil, want empty slice")
+	}
+	if len(items) != 0 {
+		t.Fatalf("search_content items len = %d, want 0", len(items))
+	}
+}
+
 func TestToolService_SensitiveNestedPathRequiresApproval(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "nested-sensitive")
@@ -514,9 +630,17 @@ func TestToolService_SensitiveNestedPathRequiresApproval(t *testing.T) {
 
 func TestToolService_ListCheckpointsWithFilterAndLimit(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "list-checkpoints-code")
+
 	service, err := NewToolService(root)
 	if err != nil {
 		t.Fatalf("NewToolService() error = %v", err)
+	}
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "list-checkpoints-code",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
 	}
 
 	if _, err := service.CreateCheckpoint("a.txt", "a-1"); err != nil {

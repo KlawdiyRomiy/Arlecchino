@@ -1,46 +1,103 @@
-import { useEffect, useCallback } from "react";
-import { EventsOn, EventsOff } from "../../wailsjs/runtime/runtime";
+import { useEffect } from "react";
+import { EventsOn, EventsOff, EventsEmit } from "../../wailsjs/runtime/runtime";
+
+type IDEEventHandler<T extends Array<unknown>> = (
+  ...args: T
+) => void | Promise<void>;
+
+const MCP_UI_EVENT_ACK = "mcp:ui-event:ack";
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const normalizeMCPEventArgs = (
+  args: Array<unknown>,
+): { requestId?: string; args: Array<unknown> } => {
+  if (args.length === 0) {
+    return { args };
+  }
+
+  const first = args[0];
+  if (!isRecord(first) || typeof first.mcpRequestId !== "string") {
+    return { args };
+  }
+
+  const requestId = first.mcpRequestId.trim();
+  if (!requestId) {
+    return { args };
+  }
+
+  if (first.mcpWrappedPayload === true) {
+    if (Object.prototype.hasOwnProperty.call(first, "payload")) {
+      return { requestId, args: [first.payload, ...args.slice(1)] };
+    }
+    return { requestId, args: args.slice(1) };
+  }
+
+  const sanitizedPayload = { ...first };
+  delete sanitizedPayload.mcpRequestId;
+  delete sanitizedPayload.mcpWrappedPayload;
+  return { requestId, args: [sanitizedPayload, ...args.slice(1)] };
+};
+
+const emitMCPEventAck = (
+  requestId: string | undefined,
+  event: string,
+  handled: boolean,
+  error?: unknown,
+) => {
+  if (!requestId) {
+    return;
+  }
+
+  EventsEmit(MCP_UI_EVENT_ACK, {
+    requestId,
+    event,
+    handled,
+    error: error instanceof Error ? error.message : error ? String(error) : "",
+  });
+};
 
 interface UseIDEEventsProps {
-  onOpenPanel?: (payload: unknown) => void;
-  onClosePanel?: (payload: unknown) => void;
-  onMovePanel?: (payload: unknown) => void;
-  onToggle?: (element: string) => void;
-  onWindowOpen?: (payload: unknown) => void;
-  onWindowUpdate?: (payload: unknown) => void;
-  onWindowClose?: (payload: unknown) => void;
-  onWindowFocus?: (payload: unknown) => void;
-  onWindowCloseAll?: () => void;
-  onWindowCheckpointCreate?: (payload: unknown) => void;
-  onWindowCheckpointRestore?: (payload: unknown) => void;
-  onAppearancePreviewStart?: (payload: unknown) => void;
-  onAppearancePreviewPatch?: (payload: unknown) => void;
-  onAppearancePreviewApply?: () => void;
-  onAppearancePreviewCancel?: () => void;
-  onTUIEnter?: () => void;
-  onTUIExit?: () => void;
-  onTUIAssistOpenPanel?: (payload: unknown) => void;
-  onTUIAssistClose?: () => void;
-  onTUIAssistSwap?: () => void;
-  onTUIAssistRatio?: (ratio: number) => void;
-  onEditorOpen?: (payload: unknown) => void;
-  onEditorSplit?: (payload: unknown) => void;
-  onEditorClose?: (target: string) => void;
-  onEditorFormat?: () => void;
-  onEditorGoto?: (target: string) => void;
-  onEditorToggle?: (feature: string) => void;
-  onFileNew?: () => void;
-  onFileSave?: () => void;
-  onFileSaveAll?: () => void;
-  onViewZoom?: (action: string) => void;
-  onAppSettings?: () => void;
-  onAppRun?: (mode: unknown) => void;
-  onAppKeybindings?: () => void;
-  onAppReload?: () => void;
-  onGitStatus?: () => void;
-  onGitCommit?: () => void;
-  onGitPush?: () => void;
-  onGitPull?: () => void;
+  onOpenPanel?: IDEEventHandler<[unknown]>;
+  onClosePanel?: IDEEventHandler<[unknown]>;
+  onMovePanel?: IDEEventHandler<[unknown]>;
+  onToggle?: IDEEventHandler<[string]>;
+  onWindowOpen?: IDEEventHandler<[unknown]>;
+  onWindowUpdate?: IDEEventHandler<[unknown]>;
+  onWindowClose?: IDEEventHandler<[unknown]>;
+  onWindowFocus?: IDEEventHandler<[unknown]>;
+  onWindowCloseAll?: IDEEventHandler<[]>;
+  onWindowCheckpointCreate?: IDEEventHandler<[unknown]>;
+  onWindowCheckpointRestore?: IDEEventHandler<[unknown]>;
+  onAppearancePreviewStart?: IDEEventHandler<[unknown]>;
+  onAppearancePreviewPatch?: IDEEventHandler<[unknown]>;
+  onAppearancePreviewApply?: IDEEventHandler<[]>;
+  onAppearancePreviewCancel?: IDEEventHandler<[]>;
+  onTUIEnter?: IDEEventHandler<[]>;
+  onTUIExit?: IDEEventHandler<[]>;
+  onTUIAssistOpenPanel?: IDEEventHandler<[unknown]>;
+  onTUIAssistClose?: IDEEventHandler<[]>;
+  onTUIAssistSwap?: IDEEventHandler<[]>;
+  onTUIAssistRatio?: IDEEventHandler<[number]>;
+  onEditorOpen?: IDEEventHandler<[unknown]>;
+  onEditorSplit?: IDEEventHandler<[unknown]>;
+  onEditorClose?: IDEEventHandler<[string]>;
+  onEditorFormat?: IDEEventHandler<[]>;
+  onEditorGoto?: IDEEventHandler<[string]>;
+  onEditorToggle?: IDEEventHandler<[string]>;
+  onFileNew?: IDEEventHandler<[]>;
+  onFileSave?: IDEEventHandler<[]>;
+  onFileSaveAll?: IDEEventHandler<[]>;
+  onViewZoom?: IDEEventHandler<[string]>;
+  onAppSettings?: IDEEventHandler<[]>;
+  onAppRun?: IDEEventHandler<[unknown]>;
+  onAppKeybindings?: IDEEventHandler<[]>;
+  onAppReload?: IDEEventHandler<[]>;
+  onGitStatus?: IDEEventHandler<[]>;
+  onGitCommit?: IDEEventHandler<[]>;
+  onGitPush?: IDEEventHandler<[]>;
+  onGitPull?: IDEEventHandler<[]>;
 }
 
 export function useIDEEvents(handlers: UseIDEEventsProps) {
@@ -91,76 +148,105 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     const listeners: Array<() => void> = [];
 
     const wrapHandler = <T extends Array<unknown>>(
-      handler: ((...args: T) => void) | undefined,
+      eventName: string,
+      handler: IDEEventHandler<T> | undefined,
     ) => {
       if (!handler) {
         return undefined;
       }
 
       return (...args: T) => {
+        const normalized = normalizeMCPEventArgs(args);
         if (!isMounted) {
+          emitMCPEventAck(normalized.requestId, eventName, false, "unmounted");
           return;
         }
 
-        handler(...args);
+        try {
+          const maybePromise = handler(...(normalized.args as T));
+          if (
+            maybePromise &&
+            typeof (maybePromise as Promise<void>).then === "function"
+          ) {
+            void (maybePromise as Promise<void>)
+              .then(() => {
+                emitMCPEventAck(normalized.requestId, eventName, true);
+              })
+              .catch((error) => {
+                emitMCPEventAck(normalized.requestId, eventName, false, error);
+              });
+            return;
+          }
+
+          emitMCPEventAck(normalized.requestId, eventName, true);
+        } catch (error) {
+          emitMCPEventAck(normalized.requestId, eventName, false, error);
+        }
       };
     };
 
-    const onOpenPanelWrapped = wrapHandler(onOpenPanel);
+    const onOpenPanelWrapped = wrapHandler("ide:panel:open", onOpenPanel);
     if (onOpenPanelWrapped) {
       EventsOn("ide:panel:open", onOpenPanelWrapped);
       listeners.push(() => EventsOff("ide:panel:open"));
     }
 
-    const onClosePanelWrapped = wrapHandler(onClosePanel);
+    const onClosePanelWrapped = wrapHandler("ide:panel:close", onClosePanel);
     if (onClosePanelWrapped) {
       EventsOn("ide:panel:close", onClosePanelWrapped);
       listeners.push(() => EventsOff("ide:panel:close"));
     }
 
-    const onMovePanelWrapped = wrapHandler(onMovePanel);
+    const onMovePanelWrapped = wrapHandler("ide:panel:move", onMovePanel);
     if (onMovePanelWrapped) {
       EventsOn("ide:panel:move", onMovePanelWrapped);
       listeners.push(() => EventsOff("ide:panel:move"));
     }
 
-    const onToggleWrapped = wrapHandler(onToggle);
+    const onToggleWrapped = wrapHandler("ide:toggle", onToggle);
     if (onToggleWrapped) {
       EventsOn("ide:toggle", onToggleWrapped);
       listeners.push(() => EventsOff("ide:toggle"));
     }
 
-    const onWindowOpenWrapped = wrapHandler(onWindowOpen);
+    const onWindowOpenWrapped = wrapHandler("ide:window:open", onWindowOpen);
     if (onWindowOpenWrapped) {
       EventsOn("ide:window:open", onWindowOpenWrapped);
       listeners.push(() => EventsOff("ide:window:open"));
     }
 
-    const onWindowUpdateWrapped = wrapHandler(onWindowUpdate);
+    const onWindowUpdateWrapped = wrapHandler(
+      "ide:window:update",
+      onWindowUpdate,
+    );
     if (onWindowUpdateWrapped) {
       EventsOn("ide:window:update", onWindowUpdateWrapped);
       listeners.push(() => EventsOff("ide:window:update"));
     }
 
-    const onWindowCloseWrapped = wrapHandler(onWindowClose);
+    const onWindowCloseWrapped = wrapHandler("ide:window:close", onWindowClose);
     if (onWindowCloseWrapped) {
       EventsOn("ide:window:close", onWindowCloseWrapped);
       listeners.push(() => EventsOff("ide:window:close"));
     }
 
-    const onWindowFocusWrapped = wrapHandler(onWindowFocus);
+    const onWindowFocusWrapped = wrapHandler("ide:window:focus", onWindowFocus);
     if (onWindowFocusWrapped) {
       EventsOn("ide:window:focus", onWindowFocusWrapped);
       listeners.push(() => EventsOff("ide:window:focus"));
     }
 
-    const onWindowCloseAllWrapped = wrapHandler(onWindowCloseAll);
+    const onWindowCloseAllWrapped = wrapHandler(
+      "ide:window:closeAll",
+      onWindowCloseAll,
+    );
     if (onWindowCloseAllWrapped) {
       EventsOn("ide:window:closeAll", onWindowCloseAllWrapped);
       listeners.push(() => EventsOff("ide:window:closeAll"));
     }
 
     const onWindowCheckpointCreateWrapped = wrapHandler(
+      "ide:window:checkpoint:create",
       onWindowCheckpointCreate,
     );
     if (onWindowCheckpointCreateWrapped) {
@@ -169,6 +255,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     }
 
     const onWindowCheckpointRestoreWrapped = wrapHandler(
+      "ide:window:checkpoint:restore",
       onWindowCheckpointRestore,
     );
     if (onWindowCheckpointRestoreWrapped) {
@@ -180,6 +267,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     }
 
     const onAppearancePreviewStartWrapped = wrapHandler(
+      "ide:appearance:preview:start",
       onAppearancePreviewStart,
     );
     if (onAppearancePreviewStartWrapped) {
@@ -188,6 +276,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     }
 
     const onAppearancePreviewPatchWrapped = wrapHandler(
+      "ide:appearance:preview:patch",
       onAppearancePreviewPatch,
     );
     if (onAppearancePreviewPatchWrapped) {
@@ -196,6 +285,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     }
 
     const onAppearancePreviewApplyWrapped = wrapHandler(
+      "ide:appearance:preview:apply",
       onAppearancePreviewApply,
     );
     if (onAppearancePreviewApplyWrapped) {
@@ -204,6 +294,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     }
 
     const onAppearancePreviewCancelWrapped = wrapHandler(
+      "ide:appearance:preview:cancel",
       onAppearancePreviewCancel,
     );
     if (onAppearancePreviewCancelWrapped) {
@@ -214,145 +305,166 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
       listeners.push(() => EventsOff("ide:appearance:preview:cancel"));
     }
 
-    const onTUIEnterWrapped = wrapHandler(onTUIEnter);
+    const onTUIEnterWrapped = wrapHandler("ide:tui:enter", onTUIEnter);
     if (onTUIEnterWrapped) {
       EventsOn("ide:tui:enter", onTUIEnterWrapped);
       listeners.push(() => EventsOff("ide:tui:enter"));
     }
 
-    const onTUIExitWrapped = wrapHandler(onTUIExit);
+    const onTUIExitWrapped = wrapHandler("ide:tui:exit", onTUIExit);
     if (onTUIExitWrapped) {
       EventsOn("ide:tui:exit", onTUIExitWrapped);
       listeners.push(() => EventsOff("ide:tui:exit"));
     }
 
-    const onTUIAssistOpenPanelWrapped = wrapHandler(onTUIAssistOpenPanel);
+    const onTUIAssistOpenPanelWrapped = wrapHandler(
+      "ide:tui:assist:open",
+      onTUIAssistOpenPanel,
+    );
     if (onTUIAssistOpenPanelWrapped) {
       EventsOn("ide:tui:assist:open", onTUIAssistOpenPanelWrapped);
       listeners.push(() => EventsOff("ide:tui:assist:open"));
     }
 
-    const onTUIAssistCloseWrapped = wrapHandler(onTUIAssistClose);
+    const onTUIAssistCloseWrapped = wrapHandler(
+      "ide:tui:assist:close",
+      onTUIAssistClose,
+    );
     if (onTUIAssistCloseWrapped) {
       EventsOn("ide:tui:assist:close", onTUIAssistCloseWrapped);
       listeners.push(() => EventsOff("ide:tui:assist:close"));
     }
 
-    const onTUIAssistSwapWrapped = wrapHandler(onTUIAssistSwap);
+    const onTUIAssistSwapWrapped = wrapHandler(
+      "ide:tui:assist:swap",
+      onTUIAssistSwap,
+    );
     if (onTUIAssistSwapWrapped) {
       EventsOn("ide:tui:assist:swap", onTUIAssistSwapWrapped);
       listeners.push(() => EventsOff("ide:tui:assist:swap"));
     }
 
-    const onTUIAssistRatioWrapped = wrapHandler(onTUIAssistRatio);
+    const onTUIAssistRatioWrapped = wrapHandler(
+      "ide:tui:assist:ratio",
+      onTUIAssistRatio,
+    );
     if (onTUIAssistRatioWrapped) {
       EventsOn("ide:tui:assist:ratio", onTUIAssistRatioWrapped);
       listeners.push(() => EventsOff("ide:tui:assist:ratio"));
     }
 
-    const onEditorOpenWrapped = wrapHandler(onEditorOpen);
+    const onEditorOpenWrapped = wrapHandler("ide:editor:open", onEditorOpen);
     if (onEditorOpenWrapped) {
       EventsOn("ide:editor:open", onEditorOpenWrapped);
       listeners.push(() => EventsOff("ide:editor:open"));
     }
 
-    const onEditorSplitWrapped = wrapHandler(onEditorSplit);
+    const onEditorSplitWrapped = wrapHandler("ide:editor:split", onEditorSplit);
     if (onEditorSplitWrapped) {
       EventsOn("ide:editor:split", onEditorSplitWrapped);
       listeners.push(() => EventsOff("ide:editor:split"));
     }
 
-    const onEditorCloseWrapped = wrapHandler(onEditorClose);
+    const onEditorCloseWrapped = wrapHandler("ide:editor:close", onEditorClose);
     if (onEditorCloseWrapped) {
       EventsOn("ide:editor:close", onEditorCloseWrapped);
       listeners.push(() => EventsOff("ide:editor:close"));
     }
 
-    const onEditorFormatWrapped = wrapHandler(onEditorFormat);
+    const onEditorFormatWrapped = wrapHandler(
+      "ide:editor:format",
+      onEditorFormat,
+    );
     if (onEditorFormatWrapped) {
       EventsOn("ide:editor:format", onEditorFormatWrapped);
       listeners.push(() => EventsOff("ide:editor:format"));
     }
 
-    const onEditorGotoWrapped = wrapHandler(onEditorGoto);
+    const onEditorGotoWrapped = wrapHandler("ide:editor:goto", onEditorGoto);
     if (onEditorGotoWrapped) {
       EventsOn("ide:editor:goto", onEditorGotoWrapped);
       listeners.push(() => EventsOff("ide:editor:goto"));
     }
 
-    const onEditorToggleWrapped = wrapHandler(onEditorToggle);
+    const onEditorToggleWrapped = wrapHandler(
+      "ide:editor:toggle",
+      onEditorToggle,
+    );
     if (onEditorToggleWrapped) {
       EventsOn("ide:editor:toggle", onEditorToggleWrapped);
       listeners.push(() => EventsOff("ide:editor:toggle"));
     }
 
-    const onFileNewWrapped = wrapHandler(onFileNew);
+    const onFileNewWrapped = wrapHandler("ide:file:new", onFileNew);
     if (onFileNewWrapped) {
       EventsOn("ide:file:new", onFileNewWrapped);
       listeners.push(() => EventsOff("ide:file:new"));
     }
 
-    const onFileSaveWrapped = wrapHandler(onFileSave);
+    const onFileSaveWrapped = wrapHandler("ide:file:save", onFileSave);
     if (onFileSaveWrapped) {
       EventsOn("ide:file:save", onFileSaveWrapped);
       listeners.push(() => EventsOff("ide:file:save"));
     }
 
-    const onFileSaveAllWrapped = wrapHandler(onFileSaveAll);
+    const onFileSaveAllWrapped = wrapHandler("ide:file:saveAll", onFileSaveAll);
     if (onFileSaveAllWrapped) {
       EventsOn("ide:file:saveAll", onFileSaveAllWrapped);
       listeners.push(() => EventsOff("ide:file:saveAll"));
     }
 
-    const onViewZoomWrapped = wrapHandler(onViewZoom);
+    const onViewZoomWrapped = wrapHandler("ide:view:zoom", onViewZoom);
     if (onViewZoomWrapped) {
       EventsOn("ide:view:zoom", onViewZoomWrapped);
       listeners.push(() => EventsOff("ide:view:zoom"));
     }
 
-    const onAppSettingsWrapped = wrapHandler(onAppSettings);
+    const onAppSettingsWrapped = wrapHandler("ide:app:settings", onAppSettings);
     if (onAppSettingsWrapped) {
       EventsOn("ide:app:settings", onAppSettingsWrapped);
       listeners.push(() => EventsOff("ide:app:settings"));
     }
 
-    const onAppRunWrapped = wrapHandler(onAppRun);
+    const onAppRunWrapped = wrapHandler("ide:app:run", onAppRun);
     if (onAppRunWrapped) {
       EventsOn("ide:app:run", onAppRunWrapped);
       listeners.push(() => EventsOff("ide:app:run"));
     }
 
-    const onAppKeybindingsWrapped = wrapHandler(onAppKeybindings);
+    const onAppKeybindingsWrapped = wrapHandler(
+      "ide:app:keybindings",
+      onAppKeybindings,
+    );
     if (onAppKeybindingsWrapped) {
       EventsOn("ide:app:keybindings", onAppKeybindingsWrapped);
       listeners.push(() => EventsOff("ide:app:keybindings"));
     }
 
-    const onAppReloadWrapped = wrapHandler(onAppReload);
+    const onAppReloadWrapped = wrapHandler("ide:app:reload", onAppReload);
     if (onAppReloadWrapped) {
       EventsOn("ide:app:reload", onAppReloadWrapped);
       listeners.push(() => EventsOff("ide:app:reload"));
     }
 
-    const onGitStatusWrapped = wrapHandler(onGitStatus);
+    const onGitStatusWrapped = wrapHandler("ide:git:status", onGitStatus);
     if (onGitStatusWrapped) {
       EventsOn("ide:git:status", onGitStatusWrapped);
       listeners.push(() => EventsOff("ide:git:status"));
     }
 
-    const onGitCommitWrapped = wrapHandler(onGitCommit);
+    const onGitCommitWrapped = wrapHandler("ide:git:commit", onGitCommit);
     if (onGitCommitWrapped) {
       EventsOn("ide:git:commit", onGitCommitWrapped);
       listeners.push(() => EventsOff("ide:git:commit"));
     }
 
-    const onGitPushWrapped = wrapHandler(onGitPush);
+    const onGitPushWrapped = wrapHandler("ide:git:push", onGitPush);
     if (onGitPushWrapped) {
       EventsOn("ide:git:push", onGitPushWrapped);
       listeners.push(() => EventsOff("ide:git:push"));
     }
 
-    const onGitPullWrapped = wrapHandler(onGitPull);
+    const onGitPullWrapped = wrapHandler("ide:git:pull", onGitPull);
     if (onGitPullWrapped) {
       EventsOn("ide:git:pull", onGitPullWrapped);
       listeners.push(() => EventsOff("ide:git:pull"));

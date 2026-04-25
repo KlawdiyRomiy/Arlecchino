@@ -16,14 +16,15 @@ import (
 )
 
 const (
-	defaultBridgeDialTimeout  = 2 * time.Second
-	defaultBridgeReadTimeout  = 8 * time.Second
-	defaultBridgeWriteTimeout = 8 * time.Second
-	defaultBridgeTokenTTL     = 1 * time.Hour
-	defaultBridgeRotateTTL    = 30 * time.Minute
-	metadataLockRetryDelay    = 25 * time.Millisecond
-	metadataLockMaxAttempts   = 20
-	envBridgeMetadataPath     = "ARLECCHINO_MCP_BRIDGE_METADATA_PATH"
+	defaultBridgeDialTimeout         = 2 * time.Second
+	defaultBridgeReadTimeout         = 8 * time.Second
+	defaultBridgeApprovalReadTimeout = 2 * time.Minute
+	defaultBridgeWriteTimeout        = 8 * time.Second
+	defaultBridgeTokenTTL            = 1 * time.Hour
+	defaultBridgeRotateTTL           = 30 * time.Minute
+	metadataLockRetryDelay           = 25 * time.Millisecond
+	metadataLockMaxAttempts          = 20
+	envBridgeMetadataPath            = "ARLECCHINO_MCP_BRIDGE_METADATA_PATH"
 )
 
 type IDEBridge interface {
@@ -174,7 +175,12 @@ func (c *SocketIDEBridgeClient) Call(method string, params map[string]any) (any,
 		return nil, err
 	}
 
-	if err := connection.SetReadDeadline(time.Now().Add(defaultBridgeReadTimeout)); err != nil {
+	readTimeout := defaultBridgeReadTimeout
+	if method == "mcp.request_approval" {
+		readTimeout = defaultBridgeApprovalReadTimeout
+	}
+
+	if err := connection.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
 		return nil, err
 	}
 

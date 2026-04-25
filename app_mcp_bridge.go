@@ -11,7 +11,26 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const bridgeMaxStringSliceItems = 100
+const (
+	bridgeMaxStringSliceItems   = 100
+	defaultMCPApprovalTimeout   = 2 * time.Minute
+	defaultMCPUIEventAckTimeout = 5 * time.Second
+	mcpApprovalRequestEvent     = "mcp:approval:request"
+	mcpApprovalResponseEvent    = "mcp:approval:response"
+	mcpUIEventAckEvent          = "mcp:ui-event:ack"
+)
+
+type mcpApprovalResponse struct {
+	approved   bool
+	ttlSeconds int
+}
+
+type mcpUIEventAck struct {
+	requestID string
+	eventName string
+	handled   bool
+	errText   string
+}
 
 func (a *App) startMCPBridge() {
 	if a == nil {
@@ -58,6 +77,8 @@ func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, er
 	}
 
 	switch strings.TrimSpace(method) {
+	case "mcp.request_approval":
+		return a.requestMCPApproval(params)
 	case "project.open":
 		path, err := bridgeRequiredString(params, "path")
 		if err != nil {
@@ -291,20 +312,177 @@ func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, er
 			return nil, fmt.Errorf("event is not allowed: %s", eventName)
 		}
 
+		requestID := bridgeOptionalString(params, "mcpRequestId")
+		if requestID == "" {
+			requestID = bridgeOptionalString(params, "mcp_request_id")
+		}
+		if requestID == "" && bridgeOptionalBool(params, "confirm", false) {
+			requestID = fmt.Sprintf("mcp-ui-event-%d", time.Now().UTC().UnixNano())
+		}
+
+		var ackCh <-chan mcpUIEventAck
+		var unsubscribeAck func()
+		if requestID != "" {
+			ackCh, unsubscribeAck = a.waitForMCPUIEventAck(requestID, eventName)
+			defer unsubscribeAck()
+		}
+
 		payload, hasPayload := params["payload"]
+		if requestID != "" {
+			payload = withMCPUIEventMetadata(payload, requestID)
+			hasPayload = true
+		}
 		if hasPayload {
 			runtime.EventsEmit(a.ctx, eventName, payload)
 		} else {
 			runtime.EventsEmit(a.ctx, eventName)
 		}
 
-		return map[string]any{
+		result := map[string]any{
 			"emitted":   true,
 			"event":     eventName,
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
-		}, nil
+		}
+
+		if requestID == "" {
+			return result, nil
+		}
+
+		result["mcpRequestId"] = requestID
+		select {
+		case ack := <-ackCh:
+			result["confirmed"] = ack.handled
+			if ack.errText != "" {
+				result["handlerError"] = ack.errText
+				return result, fmt.Errorf("ui event handler failed: %s", ack.errText)
+			}
+			return result, nil
+		case <-time.After(defaultMCPUIEventAckTimeout):
+			result["confirmed"] = false
+			return result, fmt.Errorf("ui event was emitted but no frontend acknowledgement arrived for %s", eventName)
+		}
 	default:
 		return nil, fmt.Errorf("unknown bridge method: %s", method)
+	}
+}
+
+func (a *App) waitForMCPUIEventAck(requestID, eventName string) (<-chan mcpUIEventAck, func()) {
+	responseCh := make(chan mcpUIEventAck, 1)
+	unsubscribe := runtime.EventsOn(a.ctx, mcpUIEventAckEvent, func(data ...interface{}) {
+		if len(data) == 0 {
+			return
+		}
+
+		payload, ok := data[0].(map[string]interface{})
+		if !ok {
+			return
+		}
+
+		if bridgeMapString(payload, "requestId") != requestID {
+			return
+		}
+
+		if ackEvent := bridgeMapString(payload, "event"); ackEvent != "" && ackEvent != eventName {
+			return
+		}
+
+		ack := mcpUIEventAck{
+			requestID: bridgeMapString(payload, "requestId"),
+			eventName: bridgeMapString(payload, "event"),
+			handled:   bridgeMapBool(payload, "handled", false),
+			errText:   bridgeMapString(payload, "error"),
+		}
+
+		select {
+		case responseCh <- ack:
+		default:
+		}
+	})
+
+	return responseCh, unsubscribe
+}
+
+func withMCPUIEventMetadata(payload any, requestID string) any {
+	if payloadMap, ok := payload.(map[string]any); ok {
+		nextPayload := make(map[string]any, len(payloadMap)+1)
+		for key, value := range payloadMap {
+			nextPayload[key] = value
+		}
+		nextPayload["mcpRequestId"] = requestID
+		return nextPayload
+	}
+
+	result := map[string]any{
+		"mcpRequestId":      requestID,
+		"mcpWrappedPayload": true,
+	}
+	if payload != nil {
+		result["payload"] = payload
+	}
+	return result
+}
+
+func (a *App) requestMCPApproval(params map[string]any) (any, error) {
+	if a == nil || a.ctx == nil {
+		return nil, fmt.Errorf("MCP approval UI is unavailable")
+	}
+
+	toolName, err := bridgeRequiredString(params, "tool_name")
+	if err != nil {
+		return nil, err
+	}
+
+	ttlSeconds := normalizeMCPApprovalTTL(bridgeOptionalInt(params, "ttl_seconds", 300))
+	risk := bridgeOptionalString(params, "risk")
+	if risk == "" {
+		risk = "mutating"
+	}
+
+	requestID := fmt.Sprintf("mcp-approval-%d", time.Now().UTC().UnixNano())
+	responseCh := make(chan mcpApprovalResponse, 1)
+	unsubscribe := runtime.EventsOn(a.ctx, mcpApprovalResponseEvent, func(data ...interface{}) {
+		if len(data) == 0 {
+			return
+		}
+
+		payload, ok := data[0].(map[string]interface{})
+		if !ok {
+			return
+		}
+
+		if bridgeMapString(payload, "requestId") != requestID {
+			return
+		}
+
+		response := mcpApprovalResponse{
+			approved:   bridgeMapBool(payload, "approved", false),
+			ttlSeconds: normalizeMCPApprovalTTL(bridgeMapInt(payload, "ttlSeconds", ttlSeconds)),
+		}
+
+		select {
+		case responseCh <- response:
+		default:
+		}
+	})
+	defer unsubscribe()
+
+	runtime.EventsEmit(a.ctx, mcpApprovalRequestEvent, map[string]any{
+		"requestId":   requestID,
+		"toolName":    toolName,
+		"risk":        risk,
+		"ttlSeconds":  ttlSeconds,
+		"requestedAt": time.Now().UTC().Format(time.RFC3339),
+	})
+
+	select {
+	case response := <-responseCh:
+		return map[string]any{
+			"approved":    response.approved,
+			"ttl_seconds": response.ttlSeconds,
+			"request_id":  requestID,
+		}, nil
+	case <-time.After(defaultMCPApprovalTimeout):
+		return nil, fmt.Errorf("MCP approval timed out")
 	}
 }
 
@@ -397,6 +575,85 @@ func bridgeOptionalBool(params map[string]any, key string, defaultValue bool) bo
 	}
 
 	return defaultValue
+}
+
+func bridgeMapString(params map[string]interface{}, key string) string {
+	value, ok := params[key]
+	if !ok {
+		return ""
+	}
+
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+
+	return strings.TrimSpace(text)
+}
+
+func bridgeMapBool(params map[string]interface{}, key string, defaultValue bool) bool {
+	value, ok := params[key]
+	if !ok {
+		return defaultValue
+	}
+
+	typed, ok := value.(bool)
+	if !ok {
+		return defaultValue
+	}
+
+	return typed
+}
+
+func bridgeMapInt(params map[string]interface{}, key string, defaultValue int) int {
+	value, ok := params[key]
+	if !ok {
+		return defaultValue
+	}
+
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int8:
+		return int(typed)
+	case int16:
+		return int(typed)
+	case int32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	case uint:
+		return int(typed)
+	case uint8:
+		return int(typed)
+	case uint16:
+		return int(typed)
+	case uint32:
+		return int(typed)
+	case uint64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err == nil {
+			return parsed
+		}
+	}
+
+	return defaultValue
+}
+
+func normalizeMCPApprovalTTL(ttlSeconds int) int {
+	if ttlSeconds <= 0 {
+		return 300
+	}
+	if ttlSeconds > 3600 {
+		return 3600
+	}
+	return ttlSeconds
 }
 
 func bridgeRequiredStringSlice(params map[string]any, key string) ([]string, error) {

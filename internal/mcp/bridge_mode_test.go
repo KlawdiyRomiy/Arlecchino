@@ -87,6 +87,7 @@ func TestToolService_ToolDefinitionsAlwaysIncludeBridgeTools(t *testing.T) {
 		"agent_memory.save",
 		"agent_memory.context",
 		"ide_ui.emit_event",
+		"ide_ui.open_file_panel",
 		"ide_ui.preview_open",
 		"ide_ui.preview_navigate",
 		"ide_ui.preview_focus",
@@ -108,6 +109,81 @@ func TestToolService_ToolDefinitionsAlwaysIncludeBridgeTools(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "requires live IDE bridge") {
 		t.Fatalf("ide_backend.project_status error = %v, want contains %q", err, "requires live IDE bridge")
+	}
+}
+
+func TestToolService_OpenFilePanelEmitsConfirmedPanelOpen(t *testing.T) {
+	root := t.TempDir()
+	makefilePath := filepath.Join(root, "Makefile")
+	if err := os.WriteFile(makefilePath, []byte("dev-start:\n\tgo run .\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(Makefile) error = %v", err)
+	}
+	resolvedMakefilePath, err := filepath.EvalSymlinks(makefilePath)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(Makefile) error = %v", err)
+	}
+
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "open-file-panel")
+	bridge := newFakeBridge()
+	bridge.response["ui.emit_event"] = map[string]any{
+		"emitted":   true,
+		"event":     "ide:panel:open",
+		"confirmed": true,
+	}
+
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "open-file-panel",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_ui.open_file_panel", map[string]any{
+		"path":     "Makefile",
+		"line":     1,
+		"position": "right",
+		"width":    620,
+	})
+	if err != nil {
+		t.Fatalf("open_file_panel error = %v", err)
+	}
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("open_file_panel result type = %T, want map[string]any", result)
+	}
+	if requestID, ok := resultMap["mcpRequestId"].(string); !ok || requestID == "" {
+		t.Fatalf("open_file_panel result missing mcpRequestId: %#v", resultMap)
+	}
+
+	calls := bridge.methodCalls("ui.emit_event")
+	if len(calls) != 1 {
+		t.Fatalf("ui.emit_event calls = %d, want 1", len(calls))
+	}
+	call := calls[0]
+	if got := call.Params["event"]; got != "ide:panel:open" {
+		t.Fatalf("event = %v, want ide:panel:open", got)
+	}
+	if requestID, ok := call.Params["mcpRequestId"].(string); !ok || requestID == "" {
+		t.Fatalf("bridge call missing mcpRequestId: %#v", call.Params)
+	}
+	payload, ok := call.Params["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", call.Params["payload"])
+	}
+	wantPayload := map[string]any{
+		"panel":    "code",
+		"path":     resolvedMakefilePath,
+		"line":     1,
+		"position": "right",
+		"mode":     "snapped",
+		"width":    620,
+	}
+	if !equalBridgePayload(payload, wantPayload) {
+		t.Fatalf("payload = %#v, want %#v", payload, wantPayload)
 	}
 }
 
@@ -144,6 +220,74 @@ func TestToolService_ProjectOpenRequiresUserApproval(t *testing.T) {
 
 	if len(bridge.methodCalls("project.open")) != 1 {
 		t.Fatalf("project.open bridge calls = %d, want 1", len(bridge.methodCalls("project.open")))
+	}
+}
+
+func TestToolService_RequestPermissionUsesLiveBridgeApproval(t *testing.T) {
+	root := t.TempDir()
+
+	bridge := newFakeBridge()
+	bridge.response["mcp.request_approval"] = map[string]any{
+		"approved":    true,
+		"ttl_seconds": 120,
+	}
+
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"ttl_seconds": 120,
+	})
+	if err != nil {
+		t.Fatalf("request_permission live approval error = %v", err)
+	}
+
+	status, ok := result.(PermissionStatus)
+	if !ok {
+		t.Fatalf("request_permission result type = %T, want PermissionStatus", result)
+	}
+	if !status.Required || !status.Granted {
+		t.Fatalf("request_permission status = %+v, want required and granted", status)
+	}
+
+	approvalCalls := bridge.methodCalls("mcp.request_approval")
+	if len(approvalCalls) != 1 {
+		t.Fatalf("mcp.request_approval calls = %d, want 1", len(approvalCalls))
+	}
+	if approvalCalls[0].Params["tool_name"] != "ide_control.request_permission" {
+		t.Fatalf("approval tool_name = %v, want ide_control.request_permission", approvalCalls[0].Params["tool_name"])
+	}
+
+	if _, err := service.WriteFile("src/main.go", "package main", "after-ui-approval"); err != nil {
+		t.Fatalf("WriteFile() after live approval error = %v", err)
+	}
+}
+
+func TestToolService_LiveBridgeApprovalDenialBlocksMutatingTool(t *testing.T) {
+	root := t.TempDir()
+
+	bridge := newFakeBridge()
+	bridge.response["mcp.request_approval"] = map[string]any{
+		"approved": false,
+	}
+
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	_, err = service.WriteFile("src/main.go", "package main", "denied")
+	if err == nil {
+		t.Fatalf("WriteFile() should fail when live approval is denied")
+	}
+	if !strings.Contains(err.Error(), "approval denied") {
+		t.Fatalf("WriteFile() error = %v, want approval denied", err)
+	}
+
+	if len(bridge.methodCalls("mcp.request_approval")) != 1 {
+		t.Fatalf("mcp.request_approval calls = %d, want 1", len(bridge.methodCalls("mcp.request_approval")))
 	}
 }
 

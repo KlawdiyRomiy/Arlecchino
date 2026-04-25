@@ -76,6 +76,7 @@ IDE backend tools:
 
 IDE UI tools:
 - ide_ui.emit_event
+- ide_ui.open_file_panel
 - ide_ui.preview_open
 - ide_ui.preview_navigate
 - ide_ui.preview_focus
@@ -94,6 +95,7 @@ Interaction rules:
 - Avoid destructive git operations unless the user explicitly asks.
 - Use checkpoints before risky file edits.
 - Save durable decisions, bug fixes, and workflow context into local memory.
+- Use ide_ui.open_file_panel for visible side-panel file opens. Do not use dispatch_command, raw ide:file:open, or preview windows for this.
 - Prefer existing project conventions over generic scaffolding.
 - Explain actions directly and keep the user informed about meaningful progress.
 `) + "\n"

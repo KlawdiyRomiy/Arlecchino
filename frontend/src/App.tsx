@@ -1,5 +1,6 @@
 import React, { startTransition, useEffect, useState } from "react";
 import WelcomeScreen from "./components/WelcomeScreen";
+import { MCPApprovalDialog } from "./components/MCPApprovalDialog";
 import { MainLayout } from "./components/layout/MainLayout";
 import { ProjectSwitchTransition } from "./components/layout/ProjectSwitchTransition";
 import ProjectScreen from "./components/ProjectScreen";
@@ -238,6 +239,7 @@ const App: React.FC = () => {
         >
           <div className="blackprint-bg" />
         </div>
+        <MCPApprovalDialog />
       </div>
     );
   }
@@ -274,6 +276,7 @@ const App: React.FC = () => {
             </PluginModalProvider>
           </ProjectSwitchTransition>
         </div>
+        <MCPApprovalDialog />
       </div>
     );
   }
@@ -287,6 +290,7 @@ const App: React.FC = () => {
         <div className="blackprint-bg" />
         <WelcomeScreen onProjectOpen={handleProjectOpen} />
       </div>
+      <MCPApprovalDialog />
     </div>
   );
 };

@@ -194,6 +194,21 @@ func bridgeUIToolDefinitions() []ToolDefinition {
 			}),
 		},
 		{
+			Name:        "ide_ui.open_file_panel",
+			Description: "Open a project file in the visible side code panel",
+			InputSchema: objectSchema([]string{"path"}, map[string]any{
+				"path":     map[string]any{"type": "string"},
+				"line":     map[string]any{"type": "number"},
+				"title":    map[string]any{"type": "string"},
+				"language": map[string]any{"type": "string"},
+				"content":  map[string]any{"type": "string"},
+				"position": map[string]any{"type": "string"},
+				"mode":     map[string]any{"type": "string"},
+				"width":    map[string]any{"type": "number"},
+				"height":   map[string]any{"type": "number"},
+			}),
+		},
+		{
 			Name:        "ide_ui.preview_open",
 			Description: "Open IDE preview window via canonical preview flow",
 			InputSchema: objectSchema(nil, map[string]any{
@@ -689,6 +704,87 @@ func (s *ToolService) bridgeEmitUIEvent(eventName string, payload any) (any, err
 		params["payload"] = payload
 	}
 	return s.bridgeCall("ide_ui.emit_event", "ui.emit_event", params)
+}
+
+func (s *ToolService) bridgeEmitConfirmedUIEvent(toolName, eventName string, payload any) (any, error) {
+	if err := s.requireUserApproval(toolName); err != nil {
+		return nil, err
+	}
+	if err := s.allowUIEventBurst(1); err != nil {
+		return nil, err
+	}
+	if err := s.requireUserApproval(toolName); err != nil {
+		return nil, err
+	}
+
+	requestID := fmt.Sprintf("%s-%d", strings.ReplaceAll(toolName, ".", "-"), time.Now().UTC().UnixNano())
+	params := map[string]any{
+		"event":        eventName,
+		"mcpRequestId": requestID,
+	}
+	if payload != nil {
+		params["payload"] = payload
+	}
+
+	result, err := s.bridgeCall(toolName, "ui.emit_event", params)
+	if err != nil {
+		return nil, err
+	}
+
+	if resultMap, ok := result.(map[string]any); ok {
+		resultMap["mcpRequestId"] = requestID
+		return resultMap, nil
+	}
+
+	return map[string]any{
+		"result":       result,
+		"mcpRequestId": requestID,
+	}, nil
+}
+
+func (s *ToolService) bridgeOpenFilePanel(args map[string]any) (any, error) {
+	path, err := requiredStringArg(args, "path")
+	if err != nil {
+		return nil, err
+	}
+
+	resolvedPath, err := s.prepareBridgeFilePath("ide_ui.open_file_panel", path)
+	if err != nil {
+		return nil, err
+	}
+
+	payload := map[string]any{
+		"panel":    "code",
+		"path":     resolvedPath,
+		"position": "right",
+		"mode":     "snapped",
+	}
+	if title := optionalStringArg(args, "title"); title != "" {
+		payload["title"] = title
+	}
+	if language := optionalStringArg(args, "language"); language != "" {
+		payload["language"] = language
+	}
+	if content := optionalStringArg(args, "content"); content != "" {
+		payload["content"] = content
+	}
+	if line, ok := optionalNumericArg(args, "line"); ok {
+		payload["line"] = line
+	}
+	if position := optionalStringArg(args, "position"); position == "left" || position == "right" || position == "top" || position == "bottom" {
+		payload["position"] = position
+	}
+	if mode := optionalStringArg(args, "mode"); mode == "floating" || mode == "snapped" {
+		payload["mode"] = mode
+	}
+	if width, ok := optionalNumericArg(args, "width"); ok {
+		payload["width"] = width
+	}
+	if height, ok := optionalNumericArg(args, "height"); ok {
+		payload["height"] = height
+	}
+
+	return s.bridgeEmitConfirmedUIEvent("ide_ui.open_file_panel", "ide:panel:open", payload)
 }
 
 func (s *ToolService) bridgePreviewOpen(args map[string]any) (any, error) {

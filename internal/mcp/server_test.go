@@ -88,9 +88,17 @@ func TestHandleRequestInitialize_DefaultProtocolVersionWhenMissing(t *testing.T)
 }
 
 func TestHandleRequestInitialize_IncludesProjectMemoryInstructions(t *testing.T) {
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "project-memory-code")
+
 	service, err := NewToolService(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewToolService() error = %v", err)
+	}
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "project-memory-code",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
 	}
 
 	if _, err := service.SaveAgentMemory(

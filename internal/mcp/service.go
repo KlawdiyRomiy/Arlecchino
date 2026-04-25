@@ -167,7 +167,7 @@ func NewToolServiceWithOptions(projectRoot string, options ToolServiceOptions) (
 		layouts:          layouts,
 		memory:           memory,
 		sessionID:        fmt.Sprintf("sess-%d", time.Now().UTC().UnixMilli()),
-		approvalRequired: parseBooleanEnvDefaultFalse(os.Getenv(envMCPRequireApproval)),
+		approvalRequired: parseBooleanEnvDefaultTrue(os.Getenv(envMCPRequireApproval)),
 		approvalCode:     strings.TrimSpace(os.Getenv(envMCPApprovalCode)),
 		sensitivePaths:   append([]string(nil), defaultSensitivePathPatterns...),
 	}, nil
@@ -213,7 +213,7 @@ func (s *ToolService) ToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "ide_control.request_permission",
-			Description: "Request time-limited IDE control permission. If approval code is configured, provide it; otherwise just call to grant access.",
+			Description: "Request time-limited IDE control permission. If approval code is configured, provide it; otherwise this opens a live IDE approval prompt.",
 			InputSchema: objectSchema(nil, map[string]any{
 				"approval_code": map[string]any{"type": "string"},
 				"ttl_seconds":   map[string]any{"type": "number"},
@@ -457,7 +457,7 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 		if err != nil {
 			return nil, err
 		}
-		content, err := requiredStringArg(args, "content")
+		content, err := requiredRawStringArg(args, "content")
 		if err != nil {
 			return nil, err
 		}
@@ -688,6 +688,8 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 			return nil, err
 		}
 		return s.bridgeEmitUIEvent(eventName, args["payload"])
+	case "ide_ui.open_file_panel":
+		return s.bridgeOpenFilePanel(args)
 	case "ide_ui.preview_open":
 		return s.bridgePreviewOpen(args)
 	case "ide_ui.preview_navigate":
@@ -761,9 +763,6 @@ func (s *ToolService) PermissionStatus() PermissionStatus {
 }
 
 func (s *ToolService) RequestPermission(approvalCode string, ttlSeconds int) (PermissionStatus, error) {
-	s.approvalMu.Lock()
-	defer s.approvalMu.Unlock()
-
 	if !s.approvalRequired && s.approvalCode == "" {
 		return permissionStatusSnapshot(false, time.Time{}), nil
 	}
@@ -772,11 +771,15 @@ func (s *ToolService) RequestPermission(approvalCode string, ttlSeconds int) (Pe
 		if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(approvalCode)), []byte(s.approvalCode)) != 1 {
 			return PermissionStatus{}, fmt.Errorf("invalid approval code")
 		}
+		return s.grantApproval(ttlSeconds), nil
 	}
 
-	ttl := normalizeApprovalTTL(ttlSeconds)
-	s.approvalExpires = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
-	return permissionStatusSnapshot(s.approvalRequired, s.approvalExpires), nil
+	ttl, err := s.requestLiveApproval("ide_control.request_permission", ttlSeconds)
+	if err != nil {
+		return PermissionStatus{}, err
+	}
+
+	return s.grantApproval(ttl), nil
 }
 
 func (s *ToolService) requireUserApproval(toolName string) error {
@@ -792,18 +795,69 @@ func (s *ToolService) requireSensitiveFileApproval(toolName, relPath string) err
 }
 
 func (s *ToolService) requireToolApproval(toolName string, force bool) error {
+	if s.approvalGateSatisfied(force) {
+		return nil
+	}
+
+	if strings.TrimSpace(s.approvalCode) != "" {
+		return fmt.Errorf("%s requires user approval; call ide_control.request_permission", toolName)
+	}
+
+	ttl, err := s.requestLiveApproval(toolName, defaultApprovalTTLSeconds)
+	if err != nil {
+		return fmt.Errorf("%s requires user approval: %w", toolName, err)
+	}
+
+	s.grantApproval(ttl)
+	return nil
+}
+
+func (s *ToolService) approvalGateSatisfied(force bool) bool {
 	s.approvalMu.RLock()
 	defer s.approvalMu.RUnlock()
 
 	if !force && !s.approvalRequired {
-		return nil
+		return true
 	}
 
-	if s.approvalExpires.IsZero() || !time.Now().UTC().Before(s.approvalExpires) {
-		return fmt.Errorf("%s requires user approval; call ide_control.request_permission", toolName)
+	return !s.approvalExpires.IsZero() && time.Now().UTC().Before(s.approvalExpires)
+}
+
+func (s *ToolService) grantApproval(ttlSeconds int) PermissionStatus {
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+
+	ttl := normalizeApprovalTTL(ttlSeconds)
+	s.approvalExpires = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
+	return permissionStatusSnapshot(s.approvalRequired, s.approvalExpires)
+}
+
+func (s *ToolService) requestLiveApproval(toolName string, ttlSeconds int) (int, error) {
+	if !s.bridgeAvailable() {
+		return 0, fmt.Errorf("live IDE approval is unavailable; set %s or approve from the Arlecchino UI", envMCPApprovalCode)
 	}
 
-	return nil
+	ttl := normalizeApprovalTTL(ttlSeconds)
+	result, err := s.bridge.Call("mcp.request_approval", map[string]any{
+		"tool_name":   strings.TrimSpace(toolName),
+		"ttl_seconds": ttl,
+		"risk":        s.riskClassForTool(toolName, map[string]any{}),
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		return 0, fmt.Errorf("approval response has unexpected type %T", result)
+	}
+
+	approved, _ := resultMap["approved"].(bool)
+	if !approved {
+		return 0, fmt.Errorf("approval denied")
+	}
+
+	return normalizeApprovalTTL(optionalIntArg(resultMap, "ttl_seconds", ttl)), nil
 }
 
 func (s *ToolService) isSensitivePath(relPath string) bool {
@@ -870,25 +924,23 @@ func normalizeApprovalTTL(ttlSeconds int) int {
 	return ttlSeconds
 }
 
-func parseBooleanEnvDefaultFalse(raw string) bool {
+func parseBooleanEnvDefaultTrue(raw string) bool {
 	normalized := strings.TrimSpace(strings.ToLower(raw))
 	switch normalized {
 	case "1", "true", "yes", "on":
 		return true
-	case "", "0", "false", "no", "off":
+	case "0", "false", "no", "off":
 		return false
+	case "":
+		return true
 	default:
-		return false
+		return true
 	}
 }
 
 func (s *ToolService) hasSensitiveAccessGrant() bool {
 	s.approvalMu.RLock()
 	defer s.approvalMu.RUnlock()
-
-	if strings.TrimSpace(s.approvalCode) == "" {
-		return false
-	}
 
 	if s.approvalExpires.IsZero() {
 		return false
@@ -1087,6 +1139,20 @@ func requiredStringArg(args map[string]any, key string) (string, error) {
 	}
 
 	return trimmed, nil
+}
+
+func requiredRawStringArg(args map[string]any, key string) (string, error) {
+	value, ok := args[key]
+	if !ok {
+		return "", fmt.Errorf("missing required argument: %s", key)
+	}
+
+	stringValue, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("argument %s must be string", key)
+	}
+
+	return stringValue, nil
 }
 
 func optionalStringArg(args map[string]any, key string) string {
