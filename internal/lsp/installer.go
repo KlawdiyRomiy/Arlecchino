@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -88,14 +89,14 @@ func (i *Installer) registerServers() {
 		{ID: "svelte-language-server", Name: "Svelte Language Server", Languages: []string{"svelte"}, Extensions: []string{".svelte"}, InstallType: "npm", InstallCmd: "npm install -g svelte-language-server", BinaryName: "svelteserver", CanInstall: true, Dependencies: []string{"node", "npm"}},
 		{ID: "astro-ls", Name: "Astro Language Server", Languages: []string{"astro"}, Extensions: []string{".astro"}, InstallType: "npm", InstallCmd: "npm install -g @astrojs/language-server", BinaryName: "astro-ls", CanInstall: true, Dependencies: []string{"node", "npm"}},
 		{ID: "clangd", Name: "C/C++ Language Server", Languages: []string{"c", "cpp", "objc", "objcpp"}, Extensions: []string{".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".m", ".mm"}, InstallType: "system", InstallCmd: getClangdInstallCmd(), BinaryName: "clangd", CanInstall: false},
-		{ID: "zls", Name: "Zig Language Server", Languages: []string{"zig"}, Extensions: []string{".zig"}, InstallType: "binary", InstallCmd: "Download from https://github.com/zigtools/zls/releases", BinaryName: "zls", CanInstall: true, DownloadURL: getZLSDownloadURL()},
+		brewInstallableServer("zls", "Zig Language Server", []string{"zig"}, []string{".zig"}, "zls", "zls"),
 		{ID: "yaml-language-server", Name: "YAML Language Server", Languages: []string{"yaml"}, Extensions: []string{".yaml", ".yml"}, InstallType: "npm", InstallCmd: "npm install -g yaml-language-server", BinaryName: "yaml-language-server", CanInstall: true, Dependencies: []string{"node", "npm"}},
 		{ID: "taplo", Name: "TOML Language Server", Languages: []string{"toml"}, Extensions: []string{".toml"}, InstallType: "cargo", InstallCmd: "cargo install taplo-cli --locked", BinaryName: "taplo", CanInstall: true, Dependencies: []string{"cargo"}},
-		{ID: "marksman", Name: "Markdown Language Server", Languages: []string{"markdown"}, Extensions: []string{".md", ".markdown"}, InstallType: "binary", InstallCmd: "Download from https://github.com/artempyanykh/marksman/releases", BinaryName: "marksman", CanInstall: true, DownloadURL: getMarksmanDownloadURL()},
+		brewInstallableServer("marksman", "Markdown Language Server", []string{"markdown"}, []string{".md", ".markdown"}, "marksman", "marksman"),
 		{ID: "bash-language-server", Name: "Bash Language Server", Languages: []string{"bash", "sh", "shell"}, Extensions: []string{".sh", ".bash", ".zsh", ".fish"}, InstallType: "npm", InstallCmd: "npm install -g bash-language-server", BinaryName: "bash-language-server", CanInstall: true, Dependencies: []string{"node", "npm"}},
 		{ID: "dockerfile-language-server", Name: "Dockerfile Language Server", Languages: []string{"dockerfile"}, Extensions: []string{"Dockerfile"}, InstallType: "npm", InstallCmd: "npm install -g dockerfile-language-server-nodejs", BinaryName: "docker-langserver", CanInstall: true, Dependencies: []string{"node", "npm"}},
 		{ID: "solargraph", Name: "Ruby Language Server", Languages: []string{"ruby"}, Extensions: []string{".rb", ".rake", ".gemspec"}, InstallType: "gem", InstallCmd: "gem install solargraph", BinaryName: "solargraph", CanInstall: true, Dependencies: []string{"ruby", "gem"}},
-		{ID: "lua-language-server", Name: "Lua Language Server", Languages: []string{"lua"}, Extensions: []string{".lua"}, InstallType: "binary", InstallCmd: "Download from https://github.com/LuaLS/lua-language-server/releases", BinaryName: "lua-language-server", CanInstall: true, DownloadURL: getLuaLSDownloadURL()},
+		brewInstallableServer("lua-language-server", "Lua Language Server", []string{"lua"}, []string{".lua"}, "lua-language-server", "lua-language-server"),
 		{ID: "kotlin-language-server", Name: "Kotlin Language Server", Languages: []string{"kotlin"}, Extensions: []string{".kt", ".kts"}, InstallType: "binary", InstallCmd: "Download from https://github.com/fwcd/kotlin-language-server/releases", BinaryName: "kotlin-language-server", CanInstall: false},
 		{ID: "graphql-lsp", Name: "GraphQL Language Server", Languages: []string{"graphql"}, Extensions: []string{".graphql", ".gql"}, InstallType: "npm", InstallCmd: "npm install -g graphql-language-service-cli", BinaryName: "graphql-lsp", CanInstall: true, Dependencies: []string{"node", "npm"}},
 		{ID: "terraform-ls", Name: "Terraform Language Server", Languages: []string{"terraform", "hcl"}, Extensions: []string{".tf", ".tfvars", ".hcl"}, InstallType: "binary", InstallCmd: "Download from https://releases.hashicorp.com/terraform-ls/", BinaryName: "terraform-ls", CanInstall: false},
@@ -136,6 +137,28 @@ func (i *Installer) registerServers() {
 	for _, s := range servers {
 		i.servers[s.ID] = s
 	}
+}
+
+func brewInstallableServer(id, name string, languages, extensions []string, formula, binaryName string) *LSPInfo {
+	info := &LSPInfo{
+		ID:         id,
+		Name:       name,
+		Languages:  languages,
+		Extensions: extensions,
+		InstallCmd: "brew install " + formula,
+		BinaryName: binaryName,
+	}
+
+	if runtime.GOOS == "darwin" {
+		info.InstallType = "brew"
+		info.CanInstall = true
+		info.Dependencies = []string{"brew"}
+		return info
+	}
+
+	info.InstallType = "system"
+	info.CanInstall = false
+	return info
 }
 
 func (i *Installer) GetLSPDir() string {
@@ -239,6 +262,8 @@ func (i *Installer) Install(ctx context.Context, id string) error {
 		err = i.installRustup(ctx, server)
 	case "gem":
 		err = i.installGem(ctx, server)
+	case "brew":
+		err = i.installBrew(ctx, server)
 	case "binary":
 		err = i.installBinary(ctx, server)
 	default:
@@ -357,6 +382,24 @@ func (i *Installer) installGem(ctx context.Context, server *LSPInfo) error {
 	return nil
 }
 
+func (i *Installer) installBrew(ctx context.Context, server *LSPInfo) error {
+	i.emitProgress(server.ID, "installing", 20, "Running brew install...", "")
+
+	parts := strings.Fields(server.InstallCmd)
+	if len(parts) < 3 || parts[0] != "brew" || parts[1] != "install" {
+		return fmt.Errorf("invalid brew install command")
+	}
+
+	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("brew install failed: %w\n%s", err, string(output))
+	}
+
+	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
+	return nil
+}
+
 func (i *Installer) installBinary(ctx context.Context, server *LSPInfo) error {
 	if server.DownloadURL == "" {
 		return fmt.Errorf("no download URL for %s", server.ID)
@@ -451,7 +494,10 @@ func (i *Installer) extractZip(src, dest string) error {
 	defer r.Close()
 
 	for _, f := range r.File {
-		path := filepath.Join(dest, f.Name)
+		path, err := safeExtractPath(dest, f.Name)
+		if err != nil {
+			return err
+		}
 
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(path, f.Mode())
@@ -506,7 +552,10 @@ func (i *Installer) extractTarGz(src, dest string) error {
 			return err
 		}
 
-		path := filepath.Join(dest, header.Name)
+		path, err := safeExtractPath(dest, header.Name)
+		if err != nil {
+			return err
+		}
 
 		switch header.Typeflag {
 		case tar.TypeDir:
@@ -601,6 +650,36 @@ func (i *Installer) emitProgressWithBytes(id, stage string, percent float64, mes
 			BytesDone:  done,
 		})
 	}
+}
+
+func safeExtractPath(dest, archivePath string) (string, error) {
+	normalized := strings.TrimSpace(strings.ReplaceAll(archivePath, "\\", "/"))
+	if normalized == "" {
+		return "", fmt.Errorf("archive path is empty")
+	}
+
+	cleaned := path.Clean(normalized)
+	if cleaned == "." || path.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("archive path escapes destination: %s", archivePath)
+	}
+
+	destAbs, err := filepath.Abs(dest)
+	if err != nil {
+		return "", err
+	}
+	targetAbs, err := filepath.Abs(filepath.Join(destAbs, filepath.FromSlash(cleaned)))
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(destAbs, targetAbs)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("archive path escapes destination: %s", archivePath)
+	}
+
+	return targetAbs, nil
 }
 
 func copyFile(src, dst string) error {
