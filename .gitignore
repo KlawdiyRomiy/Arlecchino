@@ -44,6 +44,7 @@ vendor/
 # Test artifacts
 test-results/
 playwright-report/
+.playwright-mcp/
 test-html.html
 
 # Debug screenshots
@@ -54,6 +55,11 @@ perspective-*.png
 # Legacy/scratch directories
 docs/*
 !docs/wails-v3-spike.md
+!docs/privacy-policy.md
+!docs/model-provenance.md
+!docs/lsp-supply-chain.md
+!docs/release-alpha-checklist.md
+!docs/trademark-clearance.md
 redesign/
 logo*/
 twitter_media/

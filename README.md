@@ -138,6 +138,10 @@ This is an **early technical alpha** path:
 - no notarization
 - no polished installer or DMG flow yet
 
+Unsigned local alpha bundles or DMGs may require macOS Privacy & Security ->
+Open Anyway. That is expected for this early alpha path until an Apple
+Developer signing and notarization flow exists.
+
 ### Build A Local Alpha Bundle
 
 ```bash
@@ -196,11 +200,34 @@ These stay outside the default alpha bootstrap:
 
 Some of these can still be installed later from Arlecchino's language server flows or manually through your own environment.
 
+See [docs/lsp-supply-chain.md](docs/lsp-supply-chain.md) for the language
+server and toolchain supply-chain policy.
+
 ### ONNX Runtime Note
 
 `onnxruntime` is **not** a hard blocker for starting Arlecchino.
 
 If it is missing, the app still boots and falls back away from the ONNX-backed path. Installing it simply gives the autocomplete stack access to the faster ML backend where available.
+
+The bundled ARLE model artifacts are tracked in
+[docs/model-provenance.md](docs/model-provenance.md). The alpha release keeps
+the model bundled for local autocomplete ranking; release gates and the
+remaining memorization check are recorded in that document.
+
+---
+
+## Privacy And Data
+
+Arlecchino's alpha builds are intended to run locally without analytics,
+accounts, or cloud AI enabled by default. Project indexes, workspace state, MCP
+audit logs, and editor/runtime state may be stored locally to support IDE
+features.
+
+See [docs/privacy-policy.md](docs/privacy-policy.md) for the alpha privacy
+policy and the release gate for future AI providers.
+
+See [docs/release-alpha-checklist.md](docs/release-alpha-checklist.md) for the
+source alpha and unsigned DMG release gates.
 
 ---
 
