@@ -210,6 +210,8 @@ export function IsLangDetectorLoaded():Promise<boolean>;
 
 export function IsLaravelProject(arg1:string):Promise<boolean>;
 
+export function IsNativeFullscreen():Promise<boolean>;
+
 export function LSPApplyWorkspaceEdit(arg1:main.LSPWorkspaceEdit):Promise<void>;
 
 export function LSPGetCodeActions(arg1:string,arg2:string,arg3:number,arg4:number):Promise<Array<main.LSPCodeAction>>;
@@ -322,9 +324,13 @@ export function StorageLink():Promise<string>;
 
 export function SuggestCommand(arg1:string):Promise<Array<main.CommandSuggestion>>;
 
+export function SyncApplicationMenuShortcuts(arg1:Array<main.ApplicationMenuShortcutPayload>):Promise<void>;
+
 export function SyncProjectDependencies(arg1:string):Promise<Record<string, string>>;
 
 export function Tinker():Promise<void>;
+
+export function ToggleNativeFullscreen():Promise<void>;
 
 export function TrashProjectEntry(arg1:string):Promise<void>;
 

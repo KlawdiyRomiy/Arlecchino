@@ -398,6 +398,10 @@ export function IsLaravelProject(arg1) {
   return window['go']['main']['App']['IsLaravelProject'](arg1);
 }
 
+export function IsNativeFullscreen() {
+  return window['go']['main']['App']['IsNativeFullscreen']();
+}
+
 export function LSPApplyWorkspaceEdit(arg1) {
   return window['go']['main']['App']['LSPApplyWorkspaceEdit'](arg1);
 }
@@ -622,12 +626,20 @@ export function SuggestCommand(arg1) {
   return window['go']['main']['App']['SuggestCommand'](arg1);
 }
 
+export function SyncApplicationMenuShortcuts(arg1) {
+  return window['go']['main']['App']['SyncApplicationMenuShortcuts'](arg1);
+}
+
 export function SyncProjectDependencies(arg1) {
   return window['go']['main']['App']['SyncProjectDependencies'](arg1);
 }
 
 export function Tinker() {
   return window['go']['main']['App']['Tinker']();
+}
+
+export function ToggleNativeFullscreen() {
+  return window['go']['main']['App']['ToggleNativeFullscreen']();
 }
 
 export function TrashProjectEntry(arg1) {

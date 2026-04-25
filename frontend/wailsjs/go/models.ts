@@ -574,6 +574,24 @@ export namespace lsp {
 
 export namespace main {
 	
+	export class ApplicationMenuShortcutPayload {
+	    actionId: string;
+	    label: string;
+	    group: string;
+	    shortcuts: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ApplicationMenuShortcutPayload(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.actionId = source["actionId"];
+	        this.label = source["label"];
+	        this.group = source["group"];
+	        this.shortcuts = source["shortcuts"];
+	    }
+	}
 	export class ClassResult {
 	    name: string;
 	    kind: string;
