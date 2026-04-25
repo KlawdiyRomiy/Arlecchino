@@ -20,6 +20,7 @@ import {
   preloadProjectDiagnostics,
   resetProjectBoundStores,
 } from "./utils/projectBoundState";
+import { useApplicationMenuBridge } from "./hooks/useApplicationMenuBridge";
 
 const buildScaledSurfaceStyle = (uiScale: number): React.CSSProperties => ({
   position: "absolute",
@@ -44,6 +45,8 @@ const appShellStyle: React.CSSProperties = {
 };
 
 const App: React.FC = () => {
+  useApplicationMenuBridge();
+
   const activeId = useWorkspaceStore((state) => state.activeId);
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const activeProject = useWorkspaceStore((state) =>

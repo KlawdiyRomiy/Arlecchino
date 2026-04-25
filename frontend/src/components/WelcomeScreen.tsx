@@ -4,8 +4,12 @@ import { FolderOpen, Loader2, Sparkles } from "lucide-react";
 
 import * as App from "../../wailsjs/go/main/App";
 import { shortcuts } from "../utils/keyboard";
+import { toggleWindowFullscreen } from "../utils/windowFullscreen";
 import { CreateProjectDialog } from "./CreateProjectDialog";
 import { WindowControls } from "./ui";
+
+const OPEN_PROJECT_EVENT = "arlecchino:open-project";
+const NEW_PROJECT_EVENT = "arlecchino:new-project";
 
 interface Project {
   id: number;
@@ -35,6 +39,12 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (shortcuts.toggleWindowFullscreen(event) && !showCreateDialog) {
+        event.preventDefault();
+        void toggleWindowFullscreen();
+        return;
+      }
+
       if (shortcuts.openProject(event) && !showCreateDialog) {
         event.preventDefault();
         void handleOpenProject();
@@ -47,8 +57,25 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
       }
     };
 
+    const handleOpenProjectEvent = () => {
+      if (!showCreateDialog) {
+        void handleOpenProject();
+      }
+    };
+
+    const handleNewProjectEvent = () => {
+      setShowCreateDialog(true);
+    };
+
     window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
+    window.addEventListener(OPEN_PROJECT_EVENT, handleOpenProjectEvent);
+    window.addEventListener(NEW_PROJECT_EVENT, handleNewProjectEvent);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener(OPEN_PROJECT_EVENT, handleOpenProjectEvent);
+      window.removeEventListener(NEW_PROJECT_EVENT, handleNewProjectEvent);
+    };
   }, [showCreateDialog]);
 
   const loadRecentProjects = async () => {

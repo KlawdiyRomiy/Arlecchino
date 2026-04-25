@@ -31,27 +31,29 @@ import (
 )
 
 type App struct {
-	ctx               context.Context
-	cmp               *composer.ComposerManager
-	sys               *system.SystemManager
-	projectManager    *project.ProjectManager
-	welcomeScreen     *welcome.WelcomeScreen
-	coreEngine        *core.Engine
-	brain             completionBrain
-	lspManager        *lsp.Manager
-	lspInstaller      *lspinstaller.Installer
-	plugins           *plugins.Registry
-	termManager       *terminal.Manager
-	carapaceProvider  *terminal.CarapaceProvider
-	executionService  *execution.Service
-	langDetector      *brain.LangDetector
-	projectPath       string
-	pathMu            sync.RWMutex
-	projectGeneration atomic.Uint64
-	lastRequestID     atomic.Value
-	mcpBridgeServer   *mcp.IDEBridgeServer
-	mcpBridgeMu       sync.Mutex
-	managerMu         sync.Mutex
+	ctx                context.Context
+	cmp                *composer.ComposerManager
+	sys                *system.SystemManager
+	projectManager     *project.ProjectManager
+	welcomeScreen      *welcome.WelcomeScreen
+	coreEngine         *core.Engine
+	brain              completionBrain
+	lspManager         *lsp.Manager
+	lspInstaller       *lspinstaller.Installer
+	plugins            *plugins.Registry
+	termManager        *terminal.Manager
+	carapaceProvider   *terminal.CarapaceProvider
+	executionService   *execution.Service
+	langDetector       *brain.LangDetector
+	projectPath        string
+	pathMu             sync.RWMutex
+	projectGeneration  atomic.Uint64
+	lastRequestID      atomic.Value
+	mcpBridgeServer    *mcp.IDEBridgeServer
+	mcpBridgeMu        sync.Mutex
+	shellMenuMu        sync.Mutex
+	shellMenuShortcuts map[string][]string
+	managerMu          sync.Mutex
 
 	projectCtx    context.Context
 	projectCancel context.CancelFunc

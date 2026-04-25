@@ -90,6 +90,7 @@ const shortcutGroups: Array<"All" | ShortcutGroup> = [
   "All",
   "Panels",
   "App",
+  "Window",
   "Editor",
   "Terminal",
 ];
@@ -218,6 +219,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       return haystack.includes(query);
     });
   }, [overrides, shortcutGroup, shortcutQuery]);
+
+  useEffect(() => {
+    if (recordingActionId) {
+      document.body.dataset.shortcutRecording = "true";
+      return () => {
+        delete document.body.dataset.shortcutRecording;
+      };
+    }
+
+    delete document.body.dataset.shortcutRecording;
+  }, [recordingActionId]);
 
   useEffect(() => {
     if (!recordingActionId) {

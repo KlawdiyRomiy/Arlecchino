@@ -64,8 +64,11 @@ const CODE_TO_KEY: Record<string, string> = {
   Delete: "delete",
 };
 
-const MODIFIER_ORDER = ["cmd", "ctrl", "alt", "shift"] as const;
+const MODIFIER_ORDER = ["fn", "cmd", "ctrl", "alt", "shift"] as const;
 const MODIFIER_ALIASES: Record<string, ShortcutModifier> = {
+  fn: "fn",
+  function: "fn",
+  globe: "fn",
   cmd: "cmd",
   command: "cmd",
   meta: "cmd",
@@ -80,6 +83,8 @@ const MODIFIER_KEYS = new Set([
   "alt",
   "control",
   "ctrl",
+  "fn",
+  "function",
   "meta",
   "option",
   "shift",
@@ -89,7 +94,7 @@ export const KEYBINDINGS_STORAGE_KEY = "keybindings-settings.v1";
 
 export type ShortcutModifier = (typeof MODIFIER_ORDER)[number];
 export type ShortcutScope = "global" | "terminal";
-export type ShortcutGroup = "Panels" | "App" | "Editor" | "Terminal";
+export type ShortcutGroup = "Panels" | "App" | "Window" | "Editor" | "Terminal";
 
 export type ShortcutActionId =
   | "search.toggle"
@@ -103,9 +108,11 @@ export type ShortcutActionId =
   | "git.fullscreen"
   | "problems.toggle"
   | "problems.fullscreen"
+  | "panel.closeFullscreen"
   | "terminal.toggle"
   | "ai.toggle"
   | "settings.toggle"
+  | "window.toggleFullscreen"
   | "browser.preview"
   | "editor.save"
   | "editor.closeTab"
@@ -169,7 +176,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Open or close the compact Problems panel.",
     group: "Panels",
     scope: "global",
-    defaultShortcuts: ["cmd+p"],
+    defaultShortcuts: ["cmd+i"],
   },
   {
     id: "problems.fullscreen",
@@ -177,7 +184,16 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Open Problems in fullscreen mode or restore it.",
     group: "Panels",
     scope: "global",
-    defaultShortcuts: ["cmd+shift+p"],
+    defaultShortcuts: ["cmd+shift+i"],
+  },
+  {
+    id: "panel.closeFullscreen",
+    label: "Close fullscreen panel",
+    description:
+      "Close the active fullscreen Git, Problems, or Terminal panel.",
+    group: "Panels",
+    scope: "global",
+    defaultShortcuts: ["option+w"],
   },
   {
     id: "ai.toggle",
@@ -193,7 +209,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Open or close the terminal panel.",
     group: "Panels",
     scope: "global",
-    defaultShortcuts: ["ctrl+`"],
+    defaultShortcuts: ["cmd+j"],
   },
   {
     id: "browser.preview",
@@ -201,7 +217,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Open browser preview for the active context.",
     group: "Panels",
     scope: "global",
-    defaultShortcuts: ["cmd+shift+b"],
+    defaultShortcuts: ["cmd+b"],
   },
   {
     id: "search.toggle",
@@ -218,6 +234,14 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     group: "App",
     scope: "global",
     defaultShortcuts: ["cmd+,", "ctrl+,"],
+  },
+  {
+    id: "window.toggleFullscreen",
+    label: "Enter Full Screen",
+    description: "Enter or exit macOS full screen mode.",
+    group: "Window",
+    scope: "global",
+    defaultShortcuts: ["fn+f"],
   },
   {
     id: "project.open",
@@ -554,6 +578,7 @@ export const eventToShortcut = (event: KeyboardEvent): string | null => {
   }
 
   const modifiers: ShortcutModifier[] = [];
+  if (hasFnModifier(event)) modifiers.push("fn");
   if (event.metaKey) modifiers.push("cmd");
   if (event.ctrlKey) modifiers.push("ctrl");
   if (event.altKey) modifiers.push("alt");
@@ -574,13 +599,16 @@ export const isShortcutEvent = (
 
   const needs = new Set(parsed.modifiers);
   const exact = options.exact ?? true;
+  const fnActive = hasFnModifier(event);
 
   if (exact) {
+    if (fnActive !== needs.has("fn")) return false;
     if (event.metaKey !== needs.has("cmd")) return false;
     if (event.ctrlKey !== needs.has("ctrl")) return false;
     if (event.altKey !== needs.has("alt")) return false;
     if (event.shiftKey !== needs.has("shift")) return false;
   } else {
+    if (needs.has("fn") && !fnActive) return false;
     if (needs.has("cmd") && !event.metaKey) return false;
     if (needs.has("ctrl") && !event.ctrlKey) return false;
     if (needs.has("alt") && !event.altKey) return false;
@@ -606,9 +634,10 @@ export const formatShortcut = (shortcut: string): string => {
   }
 
   const labelMap: Record<string, string> = {
+    fn: "fn",
     cmd: "cmd",
     ctrl: "ctrl",
-    alt: "alt",
+    alt: "option",
     shift: "shift",
     " ": "space",
   };
@@ -630,6 +659,14 @@ export function getPhysicalKey(e: KeyboardEvent): string {
   // Fallback to key for special keys
   return e.key.toLowerCase();
 }
+
+const hasFnModifier = (event: KeyboardEvent): boolean => {
+  try {
+    return event.getModifierState("Fn");
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Check if a specific key was pressed (layout-independent)
@@ -664,6 +701,7 @@ export function isShortcut(e: KeyboardEvent, shortcut: string): boolean {
     if (needsCtrl && !e.ctrlKey) return false;
   }
 
+  if (modifiers.includes("fn") && !hasFnModifier(e)) return false;
   if (needsShift && !e.shiftKey) return false;
   if (needsAlt && !e.altKey) return false;
 
@@ -697,6 +735,8 @@ export const shortcuts = {
   toggleAI: (e: KeyboardEvent) => matchesActionShortcut(e, "ai.toggle"),
   toggleSettings: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "settings.toggle"),
+  toggleWindowFullscreen: (e: KeyboardEvent) =>
+    matchesActionShortcut(e, "window.toggleFullscreen"),
   toggleGit: (e: KeyboardEvent) => matchesActionShortcut(e, "git.toggle"),
   toggleGitFullscreen: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "git.fullscreen"),
@@ -704,6 +744,8 @@ export const shortcuts = {
     matchesActionShortcut(e, "problems.toggle"),
   toggleProblemsFullscreen: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "problems.fullscreen"),
+  closeFullscreenPanel: (e: KeyboardEvent) =>
+    matchesActionShortcut(e, "panel.closeFullscreen"),
   copyProjectPath: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "project.copyPath"),
   openBrowserPreview: (e: KeyboardEvent) =>
@@ -750,6 +792,8 @@ export const shortcuts = {
   escape: (e: KeyboardEvent) => isKey(e, "escape"),
   enter: (e: KeyboardEvent) => isKey(e, "enter"),
   tab: (e: KeyboardEvent) => isKey(e, "tab"),
+  arrowLeft: (e: KeyboardEvent) => isKey(e, "arrowleft"),
+  arrowRight: (e: KeyboardEvent) => isKey(e, "arrowright"),
   arrowUp: (e: KeyboardEvent) => isKey(e, "arrowup"),
   arrowDown: (e: KeyboardEvent) => isKey(e, "arrowdown"),
 

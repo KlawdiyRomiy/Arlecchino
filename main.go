@@ -68,6 +68,7 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
+		Menu:             app.buildApplicationMenu(nil),
 		BackgroundColour: &options.RGBA{R: 10, G: 10, B: 10, A: 0},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,

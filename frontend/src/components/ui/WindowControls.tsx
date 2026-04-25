@@ -1,14 +1,13 @@
 import React, { useCallback } from "react";
-import {
-  Quit,
-  WindowMinimise,
-  WindowToggleMaximise,
-} from "../../../wailsjs/runtime/runtime";
+import { Quit, WindowMinimise } from "../../../wailsjs/runtime/runtime";
+import { toggleWindowFullscreen } from "../../utils/windowFullscreen";
 
 export const WindowControls: React.FC = () => {
   const handleClose = useCallback(() => Quit(), []);
   const handleMinimize = useCallback(() => WindowMinimise(), []);
-  const handleMaximize = useCallback(() => WindowToggleMaximise(), []);
+  const handleFullscreen = useCallback(() => {
+    void toggleWindowFullscreen();
+  }, []);
 
   return (
     <div
@@ -27,9 +26,9 @@ export const WindowControls: React.FC = () => {
           title="Minimize"
         />
         <button
-          onClick={handleMaximize}
+          onClick={handleFullscreen}
           className="h-[13px] w-[13px] rounded-full bg-[#474747] transition-colors hover:bg-[#28c840]"
-          title="Maximize"
+          title="Full Screen"
         />
       </div>
     </div>
