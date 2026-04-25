@@ -23,7 +23,7 @@ func (r *ActionRegistry) registerDefaults() {
 		{Name: "Open file explorer", Description: "Show file explorer", Icon: "folder", Handler: "panel.explorer"},
 		{Name: "Open search", Description: "Open search panel", Icon: "search", Handler: "panel.search"},
 
-		{Name: "Toggle sidebar", Description: "Show/hide sidebar", Icon: "sidebar", Handler: "toggle.sidebar", Keybinding: "cmd+b"},
+		{Name: "Toggle sidebar", Description: "Show/hide sidebar", Icon: "sidebar", Handler: "toggle.sidebar", Keybinding: "cmd+e"},
 		{Name: "Toggle terminal", Description: "Show/hide terminal", Icon: "terminal", Handler: "toggle.terminal", Keybinding: "cmd+`"},
 		{Name: "Toggle AI", Description: "Show/hide AI panel", Icon: "sparkles", Handler: "toggle.ai", Keybinding: "cmd+r"},
 
@@ -57,7 +57,7 @@ func (r *ActionRegistry) registerDefaults() {
 		{Name: "Git push", Description: "Push to remote", Icon: "upload", Handler: "git.push"},
 		{Name: "Git pull", Description: "Pull from remote", Icon: "download", Handler: "git.pull"},
 
-		{Name: "Open preview", Description: "Open browser preview window", Icon: "globe", Handler: "preview.open"},
+		{Name: "Open preview", Description: "Open browser preview window", Icon: "globe", Handler: "preview.open", Keybinding: "cmd+b"},
 		{Name: "Focus preview", Description: "Focus browser preview window", Icon: "focus", Handler: "preview.focus"},
 		{Name: "Close preview", Description: "Close browser preview window", Icon: "x-circle", Handler: "preview.close"},
 	}

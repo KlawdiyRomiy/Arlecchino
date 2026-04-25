@@ -95,10 +95,10 @@ func (s *SearchEngine) SearchFiles(pattern string) []ResultItem {
 
 func (s *SearchEngine) SearchContent(query string, caseSensitive bool) []ResultItem {
 	if s.projectPath == "" || query == "" {
-		return nil
+		return []ResultItem{}
 	}
 
-	var results []ResultItem
+	results := make([]ResultItem, 0)
 
 	searchableExts := map[string]bool{
 		".go": true, ".js": true, ".ts": true, ".tsx": true, ".jsx": true,
@@ -107,6 +107,14 @@ func (s *SearchEngine) SearchContent(query string, caseSensitive bool) []ResultI
 		".vue": true, ".svelte": true, ".html": true, ".css": true,
 		".scss": true, ".json": true, ".yaml": true, ".yml": true,
 		".md": true, ".txt": true, ".sql": true, ".sh": true,
+	}
+	searchableNames := map[string]bool{
+		"dockerfile": true,
+		"gemfile":    true,
+		"justfile":   true,
+		"makefile":   true,
+		"procfile":   true,
+		"rakefile":   true,
 	}
 
 	excludeDirs := map[string]bool{
@@ -134,7 +142,7 @@ func (s *SearchEngine) SearchContent(query string, caseSensitive bool) []ResultI
 		}
 
 		ext := strings.ToLower(filepath.Ext(path))
-		if !searchableExts[ext] {
+		if !searchableExts[ext] && !searchableNames[strings.ToLower(info.Name())] {
 			return nil
 		}
 
