@@ -344,7 +344,9 @@ const FileRow = React.memo<FileRowProps>(
       return row;
     }
 
-    return <ContextActionMenu items={contextMenuItems}>{row}</ContextActionMenu>;
+    return (
+      <ContextActionMenu items={contextMenuItems}>{row}</ContextActionMenu>
+    );
   },
 );
 
@@ -526,6 +528,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       loading: state.loading,
       busy: state.busy,
       error: state.error,
+      isRepositoryMissing: state.isRepositoryMissing,
       branch: state.branch,
       branches: state.branches,
       remotes: state.remotes,
@@ -546,6 +549,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       stageAll: state.stageAll,
       unstageAll: state.unstageAll,
       discardFile: state.discardFile,
+      initializeRepository: state.initializeRepository,
       commit: state.commit,
       switchBranch: state.switchBranch,
       createBranch: state.createBranch,
@@ -617,6 +621,8 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     git.unstagedFiles.length +
     git.conflictedFiles.length;
   const humanError = toHumanError(git.error) || localError;
+  const showInitializeRepository = git.isRepositoryMissing;
+  const visibleError = showInitializeRepository ? localError : humanError;
 
   const panelVars = useMemo(
     () =>
@@ -712,6 +718,15 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       setShowBranchDropdown(false);
     });
   }, [git, newBranchName, withErrorGuard]);
+
+  const handleInitializeRepository = useCallback(async () => {
+    await withErrorGuard(async () => {
+      await git.initializeRepository();
+      setDetailOpen(false);
+      setDiffState(null);
+      setSelectedPath(null);
+    });
+  }, [git, withErrorGuard]);
 
   const handleCreateStash = useCallback(async () => {
     await withErrorGuard(async () => {
@@ -1326,7 +1341,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   );
 
   const renderDetailTabs = (): React.ReactNode => (
-    <div className="shell-mini-x-scroll w-full min-w-0 overflow-x-scroll overflow-y-hidden pb-1">
+    <div className="shell-mini-x-scroll w-full min-w-0 overflow-x-auto overflow-y-hidden">
       <div className="shell-cluster-soft inline-flex min-w-max px-1.5 py-1">
         {detailTabs.map(([value, label, Icon]) => (
           <button
@@ -1585,6 +1600,41 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     );
   };
 
+  const renderInitializeRepositoryState = (): React.ReactNode => (
+    <div
+      data-testid="git-init-empty-state"
+      className="flex h-full min-h-0 flex-1 items-center justify-center bg-[var(--git-bg-tertiary)] px-6 text-center"
+    >
+      <div className="flex w-full max-w-[360px] flex-col items-center gap-4">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-[var(--git-border)] bg-[var(--git-surface)] text-[var(--git-text-secondary)] shadow-[var(--git-surface-shadow)]">
+          <FolderGit2 size={22} />
+        </div>
+        <div className="space-y-2">
+          <div className="text-[15px] font-semibold text-[var(--git-text)]">
+            It's not a Git repository.
+          </div>
+          <div className="text-[12px] leading-5 text-[var(--git-text-secondary)]">
+            Want to initialize Git?
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleInitializeRepository()}
+          disabled={git.busy}
+          className="shell-control h-11 justify-center gap-2 rounded-full px-5 text-[13px] font-medium text-[var(--git-text)] hover:border-[var(--status-success)] hover:text-[var(--status-success)] disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <Plus size={15} className="text-[var(--status-success)]" />
+          {git.busy ? "Initializing..." : "Initialize Git"}
+        </button>
+        {localError && (
+          <div className="max-w-full rounded-[18px] border border-[color:var(--status-error)]/30 bg-[color:var(--status-error)]/10 px-3 py-2 text-[11px] leading-4 text-[var(--git-text)]">
+            {localError}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   const renderDetailWorkspace = (
     showCloseButton: boolean,
     testId: string,
@@ -1650,7 +1700,9 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       style={panelVars}
       className="relative flex h-full min-h-0 flex-col bg-[var(--git-bg)] text-[var(--git-text)]"
     >
-      {isExpanded ? (
+      {showInitializeRepository ? (
+        renderInitializeRepositoryState()
+      ) : isExpanded ? (
         <div className="min-h-0 flex-1 overflow-hidden px-4 py-4">
           <div
             data-testid="git-expanded-workspace"
@@ -1702,13 +1754,13 @@ export const GitPanel: React.FC<GitPanelProps> = ({
         </>
       )}
 
-      {humanError && (
+      {!showInitializeRepository && visibleError && (
         <div className="border-t border-[var(--git-border)] bg-[color:var(--status-error)]/10 px-3 py-2 text-[11px] text-[var(--git-text)]">
-          {humanError}
+          {visibleError}
         </div>
       )}
 
-      {!isExpanded && (
+      {!isExpanded && !showInitializeRepository && (
         <div
           aria-hidden={!detailOpen}
           data-testid="git-compact-detail-overlay"

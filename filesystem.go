@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	gitFieldSeparator  = "\x00"
+	gitFieldSeparator  = "\x1f"
 	gitRecordSeparator = "\x1e"
 )
 
@@ -26,6 +26,7 @@ var gitAllowedSubcommands = map[string]struct{}{
 	"commit":       {},
 	"diff":         {},
 	"fetch":        {},
+	"init":         {},
 	"log":          {},
 	"pull":         {},
 	"push":         {},
@@ -55,6 +56,38 @@ func gitCommandTimeout(args []string) time.Duration {
 	default:
 		return 15 * time.Second
 	}
+}
+
+func projectGitMetadataExists(projectPath string) bool {
+	if projectPath == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, ".git")); err == nil {
+		return true
+	}
+	return false
+}
+
+func projectIsInsideGitWorkTree(projectPath string) bool {
+	if projectPath == "" {
+		return false
+	}
+	cmd := exec.Command("git", "-C", projectPath, "rev-parse", "--is-inside-work-tree")
+	output, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(output)) == "true"
+}
+
+func validateGitInitAllowed(projectPath string, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("git init only supports default initialization")
+	}
+	if projectGitMetadataExists(projectPath) {
+		return fmt.Errorf("git metadata already exists")
+	}
+	if projectIsInsideGitWorkTree(projectPath) {
+		return fmt.Errorf("project is already inside a git repository")
+	}
+	return nil
 }
 
 type FileEntry struct {
@@ -697,6 +730,11 @@ func (a *App) RunGitCommand(args []string) (string, error) {
 	if _, ok := gitAllowedSubcommands[args[0]]; !ok {
 		return "", fmt.Errorf("git command not allowed: %s", args[0])
 	}
+	if args[0] == "init" {
+		if err := validateGitInitAllowed(projectPath, args); err != nil {
+			return "", err
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout(args))
 	defer cancel()
@@ -720,6 +758,9 @@ func (a *App) RunGitCommand(args []string) (string, error) {
 
 		normalized := strings.ToLower(errText)
 		if strings.Contains(normalized, "not a git repository") {
+			if projectGitMetadataExists(projectPath) {
+				return "", fmt.Errorf("invalid git repository")
+			}
 			return "", fmt.Errorf("not a git repository")
 		}
 

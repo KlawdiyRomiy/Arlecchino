@@ -39,6 +39,7 @@ interface GitStoreState {
   loading: boolean;
   busy: boolean;
   error: string | null;
+  isRepositoryMissing: boolean;
   expanded: boolean;
   branch: GitBranchInfo;
   branches: string[];
@@ -67,6 +68,7 @@ interface GitStoreState {
   stageAll: () => Promise<void>;
   unstageAll: () => Promise<void>;
   discardFile: (path: string) => Promise<void>;
+  initializeRepository: () => Promise<void>;
   commit: (message: string) => Promise<void>;
   switchBranch: (branch: string) => Promise<void>;
   createBranch: (name: string, fromBranch?: string) => Promise<void>;
@@ -97,6 +99,9 @@ const toErrorMessage = (error: unknown): string => {
   }
   return String(error);
 };
+
+const isMissingRepositoryError = (error: unknown): boolean =>
+  toErrorMessage(error).toLowerCase().includes("not a git repository");
 
 const dedupeAndSortFiles = (files: GitFileEntry[]): GitFileEntry[] => {
   const seen = new Map<string, GitFileEntry>();
@@ -164,7 +169,9 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
 
   const shouldRefreshForPath = (value: string): boolean => {
     const activeProject = get().projectPath;
-    return activeProject === projectPath && isSameOrChildPath(value, projectPath);
+    return (
+      activeProject === projectPath && isSameOrChildPath(value, projectPath)
+    );
   };
 
   const shouldRefreshForEvent = (value: unknown): boolean => {
@@ -261,7 +268,10 @@ const executeGitAction = async (
     await action();
     await Promise.all([get().refresh(), get().loadStashes()]);
   } catch (error) {
-    set({ error: toErrorMessage(error) });
+    set({
+      error: toErrorMessage(error),
+      isRepositoryMissing: isMissingRepositoryError(error),
+    });
     throw error;
   } finally {
     set({ busy: false });
@@ -273,6 +283,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   loading: false,
   busy: false,
   error: null,
+  isRepositoryMissing: false,
   expanded: false,
   branch: emptyBranchInfo(),
   branches: [],
@@ -313,6 +324,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
       stashEntries: [],
       stashLoading: false,
       error: null,
+      isRepositoryMissing: false,
       fileMarkers: {},
       markerUpdatedAt: {},
       markerLoading: {},
@@ -335,6 +347,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     if (!projectPath) {
       set({
         error: "No project open",
+        isRepositoryMissing: false,
         branch: emptyBranchInfo(),
         branches: [],
         remotes: [],
@@ -398,6 +411,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
 
       set({
         loading: false,
+        isRepositoryMissing: false,
         branch: parsed.branch,
         branches: Array.from(new Set(branchList)),
         remotes,
@@ -410,6 +424,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
       set({
         loading: false,
         error: toErrorMessage(error),
+        isRepositoryMissing: isMissingRepositoryError(error),
         branch: emptyBranchInfo(),
         branches: [],
         remotes: [],
@@ -461,7 +476,11 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
 
       set({ stashEntries: parseStashEntries(output), stashLoading: false });
     } catch (error) {
-      set({ stashLoading: false, error: toErrorMessage(error) });
+      set({
+        stashLoading: false,
+        error: toErrorMessage(error),
+        isRepositoryMissing: isMissingRepositoryError(error),
+      });
     }
   },
 
@@ -505,6 +524,12 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
         "--",
         normalizePathForGit(get().projectPath, path),
       ]).then(() => undefined),
+    );
+  },
+
+  initializeRepository: async () => {
+    await executeGitAction(get, set, () =>
+      RunGitCommand(["init"]).then(() => undefined),
     );
   },
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -183,5 +184,129 @@ func TestTrashProjectEntry_EmitsDeletedEvent(t *testing.T) {
 	}
 	if payload.Path != filePath || payload.IsDirectory {
 		t.Fatalf("unexpected delete payload: %#v", payload)
+	}
+}
+
+func runGitForFilesystemTest(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git is unavailable: %v", err)
+	}
+
+	fullArgs := append([]string{"-C", dir}, args...)
+	cmd := exec.Command("git", fullArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v error = %v\n%s", args, err, output)
+	}
+	return string(output)
+}
+
+func createGitRepoForFilesystemTest(t *testing.T) string {
+	t.Helper()
+
+	repo := t.TempDir()
+	runGitForFilesystemTest(t, repo, "init")
+	runGitForFilesystemTest(t, repo, "config", "user.email", "test@example.com")
+	runGitForFilesystemTest(t, repo, "config", "user.name", "Test User")
+	runGitForFilesystemTest(t, repo, "config", "commit.gpgsign", "false")
+
+	readmePath := filepath.Join(repo, "README.md")
+	if err := os.WriteFile(readmePath, []byte("# Test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(README.md) error = %v", err)
+	}
+	runGitForFilesystemTest(t, repo, "add", "README.md")
+	runGitForFilesystemTest(t, repo, "commit", "-m", "initial commit")
+
+	return repo
+}
+
+func TestRunGitCommandStatus(t *testing.T) {
+	repo := createGitRepoForFilesystemTest(t)
+	app := &App{}
+	app.setProjectPath(repo)
+
+	output, err := app.RunGitCommand([]string{"status", "--short"})
+	if err != nil {
+		t.Fatalf("RunGitCommand(status --short) error = %v", err)
+	}
+	if strings.TrimSpace(output) != "" {
+		t.Fatalf("RunGitCommand(status --short) = %q, want clean output", output)
+	}
+}
+
+func TestRunGitCommandInitInitializesEmptyProject(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git is unavailable: %v", err)
+	}
+
+	projectDir := t.TempDir()
+	app := &App{}
+	app.setProjectPath(projectDir)
+
+	if _, err := app.RunGitCommand([]string{"init"}); err != nil {
+		t.Fatalf("RunGitCommand(init) error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".git")); err != nil {
+		t.Fatalf(".git metadata missing after init: %v", err)
+	}
+}
+
+func TestRunGitCommandInitRejectsExistingRepository(t *testing.T) {
+	repo := createGitRepoForFilesystemTest(t)
+	app := &App{}
+	app.setProjectPath(repo)
+
+	_, err := app.RunGitCommand([]string{"init"})
+	if err == nil {
+		t.Fatal("RunGitCommand(init) error = nil, want existing repository error")
+	}
+	if !strings.Contains(err.Error(), "git metadata already exists") {
+		t.Fatalf("RunGitCommand(init) error = %v, want git metadata already exists", err)
+	}
+}
+
+func TestRunGitCommandStatusDistinguishesInvalidGitMetadata(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git is unavailable: %v", err)
+	}
+
+	projectDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(projectDir, ".git"), 0o755); err != nil {
+		t.Fatalf("Mkdir(.git) error = %v", err)
+	}
+	app := &App{}
+	app.setProjectPath(projectDir)
+
+	_, err := app.RunGitCommand([]string{"status", "--short"})
+	if err == nil {
+		t.Fatal("RunGitCommand(status) error = nil, want invalid git repository")
+	}
+	if !strings.Contains(err.Error(), "invalid git repository") {
+		t.Fatalf("RunGitCommand(status) error = %v, want invalid git repository", err)
+	}
+}
+
+func TestGetGitLogParsesCommits(t *testing.T) {
+	repo := createGitRepoForFilesystemTest(t)
+	app := &App{}
+	app.setProjectPath(repo)
+
+	commits, err := app.GetGitLog(5, "")
+	if err != nil {
+		t.Fatalf("GetGitLog() error = %v", err)
+	}
+	if len(commits) != 1 {
+		t.Fatalf("GetGitLog() len = %d, want 1", len(commits))
+	}
+	commit := commits[0]
+	if commit.Hash == "" || commit.ShortHash == "" {
+		t.Fatalf("GetGitLog() missing hashes: %#v", commit)
+	}
+	if commit.Author != "Test User" || commit.AuthorEmail != "test@example.com" {
+		t.Fatalf("GetGitLog() author = %q <%s>, want Test User <test@example.com>", commit.Author, commit.AuthorEmail)
+	}
+	if commit.Subject != "initial commit" {
+		t.Fatalf("GetGitLog() subject = %q, want initial commit", commit.Subject)
 	}
 }

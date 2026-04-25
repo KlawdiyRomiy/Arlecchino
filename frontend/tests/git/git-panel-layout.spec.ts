@@ -1,5 +1,20 @@
 import { expect, test } from "@playwright/test";
 
+type GitPanelFixture = {
+  missing: boolean;
+  statusV2: string;
+  statusV1: string;
+  branch: string;
+  branches: string[];
+  remoteOutput: string;
+};
+
+declare global {
+  interface Window {
+    __gitPanelFixture?: GitPanelFixture;
+  }
+}
+
 const openGitPanel = async (
   page: Parameters<typeof test>[0]["page"],
 ): Promise<void> => {
@@ -21,6 +36,19 @@ const installBaseBridges = async (
 ): Promise<void> => {
   await page.addInitScript(() => {
     localStorage.clear();
+
+    const defaultGitFixture: GitPanelFixture = {
+      missing: false,
+      statusV2: "",
+      statusV1: "",
+      branch: "feature/bubble-git-panel",
+      branches: ["feature/bubble-git-panel", "main"],
+      remoteOutput: "",
+    };
+    window.__gitPanelFixture = defaultGitFixture;
+
+    const getGitFixture = (): GitPanelFixture =>
+      window.__gitPanelFixture ?? defaultGitFixture;
 
     const appBridge = new Proxy(
       {},
@@ -44,11 +72,20 @@ const installBaseBridges = async (
               case "ListFiles":
                 return [];
               case "GetGitStatus":
-                return "";
+                if (getGitFixture().missing) {
+                  throw new Error("not a git repository");
+                }
+                return getGitFixture().statusV1;
               case "GetGitBranch":
-                return "feature/bubble-git-panel";
+                if (getGitFixture().missing) {
+                  throw new Error("not a git repository");
+                }
+                return getGitFixture().branch;
               case "GetGitBranches":
-                return ["feature/bubble-git-panel", "main"];
+                if (getGitFixture().missing) {
+                  throw new Error("not a git repository");
+                }
+                return getGitFixture().branches;
               case "GetGitLog":
                 return [];
               case "GetGitDiff":
@@ -65,8 +102,27 @@ const installBaseBridges = async (
                 ].join("\n");
               case "GetGitCommitDiff":
                 return "diff --git a/file b/file\n@@ -1 +1 @@\n-old\n+new";
-              case "RunGitCommand":
+              case "RunGitCommand": {
+                const args = (_args[0] ?? []) as string[];
+                const fixture = getGitFixture();
+                if (args[0] === "init") {
+                  window.__gitPanelFixture = {
+                    ...defaultGitFixture,
+                    remoteOutput: fixture.remoteOutput,
+                  };
+                  return "Initialized empty Git repository";
+                }
+                if (fixture.missing) {
+                  throw new Error("not a git repository");
+                }
+                if (args[0] === "status") {
+                  return fixture.statusV2;
+                }
+                if (args[0] === "remote") {
+                  return fixture.remoteOutput;
+                }
                 return "";
+              }
               default:
                 return null;
             }
@@ -173,6 +229,12 @@ const nextAnimationFrame = async (
   );
 };
 
+const waitForGitPanelInitialRefresh = async (
+  page: Parameters<typeof test>[0]["page"],
+): Promise<void> => {
+  await expect(page.getByText("Working tree is clean.")).toBeVisible();
+};
+
 const readPanelFrame = async (
   page: Parameters<typeof test>[0]["page"],
   selector: string,
@@ -210,111 +272,66 @@ const readPanelFrame = async (
 const seedGitState = async (
   page: Parameters<typeof test>[0]["page"],
 ): Promise<void> => {
-  await page.evaluate(async () => {
-    const { useGitStore } = await import("/src/stores/gitStore.ts");
-
-    useGitStore.setState({
-      projectPath: "/workspace",
-      loading: false,
-      busy: false,
-      error: null,
-      branch: {
-        current: "feature/bubble-git-panel",
-        upstream: "origin/feature/bubble-git-panel",
-        ahead: 2,
-        behind: 1,
-        detached: false,
-        oid: "1234567",
-      },
+  await page.evaluate(() => {
+    window.__gitPanelFixture = {
+      missing: false,
+      branch: "feature/bubble-git-panel",
       branches: ["feature/bubble-git-panel", "main"],
-      remotes: ["origin"],
-      selectedRemote: "origin",
-      stagedFiles: [
-        {
-          path: "frontend/src/components/GitPanel.tsx",
-          status: "modified",
-          staged: true,
-          indexStatus: "M",
-          workTreeStatus: " ",
-        },
-        {
-          path: "frontend/src/components/gitPanelStyles.ts",
-          status: "added",
-          staged: true,
-          indexStatus: "A",
-          workTreeStatus: " ",
-        },
-      ],
-      unstagedFiles: [
-        {
-          path: "frontend/src/components/layout/MainLayout.tsx",
-          status: "modified",
-          staged: false,
-          indexStatus: " ",
-          workTreeStatus: "M",
-        },
-        {
-          path: "frontend/src/components/ui/FloatingPanel.tsx",
-          status: "modified",
-          staged: false,
-          indexStatus: " ",
-          workTreeStatus: "M",
-        },
-      ],
-      conflictedFiles: [],
-      historyCommits: [],
-      historyLoading: false,
-      stashEntries: [],
-      stashLoading: false,
-    });
+      remoteOutput: "origin",
+      statusV1: "",
+      statusV2: [
+        "# branch.oid 1234567",
+        "# branch.head feature/bubble-git-panel",
+        "# branch.upstream origin/feature/bubble-git-panel",
+        "# branch.ab +2 -1",
+        "1 M. N... 100644 100644 100644 abc abc frontend/src/components/GitPanel.tsx",
+        "1 A. N... 000000 100644 100644 000 abc frontend/src/components/gitPanelStyles.ts",
+        "1 .M N... 100644 100644 100644 abc abc frontend/src/components/layout/MainLayout.tsx",
+        "1 .M N... 100644 100644 100644 abc abc frontend/src/components/ui/FloatingPanel.tsx",
+      ].join("\n"),
+    };
   });
+  await page.getByTitle("Refresh status").click();
 };
 
 const seedLargeGitState = async (
   page: Parameters<typeof test>[0]["page"],
 ): Promise<void> => {
-  await page.evaluate(async () => {
-    const { useGitStore } = await import("/src/stores/gitStore.ts");
-
+  await page.evaluate(() => {
     const makeEntries = (
       prefix: string,
       count: number,
       status: "conflicted" | "modified" | "added",
       staged: boolean,
-    ) =>
-      Array.from({ length: count }, (_value, index) => ({
-        path: `.arlecchino/${prefix}-${String(index).padStart(2, "0")}.txt`,
-        status,
-        staged,
-        indexStatus: staged ? "M" : " ",
-        workTreeStatus: staged ? " " : "M",
-      }));
+    ): string[] =>
+      Array.from({ length: count }, (_value, index) => {
+        const path = `.arlecchino/${prefix}-${String(index).padStart(2, "0")}.txt`;
+        if (status === "conflicted") {
+          return `u UU N... 100644 100644 100644 100644 a b c d ${path}`;
+        }
+        return staged
+          ? `1 M. N... 100644 100644 100644 abc abc ${path}`
+          : `1 .M N... 100644 100644 100644 abc abc ${path}`;
+      });
 
-    useGitStore.setState({
-      projectPath: "/workspace",
-      loading: false,
-      busy: false,
-      error: null,
-      branch: {
-        current: "main",
-        upstream: "origin/main",
-        ahead: 0,
-        behind: 0,
-        detached: false,
-        oid: "7654321",
-      },
+    window.__gitPanelFixture = {
+      missing: false,
+      branch: "main",
       branches: ["main", "feature/bubble-git-panel"],
-      remotes: ["origin"],
-      selectedRemote: "origin",
-      stagedFiles: makeEntries("staged", 12, "modified", true),
-      unstagedFiles: makeEntries("working-tree", 12, "modified", false),
-      conflictedFiles: makeEntries("conflict", 28, "conflicted", false),
-      historyCommits: [],
-      historyLoading: false,
-      stashEntries: [],
-      stashLoading: false,
-    });
+      remoteOutput: "origin",
+      statusV1: "",
+      statusV2: [
+        "# branch.oid 7654321",
+        "# branch.head main",
+        "# branch.upstream origin/main",
+        "# branch.ab +0 -0",
+        ...makeEntries("staged", 12, "modified", true),
+        ...makeEntries("working-tree", 12, "modified", false),
+        ...makeEntries("conflict", 28, "conflicted", false),
+      ].join("\n"),
+    };
   });
+  await page.getByTitle("Refresh status").click();
 };
 
 test("git panel stays compact by default and expands into split fullscreen workspace", async ({
@@ -327,6 +344,7 @@ test("git panel stays compact by default and expands into split fullscreen works
   const root = page.getByTestId("git-panel-root");
 
   await expect(panel).toBeVisible();
+  await waitForGitPanelInitialRefresh(page);
   await seedGitState(page);
   await expect(root).toHaveAttribute("data-git-mode", "compact");
   await expect(root).toHaveAttribute("data-git-layout", "stacked");
@@ -434,6 +452,7 @@ test("git panel keeps list regions scrollable in compact and expanded modes", as
   const root = page.getByTestId("git-panel-root");
 
   await expect(panel).toBeVisible();
+  await waitForGitPanelInitialRefresh(page);
   await seedLargeGitState(page);
   await expect(page.getByText("conflict-00.txt")).toBeVisible();
 
@@ -471,4 +490,38 @@ test("git panel keeps list regions scrollable in compact and expanded modes", as
     return node.scrollTop;
   });
   expect(expandedScrollTop).toBeGreaterThan(0);
+});
+
+test("git panel shows only initialization action when project is not a git repository", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await openGitPanel(page);
+
+  await expect(page.getByTestId("panel-git")).toBeVisible();
+  await waitForGitPanelInitialRefresh(page);
+
+  await page.evaluate(() => {
+    window.__gitPanelFixture = {
+      missing: true,
+      statusV1: "",
+      statusV2: "",
+      branch: "",
+      branches: [],
+      remoteOutput: "",
+    };
+  });
+  await page.getByTitle("Refresh status").click();
+
+  const initState = page.getByTestId("git-init-empty-state");
+  await expect(initState).toBeVisible();
+  await expect(page.getByText("It's not a Git repository.")).toBeVisible();
+  await expect(page.getByText("Want to initialize Git?")).toBeVisible();
+  await expect(page.getByTestId("git-compact-scroll-region")).toHaveCount(0);
+  await expect(page.getByText("Working Tree")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Initialize Git" }).click();
+
+  await expect(initState).toHaveCount(0);
+  await expect(page.getByTestId("git-compact-scroll-region")).toBeVisible();
 });
