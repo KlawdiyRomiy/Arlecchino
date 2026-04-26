@@ -4,14 +4,20 @@ import type { ShortcutActionId } from "../../utils/keyboard";
 import type { TUIAssistAnchor } from "../../utils/terminalLayout";
 import type { PanelPosition, PanelSize } from "../ui/FloatingPanel";
 
+export type MainEditorFileOpenHandler = (
+  path: string,
+  content: string,
+  name: string,
+  line?: number,
+) => void;
+
+export type MainEditorFileOpenRegistrar = (
+  handler: MainEditorFileOpenHandler | null,
+) => void;
+
 export interface MainLayoutProps {
   children: ReactNode;
-  onFileOpen?: (
-    path: string,
-    content: string,
-    name: string,
-    line?: number,
-  ) => void;
+  onFileOpen?: MainEditorFileOpenHandler;
   onBackToWelcome?: () => void;
   onProjectOpen?: (path: string) => void;
   onSwitchProject?: (id: string, direction?: number) => void;

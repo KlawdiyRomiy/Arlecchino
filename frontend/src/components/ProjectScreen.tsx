@@ -26,6 +26,13 @@ import {
 
 type SplitDirection = "horizontal" | "vertical" | null;
 
+type EditorFileOpenHandler = (
+  path: string,
+  content: string,
+  name: string,
+  line?: number,
+) => void;
+
 interface ProjectScreenProps {
   projectPath: string;
   fileToOpen?: {
@@ -38,6 +45,7 @@ interface ProjectScreenProps {
   onToggleProblems?: () => void;
   onPerspectiveOpen?: () => void;
   onPerspectiveClose?: () => void;
+  onEditorFileOpenReady?: (handler: EditorFileOpenHandler | null) => void;
 }
 
 const AUTO_SAVE_DELAY = 1500;
@@ -72,17 +80,15 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   onToggleProblems,
   onPerspectiveOpen,
   onPerspectiveClose,
+  onEditorFileOpenReady,
 }) => {
   const { isDark } = useTheme();
   const editorBgColor = isDark ? editorCanvasBackground : "#ffffff";
   const setStatusFile = useEditorStore((state) => state.setStatusFile);
   const activeEditorPaneId = useEditorStore((state) => state.activePaneId);
-  const openEditorStoreTab = useEditorStore((state) => state.openTab);
-  const setEditorStoreActiveTab = useEditorStore((state) => state.setActiveTab);
-  const updateEditorStoreTabContent = useEditorStore(
-    (state) => state.updateTabContent,
+  const syncEditorStoreActiveTab = useEditorStore(
+    (state) => state.syncActiveTab,
   );
-  const markEditorStoreTabDirty = useEditorStore((state) => state.markTabDirty);
   const closeEditorStoreTabPath = useEditorStore((state) => state.closePath);
   const { copyAbsolutePath, revealEntry } = useProjectEntryActions();
 
@@ -149,6 +155,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const fileContentsRef = useRef<Record<string, string>>({});
   const activeTabRef = useRef<string | null>(activeTab);
   const secondaryActiveTabRef = useRef<string | null>(secondaryActiveTab);
+  const openFileRequestRef = useRef(0);
+  const quickLookRequestRef = useRef(0);
+  const reopenClosedTabRequestRef = useRef(0);
   const tabSwitcherSelectionRef = useRef<string | null>(null);
   const [isTabSwitcherOpen, setIsTabSwitcherOpen] = useState(false);
   const [tabSwitcherSelection, setTabSwitcherSelectionState] = useState<
@@ -217,10 +226,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     ).then((results) => {
       if (cancelled) return;
 
+      const currentTabIds = new Set(tabsRef.current.map((tab) => tab.id));
       const loaded: Record<string, string> = {};
       const invalidIds = new Set<string>();
 
       restoredTabs.forEach((tab, i) => {
+        if (!currentTabIds.has(tab.id)) {
+          return;
+        }
         if (results[i].status === "fulfilled") {
           loaded[tab.id] = (results[i] as PromiseFulfilledResult<string>).value;
         } else {
@@ -234,7 +247,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         setTabs((prev) => prev.filter((t) => !invalidIds.has(t.id)));
         setActiveTab((prev) =>
           prev && invalidIds.has(prev)
-            ? (restoredTabs.filter((t) => !invalidIds.has(t.id)).pop()?.id ??
+            ? (tabsRef.current.filter((t) => !invalidIds.has(t.id)).pop()?.id ??
               null)
             : prev,
         );
@@ -247,17 +260,24 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   }, []);
 
   useEffect(() => {
-    if (tabs.length === 0) {
-      localStorage.removeItem(tabStorageKey);
-      return;
-    }
-    localStorage.setItem(
-      tabStorageKey,
-      JSON.stringify({
-        tabs: tabs.map((t) => ({ path: t.path, label: t.label })),
-        activeTabId: activeTab,
-      }),
-    );
+    const timeout = window.setTimeout(() => {
+      if (tabs.length === 0) {
+        localStorage.removeItem(tabStorageKey);
+        return;
+      }
+
+      localStorage.setItem(
+        tabStorageKey,
+        JSON.stringify({
+          tabs: tabs.map((t) => ({ path: t.path, label: t.label })),
+          activeTabId: activeTab,
+        }),
+      );
+    }, 120);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
   }, [tabs, activeTab, tabStorageKey]);
 
   const lastFileToOpenRef = useRef<string | null>(null);
@@ -607,48 +627,43 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
 
     const language = getLanguageFromPath(statusTab.path);
-    setStatusFile(statusTab.path, statusTab.label, language);
-
     const content = fileContents[statusTab.id];
     if (content === undefined) {
+      setStatusFile(statusTab.path, statusTab.label, language);
       return;
     }
 
-    const editorTabId = makeEditorTabId(statusTab.path);
-    openEditorStoreTab(
+    syncEditorStoreActiveTab(
       activeEditorPaneId,
       statusTab.path,
       statusTab.label,
       content,
       language,
+      statusTab.isDirty === true,
     );
-    updateEditorStoreTabContent(editorTabId, content);
-    markEditorStoreTabDirty(editorTabId, statusTab.isDirty === true);
-    setEditorStoreActiveTab(activeEditorPaneId, editorTabId);
   }, [
     activeEditorPaneId,
     activeTab,
     fileContents,
-    markEditorStoreTabDirty,
-    openEditorStoreTab,
     secondaryActiveTab,
-    setEditorStoreActiveTab,
     setStatusFile,
+    syncEditorStoreActiveTab,
     tabs,
-    updateEditorStoreTabContent,
   ]);
 
   const handleFileOpen = useCallback(
-    async (filePath: string, content: string, fileName: string) => {
-      // Check if tab already exists
-      const existingTab = tabs.find((tab) => tab.path === filePath);
+    (filePath: string, content: string, fileName: string, line?: number) => {
+      const tabId = makeEditorTabId(filePath);
+      const existingTab = tabsRef.current.find((tab) => tab.path === filePath);
       if (existingTab) {
         setActiveTab(existingTab.id);
+        if (line) {
+          setHighlightLine(line);
+          window.setTimeout(() => setHighlightLine(undefined), 3000);
+        }
         return;
       }
 
-      // Create new tab
-      const tabId = makeEditorTabId(filePath);
       const newTab: Tab = {
         id: tabId,
         label: fileName,
@@ -657,11 +672,26 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       };
 
       setFileContents((prev) => ({ ...prev, [tabId]: content }));
-      setTabs((prevTabs) => [...prevTabs, newTab]);
+      setTabs((prevTabs) =>
+        prevTabs.some((tab) => tab.path === filePath)
+          ? prevTabs
+          : [...prevTabs, newTab],
+      );
       setActiveTab(tabId);
+      if (line) {
+        setHighlightLine(line);
+        window.setTimeout(() => setHighlightLine(undefined), 3000);
+      }
     },
-    [tabs],
+    [],
   );
+
+  useEffect(() => {
+    onEditorFileOpenReady?.(handleFileOpen);
+    return () => {
+      onEditorFileOpenReady?.(null);
+    };
+  }, [handleFileOpen, onEditorFileOpenReady]);
 
   useEffect(() => {
     setHighlightLine(undefined);
@@ -704,6 +734,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   }, []);
 
   const handleCloseAllTabs = useCallback(() => {
+    openFileRequestRef.current += 1;
     tabsRef.current.forEach((tab) => closeEditorStoreTabPath(tab.path));
     setTabs([]);
     setFileContents({});
@@ -717,12 +748,19 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
     const [lastClosedTab, ...remainingClosedTabs] = closedTabs;
     setClosedTabs(remainingClosedTabs);
+    const requestId = reopenClosedTabRequestRef.current + 1;
+    reopenClosedTabRequestRef.current = requestId;
 
     try {
       const content = await AppFunctions.ReadFile(lastClosedTab.path);
+      if (reopenClosedTabRequestRef.current !== requestId) {
+        return;
+      }
       handleFileOpen(lastClosedTab.path, content, lastClosedTab.label);
     } catch (error) {
-      console.error("Failed to reopen closed tab:", error);
+      if (reopenClosedTabRequestRef.current === requestId) {
+        console.error("Failed to reopen closed tab:", error);
+      }
     }
   };
 
@@ -885,6 +923,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   }, [activeTab, tabs, fileContents, isSaving]);
 
   const handleOpenFileRequest = async (path: string, line?: number) => {
+    const requestId = openFileRequestRef.current + 1;
+    openFileRequestRef.current = requestId;
+
     try {
       let fullPath = path;
       if (!path.startsWith("/") && projectPath) {
@@ -892,6 +933,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       }
 
       const content = await AppFunctions.ReadFile(fullPath);
+      if (openFileRequestRef.current !== requestId) {
+        return;
+      }
       const name = path.split("/").pop() || "unknown";
       handleFileOpen(fullPath, content, name);
       if (line) {
@@ -899,8 +943,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         setTimeout(() => setHighlightLine(undefined), 3000);
       }
     } catch (error) {
-      console.error("Failed to open file:", error);
-      alert(`Failed to open file: ${path}`);
+      if (openFileRequestRef.current === requestId) {
+        console.error("Failed to open file:", error);
+        alert(`Failed to open file: ${path}`);
+      }
     }
   };
 
@@ -1150,6 +1196,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   );
 
   const handleQuickLookRequest = async (path: string, line?: number) => {
+    const requestId = quickLookRequestRef.current + 1;
+    quickLookRequestRef.current = requestId;
+
     try {
       let fullPath = path;
       if (!path.startsWith("/") && projectPath) {
@@ -1157,6 +1206,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       }
 
       const content = await AppFunctions.ReadFile(fullPath);
+      if (quickLookRequestRef.current !== requestId) {
+        return;
+      }
       const language = getLanguageFromPath(fullPath);
 
       blockProjectSwitch(PROJECT_SWITCH_BLOCKERS.quickLook);
@@ -1168,8 +1220,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         highlightLine: line,
       });
     } catch (error) {
-      console.error("Failed to open Quick Look:", error);
-      alert(`Failed to open file: ${path}`);
+      if (quickLookRequestRef.current === requestId) {
+        console.error("Failed to open Quick Look:", error);
+        alert(`Failed to open file: ${path}`);
+      }
     }
   };
 

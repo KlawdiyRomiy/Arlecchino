@@ -50,6 +50,14 @@ interface EditorActions {
     content: string,
     language: string,
   ) => void;
+  syncActiveTab: (
+    paneId: string,
+    path: string,
+    name: string,
+    content: string,
+    language: string,
+    dirty: boolean,
+  ) => void;
   closeTab: (paneId: string, tabId: string) => void;
   setActiveTab: (paneId: string, tabId: string) => void;
   setActivePane: (paneId: string) => void;
@@ -198,6 +206,77 @@ export const useEditorStore = create<EditorState & EditorActions>(
           ),
           activePaneId: paneId,
           cursorPosition: { line: 1, col: 1 },
+        };
+      });
+    },
+
+    syncActiveTab: (paneId, path, name, content, language, dirty) => {
+      const id = makeEditorTabId(path);
+      set((s) => {
+        const existingTab = s.tabs.get(id);
+        const tabChanged =
+          !existingTab ||
+          existingTab.path !== path ||
+          existingTab.name !== name ||
+          existingTab.content !== content ||
+          existingTab.language !== language ||
+          existingTab.isDirty !== dirty;
+
+        const nextTabs = tabChanged ? new Map(s.tabs) : s.tabs;
+        if (tabChanged) {
+          nextTabs.set(id, {
+            id,
+            path,
+            name,
+            content,
+            isDirty: dirty,
+            language,
+          });
+        }
+
+        let panesChanged = false;
+        const nextPanes = s.panes.map((pane) => {
+          if (pane.id !== paneId) {
+            return pane;
+          }
+
+          const hasTab = pane.tabIds.includes(id);
+          if (hasTab && pane.activeTabId === id) {
+            return pane;
+          }
+
+          panesChanged = true;
+          return {
+            ...pane,
+            activeTabId: id,
+            tabIds: hasTab ? pane.tabIds : [...pane.tabIds, id],
+          };
+        });
+
+        const activePaneChanged = s.activePaneId !== paneId;
+        const statusChanged =
+          s.statusFile.path !== path ||
+          s.statusFile.name !== name ||
+          s.statusFile.language !== language;
+
+        if (
+          !tabChanged &&
+          !panesChanged &&
+          !activePaneChanged &&
+          !statusChanged
+        ) {
+          return s;
+        }
+
+        return {
+          tabs: nextTabs,
+          panes: panesChanged ? nextPanes : s.panes,
+          activePaneId: paneId,
+          statusFile: { path, name, language },
+          cursorPosition:
+            panesChanged || activePaneChanged
+              ? { line: 1, col: 1 }
+              : s.cursorPosition,
         };
       });
     },
@@ -383,7 +462,9 @@ export const useEditorStore = create<EditorState & EditorActions>(
         removedTabIds.forEach((tabId) => nextTabs.delete(tabId));
 
         const nextPanes = state.panes.map((pane) => {
-          const tabIds = pane.tabIds.filter((tabId) => !removedTabIds.has(tabId));
+          const tabIds = pane.tabIds.filter(
+            (tabId) => !removedTabIds.has(tabId),
+          );
           const activeTabId = removedTabIds.has(pane.activeTabId)
             ? tabIds[tabIds.length - 1] || ""
             : pane.activeTabId;
