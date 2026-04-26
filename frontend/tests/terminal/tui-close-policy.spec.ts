@@ -5,15 +5,27 @@ test("terminal panel close handler routes TUI close through terminal store", asy
 }) => {
   await page.goto("/");
 
-  const mainLayoutSource = await page.evaluate(async () => {
-    const response = await fetch("/src/components/layout/MainLayout.tsx?raw");
-    if (!response.ok) {
-      return "";
-    }
-    return response.text();
-  });
+  const [mainLayoutSource, panelEventsSource] = await page.evaluate(
+    async () => {
+      const [layoutResponse, panelEventsResponse] = await Promise.all([
+        fetch("/src/components/layout/MainLayout.tsx?raw"),
+        fetch("/src/components/layout/useMainLayoutPanelEvents.ts?raw"),
+      ]);
+
+      return [
+        layoutResponse.ok ? await layoutResponse.text() : "",
+        panelEventsResponse.ok ? await panelEventsResponse.text() : "",
+      ];
+    },
+  );
 
   expect(mainLayoutSource).toMatch(
-    /const\s+handleTerminalPanelClose\s*=\s*\(\)\s*=>\s*\{[\s\S]*forceHideTerminalAfterTUIExitRef\.current\s*=\s*true[\s\S]*closeTerminal\(/,
+    /useMainLayoutPanelEvents\(\{[\s\S]*forceHideTerminalAfterTUIExitRef[\s\S]*\}\)/,
+  );
+  expect(panelEventsSource).toMatch(
+    /const\s+closeTerminalPanel\s*=\s*useCallback\(\(\)\s*=>\s*\{[\s\S]*forceHideTerminalAfterTUIExitRef\.current\s*=\s*true[\s\S]*terminalState\.closeTerminal\(/,
+  );
+  expect(mainLayoutSource).toMatch(
+    /onCloseTerminalPanel=\{closeTerminalPanel\}/,
   );
 });

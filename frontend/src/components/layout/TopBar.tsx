@@ -15,7 +15,6 @@ import {
   Keyboard,
   Info,
   RefreshCw,
-  CheckCircle2,
 } from "lucide-react";
 import { WindowControls } from "../ui";
 import { useIndexingProgress } from "../../hooks/useIndexingProgress";
@@ -50,7 +49,6 @@ interface TopBarProps {
   previewEnabled?: boolean;
   previewActive?: boolean;
   previewTitle?: string;
-  projectPathCopied?: boolean;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -73,7 +71,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   previewEnabled = false,
   previewActive = false,
   previewTitle = "Preview unavailable for the current context.",
-  projectPathCopied = false,
 }) => {
   const indexing = useIndexingProgress();
   const projectName = projectPath
@@ -225,25 +222,6 @@ export const TopBar: React.FC<TopBarProps> = ({
             )}
           </AnimatePresence>
         </div>
-        <AnimatePresence>
-          {projectPathCopied && projectPath ? (
-            <motion.div
-              key="project-path-copy-confirmation"
-              initial={{ opacity: 0, x: "-50%", y: -4, scale: 0.98 }}
-              animate={{ opacity: 1, x: "-50%", y: 0, scale: 1 }}
-              exit={{ opacity: 0, x: "-50%", y: -4, scale: 0.98 }}
-              transition={{ duration: 0.16, ease: "easeOut" }}
-              className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-[80] inline-flex items-center gap-2 rounded-[18px] border border-[var(--shell-border-strong)] bg-[var(--surface-shell-strong)] px-3 py-2 text-[12px] font-medium text-[var(--text-primary)] shadow-[var(--shadow-overlay)]"
-              data-testid="project-path-copy-confirmation"
-            >
-              <CheckCircle2
-                size={14}
-                className="text-[var(--status-success)]"
-              />
-              <span>Project path copied</span>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
       </div>
 
       <div

@@ -1,0 +1,643 @@
+import { useEffect, type MutableRefObject } from "react";
+
+import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
+import { usePreviewWindowStore } from "../../stores/previewWindowStore";
+import { useTerminalStore } from "../../stores/terminalStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { shortcuts, type ShortcutActionId } from "../../utils/keyboard";
+import { measurePerf } from "../../utils/perf";
+import { isProjectSwitchBlocked } from "../../utils/priorityUI";
+import {
+  isTerminalFocusedElement,
+  isTerminalShortcutContext as hasTerminalShortcutContext,
+  shouldBypassGlobalFindShortcuts,
+} from "../../utils/terminalFocus";
+import { toggleWindowFullscreen } from "../../utils/windowFullscreen";
+import type {
+  PanelFullscreenSnapshot,
+  PanelId,
+  PanelVisibility,
+} from "./MainLayout.types";
+
+interface MainLayoutKeyboardDispatcher {
+  close: () => void;
+  isOpen: boolean;
+}
+
+type ShortcutSuppressionRef = MutableRefObject<{
+  actionId: ShortcutActionId;
+  until: number;
+} | null>;
+
+type ApplicationMenuRepeatRef = MutableRefObject<{
+  actionId: ShortcutActionId;
+  lastAt: number;
+} | null>;
+
+interface UseMainLayoutKeyboardShortcutsOptions {
+  activeModal: unknown | null;
+  activateAdjacentCodePanelTab: (direction: -1 | 1) => boolean;
+  applicationMenuRepeatRef: ApplicationMenuRepeatRef;
+  beginHeldPanelShortcut: (
+    event: KeyboardEvent,
+    target:
+      | { kind: "panel"; panelId: PanelId }
+      | { kind: "preview"; windowId?: string },
+    runTapAction: () => void,
+    options?: {
+      actionId?: ShortcutActionId;
+      runTapActionImmediately?: boolean;
+    },
+  ) => void;
+  clearHeldPanelShortcut: (runTapAction: boolean) => void;
+  closeActiveFullscreenPanelFromShortcut: () => boolean;
+  closeCreateEntryDialog: () => void;
+  closeExecutionDialog: () => void;
+  closeModal: () => void;
+  closePreviewWindowWithMotion: (windowId: string) => void;
+  closeSettings: () => void;
+  closeTUIAssistPanel: () => void;
+  copyProjectPathFromShortcut: () => Promise<boolean>;
+  createEntryDialog: unknown | null;
+  delayedShortcutActionSuppressionRef: ShortcutSuppressionRef;
+  dispatcher: MainLayoutKeyboardDispatcher;
+  executionDialogMode: unknown | null;
+  finishHeldPanelShortcutOnKeyUp: (event: KeyboardEvent) => void;
+  getShortcutEventCode: (event: KeyboardEvent) => string;
+  gitPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
+  handleHeldPanelShortcutMove: (event: KeyboardEvent) => boolean;
+  isDark: boolean;
+  isPerspectiveOpen: boolean;
+  isSettingsOpen: boolean;
+  markShortcutActionHandled: (actionId: ShortcutActionId) => void;
+  onSwitchProject?: (projectId: string, direction?: number) => void;
+  openSettings: () => void;
+  panelsRef: MutableRefObject<PanelVisibility>;
+  pressedShortcutCodesRef: MutableRefObject<Set<string>>;
+  problemsPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
+  shortcutActionSuppressionRef: ShortcutSuppressionRef;
+  toggleCanonicalBrowserPreviewRef: MutableRefObject<() => void>;
+  toggleCommandDispatcher: () => void;
+  toggleNamedPanel: (panelId: PanelId) => void;
+  togglePanelCompactFromShortcut: (
+    panelId: PanelId,
+    snapshotRef?: MutableRefObject<PanelFullscreenSnapshot | null>,
+  ) => void;
+  togglePanelFullscreenFromShortcut: (
+    panelId: "git" | "problems",
+    snapshotRef: MutableRefObject<PanelFullscreenSnapshot | null>,
+  ) => void;
+}
+
+export const useMainLayoutKeyboardShortcuts = ({
+  activeModal,
+  activateAdjacentCodePanelTab,
+  applicationMenuRepeatRef,
+  beginHeldPanelShortcut,
+  clearHeldPanelShortcut,
+  closeActiveFullscreenPanelFromShortcut,
+  closeCreateEntryDialog,
+  closeExecutionDialog,
+  closeModal,
+  closePreviewWindowWithMotion,
+  closeSettings,
+  closeTUIAssistPanel,
+  copyProjectPathFromShortcut,
+  createEntryDialog,
+  delayedShortcutActionSuppressionRef,
+  dispatcher,
+  executionDialogMode,
+  finishHeldPanelShortcutOnKeyUp,
+  getShortcutEventCode,
+  gitPreFullscreenRef,
+  handleHeldPanelShortcutMove,
+  isDark,
+  isPerspectiveOpen,
+  isSettingsOpen,
+  markShortcutActionHandled,
+  onSwitchProject,
+  openSettings,
+  panelsRef,
+  pressedShortcutCodesRef,
+  problemsPreFullscreenRef,
+  shortcutActionSuppressionRef,
+  toggleCanonicalBrowserPreviewRef,
+  toggleCommandDispatcher,
+  toggleNamedPanel,
+  togglePanelCompactFromShortcut,
+  togglePanelFullscreenFromShortcut,
+}: UseMainLayoutKeyboardShortcutsOptions) => {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const eventCode = getShortcutEventCode(e);
+      if (eventCode) {
+        pressedShortcutCodesRef.current.add(eventCode);
+      }
+
+      const terminalState = useTerminalStore.getState();
+      const isTUIActive = terminalState.tuiModeActive;
+      const panelState = panelsRef.current;
+      const activeElement = document.activeElement as HTMLElement | null;
+      const isTerminalFocused = isTerminalFocusedElement(activeElement);
+      const activePane = terminalState.panes.find(
+        (pane) => pane.id === terminalState.activePaneId,
+      );
+      const isTerminalPanelVisible = panelState.terminal;
+      const isTerminalShortcutContext = hasTerminalShortcutContext({
+        activeElement,
+        tuiModeActive: isTUIActive,
+        terminalPanelVisible: isTerminalPanelVisible,
+      });
+
+      if (shouldBypassGlobalFindShortcuts(e, activeElement)) {
+        return;
+      }
+
+      if (handleHeldPanelShortcutMove(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      if (
+        shortcuts.toggleWindowFullscreen(e) &&
+        document.body.dataset.shortcutRecording !== "true"
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        void toggleWindowFullscreen();
+        return;
+      }
+
+      if (shortcuts.closeFullscreenPanel(e)) {
+        if (closeActiveFullscreenPanelFromShortcut()) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+      }
+
+      if (
+        isTUIActive &&
+        panelState.code &&
+        (shortcuts.switchEditorTabNext(e) || shortcuts.switchEditorTabPrev(e))
+      ) {
+        const direction = shortcuts.switchEditorTabPrev(e) ? -1 : 1;
+        if (activateAdjacentCodePanelTab(direction)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+      }
+
+      if (shortcuts.terminalNewTab(e)) {
+        const hasNoTabs = activePane && activePane.tabIds.length === 0;
+        if (
+          isTerminalShortcutContext ||
+          (isTerminalPanelVisible && hasNoTabs)
+        ) {
+          e.preventDefault();
+          if (activePane) {
+            void terminalState.createTerminal(activePane.id, isDark);
+          }
+          return;
+        }
+      }
+
+      if (isTerminalShortcutContext && shortcuts.terminalCloseTab(e)) {
+        e.preventDefault();
+        if (activePane?.activeTabId) {
+          void terminalState
+            .closeTerminal(activePane.id, activePane.activeTabId)
+            .then(() => {
+              setTimeout(() => terminalState.focusActiveTerminal(), 50);
+            });
+        }
+        return;
+      }
+
+      if (isTerminalShortcutContext && shortcuts.terminalReopenTab(e)) {
+        e.preventDefault();
+        void terminalState.reopenLastClosedTab(isDark);
+        return;
+      }
+
+      if (shortcuts.unifiedSearch(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        if (terminalState.isDispatcherPaused) {
+          return;
+        }
+        toggleCommandDispatcher();
+        return;
+      }
+
+      if (shortcuts.openProject(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        window.dispatchEvent(new Event("arlecchino:open-project"));
+        return;
+      }
+
+      if (shortcuts.newProject(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        window.dispatchEvent(new Event("arlecchino:new-project"));
+        return;
+      }
+
+      if (shortcuts.toggleExplorer(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        markShortcutActionHandled("explorer.toggle");
+        e.preventDefault();
+        e.stopPropagation();
+
+        beginHeldPanelShortcut(
+          e,
+          { kind: "panel", panelId: "explorer" },
+          () => togglePanelCompactFromShortcut("explorer"),
+          { actionId: "explorer.toggle", runTapActionImmediately: true },
+        );
+        return;
+      }
+
+      if (shortcuts.switchProjectNext(e) || shortcuts.switchProjectPrev(e)) {
+        const localProjectSwitchBlocked =
+          dispatcher.isOpen || activeModal !== null || isPerspectiveOpen;
+
+        if (
+          isTerminalShortcutContext ||
+          isTUIActive ||
+          localProjectSwitchBlocked ||
+          isProjectSwitchBlocked()
+        ) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const { projects, activeId: curId } = useWorkspaceStore.getState();
+        if (projects.length < 2) return;
+        const idx = projects.findIndex((p) => p.id === curId);
+        const isNext = !shortcuts.switchProjectPrev(e);
+        const targetIdx = isNext
+          ? (idx + 1) % projects.length
+          : (idx - 1 + projects.length) % projects.length;
+        onSwitchProject?.(projects[targetIdx].id, isNext ? 1 : -1);
+        return;
+      }
+
+      if (shortcuts.toggleTerminal(e)) {
+        markShortcutActionHandled("terminal.toggle");
+        e.preventDefault();
+        e.stopPropagation();
+
+        beginHeldPanelShortcut(
+          e,
+          { kind: "panel", panelId: "terminal" },
+          () => {
+            if (!isTerminalShortcutContext) {
+              toggleNamedPanel("terminal");
+            }
+          },
+          {
+            actionId: "terminal.toggle",
+            runTapActionImmediately: !isTerminalShortcutContext,
+          },
+        );
+        return;
+      }
+
+      if (shortcuts.toggleAI(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        markShortcutActionHandled("ai.toggle");
+        e.preventDefault();
+        e.stopPropagation();
+
+        beginHeldPanelShortcut(
+          e,
+          { kind: "panel", panelId: "aiChat" },
+          () => toggleNamedPanel("aiChat"),
+          { actionId: "ai.toggle", runTapActionImmediately: true },
+        );
+        return;
+      }
+
+      if (shortcuts.toggleSettings(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        if (isSettingsOpen) {
+          closeSettings();
+        } else {
+          openSettings();
+        }
+        return;
+      }
+
+      if (shortcuts.copyProjectPath(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        void copyProjectPathFromShortcut();
+        return;
+      }
+
+      if (shortcuts.toggleGitFullscreen(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        togglePanelFullscreenFromShortcut("git", gitPreFullscreenRef);
+        return;
+      }
+
+      if (shortcuts.toggleGit(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        markShortcutActionHandled("git.toggle");
+        e.preventDefault();
+        e.stopPropagation();
+        beginHeldPanelShortcut(
+          e,
+          { kind: "panel", panelId: "git" },
+          () => togglePanelCompactFromShortcut("git", gitPreFullscreenRef),
+          { actionId: "git.toggle", runTapActionImmediately: true },
+        );
+        return;
+      }
+
+      if (shortcuts.toggleProblemsFullscreen(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        togglePanelFullscreenFromShortcut("problems", problemsPreFullscreenRef);
+        return;
+      }
+
+      if (shortcuts.toggleProblems(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        markShortcutActionHandled("problems.toggle");
+        e.preventDefault();
+        e.stopPropagation();
+        beginHeldPanelShortcut(
+          e,
+          { kind: "panel", panelId: "problems" },
+          () =>
+            togglePanelCompactFromShortcut(
+              "problems",
+              problemsPreFullscreenRef,
+            ),
+          { actionId: "problems.toggle", runTapActionImmediately: true },
+        );
+        return;
+      }
+
+      if (shortcuts.openBrowserPreview(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        beginHeldPanelShortcut(
+          e,
+          { kind: "preview" },
+          () => toggleCanonicalBrowserPreviewRef.current(),
+          { actionId: "browser.preview", runTapActionImmediately: true },
+        );
+        return;
+      }
+
+      if (shortcuts.escape(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        if (document.querySelector("[data-shell-menu-content]")) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        if (document.body.dataset.shellModalOpen === "true") {
+          return;
+        }
+
+        if (createEntryDialog) {
+          closeCreateEntryDialog();
+          return;
+        }
+
+        if (terminalState.tuiAssist.active) {
+          closeTUIAssistPanel();
+          return;
+        }
+
+        const activePreviewWindowId =
+          usePreviewWindowStore.getState().activeWindowId;
+        if (activePreviewWindowId) {
+          closePreviewWindowWithMotion(activePreviewWindowId);
+          return;
+        }
+
+        if (isSettingsOpen) {
+          closeSettings();
+          return;
+        }
+
+        if (executionDialogMode !== null) {
+          closeExecutionDialog();
+          return;
+        }
+
+        dispatcher.close();
+        closeModal();
+      }
+
+      if (shortcuts.zoomIn(e)) {
+        e.preventDefault();
+
+        if (isTerminalShortcutContext) {
+          measurePerf(
+            "zoom",
+            "shortcut.in.terminal",
+            () => {
+              terminalState.terminalZoomIn();
+            },
+            {
+              source: "keyboard",
+              tuiModeActive: isTUIActive,
+              terminalFocused: isTerminalFocused,
+            },
+          );
+          return;
+        }
+
+        measurePerf(
+          "zoom",
+          "shortcut.in",
+          () => {
+            useEditorSettingsStore.getState().zoomIn();
+          },
+          { source: "keyboard", tuiModeActive: isTUIActive },
+        );
+        return;
+      }
+      if (shortcuts.zoomOut(e)) {
+        e.preventDefault();
+
+        if (isTerminalShortcutContext) {
+          measurePerf(
+            "zoom",
+            "shortcut.out.terminal",
+            () => {
+              terminalState.terminalZoomOut();
+            },
+            {
+              source: "keyboard",
+              tuiModeActive: isTUIActive,
+              terminalFocused: isTerminalFocused,
+            },
+          );
+          return;
+        }
+
+        measurePerf(
+          "zoom",
+          "shortcut.out",
+          () => {
+            useEditorSettingsStore.getState().zoomOut();
+          },
+          { source: "keyboard", tuiModeActive: isTUIActive },
+        );
+        return;
+      }
+      if (shortcuts.zoomReset(e)) {
+        e.preventDefault();
+
+        if (isTerminalShortcutContext) {
+          measurePerf(
+            "zoom",
+            "shortcut.reset.terminal",
+            () => {
+              terminalState.terminalZoomReset();
+            },
+            {
+              source: "keyboard",
+              tuiModeActive: isTUIActive,
+              terminalFocused: isTerminalFocused,
+            },
+          );
+          return;
+        }
+
+        measurePerf(
+          "zoom",
+          "shortcut.reset",
+          () => {
+            useEditorSettingsStore.getState().resetZoom();
+          },
+          { source: "keyboard", tuiModeActive: isTUIActive },
+        );
+        return;
+      }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      const eventCode = getShortcutEventCode(event);
+      if (eventCode) {
+        pressedShortcutCodesRef.current.delete(eventCode);
+      }
+
+      applicationMenuRepeatRef.current = null;
+      finishHeldPanelShortcutOnKeyUp(event);
+    };
+
+    const handleWindowBlur = () => {
+      clearHeldPanelShortcut(false);
+      pressedShortcutCodesRef.current.clear();
+      shortcutActionSuppressionRef.current = null;
+      delayedShortcutActionSuppressionRef.current = null;
+      applicationMenuRepeatRef.current = null;
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("blur", handleWindowBlur);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("keyup", handleKeyUp, true);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, [
+    activeModal,
+    activateAdjacentCodePanelTab,
+    applicationMenuRepeatRef,
+    beginHeldPanelShortcut,
+    clearHeldPanelShortcut,
+    closeActiveFullscreenPanelFromShortcut,
+    closeCreateEntryDialog,
+    closeExecutionDialog,
+    closeModal,
+    closePreviewWindowWithMotion,
+    closeSettings,
+    closeTUIAssistPanel,
+    copyProjectPathFromShortcut,
+    createEntryDialog,
+    delayedShortcutActionSuppressionRef,
+    dispatcher,
+    executionDialogMode,
+    finishHeldPanelShortcutOnKeyUp,
+    getShortcutEventCode,
+    gitPreFullscreenRef,
+    handleHeldPanelShortcutMove,
+    isDark,
+    isPerspectiveOpen,
+    isSettingsOpen,
+    markShortcutActionHandled,
+    onSwitchProject,
+    openSettings,
+    panelsRef,
+    pressedShortcutCodesRef,
+    problemsPreFullscreenRef,
+    shortcutActionSuppressionRef,
+    toggleCanonicalBrowserPreviewRef,
+    toggleCommandDispatcher,
+    toggleNamedPanel,
+    togglePanelCompactFromShortcut,
+    togglePanelFullscreenFromShortcut,
+  ]);
+};
