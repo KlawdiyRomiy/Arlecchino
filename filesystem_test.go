@@ -28,6 +28,141 @@ func TestReadDirectory_EmptyDirectoryReturnsEmptySlice(t *testing.T) {
 	}
 }
 
+func TestReadFile_ReturnsUTF8Text(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := (&App{}).ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if got != "hello\n" {
+		t.Fatalf("ReadFile() = %q, want %q", got, "hello\n")
+	}
+}
+
+func TestReadFile_TrimsUTF8BOM(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bom.txt")
+	if err := os.WriteFile(path, []byte{0xef, 0xbb, 0xbf, 'h', 'i', '\n'}, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := (&App{}).ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if got != "hi\n" {
+		t.Fatalf("ReadFile() = %q, want %q", got, "hi\n")
+	}
+}
+
+func TestReadFile_ReturnsTextPastSniffBoundary(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "long.txt")
+	content := strings.Repeat("a", int(fileSniffBytes)+17) + "\nend"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := (&App{}).ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if got != content {
+		t.Fatalf("ReadFile() length = %d, want %d", len(got), len(content))
+	}
+}
+
+func TestReadFile_RejectsKnownBinaryExtensionBeforeReading(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "game.dmb")
+	if err := os.WriteFile(path, []byte("not actually text"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := (&App{}).ReadFile(path)
+	if err == nil {
+		t.Fatal("ReadFile() error = nil, want binary extension rejection")
+	}
+	if !strings.Contains(err.Error(), "not a text document") {
+		t.Fatalf("ReadFile() error = %v, want non-text rejection", err)
+	}
+}
+
+func TestReadFile_RejectsBinaryContent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "payload.dat")
+	if err := os.WriteFile(path, []byte{'h', 'i', 0x00, 'x'}, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := (&App{}).ReadFile(path)
+	if err == nil {
+		t.Fatal("ReadFile() error = nil, want binary content rejection")
+	}
+	if !strings.Contains(err.Error(), "appears to be binary") {
+		t.Fatalf("ReadFile() error = %v, want binary sniff rejection", err)
+	}
+}
+
+func TestReadFile_RejectsInvalidUTF8(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "invalid.txt")
+	if err := os.WriteFile(path, []byte{0xff, 0xfe, 'x'}, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := (&App{}).ReadFile(path)
+	if err == nil {
+		t.Fatal("ReadFile() error = nil, want invalid UTF-8 rejection")
+	}
+	if !strings.Contains(err.Error(), "not valid UTF-8") {
+		t.Fatalf("ReadFile() error = %v, want invalid UTF-8 rejection", err)
+	}
+}
+
+func TestReadFile_RejectsOversizedFileBeforeReading(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "huge.sql")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := file.Truncate(maxEditorFileBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatalf("Truncate() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	_, err = (&App{}).ReadFile(path)
+	if err == nil {
+		t.Fatal("ReadFile() error = nil, want oversized rejection")
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("ReadFile() error = %v, want size rejection", err)
+	}
+}
+
 type capturedRuntimeEvent struct {
 	Name string
 	Data []any

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,12 +12,96 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
 	gitFieldSeparator  = "\x1f"
 	gitRecordSeparator = "\x1e"
+	maxEditorFileBytes = int64(20 * 1024 * 1024)
+	fileSniffBytes     = int64(64 * 1024)
 )
+
+var nonTextEditorExtensions = map[string]struct{}{
+	".7z":      {},
+	".a":       {},
+	".accdb":   {},
+	".app":     {},
+	".avi":     {},
+	".avif":    {},
+	".bin":     {},
+	".bmp":     {},
+	".bz2":     {},
+	".class":   {},
+	".db":      {},
+	".db3":     {},
+	".dib":     {},
+	".dll":     {},
+	".dmb":     {},
+	".dmp":     {},
+	".doc":     {},
+	".docx":    {},
+	".dylib":   {},
+	".exe":     {},
+	".gif":     {},
+	".gz":      {},
+	".heic":    {},
+	".heif":    {},
+	".icns":    {},
+	".ico":     {},
+	".jar":     {},
+	".jpeg":    {},
+	".jpg":     {},
+	".jpe":     {},
+	".jfif":    {},
+	".mdb":     {},
+	".mov":     {},
+	".mp3":     {},
+	".mp4":     {},
+	".o":       {},
+	".otf":     {},
+	".pdf":     {},
+	".png":     {},
+	".ppt":     {},
+	".pptx":    {},
+	".rar":     {},
+	".sqlite":  {},
+	".sqlite3": {},
+	".so":      {},
+	".tar":     {},
+	".tif":     {},
+	".tiff":    {},
+	".ttf":     {},
+	".wasm":    {},
+	".wav":     {},
+	".webm":    {},
+	".webp":    {},
+	".woff":    {},
+	".woff2":   {},
+	".xls":     {},
+	".xlsx":    {},
+	".xz":      {},
+	".zip":     {},
+}
+
+var binaryMagicPrefixes = [][]byte{
+	{0x00, 0x61, 0x73, 0x6d},       // WebAssembly
+	{0x1f, 0x8b},                   // gzip
+	{0x25, 0x50, 0x44, 0x46, 0x2d}, // PDF
+	{0x42, 0x4d},                   // BMP
+	{0x49, 0x44, 0x33},             // MP3
+	{0x4d, 0x5a},                   // PE executable
+	{0x50, 0x4b, 0x03, 0x04},       // ZIP/OpenXML/JAR
+	{0x50, 0x4b, 0x05, 0x06},
+	{0x50, 0x4b, 0x07, 0x08},
+	{0x52, 0x61, 0x72, 0x21},                         // RAR
+	{0x7f, 0x45, 0x4c, 0x46},                         // ELF
+	{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, // PNG
+	{0xff, 0xd8, 0xff},                               // JPEG
+	[]byte("GIF87a"),
+	[]byte("GIF89a"),
+	[]byte("SQLite format 3"),
+}
 
 var gitAllowedSubcommands = map[string]struct{}{
 	"add":          {},
@@ -132,11 +217,114 @@ func (a *App) ReadDirectory(dirPath string) ([]FileEntry, error) {
 }
 
 func (a *App) ReadFile(filePath string) (string, error) {
-	content, err := os.ReadFile(filePath)
+	info, err := os.Stat(filePath)
 	if err != nil {
 		return "", err
 	}
+	if info.IsDir() {
+		return "", fmt.Errorf("cannot open directory as a file: %s", filePath)
+	}
+	if info.Size() > maxEditorFileBytes {
+		return "", fmt.Errorf("file is too large to open in the editor (%s, limit %s): %s", formatFileSize(info.Size()), formatFileSize(maxEditorFileBytes), filePath)
+	}
+	if isKnownNonTextEditorPath(filePath) {
+		return "", fmt.Errorf("file is not a text document and cannot be opened in the editor: %s", filePath)
+	}
+
+	content, err := readEditorFileContent(filePath, info.Size())
+	if err != nil {
+		return "", err
+	}
+	content = bytes.TrimPrefix(content, []byte{0xef, 0xbb, 0xbf})
+	if !utf8.Valid(content) {
+		return "", fmt.Errorf("file is not valid UTF-8 text and cannot be opened in the editor: %s", filePath)
+	}
 	return string(content), nil
+}
+
+func isKnownNonTextEditorPath(filePath string) bool {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if ext == "" {
+		return false
+	}
+	_, ok := nonTextEditorExtensions[ext]
+	return ok
+}
+
+func readEditorFileContent(filePath string, size int64) ([]byte, error) {
+	if size <= 0 {
+		return nil, nil
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	content := make([]byte, int(size))
+	sampleLimit := fileSniffBytes
+	if size < sampleLimit {
+		sampleLimit = size
+	}
+
+	sampleSize := int(sampleLimit)
+	sampleN, err := io.ReadFull(file, content[:sampleSize])
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return nil, err
+	}
+	if looksLikeBinary(content[:sampleN]) {
+		return nil, fmt.Errorf("file appears to be binary and cannot be opened in the editor: %s", filePath)
+	}
+	if sampleN < sampleSize {
+		return content[:sampleN], nil
+	}
+
+	restN, err := io.ReadFull(file, content[sampleN:])
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return nil, err
+	}
+	return content[:sampleN+restN], nil
+}
+
+func looksLikeBinary(sample []byte) bool {
+	if len(sample) == 0 {
+		return false
+	}
+
+	for _, prefix := range binaryMagicPrefixes {
+		if bytes.HasPrefix(sample, prefix) {
+			return true
+		}
+	}
+
+	if bytes.Contains(sample, []byte{0x00}) {
+		return true
+	}
+
+	controlBytes := 0
+	for _, b := range sample {
+		if b < 0x20 && b != '\n' && b != '\r' && b != '\t' && b != '\f' {
+			controlBytes++
+		}
+	}
+	return controlBytes > 0 && controlBytes*100/len(sample) > 5
+}
+
+func formatFileSize(bytes int64) string {
+	const unit = int64(1024)
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+
+	value := float64(bytes)
+	for _, suffix := range []string{"KB", "MB", "GB", "TB"} {
+		value /= float64(unit)
+		if value < float64(unit) {
+			return fmt.Sprintf("%.1f %s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.1f PB", value/float64(unit))
 }
 
 func (a *App) WriteFile(filePath string, content string) error {
