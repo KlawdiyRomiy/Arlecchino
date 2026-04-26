@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { FolderOpen, Loader2, Sparkles } from "lucide-react";
+import { FolderOpen, GitBranch, Loader2, Sparkles } from "lucide-react";
 
 import * as App from "../../wailsjs/go/main/App";
 import { shortcuts } from "../utils/keyboard";
 import { toggleWindowFullscreen } from "../utils/windowFullscreen";
+import { CloneRepositoryDialog } from "./CloneRepositoryDialog";
 import { CreateProjectDialog } from "./CreateProjectDialog";
 import { WindowControls } from "./ui";
 
@@ -21,12 +22,13 @@ interface Project {
   is_favorite: boolean;
 }
 
-const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
-  onProjectOpen,
-}) => {
+const WelcomeScreen: React.FC<{
+  onProjectOpen: (path: string) => void | Promise<void>;
+}> = ({ onProjectOpen }) => {
   const [recentProjects, setRecentProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showCloneDialog, setShowCloneDialog] = useState(false);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -39,32 +41,46 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (shortcuts.toggleWindowFullscreen(event) && !showCreateDialog) {
+      if (
+        shortcuts.toggleWindowFullscreen(event) &&
+        !showCreateDialog &&
+        !showCloneDialog
+      ) {
         event.preventDefault();
         void toggleWindowFullscreen();
         return;
       }
 
-      if (shortcuts.openProject(event) && !showCreateDialog) {
+      if (
+        shortcuts.openProject(event) &&
+        !showCreateDialog &&
+        !showCloneDialog
+      ) {
         event.preventDefault();
         void handleOpenProject();
         return;
       }
 
-      if (shortcuts.newProject(event) && !showCreateDialog) {
+      if (
+        shortcuts.newProject(event) &&
+        !showCreateDialog &&
+        !showCloneDialog
+      ) {
         event.preventDefault();
         setShowCreateDialog(true);
       }
     };
 
     const handleOpenProjectEvent = () => {
-      if (!showCreateDialog) {
+      if (!showCreateDialog && !showCloneDialog) {
         void handleOpenProject();
       }
     };
 
     const handleNewProjectEvent = () => {
-      setShowCreateDialog(true);
+      if (!showCloneDialog) {
+        setShowCreateDialog(true);
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
@@ -76,7 +92,7 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
       window.removeEventListener(OPEN_PROJECT_EVENT, handleOpenProjectEvent);
       window.removeEventListener(NEW_PROJECT_EVENT, handleNewProjectEvent);
     };
-  }, [showCreateDialog]);
+  }, [showCreateDialog, showCloneDialog]);
 
   const loadRecentProjects = async () => {
     try {
@@ -109,7 +125,8 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
             <div className="mt-4 h-8 w-80 animate-pulse rounded-full bg-white/8" />
           </div>
           <div className="space-y-3 px-6 py-6">
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="h-24 animate-pulse rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)]" />
               <div className="h-24 animate-pulse rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)]" />
               <div className="h-24 animate-pulse rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)]" />
             </div>
@@ -156,7 +173,7 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
           </div>
 
           <div className="px-6 py-6">
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
               <button
                 onClick={handleOpenProject}
                 className="flex items-center gap-3 rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-4 text-left transition-colors hover:border-[var(--border-default)] hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
@@ -195,6 +212,23 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
                 <span className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-2)] px-2 py-1 font-mono text-[10px] text-[var(--text-muted)]">
                   ⌘N
                 </span>
+              </button>
+
+              <button
+                onClick={() => setShowCloneDialog(true)}
+                className="flex items-center gap-3 rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-4 text-left transition-colors hover:border-[var(--border-default)] hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-primary)]">
+                  <GitBranch size={18} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-[var(--text-primary)]">
+                    Clone Repository
+                  </div>
+                  <div className="mt-1 text-xs text-[var(--text-muted)]">
+                    Clone a Git remote and open the workspace.
+                  </div>
+                </div>
               </button>
             </div>
 
@@ -245,6 +279,11 @@ const WelcomeScreen: React.FC<{ onProjectOpen: (path: string) => void }> = ({
       <CreateProjectDialog
         open={showCreateDialog}
         onOpenChange={setShowCreateDialog}
+        onProjectOpen={onProjectOpen}
+      />
+      <CloneRepositoryDialog
+        open={showCloneDialog}
+        onOpenChange={setShowCloneDialog}
         onProjectOpen={onProjectOpen}
       />
     </div>

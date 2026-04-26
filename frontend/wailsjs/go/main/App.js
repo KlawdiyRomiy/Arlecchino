@@ -22,6 +22,10 @@ export function ClearCompiled() {
   return window['go']['main']['App']['ClearCompiled']();
 }
 
+export function CloneRepository(arg1, arg2, arg3) {
+  return window['go']['main']['App']['CloneRepository'](arg1, arg2, arg3);
+}
+
 export function CloseAllTerminals() {
   return window['go']['main']['App']['CloseAllTerminals']();
 }

@@ -2,19 +2,21 @@ import React from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Plus, FolderOpen, Sparkles, GitBranch } from "lucide-react";
 import { SelectDirectory } from "../../../wailsjs/go/main/App";
+import { CloneRepositoryDialog } from "../CloneRepositoryDialog";
 import { CreateProjectDialog } from "../CreateProjectDialog";
 
 const OPEN_PROJECT_EVENT = "arlecchino:open-project";
 const NEW_PROJECT_EVENT = "arlecchino:new-project";
 
 interface AddProjectMenuProps {
-  onProjectOpen: (path: string) => void;
+  onProjectOpen: (path: string) => void | Promise<void>;
 }
 
 export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
   onProjectOpen,
 }) => {
   const [showCreateDialog, setShowCreateDialog] = React.useState(false);
+  const [showCloneDialog, setShowCloneDialog] = React.useState(false);
 
   const handleOpenProject = async () => {
     try {
@@ -27,13 +29,15 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
 
   React.useEffect(() => {
     const openProject = () => {
-      if (!showCreateDialog) {
+      if (!showCreateDialog && !showCloneDialog) {
         void handleOpenProject();
       }
     };
 
     const newProject = () => {
-      setShowCreateDialog(true);
+      if (!showCloneDialog) {
+        setShowCreateDialog(true);
+      }
     };
 
     window.addEventListener(OPEN_PROJECT_EVENT, openProject);
@@ -43,7 +47,7 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
       window.removeEventListener(OPEN_PROJECT_EVENT, openProject);
       window.removeEventListener(NEW_PROJECT_EVENT, newProject);
     };
-  }, [showCreateDialog]);
+  }, [showCreateDialog, showCloneDialog]);
 
   return (
     <>
@@ -84,11 +88,11 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
             <DropdownMenu.Separator className="my-1 h-px bg-[var(--shell-inline-divider)]" />
 
             <DropdownMenu.Item
-              disabled
-              className="shell-menu-item text-[13px] text-[var(--text-muted)]"
+              onSelect={() => setShowCloneDialog(true)}
+              className="shell-menu-item cursor-pointer text-[13px]"
             >
               <GitBranch size={16} />
-              Clone Repository
+              <span className="flex-1">Clone Repository</span>
             </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
@@ -97,6 +101,11 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
       <CreateProjectDialog
         open={showCreateDialog}
         onOpenChange={setShowCreateDialog}
+        onProjectOpen={onProjectOpen}
+      />
+      <CloneRepositoryDialog
+        open={showCloneDialog}
+        onOpenChange={setShowCloneDialog}
         onProjectOpen={onProjectOpen}
       />
     </>

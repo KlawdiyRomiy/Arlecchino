@@ -22,6 +22,8 @@ export function ClearApprovedDependencyActions():Promise<void>;
 
 export function ClearCompiled():Promise<string>;
 
+export function CloneRepository(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function CloseAllTerminals():Promise<void>;
 
 export function CloseProject():Promise<void>;
