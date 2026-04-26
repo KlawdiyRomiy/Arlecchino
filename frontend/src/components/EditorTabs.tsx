@@ -38,11 +38,14 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
 }) => {
   return (
     <div
-      className="flex items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-blackprint)] pr-2"
+      data-testid="editor-tabs-bar"
+      className="flex h-[41px] min-h-[41px] items-center gap-2 border-b border-[var(--shell-border)] bg-[var(--bg-blackprint)] pr-2"
       style={{
         zIndex: 15,
         flexShrink: 0,
-        minHeight: 36,
+        height: 41,
+        minHeight: 41,
+        maxHeight: 41,
       }}
     >
       <Reorder.Group
@@ -50,7 +53,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         axis="x"
         values={tabs}
         onReorder={onTabsReorder || (() => {})}
-        className="flex min-w-0 flex-1 items-center overflow-x-auto bg-[var(--bg-blackprint)]"
+        className="shell-mini-x-scroll flex min-w-0 flex-1 self-stretch overflow-x-auto overflow-y-hidden bg-[var(--bg-blackprint)]"
       >
         {tabs.map((tab) => {
           const tabNode = (
@@ -65,7 +68,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
                 boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
               }}
               className={`
-                relative flex min-w-[120px] max-w-[200px] cursor-grab items-center gap-2 px-3 py-2 text-[12px] font-mono group
+                group relative flex min-w-[120px] max-w-[200px] cursor-grab items-center gap-2 self-stretch px-3 py-2 text-[12px] font-mono
                 ${
                   activeTab === tab.id
                     ? "bg-[var(--bg-secondary)] text-[var(--text-primary)]"
@@ -96,6 +99,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
               {activeTab === tab.id && (
                 <motion.div
                   layoutId="active-tab-indicator"
+                  data-testid="active-tab-indicator"
                   className="absolute bottom-0 left-0 right-0 h-[2px] bg-[var(--text-primary)]"
                   transition={{ type: "spring", stiffness: 500, damping: 30 }}
                 />
@@ -108,10 +112,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
           }
 
           return (
-            <ContextActionMenu
-              key={tab.id}
-              items={getTabContextMenuItems(tab)}
-            >
+            <ContextActionMenu key={tab.id} items={getTabContextMenuItems(tab)}>
               {tabNode}
             </ContextActionMenu>
           );
@@ -119,25 +120,38 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
       </Reorder.Group>
 
       {showSplitButtons && tabs.length > 0 && (
-        <div className="flex items-center">
-          <div className="shell-cluster-soft gap-1 px-1.5 py-1">
+        <div className="flex h-full items-stretch">
+          <div
+            data-testid="editor-tabs-split-controls"
+            className="shell-cluster-soft h-full max-h-full gap-1 px-1.5 py-0"
+          >
             <motion.button
+              type="button"
               onClick={onSplitVertical}
               whileHover={{ scale: 1.06 }}
               whileTap={{ scale: 0.96 }}
-              className="shell-control h-11 w-11 px-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              className="shell-control h-10 w-10 min-w-10 px-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               title="Split Right (Cmd+\\)"
             >
-              <Columns size={25} strokeWidth={2.1} />
+              <Columns
+                className="h-[13px] w-[13px] min-w-[13px] shrink-0"
+                size={13}
+                strokeWidth={2.2}
+              />
             </motion.button>
             <motion.button
+              type="button"
               onClick={onSplitHorizontal}
               whileHover={{ scale: 1.06 }}
               whileTap={{ scale: 0.96 }}
-              className="shell-control h-11 w-11 px-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              className="shell-control h-10 w-10 min-w-10 px-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
               title="Split Down"
             >
-              <Rows size={25} strokeWidth={2.1} />
+              <Rows
+                className="h-[13px] w-[13px] min-w-[13px] shrink-0"
+                size={13}
+                strokeWidth={2.2}
+              />
             </motion.button>
           </div>
         </div>
