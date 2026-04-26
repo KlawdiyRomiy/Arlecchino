@@ -186,6 +186,42 @@ test("settings button opens settings modal", async ({ page }) => {
   await expect(page.getByTestId("settings-modal")).toBeVisible();
 });
 
+test("topbar more menu closes on Escape and omits removed actions", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.getByTitle("More").click();
+
+  await expect(page.getByRole("menuitem", { name: /AI Chat/ })).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: /Command Palette/ }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: /About Arlecchino/ }),
+  ).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+
+  await expect(page.getByRole("menuitem", { name: /AI Chat/ })).toHaveCount(0);
+});
+
+test("add project menu closes on Escape", async ({ page }) => {
+  await mountProjectUI(page);
+
+  await page.getByTitle("Add project").click();
+
+  await expect(
+    page.getByRole("menuitem", { name: /Open Project/ }),
+  ).toBeVisible();
+
+  await page.keyboard.press("Escape");
+
+  await expect(
+    page.getByRole("menuitem", { name: /Open Project/ }),
+  ).toHaveCount(0);
+});
+
 test("preview shortcut uses latest active tab context", async ({ page }) => {
   await mountProjectUI(page);
 

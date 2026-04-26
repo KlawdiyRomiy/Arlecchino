@@ -66,6 +66,7 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
             align="start"
             sideOffset={8}
             className="shell-menu-content min-w-[240px] animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
+            data-shell-menu-content
           >
             <DropdownMenu.Item
               onSelect={handleOpenProject}

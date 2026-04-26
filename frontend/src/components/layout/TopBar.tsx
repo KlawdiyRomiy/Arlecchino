@@ -12,8 +12,6 @@ import {
   MessageSquare,
   GitBranch,
   Terminal,
-  Keyboard,
-  Info,
   RefreshCw,
 } from "lucide-react";
 import { WindowControls } from "../ui";
@@ -29,7 +27,6 @@ interface PanelVisibility {
 }
 
 interface TopBarProps {
-  onCommandPaletteOpen?: () => void;
   onOpenSearch?: () => void;
   onOpenSettings?: () => void;
   onToggleExplorer?: () => void;
@@ -62,7 +59,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenDebug,
   onOpenPreview,
   onOpenDependencyPolicy,
-  onCommandPaletteOpen,
   onProjectOpen,
   onSwitchProject,
   onCloseProject,
@@ -270,6 +266,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 align="end"
                 sideOffset={8}
                 className="shell-menu-content min-w-[240px]"
+                data-shell-menu-content
               >
                 <DropdownMenu.Label className="px-3 py-2 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
                   Panels
@@ -315,27 +312,11 @@ export const TopBar: React.FC<TopBarProps> = ({
                 </DropdownMenu.Label>
 
                 <DropdownMenu.Item
-                  onSelect={() => onCommandPaletteOpen?.()}
-                  className={menuItemClass}
-                >
-                  <Keyboard size={menuIconSize} />
-                  Command Palette
-                  <span className="shell-kbd ml-auto">⌘F</span>
-                </DropdownMenu.Item>
-
-                <DropdownMenu.Item
                   onSelect={() => onOpenDependencyPolicy?.()}
                   className={menuItemClass}
                 >
                   <RefreshCw size={menuIconSize} />
                   Sync dependencies...
-                </DropdownMenu.Item>
-
-                <DropdownMenu.Separator className="my-1 h-px bg-[var(--shell-inline-divider)]" />
-
-                <DropdownMenu.Item className={menuItemClass}>
-                  <Info size={menuIconSize} />
-                  About Arlecchino
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
