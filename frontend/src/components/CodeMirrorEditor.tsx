@@ -34,7 +34,6 @@ import {
   completionKeymap,
 } from "@codemirror/autocomplete";
 import { search, searchKeymap } from "@codemirror/search";
-import { lintGutter } from "@codemirror/lint";
 import {
   bracketMatching,
   foldGutter,
@@ -1788,7 +1787,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     indentOnInput(),
     bracketMatching(),
     foldGutter(),
-    lintGutter(),
     search(),
     Prec.highest(ghost.keymap),
     Prec.highest(keymap.of(COMPLETION_KEYMAP_WITHOUT_ESCAPE)),

@@ -1,8 +1,116 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+const editorProjectPath = "/workspace";
+const editorFilePath = `${editorProjectPath}/diagnostics.ts`;
+
+const mountEditorTab = async (page: Page, content: string): Promise<void> => {
+  await page.evaluate(
+    async ({ editorProjectPath }) => {
+      const { useWorkspaceStore } =
+        await import("/src/stores/workspaceStore.ts");
+      const { useExplorerStore } = await import("/src/stores/explorerStore.ts");
+      const { useDiagnosticsStore } =
+        await import("/src/stores/diagnosticsStore.ts");
+      const { useEditorSettingsStore } =
+        await import("/src/stores/editorSettingsStore.ts");
+
+      useDiagnosticsStore.getState().reset();
+      useEditorSettingsStore.getState().setShowInlineDiagnostics(true);
+      useWorkspaceStore.setState({
+        projects: [
+          {
+            id: editorProjectPath,
+            path: editorProjectPath,
+            name: "workspace",
+            openedAt: 1,
+          },
+        ],
+        activeId: editorProjectPath,
+        activeFramework: null,
+        pendingId: null,
+        ready: true,
+        switchDirection: 1,
+        uiBlockers: [],
+      });
+      useExplorerStore.getState().setProjectPath(editorProjectPath);
+    },
+    { editorProjectPath },
+  );
+
+  await expect(page.getByTestId("main-layout")).toBeVisible({
+    timeout: 10000,
+  });
+
+  await page.evaluate(
+    async ({ content, editorFilePath }) => {
+      (
+        window as typeof window & {
+          __diagnosticsEditorContent?: string;
+          __diagnosticsEditorPath?: string;
+        }
+      ).__diagnosticsEditorContent = content;
+      (
+        window as typeof window & {
+          __diagnosticsEditorContent?: string;
+          __diagnosticsEditorPath?: string;
+        }
+      ).__diagnosticsEditorPath = editorFilePath;
+    },
+    { content, editorFilePath },
+  );
+
+  await page.locator(`[data-file-path="${editorFilePath}"]`).click();
+  await expect(page.locator(".cm-editor").first()).toBeVisible({
+    timeout: 10000,
+  });
+};
+
+const setEditorDiagnostics = async (
+  page: Page,
+  items: Array<{
+    range: {
+      start: { line: number; character: number };
+      end: { line: number; character: number };
+    };
+    severity: number;
+    message: string;
+    source?: string;
+    code?: string;
+  }>,
+): Promise<void> => {
+  await page.evaluate(
+    async ({ editorFilePath, items }) => {
+      const { useDiagnosticsStore } =
+        await import("/src/stores/diagnosticsStore.ts");
+      useDiagnosticsStore
+        .getState()
+        .setFileDiagnostics(editorFilePath, "typescript", items);
+    },
+    { editorFilePath, items },
+  );
+};
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.clear();
+    localStorage.setItem(
+      "workspace-storage",
+      JSON.stringify({
+        state: {
+          projects: [
+            {
+              id: "/workspace",
+              path: "/workspace",
+              name: "workspace",
+              openedAt: 1,
+            },
+          ],
+          activeId: "/workspace",
+          switchDirection: 1,
+        },
+        version: 0,
+      }),
+    );
 
     const eventHandlers = new Map<string, Array<(payload: unknown) => void>>();
 
@@ -18,7 +126,14 @@ test.beforeEach(async ({ page }) => {
               const handlers = eventHandlers.get(eventName) ?? [];
               handlers.push(callback);
               eventHandlers.set(eventName, handlers);
-              return `${eventName}-${handlers.length}`;
+              return () => {
+                eventHandlers.set(
+                  eventName,
+                  (eventHandlers.get(eventName) ?? []).filter(
+                    (handler) => handler !== callback,
+                  ),
+                );
+              };
             };
           }
 
@@ -30,7 +145,14 @@ test.beforeEach(async ({ page }) => {
               const handlers = eventHandlers.get(eventName) ?? [];
               handlers.push(callback);
               eventHandlers.set(eventName, handlers);
-              return `${eventName}-${handlers.length}`;
+              return () => {
+                eventHandlers.set(
+                  eventName,
+                  (eventHandlers.get(eventName) ?? []).filter(
+                    (handler) => handler !== callback,
+                  ),
+                );
+              };
             };
           }
 
@@ -46,7 +168,55 @@ test.beforeEach(async ({ page }) => {
     const appBridge = new Proxy(
       {},
       {
-        get: () => async () => null,
+        get: (_target, property: string) => {
+          return async (...args: unknown[]) => {
+            switch (property) {
+              case "GetCurrentProjectFramework":
+                return null;
+              case "GetRecentProjects":
+                return [];
+              case "GetDevToolsStatus":
+                return [];
+              case "GetCurrentProjectPath":
+                return "/workspace";
+              case "OpenProject":
+              case "CreateTerminal":
+              case "WriteTerminal":
+              case "SendTerminalText":
+              case "CloseTerminal":
+              case "ResizeTerminal":
+                return true;
+              case "ListFiles":
+                return [];
+              case "ReadDirectory":
+                return [
+                  {
+                    name: "diagnostics.ts",
+                    path: "/workspace/diagnostics.ts",
+                    isDirectory: false,
+                  },
+                ];
+              case "ReadFile": {
+                const path = typeof args[0] === "string" ? args[0] : "file.ts";
+                const diagnosticsWindow = window as typeof window & {
+                  __diagnosticsEditorContent?: string;
+                  __diagnosticsEditorPath?: string;
+                };
+                if (
+                  diagnosticsWindow.__diagnosticsEditorPath === path &&
+                  diagnosticsWindow.__diagnosticsEditorContent !== undefined
+                ) {
+                  return diagnosticsWindow.__diagnosticsEditorContent;
+                }
+                return `// ${path}\nexport const ready = true;\n`;
+              }
+              case "GetLanguageForFile":
+                return "typescript";
+              default:
+                return null;
+            }
+          };
+        },
       },
     );
 
@@ -61,6 +231,116 @@ test.beforeEach(async ({ page }) => {
   });
 
   await page.goto("/");
+});
+
+test("inline diagnostics render viewport overlay without content widgets", async ({
+  page,
+}) => {
+  const content = Array.from(
+    { length: 120 },
+    (_value, index) => `const value${index} = ${index};`,
+  ).join("\n");
+  const diagnostics = Array.from({ length: 100 }, (_value, index) => ({
+    range: {
+      start: { line: index, character: 6 },
+      end: { line: index, character: 12 },
+    },
+    severity: index % 3 === 0 ? 1 : 2,
+    message: `diagnostic ${index} intentionally long enough to exercise truncation and overlay rendering`,
+    source: "test",
+  }));
+
+  await mountEditorTab(page, content);
+  await setEditorDiagnostics(page, diagnostics);
+
+  await expect(page.locator(".cm-diagnostic-overlay").first()).toBeVisible();
+  const overlayCount = await page.locator(".cm-diagnostic-overlay").count();
+  expect(overlayCount).toBeGreaterThan(0);
+  expect(overlayCount).toBeLessThan(diagnostics.length);
+  await expect(page.locator(".cm-content .cm-diagnostic-message")).toHaveCount(
+    0,
+  );
+});
+
+test("inline diagnostics stay compact until active and survive edits without inline artifacts", async ({
+  page,
+}) => {
+  const content = [
+    "const untouched = true;",
+    "const padding = true;",
+    'const brokenScore = "bad";',
+    "const spacer = true;",
+    "missingDemoFunction();",
+    "const tail = true;",
+  ].join("\n");
+
+  await mountEditorTab(page, content);
+  await setEditorDiagnostics(page, [
+    {
+      range: {
+        start: { line: 2, character: 6 },
+        end: { line: 2, character: 17 },
+      },
+      severity: 1,
+      message:
+        "Type 'string' is not assignable to type 'number' and should remain outside the text flow.",
+      source: "tsserver",
+    },
+    {
+      range: {
+        start: { line: 4, character: 0 },
+        end: { line: 4, character: 19 },
+      },
+      severity: 1,
+      message: "Cannot find name 'missingDemoFunction'.",
+      source: "tsserver",
+    },
+    {
+      range: {
+        start: { line: 4, character: 0 },
+        end: { line: 4, character: 19 },
+      },
+      severity: 2,
+      message: "Second diagnostic on the same visible line.",
+      source: "eslint",
+    },
+  ]);
+
+  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(2);
+  await expect(page.locator(".cm-content .cm-diagnostic-message")).toHaveCount(
+    0,
+  );
+  await expect(
+    page.locator(".cm-diagnostic-overlay-count").filter({ hasText: "2" }),
+  ).toHaveCount(1);
+
+  const compactTextDisplay = await page
+    .locator(".cm-diagnostic-overlay-text")
+    .first()
+    .evaluate((node) => window.getComputedStyle(node).display);
+  expect(compactTextDisplay).toBe("none");
+
+  await page.locator(".cm-line").nth(2).click();
+  await expect(
+    page.locator(".cm-diagnostic-overlay[data-diagnostic-expanded='true']"),
+  ).toHaveCount(1);
+  await expect(
+    page.locator(
+      ".cm-diagnostic-overlay[data-diagnostic-expanded='true'] .cm-diagnostic-overlay-text",
+    ),
+  ).toContainText("not assignable");
+
+  await page.locator(".cm-line").first().click();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".cm-content .cm-diagnostic-message")).toHaveCount(
+    0,
+  );
+  await expect(page.locator(".cm-diagnostic-overlay").first()).toBeVisible();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator(".cm-content .cm-diagnostic-message")).toHaveCount(
+    0,
+  );
 });
 
 test("diagnostics store drops stale project and generation events", async ({
