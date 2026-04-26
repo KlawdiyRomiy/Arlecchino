@@ -11,6 +11,12 @@ import {
   GitBranch,
   Settings,
   Folder,
+  FolderOpen,
+  Play,
+  Bug,
+  Copy,
+  X,
+  AlertCircle,
   Code,
   Box,
   Layers,
@@ -482,8 +488,20 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
         return <Sparkles size={16} />;
       case "folder":
         return <Folder size={16} />;
+      case "folder-open":
+        return <FolderOpen size={16} />;
       case "settings":
         return <Settings size={16} />;
+      case "play":
+        return <Play size={16} />;
+      case "bug":
+        return <Bug size={16} />;
+      case "copy":
+        return <Copy size={16} />;
+      case "alert-circle":
+        return <AlertCircle size={16} />;
+      case "x-circle":
+        return <X size={16} />;
       case "file-plus":
       case "save":
       case "file-text":
@@ -493,7 +511,15 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
       case "search":
         return <Search size={16} />;
       case "workflow":
+      case "maximize":
+      case "columns":
+      case "rows":
         return <Layers size={16} />;
+      case "move":
+      case "focus":
+      case "zoom-in":
+      case "zoom-out":
+        return <Navigation size={16} />;
       case "hash":
         return <Hash size={16} />;
       default:

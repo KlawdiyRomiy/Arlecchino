@@ -1,17 +1,24 @@
 package dispatcher
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
-func TestActionRegistry_DefaultsIncludePreviewActions(t *testing.T) {
+func TestActionRegistry_DefaultsIncludeModernIDEActions(t *testing.T) {
 	registry := NewActionRegistry()
 
 	tests := []struct {
 		name    string
 		handler string
 	}{
-		{name: "Open preview", handler: "preview.open"},
-		{name: "Focus preview", handler: "preview.focus"},
-		{name: "Close preview", handler: "preview.close"},
+		{name: "Run", handler: "panel.run"},
+		{name: "Debug", handler: "panel.debug"},
+		{name: "Open Problems Panel", handler: "panel.problems"},
+		{name: "Toggle Browser Preview", handler: "shortcut.browser.preview"},
+		{name: "Toggle Window Full Screen", handler: "shortcut.window.toggleFullscreen"},
+		{name: "Move Left Panel to Right Side", handler: "panel.move.leftToRight"},
+		{name: "Move Browser Preview Top", handler: "preview.move.top"},
 	}
 
 	for _, tt := range tests {
@@ -27,8 +34,8 @@ func TestActionRegistry_DefaultsIncludePreviewActions(t *testing.T) {
 	}
 }
 
-func TestIDEEventEmitter_PreviewHandlersEmitCanonicalWindowEvents(t *testing.T) {
-	action := &IDEAction{Name: "Open preview"}
+func TestIDEEventEmitter_PreviewHandlersEmitCanonicalEvents(t *testing.T) {
+	action := &IDEAction{Name: "Open Browser Preview"}
 	tests := []struct {
 		name      string
 		handler   func(*IDEEventEmitter, *IDEAction) error
@@ -38,8 +45,8 @@ func TestIDEEventEmitter_PreviewHandlersEmitCanonicalWindowEvents(t *testing.T) 
 		{
 			name:      "open",
 			handler:   (*IDEEventEmitter).handlePreviewOpen,
-			wantEvent: "ide:window:open",
-			wantData:  defaultPreviewOpenPayload(),
+			wantEvent: "ide:panel:open",
+			wantData:  "browser",
 		},
 		{
 			name:      "focus",
@@ -76,14 +83,74 @@ func TestIDEEventEmitter_PreviewHandlersEmitCanonicalWindowEvents(t *testing.T) 
 			if len(gotData) != 1 {
 				t.Fatalf("len(data) = %d, want 1", len(gotData))
 			}
-			if !equalPreviewPayload(gotData[0], tt.wantData) {
+			if !equalPayload(gotData[0], tt.wantData) {
 				t.Fatalf("payload = %#v, want %#v", gotData[0], tt.wantData)
 			}
 		})
 	}
 }
 
-func equalPreviewPayload(got, want interface{}) bool {
+func TestIDEEventEmitter_MenuAndMoveHandlersEmitCanonicalEvents(t *testing.T) {
+	action := &IDEAction{Name: "Toggle Browser Preview"}
+	tests := []struct {
+		name      string
+		handler   func(*IDEEventEmitter) ActionHandler
+		wantEvent string
+		wantData  interface{}
+	}{
+		{
+			name:      "shortcut menu action",
+			handler:   func(emitter *IDEEventEmitter) ActionHandler { return emitter.handleMenuAction("browser.preview") },
+			wantEvent: "ide:menu:action",
+			wantData:  "browser.preview",
+		},
+		{
+			name:      "side panel move",
+			handler:   func(emitter *IDEEventEmitter) ActionHandler { return emitter.handleMovePanelSide("left", "right") },
+			wantEvent: "ide:panel:move",
+			wantData:  map[string]any{"from": "left", "to": "right"},
+		},
+		{
+			name:      "browser preview move",
+			handler:   func(emitter *IDEEventEmitter) ActionHandler { return emitter.handleMoveBrowserPreview("top") },
+			wantEvent: "ide:panel:move",
+			wantData:  map[string]any{"panel": "browser", "position": "top"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotEvent string
+			var gotData []interface{}
+			emitter := &IDEEventEmitter{
+				emitFn: func(event string, data ...interface{}) error {
+					gotEvent = event
+					gotData = append(gotData[:0], data...)
+					return nil
+				},
+			}
+
+			if err := tt.handler(emitter)(action); err != nil {
+				t.Fatalf("handler() error = %v", err)
+			}
+			if gotEvent != tt.wantEvent {
+				t.Fatalf("event = %q, want %q", gotEvent, tt.wantEvent)
+			}
+			if len(gotData) != 1 {
+				t.Fatalf("len(data) = %d, want 1", len(gotData))
+			}
+			if !equalPayload(gotData[0], tt.wantData) {
+				t.Fatalf("payload = %#v, want %#v", gotData[0], tt.wantData)
+			}
+		})
+	}
+}
+
+func equalPayload(got, want interface{}) bool {
+	if reflect.DeepEqual(got, want) {
+		return true
+	}
+
 	gotMap, ok := got.(map[string]any)
 	if !ok {
 		return false
@@ -103,7 +170,7 @@ func equalPreviewPayload(got, want interface{}) bool {
 		wantNested, wantIsMap := wantValue.(map[string]any)
 		gotNested, gotIsMap := gotValue.(map[string]any)
 		if wantIsMap || gotIsMap {
-			if !wantIsMap || !gotIsMap || !equalPreviewPayload(gotNested, wantNested) {
+			if !wantIsMap || !gotIsMap || !equalPayload(gotNested, wantNested) {
 				return false
 			}
 			continue

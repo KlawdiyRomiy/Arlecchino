@@ -24,7 +24,6 @@ func NewIDEEventEmitter(ctx context.Context) *IDEEventEmitter {
 
 const (
 	defaultPreviewWindowID = "preview-browser-default"
-	defaultPreviewTitle    = "Browser Preview"
 )
 
 func (e *IDEEventEmitter) RegisterHandlers(d *Dispatcher) {
@@ -32,9 +31,42 @@ func (e *IDEEventEmitter) RegisterHandlers(d *Dispatcher) {
 	d.RegisterHandler("panel.ai", e.handleOpenAIPanel)
 	d.RegisterHandler("panel.terminal", e.handleOpenTerminal)
 	d.RegisterHandler("panel.explorer", e.handleOpenExplorer)
+	d.RegisterHandler("panel.problems", e.handleOpenProblems)
 	d.RegisterHandler("panel.search", e.handleOpenSearch)
 	d.RegisterHandler("panel.run", e.handleOpenRun)
 	d.RegisterHandler("panel.debug", e.handleOpenDebug)
+	d.RegisterHandler("panel.close.explorer", e.handleClosePanel("explorer"))
+	d.RegisterHandler("panel.close.terminal", e.handleClosePanel("terminal"))
+	d.RegisterHandler("panel.close.ai", e.handleClosePanel("ai"))
+	d.RegisterHandler("panel.close.git", e.handleClosePanel("git"))
+	d.RegisterHandler("panel.close.problems", e.handleClosePanel("problems"))
+
+	d.RegisterHandler("shortcut.explorer.toggle", e.handleMenuAction("explorer.toggle"))
+	d.RegisterHandler("shortcut.terminal.toggle", e.handleMenuAction("terminal.toggle"))
+	d.RegisterHandler("shortcut.ai.toggle", e.handleMenuAction("ai.toggle"))
+	d.RegisterHandler("shortcut.git.toggle", e.handleMenuAction("git.toggle"))
+	d.RegisterHandler("shortcut.git.fullscreen", e.handleMenuAction("git.fullscreen"))
+	d.RegisterHandler("shortcut.problems.toggle", e.handleMenuAction("problems.toggle"))
+	d.RegisterHandler("shortcut.problems.fullscreen", e.handleMenuAction("problems.fullscreen"))
+	d.RegisterHandler("shortcut.panel.closeFullscreen", e.handleMenuAction("panel.closeFullscreen"))
+	d.RegisterHandler("shortcut.browser.preview", e.handleMenuAction("browser.preview"))
+	d.RegisterHandler("shortcut.window.toggleFullscreen", e.handleMenuAction("window.toggleFullscreen"))
+	d.RegisterHandler("shortcut.project.copyPath", e.handleMenuAction("project.copyPath"))
+	d.RegisterHandler("shortcut.project.open", e.handleMenuAction("project.open"))
+	d.RegisterHandler("shortcut.project.new", e.handleMenuAction("project.new"))
+
+	d.RegisterHandler("panel.move.leftToRight", e.handleMovePanelSide("left", "right"))
+	d.RegisterHandler("panel.move.leftToTop", e.handleMovePanelSide("left", "top"))
+	d.RegisterHandler("panel.move.leftToBottom", e.handleMovePanelSide("left", "bottom"))
+	d.RegisterHandler("panel.move.rightToLeft", e.handleMovePanelSide("right", "left"))
+	d.RegisterHandler("panel.move.rightToTop", e.handleMovePanelSide("right", "top"))
+	d.RegisterHandler("panel.move.rightToBottom", e.handleMovePanelSide("right", "bottom"))
+	d.RegisterHandler("panel.move.topToLeft", e.handleMovePanelSide("top", "left"))
+	d.RegisterHandler("panel.move.topToRight", e.handleMovePanelSide("top", "right"))
+	d.RegisterHandler("panel.move.topToBottom", e.handleMovePanelSide("top", "bottom"))
+	d.RegisterHandler("panel.move.bottomToLeft", e.handleMovePanelSide("bottom", "left"))
+	d.RegisterHandler("panel.move.bottomToRight", e.handleMovePanelSide("bottom", "right"))
+	d.RegisterHandler("panel.move.bottomToTop", e.handleMovePanelSide("bottom", "top"))
 
 	d.RegisterHandler("toggle.sidebar", e.handleToggleSidebar)
 	d.RegisterHandler("toggle.terminal", e.handleToggleTerminal)
@@ -68,6 +100,10 @@ func (e *IDEEventEmitter) RegisterHandlers(d *Dispatcher) {
 	d.RegisterHandler("git.push", e.handleGitPush)
 	d.RegisterHandler("git.pull", e.handleGitPull)
 	d.RegisterHandler("preview.open", e.handlePreviewOpen)
+	d.RegisterHandler("preview.move.left", e.handleMoveBrowserPreview("left"))
+	d.RegisterHandler("preview.move.right", e.handleMoveBrowserPreview("right"))
+	d.RegisterHandler("preview.move.top", e.handleMoveBrowserPreview("top"))
+	d.RegisterHandler("preview.move.bottom", e.handleMoveBrowserPreview("bottom"))
 	d.RegisterHandler("preview.focus", e.handlePreviewFocus)
 	d.RegisterHandler("preview.close", e.handlePreviewClose)
 }
@@ -81,16 +117,6 @@ func (e *IDEEventEmitter) emit(event string, data ...interface{}) error {
 	}
 	runtime.EventsEmit(e.ctx, event, data...)
 	return nil
-}
-
-func defaultPreviewOpenPayload() map[string]any {
-	return map[string]any{
-		"id":      defaultPreviewWindowID,
-		"surface": "browser",
-		"title":   defaultPreviewTitle,
-		"mode":    "snapped",
-		"side":    "right",
-	}
 }
 
 func defaultPreviewWindowIDPayload() map[string]any {
@@ -111,6 +137,34 @@ func (e *IDEEventEmitter) handleOpenTerminal(_ *IDEAction) error {
 
 func (e *IDEEventEmitter) handleOpenExplorer(_ *IDEAction) error {
 	return e.emit("ide:panel:open", "explorer")
+}
+
+func (e *IDEEventEmitter) handleOpenProblems(_ *IDEAction) error {
+	return e.emit("ide:panel:open", "problems")
+}
+
+func (e *IDEEventEmitter) handleClosePanel(panel string) ActionHandler {
+	return func(_ *IDEAction) error {
+		return e.emit("ide:panel:close", map[string]any{"panel": panel})
+	}
+}
+
+func (e *IDEEventEmitter) handleMenuAction(actionID string) ActionHandler {
+	return func(_ *IDEAction) error {
+		return e.emit("ide:menu:action", actionID)
+	}
+}
+
+func (e *IDEEventEmitter) handleMovePanelSide(from, to string) ActionHandler {
+	return func(_ *IDEAction) error {
+		return e.emit("ide:panel:move", map[string]any{"from": from, "to": to})
+	}
+}
+
+func (e *IDEEventEmitter) handleMoveBrowserPreview(position string) ActionHandler {
+	return func(_ *IDEAction) error {
+		return e.emit("ide:panel:move", map[string]any{"panel": "browser", "position": position})
+	}
 }
 
 func (e *IDEEventEmitter) handleOpenSearch(_ *IDEAction) error {
@@ -230,7 +284,7 @@ func (e *IDEEventEmitter) handleGitPull(_ *IDEAction) error {
 }
 
 func (e *IDEEventEmitter) handlePreviewOpen(_ *IDEAction) error {
-	return e.emit("ide:window:open", defaultPreviewOpenPayload())
+	return e.emit("ide:panel:open", "browser")
 }
 
 func (e *IDEEventEmitter) handlePreviewFocus(_ *IDEAction) error {

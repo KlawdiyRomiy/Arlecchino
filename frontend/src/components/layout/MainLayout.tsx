@@ -163,6 +163,7 @@ type HeldPanelShortcutTarget =
   | { kind: "preview"; windowId?: string };
 
 interface HeldPanelShortcut {
+  actionId?: ShortcutActionId;
   target: HeldPanelShortcutTarget;
   triggerCode: string;
   modifiers: {
@@ -173,6 +174,8 @@ interface HeldPanelShortcut {
   };
   runTapAction: () => void;
   tapActionRun: boolean;
+  tapGraceTimer: ReturnType<typeof setTimeout> | null;
+  moveLocked: boolean;
   moved: boolean;
 }
 
@@ -204,6 +207,11 @@ interface PanelOpenRequest {
   command?: string;
   terminalName?: string;
   focus?: boolean;
+}
+
+interface PanelSideMoveRequest {
+  from: PanelPosition;
+  to: PanelPosition;
 }
 
 interface CodePanelTab {
@@ -274,7 +282,9 @@ const PANEL_SHORTCUT_MOVE_POSITIONS: readonly PanelPosition[] = [
   "top",
   "bottom",
 ];
+const PANEL_SHORTCUT_TAP_GRACE_MS = 650;
 const APPLICATION_MENU_REPEAT_SUPPRESSION_MS = 700;
+const HELD_SHORTCUT_NATIVE_DUPLICATE_SUPPRESSION_MS = 5000;
 
 const uniquePanelPositions = (
   positions: Array<PanelPosition | null | undefined>,
@@ -369,6 +379,16 @@ const isPanelPosition = (value: unknown): value is PanelPosition =>
   value === "right" ||
   value === "top" ||
   value === "bottom";
+
+const PANEL_POSITION_LABELS: Record<PanelPosition, string> = {
+  left: "left",
+  right: "right",
+  top: "top",
+  bottom: "bottom",
+};
+
+const formatPanelPosition = (position: PanelPosition): string =>
+  PANEL_POSITION_LABELS[position];
 
 const resolvePanelId = (panelName: string): PanelId | null => {
   const normalized = panelName.trim().toLowerCase();
@@ -773,6 +793,30 @@ const parsePanelOpenRequest = (value: unknown): PanelOpenRequest | null => {
       getStringFromRecord(normalizedValue, "title"),
     focus: getBooleanFromRecord(normalizedValue, "focus") ?? false,
   };
+};
+
+const parsePanelSideMoveRequest = (
+  value: unknown,
+): PanelSideMoveRequest | null => {
+  const normalizedValue = unwrapEventPayload(value);
+  if (!isRecord(normalizedValue)) {
+    return null;
+  }
+
+  if (getStringFromRecord(normalizedValue, "panel")) {
+    return null;
+  }
+
+  const from =
+    parsePanelPosition(normalizedValue.from) ||
+    parsePanelPosition(normalizedValue.source) ||
+    parsePanelPosition(normalizedValue.sourcePosition);
+  const to =
+    parsePanelPosition(normalizedValue.to) ||
+    parsePanelPosition(normalizedValue.target) ||
+    parsePanelPosition(normalizedValue.targetPosition);
+
+  return from && to ? { from, to } : null;
 };
 
 const parseEditorOpenRequest = (
@@ -1590,6 +1634,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     actionId: ShortcutActionId;
     until: number;
   } | null>(null);
+  const delayedShortcutActionSuppressionRef = React.useRef<{
+    actionId: ShortcutActionId;
+    until: number;
+  } | null>(null);
   const applicationMenuRepeatRef = React.useRef<{
     actionId: ShortcutActionId;
     lastAt: number;
@@ -1844,9 +1892,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [panelDropSettlingPositions, setPanelDropSettlingPositions] = useState<
     PanelPosition[]
   >([]);
+  const [panelExitPositions, setPanelExitPositions] = useState<PanelPosition[]>(
+    [],
+  );
   const [panelPresenceBypassPositions, setPanelPresenceBypassPositions] =
     useState<PanelPosition[]>([]);
+  const panelPresenceBypassPositionsRef = useRef<PanelPosition[]>([]);
   const [floatingPresenceVersion, setFloatingPresenceVersion] = useState(0);
+  const panelExitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingPanelCloseFrameIdsRef = useRef<number[]>([]);
 
   const [notification, setNotification] = useState<{
     type: "success" | "error";
@@ -1858,9 +1912,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       if (panelDropSettlingTimerRef.current) {
         clearTimeout(panelDropSettlingTimerRef.current);
       }
+      if (panelExitTimerRef.current) {
+        clearTimeout(panelExitTimerRef.current);
+      }
+      if (typeof window !== "undefined") {
+        pendingPanelCloseFrameIdsRef.current.forEach((frameId) =>
+          window.cancelAnimationFrame(frameId),
+        );
+      }
+      pendingPanelCloseFrameIdsRef.current = [];
       setRelocatingPanelIds([]);
       setRelocatingPreviewWindowIds([]);
       setPanelDropSettlingPositions([]);
+      setPanelExitPositions([]);
+      panelPresenceBypassPositionsRef.current = [];
       setPanelPresenceBypassPositions([]);
       heldPanelShortcutRef.current = null;
       pressedShortcutCodesRef.current.clear();
@@ -3004,6 +3069,63 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     state.setTUIAssist({ active: true, ratio, anchor: state.tuiAssist.anchor });
   }, []);
 
+  const applyPanelPresenceBypassPositionsState = useCallback(
+    (nextPositions: PanelPosition[]) => {
+      panelPresenceBypassPositionsRef.current = nextPositions;
+      setPanelPresenceBypassPositions(nextPositions);
+    },
+    [],
+  );
+
+  const updatePanelPresenceBypassPositionsState = useCallback(
+    (
+      updater: (currentPositions: PanelPosition[]) => PanelPosition[],
+    ): PanelPosition[] => {
+      const nextPositions = updater(panelPresenceBypassPositionsRef.current);
+      applyPanelPresenceBypassPositionsState(nextPositions);
+      return nextPositions;
+    },
+    [applyPanelPresenceBypassPositionsState],
+  );
+
+  const restoreSnappedSlotPresence = useCallback(
+    (position: PanelPosition): boolean => {
+      if (!panelPresenceBypassPositionsRef.current.includes(position)) {
+        return false;
+      }
+
+      updatePanelPresenceBypassPositionsState((currentPositions) =>
+        currentPositions.filter(
+          (currentPosition) => currentPosition !== position,
+        ),
+      );
+      return true;
+    },
+    [updatePanelPresenceBypassPositionsState],
+  );
+
+  const schedulePanelCloseAfterPresenceRestore = useCallback(
+    (closePanel: () => void) => {
+      if (typeof window === "undefined") {
+        closePanel();
+        return;
+      }
+
+      const frameId = window.requestAnimationFrame(() => {
+        pendingPanelCloseFrameIdsRef.current =
+          pendingPanelCloseFrameIdsRef.current.filter(
+            (currentFrameId) => currentFrameId !== frameId,
+          );
+        closePanel();
+      });
+      pendingPanelCloseFrameIdsRef.current = [
+        ...pendingPanelCloseFrameIdsRef.current,
+        frameId,
+      ];
+    },
+    [],
+  );
+
   const startPanelDropSettling = useCallback(
     (
       options: {
@@ -3020,7 +3142,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setRelocatingPanelIds(options.panels ?? []);
       setRelocatingPreviewWindowIds(options.previewWindows ?? []);
       setPanelDropSettlingPositions(options.positions ?? []);
-      setPanelPresenceBypassPositions((currentPositions) =>
+      updatePanelPresenceBypassPositionsState((currentPositions) =>
         uniquePanelPositions([
           ...currentPositions,
           ...(options.positions ?? []),
@@ -3034,7 +3156,128 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         setPanelDropSettlingPositions([]);
       }, FLOATING_PANEL_LAYOUT_TRANSITION_MS + 120);
     },
-    [],
+    [updatePanelPresenceBypassPositionsState],
+  );
+
+  const startSnappedSlotExit = useCallback(
+    (position: PanelPosition) => {
+      if (reducePanelMotion) {
+        return;
+      }
+
+      if (panelExitTimerRef.current) {
+        clearTimeout(panelExitTimerRef.current);
+      }
+
+      setPanelExitPositions((currentPositions) =>
+        uniquePanelPositions([...currentPositions, position]),
+      );
+      panelExitTimerRef.current = setTimeout(() => {
+        panelExitTimerRef.current = null;
+        setPanelExitPositions([]);
+      }, FLOATING_PANEL_LAYOUT_TRANSITION_MS + 700);
+    },
+    [reducePanelMotion],
+  );
+
+  const finishSnappedSlotExit = useCallback((position: PanelPosition) => {
+    setPanelExitPositions((currentPositions) =>
+      currentPositions.filter(
+        (currentPosition) => currentPosition !== position,
+      ),
+    );
+  }, []);
+
+  const startPanelExitMotion = useCallback(
+    (panelId: PanelId) => {
+      if (!panelsRef.current[panelId]) {
+        return;
+      }
+
+      const currentConfig = panelConfigsRef.current[panelId];
+      if (currentConfig.mode !== "snapped") {
+        return;
+      }
+
+      if (panelId === "terminal" && useTerminalStore.getState().tuiModeActive) {
+        return;
+      }
+
+      startSnappedSlotExit(currentConfig.position);
+    },
+    [startSnappedSlotExit],
+  );
+
+  const startPreviewWindowExitMotion = useCallback(
+    (windowState: PreviewWindow | undefined) => {
+      if (!windowState || windowState.mode !== "snapped") {
+        return;
+      }
+
+      startSnappedSlotExit(windowState.position);
+    },
+    [startSnappedSlotExit],
+  );
+
+  const closePanelWithMotion = useCallback(
+    (panelId: PanelId) => {
+      const currentConfig = panelConfigsRef.current[panelId];
+      const restoredSlotPresence =
+        panelsRef.current[panelId] &&
+        currentConfig.mode === "snapped" &&
+        !(
+          panelId === "terminal" && useTerminalStore.getState().tuiModeActive
+        ) &&
+        restoreSnappedSlotPresence(currentConfig.position);
+      const closePanel = () => {
+        updatePanelsState((previous) =>
+          previous[panelId] ? { ...previous, [panelId]: false } : previous,
+        );
+      };
+
+      startPanelExitMotion(panelId);
+      if (restoredSlotPresence && !reducePanelMotion) {
+        schedulePanelCloseAfterPresenceRestore(closePanel);
+        return;
+      }
+
+      closePanel();
+    },
+    [
+      reducePanelMotion,
+      restoreSnappedSlotPresence,
+      schedulePanelCloseAfterPresenceRestore,
+      startPanelExitMotion,
+      updatePanelsState,
+    ],
+  );
+
+  const closePreviewWindowWithMotion = useCallback(
+    (windowId: string) => {
+      const targetWindow = usePreviewWindowStore
+        .getState()
+        .windows.find((windowState) => windowState.id === windowId);
+      const restoredSlotPresence =
+        targetWindow?.mode === "snapped" &&
+        restoreSnappedSlotPresence(targetWindow.position);
+
+      startPreviewWindowExitMotion(targetWindow);
+      if (restoredSlotPresence && !reducePanelMotion) {
+        schedulePanelCloseAfterPresenceRestore(() =>
+          closePreviewWindow(windowId),
+        );
+        return;
+      }
+
+      closePreviewWindow(windowId);
+    },
+    [
+      closePreviewWindow,
+      reducePanelMotion,
+      restoreSnappedSlotPresence,
+      schedulePanelCloseAfterPresenceRestore,
+      startPreviewWindowExitMotion,
+    ],
   );
 
   const getShortcutEventCode = (event: KeyboardEvent): string =>
@@ -3433,6 +3676,71 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     return true;
   };
 
+  const clearHeldPanelShortcutTapGraceTimer = (
+    heldShortcut: HeldPanelShortcut | null,
+  ) => {
+    if (!heldShortcut?.tapGraceTimer) {
+      return;
+    }
+
+    clearTimeout(heldShortcut.tapGraceTimer);
+    heldShortcut.tapGraceTimer = null;
+  };
+
+  const suppressDelayedShortcutMenuDuplicate = (
+    actionId: ShortcutActionId | undefined,
+  ) => {
+    if (!actionId) {
+      return;
+    }
+
+    const now = performance.now();
+    shortcutActionSuppressionRef.current = {
+      actionId,
+      until: now + APPLICATION_MENU_REPEAT_SUPPRESSION_MS,
+    };
+    delayedShortcutActionSuppressionRef.current = {
+      actionId,
+      until: now + HELD_SHORTCUT_NATIVE_DUPLICATE_SUPPRESSION_MS,
+    };
+  };
+
+  const runHeldPanelShortcutTapAction = (
+    heldShortcut: HeldPanelShortcut,
+    options: { lockMove?: boolean } = {},
+  ): boolean => {
+    clearHeldPanelShortcutTapGraceTimer(heldShortcut);
+    if (options.lockMove) {
+      heldShortcut.moveLocked = true;
+    }
+
+    if (!heldShortcut.tapActionRun && !heldShortcut.moved) {
+      heldShortcut.runTapAction();
+      heldShortcut.tapActionRun = true;
+      return true;
+    }
+
+    return false;
+  };
+
+  const commitHeldPanelShortcutTapAfterGrace = (
+    heldShortcut: HeldPanelShortcut,
+  ) => {
+    if (heldPanelShortcutRef.current !== heldShortcut) {
+      clearHeldPanelShortcutTapGraceTimer(heldShortcut);
+      return;
+    }
+
+    const tapActionCommitted = runHeldPanelShortcutTapAction(heldShortcut, {
+      lockMove: true,
+    });
+    if (heldPanelShortcutRef.current === heldShortcut && !heldShortcut.moved) {
+      if (tapActionCommitted) {
+        suppressDelayedShortcutMenuDuplicate(heldShortcut.actionId);
+      }
+    }
+  };
+
   const clearHeldPanelShortcut = (runTapAction: boolean) => {
     const heldShortcut = heldPanelShortcutRef.current;
     heldPanelShortcutRef.current = null;
@@ -3443,7 +3751,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       !heldShortcut.tapActionRun &&
       !heldShortcut.moved
     ) {
-      heldShortcut.runTapAction();
+      if (runHeldPanelShortcutTapAction(heldShortcut)) {
+        suppressDelayedShortcutMenuDuplicate(heldShortcut.actionId);
+      }
+    } else {
+      clearHeldPanelShortcutTapGraceTimer(heldShortcut);
     }
   };
 
@@ -3485,11 +3797,90 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     );
   };
 
+  const isHeldPanelShortcutTargetVisible = (
+    target: HeldPanelShortcutTarget,
+  ): boolean => {
+    if (target.kind === "panel") {
+      return panelsRef.current[target.panelId];
+    }
+
+    if (target.windowId !== undefined) {
+      return usePreviewWindowStore
+        .getState()
+        .windows.some((windowState) => windowState.id === target.windowId);
+    }
+
+    return getBrowserPreviewWindowForShortcut() !== null;
+  };
+
+  const moveSnappedPanelBetweenSides = useCallback(
+    (from: PanelPosition, to: PanelPosition): boolean => {
+      if (from === to) {
+        return true;
+      }
+
+      const panelId = findVisibleSnappedPanelAtPosition(from);
+      if (!panelId) {
+        showNotification(
+          "error",
+          `[Panels] No snapped panel on the ${formatPanelPosition(from)} side`,
+        );
+        return false;
+      }
+
+      const moved = movePanelFromHeldShortcut(panelId, to);
+      if (!moved) {
+        showNotification(
+          "error",
+          `[Panels] Unable to move ${formatPanelPosition(from)} panel to the ${formatPanelPosition(to)} side`,
+        );
+      }
+      return moved;
+    },
+    [showNotification],
+  );
+
+  const moveBrowserPreviewToPosition = useCallback(
+    (targetPosition: PanelPosition): void => {
+      const moveExistingPreview = (previewWindow: PreviewWindow): boolean => {
+        const moved = movePreviewWindowToPosition(
+          previewWindow.id,
+          targetPosition,
+        );
+        if (!moved) {
+          showNotification(
+            "error",
+            `[Preview] Unable to move browser preview to the ${formatPanelPosition(targetPosition)} side`,
+          );
+        }
+        return moved;
+      };
+
+      const existingPreviewWindow = getBrowserPreviewWindowForShortcut();
+      if (existingPreviewWindow) {
+        moveExistingPreview(existingPreviewWindow);
+        return;
+      }
+
+      openCanonicalBrowserPreviewRef.current();
+      window.requestAnimationFrame(() => {
+        const openedPreviewWindow = getBrowserPreviewWindowForShortcut();
+        if (openedPreviewWindow) {
+          moveExistingPreview(openedPreviewWindow);
+        }
+      });
+    },
+    [showNotification],
+  );
+
   const beginHeldPanelShortcut = (
     event: KeyboardEvent,
     target: HeldPanelShortcutTarget,
     runTapAction: () => void,
-    options: { runTapActionImmediately?: boolean } = {},
+    options: {
+      actionId?: ShortcutActionId;
+      runTapActionImmediately?: boolean;
+    } = {},
   ) => {
     const triggerCode = getShortcutEventCode(event);
     const currentHeldShortcut = heldPanelShortcutRef.current;
@@ -3500,18 +3891,31 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       currentHeldShortcut.triggerCode === triggerCode
     ) {
       if (event.repeat) {
+        if (!currentHeldShortcut.tapActionRun && !currentHeldShortcut.moved) {
+          clearHeldPanelShortcutTapGraceTimer(currentHeldShortcut);
+        }
         return;
       }
-      clearHeldPanelShortcut(false);
+
+      if (!currentHeldShortcut.tapActionRun && !currentHeldShortcut.moved) {
+        clearHeldPanelShortcut(true);
+        return;
+      }
+
+      clearHeldPanelShortcut(!currentHeldShortcut.tapActionRun);
+    } else {
+      clearHeldPanelShortcut(true);
     }
 
-    clearHeldPanelShortcut(true);
-    const tapActionRun = options.runTapActionImmediately === true;
+    const shouldRunTapAction = options.runTapActionImmediately === true;
+    const targetVisible = isHeldPanelShortcutTargetVisible(target);
+    const tapActionRun = shouldRunTapAction && !targetVisible;
     if (tapActionRun) {
       runTapAction();
     }
 
-    heldPanelShortcutRef.current = {
+    const heldShortcut: HeldPanelShortcut = {
+      actionId: options.actionId,
       target,
       triggerCode,
       modifiers: {
@@ -3522,8 +3926,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       },
       runTapAction,
       tapActionRun,
+      tapGraceTimer: null,
+      moveLocked: false,
       moved: false,
     };
+    heldPanelShortcutRef.current = heldShortcut;
+
+    if (shouldRunTapAction && targetVisible) {
+      heldShortcut.tapGraceTimer = setTimeout(() => {
+        commitHeldPanelShortcutTapAfterGrace(heldShortcut);
+      }, PANEL_SHORTCUT_TAP_GRACE_MS);
+    }
   };
 
   const markShortcutActionHandled = (actionId: ShortcutActionId) => {
@@ -3537,14 +3950,25 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     actionId: ShortcutActionId,
   ): boolean => {
     const now = performance.now();
+    const delayedSuppression = delayedShortcutActionSuppressionRef.current;
+    if (delayedSuppression) {
+      if (now > delayedSuppression.until) {
+        delayedShortcutActionSuppressionRef.current = null;
+      } else if (delayedSuppression.actionId === actionId) {
+        if (heldPanelShortcutRef.current?.actionId !== actionId) {
+          delayedShortcutActionSuppressionRef.current = null;
+        }
+        return true;
+      }
+    }
+
     const shortcutSuppression = shortcutActionSuppressionRef.current;
     if (
       shortcutSuppression &&
       shortcutSuppression.actionId === actionId &&
       now <= shortcutSuppression.until
     ) {
-      shortcutSuppression.until =
-        now + APPLICATION_MENU_REPEAT_SUPPRESSION_MS;
+      shortcutSuppression.until = now + APPLICATION_MENU_REPEAT_SUPPRESSION_MS;
       return true;
     }
 
@@ -3594,6 +4018,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       return false;
     }
 
+    if (heldShortcut.moveLocked) {
+      return false;
+    }
+
     if (!isHeldPanelShortcutActive(event, heldShortcut)) {
       return false;
     }
@@ -3614,14 +4042,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 (windowState) => windowState.id === previewTarget.windowId,
               )
           : getBrowserPreviewWindowForShortcut();
-      if (
-        !previewWindow ||
+      if (!previewWindow) {
+        moveBrowserPreviewToPosition(targetPosition);
+      } else if (
         !movePreviewWindowToPosition(previewWindow.id, targetPosition)
       ) {
         return false;
       }
     }
 
+    clearHeldPanelShortcutTapGraceTimer(heldShortcut);
     heldShortcut.moved = true;
     return true;
   };
@@ -3789,7 +4219,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           e,
           { kind: "panel", panelId: "explorer" },
           () => togglePanelCompactFromShortcut("explorer"),
-          { runTapActionImmediately: !panelsRef.current.explorer },
+          { actionId: "explorer.toggle", runTapActionImmediately: true },
         );
         return;
       }
@@ -3835,8 +4265,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             }
           },
           {
-            runTapActionImmediately:
-              !isTerminalShortcutContext && !panelsRef.current.terminal,
+            actionId: "terminal.toggle",
+            runTapActionImmediately: !isTerminalShortcutContext,
           },
         );
         return;
@@ -3856,7 +4286,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           e,
           { kind: "panel", panelId: "aiChat" },
           () => toggleNamedPanel("aiChat"),
-          { runTapActionImmediately: !panelsRef.current.aiChat },
+          { actionId: "ai.toggle", runTapActionImmediately: true },
         );
         return;
       }
@@ -3911,7 +4341,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           e,
           { kind: "panel", panelId: "git" },
           () => togglePanelCompactFromShortcut("git", gitPreFullscreenRef),
-          { runTapActionImmediately: !panelsRef.current.git },
+          { actionId: "git.toggle", runTapActionImmediately: true },
         );
         return;
       }
@@ -3945,7 +4375,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               "problems",
               problemsPreFullscreenRef,
             ),
-          { runTapActionImmediately: !panelsRef.current.problems },
+          { actionId: "problems.toggle", runTapActionImmediately: true },
         );
         return;
       }
@@ -3961,10 +4391,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           e,
           { kind: "preview" },
           () => toggleCanonicalBrowserPreviewRef.current(),
-          {
-            runTapActionImmediately:
-              getBrowserPreviewWindowForShortcut() === null,
-          },
+          { actionId: "browser.preview", runTapActionImmediately: true },
         );
         return;
       }
@@ -3994,7 +4421,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         const activePreviewWindowId =
           usePreviewWindowStore.getState().activeWindowId;
         if (activePreviewWindowId) {
-          closePreviewWindow(activePreviewWindowId);
+          closePreviewWindowWithMotion(activePreviewWindowId);
           return;
         }
 
@@ -4116,6 +4543,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       clearHeldPanelShortcut(false);
       pressedShortcutCodesRef.current.clear();
       shortcutActionSuppressionRef.current = null;
+      delayedShortcutActionSuppressionRef.current = null;
       applicationMenuRepeatRef.current = null;
     };
 
@@ -4132,10 +4560,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     activateAdjacentCodePanelTab,
     applyPanelConfigsState,
     applyPanelsState,
-    closePreviewWindow,
     closeExecutionDialog,
     closeCreateEntryDialog,
     closeModal,
+    closePreviewWindowWithMotion,
     closeTUIAssistPanel,
     copyProjectPathFromShortcut,
     dispatcher,
@@ -4826,12 +5254,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const toggleCanonicalBrowserPreview = useCallback(() => {
     const existingPreviewWindow = getBrowserPreviewWindowForShortcut();
     if (existingPreviewWindow) {
-      closePreviewWindow(existingPreviewWindow.id);
+      closePreviewWindowWithMotion(existingPreviewWindow.id);
       return;
     }
 
     openCanonicalBrowserPreviewRef.current();
-  }, [closePreviewWindow]);
+  }, [closePreviewWindowWithMotion]);
 
   useEffect(() => {
     toggleCanonicalBrowserPreviewRef.current = toggleCanonicalBrowserPreview;
@@ -4855,9 +5283,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       if (!windowId) {
         return;
       }
-      closePreviewWindow(windowId);
+      closePreviewWindowWithMotion(windowId);
     },
-    [closePreviewWindow],
+    [closePreviewWindowWithMotion],
   );
 
   const handlePreviewWindowFocusEvent = useCallback(
@@ -4893,7 +5321,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     const terminalState = useTerminalStore.getState();
 
     if (!terminalState.tuiModeActive) {
-      updatePanelsState((previous) => ({ ...previous, terminal: false }));
+      closePanelWithMotion("terminal");
       return;
     }
 
@@ -4916,7 +5344,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         "panel-close",
       );
     }
-  }, [updatePanelsState]);
+  }, [closePanelWithMotion]);
 
   const applyPanelOpenState = useCallback(
     (panelId: PanelId, request: PanelOpenRequest) => {
@@ -5010,10 +5438,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           closeTerminalPanel();
           return;
         }
-        updatePanelsState((previous) => ({
-          ...previous,
-          [appAction.panelId]: false,
-        }));
+        closePanelWithMotion(appAction.panelId);
         return;
       }
 
@@ -5029,29 +5454,43 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           return;
         }
 
-        updatePanelsState((previous) => ({ ...previous, [panelId]: false }));
+        closePanelWithMotion(panelId);
         if (terminalState.tuiAssist.panel === panelId) {
           terminalState.setTUIAssist({ active: false, panel: null });
         }
         return;
       }
 
-      updatePanelsState((previous) => ({ ...previous, [panelId]: false }));
+      closePanelWithMotion(panelId);
     },
     [
       closeExecutionDialog,
+      closePanelWithMotion,
       closeSettings,
       closeTUIAssistPanel,
       closeTerminalPanel,
       dispatcher,
-      updatePanelsState,
     ],
   );
 
   const handlePanelMoveEvent = useCallback(
     (payload: unknown) => {
+      const sideMoveRequest = parsePanelSideMoveRequest(payload);
+      if (sideMoveRequest) {
+        moveSnappedPanelBetweenSides(sideMoveRequest.from, sideMoveRequest.to);
+        return;
+      }
+
       const request = parsePanelOpenRequest(payload);
       if (!request || (!request.position && !request.mode)) {
+        return;
+      }
+
+      if (
+        (request.panel === "browser" || request.panel === "web") &&
+        request.position
+      ) {
+        moveBrowserPreviewToPosition(request.position);
         return;
       }
 
@@ -5099,7 +5538,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
       applyPanelOpenState(panelId, request);
     },
-    [applyPanelOpenState],
+    [
+      applyPanelOpenState,
+      moveBrowserPreviewToPosition,
+      moveSnappedPanelBetweenSides,
+    ],
   );
 
   const handlePanelOpenEvent = useCallback(
@@ -5230,9 +5673,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, []);
 
   const togglePanel = (panel: keyof PanelVisibility) => {
+    if (panelsRef.current[panel]) {
+      closePanelWithMotion(panel);
+      return;
+    }
+
     updatePanelsState((previous) => ({
       ...previous,
-      [panel]: !previous[panel],
+      [panel]: true,
     }));
   };
 
@@ -5248,7 +5696,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           return;
         }
 
-        updatePanelsState((previous) => ({ ...previous, [panelId]: false }));
+        closePanelWithMotion(panelId);
         return;
       }
 
@@ -5258,7 +5706,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         setTimeout(() => useTerminalStore.getState().focusActiveTerminal(), 80);
       }
     },
-    [applyPanelOpenState, closeTerminalPanel, updatePanelsState],
+    [applyPanelOpenState, closePanelWithMotion, closeTerminalPanel],
   );
 
   const executeApplicationMenuAction = useCallback(
@@ -6566,7 +7014,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         zIndex={windowState.zIndex}
         adjacentPanels={getPreviewWindowAdjacentPanels(windowState.id)}
         uiScale={uiScale}
-        onClose={() => closePreviewWindow(windowState.id)}
+        onClose={() => closePreviewWindowWithMotion(windowState.id)}
         onResize={(updates) => {
           updatePreviewWindow(windowState.id, {
             width: updates.width,
@@ -6678,7 +7126,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     minWidth: 0,
     opacity: 1,
     pointerEvents: "auto",
-    isolation: panelDropSettling ? "isolate" : undefined,
+    isolation:
+      panelDropSettling || panelExitPositions.length > 0
+        ? "isolate"
+        : undefined,
   };
 
   const centerWorkspaceStyle: React.CSSProperties = {
@@ -6698,6 +7149,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     isResizingSlot: boolean,
   ): React.CSSProperties => {
     const isSettlingSlot = panelDropSettlingPositions.includes(position);
+    const isExitingSlot = panelExitPositions.includes(position);
+    const shouldExposeSlotOverflow = isSettlingSlot || isExitingSlot;
     const slotTransitionSuspended =
       draggingPanel !== null ||
       draggingPreviewWindowId !== null ||
@@ -6715,11 +7168,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       minHeight: 0,
       flexShrink: 0,
       position: "relative",
-      overflow: isSettlingSlot ? "visible" : "hidden",
-      zIndex: isSettlingSlot && isActive ? 120 : undefined,
+      overflow: shouldExposeSlotOverflow ? "visible" : "hidden",
+      zIndex:
+        shouldExposeSlotOverflow && (isActive || isExitingSlot)
+          ? 120
+          : undefined,
       pointerEvents: isActive ? "auto" : "none",
       transition,
-      willChange: isSettlingSlot ? "transform, opacity" : "auto",
+      willChange: shouldExposeSlotOverflow ? "transform, opacity" : "auto",
     };
   };
 
@@ -6730,6 +7186,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     isResizingSlot: boolean,
   ): React.CSSProperties => {
     const isSettlingSlot = panelDropSettlingPositions.includes(position);
+    const isExitingSlot = panelExitPositions.includes(position);
+    const shouldExposeSlotOverflow = isSettlingSlot || isExitingSlot;
     const slotTransitionSuspended =
       draggingPanel !== null ||
       draggingPreviewWindowId !== null ||
@@ -6747,11 +7205,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       minWidth: 0,
       flexShrink: 0,
       position: "relative",
-      overflow: isSettlingSlot ? "visible" : "hidden",
-      zIndex: isSettlingSlot && isActive ? 120 : undefined,
+      overflow: shouldExposeSlotOverflow ? "visible" : "hidden",
+      zIndex:
+        shouldExposeSlotOverflow && (isActive || isExitingSlot)
+          ? 120
+          : undefined,
       pointerEvents: isActive ? "auto" : "none",
       transition,
-      willChange: isSettlingSlot ? "transform, opacity" : "auto",
+      willChange: shouldExposeSlotOverflow ? "transform, opacity" : "auto",
     };
   };
 
@@ -6930,7 +7391,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       return content;
     }
 
-    return <AnimatePresence initial={false}>{content}</AnimatePresence>;
+    return (
+      <AnimatePresence
+        initial={false}
+        onExitComplete={() => finishSnappedSlotExit(position)}
+      >
+        {content}
+      </AnimatePresence>
+    );
   };
 
   return (
@@ -7034,13 +7502,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                       resizingPreviewWindowId === leftSnappedPreviewWindow?.id,
                   )}
                 >
-                  {fullscreenSnappedExitSuppression.left ? null : (
-                    renderSnappedSlotPresence(
-                      "left",
-                      leftSnappedPanel,
-                      leftSnappedPreviewWindow,
-                    )
-                  )}
+                  {fullscreenSnappedExitSuppression.left
+                    ? null
+                    : renderSnappedSlotPresence(
+                        "left",
+                        leftSnappedPanel,
+                        leftSnappedPreviewWindow,
+                      )}
                 </motion.div>
 
                 <motion.div
@@ -7059,13 +7527,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                         resizingPreviewWindowId === topSnappedPreviewWindow?.id,
                     )}
                   >
-                    {fullscreenSnappedExitSuppression.top ? null : (
-                      renderSnappedSlotPresence(
-                        "top",
-                        topSnappedPanel,
-                        topSnappedPreviewWindow,
-                      )
-                    )}
+                    {fullscreenSnappedExitSuppression.top
+                      ? null
+                      : renderSnappedSlotPresence(
+                          "top",
+                          topSnappedPanel,
+                          topSnappedPreviewWindow,
+                        )}
                   </motion.div>
 
                   <div
@@ -7117,13 +7585,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                           bottomSnappedPreviewWindow?.id,
                     )}
                   >
-                    {fullscreenSnappedExitSuppression.bottom ? null : (
-                      renderSnappedSlotPresence(
-                        "bottom",
-                        bottomSnappedPanel,
-                        bottomSnappedPreviewWindow,
-                      )
-                    )}
+                    {fullscreenSnappedExitSuppression.bottom
+                      ? null
+                      : renderSnappedSlotPresence(
+                          "bottom",
+                          bottomSnappedPanel,
+                          bottomSnappedPreviewWindow,
+                        )}
                   </motion.div>
                 </motion.div>
 
@@ -7138,13 +7606,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                       resizingPreviewWindowId === rightSnappedPreviewWindow?.id,
                   )}
                 >
-                  {fullscreenSnappedExitSuppression.right ? null : (
-                    renderSnappedSlotPresence(
-                      "right",
-                      rightSnappedPanel,
-                      rightSnappedPreviewWindow,
-                    )
-                  )}
+                  {fullscreenSnappedExitSuppression.right
+                    ? null
+                    : renderSnappedSlotPresence(
+                        "right",
+                        rightSnappedPanel,
+                        rightSnappedPreviewWindow,
+                      )}
                 </motion.div>
 
                 <AnimatePresence key={floatingPresenceVersion} initial={false}>
@@ -7163,7 +7631,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               currentTheme={currentTheme}
               currentUiScale={uiScale}
               onUpdateWindow={updatePreviewWindow}
-              onCloseWindow={closePreviewWindow}
+              onCloseWindow={closePreviewWindowWithMotion}
               onFocusWindow={focusPreviewWindow}
               onAppearancePatch={handleAppearancePreviewPatchEvent}
               onAppearanceApply={handleAppearancePreviewApplyEvent}
