@@ -544,6 +544,10 @@ body > [data-radix-portal] > * {
   background-color: var(--file-explorer-hover-bg, transparent);
 }
 
+.file-explorer-node-highlighted {
+  background-color: var(--file-explorer-highlight-bg, transparent);
+}
+
 .file-explorer-node-highlighted:hover {
   background-color: var(--file-explorer-highlight-bg, transparent);
 }

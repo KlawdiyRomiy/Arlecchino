@@ -1,4 +1,5 @@
 import React, { useCallback, useState, useEffect, useRef } from "react";
+import { useShallow } from "zustand/react/shallow";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ChevronDown,
@@ -27,7 +28,10 @@ import { useFileRelations } from "../hooks/useFileRelations";
 import { QuickRelationsMenu } from "./QuickRelationsMenu";
 import { DependencyTree } from "./DependencyTree";
 import { AnimatePresence, motion } from "framer-motion";
-import { useExplorerStore } from "../stores/explorerStore";
+import {
+  useExplorerSelectionStore,
+  useExplorerStore,
+} from "../stores/explorerStore";
 import {
   ContextActionMenu,
   type ContextActionMenuItem,
@@ -90,18 +94,14 @@ export interface FileExplorerProps {
     name: string,
     line?: number,
   ) => void;
-  onFileOpenInPanel?: (
-    path: string,
-    name: string,
-    line?: number,
-  ) => void;
+  onFileOpenInPanel?: (path: string, name: string, line?: number) => void;
   projectPath?: string;
   isHorizontal?: boolean;
   onPerspectiveOpen?: () => void;
   onPerspectiveClose?: () => void;
 }
 
-export const FileExplorer: React.FC<FileExplorerProps> = ({
+const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   onFileOpen,
   onFileOpenInPanel,
   projectPath: initialProjectPath = "",
@@ -127,9 +127,20 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     setExpanded,
     revealRequestPath,
     clearRevealRequest,
-    setHighlightedPath: setStoreHighlightedPath,
     setProjectPath: setStoreProjectPath,
-  } = useExplorerStore();
+  } = useExplorerStore(
+    useShallow((state) => ({
+      expandedPaths: state.expandedPaths,
+      toggleExpanded: state.toggleExpanded,
+      setExpanded: state.setExpanded,
+      revealRequestPath: state.revealRequestPath,
+      clearRevealRequest: state.clearRevealRequest,
+      setProjectPath: state.setProjectPath,
+    })),
+  );
+  const setStoreHighlightedPath = useExplorerSelectionStore(
+    (state) => state.setHighlightedPath,
+  );
   const [projectPath, setProjectPath] = useState<string>(initialProjectPath);
   const [files, setFiles] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,7 +154,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     y: number;
   }>({ isOpen: false, x: 0, y: 0 });
   const [treeOpen, setTreeOpen] = useState(false);
-  const [highlightedPath, setHighlightedPath] = useState<string | null>(null);
   const explorerRef = useRef<HTMLDivElement>(null);
   const filesRef = useRef<FileNode[]>([]);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -153,12 +163,72 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   const projectPathRef = useRef(projectPath);
   const onFileOpenRef = useRef(onFileOpen);
   const onFileOpenInPanelRef = useRef(onFileOpenInPanel);
+  const highlightedPathRef = useRef<string | null>(null);
+  const latestFileOpenRequestRef = useRef(0);
   const relations = useFileRelations(perspectiveTarget || "");
   filesRef.current = files;
   expandedPathsRef.current = expandedPaths;
   projectPathRef.current = projectPath;
   onFileOpenRef.current = onFileOpen;
   onFileOpenInPanelRef.current = onFileOpenInPanel;
+
+  const findNodeElement = useCallback((path: string): HTMLElement | null => {
+    const root = explorerRef.current;
+    if (!root) {
+      return null;
+    }
+
+    const escapedPath = path.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    try {
+      return root.querySelector<HTMLElement>(
+        `.file-explorer-node[data-file-path="${escapedPath}"]`,
+      );
+    } catch {
+      // Extremely unusual filenames can still break CSS string selectors.
+    }
+
+    const nodes = root.querySelectorAll<HTMLElement>(".file-explorer-node");
+    for (const element of nodes) {
+      if (element.dataset.filePath === path) {
+        return element;
+      }
+    }
+
+    return null;
+  }, []);
+
+  const setHighlightedPath = useCallback(
+    (path: string | null, flash: boolean = true) => {
+      const previousPath = highlightedPathRef.current;
+      if (previousPath && previousPath !== path) {
+        const previousElement = findNodeElement(previousPath);
+        previousElement?.classList.remove(
+          "file-explorer-node-highlighted",
+          "file-explorer-node-flash",
+        );
+      }
+
+      highlightedPathRef.current = path;
+      setStoreHighlightedPath(path);
+
+      if (!path) {
+        return;
+      }
+
+      const nextElement = findNodeElement(path);
+      if (!nextElement) {
+        return;
+      }
+
+      nextElement.classList.add("file-explorer-node-highlighted");
+      if (flash) {
+        nextElement.classList.remove("file-explorer-node-flash");
+        void nextElement.offsetWidth;
+        nextElement.classList.add("file-explorer-node-flash");
+      }
+    },
+    [findNodeElement, setStoreHighlightedPath],
+  );
 
   // Синхронизируем isExpanded из store в файлы
   const getIsExpanded = (path: string): boolean => expandedPaths.has(path);
@@ -194,12 +264,22 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   }, [closePerspective, perspectiveTarget]);
 
   const handlePerspectiveFileSelect = async (path: string, line?: number) => {
+    const requestId = latestFileOpenRequestRef.current + 1;
+    latestFileOpenRequestRef.current = requestId;
     const readPromise = App.ReadFile(path);
     closePerspective();
     void revealPath(path);
-    const content = await readPromise;
-    if (onFileOpen)
-      onFileOpen(path, content, path.split("/").pop() || "", line);
+    try {
+      const content = await readPromise;
+      if (latestFileOpenRequestRef.current !== requestId) {
+        return;
+      }
+      onFileOpenRef.current?.(path, content, path.split("/").pop() || "", line);
+    } catch (error) {
+      if (latestFileOpenRequestRef.current === requestId) {
+        console.error("Error reading file:", error);
+      }
+    }
   };
 
   const handleFileOpenInPanel = async (path: string, name: string) => {
@@ -290,7 +370,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
     await expandToPath(path);
     setHighlightedPath(path);
-    setStoreHighlightedPath(path);
 
     if (scrollTimerRef.current) {
       clearTimeout(scrollTimerRef.current);
@@ -308,7 +387,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
     highlightTimerRef.current = setTimeout(() => {
       setHighlightedPath(null);
-      setStoreHighlightedPath(null);
     }, 2000);
 
     if (clearRequest) {
@@ -520,13 +598,21 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
   const openCreatedFile = async (createdPath: string) => {
     const fileName = createdPath.split("/").pop() || "";
+    const requestId = latestFileOpenRequestRef.current + 1;
+    latestFileOpenRequestRef.current = requestId;
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const content = await App.ReadFile(createdPath);
+        if (latestFileOpenRequestRef.current !== requestId) {
+          return;
+        }
         onFileOpenRef.current?.(createdPath, content, fileName);
         return;
       } catch (error) {
+        if (latestFileOpenRequestRef.current !== requestId) {
+          return;
+        }
         if (attempt === 1) {
           console.error("Error opening created file:", error);
           return;
@@ -665,9 +751,12 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
           return;
         }
 
-        if (highlightedPath && isSameOrChildPath(highlightedPath, deletedPath)) {
+        const currentHighlightedPath = highlightedPathRef.current;
+        if (
+          currentHighlightedPath &&
+          isSameOrChildPath(currentHighlightedPath, deletedPath)
+        ) {
           setHighlightedPath(null);
-          setStoreHighlightedPath(null);
         }
 
         void reloadExplorerTree();
@@ -678,7 +767,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       unsubscribeRenamed();
       unsubscribeDeleted();
     };
-  }, [highlightedPath, setStoreHighlightedPath]);
+  }, [setHighlightedPath]);
 
   // ========================================
   // INLINE EXTENSION STYLE - Unique Arlecchino file icons
@@ -973,19 +1062,29 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     }
 
     if (!node.isDirectory) {
+      const requestId = latestFileOpenRequestRef.current + 1;
+      latestFileOpenRequestRef.current = requestId;
+      if (highlightTimerRef.current) {
+        clearTimeout(highlightTimerRef.current);
+        highlightTimerRef.current = null;
+      }
+      setHighlightedPath(node.path);
+
       try {
         const content = await App.ReadFile(node.path);
-        setHighlightedPath(node.path);
-        setStoreHighlightedPath(node.path);
-        if (onFileOpen) {
-          onFileOpen(node.path, content, node.name);
+        if (latestFileOpenRequestRef.current !== requestId) {
+          return;
         }
+        onFileOpenRef.current?.(node.path, content, node.name);
       } catch (error) {
-        console.error("Error reading file:", error);
+        if (latestFileOpenRequestRef.current === requestId) {
+          console.error("Error reading file:", error);
+        }
       }
       return;
     }
 
+    latestFileOpenRequestRef.current += 1;
     await toggleDirectory(node);
   };
 
@@ -1131,9 +1230,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     }
   };
 
-  const buildNodeContextActions = (
-    node: FileNode,
-  ): ContextActionMenuItem[] => {
+  const buildNodeContextActions = (node: FileNode): ContextActionMenuItem[] => {
     const target: ProjectEntryActionTarget = {
       path: node.path,
       isDirectory: node.isDirectory,
@@ -1216,7 +1313,10 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       label: "New File",
       icon: <FilePlus size={14} />,
       onSelect: () =>
-        requestCreateEntry("file", projectPathRef.current || contextProjectPath),
+        requestCreateEntry(
+          "file",
+          projectPathRef.current || contextProjectPath,
+        ),
     },
     {
       label: "New Folder",
@@ -1257,7 +1357,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     isLast: boolean = false,
     parentGuides: boolean[] = [],
   ) => {
-    const isHighlighted = highlightedPath === node.path;
+    const isHighlighted = highlightedPathRef.current === node.path;
     const isNodeExpanded = getIsExpanded(node.path);
     const guideColor = isDark ? "var(--border-subtle)" : "rgba(0,0,0,0.15)";
     const highlightBackground = isDark ? "var(--bg-hover)" : "rgba(0,0,0,0.06)";
@@ -1281,7 +1381,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       marginRight: "8px",
       borderRadius: "var(--radius-sm)",
       cursor: "pointer",
-      backgroundColor: isHighlighted ? highlightBackground : "transparent",
       "--file-explorer-hover-bg": hoverBackground,
       "--file-explorer-highlight-bg": highlightBackground,
       "--file-explorer-flash-base": highlightBackground,
@@ -1497,6 +1596,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
       <ContextActionMenu items={rootContextActions}>
         <div
           ref={explorerRef}
+          data-testid="file-explorer-scroll-region"
           style={{
             height: "100%",
             overflow: "auto",
@@ -1557,6 +1657,12 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   const headerStyle: React.CSSProperties = {
     padding: "8px 12px",
     position: "relative",
+    zIndex: 5,
+    flexShrink: 0,
+    background:
+      "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 96%, transparent), color-mix(in srgb, var(--surface-shell) 98%, transparent))",
+    backdropFilter: "blur(18px)",
+    borderBottom: `1px solid ${theme.border}`,
   };
 
   const projectNameStyle: React.CSSProperties = {
@@ -1570,7 +1676,16 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   return (
     <>
       <ContextActionMenu items={rootContextActions}>
-        <div ref={explorerRef} style={{ height: "100%", overflow: "auto" }}>
+        <div
+          ref={explorerRef}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            height: "100%",
+            minHeight: 0,
+            overflow: "hidden",
+          }}
+        >
           <div
             style={{
               ...headerStyle,
@@ -1610,6 +1725,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                   align="end"
                   sideOffset={8}
                   className="z-[100] min-w-[220px] overflow-hidden rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] shadow-2xl animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
+                  data-shell-menu-content
                 >
                   <DropdownMenu.Item
                     onSelect={() =>
@@ -1638,19 +1754,17 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
-
-            <div
-              style={{
-                position: "absolute",
-                left: 0,
-                right: 0,
-                bottom: -3,
-                borderBottom: `1px solid ${theme.border}`,
-              }}
-            />
           </div>
 
-          <div style={{ padding: "4px 0" }}>
+          <div
+            data-testid="file-explorer-scroll-region"
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflow: "auto",
+              padding: "4px 0",
+            }}
+          >
             {files.map((node, index) =>
               renderFileNode(node, 0, index === files.length - 1, []),
             )}
@@ -1662,3 +1776,5 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
     </>
   );
 };
+
+export const FileExplorer = React.memo(FileExplorerComponent);

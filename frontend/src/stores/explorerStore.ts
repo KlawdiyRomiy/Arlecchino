@@ -1,19 +1,17 @@
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import {
   isSameOrChildPath,
   remapProjectPathPrefix,
-} from '../utils/projectPaths';
+} from "../utils/projectPaths";
 
 interface ExplorerState {
   expandedPaths: Set<string>;
-  highlightedPath: string | null;
   revealRequestPath: string | null;
   projectPath: string;
   toggleExpanded: (path: string) => void;
   setExpanded: (path: string, expanded: boolean) => void;
   isExpanded: (path: string) => boolean;
-  setHighlightedPath: (path: string | null) => void;
   requestRevealFile: (path: string) => void;
   clearRevealRequest: () => void;
   setProjectPath: (path: string) => void;
@@ -21,14 +19,55 @@ interface ExplorerState {
   prunePathPrefix: (pathPrefix: string) => void;
 }
 
+interface ExplorerSelectionState {
+  highlightedPath: string | null;
+  setHighlightedPath: (path: string | null) => void;
+  remapPathPrefix: (oldPrefix: string, newPrefix: string) => void;
+  prunePathPrefix: (pathPrefix: string) => void;
+}
+
+type ExplorerPersistedState = Pick<
+  ExplorerState,
+  "expandedPaths" | "projectPath"
+>;
+
+export const useExplorerSelectionStore = create<ExplorerSelectionState>(
+  (set) => ({
+    highlightedPath: null,
+
+    setHighlightedPath: (path: string | null) => {
+      set({ highlightedPath: path });
+    },
+
+    remapPathPrefix: (oldPrefix: string, newPrefix: string) => {
+      set((state) => ({
+        highlightedPath: remapProjectPathPrefix(
+          state.highlightedPath,
+          oldPrefix,
+          newPrefix,
+        ),
+      }));
+    },
+
+    prunePathPrefix: (pathPrefix: string) => {
+      set((state) => ({
+        highlightedPath:
+          state.highlightedPath &&
+          isSameOrChildPath(state.highlightedPath, pathPrefix)
+            ? null
+            : state.highlightedPath,
+      }));
+    },
+  }),
+);
+
 export const useExplorerStore = create<ExplorerState>()(
-  persist(
+  persist<ExplorerState, [], [], ExplorerPersistedState>(
     (set, get) => ({
       expandedPaths: new Set<string>(),
-      highlightedPath: null,
       projectPath: "",
       revealRequestPath: null,
-      
+
       toggleExpanded: (path: string) => {
         set((state) => {
           const newSet = new Set(state.expandedPaths);
@@ -40,7 +79,7 @@ export const useExplorerStore = create<ExplorerState>()(
           return { expandedPaths: newSet };
         });
       },
-      
+
       setExpanded: (path: string, expanded: boolean) => {
         set((state) => {
           const newSet = new Set(state.expandedPaths);
@@ -52,13 +91,9 @@ export const useExplorerStore = create<ExplorerState>()(
           return { expandedPaths: newSet };
         });
       },
-      
+
       isExpanded: (path: string) => {
         return get().expandedPaths.has(path);
-      },
-
-      setHighlightedPath: (path: string | null) => {
-        set({ highlightedPath: path });
       },
 
       requestRevealFile: (path: string) => {
@@ -87,13 +122,12 @@ export const useExplorerStore = create<ExplorerState>()(
             }
           });
 
+          useExplorerSelectionStore
+            .getState()
+            .remapPathPrefix(oldPrefix, newPrefix);
+
           return {
             expandedPaths: remappedExpandedPaths,
-            highlightedPath: remapProjectPathPrefix(
-              state.highlightedPath,
-              oldPrefix,
-              newPrefix,
-            ),
             revealRequestPath: remapProjectPathPrefix(
               state.revealRequestPath,
               oldPrefix,
@@ -112,13 +146,10 @@ export const useExplorerStore = create<ExplorerState>()(
             }
           });
 
+          useExplorerSelectionStore.getState().prunePathPrefix(pathPrefix);
+
           return {
             expandedPaths: nextExpandedPaths,
-            highlightedPath:
-              state.highlightedPath &&
-              isSameOrChildPath(state.highlightedPath, pathPrefix)
-                ? null
-                : state.highlightedPath,
             revealRequestPath:
               state.revealRequestPath &&
               isSameOrChildPath(state.revealRequestPath, pathPrefix)
@@ -129,18 +160,19 @@ export const useExplorerStore = create<ExplorerState>()(
       },
     }),
     {
-      name: 'explorer-storage',
+      name: "explorer-storage",
       // Convert Set to Array for JSON serialization
       storage: {
         getItem: (name) => {
           const str = localStorage.getItem(name);
           if (!str) return null;
           const data = JSON.parse(str);
+          const state = data.state || {};
           return {
             ...data,
             state: {
-              ...data.state,
-              expandedPaths: new Set(data.state.expandedPaths || []),
+              expandedPaths: new Set(state.expandedPaths || []),
+              projectPath: state.projectPath || "",
             },
           };
         },
@@ -156,6 +188,10 @@ export const useExplorerStore = create<ExplorerState>()(
         },
         removeItem: (name) => localStorage.removeItem(name),
       },
-    }
-  )
+      partialize: (state) => ({
+        expandedPaths: state.expandedPaths,
+        projectPath: state.projectPath,
+      }),
+    },
+  ),
 );

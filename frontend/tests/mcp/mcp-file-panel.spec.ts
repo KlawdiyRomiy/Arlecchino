@@ -20,6 +20,14 @@ const installMCPFilePanelBridges = async (
     const acks: unknown[] = [];
     const writeFileCalls: Array<{ path: unknown; content: unknown }> = [];
     const createDirectoryCalls: unknown[] = [];
+    const scrollFixtureFiles = Array.from({ length: 48 }, (_, index) => {
+      const name = `scroll-fixture-${String(index).padStart(2, "0")}.ts`;
+      return {
+        name,
+        path: `/workspace/${name}`,
+        isDirectory: false,
+      };
+    });
 
     const removeListener = (
       eventName: string,
@@ -78,6 +86,7 @@ const installMCPFilePanelBridges = async (
                       path: "/workspace/src",
                       isDirectory: true,
                     },
+                    ...scrollFixtureFiles,
                   ];
                 }
                 if (args[0] === "/workspace/src") {
@@ -451,6 +460,82 @@ test("TUI explorer file clicks open code panel tabs and keeps New File working",
     path: "/workspace/created.txt",
     content: "",
   });
+});
+
+test("Explorer create menu closes on Escape and stays visible while scrolled", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(() => {
+    window.runtime.EventsEmit("ide:panel:open", {
+      panel: "explorer",
+      position: "left",
+      mode: "snapped",
+    });
+  });
+
+  const explorerPanel = page.getByTestId("panel-explorer").last();
+  await expect(explorerPanel).toBeVisible();
+  await expect(
+    explorerPanel.locator('[data-file-path="/workspace/Makefile"]'),
+  ).toBeVisible();
+  await expect
+    .poll(async () => explorerPanel.getAttribute("data-panel-motion"))
+    .toBe("settled");
+
+  const createButton = explorerPanel.getByTitle("Create");
+  await createButton.click({ force: true });
+  await expect(page.getByRole("menuitem", { name: "New File" })).toBeVisible();
+
+  await page.keyboard.press("Escape");
+
+  await expect(page.getByRole("menuitem", { name: "New File" })).toHaveCount(0);
+
+  const scrollRegion = explorerPanel.getByTestId("file-explorer-scroll-region");
+  await scrollRegion.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+
+  const metrics = await page.evaluate(() => {
+    const panel = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid="panel-explorer"]'),
+    ).at(-1);
+    const button = panel?.querySelector<HTMLButtonElement>(
+      'button[title="Create"]',
+    );
+    const scrollRegion = panel?.querySelector<HTMLElement>(
+      '[data-testid="file-explorer-scroll-region"]',
+    );
+
+    if (!panel || !button || !scrollRegion) {
+      return null;
+    }
+
+    const panelRect = panel.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+
+    return {
+      buttonBottom: buttonRect.bottom,
+      buttonTop: buttonRect.top,
+      panelBottom: panelRect.bottom,
+      panelTop: panelRect.top,
+      scrollRegionTop: scrollRegion.getBoundingClientRect().top,
+      scrollTop: scrollRegion.scrollTop,
+    };
+  });
+
+  expect(metrics).not.toBeNull();
+  expect(metrics?.scrollTop ?? 0).toBeGreaterThan(100);
+  expect(metrics?.buttonTop ?? -Infinity).toBeGreaterThanOrEqual(
+    metrics?.panelTop ?? Infinity,
+  );
+  expect(metrics?.buttonBottom ?? Infinity).toBeLessThanOrEqual(
+    metrics?.panelBottom ?? -Infinity,
+  );
+  expect(metrics?.scrollRegionTop ?? -Infinity).toBeGreaterThanOrEqual(
+    (metrics?.buttonBottom ?? Infinity) - 1,
+  );
 });
 
 test("TUI Git and Problems fullscreen panels fill the panel workspace", async ({

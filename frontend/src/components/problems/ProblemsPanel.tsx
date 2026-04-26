@@ -24,7 +24,7 @@ import type {
   DiagnosticsSummary,
 } from "../../stores/diagnosticsStore";
 import { useEditorStore } from "../../stores/editorStore";
-import { useExplorerStore } from "../../stores/explorerStore";
+import { useExplorerSelectionStore } from "../../stores/explorerStore";
 import { useTheme } from "../../hooks/useTheme";
 import { useIndexingProgress } from "../../hooks/useIndexingProgress";
 import { getThemeColors } from "../../styles/colors";
@@ -237,7 +237,9 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const activeEditorFilePath = useEditorStore(
     (state) => state.getActiveTab(state.activePaneId)?.path ?? null,
   );
-  const highlightedPath = useExplorerStore((state) => state.highlightedPath);
+  const highlightedPath = useExplorerSelectionStore(
+    (state) => state.highlightedPath,
+  );
   const activeProjectPath = useWorkspaceStore((state) =>
     resolveDiagnosticsProjectPath(
       state.projects,
