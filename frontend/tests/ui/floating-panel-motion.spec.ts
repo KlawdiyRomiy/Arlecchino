@@ -599,6 +599,71 @@ test("fullscreen floating panel closes without a sideways slide under ui scale",
   await expect(page.locator('[data-testid="panel-git"]')).toHaveCount(0);
 });
 
+test("free floating panel opens and closes without edge slide", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+      },
+      panelConfigs: {
+        problems: {
+          position: "bottom",
+          mode: "floating",
+          size: { width: 420, height: 260 },
+          x: 140,
+          y: 120,
+        },
+      },
+    },
+  });
+
+  const panel = page.locator('[data-testid="panel-problems"]');
+  await expect(panel).toHaveCount(0);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent("arlecchino:application-menu-action", {
+        detail: { actionId: "problems.toggle" },
+      }),
+    );
+  });
+
+  await expect(panel).toBeAttached();
+  await nextAnimationFrame(page);
+
+  const openingFrame = await readPanelFrame(
+    page,
+    '[data-testid="panel-problems"]',
+  );
+  expect(openingFrame).not.toBeNull();
+  expect(openingFrame?.motion).toBe("settled");
+  expect(Math.abs(openingFrame?.translateX ?? 0)).toBeLessThanOrEqual(1);
+  expect(Math.abs(openingFrame?.translateY ?? 0)).toBeLessThanOrEqual(1);
+
+  await panel.locator('button[title="Закрыть панель"]').click();
+  await nextAnimationFrame(page);
+  await page.waitForTimeout(80);
+
+  const exitFrame = await readPanelFrame(
+    page,
+    '[data-testid="panel-problems"]',
+  );
+  if (exitFrame) {
+    expect(exitFrame.motion).toBe("exit");
+    expect(Math.abs(exitFrame.translateX)).toBeLessThanOrEqual(1);
+    expect(Math.abs(exitFrame.translateY)).toBeLessThanOrEqual(1);
+  }
+
+  await expect(page.locator('[data-testid="panel-problems"]')).toHaveCount(0);
+});
+
 test("panel shortcuts open hidden panels on keydown without waiting for hold", async ({
   page,
 }) => {

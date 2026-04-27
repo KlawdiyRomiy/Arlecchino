@@ -47,7 +47,6 @@ export const FLOATING_PANEL_LAYOUT_TRANSITION = {
 
 export const FLOATING_PANEL_LAYOUT_TRANSITION_MS = 300;
 const FLOATING_PANEL_FLOATING_SLIDE_OFFSET = 32;
-const FLOATING_PANEL_FLOATING_EXIT_OVERSHOOT = 28;
 const FLOATING_PANEL_EXIT_OVERSHOOT_MIN = 96;
 const FLOATING_PANEL_EXIT_OVERSHOOT_RATIO = 0.28;
 const FLOATING_PANEL_NO_MOTION_TRANSITION = { duration: 0 } as const;
@@ -97,28 +96,6 @@ const getSnappedExitSlideDistance = (
       distance * FLOATING_PANEL_EXIT_OVERSHOOT_RATIO,
     )
   );
-};
-
-const getNearestViewportEdge = (
-  bounds: PanelBounds,
-  viewportWidth: number,
-  viewportHeight: number,
-): PanelPosition => {
-  const distances: Array<{ edge: PanelPosition; distance: number }> = [
-    { edge: "left", distance: Math.abs(bounds.left) },
-    {
-      edge: "right",
-      distance: Math.abs(viewportWidth - (bounds.left + bounds.width)),
-    },
-    { edge: "top", distance: Math.abs(bounds.top) },
-    {
-      edge: "bottom",
-      distance: Math.abs(viewportHeight - (bounds.top + bounds.height)),
-    },
-  ];
-
-  distances.sort((left, right) => left.distance - right.distance);
-  return distances[0]?.edge ?? "top";
 };
 
 export interface FloatingPanelProps {
@@ -228,7 +205,9 @@ export const FloatingPanel = React.forwardRef<
     const [isResizing, setIsResizing] = useState(false);
     const [resizeEdge, setResizeEdge] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
-    const [hasEntered, setHasEntered] = useState(reduceMotion);
+    const [hasEntered, setHasEntered] = useState(
+      reduceMotion || mode === "floating",
+    );
     const panelRef = useRef<HTMLDivElement>(null);
     const latestBoundsRef = useRef<PanelBounds | null>(null);
     const latestDragOffsetRef = useRef({ x: 0, y: 0 });
@@ -254,10 +233,10 @@ export const FloatingPanel = React.forwardRef<
     });
 
     useEffect(() => {
-      if (reduceMotion) {
+      if (reduceMotion || mode === "floating") {
         setHasEntered(true);
       }
-    }, [reduceMotion]);
+    }, [mode, reduceMotion]);
 
     useEffect(() => {
       onResizeRef.current = onResize;
@@ -339,79 +318,22 @@ export const FloatingPanel = React.forwardRef<
         return { x: 0, y: 0 };
       }
 
-      if (mode === "snapped") {
-        return getSlideVectorForEdge(
-          position,
-          getSnappedSlideDistance(position, size),
-        );
-      }
-
-      if (typeof window === "undefined") {
-        return getSlideVectorForEdge("top");
-      }
-
-      const fallbackBounds: PanelBounds = {
-        left: x,
-        top: y,
-        width: size.width,
-        height: size.height,
-      };
-      const nearestEdge = getNearestViewportEdge(
-        latestBoundsRef.current ?? fallbackBounds,
-        window.innerWidth,
-        window.innerHeight,
+      return getSlideVectorForEdge(
+        position,
+        getSnappedSlideDistance(position, size),
       );
-
-      return getSlideVectorForEdge(nearestEdge);
-    }, [
-      isLogicalFullscreen,
-      mode,
-      position,
-      reduceMotion,
-      size.height,
-      size.width,
-      x,
-      y,
-    ]);
+    }, [isLogicalFullscreen, position, reduceMotion, size]);
 
     const getExitSlideVector = useCallback(() => {
       if (reduceMotion || isLogicalFullscreen()) {
         return { x: 0, y: 0 };
       }
 
-      if (mode === "snapped") {
-        return getSlideVectorForEdge(
-          position,
-          getSnappedExitSlideDistance(position, size),
-        );
-      }
-
-      if (typeof window === "undefined") {
-        return getSlideVectorForEdge(
-          "top",
-          FLOATING_PANEL_FLOATING_SLIDE_OFFSET +
-            FLOATING_PANEL_FLOATING_EXIT_OVERSHOOT,
-        );
-      }
-
-      const fallbackBounds: PanelBounds = {
-        left: x,
-        top: y,
-        width: size.width,
-        height: size.height,
-      };
-      const nearestEdge = getNearestViewportEdge(
-        latestBoundsRef.current ?? fallbackBounds,
-        window.innerWidth,
-        window.innerHeight,
-      );
-
       return getSlideVectorForEdge(
-        nearestEdge,
-        FLOATING_PANEL_FLOATING_SLIDE_OFFSET +
-          FLOATING_PANEL_FLOATING_EXIT_OVERSHOOT,
+        position,
+        getSnappedExitSlideDistance(position, size),
       );
-    }, [isLogicalFullscreen, mode, position, reduceMotion, size, x, y]);
+    }, [isLogicalFullscreen, position, reduceMotion, size]);
 
     const flushResizeUpdate = useCallback(() => {
       resizeFrameRef.current = null;
@@ -750,7 +672,7 @@ export const FloatingPanel = React.forwardRef<
         mode === "floating" ||
         isPinned;
       const shouldPromoteForMotion =
-        !reduceMotion && (!hasEntered || !isPresent);
+        mode === "snapped" && !reduceMotion && (!hasEntered || !isPresent);
       const panelFrameRadius = "var(--radius-lg)";
       const base: React.CSSProperties = {
         position: isFlowHosted
@@ -1041,21 +963,22 @@ export const FloatingPanel = React.forwardRef<
 
     const interactionMotionDisabled = isDragging || isResizing;
     const slideMotionEnabled = !reduceMotion && !interactionMotionDisabled;
+    const snappedSlideMotionEnabled = slideMotionEnabled && mode === "snapped";
     const shouldResolveSlideVector =
-      slideMotionEnabled && !isRelocating && (!isPresent || !hasEntered);
+      snappedSlideMotionEnabled && !isRelocating && (!isPresent || !hasEntered);
     const slideVector = shouldResolveSlideVector
       ? getSlideVector()
       : { x: 0, y: 0 };
     const slideMotionTarget = { x: 0, y: 0 };
     const exitSlideVector =
-      slideMotionEnabled && !isRelocating
+      snappedSlideMotionEnabled && !isRelocating
         ? getExitSlideVector()
         : slideMotionTarget;
     const panelMotionState = isRelocating
       ? "relocating"
       : !isPresent
         ? "exit"
-        : slideMotionEnabled && !hasEntered
+        : snappedSlideMotionEnabled && !hasEntered
           ? "enter"
           : "settled";
     const panelState = !isPresent
@@ -1069,7 +992,7 @@ export const FloatingPanel = React.forwardRef<
             : mode === "floating"
               ? "floating"
               : "docked";
-    const motionTransition = slideMotionEnabled
+    const motionTransition = snappedSlideMotionEnabled
       ? FLOATING_PANEL_LAYOUT_TRANSITION
       : FLOATING_PANEL_NO_MOTION_TRANSITION;
     const slideMotionExit = isRelocating
@@ -1079,7 +1002,7 @@ export const FloatingPanel = React.forwardRef<
           y: 0,
           transition: FLOATING_PANEL_NO_MOTION_TRANSITION,
         }
-      : slideMotionEnabled
+      : snappedSlideMotionEnabled
         ? { x: exitSlideVector.x, y: exitSlideVector.y }
         : slideMotionTarget;
     const flowLayoutMotionEnabled =
@@ -1166,7 +1089,7 @@ export const FloatingPanel = React.forwardRef<
         layout={flowLayoutMotionEnabled ? "position" : false}
         layoutId={flowLayoutMotionEnabled ? `floating-panel-${id}` : undefined}
         initial={
-          slideMotionEnabled && !isRelocating
+          snappedSlideMotionEnabled && !isRelocating
             ? {
                 x: slideVector.x,
                 y: slideVector.y,
