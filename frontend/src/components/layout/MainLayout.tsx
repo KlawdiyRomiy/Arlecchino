@@ -42,7 +42,7 @@ import {
   type PanelSize,
 } from "../ui/FloatingPanel";
 
-import { colors, zIndex } from "../../styles/colors";
+import { zIndex } from "../../styles/colors";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { usePluginModal } from "../../contexts/PluginModalContext";
@@ -149,7 +149,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   onPerspectiveOpen: externalPerspectiveOpen,
   onPerspectiveClose: externalPerspectiveClose,
 }) => {
-  const { isDark, theme: currentTheme, setTheme } = useTheme();
+  const { isDark, theme: currentTheme, setTheme, resolvedThemeId } = useTheme();
   const indexingPhase = useIndexingPhase();
   const diagnosticsPreload = useProjectDiagnosticsPreload();
   const prefersReducedMotion = useReducedMotion();
@@ -1043,7 +1043,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         try {
           targetSessionId = await state.createTerminal(
             activePane.id,
-            isDark,
+            resolvedThemeId,
             terminalName,
           );
         } catch (error) {
@@ -1075,7 +1075,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return false;
       }
     },
-    [isDark, showNotification, updatePanelsState],
+    [resolvedThemeId, showNotification, updatePanelsState],
   );
 
   const executeExecutionProfile = useCallback(
@@ -1188,7 +1188,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
 
       try {
-        return await state.createTerminal(activePane.id, isDark, terminalName);
+        return await state.createTerminal(
+          activePane.id,
+          resolvedThemeId,
+          terminalName,
+        );
       } catch (error) {
         const message =
           error instanceof Error
@@ -1198,7 +1202,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return null;
       }
     },
-    [getActiveTerminalSessionId, isDark, showNotification],
+    [getActiveTerminalSessionId, resolvedThemeId, showNotification],
   );
 
   const resolveAssistPanelId = useCallback(
@@ -2270,7 +2274,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     getShortcutEventCode,
     gitPreFullscreenRef,
     handleHeldPanelShortcutMove,
-    isDark,
+    terminalThemeId: resolvedThemeId,
     isPerspectiveOpen,
     isSettingsOpen,
     markShortcutActionHandled,
@@ -2357,8 +2361,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     overflow: "hidden",
     padding: "8px",
     boxSizing: "border-box",
-    backgroundColor: isDark ? "var(--bg-blackprint)" : colors.light.bg,
-    color: isDark ? "var(--text-primary)" : colors.light.text,
+    backgroundColor: "var(--bg-blackprint)",
+    color: "var(--text-primary)",
   };
 
   const shellFrameStyle: React.CSSProperties = {
@@ -2369,7 +2373,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     minWidth: 0,
     overflow: "hidden",
     borderRadius: "var(--radius-shell)",
-    backgroundColor: isDark ? "var(--surface-canvas)" : colors.light.bg,
+    backgroundColor: "var(--surface-canvas)",
     boxShadow: "var(--shell-shadow)",
   };
 
@@ -2379,7 +2383,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     position: "relative",
     overflow: "clip",
     minHeight: 0,
-    backgroundColor: isDark ? "var(--bg-blackprint)" : colors.light.bg,
+    backgroundColor: "var(--bg-blackprint)",
   };
 
   const editorAreaStyle: React.CSSProperties = {
@@ -2391,7 +2395,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     overflow: "hidden",
     position: "relative",
     zIndex: 0,
-    backgroundColor: isDark ? "var(--bg-blackprint)" : colors.light.bg,
+    backgroundColor: "var(--bg-blackprint)",
   };
 
   const renderDropZone = (position: PanelPosition) => {
@@ -2600,9 +2604,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         isRelocating={relocatingPreviewWindowIds.includes(windowState.id)}
         adjacentPanels={getPreviewWindowAdjacentPanels(windowState.id)}
         uiScale={uiScale}
-        surfaceBackgroundColor={
-          isDark ? "var(--bg-secondary)" : colors.light.bgSecondary
-        }
+        surfaceBackgroundColor="var(--bg-secondary)"
         appearancePreview={appearancePreview}
         currentTheme={currentTheme}
         currentUiScale={uiScale}
@@ -2755,7 +2757,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     minHeight: 0,
     display: "flex",
     flexDirection: "column",
-    backgroundColor: isDark ? "var(--bg-blackprint)" : colors.light.bg,
+    backgroundColor: "var(--bg-blackprint)",
   };
 
   // Framer layout scales slot descendants here, which makes panels expand

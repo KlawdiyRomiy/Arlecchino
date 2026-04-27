@@ -4,6 +4,7 @@ import type {
   PreviewWindowPayload,
   UpdatePreviewWindowInput,
 } from "../../stores/previewWindowStore";
+import { isThemeId, normalizeThemePreference } from "../../styles/themes";
 import type { Theme } from "../../types/theme";
 import { normalizeTUIAssistAnchor } from "../../utils/terminalLayout";
 import type { PanelPosition } from "../ui/FloatingPanel";
@@ -240,8 +241,13 @@ const toPreviewSurface = (value: unknown): PreviewSurfaceType | null => {
 };
 
 const toThemeValue = (value: unknown): Theme | null => {
-  if (value === "light" || value === "dark" || value === "system") {
-    return value;
+  if (
+    value === "light" ||
+    value === "dark" ||
+    value === "system" ||
+    isThemeId(value)
+  ) {
+    return normalizeThemePreference(value);
   }
   return null;
 };

@@ -1,17 +1,17 @@
-import React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Sun, Moon } from 'lucide-react';
-import { useTheme } from '../../hooks/useTheme';
+import React from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Sun, Moon } from "lucide-react";
+import { useTheme } from "../../hooks/useTheme";
 
 export const ThemeToggle: React.FC = () => {
-  const { isDark, setTheme, theme } = useTheme();
+  const { isDark, setTheme } = useTheme();
   const [isAnimating, setIsAnimating] = React.useState(false);
 
   const toggleTheme = () => {
-    const newTheme = isDark ? 'light' : 'dark';
+    const newTheme = isDark ? "arlecchino-light" : "blackprint";
     setIsAnimating(true);
     setTheme(newTheme);
-    
+
     setTimeout(() => setIsAnimating(false), 600);
   };
 
@@ -56,10 +56,10 @@ export const ThemeToggle: React.FC = () => {
             exit={{ opacity: 0 }}
             transition={{ duration: 0.6, ease: "easeOut" }}
             className={`fixed inset-0 pointer-events-none ${
-              isDark ? 'bg-laravel-dark-bg' : 'bg-white'
+              isDark ? "bg-laravel-dark-bg" : "bg-white"
             }`}
             style={{
-              transformOrigin: 'top right',
+              transformOrigin: "top right",
               zIndex: 9999,
             }}
           />

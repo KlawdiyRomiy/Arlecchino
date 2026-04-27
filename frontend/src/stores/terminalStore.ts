@@ -12,6 +12,12 @@ import {
   CloseTerminal,
 } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
+import {
+  getThemeTerminalById,
+  isThemeId,
+  resolveThemePreference,
+  type ThemeId,
+} from "../styles/themes";
 import type {
   ClosedTerminalTab,
   SplitDirection,
@@ -54,22 +60,22 @@ interface TerminalActions {
   initialize: () => void;
   createTerminal: (
     paneId: string,
-    isDark: boolean,
+    themeId: ThemeId,
     terminalName?: string,
   ) => Promise<string>;
   registerExternalSession: (id: string, name?: string) => void;
   closeTerminal: (paneId: string, tabId: string) => Promise<void>;
   setActiveTab: (paneId: string, tabId: string) => void;
   setActivePane: (paneId: string) => void;
-  splitPane: (direction: SplitDirection, isDark: boolean) => void;
+  splitPane: (direction: SplitDirection, themeId: ThemeId) => void;
   getSession: (id: string) => TerminalSession | undefined;
-  updateTheme: (isDark: boolean) => void;
+  updateTheme: (themeId: ThemeId) => void;
   markAttached: (id: string, attached: boolean) => void;
   focusActiveTerminal: () => void;
   terminalZoomIn: () => void;
   terminalZoomOut: () => void;
   terminalZoomReset: () => void;
-  reopenLastClosedTab: (isDark: boolean) => Promise<string | null>;
+  reopenLastClosedTab: (themeId: ThemeId) => Promise<string | null>;
   setSessionMode: (event: {
     id: string;
     mode?: string;
@@ -216,7 +222,7 @@ const createTerminalBackendSession = async (
 const createLocalTerminalSession = (
   id: string,
   name: string,
-  isDark: boolean,
+  themeId: ThemeId,
   terminalFontSize: number,
   projectPath: string,
 ): TerminalSession => {
@@ -225,7 +231,7 @@ const createLocalTerminalSession = (
     fontSize: terminalFontSize,
     fontFamily:
       "'MesloLGS NF', 'Hack Nerd Font', 'FiraCode Nerd Font', 'JetBrains Mono', 'SF Mono', Monaco, Consolas, monospace",
-    theme: getTerminalTheme(isDark),
+    theme: getTerminalTheme(themeId),
     allowProposedApi: true,
   });
 
@@ -668,54 +674,23 @@ const normalizeModeSignals = (
   return normalized.length > 0 ? normalized : [`runtime:${mode}`];
 };
 
-const getTerminalTheme = (isDark: boolean) =>
-  isDark
-    ? {
-        background: "#0a0a0a",
-        foreground: "#e5e5e5",
-        cursor: "#ef4444",
-        cursorAccent: "#0a0a0a",
-        selectionBackground: "rgba(239, 68, 68, 0.3)",
-        black: "#000000",
-        red: "#ef4444",
-        green: "#22c55e",
-        yellow: "#eab308",
-        blue: "#3b82f6",
-        magenta: "#a855f7",
-        cyan: "#06b6d4",
-        white: "#f5f5f5",
-        brightBlack: "#525252",
-        brightRed: "#f87171",
-        brightGreen: "#4ade80",
-        brightYellow: "#facc15",
-        brightBlue: "#60a5fa",
-        brightMagenta: "#c084fc",
-        brightCyan: "#22d3ee",
-        brightWhite: "#ffffff",
-      }
-    : {
-        background: "#fafafa",
-        foreground: "#171717",
-        cursor: "#ef4444",
-        cursorAccent: "#fafafa",
-        selectionBackground: "rgba(239, 68, 68, 0.2)",
-        black: "#000000",
-        red: "#dc2626",
-        green: "#16a34a",
-        yellow: "#ca8a04",
-        blue: "#2563eb",
-        magenta: "#9333ea",
-        cyan: "#0891b2",
-        white: "#f5f5f5",
-        brightBlack: "#737373",
-        brightRed: "#ef4444",
-        brightGreen: "#22c55e",
-        brightYellow: "#eab308",
-        brightBlue: "#3b82f6",
-        brightMagenta: "#a855f7",
-        brightCyan: "#06b6d4",
-        brightWhite: "#ffffff",
-      };
+const getTerminalTheme = (themeId: ThemeId) => getThemeTerminalById(themeId);
+
+const getDocumentThemeId = (): ThemeId => {
+  if (typeof window === "undefined") {
+    return "blackprint";
+  }
+
+  const themeId = window.document.documentElement.dataset.theme;
+  if (isThemeId(themeId)) {
+    return themeId;
+  }
+
+  return resolveThemePreference(
+    "system",
+    window.matchMedia("(prefers-color-scheme: dark)").matches,
+  );
+};
 
 export const useTerminalStore = create<TerminalState & TerminalActions>(
   (set, get) => ({
@@ -906,18 +881,12 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
         },
       );
 
-      EventsOn(
-        "terminal:created",
-        (event: {
-          id: string;
-          name?: string;
-        }) => {
-          if (!event?.id) {
-            return;
-          }
-          get().registerExternalSession(event.id, event.name);
-        },
-      );
+      EventsOn("terminal:created", (event: { id: string; name?: string }) => {
+        if (!event?.id) {
+          return;
+        }
+        get().registerExternalSession(event.id, event.name);
+      });
 
       EventsOn(
         "terminal:semantic",
@@ -937,7 +906,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       set({ eventsRegistered: true, isInitialized: true });
     },
 
-    createTerminal: async (paneId: string, isDark: boolean, terminalName) => {
+    createTerminal: async (paneId: string, themeId: ThemeId, terminalName) => {
       const id = generateTerminalId();
       const name = terminalName?.trim() || "Terminal";
       const state = get();
@@ -946,7 +915,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       const session = createLocalTerminalSession(
         id,
         name,
-        isDark,
+        themeId,
         terminalFontSize,
         projectPath,
       );
@@ -1023,16 +992,12 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
         return;
       }
 
-      const isDark =
-        typeof window !== "undefined"
-          ? window.document.documentElement.classList.contains("dark") ||
-            window.matchMedia("(prefers-color-scheme: dark)").matches
-          : true;
+      const themeId = getDocumentThemeId();
 
       const session = createLocalTerminalSession(
         normalizedID,
         name?.trim() || "Terminal",
-        isDark,
+        themeId,
         state.terminalFontSize,
         state.activeProjectPath ?? "",
       );
@@ -1048,10 +1013,11 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
 
         const panes =
           current.panes.length > 0 ? current.panes : createDefaultPanes();
-        const targetPaneID =
-          panes.some((pane) => pane.id === current.activePaneId)
-            ? current.activePaneId
-            : panes[0].id;
+        const targetPaneID = panes.some(
+          (pane) => pane.id === current.activePaneId,
+        )
+          ? current.activePaneId
+          : panes[0].id;
 
         const nextPanes = panes.map((pane) => {
           if (pane.id !== targetPaneID) {
@@ -1219,7 +1185,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       });
     },
 
-    splitPane: (direction: SplitDirection, isDark: boolean) => {
+    splitPane: (direction: SplitDirection, themeId: ThemeId) => {
       const newPaneId = `pane-${Date.now()}`;
 
       set((state) => {
@@ -1239,15 +1205,15 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
         };
       });
 
-      get().createTerminal(newPaneId, isDark);
+      get().createTerminal(newPaneId, themeId);
     },
 
     getSession: (id: string) => {
       return get().sessions.get(id);
     },
 
-    updateTheme: (isDark: boolean) => {
-      const theme = getTerminalTheme(isDark);
+    updateTheme: (themeId: ThemeId) => {
+      const theme = getTerminalTheme(themeId);
       get().sessions.forEach((session) => {
         session.terminal.options.theme = theme;
       });
@@ -1333,7 +1299,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       });
     },
 
-    reopenLastClosedTab: async (isDark: boolean) => {
+    reopenLastClosedTab: async (themeId: ThemeId) => {
       const state = get();
       const lastClosed =
         state.closedTabsStack[state.closedTabsStack.length - 1];
@@ -1364,7 +1330,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       try {
         return await get().createTerminal(
           targetPaneId,
-          isDark,
+          themeId,
           lastClosed.name,
         );
       } catch (error) {

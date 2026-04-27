@@ -6,6 +6,7 @@ import { useEditorStore } from "../stores/editorStore";
 import { useExplorerStore } from "../stores/explorerStore";
 import { useTerminalStore } from "../stores/terminalStore";
 import { getThemeColors } from "../styles/colors";
+import { themeOptions as builtInThemeOptions } from "../styles/themes";
 import type { Theme } from "../types/theme";
 import { MAX_UI_SCALE, MIN_UI_SCALE, UI_SCALE_STEP } from "../utils/uiScale";
 import { AIChatPanelContent } from "./AIChatPanel";
@@ -318,8 +319,11 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
             }}
           >
             <option value="system">System</option>
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
+            {builtInThemeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </div>
 

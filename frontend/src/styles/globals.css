@@ -58,6 +58,47 @@
     0 0 0 1px rgba(255, 255, 255, 0.04), 0 18px 44px -20px rgba(0, 0, 0, 0.72),
     0 30px 90px -34px rgba(0, 0, 0, 0.82);
 
+  /* Editor and terminal theme tokens */
+  --editor-bg: #050505;
+  --editor-surface: #080808;
+  --editor-surface-elevated: #0d0d0d;
+  --editor-gutter: #070707;
+  --editor-scrollbar-track: #020202;
+  --editor-scrollbar-thumb: #4f4f4f;
+  --editor-scrollbar-thumb-hover: #686868;
+  --editor-border: rgba(255, 255, 255, 0.09);
+  --editor-border-strong: rgba(255, 255, 255, 0.14);
+  --editor-text: #d7e0ea;
+  --editor-text-soft: #8b9bb0;
+  --editor-text-muted: #66758a;
+  --editor-caret: #f5f7fb;
+  --editor-active-line: rgba(255, 255, 255, 0.035);
+  --editor-active-line-gutter: #aebcd0;
+  --editor-selection: rgba(255, 255, 255, 0.14);
+  --editor-selection-inactive: rgba(255, 255, 255, 0.1);
+  --editor-selection-match: rgba(255, 255, 255, 0.08);
+  --editor-bracket-match: rgba(255, 255, 255, 0.1);
+  --editor-search-match: rgba(255, 255, 255, 0.06);
+  --editor-tooltip-bg: rgba(14, 14, 14, 0.985);
+  --editor-tooltip-bg-strong: rgba(13, 13, 13, 0.99);
+  --editor-tooltip-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.035),
+    0 18px 40px -24px rgba(0, 0, 0, 0.84), 0 28px 72px -42px rgba(0, 0, 0, 0.78);
+  --editor-ghost-text: rgba(200, 200, 200, 0.34);
+  --editor-highlight: rgba(125, 211, 252, 0.14);
+  --editor-accent: #ffffff;
+  --syntax-comment: #5f6b7a;
+  --syntax-string: #a8d6a2;
+  --syntax-number: #f2b47e;
+  --syntax-keyword: #8fb4ff;
+  --syntax-operator: #9baec5;
+  --syntax-type: #f3cf92;
+  --syntax-property: #8bd5ff;
+  --syntax-function: #9ecbff;
+  --syntax-variable: #d7e0ea;
+  --syntax-constant: #f0c48a;
+  --terminal-bg: #0a0a0a;
+
   /* Shadows */
   --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.28);
   --shadow-overlay:
@@ -142,30 +183,17 @@ body > [data-radix-portal] > * {
 }
 
 ::-webkit-scrollbar-track {
-  background: #050505;
+  background: var(--editor-scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgb(94 94 94);
+  background: var(--editor-scrollbar-thumb);
   border-radius: 9999px;
-  border: 2px solid #050505;
+  border: 2px solid var(--editor-scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgb(120 120 120);
-}
-
-:root.dark ::-webkit-scrollbar-track {
-  background: #050505;
-}
-
-:root.dark ::-webkit-scrollbar-thumb {
-  background: rgb(94 94 94);
-  border: 2px solid #050505;
-}
-
-:root.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgb(120 120 120);
+  background: var(--editor-scrollbar-thumb-hover);
 }
 
 @keyframes shimmer {

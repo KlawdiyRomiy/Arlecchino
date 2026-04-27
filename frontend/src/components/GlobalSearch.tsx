@@ -180,7 +180,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
     >
       <div
         style={{
-          backgroundColor: isDark ? colors.dark.bgPanel : "#FFFFFF",
+          backgroundColor: "var(--surface-elevated)",
           borderRadius: radius.lg,
           boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
           width: "700px",
@@ -308,7 +308,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
                   fontSize: "12px",
                   border: `1px solid ${theme.border}`,
                   borderRadius: radius.sm,
-                  backgroundColor: isDark ? colors.dark.bgPanel : "#FFFFFF",
+                  backgroundColor: "var(--surface-elevated)",
                   color: theme.text,
                 }}
               >
@@ -481,7 +481,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
           <div
             style={{
               padding: "8px 16px",
-              backgroundColor: isDark ? colors.dark.bg : "#F9FAFB",
+              backgroundColor: "var(--surface-canvas)",
               borderTop: `1px solid ${theme.border}`,
               fontSize: "12px",
               color: theme.textMuted,

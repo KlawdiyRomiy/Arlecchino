@@ -2,44 +2,45 @@ import { EditorView } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { createTheme } from "thememirror";
 
-import { radius, shadows, transitions, zIndex } from "../styles/colors";
+import { radius, transitions, zIndex } from "../styles/colors";
 
 const editorPalette = {
-  background: "#050505",
-  surface: "#080808",
-  surfaceElevated: "#0d0d0d",
-  gutter: "#070707",
-  scrollbarTrack: "#020202",
-  scrollbarThumb: "#4f4f4f",
-  scrollbarThumbHover: "#686868",
-  border: "rgba(255, 255, 255, 0.09)",
-  borderStrong: "rgba(255, 255, 255, 0.14)",
-  text: "#d7e0ea",
-  textSoft: "#8b9bb0",
-  textMuted: "#66758a",
-  caret: "#f5f7fb",
-  activeLine: "rgba(255, 255, 255, 0.035)",
-  activeLineGutter: "#aebcd0",
-  selection: "rgba(255, 255, 255, 0.14)",
-  selectionInactive: "rgba(255, 255, 255, 0.1)",
-  selectionMatch: "rgba(255, 255, 255, 0.08)",
-  bracketMatch: "rgba(255, 255, 255, 0.1)",
-  searchMatch: "rgba(255, 255, 255, 0.06)",
-  tooltipShadow:
-    "inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 18px 40px -24px rgba(0, 0, 0, 0.84), 0 28px 72px -42px rgba(0, 0, 0, 0.78)",
-  ghostText: "rgba(200, 200, 200, 0.34)",
-  highlight: "rgba(125, 211, 252, 0.14)",
-  comment: "#5f6b7a",
-  string: "#a8d6a2",
-  number: "#f2b47e",
-  keyword: "#8fb4ff",
-  operator: "#9baec5",
-  type: "#f3cf92",
-  property: "#8bd5ff",
-  function: "#9ecbff",
-  variable: "#d7e0ea",
-  constant: "#f0c48a",
-  accent: "#ffffff",
+  background: "var(--editor-bg)",
+  surface: "var(--editor-surface)",
+  surfaceElevated: "var(--editor-surface-elevated)",
+  gutter: "var(--editor-gutter)",
+  scrollbarTrack: "var(--editor-scrollbar-track)",
+  scrollbarThumb: "var(--editor-scrollbar-thumb)",
+  scrollbarThumbHover: "var(--editor-scrollbar-thumb-hover)",
+  border: "var(--editor-border)",
+  borderStrong: "var(--editor-border-strong)",
+  text: "var(--editor-text)",
+  textSoft: "var(--editor-text-soft)",
+  textMuted: "var(--editor-text-muted)",
+  caret: "var(--editor-caret)",
+  activeLine: "var(--editor-active-line)",
+  activeLineGutter: "var(--editor-active-line-gutter)",
+  selection: "var(--editor-selection)",
+  selectionInactive: "var(--editor-selection-inactive)",
+  selectionMatch: "var(--editor-selection-match)",
+  bracketMatch: "var(--editor-bracket-match)",
+  searchMatch: "var(--editor-search-match)",
+  tooltipBg: "var(--editor-tooltip-bg)",
+  tooltipBgStrong: "var(--editor-tooltip-bg-strong)",
+  tooltipShadow: "var(--editor-tooltip-shadow)",
+  ghostText: "var(--editor-ghost-text)",
+  highlight: "var(--editor-highlight)",
+  comment: "var(--syntax-comment)",
+  string: "var(--syntax-string)",
+  number: "var(--syntax-number)",
+  keyword: "var(--syntax-keyword)",
+  operator: "var(--syntax-operator)",
+  type: "var(--syntax-type)",
+  property: "var(--syntax-property)",
+  function: "var(--syntax-function)",
+  variable: "var(--syntax-variable)",
+  constant: "var(--syntax-constant)",
+  accent: "var(--editor-accent)",
 };
 
 export const codeEditorTheme = createTheme({
@@ -209,7 +210,7 @@ export const codeEditorStyles = EditorView.theme(
       borderRadius: radius.sm,
     },
     ".cm-tooltip": {
-      backgroundColor: "rgba(14, 14, 14, 0.985)",
+      backgroundColor: editorPalette.tooltipBg,
       border: `1px solid ${editorPalette.border}`,
       borderRadius: radius.md,
       boxShadow: editorPalette.tooltipShadow,
@@ -217,9 +218,8 @@ export const codeEditorStyles = EditorView.theme(
       backfaceVisibility: "hidden",
     },
     ".cm-tooltip-autocomplete": {
-      background:
-        "linear-gradient(180deg, rgba(18,18,18,0.99), rgba(13,13,13,0.995))",
-      border: "1px solid rgba(255,255,255,0.105)",
+      background: `linear-gradient(180deg, ${editorPalette.tooltipBg}, ${editorPalette.tooltipBgStrong})`,
+      border: `1px solid ${editorPalette.borderStrong}`,
       borderRadius: "22px",
       boxShadow: editorPalette.tooltipShadow,
       minWidth: "420px",
@@ -267,12 +267,12 @@ export const codeEditorStyles = EditorView.theme(
       background: "transparent",
     },
     ".cm-tooltip-autocomplete > ul::-webkit-scrollbar-thumb": {
-      background: "rgba(255,255,255,0.16)",
+      background: editorPalette.scrollbarThumb,
       borderRadius: radius.full,
-      border: "1px solid rgba(13,13,13,0.92)",
+      border: `1px solid ${editorPalette.tooltipBgStrong}`,
     },
     ".cm-tooltip-autocomplete > ul::-webkit-scrollbar-thumb:hover": {
-      background: "rgba(255,255,255,0.22)",
+      background: editorPalette.scrollbarThumbHover,
     },
     ".cm-tooltip-autocomplete > ul > li": {
       position: "relative",
@@ -294,14 +294,13 @@ export const codeEditorStyles = EditorView.theme(
       transition: `background-color ${transitions.fast}, border-color ${transitions.fast}, color ${transitions.fast}, box-shadow ${transitions.fast}`,
     },
     ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
-      background:
-        "linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.048))",
-      borderColor: "rgba(255,255,255,0.13)",
-      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.045)",
+      background: `linear-gradient(180deg, color-mix(in srgb, ${editorPalette.accent} 10%, transparent), color-mix(in srgb, ${editorPalette.accent} 6%, transparent))`,
+      borderColor: editorPalette.borderStrong,
+      boxShadow: "inset 0 1px 0 var(--shell-inner-highlight)",
     },
     ".cm-tooltip-autocomplete > ul > li:hover:not([aria-selected])": {
-      backgroundColor: "rgba(255, 255, 255, 0.032)",
-      borderColor: "rgba(255,255,255,0.055)",
+      backgroundColor: "var(--surface-hover)",
+      borderColor: editorPalette.border,
     },
     ".cm-tooltip-autocomplete > ul > li[aria-selected]::after": {
       content: '"Enter"',
@@ -311,8 +310,8 @@ export const codeEditorStyles = EditorView.theme(
       minHeight: "24px",
       minWidth: "58px",
       borderRadius: radius.full,
-      border: "1px solid rgba(255,255,255,0.09)",
-      background: "rgba(17,17,17,0.96)",
+      border: `1px solid ${editorPalette.border}`,
+      background: editorPalette.surface,
       padding: "0 11px",
       fontSize: "10px",
       fontWeight: "600",
@@ -322,14 +321,14 @@ export const codeEditorStyles = EditorView.theme(
       flexShrink: "0",
     },
     ".cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionLabel": {
-      color: "#f2f4f8",
+      color: editorPalette.text,
     },
     ".cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionDetail": {
-      color: "#aab4c1",
+      color: editorPalette.textSoft,
       opacity: "0.9",
     },
     ".cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionSource": {
-      color: "#9aa4b2",
+      color: editorPalette.textSoft,
     },
     ".cm-completionIcon": {
       display: "inline-flex",
@@ -353,7 +352,7 @@ export const codeEditorStyles = EditorView.theme(
       fontSize: "12px",
       fontWeight: "600",
       letterSpacing: "0.02em",
-      color: "#8f98a6",
+      color: editorPalette.textSoft,
     },
     ".cm-completionIcon-variable::after, .cm-completionIcon-property::after": {
       content: '"var"',
@@ -372,11 +371,11 @@ export const codeEditorStyles = EditorView.theme(
       fontSize: "10px",
     },
     ".cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionIcon": {
-      borderColor: "rgba(255,255,255,0.08)",
-      background: "rgba(17,17,17,0.62)",
+      borderColor: editorPalette.border,
+      background: editorPalette.surface,
     },
     ".cm-completionLabel": {
-      color: "#d2d8e0",
+      color: editorPalette.text,
       flex: "0 1 auto",
       overflow: "hidden",
       textOverflow: "ellipsis",
@@ -384,7 +383,7 @@ export const codeEditorStyles = EditorView.theme(
       fontWeight: "500",
     },
     ".cm-completionMatchedText": {
-      color: "#f4f6f9",
+      color: editorPalette.accent,
       fontWeight: "650",
       textDecoration: "none",
     },
@@ -416,8 +415,8 @@ export const codeEditorStyles = EditorView.theme(
     },
     ".cm-completionInfo": {
       padding: "12px 14px",
-      borderTop: "1px solid rgba(255,255,255,0.08)",
-      backgroundColor: "rgba(13,13,13,0.99)",
+      borderTop: `1px solid ${editorPalette.border}`,
+      backgroundColor: editorPalette.tooltipBgStrong,
       fontSize: "12px",
       color: editorPalette.textSoft,
       maxHeight: "180px",
@@ -437,7 +436,7 @@ export const codeEditorStyles = EditorView.theme(
       border: `1px solid ${editorPalette.scrollbarTrack}`,
     },
     ".cm-completionInfo code": {
-      backgroundColor: "rgba(17,17,17,0.98)",
+      backgroundColor: editorPalette.surface,
       padding: "3px 7px",
       borderRadius: radius.sm,
       fontFamily: '"JetBrains Mono", "SF Mono", monospace',
@@ -529,6 +528,6 @@ export const editorCanvasBackground = editorPalette.background;
 
 export const codeEditorChromeStyle = {
   background:
-    "radial-gradient(circle at top, rgba(255,255,255,0.03), transparent 24%), #050505",
-  boxShadow: shadows.panelDark,
+    "radial-gradient(circle at top, color-mix(in srgb, var(--editor-text) 3%, transparent), transparent 24%), var(--editor-bg)",
+  boxShadow: "var(--shadow-panel)",
 } as const;

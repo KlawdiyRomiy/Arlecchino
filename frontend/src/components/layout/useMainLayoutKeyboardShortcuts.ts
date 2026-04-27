@@ -4,6 +4,7 @@ import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { usePreviewWindowStore } from "../../stores/previewWindowStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import type { ThemeId } from "../../styles/themes";
 import { shortcuts, type ShortcutActionId } from "../../utils/keyboard";
 import { measurePerf } from "../../utils/perf";
 import { isProjectSwitchBlocked } from "../../utils/priorityUI";
@@ -66,7 +67,6 @@ interface UseMainLayoutKeyboardShortcutsOptions {
   getShortcutEventCode: (event: KeyboardEvent) => string;
   gitPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   handleHeldPanelShortcutMove: (event: KeyboardEvent) => boolean;
-  isDark: boolean;
   isPerspectiveOpen: boolean;
   isSettingsOpen: boolean;
   markShortcutActionHandled: (actionId: ShortcutActionId) => void;
@@ -78,6 +78,7 @@ interface UseMainLayoutKeyboardShortcutsOptions {
   shortcutActionSuppressionRef: ShortcutSuppressionRef;
   toggleCanonicalBrowserPreviewRef: MutableRefObject<() => void>;
   toggleCommandDispatcher: () => void;
+  terminalThemeId: ThemeId;
   toggleNamedPanel: (panelId: PanelId) => void;
   togglePanelCompactFromShortcut: (
     panelId: PanelId,
@@ -111,7 +112,6 @@ export const useMainLayoutKeyboardShortcuts = ({
   getShortcutEventCode,
   gitPreFullscreenRef,
   handleHeldPanelShortcutMove,
-  isDark,
   isPerspectiveOpen,
   isSettingsOpen,
   markShortcutActionHandled,
@@ -123,6 +123,7 @@ export const useMainLayoutKeyboardShortcuts = ({
   shortcutActionSuppressionRef,
   toggleCanonicalBrowserPreviewRef,
   toggleCommandDispatcher,
+  terminalThemeId,
   toggleNamedPanel,
   togglePanelCompactFromShortcut,
   togglePanelFullscreenFromShortcut,
@@ -198,7 +199,7 @@ export const useMainLayoutKeyboardShortcuts = ({
         ) {
           e.preventDefault();
           if (activePane) {
-            void terminalState.createTerminal(activePane.id, isDark);
+            void terminalState.createTerminal(activePane.id, terminalThemeId);
           }
           return;
         }
@@ -218,7 +219,7 @@ export const useMainLayoutKeyboardShortcuts = ({
 
       if (isTerminalShortcutContext && shortcuts.terminalReopenTab(e)) {
         e.preventDefault();
-        void terminalState.reopenLastClosedTab(isDark);
+        void terminalState.reopenLastClosedTab(terminalThemeId);
         return;
       }
 
@@ -624,7 +625,6 @@ export const useMainLayoutKeyboardShortcuts = ({
     getShortcutEventCode,
     gitPreFullscreenRef,
     handleHeldPanelShortcutMove,
-    isDark,
     isPerspectiveOpen,
     isSettingsOpen,
     markShortcutActionHandled,
@@ -636,6 +636,7 @@ export const useMainLayoutKeyboardShortcuts = ({
     shortcutActionSuppressionRef,
     toggleCanonicalBrowserPreviewRef,
     toggleCommandDispatcher,
+    terminalThemeId,
     toggleNamedPanel,
     togglePanelCompactFromShortcut,
     togglePanelFullscreenFromShortcut,

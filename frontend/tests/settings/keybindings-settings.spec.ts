@@ -1,4 +1,14 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { expect, test, type Page } from "@playwright/test";
+
+const customThemeExamplePath = path.join(
+  os.homedir(),
+  "Documents",
+  "tomorrow-night-burns.arlecchino-theme.json",
+);
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -166,6 +176,103 @@ test("keybindings tab records shortcuts, blocks duplicates, persists, and resets
   await expect(
     page.getByTestId("keybinding-row-explorer.toggle"),
   ).toContainText("cmd+e");
+});
+
+test("appearance theme dropdown opens and selects a theme", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await page.getByTitle("Settings").click();
+
+  await expect(page.getByRole("heading", { name: "Appearance" })).toBeVisible();
+
+  const catppuccinLabels = await page.evaluate(async () => {
+    const { themeOptions } = await import("/src/styles/themes.ts");
+    return themeOptions
+      .filter((option) => option.label.startsWith("Catppuccin"))
+      .map((option) => option.label);
+  });
+  expect(catppuccinLabels).toEqual([
+    "Catppuccin Latte",
+    "Catppuccin Frappe",
+    "Catppuccin Macchiato",
+    "Catppuccin Mocha",
+  ]);
+
+  const themeTrigger = page.getByTestId("theme-dropdown-trigger");
+  await themeTrigger.click();
+
+  const themeItem = page.getByRole("menuitem", {
+    name: /Catppuccin Mocha/,
+  });
+  await expect(themeItem).toBeVisible();
+  await themeItem.click();
+
+  await expect(themeTrigger).toContainText("Catppuccin Mocha");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-theme",
+    "catppuccin-mocha",
+  );
+});
+
+test("appearance imports custom theme json and lists it under custom themes", async ({
+  page,
+}) => {
+  test.skip(
+    !fs.existsSync(customThemeExamplePath),
+    `Missing local custom theme example at ${customThemeExamplePath}`,
+  );
+
+  await mountProjectUI(page);
+  await page.setViewportSize({ width: 1280, height: 520 });
+  await page.getByTitle("Settings").click();
+
+  await page
+    .locator('input[type="file"]')
+    .setInputFiles(customThemeExamplePath);
+
+  const themeTrigger = page.getByTestId("theme-dropdown-trigger");
+  await themeTrigger.scrollIntoViewIfNeeded();
+  await expect(themeTrigger).toContainText("Tomorrow Night Burns");
+  await expect(page.getByText("Added Tomorrow Night Burns")).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-theme",
+    "custom:tomorrow-night-burns-example",
+  );
+
+  await themeTrigger.click();
+  const dropdownContent = page.getByTestId("theme-dropdown-content");
+  await expect(dropdownContent).toBeVisible();
+
+  const [triggerBox, contentBox] = await Promise.all([
+    themeTrigger.boundingBox(),
+    dropdownContent.boundingBox(),
+  ]);
+  expect(triggerBox).not.toBeNull();
+  expect(contentBox).not.toBeNull();
+  expect(
+    Math.abs((triggerBox?.width ?? 0) - (contentBox?.width ?? 0)),
+  ).toBeLessThanOrEqual(2);
+
+  await expect
+    .poll(async () =>
+      dropdownContent.evaluate((element) => ({
+        canScroll: element.scrollHeight > element.clientHeight,
+        overflowY: window.getComputedStyle(element).overflowY,
+      })),
+    )
+    .toEqual({ canScroll: true, overflowY: "auto" });
+
+  await expect(page.getByText("Custom themes")).toBeVisible();
+  await dropdownContent.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+
+  const customThemeItem = page.getByRole("menuitem", {
+    name: /Tomorrow Night Burns/,
+  });
+  await expect(customThemeItem).toBeVisible();
+  await customThemeItem.click();
 });
 
 test("settings modal scales with app zoom shortcuts", async ({ page }) => {

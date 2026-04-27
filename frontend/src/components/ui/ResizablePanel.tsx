@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { X } from 'lucide-react';
-import { colors, getThemeColors, radius, shadows, transitions, zIndex } from '../../styles/colors';
+import { getThemeColors, radius, shadows, transitions, zIndex } from '../../styles/colors';
 import { useTheme } from '../../hooks/useTheme';
 
 type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -101,7 +101,7 @@ export const ResizablePanel: React.FC<ResizablePanelProps> = ({
       position: 'absolute',
       display: 'flex',
       flexDirection: 'column',
-      backgroundColor: isDark ? colors.dark.bgPanel : colors.light.bg,
+      backgroundColor: 'var(--surface-elevated)',
       border: `1px solid ${theme.border}`,
       borderRadius: radius.lg,
       boxShadow: isDark 

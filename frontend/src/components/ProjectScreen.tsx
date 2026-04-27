@@ -13,7 +13,6 @@ import {
   blockProjectSwitch,
   unblockProjectSwitch,
 } from "../utils/priorityUI";
-import { useTheme } from "../hooks/useTheme";
 import { makeEditorTabId, useEditorStore } from "../stores/editorStore";
 import { editorCanvasBackground } from "../utils/codeMirrorTheme";
 import { type ContextActionMenuItem } from "./ui/ContextActionMenu";
@@ -82,8 +81,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   onPerspectiveClose,
   onEditorFileOpenReady,
 }) => {
-  const { isDark } = useTheme();
-  const editorBgColor = isDark ? editorCanvasBackground : "#ffffff";
+  const editorBgColor = editorCanvasBackground;
   const setStatusFile = useEditorStore((state) => state.setStatusFile);
   const activeEditorPaneId = useEditorStore((state) => state.activePaneId);
   const syncEditorStoreActiveTab = useEditorStore(

@@ -158,7 +158,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     >
       <div
         style={{
-          backgroundColor: isDark ? colors.dark.bgPanel : "#FFFFFF",
+          backgroundColor: "var(--surface-elevated)",
           borderRadius: radius.lg,
           boxShadow:
             "0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)",
@@ -341,9 +341,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                             style={{
                               marginTop: "8px",
                               fontSize: "12px",
-                              backgroundColor: isDark
-                                ? colors.dark.bg
-                                : "#F9FAFB",
+                              backgroundColor: "var(--surface-canvas)",
                               padding: "8px",
                               borderRadius: radius.sm,
                               overflowX: "auto",
@@ -443,7 +441,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                     padding: "8px 12px",
                     border: `1px solid ${theme.border}`,
                     borderRadius: radius.md,
-                    backgroundColor: isDark ? colors.dark.bg : "#FFFFFF",
+                    backgroundColor: "var(--surface-canvas)",
                     color: theme.text,
                     fontSize: "14px",
                   }}
@@ -475,7 +473,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                     padding: "8px 12px",
                     border: `1px solid ${theme.border}`,
                     borderRadius: radius.md,
-                    backgroundColor: isDark ? colors.dark.bg : "#FFFFFF",
+                    backgroundColor: "var(--surface-canvas)",
                     color: theme.text,
                     fontSize: "14px",
                   }}
@@ -505,7 +503,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                     padding: "8px 12px",
                     border: `1px solid ${theme.border}`,
                     borderRadius: radius.md,
-                    backgroundColor: isDark ? colors.dark.bg : "#FFFFFF",
+                    backgroundColor: "var(--surface-canvas)",
                     color: theme.text,
                     fontSize: "14px",
                   }}
@@ -544,7 +542,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                     padding: "8px 12px",
                     border: `1px solid ${theme.border}`,
                     borderRadius: radius.md,
-                    backgroundColor: isDark ? colors.dark.bg : "#FFFFFF",
+                    backgroundColor: "var(--surface-canvas)",
                     color: theme.text,
                     fontSize: "14px",
                   }}
@@ -574,7 +572,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                     padding: "8px 12px",
                     border: `1px solid ${theme.border}`,
                     borderRadius: radius.md,
-                    backgroundColor: isDark ? colors.dark.bg : "#FFFFFF",
+                    backgroundColor: "var(--surface-canvas)",
                     color: theme.text,
                     fontFamily: "JetBrains Mono, monospace",
                     fontSize: "13px",

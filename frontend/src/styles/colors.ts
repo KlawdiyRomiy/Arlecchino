@@ -225,5 +225,19 @@ export const zIndex = {
 
 export type Theme = "light" | "dark";
 
-export const getThemeColors = (isDark: boolean) =>
-  isDark ? colors.dark : colors.light;
+const cssThemeColors = {
+  bg: "var(--surface-canvas)",
+  bgSecondary: "var(--bg-secondary)",
+  bgTertiary: "var(--bg-tertiary)",
+  bgPanel: "var(--surface-elevated)",
+  bgHover: "var(--bg-hover)",
+  border: "var(--border-default)",
+  borderSubtle: "var(--border-subtle)",
+  borderLight: "var(--border-strong)",
+  text: "var(--text-primary)",
+  textPrimary: "var(--text-primary)",
+  textSecondary: "var(--text-secondary)",
+  textMuted: "var(--text-muted)",
+} as const;
+
+export const getThemeColors = (_isDark: boolean) => cssThemeColors;

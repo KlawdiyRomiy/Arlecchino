@@ -2,13 +2,7 @@ import React, { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { FileCode, FolderOpen } from "lucide-react";
 import { useTheme } from "../hooks/useTheme";
-import {
-  colors,
-  getThemeColors,
-  radius,
-  shadows,
-  zIndex,
-} from "../styles/colors";
+import { getThemeColors, radius, shadows, zIndex } from "../styles/colors";
 
 export interface DefinitionItem {
   path: string;
@@ -88,7 +82,7 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
         top: finalY,
         width: `${menuWidth}px`,
         maxHeight: `${menuHeight}px`,
-        backgroundColor: isDark ? colors.dark.bgPanel : colors.light.bg,
+        backgroundColor: "var(--surface-elevated)",
         borderRadius: radius.lg,
         boxShadow: shadows.floating,
         border: `1px solid ${theme.border}`,

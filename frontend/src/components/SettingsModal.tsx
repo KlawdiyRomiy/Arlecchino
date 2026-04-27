@@ -1,14 +1,17 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import * as RadioGroup from "@radix-ui/react-radio-group";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Switch from "@radix-ui/react-switch";
 import {
   AlertCircle,
+  Check,
+  ChevronDown,
   Code2,
   Globe,
   Keyboard,
   Palette,
   Pencil,
+  Plus,
   RotateCcw,
   Search,
   Settings,
@@ -20,6 +23,7 @@ import { useTheme } from "../hooks/useTheme";
 import { useBrowserPreviewStore } from "../stores/browserPreviewStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { useKeybindingsStore } from "../stores/keybindingsStore";
+import { themeOptions as builtInThemeOptions } from "../styles/themes";
 import type { Theme } from "../types/theme";
 import {
   eventToShortcut,
@@ -41,16 +45,25 @@ const settingsIconButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-40";
 const settingsActionButtonClass =
   "inline-flex h-9 items-center gap-2 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)] px-3 text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
+const settingsDropdownTriggerClass =
+  "flex min-h-[44px] w-full items-center justify-between gap-3 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)] px-4 text-left text-[13px] text-[var(--text-primary)] outline-none transition-colors hover:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=open]:border-[var(--border-default)]";
+const settingsDropdownContentClass =
+  "z-[130] overflow-y-auto overscroll-contain rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-overlay)_98%,transparent)] p-2 shadow-[var(--shadow-overlay)] backdrop-blur-xl";
+const settingsDropdownItemClass =
+  "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-[14px] px-4 text-[15px] text-[var(--text-secondary)] outline-none transition-colors data-[highlighted]:bg-[var(--surface-hover)] data-[highlighted]:text-[var(--text-primary)]";
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-const themeOptions: Array<{ value: Theme; label: string }> = [
-  { value: "system", label: "System" },
-  { value: "dark", label: "Dark" },
-  { value: "light", label: "Light" },
+const settingsThemeOptions: Array<{
+  value: Theme;
+  label: string;
+  appearance: "auto" | "light" | "dark";
+}> = [
+  { value: "system", label: "System", appearance: "auto" },
+  ...builtInThemeOptions,
 ];
 
 type TabId =
@@ -157,14 +170,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<TabId>("appearance");
   const [shortcutQuery, setShortcutQuery] = useState("");
+  const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
+  const [customThemeStatus, setCustomThemeStatus] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
   const [shortcutGroup, setShortcutGroup] = useState<"All" | ShortcutGroup>(
     "All",
   );
   const [recordingActionId, setRecordingActionId] =
     useState<ShortcutActionId | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
+  const customThemeInputRef = useRef<HTMLInputElement | null>(null);
 
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, previewTheme, customThemes, addCustomTheme } =
+    useTheme();
   const {
     uiScale,
     editorFontSize,
@@ -219,6 +239,56 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       return haystack.includes(query);
     });
   }, [overrides, shortcutGroup, shortcutQuery]);
+
+  const customThemeOptions = useMemo(
+    () =>
+      customThemes.map((customTheme) => ({
+        value: customTheme.id as Theme,
+        label: customTheme.name,
+        appearance: customTheme.appearance,
+      })),
+    [customThemes],
+  );
+
+  const selectedThemeLabel = useMemo(() => {
+    const options = [...settingsThemeOptions, ...customThemeOptions];
+    return options.find((option) => option.value === theme)?.label ?? "System";
+  }, [customThemeOptions, theme]);
+
+  const clearThemePreview = () => {
+    previewTheme(null);
+  };
+
+  const handleThemeSelect = (nextTheme: Theme) => {
+    setTheme(nextTheme);
+  };
+
+  const handleCustomThemeFile = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      const rawTheme = JSON.parse(await file.text());
+      const importedTheme = addCustomTheme(rawTheme, file.name);
+      handleThemeSelect(importedTheme.id as Theme);
+      setCustomThemeStatus({
+        tone: "success",
+        message: `Added ${importedTheme.name}`,
+      });
+    } catch (error) {
+      setCustomThemeStatus({
+        tone: "error",
+        message:
+          error instanceof Error ? error.message : "Unable to import theme.",
+      });
+    }
+  };
 
   useEffect(() => {
     if (recordingActionId) {
@@ -494,29 +564,161 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   />
 
                   <div className={`${settingsPanelClass} p-4`}>
-                    <div className="mb-3 text-sm font-semibold text-[var(--text-primary)]">
-                      Theme
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-[var(--text-primary)]">
+                        Theme
+                      </div>
+                      <span className={settingsPillClass}>
+                        {selectedThemeLabel}
+                      </span>
                     </div>
-                    <RadioGroup.Root
-                      value={theme}
-                      onValueChange={(value) => setTheme(value as Theme)}
-                      className="grid gap-3 sm:grid-cols-3"
+
+                    <DropdownMenu.Root
+                      open={themeDropdownOpen}
+                      onOpenChange={(open) => {
+                        setThemeDropdownOpen(open);
+                        if (!open) {
+                          clearThemePreview();
+                        }
+                      }}
                     >
-                      {themeOptions.map((option) => (
-                        <label
-                          key={option.value}
-                          className={`${settingsInsetClass} flex cursor-pointer items-center gap-3 px-4 py-3 text-sm text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)]`}
+                      <DropdownMenu.Trigger asChild>
+                        <button
+                          type="button"
+                          className={settingsDropdownTriggerClass}
+                          aria-label="Select theme"
+                          data-testid="theme-dropdown-trigger"
                         >
-                          <RadioGroup.Item
-                            value={option.value}
-                            className="flex h-4 w-4 items-center justify-center rounded-full border border-[var(--border-default)]"
-                          >
-                            <RadioGroup.Indicator className="h-2 w-2 rounded-full bg-[var(--text-primary)]" />
-                          </RadioGroup.Item>
-                          {option.label}
-                        </label>
-                      ))}
-                    </RadioGroup.Root>
+                          <span className="min-w-0 truncate">
+                            {selectedThemeLabel}
+                          </span>
+                          <ChevronDown
+                            size={15}
+                            className="shrink-0 text-[var(--text-muted)]"
+                          />
+                        </button>
+                      </DropdownMenu.Trigger>
+
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.Content
+                          align="start"
+                          sideOffset={8}
+                          className={settingsDropdownContentClass}
+                          data-testid="theme-dropdown-content"
+                          data-shell-menu-content
+                          onPointerLeave={clearThemePreview}
+                          style={{
+                            width: "var(--radix-dropdown-menu-trigger-width)",
+                            maxHeight:
+                              "min(480px, var(--radix-dropdown-menu-content-available-height))",
+                          }}
+                        >
+                          <DropdownMenu.Label className="px-4 py-2 text-[12px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                            Built-in themes
+                          </DropdownMenu.Label>
+                          {settingsThemeOptions.map((option) => (
+                            <DropdownMenu.Item
+                              key={option.value}
+                              onPointerEnter={() => previewTheme(option.value)}
+                              onFocus={() => previewTheme(option.value)}
+                              onSelect={() => handleThemeSelect(option.value)}
+                              className={settingsDropdownItemClass}
+                            >
+                              <Check
+                                size={14}
+                                className={
+                                  theme === option.value
+                                    ? "text-[var(--text-primary)]"
+                                    : "text-transparent"
+                                }
+                              />
+                              <span className="min-w-0 flex-1 truncate">
+                                {option.label}
+                              </span>
+                              <span className="text-[13px] capitalize text-[var(--text-muted)]">
+                                {option.appearance}
+                              </span>
+                            </DropdownMenu.Item>
+                          ))}
+
+                          <DropdownMenu.Separator className="my-2 h-px bg-[var(--shell-inline-divider)]" />
+                          <DropdownMenu.Label className="px-4 py-2 text-[12px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                            Custom themes
+                          </DropdownMenu.Label>
+                          {customThemeOptions.length > 0 ? (
+                            customThemeOptions.map((option) => (
+                              <DropdownMenu.Item
+                                key={option.value}
+                                onPointerEnter={() =>
+                                  previewTheme(option.value)
+                                }
+                                onFocus={() => previewTheme(option.value)}
+                                onSelect={() => handleThemeSelect(option.value)}
+                                className={settingsDropdownItemClass}
+                              >
+                                <Check
+                                  size={14}
+                                  className={
+                                    theme === option.value
+                                      ? "text-[var(--text-primary)]"
+                                      : "text-transparent"
+                                  }
+                                />
+                                <span className="min-w-0 flex-1 truncate">
+                                  {option.label}
+                                </span>
+                                <span className="text-[13px] capitalize text-[var(--text-muted)]">
+                                  {option.appearance}
+                                </span>
+                              </DropdownMenu.Item>
+                            ))
+                          ) : (
+                            <div className="px-4 py-2 text-[13px] text-[var(--text-muted)]">
+                              No custom themes added
+                            </div>
+                          )}
+                        </DropdownMenu.Content>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu.Root>
+                  </div>
+
+                  <div className={`${settingsPanelClass} p-4`}>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-[var(--text-primary)]">
+                          Add custom theme
+                        </div>
+                        <div className="mt-1 text-[12px] text-[var(--text-muted)]">
+                          JSON theme file
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className={settingsActionButtonClass}
+                        onClick={() => customThemeInputRef.current?.click()}
+                      >
+                        <Plus size={14} />
+                        ADD
+                      </button>
+                    </div>
+                    <input
+                      ref={customThemeInputRef}
+                      type="file"
+                      accept=".json,application/json"
+                      className="hidden"
+                      onChange={handleCustomThemeFile}
+                    />
+                    {customThemeStatus && (
+                      <div
+                        className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
+                          customThemeStatus.tone === "success"
+                            ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
+                            : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
+                        }`}
+                      >
+                        {customThemeStatus.message}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

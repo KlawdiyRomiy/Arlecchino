@@ -59,7 +59,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   onOpenFileRef,
   onOpenPreviewUrl,
 }) => {
-  const { isDark } = useTheme();
+  const { isDark, resolvedThemeId } = useTheme();
   const theme = getThemeColors(isDark);
   const [error, setError] = useState<string | null>(null);
   const [autocompleteState, setAutocompleteState] = useState({
@@ -590,7 +590,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       if (shortcuts.terminalNewTab(e)) {
         e.preventDefault();
         e.stopPropagation();
-        void createTerminal(activePaneId, isDark);
+        void createTerminal(activePaneId, resolvedThemeId);
         return false;
       }
 
@@ -606,7 +606,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       if (shortcuts.terminalReopenTab(e)) {
         e.preventDefault();
         e.stopPropagation();
-        void reopenLastClosedTab(isDark);
+        void reopenLastClosedTab(resolvedThemeId);
         return false;
       }
 
@@ -823,8 +823,8 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     closeTerminal,
     createTerminal,
     findInTerminal,
-    isDark,
     reopenLastClosedTab,
+    resolvedThemeId,
   ]);
 
   useEffect(() => {
@@ -832,8 +832,8 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   }, [initialize]);
 
   useEffect(() => {
-    updateTheme(isDark);
-  }, [isDark, updateTheme]);
+    updateTheme(resolvedThemeId);
+  }, [resolvedThemeId, updateTheme]);
 
   const hasCreatedInitialTerminal = useRef(false);
 
@@ -849,11 +849,11 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     }
 
     Promise.all(
-      targetPanes.map((pane) => createTerminal(pane.id, isDark)),
+      targetPanes.map((pane) => createTerminal(pane.id, resolvedThemeId)),
     ).catch((err) => {
       setError(err?.message || "Failed to create terminal session");
     });
-  }, [createTerminal, isDark, isInitialized, panes]);
+  }, [createTerminal, isInitialized, panes, resolvedThemeId]);
 
   const attachTerminal = useCallback(
     (tabId: string, container: HTMLDivElement | null) => {
@@ -962,7 +962,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   };
 
   const handleSplitPane = (direction: "horizontal" | "vertical") => {
-    splitPane(direction, isDark);
+    splitPane(direction, resolvedThemeId);
   };
 
   const tabBarStyle: React.CSSProperties = {
@@ -1088,7 +1088,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           })}
           <button
             style={addTabBtnStyle}
-            onClick={() => createTerminal(pane.id, isDark)}
+            onClick={() => createTerminal(pane.id, resolvedThemeId)}
             title="New Terminal"
           >
             <Plus size={14} />
@@ -1150,7 +1150,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => createTerminal(pane.id, isDark)}
+                onClick={() => createTerminal(pane.id, resolvedThemeId)}
                 style={addTabBtnStyle}
               >
                 <Plus size={13} />
