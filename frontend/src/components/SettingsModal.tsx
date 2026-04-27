@@ -193,12 +193,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     showInlineDiagnostics,
     showCompactDiagnostics,
     showMinimap,
+    showRainbowBrackets,
     setUiScale,
     setEditorFontSize,
     resetZoom,
     setShowInlineDiagnostics,
     setShowCompactDiagnostics,
     setShowMinimap,
+    setShowRainbowBrackets,
   } = useEditorSettingsStore();
   const {
     autoOpenFromTerminal,
@@ -719,6 +721,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         {customThemeStatus.message}
                       </div>
                     )}
+                  </div>
+
+                  <div className={settingsPanelClass}>
+                    <SwitchRow
+                      title="Rainbow brackets"
+                      description="Color nested brackets with fixed depth colors. Turn off to use the current theme's bracket styling."
+                      checked={showRainbowBrackets}
+                      onCheckedChange={setShowRainbowBrackets}
+                    />
                   </div>
                 </div>
               )}

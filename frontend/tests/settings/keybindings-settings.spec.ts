@@ -275,6 +275,35 @@ test("appearance imports custom theme json and lists it under custom themes", as
   await customThemeItem.click();
 });
 
+test("appearance toggles rainbow brackets setting", async ({ page }) => {
+  await mountProjectUI(page);
+  await page.getByTitle("Settings").click();
+
+  const rainbowBracketsSwitch = page.getByRole("switch", {
+    name: "Rainbow brackets",
+  });
+  await expect(rainbowBracketsSwitch).toHaveAttribute("aria-checked", "true");
+
+  await rainbowBracketsSwitch.click();
+  await expect(rainbowBracketsSwitch).toHaveAttribute("aria-checked", "false");
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const rawSettings = localStorage.getItem("editor-settings");
+        if (!rawSettings) return null;
+        return JSON.parse(rawSettings).state.showRainbowBrackets;
+      }),
+    )
+    .toBe(false);
+
+  await page.reload();
+  await mountProjectUI(page);
+  await page.getByTitle("Settings").click();
+  await expect(
+    page.getByRole("switch", { name: "Rainbow brackets" }),
+  ).toHaveAttribute("aria-checked", "false");
+});
+
 test("settings modal scales with app zoom shortcuts", async ({ page }) => {
   await mountProjectUI(page);
   await page.getByTitle("Settings").click();

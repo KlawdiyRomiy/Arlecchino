@@ -16,6 +16,7 @@ interface EditorSettingsState {
   showInlineDiagnostics: boolean;
   showCompactDiagnostics: boolean;
   showMinimap: boolean;
+  showRainbowBrackets: boolean;
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
@@ -24,6 +25,7 @@ interface EditorSettingsState {
   setShowInlineDiagnostics: (value: boolean) => void;
   setShowCompactDiagnostics: (value: boolean) => void;
   setShowMinimap: (value: boolean) => void;
+  setShowRainbowBrackets: (value: boolean) => void;
 }
 
 const EDITOR_SETTINGS_STORAGE_VERSION = 1;
@@ -33,6 +35,7 @@ const MAX_FONT_SIZE = 48;
 const DEFAULT_SHOW_INLINE_DIAGNOSTICS = true;
 const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
 const DEFAULT_SHOW_MINIMAP = true;
+const DEFAULT_SHOW_RAINBOW_BRACKETS = true;
 
 type PersistedEditorSettingsState = Partial<
   Pick<
@@ -42,6 +45,7 @@ type PersistedEditorSettingsState = Partial<
     | "showInlineDiagnostics"
     | "showCompactDiagnostics"
     | "showMinimap"
+    | "showRainbowBrackets"
   >
 >;
 
@@ -82,6 +86,10 @@ const sanitizePersistedEditorSettings = (
     nextState.showMinimap = persistedState.showMinimap;
   }
 
+  if (typeof persistedState.showRainbowBrackets === "boolean") {
+    nextState.showRainbowBrackets = persistedState.showRainbowBrackets;
+  }
+
   return nextState;
 };
 
@@ -110,6 +118,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       showInlineDiagnostics: DEFAULT_SHOW_INLINE_DIAGNOSTICS,
       showCompactDiagnostics: DEFAULT_SHOW_COMPACT_DIAGNOSTICS,
       showMinimap: DEFAULT_SHOW_MINIMAP,
+      showRainbowBrackets: DEFAULT_SHOW_RAINBOW_BRACKETS,
 
       zoomIn: () =>
         set((state) => ({
@@ -143,6 +152,9 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
         set(() => ({ showCompactDiagnostics: value })),
 
       setShowMinimap: (value: boolean) => set(() => ({ showMinimap: value })),
+
+      setShowRainbowBrackets: (value: boolean) =>
+        set(() => ({ showRainbowBrackets: value })),
     }),
     {
       name: "editor-settings",

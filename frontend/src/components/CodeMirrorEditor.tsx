@@ -772,6 +772,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const showMinimapSetting = useEditorSettingsStore(
     (state) => state.showMinimap,
   );
+  const showRainbowBrackets = useEditorSettingsStore(
+    (state) => state.showRainbowBrackets,
+  );
   const largeDocumentMode = useMemo(
     () => shouldUseCodeMirrorLargeDocumentMode(content),
     [content],
@@ -1961,7 +1964,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           },
         ],
       }),
-      rainbowBrackets(),
+      ...(showRainbowBrackets ? [rainbowBrackets()] : []),
       ...diagnosticsExtension,
     );
   }
