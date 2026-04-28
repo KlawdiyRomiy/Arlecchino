@@ -8,6 +8,8 @@ Settings supports built-in themes and custom JSON theme imports. Imported themes
 
 - `blackprint`: default dark Arlecchino theme.
 - `arlecchino-light`: light inversion of the default theme.
+- `arlecchino-stage`: theatrical dark theme with stage-black surfaces, velvet red cues, brass dividers, and teal focus states.
+- `arlecchino-matinee`: theatrical light theme with ivory playbill surfaces, red cues, brass structure, and teal focus states.
 - `catppuccin-latte`: Catppuccin light theme.
 - `catppuccin-frappe`: Catppuccin dark theme.
 - `catppuccin-macchiato`: Catppuccin dark theme.
