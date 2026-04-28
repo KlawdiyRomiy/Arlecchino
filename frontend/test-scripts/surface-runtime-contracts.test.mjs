@@ -24,6 +24,21 @@ async function loadRuntimeContracts() {
           parseUpdatePreviewInput,
           parseWindowIdFromPayload,
         } from "./src/components/layout/mainLayoutEventParsers.ts";
+        export {
+          getSurfaceRuntimeSnapshot,
+          subscribeSurfaceRuntime,
+          syncSurfaceRuntimeFromHost,
+        } from "./src/surfaces/surfaceRuntimeStore.ts";
+        export {
+          canUseShellCapability,
+          getFallbackShellCapabilities,
+          getShellCapabilitiesSnapshot,
+          loadShellCapabilitiesFromBackend,
+          normalizeShellCapabilitiesPayload,
+          subscribeShellCapabilities,
+          syncShellCapabilities,
+          syncShellCapabilitiesFromPayload,
+        } from "./src/shell/shellCapabilities.ts";
       `,
       loader: "ts",
       resolveDir: frontendRoot,
@@ -39,7 +54,7 @@ async function loadRuntimeContracts() {
   assert.ok(code, "expected bundled surface runtime contract module");
 
   return import(
-    `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`
+    `data:text/javascript;base64,${Buffer.from(code).toString("base64")}#${Date.now()}-${Math.random()}`
   );
 }
 
@@ -273,4 +288,224 @@ test("layout event parsers keep MCP preview and panel payload contracts canonica
     focusRequested: true,
   });
   assert.equal(focusId, "preview-test");
+});
+
+test("surface runtime store publishes read-only snapshots for host sync", async () => {
+  const {
+    getSurfaceRuntimeSnapshot,
+    subscribeSurfaceRuntime,
+    syncSurfaceRuntimeFromHost,
+  } = await loadRuntimeContracts();
+  const observedRevisions = [];
+  const unsubscribe = subscribeSurfaceRuntime(() => {
+    observedRevisions.push(getSurfaceRuntimeSnapshot().revision);
+  });
+
+  const nextSnapshot = syncSurfaceRuntimeFromHost([
+    {
+      id: "panel:explorer",
+      source: "panel",
+      appletKind: "explorer",
+      hostMode: "snapped",
+      title: "Explorer",
+      active: false,
+      pinned: false,
+      panelId: "explorer",
+      geometry: {
+        position: "left",
+        width: 280,
+        height: 600,
+        x: 12,
+        y: 24,
+      },
+    },
+    {
+      id: "preview:preview-browser-default",
+      source: "preview",
+      appletKind: "browser",
+      hostMode: "snapped",
+      title: "Preview localhost:5173",
+      active: true,
+      pinned: true,
+      createdAt: 1710000000000,
+      updatedAt: 1710000001000,
+      previewWindowId: "preview-browser-default",
+      payload: { url: "http://localhost:5173" },
+      geometry: {
+        position: "right",
+        width: 520,
+        height: 620,
+        x: 900,
+        y: 70,
+        zIndex: 132,
+      },
+    },
+  ]);
+
+  assert.equal(nextSnapshot.activeSurfaceId, "preview:preview-browser-default");
+  assert.equal(nextSnapshot.sessions.length, 2);
+  assert.equal(
+    nextSnapshot.byId["preview:preview-browser-default"].payload.url,
+    "http://localhost:5173",
+  );
+  assert.deepEqual(observedRevisions, [nextSnapshot.revision]);
+
+  const unchangedSnapshot = syncSurfaceRuntimeFromHost(nextSnapshot.sessions);
+  assert.equal(unchangedSnapshot.revision, nextSnapshot.revision);
+  assert.deepEqual(observedRevisions, [nextSnapshot.revision]);
+
+  unsubscribe();
+});
+
+test("shell capabilities expose conservative fallback statuses and backend sync", async () => {
+  const {
+    canUseShellCapability,
+    getFallbackShellCapabilities,
+    getShellCapabilitiesSnapshot,
+    subscribeShellCapabilities,
+    syncShellCapabilities,
+  } = await loadRuntimeContracts();
+  const fallback = getFallbackShellCapabilities();
+  const initialSnapshot = getShellCapabilitiesSnapshot();
+
+  assert.equal(fallback.clipboard.status, "available");
+  assert.equal(fallback.browserOpenURL.status, "available");
+  assert.equal(fallback.windowControls.status, "available");
+  assert.equal(fallback.nativeMenu.status, "available");
+  assert.equal(fallback.multiWindow.status, "experimental");
+  assert.equal(fallback.contextMenu.status, "unavailable");
+  assert.equal(fallback.customProtocol.status, "requires-build");
+  assert.equal(fallback.fileAssociations.status, "requires-build");
+  assert.equal(fallback.singleInstance.status, "requires-build");
+  assert.equal(initialSnapshot.loadedFromBackend, false);
+  assert.equal(canUseShellCapability("clipboard"), true);
+  assert.equal(canUseShellCapability("multiWindow"), true);
+  assert.equal(canUseShellCapability("contextMenu"), false);
+  assert.equal(canUseShellCapability("customProtocol"), false);
+
+  const observedRevisions = [];
+  const unsubscribe = subscribeShellCapabilities(() => {
+    observedRevisions.push(getShellCapabilitiesSnapshot().revision);
+  });
+
+  const nextSnapshot = syncShellCapabilities({
+    contextMenu: {
+      status: "available",
+      reason: "Native context menu service reported ready.",
+      source: "backend",
+    },
+  });
+
+  assert.equal(nextSnapshot.capabilities.contextMenu.status, "available");
+  assert.equal(nextSnapshot.capabilities.contextMenu.source, "backend");
+  assert.equal(nextSnapshot.capabilities.tray.status, "unavailable");
+  assert.deepEqual(observedRevisions, [nextSnapshot.revision]);
+
+  const unchangedSnapshot = syncShellCapabilities({
+    contextMenu: {
+      status: "available",
+      reason: "Native context menu service reported ready.",
+      source: "backend",
+    },
+  });
+  assert.equal(unchangedSnapshot.revision, nextSnapshot.revision);
+  assert.deepEqual(observedRevisions, [nextSnapshot.revision]);
+
+  unsubscribe();
+});
+
+test("shell capabilities normalize backend payloads without trusting invalid entries", async () => {
+  const { normalizeShellCapabilitiesPayload } = await loadRuntimeContracts();
+
+  const normalized = normalizeShellCapabilitiesPayload({
+    Platform: " darwin ",
+    Runtime: " wails-v3 ",
+    Version: 1,
+    Capabilities: {
+      dialogs: {
+        Status: "available",
+        Reason: "Dialogs are ready.",
+        Source: "backend",
+      },
+      clipboard: {
+        status: "available",
+        reason: "",
+        source: "unexpected",
+      },
+      contextMenu: {
+        status: "not-a-status",
+        reason: "Invalid status must be ignored.",
+      },
+      unknownCapability: {
+        status: "available",
+        reason: "Unknown capability must be ignored.",
+      },
+    },
+  });
+
+  assert.equal(normalized.platform, "darwin");
+  assert.equal(normalized.runtime, "wails-v3");
+  assert.equal(normalized.version, 1);
+  assert.deepEqual(Object.keys(normalized.capabilities).sort(), [
+    "clipboard",
+    "dialogs",
+  ]);
+  assert.equal(normalized.capabilities.dialogs.status, "available");
+  assert.equal(normalized.capabilities.dialogs.reason, "Dialogs are ready.");
+  assert.equal(normalized.capabilities.dialogs.source, "backend");
+  assert.equal(normalized.capabilities.clipboard.source, "backend");
+  assert.match(normalized.capabilities.clipboard.reason, /Clipboard/);
+});
+
+test("shell capabilities load backend snapshots and keep stable revisions", async () => {
+  const {
+    canUseShellCapability,
+    getShellCapabilitiesSnapshot,
+    loadShellCapabilitiesFromBackend,
+    syncShellCapabilitiesFromPayload,
+  } = await loadRuntimeContracts();
+
+  const backendPayload = {
+    platform: "darwin",
+    runtime: "wails-v3",
+    version: 1,
+    capabilities: {
+      dialogs: {
+        status: "available",
+        reason: "Dialogs are ready.",
+        source: "backend",
+      },
+      contextMenu: {
+        status: "available",
+        reason: "Native context menu service reported ready.",
+        source: "backend",
+      },
+      windowControls: {
+        status: "available",
+        reason: "Window controls are ready.",
+        source: "backend",
+      },
+    },
+  };
+
+  const firstSnapshot = await loadShellCapabilitiesFromBackend({
+    GetShellCapabilities: async () => backendPayload,
+  });
+
+  assert.equal(firstSnapshot.loadedFromBackend, true);
+  assert.equal(firstSnapshot.platform, "darwin");
+  assert.equal(firstSnapshot.runtime, "wails-v3");
+  assert.equal(firstSnapshot.version, 1);
+  assert.equal(firstSnapshot.capabilities.dialogs.status, "available");
+  assert.equal(firstSnapshot.capabilities.dialogs.source, "backend");
+  assert.equal(canUseShellCapability("dialogs"), true);
+  assert.equal(canUseShellCapability("contextMenu"), true);
+  assert.equal(firstSnapshot.capabilities.tray.status, "unavailable");
+
+  const secondSnapshot = syncShellCapabilitiesFromPayload(backendPayload);
+  assert.equal(secondSnapshot.revision, firstSnapshot.revision);
+
+  const currentSnapshot = getShellCapabilitiesSnapshot();
+  const missingBridgeSnapshot = await loadShellCapabilitiesFromBackend(null);
+  assert.equal(missingBridgeSnapshot.revision, currentSnapshot.revision);
 });

@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 //go:embed all:frontend/dist
@@ -79,7 +80,7 @@ func main() {
 		Height:             900,
 		MinWidth:           1024,
 		MinHeight:          768,
-		Frameless:          true,
+		Frameless:          false,
 		StartState:         application.WindowStateMaximised,
 		Hidden:             false,
 		URL:                "/",
@@ -87,15 +88,9 @@ func main() {
 		BackgroundType:     application.BackgroundTypeTransparent,
 		BackgroundColour:   application.NewRGBA(10, 10, 10, 0),
 		Mac: application.MacWindow{
-			TitleBar: application.MacTitleBar{
-				AppearsTransparent:   true,
-				HideTitle:            true,
-				Hide:                 true,
-				FullSizeContent:      true,
-				UseToolbar:           false,
-				HideToolbarSeparator: true,
-			},
-			Backdrop: application.MacBackdropTransparent,
+			TitleBar:                application.MacTitleBarHiddenInsetUnified,
+			InvisibleTitleBarHeight: 56,
+			Backdrop:                application.MacBackdropTransparent,
 		},
 		Windows: application.WindowsWindow{
 			DisableIcon: false,
@@ -105,6 +100,20 @@ func main() {
 		},
 	})
 	app.attachMainWindow(mainWindow)
+	for _, eventType := range []events.WindowEventType{
+		events.Common.WindowShow,
+		events.Common.WindowDidResize,
+		events.Common.WindowFocus,
+		events.Common.WindowMaximise,
+		events.Common.WindowUnMaximise,
+		events.Common.WindowRestore,
+		events.Common.WindowFullscreen,
+		events.Common.WindowUnFullscreen,
+	} {
+		mainWindow.OnWindowEvent(eventType, func(_ *application.WindowEvent) {
+			app.RefreshNativeWindowControls()
+		})
+	}
 	wailsApp.Menu.SetApplicationMenu(app.buildApplicationMenu(nil))
 
 	if err := wailsApp.Run(); err != nil {

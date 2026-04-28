@@ -52,6 +52,7 @@ import {
   type OpenPreviewWindowInput,
   type PreviewWindow,
 } from "../../stores/previewWindowStore";
+import { useSurfaceRuntimeHostSync } from "../../surfaces/surfaceRuntimeStore";
 import type { ShortcutActionId } from "../../utils/keyboard";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 import {
@@ -74,11 +75,7 @@ import {
   getTUIPanelVisibility,
   normalizeTUIAssistAnchor,
 } from "../../utils/terminalLayout";
-import {
-  GetLanguageForFile,
-  ReadFile,
-  WriteTerminal,
-} from "../../wails/app";
+import { GetLanguageForFile, ReadFile, WriteTerminal } from "../../wails/app";
 import { EventsOn } from "../../wails/runtime";
 import {
   type ExecutionProfile,
@@ -218,6 +215,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     isDispatcherPaused,
   } = useTerminalStore();
   const previewWindows = usePreviewWindowStore((state) => state.windows);
+  const activePreviewWindowId = usePreviewWindowStore(
+    (state) => state.activeWindowId,
+  );
   const appearancePreview = usePreviewWindowStore(
     (state) => state.appearancePreview,
   );
@@ -274,6 +274,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         initialPanelLayoutState.rememberedSnappedPositions,
       );
     });
+  useSurfaceRuntimeHostSync({
+    panels,
+    panelConfigs,
+    previewWindows,
+    activePreviewWindowId,
+  });
   const [tuiLayoutSnapshot, setTuiLayoutSnapshot] = useState<{
     panels: PanelVisibility;
     panelConfigs: PanelConfigs;

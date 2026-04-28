@@ -21,6 +21,7 @@ import {
   resetProjectBoundStores,
 } from "./utils/projectBoundState";
 import { useApplicationMenuBridge } from "./hooks/useApplicationMenuBridge";
+import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
 
 const buildScaledSurfaceStyle = (uiScale: number): React.CSSProperties => ({
   position: "absolute",
@@ -46,6 +47,7 @@ const appShellStyle: React.CSSProperties = {
 
 const App: React.FC = () => {
   useApplicationMenuBridge();
+  useShellCapabilitiesBridge();
 
   const activeId = useWorkspaceStore((state) => state.activeId);
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
