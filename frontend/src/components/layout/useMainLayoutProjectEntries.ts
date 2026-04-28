@@ -18,7 +18,7 @@ import {
   RevealProjectEntry,
   TrashProjectEntry,
   WriteFile,
-} from "../../../wailsjs/go/main/App";
+} from "../../wails/app";
 import type {
   ProjectEntryCreateDialogState,
   ProjectEntryRenameDialogState,

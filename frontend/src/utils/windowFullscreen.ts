@@ -2,7 +2,7 @@ import {
   WindowFullscreen,
   WindowIsFullscreen,
   WindowUnfullscreen,
-} from "../../wailsjs/runtime/runtime";
+} from "../wails/runtime";
 
 interface NativeFullscreenBridge {
   ToggleNativeFullscreen?: () => Promise<void> | void;

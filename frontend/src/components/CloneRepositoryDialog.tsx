@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 
-import * as App from "../../wailsjs/go/main/App";
+import * as App from "../wails/app";
 import { deriveCloneProjectName } from "../utils/gitClone";
 import { shortcuts } from "../utils/keyboard";
 

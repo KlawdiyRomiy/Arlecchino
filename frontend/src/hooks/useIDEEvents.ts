@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { EventsOn, EventsOff, EventsEmit } from "../../wailsjs/runtime/runtime";
+import { EventsOn, EventsOff, EventsEmit } from "../wails/runtime";
 
 type IDEEventHandler<T extends Array<unknown>> = (
   ...args: T

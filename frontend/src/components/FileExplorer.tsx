@@ -16,8 +16,8 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
-import * as App from "../../wailsjs/go/main/App";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import * as App from "../wails/app";
+import { EventsOn } from "../wails/runtime";
 import {
   useProjectEntryActions,
   type ProjectEntryActionTarget,

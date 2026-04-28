@@ -2,8 +2,11 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Terminal, ChevronRight, Clock } from "lucide-react";
 import { getThemeColors, radius, shadows, transitions, zIndex, spacing } from "../styles/colors";
 import { useTheme } from "../hooks/useTheme";
-import { SuggestCommand, PredictCommand, ParseCommand } from "../../wailsjs/go/main/App";
-import { main } from "../../wailsjs/go/models";
+import { SuggestCommand, PredictCommand, ParseCommand } from "../wails/app";
+import type {
+  ClassResult,
+  CommandSuggestion,
+} from "../../bindings/arlecchino/models";
 
 interface CommandAutocompleteProps {
   input: string;
@@ -22,8 +25,8 @@ export const CommandAutocomplete: React.FC<CommandAutocompleteProps> = ({
 }) => {
   const { isDark } = useTheme();
   const theme = getThemeColors(isDark);
-  const [suggestions, setSuggestions] = useState<main.CommandSuggestion[]>([]);
-  const [prediction, setPrediction] = useState<main.ClassResult | null>(null);
+  const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
+  const [prediction, setPrediction] = useState<ClassResult | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [parsedCommand, setParsedCommand] = useState<{
     command: string;

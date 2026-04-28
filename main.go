@@ -12,14 +12,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/linux"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
+//go:embed all:frontend/dist
 var assets embed.FS
 
 var errMCPUsageRequested = errors.New("mcp usage requested")
@@ -55,55 +51,64 @@ func main() {
 	}
 
 	app := NewApp()
-
-	err := wails.Run(&options.App{
-		Title:            "Arlecchino",
-		Width:            1440,
-		Height:           900,
-		MinWidth:         1024,
-		MinHeight:        768,
-		Frameless:        true,
-		WindowStartState: options.Maximised,
-		StartHidden:      false,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
+	wailsApp := application.New(application.Options{
+		Name:        "Arlecchino",
+		Description: "High-performance polyglot IDE",
+		Services: []application.Service{
+			application.NewServiceWithOptions(app, application.ServiceOptions{Name: "App"}),
 		},
-		Menu:             app.buildApplicationMenu(nil),
-		BackgroundColour: &options.RGBA{R: 10, G: 10, B: 10, A: 0},
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
-		Mac: &mac.Options{
-			TitleBar: &mac.TitleBar{
-				TitlebarAppearsTransparent: true,
-				HideTitle:                  true,
-				HideTitleBar:               true,
-				FullSizeContent:            true,
-				UseToolbar:                 false,
-				HideToolbarSeparator:       true,
-			},
-			WebviewIsTransparent: true,
-			WindowIsTranslucent:  false,
-			About: &mac.AboutInfo{
-				Title:   "Arlecchino",
-				Message: "High-performance polyglot IDE",
-			},
+		Assets: application.AssetOptions{
+			Handler: application.AssetFileServerFS(assets),
 		},
-		Windows: &windows.Options{
-			WebviewIsTransparent: false,
-			WindowIsTranslucent:  false,
-			DisableWindowIcon:    false,
-			WebviewGpuIsDisabled: false,
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
-		Linux: &linux.Options{
-			WebviewGpuPolicy: linux.WebviewGpuPolicyAlways,
+		Windows: application.WindowsOptions{
+			DisableQuitOnLastWindowClosed: false,
 		},
-		Bind: []interface{}{
-			app,
+		Linux: application.LinuxOptions{
+			DisableQuitOnLastWindowClosed: false,
 		},
 	})
+	app.attachWailsApplication(wailsApp)
 
-	if err != nil {
-		println("Error:", err.Error())
+	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:               "main",
+		Title:              "Arlecchino",
+		Width:              1440,
+		Height:             900,
+		MinWidth:           1024,
+		MinHeight:          768,
+		Frameless:          true,
+		StartState:         application.WindowStateMaximised,
+		Hidden:             false,
+		URL:                "/",
+		UseApplicationMenu: true,
+		BackgroundType:     application.BackgroundTypeTransparent,
+		BackgroundColour:   application.NewRGBA(10, 10, 10, 0),
+		Mac: application.MacWindow{
+			TitleBar: application.MacTitleBar{
+				AppearsTransparent:   true,
+				HideTitle:            true,
+				Hide:                 true,
+				FullSizeContent:      true,
+				UseToolbar:           false,
+				HideToolbarSeparator: true,
+			},
+			Backdrop: application.MacBackdropTransparent,
+		},
+		Windows: application.WindowsWindow{
+			DisableIcon: false,
+		},
+		Linux: application.LinuxWindow{
+			WebviewGpuPolicy: application.WebviewGpuPolicyAlways,
+		},
+	})
+	app.attachMainWindow(mainWindow)
+	wailsApp.Menu.SetApplicationMenu(app.buildApplicationMenu(nil))
+
+	if err := wailsApp.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
 	}
 }
 

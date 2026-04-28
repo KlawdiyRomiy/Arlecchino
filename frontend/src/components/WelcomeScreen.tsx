@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { FolderOpen, GitBranch, Loader2, Sparkles } from "lucide-react";
 
-import * as App from "../../wailsjs/go/main/App";
+import * as App from "../wails/app";
 import { shortcuts } from "../utils/keyboard";
 import { toggleWindowFullscreen } from "../utils/windowFullscreen";
 import { CloneRepositoryDialog } from "./CloneRepositoryDialog";

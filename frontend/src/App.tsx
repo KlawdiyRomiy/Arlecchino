@@ -6,7 +6,7 @@ import { ProjectSwitchTransition } from "./components/layout/ProjectSwitchTransi
 import ProjectScreen from "./components/ProjectScreen";
 import { CommandRegistryProvider } from "./contexts/CommandRegistryContext";
 import { PluginModalProvider } from "./contexts/PluginModalContext";
-import * as AppFunctions from "../wailsjs/go/main/App";
+import * as AppFunctions from "./wails/app";
 import { useEditorSettingsStore } from "./stores/editorSettingsStore";
 import {
   getAdjacentProject,

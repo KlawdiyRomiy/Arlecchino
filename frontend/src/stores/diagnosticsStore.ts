@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import { EventsOn } from "../wails/runtime";
 import {
   getProjectPathBasename,
   isSameOrChildPath,

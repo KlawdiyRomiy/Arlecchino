@@ -7,9 +7,9 @@ import {
   GetGitLog,
   GetGitStatus,
   RunGitCommand,
-} from "../../wailsjs/go/main/App";
-import { main } from "../../wailsjs/go/models";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+} from "../wails/app";
+import type { GitCommitInfo } from "../../bindings/arlecchino/models";
+import { EventsOn } from "../wails/runtime";
 import {
   GitBranchInfo,
   GitFileEntry,
@@ -48,7 +48,7 @@ interface GitStoreState {
   stagedFiles: GitFileEntry[];
   unstagedFiles: GitFileEntry[];
   conflictedFiles: GitFileEntry[];
-  historyCommits: main.GitCommitInfo[];
+  historyCommits: GitCommitInfo[];
   historyLoading: boolean;
   historyFilePath: string;
   stashEntries: GitStashEntry[];

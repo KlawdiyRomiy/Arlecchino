@@ -9,7 +9,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Clock, ShieldAlert, ShieldCheck, X } from "lucide-react";
 
 import { Button } from "./ui";
-import { EventsEmit, EventsOn } from "../../wailsjs/runtime/runtime";
+import { EventsEmit, EventsOn } from "../wails/runtime";
 
 interface MCPApprovalRequest {
   requestId: string;

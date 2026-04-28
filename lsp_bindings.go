@@ -11,8 +11,6 @@ import (
 
 	indexerlsp "arlecchino/internal/indexer/lsp"
 	"arlecchino/internal/lsp"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // LSP Protocol Bindings - Unified LSP integration for multiple languages
@@ -433,7 +431,7 @@ func (a *App) LSPApplyWorkspaceEdit(edit *LSPWorkspaceEdit) error {
 			return fmt.Errorf("failed to write %s: %w", path, err)
 		}
 
-		runtime.EventsEmit(a.ctx, "file:changed", path)
+		a.emitEvent("file:changed", path)
 	}
 
 	return nil
@@ -718,12 +716,12 @@ func (a *App) InstallLSPServer(serverID string) error {
 		ctx := context.Background()
 		err := a.lspInstaller.Install(ctx, serverID)
 		if err != nil {
-			runtime.EventsEmit(a.ctx, "lsp:install:error", map[string]string{
+			a.emitEvent("lsp:install:error", map[string]string{
 				"id":    serverID,
 				"error": err.Error(),
 			})
 		} else {
-			runtime.EventsEmit(a.ctx, "lsp:install:complete", map[string]string{
+			a.emitEvent("lsp:install:complete", map[string]string{
 				"id": serverID,
 			})
 		}

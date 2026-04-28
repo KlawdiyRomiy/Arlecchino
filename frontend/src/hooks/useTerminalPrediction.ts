@@ -3,13 +3,13 @@ import {
   PredictTerminalCommand,
   RecordCommandExecution,
   GetCurrentProjectID,
-} from "../../wailsjs/go/main/App";
-import { terminal } from "../../wailsjs/go/models";
+} from "../wails/app";
+import type { PredictionResult } from "../../bindings/arlecchino/internal/terminal/models";
 import { useTerminalStore } from "../stores/terminalStore";
 
 export interface TerminalPredictionState {
   ghostText: string;
-  predictions: terminal.PredictionResult[];
+  predictions: PredictionResult[];
   isLoading: boolean;
 }
 

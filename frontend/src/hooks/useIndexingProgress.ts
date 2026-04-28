@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import { EventsOn } from "../wails/runtime";
 
 export type IndexingPhase = "idle" | "indexing" | "complete" | "revealed";
 

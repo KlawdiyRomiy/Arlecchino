@@ -1,4 +1,4 @@
-import * as AppFunctions from "../../wailsjs/go/main/App";
+import * as AppFunctions from "../wails/app";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {

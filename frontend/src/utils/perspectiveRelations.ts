@@ -1,4 +1,7 @@
-import type { indexer } from "../../wailsjs/go/models";
+import type {
+  DependencyEdge,
+  DependencyGraph,
+} from "../../bindings/arlecchino/internal/indexer/models";
 
 export interface RelatedFile {
   id: string;
@@ -25,8 +28,8 @@ const normalizeKind = (kind?: string) => {
 };
 
 const compareEdges = (
-  left: indexer.DependencyEdge,
-  right: indexer.DependencyEdge,
+  left: DependencyEdge,
+  right: DependencyEdge,
 ) => {
   const leftKey = `${left.target}\u0000${left.kind}\u0000${left.line}`;
   const rightKey = `${right.target}\u0000${right.kind}\u0000${right.line}`;
@@ -156,11 +159,11 @@ const categoryToItemType = (category: string): string => {
 
 interface NodeMeta {
   depth: number;
-  edge: indexer.DependencyEdge | null;
+  edge: DependencyEdge | null;
 }
 
 export const extractDependencyGraphPaths = (
-  graph: indexer.DependencyGraph | null | undefined,
+  graph: DependencyGraph | null | undefined,
   rootPath: string,
 ): Set<string> =>
   new Set(
@@ -173,7 +176,7 @@ export const extractRelationPaths = (groups: RelationGroup[]): Set<string> =>
   new Set(groups.flatMap((group) => group.items.map((item) => item.path)));
 
 export const dependencyGraphToRelationGroups = (
-  graph: indexer.DependencyGraph | null | undefined,
+  graph: DependencyGraph | null | undefined,
   rootPath: string,
 ): RelationGroup[] => {
   if (!graph?.nodes?.length || !rootPath) {
@@ -181,7 +184,7 @@ export const dependencyGraphToRelationGroups = (
   }
 
   const nodeSet = new Set(graph.nodes.map((node) => node.path).filter(Boolean));
-  const outgoing = new Map<string, indexer.DependencyEdge[]>();
+  const outgoing = new Map<string, DependencyEdge[]>();
   for (const edge of graph.edges ?? []) {
     if (!edge.source || !edge.target || edge.source === edge.target) {
       continue;

@@ -27,7 +27,10 @@ func (a *App) InitDispatcherForProject() {
 		globalDispatcher.SetCarapaceProvider(a.carapaceProvider)
 	}
 
-	ideEmitter := dispatcher.NewIDEEventEmitter(a.ctx)
+	ideEmitter := dispatcher.NewIDEEventEmitterWithEmit(a.ctx, func(event string, data ...interface{}) error {
+		a.emitEvent(event, data...)
+		return nil
+	})
 	ideEmitter.RegisterHandlers(globalDispatcher)
 }
 

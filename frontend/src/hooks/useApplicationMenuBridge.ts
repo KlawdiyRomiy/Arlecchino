@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 
-import { EventsOff, EventsOn } from "../../wailsjs/runtime/runtime";
+import { EventsOff, EventsOn } from "../wails/runtime";
 import { useKeybindingsStore } from "../stores/keybindingsStore";
 import {
   dispatchApplicationMenuAction,

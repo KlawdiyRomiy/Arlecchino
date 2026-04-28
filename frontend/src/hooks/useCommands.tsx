@@ -22,7 +22,7 @@ import {
   HardDrive,
   Eye,
 } from "lucide-react";
-import * as App from "../../wailsjs/go/main/App";
+import * as App from "../wails/app";
 import type { Command } from "../types/commands";
 
 interface UseCommandsOptions {

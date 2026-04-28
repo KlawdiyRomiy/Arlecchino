@@ -18,7 +18,7 @@ import {
   type LayerMarker,
   type ViewUpdate,
 } from "@codemirror/view";
-import { LSPGetDiagnostics } from "../../wailsjs/go/main/App";
+import { LSPGetDiagnostics } from "../wails/app";
 import {
   useDiagnosticsStore,
   type DiagnosticsEventItem,

@@ -5,8 +5,6 @@ import (
 	"fmt"
 
 	"arlecchino/internal/plugins/laravel"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Laravel Runtime - PHP Bridge operations, indexing, and inspection
@@ -69,13 +67,13 @@ func (a *App) IndexLaravelModels() (string, error) {
 		return "{}", nil
 	}
 
-	runtime.EventsEmit(a.ctx, "indexing:started", map[string]string{
+	a.emitEvent("indexing:started", map[string]string{
 		"type": "models",
 	})
 
 	models, err := provider.ModelEntries()
 	if err != nil {
-		runtime.EventsEmit(a.ctx, "indexing:error", map[string]string{
+		a.emitEvent("indexing:error", map[string]string{
 			"type":  "models",
 			"error": err.Error(),
 		})
@@ -92,7 +90,7 @@ func (a *App) IndexLaravelModels() (string, error) {
 		jsonData = "{}"
 	}
 
-	runtime.EventsEmit(a.ctx, "indexing:completed", map[string]interface{}{
+	a.emitEvent("indexing:completed", map[string]interface{}{
 		"type":  "models",
 		"count": len(models),
 	})
@@ -106,13 +104,13 @@ func (a *App) IndexLaravelRoutes() (string, error) {
 		return "", fmt.Errorf("no Laravel project opened")
 	}
 
-	runtime.EventsEmit(a.ctx, "indexing:started", map[string]string{
+	a.emitEvent("indexing:started", map[string]string{
 		"type": "routes",
 	})
 
 	routes, err := provider.RouteEntries()
 	if err != nil {
-		runtime.EventsEmit(a.ctx, "indexing:error", map[string]string{
+		a.emitEvent("indexing:error", map[string]string{
 			"type":  "routes",
 			"error": err.Error(),
 		})
@@ -125,7 +123,7 @@ func (a *App) IndexLaravelRoutes() (string, error) {
 	}
 	jsonData := string(jsonBytes)
 
-	runtime.EventsEmit(a.ctx, "indexing:completed", map[string]interface{}{
+	a.emitEvent("indexing:completed", map[string]interface{}{
 		"type":  "routes",
 		"count": len(routes),
 	})
@@ -139,13 +137,13 @@ func (a *App) IndexLaravelViews() (string, error) {
 		return "", fmt.Errorf("no Laravel project opened")
 	}
 
-	runtime.EventsEmit(a.ctx, "indexing:started", map[string]string{
+	a.emitEvent("indexing:started", map[string]string{
 		"type": "views",
 	})
 
 	views, err := provider.ViewEntries()
 	if err != nil {
-		runtime.EventsEmit(a.ctx, "indexing:error", map[string]string{
+		a.emitEvent("indexing:error", map[string]string{
 			"type":  "views",
 			"error": err.Error(),
 		})
@@ -158,7 +156,7 @@ func (a *App) IndexLaravelViews() (string, error) {
 	}
 	jsonData := string(jsonBytes)
 
-	runtime.EventsEmit(a.ctx, "indexing:completed", map[string]interface{}{
+	a.emitEvent("indexing:completed", map[string]interface{}{
 		"type":  "views",
 		"count": len(views),
 	})
@@ -172,13 +170,13 @@ func (a *App) IndexLaravelConfig() (string, error) {
 		return "", fmt.Errorf("no Laravel project opened")
 	}
 
-	runtime.EventsEmit(a.ctx, "indexing:started", map[string]string{
+	a.emitEvent("indexing:started", map[string]string{
 		"type": "config",
 	})
 
 	keys, err := provider.ConfigEntries()
 	if err != nil {
-		runtime.EventsEmit(a.ctx, "indexing:error", map[string]string{
+		a.emitEvent("indexing:error", map[string]string{
 			"type":  "config",
 			"error": err.Error(),
 		})
@@ -191,7 +189,7 @@ func (a *App) IndexLaravelConfig() (string, error) {
 	}
 	jsonData := string(jsonBytes)
 
-	runtime.EventsEmit(a.ctx, "indexing:completed", map[string]interface{}{
+	a.emitEvent("indexing:completed", map[string]interface{}{
 		"type":  "config",
 		"count": len(keys),
 	})

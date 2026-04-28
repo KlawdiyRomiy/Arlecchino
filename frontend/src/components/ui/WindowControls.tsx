@@ -1,5 +1,5 @@
 import React, { useCallback } from "react";
-import { Quit, WindowMinimise } from "../../../wailsjs/runtime/runtime";
+import { Quit, WindowMinimise } from "../../wails/runtime";
 import { toggleWindowFullscreen } from "../../utils/windowFullscreen";
 
 export const WindowControls: React.FC = () => {

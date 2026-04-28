@@ -78,8 +78,8 @@ import {
   GetLanguageForFile,
   ReadFile,
   WriteTerminal,
-} from "../../../wailsjs/go/main/App";
-import { EventsOn } from "../../../wailsjs/runtime/runtime";
+} from "../../wails/app";
+import { EventsOn } from "../../wails/runtime";
 import {
   type ExecutionProfile,
   type ExecutionProfileSet,

@@ -6,13 +6,14 @@ import (
 	"fmt"
 
 	"arlecchino/internal/terminal"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+type EventEmitter func(name string, data ...interface{})
 
 // TerminalService handles terminal operations for the Wails frontend
 type TerminalService struct {
 	ctx         context.Context
+	emit        EventEmitter
 	manager     *terminal.Manager
 	projectPath string
 }
@@ -27,6 +28,10 @@ func NewTerminalService() *TerminalService {
 // Startup initializes the service with the Wails context
 func (t *TerminalService) Startup(ctx context.Context) {
 	t.ctx = ctx
+}
+
+func (t *TerminalService) SetEventEmitter(emit EventEmitter) {
+	t.emit = emit
 }
 
 // SetProjectPath sets the current project path for terminal working directory
@@ -58,7 +63,7 @@ func (t *TerminalService) Create(id, name string, workingDir string) error {
 	// Set up data callback to emit events to frontend
 	session.SetOnData(func(data []byte) {
 		encoded := base64.StdEncoding.EncodeToString(data)
-		runtime.EventsEmit(t.ctx, "terminal:data", map[string]interface{}{
+		t.emitEvent("terminal:data", map[string]interface{}{
 			"id":   id,
 			"data": encoded,
 		})
@@ -66,13 +71,13 @@ func (t *TerminalService) Create(id, name string, workingDir string) error {
 
 	// Set up exit callback
 	session.SetOnExit(func(code int) {
-		runtime.EventsEmit(t.ctx, "terminal:exit", map[string]interface{}{
+		t.emitEvent("terminal:exit", map[string]interface{}{
 			"id":   id,
 			"code": code,
 		})
 	})
 
-	runtime.EventsEmit(t.ctx, "terminal:created", map[string]interface{}{
+	t.emitEvent("terminal:created", map[string]interface{}{
 		"id":   id,
 		"name": name,
 	})
@@ -117,4 +122,10 @@ func (t *TerminalService) CloseAll() {
 // Get returns a terminal session by ID
 func (t *TerminalService) Get(id string) *terminal.Session {
 	return t.manager.Get(id)
+}
+
+func (t *TerminalService) emitEvent(name string, data ...interface{}) {
+	if t.emit != nil {
+		t.emit(name, data...)
+	}
 }

@@ -10,7 +10,7 @@ import {
   ZapOff,
 } from "lucide-react";
 
-import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
+import { BrowserOpenURL } from "../wails/runtime";
 import { useTheme } from "../hooks/useTheme";
 import {
   isAllowedPreviewUrl,

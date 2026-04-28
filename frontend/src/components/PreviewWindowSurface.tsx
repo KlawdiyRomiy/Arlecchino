@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-import { ReadFile } from "../../wailsjs/go/main/App";
+import { ReadFile } from "../wails/app";
 import { useTheme } from "../hooks/useTheme";
 import { useEditorStore } from "../stores/editorStore";
 import { useExplorerStore } from "../stores/explorerStore";

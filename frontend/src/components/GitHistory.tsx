@@ -10,8 +10,8 @@ import {
   User,
 } from "lucide-react";
 
-import * as AppFunctions from "../../wailsjs/go/main/App";
-import { main } from "../../wailsjs/go/models";
+import * as AppFunctions from "../wails/app";
+import type { GitCommitInfo } from "../../bindings/arlecchino/models";
 import { useTheme } from "../hooks/useTheme";
 import { radius, transitions, zIndex } from "../styles/colors";
 
@@ -21,7 +21,7 @@ interface ParsedCommitStat {
 }
 
 interface GitHistoryProps {
-  commits: main.GitCommitInfo[];
+  commits: GitCommitInfo[];
   loading: boolean;
   onRefresh: () => void;
   onViewDiff?: (hash: string) => void;

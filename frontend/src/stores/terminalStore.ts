@@ -10,8 +10,8 @@ import {
   WriteTerminal,
   ResizeTerminal,
   CloseTerminal,
-} from "../../wailsjs/go/main/App";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+} from "../wails/app";
+import { EventsOn } from "../wails/runtime";
 import {
   getThemeTerminalById,
   isThemeId,

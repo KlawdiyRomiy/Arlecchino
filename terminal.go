@@ -8,8 +8,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Terminal Management - PTY session lifecycle and I/O
@@ -32,14 +30,14 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 
 	session.SetOnData(func(data []byte) {
 		encoded := base64.StdEncoding.EncodeToString(data)
-		runtime.EventsEmit(a.ctx, "terminal:data", map[string]interface{}{
+		a.emitEvent("terminal:data", map[string]interface{}{
 			"id":   id,
 			"data": encoded,
 		})
 	})
 
 	session.SetOnExit(func(code int) {
-		runtime.EventsEmit(a.ctx, "terminal:exit", map[string]interface{}{
+		a.emitEvent("terminal:exit", map[string]interface{}{
 			"id":   id,
 			"code": code,
 		})
@@ -50,7 +48,7 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 			a.tryInjectAgentGuide(session, id)
 		}
 
-		runtime.EventsEmit(a.ctx, "terminal:mode", map[string]interface{}{
+		a.emitEvent("terminal:mode", map[string]interface{}{
 			"id":            id,
 			"mode":          event.Mode,
 			"active":        event.Active,
@@ -72,11 +70,11 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 			payload["exitCode"] = *event.ExitCode
 		}
 
-		runtime.EventsEmit(a.ctx, "terminal:shell", payload)
+		a.emitEvent("terminal:shell", payload)
 	})
 
 	session.SetOnSemantic(func(event terminal.SemanticEvent) {
-		runtime.EventsEmit(a.ctx, "terminal:semantic", map[string]interface{}{
+		a.emitEvent("terminal:semantic", map[string]interface{}{
 			"id":       id,
 			"kind":     event.Kind,
 			"path":     event.Path,
@@ -87,7 +85,7 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 		})
 	})
 
-	runtime.EventsEmit(a.ctx, "terminal:created", map[string]interface{}{
+	a.emitEvent("terminal:created", map[string]interface{}{
 		"id":   id,
 		"name": name,
 	})
@@ -160,34 +158,34 @@ func (a *App) tryInjectAgentGuide(session *terminal.Session, sessionID string) {
 	projectRoot := a.GetCurrentProjectPath()
 	if projectRoot == "" {
 		session.RollbackAgentGuideInjection()
-		runtime.LogWarningf(a.ctx, "[Terminal] agent guide injection skipped for session %s: empty project root", sessionID)
+		a.logWarning(fmt.Sprintf("[Terminal] agent guide injection skipped for session %s: empty project root", sessionID))
 		return
 	}
 
 	guidePath, _, ensureErr := terminal.EnsureAgentGuideFile(projectRoot)
 	if ensureErr != nil {
 		session.RollbackAgentGuideInjection()
-		runtime.LogWarningf(a.ctx, "[Terminal] agent guide ensure failed for session %s: %v", sessionID, ensureErr)
+		a.logWarning(fmt.Sprintf("[Terminal] agent guide ensure failed for session %s: %v", sessionID, ensureErr))
 		return
 	}
 
 	contextPath, contextErr := mcp.EnsureAgentContextFile(projectRoot)
 	if contextErr != nil {
 		session.RollbackAgentGuideInjection()
-		runtime.LogWarningf(a.ctx, "[Terminal] agent context ensure failed for session %s: %v", sessionID, contextErr)
+		a.logWarning(fmt.Sprintf("[Terminal] agent context ensure failed for session %s: %v", sessionID, contextErr))
 		return
 	}
 
 	bootstrapMessage := terminal.BuildAgentGuideBootstrapMessage(guidePath, contextPath)
 	if bootstrapMessage == "" {
 		session.RollbackAgentGuideInjection()
-		runtime.LogWarningf(a.ctx, "[Terminal] agent guide bootstrap is empty for session %s", sessionID)
+		a.logWarning(fmt.Sprintf("[Terminal] agent guide bootstrap is empty for session %s", sessionID))
 		return
 	}
 
 	if writeErr := session.Write([]byte(bootstrapMessage)); writeErr != nil {
 		session.RollbackAgentGuideInjection()
-		runtime.LogWarningf(a.ctx, "[Terminal] agent guide bootstrap write failed for session %s: %v", sessionID, writeErr)
+		a.logWarning(fmt.Sprintf("[Terminal] agent guide bootstrap write failed for session %s: %v", sessionID, writeErr))
 	}
 }
 

@@ -1,7 +1,7 @@
 import React from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Plus, FolderOpen, Sparkles, GitBranch } from "lucide-react";
-import { SelectDirectory } from "../../../wailsjs/go/main/App";
+import { SelectDirectory } from "../../wails/app";
 import { CloneRepositoryDialog } from "../CloneRepositoryDialog";
 import { CreateProjectDialog } from "../CreateProjectDialog";
 

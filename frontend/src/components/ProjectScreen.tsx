@@ -4,8 +4,8 @@ import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { EditorTabs, Tab } from "./EditorTabs";
 import { TabSwitcherOverlay } from "./TabSwitcherOverlay";
 import QuickLookModal from "./QuickLookModal";
-import * as AppFunctions from "../../wailsjs/go/main/App";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import * as AppFunctions from "../wails/app";
+import { EventsOn } from "../wails/runtime";
 import { useProjectEntryActions } from "../contexts/ProjectEntryActionsContext";
 import { shortcuts } from "../utils/keyboard";
 import {

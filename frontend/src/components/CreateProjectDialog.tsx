@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
-import * as App from "../../wailsjs/go/main/App";
+import * as App from "../wails/app";
 import { shortcuts } from "../utils/keyboard";
 
 interface CreateProjectDialogProps {

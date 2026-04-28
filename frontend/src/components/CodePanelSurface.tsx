@@ -22,7 +22,7 @@ import {
   NotifyFileClosed,
   NotifyFileOpened,
   WriteFile,
-} from "../../wailsjs/go/main/App";
+} from "../wails/app";
 import { createDiagnosticsExtension } from "../extensions/diagnosticsExtension";
 import { createGitGutterExtension } from "../extensions/gitGutterExtension";
 import { useEditorStore } from "../stores/editorStore";

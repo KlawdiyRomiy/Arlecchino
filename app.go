@@ -27,11 +27,13 @@ import (
 	"arlecchino/internal/terminal"
 	"arlecchino/internal/ui/welcome"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 type App struct {
 	ctx                context.Context
+	wailsApp           *application.App
+	mainWindow         *application.WebviewWindow
 	cmp                *composer.ComposerManager
 	sys                *system.SystemManager
 	projectManager     *project.ProjectManager
@@ -58,6 +60,14 @@ type App struct {
 	projectCtx    context.Context
 	projectCancel context.CancelFunc
 	wg            sync.WaitGroup
+}
+
+func (a *App) attachWailsApplication(app *application.App) {
+	a.wailsApp = app
+}
+
+func (a *App) attachMainWindow(window *application.WebviewWindow) {
+	a.mainWindow = window
 }
 
 func (a *App) setProjectPath(path string) {
@@ -100,13 +110,24 @@ func NewApp() *App {
 		executionService: execution.NewService(pluginRegistry),
 	}
 }
+
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
+	a.startup(ctx)
+	return nil
+}
+
+func (a *App) ServiceShutdown() error {
+	a.shutdown(a.ctx)
+	return nil
+}
+
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.startMCPBridge()
 	a.ensureMCPConfigs()
 
 	installer, err := lspinstaller.NewInstaller(func(progress lspinstaller.InstallProgress) {
-		runtime.EventsEmit(ctx, "lsp:install:progress", progress)
+		a.emitEvent("lsp:install:progress", progress)
 	})
 	if err == nil {
 		a.lspInstaller = installer
@@ -143,10 +164,14 @@ func (a *App) Greet(name string) string {
 }
 
 func (a *App) SelectDirectory(title string) (string, error) {
-	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: title,
-	})
-	return path, err
+	if a == nil || a.wailsApp == nil {
+		return "", fmt.Errorf("application is not initialized")
+	}
+	return a.wailsApp.Dialog.OpenFile().
+		SetTitle(title).
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		PromptForSingleSelection()
 }
 
 func (a *App) OpenProject(path string) error {

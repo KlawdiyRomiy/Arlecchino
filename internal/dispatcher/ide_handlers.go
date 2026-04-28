@@ -3,8 +3,6 @@ package dispatcher
 import (
 	"context"
 	"fmt"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type IDEEventEmitter struct {
@@ -15,10 +13,13 @@ type IDEEventEmitter struct {
 func NewIDEEventEmitter(ctx context.Context) *IDEEventEmitter {
 	return &IDEEventEmitter{
 		ctx: ctx,
-		emitFn: func(event string, data ...interface{}) error {
-			runtime.EventsEmit(ctx, event, data...)
-			return nil
-		},
+	}
+}
+
+func NewIDEEventEmitterWithEmit(ctx context.Context, emitFn func(string, ...interface{}) error) *IDEEventEmitter {
+	return &IDEEventEmitter{
+		ctx:    ctx,
+		emitFn: emitFn,
 	}
 }
 
@@ -115,8 +116,7 @@ func (e *IDEEventEmitter) emit(event string, data ...interface{}) error {
 	if e.ctx == nil {
 		return fmt.Errorf("context not initialized")
 	}
-	runtime.EventsEmit(e.ctx, event, data...)
-	return nil
+	return fmt.Errorf("event emitter is not initialized")
 }
 
 func defaultPreviewWindowIDPayload() map[string]any {

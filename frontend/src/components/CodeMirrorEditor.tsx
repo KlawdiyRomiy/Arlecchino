@@ -98,7 +98,10 @@ import {
   DefinitionChooserMenu,
   DefinitionItem as MenuDefinitionItem,
 } from "./DefinitionChooserMenu";
-import { main as MainModels } from "../../wailsjs/go/models";
+import type {
+  EditorCompletionResult,
+  TextEditJSON,
+} from "../../bindings/arlecchino/models";
 import {
   GetEditorCompletions,
   LSPHover,
@@ -109,7 +112,7 @@ import {
   RecordCompletionUsage,
   RecordFileAccess,
   SearchClasses,
-} from "../../wailsjs/go/main/App";
+} from "../wails/app";
 import { createCompletionOrchestrator } from "../extensions/completionOrchestrator";
 import { createDiagnosticsExtension } from "../extensions/diagnosticsExtension";
 import { createGitGutterExtension } from "../extensions/gitGutterExtension";
@@ -171,7 +174,7 @@ type CompletionPayload = {
   label?: string;
   text?: string;
   insertText?: string;
-  additionalTextEdits?: MainModels.TextEditJSON[];
+  additionalTextEdits?: TextEditJSON[];
 };
 const SIGNATURE_HIDE_MS = 2400;
 const COMPLETION_CACHE_TTL_MS = 2000;
@@ -474,7 +477,7 @@ function snippetToPlainText(snippetText: string): string {
 function completionAddsUsefulText(
   prefix: string,
   insertText: string,
-  additionalTextEdits?: MainModels.TextEditJSON[],
+  additionalTextEdits?: TextEditJSON[],
 ): boolean {
   if (additionalTextEdits && additionalTextEdits.length > 0) {
     return true;
@@ -1082,10 +1085,18 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       ghostDebounceMs: GHOST_DEBOUNCE_MS,
       ghostIdleDelayMs: GHOST_IDLE_DELAY_MS,
       buildCompletionContext,
-      fetchCompletions: async (payload) =>
-        (await GetEditorCompletions(
+      fetchCompletions: async (payload) => {
+        const result = (await GetEditorCompletions(
           payload,
-        )) as MainModels.EditorCompletionResult | null,
+        )) as EditorCompletionResult | null;
+        if (!result) {
+          return null;
+        }
+        return {
+          ...result,
+          primary: result.primary ?? undefined,
+        };
+      },
       onGhostShown: metrics.recordGhostShown,
       onGhostRejected: metrics.recordGhostRejected,
       onCompletionAccepted: (label) => {
@@ -1316,7 +1327,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           currentMethod,
           imports,
           triggerChar,
-        })) as MainModels.EditorCompletionResult | null;
+        })) as EditorCompletionResult | null;
 
         if (context.aborted || orchestrator.isStale(requestId)) return null;
         if (versionAtRequest !== documentVersionRef.current) return null;

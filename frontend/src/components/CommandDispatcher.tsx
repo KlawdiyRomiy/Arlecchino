@@ -32,7 +32,7 @@ import {
   GetTerminalPreview,
   PredictTerminalCommand,
   GetTerminalHistory,
-} from "../../wailsjs/go/main/App";
+} from "../wails/app";
 
 interface DispatcherItem {
   id: string;
