@@ -62,6 +62,7 @@ export interface BuildSurfaceSessionsInput {
   previewWindows: PreviewWindow[];
   activePreviewWindowId: string | null;
   activePanelId?: PanelId | null;
+  fullscreenSurfaceIds?: readonly string[];
 }
 
 const PANEL_TITLES: Record<PanelId, string> = {
@@ -136,19 +137,35 @@ export const buildSurfaceSessions = ({
   previewWindows,
   activePreviewWindowId,
   activePanelId = null,
-}: BuildSurfaceSessionsInput): SurfaceSession[] => [
-  ...Object.entries(panels)
-    .filter(([, visible]) => visible)
-    .map(([panelId]) => {
-      const typedPanelId = panelId as PanelId;
-      return panelToSurfaceSession(
-        typedPanelId,
-        panelConfigs[typedPanelId],
-        true,
-        activePanelId,
-      );
-    }),
-  ...previewWindows.map((windowState) =>
-    previewWindowToSurfaceSession(windowState, activePreviewWindowId),
-  ),
-];
+  fullscreenSurfaceIds = [],
+}: BuildSurfaceSessionsInput): SurfaceSession[] => {
+  const fullscreenIds = new Set(fullscreenSurfaceIds);
+  const withHostModeOverride = (session: SurfaceSession): SurfaceSession =>
+    fullscreenIds.has(session.id)
+      ? {
+          ...session,
+          hostMode: "fullscreen",
+        }
+      : session;
+
+  return [
+    ...Object.entries(panels)
+      .filter(([, visible]) => visible)
+      .map(([panelId]) => {
+        const typedPanelId = panelId as PanelId;
+        return withHostModeOverride(
+          panelToSurfaceSession(
+            typedPanelId,
+            panelConfigs[typedPanelId],
+            true,
+            activePanelId,
+          ),
+        );
+      }),
+    ...previewWindows.map((windowState) =>
+      withHostModeOverride(
+        previewWindowToSurfaceSession(windowState, activePreviewWindowId),
+      ),
+    ),
+  ];
+};

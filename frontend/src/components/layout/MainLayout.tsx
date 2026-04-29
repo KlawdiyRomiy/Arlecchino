@@ -51,8 +51,24 @@ import {
   usePreviewWindowStore,
   type OpenPreviewWindowInput,
   type PreviewWindow,
+  type UpdatePreviewWindowInput,
 } from "../../stores/previewWindowStore";
-import { useSurfaceRuntimeHostSync } from "../../surfaces/surfaceRuntimeStore";
+import {
+  getSurfaceRuntimeReadModel,
+  useSurfaceRuntimeHostSync,
+} from "../../surfaces/surfaceRuntimeStore";
+import {
+  panelSurfaceId,
+  previewSurfaceId,
+  type SurfaceSession,
+} from "../../surfaces/surfaceRuntime";
+import {
+  buildSurfacePromotionResult,
+  parseSurfacePromotionRequest,
+  type SurfacePromotionPosition,
+  type SurfacePromotionRequest,
+  type SurfacePromotionResult,
+} from "../../surfaces/surfacePromotion";
 import type { ShortcutActionId } from "../../utils/keyboard";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 import {
@@ -113,6 +129,7 @@ import {
   normalizePanelSizeForPosition,
   normalizePreviewWindowSizeForPosition,
   resolveSmartSnappedPosition,
+  resolvePanelId,
   uniquePanelPositions,
 } from "./panelLayoutModel";
 import { parsePanelOpenRequest } from "./mainLayoutEventParsers";
@@ -135,6 +152,123 @@ const PANEL_SHORTCUT_MOVE_POSITIONS: readonly PanelPosition[] = [
   "top",
   "bottom",
 ];
+
+const coercePositiveSize = (
+  value: number | undefined,
+  fallback: number,
+  minimum: number,
+): number =>
+  typeof value === "number" && value > 0 ? value : Math.max(fallback, minimum);
+
+const getPanelPromotionFloatingSize = (
+  panelId: PanelId,
+  config: PanelConfig,
+): PanelSize => {
+  const defaultSize = DEFAULT_PANEL_CONFIGS[panelId].size;
+  return {
+    width: coercePositiveSize(config.size.width, defaultSize.width || 420, 260),
+    height: coercePositiveSize(
+      config.size.height,
+      defaultSize.height || 320,
+      180,
+    ),
+  };
+};
+
+const getPreviewPromotionFloatingSize = (
+  windowState: PreviewWindow,
+): { width: number; height: number } => ({
+  width: coercePositiveSize(windowState.width, 520, 260),
+  height: coercePositiveSize(windowState.height, 360, 180),
+});
+
+const surfaceSessionToPanelConfig = (
+  session: SurfaceSession,
+  fallbackConfig: PanelConfig,
+  positionOverride?: SurfacePromotionPosition,
+): PanelConfig | null => {
+  const geometry = session.geometry;
+  if (session.hostMode === "snapped") {
+    const position = positionOverride ?? geometry?.position;
+    if (!isPanelPosition(position)) {
+      return null;
+    }
+    return {
+      position,
+      mode: "snapped",
+      x: 0,
+      y: 0,
+      size: normalizePanelSizeForPosition(position, {
+        width: geometry?.width ?? fallbackConfig.size.width,
+        height: geometry?.height ?? fallbackConfig.size.height,
+      }),
+    };
+  }
+
+  if (session.hostMode === "floating" || session.hostMode === "fullscreen") {
+    const size = {
+      width: coercePositiveSize(
+        geometry?.width,
+        fallbackConfig.size.width || 420,
+        260,
+      ),
+      height: coercePositiveSize(
+        geometry?.height,
+        fallbackConfig.size.height || 320,
+        180,
+      ),
+    };
+    return {
+      position: fallbackConfig.position,
+      mode: "floating",
+      x: geometry?.x ?? fallbackConfig.x,
+      y: geometry?.y ?? fallbackConfig.y,
+      size,
+    };
+  }
+
+  return null;
+};
+
+const surfaceSessionToPreviewUpdate = (
+  session: SurfaceSession,
+  fallbackWindow: PreviewWindow,
+  positionOverride?: SurfacePromotionPosition,
+): UpdatePreviewWindowInput | null => {
+  const geometry = session.geometry;
+  if (session.hostMode === "snapped") {
+    const position = positionOverride ?? geometry?.position;
+    if (!isPanelPosition(position)) {
+      return null;
+    }
+    const size = normalizePreviewWindowSizeForPosition(position, {
+      width: geometry?.width ?? fallbackWindow.width,
+      height: geometry?.height ?? fallbackWindow.height,
+    });
+    return {
+      mode: "snapped",
+      position,
+      width: size.width,
+      height: size.height,
+    };
+  }
+
+  if (session.hostMode === "floating" || session.hostMode === "fullscreen") {
+    const size = {
+      width: coercePositiveSize(geometry?.width, fallbackWindow.width, 260),
+      height: coercePositiveSize(geometry?.height, fallbackWindow.height, 180),
+    };
+    return {
+      mode: "floating",
+      x: geometry?.x ?? fallbackWindow.x,
+      y: geometry?.y ?? fallbackWindow.y,
+      width: size.width,
+      height: size.height,
+    };
+  }
+
+  return null;
+};
 
 export const MainLayout: React.FC<MainLayoutProps> = ({
   children,
@@ -287,13 +421,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         initialPanelLayoutState.rememberedSnappedPositions,
       );
     });
-  useSurfaceRuntimeHostSync({
-    panels,
-    panelConfigs,
-    previewWindows,
-    activePreviewWindowId: activePanelId ? null : activePreviewWindowId,
-    activePanelId,
-  });
   const [tuiLayoutSnapshot, setTuiLayoutSnapshot] = useState<{
     panels: PanelVisibility;
     panelConfigs: PanelConfigs;
@@ -649,6 +776,46 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       config.size.height >= panelWorkspaceSize.height - 1,
     [panelWorkspaceSize.height, panelWorkspaceSize.width],
   );
+
+  const isLogicalFullscreenPreviewWindow = useCallback(
+    (windowState: PreviewWindow) =>
+      windowState.mode === "floating" &&
+      windowState.x === 0 &&
+      windowState.y === 0 &&
+      windowState.width >= panelWorkspaceSize.width - 1 &&
+      windowState.height >= panelWorkspaceSize.height - 1,
+    [panelWorkspaceSize.height, panelWorkspaceSize.width],
+  );
+
+  const fullscreenSurfaceIds = useMemo(() => {
+    const ids: string[] = [];
+    (Object.keys(panelConfigs) as PanelId[]).forEach((panelId) => {
+      if (panels[panelId] && isLogicalFullscreenPanel(panelConfigs[panelId])) {
+        ids.push(panelSurfaceId(panelId));
+      }
+    });
+    previewWindows.forEach((windowState) => {
+      if (isLogicalFullscreenPreviewWindow(windowState)) {
+        ids.push(previewSurfaceId(windowState.id));
+      }
+    });
+    return ids;
+  }, [
+    isLogicalFullscreenPanel,
+    isLogicalFullscreenPreviewWindow,
+    panelConfigs,
+    panels,
+    previewWindows,
+  ]);
+
+  useSurfaceRuntimeHostSync({
+    panels,
+    panelConfigs,
+    previewWindows,
+    activePreviewWindowId: activePanelId ? null : activePreviewWindowId,
+    activePanelId,
+    fullscreenSurfaceIds,
+  });
 
   const restoreOrEnterPanelFullscreen = useCallback(
     (
@@ -1808,6 +1975,370 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     return snapPreviewWindowToPosition(previewWindow, targetPosition);
   };
 
+  const resolvePromotionSnapPosition = useCallback(
+    (
+      preferred: SurfacePromotionPosition | undefined,
+      options: {
+        excludePanelId?: PanelId;
+        excludePreviewWindowId?: string;
+      } = {},
+    ): PanelPosition | null => {
+      const preferredPosition = isPanelPosition(preferred)
+        ? preferred
+        : undefined;
+      const excludedPanels = options.excludePanelId
+        ? [options.excludePanelId]
+        : undefined;
+      const excludedPreviewWindows = options.excludePreviewWindowId
+        ? [options.excludePreviewWindowId]
+        : undefined;
+
+      if (
+        preferredPosition &&
+        !isSnappedPositionOccupied(preferredPosition, {
+          exclude: excludedPanels,
+          excludeWindowIds: excludedPreviewWindows,
+        })
+      ) {
+        return preferredPosition;
+      }
+
+      return findAvailablePanelPosition({
+        preferred: preferredPosition,
+        exclude: excludedPanels,
+        excludeWindowIds: excludedPreviewWindows,
+      });
+    },
+    [findAvailablePanelPosition, isSnappedPositionOccupied],
+  );
+
+  const applyPanelPromotion = useCallback(
+    (request: SurfacePromotionRequest): SurfacePromotionResult => {
+      const panelId = request.panelId ? resolvePanelId(request.panelId) : null;
+      if (!panelId || !panelsRef.current[panelId]) {
+        return buildSurfacePromotionResult(request, {
+          handled: false,
+          reason: "Panel surface is not open.",
+        });
+      }
+
+      if (request.kind === "detach") {
+        return buildSurfacePromotionResult(request, {
+          handled: false,
+          reason: "Detached Wails windows are gated until Window Lease System.",
+        });
+      }
+
+      const currentConfig = panelConfigsRef.current[panelId];
+      const applyConfig = (
+        nextConfig: PanelConfig,
+        hostMode: "floating" | "snapped" | "fullscreen",
+        position?: PanelPosition,
+      ) => {
+        const nextConfigs = {
+          ...panelConfigsRef.current,
+          [panelId]: nextConfig,
+        };
+        applyPanelConfigsState(nextConfigs);
+        applyPanelsState({ ...panelsRef.current, [panelId]: true });
+        if (nextConfig.mode === "snapped") {
+          applyRememberedSnappedPositionsState({
+            ...rememberedSnappedPositionsRef.current,
+            [panelId]: nextConfig.position,
+          });
+        }
+        markActivePanel(panelId);
+        return buildSurfacePromotionResult(request, {
+          handled: true,
+          hostMode,
+          position,
+        });
+      };
+
+      if (request.kind === "promote-floating") {
+        const size = getPanelPromotionFloatingSize(panelId, currentConfig);
+        const nextConfig = buildPanelConfigForOpen(
+          panelId,
+          {
+            panel: panelId,
+            mode: "floating",
+            width: size.width,
+            height: size.height,
+            x: currentConfig.mode === "floating" ? currentConfig.x : 96,
+            y: currentConfig.mode === "floating" ? currentConfig.y : 96,
+          },
+          currentConfig,
+        );
+        return applyConfig(nextConfig, "floating");
+      }
+
+      if (request.kind === "snap") {
+        const position = resolvePromotionSnapPosition(
+          request.position ?? currentConfig.position,
+          { excludePanelId: panelId },
+        );
+        if (!position) {
+          return buildSurfacePromotionResult(request, {
+            handled: false,
+            reason: "No free snapped slot is available.",
+          });
+        }
+
+        const nextConfig = buildPanelConfigForOpen(
+          panelId,
+          {
+            panel: panelId,
+            mode: "snapped",
+            position,
+          },
+          currentConfig,
+        );
+        return applyConfig(nextConfig, "snapped", position);
+      }
+
+      if (request.kind === "fullscreen") {
+        const nextConfig: PanelConfig = {
+          ...currentConfig,
+          mode: "floating",
+          x: 0,
+          y: 0,
+          size: {
+            width: panelWorkspaceSize.width,
+            height: panelWorkspaceSize.height,
+          },
+        };
+        return applyConfig(nextConfig, "fullscreen");
+      }
+
+      const returnTarget = getSurfaceRuntimeReadModel({ includeEvents: false })
+        .promotion.returnTargets[request.surfaceId];
+      if (!returnTarget) {
+        return buildSurfacePromotionResult(request, {
+          handled: false,
+          reason: "No return target is recorded for this surface.",
+        });
+      }
+
+      const preferredPosition = isPanelPosition(
+        returnTarget.session.geometry?.position,
+      )
+        ? returnTarget.session.geometry?.position
+        : request.position;
+      const returnPosition =
+        returnTarget.session.hostMode === "snapped"
+          ? resolvePromotionSnapPosition(preferredPosition, {
+              excludePanelId: panelId,
+            })
+          : undefined;
+      if (returnTarget.session.hostMode === "snapped" && !returnPosition) {
+        return buildSurfacePromotionResult(request, {
+          handled: false,
+          reason: "No free snapped slot is available for return target.",
+        });
+      }
+      const nextConfig = surfaceSessionToPanelConfig(
+        returnTarget.session,
+        currentConfig,
+        returnPosition ?? undefined,
+      );
+      if (!nextConfig) {
+        return buildSurfacePromotionResult(request, {
+          handled: false,
+          reason: "Return target cannot be applied to this panel.",
+        });
+      }
+
+      return applyConfig(
+        nextConfig,
+        returnTarget.hostMode === "fullscreen"
+          ? "fullscreen"
+          : returnTarget.hostMode === "snapped"
+            ? "snapped"
+            : "floating",
+        nextConfig.mode === "snapped" ? nextConfig.position : undefined,
+      );
+    },
+    [
+      applyPanelConfigsState,
+      applyPanelsState,
+      applyRememberedSnappedPositionsState,
+      markActivePanel,
+      panelWorkspaceSize.height,
+      panelWorkspaceSize.width,
+      panelConfigsRef,
+      panelsRef,
+      rememberedSnappedPositionsRef,
+      resolvePromotionSnapPosition,
+    ],
+  );
+
+  const applyPreviewPromotion = useCallback(
+    (request: SurfacePromotionRequest): SurfacePromotionResult => {
+      const windowId = request.previewWindowId;
+      const windowState = windowId
+        ? usePreviewWindowStore
+            .getState()
+            .windows.find((currentWindow) => currentWindow.id === windowId)
+        : undefined;
+      if (!windowId || !windowState) {
+        return buildSurfacePromotionResult(request, {
+          handled: false,
+          reason: "Preview surface is not open.",
+        });
+      }
+
+      if (request.kind === "detach") {
+        return buildSurfacePromotionResult(request, {
+          handled: false,
+          reason: "Detached Wails windows are gated until Window Lease System.",
+        });
+      }
+
+      const applyUpdate = (
+        input: UpdatePreviewWindowInput,
+        hostMode: "floating" | "snapped" | "fullscreen",
+        position?: PanelPosition,
+      ) => {
+        const updated = updatePreviewWindow(windowId, input);
+        if (updated) {
+          focusPreviewWindow(windowId);
+        }
+        return buildSurfacePromotionResult(request, {
+          handled: updated,
+          hostMode,
+          position,
+          reason: updated ? undefined : "Preview surface update failed.",
+        });
+      };
+
+      if (request.kind === "promote-floating") {
+        const size = getPreviewPromotionFloatingSize(windowState);
+        return applyUpdate(
+          {
+            mode: "floating",
+            width: size.width,
+            height: size.height,
+            x: windowState.mode === "floating" ? windowState.x : 96,
+            y: windowState.mode === "floating" ? windowState.y : 96,
+          },
+          "floating",
+        );
+      }
+
+      if (request.kind === "snap") {
+        const position = resolvePromotionSnapPosition(
+          request.position ?? windowState.position,
+          { excludePreviewWindowId: windowId },
+        );
+        if (!position) {
+          return buildSurfacePromotionResult(request, {
+            handled: false,
+            reason: "No free snapped slot is available.",
+          });
+        }
+        const size = normalizePreviewWindowSizeForPosition(
+          position,
+          windowState,
+        );
+        return applyUpdate(
+          {
+            mode: "snapped",
+            position,
+            width: size.width,
+            height: size.height,
+          },
+          "snapped",
+          position,
+        );
+      }
+
+      if (request.kind === "fullscreen") {
+        return applyUpdate(
+          {
+            mode: "floating",
+            x: 0,
+            y: 0,
+            width: panelWorkspaceSize.width,
+            height: panelWorkspaceSize.height,
+          },
+          "fullscreen",
+        );
+      }
+
+      const returnTarget = getSurfaceRuntimeReadModel({ includeEvents: false })
+        .promotion.returnTargets[request.surfaceId];
+      if (!returnTarget) {
+        return buildSurfacePromotionResult(request, {
+          handled: false,
+          reason: "No return target is recorded for this surface.",
+        });
+      }
+
+      const preferredPosition = isPanelPosition(
+        returnTarget.session.geometry?.position,
+      )
+        ? returnTarget.session.geometry?.position
+        : request.position;
+      const returnPosition =
+        returnTarget.session.hostMode === "snapped"
+          ? resolvePromotionSnapPosition(preferredPosition, {
+              excludePreviewWindowId: windowId,
+            })
+          : undefined;
+      if (returnTarget.session.hostMode === "snapped" && !returnPosition) {
+        return buildSurfacePromotionResult(request, {
+          handled: false,
+          reason: "No free snapped slot is available for return target.",
+        });
+      }
+      const input = surfaceSessionToPreviewUpdate(
+        returnTarget.session,
+        windowState,
+        returnPosition ?? undefined,
+      );
+      if (!input) {
+        return buildSurfacePromotionResult(request, {
+          handled: false,
+          reason: "Return target cannot be applied to this preview.",
+        });
+      }
+
+      return applyUpdate(
+        input,
+        returnTarget.hostMode === "fullscreen"
+          ? "fullscreen"
+          : returnTarget.hostMode === "snapped"
+            ? "snapped"
+            : "floating",
+        input.mode === "snapped" ? input.position : undefined,
+      );
+    },
+    [
+      focusPreviewWindow,
+      panelWorkspaceSize.height,
+      panelWorkspaceSize.width,
+      resolvePromotionSnapPosition,
+      updatePreviewWindow,
+    ],
+  );
+
+  const handleSurfacePromoteEvent = useCallback(
+    (payload: unknown): SurfacePromotionResult => {
+      const request = parseSurfacePromotionRequest(payload);
+      if (!request) {
+        return buildSurfacePromotionResult(null, {
+          handled: false,
+          reason: "Invalid surface promotion request.",
+        });
+      }
+
+      return request.source === "panel"
+        ? applyPanelPromotion(request)
+        : applyPreviewPromotion(request);
+    },
+    [applyPanelPromotion, applyPreviewPromotion],
+  );
+
   const resolveBrowserPreviewOpenInput = (
     input: OpenPreviewWindowInput,
   ): OpenPreviewWindowInput => {
@@ -2271,6 +2802,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       handlePreviewWindowFocusEvent,
       handlePreviewWindowOpenEvent,
       handlePreviewWindowUpdateEvent,
+      handleSurfacePromoteEvent,
       isSettingsOpen,
       logicalViewport,
       moveBrowserPreviewToPosition,

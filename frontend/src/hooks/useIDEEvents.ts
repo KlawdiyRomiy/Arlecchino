@@ -84,6 +84,7 @@ interface UseIDEEventsProps {
   onWindowCheckpointCreate?: IDEEventHandler<[unknown]>;
   onWindowCheckpointRestore?: IDEEventHandler<[unknown]>;
   onSurfaceRead?: IDEEventHandler<[unknown]>;
+  onSurfacePromote?: IDEEventHandler<[unknown]>;
   onAppearancePreviewStart?: IDEEventHandler<[unknown]>;
   onAppearancePreviewPatch?: IDEEventHandler<[unknown]>;
   onAppearancePreviewApply?: IDEEventHandler<[]>;
@@ -129,6 +130,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     onWindowCheckpointCreate,
     onWindowCheckpointRestore,
     onSurfaceRead,
+    onSurfacePromote,
     onAppearancePreviewStart,
     onAppearancePreviewPatch,
     onAppearancePreviewApply,
@@ -304,6 +306,15 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     if (onSurfaceReadWrapped) {
       EventsOn("ide:surface:read", onSurfaceReadWrapped);
       listeners.push(() => EventsOff("ide:surface:read"));
+    }
+
+    const onSurfacePromoteWrapped = wrapHandler(
+      "ide:surface:promote",
+      onSurfacePromote,
+    );
+    if (onSurfacePromoteWrapped) {
+      EventsOn("ide:surface:promote", onSurfacePromoteWrapped);
+      listeners.push(() => EventsOff("ide:surface:promote"));
     }
 
     const onAppearancePreviewStartWrapped = wrapHandler(
@@ -528,6 +539,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     onWindowCheckpointCreate,
     onWindowCheckpointRestore,
     onSurfaceRead,
+    onSurfacePromote,
     onAppearancePreviewStart,
     onAppearancePreviewPatch,
     onAppearancePreviewApply,

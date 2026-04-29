@@ -25,6 +25,12 @@ async function loadRuntimeContracts() {
           surfaceRuntimeEventDedupeKey,
         } from "./src/surfaces/surfaceRuntimeEvents.ts";
         export {
+          buildSurfacePromotionResult,
+          buildSurfacePromotionCommands,
+          buildSurfacePromotionReadModel,
+          parseSurfacePromotionRequest,
+        } from "./src/surfaces/surfacePromotion.ts";
+        export {
           parseOpenPreviewInput,
           parsePanelOpenRequest,
           parseUpdatePreviewInput,
@@ -247,6 +253,127 @@ test("surface runtime keeps stable ids for panel and preview hosts", async () =>
     previewSurfaceId("terminal-preview:term-1"),
     "preview:terminal-preview:term-1",
   );
+});
+
+test("surface promotion contracts parse canonical requests and reject unsupported targets", async () => {
+  const {
+    buildSurfacePromotionResult,
+    buildSurfaceSessions,
+    parseSurfacePromotionRequest,
+  } = await loadRuntimeContracts();
+
+  assert.deepEqual(
+    parseSurfacePromotionRequest({
+      surfaceId: "panel:explorer",
+      kind: "promote-floating",
+      position: "left",
+    }),
+    {
+      surfaceId: "panel:explorer",
+      kind: "promote-floating",
+      source: "panel",
+      panelId: "explorer",
+      position: "left",
+    },
+  );
+  assert.deepEqual(
+    parseSurfacePromotionRequest({
+      surfaceID: "preview:preview-browser-default",
+      action: "fullscreen",
+    }),
+    {
+      surfaceId: "preview:preview-browser-default",
+      kind: "fullscreen",
+      source: "preview",
+      previewWindowId: "preview-browser-default",
+      position: undefined,
+    },
+  );
+  assert.equal(
+    parseSurfacePromotionRequest({
+      surfaceId: "detached:missing",
+      kind: "snap",
+    }),
+    null,
+  );
+  assert.deepEqual(
+    buildSurfacePromotionResult(
+      parseSurfacePromotionRequest({
+        surfaceId: "panel:git",
+        kind: "detach",
+      }),
+      {
+        handled: false,
+        reason: "Detached Wails windows are gated until Window Lease System.",
+      },
+    ),
+    {
+      surfaceId: "panel:git",
+      kind: "detach",
+      handled: false,
+      reason: "Detached Wails windows are gated until Window Lease System.",
+    },
+  );
+
+  const fullscreenSessions = buildSurfaceSessions({
+    panels: {
+      explorer: true,
+      terminal: false,
+      aiChat: false,
+      git: false,
+      problems: false,
+      code: false,
+    },
+    panelConfigs: {
+      explorer: {
+        position: "left",
+        mode: "floating",
+        size: { width: 1440, height: 900 },
+        x: 0,
+        y: 0,
+      },
+      terminal: {
+        position: "bottom",
+        mode: "snapped",
+        size: { width: 800, height: 260 },
+        x: 0,
+        y: 0,
+      },
+      aiChat: {
+        position: "right",
+        mode: "floating",
+        size: { width: 420, height: 640 },
+        x: 60,
+        y: 80,
+      },
+      git: {
+        position: "right",
+        mode: "floating",
+        size: { width: 420, height: 640 },
+        x: 60,
+        y: 80,
+      },
+      problems: {
+        position: "bottom",
+        mode: "floating",
+        size: { width: 700, height: 320 },
+        x: 80,
+        y: 100,
+      },
+      code: {
+        position: "right",
+        mode: "snapped",
+        size: { width: 520, height: 700 },
+        x: 0,
+        y: 0,
+      },
+    },
+    previewWindows: [],
+    activePreviewWindowId: null,
+    activePanelId: "explorer",
+    fullscreenSurfaceIds: ["panel:explorer"],
+  });
+  assert.equal(fullscreenSessions[0].hostMode, "fullscreen");
 });
 
 test("layout event parsers keep MCP preview and panel payload contracts canonical", async () => {
@@ -626,6 +753,7 @@ test("surface runtime store derives observable events from host transitions", as
   const {
     clearSurfaceRuntimeEventHistory,
     getSurfaceRuntimeEventHistory,
+    getSurfaceRuntimeReadModel,
     subscribeSurfaceRuntimeEvents,
     syncSurfaceRuntimeFromHost,
   } = await loadRuntimeContracts();
@@ -659,6 +787,17 @@ test("surface runtime store derives observable events from host transitions", as
       height: 620,
       x: 72,
       y: 88,
+    },
+  };
+  const fullscreenExplorerSession = {
+    ...movedExplorerSession,
+    hostMode: "fullscreen",
+    geometry: {
+      position: "left",
+      width: 1440,
+      height: 900,
+      x: 0,
+      y: 0,
     },
   };
   const previewSession = {
@@ -702,9 +841,44 @@ test("surface runtime store derives observable events from host transitions", as
   assert.equal(firstHistory[1].surfaceId, "preview:preview-browser-default");
   assert.equal(firstHistory[1].session.payload.url, "http://localhost:5173");
   assert.equal(observedEventNotifications, 2);
+  const promotedReadModel = getSurfaceRuntimeReadModel({
+    includeEvents: false,
+  });
+  assert.equal(
+    promotedReadModel.promotion.returnTargets["panel:explorer"].hostMode,
+    "snapped",
+  );
+  assert.equal(
+    promotedReadModel.promotion.commandsBySurfaceId["panel:explorer"].some(
+      (command) => command.kind === "return-to-main" && command.enabled,
+    ),
+    true,
+  );
+  const detachCommand = promotedReadModel.promotion.commandsBySurfaceId[
+    "panel:explorer"
+  ].find((command) => command.kind === "detach");
+  assert.equal(detachCommand.enabled, false);
+  assert.equal(detachCommand.requiresDetachedWindow, true);
 
   syncSurfaceRuntimeFromHost([movedExplorerSession, previewSession]);
   assert.equal(getSurfaceRuntimeEventHistory().length, firstHistory.length);
+
+  syncSurfaceRuntimeFromHost([fullscreenExplorerSession, previewSession]);
+  const fullscreenHistory = getSurfaceRuntimeEventHistory();
+  assert.equal(fullscreenHistory.at(-1).type, "surface:promote");
+  assert.equal(fullscreenHistory.at(-1).hostMode, "fullscreen");
+  assert.equal(
+    getSurfaceRuntimeReadModel({ includeEvents: false }).promotion
+      .returnTargets["panel:explorer"].hostMode,
+    "floating",
+  );
+
+  syncSurfaceRuntimeFromHost([movedExplorerSession, previewSession]);
+  assert.equal(
+    getSurfaceRuntimeReadModel({ includeEvents: false }).promotion
+      .returnTargets["panel:explorer"],
+    undefined,
+  );
 
   syncSurfaceRuntimeFromHost([previewSession]);
   const finalHistory = getSurfaceRuntimeEventHistory();

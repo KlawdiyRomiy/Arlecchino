@@ -127,6 +127,7 @@ interface UseMainLayoutPanelEventsOptions {
   handlePreviewWindowFocusEvent: UnknownEventHandler;
   handlePreviewWindowOpenEvent: UnknownEventHandler;
   handlePreviewWindowUpdateEvent: UnknownEventHandler;
+  handleSurfacePromoteEvent: UnknownEventHandler;
   isSettingsOpen: boolean;
   logicalViewport: { width: number; height: number };
   moveBrowserPreviewToPosition: (position: PanelPosition) => boolean | void;
@@ -194,6 +195,7 @@ export const useMainLayoutPanelEvents = ({
   handlePreviewWindowFocusEvent,
   handlePreviewWindowOpenEvent,
   handlePreviewWindowUpdateEvent,
+  handleSurfacePromoteEvent,
   isSettingsOpen,
   logicalViewport,
   moveBrowserPreviewToPosition,
@@ -808,6 +810,7 @@ export const useMainLayoutPanelEvents = ({
         parseSurfaceRuntimeReadOptions(payload),
       );
     }, []),
+    onSurfacePromote: handleSurfacePromoteEvent,
     onAppearancePreviewStart: handleAppearancePreviewStartEvent,
     onAppearancePreviewPatch: handleAppearancePreviewPatchEvent,
     onAppearancePreviewApply: handleAppearancePreviewApplyEvent,

@@ -14,6 +14,12 @@ import {
   type SurfaceSource,
 } from "./surfaceRuntime";
 import {
+  buildSurfacePromotionReadModel,
+  updateSurfacePromotionReturnTargets,
+  type SurfacePromotionReadModel,
+  type SurfaceReturnTarget,
+} from "./surfacePromotion";
+import {
   createSurfaceRuntimeEvent,
   dedupeSurfaceRuntimeEvents,
   type CreateSurfaceRuntimeEventInput,
@@ -61,6 +67,7 @@ export interface SurfaceRuntimeReadModel {
     Partial<Record<SurfaceAppletKind, readonly string[]>>
   >;
   focus: SurfaceRuntimeFocusState;
+  promotion: SurfacePromotionReadModel;
   events: readonly SurfaceRuntimeEvent[];
   eventCursor: number | null;
 }
@@ -71,6 +78,7 @@ export interface SurfaceRuntimeHostState {
   previewWindows: PreviewWindow[];
   activePreviewWindowId: string | null;
   activePanelId?: PanelId | null;
+  fullscreenSurfaceIds?: readonly string[];
 }
 
 const listeners = new Set<() => void>();
@@ -89,6 +97,7 @@ let hasSyncedSurfaceRuntimeHost = false;
 let lastSurfaceRuntimeEventAt = 0;
 let eventHistory: readonly SurfaceRuntimeEvent[] = [];
 let focusHistory: readonly SurfaceRuntimeFocusEntry[] = [];
+let promotionReturnTargets: Readonly<Record<string, SurfaceReturnTarget>> = {};
 
 const cloneSurfaceSession = (session: SurfaceSession): SurfaceSession => ({
   ...session,
@@ -240,6 +249,11 @@ export const getSurfaceRuntimeReadModel = (
       (session) => session.appletKind,
     ),
     focus: getSurfaceRuntimeFocusState(),
+    promotion: buildSurfacePromotionReadModel(
+      sessions,
+      promotionReturnTargets,
+      false,
+    ),
     events: includeEvents
       ? eventHistory.slice(-eventLimit).map(cloneSurfaceRuntimeEvent)
       : [],
@@ -463,6 +477,12 @@ export const syncSurfaceRuntimeFromHost = (
   snapshotFingerprint = nextFingerprint;
   snapshot = buildSnapshot(sessions);
   hasSyncedSurfaceRuntimeHost = true;
+  promotionReturnTargets = updateSurfacePromotionReturnTargets(
+    previousSnapshot.sessions,
+    snapshot.sessions,
+    promotionReturnTargets,
+    Date.now(),
+  );
   if (snapshot.activeSurfaceId) {
     recordSurfaceRuntimeFocus(
       snapshot.activeSurfaceId,
@@ -496,6 +516,7 @@ export function useSurfaceRuntimeHostSync({
   previewWindows,
   activePreviewWindowId,
   activePanelId = null,
+  fullscreenSurfaceIds = [],
 }: SurfaceRuntimeHostState): void {
   const surfaceSessions = useMemo(
     () =>
@@ -505,10 +526,12 @@ export function useSurfaceRuntimeHostSync({
         previewWindows,
         activePreviewWindowId,
         activePanelId,
+        fullscreenSurfaceIds,
       }),
     [
       activePanelId,
       activePreviewWindowId,
+      fullscreenSurfaceIds,
       panelConfigs,
       panels,
       previewWindows,

@@ -196,6 +196,12 @@ Baseline hardening для этой ветки теперь имеет отдел
   для будущих tray/notification/menu consumers: `cancel-job` отменяет активную cancelable
   job, а `focus-surface` фокусит main window и отправляет `ide:intent:open`/`focusSurface`.
   Native tray и native notification delivery остаются выключенными.
+- Добавлен Applet Promotion Chain v1 без detached windows: `ide:surface:promote`
+  исполняет `promote-floating`, `snap`, `fullscreen`, `return-to-main` для `panel:*`
+  и `preview:*`, сохраняя panel/window identity и payload. Surface Runtime read model
+  отдает `promotion.commandsBySurfaceId`, disabled `detach` command с явной причиной и
+  `promotion.returnTargets`, которые запоминают предыдущий host layout при переходе
+  `snapped`/`floating`/`fullscreen`.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -794,6 +800,19 @@ window. Native menus/context menus дают команды "Move to Window", "Re
 Для первого этапа не нужно переписывать UI. Можно добавить commands поверх текущих
 `openWindow`, `updateWindow`, `openPanel`, drag state. Detached window сделать позже.
 
+Текущий реализованный slice:
+
+- frontend contract: `frontend/src/surfaces/surfacePromotion.ts`;
+- read model: `SurfaceRuntimeReadModel.promotion`;
+- commands: `promote-floating`, `snap`, `fullscreen`, `return-to-main`, `detach`;
+- event route: `ide:surface:promote` принимает `{ surfaceId, kind, position? }`;
+- in-window executor меняет существующие `PanelConfig` и `PreviewWindow`, сохраняя
+  applet identity/state; fullscreen остается floating geometry `0/0/full workspace`;
+- `detach` остается disabled, пока нет Window Lease System;
+- return-layout hook: `updateSurfacePromotionReturnTargets()` запоминает предыдущий
+  `SurfaceSession` при host-mode transition и очищает target при возврате или закрытии;
+- out of scope пока остаются detached windows, Window Lease System и Arlehub host mode.
+
 ### Risks And Checks
 
 Сложность в сохранении внутреннего applet state. Не надо размонтировать тяжелые applets
@@ -1284,7 +1303,7 @@ risky action, user can return layout.
 11. Done: add internal Protocol/Open Intent router for current in-app actions only.
 12. Later: build Arlehub GUI hub mode as central surface using existing floating helpers.
 13. Later: add Agent Flight Recorder and wire it to Arlehub timeline.
-14. Later: add Applet Promotion Chain up to fullscreen/floating/snapped first.
+14. Done: add Applet Promotion Chain up to fullscreen/floating/snapped first.
 15. Later: spike Wails v3 detached windows with Window Lease System.
 16. Later: add packaged Protocol Router, file associations and single instance.
 17. Done: add Background Shell Status v1 as read model for future tray/notifications
@@ -1322,6 +1341,9 @@ capability-driven v3 shell layer. Это снижает риск перед deta
    without enabling tray yet: `backgroundStatus` available, `tray`/`notifications`
    unavailable, UI получает честное состояние через `shell:background:status`, а future
    consumers могут исполнять `cancel-job`/`focus-surface` через action contract.
+8. Done: Applet Promotion Chain v1. Surface Runtime exposes promotion commands and
+   return targets, and `ide:surface:promote` now applies in-window promotion for
+   existing panels/preview windows. Detached windows remain gated for Window Lease.
 
 Arlehub можно начинать только после пунктов 1-5: тогда hub будет использовать уже
 готовые surface events, command routing и capability checks, а не создавать параллельную
