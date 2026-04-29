@@ -28,6 +28,7 @@ type mcpUIEventAck struct {
 	eventName string
 	handled   bool
 	errText   string
+	result    any
 }
 
 func (a *App) startMCPBridge() {
@@ -350,6 +351,9 @@ func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, er
 		select {
 		case ack := <-ackCh:
 			result["confirmed"] = ack.handled
+			if ack.result != nil {
+				result["result"] = ack.result
+			}
 			if ack.errText != "" {
 				result["handlerError"] = ack.errText
 				return result, fmt.Errorf("ui event handler failed: %s", ack.errText)
@@ -389,6 +393,7 @@ func (a *App) waitForMCPUIEventAck(requestID, eventName string) (<-chan mcpUIEve
 			eventName: bridgeMapString(payload, "event"),
 			handled:   bridgeMapBool(payload, "handled", false),
 			errText:   bridgeMapString(payload, "error"),
+			result:    payload["result"],
 		}
 
 		select {

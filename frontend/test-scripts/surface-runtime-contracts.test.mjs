@@ -33,6 +33,8 @@ async function loadRuntimeContracts() {
         export {
           clearSurfaceRuntimeEventHistory,
           getSurfaceRuntimeEventHistory,
+          getSurfaceRuntimeFocusState,
+          getSurfaceRuntimeReadModel,
           getSurfaceRuntimeSnapshot,
           recordSurfaceRuntimeEvent,
           subscribeSurfaceRuntime,
@@ -365,6 +367,95 @@ test("surface runtime store publishes read-only snapshots for host sync", async 
   assert.deepEqual(observedRevisions, [nextSnapshot.revision]);
 
   unsubscribe();
+});
+
+test("surface runtime read model tracks active surface, focus history, and indexes", async () => {
+  const {
+    getSurfaceRuntimeFocusState,
+    getSurfaceRuntimeReadModel,
+    syncSurfaceRuntimeFromHost,
+  } = await loadRuntimeContracts();
+
+  const panelSession = {
+    id: "panel:explorer",
+    source: "panel",
+    appletKind: "explorer",
+    hostMode: "snapped",
+    title: "Explorer",
+    active: true,
+    pinned: false,
+    panelId: "explorer",
+    geometry: {
+      position: "left",
+      width: 280,
+      height: 600,
+      x: 12,
+      y: 24,
+    },
+  };
+  const previewSession = {
+    id: "preview:preview-browser-default",
+    source: "preview",
+    appletKind: "browser",
+    hostMode: "snapped",
+    title: "Preview localhost:5173",
+    active: false,
+    pinned: true,
+    previewWindowId: "preview-browser-default",
+    payload: { url: "http://localhost:5173" },
+    geometry: {
+      position: "right",
+      width: 520,
+      height: 620,
+      x: 900,
+      y: 70,
+      zIndex: 132,
+    },
+  };
+
+  syncSurfaceRuntimeFromHost([panelSession, previewSession]);
+  syncSurfaceRuntimeFromHost([
+    { ...panelSession, active: false },
+    { ...previewSession, active: true },
+  ]);
+
+  const readModel = getSurfaceRuntimeReadModel({ eventLimit: 1 });
+  assert.equal(readModel.activeSurfaceId, "preview:preview-browser-default");
+  assert.equal(readModel.activeSurface.title, "Preview localhost:5173");
+  assert.equal(readModel.openSurfaceCount, 2);
+  assert.deepEqual(readModel.sessionIds, [
+    "panel:explorer",
+    "preview:preview-browser-default",
+  ]);
+  assert.deepEqual(readModel.sessionsBySource.panel, ["panel:explorer"]);
+  assert.deepEqual(readModel.sessionsBySource.preview, [
+    "preview:preview-browser-default",
+  ]);
+  assert.deepEqual(readModel.sessionsByHostMode.snapped, [
+    "panel:explorer",
+    "preview:preview-browser-default",
+  ]);
+  assert.deepEqual(readModel.sessionsByAppletKind.browser, [
+    "preview:preview-browser-default",
+  ]);
+  assert.equal(readModel.focus.previousSurfaceId, "panel:explorer");
+  assert.equal(
+    readModel.focus.history.at(-1).surfaceId,
+    "preview:preview-browser-default",
+  );
+  assert.equal(readModel.events.length, 1);
+  assert.equal(readModel.events[0].type, "surface:focus");
+  assert.equal(readModel.eventCursor, readModel.events[0].at);
+
+  const focusState = getSurfaceRuntimeFocusState();
+  assert.equal(focusState.activeSurfaceId, readModel.activeSurfaceId);
+  assert.equal(focusState.activeSurface.title, readModel.activeSurface.title);
+
+  const readModelWithoutEvents = getSurfaceRuntimeReadModel({
+    includeEvents: false,
+  });
+  assert.deepEqual(readModelWithoutEvents.events, []);
+  assert.equal(readModelWithoutEvents.eventCursor, readModel.eventCursor);
 });
 
 test("surface runtime store derives observable events from host transitions", async () => {

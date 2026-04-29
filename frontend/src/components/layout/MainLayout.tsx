@@ -218,6 +218,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const activePreviewWindowId = usePreviewWindowStore(
     (state) => state.activeWindowId,
   );
+  const [activePanelId, setActivePanelId] = useState<PanelId | null>(null);
+  const activePanelIdRef = useRef<PanelId | null>(null);
+  const markActivePanel = useCallback((panelId: PanelId | null) => {
+    activePanelIdRef.current = panelId;
+    setActivePanelId(panelId);
+  }, []);
   const appearancePreview = usePreviewWindowStore(
     (state) => state.appearancePreview,
   );
@@ -231,8 +237,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const closeAllPreviewWindows = usePreviewWindowStore(
     (state) => state.closeAllWindows,
   );
-  const focusPreviewWindow = usePreviewWindowStore(
+  const focusPreviewWindowFromStore = usePreviewWindowStore(
     (state) => state.focusWindow,
+  );
+  const focusPreviewWindow = useCallback(
+    (windowId: string) => {
+      markActivePanel(null);
+      focusPreviewWindowFromStore(windowId);
+    },
+    [focusPreviewWindowFromStore, markActivePanel],
   );
   const previewButtonState = usePreviewableContext();
   const browserPreviewWindows = useMemo(
@@ -278,7 +291,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     panels,
     panelConfigs,
     previewWindows,
-    activePreviewWindowId,
+    activePreviewWindowId: activePanelId ? null : activePreviewWindowId,
+    activePanelId,
   });
   const [tuiLayoutSnapshot, setTuiLayoutSnapshot] = useState<{
     panels: PanelVisibility;
@@ -381,10 +395,28 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [],
   );
 
-  const applyPanelsState = useCallback((nextPanels: PanelVisibility) => {
-    panelsRef.current = nextPanels;
-    setPanels(nextPanels);
-  }, []);
+  const applyPanelsState = useCallback(
+    (nextPanels: PanelVisibility) => {
+      const previousPanels = panelsRef.current;
+      const currentActivePanelId = activePanelIdRef.current;
+      const newlyVisiblePanelId = (Object.keys(nextPanels) as PanelId[]).find(
+        (panelId) => nextPanels[panelId] && !previousPanels[panelId],
+      );
+
+      panelsRef.current = nextPanels;
+      setPanels(nextPanels);
+
+      if (newlyVisiblePanelId) {
+        markActivePanel(newlyVisiblePanelId);
+        return;
+      }
+
+      if (currentActivePanelId && !nextPanels[currentActivePanelId]) {
+        markActivePanel(null);
+      }
+    },
+    [markActivePanel],
+  );
 
   const updatePanelsState = useCallback(
     (updater: (previous: PanelVisibility) => PanelVisibility) => {
@@ -2177,6 +2209,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }
   }, [externalPerspectiveClose]);
 
+  const handlePreviewFocusForSurfaceRuntime = useCallback(() => {
+    markActivePanel(null);
+  }, [markActivePanel]);
+
   const {
     handleAppearancePreviewApplyEvent,
     handleAppearancePreviewCancelEvent,
@@ -2194,6 +2230,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     closePreviewWindowWithMotion,
     currentTheme,
     getBrowserPreviewWindowForShortcut,
+    onPreviewFocus: handlePreviewFocusForSurfaceRuntime,
     openCanonicalBrowserPreviewRef,
     previewLaunchInput: previewButtonState.launchInput,
     resolveBrowserPreviewOpenInput,
@@ -2250,6 +2287,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       problemsPreFullscreenRef,
       rememberedSnappedPositionsRef,
       setPanelConfigs,
+      setActivePanelId: markActivePanel,
       setTUIAssistRatio,
       shouldSuppressApplicationMenuAction,
       submitTerminalCommand,

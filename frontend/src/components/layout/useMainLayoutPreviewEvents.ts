@@ -32,6 +32,7 @@ interface UseMainLayoutPreviewEventsOptions {
   currentTheme: Theme;
   getBrowserPreviewWindowForShortcut: () => PreviewWindow | null;
   openCanonicalBrowserPreviewRef: MutableRefObject<() => void>;
+  onPreviewFocus?: () => void;
   previewLaunchInput: OpenPreviewWindowInput | null;
   resolveBrowserPreviewOpenInput: (
     input: OpenPreviewWindowInput,
@@ -49,6 +50,7 @@ export const useMainLayoutPreviewEvents = ({
   currentTheme,
   getBrowserPreviewWindowForShortcut,
   openCanonicalBrowserPreviewRef,
+  onPreviewFocus,
   previewLaunchInput,
   resolveBrowserPreviewOpenInput,
   setTheme,
@@ -164,10 +166,11 @@ export const useMainLayoutPreviewEvents = ({
       });
 
       if (updated && queuedUpdate.focusRequested) {
+        onPreviewFocus?.();
         focusPreviewWindow(windowId);
       }
     });
-  }, [focusPreviewWindow, updatePreviewWindow]);
+  }, [focusPreviewWindow, onPreviewFocus, updatePreviewWindow]);
 
   const queuePreviewWindowUpdate = useCallback(
     (
@@ -339,7 +342,10 @@ export const useMainLayoutPreviewEvents = ({
         measurePerf(
           "preview",
           "window.focus.open",
-          () => focusPreviewWindow(openedWindowId),
+          () => {
+            onPreviewFocus?.();
+            focusPreviewWindow(openedWindowId);
+          },
           {
             windowId: openedWindowId,
             surface: resolvedInput.surface,
@@ -351,6 +357,7 @@ export const useMainLayoutPreviewEvents = ({
       applyAppearanceSettings,
       ensureAppearancePreviewSession,
       focusPreviewWindow,
+      onPreviewFocus,
       openPreviewWindow,
       patchAppearancePreview,
       resolveBrowserPreviewOpenInput,
@@ -428,9 +435,10 @@ export const useMainLayoutPreviewEvents = ({
       if (!windowId) {
         return;
       }
+      onPreviewFocus?.();
       focusPreviewWindow(windowId);
     },
-    [focusPreviewWindow],
+    [focusPreviewWindow, onPreviewFocus],
   );
 
   const handlePreviewWindowCheckpointCreateEvent = useCallback(

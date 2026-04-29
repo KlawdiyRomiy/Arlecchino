@@ -87,6 +87,7 @@ func TestToolService_ToolDefinitionsAlwaysIncludeBridgeTools(t *testing.T) {
 		"agent_memory.save",
 		"agent_memory.context",
 		"ide_ui.emit_event",
+		"ide_ui.surface_read",
 		"ide_ui.open_file_panel",
 		"ide_ui.preview_open",
 		"ide_ui.preview_navigate",
@@ -184,6 +185,74 @@ func TestToolService_OpenFilePanelEmitsConfirmedPanelOpen(t *testing.T) {
 	}
 	if !equalBridgePayload(payload, wantPayload) {
 		t.Fatalf("payload = %#v, want %#v", payload, wantPayload)
+	}
+}
+
+func TestToolService_SurfaceReadReturnsFrontendReadModel(t *testing.T) {
+	root := t.TempDir()
+	bridge := newFakeBridge()
+	bridge.response["ui.emit_event"] = map[string]any{
+		"emitted":   true,
+		"event":     "ide:surface:read",
+		"confirmed": true,
+		"result": map[string]any{
+			"revision":        float64(7),
+			"activeSurfaceId": "panel:explorer",
+			"sessionIds":      []any{"panel:explorer"},
+		},
+	}
+
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_ui.surface_read", map[string]any{
+		"eventLimit":    3,
+		"includeEvents": false,
+	})
+	if err != nil {
+		t.Fatalf("surface_read error = %v", err)
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("surface_read result type = %T, want map[string]any", result)
+	}
+	if resultMap["confirmed"] != true {
+		t.Fatalf("surface_read confirmed = %v, want true", resultMap["confirmed"])
+	}
+	if requestID, ok := resultMap["mcpRequestId"].(string); !ok || requestID == "" {
+		t.Fatalf("surface_read result missing mcpRequestId: %#v", resultMap)
+	}
+	surface, ok := resultMap["surface"].(map[string]any)
+	if !ok {
+		t.Fatalf("surface_read surface type = %T, want map[string]any", resultMap["surface"])
+	}
+	if surface["activeSurfaceId"] != "panel:explorer" {
+		t.Fatalf("activeSurfaceId = %v, want panel:explorer", surface["activeSurfaceId"])
+	}
+
+	calls := bridge.methodCalls("ui.emit_event")
+	if len(calls) != 1 {
+		t.Fatalf("ui.emit_event calls = %d, want 1", len(calls))
+	}
+	call := calls[0]
+	if got := call.Params["event"]; got != "ide:surface:read" {
+		t.Fatalf("event = %v, want ide:surface:read", got)
+	}
+	if requestID, ok := call.Params["mcpRequestId"].(string); !ok || requestID == "" {
+		t.Fatalf("bridge call missing mcpRequestId: %#v", call.Params)
+	}
+	payload, ok := call.Params["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", call.Params["payload"])
+	}
+	if payload["eventLimit"] != 3 {
+		t.Fatalf("eventLimit = %v, want 3", payload["eventLimit"])
+	}
+	if payload["includeEvents"] != false {
+		t.Fatalf("includeEvents = %v, want false", payload["includeEvents"])
 	}
 }
 
@@ -643,6 +712,9 @@ func TestToolService_CapabilitiesExposeBridgeModeAndProfiles(t *testing.T) {
 
 	if resultMap["supportsUIControlV1"] != true {
 		t.Fatalf("supportsUIControlV1 = %v, want true", resultMap["supportsUIControlV1"])
+	}
+	if resultMap["supportsSurfaceRuntimeV1"] != true {
+		t.Fatalf("supportsSurfaceRuntimeV1 = %v, want true", resultMap["supportsSurfaceRuntimeV1"])
 	}
 
 	layoutProfiles, ok := resultMap["layoutProfiles"].([]string)

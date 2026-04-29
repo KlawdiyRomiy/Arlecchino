@@ -7,6 +7,10 @@ import {
 } from "react";
 
 import { useIDEEvents } from "../../hooks/useIDEEvents";
+import {
+  getSurfaceRuntimeReadModel,
+  type SurfaceRuntimeReadOptions,
+} from "../../surfaces/surfaceRuntimeStore";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import {
@@ -45,6 +49,37 @@ import {
 } from "./mainLayoutEventParsers";
 
 type UnknownEventHandler = (payload: unknown) => void;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const parseSurfaceRuntimeReadOptions = (
+  payload: unknown,
+): SurfaceRuntimeReadOptions => {
+  if (!isRecord(payload)) {
+    return {};
+  }
+
+  const eventLimit =
+    typeof payload.eventLimit === "number" &&
+    Number.isFinite(payload.eventLimit)
+      ? payload.eventLimit
+      : typeof payload.event_limit === "number" &&
+          Number.isFinite(payload.event_limit)
+        ? payload.event_limit
+        : undefined;
+  const includeEvents =
+    typeof payload.includeEvents === "boolean"
+      ? payload.includeEvents
+      : typeof payload.include_events === "boolean"
+        ? payload.include_events
+        : undefined;
+
+  return {
+    eventLimit,
+    includeEvents,
+  };
+};
 
 interface MainLayoutPanelEventsDispatcher {
   close: () => void;
@@ -106,6 +141,7 @@ interface UseMainLayoutPanelEventsOptions {
   problemsPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   rememberedSnappedPositionsRef: MutableRefObject<RememberedSnappedPositions>;
   setPanelConfigs: Dispatch<SetStateAction<PanelConfigs>>;
+  setActivePanelId: (panelId: PanelId | null) => void;
   setTUIAssistRatio: (value: unknown) => void;
   shouldSuppressApplicationMenuAction: (actionId: ShortcutActionId) => boolean;
   submitTerminalCommand: (
@@ -168,6 +204,7 @@ export const useMainLayoutPanelEvents = ({
   problemsPreFullscreenRef,
   rememberedSnappedPositionsRef,
   setPanelConfigs,
+  setActivePanelId,
   setTUIAssistRatio,
   shouldSuppressApplicationMenuAction,
   submitTerminalCommand,
@@ -223,6 +260,9 @@ export const useMainLayoutPanelEvents = ({
       applyPanelsState(nextPanels);
       applyPanelConfigsState(nextPanelConfigs);
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+      if (nextPanels[panelId]) {
+        setActivePanelId(panelId);
+      }
 
       return nextConfig;
     },
@@ -233,6 +273,7 @@ export const useMainLayoutPanelEvents = ({
       panelConfigsRef,
       panelsRef,
       rememberedSnappedPositionsRef,
+      setActivePanelId,
     ],
   );
 
@@ -704,6 +745,11 @@ export const useMainLayoutPanelEvents = ({
     onWindowCloseAll: closeAllPreviewWindows,
     onWindowCheckpointCreate: handlePreviewWindowCheckpointCreateEvent,
     onWindowCheckpointRestore: handlePreviewWindowCheckpointRestoreEvent,
+    onSurfaceRead: useCallback((payload: unknown) => {
+      return getSurfaceRuntimeReadModel(
+        parseSurfaceRuntimeReadOptions(payload),
+      );
+    }, []),
     onAppearancePreviewStart: handleAppearancePreviewStartEvent,
     onAppearancePreviewPatch: handleAppearancePreviewPatchEvent,
     onAppearancePreviewApply: handleAppearancePreviewApplyEvent,

@@ -194,6 +194,14 @@ func bridgeUIToolDefinitions() []ToolDefinition {
 			}),
 		},
 		{
+			Name:        "ide_ui.surface_read",
+			Description: "Read the current Surface Runtime state from the frontend",
+			InputSchema: objectSchema(nil, map[string]any{
+				"eventLimit":    map[string]any{"type": "number"},
+				"includeEvents": map[string]any{"type": "boolean"},
+			}),
+		},
+		{
 			Name:        "ide_ui.open_file_panel",
 			Description: "Open a project file in the visible side code panel",
 			InputSchema: objectSchema([]string{"path"}, map[string]any{
@@ -351,24 +359,25 @@ func (s *ToolService) Capabilities() map[string]any {
 	}
 
 	return map[string]any{
-		"mode":                s.modeName(),
-		"tools":               toolNames,
-		"permission":          s.PermissionStatus(),
-		"layoutProfiles":      layoutNames,
-		"bridgeMode":          bridgeMode,
-		"bridgeAvailable":     bridgeAvailable,
-		"sensitivePatterns":   append([]string(nil), s.sensitivePaths...),
-		"auditDiskPath":       s.audit.diskFilePath(),
-		"checkpointDiskPath":  projectStateFilePath(s.projectRoot, changeJournalStateFileName),
-		"layoutDiskPath":      projectStateFilePath(s.projectRoot, layoutStateFileName),
-		"memoryDiskPath":      s.memory.DiskFilePath(),
-		"memoryContextPath":   s.memory.ContextFilePath(),
-		"sessionID":           s.sessionID,
-		"runtimeHotSwitch":    true,
-		"supportsLayoutV1":    true,
-		"supportsBackendV1":   true,
-		"supportsUIControlV1": true,
-		"supportsMemoryV1":    true,
+		"mode":                     s.modeName(),
+		"tools":                    toolNames,
+		"permission":               s.PermissionStatus(),
+		"layoutProfiles":           layoutNames,
+		"bridgeMode":               bridgeMode,
+		"bridgeAvailable":          bridgeAvailable,
+		"sensitivePatterns":        append([]string(nil), s.sensitivePaths...),
+		"auditDiskPath":            s.audit.diskFilePath(),
+		"checkpointDiskPath":       projectStateFilePath(s.projectRoot, changeJournalStateFileName),
+		"layoutDiskPath":           projectStateFilePath(s.projectRoot, layoutStateFileName),
+		"memoryDiskPath":           s.memory.DiskFilePath(),
+		"memoryContextPath":        s.memory.ContextFilePath(),
+		"sessionID":                s.sessionID,
+		"runtimeHotSwitch":         true,
+		"supportsLayoutV1":         true,
+		"supportsBackendV1":        true,
+		"supportsUIControlV1":      true,
+		"supportsSurfaceRuntimeV1": true,
+		"supportsMemoryV1":         true,
 	}
 }
 
@@ -740,6 +749,65 @@ func (s *ToolService) bridgeEmitConfirmedUIEvent(toolName, eventName string, pay
 		"result":       result,
 		"mcpRequestId": requestID,
 	}, nil
+}
+
+func (s *ToolService) bridgeSurfaceRead(args map[string]any) (any, error) {
+	if err := s.allowUIEventBurst(1); err != nil {
+		return nil, err
+	}
+
+	eventLimit := optionalIntArg(args, "eventLimit", 25)
+	if _, ok := args["event_limit"]; ok {
+		eventLimit = optionalIntArg(args, "event_limit", eventLimit)
+	}
+	if eventLimit < 0 {
+		eventLimit = 0
+	}
+	if eventLimit > 100 {
+		eventLimit = 100
+	}
+
+	includeEvents := true
+	if _, ok := args["includeEvents"]; ok {
+		includeEvents = optionalBoolArg(args, "includeEvents")
+	} else if _, ok := args["include_events"]; ok {
+		includeEvents = optionalBoolArg(args, "include_events")
+	}
+
+	requestID := fmt.Sprintf("ide-ui-surface-read-%d", time.Now().UTC().UnixNano())
+	result, err := s.bridgeCall("ide_ui.surface_read", "ui.emit_event", map[string]any{
+		"event":        "ide:surface:read",
+		"mcpRequestId": requestID,
+		"payload": map[string]any{
+			"eventLimit":    eventLimit,
+			"includeEvents": includeEvents,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		return map[string]any{
+			"surface":      result,
+			"mcpRequestId": requestID,
+		}, nil
+	}
+
+	response := map[string]any{
+		"mcpRequestId": requestID,
+	}
+	if confirmed, ok := resultMap["confirmed"]; ok {
+		response["confirmed"] = confirmed
+	}
+	if surface, ok := resultMap["result"]; ok {
+		response["surface"] = surface
+	} else {
+		response["surface"] = resultMap
+	}
+
+	return response, nil
 }
 
 func (s *ToolService) bridgeOpenFilePanel(args map[string]any) (any, error) {

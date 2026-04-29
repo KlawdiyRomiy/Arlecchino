@@ -162,6 +162,15 @@ Baseline hardening для этой ветки теперь имеет отдел
   автоматически выводит `surface:*` события из diff между предыдущим и текущим host
   snapshot. Это делает уже существующие panel/preview transitions observable без
   переписывания UI handlers.
+- Surface Runtime v1 получил read/focus contract: frontend store отдает read model с
+  active surface, focus history, indexes by source/host/applet и bounded event tail.
+- `frontend/src/hooks/useIDEEvents.ts` теперь может возвращать result payload в
+  `mcp:ui-event:ack`, а `internal/mcp/service_bridge_tools.go` добавил read-only tool
+  `ide_ui.surface_read`, который запрашивает `ide:surface:read` у frontend и возвращает
+  актуальную Surface read model через live bridge.
+- `frontend/src/components/layout/MainLayout.tsx` и panel/preview event hooks теперь
+  синхронизируют активный panel/preview focus в Surface Runtime без изменения
+  визуального поведения и без detached windows.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -241,11 +250,13 @@ window. Services/bindings дают typed backend API для surface operations, 
 6. Event contract: `surface:open`, `surface:focus`, `surface:move`, `surface:promote`,
    `surface:close`, `surface:state`.
 
-Текущий реализованный slice: пункты 1-4 закрыты как adapter layer поверх существующих
+Текущий реализованный slice: пункты 1-3 закрыты как adapter layer поверх существующих
 React stores без изменения визуального поведения. Event contract уже выделен в отдельный
-module и покрывает canonical payloads для open/focus/move/promote/close/state. Следующий
-шаг для Surface Runtime - использовать эти события в реальных open/focus/move/close
-операциях и только потом начинать detached window lease spike.
+module и покрывает canonical payloads для open/focus/move/promote/close/state. Surface
+Runtime v1 также имеет read/focus model и backend-facing MCP boundary через
+`ide_ui.surface_read`. Полноценный Go `SurfaceService` остается следующим контрактным
+шагом после стабилизации Wails v3 bindings; detached window lease spike начинается только
+после этого.
 
 ### Risks And Checks
 
@@ -1203,15 +1214,18 @@ risky action, user can return layout.
 7. Done: Baseline v3 hardening. Dev runner now owns app lifecycle cleanup, shuts down
    stale output-scoped `mcp-server` processes, and exposes a dev/packaged launch target
    for UI automation.
-8. Next: adapt ready existing elements to Wails v3 shell capabilities first, with Arlehub
+8. Done: Surface Runtime v1 read/focus boundary. Frontend exposes active surface state,
+   focus history and indexed read model; MCP can read it through `ide_ui.surface_read`
+   with frontend acknowledgement result payload.
+9. Next: adapt ready existing elements to Wails v3 shell capabilities first, with Arlehub
    intentionally out of scope until the base shell layer is stable.
-9. Later: build Arlehub GUI hub mode as central surface using existing floating helpers.
-10. Later: add Agent Flight Recorder and wire it to Arlehub timeline.
-11. Later: add Applet Promotion Chain up to fullscreen/floating/snapped first.
-12. Later: spike Wails v3 detached windows with Window Lease System.
-13. Later: add Protocol Router, file associations and single instance.
-14. Later: add Background Job Broker, tray and notifications.
-15. Later: delay auto-updates/material/backdrop/dock badges until shell behavior is stable.
+10. Later: build Arlehub GUI hub mode as central surface using existing floating helpers.
+11. Later: add Agent Flight Recorder and wire it to Arlehub timeline.
+12. Later: add Applet Promotion Chain up to fullscreen/floating/snapped first.
+13. Later: spike Wails v3 detached windows with Window Lease System.
+14. Later: add Protocol Router, file associations and single instance.
+15. Later: add Background Job Broker, tray and notifications.
+16. Later: delay auto-updates/material/backdrop/dock badges until shell behavior is stable.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
@@ -1222,21 +1236,24 @@ capability-driven v3 shell layer. Это снижает риск перед deta
    действиям `open/focus/move/promote/close` в `previewWindowStore`, `MainLayout` и MCP
    UI event handlers. Результат: каждый уже существующий panel/preview transition имеет
    canonical event payload.
-2. Next: Native context menu adapter. Начать с существующих scopes: File Explorer item, editor
+2. Done: Surface Runtime read/focus contract. Добавить active surface state, focus history,
+   indexed read model и read-only MCP tool `ide_ui.surface_read` через подтвержденный
+   frontend ack payload. Detached windows остаются out of scope.
+3. Next: Native context menu adapter. Начать с существующих scopes: File Explorer item, editor
    tab, Git item, Problems row, Browser Preview URL. Если `contextMenu` unavailable,
    оставлять текущие DOM/Radix interactions; если available - routed native menu command.
-3. Dialog and clipboard audit. Все новые вызовы `SelectDirectory`, runtime clipboard и
+4. Dialog and clipboard audit. Все новые вызовы `SelectDirectory`, runtime clipboard и
    browser open должны идти через `shellDialogs.ts`, `clipboard.ts` и capability helpers,
    а не напрямую из компонентов.
-4. Protocol/open intent router. Сначала internal-only router для `open project`,
+5. Protocol/open intent router. Сначала internal-only router для `open project`,
    `open file`, `open preview URL`, `focus surface`; packaged custom protocols and file
    associations остаются gated как `requires-build`.
-5. Single-instance/open-file spike. Проверить только packaged/open-request path и event
+6. Single-instance/open-file spike. Проверить только packaged/open-request path и event
    shape. Не включать как default capability до подтвержденного packaged smoke.
-6. Background shell status. Подготовить job/status model для tray/notifications without
+7. Background shell status. Подготовить job/status model для tray/notifications without
    enabling tray yet: capability сообщает unavailable, UI получает честное состояние.
 
-Arlehub можно начинать только после пунктов 1-4: тогда hub будет использовать уже
+Arlehub можно начинать только после пунктов 1-5: тогда hub будет использовать уже
 готовые surface events, command routing и capability checks, а не создавать параллельную
 shell-модель.
 

@@ -3,7 +3,7 @@ import { EventsOn, EventsOff, EventsEmit } from "../wails/runtime";
 
 type IDEEventHandler<T extends Array<unknown>> = (
   ...args: T
-) => void | Promise<void>;
+) => unknown | Promise<unknown>;
 
 const MCP_UI_EVENT_ACK = "mcp:ui-event:ack";
 
@@ -45,17 +45,29 @@ const emitMCPEventAck = (
   event: string,
   handled: boolean,
   error?: unknown,
+  result?: unknown,
 ) => {
   if (!requestId) {
     return;
   }
 
-  EventsEmit(MCP_UI_EVENT_ACK, {
+  const payload: {
+    requestId: string;
+    event: string;
+    handled: boolean;
+    error: string;
+    result?: unknown;
+  } = {
     requestId,
     event,
     handled,
     error: error instanceof Error ? error.message : error ? String(error) : "",
-  });
+  };
+  if (result !== undefined) {
+    payload.result = result;
+  }
+
+  EventsEmit(MCP_UI_EVENT_ACK, payload);
 };
 
 interface UseIDEEventsProps {
@@ -70,6 +82,7 @@ interface UseIDEEventsProps {
   onWindowCloseAll?: IDEEventHandler<[]>;
   onWindowCheckpointCreate?: IDEEventHandler<[unknown]>;
   onWindowCheckpointRestore?: IDEEventHandler<[unknown]>;
+  onSurfaceRead?: IDEEventHandler<[unknown]>;
   onAppearancePreviewStart?: IDEEventHandler<[unknown]>;
   onAppearancePreviewPatch?: IDEEventHandler<[unknown]>;
   onAppearancePreviewApply?: IDEEventHandler<[]>;
@@ -113,6 +126,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     onWindowCloseAll,
     onWindowCheckpointCreate,
     onWindowCheckpointRestore,
+    onSurfaceRead,
     onAppearancePreviewStart,
     onAppearancePreviewPatch,
     onAppearancePreviewApply,
@@ -166,11 +180,17 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
           const maybePromise = handler(...(normalized.args as T));
           if (
             maybePromise &&
-            typeof (maybePromise as Promise<void>).then === "function"
+            typeof (maybePromise as Promise<unknown>).then === "function"
           ) {
-            void (maybePromise as Promise<void>)
-              .then(() => {
-                emitMCPEventAck(normalized.requestId, eventName, true);
+            void (maybePromise as Promise<unknown>)
+              .then((result) => {
+                emitMCPEventAck(
+                  normalized.requestId,
+                  eventName,
+                  true,
+                  undefined,
+                  result,
+                );
               })
               .catch((error) => {
                 emitMCPEventAck(normalized.requestId, eventName, false, error);
@@ -178,7 +198,13 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
             return;
           }
 
-          emitMCPEventAck(normalized.requestId, eventName, true);
+          emitMCPEventAck(
+            normalized.requestId,
+            eventName,
+            true,
+            undefined,
+            maybePromise,
+          );
         } catch (error) {
           emitMCPEventAck(normalized.requestId, eventName, false, error);
         }
@@ -264,6 +290,12 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
         onWindowCheckpointRestoreWrapped,
       );
       listeners.push(() => EventsOff("ide:window:checkpoint:restore"));
+    }
+
+    const onSurfaceReadWrapped = wrapHandler("ide:surface:read", onSurfaceRead);
+    if (onSurfaceReadWrapped) {
+      EventsOn("ide:surface:read", onSurfaceReadWrapped);
+      listeners.push(() => EventsOff("ide:surface:read"));
     }
 
     const onAppearancePreviewStartWrapped = wrapHandler(
@@ -486,6 +518,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
     onWindowCloseAll,
     onWindowCheckpointCreate,
     onWindowCheckpointRestore,
+    onSurfaceRead,
     onAppearancePreviewStart,
     onAppearancePreviewPatch,
     onAppearancePreviewApply,

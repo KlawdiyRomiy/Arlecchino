@@ -6,7 +6,13 @@ import type {
   PanelVisibility,
 } from "../components/layout/MainLayout.types";
 import type { PreviewWindow } from "../stores/previewWindowStore";
-import { buildSurfaceSessions, type SurfaceSession } from "./surfaceRuntime";
+import {
+  buildSurfaceSessions,
+  type SurfaceAppletKind,
+  type SurfaceHostMode,
+  type SurfaceSession,
+  type SurfaceSource,
+} from "./surfaceRuntime";
 import {
   createSurfaceRuntimeEvent,
   dedupeSurfaceRuntimeEvents,
@@ -21,6 +27,44 @@ export interface SurfaceRuntimeSnapshot {
   revision: number;
 }
 
+export interface SurfaceRuntimeFocusEntry {
+  surfaceId: string;
+  at: number;
+  reason: "host-sync" | "runtime-event";
+}
+
+export interface SurfaceRuntimeFocusState {
+  activeSurfaceId: string | null;
+  activeSurface?: SurfaceSession;
+  previousSurfaceId: string | null;
+  history: readonly SurfaceRuntimeFocusEntry[];
+}
+
+export interface SurfaceRuntimeReadOptions {
+  eventLimit?: number;
+  includeEvents?: boolean;
+}
+
+export interface SurfaceRuntimeReadModel {
+  revision: number;
+  activeSurfaceId: string | null;
+  activeSurface?: SurfaceSession;
+  openSurfaceCount: number;
+  sessionIds: readonly string[];
+  sessions: readonly SurfaceSession[];
+  byId: Readonly<Record<string, SurfaceSession>>;
+  sessionsBySource: Readonly<Record<SurfaceSource, readonly string[]>>;
+  sessionsByHostMode: Readonly<
+    Partial<Record<SurfaceHostMode, readonly string[]>>
+  >;
+  sessionsByAppletKind: Readonly<
+    Partial<Record<SurfaceAppletKind, readonly string[]>>
+  >;
+  focus: SurfaceRuntimeFocusState;
+  events: readonly SurfaceRuntimeEvent[];
+  eventCursor: number | null;
+}
+
 export interface SurfaceRuntimeHostState {
   panels: PanelVisibility;
   panelConfigs: PanelConfigs;
@@ -32,6 +76,7 @@ export interface SurfaceRuntimeHostState {
 const listeners = new Set<() => void>();
 const eventListeners = new Set<() => void>();
 const MAX_SURFACE_RUNTIME_EVENTS = 100;
+const MAX_SURFACE_RUNTIME_FOCUS_ENTRIES = 50;
 
 let snapshotFingerprint = "";
 let snapshot: SurfaceRuntimeSnapshot = {
@@ -43,6 +88,7 @@ let snapshot: SurfaceRuntimeSnapshot = {
 let hasSyncedSurfaceRuntimeHost = false;
 let lastSurfaceRuntimeEventAt = 0;
 let eventHistory: readonly SurfaceRuntimeEvent[] = [];
+let focusHistory: readonly SurfaceRuntimeFocusEntry[] = [];
 
 const cloneSurfaceSession = (session: SurfaceSession): SurfaceSession => ({
   ...session,
@@ -58,6 +104,10 @@ const cloneSurfaceRuntimeEvent = (
   geometry: event.geometry ? { ...event.geometry } : undefined,
 });
 
+const cloneSurfaceRuntimeFocusEntry = (
+  entry: SurfaceRuntimeFocusEntry,
+): SurfaceRuntimeFocusEntry => ({ ...entry });
+
 const buildSnapshot = (
   sessions: readonly SurfaceSession[],
 ): SurfaceRuntimeSnapshot => {
@@ -70,7 +120,7 @@ const buildSnapshot = (
     {},
   );
   const activeSurfaceId =
-    clonedSessions.find((session) => session.active)?.id ?? null;
+    clonedSessions.filter((session) => session.active).at(-1)?.id ?? null;
 
   return {
     sessions: clonedSessions,
@@ -107,6 +157,96 @@ export const getSurfaceRuntimeSnapshot = (): SurfaceRuntimeSnapshot => snapshot;
 export const getSurfaceRuntimeEventHistory = (): SurfaceRuntimeEvent[] =>
   eventHistory.map(cloneSurfaceRuntimeEvent);
 
+export const getSurfaceRuntimeFocusState = (): SurfaceRuntimeFocusState => {
+  const history = focusHistory.map(cloneSurfaceRuntimeFocusEntry);
+  const previousSurfaceId = history.at(-2)?.surfaceId ?? null;
+  const activeSurface = snapshot.activeSurfaceId
+    ? snapshot.byId[snapshot.activeSurfaceId]
+    : undefined;
+
+  return {
+    activeSurfaceId: snapshot.activeSurfaceId,
+    activeSurface: activeSurface
+      ? cloneSurfaceSession(activeSurface)
+      : undefined,
+    previousSurfaceId,
+    history,
+  };
+};
+
+const boundedEventLimit = (limit: number | undefined): number => {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) {
+    return 25;
+  }
+  return Math.min(Math.max(Math.trunc(limit), 0), MAX_SURFACE_RUNTIME_EVENTS);
+};
+
+const indexSessionIds = <Key extends string>(
+  sessions: readonly SurfaceSession[],
+  getKey: (session: SurfaceSession) => Key | undefined,
+): Partial<Record<Key, string[]>> =>
+  sessions.reduce<Partial<Record<Key, string[]>>>((accumulator, session) => {
+    const key = getKey(session);
+    if (!key) {
+      return accumulator;
+    }
+    accumulator[key] = [...(accumulator[key] ?? []), session.id];
+    return accumulator;
+  }, {});
+
+export const getSurfaceRuntimeReadModel = (
+  options: SurfaceRuntimeReadOptions = {},
+): SurfaceRuntimeReadModel => {
+  const includeEvents = options.includeEvents ?? true;
+  const eventLimit = boundedEventLimit(options.eventLimit);
+  const sessions = snapshot.sessions.map(cloneSurfaceSession);
+  const byId = sessions.reduce<Record<string, SurfaceSession>>(
+    (accumulator, session) => {
+      accumulator[session.id] = cloneSurfaceSession(session);
+      return accumulator;
+    },
+    {},
+  );
+  const activeSurface = snapshot.activeSurfaceId
+    ? snapshot.byId[snapshot.activeSurfaceId]
+    : undefined;
+  const sessionIds = sessions.map((session) => session.id);
+  const sessionsBySource: Record<SurfaceSource, string[]> = {
+    panel: [],
+    preview: [],
+    main: [],
+  };
+  sessions.forEach((session) => {
+    sessionsBySource[session.source].push(session.id);
+  });
+
+  return {
+    revision: snapshot.revision,
+    activeSurfaceId: snapshot.activeSurfaceId,
+    activeSurface: activeSurface
+      ? cloneSurfaceSession(activeSurface)
+      : undefined,
+    openSurfaceCount: sessions.length,
+    sessionIds,
+    sessions,
+    byId,
+    sessionsBySource,
+    sessionsByHostMode: indexSessionIds(
+      sessions,
+      (session) => session.hostMode,
+    ),
+    sessionsByAppletKind: indexSessionIds(
+      sessions,
+      (session) => session.appletKind,
+    ),
+    focus: getSurfaceRuntimeFocusState(),
+    events: includeEvents
+      ? eventHistory.slice(-eventLimit).map(cloneSurfaceRuntimeEvent)
+      : [],
+    eventCursor: eventHistory.at(-1)?.at ?? null,
+  };
+};
+
 export const subscribeSurfaceRuntime = (listener: () => void): (() => void) => {
   listeners.add(listener);
   return () => {
@@ -129,6 +269,31 @@ const nextSurfaceRuntimeEventTimestamp = (): number => {
   return lastSurfaceRuntimeEventAt;
 };
 
+const recordSurfaceRuntimeFocus = (
+  surfaceId: string | null,
+  at: number,
+  reason: SurfaceRuntimeFocusEntry["reason"],
+): boolean => {
+  if (!surfaceId) {
+    return false;
+  }
+
+  const lastEntry = focusHistory.at(-1);
+  if (lastEntry?.surfaceId === surfaceId) {
+    return false;
+  }
+
+  focusHistory = [
+    ...focusHistory,
+    {
+      surfaceId,
+      at,
+      reason,
+    },
+  ].slice(-MAX_SURFACE_RUNTIME_FOCUS_ENTRIES);
+  return true;
+};
+
 export const recordSurfaceRuntimeEvent = (
   input: CreateSurfaceRuntimeEventInput,
 ): SurfaceRuntimeEvent => {
@@ -140,7 +305,14 @@ export const recordSurfaceRuntimeEvent = (
     ...eventHistory,
     cloneSurfaceRuntimeEvent(event),
   ]).slice(-MAX_SURFACE_RUNTIME_EVENTS);
+  const focusChanged =
+    event.type === "surface:focus" && event.ok
+      ? recordSurfaceRuntimeFocus(event.surfaceId, event.at, "runtime-event")
+      : false;
   eventListeners.forEach((listener) => listener());
+  if (focusChanged) {
+    listeners.forEach((listener) => listener());
+  }
   return cloneSurfaceRuntimeEvent(event);
 };
 
@@ -291,6 +463,13 @@ export const syncSurfaceRuntimeFromHost = (
   snapshotFingerprint = nextFingerprint;
   snapshot = buildSnapshot(sessions);
   hasSyncedSurfaceRuntimeHost = true;
+  if (snapshot.activeSurfaceId) {
+    recordSurfaceRuntimeFocus(
+      snapshot.activeSurfaceId,
+      nextSurfaceRuntimeEventTimestamp(),
+      "host-sync",
+    );
+  }
 
   if (shouldRecordTransitions) {
     deriveSurfaceRuntimeTransitionEvents(
