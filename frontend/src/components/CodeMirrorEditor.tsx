@@ -8,6 +8,8 @@ import React, {
 import CodeMirror, { ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import {
   EditorView,
+  ViewPlugin,
+  ViewUpdate,
   keymap,
   Decoration,
   DecorationSet,
@@ -178,10 +180,125 @@ type CompletionPayload = {
 };
 const SIGNATURE_HIDE_MS = 2400;
 const COMPLETION_CACHE_TTL_MS = 2000;
+const MINIMAP_GUTTER_SELECTOR = ":scope > .cm-minimap-gutter";
+const MINIMAP_DOCK_OFFSET_PROPERTY = "--cm-minimap-dock-offset";
 const editorCanvasStyle = {
   background: editorCanvasBackground,
   boxShadow: "none",
 } as const;
+
+const getEditorScaleX = (view: EditorView): number => {
+  const rootScale = Number.parseFloat(
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--ui-scale")
+      .trim(),
+  );
+  if (Number.isFinite(rootScale) && rootScale > 0) {
+    return rootScale;
+  }
+
+  return view.scaleX || 1;
+};
+
+const getCurrentMinimapDockOffset = (gutter: HTMLElement): number => {
+  const offset = Number.parseFloat(
+    gutter.style.getPropertyValue(MINIMAP_DOCK_OFFSET_PROPERTY),
+  );
+  return Number.isFinite(offset) ? offset : 0;
+};
+
+const minimapDockingExtension = ViewPlugin.fromClass(
+  class {
+    private animationFrame: number | null = null;
+    private mutationObserver: MutationObserver | null = null;
+    private resizeObserver: ResizeObserver | null = null;
+
+    constructor(private readonly view: EditorView) {
+      if (typeof ResizeObserver !== "undefined") {
+        this.resizeObserver = new ResizeObserver(() => this.requestMeasure());
+        this.resizeObserver.observe(view.dom);
+        this.resizeObserver.observe(view.scrollDOM);
+      }
+
+      if (typeof MutationObserver !== "undefined") {
+        this.mutationObserver = new MutationObserver(() =>
+          this.requestMeasure(),
+        );
+        this.mutationObserver.observe(document.documentElement, {
+          attributeFilter: ["style"],
+          attributes: true,
+        });
+      }
+
+      this.requestMeasure();
+    }
+
+    update(update: ViewUpdate) {
+      if (
+        update.geometryChanged ||
+        update.viewportChanged ||
+        update.docChanged ||
+        update.transactions.length > 0
+      ) {
+        this.requestMeasure();
+      }
+    }
+
+    requestMeasure() {
+      if (this.animationFrame !== null) {
+        return;
+      }
+
+      this.animationFrame = requestAnimationFrame(() => {
+        this.animationFrame = null;
+        this.updateDockOffset();
+      });
+    }
+
+    private updateDockOffset() {
+      const gutter = this.view.scrollDOM.querySelector<HTMLElement>(
+        MINIMAP_GUTTER_SELECTOR,
+      );
+      if (!gutter) {
+        return;
+      }
+
+      const scaleX = getEditorScaleX(this.view);
+      const scrollerRect = this.view.scrollDOM.getBoundingClientRect();
+      const gutterRect = gutter.getBoundingClientRect();
+      const targetRight =
+        scrollerRect.left + this.view.scrollDOM.clientWidth * scaleX;
+      const currentOffset = getCurrentMinimapDockOffset(gutter);
+      const dockOffset =
+        currentOffset + (targetRight - gutterRect.right) / scaleX;
+
+      gutter.style.setProperty(
+        MINIMAP_DOCK_OFFSET_PROPERTY,
+        `${Math.round(dockOffset * 100) / 100}px`,
+      );
+    }
+
+    destroy() {
+      if (this.animationFrame !== null) {
+        cancelAnimationFrame(this.animationFrame);
+      }
+      this.resizeObserver?.disconnect();
+      this.mutationObserver?.disconnect();
+
+      const gutter = this.view.scrollDOM.querySelector<HTMLElement>(
+        MINIMAP_GUTTER_SELECTOR,
+      );
+      gutter?.style.removeProperty(MINIMAP_DOCK_OFFSET_PROPERTY);
+    }
+  },
+  {
+    eventHandlers: {
+      scroll() {
+        this.requestMeasure();
+      },
+    },
+  },
+);
 
 const SOURCE_LABELS: Record<string, string> = {
   lsp: "LSP",
@@ -1987,6 +2104,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         displayText: "blocks",
         showOverlay: "always",
       })),
+      minimapDockingExtension,
     );
   }
 

@@ -503,6 +503,11 @@ export const codeEditorStyles = EditorView.theme(
     ".cm-git-gutter": {
       backgroundColor: editorPalette.gutter,
     },
+    ".cm-minimap-gutter": {
+      transform: "translateX(var(--cm-minimap-dock-offset, 0px))",
+      willChange: "transform",
+      zIndex: "1",
+    },
     "@keyframes codeEditorPopupIn": {
       "0%": {
         opacity: "0",
