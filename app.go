@@ -30,6 +30,8 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
+const envDisableMCPBootstrap = "ARLECCHINO_DISABLE_MCP_BOOTSTRAP"
+
 type App struct {
 	ctx                context.Context
 	wailsApp           *application.App
@@ -146,6 +148,10 @@ func (a *App) shutdown(_ context.Context) {
 }
 
 func (a *App) ensureMCPConfigs() {
+	if envFlagEnabled(envDisableMCPBootstrap) {
+		return
+	}
+
 	go func() {
 		exe, err := os.Executable()
 		if err != nil {
@@ -157,6 +163,15 @@ func (a *App) ensureMCPConfigs() {
 		}
 		mcp.EnsureUniversalUserMCPBootstrap(home, exe)
 	}()
+}
+
+func envFlagEnabled(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *App) Greet(name string) string {

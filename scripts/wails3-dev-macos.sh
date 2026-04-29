@@ -1,6 +1,9 @@
 #!/bin/zsh
 
 set -euo pipefail
+unsetopt BG_NICE 2>/dev/null || true
+unsetopt XTRACE 2>/dev/null || true
+unsetopt VERBOSE 2>/dev/null || true
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 EXPECTED_BRANCH="feature/wails3-shell-spike"
@@ -37,7 +40,87 @@ OUTPUT="${ARLE_WAILS3_OUTPUT:-$BUILD_DIR/bin/$APP_NAME-v3}"
 export GOCACHE="${ARLE_WAILS3_GOCACHE:-$BUILD_DIR/go-build-cache}"
 BUILD_ONLY="0"
 SKIP_FRONTEND="0"
+KEEP_STALE_MCP="${ARLE_WAILS3_KEEP_STALE_MCP:-0}"
 APP_ARGS=()
+app_pid=""
+
+find_mcp_server_pids_for_output() {
+  local target="$1"
+  if [[ -z "${target:-}" ]]; then
+    return 0
+  fi
+
+  ps -axo pid=,command= | awk -v target="$target" -v self="$$" '
+    {
+      pid = $1
+      command = $0
+      sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "", command)
+      if (pid != self && index(command, target) > 0 && index(command, " mcp-server") > 0) {
+        print pid
+      }
+    }
+  '
+}
+
+terminate_pid() {
+  local pid="$1"
+  if [[ -z "${pid:-}" || "$pid" == "$$" ]]; then
+    return 0
+  fi
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  kill "$pid" >/dev/null 2>&1 || true
+
+  local attempt
+  for attempt in {1..20}; do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  kill -KILL "$pid" >/dev/null 2>&1 || true
+  wait "$pid" 2>/dev/null || true
+}
+
+cleanup_stale_mcp_servers() {
+  if [[ "$KEEP_STALE_MCP" == "1" ]]; then
+    return 0
+  fi
+
+  local raw_pids
+  raw_pids="$(find_mcp_server_pids_for_output "$OUTPUT" | sed '/^[[:space:]]*$/d')"
+  if [[ -z "${raw_pids:-}" ]]; then
+    return 0
+  fi
+
+  local pids
+  pids=("${(@f)raw_pids}")
+  if [[ ${#pids[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  echo "Stopping stale Wails v3 MCP server processes for $OUTPUT: ${pids[*]}" >&2
+  local pid
+  for pid in "${pids[@]}"; do
+    terminate_pid "$pid"
+  done
+}
+
+cleanup() {
+  local exit_code="${1:-$?}"
+  trap - EXIT INT TERM
+
+  if [[ -n "${app_pid:-}" ]]; then
+    terminate_pid "$app_pid"
+    app_pid=""
+  fi
+
+  cleanup_stale_mcp_servers
+  exit "$exit_code"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -70,6 +153,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+trap 'cleanup 130' INT
+trap 'cleanup 143' TERM
+trap 'cleanup $?' EXIT
+
+cleanup_stale_mcp_servers
+
 if [[ "$SKIP_FRONTEND" != "1" ]]; then
   cd "$ROOT_DIR/frontend"
   npm run build
@@ -85,4 +174,11 @@ if [[ "$BUILD_ONLY" = "1" ]]; then
   exit 0
 fi
 
-exec "$OUTPUT" "${APP_ARGS[@]}"
+"$OUTPUT" "${APP_ARGS[@]}" &
+app_pid="$!"
+set +e
+wait "$app_pid"
+exit_code="$?"
+set -e
+app_pid=""
+exit "$exit_code"

@@ -88,6 +88,21 @@ Bindings policy для этой ветки теперь repo-local: `./scripts/w
 Frontend все равно держит runtime fallback через `main.App.*`/`arlecchino.App.*`, чтобы
 dev-сборки со stale bindings не ломали shell.
 
+Baseline hardening для этой ветки теперь имеет отдельный checkpoint:
+
+- `8cdbb8b Checkpoint Wails v3 shell baseline` - зафиксирован shell/surface/runtime
+  baseline перед дальнейшим hardening.
+- `./scripts/wails3-dev-macos.sh` больше не делает tail `exec` в app binary: runner
+  владеет child process, ставит `INT`/`TERM`/`EXIT` cleanup и завершает stale
+  `mcp-server` процессы, запущенные из текущего Wails v3 output path.
+- Orphan cleanup ограничен текущим output binary. Для отладки можно временно отключить
+  его через `ARLE_WAILS3_KEEP_STALE_MCP=1`.
+- UI automation target вынесен в `./scripts/wails3-ui-launch-target-macos.sh`. Скрипт
+  печатает shell-readable dev или packaged launch target, включая executable, cwd,
+  `ARLECCHINO_MCP_BRIDGE_METADATA_PATH` и команду запуска.
+- Automation launch target выставляет `ARLECCHINO_DISABLE_MCP_BOOTSTRAP=1`, чтобы
+  smoke/Playwright запуски не переписывали пользовательские MCP bootstrap configs.
+
 ## Current Project Anchors
 
 Главные точки текущей архитектуры:
@@ -1185,15 +1200,18 @@ risky action, user can return layout.
    promote, close, state, dedupe and failure payloads.
 6. Done: wire Surface Runtime events into the existing panel/preview actions so the
    public session boundary is observable without changing current UI behavior.
-7. Next: adapt ready existing elements to Wails v3 shell capabilities first, with Arlehub
+7. Done: Baseline v3 hardening. Dev runner now owns app lifecycle cleanup, shuts down
+   stale output-scoped `mcp-server` processes, and exposes a dev/packaged launch target
+   for UI automation.
+8. Next: adapt ready existing elements to Wails v3 shell capabilities first, with Arlehub
    intentionally out of scope until the base shell layer is stable.
-8. Later: build Arlehub GUI hub mode as central surface using existing floating helpers.
-9. Later: add Agent Flight Recorder and wire it to Arlehub timeline.
-10. Later: add Applet Promotion Chain up to fullscreen/floating/snapped first.
-11. Later: spike Wails v3 detached windows with Window Lease System.
-12. Later: add Protocol Router, file associations and single instance.
-13. Later: add Background Job Broker, tray and notifications.
-14. Later: delay auto-updates/material/backdrop/dock badges until shell behavior is stable.
+9. Later: build Arlehub GUI hub mode as central surface using existing floating helpers.
+10. Later: add Agent Flight Recorder and wire it to Arlehub timeline.
+11. Later: add Applet Promotion Chain up to fullscreen/floating/snapped first.
+12. Later: spike Wails v3 detached windows with Window Lease System.
+13. Later: add Protocol Router, file associations and single instance.
+14. Later: add Background Job Broker, tray and notifications.
+15. Later: delay auto-updates/material/backdrop/dock badges until shell behavior is stable.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
