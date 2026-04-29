@@ -2279,6 +2279,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       openCommandDispatcher,
       openDebugDialog,
       openFileFromPath,
+      onProjectOpen,
       openRunDialog,
       openSettings,
       openTUIAssistPanel,

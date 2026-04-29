@@ -19,7 +19,7 @@ export interface MainLayoutProps {
   children: ReactNode;
   onFileOpen?: MainEditorFileOpenHandler;
   onBackToWelcome?: () => void;
-  onProjectOpen?: (path: string) => void;
+  onProjectOpen?: (path: string) => void | Promise<void>;
   onSwitchProject?: (id: string, direction?: number) => void;
   onCloseProject?: (id: string) => void;
   onPerspectiveOpen?: () => void;

@@ -88,6 +88,7 @@ func TestToolService_ToolDefinitionsAlwaysIncludeBridgeTools(t *testing.T) {
 		"agent_memory.context",
 		"ide_ui.emit_event",
 		"ide_ui.surface_read",
+		"ide_ui.open_intent",
 		"ide_ui.open_file_panel",
 		"ide_ui.preview_open",
 		"ide_ui.preview_navigate",
@@ -110,6 +111,76 @@ func TestToolService_ToolDefinitionsAlwaysIncludeBridgeTools(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "requires live IDE bridge") {
 		t.Fatalf("ide_backend.project_status error = %v, want contains %q", err, "requires live IDE bridge")
+	}
+}
+
+func TestToolService_OpenIntentEmitsConfirmedOpenIntentEvent(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main.go")
+	if err := os.WriteFile(filePath, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(main.go) error = %v", err)
+	}
+	resolvedFilePath, err := filepath.EvalSymlinks(filePath)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(main.go) error = %v", err)
+	}
+
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "open-intent")
+	bridge := newFakeBridge()
+	bridge.response["ui.emit_event"] = map[string]any{
+		"emitted":   true,
+		"confirmed": true,
+	}
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "open-intent",
+		"ttl_seconds":   60,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_ui.open_intent", map[string]any{
+		"kind": "file.open",
+		"path": "main.go",
+		"line": 3,
+	})
+	if err != nil {
+		t.Fatalf("open_intent error = %v", err)
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("open_intent result type = %T, want map[string]any", result)
+	}
+	if resultMap["mcpRequestId"] == "" {
+		t.Fatalf("open_intent result missing mcpRequestId: %#v", resultMap)
+	}
+
+	calls := bridge.methodCalls("ui.emit_event")
+	if len(calls) != 1 {
+		t.Fatalf("ui.emit_event call count = %d, want 1", len(calls))
+	}
+	if calls[0].Params["event"] != "ide:intent:open" {
+		t.Fatalf("event = %v, want ide:intent:open", calls[0].Params["event"])
+	}
+	payload, ok := calls[0].Params["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", calls[0].Params["payload"])
+	}
+	if payload["kind"] != "openFile" {
+		t.Fatalf("payload kind = %v, want openFile", payload["kind"])
+	}
+	if payload["path"] != resolvedFilePath {
+		t.Fatalf("payload path = %v, want %v", payload["path"], resolvedFilePath)
+	}
+	if payload["line"] != 3 {
+		t.Fatalf("payload line = %v, want 3", payload["line"])
+	}
+	if payload["source"] != "mcp" {
+		t.Fatalf("payload source = %v, want mcp", payload["source"])
 	}
 }
 

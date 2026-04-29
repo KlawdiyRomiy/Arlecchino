@@ -47,6 +47,15 @@ async function loadRuntimeContracts() {
           openNativeContextMenu,
         } from "./src/shell/nativeContextMenu.ts";
         export {
+          clearPendingOpenIntents,
+          flushPendingOpenIntents,
+          getPendingOpenIntents,
+          OPEN_INTENT_EVENT,
+          parseOpenIntentPayload,
+          registerOpenIntentDispatcher,
+          routeOpenIntent,
+        } from "./src/shell/openIntentRouter.ts";
+        export {
           openExternalUrlWithCapability,
         } from "./src/shell/browser.ts";
         export {
@@ -315,6 +324,137 @@ test("layout event parsers keep MCP preview and panel payload contracts canonica
     focusRequested: true,
   });
   assert.equal(focusId, "preview-test");
+});
+
+test("open intent router normalizes typed project file preview and focus intents", async () => {
+  const { OPEN_INTENT_EVENT, parseOpenIntentPayload } =
+    await loadRuntimeContracts();
+
+  assert.equal(OPEN_INTENT_EVENT, "ide:intent:open");
+  assert.deepEqual(
+    parseOpenIntentPayload({
+      action: "project.open",
+      projectPath: "/workspace/project",
+      source: "single-instance",
+    }),
+    {
+      kind: "openProject",
+      projectPath: "/workspace/project",
+      source: "single-instance",
+      id: undefined,
+    },
+  );
+  assert.deepEqual(
+    parseOpenIntentPayload({
+      kind: "open_file",
+      filePath: "/workspace/src/main.ts",
+      line: 7,
+    }),
+    {
+      kind: "openFile",
+      path: "/workspace/src/main.ts",
+      line: 7,
+      id: undefined,
+      source: undefined,
+    },
+  );
+  assert.deepEqual(
+    parseOpenIntentPayload({
+      type: "preview.open",
+      id: "preview-doc",
+      surface: "browser",
+      url: "http://localhost:5173",
+      mode: "side",
+      side: "right",
+      payload: { title: "ignored payload title" },
+    }),
+    {
+      kind: "openPreview",
+      id: "preview-doc",
+      source: undefined,
+      preview: {
+        id: "preview-doc",
+        surface: "browser",
+        title: undefined,
+        payload: {
+          title: "ignored payload title",
+          url: "http://localhost:5173",
+        },
+        mode: "snapped",
+        position: "right",
+        side: "right",
+        width: undefined,
+        height: undefined,
+        x: undefined,
+        y: undefined,
+        pinned: undefined,
+      },
+    },
+  );
+  assert.deepEqual(
+    parseOpenIntentPayload({
+      intent: "surface.focus",
+      surfaceId: "preview:preview-doc",
+    }),
+    {
+      kind: "focusSurface",
+      surfaceId: "preview:preview-doc",
+      previewWindowId: undefined,
+      panelId: undefined,
+      id: undefined,
+      source: undefined,
+    },
+  );
+});
+
+test("open intent router queues until dispatcher is ready and preserves order", async () => {
+  const {
+    clearPendingOpenIntents,
+    flushPendingOpenIntents,
+    getPendingOpenIntents,
+    registerOpenIntentDispatcher,
+    routeOpenIntent,
+  } = await loadRuntimeContracts();
+
+  clearPendingOpenIntents();
+  const first = await routeOpenIntent({
+    kind: "openFile",
+    path: "/workspace/first.ts",
+  });
+  const second = await routeOpenIntent({
+    kind: "openPreview",
+    surface: "browser",
+    url: "http://localhost:5173",
+  });
+
+  assert.equal(first.status, "queued");
+  assert.equal(second.status, "queued");
+  assert.equal(getPendingOpenIntents().length, 2);
+
+  const calls = [];
+  const unregister = registerOpenIntentDispatcher({
+    openProject: (projectPath) => calls.push(["project", projectPath]),
+    openFile: (path, line) => calls.push(["file", path, line]),
+    openPreview: (input) =>
+      calls.push(["preview", input.surface, input.payload.url]),
+    focusSurface: (intent) => calls.push(["focus", intent.surfaceId]),
+  });
+  await flushPendingOpenIntents();
+
+  assert.deepEqual(calls, [
+    ["file", "/workspace/first.ts", undefined],
+    ["preview", "browser", "http://localhost:5173"],
+  ]);
+  assert.equal(getPendingOpenIntents().length, 0);
+
+  const immediate = await routeOpenIntent({
+    kind: "focusSurface",
+    surfaceId: "panel:explorer",
+  });
+  assert.equal(immediate.status, "dispatched");
+  assert.deepEqual(calls.at(-1), ["focus", "panel:explorer"]);
+
+  unregister();
 });
 
 test("surface runtime store publishes read-only snapshots for host sync", async () => {

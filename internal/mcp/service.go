@@ -690,6 +690,8 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 		return s.bridgeEmitUIEvent(eventName, args["payload"])
 	case "ide_ui.surface_read":
 		return s.bridgeSurfaceRead(args)
+	case "ide_ui.open_intent":
+		return s.bridgeOpenIntent(args)
 	case "ide_ui.open_file_panel":
 		return s.bridgeOpenFilePanel(args)
 	case "ide_ui.preview_open":

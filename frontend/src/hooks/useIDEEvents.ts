@@ -71,6 +71,7 @@ const emitMCPEventAck = (
 };
 
 interface UseIDEEventsProps {
+  onOpenIntent?: IDEEventHandler<[unknown]>;
   onOpenPanel?: IDEEventHandler<[unknown]>;
   onClosePanel?: IDEEventHandler<[unknown]>;
   onMovePanel?: IDEEventHandler<[unknown]>;
@@ -115,6 +116,7 @@ interface UseIDEEventsProps {
 
 export function useIDEEvents(handlers: UseIDEEventsProps) {
   const {
+    onOpenIntent,
     onOpenPanel,
     onClosePanel,
     onMovePanel,
@@ -210,6 +212,12 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
         }
       };
     };
+
+    const onOpenIntentWrapped = wrapHandler("ide:intent:open", onOpenIntent);
+    if (onOpenIntentWrapped) {
+      EventsOn("ide:intent:open", onOpenIntentWrapped);
+      listeners.push(() => EventsOff("ide:intent:open"));
+    }
 
     const onOpenPanelWrapped = wrapHandler("ide:panel:open", onOpenPanel);
     if (onOpenPanelWrapped) {
@@ -507,6 +515,7 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
       listeners.forEach((cleanup) => cleanup());
     };
   }, [
+    onOpenIntent,
     onOpenPanel,
     onClosePanel,
     onMovePanel,

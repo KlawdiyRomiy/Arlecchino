@@ -8,6 +8,11 @@ import {
 
 import { useIDEEvents } from "../../hooks/useIDEEvents";
 import {
+  registerOpenIntentDispatcher,
+  routeOpenIntent,
+  type FocusSurfaceIntent,
+} from "../../shell/openIntentRouter";
+import {
   getSurfaceRuntimeReadModel,
   type SurfaceRuntimeReadOptions,
 } from "../../surfaces/surfaceRuntimeStore";
@@ -133,6 +138,7 @@ interface UseMainLayoutPanelEventsOptions {
   openCommandDispatcher: () => void;
   openDebugDialog: () => void;
   openFileFromPath: (path: string, line?: number) => Promise<void> | void;
+  onProjectOpen?: (projectPath: string) => Promise<void> | void;
   openRunDialog: () => void;
   openSettings: () => void;
   openTUIAssistPanel: UnknownEventHandler;
@@ -196,6 +202,7 @@ export const useMainLayoutPanelEvents = ({
   openCommandDispatcher,
   openDebugDialog,
   openFileFromPath,
+  onProjectOpen,
   openRunDialog,
   openSettings,
   openTUIAssistPanel,
@@ -578,6 +585,56 @@ export const useMainLayoutPanelEvents = ({
     );
   }, []);
 
+  const handleOpenIntentFocusSurface = useCallback(
+    (intent: FocusSurfaceIntent) => {
+      const surfaceId = intent.surfaceId?.trim();
+      const previewWindowId =
+        intent.previewWindowId ||
+        (surfaceId?.startsWith("preview:")
+          ? surfaceId.slice("preview:".length)
+          : undefined);
+      if (previewWindowId) {
+        handlePreviewWindowFocusEvent({ id: previewWindowId });
+        return;
+      }
+
+      const panelId =
+        intent.panelId ||
+        (surfaceId?.startsWith("panel:")
+          ? surfaceId.slice("panel:".length)
+          : undefined);
+      if (panelId) {
+        handlePanelOpenEvent({ panel: panelId, focus: true });
+      }
+    },
+    [handlePanelOpenEvent, handlePreviewWindowFocusEvent],
+  );
+
+  useEffect(() => {
+    return registerOpenIntentDispatcher({
+      openProject: async (projectPath) => {
+        if (!onProjectOpen) {
+          throw new Error("Project open handler is unavailable.");
+        }
+        await onProjectOpen(projectPath);
+      },
+      openFile: async (path, line) => {
+        await openFileFromPath(path, line);
+      },
+      openPreview: async (input) => {
+        await handlePreviewWindowOpenEvent(input);
+      },
+      focusSurface: async (intent) => {
+        handleOpenIntentFocusSurface(intent);
+      },
+    });
+  }, [
+    handleOpenIntentFocusSurface,
+    handlePreviewWindowOpenEvent,
+    onProjectOpen,
+    openFileFromPath,
+  ]);
+
   const toggleNamedPanel = useCallback(
     (panelId: PanelId) => {
       const isVisible = panelsRef.current[panelId];
@@ -700,6 +757,7 @@ export const useMainLayoutPanelEvents = ({
   }, [executeApplicationMenuAction]);
 
   useIDEEvents({
+    onOpenIntent: routeOpenIntent,
     onOpenPanel: handlePanelOpenEvent,
     onClosePanel: handlePanelCloseEvent,
     onMovePanel: handlePanelMoveEvent,
