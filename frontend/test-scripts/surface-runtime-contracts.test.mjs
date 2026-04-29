@@ -42,6 +42,11 @@ async function loadRuntimeContracts() {
           syncSurfaceRuntimeFromHost,
         } from "./src/surfaces/surfaceRuntimeStore.ts";
         export {
+          buildNativeContextMenuItems,
+          getContextActionId,
+          openNativeContextMenu,
+        } from "./src/shell/nativeContextMenu.ts";
+        export {
           canUseShellCapability,
           getFallbackShellCapabilities,
           getShellCapabilitiesSnapshot,
@@ -703,6 +708,119 @@ test("shell capabilities expose conservative fallback statuses and backend sync"
   assert.deepEqual(observedRevisions, [nextSnapshot.revision]);
 
   unsubscribe();
+});
+
+test("native context menu adapter serializes current actions and bridge requests", async () => {
+  const {
+    buildNativeContextMenuItems,
+    getContextActionId,
+    openNativeContextMenu,
+  } = await loadRuntimeContracts();
+
+  const items = buildNativeContextMenuItems([
+    {
+      label: "Open File",
+      onSelect: () => {},
+    },
+    { separator: true },
+    {
+      key: "copy-path",
+      label: "Copy Path",
+      onSelect: () => {},
+    },
+    {
+      actionId: "danger.delete",
+      label: "Move to Trash",
+      danger: true,
+      disabled: true,
+    },
+    {
+      label: "Hidden",
+      hidden: true,
+    },
+  ]);
+
+  assert.deepEqual(items, [
+    {
+      id: "open-file-0",
+      label: "Open File",
+      disabled: undefined,
+      danger: undefined,
+      hidden: undefined,
+    },
+    {
+      id: "separator-1",
+      separator: true,
+      hidden: undefined,
+    },
+    {
+      id: "copy-path",
+      label: "Copy Path",
+      disabled: undefined,
+      danger: undefined,
+      hidden: undefined,
+    },
+    {
+      id: "danger.delete",
+      label: "Move to Trash",
+      disabled: true,
+      danger: true,
+      hidden: undefined,
+    },
+    {
+      id: "hidden-4",
+      label: "Hidden",
+      disabled: undefined,
+      danger: undefined,
+      hidden: true,
+    },
+  ]);
+  assert.equal(getContextActionId({ label: "Open File" }, 0), "open-file-0");
+  assert.equal(
+    getContextActionId({ actionId: "custom.open", label: "Open File" }, 0),
+    "custom.open",
+  );
+
+  const requests = [];
+  const response = await openNativeContextMenu(
+    {
+      menuInstanceId: "menu-1",
+      scope: "test",
+      targetId: "/tmp/file.ts",
+      x: 12,
+      y: 24,
+      items,
+      context: { path: "/tmp/file.ts" },
+    },
+    {
+      OpenNativeContextMenu: async (request) => {
+        requests.push(request);
+        return {
+          opened: true,
+          menuInstanceId: request.menuInstanceId,
+          menuId: "native-menu-1",
+        };
+      },
+    },
+  );
+
+  assert.equal(response.opened, true);
+  assert.equal(response.menuId, "native-menu-1");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].scope, "test");
+  assert.deepEqual(requests[0].context, { path: "/tmp/file.ts" });
+
+  const missingBridgeResponse = await openNativeContextMenu(
+    {
+      menuInstanceId: "menu-2",
+      scope: "test",
+      x: 0,
+      y: 0,
+      items,
+    },
+    null,
+  );
+  assert.equal(missingBridgeResponse.opened, false);
 });
 
 test("shell capabilities normalize backend payloads without trusting invalid entries", async () => {

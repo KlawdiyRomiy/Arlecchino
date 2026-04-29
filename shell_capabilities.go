@@ -51,6 +51,13 @@ func buildShellCapabilities(platform string, appReady bool, mainWindowReady bool
 		dialogReason = "Directory/file dialogs are available through the Wails application dialog service."
 	}
 
+	contextMenuStatus := ShellCapabilityUnavailable
+	contextMenuReason := "Native context menu routing is unavailable before the main window is initialized."
+	if appReady && mainWindowReady {
+		contextMenuStatus = ShellCapabilityExperimental
+		contextMenuReason = "Scoped context menus can route through the native Wails context menu adapter with DOM menus as fallback."
+	}
+
 	materialStatus := ShellCapabilityPlatformLimited
 	materialReason := "Material/backdrop behavior is platform-specific and must be verified per window role."
 	if platform == "darwin" && mainWindowReady {
@@ -75,8 +82,8 @@ func buildShellCapabilities(platform string, appReady bool, mainWindowReady bool
 			),
 			"nativeMenu": shellCapability(nativeMenuStatus, nativeMenuReason),
 			"contextMenu": shellCapability(
-				ShellCapabilityUnavailable,
-				"Native context menu routing is not wired yet; scoped DOM menus remain the fallback.",
+				contextMenuStatus,
+				contextMenuReason,
 			),
 			"tray": shellCapability(
 				ShellCapabilityUnavailable,

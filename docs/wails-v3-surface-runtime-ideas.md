@@ -171,6 +171,11 @@ Baseline hardening для этой ветки теперь имеет отдел
 - `frontend/src/components/layout/MainLayout.tsx` и panel/preview event hooks теперь
   синхронизируют активный panel/preview focus в Surface Runtime без изменения
   визуального поведения и без detached windows.
+- Native context menu adapter добавлен как capability-aware слой поверх существующего
+  `ContextActionMenu`: при usable `contextMenu` frontend отправляет текущие visible
+  actions в `App.OpenNativeContextMenu`, backend строит transient Wails native menu и
+  возвращает выбранный action через `ide:context-menu:action`; при unavailable capability
+  остается текущий Radix/DOM fallback. Generated bindings для этого slice не тронуты.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -1217,15 +1222,18 @@ risky action, user can return layout.
 8. Done: Surface Runtime v1 read/focus boundary. Frontend exposes active surface state,
    focus history and indexed read model; MCP can read it through `ide_ui.surface_read`
    with frontend acknowledgement result payload.
-9. Next: adapt ready existing elements to Wails v3 shell capabilities first, with Arlehub
+9. Done: Native context menu adapter foundation. Existing scoped DOM menus now share a
+   capability-aware adapter that can open transient Wails native menus and dispatch the
+   selected action back to frontend, while keeping DOM fallback.
+10. Next: adapt ready existing elements to Wails v3 shell capabilities first, with Arlehub
    intentionally out of scope until the base shell layer is stable.
-10. Later: build Arlehub GUI hub mode as central surface using existing floating helpers.
-11. Later: add Agent Flight Recorder and wire it to Arlehub timeline.
-12. Later: add Applet Promotion Chain up to fullscreen/floating/snapped first.
-13. Later: spike Wails v3 detached windows with Window Lease System.
-14. Later: add Protocol Router, file associations and single instance.
-15. Later: add Background Job Broker, tray and notifications.
-16. Later: delay auto-updates/material/backdrop/dock badges until shell behavior is stable.
+11. Later: build Arlehub GUI hub mode as central surface using existing floating helpers.
+12. Later: add Agent Flight Recorder and wire it to Arlehub timeline.
+13. Later: add Applet Promotion Chain up to fullscreen/floating/snapped first.
+14. Later: spike Wails v3 detached windows with Window Lease System.
+15. Later: add Protocol Router, file associations and single instance.
+16. Later: add Background Job Broker, tray and notifications.
+17. Later: delay auto-updates/material/backdrop/dock badges until shell behavior is stable.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
@@ -1239,10 +1247,11 @@ capability-driven v3 shell layer. Это снижает риск перед deta
 2. Done: Surface Runtime read/focus contract. Добавить active surface state, focus history,
    indexed read model и read-only MCP tool `ide_ui.surface_read` через подтвержденный
    frontend ack payload. Detached windows остаются out of scope.
-3. Next: Native context menu adapter. Начать с существующих scopes: File Explorer item, editor
-   tab, Git item, Problems row, Browser Preview URL. Если `contextMenu` unavailable,
-   оставлять текущие DOM/Radix interactions; если available - routed native menu command.
-4. Dialog and clipboard audit. Все новые вызовы `SelectDirectory`, runtime clipboard и
+3. Done: Native context menu adapter. `ContextActionMenu` теперь capability-aware:
+   существующие File Explorer, editor tab, Git и Problems context menus получают native
+   route при usable `contextMenu`, а иначе остаются на DOM/Radix fallback. Browser Preview
+   URL остается на audit-доработку вместе с clipboard/browser-open проверкой.
+4. Next: Dialog, clipboard and browser URL audit. Все новые вызовы `SelectDirectory`, runtime clipboard и
    browser open должны идти через `shellDialogs.ts`, `clipboard.ts` и capability helpers,
    а не напрямую из компонентов.
 5. Protocol/open intent router. Сначала internal-only router для `open project`,

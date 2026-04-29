@@ -23,7 +23,7 @@ func TestBuildShellCapabilities_MainWindowReady(t *testing.T) {
 		{name: "dialogs", status: ShellCapabilityAvailable},
 		{name: "materialBackdrop", status: ShellCapabilityAvailable},
 		{name: "multiWindow", status: ShellCapabilityExperimental},
-		{name: "contextMenu", status: ShellCapabilityUnavailable},
+		{name: "contextMenu", status: ShellCapabilityExperimental},
 		{name: "customProtocol", status: ShellCapabilityRequiresBuild},
 		{name: "fileAssociations", status: ShellCapabilityRequiresBuild},
 		{name: "singleInstance", status: ShellCapabilityRequiresBuild},
