@@ -21,7 +21,6 @@ func TestBuildShellCapabilities_MainWindowReady(t *testing.T) {
 	}{
 		{name: "nativeMenu", status: ShellCapabilityAvailable},
 		{name: "dialogs", status: ShellCapabilityAvailable},
-		{name: "windowControls", status: ShellCapabilityAvailable},
 		{name: "materialBackdrop", status: ShellCapabilityAvailable},
 		{name: "multiWindow", status: ShellCapabilityExperimental},
 		{name: "contextMenu", status: ShellCapabilityUnavailable},
@@ -59,7 +58,6 @@ func TestBuildShellCapabilities_BeforeWindowReady(t *testing.T) {
 	}{
 		{name: "nativeMenu", status: ShellCapabilityUnavailable},
 		{name: "dialogs", status: ShellCapabilityUnavailable},
-		{name: "windowControls", status: ShellCapabilityUnavailable},
 		{name: "materialBackdrop", status: ShellCapabilityPlatformLimited},
 		{name: "dockBadges", status: ShellCapabilityPlatformLimited},
 	}

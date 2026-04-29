@@ -1083,6 +1083,86 @@ export class SearchResult {
     }
 }
 
+export class ShellCapabilitiesSnapshot {
+    "capabilities": { [_ in string]?: ShellCapabilityDescriptor };
+    "platform": string;
+    "runtime": string;
+    "version": number;
+
+    /** Creates a new ShellCapabilitiesSnapshot instance. */
+    constructor($$source: Partial<ShellCapabilitiesSnapshot> = {}) {
+        if (!("capabilities" in $$source)) {
+            this["capabilities"] = {};
+        }
+        if (!("platform" in $$source)) {
+            this["platform"] = "";
+        }
+        if (!("runtime" in $$source)) {
+            this["runtime"] = "";
+        }
+        if (!("version" in $$source)) {
+            this["version"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ShellCapabilitiesSnapshot instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ShellCapabilitiesSnapshot {
+        const $$createField0_0 = $$createType20;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("capabilities" in $$parsedSource) {
+            $$parsedSource["capabilities"] = $$createField0_0($$parsedSource["capabilities"]);
+        }
+        return new ShellCapabilitiesSnapshot($$parsedSource as Partial<ShellCapabilitiesSnapshot>);
+    }
+}
+
+export class ShellCapabilityDescriptor {
+    "status": ShellCapabilityStatus;
+    "reason": string;
+    "source": string;
+
+    /** Creates a new ShellCapabilityDescriptor instance. */
+    constructor($$source: Partial<ShellCapabilityDescriptor> = {}) {
+        if (!("status" in $$source)) {
+            this["status"] = ShellCapabilityStatus.$zero;
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+        if (!("source" in $$source)) {
+            this["source"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ShellCapabilityDescriptor instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ShellCapabilityDescriptor {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ShellCapabilityDescriptor($$parsedSource as Partial<ShellCapabilityDescriptor>);
+    }
+}
+
+export enum ShellCapabilityStatus {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    ShellCapabilityAvailable = "available",
+    ShellCapabilityUnavailable = "unavailable",
+    ShellCapabilityExperimental = "experimental",
+    ShellCapabilityRequiresBuild = "requires-build",
+    ShellCapabilityRequiresEntitlement = "requires-entitlement",
+    ShellCapabilityPlatformLimited = "platform-limited",
+};
+
 /**
  * SignatureHelpResult represents a signature help result for frontend
  */
@@ -1110,7 +1190,7 @@ export class SignatureHelpResult {
      * Creates a new SignatureHelpResult instance from a string or object.
      */
     static createFrom($$source: any = {}): SignatureHelpResult {
-        const $$createField0_0 = $$createType20;
+        const $$createField0_0 = $$createType22;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("signatures" in $$parsedSource) {
             $$parsedSource["signatures"] = $$createField0_0($$parsedSource["signatures"]);
@@ -1146,7 +1226,7 @@ export class SignatureInfo {
      * Creates a new SignatureInfo instance from a string or object.
      */
     static createFrom($$source: any = {}): SignatureInfo {
-        const $$createField2_0 = $$createType22;
+        const $$createField2_0 = $$createType24;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("parameters" in $$parsedSource) {
             $$parsedSource["parameters"] = $$createField2_0($$parsedSource["parameters"]);
@@ -1200,7 +1280,7 @@ export class TerminalPredictionResponse {
      * Creates a new TerminalPredictionResponse instance from a string or object.
      */
     static createFrom($$source: any = {}): TerminalPredictionResponse {
-        const $$createField0_0 = $$createType24;
+        const $$createField0_0 = $$createType26;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("predictions" in $$parsedSource) {
             $$parsedSource["predictions"] = $$createField0_0($$parsedSource["predictions"]);
@@ -1303,9 +1383,11 @@ const $$createType15 = $Create.Array($$createType14);
 const $$createType16 = $Create.Map($Create.Any, $$createType15);
 const $$createType17 = FlagDefJS.createFrom;
 const $$createType18 = $Create.Array($$createType17);
-const $$createType19 = SignatureInfo.createFrom;
-const $$createType20 = $Create.Array($$createType19);
-const $$createType21 = ParameterInfo.createFrom;
+const $$createType19 = ShellCapabilityDescriptor.createFrom;
+const $$createType20 = $Create.Map($Create.Any, $$createType19);
+const $$createType21 = SignatureInfo.createFrom;
 const $$createType22 = $Create.Array($$createType21);
-const $$createType23 = terminal$0.PredictionResult.createFrom;
+const $$createType23 = ParameterInfo.createFrom;
 const $$createType24 = $Create.Array($$createType23);
+const $$createType25 = terminal$0.PredictionResult.createFrom;
+const $$createType26 = $Create.Array($$createType25);

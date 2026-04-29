@@ -1,3 +1,5 @@
+import { canUseShellCapability } from "../shell/shellCapabilities";
+
 type RuntimeClipboardReader = () => Promise<string>;
 type RuntimeClipboardWriter = (text: string) => Promise<unknown>;
 
@@ -37,7 +39,7 @@ const writeToNavigatorClipboard = async (text: string): Promise<boolean> => {
 export const readClipboardTextWithFallback = async (
   readFromRuntime?: RuntimeClipboardReader,
 ): Promise<string> => {
-  if (readFromRuntime) {
+  if (readFromRuntime && canUseShellCapability("clipboard")) {
     try {
       const value = await readFromRuntime();
       if (typeof value === "string") {
@@ -55,7 +57,7 @@ export const writeClipboardTextWithFallback = async (
   text: string,
   writeToRuntime?: RuntimeClipboardWriter,
 ): Promise<boolean> => {
-  if (writeToRuntime) {
+  if (writeToRuntime && canUseShellCapability("clipboard")) {
     try {
       await writeToRuntime(text);
       return true;

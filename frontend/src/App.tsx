@@ -47,7 +47,7 @@ const appShellStyle: React.CSSProperties = {
 
 const App: React.FC = () => {
   useApplicationMenuBridge();
-  useShellCapabilitiesBridge();
+  useShellCapabilitiesBridge(AppFunctions.GetShellCapabilities);
 
   const activeId = useWorkspaceStore((state) => state.activeId);
   const uiScale = useEditorSettingsStore((state) => state.uiScale);

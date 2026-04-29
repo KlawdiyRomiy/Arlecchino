@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { FolderOpen, GitBranch, Loader2, Sparkles } from "lucide-react";
 
 import * as App from "../wails/app";
+import { selectDirectoryWithCapability } from "../shell/shellDialogs";
 import { shortcuts } from "../utils/keyboard";
 import { toggleWindowFullscreen } from "../utils/windowFullscreen";
 import { CloneRepositoryDialog } from "./CloneRepositoryDialog";
@@ -105,8 +106,9 @@ const WelcomeScreen: React.FC<{
 
   const handleOpenProject = async () => {
     try {
-      const selectedPath = await App.SelectDirectory(
+      const selectedPath = await selectDirectoryWithCapability(
         "Choose project directory",
+        App.SelectDirectory,
       );
       if (selectedPath) {
         onProjectOpen(selectedPath);

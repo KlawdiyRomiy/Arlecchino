@@ -24,8 +24,7 @@ export type ShellCapabilityName =
   | "autoUpdate"
   | "materialBackdrop"
   | "dockBadges"
-  | "browserOpenURL"
-  | "windowControls";
+  | "browserOpenURL";
 
 export interface ShellCapabilityDescriptor {
   status: ShellCapabilityStatus;
@@ -132,10 +131,6 @@ const FALLBACK_CAPABILITIES: ShellCapabilities = {
     "available",
     "External browser opening is available through the frontend runtime wrapper.",
   ),
-  windowControls: createDescriptor(
-    "available",
-    "Main-window controls are available through the frontend runtime wrapper and shell bindings.",
-  ),
 };
 
 type ShellCapabilitiesMetadata = Pick<
@@ -210,7 +205,6 @@ const SHELL_CAPABILITY_NAMES: readonly ShellCapabilityName[] = [
   "materialBackdrop",
   "dockBadges",
   "browserOpenURL",
-  "windowControls",
 ];
 
 const SHELL_CAPABILITY_STATUSES: readonly ShellCapabilityStatus[] = [
@@ -416,8 +410,8 @@ interface ShellCapabilitiesRuntimeModule {
 }
 
 const shellCapabilitiesMethodNames = [
-  "arlecchino.App.GetShellCapabilities",
   "main.App.GetShellCapabilities",
+  "arlecchino.App.GetShellCapabilities",
 ] as const;
 
 let shellCapabilitiesMethodName:
@@ -504,7 +498,7 @@ export async function loadShellCapabilitiesFromBackend(
     }
   }
 
-  if (bridge === undefined) {
+  if (bridge !== null) {
     const payload = await loadShellCapabilitiesPayloadByName();
     if (payload !== undefined) {
       return syncShellCapabilitiesFromPayload(payload);
@@ -514,8 +508,14 @@ export async function loadShellCapabilitiesFromBackend(
   return getShellCapabilitiesSnapshot();
 }
 
-export function useShellCapabilitiesBridge(): void {
+export function useShellCapabilitiesBridge(
+  getShellCapabilities?: ShellCapabilitiesBridge["GetShellCapabilities"],
+): void {
   useEffect(() => {
-    void loadShellCapabilitiesFromBackend();
-  }, []);
+    void loadShellCapabilitiesFromBackend(
+      getShellCapabilities
+        ? { GetShellCapabilities: getShellCapabilities }
+        : undefined,
+    );
+  }, [getShellCapabilities]);
 }

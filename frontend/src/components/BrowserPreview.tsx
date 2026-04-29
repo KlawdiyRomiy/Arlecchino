@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { BrowserOpenURL } from "../wails/runtime";
+import { canUseShellCapability } from "../shell/shellCapabilities";
 import { useTheme } from "../hooks/useTheme";
 import {
   isAllowedPreviewUrl,
@@ -171,6 +172,10 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
 
   const openExternal = () => {
     if (inlineDocument) {
+      return;
+    }
+    if (!canUseShellCapability("browserOpenURL")) {
+      window.open(url, "_blank", "noopener,noreferrer");
       return;
     }
     BrowserOpenURL(url);

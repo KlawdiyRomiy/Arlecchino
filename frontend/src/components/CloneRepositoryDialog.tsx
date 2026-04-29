@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import * as App from "../wails/app";
+import { selectDirectoryWithCapability } from "../shell/shellDialogs";
 import { deriveCloneProjectName } from "../utils/gitClone";
 import { shortcuts } from "../utils/keyboard";
 
@@ -78,8 +79,9 @@ export const CloneRepositoryDialog: React.FC<CloneRepositoryDialogProps> = ({
 
   const handleSelectDirectory = async () => {
     try {
-      const path = await App.SelectDirectory(
+      const path = await selectDirectoryWithCapability(
         "Select destination for cloned repository",
+        App.SelectDirectory,
       );
       if (path) {
         setSelectedDir(path);

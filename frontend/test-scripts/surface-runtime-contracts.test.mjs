@@ -19,14 +19,24 @@ async function loadRuntimeContracts() {
           previewSurfaceId,
         } from "./src/surfaces/surfaceRuntime.ts";
         export {
+          createSurfaceRuntimeEvent,
+          dedupeSurfaceRuntimeEvents,
+          parseSurfaceRuntimeEvent,
+          surfaceRuntimeEventDedupeKey,
+        } from "./src/surfaces/surfaceRuntimeEvents.ts";
+        export {
           parseOpenPreviewInput,
           parsePanelOpenRequest,
           parseUpdatePreviewInput,
           parseWindowIdFromPayload,
         } from "./src/components/layout/mainLayoutEventParsers.ts";
         export {
+          clearSurfaceRuntimeEventHistory,
+          getSurfaceRuntimeEventHistory,
           getSurfaceRuntimeSnapshot,
+          recordSurfaceRuntimeEvent,
           subscribeSurfaceRuntime,
+          subscribeSurfaceRuntimeEvents,
           syncSurfaceRuntimeFromHost,
         } from "./src/surfaces/surfaceRuntimeStore.ts";
         export {
@@ -357,6 +367,197 @@ test("surface runtime store publishes read-only snapshots for host sync", async 
   unsubscribe();
 });
 
+test("surface runtime store derives observable events from host transitions", async () => {
+  const {
+    clearSurfaceRuntimeEventHistory,
+    getSurfaceRuntimeEventHistory,
+    subscribeSurfaceRuntimeEvents,
+    syncSurfaceRuntimeFromHost,
+  } = await loadRuntimeContracts();
+
+  const seedSessions = [
+    {
+      id: "panel:explorer",
+      source: "panel",
+      appletKind: "explorer",
+      hostMode: "snapped",
+      title: "Explorer",
+      active: false,
+      pinned: false,
+      panelId: "explorer",
+      geometry: {
+        position: "left",
+        width: 280,
+        height: 600,
+        x: 12,
+        y: 24,
+      },
+    },
+  ];
+  const movedExplorerSession = {
+    ...seedSessions[0],
+    hostMode: "floating",
+    active: true,
+    geometry: {
+      position: "left",
+      width: 360,
+      height: 620,
+      x: 72,
+      y: 88,
+    },
+  };
+  const previewSession = {
+    id: "preview:preview-browser-default",
+    source: "preview",
+    appletKind: "browser",
+    hostMode: "snapped",
+    title: "Preview localhost:5173",
+    active: false,
+    pinned: true,
+    previewWindowId: "preview-browser-default",
+    payload: { url: "http://localhost:5173" },
+    geometry: {
+      position: "right",
+      width: 520,
+      height: 620,
+      x: 900,
+      y: 70,
+      zIndex: 132,
+    },
+  };
+
+  syncSurfaceRuntimeFromHost(seedSessions);
+  clearSurfaceRuntimeEventHistory();
+
+  let observedEventNotifications = 0;
+  const unsubscribe = subscribeSurfaceRuntimeEvents(() => {
+    observedEventNotifications += 1;
+  });
+
+  syncSurfaceRuntimeFromHost([movedExplorerSession, previewSession]);
+
+  const firstHistory = getSurfaceRuntimeEventHistory();
+  assert.deepEqual(
+    firstHistory.map((event) => event.type),
+    ["surface:promote", "surface:open"],
+  );
+  assert.equal(firstHistory[0].surfaceId, "panel:explorer");
+  assert.equal(firstHistory[0].hostMode, "floating");
+  assert.equal(firstHistory[0].geometry.width, 360);
+  assert.equal(firstHistory[1].surfaceId, "preview:preview-browser-default");
+  assert.equal(firstHistory[1].session.payload.url, "http://localhost:5173");
+  assert.equal(observedEventNotifications, 2);
+
+  syncSurfaceRuntimeFromHost([movedExplorerSession, previewSession]);
+  assert.equal(getSurfaceRuntimeEventHistory().length, firstHistory.length);
+
+  syncSurfaceRuntimeFromHost([previewSession]);
+  const finalHistory = getSurfaceRuntimeEventHistory();
+  assert.equal(finalHistory.at(-1).type, "surface:close");
+  assert.equal(finalHistory.at(-1).surfaceId, "panel:explorer");
+
+  unsubscribe();
+});
+
+test("surface runtime events keep operation payloads canonical", async () => {
+  const {
+    createSurfaceRuntimeEvent,
+    dedupeSurfaceRuntimeEvents,
+    parseSurfaceRuntimeEvent,
+    surfaceRuntimeEventDedupeKey,
+  } = await loadRuntimeContracts();
+
+  const openEvent = createSurfaceRuntimeEvent({
+    type: "surface:open",
+    at: 1710000002000,
+    session: {
+      id: "preview:preview-browser-default",
+      source: "preview",
+      appletKind: "browser",
+      hostMode: "snapped",
+      title: "Preview localhost:5173",
+      active: true,
+      pinned: true,
+      previewWindowId: "preview-browser-default",
+      geometry: {
+        position: "right",
+        width: 520,
+        height: 620,
+        x: 900,
+        y: 70,
+        zIndex: 132,
+      },
+      payload: { url: "http://localhost:5173" },
+    },
+  });
+  const parsedMoveEvent = parseSurfaceRuntimeEvent({
+    type: "surface:move",
+    surfaceId: "preview:preview-browser-default",
+    at: 1710000003000,
+    hostMode: "floating",
+    geometry: {
+      position: "right",
+      width: 640,
+      height: 520,
+      x: 120,
+      y: 90,
+    },
+  });
+  const parsedFailure = parseSurfaceRuntimeEvent({
+    type: "surface:close",
+    surfaceId: "preview:missing",
+    at: 1710000004000,
+    ok: false,
+    reason: "Surface not found.",
+  });
+
+  assert.equal(openEvent.surfaceId, "preview:preview-browser-default");
+  assert.equal(openEvent.ok, true);
+  assert.equal(
+    surfaceRuntimeEventDedupeKey(openEvent),
+    "surface:open:preview:preview-browser-default:1710000002000",
+  );
+  assert.deepEqual(parsedMoveEvent, {
+    type: "surface:move",
+    surfaceId: "preview:preview-browser-default",
+    at: 1710000003000,
+    session: undefined,
+    geometry: {
+      position: "right",
+      width: 640,
+      height: 520,
+      x: 120,
+      y: 90,
+    },
+    hostMode: "floating",
+    reason: undefined,
+    ok: true,
+  });
+  assert.deepEqual(parsedFailure, {
+    type: "surface:close",
+    surfaceId: "preview:missing",
+    at: 1710000004000,
+    session: undefined,
+    geometry: undefined,
+    hostMode: undefined,
+    reason: "Surface not found.",
+    ok: false,
+  });
+  assert.equal(
+    parseSurfaceRuntimeEvent({
+      type: "surface:move",
+      surfaceId: "preview:preview-browser-default",
+      hostMode: "invalid-mode",
+    })?.hostMode,
+    undefined,
+  );
+  assert.equal(parseSurfaceRuntimeEvent({ type: "surface:unknown" }), null);
+  assert.deepEqual(
+    dedupeSurfaceRuntimeEvents([openEvent, openEvent, parsedMoveEvent]),
+    [openEvent, parsedMoveEvent],
+  );
+});
+
 test("shell capabilities expose conservative fallback statuses and backend sync", async () => {
   const {
     canUseShellCapability,
@@ -370,7 +571,6 @@ test("shell capabilities expose conservative fallback statuses and backend sync"
 
   assert.equal(fallback.clipboard.status, "available");
   assert.equal(fallback.browserOpenURL.status, "available");
-  assert.equal(fallback.windowControls.status, "available");
   assert.equal(fallback.nativeMenu.status, "available");
   assert.equal(fallback.multiWindow.status, "experimental");
   assert.equal(fallback.contextMenu.status, "unavailable");
@@ -478,11 +678,6 @@ test("shell capabilities load backend snapshots and keep stable revisions", asyn
       contextMenu: {
         status: "available",
         reason: "Native context menu service reported ready.",
-        source: "backend",
-      },
-      windowControls: {
-        status: "available",
-        reason: "Window controls are ready.",
         source: "backend",
       },
     },

@@ -56,9 +56,6 @@ type App struct {
 	shellMenuMu        sync.Mutex
 	shellMenuShortcuts map[string][]string
 	managerMu          sync.Mutex
-	nativeControlsMu   sync.Mutex
-	nativeControlsSet  bool
-	nativeControls     [6]float64
 
 	projectCtx    context.Context
 	projectCancel context.CancelFunc

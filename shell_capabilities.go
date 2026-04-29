@@ -51,13 +51,6 @@ func buildShellCapabilities(platform string, appReady bool, mainWindowReady bool
 		dialogReason = "Directory/file dialogs are available through the Wails application dialog service."
 	}
 
-	windowControlStatus := ShellCapabilityUnavailable
-	windowControlReason := "Window controls are unavailable before the main window is initialized."
-	if mainWindowReady {
-		windowControlStatus = ShellCapabilityAvailable
-		windowControlReason = "Main-window controls are available for the current shell window."
-	}
-
 	materialStatus := ShellCapabilityPlatformLimited
 	materialReason := "Material/backdrop behavior is platform-specific and must be verified per window role."
 	if platform == "darwin" && mainWindowReady {
@@ -120,7 +113,6 @@ func buildShellCapabilities(platform string, appReady bool, mainWindowReady bool
 				ShellCapabilityAvailable,
 				"External browser opening is available through the frontend runtime wrapper.",
 			),
-			"windowControls": shellCapability(windowControlStatus, windowControlReason),
 		},
 	}
 }
