@@ -9,6 +9,7 @@ import { Check, ChevronLeft, ChevronRight, Copy, X } from "lucide-react";
 
 import { useTheme } from "../hooks/useTheme";
 import { radius } from "../styles/colors";
+import { writeClipboardTextWithFallback } from "../utils/clipboard";
 
 interface DiffLine {
   type: "add" | "remove" | "context" | "header" | "hunk";
@@ -301,15 +302,19 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
   );
 
   const copyDiff = useCallback(() => {
-    void navigator.clipboard.writeText(diff);
-    setCopied(true);
-    if (copyTimerRef.current !== null) {
-      window.clearTimeout(copyTimerRef.current);
-    }
-    copyTimerRef.current = window.setTimeout(() => {
-      setCopied(false);
-      copyTimerRef.current = null;
-    }, 1800);
+    void writeClipboardTextWithFallback(diff).then((copied) => {
+      if (!copied) {
+        return;
+      }
+      setCopied(true);
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = window.setTimeout(() => {
+        setCopied(false);
+        copyTimerRef.current = null;
+      }, 1800);
+    });
   }, [diff]);
 
   useEffect(() => {

@@ -47,6 +47,16 @@ async function loadRuntimeContracts() {
           openNativeContextMenu,
         } from "./src/shell/nativeContextMenu.ts";
         export {
+          openExternalUrlWithCapability,
+        } from "./src/shell/browser.ts";
+        export {
+          selectDirectoryWithCapability,
+        } from "./src/shell/shellDialogs.ts";
+        export {
+          readClipboardTextWithFallback,
+          writeClipboardTextWithFallback,
+        } from "./src/utils/clipboard.ts";
+        export {
           canUseShellCapability,
           getFallbackShellCapabilities,
           getShellCapabilitiesSnapshot,
@@ -821,6 +831,150 @@ test("native context menu adapter serializes current actions and bridge requests
     null,
   );
   assert.equal(missingBridgeResponse.opened, false);
+});
+
+test("shell wrappers route dialogs clipboard and external URL through capabilities", async () => {
+  const {
+    openExternalUrlWithCapability,
+    readClipboardTextWithFallback,
+    selectDirectoryWithCapability,
+    syncShellCapabilities,
+    writeClipboardTextWithFallback,
+  } = await loadRuntimeContracts();
+
+  const runtimeOpenedUrls = [];
+  syncShellCapabilities({
+    browserOpenURL: {
+      status: "available",
+      reason: "Runtime browser open is available.",
+      source: "backend",
+    },
+    clipboard: {
+      status: "available",
+      reason: "Runtime clipboard is available.",
+      source: "backend",
+    },
+    dialogs: {
+      status: "available",
+      reason: "Native dialogs are available.",
+      source: "backend",
+    },
+  });
+
+  assert.equal(
+    await openExternalUrlWithCapability("https://example.test/path", {
+      openWithRuntime: async (url) => runtimeOpenedUrls.push(url),
+      openWithWindow: () => {
+        throw new Error("window fallback should not run");
+      },
+    }),
+    true,
+  );
+  assert.deepEqual(runtimeOpenedUrls, ["https://example.test/path"]);
+
+  const writtenTexts = [];
+  assert.equal(
+    await writeClipboardTextWithFallback(
+      "hello",
+      async (text) => writtenTexts.push(text),
+      async () => {
+        throw new Error("navigator fallback should not run");
+      },
+    ),
+    true,
+  );
+  assert.deepEqual(writtenTexts, ["hello"]);
+  assert.equal(
+    await readClipboardTextWithFallback(
+      async () => "from-runtime",
+      async () => {
+        throw new Error("navigator fallback should not run");
+      },
+    ),
+    "from-runtime",
+  );
+  assert.equal(
+    await selectDirectoryWithCapability(
+      "Open project",
+      async (title) => `/tmp/${title}`,
+    ),
+    "/tmp/Open project",
+  );
+
+  syncShellCapabilities({
+    browserOpenURL: {
+      status: "unavailable",
+      reason: "Runtime browser open is unavailable.",
+      source: "backend",
+    },
+    clipboard: {
+      status: "unavailable",
+      reason: "Runtime clipboard is unavailable.",
+      source: "backend",
+    },
+    dialogs: {
+      status: "unavailable",
+      reason: "Native dialogs are unavailable.",
+      source: "backend",
+    },
+  });
+
+  const fallbackOpenedUrls = [];
+  assert.equal(
+    await openExternalUrlWithCapability("http://localhost:5173", {
+      openWithRuntime: () => {
+        throw new Error("runtime open should not run");
+      },
+      openWithWindow: (url, target, features) => {
+        fallbackOpenedUrls.push({ url, target, features });
+        return {};
+      },
+    }),
+    true,
+  );
+  assert.deepEqual(fallbackOpenedUrls, [
+    {
+      url: "http://localhost:5173/",
+      target: "_blank",
+      features: "noopener,noreferrer",
+    },
+  ]);
+  assert.equal(
+    await openExternalUrlWithCapability("file:///tmp/unsafe", {
+      openWithRuntime: () => {
+        throw new Error("runtime open should not run");
+      },
+      openWithWindow: () => {
+        throw new Error("window fallback should not run");
+      },
+    }),
+    false,
+  );
+
+  assert.equal(
+    await writeClipboardTextWithFallback(
+      "fallback",
+      () => {
+        throw new Error("runtime write should not run");
+      },
+      async (text) => text === "fallback",
+    ),
+    true,
+  );
+  assert.equal(
+    await readClipboardTextWithFallback(
+      () => {
+        throw new Error("runtime read should not run");
+      },
+      async () => "from-navigator",
+    ),
+    "from-navigator",
+  );
+  await assert.rejects(
+    () =>
+      selectDirectoryWithCapability("Open project", async () => "/tmp/project"),
+    /Native directory dialogs are unavailable/,
+  );
 });
 
 test("shell capabilities normalize backend payloads without trusting invalid entries", async () => {

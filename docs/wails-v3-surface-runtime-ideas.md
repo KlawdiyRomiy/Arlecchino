@@ -176,6 +176,10 @@ Baseline hardening для этой ветки теперь имеет отдел
   actions в `App.OpenNativeContextMenu`, backend строит transient Wails native menu и
   возвращает выбранный action через `ide:context-menu:action`; при unavailable capability
   остается текущий Radix/DOM fallback. Generated bindings для этого slice не тронуты.
+- Dialog/clipboard/browser URL audit закрыт для текущих прямых frontend вызовов:
+  directory dialogs идут через `shellDialogs.ts`, clipboard copy/paste - через
+  `utils/clipboard.ts` с runtime и navigator fallback, external URL open - через
+  `shell/browser.ts` с capability gate и запретом non-http(s) payloads.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -1225,15 +1229,16 @@ risky action, user can return layout.
 9. Done: Native context menu adapter foundation. Existing scoped DOM menus now share a
    capability-aware adapter that can open transient Wails native menus and dispatch the
    selected action back to frontend, while keeping DOM fallback.
-10. Next: adapt ready existing elements to Wails v3 shell capabilities first, with Arlehub
-   intentionally out of scope until the base shell layer is stable.
-11. Later: build Arlehub GUI hub mode as central surface using existing floating helpers.
-12. Later: add Agent Flight Recorder and wire it to Arlehub timeline.
-13. Later: add Applet Promotion Chain up to fullscreen/floating/snapped first.
-14. Later: spike Wails v3 detached windows with Window Lease System.
-15. Later: add Protocol Router, file associations and single instance.
-16. Later: add Background Job Broker, tray and notifications.
-17. Later: delay auto-updates/material/backdrop/dock badges until shell behavior is stable.
+10. Done: adapt ready existing elements to Wails v3 shell capabilities first, with Arlehub
+    intentionally out of scope until the base shell layer is stable.
+11. Next: add internal Protocol/Open Intent router for current in-app actions only.
+12. Later: build Arlehub GUI hub mode as central surface using existing floating helpers.
+13. Later: add Agent Flight Recorder and wire it to Arlehub timeline.
+14. Later: add Applet Promotion Chain up to fullscreen/floating/snapped first.
+15. Later: spike Wails v3 detached windows with Window Lease System.
+16. Later: add packaged Protocol Router, file associations and single instance.
+17. Later: add Background Job Broker, tray and notifications.
+18. Later: delay auto-updates/material/backdrop/dock badges until shell behavior is stable.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
@@ -1251,10 +1256,11 @@ capability-driven v3 shell layer. Это снижает риск перед deta
    существующие File Explorer, editor tab, Git и Problems context menus получают native
    route при usable `contextMenu`, а иначе остаются на DOM/Radix fallback. Browser Preview
    URL остается на audit-доработку вместе с clipboard/browser-open проверкой.
-4. Next: Dialog, clipboard and browser URL audit. Все новые вызовы `SelectDirectory`, runtime clipboard и
-   browser open должны идти через `shellDialogs.ts`, `clipboard.ts` и capability helpers,
-   а не напрямую из компонентов.
-5. Protocol/open intent router. Сначала internal-only router для `open project`,
+4. Done: Dialog, clipboard and browser URL audit. Текущие вызовы `SelectDirectory`,
+   runtime clipboard и browser open идут через `shellDialogs.ts`, `utils/clipboard.ts`
+   и `shell/browser.ts`, а не напрямую из компонентов. Browser Preview external-open
+   path теперь capability-aware и отклоняет non-http(s) URL payloads.
+5. Next: Protocol/open intent router. Сначала internal-only router для `open project`,
    `open file`, `open preview URL`, `focus surface`; packaged custom protocols and file
    associations остаются gated как `requires-build`.
 6. Single-instance/open-file spike. Проверить только packaged/open-request path и event
