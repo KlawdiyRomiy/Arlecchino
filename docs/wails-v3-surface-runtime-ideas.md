@@ -192,8 +192,10 @@ Baseline hardening для этой ветки теперь имеет отдел
   candidates. `app.go` подключает indexer, LSP install и MCP bridge lifecycle к этому
   snapshot, а frontend mirror `frontend/src/shell/backgroundShellStatus.ts` читает
   `App.GetBackgroundShellStatus()` через Wails v3 runtime `Call.ByName` и слушает
-  `shell:background:status`. Native tray и native notification delivery остаются
-  выключенными.
+  `shell:background:status`. Action contract добавляет `App.RunBackgroundShellAction(actionID)`
+  для будущих tray/notification/menu consumers: `cancel-job` отменяет активную cancelable
+  job, а `focus-surface` фокусит main window и отправляет `ide:intent:open`/`focusSurface`.
+  Native tray и native notification delivery остаются выключенными.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -854,14 +856,18 @@ Start with non-invasive broker that observes existing jobs, then move ownership 
   `BackgroundShellNotificationCandidate`, `BackgroundShellAction`;
 - backend binding: `App.GetBackgroundShellStatus()` возвращает snapshot without enabling
   native tray or native notification delivery;
+- action binding: `App.RunBackgroundShellAction(actionID)` исполняет contract actions
+  without enabling tray UI: `cancel-job` переводит cancelable active job в `canceled`,
+  `focus-surface` фокусит main window и эмитит `ide:intent:open`/`focusSurface`;
 - observed sources: project indexing, LSP installer progress and MCP bridge lifecycle;
 - summary counters distinguish transient active jobs from persistent services, so MCP
   bridge does not look like a running user job;
-- notification candidates are generated only from terminal job states and deduped with
+- notification candidates are generated only from terminal-status job transitions and deduped with
   cooldown; native delivery remains off;
 - frontend mirror: `frontend/src/shell/backgroundShellStatus.ts` normalizes camelCase and
   PascalCase payloads, keeps stable revisions, listens to `shell:background:status` and
-  can load backend snapshot through Wails v3 `Call.ByName`;
+  can load backend snapshot through Wails v3 `Call.ByName`; it also exposes
+  `runBackgroundShellAction()` for future tray/notification/menu consumers;
 - `frontend/src/App.tsx` starts the bridge without rendering new tray UI;
 - contract coverage lives in `background_shell_status_test.go` and
   `frontend/test-scripts/surface-runtime-contracts.test.mjs`.
@@ -1312,8 +1318,10 @@ capability-driven v3 shell layer. Это снижает риск перед deta
    custom protocols and file associations остаются gated как `requires-build`.
 6. Next: Single-instance/open-file spike. Проверить только packaged/open-request path и event
    shape. Не включать как default capability до подтвержденного packaged smoke.
-7. Background shell status. Подготовить job/status model для tray/notifications without
-   enabling tray yet: capability сообщает unavailable, UI получает честное состояние.
+7. Done: Background shell status. Job/status model для tray/notifications подготовлен
+   without enabling tray yet: `backgroundStatus` available, `tray`/`notifications`
+   unavailable, UI получает честное состояние через `shell:background:status`, а future
+   consumers могут исполнять `cancel-job`/`focus-surface` через action contract.
 
 Arlehub можно начинать только после пунктов 1-5: тогда hub будет использовать уже
 готовые surface events, command routing и capability checks, а не создавать параллельную

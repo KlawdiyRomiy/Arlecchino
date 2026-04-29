@@ -170,3 +170,51 @@ func TestBackgroundShellStatusService_CancelsActiveProjectJobs(t *testing.T) {
 		t.Fatalf("canceled status = %q, want canceled", canceled.Status)
 	}
 }
+
+func TestBackgroundShellStatusService_RunsActionContracts(t *testing.T) {
+	base := time.UnixMilli(1710000000000)
+	service := NewBackgroundShellStatusService()
+	service.setClockForTest(func() time.Time { return base })
+
+	snapshot := service.UpsertJob(BackgroundShellJob{
+		ID:         "execution:tests",
+		Kind:       "execution",
+		Title:      "Run tests",
+		Status:     BackgroundShellJobRunning,
+		Cancelable: true,
+	})
+	if len(snapshot.Actions) != 1 || snapshot.Actions[0].ID != "cancel:execution:tests" {
+		t.Fatalf("actions = %#v, want cancel action", snapshot.Actions)
+	}
+
+	action, snapshot, handled, err := service.RunAction("cancel:execution:tests")
+	if err != nil {
+		t.Fatalf("RunAction(cancel) error = %v", err)
+	}
+	if !handled || action.Intent != "cancel-job" {
+		t.Fatalf("cancel action handled=%v action=%#v, want handled cancel-job", handled, action)
+	}
+	if snapshot.ActiveCount != 0 {
+		t.Fatalf("ActiveCount after cancel = %d, want 0", snapshot.ActiveCount)
+	}
+	if len(snapshot.Actions) != 0 {
+		t.Fatalf("actions after cancel = %#v, want empty", snapshot.Actions)
+	}
+
+	service.UpsertJob(BackgroundShellJob{
+		ID:              "lsp-install:gopls",
+		Kind:            "lsp-install",
+		Title:           "Install gopls language server",
+		Status:          BackgroundShellJobFailed,
+		Detail:          "go is missing",
+		OwnerSurfaceID:  "panel:terminal",
+		NotifyOnFailure: true,
+	})
+	action, _, handled, err = service.RunAction("focus:panel:terminal")
+	if err != nil {
+		t.Fatalf("RunAction(focus) error = %v", err)
+	}
+	if !handled || action.Intent != "focus-surface" || action.OwnerSurfaceID != "panel:terminal" {
+		t.Fatalf("focus action handled=%v action=%#v, want focus panel:terminal", handled, action)
+	}
+}

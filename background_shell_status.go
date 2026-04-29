@@ -110,6 +110,13 @@ type BackgroundShellStatusSnapshot struct {
 	NativeNotificationsSent bool                                   `json:"nativeNotificationsSent"`
 }
 
+type BackgroundShellActionResult struct {
+	Handled  bool                          `json:"handled"`
+	Action   BackgroundShellAction         `json:"action"`
+	Snapshot BackgroundShellStatusSnapshot `json:"snapshot"`
+	Message  string                        `json:"message,omitempty"`
+}
+
 type BackgroundShellStatusService struct {
 	mu                          sync.RWMutex
 	jobs                        map[string]BackgroundShellJob
@@ -178,12 +185,66 @@ func (s *BackgroundShellStatusService) CancelJobsForProject(projectPath, reason 
 		job.Status = BackgroundShellJobCanceled
 		job.Severity = BackgroundShellSeverityWarning
 		job.Detail = strings.TrimSpace(reason)
-		job.CompletedAt = s.nowMsLocked()
+		now := s.nowMsLocked()
+		job.UpdatedAt = now
+		job.CompletedAt = now
 		s.upsertJobLocked(job)
 		changed = true
 	}
 
 	return s.snapshotLocked(), changed
+}
+
+func (s *BackgroundShellStatusService) RunAction(actionID string) (BackgroundShellAction, BackgroundShellStatusSnapshot, bool, error) {
+	if s == nil {
+		return BackgroundShellAction{}, emptyBackgroundShellStatusSnapshot(), false, fmt.Errorf("background shell status is unavailable")
+	}
+
+	actionID = strings.TrimSpace(actionID)
+	if actionID == "" {
+		return BackgroundShellAction{}, s.Snapshot(), false, fmt.Errorf("background shell action id is empty")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	action, ok := s.resolveActionLocked(actionID)
+	if !ok {
+		return BackgroundShellAction{}, s.snapshotLocked(), false, fmt.Errorf("background shell action not found: %s", actionID)
+	}
+	if !action.Enabled {
+		return action, s.snapshotLocked(), false, fmt.Errorf("background shell action is disabled: %s", actionID)
+	}
+
+	switch action.Intent {
+	case "cancel-job":
+		if strings.TrimSpace(action.JobID) == "" {
+			return action, s.snapshotLocked(), false, fmt.Errorf("background shell cancel action has no job id")
+		}
+		job, ok := s.jobs[action.JobID]
+		if !ok {
+			return action, s.snapshotLocked(), false, fmt.Errorf("background shell job not found: %s", action.JobID)
+		}
+		if !job.Cancelable || !isActiveBackgroundShellJob(job.Status) {
+			return action, s.snapshotLocked(), false, fmt.Errorf("background shell job is not cancelable: %s", action.JobID)
+		}
+		job.Status = BackgroundShellJobCanceled
+		job.Severity = BackgroundShellSeverityWarning
+		job.Detail = "Canceled from background shell action."
+		job.Cancelable = false
+		now := s.nowMsLocked()
+		job.UpdatedAt = now
+		job.CompletedAt = now
+		s.upsertJobLocked(job)
+		return action, s.snapshotLocked(), true, nil
+	case "focus-surface":
+		if strings.TrimSpace(action.OwnerSurfaceID) == "" {
+			return action, s.snapshotLocked(), false, fmt.Errorf("background shell focus action has no surface id")
+		}
+		return action, s.snapshotLocked(), true, nil
+	default:
+		return action, s.snapshotLocked(), false, fmt.Errorf("unsupported background shell action intent: %s", action.Intent)
+	}
 }
 
 func (s *BackgroundShellStatusService) setClockForTest(clock func() time.Time) {
@@ -303,6 +364,31 @@ func normalizeBackgroundShellJob(job, previous BackgroundShellJob, existed bool,
 	job.ProjectPath = strings.TrimSpace(job.ProjectPath)
 	job.OwnerSurfaceID = strings.TrimSpace(job.OwnerSurfaceID)
 	return job
+}
+
+func (s *BackgroundShellStatusService) resolveActionLocked(actionID string) (BackgroundShellAction, bool) {
+	actionID = strings.TrimSpace(actionID)
+	if actionID == "" {
+		return BackgroundShellAction{}, false
+	}
+
+	for _, job := range s.jobs {
+		if action, ok := backgroundShellCancelActionForJob(job); ok && action.ID == actionID {
+			return action, true
+		}
+	}
+
+	for _, candidate := range s.notificationCandidates {
+		if candidate.Action == nil {
+			continue
+		}
+		action := *candidate.Action
+		if action.ID == actionID {
+			return action, true
+		}
+	}
+
+	return BackgroundShellAction{}, false
 }
 
 func normalizeBackgroundShellProgress(progress *BackgroundShellProgress) *BackgroundShellProgress {
@@ -497,15 +583,14 @@ func (s *BackgroundShellStatusService) snapshotLocked() BackgroundShellStatusSna
 		}
 		if isActiveBackgroundShellJob(job.Status) {
 			activeCount++
-			if job.Cancelable {
-				actions = append(actions, BackgroundShellAction{
-					ID:      "cancel:" + job.ID,
-					Label:   "Cancel",
-					Intent:  "cancel-job",
-					JobID:   job.ID,
-					Enabled: true,
-				})
+			if action, ok := backgroundShellCancelActionForJob(job); ok {
+				actions = appendUniqueBackgroundShellAction(actions, action)
 			}
+		}
+	}
+	for _, candidate := range notifications {
+		if candidate.Action != nil {
+			actions = appendUniqueBackgroundShellAction(actions, *candidate.Action)
 		}
 	}
 
@@ -524,6 +609,31 @@ func (s *BackgroundShellStatusService) snapshotLocked() BackgroundShellStatusSna
 		NativeTrayEnabled:       false,
 		NativeNotificationsSent: false,
 	}
+}
+
+func backgroundShellCancelActionForJob(job BackgroundShellJob) (BackgroundShellAction, bool) {
+	if !job.Cancelable || !isActiveBackgroundShellJob(job.Status) || strings.TrimSpace(job.ID) == "" {
+		return BackgroundShellAction{}, false
+	}
+	return BackgroundShellAction{
+		ID:      "cancel:" + job.ID,
+		Label:   "Cancel",
+		Intent:  "cancel-job",
+		JobID:   job.ID,
+		Enabled: true,
+	}, true
+}
+
+func appendUniqueBackgroundShellAction(actions []BackgroundShellAction, action BackgroundShellAction) []BackgroundShellAction {
+	if strings.TrimSpace(action.ID) == "" {
+		return actions
+	}
+	for _, existing := range actions {
+		if existing.ID == action.ID {
+			return actions
+		}
+	}
+	return append(actions, action)
 }
 
 func cloneBackgroundShellJob(job BackgroundShellJob) BackgroundShellJob {

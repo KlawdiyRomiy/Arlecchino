@@ -85,12 +85,20 @@ export interface BackgroundShellStatusSnapshot {
   nativeNotificationsSent: boolean;
 }
 
+export interface BackgroundShellActionResult {
+  handled: boolean;
+  action?: BackgroundShellAction;
+  snapshot: BackgroundShellStatusSnapshot;
+  message?: string;
+}
+
 interface RuntimeEvent {
   data?: unknown;
 }
 
 interface BackgroundShellStatusBridge {
   GetBackgroundShellStatus?: () => Promise<unknown> | unknown;
+  RunBackgroundShellAction?: (actionId: string) => Promise<unknown> | unknown;
 }
 
 interface BackgroundShellStatusRuntimeModule {
@@ -152,8 +160,16 @@ const backgroundShellStatusMethodNames = [
   "arlecchino.App.GetBackgroundShellStatus",
 ] as const;
 
+const backgroundShellActionMethodNames = [
+  "main.App.RunBackgroundShellAction",
+  "arlecchino.App.RunBackgroundShellAction",
+] as const;
+
 let backgroundShellStatusMethodName:
   | (typeof backgroundShellStatusMethodNames)[number]
+  | undefined;
+let backgroundShellActionMethodName:
+  | (typeof backgroundShellActionMethodNames)[number]
   | undefined;
 let runtimeEventSubscriptionStarted = false;
 
@@ -421,6 +437,29 @@ export const normalizeBackgroundShellStatusPayload = (
   };
 };
 
+export const normalizeBackgroundShellActionResultPayload = (
+  payload: unknown,
+): BackgroundShellActionResult => {
+  if (!isRecord(payload)) {
+    return {
+      handled: false,
+      snapshot: getBackgroundShellStatusSnapshot(),
+    };
+  }
+
+  const rawSnapshot = getRecordValue(payload, "snapshot", "Snapshot");
+  const nextSnapshot = isRecord(rawSnapshot)
+    ? syncBackgroundShellStatusFromPayload(rawSnapshot)
+    : getBackgroundShellStatusSnapshot();
+
+  return {
+    handled: asBoolean(getRecordValue(payload, "handled", "Handled")) ?? false,
+    action: normalizeAction(getRecordValue(payload, "action", "Action")),
+    snapshot: nextSnapshot,
+    message: asTrimmedString(getRecordValue(payload, "message", "Message")),
+  };
+};
+
 const isActiveJobStatus = (status: BackgroundShellJobStatus): boolean =>
   status === "queued" || status === "running";
 
@@ -559,6 +598,70 @@ export async function loadBackgroundShellStatusFromBackend(
   }
 
   return getBackgroundShellStatusSnapshot();
+}
+
+const runBackgroundShellActionByName = async (
+  actionId: string,
+): Promise<unknown | undefined> => {
+  const runtimeModule = await loadBackgroundShellRuntimeModule();
+  const call = runtimeModule?.Call;
+  if (!call?.ByName) {
+    return undefined;
+  }
+
+  if (backgroundShellActionMethodName) {
+    try {
+      return await call.ByName(backgroundShellActionMethodName, actionId);
+    } catch {
+      backgroundShellActionMethodName = undefined;
+    }
+  }
+
+  for (const methodName of backgroundShellActionMethodNames) {
+    try {
+      const payload = await call.ByName(methodName, actionId);
+      backgroundShellActionMethodName = methodName;
+      return payload;
+    } catch {
+      // Try the next known Wails v3 service namespace.
+    }
+  }
+
+  return undefined;
+};
+
+export async function runBackgroundShellAction(
+  actionId: string,
+  bridge?: BackgroundShellStatusBridge | null,
+): Promise<BackgroundShellActionResult> {
+  const normalizedActionId = actionId.trim();
+  if (!normalizedActionId) {
+    return {
+      handled: false,
+      snapshot: getBackgroundShellStatusSnapshot(),
+      message: "Background shell action id is empty.",
+    };
+  }
+
+  if (bridge?.RunBackgroundShellAction) {
+    const payload = await Promise.resolve(
+      bridge.RunBackgroundShellAction(normalizedActionId),
+    );
+    return normalizeBackgroundShellActionResultPayload(payload);
+  }
+
+  if (bridge !== null) {
+    const payload = await runBackgroundShellActionByName(normalizedActionId);
+    if (payload !== undefined) {
+      return normalizeBackgroundShellActionResultPayload(payload);
+    }
+  }
+
+  return {
+    handled: false,
+    snapshot: getBackgroundShellStatusSnapshot(),
+    message: "Background shell action bridge is unavailable.",
+  };
 }
 
 const ensureRuntimeEventSubscription = (): void => {

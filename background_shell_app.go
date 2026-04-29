@@ -29,6 +29,42 @@ func (a *App) recordBackgroundShellJob(job BackgroundShellJob) {
 	a.emitBackgroundShellStatusSnapshot(a.backgroundShell.UpsertJob(job))
 }
 
+func (a *App) RunBackgroundShellAction(actionID string) (BackgroundShellActionResult, error) {
+	if a == nil || a.backgroundShell == nil {
+		return BackgroundShellActionResult{}, fmt.Errorf("background shell status is unavailable")
+	}
+
+	action, snapshot, handled, err := a.backgroundShell.RunAction(actionID)
+	result := BackgroundShellActionResult{
+		Handled:  handled,
+		Action:   action,
+		Snapshot: snapshot,
+	}
+	if err != nil {
+		return result, err
+	}
+
+	switch action.Intent {
+	case "focus-surface":
+		a.focusMainWindow()
+		a.emitEvent("ide:intent:open", map[string]any{
+			"id":        "background-shell:" + action.ID,
+			"kind":      "focusSurface",
+			"source":    "background-shell",
+			"surfaceId": action.OwnerSurfaceID,
+			"jobId":     action.JobID,
+		})
+		result.Message = "Surface focus requested."
+	case "cancel-job":
+		result.Message = "Background job canceled."
+	default:
+		result.Message = "Background shell action applied."
+	}
+
+	a.emitBackgroundShellStatusSnapshot(snapshot)
+	return result, nil
+}
+
 func (a *App) recordBackgroundIndexerEvent(evt core.IndexingEvent, projectPath string, generation uint64) {
 	if a == nil {
 		return
