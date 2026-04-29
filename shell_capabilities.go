@@ -87,11 +87,15 @@ func buildShellCapabilities(platform string, appReady bool, mainWindowReady bool
 			),
 			"tray": shellCapability(
 				ShellCapabilityUnavailable,
-				"Tray integration is deferred until background job ownership is defined.",
+				"Tray integration stays disabled while Background Shell Status runs as a read model.",
 			),
 			"notifications": shellCapability(
 				ShellCapabilityUnavailable,
-				"Native notifications are deferred until the job broker can rate-limit them.",
+				"Native notification delivery stays disabled; Background Shell Status only produces rate-limited candidates.",
+			),
+			"backgroundStatus": shellCapability(
+				ShellCapabilityAvailable,
+				"Background Shell Status read model is available for future tray and notification consumers.",
 			),
 			"clipboard": shellCapability(
 				ShellCapabilityAvailable,

@@ -66,6 +66,15 @@ async function loadRuntimeContracts() {
           writeClipboardTextWithFallback,
         } from "./src/utils/clipboard.ts";
         export {
+          BACKGROUND_SHELL_STATUS_EVENT,
+          getBackgroundShellStatusSnapshot,
+          getFallbackBackgroundShellStatus,
+          loadBackgroundShellStatusFromBackend,
+          normalizeBackgroundShellStatusPayload,
+          subscribeBackgroundShellStatus,
+          syncBackgroundShellStatusFromPayload,
+        } from "./src/shell/backgroundShellStatus.ts";
+        export {
           canUseShellCapability,
           getFallbackShellCapabilities,
           getShellCapabilitiesSnapshot,
@@ -818,6 +827,7 @@ test("shell capabilities expose conservative fallback statuses and backend sync"
   assert.equal(fallback.clipboard.status, "available");
   assert.equal(fallback.browserOpenURL.status, "available");
   assert.equal(fallback.nativeMenu.status, "available");
+  assert.equal(fallback.backgroundStatus.status, "available");
   assert.equal(fallback.multiWindow.status, "experimental");
   assert.equal(fallback.contextMenu.status, "unavailable");
   assert.equal(fallback.customProtocol.status, "requires-build");
@@ -845,6 +855,7 @@ test("shell capabilities expose conservative fallback statuses and backend sync"
   assert.equal(nextSnapshot.capabilities.contextMenu.status, "available");
   assert.equal(nextSnapshot.capabilities.contextMenu.source, "backend");
   assert.equal(nextSnapshot.capabilities.tray.status, "unavailable");
+  assert.equal(nextSnapshot.capabilities.backgroundStatus.status, "available");
   assert.deepEqual(observedRevisions, [nextSnapshot.revision]);
 
   const unchangedSnapshot = syncShellCapabilities({
@@ -856,6 +867,156 @@ test("shell capabilities expose conservative fallback statuses and backend sync"
   });
   assert.equal(unchangedSnapshot.revision, nextSnapshot.revision);
   assert.deepEqual(observedRevisions, [nextSnapshot.revision]);
+
+  unsubscribe();
+});
+
+test("background shell status normalizes backend snapshots without enabling native delivery", async () => {
+  const {
+    BACKGROUND_SHELL_STATUS_EVENT,
+    getFallbackBackgroundShellStatus,
+    normalizeBackgroundShellStatusPayload,
+  } = await loadRuntimeContracts();
+
+  const fallback = getFallbackBackgroundShellStatus();
+  assert.equal(BACKGROUND_SHELL_STATUS_EVENT, "shell:background:status");
+  assert.equal(fallback.source, "fallback");
+  assert.equal(fallback.nativeTrayEnabled, false);
+  assert.equal(fallback.nativeNotificationsSent, false);
+
+  const normalized = normalizeBackgroundShellStatusPayload({
+    Version: 1,
+    Revision: 7,
+    UpdatedAt: 1710000000000,
+    ActiveCount: 1,
+    ServiceCount: 1,
+    AttentionCount: 1,
+    NativeTrayEnabled: true,
+    NativeNotificationsSent: true,
+    Jobs: [
+      {
+        ID: "indexer:1",
+        Kind: "indexing",
+        Category: "job",
+        Title: "Project indexing",
+        Status: "running",
+        Severity: "info",
+        Progress: { Percent: 125, Current: 8, Total: 10 },
+        Cancelable: true,
+        StartedAt: 1710000000000,
+        UpdatedAt: 1710000001000,
+      },
+      {
+        ID: "broken",
+        Status: "unknown",
+      },
+    ],
+    Events: [
+      {
+        ID: "indexer:1:1710000001000",
+        Type: "job:updated",
+        JobID: "indexer:1",
+        Kind: "indexing",
+        Severity: "info",
+        Message: "Indexed 8 of 10 project files.",
+        At: 1710000001000,
+      },
+    ],
+    NotificationCandidates: [
+      {
+        ID: "notification:lsp-install:gopls:1710000002000",
+        JobID: "lsp-install:gopls",
+        Severity: "error",
+        Title: "Install gopls language server",
+        Body: "go is missing",
+        DedupeKey: "lsp-install:gopls:failed",
+        CreatedAt: 1710000002000,
+        Action: {
+          ID: "focus:panel:terminal",
+          Label: "Focus",
+          Intent: "focus-surface",
+          JobID: "lsp-install:gopls",
+          OwnerSurfaceID: "panel:terminal",
+          Enabled: true,
+        },
+      },
+    ],
+    Actions: [
+      {
+        ID: "cancel:indexer:1",
+        Label: "Cancel",
+        Intent: "cancel-job",
+        JobID: "indexer:1",
+        Enabled: true,
+      },
+    ],
+  });
+
+  assert.equal(normalized.source, "backend");
+  assert.equal(normalized.loadedFromBackend, true);
+  assert.equal(normalized.revision, 7);
+  assert.equal(normalized.jobs.length, 1);
+  assert.equal(normalized.jobs[0].progress.percent, 100);
+  assert.equal(normalized.events.length, 1);
+  assert.equal(normalized.notificationCandidates.length, 1);
+  assert.equal(
+    normalized.notificationCandidates[0].action.ownerSurfaceId,
+    "panel:terminal",
+  );
+  assert.equal(normalized.actions.length, 1);
+  assert.equal(normalized.nativeTrayEnabled, false);
+  assert.equal(normalized.nativeNotificationsSent, false);
+});
+
+test("background shell status syncs snapshots and keeps stable revisions", async () => {
+  const {
+    getBackgroundShellStatusSnapshot,
+    loadBackgroundShellStatusFromBackend,
+    subscribeBackgroundShellStatus,
+    syncBackgroundShellStatusFromPayload,
+  } = await loadRuntimeContracts();
+
+  const backendPayload = {
+    version: 1,
+    revision: 11,
+    updatedAt: 1710000003000,
+    activeCount: 1,
+    serviceCount: 0,
+    attentionCount: 0,
+    jobs: [
+      {
+        id: "indexer:1",
+        kind: "indexing",
+        category: "job",
+        title: "Project indexing",
+        status: "running",
+        severity: "info",
+        cancelable: false,
+        startedAt: 1710000000000,
+        updatedAt: 1710000003000,
+      },
+    ],
+  };
+
+  const observedRevisions = [];
+  const unsubscribe = subscribeBackgroundShellStatus(() => {
+    observedRevisions.push(getBackgroundShellStatusSnapshot().revision);
+  });
+
+  const firstSnapshot = await loadBackgroundShellStatusFromBackend({
+    GetBackgroundShellStatus: async () => backendPayload,
+  });
+  assert.equal(firstSnapshot.loadedFromBackend, true);
+  assert.equal(firstSnapshot.revision, 11);
+  assert.equal(firstSnapshot.activeCount, 1);
+
+  const secondSnapshot = syncBackgroundShellStatusFromPayload(backendPayload);
+  assert.equal(secondSnapshot.revision, firstSnapshot.revision);
+  assert.deepEqual(observedRevisions, [11]);
+
+  const missingBridgeSnapshot =
+    await loadBackgroundShellStatusFromBackend(null);
+  assert.equal(missingBridgeSnapshot.revision, firstSnapshot.revision);
 
   unsubscribe();
 });

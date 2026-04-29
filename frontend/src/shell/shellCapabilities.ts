@@ -16,6 +16,7 @@ export type ShellCapabilityName =
   | "contextMenu"
   | "tray"
   | "notifications"
+  | "backgroundStatus"
   | "clipboard"
   | "dialogs"
   | "customProtocol"
@@ -89,11 +90,15 @@ const FALLBACK_CAPABILITIES: ShellCapabilities = {
   ),
   tray: createDescriptor(
     "unavailable",
-    "Tray integration is deferred until background job ownership is defined.",
+    "Tray integration stays disabled while Background Shell Status runs as a read model.",
   ),
   notifications: createDescriptor(
     "unavailable",
-    "Native notifications are deferred until the job broker can rate-limit them.",
+    "Native notification delivery stays disabled; Background Shell Status only produces rate-limited candidates.",
+  ),
+  backgroundStatus: createDescriptor(
+    "available",
+    "Background Shell Status read model is available for future tray and notification consumers.",
   ),
   clipboard: createDescriptor(
     "available",
@@ -196,6 +201,7 @@ const SHELL_CAPABILITY_NAMES: readonly ShellCapabilityName[] = [
   "contextMenu",
   "tray",
   "notifications",
+  "backgroundStatus",
   "clipboard",
   "dialogs",
   "customProtocol",

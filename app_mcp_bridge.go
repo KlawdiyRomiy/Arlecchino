@@ -42,16 +42,22 @@ func (a *App) startMCPBridge() {
 
 	server, err := mcp.NewIDEBridgeServer(a.handleMCPBridgeCall)
 	if err != nil {
+		a.recordBackgroundMCPBridgeStatus(BackgroundShellJobFailed, err.Error())
 		fmt.Printf("[MCP Bridge] init failed: %v\n", err)
 		return
 	}
 
 	if err := server.Start(); err != nil {
+		a.recordBackgroundMCPBridgeStatus(BackgroundShellJobFailed, err.Error())
 		fmt.Printf("[MCP Bridge] start failed: %v\n", err)
 		return
 	}
 
 	a.mcpBridgeServer = server
+	a.recordBackgroundMCPBridgeStatus(
+		BackgroundShellJobRunning,
+		fmt.Sprintf("Listening on %s", server.SocketPath()),
+	)
 	fmt.Printf("[MCP Bridge] listening on %s\n", server.SocketPath())
 }
 
@@ -65,6 +71,7 @@ func (a *App) stopMCPBridge() {
 	}
 
 	a.mcpBridgeServer = nil
+	a.recordBackgroundMCPBridgeStatus(BackgroundShellJobCanceled, "MCP bridge stopped.")
 }
 
 func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, error) {

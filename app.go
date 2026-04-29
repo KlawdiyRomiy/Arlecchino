@@ -55,6 +55,7 @@ type App struct {
 	lastRequestID      atomic.Value
 	mcpBridgeServer    *mcp.IDEBridgeServer
 	mcpBridgeMu        sync.Mutex
+	backgroundShell    *BackgroundShellStatusService
 	shellMenuMu        sync.Mutex
 	shellMenuShortcuts map[string][]string
 	managerMu          sync.Mutex
@@ -110,6 +111,7 @@ func NewApp() *App {
 		carapaceProvider: terminal.NewCarapaceProvider(),
 		plugins:          pluginRegistry,
 		executionService: execution.NewService(pluginRegistry),
+		backgroundShell:   NewBackgroundShellStatusService(),
 	}
 }
 
@@ -129,6 +131,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ensureMCPConfigs()
 
 	installer, err := lspinstaller.NewInstaller(func(progress lspinstaller.InstallProgress) {
+		a.recordBackgroundLSPInstallProgress(progress)
 		a.emitEvent("lsp:install:progress", progress)
 	})
 	if err == nil {
@@ -244,6 +247,7 @@ func (a *App) OpenProject(path string) error {
 
 		// Listen for indexing lifecycle events
 		a.coreEngine.OnIndexing(func(evt core.IndexingEvent) {
+			a.recordBackgroundIndexerEvent(evt, path, projectGeneration)
 			switch evt.Type {
 			case core.IndexingStarted:
 				a.emitEvent("indexer:started", map[string]any{"total": evt.Total})
@@ -374,11 +378,16 @@ func (a *App) CloseProject() error {
 }
 
 func (a *App) closeProject(closeTerminals bool) error {
+	projectPath := a.currentProjectPath()
 	if a.projectCancel != nil {
 		a.projectCancel()
 	}
 
 	a.wg.Wait()
+
+	if snapshot, changed := a.backgroundShell.CancelJobsForProject(projectPath, "Project closed."); changed {
+		a.emitBackgroundShellStatusSnapshot(snapshot)
+	}
 
 	if closeTerminals && a.termManager != nil {
 		a.termManager.CloseAll()

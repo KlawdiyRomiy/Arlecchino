@@ -186,11 +186,20 @@ Baseline hardening для этой ветки теперь имеет отдел
   существующие project/file/preview/focus handlers. Для MCP добавлен подтверждаемый
   `ide_ui.open_intent`, который эмитит тот же `ide:intent:open` и сохраняет approval,
   burst-limit и path guard для file intents.
+- Добавлен Background Shell Status v1 без включения tray/notifications:
+  `background_shell_status.go` хранит in-memory read model для фоновых jobs/services,
+  bounded event tail, cancel/focus action candidates и rate-limited notification
+  candidates. `app.go` подключает indexer, LSP install и MCP bridge lifecycle к этому
+  snapshot, а frontend mirror `frontend/src/shell/backgroundShellStatus.ts` читает
+  `App.GetBackgroundShellStatus()` через Wails v3 runtime `Call.ByName` и слушает
+  `shell:background:status`. Native tray и native notification delivery остаются
+  выключенными.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
   `node --test test-scripts/surface-runtime-contracts.test.mjs`, `tsc --noEmit`,
-  `go test -run TestBuildShellCapabilities .`, `./scripts/wails3-dev-macos.sh --build-only`,
+  `go test -run 'TestBackgroundShellStatusService|TestBuildShellCapabilities' .`,
+  `./scripts/wails3-dev-macos.sh --build-only`,
   короткий smoke запуск собранного Wails v3 бинаря без `Binding call failed`, `git diff --check`.
 
 ## 1. Surface Runtime
@@ -459,6 +468,8 @@ DockBadges}`;
 - repo-local regeneration script `./scripts/wails3-generate-bindings.sh`;
 - generated bindings for `GetShellCapabilities`;
 - capability gates для dialogs, browser open и clipboard;
+- capability `backgroundStatus` сообщает, что read model для фоновых shell-состояний
+  доступен, while `tray` и `notifications` остаются `unavailable`;
 - contract tests для fallback, backend payload, invalid entries, stable revisions и
   operation events.
 
@@ -835,6 +846,25 @@ Job model:
 - actions: cancel, retry, open logs, reveal related surface.
 
 Start with non-invasive broker that observes existing jobs, then move ownership gradually.
+
+Текущий реализованный slice:
+
+- backend model/service: `BackgroundShellStatusService`,
+  `BackgroundShellStatusSnapshot`, `BackgroundShellJob`, `BackgroundShellEvent`,
+  `BackgroundShellNotificationCandidate`, `BackgroundShellAction`;
+- backend binding: `App.GetBackgroundShellStatus()` возвращает snapshot without enabling
+  native tray or native notification delivery;
+- observed sources: project indexing, LSP installer progress and MCP bridge lifecycle;
+- summary counters distinguish transient active jobs from persistent services, so MCP
+  bridge does not look like a running user job;
+- notification candidates are generated only from terminal job states and deduped with
+  cooldown; native delivery remains off;
+- frontend mirror: `frontend/src/shell/backgroundShellStatus.ts` normalizes camelCase and
+  PascalCase payloads, keeps stable revisions, listens to `shell:background:status` and
+  can load backend snapshot through Wails v3 `Call.ByName`;
+- `frontend/src/App.tsx` starts the bridge without rendering new tray UI;
+- contract coverage lives in `background_shell_status_test.go` and
+  `frontend/test-scripts/surface-runtime-contracts.test.mjs`.
 
 ### Risks And Checks
 
@@ -1251,8 +1281,11 @@ risky action, user can return layout.
 14. Later: add Applet Promotion Chain up to fullscreen/floating/snapped first.
 15. Later: spike Wails v3 detached windows with Window Lease System.
 16. Later: add packaged Protocol Router, file associations and single instance.
-17. Later: add Background Job Broker, tray and notifications.
-18. Later: delay auto-updates/material/backdrop/dock badges until shell behavior is stable.
+17. Done: add Background Shell Status v1 as read model for future tray/notifications
+    without enabling native tray or native notification delivery.
+18. Later: enable real tray, native notifications and dock/taskbar badges only after
+    packaged OS integration checks.
+19. Later: delay auto-updates/material/backdrop/dock badges until shell behavior is stable.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
