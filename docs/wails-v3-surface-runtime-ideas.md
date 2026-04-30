@@ -1382,6 +1382,11 @@ risky action, user can return layout.
 18. Done: prepare real tray, native notification and dock/taskbar badge adapters as
     default-off consumers of Background Shell state; native delivery remains off.
 19. Done: add auto-update manifest-read placeholder; material/backdrop remains later.
+20. Done: add packaged smoke harness. `wails3-packaged-smoke` and
+    `./scripts/wails3-packaged-smoke-macos.sh` produce one report for shell
+    capabilities, packaged OS adapters, Background Shell actions, single-instance gate,
+    launch/open-intent probe and current Window Lease status without enabling native
+    delivery by default.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
@@ -1426,6 +1431,9 @@ capability-driven v3 shell layer. Это снижает риск перед deta
 11. Done: Packaged OS integration adapters. Custom protocol/file associations/tray/
     notifications/dock badges/auto-update now have default-off read models and focused
     tests; Background Shell actions are routable for future tray/notification surfaces.
+12. Done: Packaged smoke harness. The Wails v3 spike binary can dump a dev-only smoke
+    report through `wails3-packaged-smoke`, and the macOS helper script builds the v3
+    target before running the same report with packaged spike env enabled.
 
 Arlehub можно начинать только после пунктов 1-5: тогда hub будет использовать уже
 готовые surface events, command routing и capability checks, а не создавать параллельную

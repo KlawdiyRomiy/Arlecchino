@@ -51,6 +51,15 @@ func main() {
 		return
 	}
 
+	handled, modeErr = maybeRunWails3PackagedSmokeMode(os.Args[1:])
+	if handled {
+		if modeErr != nil {
+			fmt.Fprintln(os.Stderr, "Error:", modeErr)
+			os.Exit(1)
+		}
+		return
+	}
+
 	app := NewApp()
 	wailsApp := application.New(application.Options{
 		Name:        "Arlecchino",
