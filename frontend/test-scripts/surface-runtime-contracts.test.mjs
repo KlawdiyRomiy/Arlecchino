@@ -77,6 +77,7 @@ async function loadRuntimeContracts() {
           getFallbackBackgroundShellStatus,
           loadBackgroundShellStatusFromBackend,
           normalizeBackgroundShellStatusPayload,
+          runBackgroundShellAction,
           subscribeBackgroundShellStatus,
           syncBackgroundShellStatusFromPayload,
         } from "./src/shell/backgroundShellStatus.ts";
@@ -1146,6 +1147,7 @@ test("background shell status syncs snapshots and keeps stable revisions", async
   const {
     getBackgroundShellStatusSnapshot,
     loadBackgroundShellStatusFromBackend,
+    runBackgroundShellAction,
     subscribeBackgroundShellStatus,
     syncBackgroundShellStatusFromPayload,
   } = await loadRuntimeContracts();
@@ -1191,6 +1193,43 @@ test("background shell status syncs snapshots and keeps stable revisions", async
   const missingBridgeSnapshot =
     await loadBackgroundShellStatusFromBackend(null);
   assert.equal(missingBridgeSnapshot.revision, firstSnapshot.revision);
+
+  const actionResult = await runBackgroundShellAction("cancel:indexer:1", {
+    RunBackgroundShellAction: async (actionId) => ({
+      handled: true,
+      action: {
+        id: actionId,
+        label: "Cancel",
+        intent: "cancel-job",
+        jobId: "indexer:1",
+        enabled: true,
+      },
+      snapshot: {
+        ...backendPayload,
+        revision: 12,
+        activeCount: 0,
+        jobs: [
+          {
+            id: "indexer:1",
+            kind: "indexing",
+            category: "job",
+            title: "Project indexing",
+            status: "canceled",
+            severity: "warning",
+            cancelable: false,
+            startedAt: 1710000000000,
+            updatedAt: 1710000004000,
+            completedAt: 1710000004000,
+          },
+        ],
+      },
+      message: "Background job canceled.",
+    }),
+  });
+  assert.equal(actionResult.handled, true);
+  assert.equal(actionResult.action.intent, "cancel-job");
+  assert.equal(actionResult.snapshot.revision, 12);
+  assert.equal(getBackgroundShellStatusSnapshot().activeCount, 0);
 
   unsubscribe();
 });
