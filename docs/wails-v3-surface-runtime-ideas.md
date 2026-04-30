@@ -1,7 +1,7 @@
 # Wails v3 Surface Runtime Ideas For Arlecchino
 
 Status: planning reference
-Date: 2026-04-29
+Date: 2026-05-01
 
 Этот документ фиксирует идеи для развития Arlecchino на ветке Wails v3. Он не является
 списком задач на немедленную реализацию. Его цель - связать продуктовые идеи IDE,
@@ -224,11 +224,11 @@ Baseline hardening для этой ветки теперь имеет отдел
   `snapped`/`floating`/`fullscreen`.
 - Добавлен Window Lease System foundation без native detached window creation:
   `frontend/src/surfaces/windowLease.ts` вводит lease registry/read model для
-  detached-capable applets (`preview:*`, `panel:git`, `panel:problems`,
-  `panel:terminal`), close/focus/return/stale policies и cleanup stale leases.
-  `SurfaceRuntimeReadModel.windowLeases` теперь сообщает supported/unsupported
-  surfaces, а `promotion.detach` становится enabled только при lease support и
-  явном Window Lease spike availability. Default остается off до packaged smoke.
+  detached-capable applet roles, close/focus/return/stale policies и cleanup stale
+  leases. На текущем gate actual native-detachable surface честно ограничен только
+  Browser Preview: `panel:git`, `panel:problems` и `panel:terminal` больше не
+  показывают enabled `detach`, пока native panel detach не реализован. Default остается
+  off до packaged/manual smoke.
 - Добавлен Window Lease v2 native detached preview spike: backend `window_lease.go`
   хранит lease registry для actual Wails windows и dev-gated
   `RunWindowLeaseAction(detach)`, который при
@@ -259,16 +259,36 @@ Baseline hardening для этой ветки теперь имеет отдел
   `./scripts/wails3-packaged-smoke-matrix-macos.sh` строит Wails v3 binary один раз и
   проверяет default report, `--open-file`, `file://`, `arlecchino://open?file=...`,
   `--open-preview`, `arlecchino://focus?...` и gated snapshot с single-instance,
-  Window Lease и packaged OS spike flags. Полноценный `.app` bundle, signing,
-  protocol/file association OS registration и native notification smoke остаются next
-  gate.
+  Window Lease и packaged OS spike flags.
+- Добавлен dev-only packaged `.app` smoke harness:
+  `./scripts/wails3-packaged-app-smoke-macos.sh` собирает Wails v3 binary, создает
+  временный `.app` bundle с bundle id, URL scheme и document type declarations,
+  запускает его через `open -n ... --args`, пишет JSON report во временную директорию и
+  не оставляет tracked artifacts. Report теперь включает `appBundle`, shell
+  capabilities, packaged OS adapters, Background Shell, `nativeDelivery`,
+  `singleInstance`, `secondInstance`, Window Lease и `autoUpdate`.
+- Packaged matrix теперь покрывает `.app` smoke cases для second-instance/open-file
+  probe, `file://`, `arlecchino://open?file=...`, `arlecchino://open?preview=...`,
+  `arlecchino://focus?...`, native tray/notification/dock badge projection из
+  Background Shell и valid/invalid auto-update manifest read. Native delivery остается
+  default-off и включается только explicit env flags.
+- Auto-update gate реализован только как manifest read/validate/report:
+  `no-manifest`, `invalid-manifest`, `valid-manifest-read`; установка обновлений
+  намеренно disabled.
+- Production `.app` packaging, signing/notarization, real LaunchServices protocol/file
+  registration, real Finder/browser handoff и real notification permission/delivery
+  остаются next gate.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
   `node --test test-scripts/surface-runtime-contracts.test.mjs`, `tsc --noEmit`,
   `go test -run 'TestBackgroundShellStatusService|TestBuildShellCapabilities' .`,
+  focused packaged/open-intent/window-lease Go tests,
   `./scripts/wails3-dev-macos.sh --build-only`,
-  короткий smoke запуск собранного Wails v3 бинаря без `Binding call failed`, `git diff --check`.
+  `./scripts/wails3-packaged-app-smoke-macos.sh`,
+  `./scripts/wails3-packaged-smoke-matrix-macos.sh`,
+  короткий smoke запуск собранного Wails v3 бинаря без `Binding call failed`,
+  `git diff --check`.
 
 ## Decision Gate Matrix
 
@@ -279,22 +299,23 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Wails v3 lifecycle/dev runner | Green | `./scripts/wails3-dev-macos.sh` is the branch smoke path; runner owns child cleanup and stale output-scoped MCP shutdown. | Keep using v3 script; do not use global v2 `wails` CLI for this branch. |
 | Bindings/service surface | Green | Shell capabilities, context menu, background shell, packaged OS and window lease methods exist behind the `App` service with runtime fallbacks. | Regenerate bindings only with `./scripts/wails3-generate-bindings.sh --write` and review generated churn separately. |
 | Surface/Applet promotion | Green | In-window `floating`, `snap`, `fullscreen`, `return-to-main` works for existing panels/previews without detached windows. | Detached remains Window Lease territory, not part of in-window promotion. |
-| Detached windows / Window Lease | Yellow | Browser Preview actual Wails detached window works only with `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`; return intent now preserves preview identity/state. | Manual preview detach/close smoke; then add Git/Problems/Terminal helper detach one by one. |
-| Single instance/open-file | Yellow | Backend parser, frontend-ready queue and `ide:intent:open` dispatch are implemented behind `ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1`. | Packaged second-instance run and OS file-open smoke before enabling capability by default. |
-| Protocol/file associations | Yellow | `arlecchino://` and `file://` payloads normalize through strict open-intent allowlist. | Real OS registration in packaged app; keep capabilities `requires-build` until smoke passes. |
-| Tray/notifications/dock badge | Yellow | Real Wails native delivery is wired to Background Shell only behind packaged spike env flags. | Signed/bundled notification smoke, tray menu smoke and badge smoke before default-on native delivery. |
-| Packaging/release OS integration | Red | Binary smoke matrix validates launch parser/report gates, but production `.app` packaging/signing/registration is not validated. | Dedicated packaged app smoke for protocol, file associations, tray, notifications, badge, single-instance and update manifest. |
+| Detached windows / Window Lease | Yellow | Browser Preview actual Wails detached window works only with `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`; return intent preserves preview identity/state; panel detach commands are now disabled/honest until native panel detach exists. | Manual preview detach/close smoke remains useful; then add Git/Problems/Terminal helper detach one by one. |
+| Single instance/open-file | Yellow | Backend parser, frontend-ready queue and `ide:intent:open` dispatch are implemented behind `ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1`; packaged `.app` smoke now validates the second-instance parser/queue probe. | Real OS second-instance handoff from a launched packaged app before enabling capability by default. |
+| Protocol/file associations | Yellow | `arlecchino://` and `file://` payloads normalize through strict open-intent allowlist; packaged `.app` smoke validates these payloads as launch args. | Real LaunchServices/Finder/browser registration smoke before moving capabilities out of `requires-build`. |
+| Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates tray action projection, notification candidate projection, badge label and tracked failure states. | Signed/bundled notification permission smoke and real tray click smoke before default-on native delivery. |
+| Auto-update manifest | Yellow | `.app` smoke reads and reports `no-manifest`, `invalid-manifest`, `valid-manifest-read`; install remains disabled. | Decide update channel/signature policy and implement installer only after release packaging is stable. |
+| Packaging/release OS integration | Red | Binary smoke and temporary `.app` smoke validate report gates, but production `.app` packaging/signing/notarization and real OS registration are not validated. | Build production bundle path, signing/notarization strategy, real protocol/file association registration, and real notification delivery smoke. |
 
 Blockers before Arlehub:
 
 - Keep current shell contracts stable for surface read, open intent, Background Shell and Window Lease.
-- Prove Browser Preview detached lifecycle under spike without stale state or lost return-to-main.
+- Keep Browser Preview detached lifecycle under spike free of stale state or lost return-to-main.
 - Avoid adding Arlehub timeline/UI until Flight Recorder and Background Shell remain readable without hub.
 
 Blockers before default-on native delivery:
 
-- Package and run an app bundle with real macOS bundle identity.
-- Verify notification permission/startup in the packaged app, not only in dev build.
+- Package and run a production-shaped signed app bundle with real macOS bundle identity.
+- Verify notification permission/startup in the packaged app, not only in report projection.
 - Verify tray menu executes only Background Shell actions and does not expose unrelated app controls.
 - Verify protocol/file association payloads from Finder/browser reach `ide:intent:open`.
 - Decide per-platform status for Windows/Linux instead of inheriting macOS results.
@@ -442,7 +463,10 @@ lease release и вернуть applet в корректный host.
 Текущий реализованный slice:
 
 - frontend lease registry/read model: `frontend/src/surfaces/windowLease.ts`;
-- supported surfaces: all `preview:*`, `panel:git`, `panel:problems`, `panel:terminal`;
+- recognized lease roles: all `preview:*`, `panel:git`, `panel:problems`, `panel:terminal`;
+- current native detach support: only `preview:*`; helper panels expose disabled
+  `detach` with the Browser Preview-only reason until their native detach lifecycle is
+  implemented;
 - unsupported surfaces keep explicit disabled detach reason;
 - policies: `close=return-to-main`, `focus=focus-detached-window`,
   `return=restore-main-host`, `stale=cleanup-return-target`;
