@@ -111,6 +111,7 @@ func main() {
 	})
 	app.attachMainWindow(mainWindow)
 	wailsApp.Menu.SetApplicationMenu(app.buildApplicationMenu(nil))
+	app.configurePackagedOSNativeDelivery()
 
 	if err := wailsApp.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)

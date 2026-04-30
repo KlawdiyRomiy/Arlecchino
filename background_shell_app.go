@@ -12,13 +12,14 @@ func (a *App) GetBackgroundShellStatus() BackgroundShellStatusSnapshot {
 	if a == nil || a.backgroundShell == nil {
 		return emptyBackgroundShellStatusSnapshot()
 	}
-	return a.backgroundShell.Snapshot()
+	return a.decorateBackgroundShellStatusSnapshot(a.backgroundShell.Snapshot())
 }
 
 func (a *App) emitBackgroundShellStatusSnapshot(snapshot BackgroundShellStatusSnapshot) {
 	if a == nil {
 		return
 	}
+	snapshot = a.applyPackagedOSNativeDelivery(snapshot)
 	a.emitEvent(backgroundShellStatusEvent, snapshot)
 }
 

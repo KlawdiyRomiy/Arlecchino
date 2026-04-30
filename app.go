@@ -63,6 +63,7 @@ type App struct {
 	pendingOpenIntents []map[string]any
 	managerMu          sync.Mutex
 	windowLeases       *WindowLeaseRegistry
+	packagedOSNative   *PackagedOSNativeDelivery
 
 	projectCtx    context.Context
 	projectCancel context.CancelFunc
@@ -117,6 +118,7 @@ func NewApp() *App {
 		executionService: execution.NewService(pluginRegistry),
 		backgroundShell:  NewBackgroundShellStatusService(),
 		windowLeases:     NewWindowLeaseRegistry(),
+		packagedOSNative: NewPackagedOSNativeDelivery(defaultPackagedOSIntegrationOptions()),
 	}
 }
 

@@ -245,6 +245,13 @@ Baseline hardening для этой ветки теперь имеет отдел
   `RunPackagedOSIntegrationAction("background:<action>")` делегирует в существующий
   Background Shell action contract, а frontend mirror
   `frontend/src/shell/packagedOSIntegration.ts` загружается через Wails v3 `Call.ByName`.
+- Добавлен Native Tray/Notification Dev Gate без default-on поведения:
+  `packaged_os_native.go` подключает Wails v3 systray, notifications и dock/taskbar badge
+  только при одновременных env-gates `ARLECCHINO_PACKAGED_BUILD=1`,
+  `ARLECCHINO_ENABLE_PACKAGED_OS_SPIKE=1` и явном adapter flag. Tray menu показывает
+  только текущие Background Shell actions, native notifications отправляют deduped
+  notification candidates, а dock/taskbar badge отражает `AttentionCount`. Notification
+  service стартует lazy, чтобы macOS bundle/signing ограничения не ломали app startup.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -1420,6 +1427,9 @@ risky action, user can return layout.
 22. Done: add Protocol/File Association packaged probe. Custom protocol URLs and
     `file://`/file-association payloads normalize into the Open Intent allowlist, while
     OS registration capabilities remain `requires-build`.
+23. Done: add Native Tray/Notification Dev Gate. Real Wails v3 tray, notification and
+    dock/taskbar badge delivery now consume Background Shell state only behind explicit
+    packaged spike env flags; native delivery remains default-off.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
@@ -1473,6 +1483,9 @@ capability-driven v3 shell layer. Это снижает риск перед deta
 14. Done: Protocol/File Association packaged probe. `arlecchino://` and `file://`
     launch payloads now normalize through the backend Open Intent parser, with strict
     allowlist semantics and `requires-build` capabilities until packaged OS smoke.
+15. Done: Native Tray/Notification Dev Gate. Tray menu mirrors only Background Shell
+    actions, notifications use existing dedupe candidates, and dock/taskbar badge mirrors
+    attention count only when packaged spike env flags explicitly enable native delivery.
 
 Arlehub можно начинать только после пунктов 1-5: тогда hub будет использовать уже
 готовые surface events, command routing и capability checks, а не создавать параллельную

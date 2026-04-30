@@ -148,8 +148,8 @@ func buildPackagedOSIntegrationSnapshot(
 		Runtime:                 "wails-v3",
 		PackagedBuild:           options.PackagedBuild,
 		SpikeEnabled:            options.SpikeEnabled,
-		NativeTrayEnabled:       trayEnabled,
-		NativeNotificationsSent: false,
+		NativeTrayEnabled:       trayEnabled || background.NativeTrayEnabled,
+		NativeNotificationsSent: background.NativeNotificationsSent,
 		BackgroundActions:       append([]BackgroundShellAction(nil), background.Actions...),
 		NotificationCandidates:  append([]BackgroundShellNotificationCandidate(nil), background.NotificationCandidates...),
 		AutoUpdateManifest:      options.AutoUpdateManifest,
@@ -249,8 +249,8 @@ func readAutoUpdateManifest(path string) (*PackagedOSAutoUpdateManifest, string)
 
 func (a *App) GetPackagedOSIntegrationStatus() PackagedOSIntegrationSnapshot {
 	background := emptyBackgroundShellStatusSnapshot()
-	if a != nil && a.backgroundShell != nil {
-		background = a.backgroundShell.Snapshot()
+	if a != nil {
+		background = a.GetBackgroundShellStatus()
 	}
 	return buildPackagedOSIntegrationSnapshot(
 		runtime.GOOS,
