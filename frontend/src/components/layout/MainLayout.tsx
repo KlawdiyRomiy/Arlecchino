@@ -95,13 +95,18 @@ import {
   getTUIPanelVisibility,
   normalizeTUIAssistAnchor,
 } from "../../utils/terminalLayout";
-import { GetLanguageForFile, ReadFile, WriteTerminal } from "../../wails/app";
+import { GetLanguageForFile, WriteTerminal } from "../../wails/app";
 import { EventsOn } from "../../wails/runtime";
 import {
   type ExecutionProfile,
   type ExecutionProfileSet,
   resolveExecutionProfiles,
 } from "../../utils/executionProfiles";
+import {
+  createEditableEditorFileLoad,
+  loadEditorFile,
+  type EditorFileLoadState,
+} from "../../utils/editorFileLoader";
 import type {
   AssistPanelId,
   CodePanelTab,
@@ -466,14 +471,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }, []);
 
   const openFileInMainEditor = useCallback(
-    (path: string, content: string, name: string, line?: number) => {
+    (file: EditorFileLoadState, line?: number) => {
+      const payload = { file, line };
       const directHandler = editorFileOpenHandlerRef.current;
       if (directHandler) {
-        directHandler(path, content, name, line);
+        directHandler(payload);
         return;
       }
 
-      onFileOpen?.(path, content, name, line);
+      onFileOpen?.(payload);
     },
     [onFileOpen],
   );
@@ -2516,24 +2522,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
 
       let language = request?.language ?? fallbackLanguage;
-      let content = typeof request?.content === "string" ? request.content : "";
-
-      if (typeof request?.content !== "string") {
-        try {
-          content = await ReadFile(path);
-          if (codePanelOpenRequestRef.current !== requestId) {
-            return;
-          }
-        } catch (error) {
-          if (codePanelOpenRequestRef.current === requestId) {
-            showNotification(
-              "error",
-              `[Files] ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
-          return;
-        }
+      const fileLoadState =
+        typeof request?.content === "string"
+          ? createEditableEditorFileLoad(path, request.content)
+          : await loadEditorFile(path);
+      if (codePanelOpenRequestRef.current !== requestId) {
+        return;
       }
+      const content =
+        fileLoadState.kind === "editable" ? fileLoadState.content : "";
 
       if (!request?.language) {
         try {
@@ -2554,10 +2551,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
       const nextTab: CodePanelTab = {
         path,
-        name,
+        name: fileLoadState.name || name,
         content,
         language,
         line,
+        loadState: fileLoadState,
       };
       setCodePanelTabs((currentTabs) => {
         const existingIndex = currentTabs.findIndex((tab) => tab.path === path);
@@ -2571,7 +2569,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       });
       setActiveCodePanelPath(path);
 
-      openEditorTab(activePaneId, path, name, content, language);
+      if (fileLoadState.kind === "editable") {
+        openEditorTab(activePaneId, path, name, content, language);
+      }
 
       const nextConfig = buildPanelConfigForOpen(
         "code",
@@ -2639,7 +2639,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      openFileInMainEditor(path, content, name, line);
+      const requestId = openFileFromPathRequestRef.current + 1;
+      openFileFromPathRequestRef.current = requestId;
+      void loadEditorFile(path, {
+        knownContent: content.length > 0 ? content : undefined,
+      }).then((file) => {
+        if (openFileFromPathRequestRef.current !== requestId) {
+          return;
+        }
+        openFileInMainEditor(file, line);
+      });
     },
     [
       canAccessPath,
@@ -2670,12 +2679,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           return;
         }
 
-        const content = await ReadFile(path);
+        const file = await loadEditorFile(path);
         if (openFileFromPathRequestRef.current !== requestId) {
           return;
         }
-        const name = path.split("/").pop() || path;
-        openFileInMainEditor(path, content, name, line);
+        openFileInMainEditor(file, line);
       } catch (error) {
         if (openFileFromPathRequestRef.current === requestId) {
           console.error("[MainLayout] Failed to open file:", error);

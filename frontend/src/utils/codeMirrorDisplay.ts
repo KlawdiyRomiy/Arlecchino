@@ -6,7 +6,7 @@ export const CODEMIRROR_TOOLTIP_Z_INDEX = zIndex.tooltip;
 
 type CodeMirrorDocumentLike = string | number | { lines: number };
 
-function getCodeMirrorLineCount(doc: CodeMirrorDocumentLike): number {
+export function getCodeMirrorLineCount(doc: CodeMirrorDocumentLike): number {
   if (typeof doc === "number") {
     return doc;
   }

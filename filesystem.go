@@ -16,10 +16,15 @@ import (
 )
 
 const (
-	gitFieldSeparator  = "\x1f"
-	gitRecordSeparator = "\x1e"
-	maxEditorFileBytes = int64(20 * 1024 * 1024)
-	fileSniffBytes     = int64(64 * 1024)
+	gitFieldSeparator             = "\x1f"
+	gitRecordSeparator            = "\x1e"
+	maxEditorFileBytes            = int64(20 * 1024 * 1024)
+	maxInteractiveEditorFileBytes = int64(2 * 1024 * 1024)
+	maxInteractiveEditorLines     = 20_000
+	maxInteractiveEditorLineBytes = 20_000
+	defaultEditorFilePreviewBytes = int64(64 * 1024)
+	maxEditorFilePreviewBytes     = int64(256 * 1024)
+	fileSniffBytes                = int64(64 * 1024)
 )
 
 var nonTextEditorExtensions = map[string]struct{}{
@@ -186,6 +191,29 @@ type ProjectEntryRenameResult struct {
 	IsDirectory bool   `json:"isDirectory"`
 }
 
+type EditorFileInspection struct {
+	Path               string `json:"path"`
+	Name               string `json:"name"`
+	SizeBytes          int64  `json:"sizeBytes"`
+	FormattedSize      string `json:"formattedSize"`
+	IsText             bool   `json:"isText"`
+	SafeForEditor      bool   `json:"safeForEditor"`
+	LargeDocument      bool   `json:"largeDocument"`
+	Reason             string `json:"reason"`
+	LineCount          int    `json:"lineCount"`
+	MaxLineLength      int    `json:"maxLineLength"`
+	LimitBytes         int64  `json:"limitBytes"`
+	LineLimit          int    `json:"lineLimit"`
+	MaxLineLengthLimit int    `json:"maxLineLengthLimit"`
+}
+
+type EditorFilePreview struct {
+	Inspection   EditorFileInspection `json:"inspection"`
+	Content      string               `json:"content"`
+	Truncated    bool                 `json:"truncated"`
+	PreviewBytes int64                `json:"previewBytes"`
+}
+
 type projectEntryRenamedEvent struct {
 	OldPath     string `json:"oldPath"`
 	NewPath     string `json:"newPath"`
@@ -216,22 +244,53 @@ func (a *App) ReadDirectory(dirPath string) ([]FileEntry, error) {
 	return result, nil
 }
 
+func (a *App) InspectEditorFile(filePath string) (EditorFileInspection, error) {
+	return inspectEditorFile(filePath)
+}
+
+func (a *App) ReadEditorFilePreview(filePath string, maxBytes int) (EditorFilePreview, error) {
+	inspection, err := inspectEditorFile(filePath)
+	if err != nil {
+		return EditorFilePreview{}, err
+	}
+	if !inspection.IsText {
+		return EditorFilePreview{}, fmt.Errorf("%s", inspection.Reason)
+	}
+
+	previewLimit := defaultEditorFilePreviewBytes
+	if maxBytes > 0 {
+		previewLimit = int64(maxBytes)
+	}
+	if previewLimit > maxEditorFilePreviewBytes {
+		previewLimit = maxEditorFilePreviewBytes
+	}
+	if previewLimit < 1 {
+		previewLimit = defaultEditorFilePreviewBytes
+	}
+
+	content, truncated, err := readEditorFilePreviewContent(filePath, previewLimit)
+	if err != nil {
+		return EditorFilePreview{}, err
+	}
+
+	return EditorFilePreview{
+		Inspection:   inspection,
+		Content:      content,
+		Truncated:    truncated,
+		PreviewBytes: int64(len([]byte(content))),
+	}, nil
+}
+
 func (a *App) ReadFile(filePath string) (string, error) {
-	info, err := os.Stat(filePath)
+	inspection, err := inspectEditorFile(filePath)
 	if err != nil {
 		return "", err
 	}
-	if info.IsDir() {
-		return "", fmt.Errorf("cannot open directory as a file: %s", filePath)
-	}
-	if info.Size() > maxEditorFileBytes {
-		return "", fmt.Errorf("file is too large to open in the editor (%s, limit %s): %s", formatFileSize(info.Size()), formatFileSize(maxEditorFileBytes), filePath)
-	}
-	if isKnownNonTextEditorPath(filePath) {
-		return "", fmt.Errorf("file is not a text document and cannot be opened in the editor: %s", filePath)
+	if !inspection.IsText || !inspection.SafeForEditor {
+		return "", fmt.Errorf("%s", inspection.Reason)
 	}
 
-	content, err := readEditorFileContent(filePath, info.Size())
+	content, err := readEditorFileContent(filePath, inspection.SizeBytes)
 	if err != nil {
 		return "", err
 	}
@@ -242,6 +301,94 @@ func (a *App) ReadFile(filePath string) (string, error) {
 	return string(content), nil
 }
 
+func inspectEditorFile(filePath string) (EditorFileInspection, error) {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return EditorFileInspection{}, err
+	}
+
+	inspection := EditorFileInspection{
+		Path:               filePath,
+		Name:               filepath.Base(filePath),
+		SizeBytes:          info.Size(),
+		FormattedSize:      formatFileSize(info.Size()),
+		IsText:             true,
+		SafeForEditor:      true,
+		LimitBytes:         maxInteractiveEditorFileBytes,
+		LineLimit:          maxInteractiveEditorLines,
+		MaxLineLengthLimit: maxInteractiveEditorLineBytes,
+		LineCount:          1,
+	}
+
+	if info.IsDir() {
+		inspection.IsText = false
+		inspection.SafeForEditor = false
+		inspection.Reason = fmt.Sprintf("cannot open directory as a file: %s", filePath)
+		return inspection, nil
+	}
+	if info.Size() > maxEditorFileBytes {
+		inspection.SafeForEditor = false
+		inspection.LargeDocument = true
+		inspection.Reason = fmt.Sprintf("file is too large to open in the editor (%s, limit %s): %s", formatFileSize(info.Size()), formatFileSize(maxEditorFileBytes), filePath)
+		return inspection, nil
+	}
+	if isKnownNonTextEditorPath(filePath) {
+		inspection.IsText = false
+		inspection.SafeForEditor = false
+		inspection.Reason = fmt.Sprintf("file is not a text document and cannot be opened in the editor: %s", filePath)
+		return inspection, nil
+	}
+
+	scanLimit := info.Size()
+	if scanLimit > maxInteractiveEditorFileBytes {
+		scanLimit = fileSniffBytes
+		if scanLimit > info.Size() {
+			scanLimit = info.Size()
+		}
+	}
+
+	content, truncated, err := readEditorFilePrefix(filePath, scanLimit)
+	if err != nil {
+		return EditorFileInspection{}, err
+	}
+	content = bytes.TrimPrefix(content, []byte{0xef, 0xbb, 0xbf})
+	if looksLikeBinary(content) {
+		inspection.IsText = false
+		inspection.SafeForEditor = false
+		inspection.Reason = fmt.Sprintf("file appears to be binary and cannot be opened in the editor: %s", filePath)
+		return inspection, nil
+	}
+	if !truncated && !utf8.Valid(content) {
+		inspection.IsText = false
+		inspection.SafeForEditor = false
+		inspection.Reason = fmt.Sprintf("file is not valid UTF-8 text and cannot be opened in the editor: %s", filePath)
+		return inspection, nil
+	}
+
+	lineCount, maxLineLength := measureEditorTextShape(content)
+	inspection.LineCount = lineCount
+	inspection.MaxLineLength = maxLineLength
+
+	switch {
+	case info.Size() > maxInteractiveEditorFileBytes:
+		inspection.SafeForEditor = false
+		inspection.LargeDocument = true
+		inspection.Reason = fmt.Sprintf("file opens in guarded preview by default (%s, interactive limit %s): %s", formatFileSize(info.Size()), formatFileSize(maxInteractiveEditorFileBytes), filePath)
+	case lineCount > maxInteractiveEditorLines:
+		inspection.SafeForEditor = false
+		inspection.LargeDocument = true
+		inspection.Reason = fmt.Sprintf("file has too many lines for interactive editing (%d, limit %d): %s", lineCount, maxInteractiveEditorLines, filePath)
+	case maxLineLength > maxInteractiveEditorLineBytes:
+		inspection.SafeForEditor = false
+		inspection.LargeDocument = true
+		inspection.Reason = fmt.Sprintf("file has a line that is too long for interactive editing (%d bytes, limit %d): %s", maxLineLength, maxInteractiveEditorLineBytes, filePath)
+	default:
+		inspection.Reason = "safe for interactive editing"
+	}
+
+	return inspection, nil
+}
+
 func isKnownNonTextEditorPath(filePath string) bool {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	if ext == "" {
@@ -249,6 +396,51 @@ func isKnownNonTextEditorPath(filePath string) bool {
 	}
 	_, ok := nonTextEditorExtensions[ext]
 	return ok
+}
+
+func readEditorFilePrefix(filePath string, limit int64) ([]byte, bool, error) {
+	if limit <= 0 {
+		return nil, false, nil
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, false, err
+	}
+	defer file.Close()
+
+	content := make([]byte, int(limit))
+	n, err := io.ReadFull(file, content)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return nil, false, err
+	}
+
+	return content[:n], int64(n) == limit, nil
+}
+
+func readEditorFilePreviewContent(filePath string, limit int64) (string, bool, error) {
+	readLimit := limit + int64(utf8.UTFMax)
+	content, hitLimit, err := readEditorFilePrefix(filePath, readLimit)
+	if err != nil {
+		return "", false, err
+	}
+	content = bytes.TrimPrefix(content, []byte{0xef, 0xbb, 0xbf})
+	if looksLikeBinary(content) {
+		return "", false, fmt.Errorf("file appears to be binary and cannot be opened in the editor: %s", filePath)
+	}
+
+	if int64(len(content)) > limit {
+		content = content[:limit]
+		hitLimit = true
+	}
+	content = trimValidUTF8Prefix(content)
+
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return "", false, err
+	}
+	truncated := hitLimit || int64(len(content)) < info.Size()
+	return string(content), truncated, nil
 }
 
 func readEditorFileContent(filePath string, size int64) ([]byte, error) {
@@ -285,6 +477,42 @@ func readEditorFileContent(filePath string, size int64) ([]byte, error) {
 		return nil, err
 	}
 	return content[:sampleN+restN], nil
+}
+
+func measureEditorTextShape(content []byte) (int, int) {
+	if len(content) == 0 {
+		return 1, 0
+	}
+
+	lineCount := 1
+	currentLineLength := 0
+	maxLineLength := 0
+	for _, b := range content {
+		if b == '\n' {
+			lineCount++
+			if currentLineLength > maxLineLength {
+				maxLineLength = currentLineLength
+			}
+			currentLineLength = 0
+			continue
+		}
+		currentLineLength++
+	}
+	if currentLineLength > maxLineLength {
+		maxLineLength = currentLineLength
+	}
+	return lineCount, maxLineLength
+}
+
+func trimValidUTF8Prefix(content []byte) []byte {
+	for len(content) > 0 && !utf8.Valid(content) {
+		_, size := utf8.DecodeLastRune(content)
+		if size <= 0 {
+			return nil
+		}
+		content = content[:len(content)-size]
+	}
+	return content
 }
 
 func looksLikeBinary(sample []byte) bool {

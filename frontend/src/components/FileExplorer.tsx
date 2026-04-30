@@ -266,20 +266,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const handlePerspectiveFileSelect = async (path: string, line?: number) => {
     const requestId = latestFileOpenRequestRef.current + 1;
     latestFileOpenRequestRef.current = requestId;
-    const readPromise = App.ReadFile(path);
     closePerspective();
     void revealPath(path);
-    try {
-      const content = await readPromise;
-      if (latestFileOpenRequestRef.current !== requestId) {
-        return;
-      }
-      onFileOpenRef.current?.(path, content, path.split("/").pop() || "", line);
-    } catch (error) {
-      if (latestFileOpenRequestRef.current === requestId) {
-        console.error("Error reading file:", error);
-      }
+    if (latestFileOpenRequestRef.current !== requestId) {
+      return;
     }
+    onFileOpenRef.current?.(path, "", path.split("/").pop() || "", line);
   };
 
   const handleFileOpenInPanel = async (path: string, name: string) => {
@@ -603,11 +595,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const content = await App.ReadFile(createdPath);
         if (latestFileOpenRequestRef.current !== requestId) {
           return;
         }
-        onFileOpenRef.current?.(createdPath, content, fileName);
+        onFileOpenRef.current?.(createdPath, "", fileName);
         return;
       } catch (error) {
         if (latestFileOpenRequestRef.current !== requestId) {
@@ -1071,11 +1062,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       setHighlightedPath(node.path);
 
       try {
-        const content = await App.ReadFile(node.path);
         if (latestFileOpenRequestRef.current !== requestId) {
           return;
         }
-        onFileOpenRef.current?.(node.path, content, node.name);
+        onFileOpenRef.current?.(node.path, "", node.name);
       } catch (error) {
         if (latestFileOpenRequestRef.current === requestId) {
           console.error("Error reading file:", error);

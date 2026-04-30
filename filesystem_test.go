@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestReadDirectory_EmptyDirectoryReturnsEmptySlice(t *testing.T) {
@@ -69,7 +70,7 @@ func TestReadFile_ReturnsTextPastSniffBoundary(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "long.txt")
-	content := strings.Repeat("a", int(fileSniffBytes)+17) + "\nend"
+	content := strings.Repeat(strings.Repeat("a", 120)+"\n", int(fileSniffBytes/121)+2) + "end"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -160,6 +161,120 @@ func TestReadFile_RejectsOversizedFileBeforeReading(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("ReadFile() error = %v, want size rejection", err)
+	}
+}
+
+func TestInspectEditorFile_MarksLargeTextUnsafeForInteractiveEditor(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "generated.cs")
+	content := strings.Repeat("a", int(maxInteractiveEditorFileBytes)+1)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	inspection, err := (&App{}).InspectEditorFile(path)
+	if err != nil {
+		t.Fatalf("InspectEditorFile() error = %v", err)
+	}
+	if !inspection.IsText {
+		t.Fatalf("InspectEditorFile() IsText = false, want true")
+	}
+	if inspection.SafeForEditor {
+		t.Fatal("InspectEditorFile() SafeForEditor = true, want false")
+	}
+	if !inspection.LargeDocument {
+		t.Fatal("InspectEditorFile() LargeDocument = false, want true")
+	}
+	if !strings.Contains(inspection.Reason, "guarded preview") {
+		t.Fatalf("InspectEditorFile() Reason = %q, want guarded preview", inspection.Reason)
+	}
+
+	_, err = (&App{}).ReadFile(path)
+	if err == nil {
+		t.Fatal("ReadFile() error = nil, want guarded preview rejection")
+	}
+	if !strings.Contains(err.Error(), "guarded preview") {
+		t.Fatalf("ReadFile() error = %v, want guarded preview rejection", err)
+	}
+}
+
+func TestInspectEditorFile_MarksManyLinesUnsafeForInteractiveEditor(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "many-lines.txt")
+	content := strings.Repeat("x\n", maxInteractiveEditorLines+1)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	inspection, err := (&App{}).InspectEditorFile(path)
+	if err != nil {
+		t.Fatalf("InspectEditorFile() error = %v", err)
+	}
+	if inspection.SafeForEditor {
+		t.Fatal("InspectEditorFile() SafeForEditor = true, want false")
+	}
+	if inspection.LineCount <= maxInteractiveEditorLines {
+		t.Fatalf("InspectEditorFile() LineCount = %d, want > %d", inspection.LineCount, maxInteractiveEditorLines)
+	}
+	if !strings.Contains(inspection.Reason, "too many lines") {
+		t.Fatalf("InspectEditorFile() Reason = %q, want too many lines", inspection.Reason)
+	}
+}
+
+func TestInspectEditorFile_MarksLongLineUnsafeForInteractiveEditor(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "long-line.txt")
+	content := strings.Repeat("x", maxInteractiveEditorLineBytes+1)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	inspection, err := (&App{}).InspectEditorFile(path)
+	if err != nil {
+		t.Fatalf("InspectEditorFile() error = %v", err)
+	}
+	if inspection.SafeForEditor {
+		t.Fatal("InspectEditorFile() SafeForEditor = true, want false")
+	}
+	if inspection.MaxLineLength <= maxInteractiveEditorLineBytes {
+		t.Fatalf("InspectEditorFile() MaxLineLength = %d, want > %d", inspection.MaxLineLength, maxInteractiveEditorLineBytes)
+	}
+	if !strings.Contains(inspection.Reason, "line that is too long") {
+		t.Fatalf("InspectEditorFile() Reason = %q, want long-line reason", inspection.Reason)
+	}
+}
+
+func TestReadEditorFilePreview_TrimsUTF8Boundary(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "unicode.txt")
+	content := "123456789éafter"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	preview, err := (&App{}).ReadEditorFilePreview(path, 10)
+	if err != nil {
+		t.Fatalf("ReadEditorFilePreview() error = %v", err)
+	}
+	if !preview.Truncated {
+		t.Fatal("ReadEditorFilePreview() Truncated = false, want true")
+	}
+	if !utf8.ValidString(preview.Content) {
+		t.Fatalf("ReadEditorFilePreview() returned invalid UTF-8: %q", preview.Content)
+	}
+	if len([]byte(preview.Content)) > 10 {
+		t.Fatalf("ReadEditorFilePreview() byte length = %d, want <= 10", len([]byte(preview.Content)))
+	}
+	if preview.Content != "123456789" {
+		t.Fatalf("ReadEditorFilePreview() Content = %q, want %q", preview.Content, "123456789")
 	}
 }
 

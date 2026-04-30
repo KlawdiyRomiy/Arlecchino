@@ -358,6 +358,7 @@ export const resetProjectBoundStores = () => {
   currentProjectScope = { generation: 0, projectPath: null };
   setDiagnosticsPreloadState(preloadStateIdle);
   useDiagnosticsStore.getState().reset();
+  usePerformanceStore.getState().resetTransientBudget();
 };
 
 export const activateProjectScope = (projectPath: string | null) => {

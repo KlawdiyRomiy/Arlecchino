@@ -376,6 +376,7 @@ export const MainLayoutPanelRenderer: React.FC<
                   name={activeCodePanelTab.name}
                   initialContent={activeCodePanelTab.content}
                   language={activeCodePanelTab.language}
+                  loadState={activeCodePanelTab.loadState}
                 />
               </div>
             </div>

@@ -268,3 +268,44 @@ test("adaptive performance budget reacts to indexer and project pressure", async
     criticalNotifyDelay: 900,
   });
 });
+
+test("adaptive performance budget resets transient editor pressure on project switch", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { usePerformanceStore } =
+      await import("/src/stores/performanceStore.ts");
+
+    usePerformanceStore.getState().updateBudget({
+      activeEditorCharCount: 3_000_000,
+      activeEditorLineCount: 30_000,
+      activeEditorLargeDocument: true,
+      eventPressure: 120,
+      frameGapMs: 95,
+      indexerQueueDepth: 0,
+      projectFileCount: 0,
+    });
+
+    const criticalMode = usePerformanceStore.getState().mode;
+    usePerformanceStore.getState().resetTransientBudget();
+    const resetSnapshot = usePerformanceStore.getState().snapshot;
+
+    return {
+      criticalMode,
+      resetMode: resetSnapshot.mode,
+      activeEditorCharCount: resetSnapshot.activeEditorCharCount,
+      activeEditorLargeDocument: resetSnapshot.activeEditorLargeDocument,
+      eventPressure: resetSnapshot.eventPressure,
+      frameGapMs: resetSnapshot.frameGapMs,
+    };
+  });
+
+  expect(result).toEqual({
+    criticalMode: "critical",
+    resetMode: "normal",
+    activeEditorCharCount: 0,
+    activeEditorLargeDocument: false,
+    eventPressure: 0,
+    frameGapMs: 0,
+  });
+});

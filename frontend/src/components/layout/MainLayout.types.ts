@@ -2,13 +2,14 @@ import type { ReactNode } from "react";
 import type { ProjectEntryActionTarget } from "../../contexts/ProjectEntryActionsContext";
 import type { ShortcutActionId } from "../../utils/keyboard";
 import type { TUIAssistAnchor } from "../../utils/terminalLayout";
+import type {
+  EditorFileLoadState,
+  EditorFileOpenPayload,
+} from "../../utils/editorFileLoader";
 import type { PanelPosition, PanelSize } from "../ui/FloatingPanel";
 
 export type MainEditorFileOpenHandler = (
-  path: string,
-  content: string,
-  name: string,
-  line?: number,
+  payload: EditorFileOpenPayload,
 ) => void;
 
 export type MainEditorFileOpenRegistrar = (
@@ -110,6 +111,7 @@ export interface CodePanelTab {
   content: string;
   language: string;
   line?: number;
+  loadState?: EditorFileLoadState;
 }
 
 export interface ProjectEntryCreateDialogState {

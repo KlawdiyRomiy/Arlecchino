@@ -46,6 +46,381 @@ export class ApplicationMenuShortcutPayload {
     }
 }
 
+export class BackgroundShellAction {
+    "id": string;
+    "label": string;
+    "intent": string;
+    "jobId"?: string;
+    "ownerSurfaceId"?: string;
+    "enabled": boolean;
+
+    /** Creates a new BackgroundShellAction instance. */
+    constructor($$source: Partial<BackgroundShellAction> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("label" in $$source)) {
+            this["label"] = "";
+        }
+        if (!("intent" in $$source)) {
+            this["intent"] = "";
+        }
+        if (!("enabled" in $$source)) {
+            this["enabled"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackgroundShellAction instance from a string or object.
+     */
+    static createFrom($$source: any = {}): BackgroundShellAction {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BackgroundShellAction($$parsedSource as Partial<BackgroundShellAction>);
+    }
+}
+
+export class BackgroundShellActionResult {
+    "handled": boolean;
+    "action": BackgroundShellAction;
+    "snapshot": BackgroundShellStatusSnapshot;
+    "message"?: string;
+
+    /** Creates a new BackgroundShellActionResult instance. */
+    constructor($$source: Partial<BackgroundShellActionResult> = {}) {
+        if (!("handled" in $$source)) {
+            this["handled"] = false;
+        }
+        if (!("action" in $$source)) {
+            this["action"] = (new BackgroundShellAction());
+        }
+        if (!("snapshot" in $$source)) {
+            this["snapshot"] = (new BackgroundShellStatusSnapshot());
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackgroundShellActionResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): BackgroundShellActionResult {
+        const $$createField1_0 = $$createType1;
+        const $$createField2_0 = $$createType2;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("action" in $$parsedSource) {
+            $$parsedSource["action"] = $$createField1_0($$parsedSource["action"]);
+        }
+        if ("snapshot" in $$parsedSource) {
+            $$parsedSource["snapshot"] = $$createField2_0($$parsedSource["snapshot"]);
+        }
+        return new BackgroundShellActionResult($$parsedSource as Partial<BackgroundShellActionResult>);
+    }
+}
+
+export class BackgroundShellEvent {
+    "id": string;
+    "type": string;
+    "jobId": string;
+    "kind": string;
+    "severity": BackgroundShellSeverity;
+    "message": string;
+    "at": number;
+
+    /** Creates a new BackgroundShellEvent instance. */
+    constructor($$source: Partial<BackgroundShellEvent> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("type" in $$source)) {
+            this["type"] = "";
+        }
+        if (!("jobId" in $$source)) {
+            this["jobId"] = "";
+        }
+        if (!("kind" in $$source)) {
+            this["kind"] = "";
+        }
+        if (!("severity" in $$source)) {
+            this["severity"] = BackgroundShellSeverity.$zero;
+        }
+        if (!("message" in $$source)) {
+            this["message"] = "";
+        }
+        if (!("at" in $$source)) {
+            this["at"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackgroundShellEvent instance from a string or object.
+     */
+    static createFrom($$source: any = {}): BackgroundShellEvent {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BackgroundShellEvent($$parsedSource as Partial<BackgroundShellEvent>);
+    }
+}
+
+export class BackgroundShellJob {
+    "id": string;
+    "kind": string;
+    "category": BackgroundShellJobCategory;
+    "title": string;
+    "detail"?: string;
+    "projectPath"?: string;
+    "ownerSurfaceId"?: string;
+    "status": BackgroundShellJobStatus;
+    "severity": BackgroundShellSeverity;
+    "progress"?: BackgroundShellProgress | null;
+    "cancelable": boolean;
+    "startedAt": number;
+    "updatedAt": number;
+    "completedAt"?: number;
+    "notifyOnSuccess"?: boolean;
+    "notifyOnFailure"?: boolean;
+
+    /** Creates a new BackgroundShellJob instance. */
+    constructor($$source: Partial<BackgroundShellJob> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("kind" in $$source)) {
+            this["kind"] = "";
+        }
+        if (!("category" in $$source)) {
+            this["category"] = BackgroundShellJobCategory.$zero;
+        }
+        if (!("title" in $$source)) {
+            this["title"] = "";
+        }
+        if (!("status" in $$source)) {
+            this["status"] = BackgroundShellJobStatus.$zero;
+        }
+        if (!("severity" in $$source)) {
+            this["severity"] = BackgroundShellSeverity.$zero;
+        }
+        if (!("cancelable" in $$source)) {
+            this["cancelable"] = false;
+        }
+        if (!("startedAt" in $$source)) {
+            this["startedAt"] = 0;
+        }
+        if (!("updatedAt" in $$source)) {
+            this["updatedAt"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackgroundShellJob instance from a string or object.
+     */
+    static createFrom($$source: any = {}): BackgroundShellJob {
+        const $$createField9_0 = $$createType4;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("progress" in $$parsedSource) {
+            $$parsedSource["progress"] = $$createField9_0($$parsedSource["progress"]);
+        }
+        return new BackgroundShellJob($$parsedSource as Partial<BackgroundShellJob>);
+    }
+}
+
+export enum BackgroundShellJobCategory {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    BackgroundShellCategoryJob = "job",
+    BackgroundShellCategoryService = "service",
+};
+
+export enum BackgroundShellJobStatus {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    BackgroundShellJobQueued = "queued",
+    BackgroundShellJobRunning = "running",
+    BackgroundShellJobSucceeded = "succeeded",
+    BackgroundShellJobFailed = "failed",
+    BackgroundShellJobCanceled = "canceled",
+};
+
+export class BackgroundShellNotificationCandidate {
+    "id": string;
+    "jobId": string;
+    "severity": BackgroundShellSeverity;
+    "title": string;
+    "body": string;
+    "dedupeKey": string;
+    "createdAt": number;
+    "action"?: BackgroundShellAction | null;
+
+    /** Creates a new BackgroundShellNotificationCandidate instance. */
+    constructor($$source: Partial<BackgroundShellNotificationCandidate> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("jobId" in $$source)) {
+            this["jobId"] = "";
+        }
+        if (!("severity" in $$source)) {
+            this["severity"] = BackgroundShellSeverity.$zero;
+        }
+        if (!("title" in $$source)) {
+            this["title"] = "";
+        }
+        if (!("body" in $$source)) {
+            this["body"] = "";
+        }
+        if (!("dedupeKey" in $$source)) {
+            this["dedupeKey"] = "";
+        }
+        if (!("createdAt" in $$source)) {
+            this["createdAt"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackgroundShellNotificationCandidate instance from a string or object.
+     */
+    static createFrom($$source: any = {}): BackgroundShellNotificationCandidate {
+        const $$createField7_0 = $$createType5;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("action" in $$parsedSource) {
+            $$parsedSource["action"] = $$createField7_0($$parsedSource["action"]);
+        }
+        return new BackgroundShellNotificationCandidate($$parsedSource as Partial<BackgroundShellNotificationCandidate>);
+    }
+}
+
+export class BackgroundShellProgress {
+    "percent": number;
+    "current"?: number;
+    "total"?: number;
+
+    /** Creates a new BackgroundShellProgress instance. */
+    constructor($$source: Partial<BackgroundShellProgress> = {}) {
+        if (!("percent" in $$source)) {
+            this["percent"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackgroundShellProgress instance from a string or object.
+     */
+    static createFrom($$source: any = {}): BackgroundShellProgress {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new BackgroundShellProgress($$parsedSource as Partial<BackgroundShellProgress>);
+    }
+}
+
+export enum BackgroundShellSeverity {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    BackgroundShellSeverityInfo = "info",
+    BackgroundShellSeveritySuccess = "success",
+    BackgroundShellSeverityWarning = "warning",
+    BackgroundShellSeverityError = "error",
+};
+
+export class BackgroundShellStatusSnapshot {
+    "version": number;
+    "revision": number;
+    "source": string;
+    "updatedAt": number;
+    "activeCount": number;
+    "serviceCount": number;
+    "attentionCount": number;
+    "jobs": BackgroundShellJob[];
+    "events": BackgroundShellEvent[];
+    "notificationCandidates": BackgroundShellNotificationCandidate[];
+    "actions": BackgroundShellAction[];
+    "nativeTrayEnabled": boolean;
+    "nativeNotificationsSent": boolean;
+
+    /** Creates a new BackgroundShellStatusSnapshot instance. */
+    constructor($$source: Partial<BackgroundShellStatusSnapshot> = {}) {
+        if (!("version" in $$source)) {
+            this["version"] = 0;
+        }
+        if (!("revision" in $$source)) {
+            this["revision"] = 0;
+        }
+        if (!("source" in $$source)) {
+            this["source"] = "";
+        }
+        if (!("updatedAt" in $$source)) {
+            this["updatedAt"] = 0;
+        }
+        if (!("activeCount" in $$source)) {
+            this["activeCount"] = 0;
+        }
+        if (!("serviceCount" in $$source)) {
+            this["serviceCount"] = 0;
+        }
+        if (!("attentionCount" in $$source)) {
+            this["attentionCount"] = 0;
+        }
+        if (!("jobs" in $$source)) {
+            this["jobs"] = [];
+        }
+        if (!("events" in $$source)) {
+            this["events"] = [];
+        }
+        if (!("notificationCandidates" in $$source)) {
+            this["notificationCandidates"] = [];
+        }
+        if (!("actions" in $$source)) {
+            this["actions"] = [];
+        }
+        if (!("nativeTrayEnabled" in $$source)) {
+            this["nativeTrayEnabled"] = false;
+        }
+        if (!("nativeNotificationsSent" in $$source)) {
+            this["nativeNotificationsSent"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new BackgroundShellStatusSnapshot instance from a string or object.
+     */
+    static createFrom($$source: any = {}): BackgroundShellStatusSnapshot {
+        const $$createField7_0 = $$createType7;
+        const $$createField8_0 = $$createType9;
+        const $$createField9_0 = $$createType11;
+        const $$createField10_0 = $$createType12;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("jobs" in $$parsedSource) {
+            $$parsedSource["jobs"] = $$createField7_0($$parsedSource["jobs"]);
+        }
+        if ("events" in $$parsedSource) {
+            $$parsedSource["events"] = $$createField8_0($$parsedSource["events"]);
+        }
+        if ("notificationCandidates" in $$parsedSource) {
+            $$parsedSource["notificationCandidates"] = $$createField9_0($$parsedSource["notificationCandidates"]);
+        }
+        if ("actions" in $$parsedSource) {
+            $$parsedSource["actions"] = $$createField10_0($$parsedSource["actions"]);
+        }
+        return new BackgroundShellStatusSnapshot($$parsedSource as Partial<BackgroundShellStatusSnapshot>);
+    }
+}
+
 /**
  * ClassResult represents a class search result
  */
@@ -86,7 +461,7 @@ export class ClassResult {
      * Creates a new ClassResult instance from a string or object.
      */
     static createFrom($$source: any = {}): ClassResult {
-        const $$createField6_0 = $$createType1;
+        const $$createField6_0 = $$createType13;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("extra" in $$parsedSource) {
             $$parsedSource["extra"] = $$createField6_0($$parsedSource["extra"]);
@@ -203,7 +578,7 @@ export class DispatcherResultJS {
      * Creates a new DispatcherResultJS instance from a string or object.
      */
     static createFrom($$source: any = {}): DispatcherResultJS {
-        const $$createField4_0 = $$createType3;
+        const $$createField4_0 = $$createType15;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("items" in $$parsedSource) {
             $$parsedSource["items"] = $$createField4_0($$parsedSource["items"]);
@@ -261,8 +636,8 @@ export class EditorCompletion {
      * Creates a new EditorCompletion instance from a string or object.
      */
     static createFrom($$source: any = {}): EditorCompletion {
-        const $$createField10_0 = $$createType4;
-        const $$createField12_0 = $$createType6;
+        const $$createField10_0 = $$createType16;
+        const $$createField12_0 = $$createType18;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("highlightPositions" in $$parsedSource) {
             $$parsedSource["highlightPositions"] = $$createField10_0($$parsedSource["highlightPositions"]);
@@ -378,8 +753,8 @@ export class EditorCompletionResult {
      * Creates a new EditorCompletionResult instance from a string or object.
      */
     static createFrom($$source: any = {}): EditorCompletionResult {
-        const $$createField0_0 = $$createType8;
-        const $$createField1_0 = $$createType9;
+        const $$createField0_0 = $$createType20;
+        const $$createField1_0 = $$createType21;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("primary" in $$parsedSource) {
             $$parsedSource["primary"] = $$createField0_0($$parsedSource["primary"]);
@@ -388,6 +763,112 @@ export class EditorCompletionResult {
             $$parsedSource["items"] = $$createField1_0($$parsedSource["items"]);
         }
         return new EditorCompletionResult($$parsedSource as Partial<EditorCompletionResult>);
+    }
+}
+
+export class EditorFileInspection {
+    "path": string;
+    "name": string;
+    "sizeBytes": number;
+    "formattedSize": string;
+    "isText": boolean;
+    "safeForEditor": boolean;
+    "largeDocument": boolean;
+    "reason": string;
+    "lineCount": number;
+    "maxLineLength": number;
+    "limitBytes": number;
+    "lineLimit": number;
+    "maxLineLengthLimit": number;
+
+    /** Creates a new EditorFileInspection instance. */
+    constructor($$source: Partial<EditorFileInspection> = {}) {
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("sizeBytes" in $$source)) {
+            this["sizeBytes"] = 0;
+        }
+        if (!("formattedSize" in $$source)) {
+            this["formattedSize"] = "";
+        }
+        if (!("isText" in $$source)) {
+            this["isText"] = false;
+        }
+        if (!("safeForEditor" in $$source)) {
+            this["safeForEditor"] = false;
+        }
+        if (!("largeDocument" in $$source)) {
+            this["largeDocument"] = false;
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+        if (!("lineCount" in $$source)) {
+            this["lineCount"] = 0;
+        }
+        if (!("maxLineLength" in $$source)) {
+            this["maxLineLength"] = 0;
+        }
+        if (!("limitBytes" in $$source)) {
+            this["limitBytes"] = 0;
+        }
+        if (!("lineLimit" in $$source)) {
+            this["lineLimit"] = 0;
+        }
+        if (!("maxLineLengthLimit" in $$source)) {
+            this["maxLineLengthLimit"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new EditorFileInspection instance from a string or object.
+     */
+    static createFrom($$source: any = {}): EditorFileInspection {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new EditorFileInspection($$parsedSource as Partial<EditorFileInspection>);
+    }
+}
+
+export class EditorFilePreview {
+    "inspection": EditorFileInspection;
+    "content": string;
+    "truncated": boolean;
+    "previewBytes": number;
+
+    /** Creates a new EditorFilePreview instance. */
+    constructor($$source: Partial<EditorFilePreview> = {}) {
+        if (!("inspection" in $$source)) {
+            this["inspection"] = (new EditorFileInspection());
+        }
+        if (!("content" in $$source)) {
+            this["content"] = "";
+        }
+        if (!("truncated" in $$source)) {
+            this["truncated"] = false;
+        }
+        if (!("previewBytes" in $$source)) {
+            this["previewBytes"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new EditorFilePreview instance from a string or object.
+     */
+    static createFrom($$source: any = {}): EditorFilePreview {
+        const $$createField0_0 = $$createType22;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("inspection" in $$parsedSource) {
+            $$parsedSource["inspection"] = $$createField0_0($$parsedSource["inspection"]);
+        }
+        return new EditorFilePreview($$parsedSource as Partial<EditorFilePreview>);
     }
 }
 
@@ -565,7 +1046,7 @@ export class LSPCodeAction {
      * Creates a new LSPCodeAction instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPCodeAction {
-        const $$createField3_0 = $$createType11;
+        const $$createField3_0 = $$createType24;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("edit" in $$parsedSource) {
             $$parsedSource["edit"] = $$createField3_0($$parsedSource["edit"]);
@@ -632,7 +1113,7 @@ export class LSPDiagnostic {
      * Creates a new LSPDiagnostic instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPDiagnostic {
-        const $$createField0_0 = $$createType12;
+        const $$createField0_0 = $$createType25;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("range" in $$parsedSource) {
             $$parsedSource["range"] = $$createField0_0($$parsedSource["range"]);
@@ -686,8 +1167,8 @@ export class LSPRange {
      * Creates a new LSPRange instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPRange {
-        const $$createField0_0 = $$createType13;
-        const $$createField1_0 = $$createType13;
+        const $$createField0_0 = $$createType26;
+        const $$createField1_0 = $$createType26;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("start" in $$parsedSource) {
             $$parsedSource["start"] = $$createField0_0($$parsedSource["start"]);
@@ -776,7 +1257,7 @@ export class LSPTextEdit {
      * Creates a new LSPTextEdit instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPTextEdit {
-        const $$createField0_0 = $$createType12;
+        const $$createField0_0 = $$createType25;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("range" in $$parsedSource) {
             $$parsedSource["range"] = $$createField0_0($$parsedSource["range"]);
@@ -801,7 +1282,7 @@ export class LSPWorkspaceEdit {
      * Creates a new LSPWorkspaceEdit instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPWorkspaceEdit {
-        const $$createField0_0 = $$createType16;
+        const $$createField0_0 = $$createType29;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("changes" in $$parsedSource) {
             $$parsedSource["changes"] = $$createField0_0($$parsedSource["changes"]);
@@ -873,6 +1354,311 @@ export class LanguagePrediction {
     static createFrom($$source: any = {}): LanguagePrediction {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new LanguagePrediction($$parsedSource as Partial<LanguagePrediction>);
+    }
+}
+
+export class NativeContextMenuItem {
+    "id": string;
+    "label": string;
+    "disabled": boolean;
+    "danger": boolean;
+    "separator": boolean;
+    "hidden": boolean;
+
+    /** Creates a new NativeContextMenuItem instance. */
+    constructor($$source: Partial<NativeContextMenuItem> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("label" in $$source)) {
+            this["label"] = "";
+        }
+        if (!("disabled" in $$source)) {
+            this["disabled"] = false;
+        }
+        if (!("danger" in $$source)) {
+            this["danger"] = false;
+        }
+        if (!("separator" in $$source)) {
+            this["separator"] = false;
+        }
+        if (!("hidden" in $$source)) {
+            this["hidden"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new NativeContextMenuItem instance from a string or object.
+     */
+    static createFrom($$source: any = {}): NativeContextMenuItem {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new NativeContextMenuItem($$parsedSource as Partial<NativeContextMenuItem>);
+    }
+}
+
+export class NativeContextMenuRequest {
+    "menuInstanceId": string;
+    "scope": string;
+    "surfaceId": string;
+    "targetId": string;
+    "x": number;
+    "y": number;
+    "items": NativeContextMenuItem[];
+    "context": { [_ in string]?: any };
+
+    /** Creates a new NativeContextMenuRequest instance. */
+    constructor($$source: Partial<NativeContextMenuRequest> = {}) {
+        if (!("menuInstanceId" in $$source)) {
+            this["menuInstanceId"] = "";
+        }
+        if (!("scope" in $$source)) {
+            this["scope"] = "";
+        }
+        if (!("surfaceId" in $$source)) {
+            this["surfaceId"] = "";
+        }
+        if (!("targetId" in $$source)) {
+            this["targetId"] = "";
+        }
+        if (!("x" in $$source)) {
+            this["x"] = 0;
+        }
+        if (!("y" in $$source)) {
+            this["y"] = 0;
+        }
+        if (!("items" in $$source)) {
+            this["items"] = [];
+        }
+        if (!("context" in $$source)) {
+            this["context"] = {};
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new NativeContextMenuRequest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): NativeContextMenuRequest {
+        const $$createField6_0 = $$createType31;
+        const $$createField7_0 = $$createType32;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("items" in $$parsedSource) {
+            $$parsedSource["items"] = $$createField6_0($$parsedSource["items"]);
+        }
+        if ("context" in $$parsedSource) {
+            $$parsedSource["context"] = $$createField7_0($$parsedSource["context"]);
+        }
+        return new NativeContextMenuRequest($$parsedSource as Partial<NativeContextMenuRequest>);
+    }
+}
+
+export class NativeContextMenuResponse {
+    "opened": boolean;
+    "menuId"?: string;
+    "menuInstanceId"?: string;
+    "reason"?: string;
+
+    /** Creates a new NativeContextMenuResponse instance. */
+    constructor($$source: Partial<NativeContextMenuResponse> = {}) {
+        if (!("opened" in $$source)) {
+            this["opened"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new NativeContextMenuResponse instance from a string or object.
+     */
+    static createFrom($$source: any = {}): NativeContextMenuResponse {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new NativeContextMenuResponse($$parsedSource as Partial<NativeContextMenuResponse>);
+    }
+}
+
+export class PackagedOSActionResult {
+    "handled": boolean;
+    "adapterId": string;
+    "backgroundAction"?: BackgroundShellAction | null;
+    "backgroundResult"?: BackgroundShellActionResult | null;
+    "message"?: string;
+
+    /** Creates a new PackagedOSActionResult instance. */
+    constructor($$source: Partial<PackagedOSActionResult> = {}) {
+        if (!("handled" in $$source)) {
+            this["handled"] = false;
+        }
+        if (!("adapterId" in $$source)) {
+            this["adapterId"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PackagedOSActionResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): PackagedOSActionResult {
+        const $$createField2_0 = $$createType5;
+        const $$createField3_0 = $$createType34;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("backgroundAction" in $$parsedSource) {
+            $$parsedSource["backgroundAction"] = $$createField2_0($$parsedSource["backgroundAction"]);
+        }
+        if ("backgroundResult" in $$parsedSource) {
+            $$parsedSource["backgroundResult"] = $$createField3_0($$parsedSource["backgroundResult"]);
+        }
+        return new PackagedOSActionResult($$parsedSource as Partial<PackagedOSActionResult>);
+    }
+}
+
+export class PackagedOSAdapter {
+    "id": string;
+    "label": string;
+    "capability": string;
+    "status": ShellCapabilityStatus;
+    "enabled": boolean;
+    "defaultEnabled": boolean;
+    "requiresPackagedBuild": boolean;
+    "reason": string;
+    "backgroundActionCount"?: number;
+    "notificationCandidateCount"?: number;
+
+    /** Creates a new PackagedOSAdapter instance. */
+    constructor($$source: Partial<PackagedOSAdapter> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("label" in $$source)) {
+            this["label"] = "";
+        }
+        if (!("capability" in $$source)) {
+            this["capability"] = "";
+        }
+        if (!("status" in $$source)) {
+            this["status"] = ShellCapabilityStatus.$zero;
+        }
+        if (!("enabled" in $$source)) {
+            this["enabled"] = false;
+        }
+        if (!("defaultEnabled" in $$source)) {
+            this["defaultEnabled"] = false;
+        }
+        if (!("requiresPackagedBuild" in $$source)) {
+            this["requiresPackagedBuild"] = false;
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PackagedOSAdapter instance from a string or object.
+     */
+    static createFrom($$source: any = {}): PackagedOSAdapter {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new PackagedOSAdapter($$parsedSource as Partial<PackagedOSAdapter>);
+    }
+}
+
+export class PackagedOSAutoUpdateManifest {
+    "channel"?: string;
+    "version"?: string;
+    "url"?: string;
+    "signature"?: string;
+    "notes"?: string;
+
+    /** Creates a new PackagedOSAutoUpdateManifest instance. */
+    constructor($$source: Partial<PackagedOSAutoUpdateManifest> = {}) {
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PackagedOSAutoUpdateManifest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): PackagedOSAutoUpdateManifest {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new PackagedOSAutoUpdateManifest($$parsedSource as Partial<PackagedOSAutoUpdateManifest>);
+    }
+}
+
+export class PackagedOSIntegrationSnapshot {
+    "version": number;
+    "platform": string;
+    "runtime": string;
+    "packagedBuild": boolean;
+    "spikeEnabled": boolean;
+    "nativeTrayEnabled": boolean;
+    "nativeNotificationsSent": boolean;
+    "adapters": { [_ in string]?: PackagedOSAdapter };
+    "backgroundActions": BackgroundShellAction[];
+    "notificationCandidates": BackgroundShellNotificationCandidate[];
+    "autoUpdateManifest"?: PackagedOSAutoUpdateManifest | null;
+
+    /** Creates a new PackagedOSIntegrationSnapshot instance. */
+    constructor($$source: Partial<PackagedOSIntegrationSnapshot> = {}) {
+        if (!("version" in $$source)) {
+            this["version"] = 0;
+        }
+        if (!("platform" in $$source)) {
+            this["platform"] = "";
+        }
+        if (!("runtime" in $$source)) {
+            this["runtime"] = "";
+        }
+        if (!("packagedBuild" in $$source)) {
+            this["packagedBuild"] = false;
+        }
+        if (!("spikeEnabled" in $$source)) {
+            this["spikeEnabled"] = false;
+        }
+        if (!("nativeTrayEnabled" in $$source)) {
+            this["nativeTrayEnabled"] = false;
+        }
+        if (!("nativeNotificationsSent" in $$source)) {
+            this["nativeNotificationsSent"] = false;
+        }
+        if (!("adapters" in $$source)) {
+            this["adapters"] = {};
+        }
+        if (!("backgroundActions" in $$source)) {
+            this["backgroundActions"] = [];
+        }
+        if (!("notificationCandidates" in $$source)) {
+            this["notificationCandidates"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PackagedOSIntegrationSnapshot instance from a string or object.
+     */
+    static createFrom($$source: any = {}): PackagedOSIntegrationSnapshot {
+        const $$createField7_0 = $$createType36;
+        const $$createField8_0 = $$createType12;
+        const $$createField9_0 = $$createType11;
+        const $$createField10_0 = $$createType38;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("adapters" in $$parsedSource) {
+            $$parsedSource["adapters"] = $$createField7_0($$parsedSource["adapters"]);
+        }
+        if ("backgroundActions" in $$parsedSource) {
+            $$parsedSource["backgroundActions"] = $$createField8_0($$parsedSource["backgroundActions"]);
+        }
+        if ("notificationCandidates" in $$parsedSource) {
+            $$parsedSource["notificationCandidates"] = $$createField9_0($$parsedSource["notificationCandidates"]);
+        }
+        if ("autoUpdateManifest" in $$parsedSource) {
+            $$parsedSource["autoUpdateManifest"] = $$createField10_0($$parsedSource["autoUpdateManifest"]);
+        }
+        return new PackagedOSIntegrationSnapshot($$parsedSource as Partial<PackagedOSIntegrationSnapshot>);
     }
 }
 
@@ -948,7 +1734,7 @@ export class PluginCommandDefJS {
      * Creates a new PluginCommandDefJS instance from a string or object.
      */
     static createFrom($$source: any = {}): PluginCommandDefJS {
-        const $$createField7_0 = $$createType18;
+        const $$createField7_0 = $$createType40;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("flags" in $$parsedSource) {
             $$parsedSource["flags"] = $$createField7_0($$parsedSource["flags"]);
@@ -1111,7 +1897,7 @@ export class ShellCapabilitiesSnapshot {
      * Creates a new ShellCapabilitiesSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): ShellCapabilitiesSnapshot {
-        const $$createField0_0 = $$createType20;
+        const $$createField0_0 = $$createType42;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("capabilities" in $$parsedSource) {
             $$parsedSource["capabilities"] = $$createField0_0($$parsedSource["capabilities"]);
@@ -1190,7 +1976,7 @@ export class SignatureHelpResult {
      * Creates a new SignatureHelpResult instance from a string or object.
      */
     static createFrom($$source: any = {}): SignatureHelpResult {
-        const $$createField0_0 = $$createType22;
+        const $$createField0_0 = $$createType44;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("signatures" in $$parsedSource) {
             $$parsedSource["signatures"] = $$createField0_0($$parsedSource["signatures"]);
@@ -1226,7 +2012,7 @@ export class SignatureInfo {
      * Creates a new SignatureInfo instance from a string or object.
      */
     static createFrom($$source: any = {}): SignatureInfo {
-        const $$createField2_0 = $$createType24;
+        const $$createField2_0 = $$createType46;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("parameters" in $$parsedSource) {
             $$parsedSource["parameters"] = $$createField2_0($$parsedSource["parameters"]);
@@ -1280,7 +2066,7 @@ export class TerminalPredictionResponse {
      * Creates a new TerminalPredictionResponse instance from a string or object.
      */
     static createFrom($$source: any = {}): TerminalPredictionResponse {
-        const $$createField0_0 = $$createType26;
+        const $$createField0_0 = $$createType48;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("predictions" in $$parsedSource) {
             $$parsedSource["predictions"] = $$createField0_0($$parsedSource["predictions"]);
@@ -1363,31 +2149,482 @@ export class TextEditJSON {
     }
 }
 
+export class Wails3PackagedSmokeReport {
+    "version": number;
+    "runtime": string;
+    "platform": string;
+    "generatedAt": string;
+    "buildTarget"?: string;
+    "workingDir"?: string;
+    "launchArgs": string[];
+    "openIntent"?: { [_ in string]?: any };
+    "openIntentQueued": boolean;
+    "shellCapabilities": ShellCapabilitiesSnapshot;
+    "packagedOSIntegration": PackagedOSIntegrationSnapshot;
+    "backgroundShell": BackgroundShellStatusSnapshot;
+    "singleInstance": Wails3SmokeGateStatus;
+    "windowLease": Wails3SmokeWindowLeaseSnapshot;
+    "checks": Wails3SmokeCheck[];
+
+    /** Creates a new Wails3PackagedSmokeReport instance. */
+    constructor($$source: Partial<Wails3PackagedSmokeReport> = {}) {
+        if (!("version" in $$source)) {
+            this["version"] = 0;
+        }
+        if (!("runtime" in $$source)) {
+            this["runtime"] = "";
+        }
+        if (!("platform" in $$source)) {
+            this["platform"] = "";
+        }
+        if (!("generatedAt" in $$source)) {
+            this["generatedAt"] = "";
+        }
+        if (!("launchArgs" in $$source)) {
+            this["launchArgs"] = [];
+        }
+        if (!("openIntentQueued" in $$source)) {
+            this["openIntentQueued"] = false;
+        }
+        if (!("shellCapabilities" in $$source)) {
+            this["shellCapabilities"] = (new ShellCapabilitiesSnapshot());
+        }
+        if (!("packagedOSIntegration" in $$source)) {
+            this["packagedOSIntegration"] = (new PackagedOSIntegrationSnapshot());
+        }
+        if (!("backgroundShell" in $$source)) {
+            this["backgroundShell"] = (new BackgroundShellStatusSnapshot());
+        }
+        if (!("singleInstance" in $$source)) {
+            this["singleInstance"] = (new Wails3SmokeGateStatus());
+        }
+        if (!("windowLease" in $$source)) {
+            this["windowLease"] = (new Wails3SmokeWindowLeaseSnapshot());
+        }
+        if (!("checks" in $$source)) {
+            this["checks"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Wails3PackagedSmokeReport instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Wails3PackagedSmokeReport {
+        const $$createField6_0 = $$createType0;
+        const $$createField7_0 = $$createType32;
+        const $$createField9_0 = $$createType49;
+        const $$createField10_0 = $$createType50;
+        const $$createField11_0 = $$createType2;
+        const $$createField12_0 = $$createType51;
+        const $$createField13_0 = $$createType52;
+        const $$createField14_0 = $$createType54;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("launchArgs" in $$parsedSource) {
+            $$parsedSource["launchArgs"] = $$createField6_0($$parsedSource["launchArgs"]);
+        }
+        if ("openIntent" in $$parsedSource) {
+            $$parsedSource["openIntent"] = $$createField7_0($$parsedSource["openIntent"]);
+        }
+        if ("shellCapabilities" in $$parsedSource) {
+            $$parsedSource["shellCapabilities"] = $$createField9_0($$parsedSource["shellCapabilities"]);
+        }
+        if ("packagedOSIntegration" in $$parsedSource) {
+            $$parsedSource["packagedOSIntegration"] = $$createField10_0($$parsedSource["packagedOSIntegration"]);
+        }
+        if ("backgroundShell" in $$parsedSource) {
+            $$parsedSource["backgroundShell"] = $$createField11_0($$parsedSource["backgroundShell"]);
+        }
+        if ("singleInstance" in $$parsedSource) {
+            $$parsedSource["singleInstance"] = $$createField12_0($$parsedSource["singleInstance"]);
+        }
+        if ("windowLease" in $$parsedSource) {
+            $$parsedSource["windowLease"] = $$createField13_0($$parsedSource["windowLease"]);
+        }
+        if ("checks" in $$parsedSource) {
+            $$parsedSource["checks"] = $$createField14_0($$parsedSource["checks"]);
+        }
+        return new Wails3PackagedSmokeReport($$parsedSource as Partial<Wails3PackagedSmokeReport>);
+    }
+}
+
+export class Wails3SmokeCheck {
+    "id": string;
+    "status": ShellCapabilityStatus;
+    "passed": boolean;
+    "message": string;
+
+    /** Creates a new Wails3SmokeCheck instance. */
+    constructor($$source: Partial<Wails3SmokeCheck> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("status" in $$source)) {
+            this["status"] = ShellCapabilityStatus.$zero;
+        }
+        if (!("passed" in $$source)) {
+            this["passed"] = false;
+        }
+        if (!("message" in $$source)) {
+            this["message"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Wails3SmokeCheck instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Wails3SmokeCheck {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new Wails3SmokeCheck($$parsedSource as Partial<Wails3SmokeCheck>);
+    }
+}
+
+export class Wails3SmokeGateStatus {
+    "enabled": boolean;
+    "status": ShellCapabilityStatus;
+    "reason": string;
+
+    /** Creates a new Wails3SmokeGateStatus instance. */
+    constructor($$source: Partial<Wails3SmokeGateStatus> = {}) {
+        if (!("enabled" in $$source)) {
+            this["enabled"] = false;
+        }
+        if (!("status" in $$source)) {
+            this["status"] = ShellCapabilityStatus.$zero;
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Wails3SmokeGateStatus instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Wails3SmokeGateStatus {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new Wails3SmokeGateStatus($$parsedSource as Partial<Wails3SmokeGateStatus>);
+    }
+}
+
+export class Wails3SmokeWindowLeaseSnapshot {
+    "available": boolean;
+    "spikeEnv": boolean;
+    "activeLeases": string[];
+    "reason": string;
+
+    /** Creates a new Wails3SmokeWindowLeaseSnapshot instance. */
+    constructor($$source: Partial<Wails3SmokeWindowLeaseSnapshot> = {}) {
+        if (!("available" in $$source)) {
+            this["available"] = false;
+        }
+        if (!("spikeEnv" in $$source)) {
+            this["spikeEnv"] = false;
+        }
+        if (!("activeLeases" in $$source)) {
+            this["activeLeases"] = [];
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Wails3SmokeWindowLeaseSnapshot instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Wails3SmokeWindowLeaseSnapshot {
+        const $$createField2_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("activeLeases" in $$parsedSource) {
+            $$parsedSource["activeLeases"] = $$createField2_0($$parsedSource["activeLeases"]);
+        }
+        return new Wails3SmokeWindowLeaseSnapshot($$parsedSource as Partial<Wails3SmokeWindowLeaseSnapshot>);
+    }
+}
+
+export class WindowLeaseActionResult {
+    "handled": boolean;
+    "actionId": string;
+    "kind"?: string;
+    "surfaceId"?: string;
+    "record"?: WindowLeaseRecord | null;
+    "snapshot": WindowLeaseSnapshot;
+    "message"?: string;
+
+    /** Creates a new WindowLeaseActionResult instance. */
+    constructor($$source: Partial<WindowLeaseActionResult> = {}) {
+        if (!("handled" in $$source)) {
+            this["handled"] = false;
+        }
+        if (!("actionId" in $$source)) {
+            this["actionId"] = "";
+        }
+        if (!("snapshot" in $$source)) {
+            this["snapshot"] = (new WindowLeaseSnapshot());
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new WindowLeaseActionResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): WindowLeaseActionResult {
+        const $$createField4_0 = $$createType56;
+        const $$createField5_0 = $$createType57;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("record" in $$parsedSource) {
+            $$parsedSource["record"] = $$createField4_0($$parsedSource["record"]);
+        }
+        if ("snapshot" in $$parsedSource) {
+            $$parsedSource["snapshot"] = $$createField5_0($$parsedSource["snapshot"]);
+        }
+        return new WindowLeaseActionResult($$parsedSource as Partial<WindowLeaseActionResult>);
+    }
+}
+
+export enum WindowLeaseClosePolicy {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    WindowLeaseCloseReturnToMain = "return-to-main",
+};
+
+export class WindowLeaseRecord {
+    "id": string;
+    "surfaceId": string;
+    "previewWindowId"?: string;
+    "role": WindowLeaseRole;
+    "appletKind"?: string;
+    "nativeWindowId"?: string;
+    "status": WindowLeaseStatus;
+    "closePolicy": WindowLeaseClosePolicy;
+    "returnTarget"?: WindowLeaseReturnTarget;
+    "title"?: string;
+    "url"?: string;
+    "pinned"?: boolean;
+    "payload"?: { [_ in string]?: any };
+    "updatedAt": number;
+
+    /** Creates a new WindowLeaseRecord instance. */
+    constructor($$source: Partial<WindowLeaseRecord> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("surfaceId" in $$source)) {
+            this["surfaceId"] = "";
+        }
+        if (!("role" in $$source)) {
+            this["role"] = WindowLeaseRole.$zero;
+        }
+        if (!("status" in $$source)) {
+            this["status"] = WindowLeaseStatus.$zero;
+        }
+        if (!("closePolicy" in $$source)) {
+            this["closePolicy"] = WindowLeaseClosePolicy.$zero;
+        }
+        if (!("updatedAt" in $$source)) {
+            this["updatedAt"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new WindowLeaseRecord instance from a string or object.
+     */
+    static createFrom($$source: any = {}): WindowLeaseRecord {
+        const $$createField8_0 = $$createType58;
+        const $$createField12_0 = $$createType32;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("returnTarget" in $$parsedSource) {
+            $$parsedSource["returnTarget"] = $$createField8_0($$parsedSource["returnTarget"]);
+        }
+        if ("payload" in $$parsedSource) {
+            $$parsedSource["payload"] = $$createField12_0($$parsedSource["payload"]);
+        }
+        return new WindowLeaseRecord($$parsedSource as Partial<WindowLeaseRecord>);
+    }
+}
+
+export class WindowLeaseReturnTarget {
+    "hostMode"?: string;
+    "position"?: string;
+
+    /** Creates a new WindowLeaseReturnTarget instance. */
+    constructor($$source: Partial<WindowLeaseReturnTarget> = {}) {
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new WindowLeaseReturnTarget instance from a string or object.
+     */
+    static createFrom($$source: any = {}): WindowLeaseReturnTarget {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new WindowLeaseReturnTarget($$parsedSource as Partial<WindowLeaseReturnTarget>);
+    }
+}
+
+export enum WindowLeaseRole {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    WindowLeaseRolePreview = "preview",
+    WindowLeaseRoleGitHelper = "git-helper",
+    WindowLeaseRoleProblemsHelper = "problems-helper",
+    WindowLeaseRoleTerminalHelper = "terminal-helper",
+};
+
+export class WindowLeaseSnapshot {
+    "version": number;
+    "runtime": string;
+    "platform": string;
+    "spikeEnabled": boolean;
+    "detachedAvailable": boolean;
+    "supportedRoles": WindowLeaseRole[];
+    "supportedSurfaceIds"?: string[];
+    "leases": WindowLeaseRecord[];
+    "leasesBySurfaceId": { [_ in string]?: WindowLeaseRecord };
+    "reason"?: string;
+
+    /** Creates a new WindowLeaseSnapshot instance. */
+    constructor($$source: Partial<WindowLeaseSnapshot> = {}) {
+        if (!("version" in $$source)) {
+            this["version"] = 0;
+        }
+        if (!("runtime" in $$source)) {
+            this["runtime"] = "";
+        }
+        if (!("platform" in $$source)) {
+            this["platform"] = "";
+        }
+        if (!("spikeEnabled" in $$source)) {
+            this["spikeEnabled"] = false;
+        }
+        if (!("detachedAvailable" in $$source)) {
+            this["detachedAvailable"] = false;
+        }
+        if (!("supportedRoles" in $$source)) {
+            this["supportedRoles"] = [];
+        }
+        if (!("leases" in $$source)) {
+            this["leases"] = [];
+        }
+        if (!("leasesBySurfaceId" in $$source)) {
+            this["leasesBySurfaceId"] = {};
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new WindowLeaseSnapshot instance from a string or object.
+     */
+    static createFrom($$source: any = {}): WindowLeaseSnapshot {
+        const $$createField5_0 = $$createType59;
+        const $$createField6_0 = $$createType0;
+        const $$createField7_0 = $$createType60;
+        const $$createField8_0 = $$createType61;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("supportedRoles" in $$parsedSource) {
+            $$parsedSource["supportedRoles"] = $$createField5_0($$parsedSource["supportedRoles"]);
+        }
+        if ("supportedSurfaceIds" in $$parsedSource) {
+            $$parsedSource["supportedSurfaceIds"] = $$createField6_0($$parsedSource["supportedSurfaceIds"]);
+        }
+        if ("leases" in $$parsedSource) {
+            $$parsedSource["leases"] = $$createField7_0($$parsedSource["leases"]);
+        }
+        if ("leasesBySurfaceId" in $$parsedSource) {
+            $$parsedSource["leasesBySurfaceId"] = $$createField8_0($$parsedSource["leasesBySurfaceId"]);
+        }
+        return new WindowLeaseSnapshot($$parsedSource as Partial<WindowLeaseSnapshot>);
+    }
+}
+
+export enum WindowLeaseStatus {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    WindowLeaseStatusAttached = "attached",
+    WindowLeaseStatusDetached = "detached",
+    WindowLeaseStatusStale = "stale",
+    WindowLeaseStatusClosed = "closed",
+};
+
 // Private type creation functions
 const $$createType0 = $Create.Array($Create.Any);
-const $$createType1 = $Create.Map($Create.Any, $Create.Any);
-const $$createType2 = ResultItemJS.createFrom;
-const $$createType3 = $Create.Array($$createType2);
-const $$createType4 = $Create.Array($Create.Any);
-const $$createType5 = TextEditJSON.createFrom;
-const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = EditorCompletion.createFrom;
-const $$createType8 = $Create.Nullable($$createType7);
-const $$createType9 = $Create.Array($$createType7);
-const $$createType10 = LSPWorkspaceEdit.createFrom;
-const $$createType11 = $Create.Nullable($$createType10);
-const $$createType12 = LSPRange.createFrom;
-const $$createType13 = LSPPosition.createFrom;
-const $$createType14 = LSPTextEdit.createFrom;
+const $$createType1 = BackgroundShellAction.createFrom;
+const $$createType2 = BackgroundShellStatusSnapshot.createFrom;
+const $$createType3 = BackgroundShellProgress.createFrom;
+const $$createType4 = $Create.Nullable($$createType3);
+const $$createType5 = $Create.Nullable($$createType1);
+const $$createType6 = BackgroundShellJob.createFrom;
+const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = BackgroundShellEvent.createFrom;
+const $$createType9 = $Create.Array($$createType8);
+const $$createType10 = BackgroundShellNotificationCandidate.createFrom;
+const $$createType11 = $Create.Array($$createType10);
+const $$createType12 = $Create.Array($$createType1);
+const $$createType13 = $Create.Map($Create.Any, $Create.Any);
+const $$createType14 = ResultItemJS.createFrom;
 const $$createType15 = $Create.Array($$createType14);
-const $$createType16 = $Create.Map($Create.Any, $$createType15);
-const $$createType17 = FlagDefJS.createFrom;
+const $$createType16 = $Create.Array($Create.Any);
+const $$createType17 = TextEditJSON.createFrom;
 const $$createType18 = $Create.Array($$createType17);
-const $$createType19 = ShellCapabilityDescriptor.createFrom;
-const $$createType20 = $Create.Map($Create.Any, $$createType19);
-const $$createType21 = SignatureInfo.createFrom;
-const $$createType22 = $Create.Array($$createType21);
-const $$createType23 = ParameterInfo.createFrom;
-const $$createType24 = $Create.Array($$createType23);
-const $$createType25 = terminal$0.PredictionResult.createFrom;
-const $$createType26 = $Create.Array($$createType25);
+const $$createType19 = EditorCompletion.createFrom;
+const $$createType20 = $Create.Nullable($$createType19);
+const $$createType21 = $Create.Array($$createType19);
+const $$createType22 = EditorFileInspection.createFrom;
+const $$createType23 = LSPWorkspaceEdit.createFrom;
+const $$createType24 = $Create.Nullable($$createType23);
+const $$createType25 = LSPRange.createFrom;
+const $$createType26 = LSPPosition.createFrom;
+const $$createType27 = LSPTextEdit.createFrom;
+const $$createType28 = $Create.Array($$createType27);
+const $$createType29 = $Create.Map($Create.Any, $$createType28);
+const $$createType30 = NativeContextMenuItem.createFrom;
+const $$createType31 = $Create.Array($$createType30);
+const $$createType32 = $Create.Map($Create.Any, $Create.Any);
+const $$createType33 = BackgroundShellActionResult.createFrom;
+const $$createType34 = $Create.Nullable($$createType33);
+const $$createType35 = PackagedOSAdapter.createFrom;
+const $$createType36 = $Create.Map($Create.Any, $$createType35);
+const $$createType37 = PackagedOSAutoUpdateManifest.createFrom;
+const $$createType38 = $Create.Nullable($$createType37);
+const $$createType39 = FlagDefJS.createFrom;
+const $$createType40 = $Create.Array($$createType39);
+const $$createType41 = ShellCapabilityDescriptor.createFrom;
+const $$createType42 = $Create.Map($Create.Any, $$createType41);
+const $$createType43 = SignatureInfo.createFrom;
+const $$createType44 = $Create.Array($$createType43);
+const $$createType45 = ParameterInfo.createFrom;
+const $$createType46 = $Create.Array($$createType45);
+const $$createType47 = terminal$0.PredictionResult.createFrom;
+const $$createType48 = $Create.Array($$createType47);
+const $$createType49 = ShellCapabilitiesSnapshot.createFrom;
+const $$createType50 = PackagedOSIntegrationSnapshot.createFrom;
+const $$createType51 = Wails3SmokeGateStatus.createFrom;
+const $$createType52 = Wails3SmokeWindowLeaseSnapshot.createFrom;
+const $$createType53 = Wails3SmokeCheck.createFrom;
+const $$createType54 = $Create.Array($$createType53);
+const $$createType55 = WindowLeaseRecord.createFrom;
+const $$createType56 = $Create.Nullable($$createType55);
+const $$createType57 = WindowLeaseSnapshot.createFrom;
+const $$createType58 = WindowLeaseReturnTarget.createFrom;
+const $$createType59 = $Create.Array($Create.Any);
+const $$createType60 = $Create.Array($$createType55);
+const $$createType61 = $Create.Map($Create.Any, $$createType55);

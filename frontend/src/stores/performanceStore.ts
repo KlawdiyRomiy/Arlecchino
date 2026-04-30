@@ -41,6 +41,8 @@ interface PerformanceState {
   recordEventPressure: (scope: PerfScope, units?: number) => void;
   recordMetric: (metric: PerfMetric) => void;
   decayPressure: () => void;
+  resetTransientBudget: () => void;
+  resetActiveEditorBudget: () => void;
 }
 
 const defaultSnapshot = (): PerformanceBudgetSnapshot => ({
@@ -121,6 +123,38 @@ export const usePerformanceStore = create<PerformanceState>((set, get) => ({
     get().updateBudget({
       eventPressure: Math.floor(snapshot.eventPressure * 0.72),
       frameGapMs: Math.floor(snapshot.frameGapMs * 0.55),
+    });
+  },
+
+  resetTransientBudget: () => {
+    set((state) => {
+      const nextSnapshot: PerformanceBudgetSnapshot = {
+        ...state.snapshot,
+        frameGapMs: 0,
+        eventPressure: 0,
+        activeEditorCharCount: 0,
+        activeEditorLineCount: 0,
+        activeEditorLargeDocument: false,
+        updatedAtMs: nowPerf(),
+      };
+      const nextMode = resolveMode(nextSnapshot);
+      nextSnapshot.mode = nextMode;
+      return { mode: nextMode, snapshot: nextSnapshot };
+    });
+  },
+
+  resetActiveEditorBudget: () => {
+    set((state) => {
+      const nextSnapshot: PerformanceBudgetSnapshot = {
+        ...state.snapshot,
+        activeEditorCharCount: 0,
+        activeEditorLineCount: 0,
+        activeEditorLargeDocument: false,
+        updatedAtMs: nowPerf(),
+      };
+      const nextMode = resolveMode(nextSnapshot);
+      nextSnapshot.mode = nextMode;
+      return { mode: nextMode, snapshot: nextSnapshot };
     });
   },
 }));

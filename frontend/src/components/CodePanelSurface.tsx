@@ -38,14 +38,20 @@ import {
   codeEditorSurfaceClassName,
   codeEditorTheme,
 } from "../utils/codeMirrorTheme";
-import { shouldUseCodeMirrorLargeDocumentMode } from "../utils/codeMirrorDisplay";
+import {
+  getCodeMirrorLineCount,
+  shouldUseCodeMirrorLargeDocumentMode,
+} from "../utils/codeMirrorDisplay";
 import type { GitLineMarker } from "../utils/git";
+import type { EditorFileLoadState } from "../utils/editorFileLoader";
+import { GuardedEditorPreview } from "./GuardedEditorPreview";
 
 interface CodePanelSurfaceProps {
   path: string;
   name: string;
   language: string;
   initialContent: string;
+  loadState?: EditorFileLoadState;
 }
 
 const autoSaveDelayMs = 500;
@@ -106,19 +112,24 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   name,
   language,
   initialContent,
+  loadState,
 }) => {
+  const isEditable = !loadState || loadState.kind === "editable";
   const activePaneID = useEditorStore((state) => state.activePaneId);
   const openTab = useEditorStore((state) => state.openTab);
   const updateTabContent = useEditorStore((state) => state.updateTabContent);
   const markTabDirty = useEditorStore((state) => state.markTabDirty);
   const tabID = useMemo(() => makeTabID(path), [path]);
   const tab = useEditorStore((state) => state.tabs.get(tabID));
-  const content = tab?.content ?? initialContent;
+  const content = isEditable ? (tab?.content ?? initialContent) : "";
   const largeDocumentMode = useMemo(
     () => shouldUseCodeMirrorLargeDocumentMode(content),
     [content],
   );
-  const contentLineCount = useMemo(() => content.split("\n").length, [content]);
+  const contentLineCount = useMemo(
+    () => getCodeMirrorLineCount(content),
+    [content],
+  );
   const performanceSnapshot = usePerformanceStore((state) => state.snapshot);
   const updatePerformanceBudget = usePerformanceStore(
     (state) => state.updateBudget,
@@ -164,6 +175,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   );
 
   useEffect(() => {
+    if (!isEditable) return;
     updatePerformanceBudget({
       activeEditorCharCount: content.length,
       activeEditorLineCount: contentLineCount,
@@ -172,15 +184,18 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   }, [
     content.length,
     contentLineCount,
+    isEditable,
     largeDocumentMode,
     updatePerformanceBudget,
   ]);
 
   useEffect(() => {
+    if (!isEditable) return;
     openTab(activePaneID, path, name, initialContent, language);
-  }, [activePaneID, initialContent, language, name, openTab, path]);
+  }, [activePaneID, initialContent, isEditable, language, name, openTab, path]);
 
   useEffect(() => {
+    if (!isEditable) return;
     diagnosticsVersionRef.current = 1;
     void NotifyFileOpened(path, language, initialContent).catch(console.warn);
 
@@ -191,7 +206,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
       }
       void NotifyFileClosed(path, language).catch(console.warn);
     };
-  }, [initialContent, language, path]);
+  }, [initialContent, isEditable, language, path]);
 
   useEffect(() => {
     return () => {
@@ -233,6 +248,9 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   ]);
 
   const handleChange = (value: string) => {
+    if (!isEditable) {
+      return;
+    }
     updateTabContent(tabID, value);
 
     if (diagnosticsTimeoutRef.current !== null) {
@@ -287,6 +305,10 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     },
     [clearFileMarkers, path],
   );
+
+  if (loadState?.kind === "guardedPreview" || loadState?.kind === "error") {
+    return <GuardedEditorPreview file={loadState} />;
+  }
 
   return (
     <div

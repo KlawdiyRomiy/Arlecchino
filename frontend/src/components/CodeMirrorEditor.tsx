@@ -133,6 +133,7 @@ import {
 import { useGitStore } from "../stores/gitStore";
 import { createCompletionCache } from "../utils/completionCache";
 import {
+  getCodeMirrorLineCount,
   shouldEnableCodeMirrorMinimap,
   shouldUseCodeMirrorLargeDocumentMode,
 } from "../utils/codeMirrorDisplay";
@@ -907,10 +908,16 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     () => shouldUseCodeMirrorLargeDocumentMode(content),
     [content],
   );
-  const contentLineCount = useMemo(() => content.split("\n").length, [content]);
+  const contentLineCount = useMemo(
+    () => getCodeMirrorLineCount(content),
+    [content],
+  );
   const performanceSnapshot = usePerformanceStore((state) => state.snapshot);
   const updatePerformanceBudget = usePerformanceStore(
     (state) => state.updateBudget,
+  );
+  const resetActiveEditorBudget = usePerformanceStore(
+    (state) => state.resetActiveEditorBudget,
   );
   const editorFeatureBudget = useMemo(
     () =>
@@ -972,6 +979,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     largeDocumentMode,
     updatePerformanceBudget,
   ]);
+
+  useEffect(
+    () => () => {
+      resetActiveEditorBudget();
+    },
+    [resetActiveEditorBudget],
+  );
 
   useEffect(() => {
     if (!filePath || !language) return;
@@ -2071,151 +2085,205 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     ];
   }, [requestSignatureHelp, clearSignatureHelp, editorFeatureBudget.hover]);
 
-  const extensions: Extension[] = [
-    codeEditorTheme,
-    codeEditorStyles,
-    fontSizeExtension,
-    highlightLineField,
-    search(),
-    keymap.of([...defaultKeymap, ...searchKeymap, indentWithTab]),
-    saveKeymap,
-    formatKeymap,
-    EditorView.updateListener.of((update) => {
-      if (!update.selectionSet && !update.docChanged) return;
-      syncCursorPosition(update.state);
-    }),
-  ];
-
-  if (editorFeatureBudget.gitGutter) {
-    extensions.push(gitGutterExtension);
-  }
-
-  if (editorFeatureBudget.ghostText) {
-    extensions.push(
-      ghost.ghostField,
-      ghost.extension,
-      Prec.highest(ghost.keymap),
-    );
-  }
-
-  if (editorFeatureBudget.richEditorFeatures) {
-    extensions.push(
-      metrics.extension,
-      ...hoverExtension,
-      indentOnInput(),
-      bracketMatching(),
-      foldGutter(),
-      ...(showRainbowBrackets ? [rainbowBrackets()] : []),
-      ...diagnosticsExtension,
-    );
-  }
-
-  if (editorFeatureBudget.lineWrapping) {
-    extensions.push(EditorView.lineWrapping);
-  }
-
-  if (editorFeatureBudget.completions) {
-    extensions.push(
-      orchestrator.extension,
-      Prec.highest(keymap.of(COMPLETION_KEYMAP_WITHOUT_ESCAPE)),
+  const extensions = useMemo<Extension[]>(() => {
+    const nextExtensions: Extension[] = [
+      codeEditorTheme,
+      codeEditorStyles,
+      fontSizeExtension,
+      highlightLineField,
+      search(),
+      keymap.of([...defaultKeymap, ...searchKeymap, indentWithTab]),
+      saveKeymap,
+      formatKeymap,
       EditorView.updateListener.of((update) => {
-        if (!update.docChanged) return;
-        if (update.view.composing || update.view.compositionStarted) return;
+        if (!update.selectionSet && !update.docChanged) return;
+        syncCursorPosition(update.state);
+      }),
+    ];
 
-        let insertedNonWhitespace = false;
-        update.transactions.forEach((transaction) => {
-          if (!transaction.isUserEvent("input")) return;
-          if (transaction.isUserEvent("input.type.compose")) return;
-          if (transaction.isUserEvent("input.complete")) return;
-          if (
-            !transaction.isUserEvent("input.type") &&
-            !transaction.isUserEvent("input.paste")
-          ) {
+    if (editorFeatureBudget.gitGutter) {
+      nextExtensions.push(gitGutterExtension);
+    }
+
+    if (editorFeatureBudget.ghostText) {
+      nextExtensions.push(
+        ghost.ghostField,
+        ghost.extension,
+        Prec.highest(ghost.keymap),
+      );
+    }
+
+    if (editorFeatureBudget.richEditorFeatures) {
+      nextExtensions.push(
+        metrics.extension,
+        ...hoverExtension,
+        indentOnInput(),
+        bracketMatching(),
+        foldGutter(),
+        ...(showRainbowBrackets ? [rainbowBrackets()] : []),
+        ...diagnosticsExtension,
+      );
+    }
+
+    if (editorFeatureBudget.lineWrapping) {
+      nextExtensions.push(EditorView.lineWrapping);
+    }
+
+    if (editorFeatureBudget.completions) {
+      nextExtensions.push(
+        orchestrator.extension,
+        Prec.highest(keymap.of(COMPLETION_KEYMAP_WITHOUT_ESCAPE)),
+        EditorView.updateListener.of((update) => {
+          if (!update.docChanged) return;
+          if (update.view.composing || update.view.compositionStarted) return;
+
+          let insertedNonWhitespace = false;
+          update.transactions.forEach((transaction) => {
+            if (!transaction.isUserEvent("input")) return;
+            if (transaction.isUserEvent("input.type.compose")) return;
+            if (transaction.isUserEvent("input.complete")) return;
+            if (
+              !transaction.isUserEvent("input.type") &&
+              !transaction.isUserEvent("input.paste")
+            ) {
+              return;
+            }
+            transaction.changes.iterChanges(
+              (_fromA, _toA, _fromB, _toB, inserted) => {
+                if (/\S/.test(inserted.toString())) {
+                  insertedNonWhitespace = true;
+                }
+              },
+            );
+          });
+
+          if (!insertedNonWhitespace) return;
+
+          const currentPos = update.state.selection.main.head;
+          const recentText = update.state.doc.sliceString(
+            Math.max(0, currentPos - 2),
+            currentPos,
+          );
+          const isAccessTrigger = endsWithAccessTrigger(recentText);
+
+          if (completionStatus(update.state) !== null && !isAccessTrigger) {
             return;
           }
-          transaction.changes.iterChanges(
-            (_fromA, _toA, _fromB, _toB, inserted) => {
-              if (/\S/.test(inserted.toString())) {
-                insertedNonWhitespace = true;
-              }
+
+          const view = update.view;
+          const docSnapshot = update.state.doc;
+
+          queueMicrotask(() => {
+            if (view.state.doc !== docSnapshot) return;
+            const version = documentVersionRef.current;
+            if (completionDismissedVersionRef.current === version) return;
+            const status = completionStatus(view.state);
+            if (status !== null && !isAccessTrigger) return;
+            if (view.composing || view.compositionStarted) return;
+            if (isAccessTrigger && status !== null) {
+              closeCompletion(view);
+            }
+            metrics.recordAutocompleteRequested();
+            autoStartedCompletionVersionRef.current = version;
+            startCompletion(view);
+          });
+        }),
+        autocompletion({
+          override: [backendCompletionSource],
+          activateOnTyping: false,
+          activateOnTypingDelay: 0,
+          updateSyncTime: 0,
+          maxRenderedOptions: 50,
+          defaultKeymap: false,
+          closeOnBlur: true,
+          interactionDelay: 0,
+          addToOptions: [
+            {
+              render(completion) {
+                const src = (completion as unknown as Record<string, unknown>)
+                  .__source as string;
+                if (!src) return null;
+                const el = document.createElement("span");
+                el.className = "cm-completionSource";
+                el.textContent = src;
+                return el;
+              },
+              position: 90,
             },
-          );
-        });
+          ],
+        }),
+      );
+    }
 
-        if (!insertedNonWhitespace) return;
+    if (shouldShowMinimap) {
+      nextExtensions.push(
+        showMinimap.compute(["doc"], () => ({
+          create: () => ({ dom: document.createElement("div") }),
+          displayText: "blocks",
+          showOverlay: "always",
+        })),
+        minimapDockingExtension,
+      );
+    }
 
-        const currentPos = update.state.selection.main.head;
-        const recentText = update.state.doc.sliceString(
-          Math.max(0, currentPos - 2),
-          currentPos,
-        );
-        const isAccessTrigger = endsWithAccessTrigger(recentText);
+    if (editorFeatureBudget.languageExtensions) {
+      const langExt = getLanguageExtension(language);
+      if (langExt) nextExtensions.push(langExt);
+    }
+    if (editorFeatureBudget.hover) {
+      nextExtensions.push(
+        ...definitionLinkExtension,
+        ...signatureHelpExtension,
+      );
+    }
 
-        if (completionStatus(update.state) !== null && !isAccessTrigger) return;
+    return nextExtensions;
+  }, [
+    backendCompletionSource,
+    definitionLinkExtension,
+    diagnosticsExtension,
+    editorFeatureBudget.completions,
+    editorFeatureBudget.ghostText,
+    editorFeatureBudget.gitGutter,
+    editorFeatureBudget.hover,
+    editorFeatureBudget.languageExtensions,
+    editorFeatureBudget.lineWrapping,
+    editorFeatureBudget.richEditorFeatures,
+    fontSizeExtension,
+    formatKeymap,
+    ghost,
+    gitGutterExtension,
+    hoverExtension,
+    language,
+    metrics,
+    orchestrator,
+    saveKeymap,
+    shouldShowMinimap,
+    showRainbowBrackets,
+    signatureHelpExtension,
+    syncCursorPosition,
+  ]);
 
-        const view = update.view;
-        const docSnapshot = update.state.doc;
-
-        queueMicrotask(() => {
-          if (view.state.doc !== docSnapshot) return;
-          const version = documentVersionRef.current;
-          if (completionDismissedVersionRef.current === version) return;
-          const status = completionStatus(view.state);
-          if (status !== null && !isAccessTrigger) return;
-          if (view.composing || view.compositionStarted) return;
-          if (isAccessTrigger && status !== null) {
-            closeCompletion(view);
-          }
-          metrics.recordAutocompleteRequested();
-          autoStartedCompletionVersionRef.current = version;
-          startCompletion(view);
-        });
-      }),
-      autocompletion({
-        override: [backendCompletionSource],
-        activateOnTyping: false,
-        activateOnTypingDelay: 0,
-        updateSyncTime: 0,
-        maxRenderedOptions: 50,
-        defaultKeymap: false,
-        closeOnBlur: true,
-        interactionDelay: 0,
-        addToOptions: [
-          {
-            render(completion) {
-              const src = (completion as unknown as Record<string, unknown>)
-                .__source as string;
-              if (!src) return null;
-              const el = document.createElement("span");
-              el.className = "cm-completionSource";
-              el.textContent = src;
-              return el;
-            },
-            position: 90,
-          },
-        ],
-      }),
-    );
-  }
-
-  if (shouldShowMinimap) {
-    extensions.push(
-      showMinimap.compute(["doc"], () => ({
-        create: () => ({ dom: document.createElement("div") }),
-        displayText: "blocks",
-        showOverlay: "always",
-      })),
-      minimapDockingExtension,
-    );
-  }
-
-  if (editorFeatureBudget.languageExtensions) {
-    const langExt = getLanguageExtension(language);
-    if (langExt) extensions.push(langExt);
-  }
-  if (editorFeatureBudget.hover) {
-    extensions.push(...definitionLinkExtension, ...signatureHelpExtension);
-  }
+  const basicSetup = useMemo(
+    () => ({
+      lineNumbers: true,
+      highlightActiveLineGutter: true,
+      highlightActiveLine: true,
+      foldGutter: false,
+      dropCursor: true,
+      allowMultipleSelections: editorFeatureBudget.richEditorFeatures,
+      indentOnInput: false,
+      bracketMatching: false,
+      closeBrackets: editorFeatureBudget.richEditorFeatures,
+      autocompletion: false,
+      rectangularSelection: true,
+      crosshairCursor: false,
+      highlightSelectionMatches: editorFeatureBudget.richEditorFeatures,
+      searchKeymap: false,
+      tabSize: 4,
+    }),
+    [editorFeatureBudget.richEditorFeatures],
+  );
 
   return (
     <div
@@ -2227,23 +2295,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         value={content}
         onChange={handleChange}
         extensions={extensions}
-        basicSetup={{
-          lineNumbers: true,
-          highlightActiveLineGutter: true,
-          highlightActiveLine: true,
-          foldGutter: false,
-          dropCursor: true,
-          allowMultipleSelections: editorFeatureBudget.richEditorFeatures,
-          indentOnInput: false,
-          bracketMatching: false,
-          closeBrackets: editorFeatureBudget.richEditorFeatures,
-          autocompletion: false,
-          rectangularSelection: true,
-          crosshairCursor: false,
-          highlightSelectionMatches: editorFeatureBudget.richEditorFeatures,
-          searchKeymap: false,
-          tabSize: 4,
-        }}
+        basicSetup={basicSetup}
         theme="none"
         className={codeEditorSurfaceClassName}
         onCreateEditor={(view) => {

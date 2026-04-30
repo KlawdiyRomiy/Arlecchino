@@ -2,6 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 
 const projectPath = "/virtual/large-file-project";
 const largeFilePath = `${projectPath}/large.go`;
+const hugeGeneratedFilePath = `${projectPath}/huge-generated.cs`;
+const longLineFilePath = `${projectPath}/long-line.txt`;
 const slowFilePath = `${projectPath}/slow.go`;
 const fastFilePath = `${projectPath}/fast.go`;
 
@@ -47,14 +49,24 @@ const largeFileContent = Array.from({ length: 2200 }, (_value, index) => {
 
   return `var line${index} = ${index}`;
 }).join("\n");
+const hugeGeneratedFileContent = Array.from(
+  { length: 30_000 },
+  (_value, index) =>
+    `public static readonly string Route${index} = "${"x".repeat(96)}";`,
+).join("\n");
+const longLineFileContent = "x".repeat(1024 * 1024);
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(
     ({
       fastFileContent,
       fastFilePath,
+      hugeGeneratedFileContent,
+      hugeGeneratedFilePath,
       largeFileContent,
       largeFilePath,
+      longLineFileContent,
+      longLineFilePath,
       projectPath,
       slowFileContent,
       slowFilePath,
@@ -80,6 +92,33 @@ test.beforeEach(async ({ page }) => {
           version: 0,
         }),
       );
+
+      const makeInspection = (
+        path: string,
+        content: string,
+        safeForEditor: boolean,
+        reason = "safe for interactive editing",
+      ) => {
+        const lines = content.split("\n");
+        return {
+          path,
+          name: path.split("/").pop() || path,
+          sizeBytes: content.length,
+          formattedSize: `${content.length} B`,
+          isText: true,
+          safeForEditor,
+          largeDocument: !safeForEditor,
+          reason,
+          lineCount: content.length === 0 ? 1 : lines.length,
+          maxLineLength: lines.reduce(
+            (max, line) => Math.max(max, line.length),
+            0,
+          ),
+          limitBytes: 2 * 1024 * 1024,
+          lineLimit: 20_000,
+          maxLineLengthLimit: 20_000,
+        };
+      };
 
       const appHandlers: Record<string, (...args: unknown[]) => unknown> = {
         SelectDirectory: async () => projectPath,
@@ -111,9 +150,66 @@ test.beforeEach(async ({ page }) => {
               path: fastFilePath,
               isDirectory: false,
             },
+            {
+              name: "huge-generated.cs",
+              path: hugeGeneratedFilePath,
+              isDirectory: false,
+            },
+            {
+              name: "long-line.txt",
+              path: longLineFilePath,
+              isDirectory: false,
+            },
           ];
         },
+        InspectEditorFile: async (path?: unknown) => {
+          if (path === hugeGeneratedFilePath) {
+            return makeInspection(
+              hugeGeneratedFilePath,
+              hugeGeneratedFileContent,
+              false,
+              "file opens in guarded preview by default",
+            );
+          }
+          if (path === longLineFilePath) {
+            return makeInspection(
+              longLineFilePath,
+              longLineFileContent,
+              false,
+              "file has a line that is too long for interactive editing",
+            );
+          }
+          if (path === largeFilePath) {
+            return makeInspection(largeFilePath, largeFileContent, false);
+          }
+          if (path === slowFilePath) {
+            return makeInspection(slowFilePath, slowFileContent, true);
+          }
+          if (path === fastFilePath) {
+            return makeInspection(fastFilePath, fastFileContent, true);
+          }
+          return makeInspection(`${path ?? ""}`, smallFileContent, true);
+        },
+        ReadEditorFilePreview: async (path?: unknown, maxBytes?: unknown) => {
+          const limit = typeof maxBytes === "number" ? maxBytes : 64 * 1024;
+          const content =
+            path === longLineFilePath
+              ? longLineFileContent
+              : path === hugeGeneratedFilePath
+                ? hugeGeneratedFileContent
+                : largeFileContent;
+          const inspection = await appHandlers.InspectEditorFile(path);
+          return {
+            inspection,
+            content: content.slice(0, limit),
+            truncated: content.length > limit,
+            previewBytes: Math.min(content.length, limit),
+          };
+        },
         ReadFile: async (path?: unknown) => {
+          if (path === hugeGeneratedFilePath || path === longLineFilePath) {
+            throw new Error("guarded preview required");
+          }
           if (path === largeFilePath) {
             return largeFileContent;
           }
@@ -163,9 +259,13 @@ test.beforeEach(async ({ page }) => {
     {
       fastFileContent,
       fastFilePath,
+      hugeGeneratedFileContent,
+      hugeGeneratedFilePath,
       projectPath,
       largeFilePath,
       largeFileContent,
+      longLineFileContent,
+      longLineFilePath,
       slowFileContent,
       slowFilePath,
       smallFileContent,
@@ -224,6 +324,65 @@ async function mountEditor(page: Page, filePath: string, content: string) {
   });
 }
 
+async function mountProjectFile(page: Page, filePath: string) {
+  await page.goto("/");
+
+  await page.evaluate(
+    async ({ filePath, projectPath }) => {
+      const rootElement = document.createElement("div");
+      rootElement.id = "playwright-project-root";
+      rootElement.style.width = "1000px";
+      rootElement.style.height = "700px";
+      document.body.innerHTML = "";
+      document.body.appendChild(rootElement);
+
+      const ReactModule = await import("/node_modules/.vite/deps/react.js");
+      const React = ReactModule.default;
+      const ReactDomClientModule =
+        await import("/node_modules/.vite/deps/react-dom_client.js");
+      const { createRoot } = ReactDomClientModule.default;
+      const { ThemeProvider } = await import("/src/contexts/ThemeContext.tsx");
+      const { ProjectEntryActionsProvider } =
+        await import("/src/contexts/ProjectEntryActionsContext.tsx");
+      const { loadEditorFile } = await import("/src/utils/editorFileLoader.ts");
+      const ProjectScreenModule =
+        await import("/src/components/ProjectScreen.tsx");
+      const ProjectScreen = ProjectScreenModule.default;
+      const file = await loadEditorFile(filePath);
+      const projectEntryActions = {
+        projectPath,
+        getRelativePath: (path: string) => path,
+        copyText: async () => true,
+        copyAbsolutePath: async () => true,
+        copyRelativePath: async () => true,
+        copyProjectPath: async () => true,
+        revealEntry: async () => true,
+        requestCreateEntry: () => undefined,
+        requestRenameEntry: () => undefined,
+        requestTrashEntry: () => undefined,
+      };
+
+      const root = createRoot(rootElement);
+      root.render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(
+            ProjectEntryActionsProvider,
+            { value: projectEntryActions },
+            React.createElement(ProjectScreen, {
+              projectPath,
+              fileToOpen: { file },
+              onFileOpened: () => undefined,
+            }),
+          ),
+        ),
+      );
+    },
+    { filePath, projectPath },
+  );
+}
+
 async function mountExplorer(page: Page) {
   await page.goto("/");
 
@@ -249,7 +408,9 @@ async function mountExplorer(page: Page) {
       const { ThemeProvider } = await import("/src/contexts/ThemeContext.tsx");
       const { ProjectEntryActionsProvider } =
         await import("/src/contexts/ProjectEntryActionsContext.tsx");
+      const { loadEditorFile } = await import("/src/utils/editorFileLoader.ts");
       const { FileExplorer } = await import("/src/components/FileExplorer.tsx");
+      let openRequestId = 0;
 
       const projectEntryActions = {
         projectPath,
@@ -274,8 +435,19 @@ async function mountExplorer(page: Page) {
             { value: projectEntryActions },
             React.createElement(FileExplorer, {
               projectPath,
-              onFileOpen: (path: string, content: string, name: string) => {
-                testWindow.__openedFiles.push({ path, content, name });
+              onFileOpen: (path: string, _content: string, name: string) => {
+                const requestId = openRequestId + 1;
+                openRequestId = requestId;
+                void loadEditorFile(path).then((file) => {
+                  if (openRequestId !== requestId || file.kind !== "editable") {
+                    return;
+                  }
+                  testWindow.__openedFiles.push({
+                    path,
+                    content: file.content,
+                    name,
+                  });
+                });
               },
             }),
           ),
@@ -300,6 +472,84 @@ test("large files disable minimap to preserve native editor scrolling", async ({
 
   await expect(page.locator(".cm-editor").first()).toBeVisible();
   await expect(page.locator(".cm-minimap-gutter")).toHaveCount(0);
+});
+
+test("CodeMirror keeps editor theme during adaptive feature reconfiguration", async ({
+  page,
+}) => {
+  await mountEditor(page, fastFilePath, fastFileContent);
+
+  const readTheme = () =>
+    page
+      .locator(".cm-editor")
+      .first()
+      .evaluate((element) => {
+        const styles = window.getComputedStyle(element);
+        const content = element.querySelector(".cm-content");
+        const contentStyles = content ? window.getComputedStyle(content) : null;
+        return {
+          color: styles.color,
+          backgroundColor: styles.backgroundColor,
+          contentColor: contentStyles?.color ?? "",
+          editorBackgroundVar: styles.getPropertyValue("--editor-bg").trim(),
+        };
+      });
+
+  const before = await readTheme();
+  await page.evaluate(async () => {
+    const { usePerformanceStore } =
+      await import("/src/stores/performanceStore.ts");
+    usePerformanceStore.getState().updateBudget({
+      activeEditorCharCount: 3_000_000,
+      activeEditorLineCount: 30_000,
+      activeEditorLargeDocument: true,
+      eventPressure: 100,
+      frameGapMs: 90,
+    });
+  });
+  const constrained = await readTheme();
+  await page.evaluate(async () => {
+    const { usePerformanceStore } =
+      await import("/src/stores/performanceStore.ts");
+    usePerformanceStore.getState().resetTransientBudget();
+  });
+  const after = await readTheme();
+
+  expect(constrained.color).toBe(before.color);
+  expect(constrained.contentColor).toBe(before.contentColor);
+  expect(constrained.editorBackgroundVar).toBe(before.editorBackgroundVar);
+  expect(after.color).toBe(before.color);
+  expect(after.contentColor).toBe(before.contentColor);
+  expect(after.editorBackgroundVar).toBe(before.editorBackgroundVar);
+  expect(before.color).not.toBe("rgb(255, 255, 255)");
+  expect(before.contentColor).not.toBe("rgb(255, 255, 255)");
+  expect(before.editorBackgroundVar).not.toBe("");
+});
+
+test("huge generated files open as guarded preview without mounting CodeMirror", async ({
+  page,
+}) => {
+  await mountProjectFile(page, hugeGeneratedFilePath);
+
+  await expect(page.getByTestId("guarded-editor-preview")).toBeVisible({
+    timeout: 10000,
+  });
+  await expect(page.locator(".cm-editor")).toHaveCount(0);
+  await expect(page.getByText("Guarded preview").first()).toBeVisible();
+});
+
+test("single-line huge files open as guarded preview without mounting CodeMirror", async ({
+  page,
+}) => {
+  await mountProjectFile(page, longLineFilePath);
+
+  await expect(page.getByTestId("guarded-editor-preview")).toBeVisible({
+    timeout: 10000,
+  });
+  await expect(page.locator(".cm-editor")).toHaveCount(0);
+  await expect(
+    page.getByText("line that is too long", { exact: false }),
+  ).toBeVisible();
 });
 
 test("rapid explorer opens ignore stale read responses", async ({ page }) => {

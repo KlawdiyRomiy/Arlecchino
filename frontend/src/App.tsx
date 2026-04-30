@@ -32,6 +32,7 @@ import { usePackagedOSIntegrationBridge } from "./shell/packagedOSIntegration";
 import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
 import { useWindowLeaseBridge } from "./shell/windowLeaseBridge";
 import { syncSurfaceRuntimeWindowLeaseBackendStatus } from "./surfaces/surfaceRuntimeStore";
+import type { EditorFileOpenPayload } from "./utils/editorFileLoader";
 
 const buildScaledSurfaceStyle = (uiScale: number): React.CSSProperties => ({
   position: "absolute",
@@ -70,12 +71,9 @@ const App: React.FC = () => {
   );
   const ready = useWorkspaceStore((state) => state.ready);
   const switchDirection = useWorkspaceStore((state) => state.switchDirection);
-  const [fileToOpen, setFileToOpen] = useState<{
-    path: string;
-    content: string;
-    name: string;
-    line?: number;
-  } | null>(null);
+  const [fileToOpen, setFileToOpen] = useState<EditorFileOpenPayload | null>(
+    null,
+  );
   const effectiveUiScale = clampUiScale(uiScale);
   const isDetachedHost = isDetachedAppletHostRoute();
 
@@ -163,13 +161,8 @@ const App: React.FC = () => {
     }
   };
 
-  const handleFileOpen = (
-    path: string,
-    content: string,
-    name: string,
-    line?: number,
-  ) => {
-    setFileToOpen({ path, content, name, line });
+  const handleFileOpen = (payload: EditorFileOpenPayload) => {
+    setFileToOpen(payload);
   };
 
   const handleBackToWelcome = async () => {
