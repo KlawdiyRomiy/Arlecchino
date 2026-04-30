@@ -86,6 +86,39 @@ func TestWails3PackagedSmokeReport_DefaultsStayOff(t *testing.T) {
 	if report.WindowLease.Available {
 		t.Fatal("WindowLease.Available = true, want false before Window Lease v2")
 	}
+	if report.AppBundle.LaunchMode != "raw-binary" {
+		t.Fatalf("AppBundle.LaunchMode = %q, want raw-binary", report.AppBundle.LaunchMode)
+	}
+}
+
+func TestWails3PackagedSmokeReport_IncludesPackagedAppBundleMetadata(t *testing.T) {
+	bundlePath := filepath.Join(t.TempDir(), "ArlecchinoV3Smoke.app")
+	t.Setenv(envWails3PackagedSmokeLaunchMode, "packaged-app")
+	t.Setenv(envWails3PackagedSmokeAppBundle, bundlePath)
+	t.Setenv(envWails3PackagedSmokeBundleID, "dev.arlecchino.v3smoke")
+
+	report := buildWails3PackagedSmokeReport(
+		nil,
+		[]string{"Arlecchino-v3"},
+		"/",
+		time.Unix(0, 0).UTC(),
+	)
+
+	if report.AppBundle.LaunchMode != "packaged-app" {
+		t.Fatalf("LaunchMode = %q, want packaged-app", report.AppBundle.LaunchMode)
+	}
+	if report.AppBundle.Path != bundlePath {
+		t.Fatalf("Path = %q, want %q", report.AppBundle.Path, bundlePath)
+	}
+	if report.AppBundle.BundleID != "dev.arlecchino.v3smoke" {
+		t.Fatalf("BundleID = %q", report.AppBundle.BundleID)
+	}
+	if report.AppBundle.Status != ShellCapabilityAvailable {
+		t.Fatalf("Status = %q, want available", report.AppBundle.Status)
+	}
+	if !smokeChecksContain(report.Checks, "packaged-app-bundle") {
+		t.Fatalf("Checks = %#v, want packaged-app-bundle", report.Checks)
+	}
 }
 
 func TestWails3PackagedSmokeReport_NormalizesPackagedProtocolPayload(t *testing.T) {
@@ -221,4 +254,13 @@ func writePackagedSmokeTestFile(t *testing.T, path string) {
 	if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
 		t.Fatalf("write test file: %v", err)
 	}
+}
+
+func smokeChecksContain(checks []Wails3SmokeCheck, id string) bool {
+	for _, check := range checks {
+		if check.ID == id {
+			return true
+		}
+	}
+	return false
 }

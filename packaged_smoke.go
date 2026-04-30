@@ -13,6 +13,10 @@ import (
 const (
 	wails3PackagedSmokeVersion        = 1
 	envWails3PackagedSmokeBuildTarget = "ARLECCHINO_WAILS3_SMOKE_BUILD_TARGET"
+	envWails3PackagedSmokeLaunchMode  = "ARLECCHINO_WAILS3_SMOKE_LAUNCH_MODE"
+	envWails3PackagedSmokeAppBundle   = "ARLECCHINO_WAILS3_SMOKE_APP_BUNDLE"
+	envWails3PackagedSmokeBundleID    = "ARLECCHINO_WAILS3_SMOKE_BUNDLE_ID"
+	envWails3PackagedSmokeOSHandlers  = "ARLECCHINO_WAILS3_SMOKE_OS_HANDLERS"
 )
 
 type Wails3PackagedSmokeReport struct {
@@ -30,6 +34,7 @@ type Wails3PackagedSmokeReport struct {
 	BackgroundShell       BackgroundShellStatusSnapshot  `json:"backgroundShell"`
 	SingleInstance        Wails3SmokeGateStatus          `json:"singleInstance"`
 	WindowLease           Wails3SmokeWindowLeaseSnapshot `json:"windowLease"`
+	AppBundle             Wails3SmokeAppBundleSnapshot   `json:"appBundle,omitempty"`
 	Checks                []Wails3SmokeCheck             `json:"checks"`
 }
 
@@ -44,6 +49,15 @@ type Wails3SmokeWindowLeaseSnapshot struct {
 	SpikeEnv     bool     `json:"spikeEnv"`
 	ActiveLeases []string `json:"activeLeases"`
 	Reason       string   `json:"reason"`
+}
+
+type Wails3SmokeAppBundleSnapshot struct {
+	LaunchMode           string                `json:"launchMode,omitempty"`
+	Path                 string                `json:"path,omitempty"`
+	BundleID             string                `json:"bundleId,omitempty"`
+	RegisteredOSHandlers bool                  `json:"registeredOSHandlers"`
+	Status               ShellCapabilityStatus `json:"status"`
+	Reason               string                `json:"reason"`
 }
 
 type Wails3SmokeCheck struct {
@@ -161,6 +175,7 @@ func buildWails3PackagedSmokeReport(
 
 	singleInstance := buildWails3SmokeSingleInstanceStatus()
 	windowLease := buildWails3SmokeWindowLeaseSnapshot(app)
+	appBundle := buildWails3SmokeAppBundleSnapshot()
 
 	return Wails3PackagedSmokeReport{
 		Version:               wails3PackagedSmokeVersion,
@@ -177,12 +192,14 @@ func buildWails3PackagedSmokeReport(
 		BackgroundShell:       background,
 		SingleInstance:        singleInstance,
 		WindowLease:           windowLease,
+		AppBundle:             appBundle,
 		Checks: buildWails3PackagedSmokeChecks(
 			shellCapabilities,
 			packagedOS,
 			background,
 			singleInstance,
 			windowLease,
+			appBundle,
 			hasOpenIntent,
 		),
 	}
@@ -256,12 +273,51 @@ func buildWails3SmokeWindowLeaseSnapshot(app *App) Wails3SmokeWindowLeaseSnapsho
 	}
 }
 
+func buildWails3SmokeAppBundleSnapshot() Wails3SmokeAppBundleSnapshot {
+	launchMode := strings.TrimSpace(os.Getenv(envWails3PackagedSmokeLaunchMode))
+	if launchMode == "" {
+		return Wails3SmokeAppBundleSnapshot{
+			LaunchMode: "raw-binary",
+			Status:     ShellCapabilityRequiresBuild,
+			Reason:     "Smoke report was generated from a raw binary, not a packaged .app bundle.",
+		}
+	}
+
+	bundlePath := strings.TrimSpace(os.Getenv(envWails3PackagedSmokeAppBundle))
+	if bundlePath != "" {
+		if filepath.IsAbs(bundlePath) {
+			bundlePath = filepath.Clean(bundlePath)
+		} else if cwd := currentWorkingDir(); cwd != "" {
+			bundlePath = filepath.Clean(filepath.Join(cwd, bundlePath))
+		} else {
+			bundlePath = filepath.Clean(bundlePath)
+		}
+	}
+
+	status := ShellCapabilityAvailable
+	reason := "Smoke report was generated through a packaged .app bundle harness."
+	if launchMode != "packaged-app" || bundlePath == "" {
+		status = ShellCapabilityRequiresBuild
+		reason = "Packaged .app launch metadata is incomplete."
+	}
+
+	return Wails3SmokeAppBundleSnapshot{
+		LaunchMode:           launchMode,
+		Path:                 bundlePath,
+		BundleID:             strings.TrimSpace(os.Getenv(envWails3PackagedSmokeBundleID)),
+		RegisteredOSHandlers: envFlagEnabled(envWails3PackagedSmokeOSHandlers),
+		Status:               status,
+		Reason:               reason,
+	}
+}
+
 func buildWails3PackagedSmokeChecks(
 	shell ShellCapabilitiesSnapshot,
 	packaged PackagedOSIntegrationSnapshot,
 	background BackgroundShellStatusSnapshot,
 	singleInstance Wails3SmokeGateStatus,
 	windowLease Wails3SmokeWindowLeaseSnapshot,
+	appBundle Wails3SmokeAppBundleSnapshot,
 	hasOpenIntent bool,
 ) []Wails3SmokeCheck {
 	checks := []Wails3SmokeCheck{
@@ -301,6 +357,14 @@ func buildWails3PackagedSmokeChecks(
 			Passed:  windowLease.Available,
 			Message: windowLease.Reason,
 		},
+	}
+	if appBundle.LaunchMode == "packaged-app" {
+		checks = append(checks, Wails3SmokeCheck{
+			ID:      "packaged-app-bundle",
+			Status:  appBundle.Status,
+			Passed:  appBundle.Status == ShellCapabilityAvailable,
+			Message: appBundle.Reason,
+		})
 	}
 	return checks
 }
