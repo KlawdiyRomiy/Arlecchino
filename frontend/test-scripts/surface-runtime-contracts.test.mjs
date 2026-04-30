@@ -52,6 +52,7 @@ async function loadRuntimeContracts() {
           subscribeSurfaceRuntime,
           subscribeSurfaceRuntimeEvents,
           syncSurfaceRuntimeFromHost,
+          syncSurfaceRuntimeWindowLeaseBackendStatus,
         } from "./src/surfaces/surfaceRuntimeStore.ts";
         export {
           buildNativeContextMenuItems,
@@ -553,6 +554,67 @@ test("window lease read model gates detach to supported applets and cleans stale
   assert.equal(staleLeases.length, 1);
   assert.equal(staleLeases[0].status, "stale");
   assert.equal(staleLeases[0].policy.stale, "cleanup-return-target");
+});
+
+test("surface runtime read model exposes detached backend leases without active host sessions", async () => {
+  const {
+    getSurfaceRuntimeReadModel,
+    syncSurfaceRuntimeFromHost,
+    syncSurfaceRuntimeWindowLeaseBackendStatus,
+  } = await loadRuntimeContracts();
+
+  try {
+    syncSurfaceRuntimeFromHost([
+      {
+        id: "panel:lease-contract-anchor",
+        source: "panel",
+        appletKind: "explorer",
+        hostMode: "snapped",
+        title: "Explorer",
+        active: false,
+        pinned: false,
+        panelId: "explorer",
+      },
+    ]);
+    syncSurfaceRuntimeWindowLeaseBackendStatus({
+      detachedAvailable: true,
+      leases: [
+        {
+          id: "lease:preview:detached-contract",
+          surfaceId: "preview:detached-contract",
+          role: "preview",
+          appletKind: "browser",
+          nativeWindowId: "detached:preview:detached-contract",
+          status: "detached",
+          updatedAt: 1710000004000,
+        },
+      ],
+    });
+
+    const readModel = getSurfaceRuntimeReadModel({ includeEvents: false });
+    assert.ok(readModel.sessionIds.includes("preview:detached-contract"));
+    assert.ok(
+      readModel.sessionsByHostMode.detached.includes(
+        "preview:detached-contract",
+      ),
+    );
+    assert.equal(
+      readModel.windowLeases.leasesBySurfaceId["preview:detached-contract"]
+        .nativeWindowId,
+      "detached:preview:detached-contract",
+    );
+    assert.deepEqual(
+      readModel.windowLeases.commandsBySurfaceId[
+        "preview:detached-contract"
+      ].map((command) => command.kind),
+      ["focus-window", "return-to-main", "close-window"],
+    );
+  } finally {
+    syncSurfaceRuntimeWindowLeaseBackendStatus({
+      detachedAvailable: false,
+      leases: [],
+    });
+  }
 });
 
 test("layout event parsers keep MCP preview and panel payload contracts canonical", async () => {

@@ -69,6 +69,10 @@ import {
   type SurfacePromotionRequest,
   type SurfacePromotionResult,
 } from "../../surfaces/surfacePromotion";
+import {
+  buildWindowLeaseActionId,
+  runWindowLeaseAction,
+} from "../../shell/windowLeaseBridge";
 import type { ShortcutActionId } from "../../utils/keyboard";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 import {
@@ -2180,7 +2184,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const applyPreviewPromotion = useCallback(
-    (request: SurfacePromotionRequest): SurfacePromotionResult => {
+    async (
+      request: SurfacePromotionRequest,
+    ): Promise<SurfacePromotionResult> => {
       const windowId = request.previewWindowId;
       const windowState = windowId
         ? usePreviewWindowStore
@@ -2200,11 +2206,56 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         }).promotion.commandsBySurfaceId[request.surfaceId]?.find(
           (command) => command.kind === "detach",
         );
+        if (!detachCommand?.enabled) {
+          return buildSurfacePromotionResult(request, {
+            handled: false,
+            reason:
+              detachCommand?.reason ??
+              "Detached Wails window creation is disabled in this build.",
+          });
+        }
+        if (windowState.surface !== "browser") {
+          return buildSurfacePromotionResult(request, {
+            handled: false,
+            reason:
+              "Native detached window spike currently supports Browser Preview only.",
+          });
+        }
+
+        const actionId = buildWindowLeaseActionId("detach", {
+          surfaceId: request.surfaceId,
+          previewWindowId: windowId,
+          role: "preview",
+          appletKind: windowState.surface,
+          title: windowState.title,
+          url:
+            typeof windowState.payload.url === "string"
+              ? windowState.payload.url
+              : undefined,
+          pinned: windowState.isPinned,
+          returnTarget: {
+            hostMode: windowState.mode,
+            position: windowState.position,
+          },
+          payload: {
+            ...windowState.payload,
+          },
+        });
+        const leaseResult = await runWindowLeaseAction(actionId);
+        if (!leaseResult.handled) {
+          return buildSurfacePromotionResult(request, {
+            handled: false,
+            reason:
+              leaseResult.message ??
+              "Detached Wails window creation was not handled.",
+          });
+        }
+
+        closePreviewWindowWithMotion(windowId);
         return buildSurfacePromotionResult(request, {
-          handled: false,
-          reason:
-            detachCommand?.reason ??
-            "Detached Wails window creation is disabled in this build.",
+          handled: true,
+          hostMode: "detached",
+          message: leaseResult.message ?? "Detached Wails window created.",
         });
       }
 
@@ -2329,6 +2380,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     },
     [
       focusPreviewWindow,
+      closePreviewWindowWithMotion,
       panelWorkspaceSize.height,
       panelWorkspaceSize.width,
       resolvePromotionSnapPosition,
@@ -2337,7 +2389,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const handleSurfacePromoteEvent = useCallback(
-    (payload: unknown): SurfacePromotionResult => {
+    (
+      payload: unknown,
+    ): SurfacePromotionResult | Promise<SurfacePromotionResult> => {
       const request = parseSurfacePromotionRequest(payload);
       if (!request) {
         return buildSurfacePromotionResult(null, {

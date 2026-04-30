@@ -27,6 +27,7 @@ import {
 } from "./surfaceRuntimeEvents";
 import {
   buildSurfaceWindowLeaseReadModel,
+  type SurfaceWindowLeaseRecord,
   type SurfaceWindowLeaseReadModel,
 } from "./windowLease";
 
@@ -103,6 +104,32 @@ let lastSurfaceRuntimeEventAt = 0;
 let eventHistory: readonly SurfaceRuntimeEvent[] = [];
 let focusHistory: readonly SurfaceRuntimeFocusEntry[] = [];
 let promotionReturnTargets: Readonly<Record<string, SurfaceReturnTarget>> = {};
+let backendWindowLeaseDetachedAvailable = false;
+let backendWindowLeaseRecords: Readonly<
+  Record<string, SurfaceWindowLeaseRecord>
+> = {};
+
+export interface SurfaceRuntimeBackendWindowLeaseRecord {
+  id?: string;
+  surfaceId: string;
+  role?: string;
+  appletKind?: string;
+  nativeWindowId?: string;
+  status?: string;
+  returnTarget?: {
+    hostMode?: string;
+    position?: string;
+  };
+  updatedAt?: number;
+}
+
+export interface SurfaceRuntimeBackendWindowLeaseStatus {
+  detachedAvailable?: boolean;
+  leasesBySurfaceId?: Readonly<
+    Record<string, SurfaceRuntimeBackendWindowLeaseRecord>
+  >;
+  leases?: readonly SurfaceRuntimeBackendWindowLeaseRecord[];
+}
 
 const cloneSurfaceSession = (session: SurfaceSession): SurfaceSession => ({
   ...session,
@@ -188,6 +215,125 @@ export const getSurfaceRuntimeFocusState = (): SurfaceRuntimeFocusState => {
   };
 };
 
+const backendRoleToAppletKind = (
+  role: string | undefined,
+  appletKind: string | undefined,
+): SurfaceAppletKind => {
+  if (
+    appletKind === "browser" ||
+    appletKind === "git" ||
+    appletKind === "problems" ||
+    appletKind === "terminal"
+  ) {
+    return appletKind;
+  }
+  switch (role) {
+    case "git-helper":
+      return "git";
+    case "problems-helper":
+      return "problems";
+    case "terminal-helper":
+      return "terminal";
+    default:
+      return "browser";
+  }
+};
+
+const backendRoleToWindowLeaseRole = (
+  role: string | undefined,
+): SurfaceWindowLeaseRecord["role"] => {
+  switch (role) {
+    case "git-helper":
+    case "problems-helper":
+    case "terminal-helper":
+      return role;
+    default:
+      return "preview";
+  }
+};
+
+const normalizeBackendWindowLeaseRecord = (
+  record: SurfaceRuntimeBackendWindowLeaseRecord,
+): SurfaceWindowLeaseRecord | null => {
+  const surfaceId = record.surfaceId?.trim();
+  if (!surfaceId) {
+    return null;
+  }
+  const status = record.status === "detached" ? "detached" : "attached";
+  return {
+    id: record.id?.trim() || `lease:${surfaceId}`,
+    surfaceId,
+    role: backendRoleToWindowLeaseRole(record.role),
+    appletKind: backendRoleToAppletKind(record.role, record.appletKind),
+    status,
+    hostMode: status === "detached" ? "detached" : "floating",
+    nativeWindowId: record.nativeWindowId,
+    updatedAt: record.updatedAt ?? Date.now(),
+    policy: {
+      close: "return-to-main",
+      focus: "focus-detached-window",
+      return: "restore-main-host",
+      stale: "cleanup-return-target",
+    },
+  };
+};
+
+const buildDetachedLeaseSession = (
+  lease: SurfaceWindowLeaseRecord,
+): SurfaceSession => ({
+  id: lease.surfaceId,
+  source: lease.role === "preview" ? "preview" : "panel",
+  appletKind: lease.appletKind,
+  hostMode: "detached",
+  title: lease.surfaceId,
+  active: false,
+  pinned: false,
+  panelId:
+    lease.role === "git-helper"
+      ? "git"
+      : lease.role === "problems-helper"
+        ? "problems"
+        : lease.role === "terminal-helper"
+          ? "terminal"
+          : undefined,
+  nativeWindowId: lease.nativeWindowId,
+});
+
+const mergeDetachedBackendLeaseSessions = (
+  sessions: readonly SurfaceSession[],
+): SurfaceSession[] => {
+  const sessionIds = new Set(sessions.map((session) => session.id));
+  const detachedLeaseSessions = Object.values(backendWindowLeaseRecords)
+    .filter(
+      (lease) =>
+        lease.status === "detached" &&
+        lease.hostMode === "detached" &&
+        !sessionIds.has(lease.surfaceId),
+    )
+    .map(buildDetachedLeaseSession);
+
+  return [...sessions, ...detachedLeaseSessions];
+};
+
+export const syncSurfaceRuntimeWindowLeaseBackendStatus = (
+  status: SurfaceRuntimeBackendWindowLeaseStatus,
+): void => {
+  backendWindowLeaseDetachedAvailable = Boolean(status.detachedAvailable);
+  const records = status.leasesBySurfaceId
+    ? Object.values(status.leasesBySurfaceId)
+    : (status.leases ?? []);
+  backendWindowLeaseRecords = records.reduce<
+    Record<string, SurfaceWindowLeaseRecord>
+  >((accumulator, record) => {
+    const normalized = normalizeBackendWindowLeaseRecord(record);
+    if (normalized) {
+      accumulator[normalized.surfaceId] = normalized;
+    }
+    return accumulator;
+  }, {});
+  listeners.forEach((listener) => listener());
+};
+
 const boundedEventLimit = (limit: number | undefined): number => {
   if (typeof limit !== "number" || !Number.isFinite(limit)) {
     return 25;
@@ -213,7 +359,9 @@ export const getSurfaceRuntimeReadModel = (
 ): SurfaceRuntimeReadModel => {
   const includeEvents = options.includeEvents ?? true;
   const eventLimit = boundedEventLimit(options.eventLimit);
-  const sessions = snapshot.sessions.map(cloneSurfaceSession);
+  const sessions = mergeDetachedBackendLeaseSessions(
+    snapshot.sessions.map(cloneSurfaceSession),
+  );
   const byId = sessions.reduce<Record<string, SurfaceSession>>(
     (accumulator, session) => {
       accumulator[session.id] = cloneSurfaceSession(session);
@@ -234,7 +382,8 @@ export const getSurfaceRuntimeReadModel = (
     sessionsBySource[session.source].push(session.id);
   });
   const windowLeases = buildSurfaceWindowLeaseReadModel(sessions, {
-    detachedAvailable: false,
+    detachedAvailable: backendWindowLeaseDetachedAvailable,
+    existingLeases: backendWindowLeaseRecords,
   });
 
   return {

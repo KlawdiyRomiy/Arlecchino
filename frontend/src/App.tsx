@@ -1,6 +1,10 @@
 import React, { startTransition, useEffect, useState } from "react";
 import WelcomeScreen from "./components/WelcomeScreen";
 import { MCPApprovalDialog } from "./components/MCPApprovalDialog";
+import {
+  DetachedAppletHost,
+  isDetachedAppletHostRoute,
+} from "./components/DetachedAppletHost";
 import { MainLayout } from "./components/layout/MainLayout";
 import { ProjectSwitchTransition } from "./components/layout/ProjectSwitchTransition";
 import ProjectScreen from "./components/ProjectScreen";
@@ -14,6 +18,7 @@ import {
   useWorkspaceStore,
 } from "./stores/workspaceStore";
 import { useTerminalStore } from "./stores/terminalStore";
+import { useTheme } from "./hooks/useTheme";
 import { clampUiScale } from "./utils/uiScale";
 import {
   activateProjectScope,
@@ -24,6 +29,8 @@ import { useApplicationMenuBridge } from "./hooks/useApplicationMenuBridge";
 import { useBackgroundShellStatusBridge } from "./shell/backgroundShellStatus";
 import { usePackagedOSIntegrationBridge } from "./shell/packagedOSIntegration";
 import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
+import { useWindowLeaseBridge } from "./shell/windowLeaseBridge";
+import { syncSurfaceRuntimeWindowLeaseBackendStatus } from "./surfaces/surfaceRuntimeStore";
 
 const buildScaledSurfaceStyle = (uiScale: number): React.CSSProperties => ({
   position: "absolute",
@@ -52,9 +59,11 @@ const App: React.FC = () => {
   useShellCapabilitiesBridge(AppFunctions.GetShellCapabilities);
   useBackgroundShellStatusBridge();
   usePackagedOSIntegrationBridge();
+  useWindowLeaseBridge(syncSurfaceRuntimeWindowLeaseBackendStatus);
 
   const activeId = useWorkspaceStore((state) => state.activeId);
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
+  const { theme: currentTheme } = useTheme();
   const activeProject = useWorkspaceStore((state) =>
     state.projects.find((project) => project.id === state.activeId),
   );
@@ -67,6 +76,7 @@ const App: React.FC = () => {
     line?: number;
   } | null>(null);
   const effectiveUiScale = clampUiScale(uiScale);
+  const isDetachedHost = isDetachedAppletHostRoute();
 
   useEffect(() => {
     document.documentElement.style.setProperty(
@@ -240,6 +250,15 @@ const App: React.FC = () => {
   };
 
   if (!ready) {
+    if (isDetachedHost) {
+      return (
+        <DetachedAppletHost
+          currentTheme={currentTheme}
+          currentUiScale={effectiveUiScale}
+        />
+      );
+    }
+
     return (
       <div data-testid="app-shell" style={appShellStyle}>
         <div
@@ -250,6 +269,15 @@ const App: React.FC = () => {
         </div>
         <MCPApprovalDialog />
       </div>
+    );
+  }
+
+  if (isDetachedHost) {
+    return (
+      <DetachedAppletHost
+        currentTheme={currentTheme}
+        currentUiScale={effectiveUiScale}
+      />
     );
   }
 

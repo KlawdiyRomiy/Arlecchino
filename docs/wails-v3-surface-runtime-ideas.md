@@ -222,6 +222,15 @@ Baseline hardening для этой ветки теперь имеет отдел
   `SurfaceRuntimeReadModel.windowLeases` теперь сообщает supported/unsupported
   surfaces, а `promotion.detach` становится enabled только при lease support и
   явном Window Lease spike availability. Default остается off до packaged smoke.
+- Добавлен Window Lease v2 native detached preview spike: backend `window_lease.go`
+  хранит lease registry для actual Wails windows и dev-gated
+  `RunWindowLeaseAction(detach)`, который при
+  `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1` создает detached Browser Preview window
+  с route `/?arleDetachedHost=...`. Frontend `windowLeaseBridge.ts` синхронизирует
+  `shell:window-lease:status`, а `DetachedAppletHost` рендерит существующий
+  `PreviewWindowSurface` без нового applet body. Close policy возвращает preview в
+  main shell через `ide:intent:open`. Git/Problems/Terminal остаются lease-supported,
+  но actual native detach для них отложен до стабильного preview smoke.
 - Добавлен Packaged OS Integration adapter layer без включения native delivery:
   `packaged_os_integration.go` отдает default-off adapters/read model для custom
   protocol, file associations, tray, notifications, dock/taskbar badges и auto-update
@@ -389,7 +398,9 @@ lease release и вернуть applet в корректный host.
 - `SurfaceRuntimeReadModel.promotion.commandsBySurfaceId[*].detach` is lease-aware:
   unsupported surfaces never enable, supported surfaces remain gated until Window Lease
   spike mode/package smoke enables detached windows;
-- out of scope пока остаются native Wails detached window creation, Arlehub hub mode и
+- actual Wails detached window creation реализован пока только для Browser Preview и
+  только при `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`;
+- out of scope пока остаются native detach для Git/Problems/Terminal, Arlehub hub mode и
   production-default detach.
 
 ### Risks And Checks
@@ -1387,6 +1398,10 @@ risky action, user can return layout.
     capabilities, packaged OS adapters, Background Shell actions, single-instance gate,
     launch/open-intent probe and current Window Lease status without enabling native
     delivery by default.
+21. Done: add Window Lease v2 native detached Browser Preview spike. Actual Wails
+    detached windows are available only under `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`;
+    close returns the preview to main through the Open Intent router. Git/Problems/
+    Terminal remain lease-supported but not native-detachable yet.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
@@ -1434,6 +1449,9 @@ capability-driven v3 shell layer. Это снижает риск перед deta
 12. Done: Packaged smoke harness. The Wails v3 spike binary can dump a dev-only smoke
     report through `wails3-packaged-smoke`, and the macOS helper script builds the v3
     target before running the same report with packaged spike env enabled.
+13. Done: Native detached Browser Preview spike. Window Lease v2 now creates a real
+    Wails window for `preview:*` under explicit spike env, keeps applet identity/payload,
+    reports active leases to Surface Runtime and restores the preview to main on close.
 
 Arlehub можно начинать только после пунктов 1-5: тогда hub будет использовать уже
 готовые surface events, command routing и capability checks, а не создавать параллельную

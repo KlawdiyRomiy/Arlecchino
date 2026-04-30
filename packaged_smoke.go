@@ -232,11 +232,27 @@ func buildWails3SmokeSingleInstanceStatus() Wails3SmokeGateStatus {
 }
 
 func buildWails3SmokeWindowLeaseSnapshot(app *App) Wails3SmokeWindowLeaseSnapshot {
+	spikeEnabled := envFlagEnabled(envEnableWindowLeaseSpike)
+	if app != nil && app.windowLeases != nil {
+		snapshot := app.windowLeases.Snapshot(spikeEnabled)
+		activeLeases := make([]string, 0, len(snapshot.Leases))
+		for _, lease := range snapshot.Leases {
+			if lease.Status == WindowLeaseStatusDetached {
+				activeLeases = append(activeLeases, lease.SurfaceID)
+			}
+		}
+		return Wails3SmokeWindowLeaseSnapshot{
+			Available:    snapshot.DetachedAvailable,
+			SpikeEnv:     snapshot.SpikeEnabled,
+			ActiveLeases: activeLeases,
+			Reason:       snapshot.Reason,
+		}
+	}
 	return Wails3SmokeWindowLeaseSnapshot{
-		Available:    false,
-		SpikeEnv:     false,
+		Available:    spikeEnabled,
+		SpikeEnv:     spikeEnabled,
 		ActiveLeases: []string{},
-		Reason:       "Backend native Window Lease registry is not active in the packaged smoke harness yet.",
+		Reason:       emptyWindowLeaseSnapshot(spikeEnabled).Reason,
 	}
 }
 

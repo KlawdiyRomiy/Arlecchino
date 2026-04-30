@@ -62,6 +62,7 @@ type App struct {
 	openIntentReady    bool
 	pendingOpenIntents []map[string]any
 	managerMu          sync.Mutex
+	windowLeases       *WindowLeaseRegistry
 
 	projectCtx    context.Context
 	projectCancel context.CancelFunc
@@ -115,6 +116,7 @@ func NewApp() *App {
 		plugins:          pluginRegistry,
 		executionService: execution.NewService(pluginRegistry),
 		backgroundShell:  NewBackgroundShellStatusService(),
+		windowLeases:     NewWindowLeaseRegistry(),
 	}
 }
 
