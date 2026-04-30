@@ -222,6 +222,13 @@ Baseline hardening для этой ветки теперь имеет отдел
   `SurfaceRuntimeReadModel.windowLeases` теперь сообщает supported/unsupported
   surfaces, а `promotion.detach` становится enabled только при lease support и
   явном Window Lease spike availability. Default остается off до packaged smoke.
+- Добавлен Packaged OS Integration adapter layer без включения native delivery:
+  `packaged_os_integration.go` отдает default-off adapters/read model для custom
+  protocol, file associations, tray, notifications, dock/taskbar badges и auto-update
+  manifest placeholder. Tray/notifications читают Background Shell actions/candidates,
+  `RunPackagedOSIntegrationAction("background:<action>")` делегирует в существующий
+  Background Shell action contract, а frontend mirror
+  `frontend/src/shell/packagedOSIntegration.ts` загружается через Wails v3 `Call.ByName`.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -527,6 +534,9 @@ DockBadges}`;
 - capability gates для dialogs, browser open и clipboard;
 - capability `backgroundStatus` сообщает, что read model для фоновых shell-состояний
   доступен, while `tray` и `notifications` остаются `unavailable`;
+- Packaged OS adapters теперь имеют отдельный read model:
+  `App.GetPackagedOSIntegrationStatus()` и frontend mirror
+  `packagedOSIntegration.ts`; shell capabilities остаются conservative/default-off;
 - contract tests для fallback, backend payload, invalid entries, stable revisions и
   operation events.
 
@@ -944,6 +954,8 @@ Start with non-invasive broker that observes existing jobs, then move ownership 
   PascalCase payloads, keeps stable revisions, listens to `shell:background:status` and
   can load backend snapshot through Wails v3 `Call.ByName`; it also exposes
   `runBackgroundShellAction()` for future tray/notification/menu consumers;
+- packaged OS bridge: `RunPackagedOSIntegrationAction("background:<action>")` routes
+  future tray/notification/menu actions into the same Background Shell action contract;
 - `frontend/src/App.tsx` starts the bridge without rendering new tray UI;
 - contract coverage lives in `background_shell_status_test.go` and
   `frontend/test-scripts/surface-runtime-contracts.test.mjs`.
@@ -1363,12 +1375,13 @@ risky action, user can return layout.
 14. Done: add Applet Promotion Chain up to fullscreen/floating/snapped first.
 15. Done: add Window Lease System foundation for detached-capable applets; native
     detached window creation remains gated/off by default.
-16. Later: add packaged Protocol Router, file associations and single instance.
+16. Done: add packaged OS integration adapter/read model for custom protocol, file
+    associations, single-instance/open-file handoff, tray, notifications and badges.
 17. Done: add Background Shell Status v1 as read model for future tray/notifications
     without enabling native tray or native notification delivery.
-18. Later: enable real tray, native notifications and dock/taskbar badges only after
-    packaged OS integration checks.
-19. Later: delay auto-updates/material/backdrop/dock badges until shell behavior is stable.
+18. Done: prepare real tray, native notification and dock/taskbar badge adapters as
+    default-off consumers of Background Shell state; native delivery remains off.
+19. Done: add auto-update manifest-read placeholder; material/backdrop remains later.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
@@ -1410,6 +1423,9 @@ capability-driven v3 shell layer. Это снижает риск перед deta
     surfaces, close/focus/return/stale policies and lease-aware detach commands for
     preview, Git, Problems and Terminal helper surfaces. Native detached Wails windows
     remain off by default until the spike/package smoke layer.
+11. Done: Packaged OS integration adapters. Custom protocol/file associations/tray/
+    notifications/dock badges/auto-update now have default-off read models and focused
+    tests; Background Shell actions are routable for future tray/notification surfaces.
 
 Arlehub можно начинать только после пунктов 1-5: тогда hub будет использовать уже
 готовые surface events, command routing и capability checks, а не создавать параллельную

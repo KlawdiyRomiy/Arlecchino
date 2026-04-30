@@ -88,6 +88,15 @@ async function loadRuntimeContracts() {
           syncBackgroundShellStatusFromPayload,
         } from "./src/shell/backgroundShellStatus.ts";
         export {
+          getFallbackPackagedOSIntegration,
+          getPackagedOSIntegrationSnapshot,
+          loadPackagedOSIntegrationFromBackend,
+          normalizePackagedOSIntegrationPayload,
+          runPackagedOSIntegrationAction,
+          subscribePackagedOSIntegration,
+          syncPackagedOSIntegrationFromPayload,
+        } from "./src/shell/packagedOSIntegration.ts";
+        export {
           canUseShellCapability,
           getFallbackShellCapabilities,
           getShellCapabilitiesSnapshot,
@@ -1211,6 +1220,137 @@ test("shell capabilities expose conservative fallback statuses and backend sync"
   });
   assert.equal(unchangedSnapshot.revision, nextSnapshot.revision);
   assert.deepEqual(observedRevisions, [nextSnapshot.revision]);
+
+  unsubscribe();
+});
+
+test("packaged OS integration normalizes default-off adapters and background actions", async () => {
+  const {
+    getFallbackPackagedOSIntegration,
+    getPackagedOSIntegrationSnapshot,
+    loadPackagedOSIntegrationFromBackend,
+    normalizePackagedOSIntegrationPayload,
+    runPackagedOSIntegrationAction,
+    subscribePackagedOSIntegration,
+    syncPackagedOSIntegrationFromPayload,
+  } = await loadRuntimeContracts();
+
+  const fallback = getFallbackPackagedOSIntegration();
+  assert.equal(fallback.adapters.customProtocol.status, "requires-build");
+  assert.equal(fallback.adapters.tray.enabled, false);
+  assert.equal(fallback.adapters.notifications.enabled, false);
+  assert.equal(fallback.adapters.autoUpdate.enabled, false);
+
+  const normalized = normalizePackagedOSIntegrationPayload({
+    Version: 1,
+    Platform: "darwin",
+    Runtime: "wails-v3",
+    PackagedBuild: true,
+    SpikeEnabled: true,
+    NativeTrayEnabled: false,
+    NativeNotificationsSent: false,
+    Adapters: {
+      tray: {
+        ID: "tray",
+        Label: "Tray",
+        Capability: "tray",
+        Status: "experimental",
+        Enabled: false,
+        RequiresPackagedBuild: true,
+        Reason: "Packaged smoke required.",
+        BackgroundActionCount: 1,
+      },
+      notifications: {
+        ID: "notifications",
+        Label: "Notifications",
+        Capability: "notifications",
+        Status: "experimental",
+        Enabled: false,
+        RequiresPackagedBuild: true,
+        Reason: "Packaged smoke required.",
+        NotificationCandidateCount: 1,
+      },
+    },
+    BackgroundActions: [
+      {
+        ID: "cancel:indexer:1",
+        Label: "Cancel",
+        Intent: "cancel-job",
+        JobID: "indexer:1",
+        Enabled: true,
+      },
+    ],
+    NotificationCandidates: [
+      {
+        ID: "notification:indexer:1",
+        JobID: "indexer:1",
+        Severity: "error",
+        Title: "Project indexing",
+        Body: "Indexing failed.",
+        DedupeKey: "indexer:1:failed",
+        CreatedAt: 1710000000000,
+        Action: {
+          ID: "focus:panel:terminal",
+          Label: "Focus",
+          Intent: "focus-surface",
+          OwnerSurfaceID: "panel:terminal",
+          Enabled: true,
+        },
+      },
+    ],
+    AutoUpdateManifest: {
+      Channel: "alpha",
+      Version: "0.1.0",
+      URL: "https://example.invalid/arlecchino.zip",
+    },
+  });
+
+  assert.equal(normalized.packagedBuild, true);
+  assert.equal(normalized.adapters.tray.status, "experimental");
+  assert.equal(normalized.adapters.tray.backgroundActionCount, 1);
+  assert.equal(normalized.notificationCandidates.length, 1);
+  assert.equal(
+    normalized.notificationCandidates[0].action.ownerSurfaceId,
+    "panel:terminal",
+  );
+  assert.equal(normalized.autoUpdateManifest.version, "0.1.0");
+
+  const observedRevisions = [];
+  const unsubscribe = subscribePackagedOSIntegration(() => {
+    observedRevisions.push(getPackagedOSIntegrationSnapshot().revision);
+  });
+
+  const firstSnapshot = syncPackagedOSIntegrationFromPayload(normalized);
+  assert.equal(firstSnapshot.loadedFromBackend, true);
+  assert.equal(firstSnapshot.revision > 0, true);
+  assert.deepEqual(observedRevisions, [firstSnapshot.revision]);
+  const secondSnapshot = syncPackagedOSIntegrationFromPayload(normalized);
+  assert.equal(secondSnapshot.revision, firstSnapshot.revision);
+  assert.deepEqual(observedRevisions, [firstSnapshot.revision]);
+
+  const loadedSnapshot = await loadPackagedOSIntegrationFromBackend({
+    GetPackagedOSIntegrationStatus: async () => normalized,
+  });
+  assert.equal(loadedSnapshot.adapters.autoUpdate.enabled, false);
+
+  const actionResult = await runPackagedOSIntegrationAction(
+    "background:cancel:indexer:1",
+    {
+      RunPackagedOSIntegrationAction: async (actionId) => ({
+        handled: true,
+        adapterId: "background-shell",
+        backgroundAction: {
+          id: actionId.slice("background:".length),
+          label: "Cancel",
+          intent: "cancel-job",
+          jobId: "indexer:1",
+          enabled: true,
+        },
+      }),
+    },
+  );
+  assert.equal(actionResult.handled, true);
+  assert.equal(actionResult.backgroundAction.intent, "cancel-job");
 
   unsubscribe();
 });

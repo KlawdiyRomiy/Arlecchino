@@ -22,6 +22,7 @@ import {
 } from "./utils/projectBoundState";
 import { useApplicationMenuBridge } from "./hooks/useApplicationMenuBridge";
 import { useBackgroundShellStatusBridge } from "./shell/backgroundShellStatus";
+import { usePackagedOSIntegrationBridge } from "./shell/packagedOSIntegration";
 import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
 
 const buildScaledSurfaceStyle = (uiScale: number): React.CSSProperties => ({
@@ -50,6 +51,7 @@ const App: React.FC = () => {
   useApplicationMenuBridge();
   useShellCapabilitiesBridge(AppFunctions.GetShellCapabilities);
   useBackgroundShellStatusBridge();
+  usePackagedOSIntegrationBridge();
 
   const activeId = useWorkspaceStore((state) => state.activeId);
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
