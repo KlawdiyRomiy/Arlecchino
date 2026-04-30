@@ -907,6 +907,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     () => shouldUseCodeMirrorLargeDocumentMode(content),
     [content],
   );
+  const contentLineCount = useMemo(() => content.split("\n").length, [content]);
   const performanceSnapshot = usePerformanceStore((state) => state.snapshot);
   const updatePerformanceBudget = usePerformanceStore(
     (state) => state.updateBudget,
@@ -916,9 +917,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       resolveAdaptiveEditorFeatureBudget({
         ...performanceSnapshot,
         activeEditorCharCount: content.length,
+        activeEditorLineCount: contentLineCount,
         activeEditorLargeDocument: largeDocumentMode,
       }),
-    [content.length, largeDocumentMode, performanceSnapshot],
+    [content.length, contentLineCount, largeDocumentMode, performanceSnapshot],
   );
   const gitMarkers = useGitStore((state) =>
     !editorFeatureBudget.gitGutter
@@ -961,9 +963,15 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   useEffect(() => {
     updatePerformanceBudget({
       activeEditorCharCount: content.length,
+      activeEditorLineCount: contentLineCount,
       activeEditorLargeDocument: largeDocumentMode,
     });
-  }, [content.length, largeDocumentMode, updatePerformanceBudget]);
+  }, [
+    content.length,
+    contentLineCount,
+    largeDocumentMode,
+    updatePerformanceBudget,
+  ]);
 
   useEffect(() => {
     if (!filePath || !language) return;
@@ -1199,7 +1207,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [content, editorFeatureBudget.gitGutter, filePath, refreshFileMarkers]);
+  }, [editorFeatureBudget.gitGutter, filePath, refreshFileMarkers]);
 
   useEffect(
     () => () => {

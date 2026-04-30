@@ -33,6 +33,54 @@ import type {
   TUIAssistState,
 } from "../types/terminal";
 
+const terminalOutputQueues = new Map<
+  string,
+  {
+    chunks: string[];
+    frameId: number | null;
+  }
+>();
+
+const flushTerminalOutputQueue = (session: TerminalSession) => {
+  const queue = terminalOutputQueues.get(session.id);
+  if (!queue || queue.chunks.length === 0) {
+    return;
+  }
+
+  const payload = queue.chunks.join("");
+  queue.chunks = [];
+  queue.frameId = null;
+  session.terminal.write(payload);
+};
+
+const scheduleTerminalOutput = (session: TerminalSession, chunk: string) => {
+  let queue = terminalOutputQueues.get(session.id);
+  if (!queue) {
+    queue = { chunks: [], frameId: null };
+    terminalOutputQueues.set(session.id, queue);
+  }
+
+  queue.chunks.push(chunk);
+  if (queue.frameId !== null) {
+    return;
+  }
+
+  queue.frameId = window.requestAnimationFrame(() => {
+    flushTerminalOutputQueue(session);
+  });
+};
+
+const clearTerminalOutputQueue = (id: string) => {
+  const queue = terminalOutputQueues.get(id);
+  if (!queue) {
+    return;
+  }
+  if (queue.frameId !== null) {
+    window.cancelAnimationFrame(queue.frameId);
+  }
+  terminalOutputQueues.delete(id);
+};
+
 interface TerminalState {
   activeProjectPath: string | null;
   sessions: Map<string, TerminalSession>;
@@ -840,7 +888,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
           usePerformanceStore
             .getState()
             .recordEventPressure("terminal", Math.ceil(decoded.length / 4096));
-          session.terminal.write(decoded);
+          scheduleTerminalOutput(session, decoded);
         }
       });
 
@@ -848,9 +896,11 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
         const session = get().sessions.get(event.id);
         if (session) {
           const tail = session.streamDecoder.decode();
+          flushTerminalOutputQueue(session);
           if (tail.length > 0) {
             session.terminal.write(tail);
           }
+          clearTerminalOutputQueue(session.id);
           session.terminal.write(
             `\r\n\x1b[90mProcess exited with code ${event.code}\x1b[0m\r\n`,
           );
@@ -952,6 +1002,7 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       try {
         await createTerminalBackendSession(id, name, projectPath);
       } catch (error) {
+        clearTerminalOutputQueue(id);
         session.terminal.dispose();
         set((state) => {
           const newSessions = new Map(state.sessions);
@@ -1067,11 +1118,13 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       const shouldTrackClosedTab = !!session;
       const closedTabName = session?.name || "Terminal";
       if (session) {
+        flushTerminalOutputQueue(session);
         const tail = session.streamDecoder.decode();
         if (tail.length > 0) {
           session.terminal.write(tail);
         }
         await CloseTerminal(tabId);
+        clearTerminalOutputQueue(tabId);
         session.terminal.dispose();
       }
 

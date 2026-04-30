@@ -33,37 +33,40 @@ import (
 const envDisableMCPBootstrap = "ARLECCHINO_DISABLE_MCP_BOOTSTRAP"
 
 type App struct {
-	ctx                context.Context
-	wailsApp           *application.App
-	mainWindow         *application.WebviewWindow
-	cmp                *composer.ComposerManager
-	sys                *system.SystemManager
-	projectManager     *project.ProjectManager
-	welcomeScreen      *welcome.WelcomeScreen
-	coreEngine         *core.Engine
-	brain              completionBrain
-	lspManager         *lsp.Manager
-	lspInstaller       *lspinstaller.Installer
-	plugins            *plugins.Registry
-	termManager        *terminal.Manager
-	carapaceProvider   *terminal.CarapaceProvider
-	executionService   *execution.Service
-	langDetector       *brain.LangDetector
-	projectPath        string
-	pathMu             sync.RWMutex
-	projectGeneration  atomic.Uint64
-	lastRequestID      atomic.Value
-	mcpBridgeServer    *mcp.IDEBridgeServer
-	mcpBridgeMu        sync.Mutex
-	backgroundShell    *BackgroundShellStatusService
-	shellMenuMu        sync.Mutex
-	shellMenuShortcuts map[string][]string
-	openIntentMu       sync.Mutex
-	openIntentReady    bool
-	pendingOpenIntents []map[string]any
-	managerMu          sync.Mutex
-	windowLeases       *WindowLeaseRegistry
-	packagedOSNative   *PackagedOSNativeDelivery
+	ctx                      context.Context
+	wailsApp                 *application.App
+	mainWindow               *application.WebviewWindow
+	cmp                      *composer.ComposerManager
+	sys                      *system.SystemManager
+	projectManager           *project.ProjectManager
+	welcomeScreen            *welcome.WelcomeScreen
+	coreEngine               *core.Engine
+	brain                    completionBrain
+	lspManager               *lsp.Manager
+	lspInstaller             *lspinstaller.Installer
+	plugins                  *plugins.Registry
+	termManager              *terminal.Manager
+	carapaceProvider         *terminal.CarapaceProvider
+	executionService         *execution.Service
+	langDetector             *brain.LangDetector
+	projectPath              string
+	pathMu                   sync.RWMutex
+	projectGeneration        atomic.Uint64
+	lastRequestID            atomic.Value
+	mcpBridgeServer          *mcp.IDEBridgeServer
+	mcpBridgeMu              sync.Mutex
+	backgroundShell          *BackgroundShellStatusService
+	shellMenuMu              sync.Mutex
+	shellMenuShortcuts       map[string][]string
+	openIntentMu             sync.Mutex
+	openIntentReady          bool
+	pendingOpenIntents       []map[string]any
+	managerMu                sync.Mutex
+	diagnosticsPreloadMu     sync.Mutex
+	diagnosticsPreloadCancel context.CancelFunc
+	diagnosticsPreloadSeq    uint64
+	windowLeases             *WindowLeaseRegistry
+	packagedOSNative         *PackagedOSNativeDelivery
 
 	projectCtx    context.Context
 	projectCancel context.CancelFunc
@@ -256,13 +259,24 @@ func (a *App) OpenProject(path string) error {
 		// Listen for indexing lifecycle events
 		a.coreEngine.OnIndexing(func(evt core.IndexingEvent) {
 			a.recordBackgroundIndexerEvent(evt, path, projectGeneration)
+			schedulerStats := a.coreEngine.SchedulerStats()
+			engineStats := a.coreEngine.Stats()
+			payload := map[string]any{
+				"current":               evt.Current,
+				"total":                 evt.Total,
+				"queueDepth":            schedulerStats.Pending,
+				"projectFileCount":      engineStats.TotalFiles,
+				"mode":                  string(schedulerStats.Mode),
+				"backgroundDelayMs":     schedulerStats.BackgroundJobDelayMs,
+				"configuredWorkerCount": schedulerStats.Workers,
+			}
 			switch evt.Type {
 			case core.IndexingStarted:
-				a.emitEvent("indexer:started", map[string]any{"total": evt.Total})
+				a.emitEvent("indexer:started", payload)
 			case core.IndexingProgress:
-				a.emitEvent("indexer:progress", map[string]any{"current": evt.Current, "total": evt.Total})
+				a.emitEvent("indexer:progress", payload)
 			case core.IndexingCompleted:
-				a.emitEvent("indexer:completed")
+				a.emitEvent("indexer:completed", payload)
 			}
 		})
 
@@ -390,6 +404,7 @@ func (a *App) closeProject(closeTerminals bool) error {
 	if a.projectCancel != nil {
 		a.projectCancel()
 	}
+	a.cancelDiagnosticsPreload()
 
 	a.wg.Wait()
 

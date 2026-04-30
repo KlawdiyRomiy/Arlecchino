@@ -57,8 +57,13 @@ type EngineStats struct {
 }
 
 const (
-	indexProjectScanYieldEvery = 256
-	indexProjectScanYieldDelay = 2 * time.Millisecond
+	indexProjectInventoryBatchSize = 128
+	indexProjectScanYieldEvery     = 256
+	indexProjectScanYieldDelay     = 2 * time.Millisecond
+	largeProjectFileCount          = 5000
+	criticalProjectFileCount       = 15000
+	speculativeChangeMaxBytes      = 256 << 10
+	foregroundIndexMaxBytes        = 1 << 20
 )
 
 func NewEngine(cfg EngineConfig) (*Engine, error) {
@@ -103,6 +108,14 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 
 func (e *Engine) Scheduler() *Scheduler {
 	return e.scheduler
+}
+
+func (e *Engine) SchedulerStats() SchedulerStats {
+	return e.scheduler.Stats()
+}
+
+func (e *Engine) ApplySchedulerPolicy(policy SchedulerPolicy) {
+	e.scheduler.SetPolicy(policy)
 }
 
 func (e *Engine) Store() *Store {
@@ -173,6 +186,14 @@ func (e *Engine) IndexProject() {
 	count := 0
 
 	knownFiles, _ := e.store.GetAllFiles()
+	inventoryBatch := make([]File, 0, indexProjectInventoryBatchSize)
+	flushInventory := func() {
+		if len(inventoryBatch) == 0 {
+			return
+		}
+		_ = e.store.SaveFiles(inventoryBatch)
+		inventoryBatch = inventoryBatch[:0]
+	}
 
 	type pendingFile struct {
 		path string
@@ -195,7 +216,10 @@ func (e *Engine) IndexProject() {
 		}
 
 		lang := e.detectLanguage(path)
-		_ = e.recordInventoryFromInfo(path, info, lang, false)
+		inventoryBatch = append(inventoryBatch, e.inventoryFileFromInfo(path, info, lang, false))
+		if len(inventoryBatch) >= indexProjectInventoryBatchSize {
+			flushInventory()
+		}
 		count++
 		if count%indexProjectScanYieldEvery == 0 {
 			time.Sleep(indexProjectScanYieldDelay)
@@ -216,6 +240,8 @@ func (e *Engine) IndexProject() {
 		changed = append(changed, pendingFile{path: path, lang: lang})
 		return nil
 	})
+	flushInventory()
+	e.applyProjectSizePolicy(count)
 
 	total := len(changed)
 	batchID := e.batchSeq.Add(1)
@@ -248,15 +274,33 @@ func (e *Engine) IndexProject() {
 	e.mu.Unlock()
 }
 
+func (e *Engine) applyProjectSizePolicy(fileCount int) {
+	switch {
+	case fileCount >= criticalProjectFileCount:
+		e.scheduler.SetPolicy(CriticalSchedulerPolicy())
+	case fileCount >= largeProjectFileCount:
+		e.scheduler.SetPolicy(ConstrainedSchedulerPolicy())
+	default:
+		e.scheduler.SetPolicy(DefaultSchedulerPolicy())
+	}
+}
+
 func (e *Engine) OnFileCreated(path string, content []byte) {
-	e.updateSpeculative(path, content)
 	e.recordInventoryFromContent(path, content)
+	if len(content) > foregroundIndexMaxBytes {
+		e.speculative.Remove(path)
+		return
+	}
+	e.updateSpeculative(path, content)
 	e.IndexFile(path, 10)
 }
 
 func (e *Engine) OnFileSaved(path string) {
 	e.speculative.Remove(path)
 	e.recordInventory(path)
+	if !e.shouldIndexForeground(path) {
+		return
+	}
 	e.IndexFile(path, 10)
 }
 
@@ -268,8 +312,22 @@ func (e *Engine) OnFileDeleted(path string) {
 }
 
 func (e *Engine) OnFileChanged(path string, content []byte) {
+	if len(content) > speculativeChangeMaxBytes {
+		e.speculative.Remove(path)
+		return
+	}
 	e.updateSpeculative(path, content)
-	e.recordInventoryFromContent(path, content)
+	if _, err := os.Stat(path); err != nil {
+		e.recordInventoryFromContent(path, content)
+	}
+}
+
+func (e *Engine) shouldIndexForeground(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.Size() <= foregroundIndexMaxBytes
 }
 
 // updateSpeculative parses content and adds symbols to speculative store
@@ -361,14 +419,18 @@ func (e *Engine) recordInventoryFromInfo(path string, info os.FileInfo, language
 		return nil
 	}
 
-	return e.store.SaveFile(File{
+	return e.store.SaveFile(e.inventoryFileFromInfo(path, info, language, hasSymbols))
+}
+
+func (e *Engine) inventoryFileFromInfo(path string, info os.FileInfo, language string, hasSymbols bool) File {
+	return File{
 		Path:       path,
 		Language:   language,
 		Kind:       classifyFileKind(path, language),
 		Hash:       fileFingerprint(info),
 		Size:       info.Size(),
 		HasSymbols: hasSymbols,
-	})
+	}
 }
 
 var skipDirNames = [...]string{
@@ -400,6 +462,10 @@ func fileFingerprint(info os.FileInfo) string {
 
 func (e *Engine) shouldSkip(path string) bool {
 	base := filepath.Base(path)
+	return shouldSkipDirName(base)
+}
+
+func shouldSkipDirName(base string) bool {
 	for _, skip := range skipDirNames {
 		if base == skip {
 			return true

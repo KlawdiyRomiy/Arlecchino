@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -293,6 +294,58 @@ func TestCollectDiagnosticsPreloadPlanUsesInventorySymbolsToPrioritizeUsefulSour
 	}
 	if plan.Candidates[0].Path != entryPath {
 		t.Fatalf("expected inventory-rich source file to be selected first, got %s", plan.Candidates[0].Path)
+	}
+}
+
+func TestAdaptDiagnosticsPreloadBudgetConstrainedByProjectPressure(t *testing.T) {
+	budget := adaptDiagnosticsPreloadBudget(defaultDiagnosticsPreloadBudget(), 6000, 0)
+
+	if budget.MaxFiles != 8 {
+		t.Fatalf("MaxFiles = %d, want 8 for constrained project", budget.MaxFiles)
+	}
+	if budget.MaxFilesPerLanguage != 2 {
+		t.Fatalf("MaxFilesPerLanguage = %d, want 2", budget.MaxFilesPerLanguage)
+	}
+	if budget.Timeout > 3*time.Second {
+		t.Fatalf("Timeout = %s, want <= 3s", budget.Timeout)
+	}
+}
+
+func TestAdaptDiagnosticsPreloadBudgetCriticalByQueueDepth(t *testing.T) {
+	budget := adaptDiagnosticsPreloadBudget(defaultDiagnosticsPreloadBudget(), 0, 500)
+
+	if budget.MaxFiles != 4 {
+		t.Fatalf("MaxFiles = %d, want 4 for critical queue", budget.MaxFiles)
+	}
+	if budget.MaxTotalBytes > 512<<10 {
+		t.Fatalf("MaxTotalBytes = %d, want <= 512KiB", budget.MaxTotalBytes)
+	}
+	if budget.Timeout > 2*time.Second {
+		t.Fatalf("Timeout = %s, want <= 2s", budget.Timeout)
+	}
+}
+
+func TestBeginDiagnosticsPreloadCancelsPreviousRequest(t *testing.T) {
+	app := &App{}
+
+	firstCtx, firstCancel, firstSeq := app.beginDiagnosticsPreload(context.Background(), time.Minute)
+	defer firstCancel()
+	secondCtx, secondCancel, secondSeq := app.beginDiagnosticsPreload(context.Background(), time.Minute)
+	defer secondCancel()
+
+	select {
+	case <-firstCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("first preload context was not canceled by newer request")
+	}
+	if app.isCurrentDiagnosticsPreload(firstSeq) {
+		t.Fatalf("first preload sequence is still current")
+	}
+	if !app.isCurrentDiagnosticsPreload(secondSeq) {
+		t.Fatalf("second preload sequence is not current")
+	}
+	if err := secondCtx.Err(); err != nil {
+		t.Fatalf("second preload context error = %v", err)
 	}
 }
 

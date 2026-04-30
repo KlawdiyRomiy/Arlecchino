@@ -69,6 +69,35 @@ func defaultDiagnosticsPreloadBudget() diagnosticsPreloadBudget {
 	}
 }
 
+func adaptDiagnosticsPreloadBudget(
+	budget diagnosticsPreloadBudget,
+	projectFileCount int,
+	queueDepth int,
+) diagnosticsPreloadBudget {
+	switch {
+	case projectFileCount >= 15000 || queueDepth >= 500:
+		budget.LargeProjectFileThreshold = 1
+		budget.MaxDominantLanguages = 1
+		budget.MaxFilesPerLanguage = 1
+		budget.MaxFiles = 4
+		budget.MaxTotalBytes = 512 << 10
+		budget.MaxFileSizeBytes = 128 << 10
+		budget.Timeout = 2 * time.Second
+		return budget
+	case projectFileCount >= 5000 || queueDepth >= 160:
+		budget.LargeProjectFileThreshold = 8
+		budget.MaxDominantLanguages = 2
+		budget.MaxFilesPerLanguage = 2
+		budget.MaxFiles = 8
+		budget.MaxTotalBytes = 1 << 20
+		budget.MaxFileSizeBytes = 192 << 10
+		budget.Timeout = 3 * time.Second
+		return budget
+	default:
+		return budget
+	}
+}
+
 func newLSPDiagnosticsPreloadEvent(
 	projectPath string,
 	generation uint64,
@@ -97,9 +126,29 @@ func collectDiagnosticsPreloadPlanWithInventory(
 	inventory map[string]core.File,
 	budget diagnosticsPreloadBudget,
 ) (diagnosticsPreloadPlan, error) {
+	return collectDiagnosticsPreloadPlanWithInventoryContext(
+		context.Background(),
+		root,
+		inventory,
+		budget,
+	)
+}
+
+func collectDiagnosticsPreloadPlanWithInventoryContext(
+	ctx context.Context,
+	root string,
+	inventory map[string]core.File,
+	budget diagnosticsPreloadBudget,
+) (diagnosticsPreloadPlan, error) {
 	var candidates []diagnosticsPreloadCandidate
 
 	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if err != nil {
 			return nil
 		}
@@ -661,15 +710,26 @@ func (a *App) lspPreloadProjectDiagnostics(
 		return false
 	}
 
-	budget := defaultDiagnosticsPreloadBudget()
 	ctx := context.Background()
 	if projectCtx != nil {
 		ctx = projectCtx
 	}
-	timedCtx, cancel := context.WithTimeout(ctx, budget.Timeout)
+	inventory := loadDiagnosticsPreloadInventory(engine)
+	budget := defaultDiagnosticsPreloadBudget()
+	queueDepth := 0
+	projectFileCount := len(inventory)
+	if engine != nil {
+		queueDepth = engine.SchedulerStats().Pending
+		stats := engine.Stats()
+		if projectFileCount == 0 {
+			projectFileCount = stats.TotalFiles
+		}
+	}
+	budget = adaptDiagnosticsPreloadBudget(budget, projectFileCount, queueDepth)
+	timedCtx, cancel, preloadSeq := a.beginDiagnosticsPreload(ctx, budget.Timeout)
 	defer cancel()
 
-	plan, err := collectDiagnosticsPreloadPlanWithInventory(root, loadDiagnosticsPreloadInventory(engine), budget)
+	plan, err := collectDiagnosticsPreloadPlanWithInventoryContext(timedCtx, root, inventory, budget)
 	if err != nil {
 		if err != context.Canceled {
 			a.logWarning("[DiagnosticsPreload] collect error: " + err.Error())
@@ -688,7 +748,7 @@ preloadLoop:
 		default:
 		}
 
-		if a.projectGeneration.Load() != generation {
+		if a.projectGeneration.Load() != generation || !a.isCurrentDiagnosticsPreload(preloadSeq) {
 			return false
 		}
 
@@ -711,7 +771,7 @@ preloadLoop:
 		}
 	}
 
-	if a.projectGeneration.Load() != generation {
+	if a.projectGeneration.Load() != generation || !a.isCurrentDiagnosticsPreload(preloadSeq) {
 		return false
 	}
 
@@ -725,6 +785,53 @@ preloadLoop:
 	}
 
 	return false
+}
+
+func (a *App) beginDiagnosticsPreload(
+	ctx context.Context,
+	timeout time.Duration,
+) (context.Context, context.CancelFunc, uint64) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	timedCtx, cancel := context.WithTimeout(ctx, timeout)
+
+	a.diagnosticsPreloadMu.Lock()
+	if a.diagnosticsPreloadCancel != nil {
+		a.diagnosticsPreloadCancel()
+	}
+	a.diagnosticsPreloadSeq++
+	seq := a.diagnosticsPreloadSeq
+	a.diagnosticsPreloadCancel = cancel
+	a.diagnosticsPreloadMu.Unlock()
+
+	return timedCtx, func() {
+		cancel()
+		a.diagnosticsPreloadMu.Lock()
+		if a.diagnosticsPreloadSeq == seq {
+			a.diagnosticsPreloadCancel = nil
+		}
+		a.diagnosticsPreloadMu.Unlock()
+	}, seq
+}
+
+func (a *App) isCurrentDiagnosticsPreload(seq uint64) bool {
+	a.diagnosticsPreloadMu.Lock()
+	defer a.diagnosticsPreloadMu.Unlock()
+	return a.diagnosticsPreloadSeq == seq
+}
+
+func (a *App) cancelDiagnosticsPreload() {
+	a.diagnosticsPreloadMu.Lock()
+	cancel := a.diagnosticsPreloadCancel
+	a.diagnosticsPreloadSeq++
+	a.diagnosticsPreloadCancel = nil
+	a.diagnosticsPreloadMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func loadDiagnosticsPreloadInventory(engine *core.Engine) map[string]core.File {

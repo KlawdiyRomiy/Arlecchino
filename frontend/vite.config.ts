@@ -4,11 +4,23 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
+const useWailsRuntimeStub = process.env.ARLECCHINO_TEST_WAILS_RUNTIME === "1";
 
 export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: [
+      ...(useWailsRuntimeStub
+        ? [
+            {
+              find: "/wails/runtime.js",
+              replacement: path.resolve(
+                dirname,
+                "src/wails/runtimeTestStub.ts",
+              ),
+            },
+          ]
+        : []),
       {
         find: "use-sync-external-store/shim/with-selector",
         replacement: "use-sync-external-store/with-selector",

@@ -330,3 +330,67 @@ func TestIndexProject_RegistersUnknownFilesInInventory(t *testing.T) {
 	assertFile(readmeFile, FileKindText, "")
 	assertFile(logoFile, FileKindAsset, "")
 }
+
+func TestOnFileChanged_DoesNotPersistExistingFileInventoryOnTyping(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	eng, err := NewEngine(EngineConfig{
+		ProjectID:   "typing-project",
+		ProjectRoot: dir,
+		DBPath:      filepath.Join(dir, ".arlecchino", "brain.db"),
+		Workers:     1,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Stop()
+	eng.RegisterAdapter(&stubAdapter{})
+
+	if err := eng.store.SaveFile(File{
+		Path:     goFile,
+		Language: "go",
+		Hash:     "saved-hash",
+		Size:     12,
+	}); err != nil {
+		t.Fatalf("SaveFile: %v", err)
+	}
+
+	eng.OnFileChanged(goFile, []byte("package main\nfunc main() {}"))
+
+	meta, err := eng.store.GetFile(goFile)
+	if err != nil {
+		t.Fatalf("GetFile: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected seeded file metadata")
+	}
+	if meta.Hash != "saved-hash" {
+		t.Fatalf("Hash = %q, want saved-hash", meta.Hash)
+	}
+}
+
+func TestOnFileChanged_SkipsHugeSpeculativeContent(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "huge.go")
+	eng, err := NewEngine(EngineConfig{
+		ProjectID:   "huge-project",
+		ProjectRoot: dir,
+		DBPath:      filepath.Join(dir, ".arlecchino", "brain.db"),
+		Workers:     1,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Stop()
+	eng.RegisterAdapter(&stubAdapter{})
+
+	eng.OnFileChanged(goFile, []byte(strings.Repeat("x", speculativeChangeMaxBytes+1)))
+
+	if entry := eng.speculative.Get(goFile); entry != nil {
+		t.Fatalf("expected huge speculative content to be skipped, got entry with %d bytes", len(entry.Content))
+	}
+}

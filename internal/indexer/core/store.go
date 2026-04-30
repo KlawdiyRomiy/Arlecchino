@@ -21,6 +21,7 @@ import (
 const (
 	symbolBatchSize = 40
 	edgeBatchSize   = 100
+	fileBatchSize   = 100
 )
 
 var (
@@ -129,11 +130,31 @@ func (s *Store) SaveFile(f File) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.prepareFileLocked(&f)
+	return s.db.Clauses(clause.OnConflict{UpdateAll: true}).Create(&f).Error
+}
+
+func (s *Store) SaveFiles(files []File) error {
+	if len(files) == 0 {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range files {
+		s.prepareFileLocked(&files[i])
+	}
+
+	return s.db.Clauses(clause.OnConflict{UpdateAll: true}).
+		CreateInBatches(files, fileBatchSize).Error
+}
+
+func (s *Store) prepareFileLocked(f *File) {
 	f.ProjectID = s.projectID
 	if f.ID == "" {
 		f.ID = s.fileID(f.Path)
 	}
-	return s.db.Clauses(clause.OnConflict{UpdateAll: true}).Create(&f).Error
 }
 
 func (s *Store) GetFile(path string) (*File, error) {

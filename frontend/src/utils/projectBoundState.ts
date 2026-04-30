@@ -5,6 +5,7 @@ import {
   ensureDiagnosticsEventsBound,
   useDiagnosticsStore,
 } from "../stores/diagnosticsStore";
+import { usePerformanceStore } from "../stores/performanceStore";
 
 type ProjectAppBridge = {
   LSPPreloadProjectDiagnostics?: (projectPath: string) => Promise<unknown>;
@@ -260,6 +261,9 @@ const bindDiagnosticsPreloadEvents = () => {
       currentProjectScope = matchingScope;
       syncProjectScopeToDiagnosticsStore();
       const metadata = getPreloadMetadata(payload);
+      usePerformanceStore
+        .getState()
+        .recordEventPressure("lsp", Math.max(1, metadata.selectedCandidates));
 
       setDiagnosticsPreloadState({
         active: true,

@@ -118,6 +118,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     () => shouldUseCodeMirrorLargeDocumentMode(content),
     [content],
   );
+  const contentLineCount = useMemo(() => content.split("\n").length, [content]);
   const performanceSnapshot = usePerformanceStore((state) => state.snapshot);
   const updatePerformanceBudget = usePerformanceStore(
     (state) => state.updateBudget,
@@ -127,9 +128,10 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
       resolveAdaptiveEditorFeatureBudget({
         ...performanceSnapshot,
         activeEditorCharCount: content.length,
+        activeEditorLineCount: contentLineCount,
         activeEditorLargeDocument: largeDocumentMode,
       }),
-    [content.length, largeDocumentMode, performanceSnapshot],
+    [content.length, contentLineCount, largeDocumentMode, performanceSnapshot],
   );
   const showInlineDiagnostics = useEditorSettingsStore(
     (state) => state.showInlineDiagnostics,
@@ -164,9 +166,15 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   useEffect(() => {
     updatePerformanceBudget({
       activeEditorCharCount: content.length,
+      activeEditorLineCount: contentLineCount,
       activeEditorLargeDocument: largeDocumentMode,
     });
-  }, [content.length, largeDocumentMode, updatePerformanceBudget]);
+  }, [
+    content.length,
+    contentLineCount,
+    largeDocumentMode,
+    updatePerformanceBudget,
+  ]);
 
   useEffect(() => {
     openTab(activePaneID, path, name, initialContent, language);
@@ -269,7 +277,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [content, editorFeatureBudget.gitGutter, path, refreshFileMarkers]);
+  }, [editorFeatureBudget.gitGutter, path, refreshFileMarkers]);
 
   useEffect(
     () => () => {

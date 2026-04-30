@@ -219,3 +219,52 @@ test("adaptive performance budget disables expensive editor features under press
     notifyChangeDelayMs: 900,
   });
 });
+
+test("adaptive performance budget reacts to indexer and project pressure", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { resolveAdaptiveEditorFeatureBudget, usePerformanceStore } =
+      await import("/src/stores/performanceStore.ts");
+
+    usePerformanceStore.getState().updateBudget({
+      activeEditorCharCount: 32_000,
+      activeEditorLineCount: 200,
+      activeEditorLargeDocument: false,
+      eventPressure: 0,
+      frameGapMs: 0,
+      indexerQueueDepth: 220,
+      projectFileCount: 7_500,
+    });
+
+    const constrainedSnapshot = usePerformanceStore.getState().snapshot;
+    const constrainedBudget =
+      resolveAdaptiveEditorFeatureBudget(constrainedSnapshot);
+
+    usePerformanceStore.getState().updateBudget({
+      indexerQueueDepth: 650,
+      projectFileCount: 16_000,
+    });
+
+    const criticalSnapshot = usePerformanceStore.getState().snapshot;
+    const criticalBudget = resolveAdaptiveEditorFeatureBudget(criticalSnapshot);
+
+    return {
+      constrainedMode: constrainedSnapshot.mode,
+      constrainedGitGutter: constrainedBudget.gitGutter,
+      constrainedCompletions: constrainedBudget.completions,
+      criticalMode: criticalSnapshot.mode,
+      criticalCompletions: criticalBudget.completions,
+      criticalNotifyDelay: criticalBudget.notifyChangeDelayMs,
+    };
+  });
+
+  expect(result).toEqual({
+    constrainedMode: "constrained",
+    constrainedGitGutter: false,
+    constrainedCompletions: true,
+    criticalMode: "critical",
+    criticalCompletions: false,
+    criticalNotifyDelay: 900,
+  });
+});

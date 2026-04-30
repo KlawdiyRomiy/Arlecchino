@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { EventsOn } from "../wails/runtime";
+import { usePerformanceStore } from "../stores/performanceStore";
 
 export type IndexingPhase = "idle" | "indexing" | "complete" | "revealed";
 
@@ -8,6 +9,13 @@ interface IndexingState {
   current: number;
   total: number;
   percentage: number;
+}
+
+interface IndexerEventPayload {
+  current?: number;
+  total?: number;
+  queueDepth?: number;
+  projectFileCount?: number;
 }
 
 const MIN_INDEXING_MS = 800;
@@ -38,6 +46,28 @@ function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
+
+const recordIndexerBudget = (data?: IndexerEventPayload) => {
+  if (!data) {
+    usePerformanceStore.getState().updateBudget({ indexerQueueDepth: 0 });
+    return;
+  }
+
+  const patch: {
+    indexerQueueDepth?: number;
+    projectFileCount?: number;
+  } = {};
+
+  if (typeof data.queueDepth === "number") {
+    patch.indexerQueueDepth = Math.max(0, data.queueDepth);
+  }
+  if (typeof data.projectFileCount === "number") {
+    patch.projectFileCount = Math.max(0, data.projectFileCount);
+  }
+  if (Object.keys(patch).length > 0) {
+    usePerformanceStore.getState().updateBudget(patch);
+  }
+};
 
 // --- Timers ---
 
@@ -79,31 +109,37 @@ function transitionToComplete() {
 
 // --- Event handlers (module-level, no stale closures) ---
 
-EventsOn("indexer:started", (data: { total: number }) => {
+EventsOn("indexer:started", (data: IndexerEventPayload) => {
   clearAllTimers();
   indexingStartedAt = Date.now();
+  recordIndexerBudget(data);
 
-  if (data.total === 0) {
+  const total = data.total ?? 0;
+
+  if (total === 0) {
     emit({ phase: "indexing", current: 0, total: 0, percentage: 100 });
     minTimer = setTimeout(transitionToComplete, MIN_INDEXING_MS);
     return;
   }
 
-  emit({ phase: "indexing", current: 0, total: data.total, percentage: 0 });
+  emit({ phase: "indexing", current: 0, total, percentage: 0 });
 });
 
-EventsOn("indexer:progress", (data: { current: number; total: number }) => {
-  const pct =
-    data.total > 0 ? Math.round((data.current / data.total) * 100) : 0;
+EventsOn("indexer:progress", (data: IndexerEventPayload) => {
+  recordIndexerBudget(data);
+  const current = data.current ?? 0;
+  const total = data.total ?? 0;
+  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
   emit({
     phase: "indexing",
-    current: data.current,
-    total: data.total,
+    current,
+    total,
     percentage: pct,
   });
 });
 
-EventsOn("indexer:completed", () => {
+EventsOn("indexer:completed", (data?: IndexerEventPayload) => {
+  recordIndexerBudget({ ...(data ?? {}), queueDepth: 0 });
   clearTimer(failsafeTimer);
   failsafeTimer = null;
   clearTimer(minTimer);

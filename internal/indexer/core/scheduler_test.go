@@ -41,3 +41,37 @@ func TestScheduler_EnqueueWakesIdleWorker(t *testing.T) {
 		t.Fatal("idle worker did not wake within 20ms after enqueue")
 	}
 }
+
+func TestScheduler_StatsExposeAdaptivePolicy(t *testing.T) {
+	s := NewScheduler(2, nil)
+	s.SetPolicy(ConstrainedSchedulerPolicy())
+	s.Enqueue(Job{ProjectID: "background", Priority: 5})
+
+	stats := s.Stats()
+	if stats.Pending != 1 {
+		t.Fatalf("Pending = %d, want 1", stats.Pending)
+	}
+	if stats.Workers != 2 {
+		t.Fatalf("Workers = %d, want 2", stats.Workers)
+	}
+	if stats.Mode != SchedulerModeConstrained {
+		t.Fatalf("Mode = %q, want %q", stats.Mode, SchedulerModeConstrained)
+	}
+	if stats.BackgroundJobDelayMs <= 0 {
+		t.Fatalf("BackgroundJobDelayMs = %d, want > 0", stats.BackgroundJobDelayMs)
+	}
+}
+
+func TestScheduler_DequeuePrioritizesForegroundJobs(t *testing.T) {
+	s := NewScheduler(1, nil)
+	s.Enqueue(Job{ProjectID: "background", Priority: 5})
+	s.Enqueue(Job{ProjectID: "foreground", Priority: 10})
+
+	job, ok := s.dequeue()
+	if !ok {
+		t.Fatal("expected queued job")
+	}
+	if job.ProjectID != "foreground" {
+		t.Fatalf("first job = %q, want foreground", job.ProjectID)
+	}
+}
