@@ -548,23 +548,42 @@ func (a *App) handleDetachedWindowClosing(surfaceID string) {
 		return
 	}
 	a.emitWindowLeaseStatus()
-	if record.Role != WindowLeaseRolePreview {
-		return
+	if intent, ok := buildDetachedPreviewReturnIntent(record); ok {
+		a.focusMainWindow()
+		a.dispatchOpenIntent(intent)
 	}
-	a.focusMainWindow()
-	a.dispatchOpenIntent(map[string]any{
-		"kind":   "openPreview",
-		"source": "window-lease",
+}
+
+func buildDetachedPreviewReturnIntent(record WindowLeaseRecord) (map[string]any, bool) {
+	if record.Role != WindowLeaseRolePreview {
+		return nil, false
+	}
+
+	payload := cloneWindowLeasePayload(record.Payload)
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	if record.URL != "" {
+		payload["url"] = record.URL
+	}
+
+	return map[string]any{
+		"kind":            "openPreview",
+		"source":          "window-lease",
+		"surfaceId":       record.SurfaceID,
+		"previewWindowId": record.PreviewWindowID,
 		"preview": map[string]any{
-			"id":       record.PreviewWindowID,
-			"surface":  record.AppletKind,
-			"title":    record.Title,
-			"payload":  record.Payload,
-			"mode":     record.ReturnTarget.HostMode,
-			"position": record.ReturnTarget.Position,
-			"pinned":   record.Pinned,
+			"id":        record.PreviewWindowID,
+			"surfaceId": record.SurfaceID,
+			"surface":   record.AppletKind,
+			"title":     record.Title,
+			"url":       record.URL,
+			"payload":   payload,
+			"mode":      record.ReturnTarget.HostMode,
+			"position":  record.ReturnTarget.Position,
+			"pinned":    record.Pinned,
 		},
-	})
+	}, true
 }
 
 func (a *App) emitWindowLeaseStatus() {

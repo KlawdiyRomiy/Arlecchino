@@ -122,3 +122,77 @@ func TestRunWindowLeaseActionDetachIsGated(t *testing.T) {
 		t.Fatal("DetachedAvailable = true, want false when env is disabled")
 	}
 }
+
+func TestBuildDetachedPreviewReturnIntentPreservesPreviewState(t *testing.T) {
+	record := WindowLeaseRecord{
+		SurfaceID:       "preview:browser",
+		PreviewWindowID: "browser",
+		Role:            WindowLeaseRolePreview,
+		AppletKind:      "browser",
+		Title:           "Preview localhost",
+		URL:             "https://example.test/app",
+		Pinned:          true,
+		ReturnTarget: WindowLeaseReturnTarget{
+			HostMode: "snapped",
+			Position: "right",
+		},
+		Payload: map[string]any{
+			"url":       "https://stale.example.test",
+			"sessionId": "session-1",
+		},
+	}
+
+	intent, ok := buildDetachedPreviewReturnIntent(record)
+	if !ok {
+		t.Fatal("buildDetachedPreviewReturnIntent ok = false, want true")
+	}
+	if intent["kind"] != "openPreview" || intent["source"] != "window-lease" {
+		t.Fatalf("intent = %#v, want window-lease openPreview", intent)
+	}
+	if intent["surfaceId"] != "preview:browser" {
+		t.Fatalf("surfaceId = %#v, want preview:browser", intent["surfaceId"])
+	}
+	if intent["previewWindowId"] != "browser" {
+		t.Fatalf("previewWindowId = %#v, want browser", intent["previewWindowId"])
+	}
+
+	preview, ok := intent["preview"].(map[string]any)
+	if !ok {
+		t.Fatalf("preview = %#v, want map", intent["preview"])
+	}
+	if preview["id"] != "browser" || preview["surfaceId"] != "preview:browser" {
+		t.Fatalf("preview identity = %#v", preview)
+	}
+	if preview["surface"] != "browser" || preview["title"] != "Preview localhost" {
+		t.Fatalf("preview surface/title = %#v", preview)
+	}
+	if preview["url"] != "https://example.test/app" {
+		t.Fatalf("preview url = %#v", preview["url"])
+	}
+	if preview["mode"] != "snapped" || preview["position"] != "right" {
+		t.Fatalf("preview return target = %#v", preview)
+	}
+	if preview["pinned"] != true {
+		t.Fatalf("preview pinned = %#v, want true", preview["pinned"])
+	}
+
+	payload, ok := preview["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload = %#v, want map", preview["payload"])
+	}
+	if payload["url"] != "https://example.test/app" {
+		t.Fatalf("payload url = %#v, want current record URL", payload["url"])
+	}
+	if payload["sessionId"] != "session-1" {
+		t.Fatalf("payload sessionId = %#v, want session-1", payload["sessionId"])
+	}
+}
+
+func TestBuildDetachedPreviewReturnIntentSkipsUnsupportedRoles(t *testing.T) {
+	if intent, ok := buildDetachedPreviewReturnIntent(WindowLeaseRecord{
+		SurfaceID: "panel:git",
+		Role:      WindowLeaseRoleGitHelper,
+	}); ok || intent != nil {
+		t.Fatalf("intent = %#v, ok = %v; want nil, false", intent, ok)
+	}
+}
