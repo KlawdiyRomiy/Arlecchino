@@ -179,6 +179,41 @@ func TestWails3PackagedSmokeReport_SecondInstanceProbeUsesQueuedOpenIntent(t *te
 	}
 }
 
+func TestWails3PackagedSmokeReport_NativeDeliveryProbeUsesBackgroundShellSample(t *testing.T) {
+	t.Setenv(packagedOSPackagedBuildEnv, "1")
+	t.Setenv(packagedOSSpikeEnv, "1")
+	t.Setenv(packagedOSNativeTrayEnv, "1")
+	t.Setenv(packagedOSNativeNotificationsEnv, "1")
+	t.Setenv(packagedOSDockBadgesEnv, "1")
+	t.Setenv(envWails3PackagedSmokeBackground, "1")
+
+	report := buildWails3PackagedSmokeReport(
+		nil,
+		[]string{"Arlecchino-v3"},
+		"/",
+		time.Unix(0, 0).UTC(),
+	)
+
+	if report.BackgroundShell.ActiveCount != 1 || report.BackgroundShell.AttentionCount != 1 {
+		t.Fatalf("BackgroundShell = %#v, want active and attention sample", report.BackgroundShell)
+	}
+	if !report.NativeDelivery.Enabled {
+		t.Fatal("NativeDelivery.Enabled = false, want true")
+	}
+	if !report.NativeDelivery.Tray.Enabled || len(report.NativeDelivery.Tray.ActionIDs) == 0 {
+		t.Fatalf("Tray probe = %#v, want projected actions", report.NativeDelivery.Tray)
+	}
+	if !report.NativeDelivery.Notifications.Enabled || len(report.NativeDelivery.Notifications.CandidateIDs) == 0 {
+		t.Fatalf("Notifications probe = %#v, want projected candidates", report.NativeDelivery.Notifications)
+	}
+	if !report.NativeDelivery.DockBadge.Enabled || report.NativeDelivery.DockBadge.Label != "1" {
+		t.Fatalf("DockBadge probe = %#v, want label 1", report.NativeDelivery.DockBadge)
+	}
+	if !smokeChecksPassed(report.Checks, "native-delivery-gate") {
+		t.Fatalf("Checks = %#v, want passing native-delivery-gate", report.Checks)
+	}
+}
+
 func TestWails3PackagedSmokeReport_MatrixLaunchTargets(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main.go")

@@ -119,6 +119,20 @@ switch (name) {
     check(intent.kind === "focusSurface", "expected packaged .app focusSurface intent");
     check(intent.surfaceId === "panel:aiChat", "packaged .app focus surface must be canonical panel:aiChat");
     break;
+  case "app-native-delivery":
+    check(report.appBundle && report.appBundle.launchMode === "packaged-app", "expected packaged .app launch");
+    check(report.packagedOSIntegration.adapters.tray.enabled === true, "tray adapter must be enabled");
+    check(report.packagedOSIntegration.adapters.notifications.enabled === true, "notifications adapter must be enabled");
+    check(report.packagedOSIntegration.adapters.dockBadges.enabled === true, "dock badge adapter must be enabled");
+    check(report.nativeDelivery && report.nativeDelivery.enabled === true, "native delivery probe must be enabled");
+    check(report.nativeDelivery.tray.actionIds.length > 0, "tray probe must expose Background Shell actions only");
+    check(report.nativeDelivery.notifications.candidateIds.length > 0, "notification probe must expose dedupe candidates");
+    check(report.nativeDelivery.dockBadge.label === "1", "dock badge probe must mirror attention count");
+    check(report.nativeDelivery.trackedFailureStates.includes("no-permission"), "native delivery must track no-permission");
+    check(report.nativeDelivery.trackedFailureStates.includes("startup-failed"), "native delivery must track startup-failed");
+    check(report.nativeDelivery.trackedFailureStates.includes("delivery-failed"), "native delivery must track delivery-failed");
+    check(report.nativeDelivery.trackedFailureStates.includes("action-rejected"), "native delivery must track action-rejected");
+    break;
   default:
     fail(`unknown validation case ${name}`);
 }
@@ -174,6 +188,20 @@ run_app_case() {
   echo "PASS $name: $report"
 }
 
+run_app_native_delivery_case() {
+  local report="$REPORT_DIR/app-native-delivery.json"
+  env \
+    ARLECCHINO_ENABLE_NATIVE_TRAY=1 \
+    ARLECCHINO_ENABLE_NATIVE_NOTIFICATIONS=1 \
+    ARLECCHINO_ENABLE_DOCK_BADGES=1 \
+    ARLECCHINO_WAILS3_SMOKE_BACKGROUND_SAMPLE=1 \
+    "$ROOT_DIR/scripts/wails3-packaged-app-smoke-macos.sh" \
+      --output "$OUTPUT" \
+      --working-dir "$FIXTURE_DIR" > "$report"
+  validate_report "$report" "app-native-delivery"
+  echo "PASS app-native-delivery: $report"
+}
+
 FILE_URL="file://$MAIN_FILE"
 PROTOCOL_FILE_URL="arlecchino://open?file=main.go"
 FOCUS_URL="arlecchino://focus?surface=panel:ai-chat"
@@ -190,5 +218,6 @@ run_app_case "app-file-url" Arlecchino-v3 "$FILE_URL"
 run_app_case "app-protocol-file" Arlecchino-v3 "$PROTOCOL_FILE_URL"
 run_app_case "app-protocol-preview" Arlecchino-v3 "arlecchino://open?preview=https%3A%2F%2Fexample.test%2Fapp"
 run_app_case "app-protocol-focus" Arlecchino-v3 "$FOCUS_URL"
+run_app_native_delivery_case
 
 echo "Wails v3 packaged smoke matrix passed."

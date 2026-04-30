@@ -58,6 +58,15 @@ func NewPackagedOSNativeDelivery(options PackagedOSIntegrationOptions) *Packaged
 	}
 }
 
+func (d *PackagedOSNativeDelivery) LastError() string {
+	if d == nil {
+		return ""
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.lastError
+}
+
 func packagedOSNativeDeliveryReady(options PackagedOSIntegrationOptions) bool {
 	if !options.PackagedBuild || !options.SpikeEnabled {
 		return false

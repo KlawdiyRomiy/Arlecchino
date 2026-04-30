@@ -18,6 +18,7 @@ const (
 	envWails3PackagedSmokeBundleID    = "ARLECCHINO_WAILS3_SMOKE_BUNDLE_ID"
 	envWails3PackagedSmokeOSHandlers  = "ARLECCHINO_WAILS3_SMOKE_OS_HANDLERS"
 	envWails3PackagedSmokeSecondArgs  = "ARLECCHINO_WAILS3_SMOKE_SECOND_INSTANCE_ARGS"
+	envWails3PackagedSmokeBackground  = "ARLECCHINO_WAILS3_SMOKE_BACKGROUND_SAMPLE"
 )
 
 type Wails3PackagedSmokeReport struct {
@@ -33,6 +34,7 @@ type Wails3PackagedSmokeReport struct {
 	ShellCapabilities     ShellCapabilitiesSnapshot      `json:"shellCapabilities"`
 	PackagedOSIntegration PackagedOSIntegrationSnapshot  `json:"packagedOSIntegration"`
 	BackgroundShell       BackgroundShellStatusSnapshot  `json:"backgroundShell"`
+	NativeDelivery        Wails3SmokeNativeDeliveryProbe `json:"nativeDelivery"`
 	SingleInstance        Wails3SmokeGateStatus          `json:"singleInstance"`
 	SecondInstance        Wails3SmokeSecondInstanceProbe `json:"secondInstance,omitempty"`
 	WindowLease           Wails3SmokeWindowLeaseSnapshot `json:"windowLease"`
@@ -60,6 +62,32 @@ type Wails3SmokeSecondInstanceProbe struct {
 	OpenIntent       map[string]any        `json:"openIntent,omitempty"`
 	OpenIntentQueued bool                  `json:"openIntentQueued"`
 	Reason           string                `json:"reason"`
+}
+
+type Wails3SmokeNativeDeliveryProbe struct {
+	Enabled              bool                            `json:"enabled"`
+	Status               ShellCapabilityStatus           `json:"status"`
+	TrackedFailureStates []string                        `json:"trackedFailureStates"`
+	LastError            string                          `json:"lastError,omitempty"`
+	Tray                 Wails3SmokeNativeAdapterProbe   `json:"tray"`
+	Notifications        Wails3SmokeNativeAdapterProbe   `json:"notifications"`
+	DockBadge            Wails3SmokeNativeDockBadgeProbe `json:"dockBadge"`
+	Reason               string                          `json:"reason"`
+}
+
+type Wails3SmokeNativeAdapterProbe struct {
+	Enabled      bool                  `json:"enabled"`
+	Status       ShellCapabilityStatus `json:"status"`
+	ActionIDs    []string              `json:"actionIds,omitempty"`
+	CandidateIDs []string              `json:"candidateIds,omitempty"`
+	Reason       string                `json:"reason"`
+}
+
+type Wails3SmokeNativeDockBadgeProbe struct {
+	Enabled bool                  `json:"enabled"`
+	Status  ShellCapabilityStatus `json:"status"`
+	Label   string                `json:"label"`
+	Reason  string                `json:"reason"`
 }
 
 type Wails3SmokeAppBundleSnapshot struct {
@@ -164,10 +192,7 @@ func buildWails3PackagedSmokeReport(
 	generatedAt time.Time,
 ) Wails3PackagedSmokeReport {
 	launchArgs := normalizeSmokeLaunchArgs(args)
-	background := emptyBackgroundShellStatusSnapshot()
-	if app != nil && app.backgroundShell != nil {
-		background = app.backgroundShell.Snapshot()
-	}
+	background := buildWails3SmokeBackgroundSnapshot(app)
 
 	shellCapabilities := buildShellCapabilities(
 		runtime.GOOS,
@@ -179,6 +204,7 @@ func buildWails3PackagedSmokeReport(
 		background,
 		defaultPackagedOSIntegrationOptions(),
 	)
+	nativeDelivery := buildWails3SmokeNativeDeliveryProbe(app, packagedOS, background)
 	openIntent, hasOpenIntent := buildOpenIntentFromLaunchArgs(launchArgs, workingDir)
 	if hasOpenIntent {
 		openIntent["source"] = "packaged-smoke"
@@ -202,6 +228,7 @@ func buildWails3PackagedSmokeReport(
 		ShellCapabilities:     shellCapabilities,
 		PackagedOSIntegration: packagedOS,
 		BackgroundShell:       background,
+		NativeDelivery:        nativeDelivery,
 		SingleInstance:        singleInstance,
 		SecondInstance:        secondInstance,
 		WindowLease:           windowLease,
@@ -210,6 +237,7 @@ func buildWails3PackagedSmokeReport(
 			shellCapabilities,
 			packagedOS,
 			background,
+			nativeDelivery,
 			singleInstance,
 			secondInstance,
 			windowLease,
@@ -217,6 +245,37 @@ func buildWails3PackagedSmokeReport(
 			hasOpenIntent,
 		),
 	}
+}
+
+func buildWails3SmokeBackgroundSnapshot(app *App) BackgroundShellStatusSnapshot {
+	if app != nil && app.backgroundShell != nil {
+		return app.backgroundShell.Snapshot()
+	}
+	if !envFlagEnabled(envWails3PackagedSmokeBackground) {
+		return emptyBackgroundShellStatusSnapshot()
+	}
+
+	service := NewBackgroundShellStatusService()
+	service.UpsertJob(BackgroundShellJob{
+		ID:             "execution:packaged-smoke",
+		Kind:           "execution",
+		Category:       BackgroundShellCategoryJob,
+		Title:          "Packaged smoke command",
+		Detail:         "Running packaged smoke action fixture.",
+		Status:         BackgroundShellJobRunning,
+		Cancelable:     true,
+		OwnerSurfaceID: "panel:terminal",
+	})
+	return service.UpsertJob(BackgroundShellJob{
+		ID:              "indexer:packaged-smoke",
+		Kind:            "indexer",
+		Category:        BackgroundShellCategoryJob,
+		Title:           "Packaged smoke indexing",
+		Detail:          "Indexing fixture failed for native notification smoke.",
+		Status:          BackgroundShellJobFailed,
+		NotifyOnFailure: true,
+		OwnerSurfaceID:  "panel:problems",
+	})
 }
 
 func normalizeSmokeLaunchArgs(args []string) []string {
@@ -318,6 +377,80 @@ func parseWails3SmokeSecondInstanceArgs(rawArgs string) ([]string, error) {
 	return cleaned, nil
 }
 
+func buildWails3SmokeNativeDeliveryProbe(
+	app *App,
+	packagedOS PackagedOSIntegrationSnapshot,
+	background BackgroundShellStatusSnapshot,
+) Wails3SmokeNativeDeliveryProbe {
+	trayAdapter := packagedOS.Adapters["tray"]
+	notificationAdapter := packagedOS.Adapters["notifications"]
+	dockAdapter := packagedOS.Adapters["dockBadges"]
+
+	lastError := ""
+	if app != nil && app.packagedOSNative != nil {
+		lastError = app.packagedOSNative.LastError()
+	}
+
+	probe := Wails3SmokeNativeDeliveryProbe{
+		Enabled: trayAdapter.Enabled || notificationAdapter.Enabled || dockAdapter.Enabled,
+		Status:  ShellCapabilityRequiresBuild,
+		TrackedFailureStates: []string{
+			"startup-failed",
+			"no-permission",
+			"delivery-failed",
+			"action-rejected",
+		},
+		LastError: lastError,
+		Tray: Wails3SmokeNativeAdapterProbe{
+			Enabled:   trayAdapter.Enabled,
+			Status:    trayAdapter.Status,
+			ActionIDs: backgroundActionIDs(background.Actions),
+			Reason:    trayAdapter.Reason,
+		},
+		Notifications: Wails3SmokeNativeAdapterProbe{
+			Enabled:      notificationAdapter.Enabled,
+			Status:       notificationAdapter.Status,
+			CandidateIDs: backgroundNotificationCandidateIDs(background.NotificationCandidates),
+			Reason:       notificationAdapter.Reason,
+		},
+		DockBadge: Wails3SmokeNativeDockBadgeProbe{
+			Enabled: dockAdapter.Enabled,
+			Status:  dockAdapter.Status,
+			Label:   packagedOSNativeDockBadgeLabel(background),
+			Reason:  dockAdapter.Reason,
+		},
+		Reason: "Native delivery remains default-off; packaged smoke can enable tray, notifications, and dock badges with explicit env flags.",
+	}
+	if probe.Enabled {
+		probe.Status = ShellCapabilityExperimental
+		probe.Reason = "Native delivery adapters are enabled by packaged smoke flags and projected from Background Shell status."
+	}
+	if lastError != "" {
+		probe.Status = ShellCapabilityUnavailable
+	}
+	return probe
+}
+
+func backgroundActionIDs(actions []BackgroundShellAction) []string {
+	ids := make([]string, 0, len(actions))
+	for _, action := range actions {
+		if id := strings.TrimSpace(action.ID); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func backgroundNotificationCandidateIDs(candidates []BackgroundShellNotificationCandidate) []string {
+	ids := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if id := strings.TrimSpace(candidate.ID); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 func buildWails3SmokeWindowLeaseSnapshot(app *App) Wails3SmokeWindowLeaseSnapshot {
 	spikeEnabled := envFlagEnabled(envEnableWindowLeaseSpike)
 	if app != nil && app.windowLeases != nil {
@@ -385,6 +518,7 @@ func buildWails3PackagedSmokeChecks(
 	shell ShellCapabilitiesSnapshot,
 	packaged PackagedOSIntegrationSnapshot,
 	background BackgroundShellStatusSnapshot,
+	nativeDelivery Wails3SmokeNativeDeliveryProbe,
 	singleInstance Wails3SmokeGateStatus,
 	secondInstance Wails3SmokeSecondInstanceProbe,
 	windowLease Wails3SmokeWindowLeaseSnapshot,
@@ -409,6 +543,12 @@ func buildWails3PackagedSmokeChecks(
 			Status:  ShellCapabilityAvailable,
 			Passed:  background.Version == backgroundShellStatusVersion,
 			Message: "Background Shell status snapshot is present.",
+		},
+		{
+			ID:      "native-delivery-gate",
+			Status:  nativeDelivery.Status,
+			Passed:  nativeDelivery.Enabled,
+			Message: nativeDelivery.Reason,
 		},
 		{
 			ID:      "single-instance-gate",
