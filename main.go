@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -79,7 +80,7 @@ func main() {
 		Height:             900,
 		MinWidth:           1024,
 		MinHeight:          768,
-		Frameless:          true,
+		Frameless:          runtime.GOOS != "darwin",
 		StartState:         application.WindowStateMaximised,
 		Hidden:             false,
 		URL:                "/",
@@ -87,15 +88,9 @@ func main() {
 		BackgroundType:     application.BackgroundTypeTransparent,
 		BackgroundColour:   application.NewRGBA(10, 10, 10, 0),
 		Mac: application.MacWindow{
-			TitleBar: application.MacTitleBar{
-				AppearsTransparent:   true,
-				HideTitle:            true,
-				Hide:                 true,
-				FullSizeContent:      true,
-				UseToolbar:           false,
-				HideToolbarSeparator: true,
-			},
-			Backdrop: application.MacBackdropTransparent,
+			TitleBar:                application.MacTitleBarHiddenInsetUnified,
+			InvisibleTitleBarHeight: 56,
+			Backdrop:                application.MacBackdropTransparent,
 		},
 		Windows: application.WindowsWindow{
 			DisableIcon: false,

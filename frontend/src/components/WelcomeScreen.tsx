@@ -152,7 +152,7 @@ const WelcomeScreen: React.FC<{
         style={{ "--wails-draggable": "drag" } as React.CSSProperties}
       />
       <div
-        className="absolute right-6 top-6 z-50 flex items-center gap-2"
+        className="absolute left-4 top-4 z-50 flex items-center gap-2"
         style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}
       >
         <WindowControls />

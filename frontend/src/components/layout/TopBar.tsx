@@ -104,6 +104,8 @@ export const TopBar: React.FC<TopBarProps> = ({
       style={{ "--wails-draggable": "drag" } as React.CSSProperties}
       data-testid="topbar"
     >
+      <WindowControls />
+
       <div
         className={topBarGroupClass}
         style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}
@@ -323,8 +325,6 @@ export const TopBar: React.FC<TopBarProps> = ({
           </DropdownMenu.Root>
         </div>
       </div>
-
-      <WindowControls />
     </div>
   );
 };
