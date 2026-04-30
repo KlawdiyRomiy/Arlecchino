@@ -35,6 +35,7 @@ type Wails3PackagedSmokeReport struct {
 	PackagedOSIntegration PackagedOSIntegrationSnapshot  `json:"packagedOSIntegration"`
 	BackgroundShell       BackgroundShellStatusSnapshot  `json:"backgroundShell"`
 	NativeDelivery        Wails3SmokeNativeDeliveryProbe `json:"nativeDelivery"`
+	AutoUpdate            Wails3SmokeAutoUpdateProbe     `json:"autoUpdate"`
 	SingleInstance        Wails3SmokeGateStatus          `json:"singleInstance"`
 	SecondInstance        Wails3SmokeSecondInstanceProbe `json:"secondInstance,omitempty"`
 	WindowLease           Wails3SmokeWindowLeaseSnapshot `json:"windowLease"`
@@ -88,6 +89,15 @@ type Wails3SmokeNativeDockBadgeProbe struct {
 	Status  ShellCapabilityStatus `json:"status"`
 	Label   string                `json:"label"`
 	Reason  string                `json:"reason"`
+}
+
+type Wails3SmokeAutoUpdateProbe struct {
+	ManifestPath   string                        `json:"manifestPath,omitempty"`
+	ManifestStatus string                        `json:"manifestStatus"`
+	InstallEnabled bool                          `json:"installEnabled"`
+	Manifest       *PackagedOSAutoUpdateManifest `json:"manifest,omitempty"`
+	Status         ShellCapabilityStatus         `json:"status"`
+	Reason         string                        `json:"reason"`
 }
 
 type Wails3SmokeAppBundleSnapshot struct {
@@ -205,6 +215,7 @@ func buildWails3PackagedSmokeReport(
 		defaultPackagedOSIntegrationOptions(),
 	)
 	nativeDelivery := buildWails3SmokeNativeDeliveryProbe(app, packagedOS, background)
+	autoUpdate := buildWails3SmokeAutoUpdateProbe(packagedOS)
 	openIntent, hasOpenIntent := buildOpenIntentFromLaunchArgs(launchArgs, workingDir)
 	if hasOpenIntent {
 		openIntent["source"] = "packaged-smoke"
@@ -229,6 +240,7 @@ func buildWails3PackagedSmokeReport(
 		PackagedOSIntegration: packagedOS,
 		BackgroundShell:       background,
 		NativeDelivery:        nativeDelivery,
+		AutoUpdate:            autoUpdate,
 		SingleInstance:        singleInstance,
 		SecondInstance:        secondInstance,
 		WindowLease:           windowLease,
@@ -238,6 +250,7 @@ func buildWails3PackagedSmokeReport(
 			packagedOS,
 			background,
 			nativeDelivery,
+			autoUpdate,
 			singleInstance,
 			secondInstance,
 			windowLease,
@@ -451,6 +464,28 @@ func backgroundNotificationCandidateIDs(candidates []BackgroundShellNotification
 	return ids
 }
 
+func buildWails3SmokeAutoUpdateProbe(
+	packagedOS PackagedOSIntegrationSnapshot,
+) Wails3SmokeAutoUpdateProbe {
+	manifestPath := strings.TrimSpace(os.Getenv(packagedOSAutoUpdateManifestEnv))
+	adapter := packagedOS.Adapters["autoUpdate"]
+	manifestStatus := "no-manifest"
+	if manifestPath != "" {
+		manifestStatus = "invalid-manifest"
+	}
+	if packagedOS.AutoUpdateManifest != nil {
+		manifestStatus = "valid-manifest-read"
+	}
+	return Wails3SmokeAutoUpdateProbe{
+		ManifestPath:   manifestPath,
+		ManifestStatus: manifestStatus,
+		InstallEnabled: false,
+		Manifest:       packagedOS.AutoUpdateManifest,
+		Status:         adapter.Status,
+		Reason:         adapter.Reason,
+	}
+}
+
 func buildWails3SmokeWindowLeaseSnapshot(app *App) Wails3SmokeWindowLeaseSnapshot {
 	spikeEnabled := envFlagEnabled(envEnableWindowLeaseSpike)
 	if app != nil && app.windowLeases != nil {
@@ -519,6 +554,7 @@ func buildWails3PackagedSmokeChecks(
 	packaged PackagedOSIntegrationSnapshot,
 	background BackgroundShellStatusSnapshot,
 	nativeDelivery Wails3SmokeNativeDeliveryProbe,
+	autoUpdate Wails3SmokeAutoUpdateProbe,
 	singleInstance Wails3SmokeGateStatus,
 	secondInstance Wails3SmokeSecondInstanceProbe,
 	windowLease Wails3SmokeWindowLeaseSnapshot,
@@ -549,6 +585,12 @@ func buildWails3PackagedSmokeChecks(
 			Status:  nativeDelivery.Status,
 			Passed:  nativeDelivery.Enabled,
 			Message: nativeDelivery.Reason,
+		},
+		{
+			ID:      "auto-update-manifest-gate",
+			Status:  autoUpdate.Status,
+			Passed:  autoUpdate.ManifestStatus == "valid-manifest-read" && !autoUpdate.InstallEnabled,
+			Message: autoUpdate.Reason,
 		},
 		{
 			ID:      "single-instance-gate",

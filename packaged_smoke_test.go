@@ -214,6 +214,67 @@ func TestWails3PackagedSmokeReport_NativeDeliveryProbeUsesBackgroundShellSample(
 	}
 }
 
+func TestWails3PackagedSmokeReport_AutoUpdateManifestGateStates(t *testing.T) {
+	defaultReport := buildWails3PackagedSmokeReport(
+		nil,
+		[]string{"Arlecchino-v3"},
+		"/",
+		time.Unix(0, 0).UTC(),
+	)
+	if defaultReport.AutoUpdate.ManifestStatus != "no-manifest" {
+		t.Fatalf("ManifestStatus = %q, want no-manifest", defaultReport.AutoUpdate.ManifestStatus)
+	}
+	if defaultReport.AutoUpdate.InstallEnabled {
+		t.Fatal("InstallEnabled = true, want false")
+	}
+
+	invalidPath := filepath.Join(t.TempDir(), "invalid-update.json")
+	if err := os.WriteFile(invalidPath, []byte("{"), 0o600); err != nil {
+		t.Fatalf("write invalid manifest: %v", err)
+	}
+	t.Setenv(packagedOSAutoUpdateManifestEnv, invalidPath)
+	invalidReport := buildWails3PackagedSmokeReport(
+		nil,
+		[]string{"Arlecchino-v3"},
+		"/",
+		time.Unix(0, 0).UTC(),
+	)
+	if invalidReport.AutoUpdate.ManifestStatus != "invalid-manifest" {
+		t.Fatalf("ManifestStatus = %q, want invalid-manifest", invalidReport.AutoUpdate.ManifestStatus)
+	}
+	if invalidReport.AutoUpdate.Manifest != nil {
+		t.Fatalf("Manifest = %#v, want nil", invalidReport.AutoUpdate.Manifest)
+	}
+
+	validPath := filepath.Join(t.TempDir(), "valid-update.json")
+	if err := os.WriteFile(
+		validPath,
+		[]byte(`{"channel":"alpha","version":"0.1.0","url":"https://example.invalid/update.zip"}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write valid manifest: %v", err)
+	}
+	t.Setenv(packagedOSAutoUpdateManifestEnv, validPath)
+	validReport := buildWails3PackagedSmokeReport(
+		nil,
+		[]string{"Arlecchino-v3"},
+		"/",
+		time.Unix(0, 0).UTC(),
+	)
+	if validReport.AutoUpdate.ManifestStatus != "valid-manifest-read" {
+		t.Fatalf("ManifestStatus = %q, want valid-manifest-read", validReport.AutoUpdate.ManifestStatus)
+	}
+	if validReport.AutoUpdate.Manifest == nil || validReport.AutoUpdate.Manifest.Version != "0.1.0" {
+		t.Fatalf("Manifest = %#v, want version 0.1.0", validReport.AutoUpdate.Manifest)
+	}
+	if validReport.AutoUpdate.InstallEnabled {
+		t.Fatal("InstallEnabled = true, want false")
+	}
+	if !smokeChecksPassed(validReport.Checks, "auto-update-manifest-gate") {
+		t.Fatalf("Checks = %#v, want passing auto-update-manifest-gate", validReport.Checks)
+	}
+}
+
 func TestWails3PackagedSmokeReport_MatrixLaunchTargets(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main.go")

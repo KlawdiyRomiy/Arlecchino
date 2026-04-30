@@ -26,6 +26,8 @@ FIXTURE_DIR="$TMP_ROOT/fixture"
 REPORT_DIR="$TMP_ROOT/reports"
 MAIN_FILE="$FIXTURE_DIR/main.go"
 PROJECT_DIR="$FIXTURE_DIR/project"
+VALID_MANIFEST="$FIXTURE_DIR/valid-update.json"
+INVALID_MANIFEST="$FIXTURE_DIR/invalid-update.json"
 
 cleanup() {
   if [[ "${ARLE_WAILS3_KEEP_SMOKE_REPORTS:-0}" == "1" ]]; then
@@ -39,6 +41,8 @@ trap cleanup EXIT
 mkdir -p "$FIXTURE_DIR" "$PROJECT_DIR" "$REPORT_DIR"
 printf 'package main\n' > "$MAIN_FILE"
 printf '# smoke fixture\n' > "$PROJECT_DIR/README.md"
+printf '{"channel":"alpha","version":"0.1.0","url":"https://example.invalid/arlecchino.zip"}\n' > "$VALID_MANIFEST"
+printf '{\n' > "$INVALID_MANIFEST"
 
 ARLE_WAILS3_OUTPUT="$OUTPUT" "$ROOT_DIR/scripts/wails3-packaged-smoke-macos.sh" --build-only
 
@@ -133,6 +137,18 @@ switch (name) {
     check(report.nativeDelivery.trackedFailureStates.includes("delivery-failed"), "native delivery must track delivery-failed");
     check(report.nativeDelivery.trackedFailureStates.includes("action-rejected"), "native delivery must track action-rejected");
     break;
+  case "app-auto-update-valid":
+    check(report.appBundle && report.appBundle.launchMode === "packaged-app", "expected packaged .app launch");
+    check(report.autoUpdate && report.autoUpdate.manifestStatus === "valid-manifest-read", "auto-update manifest must be valid");
+    check(report.autoUpdate.manifest && report.autoUpdate.manifest.version === "0.1.0", "auto-update manifest version mismatch");
+    check(report.autoUpdate.installEnabled === false, "auto-update install must remain disabled");
+    break;
+  case "app-auto-update-invalid":
+    check(report.appBundle && report.appBundle.launchMode === "packaged-app", "expected packaged .app launch");
+    check(report.autoUpdate && report.autoUpdate.manifestStatus === "invalid-manifest", "auto-update manifest must be invalid");
+    check(!report.autoUpdate.manifest, "invalid manifest must not be included");
+    check(report.autoUpdate.installEnabled === false, "auto-update install must remain disabled");
+    break;
   default:
     fail(`unknown validation case ${name}`);
 }
@@ -202,6 +218,19 @@ run_app_native_delivery_case() {
   echo "PASS app-native-delivery: $report"
 }
 
+run_app_auto_update_case() {
+  local name="$1"
+  local manifest="$2"
+  local report="$REPORT_DIR/$name.json"
+  env \
+    ARLECCHINO_AUTO_UPDATE_MANIFEST="$manifest" \
+    "$ROOT_DIR/scripts/wails3-packaged-app-smoke-macos.sh" \
+      --output "$OUTPUT" \
+      --working-dir "$FIXTURE_DIR" > "$report"
+  validate_report "$report" "$name"
+  echo "PASS $name: $report"
+}
+
 FILE_URL="file://$MAIN_FILE"
 PROTOCOL_FILE_URL="arlecchino://open?file=main.go"
 FOCUS_URL="arlecchino://focus?surface=panel:ai-chat"
@@ -219,5 +248,7 @@ run_app_case "app-protocol-file" Arlecchino-v3 "$PROTOCOL_FILE_URL"
 run_app_case "app-protocol-preview" Arlecchino-v3 "arlecchino://open?preview=https%3A%2F%2Fexample.test%2Fapp"
 run_app_case "app-protocol-focus" Arlecchino-v3 "$FOCUS_URL"
 run_app_native_delivery_case
+run_app_auto_update_case "app-auto-update-valid" "$VALID_MANIFEST"
+run_app_auto_update_case "app-auto-update-invalid" "$INVALID_MANIFEST"
 
 echo "Wails v3 packaged smoke matrix passed."
