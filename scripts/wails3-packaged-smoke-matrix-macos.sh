@@ -101,6 +101,24 @@ switch (name) {
     check(typeof report.secondInstance.openIntent.path === "string" && report.secondInstance.openIntent.path.endsWith("/main.go"), "second-instance openFile path must target fixture main.go");
     check(report.secondInstance.openIntent.source === "single-instance", "second-instance source must be single-instance");
     break;
+  case "app-file-url":
+  case "app-protocol-file":
+    check(report.appBundle && report.appBundle.launchMode === "packaged-app", "expected packaged .app launch");
+    check(intent.kind === "openFile", "expected packaged .app openFile intent");
+    check(typeof intent.path === "string" && intent.path.endsWith("/main.go"), "packaged .app openFile path must target fixture main.go");
+    check(intent.source === "packaged-smoke", "packaged .app open intent source must be packaged-smoke");
+    break;
+  case "app-protocol-preview":
+    check(report.appBundle && report.appBundle.launchMode === "packaged-app", "expected packaged .app launch");
+    check(intent.kind === "openPreview", "expected packaged .app openPreview intent");
+    check(intent.surface === "browser", "packaged .app preview surface must be browser");
+    check(intent.url === "https://example.test/app", "packaged .app preview URL mismatch");
+    break;
+  case "app-protocol-focus":
+    check(report.appBundle && report.appBundle.launchMode === "packaged-app", "expected packaged .app launch");
+    check(intent.kind === "focusSurface", "expected packaged .app focusSurface intent");
+    check(intent.surfaceId === "panel:aiChat", "packaged .app focus surface must be canonical panel:aiChat");
+    break;
   default:
     fail(`unknown validation case ${name}`);
 }
@@ -144,6 +162,18 @@ run_app_single_instance_case() {
   echo "PASS app-single-instance: $report"
 }
 
+run_app_case() {
+  local name="$1"
+  shift
+  local report="$REPORT_DIR/$name.json"
+  "$ROOT_DIR/scripts/wails3-packaged-app-smoke-macos.sh" \
+    --output "$OUTPUT" \
+    --working-dir "$FIXTURE_DIR" \
+    -- "$@" > "$report"
+  validate_report "$report" "$name"
+  echo "PASS $name: $report"
+}
+
 FILE_URL="file://$MAIN_FILE"
 PROTOCOL_FILE_URL="arlecchino://open?file=main.go"
 FOCUS_URL="arlecchino://focus?surface=panel:ai-chat"
@@ -156,5 +186,9 @@ run_case "preview" Arlecchino-v3 --open-preview https://example.test/app
 run_case "focus" Arlecchino-v3 "$FOCUS_URL"
 run_gated_case
 run_app_single_instance_case
+run_app_case "app-file-url" Arlecchino-v3 "$FILE_URL"
+run_app_case "app-protocol-file" Arlecchino-v3 "$PROTOCOL_FILE_URL"
+run_app_case "app-protocol-preview" Arlecchino-v3 "arlecchino://open?preview=https%3A%2F%2Fexample.test%2Fapp"
+run_app_case "app-protocol-focus" Arlecchino-v3 "$FOCUS_URL"
 
 echo "Wails v3 packaged smoke matrix passed."
