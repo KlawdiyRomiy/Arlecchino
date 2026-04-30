@@ -225,7 +225,7 @@ func (a *App) OpenProject(path string) error {
 		ProjectID:   path,
 		ProjectRoot: path,
 		DBPath:      filepath.Join(path, ".arlecchino", "brain.db"),
-		Workers:     4,
+		Workers:     2,
 	})
 	if err != nil {
 		a.logWarning(fmt.Sprintf("core engine init failed: %v", err))

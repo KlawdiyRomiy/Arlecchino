@@ -338,6 +338,14 @@ func (a *App) WriteFile(filePath string, content string) error {
 		return err
 	}
 
+	if a.coreEngine != nil {
+		if created {
+			a.coreEngine.OnFileCreated(filePath, []byte(content))
+		} else {
+			a.coreEngine.OnFileSaved(filePath)
+		}
+	}
+
 	eventName := "file:changed"
 	if created {
 		eventName = "file:created"

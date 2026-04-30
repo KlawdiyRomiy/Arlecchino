@@ -149,6 +149,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   };
 
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contentStateFlushTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const pendingContentStateRef = useRef<Record<string, string>>({});
+  const typingActivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const pendingTypingActivityRef = useRef(0);
   const tabsRef = useRef<Tab[]>([]);
   const fileContentsRef = useRef<Record<string, string>>({});
   const activeTabRef = useRef<string | null>(activeTab);
@@ -822,12 +830,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
 
     try {
-      console.log("Auto-saving:", tab.path);
       await AppFunctions.WriteFile(tab.path, content);
+      tabsRef.current = tabsRef.current.map((item) =>
+        item.id === tabId ? { ...item, isDirty: false } : item,
+      );
       setTabs((prevTabs) =>
         prevTabs.map((t) => (t.id === tabId ? { ...t, isDirty: false } : t)),
       );
-      console.log("Auto-saved successfully:", tab.path);
     } catch (error) {
       console.error("Auto-save error:", error);
     }
@@ -835,37 +844,84 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   const scheduleAutoSave = useCallback(
     (tabId: string) => {
-      console.log("Scheduling auto-save for:", tabId);
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
       }
 
       autoSaveTimerRef.current = setTimeout(() => {
-        console.log("Auto-save timer triggered for:", tabId);
         autoSaveFile(tabId);
       }, AUTO_SAVE_DELAY);
     },
     [autoSaveFile],
   );
 
+  const flushPendingContentState = useCallback(() => {
+    const pending = pendingContentStateRef.current;
+    pendingContentStateRef.current = {};
+    contentStateFlushTimerRef.current = null;
+    if (Object.keys(pending).length === 0) {
+      return;
+    }
+    setFileContents((previous) => ({ ...previous, ...pending }));
+  }, []);
+
+  const scheduleContentStateFlush = useCallback(
+    (tabId: string, value: string) => {
+      pendingContentStateRef.current[tabId] = value;
+      if (contentStateFlushTimerRef.current !== null) {
+        return;
+      }
+      contentStateFlushTimerRef.current = setTimeout(
+        flushPendingContentState,
+        250,
+      );
+    },
+    [flushPendingContentState],
+  );
+
+  const markTabDirty = useCallback((tabId: string) => {
+    tabsRef.current = tabsRef.current.map((tab) =>
+      tab.id === tabId && !tab.isDirty ? { ...tab, isDirty: true } : tab,
+    );
+    setTabs((previous) => {
+      let changed = false;
+      const next = previous.map((tab) => {
+        if (tab.id !== tabId || tab.isDirty) {
+          return tab;
+        }
+        changed = true;
+        return { ...tab, isDirty: true };
+      });
+      return changed ? next : previous;
+    });
+  }, []);
+
   const handleContentChange = (value: string | undefined) => {
     if (!activeTab || value === undefined) return;
 
-    console.log("Content changed for tab:", activeTab);
-
-    setFileContents((prev) => ({
-      ...prev,
-      [activeTab]: value,
-    }));
-
-    setTabs((prevTabs) =>
-      prevTabs.map((tab) =>
-        tab.id === activeTab ? { ...tab, isDirty: true } : tab,
-      ),
-    );
-
+    fileContentsRef.current[activeTab] = value;
+    scheduleContentStateFlush(activeTab, value);
+    markTabDirty(activeTab);
     scheduleAutoSave(activeTab);
   };
+
+  const recordTypingActivity = useCallback((chars: number) => {
+    if (chars <= 0) {
+      return;
+    }
+    pendingTypingActivityRef.current += chars;
+    if (typingActivityTimerRef.current !== null) {
+      return;
+    }
+    typingActivityTimerRef.current = setTimeout(() => {
+      const pending = pendingTypingActivityRef.current;
+      pendingTypingActivityRef.current = 0;
+      typingActivityTimerRef.current = null;
+      if (pending > 0) {
+        AppFunctions.RecordTypingActivity(pending).catch(() => {});
+      }
+    }, 500);
+  }, []);
 
   const handleSaveFile = useCallback(async () => {
     if (!activeTab || isSaving) return;
@@ -881,7 +937,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setIsSaving(true);
 
     try {
-      let contentToSave = fileContents[activeTab];
+      let contentToSave = fileContentsRef.current[activeTab];
 
       // Try to format code before saving
       try {
@@ -892,6 +948,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         if (formatted && formatted !== contentToSave) {
           console.log("File formatted successfully");
           contentToSave = formatted;
+          fileContentsRef.current[activeTab] = formatted;
           // Update editor content with formatted version
           setFileContents((prev) => ({
             ...prev,
@@ -904,6 +961,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       }
 
       await AppFunctions.WriteFile(tab.path, contentToSave);
+      tabsRef.current = tabsRef.current.map((item) =>
+        item.id === activeTab ? { ...item, isDirty: false } : item,
+      );
       setTabs(
         tabs.map((t) => (t.id === activeTab ? { ...t, isDirty: false } : t)),
       );
@@ -918,7 +978,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     } finally {
       setIsSaving(false);
     }
-  }, [activeTab, tabs, fileContents, isSaving]);
+  }, [activeTab, tabs, isSaving]);
 
   const handleOpenFileRequest = async (path: string, line?: number) => {
     const requestId = openFileRequestRef.current + 1;
@@ -1323,6 +1383,17 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
       }
+      if (contentStateFlushTimerRef.current) {
+        clearTimeout(contentStateFlushTimerRef.current);
+      }
+      if (typingActivityTimerRef.current) {
+        clearTimeout(typingActivityTimerRef.current);
+        const pending = pendingTypingActivityRef.current;
+        pendingTypingActivityRef.current = 0;
+        if (pending > 0) {
+          AppFunctions.RecordTypingActivity(pending).catch(() => {});
+        }
+      }
     };
   }, []);
 
@@ -1359,9 +1430,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       onQuickLook={handleQuickLookRequest}
       onPerspectiveOpen={onPerspectiveOpen}
       onPerspectiveClose={onPerspectiveClose}
-      onTyping={(chars) => {
-        AppFunctions.RecordTypingActivity(chars).catch(() => {});
-      }}
+      onTyping={recordTypingActivity}
       onGhostShown={() => {
         AppFunctions.RecordGhostShown().catch(() => {});
       }}

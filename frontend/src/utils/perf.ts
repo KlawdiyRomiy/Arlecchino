@@ -1,6 +1,14 @@
 export const PERF_EVENT_NAME = "arlecchino:perf-metric";
 
-export type PerfScope = "zoom" | "preview" | "terminal";
+export type PerfScope =
+  | "editor"
+  | "git"
+  | "indexer"
+  | "lsp"
+  | "preview"
+  | "terminal"
+  | "workspace"
+  | "zoom";
 
 type PerfDetails = Record<string, string | number | boolean | null | undefined>;
 

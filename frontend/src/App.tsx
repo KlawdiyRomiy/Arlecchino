@@ -18,6 +18,7 @@ import {
   useWorkspaceStore,
 } from "./stores/workspaceStore";
 import { useTerminalStore } from "./stores/terminalStore";
+import { startAdaptivePerformanceMonitor } from "./stores/performanceStore";
 import { useTheme } from "./hooks/useTheme";
 import { clampUiScale } from "./utils/uiScale";
 import {
@@ -78,6 +79,8 @@ const App: React.FC = () => {
   const effectiveUiScale = clampUiScale(uiScale);
   const isDetachedHost = isDetachedAppletHostRoute();
 
+  useEffect(() => startAdaptivePerformanceMonitor(), []);
+
   useEffect(() => {
     document.documentElement.style.setProperty(
       "--ui-scale",
@@ -114,7 +117,7 @@ const App: React.FC = () => {
       useWorkspaceStore.getState().addProject(projectPath);
       useTerminalStore.getState().setActiveProject(projectPath);
       await syncCurrentFramework();
-      await preloadProjectDiagnostics(projectPath);
+      void preloadProjectDiagnostics(projectPath);
       setFileToOpen(null);
     } catch (error) {
       useTerminalStore.getState().setActiveProject(outgoingProjectPath);
@@ -146,7 +149,7 @@ const App: React.FC = () => {
       useTerminalStore.getState().setActiveProject(project.path);
       await openProjectRequest;
       await syncCurrentFramework();
-      await preloadProjectDiagnostics(project.path);
+      void preloadProjectDiagnostics(project.path);
       startTransition(() => {
         useWorkspaceStore.getState().completeProjectSwitch(id);
         setFileToOpen(null);
@@ -233,7 +236,7 @@ const App: React.FC = () => {
       useTerminalStore.getState().setActiveProject(nextProject.path);
       await openProjectRequest;
       await syncCurrentFramework();
-      await preloadProjectDiagnostics(nextProject.path);
+      void preloadProjectDiagnostics(nextProject.path);
       startTransition(() => {
         const workspace = useWorkspaceStore.getState();
         workspace.completeProjectSwitch(nextProject.id);

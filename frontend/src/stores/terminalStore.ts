@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { recordTerminalPerf } from "../utils/terminalPerf";
+import { usePerformanceStore } from "./performanceStore";
 import { normalizeTUIAssistAnchor } from "../utils/terminalLayout";
 import {
   CreateTerminal,
@@ -836,6 +837,9 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
         const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
         const decoded = session.streamDecoder.decode(bytes, { stream: true });
         if (decoded.length > 0) {
+          usePerformanceStore
+            .getState()
+            .recordEventPressure("terminal", Math.ceil(decoded.length / 4096));
           session.terminal.write(decoded);
         }
       });

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,15 +29,17 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 		return err
 	}
 
-	session.SetOnData(func(data []byte) {
+	dataEmitter := newTerminalDataEmitter(func(data []byte) {
 		encoded := base64.StdEncoding.EncodeToString(data)
 		a.emitEvent("terminal:data", map[string]interface{}{
 			"id":   id,
 			"data": encoded,
 		})
 	})
+	session.SetOnData(dataEmitter.Push)
 
 	session.SetOnExit(func(code int) {
+		dataEmitter.Flush()
 		a.emitEvent("terminal:exit", map[string]interface{}{
 			"id":   id,
 			"code": code,
@@ -91,6 +94,71 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 	})
 
 	return nil
+}
+
+type terminalDataEmitter struct {
+	mu         sync.Mutex
+	buffer     []byte
+	timer      *time.Timer
+	emit       func([]byte)
+	flushDelay time.Duration
+	maxBytes   int
+}
+
+func newTerminalDataEmitter(emit func([]byte)) *terminalDataEmitter {
+	return &terminalDataEmitter{
+		emit:       emit,
+		flushDelay: 16 * time.Millisecond,
+		maxBytes:   32 << 10,
+	}
+}
+
+func (e *terminalDataEmitter) Push(data []byte) {
+	if e == nil || len(data) == 0 {
+		return
+	}
+
+	var flushData []byte
+	e.mu.Lock()
+	e.buffer = append(e.buffer, data...)
+	if len(e.buffer) >= e.maxBytes {
+		flushData = e.takeLocked()
+	} else if e.timer == nil {
+		e.timer = time.AfterFunc(e.flushDelay, e.Flush)
+	}
+	e.mu.Unlock()
+
+	if len(flushData) > 0 {
+		e.emit(flushData)
+	}
+}
+
+func (e *terminalDataEmitter) Flush() {
+	if e == nil {
+		return
+	}
+
+	e.mu.Lock()
+	flushData := e.takeLocked()
+	e.mu.Unlock()
+
+	if len(flushData) > 0 {
+		e.emit(flushData)
+	}
+}
+
+func (e *terminalDataEmitter) takeLocked() []byte {
+	if e.timer != nil {
+		e.timer.Stop()
+		e.timer = nil
+	}
+	if len(e.buffer) == 0 {
+		return nil
+	}
+	data := make([]byte, len(e.buffer))
+	copy(data, e.buffer)
+	e.buffer = e.buffer[:0]
+	return data
 }
 
 func (a *App) WriteTerminal(id string, data string) error {

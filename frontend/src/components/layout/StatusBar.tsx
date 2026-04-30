@@ -15,7 +15,7 @@ interface StatusBarProps {
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
-  const byFile = useDiagnosticsStore((state) => state.byFile);
+  const projectSummary = useDiagnosticsStore((state) => state.projectSummary);
   const statusFile = useEditorStore((state) => state.statusFile);
   const cursorPosition = useEditorStore((state) => state.cursorPosition);
   const showCompactDiagnostics = useEditorSettingsStore(
@@ -30,10 +30,6 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
     ),
   );
   const diagnosticsPreload = useProjectDiagnosticsPreload();
-  const projectSummary = useMemo(
-    () => useDiagnosticsStore.getState().getProjectSummary(activeProjectPath),
-    [activeProjectPath, byFile],
-  );
   const statusTextClass = "text-[11px] text-[var(--text-secondary)]";
   const chipClass =
     "shell-cluster-soft flex min-h-[32px] items-center gap-1.5 px-3 transition-colors hover:border-[var(--shell-border-strong)] hover:text-[var(--text-primary)]";
@@ -118,7 +114,10 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
   }, [activeProjectPath, diagnosticsPreload, projectSummary.total]);
 
   return (
-    <div className="z-50 flex h-10 select-none items-center rounded-t-[18px] border-t border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3 py-1.5 font-mono tracking-[0.08em]">
+    <div
+      className="z-50 flex h-10 select-none items-center rounded-t-[18px] border-t border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3 py-1.5 font-mono tracking-[0.08em]"
+      data-testid="statusbar"
+    >
       <div className="flex items-center gap-2">
         <div className="shell-cluster-soft min-h-[32px] px-2.5">
           {showCompactDiagnostics ? (

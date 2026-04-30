@@ -182,3 +182,40 @@ test("latest request guard marks only the newest request as current", async ({
     markedResponse: true,
   });
 });
+
+test("adaptive performance budget disables expensive editor features under pressure", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { resolveAdaptiveEditorFeatureBudget, usePerformanceStore } =
+      await import("/src/stores/performanceStore.ts");
+
+    usePerformanceStore.getState().updateBudget({
+      activeEditorCharCount: 1_250_000,
+      activeEditorLargeDocument: true,
+      eventPressure: 100,
+      frameGapMs: 90,
+    });
+
+    const snapshot = usePerformanceStore.getState().snapshot;
+    const budget = resolveAdaptiveEditorFeatureBudget(snapshot);
+
+    return {
+      mode: snapshot.mode,
+      completions: budget.completions,
+      diagnostics: budget.diagnostics,
+      gitGutter: budget.gitGutter,
+      minimap: budget.minimap,
+      notifyChangeDelayMs: budget.notifyChangeDelayMs,
+    };
+  });
+
+  expect(result).toEqual({
+    mode: "critical",
+    completions: false,
+    diagnostics: false,
+    gitGutter: false,
+    minimap: false,
+    notifyChangeDelayMs: 900,
+  });
+});

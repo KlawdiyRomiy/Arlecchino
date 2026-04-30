@@ -93,6 +93,10 @@ import prettierPluginPhp from "@prettier/plugin-php";
 import { useEditorStore } from "../stores/editorStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import {
+  resolveAdaptiveEditorFeatureBudget,
+  usePerformanceStore,
+} from "../stores/performanceStore";
+import {
   findDefinitions,
   checkIfHasDefinition,
 } from "../utils/laravelDefinitionProvider";
@@ -876,6 +880,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 }) => {
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const documentVersionRef = useRef<number>(0);
+  const cursorSyncFrameRef = useRef<number | null>(null);
+  const pendingCursorPositionRef = useRef<{ line: number; col: number } | null>(
+    null,
+  );
   const completionDismissedVersionRef = useRef<number | null>(null);
   const autoStartedCompletionVersionRef = useRef<number | null>(null);
   const initialDocLengthRef = useRef(content.length);
@@ -899,8 +907,21 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     () => shouldUseCodeMirrorLargeDocumentMode(content),
     [content],
   );
+  const performanceSnapshot = usePerformanceStore((state) => state.snapshot);
+  const updatePerformanceBudget = usePerformanceStore(
+    (state) => state.updateBudget,
+  );
+  const editorFeatureBudget = useMemo(
+    () =>
+      resolveAdaptiveEditorFeatureBudget({
+        ...performanceSnapshot,
+        activeEditorCharCount: content.length,
+        activeEditorLargeDocument: largeDocumentMode,
+      }),
+    [content.length, largeDocumentMode, performanceSnapshot],
+  );
   const gitMarkers = useGitStore((state) =>
-    largeDocumentMode
+    !editorFeatureBudget.gitGutter
       ? EMPTY_GIT_MARKERS
       : (state.fileMarkers[filePath] ?? EMPTY_GIT_MARKERS),
   );
@@ -909,14 +930,19 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const setCursorPosition = useEditorStore((state) => state.setCursorPosition);
   const diagnosticsExtension = useMemo(
     () =>
-      largeDocumentMode
+      !editorFeatureBudget.diagnostics
         ? []
         : createDiagnosticsExtension({
             filePath,
             language,
             enabled: showInlineDiagnostics,
           }),
-    [filePath, language, largeDocumentMode, showInlineDiagnostics],
+    [
+      editorFeatureBudget.diagnostics,
+      filePath,
+      language,
+      showInlineDiagnostics,
+    ],
   );
 
   const [definitionMenu, setDefinitionMenu] = useState<DefinitionMenuState>({
@@ -931,6 +957,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const notifyChangeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+
+  useEffect(() => {
+    updatePerformanceBudget({
+      activeEditorCharCount: content.length,
+      activeEditorLargeDocument: largeDocumentMode,
+    });
+  }, [content.length, largeDocumentMode, updatePerformanceBudget]);
 
   useEffect(() => {
     if (!filePath || !language) return;
@@ -992,7 +1025,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   const requestSignatureHelp = useCallback(
     async (view: EditorView, pos: number) => {
-      if (largeDocumentMode) return;
+      if (!editorFeatureBudget.hover) return;
       if (language !== "php") return;
 
       const requestId = signatureRequestGuardRef.current.next();
@@ -1084,11 +1117,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         }
       }
     },
-    [filePath, language, largeDocumentMode, clearSignatureHelp],
+    [clearSignatureHelp, editorFeatureBudget.hover, filePath, language],
   );
 
   const metrics = useMemo(() => {
-    if (largeDocumentMode) {
+    if (!editorFeatureBudget.richEditorFeatures) {
       return NOOP_METRICS;
     }
 
@@ -1135,11 +1168,19 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       },
       initialDocLengthRef.current,
     );
-  }, [largeDocumentMode, onGhostRejected, onGhostShown, onTyping]);
+  }, [
+    editorFeatureBudget.richEditorFeatures,
+    onGhostRejected,
+    onGhostShown,
+    onTyping,
+  ]);
 
   const shouldShowMinimap = useMemo(
-    () => showMinimapSetting && shouldEnableCodeMirrorMinimap(content),
-    [content, showMinimapSetting],
+    () =>
+      editorFeatureBudget.minimap &&
+      showMinimapSetting &&
+      shouldEnableCodeMirrorMinimap(content),
+    [content, editorFeatureBudget.minimap, showMinimapSetting],
   );
 
   const gitGutterExtension = useMemo(
@@ -1149,7 +1190,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   useEffect(() => {
     if (!filePath) return;
-    if (largeDocumentMode) return;
+    if (!editorFeatureBudget.gitGutter) return;
 
     const timer = window.setTimeout(() => {
       void refreshFileMarkers(filePath);
@@ -1158,7 +1199,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [content, filePath, largeDocumentMode, refreshFileMarkers]);
+  }, [content, editorFeatureBudget.gitGutter, filePath, refreshFileMarkers]);
 
   useEffect(
     () => () => {
@@ -1173,9 +1214,33 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     (state: EditorState) => {
       const head = state.selection.main.head;
       const line = state.doc.lineAt(head);
-      setCursorPosition(line.number, head - line.from + 1);
+      pendingCursorPositionRef.current = {
+        line: line.number,
+        col: head - line.from + 1,
+      };
+      if (cursorSyncFrameRef.current !== null) {
+        return;
+      }
+      cursorSyncFrameRef.current = window.requestAnimationFrame(() => {
+        cursorSyncFrameRef.current = null;
+        const pending = pendingCursorPositionRef.current;
+        if (!pending) {
+          return;
+        }
+        setCursorPosition(pending.line, pending.col);
+      });
     },
     [setCursorPosition],
+  );
+
+  useEffect(
+    () => () => {
+      if (cursorSyncFrameRef.current !== null) {
+        window.cancelAnimationFrame(cursorSyncFrameRef.current);
+        cursorSyncFrameRef.current = null;
+      }
+    },
+    [],
   );
   const fileName = useMemo(
     () => filePath.split("/").pop() || filePath,
@@ -1192,7 +1257,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   }, [clearSignatureHelp, orchestrator]);
 
   const ghost = useMemo(() => {
-    if (largeDocumentMode) {
+    if (!editorFeatureBudget.ghostText) {
       return NOOP_GHOST;
     }
 
@@ -1231,7 +1296,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         extractKeywordPrefix,
       },
     });
-  }, [filePath, handleEditorEscape, language, largeDocumentMode, metrics]);
+  }, [
+    editorFeatureBudget.ghostText,
+    filePath,
+    handleEditorEscape,
+    language,
+    metrics,
+  ]);
 
   useEffect(() => () => ghost.cleanup(), [ghost]);
 
@@ -1258,7 +1329,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   const fetchPendingClassCompletions = useCallback(
     async (context: CompletionContext): Promise<Completion[]> => {
-      if (largeDocumentMode) return [];
+      if (!editorFeatureBudget.completions) return [];
       if (language !== "php") return [];
 
       const textUntilPosition = context.state.doc.sliceString(0, context.pos);
@@ -1310,12 +1381,12 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         return [];
       }
     },
-    [language, largeDocumentMode, metrics],
+    [editorFeatureBudget.completions, language, metrics],
   );
 
   const backendCompletionSource = useCallback(
     (context: CompletionContext) => {
-      if (largeDocumentMode) return null;
+      if (!editorFeatureBudget.completions) return null;
       if (context.aborted) return null;
       const pos = context.pos;
       const line = context.state.doc.lineAt(pos);
@@ -1598,7 +1669,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     [
       filePath,
       language,
-      largeDocumentMode,
+      editorFeatureBudget.completions,
       fetchPendingClassCompletions,
       metrics,
       orchestrator,
@@ -1624,9 +1695,15 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
       notifyChangeDebounceRef.current = setTimeout(() => {
         NotifyFileChanged(filePath, language, version, value).catch(() => {});
-      }, 150);
+      }, editorFeatureBudget.notifyChangeDelayMs);
     },
-    [filePath, language, largeDocumentMode, onChange],
+    [
+      editorFeatureBudget.notifyChangeDelayMs,
+      filePath,
+      language,
+      largeDocumentMode,
+      onChange,
+    ],
   );
 
   const formatDocumentAsync = useCallback(
@@ -1766,7 +1843,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
 
   const definitionLinkExtension = useMemo<Extension[]>(() => {
-    if (largeDocumentMode) {
+    if (!editorFeatureBudget.hover) {
       return [];
     }
 
@@ -1898,16 +1975,16 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       }),
     ];
   }, [
+    editorFeatureBudget.hover,
     filePath,
     language,
-    largeDocumentMode,
     onOpenFile,
     onQuickLook,
     projectPath,
   ]);
 
   const hoverExtension = useMemo<Extension[]>(() => {
-    if (largeDocumentMode) {
+    if (!editorFeatureBudget.hover) {
       return [];
     }
 
@@ -1950,10 +2027,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         }
       }),
     ];
-  }, [filePath, language, largeDocumentMode]);
+  }, [editorFeatureBudget.hover, filePath, language]);
 
   const signatureHelpExtension = useMemo<Extension[]>(() => {
-    if (largeDocumentMode) {
+    if (!editorFeatureBudget.hover) {
       return [];
     }
 
@@ -1984,7 +2061,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         }
       }),
     ];
-  }, [requestSignatureHelp, clearSignatureHelp, largeDocumentMode]);
+  }, [requestSignatureHelp, clearSignatureHelp, editorFeatureBudget.hover]);
 
   const extensions: Extension[] = [
     codeEditorTheme,
@@ -2001,19 +2078,37 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     }),
   ];
 
-  if (!largeDocumentMode) {
+  if (editorFeatureBudget.gitGutter) {
+    extensions.push(gitGutterExtension);
+  }
+
+  if (editorFeatureBudget.ghostText) {
     extensions.push(
-      gitGutterExtension,
       ghost.ghostField,
       ghost.extension,
+      Prec.highest(ghost.keymap),
+    );
+  }
+
+  if (editorFeatureBudget.richEditorFeatures) {
+    extensions.push(
       metrics.extension,
-      orchestrator.extension,
       ...hoverExtension,
-      EditorView.lineWrapping,
       indentOnInput(),
       bracketMatching(),
       foldGutter(),
-      Prec.highest(ghost.keymap),
+      ...(showRainbowBrackets ? [rainbowBrackets()] : []),
+      ...diagnosticsExtension,
+    );
+  }
+
+  if (editorFeatureBudget.lineWrapping) {
+    extensions.push(EditorView.lineWrapping);
+  }
+
+  if (editorFeatureBudget.completions) {
+    extensions.push(
+      orchestrator.extension,
       Prec.highest(keymap.of(COMPLETION_KEYMAP_WITHOUT_ESCAPE)),
       EditorView.updateListener.of((update) => {
         if (!update.docChanged) return;
@@ -2092,8 +2187,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           },
         ],
       }),
-      ...(showRainbowBrackets ? [rainbowBrackets()] : []),
-      ...diagnosticsExtension,
     );
   }
 
@@ -2108,9 +2201,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     );
   }
 
-  if (!largeDocumentMode) {
+  if (editorFeatureBudget.languageExtensions) {
     const langExt = getLanguageExtension(language);
     if (langExt) extensions.push(langExt);
+  }
+  if (editorFeatureBudget.hover) {
     extensions.push(...definitionLinkExtension, ...signatureHelpExtension);
   }
 
@@ -2130,14 +2225,14 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           highlightActiveLine: true,
           foldGutter: false,
           dropCursor: true,
-          allowMultipleSelections: !largeDocumentMode,
+          allowMultipleSelections: editorFeatureBudget.richEditorFeatures,
           indentOnInput: false,
           bracketMatching: false,
-          closeBrackets: !largeDocumentMode,
+          closeBrackets: editorFeatureBudget.richEditorFeatures,
           autocompletion: false,
           rectangularSelection: true,
           crosshairCursor: false,
-          highlightSelectionMatches: !largeDocumentMode,
+          highlightSelectionMatches: editorFeatureBudget.richEditorFeatures,
           searchKeymap: false,
           tabSize: 4,
         }}

@@ -353,7 +353,7 @@ export const initializeWorkspace = async () => {
         .setActiveFramework(
           (await AppFunctions.GetCurrentProjectFramework()) || null,
         );
-      await preloadProjectDiagnostics(project.path);
+      void preloadProjectDiagnostics(project.path);
     } catch (error) {
       useTerminalStore.getState().setActiveProject(null);
       resetProjectBoundStores();

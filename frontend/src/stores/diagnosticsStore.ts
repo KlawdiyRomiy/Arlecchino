@@ -75,6 +75,7 @@ export interface DiagnosticsGroupOptions {
 
 interface DiagnosticsState {
   byFile: Map<string, DiagnosticsFileGroup>;
+  projectSummary: DiagnosticsSummary;
   activeProjectPath: string | null;
   currentGeneration: number;
   ingestDiagnosticsEvent: (event: DiagnosticsEventPayload) => void;
@@ -306,6 +307,16 @@ const matchesProjectPath = (filePath: string, projectPath?: string | null) => {
   );
 };
 
+const summarizeByFile = (
+  byFile: Map<string, DiagnosticsFileGroup>,
+  projectPath?: string | null,
+): DiagnosticsSummary =>
+  summarizeGroups(
+    Array.from(byFile.values()).filter((group) =>
+      matchesProjectPath(group.filePath, projectPath),
+    ),
+  );
+
 const normalizeGeneration = (generation: number | undefined): number => {
   if (typeof generation !== "number" || !Number.isFinite(generation)) {
     return 0;
@@ -360,14 +371,16 @@ const scheduleDiagnosticsEventsBind = () => {
 export const useDiagnosticsStore = create<DiagnosticsState>()(
   subscribeWithSelector((set, get) => ({
     byFile: new Map(),
+    projectSummary: emptySummary(),
     activeProjectPath: null,
     currentGeneration: 0,
 
     setProjectScope: (projectPath, generation = 0) => {
-      set({
+      set((state) => ({
         activeProjectPath: projectPath,
         currentGeneration: normalizeGeneration(generation),
-      });
+        projectSummary: summarizeByFile(state.byFile, projectPath),
+      }));
     },
 
     ingestDiagnosticsEvent: (event) => {
@@ -420,11 +433,17 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
         const next = new Map(state.byFile);
         if (items.length === 0) {
           next.delete(filePath);
-          return { byFile: next };
+          return {
+            byFile: next,
+            projectSummary: summarizeByFile(next, state.activeProjectPath),
+          };
         }
 
         next.set(filePath, createFileGroup(filePath, language, items));
-        return { byFile: next };
+        return {
+          byFile: next,
+          projectSummary: summarizeByFile(next, state.activeProjectPath),
+        };
       });
     },
 
@@ -432,7 +451,10 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
       set((state) => {
         const next = new Map(state.byFile);
         next.delete(filePath);
-        return { byFile: next };
+        return {
+          byFile: next,
+          projectSummary: summarizeByFile(next, state.activeProjectPath),
+        };
       });
     },
 
@@ -450,7 +472,10 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
           next.set(nextFilePath, remapFileGroup(group, oldPrefix, newPrefix));
         });
 
-        return { byFile: next };
+        return {
+          byFile: next,
+          projectSummary: summarizeByFile(next, state.activeProjectPath),
+        };
       });
     },
 
@@ -464,23 +489,23 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
           }
         });
 
-        return { byFile: next };
+        return {
+          byFile: next,
+          projectSummary: summarizeByFile(next, state.activeProjectPath),
+        };
       });
     },
 
     reset: () =>
       set({
         byFile: new Map(),
+        projectSummary: emptySummary(),
         activeProjectPath: null,
         currentGeneration: 0,
       }),
 
     getProjectSummary: (projectPath = null) =>
-      summarizeGroups(
-        Array.from(get().byFile.values()).filter((group) =>
-          matchesProjectPath(group.filePath, projectPath),
-        ),
-      ),
+      summarizeByFile(get().byFile, projectPath),
 
     getFileSummary: (filePath) => {
       if (!filePath) {

@@ -56,6 +56,11 @@ type EngineStats struct {
 	LastIndexedAt time.Time
 }
 
+const (
+	indexProjectScanYieldEvery = 256
+	indexProjectScanYieldDelay = 2 * time.Millisecond
+)
+
 func NewEngine(cfg EngineConfig) (*Engine, error) {
 	store, err := NewStore(cfg.DBPath, cfg.ProjectID)
 	if err != nil {
@@ -192,6 +197,9 @@ func (e *Engine) IndexProject() {
 		lang := e.detectLanguage(path)
 		_ = e.recordInventoryFromInfo(path, info, lang, false)
 		count++
+		if count%indexProjectScanYieldEvery == 0 {
+			time.Sleep(indexProjectScanYieldDelay)
+		}
 		if lang == "" {
 			return nil
 		}
@@ -262,8 +270,6 @@ func (e *Engine) OnFileDeleted(path string) {
 func (e *Engine) OnFileChanged(path string, content []byte) {
 	e.updateSpeculative(path, content)
 	e.recordInventoryFromContent(path, content)
-	// Also schedule re-index for persistence
-	e.IndexFile(path, 8)
 }
 
 // updateSpeculative parses content and adds symbols to speculative store
@@ -365,7 +371,23 @@ func (e *Engine) recordInventoryFromInfo(path string, info os.FileInfo, language
 	})
 }
 
-var skipDirNames = [...]string{".git", "node_modules", "vendor", ".idea", "__pycache__", ".vscode", "dist", "build"}
+var skipDirNames = [...]string{
+	".arlecchino",
+	".cache",
+	".git",
+	".idea",
+	".next",
+	".turbo",
+	".vscode",
+	"__pycache__",
+	"build",
+	"coverage",
+	"dist",
+	"node_modules",
+	"storage",
+	"tmp",
+	"vendor",
+}
 
 func fileFingerprint(info os.FileInfo) string {
 	var buf [40]byte

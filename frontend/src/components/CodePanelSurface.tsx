@@ -27,6 +27,10 @@ import { createDiagnosticsExtension } from "../extensions/diagnosticsExtension";
 import { createGitGutterExtension } from "../extensions/gitGutterExtension";
 import { useEditorStore } from "../stores/editorStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
+import {
+  resolveAdaptiveEditorFeatureBudget,
+  usePerformanceStore,
+} from "../stores/performanceStore";
 import { useGitStore } from "../stores/gitStore";
 import {
   codeEditorChromeStyle,
@@ -34,6 +38,7 @@ import {
   codeEditorSurfaceClassName,
   codeEditorTheme,
 } from "../utils/codeMirrorTheme";
+import { shouldUseCodeMirrorLargeDocumentMode } from "../utils/codeMirrorDisplay";
 import type { GitLineMarker } from "../utils/git";
 
 interface CodePanelSurfaceProps {
@@ -108,11 +113,31 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   const markTabDirty = useEditorStore((state) => state.markTabDirty);
   const tabID = useMemo(() => makeTabID(path), [path]);
   const tab = useEditorStore((state) => state.tabs.get(tabID));
+  const content = tab?.content ?? initialContent;
+  const largeDocumentMode = useMemo(
+    () => shouldUseCodeMirrorLargeDocumentMode(content),
+    [content],
+  );
+  const performanceSnapshot = usePerformanceStore((state) => state.snapshot);
+  const updatePerformanceBudget = usePerformanceStore(
+    (state) => state.updateBudget,
+  );
+  const editorFeatureBudget = useMemo(
+    () =>
+      resolveAdaptiveEditorFeatureBudget({
+        ...performanceSnapshot,
+        activeEditorCharCount: content.length,
+        activeEditorLargeDocument: largeDocumentMode,
+      }),
+    [content.length, largeDocumentMode, performanceSnapshot],
+  );
   const showInlineDiagnostics = useEditorSettingsStore(
     (state) => state.showInlineDiagnostics,
   );
-  const gitMarkers = useGitStore(
-    (state) => state.fileMarkers[path] ?? EMPTY_GIT_MARKERS,
+  const gitMarkers = useGitStore((state) =>
+    editorFeatureBudget.gitGutter
+      ? (state.fileMarkers[path] ?? EMPTY_GIT_MARKERS)
+      : EMPTY_GIT_MARKERS,
   );
   const refreshFileMarkers = useGitStore((state) => state.refreshFileMarkers);
   const clearFileMarkers = useGitStore((state) => state.clearFileMarkers);
@@ -126,13 +151,22 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   );
   const diagnosticsExtension = useMemo(
     () =>
-      createDiagnosticsExtension({
-        filePath: path,
-        language,
-        enabled: showInlineDiagnostics,
-      }),
-    [language, path, showInlineDiagnostics],
+      !editorFeatureBudget.diagnostics
+        ? []
+        : createDiagnosticsExtension({
+            filePath: path,
+            language,
+            enabled: showInlineDiagnostics,
+          }),
+    [editorFeatureBudget.diagnostics, language, path, showInlineDiagnostics],
   );
+
+  useEffect(() => {
+    updatePerformanceBudget({
+      activeEditorCharCount: content.length,
+      activeEditorLargeDocument: largeDocumentMode,
+    });
+  }, [content.length, largeDocumentMode, updatePerformanceBudget]);
 
   useEffect(() => {
     openTab(activePaneID, path, name, initialContent, language);
@@ -166,16 +200,29 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     const result: Extension[] = [
       codeEditorTheme,
       codeEditorStyles,
-      gitGutterExtension,
-      EditorView.lineWrapping,
       ...diagnosticsExtension,
     ];
-    const langExt = resolveLanguageExtension(language);
+    if (editorFeatureBudget.gitGutter) {
+      result.push(gitGutterExtension);
+    }
+    if (editorFeatureBudget.lineWrapping) {
+      result.push(EditorView.lineWrapping);
+    }
+    const langExt = editorFeatureBudget.languageExtensions
+      ? resolveLanguageExtension(language)
+      : null;
     if (langExt) {
       result.push(langExt);
     }
     return result;
-  }, [diagnosticsExtension, gitGutterExtension, language]);
+  }, [
+    diagnosticsExtension,
+    editorFeatureBudget.gitGutter,
+    editorFeatureBudget.languageExtensions,
+    editorFeatureBudget.lineWrapping,
+    gitGutterExtension,
+    language,
+  ]);
 
   const handleChange = (value: string) => {
     updateTabContent(tabID, value);
@@ -186,12 +233,15 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
 
     const diagnosticsVersion = diagnosticsVersionRef.current + 1;
     diagnosticsVersionRef.current = diagnosticsVersion;
-    diagnosticsTimeoutRef.current = window.setTimeout(() => {
-      void NotifyFileChanged(path, language, diagnosticsVersion, value).catch(
-        console.warn,
-      );
-      diagnosticsTimeoutRef.current = null;
-    }, diagnosticsSyncDelayMs);
+    diagnosticsTimeoutRef.current = window.setTimeout(
+      () => {
+        void NotifyFileChanged(path, language, diagnosticsVersion, value).catch(
+          console.warn,
+        );
+        diagnosticsTimeoutRef.current = null;
+      },
+      Math.max(diagnosticsSyncDelayMs, editorFeatureBudget.notifyChangeDelayMs),
+    );
 
     if (saveTimeoutRef.current !== null) {
       window.clearTimeout(saveTimeoutRef.current);
@@ -208,10 +258,9 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     }, autoSaveDelayMs);
   };
 
-  const content = tab?.content ?? initialContent;
-
   useEffect(() => {
     if (!path) return;
+    if (!editorFeatureBudget.gitGutter) return;
 
     const timer = window.setTimeout(() => {
       void refreshFileMarkers(path);
@@ -220,7 +269,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [content, path, refreshFileMarkers]);
+  }, [content, editorFeatureBudget.gitGutter, path, refreshFileMarkers]);
 
   useEffect(
     () => () => {
@@ -246,14 +295,14 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
           highlightActiveLine: true,
           foldGutter: false,
           dropCursor: true,
-          allowMultipleSelections: true,
+          allowMultipleSelections: editorFeatureBudget.richEditorFeatures,
           indentOnInput: false,
           bracketMatching: false,
-          closeBrackets: true,
+          closeBrackets: editorFeatureBudget.richEditorFeatures,
           autocompletion: false,
           rectangularSelection: true,
           crosshairCursor: false,
-          highlightSelectionMatches: true,
+          highlightSelectionMatches: editorFeatureBudget.richEditorFeatures,
           searchKeymap: false,
           tabSize: 4,
         }}
