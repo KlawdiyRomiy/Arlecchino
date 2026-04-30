@@ -22,11 +22,12 @@ fi
 
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/arlecchino-wails3-app-smoke.XXXXXX")"
 OUTPUT="$TMP_ROOT/bin/Arlecchino-v3"
-APP_BUNDLE="$TMP_ROOT/ArlecchinoV3Smoke.app"
+APP_BUNDLE="$TMP_ROOT/Arlecchino-v3.app"
 REPORT="$TMP_ROOT/report.json"
 FIXTURE_DIR="$TMP_ROOT/fixture"
 BUNDLE_ID="${ARLE_WAILS3_APP_SMOKE_BUNDLE_ID:-dev.arlecchino.v3smoke}"
 REGISTER_OS_HANDLERS="0"
+SIGN_MODE="${ARLE_WAILS3_APP_SMOKE_SIGN_MODE:-adhoc}"
 SMOKE_ARGS=()
 
 cleanup() {
@@ -42,47 +43,32 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --output)
       shift
-      if [[ $# -eq 0 ]]; then
-        echo "ERROR: --output requires a path." >&2
-        exit 1
-      fi
-      OUTPUT="$1"
+      OUTPUT="${1:-}"
       shift
       ;;
     --app-bundle)
       shift
-      if [[ $# -eq 0 ]]; then
-        echo "ERROR: --app-bundle requires a path." >&2
-        exit 1
-      fi
-      APP_BUNDLE="$1"
+      APP_BUNDLE="${1:-}"
       shift
       ;;
     --report)
       shift
-      if [[ $# -eq 0 ]]; then
-        echo "ERROR: --report requires a path." >&2
-        exit 1
-      fi
-      REPORT="$1"
+      REPORT="${1:-}"
       shift
       ;;
     --working-dir)
       shift
-      if [[ $# -eq 0 ]]; then
-        echo "ERROR: --working-dir requires a path." >&2
-        exit 1
-      fi
-      FIXTURE_DIR="$1"
+      FIXTURE_DIR="${1:-}"
       shift
       ;;
     --bundle-id)
       shift
-      if [[ $# -eq 0 ]]; then
-        echo "ERROR: --bundle-id requires a value." >&2
-        exit 1
-      fi
-      BUNDLE_ID="$1"
+      BUNDLE_ID="${1:-}"
+      shift
+      ;;
+    --sign)
+      shift
+      SIGN_MODE="${1:-}"
       shift
       ;;
     --register-os-handlers)
@@ -105,110 +91,13 @@ mkdir -p "$(dirname "$OUTPUT")" "$FIXTURE_DIR" "$(dirname "$REPORT")"
 printf 'package main\n' > "$FIXTURE_DIR/main.go"
 printf '# smoke fixture\n' > "$FIXTURE_DIR/README.md"
 
-ARLE_WAILS3_OUTPUT="$OUTPUT" "$ROOT_DIR/scripts/wails3-packaged-smoke-macos.sh" --build-only >&2
-
-MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
-RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-cp "$OUTPUT" "$MACOS_DIR/Arlecchino-v3-bin"
-chmod +x "$MACOS_DIR/Arlecchino-v3-bin"
-
-cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
-  <key>CFBundleDisplayName</key>
-  <string>Arlecchino v3 Smoke</string>
-  <key>CFBundleExecutable</key>
-  <string>ArlecchinoV3Smoke</string>
-  <key>CFBundleIdentifier</key>
-  <string>$BUNDLE_ID</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>Arlecchino v3 Smoke</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>0.0.0-smoke</string>
-  <key>CFBundleVersion</key>
-  <string>1</string>
-  <key>CFBundleURLTypes</key>
-  <array>
-    <dict>
-      <key>CFBundleURLName</key>
-      <string>Arlecchino Smoke URL</string>
-      <key>CFBundleURLSchemes</key>
-      <array>
-        <string>arlecchino</string>
-      </array>
-    </dict>
-  </array>
-  <key>CFBundleDocumentTypes</key>
-  <array>
-    <dict>
-      <key>CFBundleTypeName</key>
-      <string>Arlecchino Smoke File</string>
-      <key>CFBundleTypeRole</key>
-      <string>Viewer</string>
-      <key>LSItemContentTypes</key>
-      <array>
-        <string>public.data</string>
-      </array>
-    </dict>
-  </array>
-</dict>
-</plist>
-EOF
-
-cat > "$MACOS_DIR/ArlecchinoV3Smoke" <<'EOF'
-#!/bin/zsh
-
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_BUNDLE="$(cd "$SCRIPT_DIR/../.." && pwd)"
-REPORT=""
-ARGS=()
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --arle-smoke-report)
-      REPORT="$2"
-      shift 2
-      ;;
-    --arle-env)
-      if [[ $# -lt 2 ]]; then
-        echo "ERROR: --arle-env requires NAME=VALUE." >&2
-        exit 1
-      fi
-      export "$2"
-      shift 2
-      ;;
-    *)
-      ARGS+=("$1")
-      shift
-      ;;
-  esac
-done
-
-export ARLECCHINO_PACKAGED_BUILD="${ARLECCHINO_PACKAGED_BUILD:-1}"
-export ARLECCHINO_ENABLE_PACKAGED_OS_SPIKE="${ARLECCHINO_ENABLE_PACKAGED_OS_SPIKE:-1}"
-export ARLECCHINO_WAILS3_SMOKE_BUILD_TARGET="$SCRIPT_DIR/Arlecchino-v3-bin"
-export ARLECCHINO_WAILS3_SMOKE_LAUNCH_MODE="packaged-app"
-export ARLECCHINO_WAILS3_SMOKE_APP_BUNDLE="$APP_BUNDLE"
-
-if [[ -n "$REPORT" ]]; then
-  mkdir -p "$(dirname "$REPORT")"
-  exec "$SCRIPT_DIR/Arlecchino-v3-bin" "${ARGS[@]}" > "$REPORT" 2> "$REPORT.stderr"
-fi
-
-exec "$SCRIPT_DIR/Arlecchino-v3-bin" "${ARGS[@]}"
-EOF
-chmod +x "$MACOS_DIR/ArlecchinoV3Smoke"
+"$ROOT_DIR/scripts/wails3-package-macos.sh" \
+  --output "$OUTPUT" \
+  --app-bundle "$APP_BUNDLE" \
+  --bundle-id "$BUNDLE_ID" \
+  --version "0.0.0-smoke" \
+  --build "1" \
+  --sign "$SIGN_MODE" >&2
 
 if [[ "$REGISTER_OS_HANDLERS" == "1" ]]; then
   LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
