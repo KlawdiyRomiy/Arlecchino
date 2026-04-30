@@ -145,6 +145,40 @@ func TestWails3PackagedSmokeReport_NormalizesPackagedProtocolPayload(t *testing.
 	}
 }
 
+func TestWails3PackagedSmokeReport_SecondInstanceProbeUsesQueuedOpenIntent(t *testing.T) {
+	t.Setenv(envEnableSingleInstanceSpike, "1")
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main.go")
+	writePackagedSmokeTestFile(t, filePath)
+	t.Setenv(envWails3PackagedSmokeSecondArgs, `["Arlecchino-v3","--open-file","main.go"]`)
+
+	report := buildWails3PackagedSmokeReport(
+		nil,
+		[]string{"Arlecchino-v3"},
+		root,
+		time.Unix(0, 0).UTC(),
+	)
+
+	if !report.SecondInstance.Enabled {
+		t.Fatal("SecondInstance.Enabled = false, want true")
+	}
+	if report.SecondInstance.OpenIntent == nil || report.SecondInstance.OpenIntent["kind"] != "openFile" {
+		t.Fatalf("SecondInstance.OpenIntent = %#v, want openFile", report.SecondInstance.OpenIntent)
+	}
+	if report.SecondInstance.OpenIntent["path"] != filePath {
+		t.Fatalf("path = %#v, want %s", report.SecondInstance.OpenIntent["path"], filePath)
+	}
+	if report.SecondInstance.OpenIntent["source"] != "single-instance" {
+		t.Fatalf("source = %#v, want single-instance", report.SecondInstance.OpenIntent["source"])
+	}
+	if !report.SecondInstance.OpenIntentQueued {
+		t.Fatal("SecondInstance.OpenIntentQueued = false, want true before frontend-ready")
+	}
+	if !smokeChecksPassed(report.Checks, "single-instance-second-launch") {
+		t.Fatalf("Checks = %#v, want passing single-instance-second-launch", report.Checks)
+	}
+}
+
 func TestWails3PackagedSmokeReport_MatrixLaunchTargets(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main.go")
@@ -260,6 +294,15 @@ func smokeChecksContain(checks []Wails3SmokeCheck, id string) bool {
 	for _, check := range checks {
 		if check.ID == id {
 			return true
+		}
+	}
+	return false
+}
+
+func smokeChecksPassed(checks []Wails3SmokeCheck, id string) bool {
+	for _, check := range checks {
+		if check.ID == id {
+			return check.Passed
 		}
 	}
 	return false

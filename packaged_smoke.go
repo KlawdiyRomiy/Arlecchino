@@ -17,6 +17,7 @@ const (
 	envWails3PackagedSmokeAppBundle   = "ARLECCHINO_WAILS3_SMOKE_APP_BUNDLE"
 	envWails3PackagedSmokeBundleID    = "ARLECCHINO_WAILS3_SMOKE_BUNDLE_ID"
 	envWails3PackagedSmokeOSHandlers  = "ARLECCHINO_WAILS3_SMOKE_OS_HANDLERS"
+	envWails3PackagedSmokeSecondArgs  = "ARLECCHINO_WAILS3_SMOKE_SECOND_INSTANCE_ARGS"
 )
 
 type Wails3PackagedSmokeReport struct {
@@ -33,6 +34,7 @@ type Wails3PackagedSmokeReport struct {
 	PackagedOSIntegration PackagedOSIntegrationSnapshot  `json:"packagedOSIntegration"`
 	BackgroundShell       BackgroundShellStatusSnapshot  `json:"backgroundShell"`
 	SingleInstance        Wails3SmokeGateStatus          `json:"singleInstance"`
+	SecondInstance        Wails3SmokeSecondInstanceProbe `json:"secondInstance,omitempty"`
 	WindowLease           Wails3SmokeWindowLeaseSnapshot `json:"windowLease"`
 	AppBundle             Wails3SmokeAppBundleSnapshot   `json:"appBundle,omitempty"`
 	Checks                []Wails3SmokeCheck             `json:"checks"`
@@ -49,6 +51,15 @@ type Wails3SmokeWindowLeaseSnapshot struct {
 	SpikeEnv     bool     `json:"spikeEnv"`
 	ActiveLeases []string `json:"activeLeases"`
 	Reason       string   `json:"reason"`
+}
+
+type Wails3SmokeSecondInstanceProbe struct {
+	Enabled          bool                  `json:"enabled"`
+	Status           ShellCapabilityStatus `json:"status"`
+	Args             []string              `json:"args,omitempty"`
+	OpenIntent       map[string]any        `json:"openIntent,omitempty"`
+	OpenIntentQueued bool                  `json:"openIntentQueued"`
+	Reason           string                `json:"reason"`
 }
 
 type Wails3SmokeAppBundleSnapshot struct {
@@ -174,6 +185,7 @@ func buildWails3PackagedSmokeReport(
 	}
 
 	singleInstance := buildWails3SmokeSingleInstanceStatus()
+	secondInstance := buildWails3SmokeSecondInstanceProbe(app, workingDir, singleInstance)
 	windowLease := buildWails3SmokeWindowLeaseSnapshot(app)
 	appBundle := buildWails3SmokeAppBundleSnapshot()
 
@@ -191,6 +203,7 @@ func buildWails3PackagedSmokeReport(
 		PackagedOSIntegration: packagedOS,
 		BackgroundShell:       background,
 		SingleInstance:        singleInstance,
+		SecondInstance:        secondInstance,
 		WindowLease:           windowLease,
 		AppBundle:             appBundle,
 		Checks: buildWails3PackagedSmokeChecks(
@@ -198,6 +211,7 @@ func buildWails3PackagedSmokeReport(
 			packagedOS,
 			background,
 			singleInstance,
+			secondInstance,
 			windowLease,
 			appBundle,
 			hasOpenIntent,
@@ -246,6 +260,62 @@ func buildWails3SmokeSingleInstanceStatus() Wails3SmokeGateStatus {
 		Status:  ShellCapabilityRequiresBuild,
 		Reason:  "Single-instance routing remains default-off until packaged smoke validates launch/open-file handoff.",
 	}
+}
+
+func buildWails3SmokeSecondInstanceProbe(
+	app *App,
+	workingDir string,
+	singleInstance Wails3SmokeGateStatus,
+) Wails3SmokeSecondInstanceProbe {
+	rawArgs := strings.TrimSpace(os.Getenv(envWails3PackagedSmokeSecondArgs))
+	if rawArgs == "" {
+		return Wails3SmokeSecondInstanceProbe{
+			Enabled: singleInstance.Enabled,
+			Status:  singleInstance.Status,
+			Reason:  "No second-instance launch probe args were configured.",
+		}
+	}
+
+	probe := Wails3SmokeSecondInstanceProbe{
+		Enabled: singleInstance.Enabled,
+		Status:  ShellCapabilityRequiresBuild,
+		Reason:  "Second-instance launch probe is gated until ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1.",
+	}
+	if singleInstance.Enabled {
+		probe.Status = ShellCapabilityExperimental
+		probe.Reason = "Second-instance launch args did not produce an allowed open intent."
+	}
+
+	args, err := parseWails3SmokeSecondInstanceArgs(rawArgs)
+	if err != nil {
+		probe.Reason = err.Error()
+		return probe
+	}
+	probe.Args = args
+
+	openIntent, hasOpenIntent := buildOpenIntentFromLaunchArgs(args, workingDir)
+	if !hasOpenIntent {
+		return probe
+	}
+	openIntent["source"] = "single-instance"
+	probe.OpenIntent = openIntent
+	probe.OpenIntentQueued = app == nil || !app.openIntentReady
+	if singleInstance.Enabled {
+		probe.Reason = "Second-instance launch args normalize into the queued open-intent contract."
+	}
+	return probe
+}
+
+func parseWails3SmokeSecondInstanceArgs(rawArgs string) ([]string, error) {
+	var args []string
+	if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
+		return nil, fmt.Errorf("second-instance probe args must be a JSON string array: %w", err)
+	}
+	cleaned := normalizeSmokeLaunchArgs(args)
+	if len(cleaned) == 0 {
+		return nil, fmt.Errorf("second-instance probe args are empty")
+	}
+	return cleaned, nil
 }
 
 func buildWails3SmokeWindowLeaseSnapshot(app *App) Wails3SmokeWindowLeaseSnapshot {
@@ -316,6 +386,7 @@ func buildWails3PackagedSmokeChecks(
 	packaged PackagedOSIntegrationSnapshot,
 	background BackgroundShellStatusSnapshot,
 	singleInstance Wails3SmokeGateStatus,
+	secondInstance Wails3SmokeSecondInstanceProbe,
 	windowLease Wails3SmokeWindowLeaseSnapshot,
 	appBundle Wails3SmokeAppBundleSnapshot,
 	hasOpenIntent bool,
@@ -344,6 +415,12 @@ func buildWails3PackagedSmokeChecks(
 			Status:  singleInstance.Status,
 			Passed:  singleInstance.Enabled,
 			Message: singleInstance.Reason,
+		},
+		{
+			ID:      "single-instance-second-launch",
+			Status:  secondInstance.Status,
+			Passed:  secondInstance.Enabled && secondInstance.OpenIntent != nil && secondInstance.OpenIntentQueued,
+			Message: secondInstance.Reason,
 		},
 		{
 			ID:      "open-intent-probe",

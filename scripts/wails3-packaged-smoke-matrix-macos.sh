@@ -92,6 +92,15 @@ switch (name) {
     check(report.packagedOSIntegration.adapters.notifications.enabled === true, "notifications adapter must be enabled");
     check(report.packagedOSIntegration.adapters.dockBadges.enabled === true, "dock badge adapter must be enabled");
     break;
+  case "app-single-instance":
+    check(report.appBundle && report.appBundle.launchMode === "packaged-app", "expected packaged .app launch");
+    check(report.singleInstance && report.singleInstance.enabled === true, "single-instance gate must be enabled");
+    check(report.secondInstance && report.secondInstance.enabled === true, "second-instance probe must be enabled");
+    check(report.secondInstance.openIntentQueued === true, "second-instance probe must queue before frontend-ready");
+    check(report.secondInstance.openIntent && report.secondInstance.openIntent.kind === "openFile", "second-instance probe expected openFile intent");
+    check(typeof report.secondInstance.openIntent.path === "string" && report.secondInstance.openIntent.path.endsWith("/main.go"), "second-instance openFile path must target fixture main.go");
+    check(report.secondInstance.openIntent.source === "single-instance", "second-instance source must be single-instance");
+    break;
   default:
     fail(`unknown validation case ${name}`);
 }
@@ -123,6 +132,18 @@ run_gated_case() {
   echo "PASS gated: $report"
 }
 
+run_app_single_instance_case() {
+  local report="$REPORT_DIR/app-single-instance.json"
+  env \
+    ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1 \
+    ARLECCHINO_WAILS3_SMOKE_SECOND_INSTANCE_ARGS='["Arlecchino-v3","--open-file","main.go"]' \
+    "$ROOT_DIR/scripts/wails3-packaged-app-smoke-macos.sh" \
+      --output "$OUTPUT" \
+      --working-dir "$FIXTURE_DIR" > "$report"
+  validate_report "$report" "app-single-instance"
+  echo "PASS app-single-instance: $report"
+}
+
 FILE_URL="file://$MAIN_FILE"
 PROTOCOL_FILE_URL="arlecchino://open?file=main.go"
 FOCUS_URL="arlecchino://focus?surface=panel:ai-chat"
@@ -134,5 +155,6 @@ run_case "protocol-file" Arlecchino-v3 "$PROTOCOL_FILE_URL"
 run_case "preview" Arlecchino-v3 --open-preview https://example.test/app
 run_case "focus" Arlecchino-v3 "$FOCUS_URL"
 run_gated_case
+run_app_single_instance_case
 
 echo "Wails v3 packaged smoke matrix passed."
