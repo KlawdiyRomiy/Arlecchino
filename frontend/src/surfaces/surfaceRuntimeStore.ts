@@ -25,6 +25,10 @@ import {
   type CreateSurfaceRuntimeEventInput,
   type SurfaceRuntimeEvent,
 } from "./surfaceRuntimeEvents";
+import {
+  buildSurfaceWindowLeaseReadModel,
+  type SurfaceWindowLeaseReadModel,
+} from "./windowLease";
 
 export interface SurfaceRuntimeSnapshot {
   sessions: readonly SurfaceSession[];
@@ -68,6 +72,7 @@ export interface SurfaceRuntimeReadModel {
   >;
   focus: SurfaceRuntimeFocusState;
   promotion: SurfacePromotionReadModel;
+  windowLeases: SurfaceWindowLeaseReadModel;
   events: readonly SurfaceRuntimeEvent[];
   eventCursor: number | null;
 }
@@ -228,6 +233,9 @@ export const getSurfaceRuntimeReadModel = (
   sessions.forEach((session) => {
     sessionsBySource[session.source].push(session.id);
   });
+  const windowLeases = buildSurfaceWindowLeaseReadModel(sessions, {
+    detachedAvailable: false,
+  });
 
   return {
     revision: snapshot.revision,
@@ -252,8 +260,20 @@ export const getSurfaceRuntimeReadModel = (
     promotion: buildSurfacePromotionReadModel(
       sessions,
       promotionReturnTargets,
-      false,
+      {
+        detachedAvailable: windowLeases.detachedAvailable,
+        leaseSupportedSurfaceIds: windowLeases.supportedSurfaceIds,
+        detachReasonsBySurfaceId: Object.fromEntries(
+          Object.entries(windowLeases.commandsBySurfaceId).map(
+            ([surfaceId, commands]) => [
+              surfaceId,
+              commands.find((command) => command.kind === "detach")?.reason,
+            ],
+          ),
+        ),
+      },
     ),
+    windowLeases,
     events: includeEvents
       ? eventHistory.slice(-eventLimit).map(cloneSurfaceRuntimeEvent)
       : [],

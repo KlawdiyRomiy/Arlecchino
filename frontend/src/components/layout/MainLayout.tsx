@@ -2023,9 +2023,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
 
       if (request.kind === "detach") {
+        const detachCommand = getSurfaceRuntimeReadModel({
+          includeEvents: false,
+        }).promotion.commandsBySurfaceId[request.surfaceId]?.find(
+          (command) => command.kind === "detach",
+        );
         return buildSurfacePromotionResult(request, {
           handled: false,
-          reason: "Detached Wails windows are gated until Window Lease System.",
+          reason:
+            detachCommand?.reason ??
+            "Detached Wails window creation is disabled in this build.",
         });
       }
 
@@ -2188,9 +2195,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
 
       if (request.kind === "detach") {
+        const detachCommand = getSurfaceRuntimeReadModel({
+          includeEvents: false,
+        }).promotion.commandsBySurfaceId[request.surfaceId]?.find(
+          (command) => command.kind === "detach",
+        );
         return buildSurfacePromotionResult(request, {
           handled: false,
-          reason: "Detached Wails windows are gated until Window Lease System.",
+          reason:
+            detachCommand?.reason ??
+            "Detached Wails window creation is disabled in this build.",
         });
       }
 

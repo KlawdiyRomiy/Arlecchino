@@ -31,6 +31,12 @@ async function loadRuntimeContracts() {
           parseSurfacePromotionRequest,
         } from "./src/surfaces/surfacePromotion.ts";
         export {
+          buildSurfaceWindowLeaseReadModel,
+          cleanupSurfaceWindowLeases,
+          getSurfaceWindowLeaseRole,
+          isSurfaceWindowLeaseSupported,
+        } from "./src/surfaces/windowLease.ts";
+        export {
           parseOpenPreviewInput,
           parsePanelOpenRequest,
           parseUpdatePreviewInput,
@@ -375,6 +381,169 @@ test("surface promotion contracts parse canonical requests and reject unsupporte
     fullscreenSurfaceIds: ["panel:explorer"],
   });
   assert.equal(fullscreenSessions[0].hostMode, "fullscreen");
+});
+
+test("window lease read model gates detach to supported applets and cleans stale leases", async () => {
+  const {
+    buildSurfacePromotionReadModel,
+    buildSurfaceWindowLeaseReadModel,
+    cleanupSurfaceWindowLeases,
+    getSurfaceWindowLeaseRole,
+    isSurfaceWindowLeaseSupported,
+  } = await loadRuntimeContracts();
+
+  const explorerSession = {
+    id: "panel:explorer",
+    source: "panel",
+    appletKind: "explorer",
+    hostMode: "snapped",
+    title: "Explorer",
+    active: false,
+    pinned: false,
+    panelId: "explorer",
+  };
+  const gitSession = {
+    id: "panel:git",
+    source: "panel",
+    appletKind: "git",
+    hostMode: "snapped",
+    title: "Git",
+    active: false,
+    pinned: false,
+    panelId: "git",
+  };
+  const terminalSession = {
+    id: "panel:terminal",
+    source: "panel",
+    appletKind: "terminal",
+    hostMode: "floating",
+    title: "Terminal",
+    active: true,
+    pinned: false,
+    panelId: "terminal",
+  };
+  const previewSession = {
+    id: "preview:preview-browser-default",
+    source: "preview",
+    appletKind: "browser",
+    hostMode: "snapped",
+    title: "Preview localhost:5173",
+    active: false,
+    pinned: true,
+    previewWindowId: "preview-browser-default",
+    payload: { url: "http://localhost:5173" },
+  };
+  const sessions = [
+    explorerSession,
+    gitSession,
+    terminalSession,
+    previewSession,
+  ];
+
+  assert.equal(isSurfaceWindowLeaseSupported(explorerSession), false);
+  assert.equal(getSurfaceWindowLeaseRole(gitSession), "git-helper");
+  assert.equal(getSurfaceWindowLeaseRole(terminalSession), "terminal-helper");
+  assert.equal(getSurfaceWindowLeaseRole(previewSession), "preview");
+
+  const gatedReadModel = buildSurfaceWindowLeaseReadModel(sessions, {
+    detachedAvailable: false,
+    now: 1710000000000,
+  });
+  assert.deepEqual(gatedReadModel.supportedSurfaceIds, [
+    "panel:git",
+    "panel:terminal",
+    "preview:preview-browser-default",
+  ]);
+  assert.deepEqual(gatedReadModel.unsupportedSurfaceIds, ["panel:explorer"]);
+  assert.equal(
+    gatedReadModel.leasesBySurfaceId["panel:git"].role,
+    "git-helper",
+  );
+  assert.equal(
+    gatedReadModel.commandsBySurfaceId["panel:git"].find(
+      (command) => command.kind === "detach",
+    ).enabled,
+    false,
+  );
+  assert.match(
+    gatedReadModel.commandsBySurfaceId["panel:git"].find(
+      (command) => command.kind === "detach",
+    ).reason,
+    /spike mode/,
+  );
+
+  const enabledReadModel = buildSurfaceWindowLeaseReadModel(sessions, {
+    detachedAvailable: true,
+    now: 1710000001000,
+  });
+  const promotionReadModel = buildSurfacePromotionReadModel(
+    sessions,
+    {},
+    {
+      detachedAvailable: enabledReadModel.detachedAvailable,
+      leaseSupportedSurfaceIds: enabledReadModel.supportedSurfaceIds,
+      detachReasonsBySurfaceId: Object.fromEntries(
+        Object.entries(enabledReadModel.commandsBySurfaceId).map(
+          ([surfaceId, commands]) => [
+            surfaceId,
+            commands.find((command) => command.kind === "detach")?.reason,
+          ],
+        ),
+      ),
+    },
+  );
+  assert.equal(
+    promotionReadModel.commandsBySurfaceId["panel:git"].find(
+      (command) => command.kind === "detach",
+    ).enabled,
+    true,
+  );
+  assert.equal(
+    promotionReadModel.commandsBySurfaceId[
+      "preview:preview-browser-default"
+    ].find((command) => command.kind === "detach").enabled,
+    true,
+  );
+  assert.equal(
+    promotionReadModel.commandsBySurfaceId["panel:explorer"].find(
+      (command) => command.kind === "detach",
+    ).enabled,
+    false,
+  );
+
+  const detachedPreview = {
+    ...previewSession,
+    hostMode: "detached",
+    nativeWindowId: "window:preview-browser-default",
+  };
+  const detachedReadModel = buildSurfaceWindowLeaseReadModel(
+    [detachedPreview],
+    {
+      detachedAvailable: true,
+      now: 1710000002000,
+    },
+  );
+  assert.deepEqual(
+    detachedReadModel.commandsBySurfaceId[
+      "preview:preview-browser-default"
+    ].map((command) => command.kind),
+    ["focus-window", "return-to-main", "close-window"],
+  );
+  assert.equal(
+    detachedReadModel.leasesBySurfaceId["preview:preview-browser-default"]
+      .policy.return,
+    "restore-main-host",
+  );
+
+  const { activeLeases, staleLeases } = cleanupSurfaceWindowLeases(
+    detachedReadModel.leasesBySurfaceId,
+    [gitSession],
+    1710000003000,
+  );
+  assert.equal(activeLeases["preview:preview-browser-default"], undefined);
+  assert.equal(staleLeases.length, 1);
+  assert.equal(staleLeases[0].status, "stale");
+  assert.equal(staleLeases[0].policy.stale, "cleanup-return-target");
 });
 
 test("layout event parsers keep MCP preview and panel payload contracts canonical", async () => {

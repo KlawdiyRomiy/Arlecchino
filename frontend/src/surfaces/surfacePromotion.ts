@@ -55,6 +55,12 @@ export interface SurfacePromotionReadModel {
   returnTargets: Readonly<Record<string, SurfaceReturnTarget>>;
 }
 
+export interface SurfacePromotionReadOptions {
+  detachedAvailable?: boolean;
+  leaseSupportedSurfaceIds?: readonly string[];
+  detachReasonsBySurfaceId?: Readonly<Record<string, string | undefined>>;
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
@@ -230,9 +236,12 @@ export const buildSurfacePromotionCommands = (
   options: {
     hasReturnTarget?: boolean;
     detachedAvailable?: boolean;
+    leaseSupported?: boolean;
+    detachReason?: string;
   } = {},
 ): SurfacePromotionCommand[] => {
   const detachedAvailable = options.detachedAvailable ?? false;
+  const leaseSupported = options.leaseSupported ?? true;
   const commands: SurfacePromotionCommand[] = [];
 
   if (session.source !== "main") {
@@ -279,11 +288,15 @@ export const buildSurfacePromotionCommands = (
       "detach",
       "detached",
       "Move to Window",
-      detachedAvailable,
+      leaseSupported && detachedAvailable,
       {
-        reason: detachedAvailable
-          ? undefined
-          : "Detached Wails windows are gated until Window Lease System.",
+        reason:
+          leaseSupported && detachedAvailable
+            ? undefined
+            : (options.detachReason ??
+              (leaseSupported
+                ? "Detached windows require Window Lease spike mode and packaged smoke."
+                : "Surface is not supported by Window Lease System.")),
         requiresDetachedWindow: true,
       },
     ),
@@ -295,13 +308,23 @@ export const buildSurfacePromotionCommands = (
 export const buildSurfacePromotionReadModel = (
   sessions: readonly SurfaceSession[],
   returnTargets: Readonly<Record<string, SurfaceReturnTarget>>,
-  detachedAvailable = false,
+  options: boolean | SurfacePromotionReadOptions = false,
 ): SurfacePromotionReadModel => {
+  const readOptions: SurfacePromotionReadOptions =
+    typeof options === "boolean" ? { detachedAvailable: options } : options;
+  const detachedAvailable = readOptions.detachedAvailable ?? false;
+  const leaseSupportedSurfaceIds = readOptions.leaseSupportedSurfaceIds
+    ? new Set(readOptions.leaseSupportedSurfaceIds)
+    : null;
   const commandsBySurfaceId = sessions.reduce<
     Record<string, SurfacePromotionCommand[]>
   >((accumulator, session) => {
     accumulator[session.id] = buildSurfacePromotionCommands(session, {
       detachedAvailable,
+      leaseSupported: leaseSupportedSurfaceIds
+        ? leaseSupportedSurfaceIds.has(session.id)
+        : true,
+      detachReason: readOptions.detachReasonsBySurfaceId?.[session.id],
       hasReturnTarget: Boolean(returnTargets[session.id]),
     });
     return accumulator;
