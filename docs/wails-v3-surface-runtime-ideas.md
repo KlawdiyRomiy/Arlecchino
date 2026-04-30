@@ -260,6 +260,35 @@ Baseline hardening для этой ветки теперь имеет отдел
   `./scripts/wails3-dev-macos.sh --build-only`,
   короткий smoke запуск собранного Wails v3 бинаря без `Binding call failed`, `git diff --check`.
 
+## Decision Gate Matrix
+
+Текущий статус перед Arlehub и перед default-on native delivery:
+
+| Area | Status | Current Decision | Remaining Gate |
+| --- | --- | --- | --- |
+| Wails v3 lifecycle/dev runner | Green | `./scripts/wails3-dev-macos.sh` is the branch smoke path; runner owns child cleanup and stale output-scoped MCP shutdown. | Keep using v3 script; do not use global v2 `wails` CLI for this branch. |
+| Bindings/service surface | Green | Shell capabilities, context menu, background shell, packaged OS and window lease methods exist behind the `App` service with runtime fallbacks. | Regenerate bindings only with `./scripts/wails3-generate-bindings.sh --write` and review generated churn separately. |
+| Surface/Applet promotion | Green | In-window `floating`, `snap`, `fullscreen`, `return-to-main` works for existing panels/previews without detached windows. | Detached remains Window Lease territory, not part of in-window promotion. |
+| Detached windows / Window Lease | Yellow | Browser Preview actual Wails detached window works only with `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`. | Smoke preview lifecycle longer; then add Git/Problems/Terminal helper detach one by one. |
+| Single instance/open-file | Yellow | Backend parser, frontend-ready queue and `ide:intent:open` dispatch are implemented behind `ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1`. | Packaged second-instance run and OS file-open smoke before enabling capability by default. |
+| Protocol/file associations | Yellow | `arlecchino://` and `file://` payloads normalize through strict open-intent allowlist. | Real OS registration in packaged app; keep capabilities `requires-build` until smoke passes. |
+| Tray/notifications/dock badge | Yellow | Real Wails native delivery is wired to Background Shell only behind packaged spike env flags. | Signed/bundled notification smoke, tray menu smoke and badge smoke before default-on native delivery. |
+| Packaging/release OS integration | Red | Build-only spike works, but production packaging/signing/registration is not validated. | Dedicated packaged app smoke for protocol, file associations, tray, notifications, badge, single-instance and update manifest. |
+
+Blockers before Arlehub:
+
+- Keep current shell contracts stable for surface read, open intent, Background Shell and Window Lease.
+- Prove Browser Preview detached lifecycle under spike without stale state or lost return-to-main.
+- Avoid adding Arlehub timeline/UI until Flight Recorder and Background Shell remain readable without hub.
+
+Blockers before default-on native delivery:
+
+- Package and run an app bundle with real macOS bundle identity.
+- Verify notification permission/startup in the packaged app, not only in dev build.
+- Verify tray menu executes only Background Shell actions and does not expose unrelated app controls.
+- Verify protocol/file association payloads from Finder/browser reach `ide:intent:open`.
+- Decide per-platform status for Windows/Linux instead of inheriting macOS results.
+
 ## 1. Surface Runtime
 
 ### Purpose
@@ -1430,6 +1459,10 @@ risky action, user can return layout.
 23. Done: add Native Tray/Notification Dev Gate. Real Wails v3 tray, notification and
     dock/taskbar badge delivery now consume Background Shell state only behind explicit
     packaged spike env flags; native delivery remains default-off.
+24. Done: record Decision Gate Matrix. Lifecycle, bindings, promotion, detached windows,
+    single-instance, protocol/file-open, tray/notifications and packaging now have
+    explicit green/yellow/red status plus blockers before Arlehub or default-on native
+    delivery.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
@@ -1486,6 +1519,9 @@ capability-driven v3 shell layer. Это снижает риск перед deta
 15. Done: Native Tray/Notification Dev Gate. Tray menu mirrors only Background Shell
     actions, notifications use existing dedupe candidates, and dock/taskbar badge mirrors
     attention count only when packaged spike env flags explicitly enable native delivery.
+16. Done: Decision Gate doc. Current Wails v3 shell migration status is captured as a
+    green/yellow/red matrix with blockers before Arlehub and before default-on native OS
+    integrations.
 
 Arlehub можно начинать только после пунктов 1-5: тогда hub будет использовать уже
 готовые surface events, command routing и capability checks, а не создавать параллельную
