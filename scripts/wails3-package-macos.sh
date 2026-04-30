@@ -130,58 +130,7 @@ MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
 RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-cp "$OUTPUT" "$MACOS_DIR/$APP_NAME-bin"
-chmod +x "$MACOS_DIR/$APP_NAME-bin"
-
-cat > "$MACOS_DIR/$APP_NAME" <<'EOF'
-#!/bin/zsh
-
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_BUNDLE="$(cd "$SCRIPT_DIR/../.." && pwd)"
-APP_BIN="$SCRIPT_DIR/Arlecchino-bin"
-REPORT=""
-ARGS=()
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --arle-smoke-report)
-      if [[ $# -lt 2 ]]; then
-        echo "ERROR: --arle-smoke-report requires a path." >&2
-        exit 1
-      fi
-      REPORT="$2"
-      shift 2
-      ;;
-    --arle-env)
-      if [[ $# -lt 2 ]]; then
-        echo "ERROR: --arle-env requires NAME=VALUE." >&2
-        exit 1
-      fi
-      export "$2"
-      shift 2
-      ;;
-    *)
-      ARGS+=("$1")
-      shift
-      ;;
-  esac
-done
-
-export ARLECCHINO_PACKAGED_BUILD="${ARLECCHINO_PACKAGED_BUILD:-1}"
-export ARLECCHINO_ENABLE_PACKAGED_OS_SPIKE="${ARLECCHINO_ENABLE_PACKAGED_OS_SPIKE:-1}"
-export ARLECCHINO_WAILS3_SMOKE_BUILD_TARGET="$APP_BIN"
-export ARLECCHINO_WAILS3_SMOKE_LAUNCH_MODE="packaged-app"
-export ARLECCHINO_WAILS3_SMOKE_APP_BUNDLE="$APP_BUNDLE"
-
-if [[ -n "$REPORT" ]]; then
-  mkdir -p "$(dirname "$REPORT")"
-  exec "$APP_BIN" "${ARGS[@]}" > "$REPORT" 2> "$REPORT.stderr"
-fi
-
-exec "$APP_BIN" "${ARGS[@]}"
-EOF
+cp "$OUTPUT" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
 
 cp "$INFO_TEMPLATE" "$APP_BUNDLE/Contents/Info.plist"

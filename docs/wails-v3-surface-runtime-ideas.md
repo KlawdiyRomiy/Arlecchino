@@ -275,9 +275,24 @@ Baseline hardening для этой ветки теперь имеет отдел
 - Auto-update gate реализован только как manifest read/validate/report:
   `no-manifest`, `invalid-manifest`, `valid-manifest-read`; установка обновлений
   намеренно disabled.
-- Production `.app` packaging, signing/notarization, real LaunchServices protocol/file
-  registration, real Finder/browser handoff и real notification permission/delivery
-  остаются next gate.
+- Добавлен production-shaped `.app` packaging path:
+  `./scripts/wails3-package-macos.sh` создает настоящий `.app` layout из tracked
+  `build/darwin/Info.wails3.plist`, кладет Wails binary напрямую в `Contents/MacOS`
+  как `CFBundleExecutable`, копирует icon resources и не оставляет tracked artifacts.
+  `./scripts/wails3-sign-macos.sh` поддерживает local `adhoc` signing/verify и
+  dormant `developer-id`/notarytool path через env без Apple Developer requirement.
+- Добавлен real OS handoff smoke harness:
+  `./scripts/wails3-real-os-smoke-macos.sh` собирает production-shaped `.app`,
+  регистрирует bundle через LaunchServices, запускает live app с temp app data dir
+  и пишет `ide:intent:open` trace. Текущий smoke выявил Red blocker: в ad-hoc temp
+  bundle Wails v3 `ApplicationLaunchedWithUrl`/`ApplicationOpenedWithFile` event не
+  дошел до open-intent trace для `arlecchino://open?file=...`; harness теперь
+  фиксирует этот failure как gate evidence, а не как "parser success".
+- Packaged app data path теперь не зависит от repo cwd:
+  `internal/project.ResolveDBPath` оставляет `data/projects.db` для dev, но в packaged
+  mode использует `ARLECCHINO_DATA_DIR` или user config dir.
+- Real notification permission/delivery, real tray click, dock badge live smoke,
+  auto-update download/apply и Window Lease helper expansion остаются next gates.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -304,7 +319,8 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Protocol/file associations | Yellow | `arlecchino://` and `file://` payloads normalize through strict open-intent allowlist; packaged `.app` smoke validates these payloads as launch args. | Real LaunchServices/Finder/browser registration smoke before moving capabilities out of `requires-build`. |
 | Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates tray action projection, notification candidate projection, badge label and tracked failure states. | Signed/bundled notification permission smoke and real tray click smoke before default-on native delivery. |
 | Auto-update manifest | Yellow | `.app` smoke reads and reports `no-manifest`, `invalid-manifest`, `valid-manifest-read`; install remains disabled. | Decide update channel/signature policy and implement installer only after release packaging is stable. |
-| Packaging/release OS integration | Red | Binary smoke and temporary `.app` smoke validate report gates, but production `.app` packaging/signing/notarization and real OS registration are not validated. | Build production bundle path, signing/notarization strategy, real protocol/file association registration, and real notification delivery smoke. |
+| Packaging/release OS integration | Yellow | Production-shaped `.app` packaging and ad-hoc signing now exist; packaged smoke launches the real `CFBundleExecutable`, not a wrapper. | Developer ID/notarization remains inactive until credentials exist; real protocol/file LaunchServices handoff is still blocked by Wails event delivery smoke. |
+| Real OS handoff | Red | `wails3-real-os-smoke-macos.sh` launches a registered ad-hoc `.app` and traces `ide:intent:open`, but current Wails URL/file application events do not reach the bridge in the temp bundle smoke. | Debug Wails macOS app event delivery or add an approved fallback before claiming browser/Finder handoff green. |
 
 Blockers before Arlehub:
 
@@ -315,6 +331,8 @@ Blockers before Arlehub:
 Blockers before default-on native delivery:
 
 - Package and run a production-shaped signed app bundle with real macOS bundle identity.
+- Resolve the current Red real OS handoff smoke for `ApplicationLaunchedWithUrl` and
+  `ApplicationOpenedWithFile`.
 - Verify notification permission/startup in the packaged app, not only in report projection.
 - Verify tray menu executes only Background Shell actions and does not expose unrelated app controls.
 - Verify protocol/file association payloads from Finder/browser reach `ide:intent:open`.
@@ -1503,6 +1521,12 @@ risky action, user can return layout.
 26. Done: harden detached Browser Preview return lifecycle. The return-to-main intent is
     now a pure helper contract that preserves preview identity, current URL payload,
     pinned state and return host/position.
+27. Done: add production-shaped Wails v3 `.app` packaging and signing scripts. The bundle
+    uses tracked Info.plist metadata, direct Wails binary executable, icon resources,
+    ad-hoc local signing and dormant Developer ID/notarization config.
+28. In progress: add real OS handoff smoke. The harness is present and detects the current
+    blocker: LaunchServices/AppleEvent URL/file delivery does not yet appear in
+    `ide:intent:open` trace for the ad-hoc temp `.app`.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 

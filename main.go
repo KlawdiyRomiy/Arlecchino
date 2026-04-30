@@ -82,6 +82,7 @@ func main() {
 		},
 	})
 	app.attachWailsApplication(wailsApp)
+	registerOpenIntentApplicationEvents(app, wailsApp)
 
 	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:               "main",

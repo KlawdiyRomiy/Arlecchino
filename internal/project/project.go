@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gorm.io/driver/sqlite"
@@ -31,6 +32,12 @@ type DB struct {
 }
 
 func NewDB(dbPath string) (*DB, error) {
+	dbPath = ResolveDBPath(dbPath)
+	if dir := filepath.Dir(dbPath); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
+	}
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
 		return nil, err
@@ -42,6 +49,34 @@ func NewDB(dbPath string) (*DB, error) {
 	}
 
 	return &DB{db}, nil
+}
+
+func ResolveDBPath(dbPath string) string {
+	dbPath = strings.TrimSpace(dbPath)
+	if dbPath == "" || filepath.IsAbs(dbPath) {
+		return dbPath
+	}
+
+	if dataDir := strings.TrimSpace(os.Getenv("ARLECCHINO_DATA_DIR")); dataDir != "" {
+		return filepath.Join(dataDir, filepath.Base(dbPath))
+	}
+
+	if envFlagString(os.Getenv("ARLECCHINO_PACKAGED_BUILD")) {
+		if configDir, err := os.UserConfigDir(); err == nil && strings.TrimSpace(configDir) != "" {
+			return filepath.Join(configDir, "Arlecchino", filepath.Base(dbPath))
+		}
+	}
+
+	return dbPath
+}
+
+func envFlagString(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // OpenProject opens any directory as a project (framework-agnostic)

@@ -56,6 +56,7 @@ func (a *App) dispatchOpenIntent(payload map[string]any) {
 		}
 		a.pendingOpenIntents = append(a.pendingOpenIntents, cloneOpenIntentPayload(payload))
 		a.openIntentMu.Unlock()
+		traceOpenIntent("queued", payload)
 		return
 	}
 	a.openIntentMu.Unlock()
@@ -68,6 +69,7 @@ func (a *App) emitOpenIntentNow(payload map[string]any) {
 		return
 	}
 
+	traceOpenIntent("emitted", payload)
 	a.emitEvent(openIntentEventName, cloneOpenIntentPayload(payload))
 }
 
