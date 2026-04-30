@@ -58,6 +58,9 @@ type App struct {
 	backgroundShell    *BackgroundShellStatusService
 	shellMenuMu        sync.Mutex
 	shellMenuShortcuts map[string][]string
+	openIntentMu       sync.Mutex
+	openIntentReady    bool
+	pendingOpenIntents []map[string]any
 	managerMu          sync.Mutex
 
 	projectCtx    context.Context
@@ -111,7 +114,7 @@ func NewApp() *App {
 		carapaceProvider: terminal.NewCarapaceProvider(),
 		plugins:          pluginRegistry,
 		executionService: execution.NewService(pluginRegistry),
-		backgroundShell:   NewBackgroundShellStatusService(),
+		backgroundShell:  NewBackgroundShellStatusService(),
 	}
 }
 
@@ -127,6 +130,7 @@ func (a *App) ServiceShutdown() error {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.startOpenIntentBridge()
 	a.startMCPBridge()
 	a.ensureMCPConfigs()
 

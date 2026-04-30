@@ -58,6 +58,7 @@ func main() {
 		Services: []application.Service{
 			application.NewServiceWithOptions(app, application.ServiceOptions{Name: "App"}),
 		},
+		SingleInstance: buildSingleInstanceOptions(app),
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},

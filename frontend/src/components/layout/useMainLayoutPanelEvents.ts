@@ -7,6 +7,7 @@ import {
 } from "react";
 
 import { useIDEEvents } from "../../hooks/useIDEEvents";
+import { EventsEmit } from "../../wails/runtime";
 import {
   registerOpenIntentDispatcher,
   routeOpenIntent,
@@ -613,7 +614,7 @@ export const useMainLayoutPanelEvents = ({
   );
 
   useEffect(() => {
-    return registerOpenIntentDispatcher({
+    const unregister = registerOpenIntentDispatcher({
       openProject: async (projectPath) => {
         if (!onProjectOpen) {
           throw new Error("Project open handler is unavailable.");
@@ -630,6 +631,11 @@ export const useMainLayoutPanelEvents = ({
         handleOpenIntentFocusSurface(intent);
       },
     });
+    EventsEmit("ide:frontend:ready", {
+      contract: "open-intent",
+      version: 1,
+    });
+    return unregister;
   }, [
     handleOpenIntentFocusSurface,
     handlePreviewWindowOpenEvent,
