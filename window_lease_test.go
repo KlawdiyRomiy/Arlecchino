@@ -123,6 +123,34 @@ func TestRunWindowLeaseActionDetachIsGated(t *testing.T) {
 	}
 }
 
+func TestRunWindowLeaseActionDetachRejectsNativePanelRoles(t *testing.T) {
+	t.Setenv(envEnableWindowLeaseSpike, "1")
+	app := &App{windowLeases: NewWindowLeaseRegistry()}
+	actionID, err := BuildWindowLeaseActionID("detach", WindowLeaseActionPayload{
+		SurfaceID:  "panel:problems",
+		Role:       WindowLeaseRoleProblemsHelper,
+		AppletKind: "problems",
+		Title:      "Problems",
+	})
+	if err != nil {
+		t.Fatalf("BuildWindowLeaseActionID error = %v", err)
+	}
+
+	result, err := app.RunWindowLeaseAction(actionID)
+	if err != nil {
+		t.Fatalf("RunWindowLeaseAction error = %v", err)
+	}
+	if result.Handled {
+		t.Fatal("Handled = true, want false for panel detach")
+	}
+	if !strings.Contains(result.Message, "Browser Preview only") {
+		t.Fatalf("Message = %q, want Browser Preview only", result.Message)
+	}
+	if !result.Snapshot.DetachedAvailable {
+		t.Fatal("DetachedAvailable = false, want true when spike env is enabled")
+	}
+}
+
 func TestBuildDetachedPreviewReturnIntentPreservesPreviewState(t *testing.T) {
 	record := WindowLeaseRecord{
 		SurfaceID:       "preview:browser",

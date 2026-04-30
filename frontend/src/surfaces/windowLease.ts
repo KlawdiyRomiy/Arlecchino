@@ -67,6 +67,15 @@ const DEFAULT_WINDOW_LEASE_POLICY: SurfaceWindowLeasePolicy = {
   stale: "cleanup-return-target",
 };
 
+const UNSUPPORTED_WINDOW_LEASE_REASON =
+  "Surface is not supported by Window Lease System.";
+
+const PREVIEW_ONLY_WINDOW_LEASE_REASON =
+  "Native detached window spike currently supports Browser Preview only.";
+
+const GATED_WINDOW_LEASE_REASON =
+  "Detached windows require Window Lease spike mode and packaged smoke.";
+
 const cloneLease = (
   lease: SurfaceWindowLeaseRecord,
 ): SurfaceWindowLeaseRecord => ({
@@ -110,20 +119,20 @@ export const getSurfaceWindowLeaseRole = (
 
 export const isSurfaceWindowLeaseSupported = (
   session: SurfaceSession,
-): boolean => getSurfaceWindowLeaseRole(session) !== null;
+): boolean => getSurfaceWindowLeaseRole(session) === "preview";
 
 export const buildSurfaceWindowLeaseCommands = (
   session: SurfaceSession,
   options: {
     supported?: boolean;
     detachedAvailable?: boolean;
+    unsupportedReason?: string;
   } = {},
 ): SurfaceWindowLeaseCommand[] => {
   const supported = options.supported ?? isSurfaceWindowLeaseSupported(session);
   const detachedAvailable = options.detachedAvailable ?? false;
-  const unsupportedReason = "Surface is not supported by Window Lease System.";
-  const gatedReason =
-    "Detached windows require Window Lease spike mode and packaged smoke.";
+  const unsupportedReason =
+    options.unsupportedReason ?? UNSUPPORTED_WINDOW_LEASE_REASON;
 
   if (!supported) {
     return [
@@ -145,7 +154,7 @@ export const buildSurfaceWindowLeaseCommands = (
       "detach",
       "Move to Window",
       detachedAvailable,
-      detachedAvailable ? undefined : gatedReason,
+      detachedAvailable ? undefined : GATED_WINDOW_LEASE_REASON,
     ),
   ];
 };
@@ -196,13 +205,17 @@ export const buildSurfaceWindowLeaseReadModel = (
 
   sessions.forEach((session) => {
     const role = getSurfaceWindowLeaseRole(session);
-    if (!role) {
+    const supported = isSurfaceWindowLeaseSupported(session);
+    if (!role || !supported) {
       unsupportedSurfaceIds.push(session.id);
       commandsBySurfaceId[session.id] = buildSurfaceWindowLeaseCommands(
         session,
         {
           supported: false,
           detachedAvailable,
+          unsupportedReason: role
+            ? PREVIEW_ONLY_WINDOW_LEASE_REASON
+            : UNSUPPORTED_WINDOW_LEASE_REASON,
         },
       );
       return;
