@@ -400,6 +400,7 @@ func (s *ToolService) Capabilities() map[string]any {
 		"bridgeAvailable":          bridgeAvailable,
 		"sensitivePatterns":        append([]string(nil), s.sensitivePaths...),
 		"auditDiskPath":            s.audit.diskFilePath(),
+		"flightRecorderDiskPath":   s.flightRecorder.diskFilePath(),
 		"checkpointDiskPath":       projectStateFilePath(s.projectRoot, changeJournalStateFileName),
 		"layoutDiskPath":           projectStateFilePath(s.projectRoot, layoutStateFileName),
 		"memoryDiskPath":           s.memory.DiskFilePath(),
@@ -410,7 +411,21 @@ func (s *ToolService) Capabilities() map[string]any {
 		"supportsBackendV1":        true,
 		"supportsUIControlV1":      true,
 		"supportsSurfaceRuntimeV1": true,
+		"supportsFlightRecorderV1": true,
 		"supportsMemoryV1":         true,
+	}
+}
+
+func (s *ToolService) FlightRecorder(limit int) map[string]any {
+	effectiveLimit := limit
+	if effectiveLimit <= 0 {
+		effectiveLimit = 50
+	}
+
+	return map[string]any{
+		"items":    s.flightRecorder.list(effectiveLimit),
+		"diskPath": s.flightRecorder.diskFilePath(),
+		"mode":     s.modeName(),
 	}
 }
 
@@ -434,6 +449,33 @@ func (s *ToolService) recordAudit(toolName string, args map[string]any, err erro
 		startedAt,
 	)
 	s.audit.append(entry)
+}
+
+func (s *ToolService) recordFlightEvent(record FlightRecord) {
+	if s == nil || s.flightRecorder == nil {
+		return
+	}
+	s.flightRecorder.append(record)
+}
+
+func (s *ToolService) recordToolFlightEvent(toolName string, args map[string]any, err error, startedAt time.Time) {
+	status := "success"
+	errText := ""
+	if err != nil {
+		status = "error"
+		errText = err.Error()
+	}
+
+	s.recordFlightEvent(FlightRecord{
+		Type:       "mcp.tool.completed",
+		Source:     "mcp",
+		Tool:       toolName,
+		Risk:       s.riskClassForTool(toolName, args),
+		Status:     status,
+		Error:      errText,
+		DurationMs: time.Since(startedAt).Milliseconds(),
+		Args:       s.sanitizeAuditArgs(args),
+	})
 }
 
 func (s *ToolService) sanitizeAuditArgs(args map[string]any) map[string]any {
@@ -530,17 +572,10 @@ func (s *ToolService) bridgeProjectOpen(path string) (any, error) {
 		return nil, err
 	}
 
-	if err := s.requireToolApproval("ide_backend.project_open", forceApproval); err != nil {
-		return nil, err
-	}
-
 	return s.bridgeCall("ide_backend.project_open", "project.open", map[string]any{"path": requestedPath})
 }
 
 func (s *ToolService) bridgeProjectClose() (any, error) {
-	if err := s.requireUserApproval("ide_backend.project_close"); err != nil {
-		return nil, err
-	}
 	if err := s.requireUserApproval("ide_backend.project_close"); err != nil {
 		return nil, err
 	}
@@ -559,16 +594,10 @@ func (s *ToolService) bridgeLSPRestart(language string) (any, error) {
 	if err := s.requireUserApproval("ide_backend.lsp_restart"); err != nil {
 		return nil, err
 	}
-	if err := s.requireUserApproval("ide_backend.lsp_restart"); err != nil {
-		return nil, err
-	}
 	return s.bridgeCall("ide_backend.lsp_restart", "lsp.restart", map[string]any{"language": language})
 }
 
 func (s *ToolService) bridgeLSPInstall(serverID string) (any, error) {
-	if err := s.requireUserApproval("ide_backend.lsp_install"); err != nil {
-		return nil, err
-	}
 	if err := s.requireUserApproval("ide_backend.lsp_install"); err != nil {
 		return nil, err
 	}
@@ -622,9 +651,6 @@ func (s *ToolService) bridgeTerminalCreate(id, name, command string) (any, error
 	if err := s.requireUserApproval("ide_backend.terminal_create"); err != nil {
 		return nil, err
 	}
-	if err := s.requireUserApproval("ide_backend.terminal_create"); err != nil {
-		return nil, err
-	}
 	params := map[string]any{"id": id, "name": name}
 	if strings.TrimSpace(command) != "" {
 		params["command"] = command
@@ -636,16 +662,10 @@ func (s *ToolService) bridgeTerminalWrite(id, data string) (any, error) {
 	if err := s.requireUserApproval("ide_backend.terminal_write"); err != nil {
 		return nil, err
 	}
-	if err := s.requireUserApproval("ide_backend.terminal_write"); err != nil {
-		return nil, err
-	}
 	return s.bridgeCall("ide_backend.terminal_write", "terminal.write", map[string]any{"id": id, "data": data})
 }
 
 func (s *ToolService) bridgeTerminalResize(id string, rows, cols int) (any, error) {
-	if err := s.requireUserApproval("ide_backend.terminal_resize"); err != nil {
-		return nil, err
-	}
 	if err := s.requireUserApproval("ide_backend.terminal_resize"); err != nil {
 		return nil, err
 	}
@@ -656,16 +676,10 @@ func (s *ToolService) bridgeTerminalClose(id string) (any, error) {
 	if err := s.requireUserApproval("ide_backend.terminal_close"); err != nil {
 		return nil, err
 	}
-	if err := s.requireUserApproval("ide_backend.terminal_close"); err != nil {
-		return nil, err
-	}
 	return s.bridgeCall("ide_backend.terminal_close", "terminal.close", map[string]any{"id": id})
 }
 
 func (s *ToolService) bridgeTerminalCloseAll() (any, error) {
-	if err := s.requireUserApproval("ide_backend.terminal_close_all"); err != nil {
-		return nil, err
-	}
 	if err := s.requireUserApproval("ide_backend.terminal_close_all"); err != nil {
 		return nil, err
 	}
@@ -697,9 +711,6 @@ func (s *ToolService) bridgeDispatchSearchSymbols(query string) (any, error) {
 }
 
 func (s *ToolService) bridgeDispatchCommand(input string) (any, error) {
-	if err := s.requireUserApproval("ide_backend.dispatch_command"); err != nil {
-		return nil, err
-	}
 	if err := s.requireUserApproval("ide_backend.dispatch_command"); err != nil {
 		return nil, err
 	}
@@ -737,15 +748,38 @@ func (s *ToolService) bridgeEmitUIEvent(eventName string, payload any) (any, err
 	if err := s.allowUIEventBurst(1); err != nil {
 		return nil, err
 	}
-	if err := s.requireUserApproval("ide_ui.emit_event"); err != nil {
-		return nil, err
-	}
 
 	params := map[string]any{"event": eventName}
 	if payload != nil {
 		params["payload"] = payload
 	}
-	return s.bridgeCall("ide_ui.emit_event", "ui.emit_event", params)
+	startedAt := time.Now()
+	s.recordFlightEvent(FlightRecord{
+		Type:   "agent.ui.requested",
+		Source: "mcp",
+		Tool:   "ide_ui.emit_event",
+		Risk:   s.riskClassForTool("ide_ui.emit_event", params),
+		Status: "pending",
+		Args:   s.sanitizeAuditArgs(params),
+	})
+	result, err := s.bridgeCall("ide_ui.emit_event", "ui.emit_event", params)
+	status := "acknowledged"
+	errText := ""
+	if err != nil {
+		status = "error"
+		errText = err.Error()
+	}
+	s.recordFlightEvent(FlightRecord{
+		Type:       "agent.ui.acknowledged",
+		Source:     "frontend",
+		Tool:       "ide_ui.emit_event",
+		Risk:       s.riskClassForTool("ide_ui.emit_event", params),
+		Status:     status,
+		Error:      errText,
+		DurationMs: time.Since(startedAt).Milliseconds(),
+		Args:       map[string]any{"event": eventName},
+	})
+	return result, err
 }
 
 func (s *ToolService) bridgeEmitConfirmedUIEvent(toolName, eventName string, payload any) (any, error) {
@@ -753,9 +787,6 @@ func (s *ToolService) bridgeEmitConfirmedUIEvent(toolName, eventName string, pay
 		return nil, err
 	}
 	if err := s.allowUIEventBurst(1); err != nil {
-		return nil, err
-	}
-	if err := s.requireUserApproval(toolName); err != nil {
 		return nil, err
 	}
 
@@ -768,16 +799,67 @@ func (s *ToolService) bridgeEmitConfirmedUIEvent(toolName, eventName string, pay
 		params["payload"] = payload
 	}
 
+	startedAt := time.Now()
+	s.recordFlightEvent(FlightRecord{
+		Type:          "agent.ui.requested",
+		Source:        "mcp",
+		Tool:          toolName,
+		Risk:          s.riskClassForTool(toolName, params),
+		Status:        "pending",
+		CorrelationID: requestID,
+		Args:          s.sanitizeAuditArgs(params),
+	})
 	result, err := s.bridgeCall(toolName, "ui.emit_event", params)
 	if err != nil {
+		s.recordFlightEvent(FlightRecord{
+			Type:          "agent.ui.acknowledged",
+			Source:        "frontend",
+			Tool:          toolName,
+			Risk:          s.riskClassForTool(toolName, params),
+			Status:        "error",
+			Error:         err.Error(),
+			DurationMs:    time.Since(startedAt).Milliseconds(),
+			CorrelationID: requestID,
+			Args:          map[string]any{"event": eventName},
+		})
 		return nil, err
 	}
 
 	if resultMap, ok := result.(map[string]any); ok {
+		status := "acknowledged"
+		errText := ""
+		if confirmed, ok := resultMap["confirmed"].(bool); ok && !confirmed {
+			status = "rejected"
+		}
+		if errorText, ok := resultMap["error"].(string); ok && strings.TrimSpace(errorText) != "" {
+			status = "error"
+			errText = strings.TrimSpace(errorText)
+		}
+		s.recordFlightEvent(FlightRecord{
+			Type:          "agent.ui.acknowledged",
+			Source:        "frontend",
+			Tool:          toolName,
+			Risk:          s.riskClassForTool(toolName, params),
+			Status:        status,
+			Error:         errText,
+			DurationMs:    time.Since(startedAt).Milliseconds(),
+			CorrelationID: requestID,
+			Args:          map[string]any{"event": eventName},
+		})
 		resultMap["mcpRequestId"] = requestID
 		return resultMap, nil
 	}
 
+	s.recordFlightEvent(FlightRecord{
+		Type:          "agent.ui.acknowledged",
+		Source:        "frontend",
+		Tool:          toolName,
+		Risk:          s.riskClassForTool(toolName, params),
+		Status:        "acknowledged",
+		DurationMs:    time.Since(startedAt).Milliseconds(),
+		CorrelationID: requestID,
+		Args:          map[string]any{"event": eventName},
+	})
 	return map[string]any{
 		"result":       result,
 		"mcpRequestId": requestID,
@@ -1155,9 +1237,6 @@ func (s *ToolService) applyLayoutProfile(name string) (any, error) {
 
 	appliedActions := 0
 	for _, action := range profile.Actions {
-		if err := s.requireUserApproval("ide_ui.apply_layout_profile"); err != nil {
-			return nil, err
-		}
 		_, err := s.bridgeCall("ide_ui.apply_layout_profile", "ui.emit_event", map[string]any{
 			"event":   action.Event,
 			"payload": action.Payload,
@@ -1201,9 +1280,6 @@ func (s *ToolService) applyHotSwitch(actions []LayoutAction, label string) (any,
 
 	appliedActions := 0
 	for _, action := range actions {
-		if err := s.requireUserApproval("ide_ui.hot_switch"); err != nil {
-			return nil, err
-		}
 		_, err := s.bridgeCall("ide_ui.hot_switch", "ui.emit_event", map[string]any{
 			"event":   action.Event,
 			"payload": action.Payload,
@@ -1253,9 +1329,6 @@ func (s *ToolService) applyLayoutSnapshot(snapshotID string) (any, error) {
 
 	appliedActions := 0
 	for _, action := range snapshot.Actions {
-		if err := s.requireUserApproval("ide_ui.apply_layout_snapshot"); err != nil {
-			return nil, err
-		}
 		_, err := s.bridgeCall("ide_ui.apply_layout_snapshot", "ui.emit_event", map[string]any{
 			"event":    action.Event,
 			"payload":  action.Payload,

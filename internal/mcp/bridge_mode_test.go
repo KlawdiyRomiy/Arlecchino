@@ -86,6 +86,7 @@ func TestToolService_ToolDefinitionsAlwaysIncludeBridgeTools(t *testing.T) {
 		"ide_backend.git_status",
 		"agent_memory.save",
 		"agent_memory.context",
+		"ide_control.flight_recorder",
 		"ide_ui.emit_event",
 		"ide_ui.surface_read",
 		"ide_ui.open_intent",
@@ -490,6 +491,129 @@ func TestToolService_AuditLogsPersistToDisk(t *testing.T) {
 	}
 	if len(strings.TrimSpace(string(diskData))) == 0 {
 		t.Fatalf("audit disk log must not be empty")
+	}
+}
+
+func TestToolService_FlightRecorderRecordsUIAckAndRedactsArgs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "flight-code")
+
+	bridge := newFakeBridge()
+	bridge.response["ui.emit_event"] = map[string]any{
+		"confirmed": true,
+		"result":    map[string]any{"opened": true},
+	}
+
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "flight-code",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_ui.open_file_panel", map[string]any{
+		"path":    "src/main.go",
+		"content": "SECRET_TOKEN=123",
+	}); err != nil {
+		t.Fatalf("open_file_panel error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_control.flight_recorder", map[string]any{"limit": 20})
+	if err != nil {
+		t.Fatalf("flight_recorder error = %v", err)
+	}
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("flight_recorder result type = %T, want map[string]any", result)
+	}
+	items, ok := resultMap["items"].([]FlightRecord)
+	if !ok {
+		t.Fatalf("flight_recorder items type = %T, want []FlightRecord", resultMap["items"])
+	}
+
+	var sawRequested, sawAck, sawTool bool
+	for _, item := range items {
+		switch item.Type {
+		case "agent.ui.requested":
+			if item.Tool == "ide_ui.open_file_panel" && item.CorrelationID != "" {
+				sawRequested = true
+			}
+		case "agent.ui.acknowledged":
+			if item.Tool == "ide_ui.open_file_panel" && item.Status == "acknowledged" {
+				sawAck = true
+			}
+		case "mcp.tool.completed":
+			if item.Tool == "ide_ui.open_file_panel" {
+				sawTool = true
+				if item.Args["content"] != redactedValue {
+					t.Fatalf("flight recorder content arg = %#v, want redacted", item.Args["content"])
+				}
+			}
+		}
+	}
+	if !sawRequested || !sawAck || !sawTool {
+		t.Fatalf("flight recorder events requested=%v ack=%v tool=%v, want all true", sawRequested, sawAck, sawTool)
+	}
+	if diskPath, ok := resultMap["diskPath"].(string); !ok || strings.TrimSpace(diskPath) == "" {
+		t.Fatalf("flight_recorder diskPath = %#v, want non-empty string", resultMap["diskPath"])
+	} else {
+		diskData, err := os.ReadFile(diskPath)
+		if err != nil {
+			t.Fatalf("ReadFile(flight recorder disk) error = %v", err)
+		}
+		diskText := string(diskData)
+		if !strings.Contains(diskText, "mcp.tool.completed") {
+			t.Fatalf("flight recorder disk log missing tool completion event: %s", diskText)
+		}
+		if strings.Contains(diskText, "SECRET_TOKEN=123") {
+			t.Fatalf("flight recorder disk log contains unredacted secret: %s", diskText)
+		}
+	}
+}
+
+func TestToolService_FlightRecorderRecordsLiveApproval(t *testing.T) {
+	root := t.TempDir()
+
+	bridge := newFakeBridge()
+	bridge.response["mcp.request_approval"] = map[string]any{
+		"approved":    true,
+		"ttl_seconds": 120,
+	}
+
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_backend.terminal_create", map[string]any{
+		"id":   "term-1",
+		"name": "Terminal",
+	}); err != nil {
+		t.Fatalf("terminal_create error = %v", err)
+	}
+
+	result := service.FlightRecorder(20)
+	items, ok := result["items"].([]FlightRecord)
+	if !ok {
+		t.Fatalf("FlightRecorder items type = %T, want []FlightRecord", result["items"])
+	}
+
+	var requested, resolved bool
+	for _, item := range items {
+		if item.Type == "approval.requested" && item.Tool == "ide_backend.terminal_create" {
+			requested = true
+		}
+		if item.Type == "approval.resolved" && item.Tool == "ide_backend.terminal_create" && item.Status == "approved" {
+			resolved = true
+		}
+	}
+	if !requested || !resolved {
+		t.Fatalf("approval recorder events requested=%v resolved=%v, want both true", requested, resolved)
 	}
 }
 

@@ -39,6 +39,8 @@ type ToolServiceOptions struct {
 	BridgeMetadataPath     string
 	AuditLogPath           string
 	AuditMemoryLimit       int
+	FlightRecorderPath     string
+	FlightRecorderLimit    int
 }
 
 type BridgeCallHandler func(method string, params map[string]any) (any, error)

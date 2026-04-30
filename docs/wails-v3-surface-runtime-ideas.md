@@ -196,6 +196,13 @@ Baseline hardening для этой ветки теперь имеет отдел
   для будущих tray/notification/menu consumers: `cancel-job` отменяет активную cancelable
   job, а `focus-surface` фокусит main window и отправляет `ide:intent:open`/`focusSurface`.
   Native tray и native notification delivery остаются выключенными.
+- Добавлен Agent Flight Recorder v1 на MCP/backend side: `internal/mcp/flight_recorder.go`
+  ведет bounded in-memory timeline и append-only `.arlecchino/agent-flight-recorder.log`,
+  `ide_control.flight_recorder` читает события, а `ide_control.capabilities` отдает
+  `flightRecorderDiskPath` и `supportsFlightRecorderV1`. MCP tool calls пишут
+  `mcp.tool.completed`, UI bridge calls пишут `agent.ui.requested`/`agent.ui.acknowledged`,
+  live approval path пишет `approval.requested`/`approval.resolved`; redaction использует
+  audit sanitizer, а дублирующие approval checks внутри bridge helpers убраны.
 - Добавлен Applet Promotion Chain v1 без detached windows: `ide:surface:promote`
   исполняет `promote-floating`, `snap`, `fullscreen`, `return-to-main` для `panel:*`
   и `preview:*`, сохраняя panel/window identity и payload. Surface Runtime read model
@@ -403,6 +410,20 @@ bus доставляет события, recorder хранит историю и
 - хранить correlation IDs между MCP tool call, frontend ack, terminal session и surface;
 - дать frontend read model: timeline, current run state, last UI action, failed UI action;
 - интегрировать с Arlehub GUI chat: каждое agent действие можно раскрыть в event trail.
+
+Текущий реализованный slice:
+
+- backend recorder: `internal/mcp/flight_recorder.go`;
+- read tool: `ide_control.flight_recorder`;
+- capability flags: `flightRecorderDiskPath`, `supportsFlightRecorderV1`;
+- event types: `mcp.tool.completed`, `agent.ui.requested`, `agent.ui.acknowledged`,
+  `approval.requested`, `approval.resolved`;
+- redaction: `approval_code`, `content`, `data` и длинные string payloads проходят через
+  общий audit sanitizer;
+- guardrail cleanup: bridge helpers больше не делают повторный approval check внутри
+  уже проверенного tool call path;
+- out of scope пока остаются Arlehub timeline UI, terminal semantic ingestion и frontend
+  recorder surface.
 
 ### Risks And Checks
 
@@ -1302,7 +1323,7 @@ risky action, user can return layout.
     intentionally out of scope until the base shell layer is stable.
 11. Done: add internal Protocol/Open Intent router for current in-app actions only.
 12. Later: build Arlehub GUI hub mode as central surface using existing floating helpers.
-13. Later: add Agent Flight Recorder and wire it to Arlehub timeline.
+13. Done: add Agent Flight Recorder v1 on MCP/backend side; Arlehub timeline UI remains later.
 14. Done: add Applet Promotion Chain up to fullscreen/floating/snapped first.
 15. Later: spike Wails v3 detached windows with Window Lease System.
 16. Later: add packaged Protocol Router, file associations and single instance.
@@ -1341,7 +1362,10 @@ capability-driven v3 shell layer. Это снижает риск перед deta
    without enabling tray yet: `backgroundStatus` available, `tray`/`notifications`
    unavailable, UI получает честное состояние через `shell:background:status`, а future
    consumers могут исполнять `cancel-job`/`focus-surface` через action contract.
-8. Done: Applet Promotion Chain v1. Surface Runtime exposes promotion commands and
+8. Done: Agent Flight Recorder and guardrails v1. MCP/UI tool calls, UI ack path and live
+   approval path пишутся в bounded timeline + append-only disk log; secrets redacted;
+   duplicate approval checks in bridge helpers removed.
+9. Done: Applet Promotion Chain v1. Surface Runtime exposes promotion commands and
    return targets, and `ide:surface:promote` now applies in-window promotion for
    existing panels/preview windows. Detached windows remain gated for Window Lease.
 
