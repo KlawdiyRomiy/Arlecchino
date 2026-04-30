@@ -238,6 +238,9 @@ Baseline hardening для этой ветки теперь имеет отдел
   `PreviewWindowSurface` без нового applet body. Close policy возвращает preview в
   main shell через `ide:intent:open`. Git/Problems/Terminal остаются lease-supported,
   но actual native detach для них отложен до стабильного preview smoke.
+- Detached Browser Preview return lifecycle усилен чистым helper contract: close/return
+  intent теперь сохраняет `surfaceId`, `previewWindowId`, current URL payload, title,
+  `pinned` и return target host/position перед отправкой обратно в Open Intent router.
 - Добавлен Packaged OS Integration adapter layer без включения native delivery:
   `packaged_os_integration.go` отдает default-off adapters/read model для custom
   protocol, file associations, tray, notifications, dock/taskbar badges и auto-update
@@ -252,6 +255,13 @@ Baseline hardening для этой ветки теперь имеет отдел
   только текущие Background Shell actions, native notifications отправляют deduped
   notification candidates, а dock/taskbar badge отражает `AttentionCount`. Notification
   service стартует lazy, чтобы macOS bundle/signing ограничения не ломали app startup.
+- Добавлен packaged binary smoke matrix без `.app` packaging:
+  `./scripts/wails3-packaged-smoke-matrix-macos.sh` строит Wails v3 binary один раз и
+  проверяет default report, `--open-file`, `file://`, `arlecchino://open?file=...`,
+  `--open-preview`, `arlecchino://focus?...` и gated snapshot с single-instance,
+  Window Lease и packaged OS spike flags. Полноценный `.app` bundle, signing,
+  protocol/file association OS registration и native notification smoke остаются next
+  gate.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -269,11 +279,11 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Wails v3 lifecycle/dev runner | Green | `./scripts/wails3-dev-macos.sh` is the branch smoke path; runner owns child cleanup and stale output-scoped MCP shutdown. | Keep using v3 script; do not use global v2 `wails` CLI for this branch. |
 | Bindings/service surface | Green | Shell capabilities, context menu, background shell, packaged OS and window lease methods exist behind the `App` service with runtime fallbacks. | Regenerate bindings only with `./scripts/wails3-generate-bindings.sh --write` and review generated churn separately. |
 | Surface/Applet promotion | Green | In-window `floating`, `snap`, `fullscreen`, `return-to-main` works for existing panels/previews without detached windows. | Detached remains Window Lease territory, not part of in-window promotion. |
-| Detached windows / Window Lease | Yellow | Browser Preview actual Wails detached window works only with `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`. | Smoke preview lifecycle longer; then add Git/Problems/Terminal helper detach one by one. |
+| Detached windows / Window Lease | Yellow | Browser Preview actual Wails detached window works only with `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`; return intent now preserves preview identity/state. | Manual preview detach/close smoke; then add Git/Problems/Terminal helper detach one by one. |
 | Single instance/open-file | Yellow | Backend parser, frontend-ready queue and `ide:intent:open` dispatch are implemented behind `ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1`. | Packaged second-instance run and OS file-open smoke before enabling capability by default. |
 | Protocol/file associations | Yellow | `arlecchino://` and `file://` payloads normalize through strict open-intent allowlist. | Real OS registration in packaged app; keep capabilities `requires-build` until smoke passes. |
 | Tray/notifications/dock badge | Yellow | Real Wails native delivery is wired to Background Shell only behind packaged spike env flags. | Signed/bundled notification smoke, tray menu smoke and badge smoke before default-on native delivery. |
-| Packaging/release OS integration | Red | Build-only spike works, but production packaging/signing/registration is not validated. | Dedicated packaged app smoke for protocol, file associations, tray, notifications, badge, single-instance and update manifest. |
+| Packaging/release OS integration | Red | Binary smoke matrix validates launch parser/report gates, but production `.app` packaging/signing/registration is not validated. | Dedicated packaged app smoke for protocol, file associations, tray, notifications, badge, single-instance and update manifest. |
 
 Blockers before Arlehub:
 
@@ -1463,6 +1473,12 @@ risky action, user can return layout.
     single-instance, protocol/file-open, tray/notifications and packaging now have
     explicit green/yellow/red status plus blockers before Arlehub or default-on native
     delivery.
+25. Done: add packaged binary smoke matrix. The new macOS matrix script validates the
+    existing v3 binary smoke path across default, open-file, file URL, custom protocol,
+    preview, focus and gated snapshot cases without creating tracked artifacts.
+26. Done: harden detached Browser Preview return lifecycle. The return-to-main intent is
+    now a pure helper contract that preserves preview identity, current URL payload,
+    pinned state and return host/position.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
@@ -1522,6 +1538,12 @@ capability-driven v3 shell layer. Это снижает риск перед deta
 16. Done: Decision Gate doc. Current Wails v3 shell migration status is captured as a
     green/yellow/red matrix with blockers before Arlehub and before default-on native OS
     integrations.
+17. Done: Packaged binary smoke matrix. `./scripts/wails3-packaged-smoke-matrix-macos.sh`
+    builds the v3 binary once and validates default/open-file/file-url/protocol/preview/
+    focus/gated report paths; `.app` packaging remains next gate.
+18. Done: Detached preview lifecycle hardening. Browser Preview close/return now keeps
+    `surfaceId`, `previewWindowId`, URL payload, title, pinned state and return target
+    intact through the Open Intent router.
 
 Arlehub можно начинать только после пунктов 1-5: тогда hub будет использовать уже
 готовые surface events, command routing и capability checks, а не создавать параллельную
