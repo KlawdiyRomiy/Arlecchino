@@ -192,6 +192,13 @@ Baseline hardening для этой ветки теперь имеет отдел
   до frontend-ready сигнала `ide:frontend:ready`, чтобы launch args и second-instance
   requests не терялись до регистрации React dispatcher. По умолчанию capability остается
   выключенной до packaged smoke.
+- Добавлен Protocol/File Association packaged probe: backend launch parser теперь
+  нормализует `arlecchino://` custom protocol payloads и `file://` association payloads
+  в те же typed `ide:intent:open` intents. Allowlist остается узким:
+  open project, open file, open preview URL и focus surface; произвольные commands,
+  non-http(s) preview URL и небезопасные surface ids отклоняются. Capabilities
+  `customProtocol`/`fileAssociations` остаются `requires-build`, пока packaged smoke не
+  подтвердит OS registration.
 - Добавлен Background Shell Status v1 без включения tray/notifications:
   `background_shell_status.go` хранит in-memory read model для фоновых jobs/services,
   bounded event tail, cancel/focus action candidates и rate-limited notification
@@ -818,7 +825,15 @@ Single-instance spike теперь добавлен, но gated: `ARLECCHINO_ENA
 `--open-file`, `--open-preview`, first existing path или http(s) URL) и отправляет typed
 intent в существующий `ide:intent:open`. Initial launch args проходят тот же parser, но
 backend держит pending queue до frontend-ready. Это еще не включает packaged custom protocol
-или file associations как capability.
+или file associations как default-on capability.
+
+Protocol/File Association packaged probe теперь добавлен поверх того же parser:
+`arlecchino://open?project=...`, `arlecchino://open/file?path=...`,
+`arlecchino://open?preview=https://...`, `arlecchino://focus?surface=panel:git`,
+bare file paths и `file://...` payloads нормализуются в `openProject`, `openFile`,
+`openPreview` или `focusSurface`. Это проверяет strict routing contract до OS registration;
+`customProtocol` и `fileAssociations` остаются `requires-build`, пока packaged app smoke не
+подтвердит настоящую регистрацию и delivery от macOS/Windows/Linux.
 
 ### Risks And Checks
 
@@ -1402,6 +1417,9 @@ risky action, user can return layout.
     detached windows are available only under `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`;
     close returns the preview to main through the Open Intent router. Git/Problems/
     Terminal remain lease-supported but not native-detachable yet.
+22. Done: add Protocol/File Association packaged probe. Custom protocol URLs and
+    `file://`/file-association payloads normalize into the Open Intent allowlist, while
+    OS registration capabilities remain `requires-build`.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
@@ -1452,6 +1470,9 @@ capability-driven v3 shell layer. Это снижает риск перед deta
 13. Done: Native detached Browser Preview spike. Window Lease v2 now creates a real
     Wails window for `preview:*` under explicit spike env, keeps applet identity/payload,
     reports active leases to Surface Runtime and restores the preview to main on close.
+14. Done: Protocol/File Association packaged probe. `arlecchino://` and `file://`
+    launch payloads now normalize through the backend Open Intent parser, with strict
+    allowlist semantics and `requires-build` capabilities until packaged OS smoke.
 
 Arlehub можно начинать только после пунктов 1-5: тогда hub будет использовать уже
 готовые surface events, command routing и capability checks, а не создавать параллельную

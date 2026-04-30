@@ -160,7 +160,7 @@ func buildPackagedOSIntegrationSnapshot(
 				Capability:            "customProtocol",
 				Status:                ShellCapabilityRequiresBuild,
 				RequiresPackagedBuild: true,
-				Reason:                "Custom protocol registration is adapter-only until packaged app smoke validates strict open-intent routing.",
+				Reason:                "arlecchino:// payloads normalize through the strict open-intent allowlist, but OS registration still requires packaged smoke.",
 			},
 			"fileAssociations": {
 				ID:                    "fileAssociations",
@@ -168,7 +168,7 @@ func buildPackagedOSIntegrationSnapshot(
 				Capability:            "fileAssociations",
 				Status:                ShellCapabilityRequiresBuild,
 				RequiresPackagedBuild: true,
-				Reason:                "File associations are adapter-only until packaged app smoke validates open-file routing.",
+				Reason:                "File paths and file:// payloads normalize into open-file/open-project intents, but OS association remains requires-build.",
 			},
 			"tray": {
 				ID:                    "tray",

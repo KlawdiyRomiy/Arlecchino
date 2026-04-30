@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,6 +85,30 @@ func TestWails3PackagedSmokeReport_DefaultsStayOff(t *testing.T) {
 	}
 	if report.WindowLease.Available {
 		t.Fatal("WindowLease.Available = true, want false before Window Lease v2")
+	}
+}
+
+func TestWails3PackagedSmokeReport_NormalizesPackagedProtocolPayload(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main.go")
+	writePackagedSmokeTestFile(t, filePath)
+	protocolURL := "arlecchino://open?file=" + url.QueryEscape("main.go")
+
+	report := buildWails3PackagedSmokeReport(
+		nil,
+		[]string{"Arlecchino-v3", protocolURL},
+		root,
+		time.Unix(0, 0).UTC(),
+	)
+
+	if report.OpenIntent == nil || report.OpenIntent["kind"] != "openFile" {
+		t.Fatalf("OpenIntent = %#v, want protocol openFile", report.OpenIntent)
+	}
+	if report.OpenIntent["path"] != filePath || report.OpenIntent["source"] != "packaged-smoke" {
+		t.Fatalf("OpenIntent = %#v, want packaged-smoke file path", report.OpenIntent)
+	}
+	if report.PackagedOSIntegration.Adapters["customProtocol"].Status != ShellCapabilityRequiresBuild {
+		t.Fatalf("customProtocol status = %q, want requires-build", report.PackagedOSIntegration.Adapters["customProtocol"].Status)
 	}
 }
 
