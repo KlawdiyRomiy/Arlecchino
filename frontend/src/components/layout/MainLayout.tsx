@@ -205,6 +205,19 @@ const createEmptyZenPanelHoverLeaveTimers = (): ZenPanelHoverLeaveTimers => ({
   bottom: {},
 });
 
+const createEmptySnappedSlotSizes = (): Record<PanelPosition, number> => ({
+  left: 0,
+  right: 0,
+  top: 0,
+  bottom: 0,
+});
+
+const getPrimarySnappedSlotSize = (
+  position: PanelPosition,
+  size: PanelSize,
+): number =>
+  position === "left" || position === "right" ? size.width : size.height;
+
 const coercePositiveSize = (
   value: number | undefined,
   fallback: number,
@@ -905,6 +918,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [panelExitPositions, setPanelExitPositions] = useState<PanelPosition[]>(
     [],
   );
+  const [panelExitSlotSizes, setPanelExitSlotSizes] = useState<
+    Record<PanelPosition, number>
+  >(createEmptySnappedSlotSizes);
   const [panelPresenceBypassPositions, setPanelPresenceBypassPositions] =
     useState<PanelPosition[]>([]);
   const panelPresenceBypassPositionsRef = useRef<PanelPosition[]>([]);
@@ -945,6 +961,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setRelocatingPreviewWindowIds([]);
       setPanelDropSettlingPositions([]);
       setPanelExitPositions([]);
+      setPanelExitSlotSizes(createEmptySnappedSlotSizes());
       panelPresenceBypassPositionsRef.current = [];
       setPanelPresenceBypassPositions([]);
       heldPanelShortcutRef.current = null;
@@ -2099,7 +2116,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const startSnappedSlotExit = useCallback(
-    (position: PanelPosition) => {
+    (position: PanelPosition, slotSize: number) => {
       if (reducePanelMotion) {
         return;
       }
@@ -2108,12 +2125,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         clearTimeout(panelExitTimerRef.current);
       }
 
+      setPanelExitSlotSizes((currentSizes) => {
+        if (currentSizes[position] === slotSize) {
+          return currentSizes;
+        }
+
+        return { ...currentSizes, [position]: slotSize };
+      });
       setPanelExitPositions((currentPositions) =>
         uniquePanelPositions([...currentPositions, position]),
       );
       panelExitTimerRef.current = setTimeout(() => {
         panelExitTimerRef.current = null;
         setPanelExitPositions([]);
+        setPanelExitSlotSizes(createEmptySnappedSlotSizes());
       }, FLOATING_PANEL_LAYOUT_TRANSITION_MS + 700);
     },
     [reducePanelMotion],
@@ -2124,6 +2149,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       currentPositions.filter(
         (currentPosition) => currentPosition !== position,
       ),
+    );
+    setPanelExitSlotSizes((currentSizes) =>
+      currentSizes[position] === 0
+        ? currentSizes
+        : { ...currentSizes, [position]: 0 },
     );
   }, []);
 
@@ -2142,7 +2172,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      startSnappedSlotExit(currentConfig.position);
+      startSnappedSlotExit(
+        currentConfig.position,
+        getPrimarySnappedSlotSize(currentConfig.position, currentConfig.size),
+      );
     },
     [startSnappedSlotExit],
   );
@@ -2153,7 +2186,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      startSnappedSlotExit(windowState.position);
+      startSnappedSlotExit(
+        windowState.position,
+        windowState.position === "left" || windowState.position === "right"
+          ? windowState.width
+          : windowState.height,
+      );
     },
     [startSnappedSlotExit],
   );
@@ -2260,7 +2298,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      startSnappedSlotExit(config.position);
+      startSnappedSlotExit(
+        config.position,
+        getPrimarySnappedSlotSize(config.position, config.size),
+      );
     });
   }, [
     effectivePanels,
@@ -3729,6 +3770,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     position: "relative",
     zIndex: 0,
     backgroundColor: "var(--bg-blackprint)",
+    contain: "layout paint style",
+    transform: "translateZ(0)",
+    backfaceVisibility: "hidden",
   };
 
   const renderDropZone = (position: PanelPosition) => {
@@ -4145,20 +4189,23 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   ): React.CSSProperties => {
     const isSettlingSlot = panelDropSettlingPositions.includes(position);
     const isExitingSlot = panelExitPositions.includes(position);
-    const shouldExposeSlotOverflow = isSettlingSlot || isExitingSlot;
+    const resolvedWidth =
+      isExitingSlot && width <= 0 ? panelExitSlotSizes[position] : width;
+    const shouldExposeSlotOverflow = isSettlingSlot;
     const slotTransitionSuspended =
       draggingPanel !== null ||
       draggingPreviewWindowId !== null ||
       isResizingSlot;
+    const shouldAnimateSlotSize = isSettlingSlot && !slotTransitionSuspended;
     const transition =
-      reducePanelMotion || slotTransitionSuspended
+      reducePanelMotion || !shouldAnimateSlotSize
         ? "none"
         : `width ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1), min-width ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1), max-width ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`;
 
     return {
-      width,
-      minWidth: width,
-      maxWidth: width,
+      width: resolvedWidth,
+      minWidth: resolvedWidth,
+      maxWidth: resolvedWidth,
       height: "100%",
       minHeight: 0,
       flexShrink: 0,
@@ -4182,20 +4229,23 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   ): React.CSSProperties => {
     const isSettlingSlot = panelDropSettlingPositions.includes(position);
     const isExitingSlot = panelExitPositions.includes(position);
-    const shouldExposeSlotOverflow = isSettlingSlot || isExitingSlot;
+    const resolvedHeight =
+      isExitingSlot && height <= 0 ? panelExitSlotSizes[position] : height;
+    const shouldExposeSlotOverflow = isSettlingSlot;
     const slotTransitionSuspended =
       draggingPanel !== null ||
       draggingPreviewWindowId !== null ||
       isResizingSlot;
+    const shouldAnimateSlotSize = isSettlingSlot && !slotTransitionSuspended;
     const transition =
-      reducePanelMotion || slotTransitionSuspended
+      reducePanelMotion || !shouldAnimateSlotSize
         ? "none"
         : `height ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1), min-height ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1), max-height ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`;
 
     return {
-      height,
-      minHeight: height,
-      maxHeight: height,
+      height: resolvedHeight,
+      minHeight: resolvedHeight,
+      maxHeight: resolvedHeight,
       width: "100%",
       minWidth: 0,
       flexShrink: 0,
@@ -4221,8 +4271,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   };
 
   // Framer layout scales slot descendants here, which makes panels expand
-  // instead of sliding. Slot size uses explicit CSS transitions instead.
+  // instead of sliding. Only drag/drop settling animates slot size.
   const workspaceLayoutMotionEnabled = false;
+  const panelLayoutChanging =
+    panelDropSettling || panelExitPositions.length > 0;
   const workspaceEditorContent = tuiModeActive ? (
     <TUITerminalWorkspaceContent
       paneStyle={tuiTerminalPaneStyle}
@@ -4407,6 +4459,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 tuiModeActive ? "tui-center-terminal" : "editor-area"
               }
               editorContent={workspaceEditorContent}
+              panelLayoutChanging={panelLayoutChanging}
               panelDropSettling={panelDropSettling}
               draggingPanel={draggingPanel}
               draggingPreviewWindowId={draggingPreviewWindowId}

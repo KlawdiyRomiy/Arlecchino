@@ -21,6 +21,7 @@ interface MainPanelWorkspaceProps {
   editorAreaStyle: React.CSSProperties;
   editorAreaTestId: string;
   editorContent: React.ReactNode;
+  panelLayoutChanging: boolean;
   panelDropSettling: boolean;
   draggingPanel: PanelId | null;
   draggingPreviewWindowId: string | null;
@@ -75,6 +76,7 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
   editorAreaStyle,
   editorAreaTestId,
   editorContent,
+  panelLayoutChanging,
   panelDropSettling,
   draggingPanel,
   draggingPreviewWindowId,
@@ -242,7 +244,11 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
                 )}
           </motion.div>
 
-          <div style={editorAreaStyle} data-testid={editorAreaTestId}>
+          <div
+            style={editorAreaStyle}
+            data-testid={editorAreaTestId}
+            data-panel-layout-changing={panelLayoutChanging ? "true" : "false"}
+          >
             {editorContent}
           </div>
 
