@@ -244,14 +244,14 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     if (editorFeatureBudget.runtimeRichEditorFeatures) {
       result.push(closeBrackets(), highlightSelectionMatches());
     }
-    if (editorFeatureBudget.runtimeGitGutter) {
+    if (editorFeatureBudget.layoutStableGitGutter) {
       result.push(gitGutterExtension);
     }
     result.push(...diagnosticsExtension);
     return result;
   }, [
     diagnosticsExtension,
-    editorFeatureBudget.runtimeGitGutter,
+    editorFeatureBudget.layoutStableGitGutter,
     editorFeatureBudget.runtimeRichEditorFeatures,
     gitGutterExtension,
   ]);

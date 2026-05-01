@@ -2132,7 +2132,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const adaptiveExtensions = useMemo<Extension[]>(() => {
     const nextExtensions: Extension[] = [];
 
-    if (editorFeatureBudget.runtimeGitGutter) {
+    if (editorFeatureBudget.layoutStableGitGutter) {
       nextExtensions.push(gitGutterExtension);
     }
 
@@ -2257,7 +2257,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     diagnosticsExtension,
     editorFeatureBudget.runtimeCompletions,
     editorFeatureBudget.runtimeGhostText,
-    editorFeatureBudget.runtimeGitGutter,
+    editorFeatureBudget.layoutStableGitGutter,
     editorFeatureBudget.runtimeHover,
     editorFeatureBudget.runtimeRichEditorFeatures,
     ghost,
@@ -2274,7 +2274,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     editorFeatureBudget.runtimeCompletions,
     editorFeatureBudget.runtimeDiagnostics,
     editorFeatureBudget.runtimeGhostText,
-    editorFeatureBudget.runtimeGitGutter,
+    editorFeatureBudget.layoutStableGitGutter,
     editorFeatureBudget.runtimeHover,
     editorFeatureBudget.runtimeRichEditorFeatures,
     showRainbowBrackets,

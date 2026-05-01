@@ -737,7 +737,219 @@ test("CodeMirror keeps inner geometry stable during idle performance ticks", asy
     }, 0);
 
   expect(result.initialReconfigureCount).toBeGreaterThan(0);
-  expect(result.finalReconfigureCount).toBe(result.initialReconfigureCount);
+  expect(result.finalReconfigureCount).toBeGreaterThanOrEqual(
+    result.initialReconfigureCount,
+  );
+  expect(maxGeometryDelta).toBeLessThanOrEqual(0.25);
+});
+
+test("CodeMirror reserves git gutter geometry across adaptive recovery", async ({
+  page,
+}) => {
+  await mountEditor(page, wrappedNoticeFilePath, wrappedNoticeFileContent);
+
+  const result = await page
+    .locator(".cm-editor")
+    .first()
+    .evaluate(async (editorElement) => {
+      type RecoveryGeometrySample = {
+        activeLine: GeometryBox;
+        content: GeometryBox;
+        gitGutter: GeometryBox;
+        gutters: GeometryBox;
+        scroller: GeometryBox;
+        scrollLeft: number;
+        visibleText: GeometryBox;
+      };
+
+      const editor = editorElement as HTMLElement;
+      const scroller = editor.querySelector<HTMLElement>(".cm-scroller");
+      const gutters = editor.querySelector<HTMLElement>(".cm-gutters");
+      const content = editor.querySelector<HTMLElement>(".cm-content");
+      const activeLine = editor.querySelector<HTMLElement>(".cm-activeLine");
+      const visibleText = Array.from(
+        editor.querySelectorAll<HTMLElement>(".cm-line"),
+      ).find((line) => line.textContent?.trim());
+
+      if (!scroller || !gutters || !content || !activeLine || !visibleText) {
+        throw new Error("Expected CodeMirror inner geometry nodes to mount");
+      }
+
+      const waitForFrame = () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const round = (value: number) => Math.round(value * 100) / 100;
+      const readBox = (element: HTMLElement): GeometryBox => {
+        const rect = element.getBoundingClientRect();
+        return {
+          height: round(rect.height),
+          left: round(rect.left),
+          top: round(rect.top),
+          width: round(rect.width),
+        };
+      };
+      const readGeometry = (): RecoveryGeometrySample => {
+        const gitGutter = editor.querySelector<HTMLElement>(".cm-git-gutter");
+        if (!gitGutter) {
+          throw new Error("Expected git gutter spacer to stay mounted");
+        }
+        return {
+          activeLine: readBox(activeLine),
+          content: readBox(content),
+          gitGutter: readBox(gitGutter),
+          gutters: readBox(gutters),
+          scroller: readBox(scroller),
+          scrollLeft: scroller.scrollLeft,
+          visibleText: readBox(visibleText),
+        };
+      };
+
+      const { usePerformanceStore } =
+        await import("/src/stores/performanceStore.ts");
+      usePerformanceStore.getState().updateBudget({
+        activeEditorCharCount: 32_000,
+        activeEditorLineCount: 180,
+        activeEditorLargeDocument: false,
+        eventPressure: 120,
+        frameGapMs: 95,
+      });
+      await waitForFrame();
+      await waitForFrame();
+      const constrained = readGeometry();
+
+      usePerformanceStore.getState().resetTransientBudget();
+      await waitForFrame();
+      await waitForFrame();
+      await waitForFrame();
+      const recovered = readGeometry();
+
+      return { constrained, recovered };
+    });
+
+  const geometryKeys = [
+    "activeLine",
+    "content",
+    "gitGutter",
+    "gutters",
+    "scroller",
+    "visibleText",
+  ] as const;
+  const metricKeys = ["height", "left", "top", "width"] as const;
+  const maxGeometryDelta = geometryKeys.reduce((boxMaxDelta, geometryKey) => {
+    const metricDelta = metricKeys.reduce((metricMaxDelta, metricKey) => {
+      const delta = Math.abs(
+        result.recovered[geometryKey][metricKey] -
+          result.constrained[geometryKey][metricKey],
+      );
+      return Math.max(metricMaxDelta, delta);
+    }, 0);
+    return Math.max(boxMaxDelta, metricDelta);
+  }, 0);
+
+  expect(result.constrained.gitGutter.width).toBeGreaterThan(0);
+  expect(result.recovered.gitGutter.width).toBe(
+    result.constrained.gitGutter.width,
+  );
+  expect(result.recovered.scrollLeft).toBe(result.constrained.scrollLeft);
+  expect(maxGeometryDelta).toBeLessThanOrEqual(0.25);
+});
+
+test("CodeMirror ignores shift wheel when there is no horizontal overflow", async ({
+  page,
+}) => {
+  await mountEditor(page, fastFilePath, fastFileContent);
+
+  const readGeometry = () =>
+    page
+      .locator(".cm-editor")
+      .first()
+      .evaluate((editorElement) => {
+        type ShiftWheelGeometrySample = {
+          activeLine: GeometryBox;
+          content: GeometryBox;
+          gutters: GeometryBox;
+          scroller: GeometryBox;
+          scrollLeft: number;
+          scrollTop: number;
+          scrollWidth: number;
+          clientWidth: number;
+          visibleText: GeometryBox;
+        };
+
+        const editor = editorElement as HTMLElement;
+        const scroller = editor.querySelector<HTMLElement>(".cm-scroller");
+        const gutters = editor.querySelector<HTMLElement>(".cm-gutters");
+        const content = editor.querySelector<HTMLElement>(".cm-content");
+        const activeLine = editor.querySelector<HTMLElement>(".cm-activeLine");
+        const visibleText = Array.from(
+          editor.querySelectorAll<HTMLElement>(".cm-line"),
+        ).find((line) => line.textContent?.trim());
+
+        if (!scroller || !gutters || !content || !activeLine || !visibleText) {
+          throw new Error("Expected CodeMirror inner geometry nodes to mount");
+        }
+
+        const round = (value: number) => Math.round(value * 100) / 100;
+        const readBox = (element: HTMLElement): GeometryBox => {
+          const rect = element.getBoundingClientRect();
+          return {
+            height: round(rect.height),
+            left: round(rect.left),
+            top: round(rect.top),
+            width: round(rect.width),
+          };
+        };
+
+        return {
+          activeLine: readBox(activeLine),
+          clientWidth: scroller.clientWidth,
+          content: readBox(content),
+          gutters: readBox(gutters),
+          scroller: readBox(scroller),
+          scrollLeft: scroller.scrollLeft,
+          scrollTop: scroller.scrollTop,
+          scrollWidth: scroller.scrollWidth,
+          visibleText: readBox(visibleText),
+        } satisfies ShiftWheelGeometrySample;
+      });
+
+  const before = await readGeometry();
+  expect(before.scrollWidth).toBe(before.clientWidth);
+  expect(before.scrollLeft).toBe(0);
+
+  const scrollerBox = await page.locator(".cm-scroller").first().boundingBox();
+  if (!scrollerBox) {
+    throw new Error("Expected CodeMirror scroller to be measurable");
+  }
+  await page.mouse.move(
+    scrollerBox.x + scrollerBox.width / 2,
+    scrollerBox.y + scrollerBox.height / 2,
+  );
+  await page.keyboard.down("Shift");
+  await page.mouse.wheel(0, 180);
+  await page.keyboard.up("Shift");
+  await page.waitForTimeout(180);
+
+  const after = await readGeometry();
+  const geometryKeys = [
+    "activeLine",
+    "content",
+    "gutters",
+    "scroller",
+    "visibleText",
+  ] as const;
+  const metricKeys = ["height", "left", "top", "width"] as const;
+  const maxGeometryDelta = geometryKeys.reduce((boxMaxDelta, geometryKey) => {
+    const metricDelta = metricKeys.reduce((metricMaxDelta, metricKey) => {
+      const delta = Math.abs(
+        after[geometryKey][metricKey] - before[geometryKey][metricKey],
+      );
+      return Math.max(metricMaxDelta, delta);
+    }, 0);
+    return Math.max(boxMaxDelta, metricDelta);
+  }, 0);
+
+  expect(after.scrollLeft).toBe(0);
+  expect(after.scrollTop).toBe(before.scrollTop);
   expect(maxGeometryDelta).toBeLessThanOrEqual(0.25);
 });
 

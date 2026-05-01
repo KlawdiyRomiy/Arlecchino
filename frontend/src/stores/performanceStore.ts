@@ -24,6 +24,7 @@ export interface AdaptiveEditorFeatureBudget {
   mode: AdaptivePerformanceMode;
   layoutStableLineWrapping: boolean;
   layoutStableFoldGutter: boolean;
+  layoutStableGitGutter: boolean;
   layoutStableMinimap: boolean;
   runtimeRichEditorFeatures: boolean;
   runtimeCompletions: boolean;
@@ -179,6 +180,7 @@ export const resolveAdaptiveEditorFeatureBudget = (
   const layoutConstrained = snapshot.activeEditorLargeDocument;
   const layoutStableLineWrapping = !layoutConstrained;
   const layoutStableFoldGutter = false;
+  const layoutStableGitGutter = !layoutConstrained;
   const layoutStableMinimap = !layoutConstrained;
   const runtimeRichEditorFeatures = !constrained;
   const runtimeCompletions = !critical;
@@ -192,6 +194,7 @@ export const resolveAdaptiveEditorFeatureBudget = (
     mode: snapshot.mode,
     layoutStableLineWrapping,
     layoutStableFoldGutter,
+    layoutStableGitGutter,
     layoutStableMinimap,
     runtimeRichEditorFeatures,
     runtimeCompletions,

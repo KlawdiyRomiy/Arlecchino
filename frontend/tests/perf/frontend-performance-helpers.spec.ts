@@ -206,6 +206,7 @@ test("adaptive performance budget disables expensive editor features under press
       diagnostics: budget.diagnostics,
       gitGutter: budget.gitGutter,
       layoutStableFoldGutter: budget.layoutStableFoldGutter,
+      layoutStableGitGutter: budget.layoutStableGitGutter,
       layoutStableLineWrapping: budget.layoutStableLineWrapping,
       minimap: budget.minimap,
       notifyChangeDelayMs: budget.notifyChangeDelayMs,
@@ -218,6 +219,7 @@ test("adaptive performance budget disables expensive editor features under press
     diagnostics: false,
     gitGutter: false,
     layoutStableFoldGutter: false,
+    layoutStableGitGutter: false,
     layoutStableLineWrapping: false,
     minimap: false,
     notifyChangeDelayMs: 900,
@@ -256,6 +258,7 @@ test("adaptive performance budget reacts to indexer and project pressure", async
     return {
       constrainedMode: constrainedSnapshot.mode,
       constrainedGitGutter: constrainedBudget.gitGutter,
+      constrainedLayoutStableGitGutter: constrainedBudget.layoutStableGitGutter,
       constrainedLineWrapping: constrainedBudget.layoutStableLineWrapping,
       constrainedCompletions: constrainedBudget.completions,
       criticalMode: criticalSnapshot.mode,
@@ -268,6 +271,7 @@ test("adaptive performance budget reacts to indexer and project pressure", async
   expect(result).toEqual({
     constrainedMode: "constrained",
     constrainedGitGutter: false,
+    constrainedLayoutStableGitGutter: true,
     constrainedLineWrapping: true,
     constrainedCompletions: true,
     criticalMode: "critical",
