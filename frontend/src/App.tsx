@@ -28,6 +28,7 @@ import {
 } from "./utils/projectBoundState";
 import { useApplicationMenuBridge } from "./hooks/useApplicationMenuBridge";
 import { useBackgroundShellStatusBridge } from "./shell/backgroundShellStatus";
+import { useOpenIntentEventBridge } from "./shell/openIntentEventBridge";
 import { usePackagedOSIntegrationBridge } from "./shell/packagedOSIntegration";
 import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
 import { useWindowLeaseBridge } from "./shell/windowLeaseBridge";
@@ -59,6 +60,7 @@ const appShellStyle: React.CSSProperties = {
 const App: React.FC = () => {
   useApplicationMenuBridge();
   useShellCapabilitiesBridge(AppFunctions.GetShellCapabilities);
+  useOpenIntentEventBridge();
   useBackgroundShellStatusBridge();
   usePackagedOSIntegrationBridge();
   useWindowLeaseBridge(syncSurfaceRuntimeWindowLeaseBackendStatus);

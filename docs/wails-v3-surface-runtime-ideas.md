@@ -284,10 +284,26 @@ Baseline hardening для этой ветки теперь имеет отдел
 - Добавлен real OS handoff smoke harness:
   `./scripts/wails3-real-os-smoke-macos.sh` собирает production-shaped `.app`,
   регистрирует bundle через LaunchServices, запускает live app с temp app data dir
-  и пишет `ide:intent:open` trace. Текущий smoke выявил Red blocker: в ad-hoc temp
-  bundle Wails v3 `ApplicationLaunchedWithUrl`/`ApplicationOpenedWithFile` event не
-  дошел до open-intent trace для `arlecchino://open?file=...`; harness теперь
-  фиксирует этот failure как gate evidence, а не как "parser success".
+  и пишет `ide:intent:open` trace. Trace теперь разделяет вход в Wails
+  `ApplicationLaunchedWithUrl`/`ApplicationOpenedWithFile` handlers
+  (`application-event`) и последующий `queued`/`emitted` dispatch, поэтому Red gate
+  можно отличить как OS/Wails delivery failure, parser rejection или frontend-ready queue
+  issue. Smoke now passes for protocol open-file, protocol preview, protocol focus,
+  rejected arbitrary command, file association and second-instance handoff. Report also
+  records the actual route used per case, currently `osascript open location` for protocol
+  payloads and `osascript open POSIX file` for file association payloads.
+- Добавлен temp-only repro harness для pinned Wails `v3.0.0-alpha.78`
+  custom-protocol example: `./scripts/wails3-custom-protocol-repro-macos.sh` копирует
+  upstream example во временную директорию, ad-hoc signs `.app`, регистрирует URL scheme
+  через LaunchServices и проверяет, логирует ли сам Wails example
+  `ApplicationLaunchedWithUrl`. Это нужно для честного сравнения "наша упаковка" vs
+  "upstream Wails example".
+- Open Intent frontend bridge поднят с `MainLayout` на app-shell level:
+  `frontend/src/shell/openIntentEventBridge.ts` регистрирует listener для
+  `ide:intent:open` и отправляет `ide:frontend:ready` сразу после готовности bridge.
+  `MainLayout` по-прежнему регистрирует actual dispatcher; если layout еще не смонтирован
+  (welcome/no-project packaged launch), frontend router держит intent в своей bounded
+  queue до появления layout dispatcher.
 - Packaged app data path теперь не зависит от repo cwd:
   `internal/project.ResolveDBPath` оставляет `data/projects.db` для dev, но в packaged
   mode использует `ARLECCHINO_DATA_DIR` или user config dir.
@@ -315,12 +331,12 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Bindings/service surface | Green | Shell capabilities, context menu, background shell, packaged OS and window lease methods exist behind the `App` service with runtime fallbacks. | Regenerate bindings only with `./scripts/wails3-generate-bindings.sh --write` and review generated churn separately. |
 | Surface/Applet promotion | Green | In-window `floating`, `snap`, `fullscreen`, `return-to-main` works for existing panels/previews without detached windows. | Detached remains Window Lease territory, not part of in-window promotion. |
 | Detached windows / Window Lease | Yellow | Browser Preview actual Wails detached window works only with `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`; return intent preserves preview identity/state; panel detach commands are now disabled/honest until native panel detach exists. | Manual preview detach/close smoke remains useful; then add Git/Problems/Terminal helper detach one by one. |
-| Single instance/open-file | Yellow | Backend parser, frontend-ready queue and `ide:intent:open` dispatch are implemented behind `ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1`; packaged `.app` smoke now validates the second-instance parser/queue probe. | Real OS second-instance handoff from a launched packaged app before enabling capability by default. |
-| Protocol/file associations | Yellow | `arlecchino://` and `file://` payloads normalize through strict open-intent allowlist; packaged `.app` smoke validates these payloads as launch args. | Real LaunchServices/Finder/browser registration smoke before moving capabilities out of `requires-build`. |
+| Single instance/open-file | Green | Backend parser, frontend-ready queue and `ide:intent:open` dispatch are implemented behind `ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1`; real OS smoke now proves second-instance handoff into the first launched packaged app. | Keep gated/default-off until release packaging policy says this can be enabled by default. |
+| Protocol/file associations | Green | `arlecchino://` and file association payloads normalize through strict open-intent allowlist; real OS smoke now proves Wails handler entry and emitted dispatch through LaunchServices/AppleEvent routes. | Keep production default-handler claims scoped to signed/notarized release packaging. |
 | Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates tray action projection, notification candidate projection, badge label and tracked failure states. | Signed/bundled notification permission smoke and real tray click smoke before default-on native delivery. |
 | Auto-update manifest | Yellow | `.app` smoke reads and reports `no-manifest`, `invalid-manifest`, `valid-manifest-read`; install remains disabled. | Decide update channel/signature policy and implement installer only after release packaging is stable. |
-| Packaging/release OS integration | Yellow | Production-shaped `.app` packaging and ad-hoc signing now exist; packaged smoke launches the real `CFBundleExecutable`, not a wrapper. | Developer ID/notarization remains inactive until credentials exist; real protocol/file LaunchServices handoff is still blocked by Wails event delivery smoke. |
-| Real OS handoff | Red | `wails3-real-os-smoke-macos.sh` launches a registered ad-hoc `.app` and traces `ide:intent:open`, but current Wails URL/file application events do not reach the bridge in the temp bundle smoke. | Debug Wails macOS app event delivery or add an approved fallback before claiming browser/Finder handoff green. |
+| Packaging/release OS integration | Yellow | Production-shaped `.app` packaging and ad-hoc signing now exist; packaged smoke launches the real `CFBundleExecutable`, not a wrapper, and real OS handoff passes in the ad-hoc smoke bundle. | Developer ID/notarization remains inactive until credentials exist; production DMG/release layout still needs release smoke. |
+| Real OS handoff | Green | `wails3-real-os-smoke-macos.sh` launches a registered ad-hoc `.app`, traces Wails application-event handler entry, proves `ide:intent:open` emitted dispatch for protocol/file payloads and proves gated second-instance handoff. | Keep the evidence as smoke-gated; browser/Finder UX still depends on production registration/signing decisions. |
 
 Blockers before Arlehub:
 
@@ -331,8 +347,7 @@ Blockers before Arlehub:
 Blockers before default-on native delivery:
 
 - Package and run a production-shaped signed app bundle with real macOS bundle identity.
-- Resolve the current Red real OS handoff smoke for `ApplicationLaunchedWithUrl` and
-  `ApplicationOpenedWithFile`.
+- Keep real OS handoff smoke green as packaging/signing evolves.
 - Verify notification permission/startup in the packaged app, not only in report projection.
 - Verify tray menu executes only Background Shell actions and does not expose unrelated app controls.
 - Verify protocol/file association payloads from Finder/browser reach `ide:intent:open`.
@@ -1524,9 +1539,12 @@ risky action, user can return layout.
 27. Done: add production-shaped Wails v3 `.app` packaging and signing scripts. The bundle
     uses tracked Info.plist metadata, direct Wails binary executable, icon resources,
     ad-hoc local signing and dormant Developer ID/notarization config.
-28. In progress: add real OS handoff smoke. The harness is present and detects the current
-    blocker: LaunchServices/AppleEvent URL/file delivery does not yet appear in
-    `ide:intent:open` trace for the ad-hoc temp `.app`.
+28. Done: diagnose and recover real OS handoff. The Arlecchino harness now records Wails
+    application handler entry separately from `ide:intent:open` dispatch, the app-shell
+    frontend bridge prevents welcome/no-project launches from swallowing queued intents,
+    and the real OS smoke is green for protocol, file association and second-instance
+    handoff. The pinned Wails custom-protocol repro remains available for future alpha
+    regressions.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 

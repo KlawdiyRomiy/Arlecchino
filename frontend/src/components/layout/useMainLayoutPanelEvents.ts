@@ -7,10 +7,8 @@ import {
 } from "react";
 
 import { useIDEEvents } from "../../hooks/useIDEEvents";
-import { EventsEmit } from "../../wails/runtime";
 import {
   registerOpenIntentDispatcher,
-  routeOpenIntent,
   type FocusSurfaceIntent,
 } from "../../shell/openIntentRouter";
 import {
@@ -631,10 +629,6 @@ export const useMainLayoutPanelEvents = ({
         handleOpenIntentFocusSurface(intent);
       },
     });
-    EventsEmit("ide:frontend:ready", {
-      contract: "open-intent",
-      version: 1,
-    });
     return unregister;
   }, [
     handleOpenIntentFocusSurface,
@@ -765,7 +759,6 @@ export const useMainLayoutPanelEvents = ({
   }, [executeApplicationMenuAction]);
 
   useIDEEvents({
-    onOpenIntent: routeOpenIntent,
     onOpenPanel: handlePanelOpenEvent,
     onClosePanel: handlePanelCloseEvent,
     onMovePanel: handlePanelMoveEvent,
