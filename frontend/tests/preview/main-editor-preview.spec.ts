@@ -151,7 +151,7 @@ test("Browser Preview uses file opened in the main editor", async ({
   await expect(page.getByText("Main editor preview")).toBeVisible();
   await expect(
     page.getByTestId("editor-tabs-markdown-preview-toggle"),
-  ).toBeDisabled();
+  ).toHaveCount(0);
 
   await page.getByTestId("topbar-preview-button").click();
 
@@ -191,6 +191,9 @@ test("image files open inline in the main editor surface", async ({ page }) => {
   await expect(page.getByTestId("image-editor-preview")).toContainText(
     "image/png",
   );
+  await expect(
+    page.getByTestId("editor-tabs-markdown-preview-toggle"),
+  ).toHaveCount(0);
   await expect(page.getByTestId("panel-markdownPreview")).toHaveCount(0);
 
   const previewWindowCount = await page.evaluate(async () => {
@@ -229,6 +232,8 @@ test("Markdown preview panel follows the active tab and updates before autosave"
   expect(writeCalls).toBe(0);
 
   await page.locator('[data-file-path="/workspace/index.html"]').click();
-  await expect(toggle).toBeDisabled();
+  await expect(
+    page.getByTestId("editor-tabs-markdown-preview-toggle"),
+  ).toHaveCount(0);
   await expect(panel).toContainText("Open a Markdown tab");
 });
