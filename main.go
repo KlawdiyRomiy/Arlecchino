@@ -98,11 +98,7 @@ func main() {
 		UseApplicationMenu: true,
 		BackgroundType:     application.BackgroundTypeTransparent,
 		BackgroundColour:   application.NewRGBA(10, 10, 10, 0),
-		Mac: application.MacWindow{
-			TitleBar:                application.MacTitleBarHiddenInsetUnified,
-			InvisibleTitleBarHeight: 56,
-			Backdrop:                application.MacBackdropTransparent,
-		},
+		Mac:                mainWindowMacOptions(),
 		Windows: application.WindowsWindow{
 			DisableIcon: false,
 		},

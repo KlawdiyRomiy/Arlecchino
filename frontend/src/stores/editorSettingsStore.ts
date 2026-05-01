@@ -8,6 +8,8 @@ import {
   getUiScaleStepOffset,
 } from "../utils/uiScale";
 
+export type ProjectSwitchShortcutBehavior = "project-switch" | "window-cycle";
+
 interface EditorSettingsState {
   uiScale: number;
   editorFontSize: number;
@@ -18,6 +20,7 @@ interface EditorSettingsState {
   showMinimap: boolean;
   showRainbowBrackets: boolean;
   zenModeEnabled: boolean;
+  projectSwitchShortcutBehavior: ProjectSwitchShortcutBehavior;
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
@@ -28,6 +31,9 @@ interface EditorSettingsState {
   setShowMinimap: (value: boolean) => void;
   setShowRainbowBrackets: (value: boolean) => void;
   setZenModeEnabled: (value: boolean) => void;
+  setProjectSwitchShortcutBehavior: (
+    value: ProjectSwitchShortcutBehavior,
+  ) => void;
   toggleZenMode: () => void;
 }
 
@@ -40,6 +46,8 @@ const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
 const DEFAULT_SHOW_MINIMAP = true;
 const DEFAULT_SHOW_RAINBOW_BRACKETS = true;
 const DEFAULT_ZEN_MODE_ENABLED = false;
+const DEFAULT_PROJECT_SWITCH_SHORTCUT_BEHAVIOR: ProjectSwitchShortcutBehavior =
+  "project-switch";
 
 type PersistedEditorSettingsState = Partial<
   Pick<
@@ -51,6 +59,7 @@ type PersistedEditorSettingsState = Partial<
     | "showMinimap"
     | "showRainbowBrackets"
     | "zenModeEnabled"
+    | "projectSwitchShortcutBehavior"
   >
 >;
 
@@ -59,6 +68,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const clampEditorFontSize = (size: number): number =>
   Math.min(Math.max(size, MIN_FONT_SIZE), MAX_FONT_SIZE);
+
+const isProjectSwitchShortcutBehavior = (
+  value: unknown,
+): value is ProjectSwitchShortcutBehavior =>
+  value === "project-switch" || value === "window-cycle";
 
 const sanitizePersistedEditorSettings = (
   persistedState: unknown,
@@ -99,6 +113,15 @@ const sanitizePersistedEditorSettings = (
     nextState.zenModeEnabled = persistedState.zenModeEnabled;
   }
 
+  if (
+    isProjectSwitchShortcutBehavior(
+      persistedState.projectSwitchShortcutBehavior,
+    )
+  ) {
+    nextState.projectSwitchShortcutBehavior =
+      persistedState.projectSwitchShortcutBehavior;
+  }
+
   return nextState;
 };
 
@@ -129,6 +152,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       showMinimap: DEFAULT_SHOW_MINIMAP,
       showRainbowBrackets: DEFAULT_SHOW_RAINBOW_BRACKETS,
       zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
+      projectSwitchShortcutBehavior: DEFAULT_PROJECT_SWITCH_SHORTCUT_BEHAVIOR,
 
       zoomIn: () =>
         set((state) => ({
@@ -168,6 +192,9 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setZenModeEnabled: (value: boolean) =>
         set(() => ({ zenModeEnabled: value })),
+
+      setProjectSwitchShortcutBehavior: (value) =>
+        set(() => ({ projectSwitchShortcutBehavior: value })),
 
       toggleZenMode: () =>
         set((state) => ({ zenModeEnabled: !state.zenModeEnabled })),

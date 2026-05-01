@@ -17,6 +17,11 @@ test.beforeEach(async ({ page }) => {
       sessionStorage.setItem("__keybindings_settings_ready", "1");
     }
 
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      get: () => "MacIntel",
+    });
+
     const appBridge = new Proxy(
       {},
       {
@@ -88,40 +93,48 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-async function mountProjectUI(page: Page) {
-  await page.evaluate(async () => {
-    const { useWorkspaceStore } = await import("/src/stores/workspaceStore.ts");
-    const { useExplorerStore } = await import("/src/stores/explorerStore.ts");
-    const { useEditorStore } = await import("/src/stores/editorStore.ts");
+async function mountProjectUI(
+  page: Page,
+  projects = [
+    {
+      id: "/workspace",
+      path: "/workspace",
+      name: "workspace",
+      openedAt: 1,
+    },
+  ],
+  activeId = "/workspace",
+) {
+  await page.evaluate(
+    async ({ nextProjects, nextActiveId }) => {
+      const { useWorkspaceStore } =
+        await import("/src/stores/workspaceStore.ts");
+      const { useExplorerStore } = await import("/src/stores/explorerStore.ts");
+      const { useEditorStore } = await import("/src/stores/editorStore.ts");
 
-    useWorkspaceStore.setState({
-      projects: [
-        {
-          id: "/workspace",
-          path: "/workspace",
-          name: "workspace",
-          openedAt: 1,
-        },
-      ],
-      activeId: "/workspace",
-      activeFramework: null,
-      pendingId: null,
-      ready: true,
-      switchDirection: 1,
-      uiBlockers: [],
-    });
+      useWorkspaceStore.setState({
+        projects: nextProjects,
+        activeId: nextActiveId,
+        activeFramework: null,
+        pendingId: null,
+        ready: true,
+        switchDirection: 1,
+        uiBlockers: [],
+      });
 
-    useExplorerStore.getState().setProjectPath("/workspace");
-    useEditorStore
-      .getState()
-      .openTab(
-        "pane-main",
-        "/workspace/index.tsx",
-        "index.tsx",
-        "export const ready = true;",
-        "tsx",
-      );
-  });
+      useExplorerStore.getState().setProjectPath(nextActiveId);
+      useEditorStore
+        .getState()
+        .openTab(
+          "pane-main",
+          `${nextActiveId}/index.tsx`,
+          "index.tsx",
+          "export const ready = true;",
+          "tsx",
+        );
+    },
+    { nextProjects: projects, nextActiveId: activeId },
+  );
 
   await expect(page.getByTitle("Settings")).toBeVisible();
 }
@@ -137,17 +150,16 @@ async function openKeybindings(page: Page) {
 const dispatchShortcut = async (
   page: Page,
   payload: { key: string; code: string; metaKey?: boolean; ctrlKey?: boolean },
-): Promise<void> => {
-  await page.evaluate((eventInit) => {
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        ...eventInit,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
+): Promise<boolean> =>
+  page.evaluate((eventInit) => {
+    const event = new KeyboardEvent("keydown", {
+      ...eventInit,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
   }, payload);
-};
 
 test("keybindings tab records shortcuts, blocks duplicates, persists, and resets", async ({
   page,
@@ -176,6 +188,101 @@ test("keybindings tab records shortcuts, blocks duplicates, persists, and resets
   await expect(
     page.getByTestId("keybinding-row-explorer.toggle"),
   ).toContainText("cmd+e");
+});
+
+test("keybindings tab persists Cmd+Backquote behavior", async ({ page }) => {
+  await mountProjectUI(page);
+  await openKeybindings(page);
+
+  const projectsButton = page.getByRole("button", { name: "Projects" });
+  const windowsButton = page.getByRole("button", { name: "Windows" });
+
+  await expect(projectsButton).toHaveAttribute("aria-pressed", "true");
+  await expect(windowsButton).toHaveAttribute("aria-pressed", "false");
+
+  await windowsButton.click();
+  await expect(projectsButton).toHaveAttribute("aria-pressed", "false");
+  await expect(windowsButton).toHaveAttribute("aria-pressed", "true");
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const rawSettings = localStorage.getItem("editor-settings");
+        if (!rawSettings) return null;
+        return JSON.parse(rawSettings).state.projectSwitchShortcutBehavior;
+      }),
+    )
+    .toBe("window-cycle");
+
+  await page.reload();
+  await mountProjectUI(page);
+  await openKeybindings(page);
+  await expect(page.getByRole("button", { name: "Windows" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  await page.getByRole("button", { name: "Projects" }).click();
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const rawSettings = localStorage.getItem("editor-settings");
+        if (!rawSettings) return null;
+        return JSON.parse(rawSettings).state.projectSwitchShortcutBehavior;
+      }),
+    )
+    .toBe("project-switch");
+});
+
+test("Cmd+Backquote switches projects or yields to native windows by setting", async ({
+  page,
+}) => {
+  const projects = [
+    { id: "/alpha", path: "/alpha", name: "alpha", openedAt: 1 },
+    { id: "/beta", path: "/beta", name: "beta", openedAt: 2 },
+  ];
+  const shortcut = { key: "`", code: "Backquote", metaKey: true };
+
+  await mountProjectUI(page, projects, "/alpha");
+
+  const projectSwitchPrevented = await dispatchShortcut(page, shortcut);
+  expect(projectSwitchPrevented).toBe(true);
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useWorkspaceStore } =
+          await import("/src/stores/workspaceStore.ts");
+        return useWorkspaceStore.getState().activeId;
+      }),
+    )
+    .toBe("/beta");
+
+  await page.evaluate(async () => {
+    const { useWorkspaceStore } = await import("/src/stores/workspaceStore.ts");
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useWorkspaceStore.setState({
+      activeId: "/alpha",
+      pendingId: null,
+      switchSourceId: null,
+      switchDirection: 1,
+      uiBlockers: [],
+    });
+    useEditorSettingsStore
+      .getState()
+      .setProjectSwitchShortcutBehavior("window-cycle");
+  });
+
+  const windowCyclePrevented = await dispatchShortcut(page, shortcut);
+  expect(windowCyclePrevented).toBe(false);
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useWorkspaceStore } =
+          await import("/src/stores/workspaceStore.ts");
+        return useWorkspaceStore.getState().activeId;
+      }),
+    )
+    .toBe("/alpha");
 });
 
 test("appearance theme dropdown opens and selects a theme", async ({

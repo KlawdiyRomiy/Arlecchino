@@ -502,11 +502,7 @@ func (a *App) runWindowLeaseDetach(actionID string, parsed parsedWindowLeaseActi
 		UseApplicationMenu: true,
 		BackgroundType:     application.BackgroundTypeTransparent,
 		BackgroundColour:   application.NewRGBA(10, 10, 10, 0),
-		Mac: application.MacWindow{
-			TitleBar:                application.MacTitleBarDefault,
-			InvisibleTitleBarHeight: 0,
-			Backdrop:                application.MacBackdropTransparent,
-		},
+		Mac:                detachedWindowMacOptions(),
 		Windows: application.WindowsWindow{
 			DisableIcon: false,
 		},

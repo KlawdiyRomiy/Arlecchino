@@ -20,6 +20,16 @@ import type {
   PanelVisibility,
 } from "./MainLayout.types";
 
+const isMacPlatform = (): boolean =>
+  typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+
+const isPhysicalMacProjectSwitchShortcut = (event: KeyboardEvent): boolean =>
+  isMacPlatform() &&
+  event.metaKey &&
+  !event.ctrlKey &&
+  !event.altKey &&
+  event.code === "Backquote";
+
 interface MainLayoutKeyboardDispatcher {
   close: () => void;
   isOpen: boolean;
@@ -276,6 +286,14 @@ export const useMainLayoutKeyboardShortcuts = ({
       }
 
       if (shortcuts.switchProjectNext(e) || shortcuts.switchProjectPrev(e)) {
+        if (
+          useEditorSettingsStore.getState().projectSwitchShortcutBehavior ===
+            "window-cycle" &&
+          isPhysicalMacProjectSwitchShortcut(e)
+        ) {
+          return;
+        }
+
         const localProjectSwitchBlocked =
           dispatcher.isOpen || activeModal !== null || isPerspectiveOpen;
 
