@@ -16,6 +16,12 @@ export type MainEditorFileOpenRegistrar = (
   handler: MainEditorFileOpenHandler | null,
 ) => void;
 
+export interface MarkdownPreviewSource {
+  path: string;
+  name: string;
+  content: string;
+}
+
 export interface MainLayoutProps {
   children: ReactNode;
   onFileOpen?: MainEditorFileOpenHandler;
@@ -41,8 +47,12 @@ export type PanelId =
   | "aiChat"
   | "git"
   | "problems"
-  | "code";
-export type AssistPanelId = Exclude<PanelId, "terminal" | "problems" | "code">;
+  | "code"
+  | "markdownPreview";
+export type AssistPanelId = Exclude<
+  PanelId,
+  "terminal" | "problems" | "code" | "markdownPreview"
+>;
 export type PanelVisibility = Record<PanelId, boolean>;
 export type PanelFullscreenSnapshot = Pick<
   PanelConfig,

@@ -38,6 +38,7 @@ const callIDToMethod = new Map<number, string>([
   [517162042, "OpenProject"],
   [3882613584, "ReadDirectory"],
   [3674158986, "ReadEditorFilePreview"],
+  [963892010, "ReadEditorVisualFile"],
   [1160596971, "ReadFile"],
   [1772246131, "RunGitCommand"],
   [1433890444, "ValidateEnvironment"],

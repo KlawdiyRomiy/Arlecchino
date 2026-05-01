@@ -25,6 +25,7 @@ const PANEL_POSITION_PREFERENCES: Record<PanelId, readonly PanelPosition[]> = {
   git: ["left", "right", "bottom", "top"],
   problems: ["bottom", "right", "left", "top"],
   code: ["right", "left", "bottom", "top"],
+  markdownPreview: ["right", "left", "bottom", "top"],
 };
 
 const PANEL_ID_ALIASES: Record<string, PanelId> = {
@@ -44,6 +45,10 @@ const PANEL_ID_ALIASES: Record<string, PanelId> = {
   diagnostics: "problems",
   code: "code",
   editor: "code",
+  markdown: "markdownPreview",
+  markdownpreview: "markdownPreview",
+  mdpreview: "markdownPreview",
+  previewmarkdown: "markdownPreview",
 };
 
 const APP_SURFACE_ALIASES: Record<string, AppSurfaceAction> = {
@@ -67,6 +72,7 @@ export const DEFAULT_PANELS: PanelVisibility = {
   git: false,
   problems: false,
   code: false,
+  markdownPreview: false,
 };
 
 export const DEFAULT_PANEL_CONFIGS: PanelConfigs = {
@@ -108,6 +114,13 @@ export const DEFAULT_PANEL_CONFIGS: PanelConfigs = {
   code: {
     position: "right",
     size: { width: 620, height: 0 },
+    mode: "snapped",
+    x: 0,
+    y: 0,
+  },
+  markdownPreview: {
+    position: "right",
+    size: { width: 420, height: 0 },
     mode: "snapped",
     x: 0,
     y: 0,
@@ -481,6 +494,10 @@ export const cloneDefaultPanelConfigs = (): PanelConfigs => ({
     ...DEFAULT_PANEL_CONFIGS.code,
     size: { ...DEFAULT_PANEL_CONFIGS.code.size },
   },
+  markdownPreview: {
+    ...DEFAULT_PANEL_CONFIGS.markdownPreview,
+    size: { ...DEFAULT_PANEL_CONFIGS.markdownPreview.size },
+  },
 });
 
 export const createDefaultRememberedSnappedPositions =
@@ -491,6 +508,7 @@ export const createDefaultRememberedSnappedPositions =
     git: DEFAULT_PANEL_CONFIGS.git.position,
     problems: DEFAULT_PANEL_CONFIGS.problems.position,
     code: DEFAULT_PANEL_CONFIGS.code.position,
+    markdownPreview: DEFAULT_PANEL_CONFIGS.markdownPreview.position,
   });
 
 export const clonePanelConfigsValue = (source: PanelConfigs): PanelConfigs => ({
@@ -500,6 +518,10 @@ export const clonePanelConfigsValue = (source: PanelConfigs): PanelConfigs => ({
   git: { ...source.git, size: { ...source.git.size } },
   problems: { ...source.problems, size: { ...source.problems.size } },
   code: { ...source.code, size: { ...source.code.size } },
+  markdownPreview: {
+    ...source.markdownPreview,
+    size: { ...source.markdownPreview.size },
+  },
 });
 
 export const cloneRememberedSnappedPositionsValue = (
@@ -511,6 +533,7 @@ export const cloneRememberedSnappedPositionsValue = (
   git: source.git,
   problems: source.problems,
   code: source.code,
+  markdownPreview: source.markdownPreview,
 });
 
 export const normalizeHydratedPanelLayoutState = (
@@ -601,6 +624,10 @@ const resolveStoredPanelConfigs = (
       DEFAULT_PANEL_CONFIGS.problems,
     ),
     code: resolveStoredPanelConfig(rest.code, DEFAULT_PANEL_CONFIGS.code),
+    markdownPreview: resolveStoredPanelConfig(
+      rest.markdownPreview,
+      DEFAULT_PANEL_CONFIGS.markdownPreview,
+    ),
   };
 };
 

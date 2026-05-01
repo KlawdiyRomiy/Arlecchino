@@ -116,6 +116,7 @@ import type {
   MainEditorFileOpenHandler,
   MainEditorFileOpenRegistrar,
   MainLayoutProps,
+  MarkdownPreviewSource,
   PanelConfig,
   PanelConfigs,
   PanelFullscreenSnapshot,
@@ -162,6 +163,7 @@ const PANEL_SHORTCUT_MOVE_POSITIONS: readonly PanelPosition[] = [
   "top",
   "bottom",
 ];
+type FullscreenPanelId = "terminal" | "git" | "problems" | "markdownPreview";
 
 const coercePositiveSize = (
   value: number | undefined,
@@ -317,6 +319,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [isPerspectiveOpen, setIsPerspectiveOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDependencyPolicyOpen, setIsDependencyPolicyOpen] = useState(false);
+  const [markdownPreviewSource, setMarkdownPreviewSource] =
+    useState<MarkdownPreviewSource | null>(null);
   const [executionDialogMode, setExecutionDialogMode] = useState<
     "run" | "debug" | null
   >(null);
@@ -529,6 +533,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         git: { ...source.git, size: { ...source.git.size } },
         problems: { ...source.problems, size: { ...source.problems.size } },
         code: { ...source.code, size: { ...source.code.size } },
+        markdownPreview: {
+          ...source.markdownPreview,
+          size: { ...source.markdownPreview.size },
+        },
       };
     },
     [],
@@ -542,6 +550,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       git: source.git,
       problems: source.problems,
       code: source.code,
+      markdownPreview: source.markdownPreview,
     }),
     [],
   );
@@ -668,6 +677,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           git: nextPanels.git,
           problems: prev.problems,
           code: prev.code,
+          markdownPreview: prev.markdownPreview,
         };
       });
 
@@ -724,6 +734,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const problemsPreFullscreenRef = React.useRef<PanelFullscreenSnapshot | null>(
     null,
   );
+  const markdownPreviewPreFullscreenRef =
+    React.useRef<PanelFullscreenSnapshot | null>(null);
   const panelWorkspaceRef = React.useRef<HTMLDivElement | null>(null);
   const [panelWorkspaceSize, setPanelWorkspaceSize] =
     React.useState(logicalViewport);
@@ -843,7 +855,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const restoreOrEnterPanelFullscreen = useCallback(
     (
-      panelId: "terminal" | "git" | "problems",
+      panelId: FullscreenPanelId,
       snapshotRef: React.MutableRefObject<PanelFullscreenSnapshot | null>,
     ) => {
       const currentConfig = panelConfigsRef.current[panelId];
@@ -927,7 +939,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     if (snapshotRef && panelsRef.current[panelId] && looksFullscreen) {
       const restorePosition = currentConfig.position;
       restoreOrEnterPanelFullscreen(
-        panelId as "terminal" | "git" | "problems",
+        panelId as FullscreenPanelId,
         snapshotRef,
       );
       updatePanelsState((previous) => {
@@ -958,7 +970,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }
 
   function closePanelFullscreenFromShortcut(
-    panelId: "terminal" | "git" | "problems",
+    panelId: FullscreenPanelId,
     snapshotRef: React.MutableRefObject<PanelFullscreenSnapshot | null>,
   ): boolean {
     const currentConfig = panelConfigsRef.current[panelId];
@@ -1018,6 +1030,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     if (
       !useTerminalStore.getState().tuiModeActive &&
       closePanelFullscreenFromShortcut("terminal", terminalPreFullscreenRef)
+    ) {
+      return true;
+    }
+
+    if (
+      closePanelFullscreenFromShortcut(
+        "markdownPreview",
+        markdownPreviewPreFullscreenRef,
+      )
     ) {
       return true;
     }
@@ -3022,6 +3043,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }));
   };
 
+  const handleMarkdownPreviewSourceChange = useCallback(
+    (source: MarkdownPreviewSource | null) => {
+      setMarkdownPreviewSource(source);
+    },
+    [],
+  );
+
+  const handleToggleMarkdownPreview = () => {
+    togglePanel("markdownPreview");
+  };
+
   const {
     handleDragEnd,
     handleDragMove,
@@ -3188,6 +3220,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       activeEditorTabPath={activeEditorTab?.path ?? null}
       activeCodePanelTab={activeCodePanelTab}
       codePanelTabs={codePanelTabs}
+      markdownPreviewSource={markdownPreviewSource}
       tuiModeActive={tuiModeActive}
       tuiTerminalPaneStyle={tuiTerminalPaneStyle}
       terminalZIndex={tuiModeActive ? zIndex.tooltip + 10 : undefined}
@@ -3210,6 +3243,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
       onProblemsFullscreen={() =>
         restoreOrEnterPanelFullscreen("problems", problemsPreFullscreenRef)
+      }
+      onMarkdownPreviewFullscreen={() =>
+        restoreOrEnterPanelFullscreen(
+          "markdownPreview",
+          markdownPreviewPreFullscreenRef,
+        )
       }
       onFileOpen={handleFileOpen}
       onFileOpenInPanel={handleFileOpenInPanel}
@@ -3500,12 +3539,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     React.cloneElement(
       children as React.ReactElement<{
         onToggleProblems?: () => void;
+        markdownPreviewOpen?: boolean;
+        onToggleMarkdownPreview?: () => void;
+        onMarkdownPreviewSourceChange?: (
+          source: MarkdownPreviewSource | null,
+        ) => void;
         onPerspectiveOpen?: () => void;
         onPerspectiveClose?: () => void;
         onEditorFileOpenReady?: MainEditorFileOpenRegistrar;
       }>,
       {
         onToggleProblems: () => togglePanel("problems"),
+        markdownPreviewOpen: panels.markdownPreview,
+        onToggleMarkdownPreview: handleToggleMarkdownPreview,
+        onMarkdownPreviewSourceChange: handleMarkdownPreviewSourceChange,
         onPerspectiveOpen: handlePerspectiveOpen,
         onPerspectiveClose: handlePerspectiveClose,
         onEditorFileOpenReady: registerEditorFileOpenHandler,

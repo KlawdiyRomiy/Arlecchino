@@ -67,7 +67,9 @@
     "react": "^19.2.1",
     "react-arborist": "^3.4.3",
     "react-dom": "^19.2.1",
+    "react-markdown": "10.1.0",
     "react-resizable-panels": "^4.4.1",
+    "remark-gfm": "4.0.1",
     "thememirror": "^2.0.1",
     "xterm": "^5.3.0",
     "zustand": "^5.0.8"

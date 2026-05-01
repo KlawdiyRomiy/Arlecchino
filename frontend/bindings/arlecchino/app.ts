@@ -760,6 +760,12 @@ export function ReadEditorFilePreview(filePath: string, maxBytes: number): $Canc
     });
 }
 
+export function ReadEditorVisualFile(filePath: string): $CancellablePromise<$models.EditorVisualFile> {
+    return $Call.ByID(963892010, filePath).then(($result: any) => {
+        return $$createType67($result);
+    });
+}
+
 export function ReadFile(filePath: string): $CancellablePromise<string> {
     return $Call.ByID(1160596971, filePath);
 }
@@ -1042,3 +1048,4 @@ const $$createType63 = $models.CommandSuggestion.createFrom;
 const $$createType64 = $Create.Array($$createType63);
 const $$createType65 = $Create.Map($Create.Any, $Create.Any);
 const $$createType66 = $Create.Map($Create.Any, $Create.Any);
+const $$createType67 = $models.EditorVisualFile.createFrom;

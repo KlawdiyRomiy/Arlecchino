@@ -102,6 +102,24 @@ func TestReadFile_RejectsKnownBinaryExtensionBeforeReading(t *testing.T) {
 	}
 }
 
+func TestReadFile_RejectsImageExtensionBeforeReading(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "logo.png")
+	if err := os.WriteFile(path, []byte("not actually an image"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := (&App{}).ReadFile(path)
+	if err == nil {
+		t.Fatal("ReadFile() error = nil, want image extension rejection")
+	}
+	if !strings.Contains(err.Error(), "not a text document") {
+		t.Fatalf("ReadFile() error = %v, want non-text rejection", err)
+	}
+}
+
 func TestReadFile_RejectsBinaryContent(t *testing.T) {
 	t.Parallel()
 
@@ -247,6 +265,78 @@ func TestInspectEditorFile_MarksLongLineUnsafeForInteractiveEditor(t *testing.T)
 	}
 	if !strings.Contains(inspection.Reason, "line that is too long") {
 		t.Fatalf("InspectEditorFile() Reason = %q, want long-line reason", inspection.Reason)
+	}
+}
+
+func TestReadEditorVisualFile_ReturnsDataURLForPNG(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "logo.png")
+	png := []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	}
+	if err := os.WriteFile(path, png, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := (&App{}).ReadEditorVisualFile(path)
+	if err != nil {
+		t.Fatalf("ReadEditorVisualFile() error = %v", err)
+	}
+	if got.MimeType != "image/png" {
+		t.Fatalf("ReadEditorVisualFile() MimeType = %q, want image/png", got.MimeType)
+	}
+	if !strings.HasPrefix(got.DataURL, "data:image/png;base64,") {
+		t.Fatalf("ReadEditorVisualFile() DataURL = %q, want png data URL", got.DataURL)
+	}
+	if got.SizeBytes != int64(len(png)) {
+		t.Fatalf("ReadEditorVisualFile() SizeBytes = %d, want %d", got.SizeBytes, len(png))
+	}
+}
+
+func TestReadEditorVisualFile_RejectsUnsupportedExtension(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := (&App{}).ReadEditorVisualFile(path)
+	if err == nil {
+		t.Fatal("ReadEditorVisualFile() error = nil, want unsupported extension rejection")
+	}
+	if !strings.Contains(err.Error(), "not a supported visual format") {
+		t.Fatalf("ReadEditorVisualFile() error = %v, want unsupported visual rejection", err)
+	}
+}
+
+func TestReadEditorVisualFile_RejectsOversizedImageBeforeReading(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "huge.png")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := file.Truncate(maxEditorVisualFileBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatalf("Truncate() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	_, err = (&App{}).ReadEditorVisualFile(path)
+	if err == nil {
+		t.Fatal("ReadEditorVisualFile() error = nil, want oversized rejection")
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("ReadEditorVisualFile() error = %v, want size rejection", err)
 	}
 }
 

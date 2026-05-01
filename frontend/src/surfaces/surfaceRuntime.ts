@@ -24,6 +24,7 @@ export type SurfaceAppletKind =
   | PreviewSurfaceType
   | "explorer"
   | "aiChat"
+  | "markdownPreview"
   | "problems";
 
 export type SurfaceFocusPolicy = "activate" | "preserve-current" | "background";
@@ -72,6 +73,7 @@ const PANEL_TITLES: Record<PanelId, string> = {
   git: "Git",
   problems: "Problems",
   code: "Code",
+  markdownPreview: "Markdown Preview",
 };
 
 export const panelSurfaceId = (panelId: PanelId): string => `panel:${panelId}`;

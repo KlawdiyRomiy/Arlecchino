@@ -45,6 +45,7 @@ import {
 import type { GitLineMarker } from "../utils/git";
 import type { EditorFileLoadState } from "../utils/editorFileLoader";
 import { GuardedEditorPreview } from "./GuardedEditorPreview";
+import { ImageEditorPreview } from "./ImageEditorPreview";
 
 interface CodePanelSurfaceProps {
   path: string;
@@ -308,6 +309,9 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
 
   if (loadState?.kind === "guardedPreview" || loadState?.kind === "error") {
     return <GuardedEditorPreview file={loadState} />;
+  }
+  if (loadState?.kind === "visualPreview") {
+    return <ImageEditorPreview file={loadState} />;
   }
 
   return (

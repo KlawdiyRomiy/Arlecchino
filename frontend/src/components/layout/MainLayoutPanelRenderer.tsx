@@ -1,6 +1,7 @@
 import React from "react";
 import {
   AlertCircle,
+  BookOpen,
   FileText,
   FolderTree,
   GitBranch,
@@ -11,6 +12,7 @@ import { AIChatPanelContent } from "../AIChatPanel";
 import { CodePanelSurface } from "../CodePanelSurface";
 import { FileExplorer } from "../FileExplorer";
 import { GitPanel } from "../GitPanel";
+import { MarkdownPreviewPanelContent } from "../MarkdownPreviewPanelContent";
 import { ProblemsPanel } from "../problems/ProblemsPanel";
 import { TerminalPanelContent } from "../TerminalPanel";
 import {
@@ -21,6 +23,7 @@ import {
 import type { PreviewWindow } from "../../stores/previewWindowStore";
 import type {
   CodePanelTab,
+  MarkdownPreviewSource,
   PanelConfig,
   PanelConfigs,
   PanelId,
@@ -59,6 +62,7 @@ interface MainLayoutPanelRendererProps {
   activeEditorTabPath: string | null;
   activeCodePanelTab: CodePanelTab | null;
   codePanelTabs: CodePanelTab[];
+  markdownPreviewSource: MarkdownPreviewSource | null;
   tuiModeActive: boolean;
   tuiTerminalPaneStyle: React.CSSProperties;
   terminalZIndex?: number;
@@ -74,6 +78,7 @@ interface MainLayoutPanelRendererProps {
   onTerminalFullscreen: () => void;
   onGitFullscreen: () => void;
   onProblemsFullscreen: () => void;
+  onMarkdownPreviewFullscreen: () => void;
   onFileOpen: (
     path: string,
     content: string,
@@ -112,6 +117,7 @@ export const MainLayoutPanelRenderer: React.FC<
   activeEditorTabPath,
   activeCodePanelTab,
   codePanelTabs,
+  markdownPreviewSource,
   tuiModeActive,
   tuiTerminalPaneStyle,
   terminalZIndex,
@@ -127,6 +133,7 @@ export const MainLayoutPanelRenderer: React.FC<
   onTerminalFullscreen,
   onGitFullscreen,
   onProblemsFullscreen,
+  onMarkdownPreviewFullscreen,
   onFileOpen,
   onFileOpenInPanel,
   onOpenFileFromPath,
@@ -385,6 +392,25 @@ export const MainLayoutPanelRenderer: React.FC<
               Open file from Explorer to start editing in panel
             </div>
           )}
+        </FloatingPanel>
+      );
+    case "markdownPreview":
+      return (
+        <FloatingPanel
+          key={panelId}
+          id="markdownPreview"
+          title={
+            markdownPreviewSource
+              ? `${markdownPreviewSource.name} (Preview)`
+              : "Markdown Preview"
+          }
+          icon={<BookOpen size={16} />}
+          minSize={320}
+          maxSize={1100}
+          {...panelProps}
+          onFullscreen={onMarkdownPreviewFullscreen}
+        >
+          <MarkdownPreviewPanelContent source={markdownPreviewSource} />
         </FloatingPanel>
       );
     default:

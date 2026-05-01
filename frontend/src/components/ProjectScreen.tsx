@@ -4,6 +4,7 @@ import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { EditorTabs, Tab } from "./EditorTabs";
 import { TabSwitcherOverlay } from "./TabSwitcherOverlay";
 import QuickLookModal from "./QuickLookModal";
+import { ImageEditorPreview } from "./ImageEditorPreview";
 import * as AppFunctions from "../wails/app";
 import { EventsOn } from "../wails/runtime";
 import { useProjectEntryActions } from "../contexts/ProjectEntryActionsContext";
@@ -30,6 +31,7 @@ import {
   type EditorFileOpenPayload,
 } from "../utils/editorFileLoader";
 import { usePerformanceStore } from "../stores/performanceStore";
+import type { MarkdownPreviewSource } from "./layout/MainLayout.types";
 
 type SplitDirection = "horizontal" | "vertical" | null;
 
@@ -40,12 +42,20 @@ interface ProjectScreenProps {
   fileToOpen?: EditorFileOpenPayload | null;
   onFileOpened?: () => void;
   onToggleProblems?: () => void;
+  markdownPreviewOpen?: boolean;
+  onToggleMarkdownPreview?: () => void;
+  onMarkdownPreviewSourceChange?: (
+    source: MarkdownPreviewSource | null,
+  ) => void;
   onPerspectiveOpen?: () => void;
   onPerspectiveClose?: () => void;
   onEditorFileOpenReady?: (handler: EditorFileOpenHandler | null) => void;
 }
 
 const AUTO_SAVE_DELAY = 1500;
+
+const isMarkdownPath = (path: string): boolean =>
+  /\.(md|mdx|markdown|mdown|mkdn)$/i.test(path);
 
 const getWrappedTabIndex = (
   currentIndex: number,
@@ -75,6 +85,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   fileToOpen,
   onFileOpened,
   onToggleProblems,
+  markdownPreviewOpen = false,
+  onToggleMarkdownPreview,
+  onMarkdownPreviewSourceChange,
   onPerspectiveOpen,
   onPerspectiveClose,
   onEditorFileOpenReady,
@@ -645,6 +658,43 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     return languageMap[ext || ""] || "plaintext";
   };
 
+  const buildMarkdownPreviewSource = useCallback(
+    (tabId: string | null): MarkdownPreviewSource | null => {
+      if (!tabId) {
+        return null;
+      }
+
+      const tab = tabs.find((candidate) => candidate.id === tabId);
+      if (!tab || !isMarkdownPath(tab.path)) {
+        return null;
+      }
+
+      const loadState = fileLoadStates[tab.id];
+      const content =
+        fileContents[tab.id] ??
+        (loadState?.kind === "editable"
+          ? loadState.content
+          : loadState?.kind === "guardedPreview"
+            ? loadState.preview.content
+            : null);
+
+      if (content === null || content === undefined) {
+        return null;
+      }
+
+      return {
+        path: tab.path,
+        name: tab.label,
+        content,
+      };
+    },
+    [fileContents, fileLoadStates, tabs],
+  );
+
+  useEffect(() => {
+    onMarkdownPreviewSourceChange?.(buildMarkdownPreviewSource(activeTab));
+  }, [activeTab, buildMarkdownPreviewSource, onMarkdownPreviewSourceChange]);
+
   useEffect(() => {
     const primaryActiveTab = tabs.find((tab) => tab.id === activeTab) ?? null;
     const secondaryTab =
@@ -981,6 +1031,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         content: value,
       };
       fileLoadStatesRef.current[activeTab] = nextLoadState;
+    }
+    const tab = tabsRef.current.find((item) => item.id === activeTab);
+    if (tab && isMarkdownPath(tab.path)) {
+      onMarkdownPreviewSourceChange?.({
+        path: tab.path,
+        name: tab.label,
+        content: value,
+      });
     }
     scheduleContentStateFlush(activeTab, value);
     markTabDirty(activeTab);
@@ -1509,6 +1567,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   }, []);
 
   const activeTabData = tabs.find((tab) => tab.id === activeTab);
+  const activeMarkdownPreviewSource = buildMarkdownPreviewSource(activeTab);
   const secondaryTabData = secondaryActiveTab
     ? tabs.find((tab) => tab.id === secondaryActiveTab)
     : null;
@@ -1558,6 +1617,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     if (!loadState && fileContents[tabData.id] === undefined) {
       return <div className="h-full w-full" />;
     }
+    if (loadState?.kind === "visualPreview") {
+      return <ImageEditorPreview file={loadState} />;
+    }
     if (loadState?.kind === "guardedPreview" || loadState?.kind === "error") {
       return <GuardedEditorPreview file={loadState} />;
     }
@@ -1580,6 +1642,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           onTabClose={handleTabClose}
           onSplitHorizontal={() => handleSplit("vertical")}
           onSplitVertical={() => handleSplit("horizontal")}
+          markdownPreviewAvailable={activeMarkdownPreviewSource !== null}
+          markdownPreviewActive={
+            markdownPreviewOpen && activeMarkdownPreviewSource !== null
+          }
+          onToggleMarkdownPreview={onToggleMarkdownPreview}
           getTabContextMenuItems={buildTabContextMenuItems}
         />
       )}

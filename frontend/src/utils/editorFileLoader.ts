@@ -1,6 +1,7 @@
 import {
   InspectEditorFile,
   ReadEditorFilePreview,
+  ReadEditorVisualFile,
   ReadFile,
 } from "../wails/app";
 
@@ -27,6 +28,15 @@ export interface EditorFilePreview {
   previewBytes: number;
 }
 
+export interface EditorVisualFile {
+  path: string;
+  name: string;
+  sizeBytes: number;
+  formattedSize: string;
+  mimeType: string;
+  dataUrl: string;
+}
+
 export type EditorFileLoadState =
   | {
       kind: "editable";
@@ -43,6 +53,12 @@ export type EditorFileLoadState =
       inspection: EditorFileInspection;
     }
   | {
+      kind: "visualPreview";
+      path: string;
+      name: string;
+      visual: EditorVisualFile;
+    }
+  | {
       kind: "error";
       path: string;
       name: string;
@@ -57,6 +73,26 @@ export interface EditorFileOpenPayload {
 
 export const getEditorFileName = (path: string): string =>
   path.split("/").pop() || path;
+
+export const isEditorVisualFilePath = (path: string): boolean => {
+  const ext = path.split(".").pop()?.toLowerCase();
+  return Boolean(
+    ext &&
+      [
+        "avif",
+        "bmp",
+        "gif",
+        "ico",
+        "jpeg",
+        "jpe",
+        "jfif",
+        "jpg",
+        "png",
+        "svg",
+        "webp",
+      ].includes(ext),
+  );
+};
 
 export const createEditableEditorFileLoad = (
   path: string,
@@ -91,6 +127,19 @@ export const loadEditorFile = async (
   options: { knownContent?: string; previewBytes?: number } = {},
 ): Promise<EditorFileLoadState> => {
   try {
+    if (
+      isEditorVisualFilePath(path) &&
+      typeof options.knownContent !== "string"
+    ) {
+      const visual = (await ReadEditorVisualFile(path)) as EditorVisualFile;
+      return {
+        kind: "visualPreview",
+        path,
+        name: visual.name || getEditorFileName(path),
+        visual,
+      };
+    }
+
     const inspection = (await InspectEditorFile(path)) as
       | EditorFileInspection
       | null

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +25,7 @@ const (
 	maxInteractiveEditorLineBytes = 20_000
 	defaultEditorFilePreviewBytes = int64(64 * 1024)
 	maxEditorFilePreviewBytes     = int64(256 * 1024)
+	maxEditorVisualFileBytes      = int64(20 * 1024 * 1024)
 	fileSniffBytes                = int64(64 * 1024)
 )
 
@@ -73,6 +75,7 @@ var nonTextEditorExtensions = map[string]struct{}{
 	".sqlite":  {},
 	".sqlite3": {},
 	".so":      {},
+	".svg":     {},
 	".tar":     {},
 	".tif":     {},
 	".tiff":    {},
@@ -106,6 +109,20 @@ var binaryMagicPrefixes = [][]byte{
 	[]byte("GIF87a"),
 	[]byte("GIF89a"),
 	[]byte("SQLite format 3"),
+}
+
+var editorVisualFileExtensions = map[string]string{
+	".avif": "image/avif",
+	".bmp":  "image/bmp",
+	".gif":  "image/gif",
+	".ico":  "image/x-icon",
+	".jpeg": "image/jpeg",
+	".jpe":  "image/jpeg",
+	".jfif": "image/jpeg",
+	".jpg":  "image/jpeg",
+	".png":  "image/png",
+	".svg":  "image/svg+xml",
+	".webp": "image/webp",
 }
 
 var gitAllowedSubcommands = map[string]struct{}{
@@ -214,6 +231,15 @@ type EditorFilePreview struct {
 	PreviewBytes int64                `json:"previewBytes"`
 }
 
+type EditorVisualFile struct {
+	Path          string `json:"path"`
+	Name          string `json:"name"`
+	SizeBytes     int64  `json:"sizeBytes"`
+	FormattedSize string `json:"formattedSize"`
+	MimeType      string `json:"mimeType"`
+	DataURL       string `json:"dataUrl"`
+}
+
 type projectEntryRenamedEvent struct {
 	OldPath     string `json:"oldPath"`
 	NewPath     string `json:"newPath"`
@@ -278,6 +304,42 @@ func (a *App) ReadEditorFilePreview(filePath string, maxBytes int) (EditorFilePr
 		Content:      content,
 		Truncated:    truncated,
 		PreviewBytes: int64(len([]byte(content))),
+	}, nil
+}
+
+func (a *App) ReadEditorVisualFile(filePath string) (EditorVisualFile, error) {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return EditorVisualFile{}, err
+	}
+	if info.IsDir() {
+		return EditorVisualFile{}, fmt.Errorf("cannot open directory as a visual file: %s", filePath)
+	}
+	if info.Size() > maxEditorVisualFileBytes {
+		return EditorVisualFile{}, fmt.Errorf("visual file is too large to preview (%s, limit %s): %s", formatFileSize(info.Size()), formatFileSize(maxEditorVisualFileBytes), filePath)
+	}
+
+	expectedMime, ok := editorVisualFileExtensions[strings.ToLower(filepath.Ext(filePath))]
+	if !ok {
+		return EditorVisualFile{}, fmt.Errorf("file is not a supported visual format: %s", filePath)
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return EditorVisualFile{}, err
+	}
+	mimeType, ok := detectEditorVisualMime(filePath, content)
+	if !ok || mimeType != expectedMime {
+		return EditorVisualFile{}, fmt.Errorf("file content does not match supported visual format %s: %s", expectedMime, filePath)
+	}
+
+	return EditorVisualFile{
+		Path:          filePath,
+		Name:          filepath.Base(filePath),
+		SizeBytes:     info.Size(),
+		FormattedSize: formatFileSize(info.Size()),
+		MimeType:      mimeType,
+		DataURL:       "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(content),
 	}, nil
 }
 
@@ -396,6 +458,45 @@ func isKnownNonTextEditorPath(filePath string) bool {
 	}
 	_, ok := nonTextEditorExtensions[ext]
 	return ok
+}
+
+func isEditorVisualFilePath(filePath string) bool {
+	_, ok := editorVisualFileExtensions[strings.ToLower(filepath.Ext(filePath))]
+	return ok
+}
+
+func detectEditorVisualMime(filePath string, content []byte) (string, bool) {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".png":
+		return "image/png", bytes.HasPrefix(content, []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a})
+	case ".jpg", ".jpeg", ".jpe", ".jfif":
+		return "image/jpeg", len(content) >= 3 && content[0] == 0xff && content[1] == 0xd8 && content[2] == 0xff
+	case ".gif":
+		return "image/gif", bytes.HasPrefix(content, []byte("GIF87a")) || bytes.HasPrefix(content, []byte("GIF89a"))
+	case ".webp":
+		return "image/webp", len(content) >= 12 && bytes.HasPrefix(content, []byte("RIFF")) && string(content[8:12]) == "WEBP"
+	case ".bmp":
+		return "image/bmp", bytes.HasPrefix(content, []byte{0x42, 0x4d})
+	case ".ico":
+		return "image/x-icon", bytes.HasPrefix(content, []byte{0x00, 0x00, 0x01, 0x00}) || bytes.HasPrefix(content, []byte{0x00, 0x00, 0x02, 0x00})
+	case ".avif":
+		return "image/avif", len(content) >= 12 && string(content[4:8]) == "ftyp" && (string(content[8:12]) == "avif" || string(content[8:12]) == "avis")
+	case ".svg":
+		trimmed := bytes.TrimSpace(bytes.TrimPrefix(content, []byte{0xef, 0xbb, 0xbf}))
+		if !utf8.Valid(trimmed) {
+			return "image/svg+xml", false
+		}
+		prefix := strings.ToLower(string(trimmed))
+		if strings.HasPrefix(prefix, "<?xml") {
+			if end := strings.Index(prefix, "?>"); end >= 0 {
+				prefix = strings.TrimSpace(prefix[end+2:])
+			}
+		}
+		return "image/svg+xml", strings.HasPrefix(prefix, "<svg") || strings.HasPrefix(prefix, "<!doctype svg")
+	default:
+		return "", false
+	}
 }
 
 func readEditorFilePrefix(filePath string, limit int64) ([]byte, bool, error) {

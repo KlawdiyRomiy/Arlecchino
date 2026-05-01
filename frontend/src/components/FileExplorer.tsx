@@ -952,8 +952,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       png: "IMG",
       jpg: "IMG",
       jpeg: "IMG",
+      jpe: "IMG",
+      jfif: "IMG",
       gif: "IMG",
       webp: "IMG",
+      bmp: "IMG",
+      avif: "IMG",
       ico: "ICO",
     };
 
@@ -978,7 +982,20 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     if (!ext) return theme.textMuted;
 
     // Images
-    if (["png", "jpg", "jpeg", "gif", "webp", "ico", "bmp"].includes(ext)) {
+    if (
+      [
+        "png",
+        "jpg",
+        "jpeg",
+        "jpe",
+        "jfif",
+        "gif",
+        "webp",
+        "ico",
+        "bmp",
+        "avif",
+      ].includes(ext)
+    ) {
       return colors.fileType.image;
     }
 
@@ -1018,7 +1035,18 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     const ext = fileName.split(".").pop()?.toLowerCase();
     return ext
       ? ext in extColorMap ||
-          ["png", "jpg", "jpeg", "gif", "webp", "ico", "bmp"].includes(ext)
+          [
+            "png",
+            "jpg",
+            "jpeg",
+            "jpe",
+            "jfif",
+            "gif",
+            "webp",
+            "ico",
+            "bmp",
+            "avif",
+          ].includes(ext)
       : false;
   };
 

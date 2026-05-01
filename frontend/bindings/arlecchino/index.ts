@@ -27,6 +27,7 @@ export {
     EditorCompletionResult,
     EditorFileInspection,
     EditorFilePreview,
+    EditorVisualFile,
     ExecutionProfilesRequest,
     FileEntry,
     FlagDefJS,

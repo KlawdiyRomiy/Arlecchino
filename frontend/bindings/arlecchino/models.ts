@@ -872,6 +872,47 @@ export class EditorFilePreview {
     }
 }
 
+export class EditorVisualFile {
+    "path": string;
+    "name": string;
+    "sizeBytes": number;
+    "formattedSize": string;
+    "mimeType": string;
+    "dataUrl": string;
+
+    /** Creates a new EditorVisualFile instance. */
+    constructor($$source: Partial<EditorVisualFile> = {}) {
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("sizeBytes" in $$source)) {
+            this["sizeBytes"] = 0;
+        }
+        if (!("formattedSize" in $$source)) {
+            this["formattedSize"] = "";
+        }
+        if (!("mimeType" in $$source)) {
+            this["mimeType"] = "";
+        }
+        if (!("dataUrl" in $$source)) {
+            this["dataUrl"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new EditorVisualFile instance from a string or object.
+     */
+    static createFrom($$source: any = {}): EditorVisualFile {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new EditorVisualFile($$parsedSource as Partial<EditorVisualFile>);
+    }
+}
+
 export class ExecutionProfilesRequest {
     "projectPath": string;
     "activeFilePath": string;
