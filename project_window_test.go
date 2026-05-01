@@ -1,141 +1,122 @@
 package main
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"net/url"
 	"path/filepath"
-	"runtime"
 	"testing"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
-func TestProjectWindowLaunchArgsBuildRoutePayload(t *testing.T) {
-	projectPath := t.TempDir()
-	args := []string{"Arlecchino", projectWindowLaunchFlag, "--open-project", projectPath}
+type fakeProjectWindow struct {
+	shown   bool
+	focused bool
+}
 
-	payload, ok := buildProjectWindowLaunchPayloadFromLaunchArgs(args, "")
-	if !ok {
-		t.Fatal("project-window launch args were not parsed")
-	}
-	if payload.ProjectPath != projectPath {
-		t.Fatalf("ProjectPath = %q, want %q", payload.ProjectPath, projectPath)
-	}
+func (f *fakeProjectWindow) Show() application.Window {
+	f.shown = true
+	return nil
+}
 
-	rawURL, err := buildProjectWindowURL(payload)
-	if err != nil {
-		t.Fatalf("buildProjectWindowURL returned error: %v", err)
-	}
+func (f *fakeProjectWindow) Focus() {
+	f.focused = true
+}
+
+func (f *fakeProjectWindow) OnWindowEvent(events.WindowEventType, func(event *application.WindowEvent)) func() {
+	return func() {}
+}
+
+func TestBuildProjectSessionURLUsesSessionParam(t *testing.T) {
+	rawURL := buildProjectSessionURL("project-session-7")
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		t.Fatalf("parse project window URL: %v", err)
+		t.Fatalf("parse project session URL: %v", err)
 	}
-	encoded := parsed.Query().Get(projectWindowRouteParam)
-	if encoded == "" {
-		t.Fatalf("URL %q is missing %s", rawURL, projectWindowRouteParam)
+	if parsed.Query().Get(projectSessionRouteParam) != "project-session-7" {
+		t.Fatalf("URL %q is missing project session param", rawURL)
 	}
-
-	data, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		t.Fatalf("decode project window payload: %v", err)
-	}
-	var decoded projectWindowLaunchPayload
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("unmarshal project window payload: %v", err)
-	}
-	if decoded.ProjectPath != projectPath {
-		t.Fatalf("decoded ProjectPath = %q, want %q", decoded.ProjectPath, projectPath)
+	if parsed.Query().Get("arleProjectWindow") != "" {
+		t.Fatalf("URL %q uses removed project-window launch param", rawURL)
 	}
 }
 
-func TestProjectWindowLaunchBypassesSingleInstance(t *testing.T) {
+func TestProjectWindowLaunchDoesNotBypassSingleInstance(t *testing.T) {
 	t.Setenv(envEnableSingleInstanceSpike, "1")
 
 	if !singleInstanceEnabledForLaunchArgs([]string{"Arlecchino", "--open-project", t.TempDir()}) {
 		t.Fatal("normal open-project launch did not enable single-instance")
 	}
-	if singleInstanceEnabledForLaunchArgs([]string{"Arlecchino", projectWindowLaunchFlag, "--open-project", t.TempDir()}) {
-		t.Fatal("project-window launch enabled single-instance")
-	}
 }
 
-func TestBuildProjectWindowLaunchCommandUsesPackagedMacOpen(t *testing.T) {
-	projectPath := filepath.Join(t.TempDir(), "project")
-	command := buildProjectWindowLaunchCommand(
-		projectPath,
-		"/Applications/Arlecchino.app/Contents/MacOS/Arlecchino",
-		"/Applications/Arlecchino.app",
-		"darwin",
-	)
-
-	if command.Name != "/usr/bin/open" {
-		t.Fatalf("command name = %q, want /usr/bin/open", command.Name)
-	}
-	wantArgs := []string{
-		"-n",
-		"/Applications/Arlecchino.app",
-		"--args",
-		projectWindowLaunchFlag,
-		"--open-project",
-		filepath.Clean(projectPath),
-	}
-	if !equalStringSlices(command.Args, wantArgs) {
-		t.Fatalf("command args = %#v, want %#v", command.Args, wantArgs)
-	}
-}
-
-func TestBuildProjectWindowLaunchCommandUsesExecutableForRawBinary(t *testing.T) {
-	projectPath := filepath.Join(t.TempDir(), "project")
-	command := buildProjectWindowLaunchCommand(projectPath, "/tmp/arlecchino", "", runtime.GOOS)
-
-	if command.Name != "/tmp/arlecchino" {
-		t.Fatalf("command name = %q, want raw executable", command.Name)
-	}
-	wantArgs := []string{projectWindowLaunchFlag, "--open-project", filepath.Clean(projectPath)}
-	if !equalStringSlices(command.Args, wantArgs) {
-		t.Fatalf("command args = %#v, want %#v", command.Args, wantArgs)
-	}
-}
-
-func TestOpenProjectWindowValidatesAccessAndLaunches(t *testing.T) {
+func TestOpenProjectWindowCreatesInProcessWailsWindow(t *testing.T) {
 	projectPath := t.TempDir()
-	var launched []projectWindowLaunchCommand
-	previousStarter := startProjectWindowProcess
-	startProjectWindowProcess = func(command projectWindowLaunchCommand) error {
-		launched = append(launched, command)
-		return nil
+	app := NewApp()
+
+	var gotOptions application.WebviewWindowOptions
+	fakeWindow := &fakeProjectWindow{}
+	previousFactory := newProjectWebviewWindow
+	newProjectWebviewWindow = func(_ *App, options application.WebviewWindowOptions) (projectWindowHandle, error) {
+		gotOptions = options
+		return fakeWindow, nil
 	}
 	defer func() {
-		startProjectWindowProcess = previousStarter
+		newProjectWebviewWindow = previousFactory
 	}()
 
-	result, err := (&App{}).OpenProjectWindow(projectPath)
+	result, err := app.OpenProjectWindow(projectPath)
 	if err != nil {
 		t.Fatalf("OpenProjectWindow returned error: %v", err)
 	}
-	if !result.Handled || result.ProjectPath != projectPath {
-		t.Fatalf("result = %#v, want handled project path", result)
+	defer app.closeProjectWindowSession(result.SessionID)
+	if !result.Handled || result.ProjectPath != filepath.Clean(projectPath) || result.SessionID == "" {
+		t.Fatalf("result = %#v, want handled session result", result)
 	}
-	if len(launched) != 1 {
-		t.Fatalf("launch count = %d, want 1", len(launched))
+	if result.Reused {
+		t.Fatal("first project window was marked as reused")
+	}
+	if gotOptions.Name != result.WindowName {
+		t.Fatalf("window name = %q, want %q", gotOptions.Name, result.WindowName)
+	}
+	if gotOptions.URL != buildProjectSessionURL(result.SessionID) {
+		t.Fatalf("window URL = %q, want project session URL", gotOptions.URL)
+	}
+	if gotOptions.Mac.TitleBar != mainWindowMacOptions().TitleBar {
+		t.Fatalf("project window titlebar = %v, want main titlebar", gotOptions.Mac.TitleBar)
+	}
+	if !hasMacWindowCollectionBehavior(gotOptions.Mac.CollectionBehavior, application.MacWindowCollectionBehaviorParticipatesInCycle) {
+		t.Fatal("project window does not participate in macOS window cycle")
+	}
+	if !fakeWindow.shown || !fakeWindow.focused {
+		t.Fatalf("fake window shown=%v focused=%v, want both true", fakeWindow.shown, fakeWindow.focused)
 	}
 
-	_, err = (&App{}).OpenProjectWindow(filepath.Join(t.TempDir(), "missing"))
-	if err == nil {
-		t.Fatal("OpenProjectWindow accepted an inaccessible path")
+	payload, err := app.GetProjectWindowSession(result.SessionID)
+	if err != nil {
+		t.Fatalf("GetProjectWindowSession returned error: %v", err)
 	}
-	if len(launched) != 1 {
-		t.Fatalf("launch count after invalid path = %d, want 1", len(launched))
+	if payload.ProjectPath != filepath.Clean(projectPath) || payload.SessionID != result.SessionID {
+		t.Fatalf("payload = %#v, want project session payload", payload)
 	}
 }
 
-func equalStringSlices(a []string, b []string) bool {
-	if len(a) != len(b) {
-		return false
+func TestOpenProjectWindowValidatesAccessBeforeCreatingWindow(t *testing.T) {
+	app := NewApp()
+	var createCount int
+	previousFactory := newProjectWebviewWindow
+	newProjectWebviewWindow = func(_ *App, options application.WebviewWindowOptions) (projectWindowHandle, error) {
+		createCount++
+		return &fakeProjectWindow{}, nil
 	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
+	defer func() {
+		newProjectWebviewWindow = previousFactory
+	}()
+
+	_, err := app.OpenProjectWindow(filepath.Join(t.TempDir(), "missing"))
+	if err == nil {
+		t.Fatal("OpenProjectWindow accepted an inaccessible path")
 	}
-	return true
+	if createCount != 0 {
+		t.Fatalf("window create count = %d, want 0", createCount)
+	}
 }

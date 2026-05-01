@@ -667,11 +667,11 @@ func (a *App) WriteFile(filePath string, content string) error {
 		return err
 	}
 
-	if a.coreEngine != nil {
+	if engine := a.activeCoreEngine(); engine != nil {
 		if created {
-			a.coreEngine.OnFileCreated(filePath, []byte(content))
+			engine.OnFileCreated(filePath, []byte(content))
 		} else {
-			a.coreEngine.OnFileSaved(filePath)
+			engine.OnFileSaved(filePath)
 		}
 	}
 

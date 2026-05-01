@@ -105,8 +105,8 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.M
 
 	windowMenu := appMenu.AddSubmenu("Window")
 	windowMenu.Add("Minimize").SetAccelerator("cmd+m").OnClick(func(_ *application.Context) {
-		if a.mainWindow != nil {
-			a.mainWindow.Minimise()
+		if window := a.currentNativeWindow(); window != nil {
+			window.Minimise()
 		}
 	})
 
@@ -128,6 +128,10 @@ func (a *App) emitMenuAction(actionID string) func(*application.Context) {
 		if a.ctx == nil {
 			return
 		}
+		if window := a.currentNativeWindow(); window != nil {
+			window.EmitEvent(menuActionEventName, actionID)
+			return
+		}
 		a.emitEvent(menuActionEventName, actionID)
 	}
 }
@@ -137,8 +141,24 @@ func (a *App) emitViewZoom(action string) func(*application.Context) {
 		if a.ctx == nil {
 			return
 		}
+		if window := a.currentNativeWindow(); window != nil {
+			window.EmitEvent("ide:view:zoom", action)
+			return
+		}
 		a.emitEvent("ide:view:zoom", action)
 	}
+}
+
+func (a *App) currentNativeWindow() application.Window {
+	if a != nil && a.wailsApp != nil {
+		if window := a.wailsApp.Window.Current(); window != nil {
+			return window
+		}
+	}
+	if a != nil {
+		return a.mainWindow
+	}
+	return nil
 }
 
 func menuAcceleratorForAction(actionID string, shortcuts map[string][]string) string {

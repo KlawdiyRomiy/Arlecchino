@@ -73,13 +73,25 @@ type LSPDiagnosticsEvent struct {
 	URI         string          `json:"uri"`
 	FilePath    string          `json:"filePath"`
 	ProjectPath string          `json:"projectPath"`
+	SessionID   string          `json:"sessionId,omitempty"`
 	Generation  uint64          `json:"generation"`
 	Language    string          `json:"language"`
 	Items       []LSPDiagnostic `json:"items"`
 }
 
+type LSPDiagnosticsStatusEvent struct {
+	ProjectPath string `json:"projectPath"`
+	SessionID   string `json:"sessionId,omitempty"`
+	Generation  uint64 `json:"generation"`
+	Language    string `json:"language,omitempty"`
+	FilePath    string `json:"filePath,omitempty"`
+	State       string `json:"state"`
+	Message     string `json:"message"`
+}
+
 type LSPDiagnosticsPreloadEvent struct {
 	ProjectPath        string `json:"projectPath"`
+	SessionID          string `json:"sessionId,omitempty"`
 	Generation         uint64 `json:"generation"`
 	Bounded            bool   `json:"bounded"`
 	TotalCandidates    int    `json:"totalCandidates"`
@@ -151,14 +163,63 @@ func convertLSPDiagnostics(diagnostics []indexerlsp.Diagnostic) []LSPDiagnostic 
 }
 
 func newLSPDiagnosticsEvent(projectPath string, generation uint64, language, filePath string, diagnostics []indexerlsp.Diagnostic) LSPDiagnosticsEvent {
+	return newLSPDiagnosticsEventForSession(projectPath, generation, "", language, filePath, diagnostics)
+}
+
+func newLSPDiagnosticsEventForSession(projectPath string, generation uint64, sessionID string, language, filePath string, diagnostics []indexerlsp.Diagnostic) LSPDiagnosticsEvent {
 	return LSPDiagnosticsEvent{
 		URI:         "file://" + filepath.ToSlash(filePath),
 		FilePath:    filePath,
 		ProjectPath: projectPath,
+		SessionID:   sessionID,
 		Generation:  generation,
 		Language:    language,
 		Items:       convertLSPDiagnostics(diagnostics),
 	}
+}
+
+func newLSPDiagnosticsStatusEvent(projectPath string, generation uint64, language, filePath, state, message string) LSPDiagnosticsStatusEvent {
+	return newLSPDiagnosticsStatusEventForSession("", projectPath, generation, language, filePath, state, message)
+}
+
+func newLSPDiagnosticsStatusEventForSession(sessionID string, projectPath string, generation uint64, language, filePath, state, message string) LSPDiagnosticsStatusEvent {
+	return LSPDiagnosticsStatusEvent{
+		ProjectPath: projectPath,
+		SessionID:   sessionID,
+		Generation:  generation,
+		Language:    language,
+		FilePath:    filePath,
+		State:       state,
+		Message:     message,
+	}
+}
+
+func (a *App) emitLSPDiagnosticsStatusForProject(projectPath string, generation uint64, language, filePath, state, message string) {
+	a.emitLSPDiagnosticsStatusForSession("", projectPath, generation, language, filePath, state, message)
+}
+
+func (a *App) emitLSPDiagnosticsStatusForSession(sessionID string, projectPath string, generation uint64, language, filePath, state, message string) {
+	a.emitEvent(
+		"lsp:diagnostics:status",
+		newLSPDiagnosticsStatusEventForSession(sessionID, projectPath, generation, language, filePath, state, message),
+	)
+}
+
+func (a *App) emitLSPDiagnosticsStatus(language, filePath, state, message string) {
+	session := a.activeProjectSession()
+	sessionID := ""
+	if session != nil {
+		sessionID = session.ID
+	}
+	a.emitLSPDiagnosticsStatusForSession(
+		sessionID,
+		a.currentProjectPath(),
+		a.activeProjectGeneration(),
+		language,
+		filePath,
+		state,
+		message,
+	)
 }
 
 func shouldSkipPreloadDir(name string) bool {
@@ -171,12 +232,14 @@ func shouldSkipPreloadDir(name string) bool {
 }
 
 func (a *App) LSPPreloadProjectDiagnostics(projectPath string) bool {
-	return a.lspPreloadProjectDiagnostics(projectPath, a.projectGeneration.Load())
+	session := a.activeProjectSession()
+	return a.lspPreloadProjectDiagnosticsForSession(session, projectPath, a.activeProjectGeneration())
 }
 
 // LSPGoToDefinition finds definition using unified LSP manager
 func (a *App) LSPGoToDefinition(filePath string, content string, line int, character int) ([]LSPDefinitionResult, error) {
-	if a.lspManager == nil {
+	manager := a.activeLSPManager()
+	if manager == nil {
 		return nil, fmt.Errorf("LSP manager not available")
 	}
 
@@ -186,16 +249,16 @@ func (a *App) LSPGoToDefinition(filePath string, content string, line int, chara
 	}
 
 	// Notify LSP about the document
-	opened, err := ensureDocOpen(a.lspManager, language, filePath, content)
+	opened, err := ensureDocOpen(manager, language, filePath, content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open document: %w", err)
 	}
 	if opened {
-		defer a.lspManager.DidClose(language, filePath)
+		defer manager.DidClose(language, filePath)
 	}
 
 	// Get definition (LSP uses 0-indexed lines)
-	locations, err := a.lspManager.GoToDefinition(language, filePath, line, character)
+	locations, err := manager.GoToDefinition(language, filePath, line, character)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get definition: %w", err)
 	}
@@ -220,7 +283,8 @@ func (a *App) LSPGoToDefinition(filePath string, content string, line int, chara
 
 // LSPHover returns hover information for a symbol
 func (a *App) LSPHover(filePath string, content string, line int, character int) (string, error) {
-	if a.lspManager == nil {
+	manager := a.activeLSPManager()
+	if manager == nil {
 		return "", fmt.Errorf("LSP manager not available")
 	}
 
@@ -230,16 +294,16 @@ func (a *App) LSPHover(filePath string, content string, line int, character int)
 	}
 
 	// Notify LSP about the document
-	opened, err := ensureDocOpen(a.lspManager, language, filePath, content)
+	opened, err := ensureDocOpen(manager, language, filePath, content)
 	if err != nil {
 		return "", fmt.Errorf("failed to open document: %w", err)
 	}
 	if opened {
-		defer a.lspManager.DidClose(language, filePath)
+		defer manager.DidClose(language, filePath)
 	}
 
 	// Get hover info
-	hover, err := a.lspManager.Hover(language, filePath, line, character)
+	hover, err := manager.Hover(language, filePath, line, character)
 	if err != nil {
 		return "", fmt.Errorf("failed to get hover: %w", err)
 	}
@@ -249,7 +313,8 @@ func (a *App) LSPHover(filePath string, content string, line int, character int)
 
 // LSPSignatureHelp returns signature help for a function call
 func (a *App) LSPSignatureHelp(filePath string, content string, line int, character int) (*SignatureHelpResult, error) {
-	if a.lspManager == nil {
+	manager := a.activeLSPManager()
+	if manager == nil {
 		return nil, fmt.Errorf("LSP manager not available")
 	}
 
@@ -259,16 +324,16 @@ func (a *App) LSPSignatureHelp(filePath string, content string, line int, charac
 	}
 
 	// Notify LSP about the document
-	opened, err := ensureDocOpen(a.lspManager, language, filePath, content)
+	opened, err := ensureDocOpen(manager, language, filePath, content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open document: %w", err)
 	}
 	if opened {
-		defer a.lspManager.DidClose(language, filePath)
+		defer manager.DidClose(language, filePath)
 	}
 
 	// Get signature help
-	result, err := a.lspManager.SignatureHelp(language, filePath, line, character)
+	result, err := manager.SignatureHelp(language, filePath, line, character)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get signature help: %w", err)
 	}
@@ -301,7 +366,8 @@ func (a *App) LSPSignatureHelp(filePath string, content string, line int, charac
 }
 
 func (a *App) LSPGetDiagnostics(filePath string) ([]LSPDiagnostic, error) {
-	if a.lspManager == nil {
+	manager := a.activeLSPManager()
+	if manager == nil {
 		return nil, fmt.Errorf("LSP manager not available")
 	}
 
@@ -310,7 +376,7 @@ func (a *App) LSPGetDiagnostics(filePath string) ([]LSPDiagnostic, error) {
 		return nil, fmt.Errorf("unsupported language for file: %s", filePath)
 	}
 
-	diagnostics := a.lspManager.GetDiagnostics(language, filePath)
+	diagnostics := manager.GetDiagnostics(language, filePath)
 	if len(diagnostics) == 0 {
 		return nil, nil
 	}
@@ -319,7 +385,8 @@ func (a *App) LSPGetDiagnostics(filePath string) ([]LSPDiagnostic, error) {
 }
 
 func (a *App) LSPGetCodeActions(filePath string, content string, line int, character int) ([]LSPCodeAction, error) {
-	if a.lspManager == nil {
+	manager := a.activeLSPManager()
+	if manager == nil {
 		return nil, fmt.Errorf("LSP manager not available")
 	}
 
@@ -328,15 +395,15 @@ func (a *App) LSPGetCodeActions(filePath string, content string, line int, chara
 		return nil, fmt.Errorf("unsupported language for file: %s", filePath)
 	}
 
-	opened, err := ensureDocOpen(a.lspManager, language, filePath, content)
+	opened, err := ensureDocOpen(manager, language, filePath, content)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open document: %w", err)
 	}
 	if opened {
-		defer a.lspManager.DidClose(language, filePath)
+		defer manager.DidClose(language, filePath)
 	}
 
-	allDiagnostics := a.lspManager.GetDiagnostics(language, filePath)
+	allDiagnostics := manager.GetDiagnostics(language, filePath)
 	lineDiagnostics := make([]indexerlsp.Diagnostic, 0, len(allDiagnostics))
 	for _, diag := range allDiagnostics {
 		if diag.Range.Start.Line <= line && diag.Range.End.Line >= line {
@@ -344,7 +411,7 @@ func (a *App) LSPGetCodeActions(filePath string, content string, line int, chara
 		}
 	}
 
-	actions, err := a.lspManager.CodeAction(language, filePath, line, character, lineDiagnostics)
+	actions, err := manager.CodeAction(language, filePath, line, character, lineDiagnostics)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get code actions: %w", err)
 	}
@@ -692,8 +759,8 @@ func (a *App) GetLanguageForFile(filePath string) *LanguageInfoResult {
 		ARLESupported: lang.ARLESupported,
 	}
 
-	if a.brain != nil {
-		result.ARLESupported = a.brain.HasARLELanguageSupport(lang.ID)
+	if brain := a.activeCompletionBrain(); brain != nil {
+		result.ARLESupported = brain.HasARLELanguageSupport(lang.ID)
 	}
 
 	if a.lspInstaller != nil && lang.LSPServerID != "" {

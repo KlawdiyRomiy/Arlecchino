@@ -5,8 +5,9 @@ import "arlecchino/internal/indexer/brain"
 type AutocompleteTrace = brain.CompletionTrace
 
 func (a *App) GetLastAutocompleteTrace() brain.CompletionTrace {
-	if a.brain == nil {
+	completionBrain := a.activeCompletionBrain()
+	if completionBrain == nil {
 		return brain.CompletionTrace{}
 	}
-	return a.brain.LastCompletionTrace()
+	return completionBrain.LastCompletionTrace()
 }

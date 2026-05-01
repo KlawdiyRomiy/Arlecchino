@@ -15,9 +15,8 @@ func hasMacWindowCollectionBehavior(
 
 func TestMacWindowOptionsParticipateInWindowCycle(t *testing.T) {
 	for name, behavior := range map[string]application.MacWindowCollectionBehavior{
-		"main":           mainWindowMacOptions().CollectionBehavior,
-		"detached":       detachedWindowMacOptions().CollectionBehavior,
-		"project-window": projectWindowMacOptions().CollectionBehavior,
+		"main":     mainWindowMacOptions().CollectionBehavior,
+		"detached": detachedWindowMacOptions().CollectionBehavior,
 	} {
 		if !hasMacWindowCollectionBehavior(
 			behavior,
@@ -34,12 +33,12 @@ func TestMacWindowOptionsParticipateInWindowCycle(t *testing.T) {
 	}
 }
 
-func TestProjectWindowMacOptionsUseNativeTitlebar(t *testing.T) {
-	options := projectWindowMacOptions()
-	if options.TitleBar != application.MacTitleBarDefault {
-		t.Fatalf("project window titlebar = %v, want default/native", options.TitleBar)
+func TestProjectWindowsUseMainWindowMacOptions(t *testing.T) {
+	options := mainWindowMacOptions()
+	if options.TitleBar != application.MacTitleBarHiddenInsetUnified {
+		t.Fatalf("project window titlebar = %v, want main hidden inset unified", options.TitleBar)
 	}
-	if options.InvisibleTitleBarHeight != 0 {
-		t.Fatalf("project window invisible titlebar height = %d, want 0", options.InvisibleTitleBarHeight)
+	if options.InvisibleTitleBarHeight == 0 {
+		t.Fatalf("project window invisible titlebar height = 0, want main chrome spacer")
 	}
 }

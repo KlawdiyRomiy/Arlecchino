@@ -6,6 +6,7 @@ import {
   useDiagnosticsStore,
 } from "../stores/diagnosticsStore";
 import { usePerformanceStore } from "../stores/performanceStore";
+import { readProjectSessionRoutePayload } from "../shell/projectSessionRoute";
 
 type ProjectAppBridge = {
   LSPPreloadProjectDiagnostics?: (projectPath: string) => Promise<unknown>;
@@ -25,6 +26,7 @@ interface DiagnosticsPreloadState {
 interface DiagnosticsPreloadEventPayload {
   generation?: number;
   projectPath?: string;
+  sessionId?: string;
   bounded?: boolean;
   totalCandidates?: number;
   selectedCandidates?: number;
@@ -62,6 +64,8 @@ let currentProjectScope: ProjectScopeState = {
   generation: 0,
   projectPath: null,
 };
+const currentProjectSessionId =
+  readProjectSessionRoutePayload()?.sessionId ?? "main";
 
 const diagnosticsPreloadListeners = new Set<() => void>();
 
@@ -101,6 +105,16 @@ const normalizeProjectPath = (payload: DiagnosticsPreloadEventPayload) => {
     payload.projectPath.length > 0
     ? payload.projectPath
     : null;
+};
+
+const payloadMatchesCurrentProjectSession = (
+  payload: DiagnosticsPreloadEventPayload,
+) => {
+  const sessionId =
+    typeof payload.sessionId === "string" && payload.sessionId.length > 0
+      ? payload.sessionId
+      : "main";
+  return sessionId === currentProjectSessionId;
 };
 
 const normalizeCount = (value?: number) => {
@@ -198,6 +212,9 @@ const bindDiagnosticsPreloadEvents = () => {
   diagnosticsPreloadEventsBound = true;
   resolveDiagnosticsPreloadEventsBound();
   EventsOn("lsp:ready", (payload: LSPReadyEventPayload) => {
+    if (!payloadMatchesCurrentProjectSession(payload)) {
+      return;
+    }
     const projectPath = normalizeProjectPath(payload);
     const generation = normalizeGeneration(payload.generation);
     if (!projectPath || generation === 0) {
@@ -221,6 +238,9 @@ const bindDiagnosticsPreloadEvents = () => {
   EventsOn(
     "lsp:diagnostics:preload:start",
     (payload: DiagnosticsPreloadEventPayload) => {
+      if (!payloadMatchesCurrentProjectSession(payload)) {
+        return;
+      }
       const projectPath = normalizeProjectPath(payload);
       const generation = normalizeGeneration(payload.generation);
       const matchingScope = resolveMatchingProjectScope(
@@ -257,6 +277,9 @@ const bindDiagnosticsPreloadEvents = () => {
   EventsOn(
     "lsp:diagnostics:preload:complete",
     (payload: DiagnosticsPreloadEventPayload) => {
+      if (!payloadMatchesCurrentProjectSession(payload)) {
+        return;
+      }
       const projectPath = normalizeProjectPath(payload);
       const generation = normalizeGeneration(payload.generation);
       const matchingScope = resolveMatchingProjectScope(

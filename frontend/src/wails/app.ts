@@ -17,6 +17,13 @@ interface NativeWindowControlsBridge {
 
 interface ProjectWindowBridge {
   OpenProjectWindow?: (path: string) => Promise<unknown> | unknown;
+  GetProjectWindowSession?: (sessionId: string) => Promise<unknown> | unknown;
+}
+
+export interface ProjectWindowSessionPayload {
+  sessionId: string;
+  projectPath: string;
+  windowName: string;
 }
 
 const nativeWindowControlsMethodNames = [
@@ -29,11 +36,19 @@ const projectWindowMethodNames = [
   "arlecchino.App.OpenProjectWindow",
 ] as const;
 
+const projectWindowSessionMethodNames = [
+  "main.App.GetProjectWindowSession",
+  "arlecchino.App.GetProjectWindowSession",
+] as const;
+
 let nativeWindowControlsMethodName:
   | (typeof nativeWindowControlsMethodNames)[number]
   | undefined;
 let projectWindowMethodName:
   | (typeof projectWindowMethodNames)[number]
+  | undefined;
+let projectWindowSessionMethodName:
+  | (typeof projectWindowSessionMethodNames)[number]
   | undefined;
 
 const getNativeWindowControlsBridge = ():
@@ -153,4 +168,66 @@ export async function OpenProjectWindow(path: string): Promise<boolean> {
   }
 
   return false;
+}
+
+const normalizeProjectWindowSessionPayload = (
+  payload: unknown,
+): ProjectWindowSessionPayload => {
+  if (typeof payload !== "object" || payload === null) {
+    throw new Error("Invalid project window session payload.");
+  }
+  const record = payload as Record<string, unknown>;
+  const sessionId =
+    typeof record.sessionId === "string" ? record.sessionId : "";
+  const projectPath =
+    typeof record.projectPath === "string" ? record.projectPath : "";
+  const windowName =
+    typeof record.windowName === "string" ? record.windowName : "";
+  if (!sessionId || !projectPath) {
+    throw new Error("Invalid project window session payload.");
+  }
+  return { sessionId, projectPath, windowName };
+};
+
+export async function GetProjectWindowSession(
+  sessionId: string,
+): Promise<ProjectWindowSessionPayload> {
+  const bridge = getProjectWindowBridge();
+  if (bridge?.GetProjectWindowSession) {
+    try {
+      return normalizeProjectWindowSessionPayload(
+        await Promise.resolve(bridge.GetProjectWindowSession(sessionId)),
+      );
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  const runtimeModule = await loadRuntimeCallModule();
+  const callByName = runtimeModule?.Call?.ByName;
+  if (!callByName) {
+    throw new Error("Project window session bridge is unavailable.");
+  }
+
+  if (projectWindowSessionMethodName) {
+    try {
+      return normalizeProjectWindowSessionPayload(
+        await callByName(projectWindowSessionMethodName, sessionId),
+      );
+    } catch {
+      projectWindowSessionMethodName = undefined;
+    }
+  }
+
+  for (const methodName of projectWindowSessionMethodNames) {
+    try {
+      const result = await callByName(methodName, sessionId);
+      projectWindowSessionMethodName = methodName;
+      return normalizeProjectWindowSessionPayload(result);
+    } catch {
+      // Try the next known Wails v3 service namespace.
+    }
+  }
+
+  throw new Error("Project window session bridge is unavailable.");
 }

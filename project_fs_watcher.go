@@ -35,7 +35,11 @@ const (
 var errProjectWatchBudgetExceeded = errors.New("project watch scan budget exceeded")
 
 func (a *App) startProjectFilesystemWatcher(projectPath string, generation uint64) {
-	if a == nil || a.projectCtx == nil || strings.TrimSpace(projectPath) == "" {
+	a.startProjectFilesystemWatcherForSession(a.activeProjectSession(), projectPath, generation)
+}
+
+func (a *App) startProjectFilesystemWatcherForSession(session *ProjectRuntimeSession, projectPath string, generation uint64) {
+	if a == nil || session == nil || session.projectCtx == nil || strings.TrimSpace(projectPath) == "" {
 		return
 	}
 
@@ -46,10 +50,10 @@ func (a *App) startProjectFilesystemWatcher(projectPath string, generation uint6
 	}
 	knownEntries := initialScan.Entries
 
-	ctx := a.projectCtx
-	a.wg.Add(1)
+	ctx := session.projectCtx
+	session.wg.Add(1)
 	go func() {
-		defer a.wg.Done()
+		defer session.wg.Done()
 
 		interval := projectWatchInitialInterval
 		if initialScan.Bounded {
@@ -65,7 +69,7 @@ func (a *App) startProjectFilesystemWatcher(projectPath string, generation uint6
 			case <-timer.C:
 			}
 
-			if a.projectGeneration.Load() != generation {
+			if session.projectGeneration.Load() != generation {
 				return
 			}
 

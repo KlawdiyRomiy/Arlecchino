@@ -18,13 +18,22 @@ func (a *App) CreateTerminal(id, name string) error {
 }
 
 func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
+	projectSession := a.activeProjectSession()
+	projectSessionID := "main"
+	if projectSession != nil {
+		projectSessionID = projectSession.ID
+	}
+	termManager := a.activeTerminalManager()
+	if termManager == nil {
+		return fmt.Errorf("terminal manager not initialized")
+	}
 	workingDir := projectPath
 	if workingDir == "" {
 		home, _ := os.UserHomeDir()
 		workingDir = home
 	}
 
-	session, err := a.termManager.Create(id, name, workingDir)
+	session, err := termManager.Create(id, name, workingDir)
 	if err != nil {
 		return err
 	}
@@ -32,8 +41,9 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 	dataEmitter := newTerminalDataEmitter(func(data []byte) {
 		encoded := base64.StdEncoding.EncodeToString(data)
 		a.emitEvent("terminal:data", map[string]interface{}{
-			"id":   id,
-			"data": encoded,
+			"id":        id,
+			"data":      encoded,
+			"sessionId": projectSessionID,
 		})
 	})
 	session.SetOnData(dataEmitter.Push)
@@ -41,8 +51,9 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 	session.SetOnExit(func(code int) {
 		dataEmitter.Flush()
 		a.emitEvent("terminal:exit", map[string]interface{}{
-			"id":   id,
-			"code": code,
+			"id":        id,
+			"code":      code,
+			"sessionId": projectSessionID,
 		})
 	})
 
@@ -53,6 +64,7 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 
 		a.emitEvent("terminal:mode", map[string]interface{}{
 			"id":            id,
+			"sessionId":     projectSessionID,
 			"mode":          event.Mode,
 			"active":        event.Active,
 			"reason":        event.Reason,
@@ -64,10 +76,11 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 
 	session.SetOnShell(func(event terminal.ShellEvent) {
 		payload := map[string]interface{}{
-			"id":   id,
-			"type": event.Type,
-			"cwd":  event.CWD,
-			"raw":  event.Raw,
+			"id":        id,
+			"sessionId": projectSessionID,
+			"type":      event.Type,
+			"cwd":       event.CWD,
+			"raw":       event.Raw,
 		}
 		if event.ExitCode != nil {
 			payload["exitCode"] = *event.ExitCode
@@ -78,19 +91,21 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 
 	session.SetOnSemantic(func(event terminal.SemanticEvent) {
 		a.emitEvent("terminal:semantic", map[string]interface{}{
-			"id":       id,
-			"kind":     event.Kind,
-			"path":     event.Path,
-			"line":     event.Line,
-			"column":   event.Column,
-			"severity": event.Severity,
-			"message":  event.Message,
+			"id":        id,
+			"sessionId": projectSessionID,
+			"kind":      event.Kind,
+			"path":      event.Path,
+			"line":      event.Line,
+			"column":    event.Column,
+			"severity":  event.Severity,
+			"message":   event.Message,
 		})
 	})
 
 	a.emitEvent("terminal:created", map[string]interface{}{
-		"id":   id,
-		"name": name,
+		"id":        id,
+		"name":      name,
+		"sessionId": projectSessionID,
 	})
 
 	return nil
@@ -162,7 +177,11 @@ func (e *terminalDataEmitter) takeLocked() []byte {
 }
 
 func (a *App) WriteTerminal(id string, data string) error {
-	session := a.termManager.Get(id)
+	termManager := a.activeTerminalManager()
+	if termManager == nil {
+		return fmt.Errorf("terminal manager not initialized")
+	}
+	session := termManager.Get(id)
 	if session == nil {
 		return fmt.Errorf("terminal session not found")
 	}
@@ -194,7 +213,11 @@ func (a *App) WriteTerminal(id string, data string) error {
 }
 
 func (a *App) ResizeTerminal(id string, rows, cols int) error {
-	session := a.termManager.Get(id)
+	termManager := a.activeTerminalManager()
+	if termManager == nil {
+		return fmt.Errorf("terminal manager not initialized")
+	}
+	session := termManager.Get(id)
 	if session == nil {
 		return fmt.Errorf("terminal session not found")
 	}
@@ -202,19 +225,31 @@ func (a *App) ResizeTerminal(id string, rows, cols int) error {
 }
 
 func (a *App) CloseTerminal(id string) error {
-	return a.termManager.Close(id)
+	if termManager := a.activeTerminalManager(); termManager != nil {
+		return termManager.Close(id)
+	}
+	return nil
 }
 
 func (a *App) CloseAllTerminals() {
-	a.termManager.CloseAll()
+	if termManager := a.activeTerminalManager(); termManager != nil {
+		termManager.CloseAll()
+	}
 }
 
 func (a *App) ListTerminalSessions() []string {
-	return a.termManager.List()
+	if termManager := a.activeTerminalManager(); termManager != nil {
+		return termManager.List()
+	}
+	return nil
 }
 
 func (a *App) SendTerminalText(id, text string) error {
-	session := a.termManager.Get(id)
+	termManager := a.activeTerminalManager()
+	if termManager == nil {
+		return fmt.Errorf("terminal manager not initialized")
+	}
+	session := termManager.Get(id)
 	if session == nil {
 		return fmt.Errorf("terminal session not found")
 	}

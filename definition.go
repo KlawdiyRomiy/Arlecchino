@@ -67,7 +67,7 @@ func (a *App) GoToDefinition(filePath string, content string, line int, column i
 
 	var results []DefinitionResult
 	tryLSPDefinition := func() bool {
-		if a.lspManager == nil {
+		if a.activeLSPManager() == nil {
 			return false
 		}
 

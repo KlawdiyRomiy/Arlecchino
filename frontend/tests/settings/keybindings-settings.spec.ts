@@ -54,6 +54,12 @@ test.beforeEach(async ({ page }) => {
                   runtime: "test",
                   version: 1,
                 };
+              case "GetProjectWindowSession":
+                return {
+                  sessionId: args[0],
+                  projectPath: "/launched",
+                  windowName: "project:project-session-1",
+                };
               case "SelectDirectory":
                 return testWindow.__selectedDirectory ?? "";
               case "GetRecentProjects":
@@ -476,14 +482,10 @@ test("windows project opening mode uses current window when welcome has no activ
   expect(calls.some((call) => call.method === "OpenProjectWindow")).toBe(false);
 });
 
-test("project-window route ignores shared workspace storage", async ({
+test("project session route ignores shared workspace storage", async ({
   page,
 }) => {
-  const payload = Buffer.from(
-    JSON.stringify({ projectPath: "/launched", source: "project-window" }),
-  ).toString("base64url");
-
-  await page.goto(`/?arleProjectWindow=${payload}`);
+  await page.goto("/?arleProjectSession=session-1");
 
   await expect
     .poll(async () =>

@@ -1,153 +1,140 @@
 package main
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/url"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
-const (
-	projectWindowLaunchFlag = "--project-window"
-	projectWindowRouteParam = "arleProjectWindow"
-)
+const projectSessionRouteParam = "arleProjectSession"
 
 type ProjectWindowLaunchResult struct {
 	Handled     bool   `json:"handled"`
 	ProjectPath string `json:"projectPath"`
+	SessionID   string `json:"sessionId"`
+	WindowName  string `json:"windowName"`
+	Reused      bool   `json:"reused"`
 }
 
-type projectWindowLaunchPayload struct {
+type ProjectWindowSessionPayload struct {
+	SessionID   string `json:"sessionId"`
 	ProjectPath string `json:"projectPath"`
-	Source      string `json:"source,omitempty"`
+	WindowName  string `json:"windowName"`
 }
 
-type projectWindowLaunchCommand struct {
-	Name string
-	Args []string
+type projectWindowHandle interface {
+	Show() application.Window
+	Focus()
+	OnWindowEvent(events.WindowEventType, func(event *application.WindowEvent)) func()
 }
 
-var startProjectWindowProcess = func(command projectWindowLaunchCommand) error {
-	cmd := exec.Command(command.Name, command.Args...)
-	return cmd.Start()
+var newProjectWebviewWindow = func(app *App, options application.WebviewWindowOptions) (projectWindowHandle, error) {
+	if app == nil || app.wailsApp == nil {
+		return nil, fmt.Errorf("wails application is not initialized")
+	}
+	return app.wailsApp.Window.NewWithOptions(options), nil
 }
 
 func (a *App) OpenProjectWindow(path string) (ProjectWindowLaunchResult, error) {
-	path = strings.TrimSpace(path)
+	path = filepath.Clean(strings.TrimSpace(path))
 	if err := validateProjectOpenAccess(path); err != nil {
 		return ProjectWindowLaunchResult{}, err
 	}
 
-	command, err := buildCurrentProjectWindowLaunchCommand(path)
-	if err != nil {
+	registry := a.ensureProjectSessions()
+	if existing := registry.findProjectWindowByPath(path); existing != nil {
+		a.focusProjectSessionWindow(existing)
+		return ProjectWindowLaunchResult{
+			Handled:     true,
+			ProjectPath: existing.currentProjectPath(),
+			SessionID:   existing.ID,
+			WindowName:  existing.WindowName,
+			Reused:      true,
+		}, nil
+	}
+
+	sessionID := a.nextProjectWindowSessionID()
+	windowName := "project:" + sessionID
+	session := newProjectRuntimeSession(sessionID, windowName)
+	registry.register(session)
+
+	if err := a.openProjectInSession(session, path); err != nil {
+		registry.remove(sessionID)
 		return ProjectWindowLaunchResult{}, err
 	}
-	if err := startProjectWindowProcess(command); err != nil {
-		return ProjectWindowLaunchResult{}, fmt.Errorf("launch project window: %w", err)
+
+	windowURL := buildProjectSessionURL(sessionID)
+	window, err := newProjectWebviewWindow(a, application.WebviewWindowOptions{
+		Name:               windowName,
+		Title:              "Arlecchino - " + filepath.Base(path),
+		Width:              1440,
+		Height:             900,
+		MinWidth:           1024,
+		MinHeight:          768,
+		Frameless:          runtime.GOOS != "darwin",
+		URL:                windowURL,
+		UseApplicationMenu: true,
+		BackgroundType:     application.BackgroundTypeTransparent,
+		BackgroundColour:   application.NewRGBA(10, 10, 10, 0),
+		Mac:                mainWindowMacOptions(),
+		Windows: application.WindowsWindow{
+			DisableIcon: false,
+		},
+		Linux: application.LinuxWindow{
+			WebviewGpuPolicy: application.WebviewGpuPolicyAlways,
+		},
+	})
+	if err != nil {
+		_ = a.closeProjectInSession(session, true)
+		registry.remove(sessionID)
+		return ProjectWindowLaunchResult{}, err
 	}
+
+	window.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		a.closeProjectWindowSession(sessionID)
+	})
+	window.Show()
+	window.Focus()
 
 	return ProjectWindowLaunchResult{
 		Handled:     true,
-		ProjectPath: filepath.Clean(path),
+		ProjectPath: path,
+		SessionID:   sessionID,
+		WindowName:  windowName,
 	}, nil
 }
 
-func buildCurrentProjectWindowLaunchCommand(projectPath string) (projectWindowLaunchCommand, error) {
-	executable, err := os.Executable()
-	if err != nil {
-		return projectWindowLaunchCommand{}, fmt.Errorf("resolve executable: %w", err)
-	}
-	executable, err = filepath.Abs(executable)
-	if err != nil {
-		return projectWindowLaunchCommand{}, fmt.Errorf("resolve executable path: %w", err)
-	}
-
-	return buildProjectWindowLaunchCommand(
-		projectPath,
-		executable,
-		findProjectWindowAppBundlePath(executable),
-		runtime.GOOS,
-	), nil
-}
-
-func buildProjectWindowLaunchCommand(projectPath string, executablePath string, appBundlePath string, goos string) projectWindowLaunchCommand {
-	args := []string{projectWindowLaunchFlag, "--open-project", filepath.Clean(projectPath)}
-	if goos == "darwin" && strings.TrimSpace(appBundlePath) != "" {
-		return projectWindowLaunchCommand{
-			Name: "/usr/bin/open",
-			Args: append([]string{
-				"-n",
-				filepath.Clean(appBundlePath),
-				"--args",
-			}, args...),
-		}
-	}
-
-	return projectWindowLaunchCommand{
-		Name: executablePath,
-		Args: args,
-	}
-}
-
-func findProjectWindowAppBundlePath(path string) string {
-	path = filepath.Clean(strings.TrimSpace(path))
-	if path == "" || path == "." {
-		return ""
-	}
-	for {
-		if strings.HasSuffix(path, ".app") {
-			return path
-		}
-		parent := filepath.Dir(path)
-		if parent == path || parent == "." {
-			return ""
-		}
-		path = parent
-	}
-}
-
-func isProjectWindowLaunchArgs(args []string) bool {
-	for _, arg := range stripExecutableArg(args) {
-		if strings.TrimSpace(arg) == projectWindowLaunchFlag {
-			return true
-		}
-	}
-	return false
-}
-
-func buildProjectWindowLaunchPayloadFromLaunchArgs(args []string, workingDir string) (projectWindowLaunchPayload, bool) {
-	if !isProjectWindowLaunchArgs(args) {
-		return projectWindowLaunchPayload{}, false
-	}
-
-	payload, ok := buildOpenIntentFromLaunchArgs(args, workingDir)
-	if !ok || payload["kind"] != "openProject" {
-		return projectWindowLaunchPayload{}, false
-	}
-
-	projectPath, ok := payload["projectPath"].(string)
-	if !ok || strings.TrimSpace(projectPath) == "" {
-		return projectWindowLaunchPayload{}, false
-	}
-
-	return projectWindowLaunchPayload{
-		ProjectPath: filepath.Clean(projectPath),
-		Source:      "project-window",
-	}, true
-}
-
-func buildProjectWindowURL(payload projectWindowLaunchPayload) (string, error) {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-
+func buildProjectSessionURL(sessionID string) string {
 	values := url.Values{}
-	values.Set(projectWindowRouteParam, base64.RawURLEncoding.EncodeToString(data))
-	return "/?" + values.Encode(), nil
+	values.Set(projectSessionRouteParam, strings.TrimSpace(sessionID))
+	return "/?" + values.Encode()
+}
+
+func (a *App) GetProjectWindowSession(sessionID string) (ProjectWindowSessionPayload, error) {
+	session := a.projectSessionByID(sessionID)
+	if session == nil {
+		return ProjectWindowSessionPayload{}, fmt.Errorf("project window session not found")
+	}
+	projectPath := session.currentProjectPath()
+	if projectPath == "" {
+		return ProjectWindowSessionPayload{}, fmt.Errorf("project window session has no project")
+	}
+	return ProjectWindowSessionPayload{
+		SessionID:   session.ID,
+		ProjectPath: projectPath,
+		WindowName:  session.WindowName,
+	}, nil
+}
+
+func (a *App) closeProjectWindowSession(sessionID string) {
+	session := a.ensureProjectSessions().remove(sessionID)
+	if session == nil {
+		return
+	}
+	_ = a.closeProjectInSession(session, true)
 }

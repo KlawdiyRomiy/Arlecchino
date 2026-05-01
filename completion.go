@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -94,10 +95,11 @@ type EditorCompletionResult struct {
 
 func (a *App) SuggestCommand(input string) []CommandSuggestion {
 	projectPath := a.GetCurrentProjectPath()
+	pluginRegistry := a.activePluginRegistry()
 
 	// Use plugin registry for command suggestions
-	if a.plugins != nil && projectPath != "" {
-		pluginSuggestions := a.plugins.SuggestCommand(projectPath, input)
+	if pluginRegistry != nil && projectPath != "" {
+		pluginSuggestions := pluginRegistry.SuggestCommand(projectPath, input)
 		if len(pluginSuggestions) > 0 {
 			var result []CommandSuggestion
 			for _, s := range pluginSuggestions {
@@ -130,29 +132,33 @@ func (a *App) SuggestCommand(input string) []CommandSuggestion {
 // UpdatePrediction updates the speculative store based on terminal input
 func (a *App) UpdatePrediction(input string) {
 	projectPath := a.GetCurrentProjectPath()
-	if a.plugins != nil && projectPath != "" {
-		a.plugins.UpdatePrediction(projectPath, input)
+	pluginRegistry := a.activePluginRegistry()
+	if pluginRegistry != nil && projectPath != "" {
+		pluginRegistry.UpdatePrediction(projectPath, input)
 	}
 }
 
 // CancelPrediction clears any pending predictions
 func (a *App) CancelPrediction() {
 	projectPath := a.GetCurrentProjectPath()
-	if a.plugins != nil && projectPath != "" {
-		a.plugins.CancelPrediction(projectPath)
+	pluginRegistry := a.activePluginRegistry()
+	if pluginRegistry != nil && projectPath != "" {
+		pluginRegistry.CancelPrediction(projectPath)
 	}
 }
 
 // ConfirmPrediction is called when a command is executed
 func (a *App) ConfirmPrediction(input string) {
 	projectPath := a.GetCurrentProjectPath()
-	if a.plugins != nil && projectPath != "" {
-		a.plugins.ConfirmPrediction(projectPath, input)
+	pluginRegistry := a.activePluginRegistry()
+	if pluginRegistry != nil && projectPath != "" {
+		pluginRegistry.ConfirmPrediction(projectPath, input)
 	}
 }
 
 func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletionResult {
-	if a.brain == nil {
+	completionBrain := a.activeCompletionBrain()
+	if completionBrain == nil {
 		a.logWarning("[AutocompleteV2][Backend] brain is nil - not initialized")
 		return EditorCompletionResult{}
 	}
@@ -168,7 +174,7 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 	a.logDebugf("[AutocompleteV2][Backend] request file=%s lang=%s line=%d col=%d textBefore='%s'",
 		ctx.FilePath, ctx.Language, ctx.Line, ctx.Column, textBeforeShort)
 
-	prefixInfo := a.brain.ExtractPrefix(ctx.FilePath, []byte(ctx.FullText), ctx.Line, ctx.Column)
+	prefixInfo := completionBrain.ExtractPrefix(ctx.FilePath, []byte(ctx.FullText), ctx.Line, ctx.Column)
 	prefix := prefixInfo.Prefix
 	if !prefixInfo.InImport && predictive.DetectImportContextFromText(ctx.TextBefore, ctx.Language) {
 		prefixInfo.InImport = true
@@ -231,7 +237,7 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		Ctx:               requestCtx,
 	}
 
-	suggestions := a.brain.Complete(brainCtx)
+	suggestions := completionBrain.Complete(brainCtx)
 
 	if last := a.lastRequestID.Load(); last != nil && last.(string) != requestID {
 		return EditorCompletionResult{
@@ -286,9 +292,9 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		primary = &items[0]
 	}
 
-	ghostResult := a.brain.SelectGhostTextWithContext(brainCtx, suggestions, prefix, prefixInfo.AccessChain)
-	if a.brain != nil && ghostResult.ShouldShow {
-		a.brain.RecordCompletionShown()
+	ghostResult := completionBrain.SelectGhostTextWithContext(brainCtx, suggestions, prefix, prefixInfo.AccessChain)
+	if ghostResult.ShouldShow {
+		completionBrain.RecordCompletionShown()
 	}
 
 	a.logDebugf("[AutocompleteV2][Backend] ghost show=%v text='%s' confidence=%.2f",
@@ -355,13 +361,14 @@ func computeImportsHash(imports []string) string {
 }
 
 func (a *App) GetInlineSuggestion(filePath, content string, line, column int, prefix string) string {
-	if a.brain == nil {
+	completionBrain := a.activeCompletionBrain()
+	if completionBrain == nil {
 		return ""
 	}
 
 	language := detectLanguageFromPath(filePath)
 
-	prefixInfo := a.brain.ExtractPrefix(filePath, []byte(content), line, column)
+	prefixInfo := completionBrain.ExtractPrefix(filePath, []byte(content), line, column)
 	if prefixInfo.PositionContext == "function_argument" {
 		return ""
 	}
@@ -375,7 +382,7 @@ func (a *App) GetInlineSuggestion(filePath, content string, line, column int, pr
 		Language: language,
 	}
 
-	suggestions := a.brain.Complete(brainCtx)
+	suggestions := completionBrain.Complete(brainCtx)
 	if len(suggestions) == 0 {
 		return ""
 	}
@@ -549,68 +556,90 @@ func calculateGhostTextScore(s *brain.Suggestion, text, prefix string) float64 {
 }
 
 func (a *App) RecordCompletionUsage(label string) {
-	if a.brain != nil {
-		a.brain.RecordUsage(label, "")
+	if completionBrain := a.activeCompletionBrain(); completionBrain != nil {
+		completionBrain.RecordUsage(label, "")
 	}
 }
 
 func (a *App) RecordTypingActivity(chars int) {
-	if a.brain != nil {
-		a.brain.RecordTyping(chars)
+	if completionBrain := a.activeCompletionBrain(); completionBrain != nil {
+		completionBrain.RecordTyping(chars)
 	}
 }
 
 func (a *App) RecordGhostRejected() {
-	if a.brain != nil {
-		a.brain.RecordGhostRejected()
+	if completionBrain := a.activeCompletionBrain(); completionBrain != nil {
+		completionBrain.RecordGhostRejected()
 	}
 }
 
 func (a *App) RecordGhostShown() {
-	if a.brain != nil {
-		a.brain.RecordCompletionShown()
+	if completionBrain := a.activeCompletionBrain(); completionBrain != nil {
+		completionBrain.RecordCompletionShown()
 	}
 }
 
 func (a *App) RecordFileAccess(filePath string) {
-	if a.brain != nil {
-		a.brain.RecordFileAccess(filePath)
+	if completionBrain := a.activeCompletionBrain(); completionBrain != nil {
+		completionBrain.RecordFileAccess(filePath)
 	}
 }
 
 // NotifyFileOpened notifies LSP servers when a file is opened in the editor
 func (a *App) NotifyFileOpened(filePath, language, content string) {
-	if a.lspManager != nil {
-		a.lspManager.DidOpen(language, filePath, content)
+	lspManager := a.activeLSPManager()
+	if lspManager != nil {
+		if err := lspManager.DidOpen(language, filePath, content); err != nil {
+			message := fmt.Sprintf("LSP didOpen failed for %s: %v", filePath, err)
+			a.logWarning(message)
+			a.emitLSPDiagnosticsStatus(language, filePath, "error", message)
+		}
+		return
 	}
+	a.emitLSPDiagnosticsStatus(language, filePath, "unavailable", "LSP diagnostics manager is not available")
 }
 
 // NotifyFileChanged notifies LSP servers when a file content changes
 func (a *App) NotifyFileChanged(filePath, language string, version int, content string) {
-	if a.lspManager != nil {
-		a.lspManager.DidChange(language, filePath, version, content)
+	lspManager := a.activeLSPManager()
+	if lspManager != nil {
+		if err := lspManager.DidChange(language, filePath, version, content); err != nil {
+			message := fmt.Sprintf("LSP didChange failed for %s: %v", filePath, err)
+			a.logWarning(message)
+			a.emitLSPDiagnosticsStatus(language, filePath, "error", message)
+		}
+	} else {
+		a.emitLSPDiagnosticsStatus(language, filePath, "unavailable", "LSP diagnostics manager is not available")
 	}
-	if a.coreEngine != nil {
-		a.coreEngine.OnFileChanged(filePath, []byte(content))
+	if engine := a.activeCoreEngine(); engine != nil {
+		engine.OnFileChanged(filePath, []byte(content))
 	}
-	if a.brain != nil {
-		a.brain.InvalidateCompletionCache(filePath)
+	if completionBrain := a.activeCompletionBrain(); completionBrain != nil {
+		completionBrain.InvalidateCompletionCache(filePath)
 	}
 }
 
 // NotifyFileClosed notifies LSP servers when a file is closed
 func (a *App) NotifyFileClosed(filePath, language string) {
-	if a.lspManager != nil {
-		a.lspManager.DidClose(language, filePath)
+	lspManager := a.activeLSPManager()
+	if lspManager != nil {
+		if err := lspManager.DidClose(language, filePath); err != nil {
+			message := fmt.Sprintf("LSP didClose failed for %s: %v", filePath, err)
+			a.logWarning(message)
+			a.emitLSPDiagnosticsStatus(language, filePath, "error", message)
+		}
+		return
 	}
+	a.emitLSPDiagnosticsStatus(language, filePath, "unavailable", "LSP diagnostics manager is not available")
 }
 
 func (a *App) ParseCommand(input string) map[string]interface{} {
 	projectPath := a.GetCurrentProjectPath()
+	pluginRegistry := a.activePluginRegistry()
 
 	// Use plugin registry for command parsing
-	if a.plugins != nil && projectPath != "" {
-		parsed := a.plugins.ParseCommand(projectPath, input)
+	if pluginRegistry != nil && projectPath != "" {
+		parsed := pluginRegistry.ParseCommand(projectPath, input)
 		if parsed != nil && parsed.Valid {
 			return map[string]interface{}{
 				"prefix":   parsed.Prefix,
@@ -639,21 +668,22 @@ func (a *App) ParseCommand(input string) map[string]interface{} {
 
 func (a *App) PredictCommand(input string) *ClassResult {
 	projectPath := a.GetCurrentProjectPath()
-	if a.plugins == nil || projectPath == "" {
+	pluginRegistry := a.activePluginRegistry()
+	if pluginRegistry == nil || projectPath == "" {
 		return nil
 	}
 
 	// Update prediction in plugins
-	a.plugins.UpdatePrediction(projectPath, input)
+	pluginRegistry.UpdatePrediction(projectPath, input)
 
 	// Parse command to get the argument name
-	parsed := a.plugins.ParseCommand(projectPath, input)
+	parsed := pluginRegistry.ParseCommand(projectPath, input)
 	if parsed == nil || !parsed.Valid || parsed.Argument == "" {
 		return nil
 	}
 
 	// Get pending entry from plugins
-	entry := a.plugins.GetPendingEntry(projectPath, parsed.Argument)
+	entry := pluginRegistry.GetPendingEntry(projectPath, parsed.Argument)
 	if entry == nil {
 		return nil
 	}
@@ -669,11 +699,12 @@ func (a *App) PredictCommand(input string) *ClassResult {
 
 func (a *App) SearchClasses(prefix string) []ClassResult {
 	projectPath := a.GetCurrentProjectPath()
-	if a.plugins == nil || projectPath == "" {
+	pluginRegistry := a.activePluginRegistry()
+	if pluginRegistry == nil || projectPath == "" {
 		return nil
 	}
 
-	pluginResults := a.plugins.SearchClasses(projectPath, prefix)
+	pluginResults := pluginRegistry.SearchClasses(projectPath, prefix)
 	var out []ClassResult
 	for _, r := range pluginResults {
 		out = append(out, ClassResult{

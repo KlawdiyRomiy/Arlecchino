@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { EventsOn } from "../wails/runtime";
 import { usePerformanceStore } from "../stores/performanceStore";
+import { readProjectSessionRoutePayload } from "../shell/projectSessionRoute";
 
 export type IndexingPhase = "idle" | "indexing" | "complete" | "revealed";
 
@@ -16,6 +17,7 @@ interface IndexerEventPayload {
   total?: number;
   queueDepth?: number;
   projectFileCount?: number;
+  sessionId?: string;
 }
 
 const MIN_INDEXING_MS = 800;
@@ -29,6 +31,16 @@ let state: IndexingState = {
   current: 0,
   total: 0,
   percentage: 0,
+};
+const currentProjectSessionId =
+  readProjectSessionRoutePayload()?.sessionId ?? "main";
+
+const matchesCurrentProjectSession = (data?: IndexerEventPayload) => {
+  const sessionId =
+    typeof data?.sessionId === "string" && data.sessionId.length > 0
+      ? data.sessionId
+      : "main";
+  return sessionId === currentProjectSessionId;
 };
 
 const listeners = new Set<() => void>();
@@ -110,6 +122,9 @@ function transitionToComplete() {
 // --- Event handlers (module-level, no stale closures) ---
 
 EventsOn("indexer:started", (data: IndexerEventPayload) => {
+  if (!matchesCurrentProjectSession(data)) {
+    return;
+  }
   clearAllTimers();
   indexingStartedAt = Date.now();
   recordIndexerBudget(data);
@@ -126,6 +141,9 @@ EventsOn("indexer:started", (data: IndexerEventPayload) => {
 });
 
 EventsOn("indexer:progress", (data: IndexerEventPayload) => {
+  if (!matchesCurrentProjectSession(data)) {
+    return;
+  }
   recordIndexerBudget(data);
   const current = data.current ?? 0;
   const total = data.total ?? 0;
@@ -139,6 +157,9 @@ EventsOn("indexer:progress", (data: IndexerEventPayload) => {
 });
 
 EventsOn("indexer:completed", (data?: IndexerEventPayload) => {
+  if (!matchesCurrentProjectSession(data)) {
+    return;
+  }
   recordIndexerBudget({ ...(data ?? {}), queueDepth: 0 });
   clearTimer(failsafeTimer);
   failsafeTimer = null;

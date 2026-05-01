@@ -22,6 +22,8 @@ var assets embed.FS
 var errMCPUsageRequested = errors.New("mcp usage requested")
 var errMCPBootstrapUsageRequested = errors.New("mcp bootstrap usage requested")
 
+const mainWindowTitle = "Arlecchino"
+
 type mcpBootstrapOptions struct {
 	projectRoot        string
 	executablePath     string
@@ -61,16 +63,6 @@ func main() {
 	}
 
 	app := NewApp()
-	mainWindowURL := "/"
-	mainWindowTitle := "Arlecchino"
-	mainWindowMac := mainWindowMacOptions()
-	if projectWindowPayload, ok := buildProjectWindowLaunchPayloadFromLaunchArgs(os.Args, currentWorkingDir()); ok {
-		if projectWindowURL, err := buildProjectWindowURL(projectWindowPayload); err == nil {
-			mainWindowURL = projectWindowURL
-		}
-		mainWindowTitle = "Arlecchino - " + filepath.Base(projectWindowPayload.ProjectPath)
-		mainWindowMac = projectWindowMacOptions()
-	}
 	wailsApp := application.New(application.Options{
 		Name:        "Arlecchino",
 		Description: "High-performance polyglot IDE",
@@ -104,11 +96,11 @@ func main() {
 		Frameless:          runtime.GOOS != "darwin",
 		StartState:         application.WindowStateMaximised,
 		Hidden:             false,
-		URL:                mainWindowURL,
+		URL:                "/",
 		UseApplicationMenu: true,
 		BackgroundType:     application.BackgroundTypeTransparent,
 		BackgroundColour:   application.NewRGBA(10, 10, 10, 0),
-		Mac:                mainWindowMac,
+		Mac:                mainWindowMacOptions(),
 		Windows: application.WindowsWindow{
 			DisableIcon: false,
 		},

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"arlecchino/internal/composer"
+	"arlecchino/internal/indexer/core"
 	"arlecchino/internal/system"
 	"arlecchino/internal/terminal"
 )
@@ -49,6 +50,30 @@ func TestOpenProject_DoesNotInitializePHPSpecificManagersEagerly(t *testing.T) {
 	}
 	if got := systemCalls.Load(); got != 0 {
 		t.Fatalf("system manager init calls = %d, want 0", got)
+	}
+}
+
+func TestOpenProject_InitializesLSPWhenCoreEngineFails(t *testing.T) {
+	oldCoreEngine := newCoreEngine
+	t.Cleanup(func() {
+		newCoreEngine = oldCoreEngine
+	})
+
+	newCoreEngine = func(core.EngineConfig) (*core.Engine, error) {
+		return nil, errors.New("forced core engine failure")
+	}
+
+	app := &App{}
+	projectPath := t.TempDir()
+	t.Cleanup(func() {
+		_ = app.CloseProject()
+	})
+
+	if err := app.OpenProject(projectPath); err != nil {
+		t.Fatalf("OpenProject returned error when only core engine failed: %v", err)
+	}
+	if app.lspManager == nil {
+		t.Fatal("expected LSP manager to be initialized independently of core engine")
 	}
 }
 

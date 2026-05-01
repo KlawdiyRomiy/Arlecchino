@@ -20,8 +20,8 @@ func (a *App) InitDispatcherForProject() {
 	if projectPath != "" {
 		globalDispatcher.SetProjectPath(projectPath)
 	}
-	if a.coreEngine != nil {
-		globalDispatcher.SetIndexEngine(a.coreEngine)
+	if engine := a.activeCoreEngine(); engine != nil {
+		globalDispatcher.SetIndexEngine(engine)
 	}
 	if a.carapaceProvider != nil {
 		globalDispatcher.SetCarapaceProvider(a.carapaceProvider)

@@ -70,6 +70,10 @@ func (a *App) emitOpenIntentNow(payload map[string]any) {
 	}
 
 	traceOpenIntent("emitted", payload)
+	if a.mainWindow != nil {
+		a.mainWindow.EmitEvent(openIntentEventName, cloneOpenIntentPayload(payload))
+		return
+	}
 	a.emitEvent(openIntentEventName, cloneOpenIntentPayload(payload))
 }
 

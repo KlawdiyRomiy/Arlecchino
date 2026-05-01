@@ -103,8 +103,18 @@ func newLSPDiagnosticsPreloadEvent(
 	generation uint64,
 	plan diagnosticsPreloadPlan,
 ) LSPDiagnosticsPreloadEvent {
+	return newLSPDiagnosticsPreloadEventForSession("", projectPath, generation, plan)
+}
+
+func newLSPDiagnosticsPreloadEventForSession(
+	sessionID string,
+	projectPath string,
+	generation uint64,
+	plan diagnosticsPreloadPlan,
+) LSPDiagnosticsPreloadEvent {
 	return LSPDiagnosticsPreloadEvent{
 		ProjectPath:        projectPath,
+		SessionID:          sessionID,
 		Generation:         generation,
 		Bounded:            plan.Bounded,
 		TotalCandidates:    plan.TotalCandidates,
@@ -691,22 +701,34 @@ func (a *App) lspPreloadProjectDiagnostics(
 	projectPath string,
 	generation uint64,
 ) bool {
-	a.managerMu.Lock()
-	mgr := a.lspManager
-	engine := a.coreEngine
-	projectCtx := a.projectCtx
-	a.managerMu.Unlock()
-	currentProjectPath := a.currentProjectPath()
+	return a.lspPreloadProjectDiagnosticsForSession(a.activeProjectSession(), projectPath, generation)
+}
 
-	if mgr == nil {
-		return false
+func (a *App) lspPreloadProjectDiagnosticsForSession(
+	session *ProjectRuntimeSession,
+	projectPath string,
+	generation uint64,
+) bool {
+	if session == nil {
+		session = defaultProjectSessionFromApp(a)
 	}
+	a.managerMu.Lock()
+	mgr := session.lspManager
+	engine := session.coreEngine
+	projectCtx := session.projectCtx
+	a.managerMu.Unlock()
+	currentProjectPath := session.currentProjectPath()
 
 	root := projectPath
 	if root == "" {
 		root = currentProjectPath
 	}
 	if root == "" {
+		return false
+	}
+	if mgr == nil {
+		a.emitLSPDiagnosticsStatusForSession(session.ID, root, generation, "", "", "unavailable", "LSP diagnostics manager is not available")
+		a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, diagnosticsPreloadPlan{}))
 		return false
 	}
 
@@ -726,7 +748,7 @@ func (a *App) lspPreloadProjectDiagnostics(
 		}
 	}
 	budget = adaptDiagnosticsPreloadBudget(budget, projectFileCount, queueDepth)
-	timedCtx, cancel, preloadSeq := a.beginDiagnosticsPreload(ctx, budget.Timeout)
+	timedCtx, cancel, preloadSeq := a.beginDiagnosticsPreloadForSession(session, ctx, budget.Timeout)
 	defer cancel()
 
 	plan, err := collectDiagnosticsPreloadPlanWithInventoryContext(timedCtx, root, inventory, budget)
@@ -736,7 +758,7 @@ func (a *App) lspPreloadProjectDiagnostics(
 		}
 		return false
 	}
-	event := newLSPDiagnosticsPreloadEvent(root, generation, plan)
+	event := newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, plan)
 	a.emitEvent("lsp:diagnostics:preload:start", event)
 	openedPaths := make([]string, 0, len(plan.Candidates))
 
@@ -748,7 +770,7 @@ preloadLoop:
 		default:
 		}
 
-		if a.projectGeneration.Load() != generation || !a.isCurrentDiagnosticsPreload(preloadSeq) {
+		if session.projectGeneration.Load() != generation || !a.isCurrentDiagnosticsPreloadForSession(session, preloadSeq) {
 			return false
 		}
 
@@ -771,7 +793,7 @@ preloadLoop:
 		}
 	}
 
-	if a.projectGeneration.Load() != generation || !a.isCurrentDiagnosticsPreload(preloadSeq) {
+	if session.projectGeneration.Load() != generation || !a.isCurrentDiagnosticsPreloadForSession(session, preloadSeq) {
 		return false
 	}
 
@@ -791,43 +813,68 @@ func (a *App) beginDiagnosticsPreload(
 	ctx context.Context,
 	timeout time.Duration,
 ) (context.Context, context.CancelFunc, uint64) {
+	return a.beginDiagnosticsPreloadForSession(a.activeProjectSession(), ctx, timeout)
+}
+
+func (a *App) beginDiagnosticsPreloadForSession(
+	session *ProjectRuntimeSession,
+	ctx context.Context,
+	timeout time.Duration,
+) (context.Context, context.CancelFunc, uint64) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if session == nil {
+		session = defaultProjectSessionFromApp(a)
 	}
 
 	timedCtx, cancel := context.WithTimeout(ctx, timeout)
 
-	a.diagnosticsPreloadMu.Lock()
-	if a.diagnosticsPreloadCancel != nil {
-		a.diagnosticsPreloadCancel()
+	session.diagnosticsPreloadMu.Lock()
+	if session.diagnosticsPreloadCancel != nil {
+		session.diagnosticsPreloadCancel()
 	}
-	a.diagnosticsPreloadSeq++
-	seq := a.diagnosticsPreloadSeq
-	a.diagnosticsPreloadCancel = cancel
-	a.diagnosticsPreloadMu.Unlock()
+	session.diagnosticsPreloadSeq++
+	seq := session.diagnosticsPreloadSeq
+	session.diagnosticsPreloadCancel = cancel
+	session.diagnosticsPreloadMu.Unlock()
 
 	return timedCtx, func() {
 		cancel()
-		a.diagnosticsPreloadMu.Lock()
-		if a.diagnosticsPreloadSeq == seq {
-			a.diagnosticsPreloadCancel = nil
+		session.diagnosticsPreloadMu.Lock()
+		if session.diagnosticsPreloadSeq == seq {
+			session.diagnosticsPreloadCancel = nil
 		}
-		a.diagnosticsPreloadMu.Unlock()
+		session.diagnosticsPreloadMu.Unlock()
 	}, seq
 }
 
 func (a *App) isCurrentDiagnosticsPreload(seq uint64) bool {
-	a.diagnosticsPreloadMu.Lock()
-	defer a.diagnosticsPreloadMu.Unlock()
-	return a.diagnosticsPreloadSeq == seq
+	return a.isCurrentDiagnosticsPreloadForSession(a.activeProjectSession(), seq)
+}
+
+func (a *App) isCurrentDiagnosticsPreloadForSession(session *ProjectRuntimeSession, seq uint64) bool {
+	if session == nil {
+		session = defaultProjectSessionFromApp(a)
+	}
+	session.diagnosticsPreloadMu.Lock()
+	defer session.diagnosticsPreloadMu.Unlock()
+	return session.diagnosticsPreloadSeq == seq
 }
 
 func (a *App) cancelDiagnosticsPreload() {
-	a.diagnosticsPreloadMu.Lock()
-	cancel := a.diagnosticsPreloadCancel
-	a.diagnosticsPreloadSeq++
-	a.diagnosticsPreloadCancel = nil
-	a.diagnosticsPreloadMu.Unlock()
+	a.cancelDiagnosticsPreloadForSession(a.activeProjectSession())
+}
+
+func (a *App) cancelDiagnosticsPreloadForSession(session *ProjectRuntimeSession) {
+	if session == nil {
+		session = defaultProjectSessionFromApp(a)
+	}
+	session.diagnosticsPreloadMu.Lock()
+	cancel := session.diagnosticsPreloadCancel
+	session.diagnosticsPreloadSeq++
+	session.diagnosticsPreloadCancel = nil
+	session.diagnosticsPreloadMu.Unlock()
 
 	if cancel != nil {
 		cancel()

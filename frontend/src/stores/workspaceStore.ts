@@ -7,9 +7,9 @@ import {
   resetProjectBoundStores,
 } from "../utils/projectBoundState";
 import {
-  readProjectWindowLaunchPayload,
-  workspaceStorageNameForProjectWindow,
-} from "../shell/projectWindowRoute";
+  readProjectSessionRoutePayload,
+  workspaceStorageNameForProjectSession,
+} from "../shell/projectSessionRoute";
 import { useTerminalStore } from "./terminalStore";
 
 export interface WorkspaceProject {
@@ -142,9 +142,9 @@ export const getAdjacentProject = (
 };
 
 let workspaceInitPromise: Promise<void> | null = null;
-const projectWindowLaunchPayload = readProjectWindowLaunchPayload();
-const workspaceStorageName = workspaceStorageNameForProjectWindow(
-  projectWindowLaunchPayload,
+const projectSessionRoutePayload = readProjectSessionRoutePayload();
+const workspaceStorageName = workspaceStorageNameForProjectSession(
+  projectSessionRoutePayload,
 );
 
 const createWorkspaceStore = (storageName: string) =>
@@ -360,7 +360,7 @@ export const useWorkspaceStore =
   (workspaceStores[workspaceStorageName] =
     createWorkspaceStore(workspaceStorageName));
 
-const resetWorkspaceProjectWindowState = () => {
+const resetWorkspaceProjectSessionState = () => {
   useWorkspaceStore.setState({
     projects: [],
     activeId: null,
@@ -372,19 +372,16 @@ const resetWorkspaceProjectWindowState = () => {
   });
 };
 
-const initializeProjectWindowWorkspace = async (projectPath: string) => {
+const initializeProjectSessionWorkspace = async (sessionId: string) => {
   await Promise.resolve(useWorkspaceStore.persist.rehydrate());
-  resetWorkspaceProjectWindowState();
+  resetWorkspaceProjectSessionState();
 
   try {
-    const access = await inspectProjectAccess(projectPath);
-    if (!access.accessible) {
-      throw new Error(access.reason || "Project is not accessible.");
-    }
+    const session = await AppFunctions.GetProjectWindowSession(sessionId);
+    const projectPath = session.projectPath;
 
     resetProjectBoundStores();
     activateProjectScope(projectPath);
-    await AppFunctions.OpenProject(projectPath);
     useWorkspaceStore.getState().addProject(projectPath);
     useTerminalStore.getState().setActiveProject(projectPath);
     useWorkspaceStore
@@ -398,7 +395,7 @@ const initializeProjectWindowWorkspace = async (projectPath: string) => {
     resetProjectBoundStores();
     useWorkspaceStore.getState().clearActiveProject();
     useWorkspaceStore.getState().setActiveFramework(null);
-    console.error("Error restoring project window:", error);
+    console.error("Error restoring project session window:", error);
   }
 };
 
@@ -413,9 +410,9 @@ export const initializeWorkspace = async () => {
   }
 
   workspaceInitPromise = (async () => {
-    if (projectWindowLaunchPayload) {
-      await initializeProjectWindowWorkspace(
-        projectWindowLaunchPayload.projectPath,
+    if (projectSessionRoutePayload) {
+      await initializeProjectSessionWorkspace(
+        projectSessionRoutePayload.sessionId,
       );
       return;
     }

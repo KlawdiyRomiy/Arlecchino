@@ -13,6 +13,7 @@ import {
   CloseTerminal,
 } from "../wails/app";
 import { EventsOn } from "../wails/runtime";
+import { readProjectSessionRoutePayload } from "../shell/projectSessionRoute";
 import {
   getThemeTerminalById,
   isThemeId,
@@ -32,6 +33,17 @@ import type {
   TerminalShellState,
   TUIAssistState,
 } from "../types/terminal";
+
+const currentProjectSessionId =
+  readProjectSessionRoutePayload()?.sessionId ?? "main";
+
+const terminalEventMatchesCurrentSession = (event: { sessionId?: string }) => {
+  const sessionId =
+    typeof event.sessionId === "string" && event.sessionId.length > 0
+      ? event.sessionId
+      : "main";
+  return sessionId === currentProjectSessionId;
+};
 
 const terminalOutputQueues = new Map<
   string,
@@ -868,44 +880,62 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
       const state = get();
       if (state.eventsRegistered) return;
 
-      EventsOn("terminal:data", (event: { id: string; data: string }) => {
-        const session = get().sessions.get(event.id);
-        if (!session) {
-          return;
-        }
-
-        let binary = "";
-        try {
-          binary = atob(event.data);
-        } catch (error) {
-          console.error("[TerminalStore] Invalid terminal:data payload", error);
-          return;
-        }
-
-        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-        const decoded = session.streamDecoder.decode(bytes, { stream: true });
-        if (decoded.length > 0) {
-          usePerformanceStore
-            .getState()
-            .recordEventPressure("terminal", Math.ceil(decoded.length / 4096));
-          scheduleTerminalOutput(session, decoded);
-        }
-      });
-
-      EventsOn("terminal:exit", (event: { id: string; code: number }) => {
-        const session = get().sessions.get(event.id);
-        if (session) {
-          const tail = session.streamDecoder.decode();
-          flushTerminalOutputQueue(session);
-          if (tail.length > 0) {
-            session.terminal.write(tail);
+      EventsOn(
+        "terminal:data",
+        (event: { id: string; data: string; sessionId?: string }) => {
+          if (!terminalEventMatchesCurrentSession(event)) {
+            return;
           }
-          clearTerminalOutputQueue(session.id);
-          session.terminal.write(
-            `\r\n\x1b[90mProcess exited with code ${event.code}\x1b[0m\r\n`,
-          );
-        }
-      });
+          const session = get().sessions.get(event.id);
+          if (!session) {
+            return;
+          }
+
+          let binary = "";
+          try {
+            binary = atob(event.data);
+          } catch (error) {
+            console.error(
+              "[TerminalStore] Invalid terminal:data payload",
+              error,
+            );
+            return;
+          }
+
+          const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+          const decoded = session.streamDecoder.decode(bytes, { stream: true });
+          if (decoded.length > 0) {
+            usePerformanceStore
+              .getState()
+              .recordEventPressure(
+                "terminal",
+                Math.ceil(decoded.length / 4096),
+              );
+            scheduleTerminalOutput(session, decoded);
+          }
+        },
+      );
+
+      EventsOn(
+        "terminal:exit",
+        (event: { id: string; code: number; sessionId?: string }) => {
+          if (!terminalEventMatchesCurrentSession(event)) {
+            return;
+          }
+          const session = get().sessions.get(event.id);
+          if (session) {
+            const tail = session.streamDecoder.decode();
+            flushTerminalOutputQueue(session);
+            if (tail.length > 0) {
+              session.terminal.write(tail);
+            }
+            clearTerminalOutputQueue(session.id);
+            session.terminal.write(
+              `\r\n\x1b[90mProcess exited with code ${event.code}\x1b[0m\r\n`,
+            );
+          }
+        },
+      );
 
       EventsOn(
         "terminal:mode",
@@ -917,7 +947,11 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
           confidence?: number;
           sourceSignals?: string[];
           timestamp?: number;
+          sessionId?: string;
         }) => {
+          if (!terminalEventMatchesCurrentSession(event)) {
+            return;
+          }
           get().setSessionMode(event);
         },
       );
@@ -930,17 +964,27 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
           cwd?: string;
           exitCode?: number;
           raw?: string;
+          sessionId?: string;
         }) => {
+          if (!terminalEventMatchesCurrentSession(event)) {
+            return;
+          }
           get().setShellEvent(event);
         },
       );
 
-      EventsOn("terminal:created", (event: { id: string; name?: string }) => {
-        if (!event?.id) {
-          return;
-        }
-        get().registerExternalSession(event.id, event.name);
-      });
+      EventsOn(
+        "terminal:created",
+        (event: { id: string; name?: string; sessionId?: string }) => {
+          if (!terminalEventMatchesCurrentSession(event)) {
+            return;
+          }
+          if (!event?.id) {
+            return;
+          }
+          get().registerExternalSession(event.id, event.name);
+        },
+      );
 
       EventsOn(
         "terminal:semantic",
@@ -952,7 +996,11 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
           column?: number;
           severity?: string;
           message?: string;
+          sessionId?: string;
         }) => {
+          if (!terminalEventMatchesCurrentSession(event)) {
+            return;
+          }
           get().setSemanticEvent(event);
         },
       );

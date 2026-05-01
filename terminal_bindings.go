@@ -35,6 +35,8 @@ func (a *App) PredictTerminalCommand(req TerminalPredictionRequest) (TerminalPre
 	if len(parts) > 1 {
 		lastToken = parts[len(parts)-1]
 	}
+	engine := a.activeCoreEngine()
+	pluginRegistry := a.activePluginRegistry()
 
 	if len(parts) == 1 && a.carapaceProvider != nil {
 		cmdPredictions := a.carapaceProvider.GetCommandCompletions(parts[0])
@@ -49,8 +51,8 @@ func (a *App) PredictTerminalCommand(req TerminalPredictionRequest) (TerminalPre
 		predictions = append(predictions, carapacePredictions...)
 	}
 
-	if a.coreEngine != nil && len(parts) > 1 && !strings.HasPrefix(lastToken, "-") {
-		store := a.coreEngine.Store()
+	if engine != nil && len(parts) > 1 && !strings.HasPrefix(lastToken, "-") {
+		store := engine.Store()
 		if store != nil {
 			files, err := store.SearchFiles(lastToken, 10)
 			if err == nil && len(files) > 0 {
@@ -84,8 +86,8 @@ func (a *App) PredictTerminalCommand(req TerminalPredictionRequest) (TerminalPre
 		}
 	}
 
-	if a.plugins != nil && projectPath != "" {
-		pluginSuggestions := a.plugins.SuggestCommand(projectPath, input)
+	if pluginRegistry != nil && projectPath != "" {
+		pluginSuggestions := pluginRegistry.SuggestCommand(projectPath, input)
 		for _, s := range pluginSuggestions {
 			lastToken := input
 			if idx := strings.LastIndex(input, " "); idx >= 0 {
@@ -135,11 +137,12 @@ func deduplicatePredictions(preds []terminal.PredictionResult) []terminal.Predic
 }
 
 func (a *App) RecordCommandExecution(projectID, command, workDir string) error {
-	if a.coreEngine == nil {
+	engine := a.activeCoreEngine()
+	if engine == nil {
 		return nil
 	}
 
-	store := a.coreEngine.Store()
+	store := engine.Store()
 	if store == nil {
 		return nil
 	}
@@ -148,11 +151,12 @@ func (a *App) RecordCommandExecution(projectID, command, workDir string) error {
 }
 
 func (a *App) ImportShellHistory(projectID, historyPath, workDir string) error {
-	if a.coreEngine == nil {
+	engine := a.activeCoreEngine()
+	if engine == nil {
 		return nil
 	}
 
-	store := a.coreEngine.Store()
+	store := engine.Store()
 	if store == nil {
 		return nil
 	}

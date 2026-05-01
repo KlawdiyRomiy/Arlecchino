@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { EventsOn } from "../wails/runtime";
+import { readProjectSessionRoutePayload } from "../shell/projectSessionRoute";
 import {
   getProjectPathBasename,
   isSameOrChildPath,
@@ -9,6 +10,11 @@ import {
 
 export type DiagnosticsSeverity = "error" | "warning" | "info";
 export type DiagnosticsSeverityFilter = "all" | DiagnosticsSeverity;
+export type DiagnosticsRuntimeState =
+  | "idle"
+  | "ready"
+  | "unavailable"
+  | "error";
 
 export interface DiagnosticsPosition {
   line: number;
@@ -32,9 +38,20 @@ export interface DiagnosticsEventPayload {
   uri?: string;
   filePath?: string;
   projectPath?: string;
+  sessionId?: string;
   generation?: number;
   language?: string;
   items?: DiagnosticsEventItem[] | null;
+}
+
+export interface DiagnosticsStatusEventPayload {
+  projectPath?: string;
+  sessionId?: string;
+  generation?: number;
+  language?: string;
+  filePath?: string;
+  state?: string;
+  message?: string;
 }
 
 export interface DiagnosticsSummary {
@@ -66,6 +83,16 @@ export interface DiagnosticsFileGroup {
   summary: DiagnosticsSummary;
 }
 
+export interface DiagnosticsRuntimeStatus {
+  state: DiagnosticsRuntimeState;
+  projectPath: string | null;
+  generation: number;
+  language: string;
+  filePath: string;
+  message: string;
+  updatedAt: number;
+}
+
 export interface DiagnosticsGroupOptions {
   severity?: DiagnosticsSeverityFilter;
   currentFileOnly?: boolean;
@@ -78,7 +105,9 @@ interface DiagnosticsState {
   projectSummary: DiagnosticsSummary;
   activeProjectPath: string | null;
   currentGeneration: number;
+  runtimeStatus: DiagnosticsRuntimeStatus;
   ingestDiagnosticsEvent: (event: DiagnosticsEventPayload) => void;
+  ingestDiagnosticsStatusEvent: (event: DiagnosticsStatusEventPayload) => void;
   setProjectScope: (projectPath: string | null, generation?: number) => void;
   setFileDiagnostics: (
     filePath: string,
@@ -102,6 +131,16 @@ const emptySummary = (): DiagnosticsSummary => ({
   warnings: 0,
   infos: 0,
   total: 0,
+});
+
+const emptyRuntimeStatus = (): DiagnosticsRuntimeStatus => ({
+  state: "idle",
+  projectPath: null,
+  generation: 0,
+  language: "",
+  filePath: "",
+  message: "",
+  updatedAt: 0,
 });
 
 const severityRank: Record<DiagnosticsSeverity, number> = {
@@ -325,9 +364,32 @@ const normalizeGeneration = (generation: number | undefined): number => {
   return generation > 0 ? Math.trunc(generation) : 0;
 };
 
+const normalizeRuntimeState = (state?: string): DiagnosticsRuntimeState => {
+  switch (state) {
+    case "ready":
+    case "unavailable":
+    case "error":
+      return state;
+    default:
+      return "idle";
+  }
+};
+
 let diagnosticsEventsBound = false;
 let diagnosticsEventsBindTimer: number | null = null;
 let diagnosticsEventsBoundWaiters: Array<() => void> = [];
+const currentProjectSessionId =
+  readProjectSessionRoutePayload()?.sessionId ?? "main";
+
+const diagnosticPayloadMatchesCurrentSession = (
+  payload: DiagnosticsEventPayload | DiagnosticsStatusEventPayload,
+) => {
+  const sessionId =
+    typeof payload.sessionId === "string" && payload.sessionId.length > 0
+      ? payload.sessionId
+      : "main";
+  return sessionId === currentProjectSessionId;
+};
 
 const resolveDiagnosticsEventsBound = () => {
   if (diagnosticsEventsBoundWaiters.length === 0) {
@@ -360,12 +422,19 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
     projectSummary: emptySummary(),
     activeProjectPath: null,
     currentGeneration: 0,
+    runtimeStatus: emptyRuntimeStatus(),
 
     setProjectScope: (projectPath, generation = 0) => {
       set((state) => ({
         activeProjectPath: projectPath,
         currentGeneration: normalizeGeneration(generation),
         projectSummary: summarizeByFile(state.byFile, projectPath),
+        runtimeStatus:
+          !projectPath ||
+          (state.runtimeStatus.projectPath &&
+            state.runtimeStatus.projectPath !== projectPath)
+            ? emptyRuntimeStatus()
+            : state.runtimeStatus,
       }));
     },
 
@@ -412,6 +481,51 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
 
       const items = Array.isArray(event.items) ? event.items : [];
       get().setFileDiagnostics(filePath, event.language ?? "", items);
+    },
+
+    ingestDiagnosticsStatusEvent: (event) => {
+      const nextRuntimeState = normalizeRuntimeState(event.state);
+      const eventProjectPath =
+        typeof event.projectPath === "string" && event.projectPath !== ""
+          ? event.projectPath
+          : null;
+      const eventGeneration = normalizeGeneration(event.generation);
+
+      set((state) => {
+        if (
+          state.activeProjectPath &&
+          eventProjectPath &&
+          eventProjectPath !== state.activeProjectPath
+        ) {
+          return state;
+        }
+        if (
+          state.currentGeneration > 0 &&
+          eventGeneration > 0 &&
+          eventGeneration < state.currentGeneration
+        ) {
+          return state;
+        }
+
+        const nextGeneration =
+          eventGeneration > state.currentGeneration
+            ? eventGeneration
+            : state.currentGeneration;
+        const projectPath = eventProjectPath ?? state.activeProjectPath;
+
+        return {
+          currentGeneration: nextGeneration,
+          runtimeStatus: {
+            state: nextRuntimeState,
+            projectPath,
+            generation: eventGeneration || nextGeneration,
+            language: typeof event.language === "string" ? event.language : "",
+            filePath: typeof event.filePath === "string" ? event.filePath : "",
+            message: typeof event.message === "string" ? event.message : "",
+            updatedAt: Date.now(),
+          },
+        };
+      });
     },
 
     setFileDiagnostics: (filePath, language, items) => {
@@ -488,6 +602,7 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
         projectSummary: emptySummary(),
         activeProjectPath: null,
         currentGeneration: 0,
+        runtimeStatus: emptyRuntimeStatus(),
       }),
 
     getProjectSummary: (projectPath = null) =>
@@ -560,7 +675,16 @@ const bindDiagnosticsEvents = () => {
   diagnosticsEventsBound = true;
   resolveDiagnosticsEventsBound();
   EventsOn("lsp:diagnostics", (event: DiagnosticsEventPayload) => {
+    if (!diagnosticPayloadMatchesCurrentSession(event)) {
+      return;
+    }
     useDiagnosticsStore.getState().ingestDiagnosticsEvent(event);
+  });
+  EventsOn("lsp:diagnostics:status", (event: DiagnosticsStatusEventPayload) => {
+    if (!diagnosticPayloadMatchesCurrentSession(event)) {
+      return;
+    }
+    useDiagnosticsStore.getState().ingestDiagnosticsStatusEvent(event);
   });
 };
 
