@@ -387,6 +387,11 @@ const report = {
   runtime: "wails-v3",
   platform: "darwin",
   generatedAt: new Date().toISOString(),
+  scope: {
+    launchServices: "registered-smoke-bundle",
+    productionDefaultHandlerClaimed: false,
+    strictOpenIntentAllowlist: true
+  },
   launchServices: {
     bundleId,
     appBundle,

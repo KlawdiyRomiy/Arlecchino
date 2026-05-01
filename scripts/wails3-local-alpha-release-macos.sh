@@ -190,6 +190,7 @@ DMG_PATH=""
 SMOKE_STATUS="skipped"
 SMOKE_EXIT="0"
 SMOKE_LOG="$RELEASE_DIR/logs/release-smoke.log"
+SMOKE_REPORT="$RELEASE_DIR/release-smoke-report.json"
 
 build_arch_binary() {
   local arch="$1"
@@ -258,7 +259,7 @@ fi
 
 if [[ "$RUN_SMOKE" == "1" ]]; then
   set +e
-  ARLE_WAILS3_RELEASE_SMOKE_SIGN_MODE="$SIGN_MODE" "$ROOT_DIR/scripts/wails3-release-smoke-macos.sh" >"$SMOKE_LOG" 2>&1
+  ARLE_WAILS3_RELEASE_SMOKE_SIGN_MODE="$SIGN_MODE" "$ROOT_DIR/scripts/wails3-release-smoke-macos.sh" --report "$SMOKE_REPORT" >"$SMOKE_LOG" 2>&1
   SMOKE_EXIT="$?"
   set -e
   if [[ "$SMOKE_EXIT" == "0" ]]; then
@@ -294,6 +295,7 @@ export ARLE_RELEASE_RUN_SMOKE="$RUN_SMOKE"
 export ARLE_RELEASE_SMOKE_STATUS="$SMOKE_STATUS"
 export ARLE_RELEASE_SMOKE_EXIT="$SMOKE_EXIT"
 export ARLE_RELEASE_SMOKE_LOG="$SMOKE_LOG"
+export ARLE_RELEASE_SMOKE_REPORT="$SMOKE_REPORT"
 export ARLE_RELEASE_CODESIGN_OUTPUT="$CODESIGN_OUTPUT"
 export ARLE_RELEASE_CODESIGN_EXIT="$CODESIGN_EXIT"
 export ARLE_RELEASE_SPCTL_OUTPUT="$SPCTL_OUTPUT"
@@ -406,6 +408,8 @@ const report = {
     status: env.ARLE_RELEASE_SMOKE_STATUS,
     exitCode: Number(env.ARLE_RELEASE_SMOKE_EXIT || "0"),
     logPath: env.ARLE_RELEASE_SMOKE_LOG,
+    reportPath: env.ARLE_RELEASE_SMOKE_REPORT,
+    reportExists: exists(env.ARLE_RELEASE_SMOKE_REPORT),
   },
   binary: {
     lipoInfo: env.ARLE_RELEASE_LIPO_INFO || "",
