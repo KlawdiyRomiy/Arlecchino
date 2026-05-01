@@ -74,6 +74,9 @@ notarized distribution path.
 - If using update manifests, generate them with
   `./scripts/wails3-update-manifest.mjs`; keep the Ed25519 private key outside
   the repository and publish only the manifest/artifacts/public verifier key.
+- Manual update UX is notification-only: a validated manifest can show an
+  in-app foreground notification that opens GitHub Releases. The app must not
+  replace/apply itself until a future trusted release policy exists.
 
 ## Security Gates
 
@@ -91,3 +94,6 @@ notarized distribution path.
 - Auto-update install/apply remains disabled. Current updater work is limited
   to manifest read, checksum verification, detached signature verification and
   temp staging under explicit smoke flags.
+- DMG users update by downloading the next `arlecchino-macos-universal.dmg` and
+  replacing `/Applications/Arlecchino.app`; source users update with `git pull`
+  and the dev scripts.

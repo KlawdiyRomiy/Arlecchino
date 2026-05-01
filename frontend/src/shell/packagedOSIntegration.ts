@@ -46,9 +46,23 @@ export interface PackagedOSNotificationCandidate {
 export interface PackagedOSAutoUpdateManifest {
   channel?: string;
   version?: string;
+  artifacts?: readonly PackagedOSAutoUpdateArtifact[];
+  releaseNotes?: string;
+  mandatory?: boolean;
   url?: string;
+  sha256?: string;
   signature?: string;
   notes?: string;
+}
+
+export interface PackagedOSAutoUpdateArtifact {
+  platform?: string;
+  arch?: string;
+  url?: string;
+  sha256?: string;
+  signature?: string;
+  size?: number;
+  kind?: string;
 }
 
 export interface PackagedOSIntegrationSnapshot {
@@ -341,11 +355,58 @@ const normalizeManifest = (
   const manifest = {
     channel: readString(getRecordValue(value, "channel", "Channel")),
     version: readString(getRecordValue(value, "version", "Version")),
+    artifacts: normalizeArtifacts(
+      getRecordValue(value, "artifacts", "Artifacts"),
+    ),
+    releaseNotes: readString(
+      getRecordValue(value, "releaseNotes", "ReleaseNotes"),
+    ),
+    mandatory: readBoolean(getRecordValue(value, "mandatory", "Mandatory")),
     url: readString(getRecordValue(value, "url", "URL")),
+    sha256: readString(getRecordValue(value, "sha256", "SHA256")),
     signature: readString(getRecordValue(value, "signature", "Signature")),
     notes: readString(getRecordValue(value, "notes", "Notes")),
   };
-  return Object.values(manifest).some(Boolean) ? manifest : undefined;
+  return Object.values(manifest).some((item) =>
+    Array.isArray(item) ? item.length > 0 : Boolean(item),
+  )
+    ? manifest
+    : undefined;
+};
+
+const normalizeArtifact = (
+  value: unknown,
+): PackagedOSAutoUpdateArtifact | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const artifact = {
+    platform: readString(getRecordValue(value, "platform", "Platform")),
+    arch: readString(getRecordValue(value, "arch", "Arch")),
+    url: readString(getRecordValue(value, "url", "URL")),
+    sha256: readString(getRecordValue(value, "sha256", "SHA256")),
+    signature: readString(getRecordValue(value, "signature", "Signature")),
+    size: readNumber(getRecordValue(value, "size", "Size")),
+    kind: readString(getRecordValue(value, "kind", "Kind")),
+  };
+
+  return Object.values(artifact).some(Boolean) ? artifact : undefined;
+};
+
+const normalizeArtifacts = (
+  value: unknown,
+): readonly PackagedOSAutoUpdateArtifact[] | undefined => {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const artifacts = value.flatMap((item) => {
+    const artifact = normalizeArtifact(item);
+    return artifact ? [artifact] : [];
+  });
+
+  return artifacts.length > 0 ? artifacts : undefined;
 };
 
 const buildFallbackSnapshot = (): PackagedOSIntegrationSnapshot => ({
