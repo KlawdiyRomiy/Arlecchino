@@ -680,7 +680,7 @@ const expectSnappedPanelCloseMotion = async (
   const exitFrame = await readPanelFrame(page, selector);
   expect(exitFrame).not.toBeNull();
   expect(exitFrame?.motion).toBe("exit");
-  expect(exitFrame?.parentOverflow).toBe("hidden");
+  expect(exitFrame?.parentOverflow).toBe("visible");
   expectDirectionalSlide(exitFrame, position);
 
   await expect(page.locator(selector)).toHaveCount(0);
@@ -751,7 +751,7 @@ test("snapped floating panel uses slide-only motion for open and close", async (
   expect(exitFrame).not.toBeNull();
   expect(exitFrame?.motion).toBe("exit");
   expect(exitFrame?.opacity).toBe("1");
-  expect(exitFrame?.parentOverflow).toBe("hidden");
+  expect(exitFrame?.parentOverflow).toBe("visible");
   expectDirectionalSlide(exitFrame, panelPosition);
 
   await expect(page.locator('[data-testid="panel-git"]')).toHaveCount(0);
@@ -814,7 +814,7 @@ for (const position of ["left", "right", "top", "bottom"] as const) {
 
     const exitFrame = await readPanelFrame(page, '[data-testid="panel-git"]');
     expect(exitFrame?.motion).toBe("exit");
-    expect(exitFrame?.parentOverflow).toBe("hidden");
+    expect(exitFrame?.parentOverflow).toBe("visible");
     expectDirectionalSlide(exitFrame, position);
     const editorDuringClose = await readElementBox(
       page,
@@ -822,17 +822,13 @@ for (const position of ["left", "right", "top", "bottom"] as const) {
     );
     expect(editorDuringClose).not.toBeNull();
     if (position === "left" || position === "right") {
-      expect(
-        Math.abs(
-          (editorDuringClose?.width ?? 0) - (editorBeforeClose?.width ?? 0),
-        ),
-      ).toBeLessThanOrEqual(1);
+      expect(editorDuringClose?.width ?? 0).toBeGreaterThan(
+        (editorBeforeClose?.width ?? 0) + 4,
+      );
     } else {
-      expect(
-        Math.abs(
-          (editorDuringClose?.height ?? 0) - (editorBeforeClose?.height ?? 0),
-        ),
-      ).toBeLessThanOrEqual(1);
+      expect(editorDuringClose?.height ?? 0).toBeGreaterThan(
+        (editorBeforeClose?.height ?? 0) + 4,
+      );
     }
 
     await expect(page.locator('[data-testid="panel-git"]')).toHaveCount(0);
@@ -2206,7 +2202,7 @@ test("lateral panel relocation does not promote occupied top and bottom slots", 
 
   expect(slotStyles.explorer).toEqual({
     overflow: "visible",
-    willChange: "transform, opacity",
+    willChange: "width, transform, opacity",
   });
   expect(slotStyles.git).toEqual({
     overflow: "hidden",
@@ -2429,6 +2425,93 @@ test("browser preview resizes from the inner edge across iframe content", async 
       return nextBox?.width ?? 0;
     })
     .toBeLessThan((startBox?.width ?? 0) - 60);
+});
+
+test("snapped panel close resizes the editor during exit motion", async ({
+  page,
+}) => {
+  await mountProjectUI(page, { editorContent: largeEditorContent });
+
+  const explorerPanel = page.locator('[data-testid="panel-explorer"]').last();
+  const editorArea = page.getByTestId("editor-area");
+  await expect(explorerPanel).toBeVisible();
+  await waitForPanelSettled(page, "panel-explorer");
+
+  const startBox = await editorArea.boundingBox();
+  expect(startBox).not.toBeNull();
+
+  await page.keyboard.press("Meta+E");
+
+  await expect
+    .poll(async () => {
+      const panelStillExiting = (await explorerPanel.count()) > 0;
+      const nextBox = await editorArea.boundingBox();
+      return (
+        panelStillExiting && (nextBox?.width ?? 0) > (startBox?.width ?? 0) + 20
+      );
+    })
+    .toBe(true);
+
+  await expect(explorerPanel).toHaveCount(0);
+});
+
+test("browser preview iframe scrolls with wheel input", async ({ page }) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(() => {
+    (
+      window as Window & {
+        runtime: { EventsEmit: (eventName: string, payload: unknown) => void };
+      }
+    ).runtime.EventsEmit("ide:window:open", {
+      id: "scroll-preview",
+      surface: "browser",
+      title: "Scroll Preview",
+      mode: "snapped",
+      position: "right",
+      payload: {
+        sourceLabel: "scroll-preview.html",
+        revision: 1,
+        htmlContent: `
+          <!doctype html>
+          <html>
+            <body style="margin:0; min-height: 2400px; font-family: sans-serif;">
+              <main style="height: 2400px; padding: 24px;">
+                <h1>Scrollable preview</h1>
+                <p>Wheel input should scroll this iframe.</p>
+              </main>
+            </body>
+          </html>
+        `,
+      },
+    });
+  });
+
+  const previewPanel = page
+    .locator('[data-testid="panel-scroll-preview"]')
+    .last();
+  await expect(previewPanel).toBeVisible();
+  await expect(
+    page.locator('[data-testid="browser-preview-root"] iframe'),
+  ).toBeVisible();
+
+  const iframe = page.locator('[data-testid="browser-preview-root"] iframe');
+  const iframeBox = await iframe.boundingBox();
+  expect(iframeBox).not.toBeNull();
+
+  await page.mouse.move(
+    (iframeBox?.x ?? 0) + (iframeBox?.width ?? 0) / 2,
+    (iframeBox?.y ?? 0) + (iframeBox?.height ?? 0) / 2,
+  );
+  await page.mouse.wheel(0, 700);
+
+  await expect
+    .poll(async () =>
+      iframe.evaluate(
+        (element) => (element as HTMLIFrameElement).contentWindow?.scrollY ?? 0,
+      ),
+    )
+    .toBeGreaterThan(120);
 });
 
 test("browser preview uses real layout slots on every edge", async ({

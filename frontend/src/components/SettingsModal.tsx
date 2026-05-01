@@ -162,9 +162,9 @@ const SwitchRow: React.FC<{
       checked={checked}
       onCheckedChange={onCheckedChange}
       aria-label={controlLabel ?? title}
-      className="relative h-7 w-12 shrink-0 rounded-full border border-[var(--border-default)] bg-[var(--surface-3)] transition-colors focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=checked]:border-[var(--text-primary)] data-[state=checked]:bg-[var(--text-primary)]"
+      className="relative h-7 w-12 shrink-0 rounded-full border border-[var(--switch-border)] bg-[var(--switch-track)] transition-colors focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=checked]:border-[var(--switch-border-checked)] data-[state=checked]:bg-[var(--switch-track-checked)]"
     >
-      <Switch.Thumb className="block h-6 w-6 translate-x-0.5 rounded-full bg-[var(--surface-canvas)] shadow-sm transition-transform data-[state=checked]:translate-x-[22px]" />
+      <Switch.Thumb className="block h-6 w-6 translate-x-0.5 rounded-full bg-[var(--switch-thumb)] shadow-sm transition-transform data-[state=checked]:translate-x-[22px]" />
     </Switch.Root>
   </div>
 );

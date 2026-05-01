@@ -622,11 +622,96 @@ test("appearance toggles rainbow brackets setting", async ({ page }) => {
     .toBe(false);
 
   await page.reload();
+  await page.waitForLoadState("domcontentloaded");
   await mountProjectUI(page);
   await page.getByTitle("Settings").click();
   await expect(
     page.getByRole("switch", { name: "Rainbow brackets" }),
   ).toHaveAttribute("aria-checked", "false");
+});
+
+test("light theme switches use dark readable thumbs", async ({ page }) => {
+  await mountProjectUI(page);
+  await openAppearance(page);
+
+  const themeTrigger = page.getByTestId("theme-dropdown-trigger");
+  await themeTrigger.click();
+  await page.getByRole("menuitem", { name: /Catppuccin Latte/ }).click();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-theme",
+    "catppuccin-latte",
+  );
+
+  const rainbowBracketsSwitch = page.getByRole("switch", {
+    name: "Rainbow brackets",
+  });
+  const thumbTone = await rainbowBracketsSwitch
+    .locator("span")
+    .evaluate((element) => {
+      const color = window.getComputedStyle(element).backgroundColor;
+      const channels = color
+        .match(/[\d.]+/g)
+        ?.slice(0, 3)
+        .map(Number);
+      if (!channels || channels.length < 3) {
+        return 255;
+      }
+      const rgb = channels.map((channel) =>
+        channel <= 1 ? channel * 255 : channel,
+      );
+      return rgb.reduce((sum, channel) => sum + channel, 0) / rgb.length;
+    });
+
+  expect(thumbTone).toBeLessThan(125);
+});
+
+test("Ctrl+Tab switcher inherits the active light theme surface", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    localStorage.setItem(
+      "editorTabs:/workspace",
+      JSON.stringify({
+        tabs: [
+          { path: "/workspace/index.tsx", label: "index.tsx" },
+          { path: "/workspace/second.ts", label: "second.ts" },
+        ],
+        activeTabId: "tab--workspace-index-tsx",
+      }),
+    );
+  });
+  await page.reload();
+  await page.waitForLoadState("domcontentloaded");
+
+  await mountProjectUI(page);
+  await openAppearance(page);
+
+  const themeTrigger = page.getByTestId("theme-dropdown-trigger");
+  await themeTrigger.click();
+  await page.getByRole("menuitem", { name: /Catppuccin Latte/ }).click();
+  await page.getByLabel("Close settings").click();
+  await expect(page.getByTestId("settings-modal")).toHaveCount(0);
+
+  await dispatchShortcut(page, { key: "Tab", code: "Tab", ctrlKey: true });
+
+  const switcherPanel = page.getByTestId("tab-switcher-panel");
+  await expect(switcherPanel).toBeVisible();
+  const panelTone = await switcherPanel.evaluate((element) => {
+    const color = window.getComputedStyle(element).backgroundColor;
+    const channels = color
+      .match(/[\d.]+/g)
+      ?.slice(0, 3)
+      .map(Number);
+    if (!channels || channels.length < 3) {
+      return 0;
+    }
+    const rgb = channels.map((channel) =>
+      channel <= 1 ? channel * 255 : channel,
+    );
+    return rgb.reduce((sum, channel) => sum + channel, 0) / rgb.length;
+  });
+
+  expect(panelTone).toBeGreaterThan(160);
 });
 
 test("settings modal scales with app zoom shortcuts", async ({ page }) => {
