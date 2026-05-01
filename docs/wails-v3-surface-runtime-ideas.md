@@ -307,6 +307,12 @@ Baseline hardening для этой ветки теперь имеет отдел
   packaged-app, real OS handoff, native delivery и Window Lease live steps. Этот report
   используется local-alpha release evidence и фиксирует, что OS handoff доказан только
   для registered smoke bundle, не как production default-handler claim.
+- `./scripts/wails3-installed-app-smoke-macos.sh` добавлен как installed-app gate для
+  уже установленного или явно переданного `Arlecchino.app`: report фиксирует bundle name,
+  codesign verify, Gatekeeper status, process/resource snapshot, absence of real TCP
+  Arlecchino/Wails listeners, MCP bridge socket presence и stale dev-binary orphan
+  leakage. `wails://localhost` в Activity Monitor трактуется как WebView renderer label,
+  не как proof of a local TCP server.
 - Добавлен real OS handoff smoke harness:
   `./scripts/wails3-real-os-smoke-macos.sh` собирает production-shaped `.app`,
   регистрирует bundle через LaunchServices, запускает live app с temp app data dir
@@ -371,7 +377,7 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Protocol/file associations | Green | `arlecchino://` and file association payloads normalize through strict open-intent allowlist; real OS smoke now proves Wails handler entry and emitted dispatch through LaunchServices/AppleEvent routes. | Keep production default-handler claims scoped to signed/notarized release packaging. |
 | Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates projection, and live smoke proves tray startup, dock badge set, accepted/rejected action routing and tracked failure states. Notification manual smoke now records permission status and delivery result. | Run `--include-notifications` permission smoke manually before claiming notification delivery; keep default-off until signed/bundled UX is acceptable. |
 | Auto-update verifier | Yellow | `.app` smoke reads/validates manifest schema, checks channel/platform/universal artifact selection and can explicitly stage a signed artifact with checksum + Ed25519 signature verification. Manifest generation/signing helper exists for static HTTPS/GitHub Releases artifacts. Production install/apply remains disabled. | Decide release channel hosting and installer/apply policy after release packaging is stable; private signing key must remain outside repo. |
-| Packaging/release OS integration | Yellow | Local-alpha release profile now builds universal `arm64+x86_64` ad-hoc signed `Arlecchino.app`, `arlecchino-macos-universal.zip` and optional `arlecchino-macos-universal.dmg` for Big Sur 11.0 through Tahoe 26.x. Evidence records split GitHub asset names and confirms public names do not contain `v3`. | Developer ID/notarization remains inactive until credentials exist; ad-hoc artifacts are local/tester alpha only and not trusted public distribution. |
+| Packaging/release OS integration | Yellow | Local-alpha release profile now builds universal `arm64+x86_64` ad-hoc signed `Arlecchino.app`, `arlecchino-macos-universal.zip` and optional `arlecchino-macos-universal.dmg` for Big Sur 11.0 through Tahoe 26.x. Evidence records split GitHub asset names, confirms public names do not contain `v3`, and installed-app smoke distinguishes `wails://localhost` renderer labels from real TCP listeners. | Developer ID/notarization remains inactive until credentials exist; ad-hoc artifacts are local/tester alpha only and not trusted public distribution. Keep stale dev-orphan cleanup green before release evidence is accepted. |
 | Real OS handoff | Green | `wails3-real-os-smoke-macos.sh` launches a registered ad-hoc `.app`, traces Wails application-event handler entry, proves `ide:intent:open` emitted dispatch for protocol/file payloads and proves gated second-instance handoff. | Keep the evidence as smoke-gated; browser/Finder UX still depends on production registration/signing decisions. |
 
 Blockers before Arlehub:
@@ -1620,6 +1626,10 @@ risky action, user can return layout.
 36. Done: lock release artifact naming. Public product artifacts use `Arlecchino.app`
     and `arlecchino-macos-<arch>.*`; `v3` remains only an internal Wails migration/script
     label, not a product or GitHub Release asset name.
+37. Done: add installed-app smoke gate. `wails3-installed-app-smoke-macos.sh` validates
+    installed/provided `Arlecchino.app`, codesign, Gatekeeper status, absence of real
+    Arlecchino/Wails TCP listeners, MCP bridge socket presence, process snapshot and
+    stale dev `Arlecchino-v3 mcp-server` orphan leakage.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
