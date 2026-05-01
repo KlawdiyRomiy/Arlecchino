@@ -55,6 +55,9 @@ notarized distribution path.
 - Review `docs/trademark-clearance.md` before broader public launch.
 - Do a release dogfood pass: startup, project open, editor interaction,
   terminal command, autocomplete/ranking path, and one MCP approval flow.
+- Verify in-app notifications through the neutral notification stack: save
+  progress, save success/error, dispatcher result, and terminal/git errors.
+  Native macOS notifications remain separate and default-off.
 - Run `./scripts/wails3-release-smoke-macos.sh --report <path>` and attach the
   report to the release notes or internal release evidence.
 - If the machine has been used for Wails v3 dev runs, run

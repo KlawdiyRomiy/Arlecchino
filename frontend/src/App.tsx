@@ -1,5 +1,6 @@
 import React, { startTransition, useEffect, useState } from "react";
 import WelcomeScreen from "./components/WelcomeScreen";
+import { AppNotificationStack } from "./components/layout/AppNotificationStack";
 import { MCPApprovalDialog } from "./components/MCPApprovalDialog";
 import {
   DetachedAppletHost,
@@ -294,10 +295,13 @@ const App: React.FC = () => {
   if (!ready) {
     if (isDetachedHost) {
       return (
-        <DetachedAppletHost
-          currentTheme={currentTheme}
-          currentUiScale={effectiveUiScale}
-        />
+        <>
+          <DetachedAppletHost
+            currentTheme={currentTheme}
+            currentUiScale={effectiveUiScale}
+          />
+          <AppNotificationStack />
+        </>
       );
     }
 
@@ -310,16 +314,20 @@ const App: React.FC = () => {
           <div className="blackprint-bg" />
         </div>
         <MCPApprovalDialog />
+        <AppNotificationStack />
       </div>
     );
   }
 
   if (isDetachedHost) {
     return (
-      <DetachedAppletHost
-        currentTheme={currentTheme}
-        currentUiScale={effectiveUiScale}
-      />
+      <>
+        <DetachedAppletHost
+          currentTheme={currentTheme}
+          currentUiScale={effectiveUiScale}
+        />
+        <AppNotificationStack />
+      </>
     );
   }
 
@@ -373,6 +381,7 @@ const App: React.FC = () => {
           </ProjectSwitchTransition>
         </div>
         <MCPApprovalDialog />
+        <AppNotificationStack />
       </div>
     );
   }
@@ -387,6 +396,7 @@ const App: React.FC = () => {
         <WelcomeScreen onProjectOpen={handleProjectOpen} />
       </div>
       <MCPApprovalDialog />
+      <AppNotificationStack />
     </div>
   );
 };

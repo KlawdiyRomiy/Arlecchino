@@ -317,6 +317,12 @@ Baseline hardening для этой ветки теперь имеет отдел
   он матчится только на точный dev command
   `/tmp/Arlecchino-wails-build/bin/Arlecchino-v3 mcp-server`, поддерживает dry-run/JSON
   report и не трогает установленный `/Applications/Arlecchino.app`.
+- In-app notification UX заменен на нейтральный app-wide notification stack:
+  старый single-toast и маленький save-status pill убраны, `AppNotificationStack`
+  хостится на root shell level для main/detached windows, save progress/success/error
+  и текущие `showNotification` вызовы идут через единый Zustand store. Native macOS
+  notifications остаются separate default-off Background Shell delivery, чтобы не было
+  duplicate in-app/native notifications.
 - Добавлен real OS handoff smoke harness:
   `./scripts/wails3-real-os-smoke-macos.sh` собирает production-shaped `.app`,
   регистрирует bundle через LaunchServices, запускает live app с temp app data dir
@@ -379,7 +385,7 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Detached windows / Window Lease | Yellow | Browser Preview, Git, Problems and Terminal helper surfaces can create actual Wails detached windows only with `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`; live `.app` smoke proves native window ids and close/return to attached state; manual Terminal PTY/focus checklist now exists. | Run and record the manual Terminal helper smoke before any default-on detach discussion. |
 | Single instance/open-file | Green | Backend parser, frontend-ready queue and `ide:intent:open` dispatch are implemented behind `ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1`; real OS smoke now proves second-instance handoff into the first launched packaged app. | Keep gated/default-off until release packaging policy says this can be enabled by default. |
 | Protocol/file associations | Green | `arlecchino://` and file association payloads normalize through strict open-intent allowlist; real OS smoke now proves Wails handler entry and emitted dispatch through LaunchServices/AppleEvent routes. | Keep production default-handler claims scoped to signed/notarized release packaging. |
-| Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates projection, and live smoke proves tray startup, dock badge set, accepted/rejected action routing and tracked failure states. Notification manual smoke now records permission status and delivery result. | Run `--include-notifications` permission smoke manually before claiming notification delivery; keep default-off until signed/bundled UX is acceptable. |
+| Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates projection, and live smoke proves tray startup, dock badge set, accepted/rejected action routing and tracked failure states. Notification manual smoke now records permission status and delivery result. In-app notifications use a separate app-wide stack for foreground IDE feedback. | Run `--include-notifications` permission smoke manually before claiming native notification delivery; keep default-off until signed/bundled UX is acceptable. |
 | Auto-update verifier | Yellow | `.app` smoke reads/validates manifest schema, checks channel/platform/universal artifact selection and can explicitly stage a signed artifact with checksum + Ed25519 signature verification. Manifest generation/signing helper exists for static HTTPS/GitHub Releases artifacts. Production install/apply remains disabled. | Decide release channel hosting and installer/apply policy after release packaging is stable; private signing key must remain outside repo. |
 | Packaging/release OS integration | Yellow | Local-alpha release profile now builds universal `arm64+x86_64` ad-hoc signed `Arlecchino.app`, `arlecchino-macos-universal.zip` and optional `arlecchino-macos-universal.dmg` for Big Sur 11.0 through Tahoe 26.x. Evidence records split GitHub asset names, confirms public names do not contain `v3`, and installed-app smoke distinguishes `wails://localhost` renderer labels from real TCP listeners. | Developer ID/notarization remains inactive until credentials exist; ad-hoc artifacts are local/tester alpha only and not trusted public distribution. Keep stale dev-orphan cleanup green before release evidence is accepted. |
 | Real OS handoff | Green | `wails3-real-os-smoke-macos.sh` launches a registered ad-hoc `.app`, traces Wails application-event handler entry, proves `ide:intent:open` emitted dispatch for protocol/file payloads and proves gated second-instance handoff. | Keep the evidence as smoke-gated; browser/Finder UX still depends on production registration/signing decisions. |
@@ -1637,6 +1643,10 @@ risky action, user can return layout.
 38. Done: add Wails v3 dev orphan cleanup. `wails3-clean-dev-orphans-macos.sh` safely
     lists/kills only stale `/tmp/Arlecchino-wails-build/bin/Arlecchino-v3 mcp-server`
     processes and leaves installed `Arlecchino.app` alone.
+39. Done: replace in-app notification UX. The old single-toast and small save-status
+    pill are replaced by neutral `AppNotificationStack` + `appNotificationStore`, with
+    save progress/success/error and existing IDE `showNotification` calls routed through
+    the same foreground stack. Native notifications remain separate and default-off.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 

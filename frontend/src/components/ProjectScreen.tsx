@@ -16,6 +16,7 @@ import {
   unblockProjectSwitch,
 } from "../utils/priorityUI";
 import { makeEditorTabId, useEditorStore } from "../stores/editorStore";
+import { useAppNotificationStore } from "../stores/appNotificationStore";
 import { editorCanvasBackground } from "../utils/codeMirrorTheme";
 import { type ContextActionMenuItem } from "./ui/ContextActionMenu";
 import { GuardedEditorPreview } from "./GuardedEditorPreview";
@@ -1149,10 +1150,23 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
 
     setIsSaving(true);
+    const saveNotificationId = useAppNotificationStore
+      .getState()
+      .addNotification({
+        id: `save:${tab.path}`,
+        kind: "progress",
+        title: "Saving file",
+        message: tab.path,
+        source: "Editor",
+        sticky: true,
+      });
 
     try {
       let contentToSave = fileContentsRef.current[activeTab];
       if (contentToSave === undefined) {
+        useAppNotificationStore
+          .getState()
+          .dismissNotification(saveNotificationId);
         return;
       }
 
@@ -1196,9 +1210,26 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       window.dispatchEvent(
         new CustomEvent("file-saved", { detail: { path: tab.path } }),
       );
+      useAppNotificationStore
+        .getState()
+        .updateNotification(saveNotificationId, {
+          kind: "success",
+          title: "File saved",
+          message: getProjectPathBasename(tab.path),
+          sticky: false,
+          timeoutMs: 2200,
+        });
     } catch (error) {
       console.error("Error saving file:", error);
-      alert(`Failed to save file: ${error}`);
+      useAppNotificationStore
+        .getState()
+        .updateNotification(saveNotificationId, {
+          kind: "error",
+          title: "Failed to save file",
+          message: error instanceof Error ? error.message : String(error),
+          sticky: false,
+          timeoutMs: 7000,
+        });
     } finally {
       setIsSaving(false);
     }
@@ -1782,12 +1813,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           <div className="h-full w-full" />
         )}
       </div>
-
-      {isSaving && (
-        <div className="absolute bottom-8 right-4 px-3 py-1 bg-blue-500 text-white text-sm rounded-full shadow-lg">
-          Saving...
-        </div>
-      )}
 
       {isTabSwitcherOpen ? (
         <TabSwitcherOverlay

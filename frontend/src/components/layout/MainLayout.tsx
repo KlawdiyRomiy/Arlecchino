@@ -10,10 +10,6 @@ import { TopBar } from "./TopBar";
 import { StatusBar } from "./StatusBar";
 import { MainLayoutPanelRenderer } from "./MainLayoutPanelRenderer";
 import { MainPanelWorkspace } from "./MainPanelWorkspace";
-import {
-  NotificationToast,
-  type MainLayoutNotification,
-} from "./NotificationToast";
 import { PanelDropZone } from "./PanelDropZone";
 import { ProjectEntryDialogs } from "./ProjectEntryDialogs";
 import { ProjectPathCopyConfirmation } from "./ProjectPathCopyConfirmation";
@@ -32,6 +28,7 @@ import { CommandDispatcher } from "../CommandDispatcher";
 import { useDispatcher } from "../../hooks/useDispatcher";
 import { ProjectEntryActionsProvider } from "../../contexts/ProjectEntryActionsContext";
 import { useEditorStore } from "../../stores/editorStore";
+import { useAppNotificationStore } from "../../stores/appNotificationStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useDiagnosticsStore } from "../../stores/diagnosticsStore";
@@ -915,9 +912,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const panelExitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingPanelCloseFrameIdsRef = useRef<number[]>([]);
 
-  const [notification, setNotification] =
-    useState<MainLayoutNotification | null>(null);
-
   useEffect(() => {
     return () => {
       if (panelDropSettlingTimerRef.current) {
@@ -1600,9 +1594,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
   const showNotification = useCallback(
     (type: "success" | "error", message: string) => {
-      setNotification({ type, message });
-      const timeout = type === "error" ? 6000 : 3000;
-      setTimeout(() => setNotification(null), timeout);
+      useAppNotificationStore.getState().addNotification({
+        kind: type,
+        title: type === "success" ? "Done" : "Action failed",
+        message,
+        source: "IDE",
+      });
     },
     [],
   );
@@ -4548,11 +4545,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         <ProjectPathCopyConfirmation
           visible={projectPathCopiedVisible}
           projectPath={activeProjectPath}
-        />
-
-        <NotificationToast
-          notification={notification}
-          onClose={() => setNotification(null)}
         />
       </div>
     </ProjectEntryActionsProvider>
