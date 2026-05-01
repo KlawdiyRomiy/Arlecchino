@@ -2,6 +2,9 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -46,6 +49,57 @@ func TestOpenProject_DoesNotInitializePHPSpecificManagersEagerly(t *testing.T) {
 	}
 	if got := systemCalls.Load(); got != 0 {
 		t.Fatalf("system manager init calls = %d, want 0", got)
+	}
+}
+
+func TestOpenProject_RejectsUnreadableProjectBeforeChangingState(t *testing.T) {
+	parent := t.TempDir()
+	projectPath := filepath.Join(parent, "blocked")
+	if err := os.Mkdir(projectPath, 0o700); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	if err := os.Chmod(projectPath, 0o300); err != nil {
+		t.Fatalf("chmod project unreadable: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(projectPath, 0o700)
+	})
+
+	app := &App{}
+	err := app.OpenProject(projectPath)
+	if err == nil {
+		t.Fatal("OpenProject returned nil for unreadable project")
+	}
+	if !strings.Contains(err.Error(), "project directory is not readable") {
+		t.Fatalf("OpenProject error = %v, want unreadable project error", err)
+	}
+	if got := app.currentProjectPath(); got != "" {
+		t.Fatalf("currentProjectPath = %q, want empty after failed open", got)
+	}
+}
+
+func TestInspectProjectAccess_ReturnsPermissionFailureWithoutError(t *testing.T) {
+	parent := t.TempDir()
+	projectPath := filepath.Join(parent, "blocked")
+	if err := os.Mkdir(projectPath, 0o700); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	if err := os.Chmod(projectPath, 0o300); err != nil {
+		t.Fatalf("chmod project unreadable: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(projectPath, 0o700)
+	})
+
+	inspection := (&App{}).InspectProjectAccess(projectPath)
+	if inspection.Accessible {
+		t.Fatal("InspectProjectAccess marked unreadable project accessible")
+	}
+	if inspection.Path != projectPath {
+		t.Fatalf("InspectProjectAccess path = %q, want %q", inspection.Path, projectPath)
+	}
+	if !strings.Contains(inspection.Reason, "project directory is not readable") {
+		t.Fatalf("InspectProjectAccess reason = %q, want unreadable project reason", inspection.Reason)
 	}
 }
 

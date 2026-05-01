@@ -18,7 +18,10 @@ import {
   useWorkspaceStore,
 } from "./stores/workspaceStore";
 import { useTerminalStore } from "./stores/terminalStore";
-import { startAdaptivePerformanceMonitor } from "./stores/performanceStore";
+import {
+  startAdaptivePerformanceMonitor,
+  usePerformanceStore,
+} from "./stores/performanceStore";
 import { useTheme } from "./hooks/useTheme";
 import { clampUiScale } from "./utils/uiScale";
 import {
@@ -34,6 +37,15 @@ import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
 import { useWindowLeaseBridge } from "./shell/windowLeaseBridge";
 import { syncSurfaceRuntimeWindowLeaseBackendStatus } from "./surfaces/surfaceRuntimeStore";
 import type { EditorFileOpenPayload } from "./utils/editorFileLoader";
+
+const PROJECT_SWITCH_VISUAL_SETTLE_MS = 260;
+
+const waitForProjectSwitchVisualSettle = () =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(() => {
+      window.requestAnimationFrame(() => resolve());
+    }, PROJECT_SWITCH_VISUAL_SETTLE_MS);
+  });
 
 const buildScaledSurfaceStyle = (uiScale: number): React.CSSProperties => ({
   position: "absolute",
@@ -57,6 +69,18 @@ const appShellStyle: React.CSSProperties = {
   background: "transparent",
 };
 
+const projectSwitchFallbackStyle: React.CSSProperties = {
+  alignItems: "center",
+  background: "var(--bg-blackprint, #0a0a0a)",
+  color: "var(--text-secondary, rgba(232, 237, 246, 0.72))",
+  display: "flex",
+  fontSize: "12px",
+  height: "100%",
+  justifyContent: "center",
+  letterSpacing: "0.02em",
+  width: "100%",
+};
+
 const App: React.FC = () => {
   useApplicationMenuBridge();
   useShellCapabilitiesBridge(AppFunctions.GetShellCapabilities);
@@ -72,10 +96,14 @@ const App: React.FC = () => {
     state.projects.find((project) => project.id === state.activeId),
   );
   const ready = useWorkspaceStore((state) => state.ready);
+  const pendingProjectId = useWorkspaceStore((state) => state.pendingId);
   const switchDirection = useWorkspaceStore((state) => state.switchDirection);
   const [fileToOpen, setFileToOpen] = useState<EditorFileOpenPayload | null>(
     null,
   );
+  const [hydratingProjectPath, setHydratingProjectPath] = useState<
+    string | null
+  >(null);
   const effectiveUiScale = clampUiScale(uiScale);
   const isDetachedHost = isDetachedAppletHostRoute();
 
@@ -140,24 +168,32 @@ const App: React.FC = () => {
 
     const outgoingProjectPath =
       state.projects.find((item) => item.id === state.activeId)?.path ?? null;
+    usePerformanceStore.getState().resetTransientBudget();
     state.beginProjectSwitch(id, direction);
+    setFileToOpen(null);
+    setHydratingProjectPath(project.path);
 
     try {
+      const workspace = useWorkspaceStore.getState();
+      workspace.confirmProjectSwitch(id);
+      await waitForProjectSwitchVisualSettle();
       activateProjectScope(project.path);
-      const openProjectRequest = AppFunctions.OpenProject(project.path);
-      useWorkspaceStore.getState().confirmProjectSwitch(id);
+      await AppFunctions.OpenProject(project.path);
       useTerminalStore.getState().setActiveProject(project.path);
-      await openProjectRequest;
       await syncCurrentFramework();
-      void preloadProjectDiagnostics(project.path);
       startTransition(() => {
         useWorkspaceStore.getState().completeProjectSwitch(id);
+        setHydratingProjectPath(null);
         setFileToOpen(null);
+      });
+      window.requestAnimationFrame(() => {
+        void preloadProjectDiagnostics(project.path);
       });
     } catch (error) {
       activateProjectScope(outgoingProjectPath);
       useTerminalStore.getState().setActiveProject(outgoingProjectPath);
       useWorkspaceStore.getState().cancelProjectSwitch(id);
+      setHydratingProjectPath(null);
       console.error("Error switching project:", error);
       alert(`Error while switching project: ${error}`);
     }
@@ -222,26 +258,34 @@ const App: React.FC = () => {
     const outgoingProjectPath =
       state.projects.find((project) => project.id === state.activeId)?.path ??
       null;
+    usePerformanceStore.getState().resetTransientBudget();
     state.beginProjectSwitch(nextProject.id, direction);
+    setFileToOpen(null);
+    setHydratingProjectPath(nextProject.path);
 
     try {
+      const workspace = useWorkspaceStore.getState();
+      workspace.confirmProjectSwitch(nextProject.id);
+      await waitForProjectSwitchVisualSettle();
       activateProjectScope(nextProject.path);
-      const openProjectRequest = AppFunctions.OpenProject(nextProject.path);
-      useWorkspaceStore.getState().confirmProjectSwitch(nextProject.id);
+      await AppFunctions.OpenProject(nextProject.path);
       useTerminalStore.getState().setActiveProject(nextProject.path);
-      await openProjectRequest;
       await syncCurrentFramework();
-      void preloadProjectDiagnostics(nextProject.path);
       startTransition(() => {
-        const workspace = useWorkspaceStore.getState();
-        workspace.completeProjectSwitch(nextProject.id);
-        workspace.removeProject(id);
+        const latestWorkspace = useWorkspaceStore.getState();
+        latestWorkspace.completeProjectSwitch(nextProject.id);
+        latestWorkspace.removeProject(id);
+        setHydratingProjectPath(null);
         setFileToOpen(null);
+      });
+      window.requestAnimationFrame(() => {
+        void preloadProjectDiagnostics(nextProject.path);
       });
     } catch (error) {
       activateProjectScope(outgoingProjectPath);
       useTerminalStore.getState().setActiveProject(outgoingProjectPath);
       useWorkspaceStore.getState().cancelProjectSwitch(nextProject.id);
+      setHydratingProjectPath(null);
       console.error("Error switching after close:", error);
       alert(`Error while switching project: ${error}`);
     }
@@ -280,6 +324,17 @@ const App: React.FC = () => {
   }
 
   if (activeId && activeProject) {
+    const projectSwitchLightweight =
+      pendingProjectId !== null || hydratingProjectPath === activeProject.path;
+    const projectSwitchFallback = (
+      <div
+        data-testid="project-switch-lightweight-shell"
+        style={projectSwitchFallbackStyle}
+      >
+        {activeProject.name}
+      </div>
+    );
+
     return (
       <div data-testid="app-shell" style={appShellStyle}>
         <div
@@ -290,25 +345,31 @@ const App: React.FC = () => {
           <ProjectSwitchTransition
             layoutKey={activeProject.path}
             direction={switchDirection}
+            lightweight={projectSwitchLightweight}
+            fallback={projectSwitchFallback}
           >
-            <PluginModalProvider key={activeProject.path}>
-              <CommandRegistryProvider>
-                <MainLayout
-                  key={activeProject.path}
-                  onFileOpen={handleFileOpen}
-                  onBackToWelcome={handleBackToWelcome}
-                  onProjectOpen={handleProjectOpen}
-                  onSwitchProject={handleSwitchProject}
-                  onCloseProject={handleCloseProject}
-                >
-                  <ProjectScreen
-                    projectPath={activeProject.path}
-                    fileToOpen={fileToOpen}
-                    onFileOpened={() => setFileToOpen(null)}
-                  />
-                </MainLayout>
-              </CommandRegistryProvider>
-            </PluginModalProvider>
+            {projectSwitchLightweight ? (
+              projectSwitchFallback
+            ) : (
+              <PluginModalProvider key={activeProject.path}>
+                <CommandRegistryProvider>
+                  <MainLayout
+                    key={activeProject.path}
+                    onFileOpen={handleFileOpen}
+                    onBackToWelcome={handleBackToWelcome}
+                    onProjectOpen={handleProjectOpen}
+                    onSwitchProject={handleSwitchProject}
+                    onCloseProject={handleCloseProject}
+                  >
+                    <ProjectScreen
+                      projectPath={activeProject.path}
+                      fileToOpen={fileToOpen}
+                      onFileOpened={() => setFileToOpen(null)}
+                    />
+                  </MainLayout>
+                </CommandRegistryProvider>
+              </PluginModalProvider>
+            )}
           </ProjectSwitchTransition>
         </div>
         <MCPApprovalDialog />

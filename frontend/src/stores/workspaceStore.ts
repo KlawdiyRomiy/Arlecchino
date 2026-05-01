@@ -15,6 +15,12 @@ export interface WorkspaceProject {
   openedAt: number;
 }
 
+interface ProjectAccessInspection {
+  path: string;
+  accessible: boolean;
+  reason: string;
+}
+
 interface WorkspaceState {
   projects: WorkspaceProject[];
   activeId: string | null;
@@ -41,6 +47,31 @@ interface WorkspaceState {
 }
 
 const getProjectName = (path: string) => path.split("/").pop() || path;
+
+const inspectProjectAccess = async (
+  path: string,
+): Promise<ProjectAccessInspection> => {
+  try {
+    const inspection = (await AppFunctions.InspectProjectAccess(
+      path,
+    )) as ProjectAccessInspection;
+    if (inspection && typeof inspection.accessible === "boolean") {
+      return inspection;
+    }
+  } catch {
+    return {
+      path,
+      accessible: true,
+      reason: "",
+    };
+  }
+
+  return {
+    path,
+    accessible: true,
+    reason: "",
+  };
+};
 
 export const getProjectPathById = (
   projects: WorkspaceProject[],
@@ -336,31 +367,52 @@ export const initializeWorkspace = async () => {
       return;
     }
 
-    const project = projects.find((item) => item.id === activeId);
-    if (!project) {
+    const activeProject = projects.find((item) => item.id === activeId);
+    if (!activeProject) {
       useTerminalStore.getState().setActiveProject(null);
       useWorkspaceStore.getState().clearActiveProject();
       return;
     }
 
-    try {
-      resetProjectBoundStores();
-      activateProjectScope(project.path);
-      await AppFunctions.OpenProject(project.path);
-      useTerminalStore.getState().setActiveProject(project.path);
-      useWorkspaceStore
-        .getState()
-        .setActiveFramework(
-          (await AppFunctions.GetCurrentProjectFramework()) || null,
-        );
-      void preloadProjectDiagnostics(project.path);
-    } catch (error) {
-      useTerminalStore.getState().setActiveProject(null);
-      resetProjectBoundStores();
-      console.error("Error restoring workspace:", error);
-      useWorkspaceStore.getState().removeProject(activeId);
-      useWorkspaceStore.getState().setActiveFramework(null);
+    const restoreCandidates = [
+      activeProject,
+      ...projects.filter((project) => project.id !== activeId),
+    ];
+
+    for (const project of restoreCandidates) {
+      const access = await inspectProjectAccess(project.path);
+      if (!access.accessible) {
+        console.warn("Skipping inaccessible project:", access.reason);
+        useWorkspaceStore.getState().removeProject(project.id);
+        continue;
+      }
+
+      try {
+        resetProjectBoundStores();
+        activateProjectScope(project.path);
+        await AppFunctions.OpenProject(project.path);
+        useWorkspaceStore.getState().addProject(project.path);
+        useTerminalStore.getState().setActiveProject(project.path);
+        useWorkspaceStore
+          .getState()
+          .setActiveFramework(
+            (await AppFunctions.GetCurrentProjectFramework()) || null,
+          );
+        void preloadProjectDiagnostics(project.path);
+        return;
+      } catch (error) {
+        useTerminalStore.getState().setActiveProject(null);
+        resetProjectBoundStores();
+        console.error("Error restoring workspace:", error);
+        useWorkspaceStore.getState().removeProject(project.id);
+        useWorkspaceStore.getState().setActiveFramework(null);
+      }
     }
+
+    useTerminalStore.getState().setActiveProject(null);
+    resetProjectBoundStores();
+    useWorkspaceStore.getState().clearActiveProject();
+    useWorkspaceStore.getState().setActiveFramework(null);
   })().finally(() => {
     useWorkspaceStore.getState().setReady(true);
     workspaceInitPromise = null;

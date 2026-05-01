@@ -7,16 +7,25 @@ import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
 interface Props {
   layoutKey: string;
   direction: number;
+  lightweight?: boolean;
+  fallback?: React.ReactNode;
   children: React.ReactNode;
 }
 
 export const ProjectSwitchTransition: React.FC<Props> = ({
   layoutKey,
   direction,
+  lightweight = false,
+  fallback = null,
   children,
 }) => {
   const childrenMap = useRef<Record<string, React.ReactNode>>({});
-  childrenMap.current[layoutKey] = children;
+  if (lightweight) {
+    childrenMap.current = {};
+    childrenMap.current[layoutKey] = fallback;
+  } else {
+    childrenMap.current = { [layoutKey]: children };
+  }
   const indexingPhase = useIndexingPhase();
   const diagnosticsPreload = useProjectDiagnosticsPreload();
   const switchPending = useWorkspaceStore((state) => state.pendingId !== null);
@@ -55,14 +64,16 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
         width: "100%",
         height: "100%",
         overflow: "hidden",
-        contain: "strict",
+        contain: "layout paint style",
         clipPath: "inset(0)",
         backgroundColor: "var(--bg-blackprint, #0a0a0a)",
         overscrollBehavior: "none",
       }}
     >
       {transitions((style, item) => {
-        const renderedChildren = childrenMap.current[item];
+        const renderedChildren = lightweight
+          ? fallback
+          : (childrenMap.current[item] ?? fallback);
         const { x, ...restStyle } = style;
 
         return (
@@ -75,7 +86,7 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
               inset: 0,
               width: "100%",
               height: "100%",
-              contain: "strict",
+              contain: "layout paint style",
               willChange: "transform",
               backgroundColor: "var(--bg-blackprint, #0a0a0a)",
               zIndex: 1,

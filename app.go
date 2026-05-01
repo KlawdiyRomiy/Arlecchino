@@ -73,6 +73,12 @@ type App struct {
 	wg            sync.WaitGroup
 }
 
+type ProjectAccessInspection struct {
+	Path       string `json:"path"`
+	Accessible bool   `json:"accessible"`
+	Reason     string `json:"reason"`
+}
+
 func (a *App) attachWailsApplication(app *application.App) {
 	a.wailsApp = app
 }
@@ -205,7 +211,23 @@ func (a *App) SelectDirectory(title string) (string, error) {
 		PromptForSingleSelection()
 }
 
+func (a *App) InspectProjectAccess(path string) ProjectAccessInspection {
+	inspection := ProjectAccessInspection{
+		Path:       strings.TrimSpace(path),
+		Accessible: true,
+	}
+	if err := validateProjectOpenAccess(path); err != nil {
+		inspection.Accessible = false
+		inspection.Reason = err.Error()
+	}
+	return inspection
+}
+
 func (a *App) OpenProject(path string) error {
+	if err := validateProjectOpenAccess(path); err != nil {
+		return err
+	}
+
 	if a.currentProjectPath() != "" {
 		_ = a.closeProject(false)
 	}
@@ -369,6 +391,26 @@ func (a *App) OpenProject(path string) error {
 		"generation":  projectGeneration,
 	})
 	a.startProjectFilesystemWatcher(path, projectGeneration)
+
+	return nil
+}
+
+func validateProjectOpenAccess(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("project path is required")
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("project path is not accessible: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("project path is not a directory: %s", path)
+	}
+	if _, err := os.ReadDir(path); err != nil {
+		return fmt.Errorf("project directory is not readable: %w", err)
+	}
 
 	return nil
 }
