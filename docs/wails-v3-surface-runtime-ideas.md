@@ -296,9 +296,11 @@ Baseline hardening для этой ветки теперь имеет отдел
   dormant `developer-id`/notarytool path через env без Apple Developer requirement.
 - Добавлен local-alpha release profile без Apple Developer:
   `./scripts/wails3-local-alpha-release-macos.sh` по умолчанию собирает universal
-  `arm64+x86_64` `.app` с `LSMinimumSystemVersion=11.0`, ad-hoc signs bundle,
-  создает ZIP artifact, optional DMG через `sindresorhus/create-dmg`
-  (`create-dmg`/`npx create-dmg`) и пишет JSON evidence report. Gatekeeper
+  `arm64+x86_64` `Arlecchino.app` с `LSMinimumSystemVersion=11.0`, ad-hoc signs
+  bundle, создает `arlecchino-macos-universal.zip`, optional
+  `arlecchino-macos-universal.dmg` через `sindresorhus/create-dmg`
+  (`create-dmg`/`npx create-dmg`) и пишет JSON evidence report. Public release
+  naming не использует `v3`; version живет в GitHub tag/release metadata. Gatekeeper
   rejection для ad-hoc считается expected warning, а Developer ID/notarization
   остаются явно skipped до появления credentials.
 - `./scripts/wails3-release-smoke-macos.sh` теперь пишет structured smoke report по
@@ -369,7 +371,7 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Protocol/file associations | Green | `arlecchino://` and file association payloads normalize through strict open-intent allowlist; real OS smoke now proves Wails handler entry and emitted dispatch through LaunchServices/AppleEvent routes. | Keep production default-handler claims scoped to signed/notarized release packaging. |
 | Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates projection, and live smoke proves tray startup, dock badge set, accepted/rejected action routing and tracked failure states. Notification manual smoke now records permission status and delivery result. | Run `--include-notifications` permission smoke manually before claiming notification delivery; keep default-off until signed/bundled UX is acceptable. |
 | Auto-update verifier | Yellow | `.app` smoke reads/validates manifest schema, checks channel/platform/universal artifact selection and can explicitly stage a signed artifact with checksum + Ed25519 signature verification. Manifest generation/signing helper exists for static HTTPS/GitHub Releases artifacts. Production install/apply remains disabled. | Decide release channel hosting and installer/apply policy after release packaging is stable; private signing key must remain outside repo. |
-| Packaging/release OS integration | Yellow | Local-alpha release profile now builds universal `arm64+x86_64` ad-hoc signed `.app`/ZIP with macOS 11+ Info.plist, optional `create-dmg`, structured evidence report and release smoke report. | Developer ID/notarization remains inactive until credentials exist; ad-hoc artifacts are local/tester alpha only and not trusted public distribution. |
+| Packaging/release OS integration | Yellow | Local-alpha release profile now builds universal `arm64+x86_64` ad-hoc signed `Arlecchino.app`, `arlecchino-macos-universal.zip` and optional `arlecchino-macos-universal.dmg` for Big Sur 11.0 through Tahoe 26.x. Evidence records split GitHub asset names and confirms public names do not contain `v3`. | Developer ID/notarization remains inactive until credentials exist; ad-hoc artifacts are local/tester alpha only and not trusted public distribution. |
 | Real OS handoff | Green | `wails3-real-os-smoke-macos.sh` launches a registered ad-hoc `.app`, traces Wails application-event handler entry, proves `ide:intent:open` emitted dispatch for protocol/file payloads and proves gated second-instance handoff. | Keep the evidence as smoke-gated; browser/Finder UX still depends on production registration/signing decisions. |
 
 Blockers before Arlehub:
@@ -382,6 +384,7 @@ Blockers before Arlehub:
 Blockers before default-on native delivery:
 
 - Keep packaging evidence current for universal Intel+Apple Silicon local-alpha artifacts.
+- Keep GitHub release assets split by platform/architecture and keep product artifact names free of `v3`.
 - Keep real OS handoff smoke green as packaging/signing evolves.
 - Verify notification permission/startup in the packaged app, not only in report projection.
 - Verify tray menu executes only Background Shell actions and does not expose unrelated app controls.
@@ -396,6 +399,7 @@ Ready for Arlehub checklist:
 - Green Background Shell and Flight Recorder backend readability without hub UI.
 - Yellow but stable Window Lease helper lifecycle with manual Terminal smoke recorded.
 - Yellow local-alpha release evidence for universal macOS artifacts without Developer ID.
+- Public GitHub release asset policy uses `arlecchino-macos-universal.dmg` as macOS primary and `arlecchino-macos-universal.zip` as fallback.
 
 ## 1. Surface Runtime
 
@@ -1600,9 +1604,10 @@ risky action, user can return layout.
     production-shaped live smoke proves detach, native window ids, close/return and
     attached cleanup for all four roles.
 31. Done: add No-Developer-ID local-alpha release profile. The new release script builds
-    ad-hoc signed universal `arm64+x86_64` `.app` artifacts for macOS 11+, creates ZIP
-    output, optionally uses `create-dmg`, and writes evidence without claiming trusted
-    Gatekeeper distribution.
+    ad-hoc signed universal `arm64+x86_64` `Arlecchino.app` artifacts for macOS Big Sur
+    11.0 through Tahoe 26.x, creates split GitHub release assets
+    `arlecchino-macos-universal.zip` and optional `arlecchino-macos-universal.dmg`,
+    and writes evidence without claiming trusted Gatekeeper distribution.
 32. Done: add structured release smoke report. Release smoke now records packaged-app,
     real OS handoff, native delivery and Window Lease steps as JSON evidence.
 33. Done: add native notification manual evidence. Permission request/status and delivery
@@ -1612,6 +1617,9 @@ risky action, user can return layout.
     install/apply remains disabled.
 35. Done: add Window Lease manual smoke checklist for Terminal detached PTY/focus/session
     continuity before any default-on detach decision.
+36. Done: lock release artifact naming. Public product artifacts use `Arlecchino.app`
+    and `arlecchino-macos-<arch>.*`; `v3` remains only an internal Wails migration/script
+    label, not a product or GitHub Release asset name.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 

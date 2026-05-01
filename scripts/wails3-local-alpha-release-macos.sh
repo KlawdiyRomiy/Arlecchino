@@ -36,7 +36,7 @@ fi
 PROFILE="${ARLE_WAILS3_RELEASE_PROFILE:-local-alpha}"
 VERSION="${ARLE_WAILS3_APP_VERSION:-0.0.0-alpha}"
 BUILD_NUMBER="${ARLE_WAILS3_APP_BUILD:-1}"
-BUNDLE_ID="${ARLE_WAILS3_BUNDLE_ID:-io.arlecchino.ide.v3.local-alpha}"
+BUNDLE_ID="${ARLE_WAILS3_BUNDLE_ID:-io.arlecchino.ide.local-alpha}"
 MIN_MACOS_VERSION="${ARLE_WAILS3_MIN_MACOS:-11.0}"
 ARCH_TARGET="${ARLE_WAILS3_RELEASE_ARCH:-universal}"
 SIGN_MODE="${ARLE_WAILS3_SIGN_MODE:-adhoc}"
@@ -44,7 +44,7 @@ CREATE_DMG="${ARLE_WAILS3_RELEASE_CREATE_DMG:-0}"
 RUN_SMOKE="${ARLE_WAILS3_RELEASE_RUN_SMOKE:-1}"
 SKIP_FRONTEND="0"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
-OUTPUT_ROOT="${ARLE_WAILS3_RELEASE_OUTPUT:-$BUILD_DIR/releases/wails3-local-alpha}"
+OUTPUT_ROOT="${ARLE_WAILS3_RELEASE_OUTPUT:-$BUILD_DIR/releases/local-alpha}"
 RELEASE_DIR=""
 REPORT_PATH=""
 
@@ -61,7 +61,7 @@ Options:
   --min-macos <version> Minimum macOS version. Default: 11.0.
   --arch <target>       arm64, amd64, or universal. Default: universal.
   --sign <mode>         adhoc, developer-id, or none. Default: adhoc.
-  --create-dmg          Create a DMG through create-dmg or npx create-dmg.
+  --create-dmg          Create arlecchino-macos-<arch>.dmg through create-dmg or npx create-dmg.
   --skip-dmg            Do not create a DMG.
   --run-smoke           Run the existing Wails v3 release smoke suite.
   --skip-smoke          Skip release smoke suite and mark it skipped in report.
@@ -183,9 +183,22 @@ if [[ -z "$REPORT_PATH" ]]; then
   REPORT_PATH="$RELEASE_DIR/release-evidence.json"
 fi
 
-APP_BUNDLE="$RELEASE_DIR/Arlecchino-v3.app"
-UNIVERSAL_BINARY="$RELEASE_DIR/bin/Arlecchino-v3-universal"
-ZIP_PATH="$RELEASE_DIR/artifacts/Arlecchino-v3-$VERSION-macos-$ARCH_TARGET.zip"
+case "$ARCH_TARGET" in
+  amd64)
+    PUBLIC_ARCH_LABEL="x86_64"
+    ;;
+  *)
+    PUBLIC_ARCH_LABEL="$ARCH_TARGET"
+    ;;
+esac
+PUBLIC_ASSET_STEM="arlecchino-macos-$PUBLIC_ARCH_LABEL"
+PUBLIC_ZIP_NAME="$PUBLIC_ASSET_STEM.zip"
+PUBLIC_DMG_NAME="$PUBLIC_ASSET_STEM.dmg"
+SUPPORTED_MACOS_RANGE="Big Sur 11.0 through Tahoe 26.x"
+
+APP_BUNDLE="$RELEASE_DIR/$APP_NAME.app"
+UNIVERSAL_BINARY="$RELEASE_DIR/bin/$APP_NAME-universal"
+ZIP_PATH="$RELEASE_DIR/artifacts/$PUBLIC_ZIP_NAME"
 DMG_PATH=""
 SMOKE_STATUS="skipped"
 SMOKE_EXIT="0"
@@ -207,35 +220,50 @@ build_arch_binary() {
     GOARCH="$arch" \
     CGO_ENABLED=1 \
     MACOSX_DEPLOYMENT_TARGET="$MIN_MACOS_VERSION" \
+    CGO_CFLAGS="${CGO_CFLAGS:-} -mmacosx-version-min=$MIN_MACOS_VERSION" \
+    CGO_CXXFLAGS="${CGO_CXXFLAGS:-} -mmacosx-version-min=$MIN_MACOS_VERSION" \
+    CGO_LDFLAGS="${CGO_LDFLAGS:-} -mmacosx-version-min=$MIN_MACOS_VERSION" \
     ARLE_WAILS3_GOCACHE="$RELEASE_DIR/go-build-cache-$arch" \
     "$ROOT_DIR/scripts/wails3-dev-macos.sh" "${args[@]}"
 }
 
 run_create_dmg() {
   local destination="$1"
+  local tmp_dir="$RELEASE_DIR/dmg-tmp"
+  local canonical_path="$destination/$PUBLIC_DMG_NAME"
+  local generated_path=""
   mkdir -p "$destination"
+  rm -rf "$tmp_dir"
+  mkdir -p "$tmp_dir"
   if command -v create-dmg >/dev/null 2>&1; then
-    create-dmg --overwrite --no-code-sign "$APP_BUNDLE" "$destination"
-    return $?
+    create-dmg --overwrite --no-code-sign --no-version-in-filename --dmg-title "$APP_NAME" "$APP_BUNDLE" "$tmp_dir" >&2
+  elif command -v npx >/dev/null 2>&1; then
+    npx --yes create-dmg --overwrite --no-code-sign --no-version-in-filename --dmg-title "$APP_NAME" "$APP_BUNDLE" "$tmp_dir" >&2
+  else
+    echo "ERROR: create-dmg or npx is required for --create-dmg." >&2
+    return 1
   fi
-  if command -v npx >/dev/null 2>&1; then
-    npx --yes create-dmg --overwrite --no-code-sign "$APP_BUNDLE" "$destination"
-    return $?
+  generated_path="$(find "$tmp_dir" -maxdepth 1 -name '*.dmg' -print | sort | tail -1)"
+  if [[ -z "$generated_path" || ! -f "$generated_path" ]]; then
+    echo "ERROR: create-dmg did not produce a DMG in $tmp_dir." >&2
+    return 1
   fi
-  echo "ERROR: create-dmg or npx is required for --create-dmg." >&2
-  return 1
+  rm -f "$canonical_path"
+  mv "$generated_path" "$canonical_path"
+  rm -rf "$tmp_dir"
+  echo "$canonical_path"
 }
 
 if [[ "$ARCH_TARGET" == "universal" ]]; then
-  ARM64_BINARY="$RELEASE_DIR/bin/Arlecchino-v3-arm64"
-  AMD64_BINARY="$RELEASE_DIR/bin/Arlecchino-v3-amd64"
+  ARM64_BINARY="$RELEASE_DIR/bin/$APP_NAME-arm64"
+  AMD64_BINARY="$RELEASE_DIR/bin/$APP_NAME-x86_64"
   build_arch_binary "arm64" "$ARM64_BINARY" "$SKIP_FRONTEND"
   build_arch_binary "amd64" "$AMD64_BINARY" "1"
   lipo -create -output "$UNIVERSAL_BINARY" "$ARM64_BINARY" "$AMD64_BINARY"
   chmod +x "$UNIVERSAL_BINARY"
   PACKAGE_BINARY="$UNIVERSAL_BINARY"
 else
-  PACKAGE_BINARY="$RELEASE_DIR/bin/Arlecchino-v3-$ARCH_TARGET"
+  PACKAGE_BINARY="$RELEASE_DIR/bin/$APP_NAME-$PUBLIC_ARCH_LABEL"
   build_arch_binary "$ARCH_TARGET" "$PACKAGE_BINARY" "$SKIP_FRONTEND"
 fi
 
@@ -253,8 +281,7 @@ env ARLE_WAILS3_MIN_MACOS="$MIN_MACOS_VERSION" \
 ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
 
 if [[ "$CREATE_DMG" == "1" ]]; then
-  run_create_dmg "$RELEASE_DIR/artifacts"
-  DMG_PATH="$(find "$RELEASE_DIR/artifacts" -maxdepth 1 -name '*.dmg' -print | sort | tail -1)"
+  DMG_PATH="$(run_create_dmg "$RELEASE_DIR/artifacts")"
 fi
 
 if [[ "$RUN_SMOKE" == "1" ]]; then
@@ -285,7 +312,13 @@ export ARLE_RELEASE_BUILD="$BUILD_NUMBER"
 export ARLE_RELEASE_BUNDLE_ID="$BUNDLE_ID"
 export ARLE_RELEASE_MIN_MACOS="$MIN_MACOS_VERSION"
 export ARLE_RELEASE_ARCH_TARGET="$ARCH_TARGET"
+export ARLE_RELEASE_PUBLIC_ARCH_LABEL="$PUBLIC_ARCH_LABEL"
 export ARLE_RELEASE_SIGN_MODE="$SIGN_MODE"
+export ARLE_RELEASE_APP_BUNDLE_NAME="$APP_NAME.app"
+export ARLE_RELEASE_PUBLIC_ASSET_STEM="$PUBLIC_ASSET_STEM"
+export ARLE_RELEASE_PUBLIC_ZIP_NAME="$PUBLIC_ZIP_NAME"
+export ARLE_RELEASE_PUBLIC_DMG_NAME="$PUBLIC_DMG_NAME"
+export ARLE_RELEASE_SUPPORTED_MACOS_RANGE="$SUPPORTED_MACOS_RANGE"
 export ARLE_RELEASE_APP_BUNDLE="$APP_BUNDLE"
 export ARLE_RELEASE_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 export ARLE_RELEASE_ZIP_PATH="$ZIP_PATH"
@@ -319,6 +352,7 @@ const readPlist = (appBundle) => {
 };
 const exists = (path) => Boolean(path && fs.existsSync(path));
 const statSize = (path) => exists(path) ? fs.statSync(path).size : 0;
+const basename = (path) => path ? require("path").basename(path) : "";
 const parseArchs = (lipoInfo) => {
   const archs = new Set();
   const matches = [...lipoInfo.matchAll(/architecture(?:s)?:? ([A-Za-z0-9_ ]+)/g)];
@@ -341,10 +375,24 @@ const spctlStatus = spctlExit === 0
     ? "expected-rejected"
     : "rejected";
 const report = {
-  runtime: "wails-v3",
+  runtime: "wails",
   platform: "darwin",
   generatedAt: new Date().toISOString(),
   profile: env.ARLE_RELEASE_PROFILE,
+  publicAssetPolicy: {
+    appBundleName: env.ARLE_RELEASE_APP_BUNDLE_NAME,
+    supportedMacOSRange: env.ARLE_RELEASE_SUPPORTED_MACOS_RANGE,
+    githubAssetNames: {
+      macOSPrimaryDMG: env.ARLE_RELEASE_PUBLIC_DMG_NAME,
+      macOSFallbackZip: env.ARLE_RELEASE_PUBLIC_ZIP_NAME,
+    },
+    versionSource: "git tag and release metadata",
+    publicNameContainsV3: /v3/i.test([
+      env.ARLE_RELEASE_APP_BUNDLE_NAME,
+      env.ARLE_RELEASE_PUBLIC_DMG_NAME,
+      env.ARLE_RELEASE_PUBLIC_ZIP_NAME,
+    ].filter(Boolean).join(" ")),
+  },
   trustModel: {
     appleDeveloperAvailable: false,
     publicTrustedDistribution: false,
@@ -358,8 +406,10 @@ const report = {
   },
   target: {
     arch: env.ARLE_RELEASE_ARCH_TARGET,
+    publicArch: env.ARLE_RELEASE_PUBLIC_ARCH_LABEL,
     binaryArchs: parseArchs(env.ARLE_RELEASE_LIPO_INFO || ""),
     minMacOS: env.ARLE_RELEASE_MIN_MACOS,
+    supportedMacOSRange: env.ARLE_RELEASE_SUPPORTED_MACOS_RANGE,
     intelSupported: parseArchs(env.ARLE_RELEASE_LIPO_INFO || "").includes("x86_64"),
     appleSiliconSupported: parseArchs(env.ARLE_RELEASE_LIPO_INFO || "").includes("arm64"),
   },
@@ -388,19 +438,22 @@ const report = {
   artifacts: {
     app: {
       path: env.ARLE_RELEASE_APP_BUNDLE,
+      name: basename(env.ARLE_RELEASE_APP_BUNDLE),
       exists: exists(env.ARLE_RELEASE_APP_BUNDLE),
     },
     zip: {
       path: env.ARLE_RELEASE_ZIP_PATH,
+      name: basename(env.ARLE_RELEASE_ZIP_PATH),
       exists: exists(env.ARLE_RELEASE_ZIP_PATH),
       size: statSize(env.ARLE_RELEASE_ZIP_PATH),
     },
     dmg: {
       requested: env.ARLE_RELEASE_CREATE_DMG === "1",
       path: env.ARLE_RELEASE_DMG_PATH || "",
+      name: basename(env.ARLE_RELEASE_DMG_PATH) || env.ARLE_RELEASE_PUBLIC_DMG_NAME,
       exists: exists(env.ARLE_RELEASE_DMG_PATH),
       size: statSize(env.ARLE_RELEASE_DMG_PATH),
-      tool: env.ARLE_RELEASE_CREATE_DMG === "1" ? "create-dmg" : "",
+      tool: env.ARLE_RELEASE_CREATE_DMG === "1" ? "sindresorhus/create-dmg" : "",
     },
   },
   smoke: {

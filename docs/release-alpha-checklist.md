@@ -10,9 +10,16 @@ notarized distribution path.
   `./scripts/bootstrap-dev-macos.sh` once and `./scripts/wails-dev-macos.sh` for
   development launches.
 - Convenience path: `./scripts/wails3-local-alpha-release-macos.sh` creates an
-  ad-hoc signed universal `arm64+x86_64` `.app` for macOS 11+, ZIP artifact,
-  JSON evidence report, and optional DMG through
+  ad-hoc signed universal `arm64+x86_64` `Arlecchino.app` for macOS Big Sur
+  11.0 through Tahoe 26.x, `arlecchino-macos-universal.zip`, JSON evidence
+  report, and optional `arlecchino-macos-universal.dmg` through
   `sindresorhus/create-dmg` (`create-dmg`/`npx create-dmg`).
+- GitHub Releases should use split assets by platform/architecture. For macOS,
+  the primary asset is `arlecchino-macos-universal.dmg`; the fallback/manual
+  asset is `arlecchino-macos-universal.zip`. Version belongs to the GitHub tag
+  and release metadata, not the artifact filename.
+- Public product/release names must not include `v3`. Keep `wails3` only in
+  internal migration script names.
 - Gatekeeper rejection for ad-hoc artifacts is expected. Do not present the
   ad-hoc `.app`, ZIP, or DMG as notarized, hardened, or equivalent to an Apple
   Developer ID release.
