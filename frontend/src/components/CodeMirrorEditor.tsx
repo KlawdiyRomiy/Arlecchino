@@ -2152,9 +2152,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         closeBrackets(),
         highlightSelectionMatches(),
         ...(showRainbowBrackets ? [rainbowBrackets()] : []),
-        ...diagnosticsExtension,
       );
     }
+
+    nextExtensions.push(...diagnosticsExtension);
 
     if (editorFeatureBudget.runtimeCompletions) {
       nextExtensions.push(

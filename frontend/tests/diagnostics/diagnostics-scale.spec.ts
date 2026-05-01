@@ -3,9 +3,23 @@ import { expect, test, type Page } from "@playwright/test";
 const editorProjectPath = "/workspace";
 const editorFilePath = `${editorProjectPath}/diagnostics.ts`;
 
-const mountEditorTab = async (page: Page, content: string): Promise<void> => {
+const mountEditorTab = async (
+  page: Page,
+  content: string,
+  options: {
+    constrainedPerformance?: boolean;
+    showInlineDiagnostics?: boolean;
+  } = {},
+): Promise<void> => {
+  const { constrainedPerformance = false, showInlineDiagnostics = true } =
+    options;
+
   await page.evaluate(
-    async ({ editorProjectPath }) => {
+    async ({
+      constrainedPerformance,
+      editorProjectPath,
+      showInlineDiagnostics,
+    }) => {
       const { useWorkspaceStore } =
         await import("/src/stores/workspaceStore.ts");
       const { useExplorerStore } = await import("/src/stores/explorerStore.ts");
@@ -13,9 +27,26 @@ const mountEditorTab = async (page: Page, content: string): Promise<void> => {
         await import("/src/stores/diagnosticsStore.ts");
       const { useEditorSettingsStore } =
         await import("/src/stores/editorSettingsStore.ts");
+      const { usePerformanceStore } =
+        await import("/src/stores/performanceStore.ts");
 
       useDiagnosticsStore.getState().reset();
-      useEditorSettingsStore.getState().setShowInlineDiagnostics(true);
+      useEditorSettingsStore
+        .getState()
+        .setShowInlineDiagnostics(showInlineDiagnostics);
+      if (constrainedPerformance) {
+        usePerformanceStore.getState().updateBudget({
+          activeEditorCharCount: 32_000,
+          activeEditorLineCount: 200,
+          activeEditorLargeDocument: false,
+          eventPressure: 0,
+          frameGapMs: 0,
+          indexerQueueDepth: 220,
+          projectFileCount: 7_500,
+        });
+      } else {
+        usePerformanceStore.getState().resetTransientBudget();
+      }
       useWorkspaceStore.setState({
         projects: [
           {
@@ -34,7 +65,7 @@ const mountEditorTab = async (page: Page, content: string): Promise<void> => {
       });
       useExplorerStore.getState().setProjectPath(editorProjectPath);
     },
-    { editorProjectPath },
+    { constrainedPerformance, editorProjectPath, showInlineDiagnostics },
   );
 
   await expect(page.getByTestId("main-layout")).toBeVisible({
@@ -63,6 +94,33 @@ const mountEditorTab = async (page: Page, content: string): Promise<void> => {
   await expect(page.locator(".cm-editor").first()).toBeVisible({
     timeout: 10000,
   });
+
+  if (constrainedPerformance) {
+    await page.evaluate(async () => {
+      const { usePerformanceStore } =
+        await import("/src/stores/performanceStore.ts");
+      usePerformanceStore.getState().updateBudget({
+        activeEditorCharCount: 32_000,
+        activeEditorLineCount: 200,
+        activeEditorLargeDocument: false,
+        eventPressure: 0,
+        frameGapMs: 0,
+        indexerQueueDepth: 220,
+        projectFileCount: 7_500,
+      });
+    });
+  }
+
+  await expect
+    .poll(() =>
+      page
+        .locator(".cm-editor")
+        .first()
+        .evaluate((node) =>
+          node.getAttribute("data-adaptive-reconfigure-count"),
+        ),
+    )
+    .not.toBeNull();
 };
 
 const setEditorDiagnostics = async (
@@ -85,9 +143,31 @@ const setEditorDiagnostics = async (
       useDiagnosticsStore
         .getState()
         .setFileDiagnostics(editorFilePath, "typescript", items);
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+      useDiagnosticsStore
+        .getState()
+        .setFileDiagnostics(editorFilePath, "typescript", items);
     },
     { editorFilePath, items },
   );
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        async ({ editorFilePath }) => {
+          const { useDiagnosticsStore } =
+            await import("/src/stores/diagnosticsStore.ts");
+          return (
+            useDiagnosticsStore.getState().byFile.get(editorFilePath)?.items
+              .length ?? 0
+          );
+        },
+        { editorFilePath },
+      ),
+    )
+    .toBe(items.length);
 };
 
 test.beforeEach(async ({ page }) => {
@@ -260,6 +340,58 @@ test("inline diagnostics render viewport overlay without content widgets", async
   await expect(page.locator(".cm-content .cm-diagnostic-message")).toHaveCount(
     0,
   );
+});
+
+test("inline diagnostics render under constrained performance budget", async ({
+  page,
+}) => {
+  const content = [
+    "const ok = true;",
+    "const brokenValue = missingValue;",
+    "const tail = true;",
+  ].join("\n");
+
+  await mountEditorTab(page, content, { constrainedPerformance: true });
+  await setEditorDiagnostics(page, [
+    {
+      range: {
+        start: { line: 1, character: 20 },
+        end: { line: 1, character: 32 },
+      },
+      severity: 1,
+      message: "Cannot find name 'missingValue'.",
+      source: "tsserver",
+    },
+  ]);
+
+  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(1);
+  await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(1);
+});
+
+test("inline diagnostics stay hidden when the editor setting is disabled", async ({
+  page,
+}) => {
+  const content = [
+    "const ok = true;",
+    "const brokenValue = missingValue;",
+    "const tail = true;",
+  ].join("\n");
+
+  await mountEditorTab(page, content, { showInlineDiagnostics: false });
+  await setEditorDiagnostics(page, [
+    {
+      range: {
+        start: { line: 1, character: 20 },
+        end: { line: 1, character: 32 },
+      },
+      severity: 1,
+      message: "Cannot find name 'missingValue'.",
+      source: "tsserver",
+    },
+  ]);
+
+  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(0);
+  await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(0);
 });
 
 test("inline diagnostics stay compact until active and survive edits without inline artifacts", async ({
