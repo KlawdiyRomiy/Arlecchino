@@ -334,6 +334,31 @@ func TestWails3PackagedSmokeReport_AutoUpdateApplySmokeVerifiesArtifact(t *testi
 	}
 }
 
+func TestSelectAutoUpdateArtifactAcceptsUniversalDarwinArtifact(t *testing.T) {
+	manifest := PackagedOSAutoUpdateManifest{
+		Artifacts: []PackagedOSAutoUpdateArtifact{
+			{
+				Platform: "darwin",
+				Arch:     "universal",
+				URL:      "https://example.invalid/Arlecchino.zip",
+				SHA256:   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+		},
+	}
+
+	artifact, ok := selectAutoUpdateArtifact(&manifest, "darwin", "amd64")
+	if !ok {
+		t.Fatal("selectAutoUpdateArtifact = false, want true for amd64 universal artifact")
+	}
+	if artifact.Arch != "universal" {
+		t.Fatalf("Arch = %q, want universal", artifact.Arch)
+	}
+
+	if _, ok := selectAutoUpdateArtifact(&manifest, "darwin", "arm64"); !ok {
+		t.Fatal("selectAutoUpdateArtifact = false, want true for arm64 universal artifact")
+	}
+}
+
 func TestWails3PackagedSmokeReport_MatrixLaunchTargets(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "main.go")

@@ -145,7 +145,7 @@ func selectAutoUpdateArtifact(manifest *PackagedOSAutoUpdateManifest, platform s
 		if artifact.Platform != platform {
 			continue
 		}
-		if artifact.Arch != "" && artifact.Arch != arch {
+		if artifact.Arch != "" && artifact.Arch != arch && artifact.Arch != "universal" {
 			continue
 		}
 		return artifact, true
