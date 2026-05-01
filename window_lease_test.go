@@ -123,7 +123,23 @@ func TestRunWindowLeaseActionDetachIsGated(t *testing.T) {
 	}
 }
 
-func TestRunWindowLeaseActionDetachRejectsNativePanelRoles(t *testing.T) {
+func TestNativeWindowLeaseRoleSupportIncludesHelpers(t *testing.T) {
+	for _, role := range []WindowLeaseRole{
+		WindowLeaseRolePreview,
+		WindowLeaseRoleGitHelper,
+		WindowLeaseRoleProblemsHelper,
+		WindowLeaseRoleTerminalHelper,
+	} {
+		if !isNativeWindowLeaseRoleEnabled(role) {
+			t.Fatalf("isNativeWindowLeaseRoleEnabled(%q) = false, want true", role)
+		}
+	}
+	if isNativeWindowLeaseRoleEnabled(WindowLeaseRole("")) {
+		t.Fatal("isNativeWindowLeaseRoleEnabled(empty) = true, want false")
+	}
+}
+
+func TestRunWindowLeaseActionDetachNeedsWailsAppForNativePanels(t *testing.T) {
 	t.Setenv(envEnableWindowLeaseSpike, "1")
 	app := &App{windowLeases: NewWindowLeaseRegistry()}
 	actionID, err := BuildWindowLeaseActionID("detach", WindowLeaseActionPayload{
@@ -136,18 +152,8 @@ func TestRunWindowLeaseActionDetachRejectsNativePanelRoles(t *testing.T) {
 		t.Fatalf("BuildWindowLeaseActionID error = %v", err)
 	}
 
-	result, err := app.RunWindowLeaseAction(actionID)
-	if err != nil {
-		t.Fatalf("RunWindowLeaseAction error = %v", err)
-	}
-	if result.Handled {
-		t.Fatal("Handled = true, want false for panel detach")
-	}
-	if !strings.Contains(result.Message, "Browser Preview only") {
-		t.Fatalf("Message = %q, want Browser Preview only", result.Message)
-	}
-	if !result.Snapshot.DetachedAvailable {
-		t.Fatal("DetachedAvailable = false, want true when spike env is enabled")
+	if _, err := app.RunWindowLeaseAction(actionID); err == nil {
+		t.Fatal("RunWindowLeaseAction error = nil, want Wails app initialization error")
 	}
 }
 
@@ -222,5 +228,52 @@ func TestBuildDetachedPreviewReturnIntentSkipsUnsupportedRoles(t *testing.T) {
 		Role:      WindowLeaseRoleGitHelper,
 	}); ok || intent != nil {
 		t.Fatalf("intent = %#v, ok = %v; want nil, false", intent, ok)
+	}
+}
+
+func TestBuildWindowLeaseReturnIntentSupportsHelperPanels(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		role      WindowLeaseRole
+		surfaceID string
+		panelID   string
+	}{
+		{
+			name:      "git",
+			role:      WindowLeaseRoleGitHelper,
+			surfaceID: "panel:git",
+			panelID:   "git",
+		},
+		{
+			name:      "problems",
+			role:      WindowLeaseRoleProblemsHelper,
+			surfaceID: "panel:problems",
+			panelID:   "problems",
+		},
+		{
+			name:      "terminal",
+			role:      WindowLeaseRoleTerminalHelper,
+			surfaceID: "panel:terminal",
+			panelID:   "terminal",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			intent, ok := buildWindowLeaseReturnIntent(WindowLeaseRecord{
+				SurfaceID: testCase.surfaceID,
+				Role:      testCase.role,
+			})
+			if !ok {
+				t.Fatal("buildWindowLeaseReturnIntent ok = false, want true")
+			}
+			if intent["kind"] != "focusSurface" || intent["source"] != "window-lease" {
+				t.Fatalf("intent = %#v, want window-lease focusSurface", intent)
+			}
+			if intent["surfaceId"] != testCase.surfaceID {
+				t.Fatalf("surfaceId = %#v, want %s", intent["surfaceId"], testCase.surfaceID)
+			}
+			if intent["panelId"] != testCase.panelID {
+				t.Fatalf("panelId = %#v, want %s", intent["panelId"], testCase.panelID)
+			}
+		})
 	}
 }

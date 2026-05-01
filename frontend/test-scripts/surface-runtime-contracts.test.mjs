@@ -452,9 +452,9 @@ test("window lease read model gates detach to supported applets and cleans stale
 
   assert.equal(isSurfaceWindowLeaseSupported(explorerSession), false);
   assert.equal(getSurfaceWindowLeaseRole(gitSession), "git-helper");
-  assert.equal(isSurfaceWindowLeaseSupported(gitSession), false);
+  assert.equal(isSurfaceWindowLeaseSupported(gitSession), true);
   assert.equal(getSurfaceWindowLeaseRole(terminalSession), "terminal-helper");
-  assert.equal(isSurfaceWindowLeaseSupported(terminalSession), false);
+  assert.equal(isSurfaceWindowLeaseSupported(terminalSession), true);
   assert.equal(getSurfaceWindowLeaseRole(previewSession), "preview");
   assert.equal(isSurfaceWindowLeaseSupported(previewSession), true);
 
@@ -463,17 +463,14 @@ test("window lease read model gates detach to supported applets and cleans stale
     now: 1710000000000,
   });
   assert.deepEqual(gatedReadModel.supportedSurfaceIds, [
+    "panel:git",
+    "panel:terminal",
     "preview:preview-browser-default",
   ]);
   assert.deepEqual(gatedReadModel.unsupportedSurfaceIds, [
     "panel:explorer",
-    "panel:git",
-    "panel:terminal",
   ]);
-  assert.equal(
-    gatedReadModel.leasesBySurfaceId["panel:git"],
-    undefined,
-  );
+  assert.equal(gatedReadModel.leasesBySurfaceId["panel:git"].role, "git-helper");
   assert.equal(
     gatedReadModel.commandsBySurfaceId["panel:git"].find(
       (command) => command.kind === "detach",
@@ -484,7 +481,7 @@ test("window lease read model gates detach to supported applets and cleans stale
     gatedReadModel.commandsBySurfaceId["panel:git"].find(
       (command) => command.kind === "detach",
     ).reason,
-    /Browser Preview only/,
+    /Window Lease spike mode/,
   );
 
   const enabledReadModel = buildSurfaceWindowLeaseReadModel(sessions, {
@@ -511,13 +508,13 @@ test("window lease read model gates detach to supported applets and cleans stale
     promotionReadModel.commandsBySurfaceId["panel:git"].find(
       (command) => command.kind === "detach",
     ).enabled,
-    false,
+    true,
   );
-  assert.match(
-    promotionReadModel.commandsBySurfaceId["panel:git"].find(
+  assert.equal(
+    promotionReadModel.commandsBySurfaceId["panel:terminal"].find(
       (command) => command.kind === "detach",
-    ).reason,
-    /Browser Preview only/,
+    ).enabled,
+    true,
   );
   assert.equal(
     promotionReadModel.commandsBySurfaceId[

@@ -128,6 +128,7 @@ func NewApp() *App {
 func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	a.startup(ctx)
 	a.startPackagedOSNativeLiveSmokeIfConfigured()
+	a.startWindowLeaseLiveSmokeIfConfigured()
 	return nil
 }
 

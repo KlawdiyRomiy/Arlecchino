@@ -241,7 +241,15 @@ func inferWindowLeaseRole(surfaceID string) WindowLeaseRole {
 }
 
 func isNativeWindowLeaseRoleEnabled(role WindowLeaseRole) bool {
-	return role == WindowLeaseRolePreview
+	switch role {
+	case WindowLeaseRolePreview,
+		WindowLeaseRoleGitHelper,
+		WindowLeaseRoleProblemsHelper,
+		WindowLeaseRoleTerminalHelper:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *WindowLeaseRegistry) Snapshot(spikeEnabled bool) WindowLeaseSnapshot {
@@ -256,7 +264,7 @@ func (r *WindowLeaseRegistry) Snapshot(spikeEnabled bool) WindowLeaseSnapshot {
 func emptyWindowLeaseSnapshot(spikeEnabled bool) WindowLeaseSnapshot {
 	reason := "Detached windows require ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1."
 	if spikeEnabled {
-		reason = "Window Lease spike is enabled for preview detached windows."
+		reason = "Window Lease spike is enabled for detached helper windows."
 	}
 	return WindowLeaseSnapshot{
 		Version:           windowLeaseVersion,
@@ -266,6 +274,9 @@ func emptyWindowLeaseSnapshot(spikeEnabled bool) WindowLeaseSnapshot {
 		DetachedAvailable: spikeEnabled,
 		SupportedRoles: []WindowLeaseRole{
 			WindowLeaseRolePreview,
+			WindowLeaseRoleGitHelper,
+			WindowLeaseRoleProblemsHelper,
+			WindowLeaseRoleTerminalHelper,
 		},
 		Leases:            []WindowLeaseRecord{},
 		LeasesBySurfaceID: map[string]WindowLeaseRecord{},
@@ -463,10 +474,10 @@ func (a *App) runWindowLeaseDetach(actionID string, parsed parsedWindowLeaseActi
 		return result, nil
 	}
 	if !isNativeWindowLeaseRoleEnabled(parsed.payload.Role) {
-		result.Message = "Native detached window spike currently supports Browser Preview only."
+		result.Message = "Native detached window spike does not support this surface."
 		return result, nil
 	}
-	if parsed.payload.AppletKind != "" && parsed.payload.AppletKind != "browser" {
+	if parsed.payload.Role == WindowLeaseRolePreview && parsed.payload.AppletKind != "" && parsed.payload.AppletKind != "browser" {
 		result.Message = "Native detached preview spike currently supports browser previews only."
 		return result, nil
 	}
@@ -483,8 +494,8 @@ func (a *App) runWindowLeaseDetach(actionID string, parsed parsedWindowLeaseActi
 	window := a.wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:               nativeWindowID,
 		Title:              record.Title,
-		Width:              980,
-		Height:             720,
+		Width:              detachedWindowWidth(record),
+		Height:             detachedWindowHeight(record),
 		MinWidth:           520,
 		MinHeight:          360,
 		URL:                windowURL,
@@ -548,9 +559,61 @@ func (a *App) handleDetachedWindowClosing(surfaceID string) {
 		return
 	}
 	a.emitWindowLeaseStatus()
-	if intent, ok := buildDetachedPreviewReturnIntent(record); ok {
+	if intent, ok := buildWindowLeaseReturnIntent(record); ok {
 		a.focusMainWindow()
 		a.dispatchOpenIntent(intent)
+	}
+}
+
+func detachedWindowWidth(record WindowLeaseRecord) int {
+	switch record.Role {
+	case WindowLeaseRoleTerminalHelper:
+		return 1100
+	case WindowLeaseRoleGitHelper, WindowLeaseRoleProblemsHelper:
+		return 980
+	default:
+		return 980
+	}
+}
+
+func detachedWindowHeight(record WindowLeaseRecord) int {
+	switch record.Role {
+	case WindowLeaseRoleTerminalHelper:
+		return 680
+	case WindowLeaseRoleProblemsHelper:
+		return 640
+	default:
+		return 720
+	}
+}
+
+func buildWindowLeaseReturnIntent(record WindowLeaseRecord) (map[string]any, bool) {
+	if record.Role == WindowLeaseRolePreview {
+		return buildDetachedPreviewReturnIntent(record)
+	}
+
+	panelID, ok := windowLeaseRolePanelID(record.Role)
+	if !ok {
+		return nil, false
+	}
+	return map[string]any{
+		"kind":      "focusSurface",
+		"source":    "window-lease",
+		"surfaceId": record.SurfaceID,
+		"panelId":   panelID,
+	}, true
+}
+
+func windowLeaseRolePanelID(role WindowLeaseRole) (string, bool) {
+	switch role {
+	case WindowLeaseRoleGitHelper:
+		return "git", true
+	case WindowLeaseRoleProblemsHelper:
+		return "problems", true
+	case WindowLeaseRoleTerminalHelper:
+		return "terminal", true
+	default:
+		return "", false
 	}
 }
 

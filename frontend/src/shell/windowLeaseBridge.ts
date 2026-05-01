@@ -88,7 +88,7 @@ const FALLBACK_SNAPSHOT: WindowLeaseSnapshot = {
   runtime: "wails-v3",
   spikeEnabled: false,
   detachedAvailable: false,
-  supportedRoles: ["preview"],
+  supportedRoles: ["preview", "git-helper", "problems-helper", "terminal-helper"],
   leases: [],
   leasesBySurfaceId: {},
   reason: "Detached windows require Window Lease spike mode.",

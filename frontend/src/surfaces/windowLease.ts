@@ -119,7 +119,17 @@ export const getSurfaceWindowLeaseRole = (
 
 export const isSurfaceWindowLeaseSupported = (
   session: SurfaceSession,
-): boolean => getSurfaceWindowLeaseRole(session) === "preview";
+): boolean => {
+  switch (getSurfaceWindowLeaseRole(session)) {
+    case "preview":
+    case "git-helper":
+    case "problems-helper":
+    case "terminal-helper":
+      return true;
+    default:
+      return false;
+  }
+};
 
 export const buildSurfaceWindowLeaseCommands = (
   session: SurfaceSession,

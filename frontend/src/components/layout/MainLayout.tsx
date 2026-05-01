@@ -72,6 +72,7 @@ import {
 import {
   buildWindowLeaseActionId,
   runWindowLeaseAction,
+  type WindowLeaseRole,
 } from "../../shell/windowLeaseBridge";
 import type { ShortcutActionId } from "../../utils/keyboard";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
@@ -182,6 +183,19 @@ const getPanelPromotionFloatingSize = (
       180,
     ),
   };
+};
+
+const panelToWindowLeaseRole = (panelId: PanelId): WindowLeaseRole | null => {
+  switch (panelId) {
+    case "git":
+      return "git-helper";
+    case "problems":
+      return "problems-helper";
+    case "terminal":
+      return "terminal-helper";
+    default:
+      return null;
+  }
 };
 
 const getPreviewPromotionFloatingSize = (
@@ -2023,7 +2037,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const applyPanelPromotion = useCallback(
-    (request: SurfacePromotionRequest): SurfacePromotionResult => {
+    async (
+      request: SurfacePromotionRequest,
+    ): Promise<SurfacePromotionResult> => {
       const panelId = request.panelId ? resolvePanelId(request.panelId) : null;
       if (!panelId || !panelsRef.current[panelId]) {
         return buildSurfacePromotionResult(request, {
@@ -2032,21 +2048,68 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         });
       }
 
+      const currentConfig = panelConfigsRef.current[panelId];
       if (request.kind === "detach") {
         const detachCommand = getSurfaceRuntimeReadModel({
           includeEvents: false,
         }).promotion.commandsBySurfaceId[request.surfaceId]?.find(
           (command) => command.kind === "detach",
         );
+        if (!detachCommand?.enabled) {
+          return buildSurfacePromotionResult(request, {
+            handled: false,
+            reason:
+              detachCommand?.reason ??
+              "Detached Wails window creation is disabled in this build.",
+          });
+        }
+        const role = panelToWindowLeaseRole(panelId);
+        if (!role) {
+          return buildSurfacePromotionResult(request, {
+            handled: false,
+            reason: "Panel surface is not supported by Window Lease System.",
+          });
+        }
+        const actionId = buildWindowLeaseActionId("detach", {
+          surfaceId: request.surfaceId,
+          role,
+          appletKind: panelId,
+          title:
+            panelId === "git"
+              ? "Git"
+              : panelId === "problems"
+                ? "Problems"
+                : "Terminal",
+          returnTarget: {
+            hostMode: currentConfig.mode,
+            position: currentConfig.position,
+          },
+          payload: {
+            projectPath: activeProjectPath,
+            activeFilePath: activeStatusFilePath ?? activeEditorTab?.path ?? "",
+          },
+        });
+        const leaseResult = await runWindowLeaseAction(actionId);
+        if (!leaseResult.handled) {
+          return buildSurfacePromotionResult(request, {
+            handled: false,
+            reason:
+              leaseResult.message ??
+              "Detached Wails window creation was not handled.",
+          });
+        }
+
+        applyPanelsState({ ...panelsRef.current, [panelId]: false });
+        if (activePanelIdRef.current === panelId) {
+          markActivePanel(null);
+        }
         return buildSurfacePromotionResult(request, {
-          handled: false,
-          reason:
-            detachCommand?.reason ??
-            "Detached Wails window creation is disabled in this build.",
+          handled: true,
+          hostMode: "detached",
+          message: leaseResult.message ?? "Detached Wails window created.",
         });
       }
 
-      const currentConfig = panelConfigsRef.current[panelId];
       const applyConfig = (
         nextConfig: PanelConfig,
         hostMode: "floating" | "snapped" | "fullscreen",
@@ -2179,6 +2242,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       applyPanelConfigsState,
       applyPanelsState,
       applyRememberedSnappedPositionsState,
+      activeEditorTab,
+      activeProjectPath,
+      activeStatusFilePath,
       markActivePanel,
       panelWorkspaceSize.height,
       panelWorkspaceSize.width,

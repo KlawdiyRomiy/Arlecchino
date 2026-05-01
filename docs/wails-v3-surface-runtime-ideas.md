@@ -225,10 +225,7 @@ Baseline hardening для этой ветки теперь имеет отдел
 - Добавлен Window Lease System foundation без native detached window creation:
   `frontend/src/surfaces/windowLease.ts` вводит lease registry/read model для
   detached-capable applet roles, close/focus/return/stale policies и cleanup stale
-  leases. На текущем gate actual native-detachable surface честно ограничен только
-  Browser Preview: `panel:git`, `panel:problems` и `panel:terminal` больше не
-  показывают enabled `detach`, пока native panel detach не реализован. Default остается
-  off до packaged/manual smoke.
+  leases. Default остается off до packaged/manual smoke.
 - Добавлен Window Lease v2 native detached preview spike: backend `window_lease.go`
   хранит lease registry для actual Wails windows и dev-gated
   `RunWindowLeaseAction(detach)`, который при
@@ -236,8 +233,15 @@ Baseline hardening для этой ветки теперь имеет отдел
   с route `/?arleDetachedHost=...`. Frontend `windowLeaseBridge.ts` синхронизирует
   `shell:window-lease:status`, а `DetachedAppletHost` рендерит существующий
   `PreviewWindowSurface` без нового applet body. Close policy возвращает preview в
-  main shell через `ide:intent:open`. Git/Problems/Terminal остаются lease-supported,
-  но actual native detach для них отложен до стабильного preview smoke.
+  main shell через `ide:intent:open`.
+- Window Lease expansion добавил native detach для `panel:git`, `panel:problems` и
+  `panel:terminal` под тем же explicit gate `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`.
+  Helper windows используют тот же `/?arleDetachedHost=...` route, сохраняют
+  `surfaceId`, role, project/file payload и return target, а close/return возвращает
+  main shell через `focusSurface`. Новый
+  `./scripts/wails3-window-lease-live-smoke-macos.sh` строит production-shaped ad-hoc
+  `.app`, создает detached Preview/Git/Problems/Terminal windows, проверяет native
+  window ids и закрывает/возвращает все leases в attached state.
 - Detached Browser Preview return lifecycle усилен чистым helper contract: close/return
   intent теперь сохраняет `surfaceId`, `previewWindowId`, current URL payload, title,
   `pinned` и return target host/position перед отправкой обратно в Open Intent router.
@@ -316,8 +320,8 @@ Baseline hardening для этой ветки теперь имеет отдел
 - Packaged app data path теперь не зависит от repo cwd:
   `internal/project.ResolveDBPath` оставляет `data/projects.db` для dev, но в packaged
   mode использует `ARLECCHINO_DATA_DIR` или user config dir.
-- Real notification permission/delivery, production auto-update install/apply и Window
-  Lease helper expansion остаются next gates.
+- Real notification permission/delivery и production auto-update install/apply остаются
+  next gates.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -339,7 +343,7 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Wails v3 lifecycle/dev runner | Green | `./scripts/wails3-dev-macos.sh` is the branch smoke path; runner owns child cleanup and stale output-scoped MCP shutdown. | Keep using v3 script; do not use global v2 `wails` CLI for this branch. |
 | Bindings/service surface | Green | Shell capabilities, context menu, background shell, packaged OS and window lease methods exist behind the `App` service with runtime fallbacks. | Regenerate bindings only with `./scripts/wails3-generate-bindings.sh --write` and review generated churn separately. |
 | Surface/Applet promotion | Green | In-window `floating`, `snap`, `fullscreen`, `return-to-main` works for existing panels/previews without detached windows. | Detached remains Window Lease territory, not part of in-window promotion. |
-| Detached windows / Window Lease | Yellow | Browser Preview actual Wails detached window works only with `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`; return intent preserves preview identity/state; panel detach commands are now disabled/honest until native panel detach exists. | Manual preview detach/close smoke remains useful; then add Git/Problems/Terminal helper detach one by one. |
+| Detached windows / Window Lease | Yellow | Browser Preview, Git, Problems and Terminal helper surfaces can create actual Wails detached windows only with `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`; live `.app` smoke proves native window ids and close/return to attached state. | Keep gated/default-off; manual IDE smoke is still needed for real terminal PTY focus/session ergonomics before default-on detach. |
 | Single instance/open-file | Green | Backend parser, frontend-ready queue and `ide:intent:open` dispatch are implemented behind `ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1`; real OS smoke now proves second-instance handoff into the first launched packaged app. | Keep gated/default-off until release packaging policy says this can be enabled by default. |
 | Protocol/file associations | Green | `arlecchino://` and file association payloads normalize through strict open-intent allowlist; real OS smoke now proves Wails handler entry and emitted dispatch through LaunchServices/AppleEvent routes. | Keep production default-handler claims scoped to signed/notarized release packaging. |
 | Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates projection, and live smoke proves tray startup, dock badge set, accepted/rejected action routing and tracked failure states. | Run `--include-notifications` permission smoke manually before claiming notification delivery; keep default-off until signed/bundled UX is acceptable. |
@@ -350,7 +354,7 @@ Baseline hardening для этой ветки теперь имеет отдел
 Blockers before Arlehub:
 
 - Keep current shell contracts stable for surface read, open intent, Background Shell and Window Lease.
-- Keep Browser Preview detached lifecycle under spike free of stale state or lost return-to-main.
+- Keep detached helper lifecycle under spike free of stale state or lost return-to-main.
 - Avoid adding Arlehub timeline/UI until Flight Recorder and Background Shell remain readable without hub.
 
 Blockers before default-on native delivery:
@@ -1560,6 +1564,10 @@ risky action, user can return layout.
     and the real OS smoke is green for protocol, file association and second-instance
     handoff. The pinned Wails custom-protocol repro remains available for future alpha
     regressions.
+30. Done: expand Window Lease native helper detach. Git, Problems and Terminal helpers
+    now share the gated detached Wails window lifecycle with Browser Preview; the
+    production-shaped live smoke proves detach, native window ids, close/return and
+    attached cleanup for all four roles.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
