@@ -8,6 +8,9 @@ import { Create as $Create } from "/wails/runtime.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as terminal$0 from "./internal/terminal/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as json$0 from "../encoding/json/models.js";
 
 export class ApplicationMenuShortcutPayload {
     "actionId": string;
@@ -1607,12 +1610,41 @@ export class PackagedOSAdapter {
     }
 }
 
+export class PackagedOSAutoUpdateArtifact {
+    "platform"?: string;
+    "arch"?: string;
+    "url"?: string;
+    "sha256"?: string;
+    "signature"?: string;
+    "size"?: number;
+    "kind"?: string;
+
+    /** Creates a new PackagedOSAutoUpdateArtifact instance. */
+    constructor($$source: Partial<PackagedOSAutoUpdateArtifact> = {}) {
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PackagedOSAutoUpdateArtifact instance from a string or object.
+     */
+    static createFrom($$source: any = {}): PackagedOSAutoUpdateArtifact {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new PackagedOSAutoUpdateArtifact($$parsedSource as Partial<PackagedOSAutoUpdateArtifact>);
+    }
+}
+
 export class PackagedOSAutoUpdateManifest {
     "channel"?: string;
     "version"?: string;
+    "artifacts"?: PackagedOSAutoUpdateArtifact[];
+    "releaseNotes"?: string;
+    "mandatory"?: boolean;
     "url"?: string;
+    "sha256"?: string;
     "signature"?: string;
     "notes"?: string;
+    "metadata"?: { [_ in string]?: json$0.RawMessage };
 
     /** Creates a new PackagedOSAutoUpdateManifest instance. */
     constructor($$source: Partial<PackagedOSAutoUpdateManifest> = {}) {
@@ -1624,8 +1656,71 @@ export class PackagedOSAutoUpdateManifest {
      * Creates a new PackagedOSAutoUpdateManifest instance from a string or object.
      */
     static createFrom($$source: any = {}): PackagedOSAutoUpdateManifest {
+        const $$createField2_0 = $$createType36;
+        const $$createField9_0 = $$createType37;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("artifacts" in $$parsedSource) {
+            $$parsedSource["artifacts"] = $$createField2_0($$parsedSource["artifacts"]);
+        }
+        if ("metadata" in $$parsedSource) {
+            $$parsedSource["metadata"] = $$createField9_0($$parsedSource["metadata"]);
+        }
         return new PackagedOSAutoUpdateManifest($$parsedSource as Partial<PackagedOSAutoUpdateManifest>);
+    }
+}
+
+export class PackagedOSAutoUpdateVerification {
+    "status": string;
+    "reason": string;
+    "channel"?: string;
+    "version"?: string;
+    "platform"?: string;
+    "arch"?: string;
+    "artifact"?: PackagedOSAutoUpdateArtifact | null;
+    "downloadPath"?: string;
+    "checksumVerified": boolean;
+    "signatureVerified": boolean;
+    "staged": boolean;
+    "installEnabled": boolean;
+    "mandatory": boolean;
+
+    /** Creates a new PackagedOSAutoUpdateVerification instance. */
+    constructor($$source: Partial<PackagedOSAutoUpdateVerification> = {}) {
+        if (!("status" in $$source)) {
+            this["status"] = "";
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+        if (!("checksumVerified" in $$source)) {
+            this["checksumVerified"] = false;
+        }
+        if (!("signatureVerified" in $$source)) {
+            this["signatureVerified"] = false;
+        }
+        if (!("staged" in $$source)) {
+            this["staged"] = false;
+        }
+        if (!("installEnabled" in $$source)) {
+            this["installEnabled"] = false;
+        }
+        if (!("mandatory" in $$source)) {
+            this["mandatory"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PackagedOSAutoUpdateVerification instance from a string or object.
+     */
+    static createFrom($$source: any = {}): PackagedOSAutoUpdateVerification {
+        const $$createField6_0 = $$createType38;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("artifact" in $$parsedSource) {
+            $$parsedSource["artifact"] = $$createField6_0($$parsedSource["artifact"]);
+        }
+        return new PackagedOSAutoUpdateVerification($$parsedSource as Partial<PackagedOSAutoUpdateVerification>);
     }
 }
 
@@ -1682,10 +1777,10 @@ export class PackagedOSIntegrationSnapshot {
      * Creates a new PackagedOSIntegrationSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): PackagedOSIntegrationSnapshot {
-        const $$createField7_0 = $$createType36;
+        const $$createField7_0 = $$createType40;
         const $$createField8_0 = $$createType12;
         const $$createField9_0 = $$createType11;
-        const $$createField10_0 = $$createType38;
+        const $$createField10_0 = $$createType42;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("adapters" in $$parsedSource) {
             $$parsedSource["adapters"] = $$createField7_0($$parsedSource["adapters"]);
@@ -1775,12 +1870,41 @@ export class PluginCommandDefJS {
      * Creates a new PluginCommandDefJS instance from a string or object.
      */
     static createFrom($$source: any = {}): PluginCommandDefJS {
-        const $$createField7_0 = $$createType40;
+        const $$createField7_0 = $$createType44;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("flags" in $$parsedSource) {
             $$parsedSource["flags"] = $$createField7_0($$parsedSource["flags"]);
         }
         return new PluginCommandDefJS($$parsedSource as Partial<PluginCommandDefJS>);
+    }
+}
+
+export class ProjectAccessInspection {
+    "path": string;
+    "accessible": boolean;
+    "reason": string;
+
+    /** Creates a new ProjectAccessInspection instance. */
+    constructor($$source: Partial<ProjectAccessInspection> = {}) {
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("accessible" in $$source)) {
+            this["accessible"] = false;
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProjectAccessInspection instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProjectAccessInspection {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProjectAccessInspection($$parsedSource as Partial<ProjectAccessInspection>);
     }
 }
 
@@ -1938,7 +2062,7 @@ export class ShellCapabilitiesSnapshot {
      * Creates a new ShellCapabilitiesSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): ShellCapabilitiesSnapshot {
-        const $$createField0_0 = $$createType42;
+        const $$createField0_0 = $$createType46;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("capabilities" in $$parsedSource) {
             $$parsedSource["capabilities"] = $$createField0_0($$parsedSource["capabilities"]);
@@ -2017,7 +2141,7 @@ export class SignatureHelpResult {
      * Creates a new SignatureHelpResult instance from a string or object.
      */
     static createFrom($$source: any = {}): SignatureHelpResult {
-        const $$createField0_0 = $$createType44;
+        const $$createField0_0 = $$createType48;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("signatures" in $$parsedSource) {
             $$parsedSource["signatures"] = $$createField0_0($$parsedSource["signatures"]);
@@ -2053,7 +2177,7 @@ export class SignatureInfo {
      * Creates a new SignatureInfo instance from a string or object.
      */
     static createFrom($$source: any = {}): SignatureInfo {
-        const $$createField2_0 = $$createType46;
+        const $$createField2_0 = $$createType50;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("parameters" in $$parsedSource) {
             $$parsedSource["parameters"] = $$createField2_0($$parsedSource["parameters"]);
@@ -2107,7 +2231,7 @@ export class TerminalPredictionResponse {
      * Creates a new TerminalPredictionResponse instance from a string or object.
      */
     static createFrom($$source: any = {}): TerminalPredictionResponse {
-        const $$createField0_0 = $$createType48;
+        const $$createField0_0 = $$createType52;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("predictions" in $$parsedSource) {
             $$parsedSource["predictions"] = $$createField0_0($$parsedSource["predictions"]);
@@ -2203,8 +2327,12 @@ export class Wails3PackagedSmokeReport {
     "shellCapabilities": ShellCapabilitiesSnapshot;
     "packagedOSIntegration": PackagedOSIntegrationSnapshot;
     "backgroundShell": BackgroundShellStatusSnapshot;
+    "nativeDelivery": Wails3SmokeNativeDeliveryProbe;
+    "autoUpdate": Wails3SmokeAutoUpdateProbe;
     "singleInstance": Wails3SmokeGateStatus;
+    "secondInstance"?: Wails3SmokeSecondInstanceProbe;
     "windowLease": Wails3SmokeWindowLeaseSnapshot;
+    "appBundle"?: Wails3SmokeAppBundleSnapshot;
     "checks": Wails3SmokeCheck[];
 
     /** Creates a new Wails3PackagedSmokeReport instance. */
@@ -2236,6 +2364,12 @@ export class Wails3PackagedSmokeReport {
         if (!("backgroundShell" in $$source)) {
             this["backgroundShell"] = (new BackgroundShellStatusSnapshot());
         }
+        if (!("nativeDelivery" in $$source)) {
+            this["nativeDelivery"] = (new Wails3SmokeNativeDeliveryProbe());
+        }
+        if (!("autoUpdate" in $$source)) {
+            this["autoUpdate"] = (new Wails3SmokeAutoUpdateProbe());
+        }
         if (!("singleInstance" in $$source)) {
             this["singleInstance"] = (new Wails3SmokeGateStatus());
         }
@@ -2255,12 +2389,16 @@ export class Wails3PackagedSmokeReport {
     static createFrom($$source: any = {}): Wails3PackagedSmokeReport {
         const $$createField6_0 = $$createType0;
         const $$createField7_0 = $$createType32;
-        const $$createField9_0 = $$createType49;
-        const $$createField10_0 = $$createType50;
+        const $$createField9_0 = $$createType53;
+        const $$createField10_0 = $$createType54;
         const $$createField11_0 = $$createType2;
-        const $$createField12_0 = $$createType51;
-        const $$createField13_0 = $$createType52;
-        const $$createField14_0 = $$createType54;
+        const $$createField12_0 = $$createType55;
+        const $$createField13_0 = $$createType56;
+        const $$createField14_0 = $$createType57;
+        const $$createField15_0 = $$createType58;
+        const $$createField16_0 = $$createType59;
+        const $$createField17_0 = $$createType60;
+        const $$createField18_0 = $$createType62;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("launchArgs" in $$parsedSource) {
             $$parsedSource["launchArgs"] = $$createField6_0($$parsedSource["launchArgs"]);
@@ -2277,16 +2415,107 @@ export class Wails3PackagedSmokeReport {
         if ("backgroundShell" in $$parsedSource) {
             $$parsedSource["backgroundShell"] = $$createField11_0($$parsedSource["backgroundShell"]);
         }
+        if ("nativeDelivery" in $$parsedSource) {
+            $$parsedSource["nativeDelivery"] = $$createField12_0($$parsedSource["nativeDelivery"]);
+        }
+        if ("autoUpdate" in $$parsedSource) {
+            $$parsedSource["autoUpdate"] = $$createField13_0($$parsedSource["autoUpdate"]);
+        }
         if ("singleInstance" in $$parsedSource) {
-            $$parsedSource["singleInstance"] = $$createField12_0($$parsedSource["singleInstance"]);
+            $$parsedSource["singleInstance"] = $$createField14_0($$parsedSource["singleInstance"]);
+        }
+        if ("secondInstance" in $$parsedSource) {
+            $$parsedSource["secondInstance"] = $$createField15_0($$parsedSource["secondInstance"]);
         }
         if ("windowLease" in $$parsedSource) {
-            $$parsedSource["windowLease"] = $$createField13_0($$parsedSource["windowLease"]);
+            $$parsedSource["windowLease"] = $$createField16_0($$parsedSource["windowLease"]);
+        }
+        if ("appBundle" in $$parsedSource) {
+            $$parsedSource["appBundle"] = $$createField17_0($$parsedSource["appBundle"]);
         }
         if ("checks" in $$parsedSource) {
-            $$parsedSource["checks"] = $$createField14_0($$parsedSource["checks"]);
+            $$parsedSource["checks"] = $$createField18_0($$parsedSource["checks"]);
         }
         return new Wails3PackagedSmokeReport($$parsedSource as Partial<Wails3PackagedSmokeReport>);
+    }
+}
+
+export class Wails3SmokeAppBundleSnapshot {
+    "launchMode"?: string;
+    "path"?: string;
+    "bundleId"?: string;
+    "registeredOSHandlers": boolean;
+    "status": ShellCapabilityStatus;
+    "reason": string;
+
+    /** Creates a new Wails3SmokeAppBundleSnapshot instance. */
+    constructor($$source: Partial<Wails3SmokeAppBundleSnapshot> = {}) {
+        if (!("registeredOSHandlers" in $$source)) {
+            this["registeredOSHandlers"] = false;
+        }
+        if (!("status" in $$source)) {
+            this["status"] = ShellCapabilityStatus.$zero;
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Wails3SmokeAppBundleSnapshot instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Wails3SmokeAppBundleSnapshot {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new Wails3SmokeAppBundleSnapshot($$parsedSource as Partial<Wails3SmokeAppBundleSnapshot>);
+    }
+}
+
+export class Wails3SmokeAutoUpdateProbe {
+    "manifestPath"?: string;
+    "manifestStatus": string;
+    "installEnabled": boolean;
+    "manifest"?: PackagedOSAutoUpdateManifest | null;
+    "verification": PackagedOSAutoUpdateVerification;
+    "status": ShellCapabilityStatus;
+    "reason": string;
+
+    /** Creates a new Wails3SmokeAutoUpdateProbe instance. */
+    constructor($$source: Partial<Wails3SmokeAutoUpdateProbe> = {}) {
+        if (!("manifestStatus" in $$source)) {
+            this["manifestStatus"] = "";
+        }
+        if (!("installEnabled" in $$source)) {
+            this["installEnabled"] = false;
+        }
+        if (!("verification" in $$source)) {
+            this["verification"] = (new PackagedOSAutoUpdateVerification());
+        }
+        if (!("status" in $$source)) {
+            this["status"] = ShellCapabilityStatus.$zero;
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Wails3SmokeAutoUpdateProbe instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Wails3SmokeAutoUpdateProbe {
+        const $$createField3_0 = $$createType42;
+        const $$createField4_0 = $$createType63;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("manifest" in $$parsedSource) {
+            $$parsedSource["manifest"] = $$createField3_0($$parsedSource["manifest"]);
+        }
+        if ("verification" in $$parsedSource) {
+            $$parsedSource["verification"] = $$createField4_0($$parsedSource["verification"]);
+        }
+        return new Wails3SmokeAutoUpdateProbe($$parsedSource as Partial<Wails3SmokeAutoUpdateProbe>);
     }
 }
 
@@ -2349,6 +2578,183 @@ export class Wails3SmokeGateStatus {
     static createFrom($$source: any = {}): Wails3SmokeGateStatus {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new Wails3SmokeGateStatus($$parsedSource as Partial<Wails3SmokeGateStatus>);
+    }
+}
+
+export class Wails3SmokeNativeAdapterProbe {
+    "enabled": boolean;
+    "status": ShellCapabilityStatus;
+    "actionIds"?: string[];
+    "candidateIds"?: string[];
+    "reason": string;
+
+    /** Creates a new Wails3SmokeNativeAdapterProbe instance. */
+    constructor($$source: Partial<Wails3SmokeNativeAdapterProbe> = {}) {
+        if (!("enabled" in $$source)) {
+            this["enabled"] = false;
+        }
+        if (!("status" in $$source)) {
+            this["status"] = ShellCapabilityStatus.$zero;
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Wails3SmokeNativeAdapterProbe instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Wails3SmokeNativeAdapterProbe {
+        const $$createField2_0 = $$createType0;
+        const $$createField3_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("actionIds" in $$parsedSource) {
+            $$parsedSource["actionIds"] = $$createField2_0($$parsedSource["actionIds"]);
+        }
+        if ("candidateIds" in $$parsedSource) {
+            $$parsedSource["candidateIds"] = $$createField3_0($$parsedSource["candidateIds"]);
+        }
+        return new Wails3SmokeNativeAdapterProbe($$parsedSource as Partial<Wails3SmokeNativeAdapterProbe>);
+    }
+}
+
+export class Wails3SmokeNativeDeliveryProbe {
+    "enabled": boolean;
+    "status": ShellCapabilityStatus;
+    "trackedFailureStates": string[];
+    "lastError"?: string;
+    "tray": Wails3SmokeNativeAdapterProbe;
+    "notifications": Wails3SmokeNativeAdapterProbe;
+    "dockBadge": Wails3SmokeNativeDockBadgeProbe;
+    "reason": string;
+
+    /** Creates a new Wails3SmokeNativeDeliveryProbe instance. */
+    constructor($$source: Partial<Wails3SmokeNativeDeliveryProbe> = {}) {
+        if (!("enabled" in $$source)) {
+            this["enabled"] = false;
+        }
+        if (!("status" in $$source)) {
+            this["status"] = ShellCapabilityStatus.$zero;
+        }
+        if (!("trackedFailureStates" in $$source)) {
+            this["trackedFailureStates"] = [];
+        }
+        if (!("tray" in $$source)) {
+            this["tray"] = (new Wails3SmokeNativeAdapterProbe());
+        }
+        if (!("notifications" in $$source)) {
+            this["notifications"] = (new Wails3SmokeNativeAdapterProbe());
+        }
+        if (!("dockBadge" in $$source)) {
+            this["dockBadge"] = (new Wails3SmokeNativeDockBadgeProbe());
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Wails3SmokeNativeDeliveryProbe instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Wails3SmokeNativeDeliveryProbe {
+        const $$createField2_0 = $$createType0;
+        const $$createField4_0 = $$createType64;
+        const $$createField5_0 = $$createType64;
+        const $$createField6_0 = $$createType65;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("trackedFailureStates" in $$parsedSource) {
+            $$parsedSource["trackedFailureStates"] = $$createField2_0($$parsedSource["trackedFailureStates"]);
+        }
+        if ("tray" in $$parsedSource) {
+            $$parsedSource["tray"] = $$createField4_0($$parsedSource["tray"]);
+        }
+        if ("notifications" in $$parsedSource) {
+            $$parsedSource["notifications"] = $$createField5_0($$parsedSource["notifications"]);
+        }
+        if ("dockBadge" in $$parsedSource) {
+            $$parsedSource["dockBadge"] = $$createField6_0($$parsedSource["dockBadge"]);
+        }
+        return new Wails3SmokeNativeDeliveryProbe($$parsedSource as Partial<Wails3SmokeNativeDeliveryProbe>);
+    }
+}
+
+export class Wails3SmokeNativeDockBadgeProbe {
+    "enabled": boolean;
+    "status": ShellCapabilityStatus;
+    "label": string;
+    "reason": string;
+
+    /** Creates a new Wails3SmokeNativeDockBadgeProbe instance. */
+    constructor($$source: Partial<Wails3SmokeNativeDockBadgeProbe> = {}) {
+        if (!("enabled" in $$source)) {
+            this["enabled"] = false;
+        }
+        if (!("status" in $$source)) {
+            this["status"] = ShellCapabilityStatus.$zero;
+        }
+        if (!("label" in $$source)) {
+            this["label"] = "";
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Wails3SmokeNativeDockBadgeProbe instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Wails3SmokeNativeDockBadgeProbe {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new Wails3SmokeNativeDockBadgeProbe($$parsedSource as Partial<Wails3SmokeNativeDockBadgeProbe>);
+    }
+}
+
+export class Wails3SmokeSecondInstanceProbe {
+    "enabled": boolean;
+    "status": ShellCapabilityStatus;
+    "args"?: string[];
+    "openIntent"?: { [_ in string]?: any };
+    "openIntentQueued": boolean;
+    "reason": string;
+
+    /** Creates a new Wails3SmokeSecondInstanceProbe instance. */
+    constructor($$source: Partial<Wails3SmokeSecondInstanceProbe> = {}) {
+        if (!("enabled" in $$source)) {
+            this["enabled"] = false;
+        }
+        if (!("status" in $$source)) {
+            this["status"] = ShellCapabilityStatus.$zero;
+        }
+        if (!("openIntentQueued" in $$source)) {
+            this["openIntentQueued"] = false;
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Wails3SmokeSecondInstanceProbe instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Wails3SmokeSecondInstanceProbe {
+        const $$createField2_0 = $$createType0;
+        const $$createField3_0 = $$createType32;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("args" in $$parsedSource) {
+            $$parsedSource["args"] = $$createField2_0($$parsedSource["args"]);
+        }
+        if ("openIntent" in $$parsedSource) {
+            $$parsedSource["openIntent"] = $$createField3_0($$parsedSource["openIntent"]);
+        }
+        return new Wails3SmokeSecondInstanceProbe($$parsedSource as Partial<Wails3SmokeSecondInstanceProbe>);
     }
 }
 
@@ -2417,8 +2823,8 @@ export class WindowLeaseActionResult {
      * Creates a new WindowLeaseActionResult instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseActionResult {
-        const $$createField4_0 = $$createType56;
-        const $$createField5_0 = $$createType57;
+        const $$createField4_0 = $$createType67;
+        const $$createField5_0 = $$createType68;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("record" in $$parsedSource) {
             $$parsedSource["record"] = $$createField4_0($$parsedSource["record"]);
@@ -2483,7 +2889,7 @@ export class WindowLeaseRecord {
      * Creates a new WindowLeaseRecord instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseRecord {
-        const $$createField8_0 = $$createType58;
+        const $$createField8_0 = $$createType69;
         const $$createField12_0 = $$createType32;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("returnTarget" in $$parsedSource) {
@@ -2573,10 +2979,10 @@ export class WindowLeaseSnapshot {
      * Creates a new WindowLeaseSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseSnapshot {
-        const $$createField5_0 = $$createType59;
+        const $$createField5_0 = $$createType70;
         const $$createField6_0 = $$createType0;
-        const $$createField7_0 = $$createType60;
-        const $$createField8_0 = $$createType61;
+        const $$createField7_0 = $$createType71;
+        const $$createField8_0 = $$createType72;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("supportedRoles" in $$parsedSource) {
             $$parsedSource["supportedRoles"] = $$createField5_0($$parsedSource["supportedRoles"]);
@@ -2642,30 +3048,41 @@ const $$createType31 = $Create.Array($$createType30);
 const $$createType32 = $Create.Map($Create.Any, $Create.Any);
 const $$createType33 = BackgroundShellActionResult.createFrom;
 const $$createType34 = $Create.Nullable($$createType33);
-const $$createType35 = PackagedOSAdapter.createFrom;
-const $$createType36 = $Create.Map($Create.Any, $$createType35);
-const $$createType37 = PackagedOSAutoUpdateManifest.createFrom;
-const $$createType38 = $Create.Nullable($$createType37);
-const $$createType39 = FlagDefJS.createFrom;
-const $$createType40 = $Create.Array($$createType39);
-const $$createType41 = ShellCapabilityDescriptor.createFrom;
-const $$createType42 = $Create.Map($Create.Any, $$createType41);
-const $$createType43 = SignatureInfo.createFrom;
+const $$createType35 = PackagedOSAutoUpdateArtifact.createFrom;
+const $$createType36 = $Create.Array($$createType35);
+const $$createType37 = $Create.Map($Create.Any, $Create.Any);
+const $$createType38 = $Create.Nullable($$createType35);
+const $$createType39 = PackagedOSAdapter.createFrom;
+const $$createType40 = $Create.Map($Create.Any, $$createType39);
+const $$createType41 = PackagedOSAutoUpdateManifest.createFrom;
+const $$createType42 = $Create.Nullable($$createType41);
+const $$createType43 = FlagDefJS.createFrom;
 const $$createType44 = $Create.Array($$createType43);
-const $$createType45 = ParameterInfo.createFrom;
-const $$createType46 = $Create.Array($$createType45);
-const $$createType47 = terminal$0.PredictionResult.createFrom;
+const $$createType45 = ShellCapabilityDescriptor.createFrom;
+const $$createType46 = $Create.Map($Create.Any, $$createType45);
+const $$createType47 = SignatureInfo.createFrom;
 const $$createType48 = $Create.Array($$createType47);
-const $$createType49 = ShellCapabilitiesSnapshot.createFrom;
-const $$createType50 = PackagedOSIntegrationSnapshot.createFrom;
-const $$createType51 = Wails3SmokeGateStatus.createFrom;
-const $$createType52 = Wails3SmokeWindowLeaseSnapshot.createFrom;
-const $$createType53 = Wails3SmokeCheck.createFrom;
-const $$createType54 = $Create.Array($$createType53);
-const $$createType55 = WindowLeaseRecord.createFrom;
-const $$createType56 = $Create.Nullable($$createType55);
-const $$createType57 = WindowLeaseSnapshot.createFrom;
-const $$createType58 = WindowLeaseReturnTarget.createFrom;
-const $$createType59 = $Create.Array($Create.Any);
-const $$createType60 = $Create.Array($$createType55);
-const $$createType61 = $Create.Map($Create.Any, $$createType55);
+const $$createType49 = ParameterInfo.createFrom;
+const $$createType50 = $Create.Array($$createType49);
+const $$createType51 = terminal$0.PredictionResult.createFrom;
+const $$createType52 = $Create.Array($$createType51);
+const $$createType53 = ShellCapabilitiesSnapshot.createFrom;
+const $$createType54 = PackagedOSIntegrationSnapshot.createFrom;
+const $$createType55 = Wails3SmokeNativeDeliveryProbe.createFrom;
+const $$createType56 = Wails3SmokeAutoUpdateProbe.createFrom;
+const $$createType57 = Wails3SmokeGateStatus.createFrom;
+const $$createType58 = Wails3SmokeSecondInstanceProbe.createFrom;
+const $$createType59 = Wails3SmokeWindowLeaseSnapshot.createFrom;
+const $$createType60 = Wails3SmokeAppBundleSnapshot.createFrom;
+const $$createType61 = Wails3SmokeCheck.createFrom;
+const $$createType62 = $Create.Array($$createType61);
+const $$createType63 = PackagedOSAutoUpdateVerification.createFrom;
+const $$createType64 = Wails3SmokeNativeAdapterProbe.createFrom;
+const $$createType65 = Wails3SmokeNativeDockBadgeProbe.createFrom;
+const $$createType66 = WindowLeaseRecord.createFrom;
+const $$createType67 = $Create.Nullable($$createType66);
+const $$createType68 = WindowLeaseSnapshot.createFrom;
+const $$createType69 = WindowLeaseReturnTarget.createFrom;
+const $$createType70 = $Create.Array($Create.Any);
+const $$createType71 = $Create.Array($$createType66);
+const $$createType72 = $Create.Map($Create.Any, $$createType66);

@@ -32,6 +32,7 @@ const callIDToMethod = new Map<number, string>([
   [2741556134, "GetRecentProjects"],
   [1991393444, "InspectEditorFile"],
   [2376510860, "InspectProject"],
+  [2417092806, "InspectProjectAccess"],
   [2755018294, "LSPPreloadProjectDiagnostics"],
   [3640445830, "NotifyFileChanged"],
   [3996156971, "NotifyFileOpened"],
