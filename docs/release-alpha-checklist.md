@@ -26,6 +26,22 @@ notarized distribution path.
 - Intel Mac support must be checked through the release report `target.binaryArchs`
   containing `x86_64`; Apple Silicon support through `arm64`.
 
+## GitHub Release Draft Flow
+
+- Use one GitHub release tag per alpha build.
+- Upload macOS assets as separate files:
+  - `arlecchino-macos-universal.dmg`
+  - `arlecchino-macos-universal.zip`
+  - checksum file and signed update manifest when the manifest is used.
+- Keep the app bundle inside the DMG named `Arlecchino.app`.
+- Do not put the version in the macOS asset filename; the version belongs to
+  the GitHub tag, release title, release notes, and manifest metadata.
+- Do not publish a trusted macOS distribution claim until Developer ID signing
+  and notarization are available. Local-alpha ad-hoc assets are for local/tester
+  workflows only.
+- Future platform assets should follow the same split-asset model by platform
+  and architecture, rather than mixing installers into one catch-all artifact.
+
 ## Must Be Included In Release Artifacts
 
 - `LICENSE`

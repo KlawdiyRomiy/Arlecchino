@@ -328,6 +328,10 @@ Baseline hardening для этой ветки теперь имеет отдел
   `AppNotificationStack` и открывает GitHub Releases. Checksum/signature verification
   остается release/smoke gate; self-replace/apply не включается без будущей trusted
   release policy.
+- Release draft flow зафиксирован в `docs/release-alpha-checklist.md`: one tag,
+  split assets by platform/architecture, macOS primary
+  `arlecchino-macos-universal.dmg`, fallback `arlecchino-macos-universal.zip`,
+  checksum/manifest рядом, version только в tag/release metadata/manifest.
 - Добавлен real OS handoff smoke harness:
   `./scripts/wails3-real-os-smoke-macos.sh` собирает production-shaped `.app`,
   регистрирует bundle через LaunchServices, запускает live app с temp app data dir
@@ -392,7 +396,7 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Protocol/file associations | Green | `arlecchino://` and file association payloads normalize through strict open-intent allowlist; real OS smoke now proves Wails handler entry and emitted dispatch through LaunchServices/AppleEvent routes. | Keep production default-handler claims scoped to signed/notarized release packaging. |
 | Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates projection, and live smoke proves tray startup, dock badge set, accepted/rejected action routing and tracked failure states. Notification manual smoke now records permission status and delivery result. In-app notifications use a separate app-wide stack for foreground IDE feedback. | Run `--include-notifications` permission smoke manually before claiming native notification delivery; keep default-off until signed/bundled UX is acceptable. |
 | Auto-update verifier | Yellow | `.app` smoke reads/validates manifest schema, checks channel/platform/universal artifact selection and can explicitly stage a signed artifact with checksum + Ed25519 signature verification. Manifest generation/signing helper exists for static HTTPS/GitHub Releases artifacts. Foreground app can show a manual update notification that opens GitHub Releases. Production install/apply remains disabled. | Decide release channel hosting and installer/apply policy after release packaging is stable; private signing key must remain outside repo. |
-| Packaging/release OS integration | Yellow | Local-alpha release profile now builds universal `arm64+x86_64` ad-hoc signed `Arlecchino.app`, `arlecchino-macos-universal.zip` and optional `arlecchino-macos-universal.dmg` for Big Sur 11.0 through Tahoe 26.x. Evidence records split GitHub asset names, confirms public names do not contain `v3`, and installed-app smoke distinguishes `wails://localhost` renderer labels from real TCP listeners. | Developer ID/notarization remains inactive until credentials exist; ad-hoc artifacts are local/tester alpha only and not trusted public distribution. Keep stale dev-orphan cleanup green before release evidence is accepted. |
+| Packaging/release OS integration | Yellow | Local-alpha release profile now builds universal `arm64+x86_64` ad-hoc signed `Arlecchino.app`, `arlecchino-macos-universal.zip` and optional `arlecchino-macos-universal.dmg` for Big Sur 11.0 through Tahoe 26.x. Evidence records split GitHub asset names, confirms public names do not contain `v3`, installed-app smoke distinguishes `wails://localhost` renderer labels from real TCP listeners, and release draft flow is documented as one tag with split assets. | Developer ID/notarization remains inactive until credentials exist; ad-hoc artifacts are local/tester alpha only and not trusted public distribution. Keep stale dev-orphan cleanup green before release evidence is accepted. |
 | Real OS handoff | Green | `wails3-real-os-smoke-macos.sh` launches a registered ad-hoc `.app`, traces Wails application-event handler entry, proves `ide:intent:open` emitted dispatch for protocol/file payloads and proves gated second-instance handoff. | Keep the evidence as smoke-gated; browser/Finder UX still depends on production registration/signing decisions. |
 
 Blockers before Arlehub:
@@ -1655,6 +1659,9 @@ risky action, user can return layout.
 40. Done: add manual update UX. `manualUpdateNotifications` watches the packaged OS
     manifest read model, shows foreground update notifications and opens GitHub Releases;
     install/apply remains disabled outside explicit smoke gates.
+41. Done: document release draft flow. Local alpha releases use one GitHub tag with
+    split assets, macOS primary `arlecchino-macos-universal.dmg`, fallback ZIP and
+    checksum/manifest sidecars. Product artifact names remain free of `v3`.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 
