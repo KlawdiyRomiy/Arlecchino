@@ -162,7 +162,7 @@ const WelcomeScreen: React.FC<{
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.24 }}
-        className="relative z-20 mx-auto flex h-full w-full max-w-[760px] flex-1 items-center px-6 pb-10 pt-20"
+        className="absolute inset-0 z-20 mx-auto flex w-full max-w-[760px] items-center justify-center overflow-y-auto px-6 pb-52 pt-12"
       >
         <div className="w-full overflow-hidden rounded-[22px] border border-[var(--border-default)] bg-[var(--surface-elevated)] shadow-[var(--shadow-overlay)]">
           <div className="border-b border-[var(--border-subtle)] bg-[var(--surface-2)] px-6 py-5">

@@ -17,6 +17,7 @@ interface EditorSettingsState {
   showCompactDiagnostics: boolean;
   showMinimap: boolean;
   showRainbowBrackets: boolean;
+  zenModeEnabled: boolean;
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
@@ -26,6 +27,8 @@ interface EditorSettingsState {
   setShowCompactDiagnostics: (value: boolean) => void;
   setShowMinimap: (value: boolean) => void;
   setShowRainbowBrackets: (value: boolean) => void;
+  setZenModeEnabled: (value: boolean) => void;
+  toggleZenMode: () => void;
 }
 
 const EDITOR_SETTINGS_STORAGE_VERSION = 1;
@@ -36,6 +39,7 @@ const DEFAULT_SHOW_INLINE_DIAGNOSTICS = true;
 const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
 const DEFAULT_SHOW_MINIMAP = true;
 const DEFAULT_SHOW_RAINBOW_BRACKETS = true;
+const DEFAULT_ZEN_MODE_ENABLED = false;
 
 type PersistedEditorSettingsState = Partial<
   Pick<
@@ -46,6 +50,7 @@ type PersistedEditorSettingsState = Partial<
     | "showCompactDiagnostics"
     | "showMinimap"
     | "showRainbowBrackets"
+    | "zenModeEnabled"
   >
 >;
 
@@ -90,6 +95,10 @@ const sanitizePersistedEditorSettings = (
     nextState.showRainbowBrackets = persistedState.showRainbowBrackets;
   }
 
+  if (typeof persistedState.zenModeEnabled === "boolean") {
+    nextState.zenModeEnabled = persistedState.zenModeEnabled;
+  }
+
   return nextState;
 };
 
@@ -119,6 +128,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       showCompactDiagnostics: DEFAULT_SHOW_COMPACT_DIAGNOSTICS,
       showMinimap: DEFAULT_SHOW_MINIMAP,
       showRainbowBrackets: DEFAULT_SHOW_RAINBOW_BRACKETS,
+      zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
 
       zoomIn: () =>
         set((state) => ({
@@ -155,6 +165,12 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setShowRainbowBrackets: (value: boolean) =>
         set(() => ({ showRainbowBrackets: value })),
+
+      setZenModeEnabled: (value: boolean) =>
+        set(() => ({ zenModeEnabled: value })),
+
+      toggleZenMode: () =>
+        set((state) => ({ zenModeEnabled: !state.zenModeEnabled })),
     }),
     {
       name: "editor-settings",

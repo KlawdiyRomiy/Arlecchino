@@ -17,6 +17,7 @@ var nativeMenuAcceleratorActions = map[string]bool{
 	"project.new":             true,
 	"project.open":            true,
 	"settings.toggle":         true,
+	"zenMode.toggle":          true,
 	"browser.preview":         true,
 	"git.toggle":              true,
 	"git.fullscreen":          true,
@@ -84,6 +85,7 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.M
 
 	viewMenu := appMenu.AddSubmenu("View")
 	a.addMenuAction(viewMenu, "Search", "search.toggle", shortcuts)
+	a.addMenuAction(viewMenu, "Toggle Zen Mode", "zenMode.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle Explorer", "explorer.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle Terminal", "terminal.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle AI Panel", "ai.toggle", shortcuts)

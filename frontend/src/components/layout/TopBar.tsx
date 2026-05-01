@@ -46,6 +46,7 @@ interface TopBarProps {
   previewEnabled?: boolean;
   previewActive?: boolean;
   previewTitle?: string;
+  windowControlsVisible?: boolean;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -67,6 +68,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   previewEnabled = false,
   previewActive = false,
   previewTitle = "Preview unavailable for the current context.",
+  windowControlsVisible = true,
 }) => {
   const indexing = useIndexingProgress();
   const projectName = projectPath
@@ -104,7 +106,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       style={{ "--wails-draggable": "drag" } as React.CSSProperties}
       data-testid="topbar"
     >
-      <WindowControls />
+      <WindowControls visible={windowControlsVisible} />
 
       <div
         className={topBarGroupClass}

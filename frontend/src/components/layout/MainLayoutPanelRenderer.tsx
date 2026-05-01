@@ -29,6 +29,7 @@ import type {
   PanelId,
   PanelOpenRequest,
   PanelVisibility,
+  ZenPinnedPanels,
 } from "./MainLayout.types";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 import { CodePanelTabs } from "./CodePanelTabs";
@@ -50,6 +51,8 @@ interface MainLayoutPanelRendererProps {
   panelId: PanelId;
   hostMode?: PanelHostMode;
   panels: PanelVisibility;
+  zenPinnedPanels: ZenPinnedPanels;
+  zenModeEnabled: boolean;
   panelConfigs: PanelConfigs;
   previewWindows: PreviewWindow[];
   dropTargetPosition: PanelPosition | null;
@@ -97,6 +100,7 @@ interface MainLayoutPanelRendererProps {
   onPerspectiveClose: () => void;
   onGitDiffFocusChange: (active: boolean) => void;
   onCodePanelActivate: (path: string) => void;
+  onZenPinToggle: (panelId: PanelId) => void;
 }
 
 export const MainLayoutPanelRenderer: React.FC<
@@ -105,6 +109,8 @@ export const MainLayoutPanelRenderer: React.FC<
   panelId,
   hostMode = "overlay",
   panels,
+  zenPinnedPanels,
+  zenModeEnabled,
   panelConfigs,
   previewWindows,
   dropTargetPosition,
@@ -142,6 +148,7 @@ export const MainLayoutPanelRenderer: React.FC<
   onPerspectiveClose,
   onGitDiffFocusChange,
   onCodePanelActivate,
+  onZenPinToggle,
 }) => {
   const isVisible = panels[panelId];
   const config = panelConfigs[panelId];
@@ -232,6 +239,9 @@ export const MainLayoutPanelRenderer: React.FC<
     uiScale,
     isFullscreen,
     isRelocating: relocatingPanelIds.includes(panelId),
+    zenModeEnabled,
+    isZenPinned: zenPinnedPanels[panelId],
+    onZenPinToggle: () => onZenPinToggle(panelId),
   };
 
   switch (panelId) {

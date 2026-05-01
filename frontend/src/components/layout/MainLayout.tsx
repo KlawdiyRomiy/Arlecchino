@@ -96,7 +96,11 @@ import {
   getTUIPanelVisibility,
   normalizeTUIAssistAnchor,
 } from "../../utils/terminalLayout";
-import { GetLanguageForFile, WriteTerminal } from "../../wails/app";
+import {
+  GetLanguageForFile,
+  SetNativeWindowControlsVisible,
+  WriteTerminal,
+} from "../../wails/app";
 import { EventsOn } from "../../wails/runtime";
 import {
   type ExecutionProfile,
@@ -104,6 +108,7 @@ import {
   resolveExecutionProfiles,
 } from "../../utils/executionProfiles";
 import {
+  createEditorFileLoadingLoad,
   createEditableEditorFileLoad,
   loadEditorFile,
   type EditorFileLoadState,
@@ -126,11 +131,13 @@ import type {
   ProjectEntryDeletedEvent,
   ProjectEntryRenamedEvent,
   RememberedSnappedPositions,
+  ZenPinnedPanels,
 } from "./MainLayout.types";
 import {
   buildPanelConfigForOpen,
   clonePanelConfigsValue,
   cloneRememberedSnappedPositionsValue,
+  cloneZenPinnedPanelsValue,
   computeNextPanelOpenState,
   DEFAULT_PANEL_CONFIGS,
   formatPanelPosition,
@@ -163,7 +170,43 @@ const PANEL_SHORTCUT_MOVE_POSITIONS: readonly PanelPosition[] = [
   "top",
   "bottom",
 ];
+const PANEL_POSITIONS: readonly PanelPosition[] = [
+  "left",
+  "right",
+  "top",
+  "bottom",
+];
+const ZEN_EDGE_HOVER_CLOSE_DELAY_MS = 140;
+const ZEN_CHROME_HOVER_CLOSE_DELAY_MS = 140;
+const ZEN_EDGE_HOVER_SIZE = 32;
 type FullscreenPanelId = "terminal" | "git" | "problems" | "markdownPreview";
+let nativeWindowControlsOwner: symbol | null = null;
+let nativeWindowControlsRestoreTimer: ReturnType<typeof setTimeout> | null =
+  null;
+
+type ZenPanelHoverSource = "edge" | "slot";
+type ZenPanelHoverSources = Record<
+  PanelPosition,
+  Record<ZenPanelHoverSource, boolean>
+>;
+type ZenPanelHoverLeaveTimers = Record<
+  PanelPosition,
+  Partial<Record<ZenPanelHoverSource, ReturnType<typeof setTimeout>>>
+>;
+
+const createEmptyZenPanelHoverSources = (): ZenPanelHoverSources => ({
+  left: { edge: false, slot: false },
+  right: { edge: false, slot: false },
+  top: { edge: false, slot: false },
+  bottom: { edge: false, slot: false },
+});
+
+const createEmptyZenPanelHoverLeaveTimers = (): ZenPanelHoverLeaveTimers => ({
+  left: {},
+  right: {},
+  top: {},
+  bottom: {},
+});
 
 const coercePositiveSize = (
   value: number | undefined,
@@ -331,6 +374,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     });
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const setUiScale = useEditorSettingsStore((state) => state.setUiScale);
+  const zenModeEnabled = useEditorSettingsStore(
+    (state) => state.zenModeEnabled,
+  );
   const logicalViewport = React.useMemo(
     () => getLogicalViewportSize(uiScale),
     [uiScale],
@@ -448,6 +494,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         initialPanelLayoutState.rememberedSnappedPositions,
       );
     });
+  const [zenPinnedPanels, setZenPinnedPanels] = useState<ZenPinnedPanels>(
+    () => {
+      return cloneZenPinnedPanelsValue(initialPanelLayoutState.zenPinnedPanels);
+    },
+  );
   const [tuiLayoutSnapshot, setTuiLayoutSnapshot] = useState<{
     panels: PanelVisibility;
     panelConfigs: PanelConfigs;
@@ -461,6 +512,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const rememberedSnappedPositionsRef = React.useRef(
     rememberedSnappedPositions,
   );
+  const zenPinnedPanelsRef = React.useRef(zenPinnedPanels);
   const heldPanelShortcutRef = React.useRef<HeldPanelShortcut | null>(null);
   const pressedShortcutCodesRef = React.useRef<Set<string>>(new Set());
   const shortcutActionSuppressionRef = React.useRef<{
@@ -480,6 +532,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const executionProfilesRequestRef = React.useRef(0);
   const codePanelOpenRequestRef = React.useRef(0);
   const openFileFromPathRequestRef = React.useRef(0);
+  const editorFileOpenLoadingTimerRef = React.useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const editorFileOpenHandlerRef =
     React.useRef<MainEditorFileOpenHandler | null>(null);
 
@@ -500,6 +555,35 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onFileOpen?.(payload);
     },
     [onFileOpen],
+  );
+
+  const clearEditorFileOpenLoadingTimer = useCallback(() => {
+    if (editorFileOpenLoadingTimerRef.current === null) {
+      return;
+    }
+
+    clearTimeout(editorFileOpenLoadingTimerRef.current);
+    editorFileOpenLoadingTimerRef.current = null;
+  }, []);
+
+  const scheduleEditorFileOpenLoading = useCallback(
+    (requestId: number, path: string, name: string, line?: number) => {
+      clearEditorFileOpenLoadingTimer();
+      editorFileOpenLoadingTimerRef.current = setTimeout(() => {
+        editorFileOpenLoadingTimerRef.current = null;
+        if (openFileFromPathRequestRef.current !== requestId) {
+          return;
+        }
+
+        openFileInMainEditor(createEditorFileLoadingLoad(path, name), line);
+      }, 140);
+    },
+    [clearEditorFileOpenLoadingTimer, openFileInMainEditor],
+  );
+
+  useEffect(
+    () => () => clearEditorFileOpenLoadingTimer(),
+    [clearEditorFileOpenLoadingTimer],
   );
 
   useEffect(() => {
@@ -555,6 +639,23 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [],
   );
 
+  const applyZenPinnedPanelsState = useCallback(
+    (nextZenPinnedPanels: ZenPinnedPanels) => {
+      zenPinnedPanelsRef.current = nextZenPinnedPanels;
+      setZenPinnedPanels(nextZenPinnedPanels);
+    },
+    [],
+  );
+
+  const updateZenPinnedPanelsState = useCallback(
+    (updater: (previous: ZenPinnedPanels) => ZenPinnedPanels) => {
+      const nextZenPinnedPanels = updater(zenPinnedPanelsRef.current);
+      applyZenPinnedPanelsState(nextZenPinnedPanels);
+      return nextZenPinnedPanels;
+    },
+    [applyZenPinnedPanelsState],
+  );
+
   const applyPanelsState = useCallback(
     (nextPanels: PanelVisibility) => {
       const previousPanels = panelsRef.current;
@@ -562,6 +663,19 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       const newlyVisiblePanelId = (Object.keys(nextPanels) as PanelId[]).find(
         (panelId) => nextPanels[panelId] && !previousPanels[panelId],
       );
+      updateZenPinnedPanelsState((currentPins) => {
+        let changed = false;
+        const nextPins = { ...currentPins };
+
+        (Object.keys(nextPanels) as PanelId[]).forEach((panelId) => {
+          if (!nextPanels[panelId] && nextPins[panelId]) {
+            nextPins[panelId] = false;
+            changed = true;
+          }
+        });
+
+        return changed ? nextPins : currentPins;
+      });
 
       panelsRef.current = nextPanels;
       setPanels(nextPanels);
@@ -575,7 +689,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         markActivePanel(null);
       }
     },
-    [markActivePanel],
+    [markActivePanel, updateZenPinnedPanelsState],
   );
 
   const updatePanelsState = useCallback(
@@ -616,6 +730,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, [rememberedSnappedPositions]);
 
   useEffect(() => {
+    zenPinnedPanelsRef.current = zenPinnedPanels;
+  }, [zenPinnedPanels]);
+
+  useEffect(() => {
     try {
       if (tuiModeActive || !panelStorageKey) return;
       localStorage.setItem(
@@ -624,6 +742,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           panels,
           panelConfigs,
           rememberedSnappedPositions,
+          zenPinnedPanels,
         }),
       );
     } catch {
@@ -634,6 +753,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     panelStorageKey,
     panels,
     rememberedSnappedPositions,
+    zenPinnedPanels,
     tuiModeActive,
   ]);
 
@@ -736,10 +856,33 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
   const markdownPreviewPreFullscreenRef =
     React.useRef<PanelFullscreenSnapshot | null>(null);
+  const topChromeRef = React.useRef<HTMLDivElement | null>(null);
+  const bottomChromeRef = React.useRef<HTMLDivElement | null>(null);
   const panelWorkspaceRef = React.useRef<HTMLDivElement | null>(null);
   const [panelWorkspaceSize, setPanelWorkspaceSize] =
     React.useState(logicalViewport);
   const previousPanelWorkspaceSizeRef = React.useRef(panelWorkspaceSize);
+  const [topChromeHeight, setTopChromeHeight] = useState(0);
+  const [bottomChromeHeight, setBottomChromeHeight] = useState(0);
+  const [zenTopChromeHovered, setZenTopChromeHovered] = useState(false);
+  const [zenBottomChromeHovered, setZenBottomChromeHovered] = useState(false);
+  const zenTopChromeHoverTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const zenBottomChromeHoverTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const [zenPanelHoverSources, setZenPanelHoverSources] =
+    useState<ZenPanelHoverSources>(() => createEmptyZenPanelHoverSources());
+  const zenPanelHoverLeaveTimersRef = useRef<ZenPanelHoverLeaveTimers>(
+    createEmptyZenPanelHoverLeaveTimers(),
+  );
+  const effectivePanelsRef = useRef<PanelVisibility>(panels);
+  const previousEffectivePanelsRef = useRef<PanelVisibility | null>(null);
+  const nativeWindowControlsOwnerRef = useRef<symbol>(
+    Symbol("main-layout-native-window-controls"),
+  );
+  const nativeWindowControlsVisibleRef = useRef<boolean | null>(null);
 
   const [draggingPanel, setDraggingPanel] = useState<PanelId | null>(null);
   const [draggingPreviewWindowId, setDraggingPreviewWindowId] = useState<
@@ -783,6 +926,21 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       if (panelExitTimerRef.current) {
         clearTimeout(panelExitTimerRef.current);
       }
+      if (zenTopChromeHoverTimerRef.current) {
+        clearTimeout(zenTopChromeHoverTimerRef.current);
+      }
+      if (zenBottomChromeHoverTimerRef.current) {
+        clearTimeout(zenBottomChromeHoverTimerRef.current);
+      }
+      PANEL_POSITIONS.forEach((position) => {
+        const timers = zenPanelHoverLeaveTimersRef.current[position];
+        if (timers.edge) {
+          clearTimeout(timers.edge);
+        }
+        if (timers.slot) {
+          clearTimeout(timers.slot);
+        }
+      });
       if (typeof window !== "undefined") {
         pendingPanelCloseFrameIdsRef.current.forEach((frameId) =>
           window.cancelAnimationFrame(frameId),
@@ -924,6 +1082,29 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     ],
   );
 
+  const pinZenPanelIfShortcutOpened = useCallback(
+    (panelId: PanelId) => {
+      if (!zenModeEnabled || !panelsRef.current[panelId]) {
+        return;
+      }
+
+      const config = panelConfigsRef.current[panelId];
+      if (config.mode !== "snapped") {
+        return;
+      }
+
+      updateZenPinnedPanelsState((currentPins) =>
+        currentPins[panelId]
+          ? currentPins
+          : {
+              ...currentPins,
+              [panelId]: true,
+            },
+      );
+    },
+    [updateZenPinnedPanelsState, zenModeEnabled],
+  );
+
   function togglePanelCompactFromShortcut(
     panelId: PanelId,
     snapshotRef?: React.MutableRefObject<PanelFullscreenSnapshot | null>,
@@ -938,10 +1119,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
     if (snapshotRef && panelsRef.current[panelId] && looksFullscreen) {
       const restorePosition = currentConfig.position;
-      restoreOrEnterPanelFullscreen(
-        panelId as FullscreenPanelId,
-        snapshotRef,
-      );
+      restoreOrEnterPanelFullscreen(panelId as FullscreenPanelId, snapshotRef);
       updatePanelsState((previous) => {
         let changed = false;
         const nextPanels = { ...previous };
@@ -963,10 +1141,26 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
         return changed ? nextPanels : previous;
       });
+      pinZenPanelIfShortcutOpened(panelId);
+      return;
+    }
+
+    const wasVisible = panelsRef.current[panelId];
+    const isZenHiddenSnappedPanel =
+      zenModeEnabled &&
+      wasVisible &&
+      panelConfigsRef.current[panelId].mode === "snapped" &&
+      !effectivePanelsRef.current[panelId];
+    if (isZenHiddenSnappedPanel) {
+      pinZenPanelIfShortcutOpened(panelId);
+      markActivePanel(panelId);
       return;
     }
 
     toggleNamedPanel(panelId);
+    if (!wasVisible) {
+      pinZenPanelIfShortcutOpened(panelId);
+    }
   }
 
   function closePanelFullscreenFromShortcut(
@@ -1118,6 +1312,214 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       resizeObserver.disconnect();
     };
   }, [logicalViewport, uiScale]);
+
+  useEffect(() => {
+    const topChrome = topChromeRef.current;
+    const bottomChrome = bottomChromeRef.current;
+    if (!topChrome && !bottomChrome) {
+      return;
+    }
+
+    const updateChromeMeasurements = () => {
+      if (topChrome) {
+        const topRect = topChrome.getBoundingClientRect();
+        setTopChromeHeight((currentHeight) => {
+          const nextHeight = screenToLogicalPixels(topRect.height, uiScale);
+          return Math.abs(currentHeight - nextHeight) < 0.5
+            ? currentHeight
+            : nextHeight;
+        });
+      }
+
+      if (bottomChrome) {
+        const bottomRect = bottomChrome.getBoundingClientRect();
+        setBottomChromeHeight((currentHeight) => {
+          const nextHeight = screenToLogicalPixels(bottomRect.height, uiScale);
+          return Math.abs(currentHeight - nextHeight) < 0.5
+            ? currentHeight
+            : nextHeight;
+        });
+      }
+    };
+
+    updateChromeMeasurements();
+
+    const resizeObserver = new ResizeObserver(updateChromeMeasurements);
+    if (topChrome) {
+      resizeObserver.observe(topChrome);
+    }
+    if (bottomChrome) {
+      resizeObserver.observe(bottomChrome);
+    }
+    window.addEventListener("resize", updateChromeMeasurements);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateChromeMeasurements);
+    };
+  }, [uiScale]);
+
+  const showZenTopChrome = useCallback(() => {
+    if (zenTopChromeHoverTimerRef.current) {
+      clearTimeout(zenTopChromeHoverTimerRef.current);
+      zenTopChromeHoverTimerRef.current = null;
+    }
+    setZenTopChromeHovered(true);
+  }, []);
+
+  const hideZenTopChrome = useCallback(() => {
+    if (zenTopChromeHoverTimerRef.current) {
+      clearTimeout(zenTopChromeHoverTimerRef.current);
+    }
+    zenTopChromeHoverTimerRef.current = setTimeout(() => {
+      zenTopChromeHoverTimerRef.current = null;
+      setZenTopChromeHovered(false);
+    }, ZEN_CHROME_HOVER_CLOSE_DELAY_MS);
+  }, []);
+
+  const showZenBottomChrome = useCallback(() => {
+    if (zenBottomChromeHoverTimerRef.current) {
+      clearTimeout(zenBottomChromeHoverTimerRef.current);
+      zenBottomChromeHoverTimerRef.current = null;
+    }
+    setZenBottomChromeHovered(true);
+  }, []);
+
+  const hideZenBottomChrome = useCallback(() => {
+    if (zenBottomChromeHoverTimerRef.current) {
+      clearTimeout(zenBottomChromeHoverTimerRef.current);
+    }
+    zenBottomChromeHoverTimerRef.current = setTimeout(() => {
+      zenBottomChromeHoverTimerRef.current = null;
+      setZenBottomChromeHovered(false);
+    }, ZEN_CHROME_HOVER_CLOSE_DELAY_MS);
+  }, []);
+
+  const clearZenPanelHoverLeaveTimer = useCallback(
+    (position: PanelPosition, source: ZenPanelHoverSource) => {
+      const timer = zenPanelHoverLeaveTimersRef.current[position][source];
+      if (!timer) {
+        return;
+      }
+
+      clearTimeout(timer);
+      delete zenPanelHoverLeaveTimersRef.current[position][source];
+    },
+    [],
+  );
+
+  const clearAllZenPanelHoverLeaveTimers = useCallback(() => {
+    PANEL_POSITIONS.forEach((position) => {
+      clearZenPanelHoverLeaveTimer(position, "edge");
+      clearZenPanelHoverLeaveTimer(position, "slot");
+    });
+  }, [clearZenPanelHoverLeaveTimer]);
+
+  const setZenPanelHoverSource = useCallback(
+    (position: PanelPosition, source: ZenPanelHoverSource, active: boolean) => {
+      clearZenPanelHoverLeaveTimer(position, source);
+
+      if (active) {
+        setZenPanelHoverSources((currentSources) => {
+          if (currentSources[position][source]) {
+            return currentSources;
+          }
+
+          return {
+            ...currentSources,
+            [position]: {
+              ...currentSources[position],
+              [source]: true,
+            },
+          };
+        });
+        return;
+      }
+
+      zenPanelHoverLeaveTimersRef.current[position][source] = setTimeout(() => {
+        delete zenPanelHoverLeaveTimersRef.current[position][source];
+        setZenPanelHoverSources((currentSources) => {
+          if (!currentSources[position][source]) {
+            return currentSources;
+          }
+
+          return {
+            ...currentSources,
+            [position]: {
+              ...currentSources[position],
+              [source]: false,
+            },
+          };
+        });
+      }, ZEN_EDGE_HOVER_CLOSE_DELAY_MS);
+    },
+    [clearZenPanelHoverLeaveTimer],
+  );
+
+  const handleZenPanelEdgeEnter = useCallback(
+    (position: PanelPosition) => setZenPanelHoverSource(position, "edge", true),
+    [setZenPanelHoverSource],
+  );
+
+  const handleZenPanelEdgeLeave = useCallback(
+    (position: PanelPosition) =>
+      setZenPanelHoverSource(position, "edge", false),
+    [setZenPanelHoverSource],
+  );
+
+  const handleZenPanelSlotEnter = useCallback(
+    (position: PanelPosition) => setZenPanelHoverSource(position, "slot", true),
+    [setZenPanelHoverSource],
+  );
+
+  const handleZenPanelSlotLeave = useCallback(
+    (position: PanelPosition) =>
+      setZenPanelHoverSource(position, "slot", false),
+    [setZenPanelHoverSource],
+  );
+
+  const handleZenCornerEnter = useCallback(
+    (
+      verticalPosition: "top" | "bottom",
+      horizontalPosition: "left" | "right",
+    ) => {
+      if (verticalPosition === "top") {
+        showZenTopChrome();
+      } else {
+        showZenBottomChrome();
+      }
+      handleZenPanelEdgeEnter(verticalPosition);
+      handleZenPanelEdgeEnter(horizontalPosition);
+    },
+    [handleZenPanelEdgeEnter, showZenBottomChrome, showZenTopChrome],
+  );
+
+  const handleZenCornerLeave = useCallback(
+    (
+      verticalPosition: "top" | "bottom",
+      horizontalPosition: "left" | "right",
+    ) => {
+      if (verticalPosition === "top") {
+        hideZenTopChrome();
+      } else {
+        hideZenBottomChrome();
+      }
+      handleZenPanelEdgeLeave(verticalPosition);
+      handleZenPanelEdgeLeave(horizontalPosition);
+    },
+    [handleZenPanelEdgeLeave, hideZenBottomChrome, hideZenTopChrome],
+  );
+
+  useEffect(() => {
+    if (zenModeEnabled) {
+      return;
+    }
+
+    clearAllZenPanelHoverLeaveTimers();
+    setZenPanelHoverSources(createEmptyZenPanelHoverSources());
+    setZenTopChromeHovered(false);
+    setZenBottomChromeHovered(false);
+  }, [clearAllZenPanelHoverLeaveTimers, zenModeEnabled]);
 
   useEffect(() => {
     const previousViewport = previousPanelWorkspaceSizeRef.current;
@@ -1759,6 +2161,138 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [startSnappedSlotExit],
   );
 
+  const zenPanelHoverActive = useMemo(
+    () => ({
+      left: zenPanelHoverSources.left.edge || zenPanelHoverSources.left.slot,
+      right: zenPanelHoverSources.right.edge || zenPanelHoverSources.right.slot,
+      top: zenPanelHoverSources.top.edge || zenPanelHoverSources.top.slot,
+      bottom:
+        zenPanelHoverSources.bottom.edge || zenPanelHoverSources.bottom.slot,
+    }),
+    [zenPanelHoverSources],
+  );
+
+  const zenPanelHoverPositions = useMemo<PanelPosition[]>(() => {
+    if (!zenModeEnabled) {
+      return [];
+    }
+
+    const positions = new Set<PanelPosition>();
+    (Object.keys(panelConfigs) as PanelId[]).forEach((panelId) => {
+      if (!panels[panelId]) {
+        return;
+      }
+
+      const config = panelConfigs[panelId];
+      if (config.mode !== "snapped") {
+        return;
+      }
+
+      if (panelId === "terminal" && tuiModeActive) {
+        return;
+      }
+
+      positions.add(config.position);
+    });
+
+    return PANEL_POSITIONS.filter((position) => positions.has(position));
+  }, [panelConfigs, panels, tuiModeActive, zenModeEnabled]);
+
+  const effectivePanels = useMemo<PanelVisibility>(() => {
+    if (!zenModeEnabled) {
+      return panels;
+    }
+
+    const nextPanels = { ...panels };
+    (Object.keys(panelConfigs) as PanelId[]).forEach((panelId) => {
+      if (!panels[panelId]) {
+        nextPanels[panelId] = false;
+        return;
+      }
+
+      const config = panelConfigs[panelId];
+      if (
+        config.mode !== "snapped" ||
+        (panelId === "terminal" && tuiModeActive)
+      ) {
+        nextPanels[panelId] = true;
+        return;
+      }
+
+      nextPanels[panelId] =
+        zenPinnedPanels[panelId] || zenPanelHoverActive[config.position];
+    });
+
+    return nextPanels;
+  }, [
+    panelConfigs,
+    panels,
+    tuiModeActive,
+    zenModeEnabled,
+    zenPanelHoverActive,
+    zenPinnedPanels,
+  ]);
+
+  useEffect(() => {
+    effectivePanelsRef.current = effectivePanels;
+  }, [effectivePanels]);
+
+  useEffect(() => {
+    const previousEffectivePanels = previousEffectivePanelsRef.current;
+    previousEffectivePanelsRef.current = effectivePanels;
+
+    if (!previousEffectivePanels || !zenModeEnabled) {
+      return;
+    }
+
+    (Object.keys(effectivePanels) as PanelId[]).forEach((panelId) => {
+      if (
+        !panels[panelId] ||
+        !previousEffectivePanels[panelId] ||
+        effectivePanels[panelId]
+      ) {
+        return;
+      }
+
+      const config = panelConfigs[panelId];
+      if (config.mode !== "snapped") {
+        return;
+      }
+
+      if (panelId === "terminal" && tuiModeActive) {
+        return;
+      }
+
+      startSnappedSlotExit(config.position);
+    });
+  }, [
+    effectivePanels,
+    panelConfigs,
+    panels,
+    startSnappedSlotExit,
+    tuiModeActive,
+    zenModeEnabled,
+  ]);
+
+  const toggleZenPinnedPanel = useCallback(
+    (panelId: PanelId) => {
+      if (!zenModeEnabled || !panelsRef.current[panelId]) {
+        return;
+      }
+
+      const config = panelConfigsRef.current[panelId];
+      if (config.mode !== "snapped") {
+        return;
+      }
+
+      updateZenPinnedPanelsState((currentPins) => ({
+        ...currentPins,
+        [panelId]: !currentPins[panelId],
+      }));
+    },
+    [updateZenPinnedPanelsState, zenModeEnabled],
+  );
+
   const closePanelWithMotion = useCallback(
     (panelId: PanelId) => {
       const currentConfig = panelConfigsRef.current[panelId];
@@ -1791,6 +2325,46 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       updatePanelsState,
     ],
   );
+
+  const handleMarkdownPreviewSourceChange = useCallback(
+    (source: MarkdownPreviewSource | null) => {
+      setMarkdownPreviewSource(source);
+    },
+    [],
+  );
+
+  const handleToggleMarkdownPreview = useCallback(() => {
+    if (panelsRef.current.markdownPreview) {
+      closePanelWithMotion("markdownPreview");
+      return;
+    }
+
+    const { nextPanels, nextConfig, nextRememberedSnappedPositions } =
+      computeNextPanelOpenState(
+        "markdownPreview",
+        {
+          panel: "markdownPreview",
+          mode: "snapped",
+          position: "right",
+          width: 420,
+        },
+        panelsRef.current,
+        panelConfigsRef.current,
+        rememberedSnappedPositionsRef.current,
+      );
+
+    applyPanelsState(nextPanels);
+    applyPanelConfigsState({
+      ...panelConfigsRef.current,
+      markdownPreview: nextConfig,
+    });
+    applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+  }, [
+    applyPanelConfigsState,
+    applyPanelsState,
+    applyRememberedSnappedPositionsState,
+    closePanelWithMotion,
+  ]);
 
   const closePreviewWindowWithMotion = useCallback(
     (windowId: string) => {
@@ -2728,19 +3302,31 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
       const requestId = openFileFromPathRequestRef.current + 1;
       openFileFromPathRequestRef.current = requestId;
+      scheduleEditorFileOpenLoading(requestId, path, name, line);
       void loadEditorFile(path, {
         knownContent: content.length > 0 ? content : undefined,
-      }).then((file) => {
-        if (openFileFromPathRequestRef.current !== requestId) {
-          return;
-        }
-        openFileInMainEditor(file, line);
-      });
+      })
+        .then((file) => {
+          if (openFileFromPathRequestRef.current !== requestId) {
+            return;
+          }
+          clearEditorFileOpenLoadingTimer();
+          openFileInMainEditor(file, line);
+        })
+        .catch((error) => {
+          if (openFileFromPathRequestRef.current !== requestId) {
+            return;
+          }
+          clearEditorFileOpenLoadingTimer();
+          console.error("[MainLayout] Failed to open file:", error);
+        });
     },
     [
       canAccessPath,
+      clearEditorFileOpenLoadingTimer,
       handleFileOpenInPanel,
       openFileInMainEditor,
+      scheduleEditorFileOpenLoading,
       showNotification,
       tuiModeActive,
     ],
@@ -2766,21 +3352,31 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           return;
         }
 
+        scheduleEditorFileOpenLoading(
+          requestId,
+          path,
+          path.split("/").pop() || path,
+          line,
+        );
         const file = await loadEditorFile(path);
         if (openFileFromPathRequestRef.current !== requestId) {
           return;
         }
+        clearEditorFileOpenLoadingTimer();
         openFileInMainEditor(file, line);
       } catch (error) {
         if (openFileFromPathRequestRef.current === requestId) {
+          clearEditorFileOpenLoadingTimer();
           console.error("[MainLayout] Failed to open file:", error);
         }
       }
     },
     [
       canAccessPath,
+      clearEditorFileOpenLoadingTimer,
       handleFileOpenInPanel,
       openFileInMainEditor,
+      scheduleEditorFileOpenLoading,
       showNotification,
       tuiModeActive,
     ],
@@ -3026,7 +3622,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     shortcutActionSuppressionRef,
     toggleCanonicalBrowserPreviewRef,
     toggleCommandDispatcher,
-    toggleNamedPanel,
     togglePanelCompactFromShortcut,
     togglePanelFullscreenFromShortcut,
   });
@@ -3041,17 +3636,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       ...previous,
       [panel]: true,
     }));
-  };
-
-  const handleMarkdownPreviewSourceChange = useCallback(
-    (source: MarkdownPreviewSource | null) => {
-      setMarkdownPreviewSource(source);
-    },
-    [],
-  );
-
-  const handleToggleMarkdownPreview = () => {
-    togglePanel("markdownPreview");
   };
 
   const {
@@ -3092,7 +3676,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   });
 
   const workspaceModel = useMainPanelWorkspaceModel({
-    panels,
+    panels: effectivePanels,
     panelConfigs,
     previewWindows,
     browserPreviewWindows,
@@ -3120,6 +3704,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     flex: 1,
     display: "flex",
     flexDirection: "column",
+    position: "relative",
     minHeight: 0,
     minWidth: 0,
     overflow: "hidden",
@@ -3207,7 +3792,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       key={panelId}
       panelId={panelId}
       hostMode={hostMode}
-      panels={panels}
+      panels={effectivePanels}
+      zenPinnedPanels={zenPinnedPanels}
+      zenModeEnabled={zenModeEnabled}
       panelConfigs={panelConfigs}
       previewWindows={previewWindows}
       dropTargetPosition={dropTargetPosition}
@@ -3258,6 +3845,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onPerspectiveClose={handlePerspectiveClose}
       onGitDiffFocusChange={handleGitDiffFocusChange}
       onCodePanelActivate={setActiveCodePanelPath}
+      onZenPinToggle={toggleZenPinnedPanel}
     />
   );
 
@@ -3270,7 +3858,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     } = {};
 
     (Object.keys(panelConfigs) as PanelId[]).forEach((id) => {
-      if (!panels[id]) {
+      if (!effectivePanels[id]) {
         return;
       }
 
@@ -3392,37 +3980,154 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     );
   };
 
+  const zenTopChromeVisible = !zenModeEnabled || zenTopChromeHovered;
+  const zenBottomChromeVisible = !zenModeEnabled || zenBottomChromeHovered;
+
+  useEffect(() => {
+    const owner = nativeWindowControlsOwnerRef.current;
+    nativeWindowControlsOwner = owner;
+    if (nativeWindowControlsRestoreTimer !== null) {
+      clearTimeout(nativeWindowControlsRestoreTimer);
+      nativeWindowControlsRestoreTimer = null;
+    }
+
+    const nativeWindowControlsVisible = !zenModeEnabled || zenTopChromeVisible;
+    if (
+      nativeWindowControlsVisibleRef.current === nativeWindowControlsVisible
+    ) {
+      return;
+    }
+
+    nativeWindowControlsVisibleRef.current = nativeWindowControlsVisible;
+    void SetNativeWindowControlsVisible(nativeWindowControlsVisible).catch(
+      () => undefined,
+    );
+  }, [zenModeEnabled, zenTopChromeVisible]);
+
+  useEffect(() => {
+    const owner = nativeWindowControlsOwnerRef.current;
+
+    return () => {
+      if (nativeWindowControlsOwner !== owner) {
+        return;
+      }
+
+      nativeWindowControlsOwner = null;
+      if (nativeWindowControlsRestoreTimer !== null) {
+        clearTimeout(nativeWindowControlsRestoreTimer);
+      }
+      nativeWindowControlsRestoreTimer = setTimeout(() => {
+        nativeWindowControlsRestoreTimer = null;
+        if (nativeWindowControlsOwner !== null) {
+          return;
+        }
+
+        void SetNativeWindowControlsVisible(true).catch(() => undefined);
+      }, 0);
+    };
+  }, []);
+
+  const zenChromeTransition = reducePanelMotion
+    ? "none"
+    : `transform ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1), opacity 140ms ease`;
+  const zenWorkspaceInsetTransition = reducePanelMotion
+    ? "none"
+    : `padding ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`;
+
   const topChromeStyle: React.CSSProperties = {
+    left: zenModeEnabled ? 0 : undefined,
     maxHeight: 72,
-    opacity: 1,
+    opacity: zenTopChromeVisible ? 1 : 0,
     overflow: "visible",
-    pointerEvents: "auto",
-    position: "relative",
-    transform: "translateY(2px)",
-    zIndex: zIndex.tooltip + 2,
+    pointerEvents: zenTopChromeVisible ? "auto" : "none",
+    position: zenModeEnabled ? "absolute" : "relative",
+    right: zenModeEnabled ? 0 : undefined,
+    top: zenModeEnabled ? 0 : undefined,
+    transform: zenTopChromeVisible
+      ? "translateY(2px)"
+      : "translateY(calc(-100% - 12px))",
+    transition: zenModeEnabled ? zenChromeTransition : undefined,
+    zIndex: zIndex.tooltip + 4,
   };
 
   const bottomChromeStyle: React.CSSProperties = {
+    bottom: zenModeEnabled ? 0 : undefined,
+    left: zenModeEnabled ? 0 : undefined,
     maxHeight: 40,
-    opacity: 1,
+    opacity: zenBottomChromeVisible ? 1 : 0,
     overflow: "hidden",
-    pointerEvents: "auto",
+    pointerEvents: zenBottomChromeVisible ? "auto" : "none",
+    position: zenModeEnabled ? "absolute" : "relative",
+    right: zenModeEnabled ? 0 : undefined,
+    transform: zenBottomChromeVisible
+      ? "translateY(0)"
+      : "translateY(calc(100% + 12px))",
+    transition: zenModeEnabled ? zenChromeTransition : undefined,
+    zIndex: zIndex.tooltip + 4,
   };
+
+  const topChromeHoverSentinelStyle: React.CSSProperties = {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: ZEN_EDGE_HOVER_SIZE,
+    zIndex: zIndex.tooltip + 3,
+    pointerEvents: zenModeEnabled ? "auto" : "none",
+    background: "transparent",
+  };
+
+  const bottomChromeHoverSentinelStyle: React.CSSProperties = {
+    position: "fixed",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: ZEN_EDGE_HOVER_SIZE,
+    zIndex: zIndex.tooltip + 3,
+    pointerEvents: zenModeEnabled ? "auto" : "none",
+    background: "transparent",
+  };
+
+  const getZenCornerHoverSentinelStyle = (
+    verticalPosition: "top" | "bottom",
+    horizontalPosition: "left" | "right",
+  ): React.CSSProperties => ({
+    position: "fixed",
+    [verticalPosition]: 0,
+    [horizontalPosition]: 0,
+    width: ZEN_EDGE_HOVER_SIZE,
+    height: ZEN_EDGE_HOVER_SIZE,
+    zIndex: zIndex.tooltip + 5,
+    pointerEvents: zenModeEnabled ? "auto" : "none",
+    background: "transparent",
+  });
 
   const normalWorkspaceStyle: React.CSSProperties = {
     position: "relative",
     width: "100%",
     height: "100%",
+    boxSizing: "border-box",
     display: "flex",
     flexDirection: "row",
     minHeight: 0,
     minWidth: 0,
     opacity: 1,
+    paddingTop: zenModeEnabled
+      ? zenTopChromeVisible
+        ? topChromeHeight
+        : 0
+      : undefined,
+    paddingBottom: zenModeEnabled
+      ? zenBottomChromeVisible
+        ? bottomChromeHeight
+        : 0
+      : undefined,
     pointerEvents: "auto",
     isolation:
       panelDropSettling || panelExitPositions.length > 0
         ? "isolate"
         : undefined,
+    transition: zenModeEnabled ? zenWorkspaceInsetTransition : undefined,
   };
 
   const centerWorkspaceStyle: React.CSSProperties = {
@@ -3538,8 +4243,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   ) : (
     React.cloneElement(
       children as React.ReactElement<{
-        onToggleProblems?: () => void;
         markdownPreviewOpen?: boolean;
+        onToggleProblems?: () => void;
         onToggleMarkdownPreview?: () => void;
         onMarkdownPreviewSourceChange?: (
           source: MarkdownPreviewSource | null,
@@ -3549,8 +4254,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         onEditorFileOpenReady?: MainEditorFileOpenRegistrar;
       }>,
       {
-        onToggleProblems: () => togglePanel("problems"),
         markdownPreviewOpen: panels.markdownPreview,
+        onToggleProblems: () => togglePanel("problems"),
         onToggleMarkdownPreview: handleToggleMarkdownPreview,
         onMarkdownPreviewSourceChange: handleMarkdownPreviewSourceChange,
         onPerspectiveOpen: handlePerspectiveOpen,
@@ -3566,9 +4271,76 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         style={containerStyle}
         data-testid="main-layout"
         data-tui-session-id={tuiActiveSessionId || ""}
+        data-zen-mode={zenModeEnabled ? "true" : "false"}
+        data-zen-topbar-visible={zenTopChromeVisible ? "true" : "false"}
+        data-zen-statusbar-visible={zenBottomChromeVisible ? "true" : "false"}
       >
         <div style={shellFrameStyle}>
-          <div style={topChromeStyle}>
+          {zenModeEnabled && (
+            <>
+              <div
+                data-testid="zen-topbar-hover"
+                style={topChromeHoverSentinelStyle}
+                onMouseEnter={() => {
+                  showZenTopChrome();
+                  handleZenPanelEdgeEnter("top");
+                }}
+                onMouseLeave={() => {
+                  hideZenTopChrome();
+                  handleZenPanelEdgeLeave("top");
+                }}
+              />
+              <div
+                data-testid="zen-statusbar-hover"
+                style={bottomChromeHoverSentinelStyle}
+                onMouseEnter={() => {
+                  showZenBottomChrome();
+                  handleZenPanelEdgeEnter("bottom");
+                }}
+                onMouseLeave={() => {
+                  hideZenBottomChrome();
+                  handleZenPanelEdgeLeave("bottom");
+                }}
+              />
+              {(["top", "bottom"] as const).flatMap((verticalPosition) =>
+                (["left", "right"] as const).map((horizontalPosition) => (
+                  <div
+                    key={`zen-corner-hover-${verticalPosition}-${horizontalPosition}`}
+                    data-testid={`zen-corner-hover-${verticalPosition}-${horizontalPosition}`}
+                    style={getZenCornerHoverSentinelStyle(
+                      verticalPosition,
+                      horizontalPosition,
+                    )}
+                    onMouseEnter={() =>
+                      handleZenCornerEnter(verticalPosition, horizontalPosition)
+                    }
+                    onMouseLeave={() =>
+                      handleZenCornerLeave(verticalPosition, horizontalPosition)
+                    }
+                  />
+                )),
+              )}
+            </>
+          )}
+
+          <div
+            ref={topChromeRef}
+            style={topChromeStyle}
+            onMouseEnter={() => {
+              if (!zenModeEnabled) {
+                return;
+              }
+              showZenTopChrome();
+              handleZenPanelEdgeEnter("top");
+            }}
+            onMouseLeave={() => {
+              if (!zenModeEnabled) {
+                return;
+              }
+              hideZenTopChrome();
+              handleZenPanelEdgeLeave("top");
+            }}
+          >
             <TopBar
               onOpenSearch={openCommandDispatcher}
               onOpenSettings={openSettings}
@@ -3622,6 +4394,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               previewEnabled={previewButtonState.enabled}
               previewActive={previewButtonState.active}
               previewTitle={previewButtonState.buttonTitle}
+              windowControlsVisible={zenTopChromeVisible}
             />
           </div>
 
@@ -3650,6 +4423,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               floatingBrowserPreviewWindows={
                 workspaceModel.floatingBrowserPreviewWindows
               }
+              zenModeEnabled={zenModeEnabled}
+              zenEdgeHoverSize={ZEN_EDGE_HOVER_SIZE}
+              zenPanelHoverPositions={zenPanelHoverPositions}
+              onZenPanelEdgeEnter={handleZenPanelEdgeEnter}
+              onZenPanelEdgeLeave={handleZenPanelEdgeLeave}
+              onZenPanelSlotEnter={handleZenPanelSlotEnter}
+              onZenPanelSlotLeave={handleZenPanelSlotLeave}
               renderDropZone={renderDropZone}
               renderPanel={renderPanel}
               renderPreviewWindowPanel={renderPreviewWindowPanel}
@@ -3682,7 +4462,24 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             />
           </div>
 
-          <div style={bottomChromeStyle}>
+          <div
+            ref={bottomChromeRef}
+            style={bottomChromeStyle}
+            onMouseEnter={() => {
+              if (!zenModeEnabled) {
+                return;
+              }
+              showZenBottomChrome();
+              handleZenPanelEdgeEnter("bottom");
+            }}
+            onMouseLeave={() => {
+              if (!zenModeEnabled) {
+                return;
+              }
+              hideZenBottomChrome();
+              handleZenPanelEdgeLeave("bottom");
+            }}
+          >
             <StatusBar onToggleProblems={() => togglePanel("problems")} />
           </div>
         </div>

@@ -149,6 +149,9 @@ export interface FloatingPanelProps {
   isFullscreen?: boolean;
   activeDropTargetPosition?: PanelPosition | null;
   isRelocating?: boolean;
+  zenModeEnabled?: boolean;
+  isZenPinned?: boolean;
+  onZenPinToggle?: (id: string) => void;
 }
 
 export const FloatingPanel = React.forwardRef<
@@ -190,6 +193,9 @@ export const FloatingPanel = React.forwardRef<
       isFullscreen = false,
       activeDropTargetPosition = null,
       isRelocating = false,
+      zenModeEnabled = false,
+      isZenPinned = false,
+      onZenPinToggle,
     },
     forwardedRef,
   ) => {
@@ -513,6 +519,19 @@ export const FloatingPanel = React.forwardRef<
 
     const handleDragStartInternal = useCallback(
       (e: React.MouseEvent) => {
+        if (
+          zenModeEnabled &&
+          mode === "snapped" &&
+          e.button === 0 &&
+          e.metaKey &&
+          onZenPinToggle
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          onZenPinToggle(id);
+          return;
+        }
+
         e.preventDefault();
         const rect = panelRef.current?.getBoundingClientRect();
         startRef.current = {
@@ -541,11 +560,14 @@ export const FloatingPanel = React.forwardRef<
         dragY,
         effectiveUiScale,
         id,
+        mode,
         onDragStart,
+        onZenPinToggle,
         size.height,
         size.width,
         x,
         y,
+        zenModeEnabled,
       ],
     );
 
@@ -1111,6 +1133,7 @@ export const FloatingPanel = React.forwardRef<
         data-panel-state={panelState}
         data-panel-motion={panelMotionState}
         data-panel-relocating={isRelocating ? "true" : "false"}
+        data-panel-zen-pinned={isZenPinned ? "true" : "false"}
       >
         {mode === "floating" ? (
           <>

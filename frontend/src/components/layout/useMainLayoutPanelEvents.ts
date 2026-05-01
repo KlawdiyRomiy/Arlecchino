@@ -678,10 +678,10 @@ export const useMainLayoutPanelEvents = ({
           togglePanelCompactFromShortcut("explorer");
           return;
         case "terminal.toggle":
-          toggleNamedPanel("terminal");
+          togglePanelCompactFromShortcut("terminal");
           return;
         case "ai.toggle":
-          toggleNamedPanel("aiChat");
+          togglePanelCompactFromShortcut("aiChat");
           return;
         case "settings.toggle":
           if (isSettingsOpen) {
@@ -689,6 +689,9 @@ export const useMainLayoutPanelEvents = ({
           } else {
             openSettings();
           }
+          return;
+        case "zenMode.toggle":
+          useEditorSettingsStore.getState().toggleZenMode();
           return;
         case "project.copyPath":
           void copyProjectPathFromShortcut();

@@ -194,6 +194,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     showCompactDiagnostics,
     showMinimap,
     showRainbowBrackets,
+    zenModeEnabled,
     setUiScale,
     setEditorFontSize,
     resetZoom,
@@ -201,6 +202,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowCompactDiagnostics,
     setShowMinimap,
     setShowRainbowBrackets,
+    setZenModeEnabled,
   } = useEditorSettingsStore();
   const {
     autoOpenFromTerminal,
@@ -724,6 +726,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
 
                   <div className={settingsPanelClass}>
+                    <SwitchRow
+                      title="Zen Mode"
+                      description="Hide the top bar, status bar, and snapped panels until their edge is hovered."
+                      checked={zenModeEnabled}
+                      onCheckedChange={setZenModeEnabled}
+                    />
                     <SwitchRow
                       title="Rainbow brackets"
                       description="Color nested brackets with fixed depth colors. Turn off to use the current theme's bracket styling."

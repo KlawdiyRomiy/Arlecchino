@@ -17,6 +17,10 @@ interface NavigatorWithUserAgentData extends Navigator {
   };
 }
 
+interface WindowControlsProps {
+  visible?: boolean;
+}
+
 const isMacPlatform = (): boolean => {
   if (typeof navigator === "undefined") {
     return false;
@@ -61,7 +65,9 @@ const nativeBackdropBubbleStyle: React.CSSProperties = {
   height: "28px",
 };
 
-export const WindowControls: React.FC = () => {
+export const WindowControls: React.FC<WindowControlsProps> = ({
+  visible = true,
+}) => {
   const reserveNativeMacControls = shouldReserveNativeMacControls();
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
   const handleClose = useCallback(() => Quit(), []);
@@ -115,7 +121,7 @@ export const WindowControls: React.FC = () => {
         aria-hidden="true"
         data-testid="window-controls-native-spacer"
       />
-      {portalRoot
+      {portalRoot && visible
         ? createPortal(
             <div
               aria-hidden="true"

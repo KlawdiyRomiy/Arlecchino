@@ -112,6 +112,7 @@ export type ShortcutActionId =
   | "terminal.toggle"
   | "ai.toggle"
   | "settings.toggle"
+  | "zenMode.toggle"
   | "window.toggleFullscreen"
   | "browser.preview"
   | "editor.save"
@@ -234,6 +235,14 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     group: "App",
     scope: "global",
     defaultShortcuts: ["cmd+,", "ctrl+,"],
+  },
+  {
+    id: "zenMode.toggle",
+    label: "Zen Mode",
+    description: "Show or hide chrome and snapped panels until hovered.",
+    group: "App",
+    scope: "global",
+    defaultShortcuts: ["cmd+shift+."],
   },
   {
     id: "window.toggleFullscreen",
@@ -735,6 +744,8 @@ export const shortcuts = {
   toggleAI: (e: KeyboardEvent) => matchesActionShortcut(e, "ai.toggle"),
   toggleSettings: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "settings.toggle"),
+  toggleZenMode: (e: KeyboardEvent) =>
+    matchesActionShortcut(e, "zenMode.toggle"),
   toggleWindowFullscreen: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "window.toggleFullscreen"),
   toggleGit: (e: KeyboardEvent) => matchesActionShortcut(e, "git.toggle"),

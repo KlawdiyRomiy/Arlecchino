@@ -55,6 +55,7 @@ func (e *IDEEventEmitter) RegisterHandlers(d *Dispatcher) {
 	d.RegisterHandler("shortcut.project.copyPath", e.handleMenuAction("project.copyPath"))
 	d.RegisterHandler("shortcut.project.open", e.handleMenuAction("project.open"))
 	d.RegisterHandler("shortcut.project.new", e.handleMenuAction("project.new"))
+	d.RegisterHandler("shortcut.zenMode.toggle", e.handleMenuAction("zenMode.toggle"))
 
 	d.RegisterHandler("panel.move.leftToRight", e.handleMovePanelSide("left", "right"))
 	d.RegisterHandler("panel.move.leftToTop", e.handleMovePanelSide("left", "top"))

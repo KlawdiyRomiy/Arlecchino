@@ -54,6 +54,7 @@ export type AssistPanelId = Exclude<
   "terminal" | "problems" | "code" | "markdownPreview"
 >;
 export type PanelVisibility = Record<PanelId, boolean>;
+export type ZenPinnedPanels = Record<PanelId, boolean>;
 export type PanelFullscreenSnapshot = Pick<
   PanelConfig,
   "mode" | "x" | "y" | "size"
@@ -87,6 +88,7 @@ export interface HydratedPanelLayoutState {
   panels: PanelVisibility;
   panelConfigs: PanelConfigs;
   rememberedSnappedPositions: RememberedSnappedPositions;
+  zenPinnedPanels: ZenPinnedPanels;
 }
 
 export interface PanelOpenRequest {

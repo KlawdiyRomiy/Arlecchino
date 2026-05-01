@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.clear();
+    const nativeWindowControlsVisibleCalls: boolean[] = [];
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: {
@@ -33,6 +34,9 @@ test.beforeEach(async ({ page }) => {
               case "CloseTerminal":
               case "ResizeTerminal":
                 return true;
+              case "SetNativeWindowControlsVisible":
+                nativeWindowControlsVisibleCalls.push(Boolean(args[0]));
+                return true;
               case "ListFiles":
                 return [];
               default:
@@ -61,6 +65,7 @@ test.beforeEach(async ({ page }) => {
     Object.assign(window, {
       go: { main: { App: appBridge } },
       runtime: runtimeBridge,
+      __nativeWindowControlsVisibleCalls: nativeWindowControlsVisibleCalls,
     });
 
     localStorage.setItem(
@@ -184,6 +189,74 @@ test("settings button opens settings modal", async ({ page }) => {
   await page.getByTitle("Settings").click();
 
   await expect(page.getByTestId("settings-modal")).toBeVisible();
+});
+
+test("Cmd+Shift+. toggles zen chrome and edge hover reveals it", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(() => {
+    const eventInit = {
+      key: ".",
+      code: "Period",
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    window.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+    window.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+  });
+
+  const layout = page.getByTestId("main-layout");
+  await expect(layout).toHaveAttribute("data-zen-mode", "true");
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+  await expect(layout).toHaveAttribute("data-zen-statusbar-visible", "false");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            __nativeWindowControlsVisibleCalls: boolean[];
+          }
+        ).__nativeWindowControlsVisibleCalls.at(-1),
+      ),
+    )
+    .toBe(false);
+
+  await page.mouse.move(1, 1);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            __nativeWindowControlsVisibleCalls: boolean[];
+          }
+        ).__nativeWindowControlsVisibleCalls.at(-1),
+      ),
+    )
+    .toBe(true);
+  await page.mouse.move(520, 320);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            __nativeWindowControlsVisibleCalls: boolean[];
+          }
+        ).__nativeWindowControlsVisibleCalls.at(-1),
+      ),
+    )
+    .toBe(false);
+
+  const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
+  await page.mouse.move(viewport.width - 1, viewport.height - 1);
+  await expect(layout).toHaveAttribute("data-zen-statusbar-visible", "true");
+  await page.mouse.move(520, 320);
+  await expect(layout).toHaveAttribute("data-zen-statusbar-visible", "false");
 });
 
 test("topbar more menu closes on Escape and omits removed actions", async ({
