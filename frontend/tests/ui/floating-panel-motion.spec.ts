@@ -992,6 +992,98 @@ test("zen mode hides an open snapped panel until its edge is hovered", async ({
   await expect(panel).toHaveCount(0);
 });
 
+test("zen mode edge hover reveals unpinned snapped panels on every side", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: true,
+        terminal: false,
+        aiChat: true,
+        git: true,
+        problems: true,
+        code: false,
+      },
+      panelConfigs: {
+        explorer: {
+          position: "left",
+          mode: "snapped",
+          size: { width: 260, height: 0 },
+          x: 0,
+          y: 0,
+        },
+        git: {
+          position: "right",
+          mode: "snapped",
+          size: { width: 300, height: 0 },
+          x: 0,
+          y: 0,
+        },
+        aiChat: {
+          position: "top",
+          mode: "snapped",
+          size: { width: 0, height: 180 },
+          x: 0,
+          y: 0,
+        },
+        problems: {
+          position: "bottom",
+          mode: "snapped",
+          size: { width: 0, height: 220 },
+          x: 0,
+          y: 0,
+        },
+      },
+      rememberedSnappedPositions: {
+        explorer: "left",
+        git: "right",
+        aiChat: "top",
+        problems: "bottom",
+      },
+    },
+  });
+  await setZenMode(page, true);
+
+  const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
+  const cases = [
+    {
+      panelId: "explorer",
+      position: "left",
+      point: { x: 1, y: viewport.height / 2 },
+    },
+    {
+      panelId: "git",
+      position: "right",
+      point: { x: viewport.width - 1, y: viewport.height / 2 },
+    },
+    {
+      panelId: "aiChat",
+      position: "top",
+      point: { x: viewport.width / 2, y: 1 },
+    },
+    {
+      panelId: "problems",
+      position: "bottom",
+      point: { x: viewport.width / 2, y: viewport.height - 1 },
+    },
+  ] as const;
+
+  for (const { panelId, position, point } of cases) {
+    await expect(
+      page.getByTestId(`zen-panel-hover-${position}`),
+    ).toBeAttached();
+    await page.mouse.move(viewport.width / 2, viewport.height / 2);
+    await expect(page.getByTestId(`panel-${panelId}`)).toHaveCount(0);
+    await page.mouse.move(point.x, point.y);
+    await expect(page.getByTestId(`panel-${panelId}`)).toBeVisible();
+    await expect(page.getByTestId(`panel-${panelId}`)).toHaveAttribute(
+      "data-panel-position",
+      position,
+    );
+  }
+});
+
 test("cmd-clicking a zen-hovered panel header pins and unpins it", async ({
   page,
 }) => {

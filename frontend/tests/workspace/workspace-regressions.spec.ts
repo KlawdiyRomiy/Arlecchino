@@ -426,6 +426,11 @@ test("zen native window controls cleanup is guarded across layout remounts", asy
   );
   expect(layoutSource).toMatch(/nativeWindowControlsOwnerRef/);
   expect(layoutSource).toMatch(/nativeWindowControlsRestoreTimer = setTimeout/);
+  expect(layoutSource).toMatch(/let nativeWindowControlsLastVisible = true/);
+  expect(layoutSource).toMatch(
+    /nativeWindowControlsLastVisible = nativeWindowControlsVisible/,
+  );
+  expect(layoutSource).toMatch(/if \(!nativeWindowControlsLastVisible\) \{/);
   expect(layoutSource).toMatch(
     /SetNativeWindowControlsVisible\(nativeWindowControlsVisible\)/,
   );

@@ -197,8 +197,15 @@ export const Browser = {
 };
 
 export const Clipboard = {
-  Text: async () => "",
-  SetText: async () => undefined,
+  Text: async () =>
+    typeof window === "undefined"
+      ? ""
+      : ((window as unknown as { __copiedText?: string }).__copiedText ?? ""),
+  SetText: async (text: string) => {
+    if (typeof window !== "undefined") {
+      (window as unknown as { __copiedText?: string }).__copiedText = text;
+    }
+  },
 };
 
 export const Window = {

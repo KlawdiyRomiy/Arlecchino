@@ -177,11 +177,14 @@ const PANEL_POSITIONS: readonly PanelPosition[] = [
 const ZEN_EDGE_HOVER_CLOSE_DELAY_MS = 140;
 const ZEN_CHROME_HOVER_CLOSE_DELAY_MS = 140;
 const ZEN_EDGE_HOVER_SIZE = 32;
+const ZEN_CHROME_HOVER_Z_INDEX = zIndex.tooltip - 15;
+const ZEN_PANEL_HOVER_Z_INDEX = zIndex.tooltip + 2;
 const NATIVE_FULLSCREEN_CHANGED_EVENT = "shell:native-fullscreen-changed";
 type FullscreenPanelId = "terminal" | "git" | "problems" | "markdownPreview";
 let nativeWindowControlsOwner: symbol | null = null;
 let nativeWindowControlsRestoreTimer: ReturnType<typeof setTimeout> | null =
   null;
+let nativeWindowControlsLastVisible = true;
 
 interface NativeFullscreenChangedEvent {
   fullscreen?: boolean;
@@ -1382,7 +1385,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       clearTimeout(zenTopChromeHoverTimerRef.current);
       zenTopChromeHoverTimerRef.current = null;
     }
-    setZenTopChromeHovered(true);
+    setZenTopChromeHovered((current) => (current ? current : true));
   }, []);
 
   const hideZenTopChrome = useCallback(() => {
@@ -1391,7 +1394,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }
     zenTopChromeHoverTimerRef.current = setTimeout(() => {
       zenTopChromeHoverTimerRef.current = null;
-      setZenTopChromeHovered(false);
+      setZenTopChromeHovered((current) => (current ? false : current));
     }, ZEN_CHROME_HOVER_CLOSE_DELAY_MS);
   }, []);
 
@@ -1400,7 +1403,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       clearTimeout(zenBottomChromeHoverTimerRef.current);
       zenBottomChromeHoverTimerRef.current = null;
     }
-    setZenBottomChromeHovered(true);
+    setZenBottomChromeHovered((current) => (current ? current : true));
   }, []);
 
   const hideZenBottomChrome = useCallback(() => {
@@ -1409,7 +1412,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }
     zenBottomChromeHoverTimerRef.current = setTimeout(() => {
       zenBottomChromeHoverTimerRef.current = null;
-      setZenBottomChromeHovered(false);
+      setZenBottomChromeHovered((current) => (current ? false : current));
     }, ZEN_CHROME_HOVER_CLOSE_DELAY_MS);
   }, []);
 
@@ -4072,6 +4075,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }
 
     nativeWindowControlsVisibleRef.current = nativeWindowControlsVisible;
+    nativeWindowControlsLastVisible = nativeWindowControlsVisible;
     void SetNativeWindowControlsVisible(nativeWindowControlsVisible).catch(
       () => undefined,
     );
@@ -4092,6 +4096,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       nativeWindowControlsRestoreTimer = setTimeout(() => {
         nativeWindowControlsRestoreTimer = null;
         if (nativeWindowControlsOwner !== null) {
+          return;
+        }
+        if (!nativeWindowControlsLastVisible) {
           return;
         }
 
@@ -4139,13 +4146,81 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     zIndex: zIndex.tooltip + 4,
   };
 
+  const handleZenViewportMouseMove = useCallback(
+    (event: Pick<MouseEvent, "clientX" | "clientY">) => {
+      if (!zenModeEnabled) {
+        return;
+      }
+
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const { clientX, clientY } = event;
+
+      if (clientY <= ZEN_EDGE_HOVER_SIZE) {
+        showZenTopChrome();
+        handleZenPanelEdgeEnter("top");
+      } else if (clientY > topChromeHeight + ZEN_EDGE_HOVER_SIZE) {
+        if (zenTopChromeHoverTimerRef.current) {
+          clearTimeout(zenTopChromeHoverTimerRef.current);
+          zenTopChromeHoverTimerRef.current = null;
+        }
+        setZenTopChromeHovered((current) => (current ? false : current));
+        handleZenPanelEdgeLeave("top");
+      }
+      if (clientY >= viewportHeight - ZEN_EDGE_HOVER_SIZE) {
+        showZenBottomChrome();
+        handleZenPanelEdgeEnter("bottom");
+      } else if (
+        clientY <
+        viewportHeight - bottomChromeHeight - ZEN_EDGE_HOVER_SIZE
+      ) {
+        if (zenBottomChromeHoverTimerRef.current) {
+          clearTimeout(zenBottomChromeHoverTimerRef.current);
+          zenBottomChromeHoverTimerRef.current = null;
+        }
+        setZenBottomChromeHovered((current) => (current ? false : current));
+        handleZenPanelEdgeLeave("bottom");
+      }
+      if (clientX <= ZEN_EDGE_HOVER_SIZE) {
+        handleZenPanelEdgeEnter("left");
+      } else {
+        handleZenPanelEdgeLeave("left");
+      }
+      if (clientX >= viewportWidth - ZEN_EDGE_HOVER_SIZE) {
+        handleZenPanelEdgeEnter("right");
+      } else {
+        handleZenPanelEdgeLeave("right");
+      }
+    },
+    [
+      bottomChromeHeight,
+      handleZenPanelEdgeEnter,
+      handleZenPanelEdgeLeave,
+      showZenBottomChrome,
+      showZenTopChrome,
+      topChromeHeight,
+      zenModeEnabled,
+    ],
+  );
+
+  useEffect(() => {
+    if (!zenModeEnabled) {
+      return;
+    }
+
+    window.addEventListener("mousemove", handleZenViewportMouseMove, true);
+    return () => {
+      window.removeEventListener("mousemove", handleZenViewportMouseMove, true);
+    };
+  }, [handleZenViewportMouseMove, zenModeEnabled]);
+
   const topChromeHoverSentinelStyle: React.CSSProperties = {
     position: "fixed",
     top: 0,
     left: 0,
     right: 0,
     height: ZEN_EDGE_HOVER_SIZE,
-    zIndex: zIndex.tooltip + 3,
+    zIndex: ZEN_CHROME_HOVER_Z_INDEX,
     pointerEvents: zenModeEnabled ? "auto" : "none",
     background: "transparent",
   };
@@ -4156,7 +4231,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     left: 0,
     right: 0,
     height: ZEN_EDGE_HOVER_SIZE,
-    zIndex: zIndex.tooltip + 3,
+    zIndex: ZEN_CHROME_HOVER_Z_INDEX,
     pointerEvents: zenModeEnabled ? "auto" : "none",
     background: "transparent",
   };
@@ -4366,6 +4441,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                   showZenTopChrome();
                   handleZenPanelEdgeEnter("top");
                 }}
+                onMouseMove={() => {
+                  showZenTopChrome();
+                  handleZenPanelEdgeEnter("top");
+                }}
                 onMouseLeave={() => {
                   hideZenTopChrome();
                   handleZenPanelEdgeLeave("top");
@@ -4375,6 +4454,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 data-testid="zen-statusbar-hover"
                 style={bottomChromeHoverSentinelStyle}
                 onMouseEnter={() => {
+                  showZenBottomChrome();
+                  handleZenPanelEdgeEnter("bottom");
+                }}
+                onMouseMove={() => {
                   showZenBottomChrome();
                   handleZenPanelEdgeEnter("bottom");
                 }}
@@ -4393,6 +4476,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                       horizontalPosition,
                     )}
                     onMouseEnter={() =>
+                      handleZenCornerEnter(verticalPosition, horizontalPosition)
+                    }
+                    onMouseMove={() =>
                       handleZenCornerEnter(verticalPosition, horizontalPosition)
                     }
                     onMouseLeave={() =>
@@ -4507,6 +4593,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               }
               zenModeEnabled={zenModeEnabled}
               zenEdgeHoverSize={ZEN_EDGE_HOVER_SIZE}
+              zenPanelHoverZIndex={ZEN_PANEL_HOVER_Z_INDEX}
               zenPanelHoverPositions={zenPanelHoverPositions}
               onZenPanelEdgeEnter={handleZenPanelEdgeEnter}
               onZenPanelEdgeLeave={handleZenPanelEdgeLeave}

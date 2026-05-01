@@ -88,9 +88,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   const menuIconSize = 16;
   const isIndexingActive =
     Boolean(projectPath) && indexing.phase === "indexing";
-  const blurTransition = { duration: 0.35, ease: "easeInOut" } as const;
-  const blurInitial = { opacity: 0, filter: "blur(4px)" };
-  const blurAnimate = { opacity: 1, filter: "blur(0px)" };
+  const fadeTransition = { duration: 0.16, ease: "easeOut" } as const;
+  const fadeInitial = { opacity: 0, y: -2 };
+  const fadeAnimate = { opacity: 1, y: 0 };
   const contextPathRootClass =
     "flex min-w-0 max-w-[620px] items-center gap-0 overflow-hidden font-mono leading-none";
   const contextPathParentClass =
@@ -161,21 +161,20 @@ export const TopBar: React.FC<TopBarProps> = ({
             {projectPath ? (
               <motion.div
                 key="context-strip"
-                layout
-                initial={blurInitial}
-                animate={blurAnimate}
-                exit={blurInitial}
-                transition={blurTransition}
-                className="shell-cluster min-w-0 max-w-[620px] items-center overflow-hidden px-3 py-1.5"
+                initial={fadeInitial}
+                animate={fadeAnimate}
+                exit={fadeInitial}
+                transition={fadeTransition}
+                className="topbar-context-shell shell-cluster min-w-0 max-w-[620px] items-center overflow-hidden px-3 py-1.5"
               >
                 <AnimatePresence mode="wait" initial={false}>
                   {isIndexingActive ? (
                     <motion.div
                       key="indexing-state"
-                      initial={blurInitial}
-                      animate={blurAnimate}
-                      exit={blurInitial}
-                      transition={blurTransition}
+                      initial={fadeInitial}
+                      animate={fadeAnimate}
+                      exit={fadeInitial}
+                      transition={fadeTransition}
                       className={indexingBubbleClass}
                     >
                       <span>Indexing</span>
@@ -191,10 +190,10 @@ export const TopBar: React.FC<TopBarProps> = ({
                   ) : (
                     <motion.div
                       key="path-state"
-                      initial={blurInitial}
-                      animate={blurAnimate}
-                      exit={blurInitial}
-                      transition={blurTransition}
+                      initial={fadeInitial}
+                      animate={fadeAnimate}
+                      exit={fadeInitial}
+                      transition={fadeTransition}
                       className={contextPathRootClass}
                       data-testid="topbar-project-path"
                     >
@@ -211,11 +210,11 @@ export const TopBar: React.FC<TopBarProps> = ({
             ) : (
               <motion.div
                 key="empty-context-strip"
-                initial={blurInitial}
-                animate={blurAnimate}
-                exit={blurInitial}
-                transition={blurTransition}
-                className="shell-cluster px-2.5 py-1.5"
+                initial={fadeInitial}
+                animate={fadeAnimate}
+                exit={fadeInitial}
+                transition={fadeTransition}
+                className="topbar-context-shell shell-cluster px-2.5 py-1.5"
               >
                 <span className={centerChipClass}>No project open</span>
               </motion.div>

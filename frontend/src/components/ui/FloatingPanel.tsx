@@ -217,6 +217,8 @@ export const FloatingPanel = React.forwardRef<
     const panelRef = useRef<HTMLDivElement>(null);
     const latestBoundsRef = useRef<PanelBounds | null>(null);
     const latestDragOffsetRef = useRef({ x: 0, y: 0 });
+    const zenHeaderPointerPinHandledRef = useRef(false);
+    const metaKeyPressedRef = useRef(false);
     const resizeFrameRef = useRef<number | null>(null);
     const pendingResizeRef = useRef<{
       width: number;
@@ -249,6 +251,31 @@ export const FloatingPanel = React.forwardRef<
       onResizeStartRef.current = onResizeStart;
       onResizeEndRef.current = onResizeEnd;
     }, [onResize, onResizeEnd, onResizeStart]);
+
+    useEffect(() => {
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Meta" || event.metaKey) {
+          metaKeyPressedRef.current = true;
+        }
+      };
+      const handleKeyUp = (event: KeyboardEvent) => {
+        if (event.key === "Meta" || !event.metaKey) {
+          metaKeyPressedRef.current = false;
+        }
+      };
+      const handleBlur = () => {
+        metaKeyPressedRef.current = false;
+      };
+
+      window.addEventListener("keydown", handleKeyDown, true);
+      window.addEventListener("keyup", handleKeyUp, true);
+      window.addEventListener("blur", handleBlur);
+      return () => {
+        window.removeEventListener("keydown", handleKeyDown, true);
+        window.removeEventListener("keyup", handleKeyUp, true);
+        window.removeEventListener("blur", handleBlur);
+      };
+    }, []);
 
     useLayoutEffect(() => {
       if (isDragging || isResizing) {
@@ -517,13 +544,38 @@ export const FloatingPanel = React.forwardRef<
       };
     }, [isResizing, handleResizeMove, handleResizeEnd, resizeEdge]);
 
-    const handleDragStartInternal = useCallback(
-      (e: React.MouseEvent) => {
+    const handleHeaderPointerDown = useCallback(
+      (e: React.PointerEvent) => {
         if (
           zenModeEnabled &&
           mode === "snapped" &&
           e.button === 0 &&
-          e.metaKey &&
+          (e.metaKey || metaKeyPressedRef.current) &&
+          onZenPinToggle
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          zenHeaderPointerPinHandledRef.current = true;
+          onZenPinToggle(id);
+        }
+      },
+      [id, mode, onZenPinToggle, zenModeEnabled],
+    );
+
+    const handleDragStartInternal = useCallback(
+      (e: React.MouseEvent) => {
+        if (zenHeaderPointerPinHandledRef.current) {
+          zenHeaderPointerPinHandledRef.current = false;
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+
+        if (
+          zenModeEnabled &&
+          mode === "snapped" &&
+          e.button === 0 &&
+          (e.metaKey || metaKeyPressedRef.current) &&
           onZenPinToggle
         ) {
           e.preventDefault();
@@ -1152,6 +1204,7 @@ export const FloatingPanel = React.forwardRef<
 
         <div
           style={headerStyle}
+          onPointerDown={handleHeaderPointerDown}
           onMouseDown={handleDragStartInternal}
           data-testid={`panel-${id}-drag-handle`}
         >

@@ -38,6 +38,7 @@ interface MainPanelWorkspaceProps {
   floatingBrowserPreviewWindows: PreviewWindow[];
   zenModeEnabled: boolean;
   zenEdgeHoverSize: number;
+  zenPanelHoverZIndex: number;
   zenPanelHoverPositions: PanelPosition[];
   onZenPanelEdgeEnter: (position: PanelPosition) => void;
   onZenPanelEdgeLeave: (position: PanelPosition) => void;
@@ -88,6 +89,7 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
   floatingBrowserPreviewWindows,
   zenModeEnabled,
   zenEdgeHoverSize,
+  zenPanelHoverZIndex,
   zenPanelHoverPositions,
   onZenPanelEdgeEnter,
   onZenPanelEdgeLeave,
@@ -141,7 +143,7 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
 
     const baseStyle: React.CSSProperties = {
       position: "fixed",
-      zIndex: 45,
+      zIndex: zenPanelHoverZIndex,
       pointerEvents: "auto",
       background: "transparent",
     };
@@ -161,6 +163,7 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
         data-testid={`zen-panel-hover-${position}`}
         style={style}
         onMouseEnter={() => onZenPanelEdgeEnter(position)}
+        onMouseMove={() => onZenPanelEdgeEnter(position)}
         onMouseLeave={() => onZenPanelEdgeLeave(position)}
       />
     );
