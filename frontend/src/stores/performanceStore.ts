@@ -22,6 +22,16 @@ export interface PerformanceBudgetSnapshot {
 
 export interface AdaptiveEditorFeatureBudget {
   mode: AdaptivePerformanceMode;
+  layoutStableLineWrapping: boolean;
+  layoutStableFoldGutter: boolean;
+  layoutStableMinimap: boolean;
+  runtimeRichEditorFeatures: boolean;
+  runtimeCompletions: boolean;
+  runtimeDiagnostics: boolean;
+  runtimeGitGutter: boolean;
+  runtimeGhostText: boolean;
+  runtimeHover: boolean;
+  runtimeMinimap: boolean;
   richEditorFeatures: boolean;
   completions: boolean;
   diagnostics: boolean;
@@ -166,18 +176,39 @@ export const resolveAdaptiveEditorFeatureBudget = (
     snapshot.mode !== "normal" || snapshot.activeEditorLargeDocument;
   const critical =
     snapshot.mode === "critical" || snapshot.activeEditorLargeDocument;
+  const layoutConstrained = snapshot.activeEditorLargeDocument;
+  const layoutStableLineWrapping = !layoutConstrained;
+  const layoutStableFoldGutter = false;
+  const layoutStableMinimap = !layoutConstrained;
+  const runtimeRichEditorFeatures = !constrained;
+  const runtimeCompletions = !critical;
+  const runtimeDiagnostics = !constrained;
+  const runtimeGitGutter = !constrained;
+  const runtimeGhostText = !constrained;
+  const runtimeHover = !constrained;
+  const runtimeMinimap = !constrained;
 
   return {
     mode: snapshot.mode,
-    richEditorFeatures: !constrained,
-    completions: !critical,
-    diagnostics: !constrained,
-    gitGutter: !constrained,
-    ghostText: !constrained,
-    hover: !constrained,
-    languageExtensions: !constrained,
-    lineWrapping: !constrained,
-    minimap: !constrained,
+    layoutStableLineWrapping,
+    layoutStableFoldGutter,
+    layoutStableMinimap,
+    runtimeRichEditorFeatures,
+    runtimeCompletions,
+    runtimeDiagnostics,
+    runtimeGitGutter,
+    runtimeGhostText,
+    runtimeHover,
+    runtimeMinimap,
+    richEditorFeatures: runtimeRichEditorFeatures,
+    completions: runtimeCompletions,
+    diagnostics: runtimeDiagnostics,
+    gitGutter: runtimeGitGutter,
+    ghostText: runtimeGhostText,
+    hover: runtimeHover,
+    languageExtensions: true,
+    lineWrapping: layoutStableLineWrapping,
+    minimap: runtimeMinimap,
     notifyChangeDelayMs: critical ? 900 : constrained ? 450 : 180,
   };
 };

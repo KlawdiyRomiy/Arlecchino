@@ -205,6 +205,8 @@ test("adaptive performance budget disables expensive editor features under press
       completions: budget.completions,
       diagnostics: budget.diagnostics,
       gitGutter: budget.gitGutter,
+      layoutStableFoldGutter: budget.layoutStableFoldGutter,
+      layoutStableLineWrapping: budget.layoutStableLineWrapping,
       minimap: budget.minimap,
       notifyChangeDelayMs: budget.notifyChangeDelayMs,
     };
@@ -215,6 +217,8 @@ test("adaptive performance budget disables expensive editor features under press
     completions: false,
     diagnostics: false,
     gitGutter: false,
+    layoutStableFoldGutter: false,
+    layoutStableLineWrapping: false,
     minimap: false,
     notifyChangeDelayMs: 900,
   });
@@ -252,9 +256,11 @@ test("adaptive performance budget reacts to indexer and project pressure", async
     return {
       constrainedMode: constrainedSnapshot.mode,
       constrainedGitGutter: constrainedBudget.gitGutter,
+      constrainedLineWrapping: constrainedBudget.layoutStableLineWrapping,
       constrainedCompletions: constrainedBudget.completions,
       criticalMode: criticalSnapshot.mode,
       criticalCompletions: criticalBudget.completions,
+      criticalLineWrapping: criticalBudget.layoutStableLineWrapping,
       criticalNotifyDelay: criticalBudget.notifyChangeDelayMs,
     };
   });
@@ -262,9 +268,11 @@ test("adaptive performance budget reacts to indexer and project pressure", async
   expect(result).toEqual({
     constrainedMode: "constrained",
     constrainedGitGutter: false,
+    constrainedLineWrapping: true,
     constrainedCompletions: true,
     criticalMode: "critical",
     criticalCompletions: false,
+    criticalLineWrapping: true,
     criticalNotifyDelay: 900,
   });
 });

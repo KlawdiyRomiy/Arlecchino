@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Copy, ExternalLink, X } from "lucide-react";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
+import { EditorFileLoadingView } from "./EditorFileLoadingView";
 import { EditorTabs, Tab } from "./EditorTabs";
 import { TabSwitcherOverlay } from "./TabSwitcherOverlay";
 import QuickLookModal from "./QuickLookModal";
@@ -25,6 +26,7 @@ import {
   remapProjectPathPrefix,
 } from "../utils/projectPaths";
 import {
+  createEditorFileLoadingLoad,
   createEditableEditorFileLoad,
   loadEditorFile,
   type EditorFileLoadState,
@@ -180,6 +182,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const activeTabRef = useRef<string | null>(activeTab);
   const secondaryActiveTabRef = useRef<string | null>(secondaryActiveTab);
   const openFileRequestRef = useRef(0);
+  const fileOpenLoadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const quickLookRequestRef = useRef(0);
   const reopenClosedTabRequestRef = useRef(0);
   const tabSwitcherSelectionRef = useRef<string | null>(null);
@@ -329,7 +334,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     if (!fileToOpen) return;
 
     // Prevent duplicate opens for the same file
-    const fileKey = `${fileToOpen.file.path}:${fileToOpen.line || 0}`;
+    const fileKey = `${fileToOpen.file.kind}:${fileToOpen.file.path}:${
+      fileToOpen.line || 0
+    }`;
     if (lastFileToOpenRef.current === fileKey) return;
     lastFileToOpenRef.current = fileKey;
 
@@ -733,13 +740,51 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     tabs,
   ]);
 
+  const removeStaleLoadingTabs = useCallback((activePath: string) => {
+    const staleLoadingTabIds = new Set<string>();
+    Object.entries(fileLoadStatesRef.current).forEach(([tabId, file]) => {
+      if (file.kind === "loading" && file.path !== activePath) {
+        staleLoadingTabIds.add(tabId);
+      }
+    });
+
+    if (staleLoadingTabIds.size === 0) {
+      return;
+    }
+
+    const nextLoadStates = { ...fileLoadStatesRef.current };
+    staleLoadingTabIds.forEach((tabId) => {
+      delete nextLoadStates[tabId];
+      delete fileContentsRef.current[tabId];
+    });
+    fileLoadStatesRef.current = nextLoadStates;
+    setFileLoadStates(nextLoadStates);
+    setFileContents((previous) => {
+      const nextContents = { ...previous };
+      staleLoadingTabIds.forEach((tabId) => {
+        delete nextContents[tabId];
+      });
+      return nextContents;
+    });
+
+    tabsRef.current = tabsRef.current.filter(
+      (tab) => !staleLoadingTabIds.has(tab.id),
+    );
+    setTabs((previous) =>
+      previous.filter((tab) => !staleLoadingTabIds.has(tab.id)),
+    );
+  }, []);
+
   const handleFileOpen = useCallback(
     ({ file, line }: EditorFileOpenPayload) => {
       const filePath = file.path;
+      removeStaleLoadingTabs(filePath);
       const tabId = makeEditorTabId(filePath);
       const existingTab = tabsRef.current.find((tab) => tab.path === filePath);
       if (existingTab) {
-        storeFileLoadState(existingTab.id, file);
+        if (file.kind !== "loading") {
+          storeFileLoadState(existingTab.id, file);
+        }
         setActiveTab(existingTab.id);
         if (line) {
           setHighlightLine(line);
@@ -767,8 +812,37 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         window.setTimeout(() => setHighlightLine(undefined), 3000);
       }
     },
-    [storeFileLoadState],
+    [removeStaleLoadingTabs, storeFileLoadState],
   );
+
+  const clearFileOpenLoadingTimer = useCallback(() => {
+    if (fileOpenLoadingTimerRef.current === null) {
+      return;
+    }
+
+    clearTimeout(fileOpenLoadingTimerRef.current);
+    fileOpenLoadingTimerRef.current = null;
+  }, []);
+
+  const scheduleFileOpenLoading = useCallback(
+    (requestId: number, path: string, line?: number) => {
+      clearFileOpenLoadingTimer();
+      fileOpenLoadingTimerRef.current = setTimeout(() => {
+        fileOpenLoadingTimerRef.current = null;
+        if (openFileRequestRef.current !== requestId) {
+          return;
+        }
+
+        handleFileOpen({
+          file: createEditorFileLoadingLoad(path),
+          line,
+        });
+      }, 140);
+    },
+    [clearFileOpenLoadingTimer, handleFileOpen],
+  );
+
+  useEffect(() => clearFileOpenLoadingTimer, [clearFileOpenLoadingTimer]);
 
   useEffect(() => {
     onEditorFileOpenReady?.(handleFileOpen);
@@ -1140,10 +1214,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         fullPath = `${projectPath}/${path}`;
       }
 
+      scheduleFileOpenLoading(requestId, fullPath, line);
       const file = await loadEditorFile(fullPath);
       if (openFileRequestRef.current !== requestId) {
         return;
       }
+      clearFileOpenLoadingTimer();
       handleFileOpen({ file, line });
       if (line) {
         setHighlightLine(line);
@@ -1151,6 +1227,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       }
     } catch (error) {
       if (openFileRequestRef.current === requestId) {
+        clearFileOpenLoadingTimer();
         console.error("Failed to open file:", error);
         alert(`Failed to open file: ${path}`);
       }
@@ -1615,7 +1692,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const renderEditorSurface = (tabData: Tab, isSecondary = false) => {
     const loadState = fileLoadStates[tabData.id];
     if (!loadState && fileContents[tabData.id] === undefined) {
-      return <div className="h-full w-full" />;
+      return (
+        <EditorFileLoadingView
+          file={createEditorFileLoadingLoad(tabData.path, tabData.label)}
+        />
+      );
+    }
+    if (loadState?.kind === "loading") {
+      return <EditorFileLoadingView file={loadState} />;
     }
     if (loadState?.kind === "visualPreview") {
       return <ImageEditorPreview file={loadState} />;

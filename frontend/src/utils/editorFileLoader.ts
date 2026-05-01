@@ -37,7 +37,14 @@ export interface EditorVisualFile {
   dataUrl: string;
 }
 
+export type EditorFileLoadingState = {
+  kind: "loading";
+  path: string;
+  name: string;
+};
+
 export type EditorFileLoadState =
+  | EditorFileLoadingState
   | {
       kind: "editable";
       path: string;
@@ -78,21 +85,30 @@ export const isEditorVisualFilePath = (path: string): boolean => {
   const ext = path.split(".").pop()?.toLowerCase();
   return Boolean(
     ext &&
-      [
-        "avif",
-        "bmp",
-        "gif",
-        "ico",
-        "jpeg",
-        "jpe",
-        "jfif",
-        "jpg",
-        "png",
-        "svg",
-        "webp",
-      ].includes(ext),
+    [
+      "avif",
+      "bmp",
+      "gif",
+      "ico",
+      "jpeg",
+      "jpe",
+      "jfif",
+      "jpg",
+      "png",
+      "svg",
+      "webp",
+    ].includes(ext),
   );
 };
+
+export const createEditorFileLoadingLoad = (
+  path: string,
+  name?: string,
+): EditorFileLoadingState => ({
+  kind: "loading",
+  path,
+  name: name || getEditorFileName(path),
+});
 
 export const createEditableEditorFileLoad = (
   path: string,

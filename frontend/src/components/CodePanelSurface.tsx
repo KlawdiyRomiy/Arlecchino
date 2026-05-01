@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import CodeMirror from "@uiw/react-codemirror";
+import { closeBrackets } from "@codemirror/autocomplete";
+import { highlightSelectionMatches } from "@codemirror/search";
 import { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { javascript } from "@codemirror/lang-javascript";
@@ -27,6 +29,7 @@ import { createDiagnosticsExtension } from "../extensions/diagnosticsExtension";
 import { createGitGutterExtension } from "../extensions/gitGutterExtension";
 import { useEditorStore } from "../stores/editorStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
+import { useCodeMirrorAdaptiveExtensions } from "../hooks/useCodeMirrorAdaptiveExtensions";
 import {
   resolveAdaptiveEditorFeatureBudget,
   usePerformanceStore,
@@ -44,6 +47,7 @@ import {
 } from "../utils/codeMirrorDisplay";
 import type { GitLineMarker } from "../utils/git";
 import type { EditorFileLoadState } from "../utils/editorFileLoader";
+import { EditorFileLoadingView } from "./EditorFileLoadingView";
 import { GuardedEditorPreview } from "./GuardedEditorPreview";
 import { ImageEditorPreview } from "./ImageEditorPreview";
 
@@ -145,11 +149,12 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
       }),
     [content.length, contentLineCount, largeDocumentMode, performanceSnapshot],
   );
+  const notifyChangeDelayRef = useRef(editorFeatureBudget.notifyChangeDelayMs);
   const showInlineDiagnostics = useEditorSettingsStore(
     (state) => state.showInlineDiagnostics,
   );
   const gitMarkers = useGitStore((state) =>
-    editorFeatureBudget.gitGutter
+    editorFeatureBudget.runtimeGitGutter
       ? (state.fileMarkers[path] ?? EMPTY_GIT_MARKERS)
       : EMPTY_GIT_MARKERS,
   );
@@ -165,14 +170,19 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   );
   const diagnosticsExtension = useMemo(
     () =>
-      !editorFeatureBudget.diagnostics
+      !editorFeatureBudget.runtimeDiagnostics
         ? []
         : createDiagnosticsExtension({
             filePath: path,
             language,
             enabled: showInlineDiagnostics,
           }),
-    [editorFeatureBudget.diagnostics, language, path, showInlineDiagnostics],
+    [
+      editorFeatureBudget.runtimeDiagnostics,
+      language,
+      path,
+      showInlineDiagnostics,
+    ],
   );
 
   useEffect(() => {
@@ -189,6 +199,10 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     largeDocumentMode,
     updatePerformanceBudget,
   ]);
+
+  useEffect(() => {
+    notifyChangeDelayRef.current = editorFeatureBudget.notifyChangeDelayMs;
+  }, [editorFeatureBudget.notifyChangeDelayMs]);
 
   useEffect(() => {
     if (!isEditable) return;
@@ -220,74 +234,102 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     };
   }, []);
 
+  const languageExtension = useMemo(
+    () => resolveLanguageExtension(language),
+    [language],
+  );
+
+  const adaptiveExtensions = useMemo(() => {
+    const result: Extension[] = [];
+    if (editorFeatureBudget.runtimeRichEditorFeatures) {
+      result.push(closeBrackets(), highlightSelectionMatches());
+    }
+    if (editorFeatureBudget.runtimeGitGutter) {
+      result.push(gitGutterExtension);
+    }
+    result.push(...diagnosticsExtension);
+    return result;
+  }, [
+    diagnosticsExtension,
+    editorFeatureBudget.runtimeGitGutter,
+    editorFeatureBudget.runtimeRichEditorFeatures,
+    gitGutterExtension,
+  ]);
+
+  const {
+    adaptiveCompartmentExtension,
+    bindEditorView,
+    reapplyAdaptiveExtensions,
+    scrollGuardExtension,
+  } = useCodeMirrorAdaptiveExtensions(adaptiveExtensions);
+
   const extensions = useMemo(() => {
     const result: Extension[] = [
       codeEditorTheme,
       codeEditorStyles,
-      ...diagnosticsExtension,
+      scrollGuardExtension,
+      adaptiveCompartmentExtension,
     ];
-    if (editorFeatureBudget.gitGutter) {
-      result.push(gitGutterExtension);
-    }
-    if (editorFeatureBudget.lineWrapping) {
+    if (editorFeatureBudget.layoutStableLineWrapping) {
       result.push(EditorView.lineWrapping);
     }
-    const langExt = editorFeatureBudget.languageExtensions
-      ? resolveLanguageExtension(language)
-      : null;
-    if (langExt) {
-      result.push(langExt);
+    if (languageExtension) {
+      result.push(languageExtension);
     }
     return result;
   }, [
-    diagnosticsExtension,
-    editorFeatureBudget.gitGutter,
-    editorFeatureBudget.languageExtensions,
-    editorFeatureBudget.lineWrapping,
-    gitGutterExtension,
-    language,
+    adaptiveCompartmentExtension,
+    editorFeatureBudget.layoutStableLineWrapping,
+    languageExtension,
+    scrollGuardExtension,
   ]);
 
-  const handleChange = (value: string) => {
-    if (!isEditable) {
-      return;
-    }
-    updateTabContent(tabID, value);
+  const handleChange = useCallback(
+    (value: string) => {
+      if (!isEditable) {
+        return;
+      }
+      updateTabContent(tabID, value);
 
-    if (diagnosticsTimeoutRef.current !== null) {
-      window.clearTimeout(diagnosticsTimeoutRef.current);
-    }
+      if (diagnosticsTimeoutRef.current !== null) {
+        window.clearTimeout(diagnosticsTimeoutRef.current);
+      }
 
-    const diagnosticsVersion = diagnosticsVersionRef.current + 1;
-    diagnosticsVersionRef.current = diagnosticsVersion;
-    diagnosticsTimeoutRef.current = window.setTimeout(
-      () => {
-        void NotifyFileChanged(path, language, diagnosticsVersion, value).catch(
-          console.warn,
-        );
-        diagnosticsTimeoutRef.current = null;
-      },
-      Math.max(diagnosticsSyncDelayMs, editorFeatureBudget.notifyChangeDelayMs),
-    );
+      const diagnosticsVersion = diagnosticsVersionRef.current + 1;
+      diagnosticsVersionRef.current = diagnosticsVersion;
+      diagnosticsTimeoutRef.current = window.setTimeout(
+        () => {
+          void NotifyFileChanged(
+            path,
+            language,
+            diagnosticsVersion,
+            value,
+          ).catch(console.warn);
+          diagnosticsTimeoutRef.current = null;
+        },
+        Math.max(diagnosticsSyncDelayMs, notifyChangeDelayRef.current),
+      );
 
-    if (saveTimeoutRef.current !== null) {
-      window.clearTimeout(saveTimeoutRef.current);
-    }
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+      }
 
-    saveTimeoutRef.current = window.setTimeout(() => {
-      void WriteFile(path, value)
-        .then(() => {
-          markTabDirty(tabID, false);
-        })
-        .catch((error) => {
-          console.error("Code panel auto-save failed", error);
-        });
-    }, autoSaveDelayMs);
-  };
+      saveTimeoutRef.current = window.setTimeout(() => {
+        void WriteFile(path, value)
+          .then(() => {
+            markTabDirty(tabID, false);
+          })
+          .catch((error) => {
+            console.error("Code panel auto-save failed", error);
+          });
+      }, autoSaveDelayMs);
+    },
+    [isEditable, language, markTabDirty, path, tabID, updateTabContent],
+  );
 
   useEffect(() => {
     if (!path) return;
-    if (!editorFeatureBudget.gitGutter) return;
+    if (!editorFeatureBudget.runtimeGitGutter) return;
 
     const timer = window.setTimeout(() => {
       void refreshFileMarkers(path);
@@ -296,7 +338,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [editorFeatureBudget.gitGutter, path, refreshFileMarkers]);
+  }, [editorFeatureBudget.runtimeGitGutter, path, refreshFileMarkers]);
 
   useEffect(
     () => () => {
@@ -307,11 +349,39 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     [clearFileMarkers, path],
   );
 
+  const basicSetup = useMemo(
+    () => ({
+      lineNumbers: true,
+      highlightActiveLineGutter: true,
+      highlightActiveLine: true,
+      foldGutter: editorFeatureBudget.layoutStableFoldGutter,
+      dropCursor: true,
+      allowMultipleSelections: true,
+      indentOnInput: false,
+      bracketMatching: false,
+      closeBrackets: false,
+      autocompletion: false,
+      rectangularSelection: true,
+      crosshairCursor: false,
+      highlightSelectionMatches: false,
+      searchKeymap: false,
+      tabSize: 4,
+    }),
+    [editorFeatureBudget.layoutStableFoldGutter],
+  );
+
+  useEffect(() => {
+    reapplyAdaptiveExtensions();
+  }, [extensions, reapplyAdaptiveExtensions]);
+
   if (loadState?.kind === "guardedPreview" || loadState?.kind === "error") {
     return <GuardedEditorPreview file={loadState} />;
   }
   if (loadState?.kind === "visualPreview") {
     return <ImageEditorPreview file={loadState} />;
+  }
+  if (loadState?.kind === "loading") {
+    return <EditorFileLoadingView file={loadState} />;
   }
 
   return (
@@ -323,25 +393,10 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
         value={content}
         extensions={extensions}
         onChange={handleChange}
-        basicSetup={{
-          lineNumbers: true,
-          highlightActiveLineGutter: true,
-          highlightActiveLine: true,
-          foldGutter: false,
-          dropCursor: true,
-          allowMultipleSelections: editorFeatureBudget.richEditorFeatures,
-          indentOnInput: false,
-          bracketMatching: false,
-          closeBrackets: editorFeatureBudget.richEditorFeatures,
-          autocompletion: false,
-          rectangularSelection: true,
-          crosshairCursor: false,
-          highlightSelectionMatches: editorFeatureBudget.richEditorFeatures,
-          searchKeymap: false,
-          tabSize: 4,
-        }}
+        basicSetup={basicSetup}
         theme="none"
         className={codeEditorSurfaceClassName}
+        onCreateEditor={bindEditorView}
       />
     </div>
   );

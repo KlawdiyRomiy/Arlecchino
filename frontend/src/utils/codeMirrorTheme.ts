@@ -112,7 +112,6 @@ export const codeEditorStyles = EditorView.theme(
       fontFamily: '"JetBrains Mono", "SF Mono", "Fira Code", monospace',
       backgroundColor: editorPalette.background,
       letterSpacing: "0.01em",
-      transition: `background-color ${transitions.fast}, box-shadow ${transitions.fast}, border-color ${transitions.fast}`,
     },
     "&.cm-focused": {
       outline: "none",
@@ -120,12 +119,12 @@ export const codeEditorStyles = EditorView.theme(
     },
     ".cm-scroller": {
       backgroundColor: editorPalette.background,
+      color: editorPalette.text,
       overflow: "auto",
       lineHeight: "1.72",
       scrollbarWidth: "thin",
       scrollbarColor: `${editorPalette.scrollbarThumb} ${editorPalette.scrollbarTrack}`,
-      contain: "strict",
-      backfaceVisibility: "hidden",
+      contain: "layout style",
     },
     ".cm-scroller::-webkit-scrollbar": {
       width: "10px",
@@ -146,11 +145,13 @@ export const codeEditorStyles = EditorView.theme(
     },
     ".cm-content": {
       padding: "14px 0 28px",
+      color: editorPalette.text,
       caretColor: editorPalette.caret,
       backgroundColor: editorPalette.background,
     },
     ".cm-line": {
       padding: "0 18px 0 14px",
+      color: editorPalette.text,
     },
     ".cm-gutters": {
       backgroundColor: editorPalette.gutter,

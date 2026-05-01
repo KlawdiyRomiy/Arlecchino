@@ -32,13 +32,17 @@ import {
   Completion,
   startCompletion,
   closeCompletion,
+  closeBrackets,
   completionStatus,
   completionKeymap,
 } from "@codemirror/autocomplete";
-import { search, searchKeymap } from "@codemirror/search";
+import {
+  highlightSelectionMatches,
+  search,
+  searchKeymap,
+} from "@codemirror/search";
 import {
   bracketMatching,
-  foldGutter,
   indentOnInput,
   StreamLanguage,
 } from "@codemirror/language";
@@ -92,6 +96,7 @@ import prettierPluginTypescript from "prettier/plugins/typescript";
 import prettierPluginPhp from "@prettier/plugin-php";
 import { useEditorStore } from "../stores/editorStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
+import { useCodeMirrorAdaptiveExtensions } from "../hooks/useCodeMirrorAdaptiveExtensions";
 import {
   resolveAdaptiveEditorFeatureBudget,
   usePerformanceStore,
@@ -239,12 +244,7 @@ const minimapDockingExtension = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate) {
-      if (
-        update.geometryChanged ||
-        update.viewportChanged ||
-        update.docChanged ||
-        update.transactions.length > 0
-      ) {
+      if (update.geometryChanged || update.docChanged) {
         this.requestMeasure();
       }
     }
@@ -296,13 +296,7 @@ const minimapDockingExtension = ViewPlugin.fromClass(
       gutter?.style.removeProperty(MINIMAP_DOCK_OFFSET_PROPERTY);
     }
   },
-  {
-    eventHandlers: {
-      scroll() {
-        this.requestMeasure();
-      },
-    },
-  },
+  {},
 );
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -929,8 +923,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       }),
     [content.length, contentLineCount, largeDocumentMode, performanceSnapshot],
   );
+  const notifyChangeDelayRef = useRef(editorFeatureBudget.notifyChangeDelayMs);
   const gitMarkers = useGitStore((state) =>
-    !editorFeatureBudget.gitGutter
+    !editorFeatureBudget.runtimeGitGutter
       ? EMPTY_GIT_MARKERS
       : (state.fileMarkers[filePath] ?? EMPTY_GIT_MARKERS),
   );
@@ -939,7 +934,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const setCursorPosition = useEditorStore((state) => state.setCursorPosition);
   const diagnosticsExtension = useMemo(
     () =>
-      !editorFeatureBudget.diagnostics
+      !editorFeatureBudget.runtimeDiagnostics
         ? []
         : createDiagnosticsExtension({
             filePath,
@@ -947,7 +942,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             enabled: showInlineDiagnostics,
           }),
     [
-      editorFeatureBudget.diagnostics,
+      editorFeatureBudget.runtimeDiagnostics,
       filePath,
       language,
       showInlineDiagnostics,
@@ -979,6 +974,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     largeDocumentMode,
     updatePerformanceBudget,
   ]);
+
+  useEffect(() => {
+    notifyChangeDelayRef.current = editorFeatureBudget.notifyChangeDelayMs;
+  }, [editorFeatureBudget.notifyChangeDelayMs]);
 
   useEffect(
     () => () => {
@@ -1199,10 +1198,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   const shouldShowMinimap = useMemo(
     () =>
-      editorFeatureBudget.minimap &&
+      editorFeatureBudget.layoutStableMinimap &&
       showMinimapSetting &&
       shouldEnableCodeMirrorMinimap(content),
-    [content, editorFeatureBudget.minimap, showMinimapSetting],
+    [content, editorFeatureBudget.layoutStableMinimap, showMinimapSetting],
   );
 
   const gitGutterExtension = useMemo(
@@ -1212,7 +1211,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   useEffect(() => {
     if (!filePath) return;
-    if (!editorFeatureBudget.gitGutter) return;
+    if (!editorFeatureBudget.runtimeGitGutter) return;
 
     const timer = window.setTimeout(() => {
       void refreshFileMarkers(filePath);
@@ -1221,7 +1220,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [editorFeatureBudget.gitGutter, filePath, refreshFileMarkers]);
+  }, [editorFeatureBudget.runtimeGitGutter, filePath, refreshFileMarkers]);
 
   useEffect(
     () => () => {
@@ -1717,15 +1716,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
       notifyChangeDebounceRef.current = setTimeout(() => {
         NotifyFileChanged(filePath, language, version, value).catch(() => {});
-      }, editorFeatureBudget.notifyChangeDelayMs);
+      }, notifyChangeDelayRef.current);
     },
-    [
-      editorFeatureBudget.notifyChangeDelayMs,
-      filePath,
-      language,
-      largeDocumentMode,
-      onChange,
-    ],
+    [filePath, language, largeDocumentMode, onChange],
   );
 
   const formatDocumentAsync = useCallback(
@@ -2085,27 +2078,19 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     ];
   }, [requestSignatureHelp, clearSignatureHelp, editorFeatureBudget.hover]);
 
-  const extensions = useMemo<Extension[]>(() => {
-    const nextExtensions: Extension[] = [
-      codeEditorTheme,
-      codeEditorStyles,
-      fontSizeExtension,
-      highlightLineField,
-      search(),
-      keymap.of([...defaultKeymap, ...searchKeymap, indentWithTab]),
-      saveKeymap,
-      formatKeymap,
-      EditorView.updateListener.of((update) => {
-        if (!update.selectionSet && !update.docChanged) return;
-        syncCursorPosition(update.state);
-      }),
-    ];
+  const languageExtension = useMemo(
+    () => getLanguageExtension(language),
+    [language],
+  );
 
-    if (editorFeatureBudget.gitGutter) {
+  const adaptiveExtensions = useMemo<Extension[]>(() => {
+    const nextExtensions: Extension[] = [];
+
+    if (editorFeatureBudget.runtimeGitGutter) {
       nextExtensions.push(gitGutterExtension);
     }
 
-    if (editorFeatureBudget.ghostText) {
+    if (editorFeatureBudget.runtimeGhostText) {
       nextExtensions.push(
         ghost.ghostField,
         ghost.extension,
@@ -2113,23 +2098,19 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       );
     }
 
-    if (editorFeatureBudget.richEditorFeatures) {
+    if (editorFeatureBudget.runtimeRichEditorFeatures) {
       nextExtensions.push(
         metrics.extension,
-        ...hoverExtension,
         indentOnInput(),
         bracketMatching(),
-        foldGutter(),
+        closeBrackets(),
+        highlightSelectionMatches(),
         ...(showRainbowBrackets ? [rainbowBrackets()] : []),
         ...diagnosticsExtension,
       );
     }
 
-    if (editorFeatureBudget.lineWrapping) {
-      nextExtensions.push(EditorView.lineWrapping);
-    }
-
-    if (editorFeatureBudget.completions) {
+    if (editorFeatureBudget.runtimeCompletions) {
       nextExtensions.push(
         orchestrator.extension,
         Prec.highest(keymap.of(COMPLETION_KEYMAP_WITHOUT_ESCAPE)),
@@ -2215,6 +2196,66 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       );
     }
 
+    if (editorFeatureBudget.runtimeHover) {
+      nextExtensions.push(
+        ...hoverExtension,
+        ...definitionLinkExtension,
+        ...signatureHelpExtension,
+      );
+    }
+
+    return nextExtensions;
+  }, [
+    backendCompletionSource,
+    definitionLinkExtension,
+    diagnosticsExtension,
+    editorFeatureBudget.runtimeCompletions,
+    editorFeatureBudget.runtimeGhostText,
+    editorFeatureBudget.runtimeGitGutter,
+    editorFeatureBudget.runtimeHover,
+    editorFeatureBudget.runtimeRichEditorFeatures,
+    ghost,
+    gitGutterExtension,
+    hoverExtension,
+    metrics,
+    orchestrator,
+    showRainbowBrackets,
+    signatureHelpExtension,
+  ]);
+
+  const {
+    adaptiveCompartmentExtension,
+    bindEditorView,
+    reapplyAdaptiveExtensions,
+    scrollGuardExtension,
+  } = useCodeMirrorAdaptiveExtensions(adaptiveExtensions);
+
+  const extensions = useMemo<Extension[]>(() => {
+    const nextExtensions: Extension[] = [
+      codeEditorTheme,
+      codeEditorStyles,
+      fontSizeExtension,
+      highlightLineField,
+      search(),
+      keymap.of([...defaultKeymap, ...searchKeymap, indentWithTab]),
+      saveKeymap,
+      formatKeymap,
+      scrollGuardExtension,
+      adaptiveCompartmentExtension,
+      EditorView.updateListener.of((update) => {
+        if (!update.selectionSet && !update.docChanged) return;
+        syncCursorPosition(update.state);
+      }),
+    ];
+
+    if (editorFeatureBudget.layoutStableLineWrapping) {
+      nextExtensions.push(EditorView.lineWrapping);
+    }
+
+    if (languageExtension) {
+      nextExtensions.push(languageExtension);
+    }
+
     if (shouldShowMinimap) {
       nextExtensions.push(
         showMinimap.compute(["doc"], () => ({
@@ -2226,41 +2267,16 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       );
     }
 
-    if (editorFeatureBudget.languageExtensions) {
-      const langExt = getLanguageExtension(language);
-      if (langExt) nextExtensions.push(langExt);
-    }
-    if (editorFeatureBudget.hover) {
-      nextExtensions.push(
-        ...definitionLinkExtension,
-        ...signatureHelpExtension,
-      );
-    }
-
     return nextExtensions;
   }, [
-    backendCompletionSource,
-    definitionLinkExtension,
-    diagnosticsExtension,
-    editorFeatureBudget.completions,
-    editorFeatureBudget.ghostText,
-    editorFeatureBudget.gitGutter,
-    editorFeatureBudget.hover,
-    editorFeatureBudget.languageExtensions,
-    editorFeatureBudget.lineWrapping,
-    editorFeatureBudget.richEditorFeatures,
+    adaptiveCompartmentExtension,
+    editorFeatureBudget.layoutStableLineWrapping,
     fontSizeExtension,
     formatKeymap,
-    ghost,
-    gitGutterExtension,
-    hoverExtension,
-    language,
-    metrics,
-    orchestrator,
+    languageExtension,
     saveKeymap,
+    scrollGuardExtension,
     shouldShowMinimap,
-    showRainbowBrackets,
-    signatureHelpExtension,
     syncCursorPosition,
   ]);
 
@@ -2269,21 +2285,25 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       lineNumbers: true,
       highlightActiveLineGutter: true,
       highlightActiveLine: true,
-      foldGutter: false,
+      foldGutter: editorFeatureBudget.layoutStableFoldGutter,
       dropCursor: true,
-      allowMultipleSelections: editorFeatureBudget.richEditorFeatures,
+      allowMultipleSelections: true,
       indentOnInput: false,
       bracketMatching: false,
-      closeBrackets: editorFeatureBudget.richEditorFeatures,
+      closeBrackets: false,
       autocompletion: false,
       rectangularSelection: true,
       crosshairCursor: false,
-      highlightSelectionMatches: editorFeatureBudget.richEditorFeatures,
+      highlightSelectionMatches: false,
       searchKeymap: false,
       tabSize: 4,
     }),
-    [editorFeatureBudget.richEditorFeatures],
+    [editorFeatureBudget.layoutStableFoldGutter],
   );
+
+  useEffect(() => {
+    reapplyAdaptiveExtensions();
+  }, [extensions, reapplyAdaptiveExtensions]);
 
   return (
     <div
@@ -2299,6 +2319,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         theme="none"
         className={codeEditorSurfaceClassName}
         onCreateEditor={(view) => {
+          bindEditorView(view);
           syncCursorPosition(view.state);
         }}
       />
