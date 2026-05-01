@@ -313,6 +313,10 @@ Baseline hardening для этой ветки теперь имеет отдел
   Arlecchino/Wails listeners, MCP bridge socket presence и stale dev-binary orphan
   leakage. `wails://localhost` в Activity Monitor трактуется как WebView renderer label,
   не как proof of a local TCP server.
+- `./scripts/wails3-clean-dev-orphans-macos.sh` добавлен для Wails v3 dev cleanup:
+  он матчится только на точный dev command
+  `/tmp/Arlecchino-wails-build/bin/Arlecchino-v3 mcp-server`, поддерживает dry-run/JSON
+  report и не трогает установленный `/Applications/Arlecchino.app`.
 - Добавлен real OS handoff smoke harness:
   `./scripts/wails3-real-os-smoke-macos.sh` собирает production-shaped `.app`,
   регистрирует bundle через LaunchServices, запускает live app с temp app data dir
@@ -369,7 +373,7 @@ Baseline hardening для этой ветки теперь имеет отдел
 
 | Area | Status | Current Decision | Remaining Gate |
 | --- | --- | --- | --- |
-| Wails v3 lifecycle/dev runner | Green | `./scripts/wails3-dev-macos.sh` is the branch smoke path; runner owns child cleanup and stale output-scoped MCP shutdown. | Keep using v3 script; do not use global v2 `wails` CLI for this branch. |
+| Wails v3 lifecycle/dev runner | Green | `./scripts/wails3-dev-macos.sh` is the branch smoke path; runner owns child cleanup and stale output-scoped MCP shutdown. `wails3-clean-dev-orphans-macos.sh` can clean stale dev `mcp-server` processes before installed-app/release validation. | Keep using v3 script; do not use global v2 `wails` CLI for this branch. |
 | Bindings/service surface | Green | Shell capabilities, context menu, background shell, packaged OS and window lease methods exist behind the `App` service with runtime fallbacks. | Regenerate bindings only with `./scripts/wails3-generate-bindings.sh --write` and review generated churn separately. |
 | Surface/Applet promotion | Green | In-window `floating`, `snap`, `fullscreen`, `return-to-main` works for existing panels/previews without detached windows. | Detached remains Window Lease territory, not part of in-window promotion. |
 | Detached windows / Window Lease | Yellow | Browser Preview, Git, Problems and Terminal helper surfaces can create actual Wails detached windows only with `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`; live `.app` smoke proves native window ids and close/return to attached state; manual Terminal PTY/focus checklist now exists. | Run and record the manual Terminal helper smoke before any default-on detach discussion. |
@@ -1630,6 +1634,9 @@ risky action, user can return layout.
     installed/provided `Arlecchino.app`, codesign, Gatekeeper status, absence of real
     Arlecchino/Wails TCP listeners, MCP bridge socket presence, process snapshot and
     stale dev `Arlecchino-v3 mcp-server` orphan leakage.
+38. Done: add Wails v3 dev orphan cleanup. `wails3-clean-dev-orphans-macos.sh` safely
+    lists/kills only stale `/tmp/Arlecchino-wails-build/bin/Arlecchino-v3 mcp-server`
+    processes and leaves installed `Arlecchino.app` alone.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 

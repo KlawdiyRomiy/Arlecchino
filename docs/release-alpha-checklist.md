@@ -57,6 +57,10 @@ notarized distribution path.
   terminal command, autocomplete/ranking path, and one MCP approval flow.
 - Run `./scripts/wails3-release-smoke-macos.sh --report <path>` and attach the
   report to the release notes or internal release evidence.
+- If the machine has been used for Wails v3 dev runs, run
+  `./scripts/wails3-clean-dev-orphans-macos.sh --dry-run` first, then without
+  `--dry-run` if it finds stale `/tmp/Arlecchino-wails-build/bin/Arlecchino-v3 mcp-server`
+  processes.
 - Run `./scripts/wails3-installed-app-smoke-macos.sh --app-bundle /Applications/Arlecchino.app --report <path>`
   after installing the DMG. This verifies the installed bundle name, codesign,
   Gatekeeper status, absence of real Arlecchino/Wails TCP listeners, process

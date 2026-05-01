@@ -136,7 +136,15 @@ lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | rg -i 'Arlecchino|wails' > "$TCP_OUT" 
 find "$HOME/Library/Caches/arlecchino" -maxdepth 1 -type s -name 'mcp-bridge-*.sock' -print > "$MCP_SOCKETS_OUT" 2>/dev/null || true
 
 ps -axo pid=,ppid=,rss=,command= \
-  | awk 'index($0, "/tmp/Arlecchino-wails-build/bin/Arlecchino-v3 mcp-server") > 0 { print }' \
+  | awk -v target="/tmp/Arlecchino-wails-build/bin/Arlecchino-v3 mcp-server" '
+      {
+        command = $0
+        sub(/^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+/, "", command)
+        if (command == target || index(command, target " ") == 1) {
+          print
+        }
+      }
+    ' \
   > "$DEV_ORPHANS_OUT" || true
 
 REPORT_PATH="$REPORT_PATH" \
