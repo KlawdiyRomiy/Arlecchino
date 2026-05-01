@@ -124,6 +124,8 @@ export const codeEditorStyles = EditorView.theme(
       lineHeight: "1.72",
       scrollbarWidth: "thin",
       scrollbarColor: `${editorPalette.scrollbarThumb} ${editorPalette.scrollbarTrack}`,
+      scrollbarGutter: "stable",
+      overflowAnchor: "none",
       contain: "layout style",
     },
     ".cm-scroller::-webkit-scrollbar": {

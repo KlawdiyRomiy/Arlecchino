@@ -38,6 +38,7 @@ export const useCodeMirrorAdaptiveExtensions = (
   const scrollingRef = useRef(false);
   const latestExtensionsRef = useRef(adaptiveExtensions);
   const pendingExtensionsRef = useRef<Extension[] | null>(adaptiveExtensions);
+  const pendingForceRef = useRef(false);
   const appliedExtensionsRef = useRef<Extension[] | null>(null);
 
   const applyExtensions = useCallback(
@@ -47,20 +48,24 @@ export const useCodeMirrorAdaptiveExtensions = (
       const view = viewRef.current;
       if (!view) {
         pendingExtensionsRef.current = extensions;
+        pendingForceRef.current = force;
         return;
       }
-      if (scrollingRef.current && !force) {
+      if (scrollingRef.current) {
         pendingExtensionsRef.current = extensions;
+        pendingForceRef.current = pendingForceRef.current || force;
         return;
       }
       if (appliedExtensionsRef.current === extensions) {
         pendingExtensionsRef.current = null;
+        pendingForceRef.current = false;
         if (!force) {
           return;
         }
       }
 
       pendingExtensionsRef.current = null;
+      pendingForceRef.current = false;
       appliedExtensionsRef.current = extensions;
       const scrollSnapshot = readScrollSnapshot(view);
       view.dispatch({
@@ -74,8 +79,9 @@ export const useCodeMirrorAdaptiveExtensions = (
   const flushPendingExtensions = useCallback(() => {
     scrollingRef.current = false;
     const pendingExtensions = pendingExtensionsRef.current;
+    const pendingForce = pendingForceRef.current;
     if (pendingExtensions) {
-      applyExtensions(pendingExtensions);
+      applyExtensions(pendingExtensions, pendingForce);
       return;
     }
     applyExtensions(latestExtensionsRef.current);
@@ -119,6 +125,7 @@ export const useCodeMirrorAdaptiveExtensions = (
     () => () => {
       viewRef.current = null;
       pendingExtensionsRef.current = null;
+      pendingForceRef.current = false;
       appliedExtensionsRef.current = null;
     },
     [],

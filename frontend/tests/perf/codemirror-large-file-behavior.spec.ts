@@ -5,6 +5,7 @@ const largeFilePath = `${projectPath}/large.go`;
 const hugeGeneratedFilePath = `${projectPath}/huge-generated.cs`;
 const longLineFilePath = `${projectPath}/long-line.txt`;
 const horizontalFilePath = `${projectPath}/horizontal.go`;
+const wrappedNoticeFilePath = `${projectPath}/wrapped-notice.txt`;
 const slowFilePath = `${projectPath}/slow.go`;
 const fastFilePath = `${projectPath}/fast.go`;
 
@@ -62,6 +63,11 @@ const horizontal = "${"x".repeat(12_000)}"
 
 func main() {}
 `;
+const wrappedNoticeFileContent = Array.from({ length: 180 }, (_value, index) =>
+  index % 6 === 0
+    ? `License notice for package-${index}`
+    : `Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files, subject to the following conditions ${index}.`,
+).join("\n");
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(
@@ -598,12 +604,21 @@ test("CodeMirror scroller uses non-strict containment for smooth WebKit repaint"
 }) => {
   await mountEditor(page, fastFilePath, fastFileContent);
 
-  const containment = await page
+  const scrollerStyles = await page
     .locator(".cm-scroller")
     .first()
-    .evaluate((element) => window.getComputedStyle(element).contain);
+    .evaluate((element) => {
+      const styles = window.getComputedStyle(element);
+      return {
+        containment: styles.contain,
+        overflowAnchor: styles.getPropertyValue("overflow-anchor"),
+        scrollbarGutter: styles.getPropertyValue("scrollbar-gutter"),
+      };
+    });
 
-  expect(containment).not.toContain("strict");
+  expect(scrollerStyles.containment).not.toContain("strict");
+  expect(scrollerStyles.overflowAnchor).toBe("none");
+  expect(scrollerStyles.scrollbarGutter).toContain("stable");
 });
 
 test("CodeMirror preserves horizontal shift-scroll position across adaptive idle reconfigure", async ({
@@ -664,6 +679,109 @@ test("CodeMirror preserves horizontal shift-scroll position across adaptive idle
 
   expect(after.scrollLeft).toBeGreaterThanOrEqual(before.scrollLeft - 1);
   expect(after.scrollTop).toBe(0);
+});
+
+test("CodeMirror keeps geometry stable while scroll reconfigure is pending", async ({
+  page,
+}) => {
+  await mountEditor(page, wrappedNoticeFilePath, wrappedNoticeFileContent);
+
+  const samples = await page
+    .locator(".cm-scroller")
+    .first()
+    .evaluate(async (scroller) => {
+      type BoxSample = {
+        left: number;
+        width: number;
+      };
+      type GeometrySample = {
+        content: BoxSample;
+        editor: BoxSample;
+        gutters: BoxSample;
+        scrollActive: boolean;
+        scrollTop: number;
+        scroller: BoxSample;
+      };
+
+      const editor = scroller.closest<HTMLElement>(".cm-editor");
+      const gutters = editor?.querySelector<HTMLElement>(".cm-gutters");
+      const content = editor?.querySelector<HTMLElement>(".cm-content");
+      if (!editor || !gutters || !content) {
+        throw new Error("CodeMirror geometry nodes were not mounted");
+      }
+
+      const waitForFrame = () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const readBox = (element: HTMLElement): BoxSample => {
+        const rect = element.getBoundingClientRect();
+        return {
+          left: Math.round(rect.left * 100) / 100,
+          width: Math.round(rect.width * 100) / 100,
+        };
+      };
+      const readGeometry = (): GeometrySample => ({
+        content: readBox(content),
+        editor: readBox(editor),
+        gutters: readBox(gutters),
+        scrollActive: editor.dataset.scrollActive === "true",
+        scrollTop: scroller.scrollTop,
+        scroller: readBox(scroller),
+      });
+
+      scroller.scrollTop = 180;
+      scroller.dispatchEvent(new Event("scroll"));
+      await waitForFrame();
+      const before = readGeometry();
+
+      const { usePerformanceStore } =
+        await import("/src/stores/performanceStore.ts");
+      usePerformanceStore.getState().updateBudget({
+        activeEditorCharCount: 64_000,
+        activeEditorLineCount: 180,
+        activeEditorLargeDocument: false,
+        eventPressure: 120,
+        frameGapMs: 95,
+      });
+
+      const { useEditorSettingsStore } =
+        await import("/src/stores/editorSettingsStore.ts");
+      useEditorSettingsStore.getState().setShowRainbowBrackets(false);
+      await waitForFrame();
+      const during = readGeometry();
+
+      scroller.scrollTop = 420;
+      scroller.dispatchEvent(new Event("scroll"));
+      await waitForFrame();
+      const stillScrolling = readGeometry();
+
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 240));
+      await waitForFrame();
+      const afterIdle = readGeometry();
+
+      return [before, during, stillScrolling, afterIdle];
+    });
+
+  const geometryKeys = ["content", "editor", "gutters", "scroller"] as const;
+  const metricKeys = ["left", "width"] as const;
+  const baseline = samples[0];
+  const maxGeometryDelta = samples.slice(1).reduce((maxDelta, sample) => {
+    const sampleDelta = geometryKeys.reduce((boxMaxDelta, geometryKey) => {
+      const metricDelta = metricKeys.reduce((metricMaxDelta, metricKey) => {
+        const delta = Math.abs(
+          sample[geometryKey][metricKey] - baseline[geometryKey][metricKey],
+        );
+        return Math.max(metricMaxDelta, delta);
+      }, 0);
+      return Math.max(boxMaxDelta, metricDelta);
+    }, 0);
+    return Math.max(maxDelta, sampleDelta);
+  }, 0);
+
+  expect(samples.some((sample) => sample.scrollActive)).toBe(true);
+  expect(samples[samples.length - 1].scrollTop).toBeGreaterThan(
+    baseline.scrollTop,
+  );
+  expect(maxGeometryDelta).toBeLessThanOrEqual(1);
 });
 
 test("CodeMirror keeps rendered lines across rapid scroll jumps", async ({
