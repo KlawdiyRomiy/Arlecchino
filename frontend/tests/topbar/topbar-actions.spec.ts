@@ -4,6 +4,10 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.clear();
     const nativeWindowControlsVisibleCalls: boolean[] = [];
+    const runtimeEventHandlers = new Map<
+      string,
+      Set<(payload: unknown) => void>
+    >();
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: {
@@ -27,6 +31,8 @@ test.beforeEach(async ({ page }) => {
                 return [];
               case "GetDevToolsStatus":
                 return [];
+              case "IsNativeFullscreen":
+                return false;
               case "OpenProject":
               case "CreateTerminal":
               case "WriteTerminal":
@@ -52,10 +58,28 @@ test.beforeEach(async ({ page }) => {
       {
         get: (_target, property: string) => {
           if (property === "EventsOn" || property === "EventsOnMultiple") {
-            return () => () => undefined;
+            return (
+              eventName: string,
+              callback: (payload: unknown) => void,
+            ) => {
+              const handlers = runtimeEventHandlers.get(eventName) ?? new Set();
+              handlers.add(callback);
+              runtimeEventHandlers.set(eventName, handlers);
+              return () => handlers.delete(callback);
+            };
           }
           if (property === "EventsOff") {
-            return () => undefined;
+            return (eventName: string, ...additionalEventNames: string[]) => {
+              [eventName, ...additionalEventNames].forEach((name) =>
+                runtimeEventHandlers.delete(name),
+              );
+            };
+          }
+          if (property === "EventsEmit") {
+            return (eventName: string, payload?: unknown) => {
+              const handlers = runtimeEventHandlers.get(eventName) ?? new Set();
+              handlers.forEach((handler) => handler(payload));
+            };
           }
           return async () => undefined;
         },
@@ -63,6 +87,7 @@ test.beforeEach(async ({ page }) => {
     );
 
     Object.assign(window, {
+      _wails: { environment: { OS: "darwin" } },
       go: { main: { App: appBridge } },
       runtime: runtimeBridge,
       __nativeWindowControlsVisibleCalls: nativeWindowControlsVisibleCalls,
@@ -257,6 +282,138 @@ test("Cmd+Shift+. toggles zen chrome and edge hover reveals it", async ({
   await expect(layout).toHaveAttribute("data-zen-statusbar-visible", "true");
   await page.mouse.move(520, 320);
   await expect(layout).toHaveAttribute("data-zen-statusbar-visible", "false");
+});
+
+test("native fullscreen hides macOS window controls backdrop", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await expect(
+    page.getByTestId("window-controls-native-backdrop"),
+  ).toBeVisible();
+
+  await page.evaluate(() => {
+    (
+      window as unknown as {
+        runtime: {
+          EventsEmit: (eventName: string, payload?: unknown) => void;
+        };
+      }
+    ).runtime.EventsEmit("shell:native-fullscreen-changed", {
+      fullscreen: true,
+    });
+  });
+
+  await expect(page.getByTestId("window-controls-native-backdrop")).toHaveCount(
+    0,
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            __nativeWindowControlsVisibleCalls: boolean[];
+          }
+        ).__nativeWindowControlsVisibleCalls.at(-1),
+      ),
+    )
+    .toBe(false);
+
+  await page.evaluate(() => {
+    (
+      window as unknown as {
+        runtime: {
+          EventsEmit: (eventName: string, payload?: unknown) => void;
+        };
+      }
+    ).runtime.EventsEmit("shell:native-fullscreen-changed", {
+      fullscreen: false,
+    });
+  });
+
+  await expect(
+    page.getByTestId("window-controls-native-backdrop"),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            __nativeWindowControlsVisibleCalls: boolean[];
+          }
+        ).__nativeWindowControlsVisibleCalls.at(-1),
+      ),
+    )
+    .toBe(true);
+});
+
+test("native fullscreen exit does not restore backdrop while Zen topbar is hidden", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(() => {
+    const runtime = (
+      window as unknown as {
+        runtime: {
+          EventsEmit: (eventName: string, payload?: unknown) => void;
+        };
+      }
+    ).runtime;
+
+    runtime.EventsEmit("shell:native-fullscreen-changed", {
+      fullscreen: true,
+    });
+  });
+
+  await expect(page.getByTestId("window-controls-native-backdrop")).toHaveCount(
+    0,
+  );
+
+  await page.evaluate(() => {
+    const eventInit = {
+      key: ".",
+      code: "Period",
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    window.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+    window.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+  });
+
+  const layout = page.getByTestId("main-layout");
+  await expect(layout).toHaveAttribute("data-zen-mode", "true");
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+
+  await page.evaluate(() => {
+    (
+      window as unknown as {
+        runtime: {
+          EventsEmit: (eventName: string, payload?: unknown) => void;
+        };
+      }
+    ).runtime.EventsEmit("shell:native-fullscreen-changed", {
+      fullscreen: false,
+    });
+  });
+
+  await expect(page.getByTestId("window-controls-native-backdrop")).toHaveCount(
+    0,
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            __nativeWindowControlsVisibleCalls: boolean[];
+          }
+        ).__nativeWindowControlsVisibleCalls.at(-1),
+      ),
+    )
+    .toBe(false);
 });
 
 test("topbar more menu closes on Escape and omits removed actions", async ({

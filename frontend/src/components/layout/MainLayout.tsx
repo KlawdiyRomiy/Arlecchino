@@ -95,6 +95,7 @@ import {
 } from "../../utils/terminalLayout";
 import {
   GetLanguageForFile,
+  IsNativeFullscreen,
   SetNativeWindowControlsVisible,
   WriteTerminal,
 } from "../../wails/app";
@@ -176,10 +177,15 @@ const PANEL_POSITIONS: readonly PanelPosition[] = [
 const ZEN_EDGE_HOVER_CLOSE_DELAY_MS = 140;
 const ZEN_CHROME_HOVER_CLOSE_DELAY_MS = 140;
 const ZEN_EDGE_HOVER_SIZE = 32;
+const NATIVE_FULLSCREEN_CHANGED_EVENT = "shell:native-fullscreen-changed";
 type FullscreenPanelId = "terminal" | "git" | "problems" | "markdownPreview";
 let nativeWindowControlsOwner: symbol | null = null;
 let nativeWindowControlsRestoreTimer: ReturnType<typeof setTimeout> | null =
   null;
+
+interface NativeFullscreenChangedEvent {
+  fullscreen?: boolean;
+}
 
 type ZenPanelHoverSource = "edge" | "slot";
 type ZenPanelHoverSources = Record<
@@ -876,6 +882,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [bottomChromeHeight, setBottomChromeHeight] = useState(0);
   const [zenTopChromeHovered, setZenTopChromeHovered] = useState(false);
   const [zenBottomChromeHovered, setZenBottomChromeHovered] = useState(false);
+  const [nativeWindowFullscreen, setNativeWindowFullscreen] = useState(false);
   const zenTopChromeHoverTimerRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
@@ -4023,6 +4030,32 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const zenTopChromeVisible = !zenModeEnabled || zenTopChromeHovered;
   const zenBottomChromeVisible = !zenModeEnabled || zenBottomChromeHovered;
+  const nativeWindowControlsVisible =
+    zenTopChromeVisible && !nativeWindowFullscreen;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void IsNativeFullscreen()
+      .then((fullscreen) => {
+        if (!cancelled) {
+          setNativeWindowFullscreen(Boolean(fullscreen));
+        }
+      })
+      .catch(() => undefined);
+
+    const unsubscribe = EventsOn(
+      NATIVE_FULLSCREEN_CHANGED_EVENT,
+      (payload: NativeFullscreenChangedEvent) => {
+        setNativeWindowFullscreen(Boolean(payload?.fullscreen));
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     const owner = nativeWindowControlsOwnerRef.current;
@@ -4032,7 +4065,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       nativeWindowControlsRestoreTimer = null;
     }
 
-    const nativeWindowControlsVisible = !zenModeEnabled || zenTopChromeVisible;
     if (
       nativeWindowControlsVisibleRef.current === nativeWindowControlsVisible
     ) {
@@ -4043,7 +4075,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     void SetNativeWindowControlsVisible(nativeWindowControlsVisible).catch(
       () => undefined,
     );
-  }, [zenModeEnabled, zenTopChromeVisible]);
+  }, [nativeWindowControlsVisible]);
 
   useEffect(() => {
     const owner = nativeWindowControlsOwnerRef.current;
@@ -4443,7 +4475,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               previewEnabled={previewButtonState.enabled}
               previewActive={previewButtonState.active}
               previewTitle={previewButtonState.buttonTitle}
-              windowControlsVisible={zenTopChromeVisible}
+              windowControlsVisible={nativeWindowControlsVisible}
             />
           </div>
 

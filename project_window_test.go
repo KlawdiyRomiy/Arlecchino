@@ -27,6 +27,10 @@ func (f *fakeProjectWindow) OnWindowEvent(events.WindowEventType, func(event *ap
 	return func() {}
 }
 
+func (f *fakeProjectWindow) EmitEvent(string, ...any) bool {
+	return false
+}
+
 func TestBuildProjectSessionURLUsesSessionParam(t *testing.T) {
 	rawURL := buildProjectSessionURL("project-session-7")
 	parsed, err := url.Parse(rawURL)

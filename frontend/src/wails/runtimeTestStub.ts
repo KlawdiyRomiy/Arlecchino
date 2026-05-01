@@ -31,6 +31,7 @@ const callIDToMethod = new Map<number, string>([
   [1376901355, "GetLSPInstallStatus"],
   [2741556134, "GetRecentProjects"],
   [1383723841, "GetShellCapabilities"],
+  [852222967, "IsNativeFullscreen"],
   [1991393444, "InspectEditorFile"],
   [2376510860, "InspectProject"],
   [2417092806, "InspectProjectAccess"],

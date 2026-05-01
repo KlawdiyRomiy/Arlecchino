@@ -31,6 +31,7 @@ type projectWindowHandle interface {
 	Show() application.Window
 	Focus()
 	OnWindowEvent(events.WindowEventType, func(event *application.WindowEvent)) func()
+	EmitEvent(name string, data ...any) bool
 }
 
 var newProjectWebviewWindow = func(app *App, options application.WebviewWindowOptions) (projectWindowHandle, error) {
@@ -98,6 +99,7 @@ func (a *App) OpenProjectWindow(path string) (ProjectWindowLaunchResult, error) 
 	window.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
 		a.closeProjectWindowSession(sessionID)
 	})
+	registerNativeFullscreenEvents(window)
 	window.Show()
 	window.Focus()
 
