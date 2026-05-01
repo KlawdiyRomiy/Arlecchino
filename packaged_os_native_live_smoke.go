@@ -29,23 +29,27 @@ type Wails3NativeDeliveryLiveSmokeReport struct {
 }
 
 type PackagedOSNativeDeliveryLiveStatus struct {
-	Enabled                      bool     `json:"enabled"`
-	DeliveryAttempted            bool     `json:"deliveryAttempted"`
-	TrayEnabled                  bool     `json:"trayEnabled"`
-	TrayReady                    bool     `json:"trayReady"`
-	TrayActionIDs                []string `json:"trayActionIds,omitempty"`
-	NotificationsEnabled         bool     `json:"notificationsEnabled"`
-	NotificationStartupAttempted bool     `json:"notificationStartupAttempted"`
-	NotificationReady            bool     `json:"notificationReady"`
-	NotificationCandidateCount   int      `json:"notificationCandidateCount"`
-	SentNotificationCount        int      `json:"sentNotificationCount"`
-	NotificationDedupeSuppressed bool     `json:"notificationDedupeSuppressed"`
-	DockBadgeEnabled             bool     `json:"dockBadgeEnabled"`
-	DockStartupAttempted         bool     `json:"dockStartupAttempted"`
-	DockReady                    bool     `json:"dockReady"`
-	DockBadgeLabel               string   `json:"dockBadgeLabel"`
-	FailureStates                []string `json:"failureStates,omitempty"`
-	LastError                    string   `json:"lastError,omitempty"`
+	Enabled                         bool     `json:"enabled"`
+	DeliveryAttempted               bool     `json:"deliveryAttempted"`
+	TrayEnabled                     bool     `json:"trayEnabled"`
+	TrayReady                       bool     `json:"trayReady"`
+	TrayActionIDs                   []string `json:"trayActionIds,omitempty"`
+	NotificationsEnabled            bool     `json:"notificationsEnabled"`
+	NotificationStartupAttempted    bool     `json:"notificationStartupAttempted"`
+	NotificationReady               bool     `json:"notificationReady"`
+	NotificationPermissionRequested bool     `json:"notificationPermissionRequested"`
+	NotificationPermissionStatus    string   `json:"notificationPermissionStatus,omitempty"`
+	NotificationCandidateCount      int      `json:"notificationCandidateCount"`
+	NotificationDeliveryAttempted   bool     `json:"notificationDeliveryAttempted"`
+	NotificationDeliveryResult      string   `json:"notificationDeliveryResult,omitempty"`
+	SentNotificationCount           int      `json:"sentNotificationCount"`
+	NotificationDedupeSuppressed    bool     `json:"notificationDedupeSuppressed"`
+	DockBadgeEnabled                bool     `json:"dockBadgeEnabled"`
+	DockStartupAttempted            bool     `json:"dockStartupAttempted"`
+	DockReady                       bool     `json:"dockReady"`
+	DockBadgeLabel                  string   `json:"dockBadgeLabel"`
+	FailureStates                   []string `json:"failureStates,omitempty"`
+	LastError                       string   `json:"lastError,omitempty"`
 }
 
 type PackagedOSNativeDeliveryActionProbe struct {
@@ -179,6 +183,10 @@ func packagedOSNativeDeliveryLiveStatus(
 	status.TrayReady = delivery.trayReady
 	status.NotificationStartupAttempted = delivery.notificationStartupAttempted
 	status.NotificationReady = delivery.notificationReady
+	status.NotificationPermissionRequested = delivery.notificationPermissionRequested
+	status.NotificationPermissionStatus = delivery.notificationPermissionStatus
+	status.NotificationDeliveryAttempted = delivery.notificationDeliveryAttempted
+	status.NotificationDeliveryResult = delivery.notificationDeliveryResult
 	status.SentNotificationCount = delivery.sentNotificationCount
 	status.DockStartupAttempted = delivery.dockStartupAttempted
 	status.DockReady = delivery.dockReady

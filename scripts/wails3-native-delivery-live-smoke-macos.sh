@@ -76,7 +76,7 @@ while [[ $# -gt 0 ]]; do
 Usage: scripts/wails3-native-delivery-live-smoke-macos.sh [options]
 
 Options:
-  --include-notifications   Also request native notification delivery. This may show a macOS permission prompt.
+  --include-notifications   Manual notification permission smoke. This may show a macOS permission prompt.
   --output <path>           Intermediate Wails v3 binary path.
   --app-bundle <path>       Temporary .app path.
   --report <path>           JSON report path.
@@ -154,6 +154,11 @@ check(report.nativeDelivery.dockReady === true, "dock badge service must be read
 check(report.nativeDelivery.dockBadgeLabel === "1", "dock badge must mirror attention count");
 if (includeNotifications) {
   check(report.nativeDelivery.notificationStartupAttempted === true, "notification startup must be attempted");
+  check(
+    typeof report.nativeDelivery.notificationPermissionStatus === "string" ||
+      Array.isArray(report.nativeDelivery.failureStates),
+    "notification permission status or failure state must be reported"
+  );
   check(
     report.nativeDelivery.notificationReady === true ||
       (Array.isArray(report.nativeDelivery.failureStates) && report.nativeDelivery.failureStates.length > 0),

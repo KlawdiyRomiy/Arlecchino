@@ -137,6 +137,8 @@ func TestPackagedOSNativeDeliveryDecorate_ReportsActualNativeState(t *testing.T)
 
 func TestPackagedOSNativeFailureStates_AreClassified(t *testing.T) {
 	delivery := NewPackagedOSNativeDelivery(PackagedOSIntegrationOptions{})
+	delivery.recordNotificationPermission("denied", true)
+	delivery.recordNotificationDeliveryAttempt("failed")
 	delivery.setLastError("native notification authorization was not granted")
 	delivery.setLastError("dock badge update failed: denied")
 	delivery.recordFailureState("action-rejected")
@@ -153,6 +155,12 @@ func TestPackagedOSNativeFailureStates_AreClassified(t *testing.T) {
 
 	if !status.Enabled || !status.NotificationsEnabled {
 		t.Fatalf("status = %#v, want enabled notification status", status)
+	}
+	if !status.NotificationPermissionRequested || status.NotificationPermissionStatus != "denied" {
+		t.Fatalf("notification permission = %v/%q, want requested denied", status.NotificationPermissionRequested, status.NotificationPermissionStatus)
+	}
+	if !status.NotificationDeliveryAttempted || status.NotificationDeliveryResult != "failed" {
+		t.Fatalf("notification delivery = %v/%q, want attempted failed", status.NotificationDeliveryAttempted, status.NotificationDeliveryResult)
 	}
 	if !stringSliceContains(status.FailureStates, "no-permission") {
 		t.Fatalf("FailureStates = %#v, want no-permission", status.FailureStates)

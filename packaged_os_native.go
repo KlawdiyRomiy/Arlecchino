@@ -38,11 +38,15 @@ type PackagedOSNativeDelivery struct {
 	tray      *application.SystemTray
 	trayReady bool
 
-	notificationService          *notifications.NotificationService
-	notificationStartupAttempted bool
-	notificationReady            bool
-	sentNotificationKeys         map[string]struct{}
-	sentNotificationCount        int
+	notificationService             *notifications.NotificationService
+	notificationStartupAttempted    bool
+	notificationReady               bool
+	notificationPermissionRequested bool
+	notificationPermissionStatus    string
+	notificationDeliveryAttempted   bool
+	notificationDeliveryResult      string
+	sentNotificationKeys            map[string]struct{}
+	sentNotificationCount           int
 
 	dockService          *dock.DockService
 	dockStartupAttempted bool
@@ -308,6 +312,7 @@ func (d *PackagedOSNativeDelivery) sendNotificationCandidates(
 	}
 
 	for _, candidate := range candidates {
+		d.recordNotificationDeliveryAttempt("attempted")
 		key := packagedOSNativeNotificationKey(candidate)
 		if key == "" {
 			continue
@@ -327,6 +332,7 @@ func (d *PackagedOSNativeDelivery) sendNotificationCandidates(
 		}
 
 		if err := service.SendNotification(options); err != nil {
+			d.recordNotificationDeliveryAttempt("failed")
 			d.setLastError(fmt.Sprintf("native notification failed: %v", err))
 			continue
 		}
@@ -334,6 +340,7 @@ func (d *PackagedOSNativeDelivery) sendNotificationCandidates(
 		d.mu.Lock()
 		d.sentNotificationKeys[key] = struct{}{}
 		d.sentNotificationCount++
+		d.notificationDeliveryResult = "delivered"
 		d.mu.Unlock()
 	}
 }
@@ -372,22 +379,57 @@ func (d *PackagedOSNativeDelivery) ensureNotificationService(
 	}
 
 	authorized, err := service.CheckNotificationAuthorization()
+	if err != nil {
+		d.recordNotificationPermission("check-failed", false)
+		d.setLastError(fmt.Sprintf("native notification authorization failed: %v", err))
+		return service, false
+	}
 	if err == nil && !authorized {
+		d.recordNotificationPermission("requested", true)
 		authorized, err = service.RequestNotificationAuthorization()
 	}
 	if err != nil {
+		d.recordNotificationPermission("request-failed", true)
 		d.setLastError(fmt.Sprintf("native notification authorization failed: %v", err))
 		return service, false
 	}
 	if !authorized {
+		d.recordNotificationPermission("denied", true)
 		d.setLastError("native notification authorization was not granted")
 		return service, false
 	}
 
 	d.mu.Lock()
 	d.notificationReady = true
+	if d.notificationPermissionStatus == "" || d.notificationPermissionStatus == "requested" {
+		d.notificationPermissionStatus = "granted"
+	}
 	d.mu.Unlock()
 	return service, true
+}
+
+func (d *PackagedOSNativeDelivery) recordNotificationPermission(status string, requested bool) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	if requested {
+		d.notificationPermissionRequested = true
+	}
+	d.notificationPermissionStatus = strings.TrimSpace(status)
+	d.mu.Unlock()
+}
+
+func (d *PackagedOSNativeDelivery) recordNotificationDeliveryAttempt(result string) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	d.notificationDeliveryAttempted = true
+	if strings.TrimSpace(result) != "" {
+		d.notificationDeliveryResult = strings.TrimSpace(result)
+	}
+	d.mu.Unlock()
 }
 
 func (d *PackagedOSNativeDelivery) handleNotificationResponse(
