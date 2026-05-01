@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,12 +50,14 @@ type PackagedOSNativeDelivery struct {
 	lastDockBadge        string
 
 	lastError string
+	failures  map[string]struct{}
 }
 
 func NewPackagedOSNativeDelivery(options PackagedOSIntegrationOptions) *PackagedOSNativeDelivery {
 	return &PackagedOSNativeDelivery{
 		options:              options,
 		sentNotificationKeys: make(map[string]struct{}),
+		failures:             make(map[string]struct{}),
 	}
 }
 
@@ -65,6 +68,15 @@ func (d *PackagedOSNativeDelivery) LastError() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.lastError
+}
+
+func (d *PackagedOSNativeDelivery) failureStatesLocked() []string {
+	states := make([]string, 0, len(d.failures))
+	for state := range d.failures {
+		states = append(states, state)
+	}
+	sort.Strings(states)
+	return states
 }
 
 func packagedOSNativeDeliveryReady(options PackagedOSIntegrationOptions) bool {
@@ -468,5 +480,46 @@ func (d *PackagedOSNativeDelivery) setLastError(message string) {
 	}
 	d.mu.Lock()
 	d.lastError = message
+	if state := classifyPackagedOSNativeFailureState(message); state != "" {
+		if d.failures == nil {
+			d.failures = make(map[string]struct{})
+		}
+		d.failures[state] = struct{}{}
+	}
 	d.mu.Unlock()
+}
+
+func (d *PackagedOSNativeDelivery) recordFailureState(state string) {
+	if d == nil {
+		return
+	}
+	state = strings.TrimSpace(state)
+	if state == "" {
+		return
+	}
+	d.mu.Lock()
+	if d.failures == nil {
+		d.failures = make(map[string]struct{})
+	}
+	d.failures[state] = struct{}{}
+	d.mu.Unlock()
+}
+
+func classifyPackagedOSNativeFailureState(message string) string {
+	message = strings.ToLower(strings.TrimSpace(message))
+	switch {
+	case message == "":
+		return ""
+	case strings.Contains(message, "authorization") ||
+		strings.Contains(message, "permission") ||
+		strings.Contains(message, "not granted"):
+		return "no-permission"
+	case strings.Contains(message, "unavailable") ||
+		strings.Contains(message, "service"):
+		return "startup-failed"
+	case strings.Contains(message, "failed"):
+		return "delivery-failed"
+	default:
+		return ""
+	}
 }

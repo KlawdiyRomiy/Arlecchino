@@ -17,5 +17,6 @@ fi
 
 "$ROOT_DIR/scripts/wails3-packaged-app-smoke-macos.sh" --sign "${ARLE_WAILS3_RELEASE_SMOKE_SIGN_MODE:-adhoc}" -- Arlecchino-v3 >/dev/null
 "$ROOT_DIR/scripts/wails3-real-os-smoke-macos.sh" >/dev/null
+"$ROOT_DIR/scripts/wails3-native-delivery-live-smoke-macos.sh" --sign "${ARLE_WAILS3_RELEASE_SMOKE_SIGN_MODE:-adhoc}" >/dev/null
 
 echo "Wails v3 release smoke passed."

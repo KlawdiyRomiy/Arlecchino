@@ -134,3 +134,42 @@ func TestPackagedOSNativeDeliveryDecorate_ReportsActualNativeState(t *testing.T)
 		t.Fatal("NativeNotificationsSent = false, want true")
 	}
 }
+
+func TestPackagedOSNativeFailureStates_AreClassified(t *testing.T) {
+	delivery := NewPackagedOSNativeDelivery(PackagedOSIntegrationOptions{})
+	delivery.setLastError("native notification authorization was not granted")
+	delivery.setLastError("dock badge update failed: denied")
+	delivery.recordFailureState("action-rejected")
+
+	status := packagedOSNativeDeliveryLiveStatus(
+		delivery,
+		PackagedOSIntegrationOptions{
+			PackagedBuild:              true,
+			SpikeEnabled:               true,
+			NativeNotificationsEnabled: true,
+		},
+		emptyBackgroundShellStatusSnapshot(),
+	)
+
+	if !status.Enabled || !status.NotificationsEnabled {
+		t.Fatalf("status = %#v, want enabled notification status", status)
+	}
+	if !stringSliceContains(status.FailureStates, "no-permission") {
+		t.Fatalf("FailureStates = %#v, want no-permission", status.FailureStates)
+	}
+	if !stringSliceContains(status.FailureStates, "delivery-failed") {
+		t.Fatalf("FailureStates = %#v, want delivery-failed", status.FailureStates)
+	}
+	if !stringSliceContains(status.FailureStates, "action-rejected") {
+		t.Fatalf("FailureStates = %#v, want action-rejected", status.FailureStates)
+	}
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
