@@ -25,7 +25,7 @@
   <key>CFBundleVersion</key>
   <string>__APP_BUILD__</string>
   <key>LSMinimumSystemVersion</key>
-  <string>11.0</string>
+  <string>__MIN_MACOS_VERSION__</string>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSHumanReadableCopyright</key>

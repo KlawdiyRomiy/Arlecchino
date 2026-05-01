@@ -27,6 +27,7 @@ VERSION="${ARLE_WAILS3_APP_VERSION:-0.0.0-alpha}"
 BUILD_NUMBER="${ARLE_WAILS3_APP_BUILD:-1}"
 BUNDLE_ID="${ARLE_WAILS3_BUNDLE_ID:-io.arlecchino.ide.v3}"
 DISPLAY_NAME="${ARLE_WAILS3_APP_DISPLAY_NAME:-Arlecchino}"
+MIN_MACOS_VERSION="${ARLE_WAILS3_MIN_MACOS:-11.0}"
 SIGN_MODE="${ARLE_WAILS3_SIGN_MODE:-none}"
 OUTPUT="${ARLE_WAILS3_OUTPUT:-$BUILD_DIR/bin/$APP_NAME-v3}"
 APP_BUNDLE="${ARLE_WAILS3_APP_BUNDLE:-$BUILD_DIR/bin/$APP_NAME-v3.app}"
@@ -43,6 +44,7 @@ Options:
   --bundle-id <id>      CFBundleIdentifier.
   --version <version>   CFBundleShortVersionString.
   --build <number>      CFBundleVersion.
+  --min-macos <version> LSMinimumSystemVersion.
   --skip-build          Reuse an existing --output binary.
   --skip-frontend       Pass --skip-frontend to the v3 build script.
   --sign <mode>         none, adhoc, or developer-id.
@@ -76,6 +78,11 @@ while [[ $# -gt 0 ]]; do
     --build)
       shift
       BUILD_NUMBER="${1:-}"
+      shift
+      ;;
+    --min-macos)
+      shift
+      MIN_MACOS_VERSION="${1:-}"
       shift
       ;;
     --skip-build)
@@ -140,6 +147,7 @@ export ARLE_TEMPLATE_BUNDLE_ID="$BUNDLE_ID"
 export ARLE_TEMPLATE_APP_NAME="$APP_NAME"
 export ARLE_TEMPLATE_APP_VERSION="$VERSION"
 export ARLE_TEMPLATE_APP_BUILD="$BUILD_NUMBER"
+export ARLE_TEMPLATE_MIN_MACOS_VERSION="$MIN_MACOS_VERSION"
 export ARLE_TEMPLATE_COPYRIGHT_YEAR="$(date +%Y)"
 perl -0pi -e '
 s/__APP_DISPLAY_NAME__/$ENV{ARLE_TEMPLATE_APP_DISPLAY_NAME}/g;
@@ -148,6 +156,7 @@ s/__BUNDLE_ID__/$ENV{ARLE_TEMPLATE_BUNDLE_ID}/g;
 s/__APP_NAME__/$ENV{ARLE_TEMPLATE_APP_NAME}/g;
 s/__APP_VERSION__/$ENV{ARLE_TEMPLATE_APP_VERSION}/g;
 s/__APP_BUILD__/$ENV{ARLE_TEMPLATE_APP_BUILD}/g;
+s/__MIN_MACOS_VERSION__/$ENV{ARLE_TEMPLATE_MIN_MACOS_VERSION}/g;
 s/__COPYRIGHT_YEAR__/$ENV{ARLE_TEMPLATE_COPYRIGHT_YEAR}/g;
 ' "$APP_BUNDLE/Contents/Info.plist"
 
