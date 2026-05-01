@@ -325,20 +325,6 @@ const normalizeGeneration = (generation: number | undefined): number => {
   return generation > 0 ? Math.trunc(generation) : 0;
 };
 
-const hasWailsRuntimeEvents = () => {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  const runtimeWindow = window as typeof window & {
-    runtime?: {
-      EventsOnMultiple?: unknown;
-    };
-  };
-
-  return typeof runtimeWindow.runtime?.EventsOnMultiple === "function";
-};
-
 let diagnosticsEventsBound = false;
 let diagnosticsEventsBindTimer: number | null = null;
 let diagnosticsEventsBoundWaiters: Array<() => void> = [];
@@ -563,11 +549,6 @@ export const ensureDiagnosticsEventsBound = (): Promise<void> => {
 
 const bindDiagnosticsEvents = () => {
   if (diagnosticsEventsBound || typeof window === "undefined") {
-    return;
-  }
-
-  if (!hasWailsRuntimeEvents()) {
-    scheduleDiagnosticsEventsBind();
     return;
   }
 

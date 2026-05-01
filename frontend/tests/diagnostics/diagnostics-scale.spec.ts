@@ -762,52 +762,74 @@ test("project scope activated before runtime events preserves diagnostics", asyn
   });
 });
 
+test("diagnostics bind through runtime wrapper without legacy window runtime", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "runtime", {
+      configurable: true,
+      get: () => undefined,
+      set: () => undefined,
+    });
+  });
+  await page.reload();
+
+  const state = await page.evaluate(async () => {
+    const moduleKey = Date.now();
+    const diagnostics = await import(
+      `/src/stores/diagnosticsStore.ts?runtime-free=${moduleKey}`
+    );
+    const runtime = await import("/src/wails/runtime.ts");
+
+    diagnostics.useDiagnosticsStore.getState().reset();
+    diagnostics.useDiagnosticsStore
+      .getState()
+      .setProjectScope("/projects/runtime-free", 0);
+
+    runtime.EventsEmit("lsp:diagnostics", {
+      projectPath: "/projects/runtime-free",
+      generation: 1,
+      filePath: "/projects/runtime-free/src/main.ts",
+      language: "typescript",
+      items: [
+        {
+          range: {
+            start: { line: 1, character: 2 },
+            end: { line: 1, character: 6 },
+          },
+          severity: 1,
+          message: "runtime wrapper diagnostic",
+        },
+      ],
+    });
+
+    const snapshot = diagnostics.useDiagnosticsStore.getState() as {
+      byFile: Map<string, { summary: { total: number } }>;
+      activeProjectPath?: string | null;
+      currentGeneration?: number;
+    };
+
+    return {
+      activeProjectPath: snapshot.activeProjectPath ?? null,
+      currentGeneration: snapshot.currentGeneration ?? 0,
+      files: Array.from(snapshot.byFile.keys()),
+      totals: Array.from(snapshot.byFile.values()).map(
+        (group) => group.summary.total,
+      ),
+    };
+  });
+
+  expect(state.activeProjectPath).toBe("/projects/runtime-free");
+  expect(state.currentGeneration).toBe(1);
+  expect(state.files).toEqual(["/projects/runtime-free/src/main.ts"]);
+  expect(state.totals).toEqual([1]);
+});
+
 test("preload waits for runtime listeners before backend diagnostics publish", async ({
   page,
 }) => {
   await page.addInitScript(() => {
     localStorage.clear();
-
-    const eventHandlers = new Map<string, Array<(payload: unknown) => void>>();
-    let eventsOnMultipleReady = false;
-
-    window.setTimeout(() => {
-      eventsOnMultipleReady = true;
-    }, 10);
-
-    const runtimeBridge = new Proxy(
-      {},
-      {
-        get: (_target, property: string) => {
-          if (property === "EventsOnMultiple") {
-            if (!eventsOnMultipleReady) {
-              return undefined;
-            }
-
-            return (
-              eventName: string,
-              callback: (payload: unknown) => void,
-            ) => {
-              const handlers = eventHandlers.get(eventName) ?? [];
-              handlers.push(callback);
-              eventHandlers.set(eventName, handlers);
-              return `${eventName}-${handlers.length}`;
-            };
-          }
-
-          if (property === "EventsOff") {
-            return () => undefined;
-          }
-
-          return () => undefined;
-        },
-      },
-    );
-
-    const emit = (eventName: string, payload: unknown) => {
-      const handlers = eventHandlers.get(eventName) ?? [];
-      handlers.forEach((handler) => handler(payload));
-    };
 
     const appBridge = new Proxy(
       {},
@@ -815,6 +837,18 @@ test("preload waits for runtime listeners before backend diagnostics publish", a
         get: (_target, property: string) => {
           if (property === "LSPPreloadProjectDiagnostics") {
             return async () => {
+              const emit = (
+                window as typeof window & {
+                  __emitRuntimeEvent?: (
+                    eventName: string,
+                    payload: unknown,
+                  ) => void;
+                }
+              ).__emitRuntimeEvent;
+              if (typeof emit !== "function") {
+                throw new Error("runtime event emitter unavailable");
+              }
+
               emit("lsp:ready", {
                 generation: 5,
                 projectPath: "/projects/race",
@@ -851,10 +885,17 @@ test("preload waits for runtime listeners before backend diagnostics publish", a
         },
       },
     );
+    const goBridge = { main: { App: appBridge } };
 
-    Object.assign(window, {
-      go: { main: { App: appBridge } },
-      runtime: runtimeBridge,
+    Object.defineProperty(window, "go", {
+      configurable: true,
+      get: () => goBridge,
+      set: () => undefined,
+    });
+    Object.defineProperty(window, "runtime", {
+      configurable: true,
+      get: () => undefined,
+      set: () => undefined,
     });
   });
 
@@ -863,6 +904,13 @@ test("preload waits for runtime listeners before backend diagnostics publish", a
   const result = await page.evaluate(async () => {
     const diagnostics = await import("/src/stores/diagnosticsStore.ts");
     const projectState = await import("/src/utils/projectBoundState.ts");
+    const runtime = await import("/src/wails/runtime.ts");
+
+    (
+      window as typeof window & {
+        __emitRuntimeEvent?: (eventName: string, payload: unknown) => void;
+      }
+    ).__emitRuntimeEvent = runtime.EventsEmit;
 
     projectState.resetProjectBoundStores();
     projectState.activateProjectScope("/projects/race");

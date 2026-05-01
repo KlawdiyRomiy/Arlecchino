@@ -170,20 +170,6 @@ const resolveMatchingProjectScope = (
   return null;
 };
 
-const hasWailsRuntimeEvents = () => {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  const runtimeWindow = window as typeof window & {
-    runtime?: {
-      EventsOnMultiple?: unknown;
-    };
-  };
-
-  return typeof runtimeWindow.runtime?.EventsOnMultiple === "function";
-};
-
 const scheduleDiagnosticsPreloadBind = () => {
   if (
     diagnosticsPreloadEventsBound ||
@@ -201,11 +187,6 @@ const scheduleDiagnosticsPreloadBind = () => {
 
 const bindDiagnosticsPreloadEvents = () => {
   if (diagnosticsPreloadEventsBound || typeof window === "undefined") {
-    return;
-  }
-
-  if (!hasWailsRuntimeEvents()) {
-    scheduleDiagnosticsPreloadBind();
     return;
   }
 
