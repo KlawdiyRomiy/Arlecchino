@@ -1,6 +1,11 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -249,7 +254,7 @@ func TestWails3PackagedSmokeReport_AutoUpdateManifestGateStates(t *testing.T) {
 	validPath := filepath.Join(t.TempDir(), "valid-update.json")
 	if err := os.WriteFile(
 		validPath,
-		[]byte(`{"channel":"alpha","version":"0.1.0","url":"https://example.invalid/update.zip"}`),
+		[]byte(`{"channel":"alpha","version":"0.1.0","artifacts":[{"platform":"darwin","arch":"arm64","url":"https://example.invalid/update.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","signature":"placeholder"}]}`),
 		0o600,
 	); err != nil {
 		t.Fatalf("write valid manifest: %v", err)
@@ -272,6 +277,60 @@ func TestWails3PackagedSmokeReport_AutoUpdateManifestGateStates(t *testing.T) {
 	}
 	if !smokeChecksPassed(validReport.Checks, "auto-update-manifest-gate") {
 		t.Fatalf("Checks = %#v, want passing auto-update-manifest-gate", validReport.Checks)
+	}
+}
+
+func TestWails3PackagedSmokeReport_AutoUpdateApplySmokeVerifiesArtifact(t *testing.T) {
+	root := t.TempDir()
+	artifactPath := filepath.Join(root, "Arlecchino-v3.zip")
+	artifactBytes := []byte("signed artifact")
+	if err := os.WriteFile(artifactPath, artifactBytes, 0o600); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	sum := sha256.Sum256(artifactBytes)
+	signature := ed25519.Sign(privateKey, artifactBytes)
+
+	manifestPath := filepath.Join(root, "update.json")
+	manifest := `{
+  "channel": "alpha",
+  "version": "0.1.0",
+  "releaseNotes": "Smoke update",
+  "mandatory": false,
+  "artifacts": [{
+    "platform": "darwin",
+    "arch": "arm64",
+    "url": "` + (&url.URL{Scheme: "file", Path: artifactPath}).String() + `",
+    "sha256": "` + hex.EncodeToString(sum[:]) + `",
+    "signature": "` + base64.StdEncoding.EncodeToString(signature) + `"
+  }]
+}`
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	t.Setenv(packagedOSAutoUpdateManifestEnv, manifestPath)
+	t.Setenv(packagedOSAutoUpdateApplyEnv, "1")
+	t.Setenv(packagedOSAutoUpdatePublicKeyEnv, base64.StdEncoding.EncodeToString(publicKey))
+
+	report := buildWails3PackagedSmokeReport(
+		nil,
+		[]string{"Arlecchino-v3"},
+		"/",
+		time.Unix(0, 0).UTC(),
+	)
+	if report.AutoUpdate.ManifestStatus != "staged-apply-ready" {
+		t.Fatalf("ManifestStatus = %q, want staged-apply-ready: %#v", report.AutoUpdate.ManifestStatus, report.AutoUpdate.Verification)
+	}
+	if !report.AutoUpdate.InstallEnabled {
+		t.Fatal("InstallEnabled = false, want true under explicit smoke flag")
+	}
+	if !report.AutoUpdate.Verification.ChecksumVerified || !report.AutoUpdate.Verification.SignatureVerified || !report.AutoUpdate.Verification.Staged {
+		t.Fatalf("Verification = %#v, want checksum/signature/staged", report.AutoUpdate.Verification)
 	}
 }
 

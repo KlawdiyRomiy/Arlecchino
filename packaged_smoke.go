@@ -92,12 +92,13 @@ type Wails3SmokeNativeDockBadgeProbe struct {
 }
 
 type Wails3SmokeAutoUpdateProbe struct {
-	ManifestPath   string                        `json:"manifestPath,omitempty"`
-	ManifestStatus string                        `json:"manifestStatus"`
-	InstallEnabled bool                          `json:"installEnabled"`
-	Manifest       *PackagedOSAutoUpdateManifest `json:"manifest,omitempty"`
-	Status         ShellCapabilityStatus         `json:"status"`
-	Reason         string                        `json:"reason"`
+	ManifestPath   string                           `json:"manifestPath,omitempty"`
+	ManifestStatus string                           `json:"manifestStatus"`
+	InstallEnabled bool                             `json:"installEnabled"`
+	Manifest       *PackagedOSAutoUpdateManifest    `json:"manifest,omitempty"`
+	Verification   PackagedOSAutoUpdateVerification `json:"verification"`
+	Status         ShellCapabilityStatus            `json:"status"`
+	Reason         string                           `json:"reason"`
 }
 
 type Wails3SmokeAppBundleSnapshot struct {
@@ -476,13 +477,18 @@ func buildWails3SmokeAutoUpdateProbe(
 	if packagedOS.AutoUpdateManifest != nil {
 		manifestStatus = "valid-manifest-read"
 	}
+	verification := verifyAutoUpdateForSmoke(packagedOS.AutoUpdateManifest)
+	if verification.Status != "no-manifest" {
+		manifestStatus = verification.Status
+	}
 	return Wails3SmokeAutoUpdateProbe{
 		ManifestPath:   manifestPath,
 		ManifestStatus: manifestStatus,
-		InstallEnabled: false,
+		InstallEnabled: verification.InstallEnabled,
 		Manifest:       packagedOS.AutoUpdateManifest,
+		Verification:   verification,
 		Status:         adapter.Status,
-		Reason:         adapter.Reason,
+		Reason:         verification.Reason,
 	}
 }
 
@@ -587,9 +593,10 @@ func buildWails3PackagedSmokeChecks(
 			Message: nativeDelivery.Reason,
 		},
 		{
-			ID:      "auto-update-manifest-gate",
-			Status:  autoUpdate.Status,
-			Passed:  autoUpdate.ManifestStatus == "valid-manifest-read" && !autoUpdate.InstallEnabled,
+			ID:     "auto-update-manifest-gate",
+			Status: autoUpdate.Status,
+			Passed: autoUpdate.ManifestStatus == "valid-manifest-read" ||
+				autoUpdate.ManifestStatus == "staged-apply-ready",
 			Message: autoUpdate.Reason,
 		},
 		{

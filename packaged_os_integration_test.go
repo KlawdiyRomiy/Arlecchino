@@ -93,7 +93,7 @@ func TestReadAutoUpdateManifest_ReadsButDoesNotEnableUpdates(t *testing.T) {
 	manifestPath := filepath.Join(t.TempDir(), "update.json")
 	if err := os.WriteFile(
 		manifestPath,
-		[]byte(`{"channel":"alpha","version":"0.1.0","url":"https://example.invalid/arlecchino.zip"}`),
+		[]byte(`{"channel":"alpha","version":"0.1.0","artifacts":[{"platform":"darwin","arch":"arm64","url":"https://example.invalid/arlecchino.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","signature":"placeholder"}]}`),
 		0o600,
 	); err != nil {
 		t.Fatalf("write manifest: %v", err)

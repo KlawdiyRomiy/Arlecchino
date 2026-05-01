@@ -270,11 +270,13 @@ Baseline hardening для этой ветки теперь имеет отдел
 - Packaged matrix теперь покрывает `.app` smoke cases для second-instance/open-file
   probe, `file://`, `arlecchino://open?file=...`, `arlecchino://open?preview=...`,
   `arlecchino://focus?...`, native tray/notification/dock badge projection из
-  Background Shell и valid/invalid auto-update manifest read. Native delivery остается
-  default-off и включается только explicit env flags.
-- Auto-update gate реализован только как manifest read/validate/report:
-  `no-manifest`, `invalid-manifest`, `valid-manifest-read`; установка обновлений
-  намеренно disabled.
+  Background Shell, valid/invalid auto-update manifest read и signed apply-smoke
+  staging. Native delivery остается default-off и включается только explicit env flags.
+- Auto-update gate расширен до verifier v1: manifest schema проверяет
+  `channel`, `version`, platform artifacts, SHA256 и detached signature; explicit
+  `ARLECCHINO_ENABLE_AUTO_UPDATE_APPLY_SMOKE=1` скачивает artifact во временный stage,
+  сверяет checksum/signature через `ARLECCHINO_AUTO_UPDATE_PUBLIC_KEY` и возвращает
+  `staged-apply-ready`. Production install/apply намеренно остается disabled/default-off.
 - Добавлен production-shaped `.app` packaging path:
   `./scripts/wails3-package-macos.sh` создает настоящий `.app` layout из tracked
   `build/darwin/Info.wails3.plist`, кладет Wails binary напрямую в `Contents/MacOS`
@@ -308,7 +310,7 @@ Baseline hardening для этой ветки теперь имеет отдел
   `internal/project.ResolveDBPath` оставляет `data/projects.db` для dev, но в packaged
   mode использует `ARLECCHINO_DATA_DIR` или user config dir.
 - Real notification permission/delivery, real tray click, dock badge live smoke,
-  auto-update download/apply и Window Lease helper expansion остаются next gates.
+  production auto-update install/apply и Window Lease helper expansion остаются next gates.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -334,7 +336,7 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Single instance/open-file | Green | Backend parser, frontend-ready queue and `ide:intent:open` dispatch are implemented behind `ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1`; real OS smoke now proves second-instance handoff into the first launched packaged app. | Keep gated/default-off until release packaging policy says this can be enabled by default. |
 | Protocol/file associations | Green | `arlecchino://` and file association payloads normalize through strict open-intent allowlist; real OS smoke now proves Wails handler entry and emitted dispatch through LaunchServices/AppleEvent routes. | Keep production default-handler claims scoped to signed/notarized release packaging. |
 | Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates tray action projection, notification candidate projection, badge label and tracked failure states. | Signed/bundled notification permission smoke and real tray click smoke before default-on native delivery. |
-| Auto-update manifest | Yellow | `.app` smoke reads and reports `no-manifest`, `invalid-manifest`, `valid-manifest-read`; install remains disabled. | Decide update channel/signature policy and implement installer only after release packaging is stable. |
+| Auto-update verifier | Yellow | `.app` smoke reads/validates manifest schema, checks channel/platform artifact selection and can explicitly stage a signed artifact with checksum + Ed25519 signature verification. Production install/apply remains disabled. | Decide release channel hosting, artifact signing keys and installer/apply policy after release packaging is stable. |
 | Packaging/release OS integration | Yellow | Production-shaped `.app` packaging and ad-hoc signing now exist; packaged smoke launches the real `CFBundleExecutable`, not a wrapper, and real OS handoff passes in the ad-hoc smoke bundle. | Developer ID/notarization remains inactive until credentials exist; production DMG/release layout still needs release smoke. |
 | Real OS handoff | Green | `wails3-real-os-smoke-macos.sh` launches a registered ad-hoc `.app`, traces Wails application-event handler entry, proves `ide:intent:open` emitted dispatch for protocol/file payloads and proves gated second-instance handoff. | Keep the evidence as smoke-gated; browser/Finder UX still depends on production registration/signing decisions. |
 
@@ -1510,7 +1512,9 @@ risky action, user can return layout.
     without enabling native tray or native notification delivery.
 18. Done: prepare real tray, native notification and dock/taskbar badge adapters as
     default-off consumers of Background Shell state; native delivery remains off.
-19. Done: add auto-update manifest-read placeholder; material/backdrop remains later.
+19. Done: add auto-update verifier gate. Manifest read now validates channel/version/
+    platform artifacts/SHA256/signature, and explicit smoke can download to temp,
+    verify checksum/signature and stage without enabling production install/apply.
 20. Done: add packaged smoke harness. `wails3-packaged-smoke` and
     `./scripts/wails3-packaged-smoke-macos.sh` produce one report for shell
     capabilities, packaged OS adapters, Background Shell actions, single-instance gate,

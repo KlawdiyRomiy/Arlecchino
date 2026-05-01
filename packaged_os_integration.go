@@ -17,6 +17,9 @@ const (
 	packagedOSNativeNotificationsEnv = "ARLECCHINO_ENABLE_NATIVE_NOTIFICATIONS"
 	packagedOSDockBadgesEnv          = "ARLECCHINO_ENABLE_DOCK_BADGES"
 	packagedOSAutoUpdateManifestEnv  = "ARLECCHINO_AUTO_UPDATE_MANIFEST"
+	packagedOSAutoUpdateChannelEnv   = "ARLECCHINO_AUTO_UPDATE_CHANNEL"
+	packagedOSAutoUpdatePublicKeyEnv = "ARLECCHINO_AUTO_UPDATE_PUBLIC_KEY"
+	packagedOSAutoUpdateApplyEnv     = "ARLECCHINO_ENABLE_AUTO_UPDATE_APPLY_SMOKE"
 )
 
 type PackagedOSAdapter struct {
@@ -33,11 +36,26 @@ type PackagedOSAdapter struct {
 }
 
 type PackagedOSAutoUpdateManifest struct {
-	Channel   string `json:"channel,omitempty"`
-	Version   string `json:"version,omitempty"`
+	Channel      string                         `json:"channel,omitempty"`
+	Version      string                         `json:"version,omitempty"`
+	Artifacts    []PackagedOSAutoUpdateArtifact `json:"artifacts,omitempty"`
+	ReleaseNotes string                         `json:"releaseNotes,omitempty"`
+	Mandatory    bool                           `json:"mandatory,omitempty"`
+	URL          string                         `json:"url,omitempty"`
+	SHA256       string                         `json:"sha256,omitempty"`
+	Signature    string                         `json:"signature,omitempty"`
+	Notes        string                         `json:"notes,omitempty"`
+	Metadata     map[string]json.RawMessage     `json:"metadata,omitempty"`
+}
+
+type PackagedOSAutoUpdateArtifact struct {
+	Platform  string `json:"platform,omitempty"`
+	Arch      string `json:"arch,omitempty"`
 	URL       string `json:"url,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
 	Signature string `json:"signature,omitempty"`
-	Notes     string `json:"notes,omitempty"`
+	Size      int64  `json:"size,omitempty"`
+	Kind      string `json:"kind,omitempty"`
 }
 
 type PackagedOSIntegrationSnapshot struct {
@@ -137,7 +155,7 @@ func buildPackagedOSIntegrationSnapshot(
 	autoUpdateReason := "Auto-update remains disabled; manifest reading is available only as a placeholder."
 	if options.AutoUpdateManifest != nil {
 		autoUpdateStatus = ShellCapabilityExperimental
-		autoUpdateReason = "Auto-update manifest was read, but update installation remains disabled."
+		autoUpdateReason = "Auto-update manifest was read and can be verified; update install/apply remains gated."
 	} else if strings.TrimSpace(options.AutoUpdateManifestReason) != "" {
 		autoUpdateReason = options.AutoUpdateManifestReason
 	}
@@ -235,16 +253,12 @@ func readAutoUpdateManifest(path string) (*PackagedOSAutoUpdateManifest, string)
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return nil, fmt.Sprintf("Auto-update manifest is invalid JSON: %v", err)
 	}
-	manifest.Channel = strings.TrimSpace(manifest.Channel)
-	manifest.Version = strings.TrimSpace(manifest.Version)
-	manifest.URL = strings.TrimSpace(manifest.URL)
-	manifest.Signature = strings.TrimSpace(manifest.Signature)
-	manifest.Notes = strings.TrimSpace(manifest.Notes)
-	if manifest.Channel == "" && manifest.Version == "" && manifest.URL == "" {
-		return nil, "Auto-update manifest has no channel, version, or URL."
+	manifest = normalizeAutoUpdateManifest(manifest)
+	if reason := validateAutoUpdateManifest(manifest); reason != "" {
+		return nil, reason
 	}
 
-	return &manifest, "Auto-update manifest was read; update installation remains disabled."
+	return &manifest, "Auto-update manifest was read and schema-validated; update install/apply remains gated."
 }
 
 func (a *App) GetPackagedOSIntegrationStatus() PackagedOSIntegrationSnapshot {

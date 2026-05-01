@@ -28,6 +28,8 @@ MAIN_FILE="$FIXTURE_DIR/main.go"
 PROJECT_DIR="$FIXTURE_DIR/project"
 VALID_MANIFEST="$FIXTURE_DIR/valid-update.json"
 INVALID_MANIFEST="$FIXTURE_DIR/invalid-update.json"
+UPDATE_ARTIFACT="$FIXTURE_DIR/Arlecchino-v3.zip"
+UPDATE_PUBLIC_KEY="$FIXTURE_DIR/update-public-key.txt"
 
 cleanup() {
   if [[ "${ARLE_WAILS3_KEEP_SMOKE_REPORTS:-0}" == "1" ]]; then
@@ -41,7 +43,81 @@ trap cleanup EXIT
 mkdir -p "$FIXTURE_DIR" "$PROJECT_DIR" "$REPORT_DIR"
 printf 'package main\n' > "$MAIN_FILE"
 printf '# smoke fixture\n' > "$PROJECT_DIR/README.md"
-printf '{"channel":"alpha","version":"0.1.0","url":"https://example.invalid/arlecchino.zip"}\n' > "$VALID_MANIFEST"
+printf 'signed smoke artifact\n' > "$UPDATE_ARTIFACT"
+SIGNER="$TMP_ROOT/sign-update-fixture.go"
+cat > "$SIGNER" <<'EOF'
+package main
+
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"net/url"
+	"os"
+	"runtime"
+)
+
+type manifest struct {
+	Channel      string     `json:"channel"`
+	Version      string     `json:"version"`
+	ReleaseNotes string     `json:"releaseNotes"`
+	Mandatory    bool       `json:"mandatory"`
+	Artifacts    []artifact `json:"artifacts"`
+}
+
+type artifact struct {
+	Platform  string `json:"platform"`
+	Arch      string `json:"arch"`
+	URL       string `json:"url"`
+	SHA256    string `json:"sha256"`
+	Signature string `json:"signature"`
+	Size      int64  `json:"size"`
+	Kind      string `json:"kind"`
+}
+
+func main() {
+	manifestPath := os.Args[1]
+	artifactPath := os.Args[2]
+	publicKeyPath := os.Args[3]
+	data, err := os.ReadFile(artifactPath)
+	if err != nil {
+		panic(err)
+	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	sum := sha256.Sum256(data)
+	payload := manifest{
+		Channel:      "alpha",
+		Version:      "0.1.0",
+		ReleaseNotes: "Smoke update",
+		Artifacts: []artifact{{
+			Platform:  runtime.GOOS,
+			Arch:      runtime.GOARCH,
+			URL:       (&url.URL{Scheme: "file", Path: artifactPath}).String(),
+			SHA256:    hex.EncodeToString(sum[:]),
+			Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, data)),
+			Size:      int64(len(data)),
+			Kind:      "zip",
+		}},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile(manifestPath, append(encoded, '\n'), 0o600); err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile(publicKeyPath, []byte(base64.StdEncoding.EncodeToString(publicKey)), 0o600); err != nil {
+		panic(err)
+	}
+}
+EOF
+go run "$SIGNER" "$VALID_MANIFEST" "$UPDATE_ARTIFACT" "$UPDATE_PUBLIC_KEY"
 printf '{\n' > "$INVALID_MANIFEST"
 
 ARLE_WAILS3_OUTPUT="$OUTPUT" "$ROOT_DIR/scripts/wails3-packaged-smoke-macos.sh" --build-only
@@ -143,6 +219,14 @@ switch (name) {
     check(report.autoUpdate.manifest && report.autoUpdate.manifest.version === "0.1.0", "auto-update manifest version mismatch");
     check(report.autoUpdate.installEnabled === false, "auto-update install must remain disabled");
     break;
+  case "app-auto-update-apply":
+    check(report.appBundle && report.appBundle.launchMode === "packaged-app", "expected packaged .app launch");
+    check(report.autoUpdate && report.autoUpdate.manifestStatus === "staged-apply-ready", "auto-update apply smoke must stage artifact");
+    check(report.autoUpdate.installEnabled === true, "auto-update install must be enabled only for explicit apply smoke");
+    check(report.autoUpdate.verification && report.autoUpdate.verification.checksumVerified === true, "auto-update checksum must verify");
+    check(report.autoUpdate.verification.signatureVerified === true, "auto-update signature must verify");
+    check(report.autoUpdate.verification.staged === true, "auto-update artifact must be staged");
+    break;
   case "app-auto-update-invalid":
     check(report.appBundle && report.appBundle.launchMode === "packaged-app", "expected packaged .app launch");
     check(report.autoUpdate && report.autoUpdate.manifestStatus === "invalid-manifest", "auto-update manifest must be invalid");
@@ -231,6 +315,19 @@ run_app_auto_update_case() {
   echo "PASS $name: $report"
 }
 
+run_app_auto_update_apply_case() {
+  local report="$REPORT_DIR/app-auto-update-apply.json"
+  env \
+    ARLECCHINO_AUTO_UPDATE_MANIFEST="$VALID_MANIFEST" \
+    ARLECCHINO_ENABLE_AUTO_UPDATE_APPLY_SMOKE=1 \
+    ARLECCHINO_AUTO_UPDATE_PUBLIC_KEY="$(cat "$UPDATE_PUBLIC_KEY")" \
+    "$ROOT_DIR/scripts/wails3-packaged-app-smoke-macos.sh" \
+      --output "$OUTPUT" \
+      --working-dir "$FIXTURE_DIR" > "$report"
+  validate_report "$report" "app-auto-update-apply"
+  echo "PASS app-auto-update-apply: $report"
+}
+
 FILE_URL="file://$MAIN_FILE"
 PROTOCOL_FILE_URL="arlecchino://open?file=main.go"
 FOCUS_URL="arlecchino://focus?surface=panel:ai-chat"
@@ -250,5 +347,6 @@ run_app_case "app-protocol-focus" Arlecchino-v3 "$FOCUS_URL"
 run_app_native_delivery_case
 run_app_auto_update_case "app-auto-update-valid" "$VALID_MANIFEST"
 run_app_auto_update_case "app-auto-update-invalid" "$INVALID_MANIFEST"
+run_app_auto_update_apply_case
 
 echo "Wails v3 packaged smoke matrix passed."
