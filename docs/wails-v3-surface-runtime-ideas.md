@@ -294,6 +294,17 @@ Baseline hardening для этой ветки теперь имеет отдел
   как `CFBundleExecutable`, копирует icon resources и не оставляет tracked artifacts.
   `./scripts/wails3-sign-macos.sh` поддерживает local `adhoc` signing/verify и
   dormant `developer-id`/notarytool path через env без Apple Developer requirement.
+- Добавлен local-alpha release profile без Apple Developer:
+  `./scripts/wails3-local-alpha-release-macos.sh` по умолчанию собирает universal
+  `arm64+x86_64` `.app` с `LSMinimumSystemVersion=11.0`, ad-hoc signs bundle,
+  создает ZIP artifact, optional DMG через `sindresorhus/create-dmg`
+  (`create-dmg`/`npx create-dmg`) и пишет JSON evidence report. Gatekeeper
+  rejection для ad-hoc считается expected warning, а Developer ID/notarization
+  остаются явно skipped до появления credentials.
+- `./scripts/wails3-release-smoke-macos.sh` теперь пишет structured smoke report по
+  packaged-app, real OS handoff, native delivery и Window Lease live steps. Этот report
+  используется local-alpha release evidence и фиксирует, что OS handoff доказан только
+  для registered smoke bundle, не как production default-handler claim.
 - Добавлен real OS handoff smoke harness:
   `./scripts/wails3-real-os-smoke-macos.sh` собирает production-shaped `.app`,
   регистрирует bundle через LaunchServices, запускает live app с temp app data dir
@@ -320,8 +331,18 @@ Baseline hardening для этой ветки теперь имеет отдел
 - Packaged app data path теперь не зависит от repo cwd:
   `internal/project.ResolveDBPath` оставляет `data/projects.db` для dev, но в packaged
   mode использует `ARLECCHINO_DATA_DIR` или user config dir.
-- Real notification permission/delivery и production auto-update install/apply остаются
-  next gates.
+- Native notification manual permission smoke теперь пишет permission requested/status,
+  delivery attempted/result и dedupe evidence через
+  `./scripts/wails3-native-delivery-live-smoke-macos.sh --include-notifications`.
+- Auto-update prep получил release manifest helper
+  `./scripts/wails3-update-manifest.mjs`: он подписывает artifact внешним Ed25519 PEM
+  key, пишет manifest для static HTTPS/GitHub Releases hosting и может вывести raw
+  public key для verifier env. Private signing key остается вне repo.
+- Window Lease manual smoke получил checklist/report script:
+  `./scripts/wails3-window-lease-manual-smoke-macos.sh`, основной manual gate -
+  Terminal detached PTY/focus/session continuity.
+- Production auto-update install/apply и trusted Developer ID/notarized distribution
+  остаются next gates.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -343,28 +364,38 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Wails v3 lifecycle/dev runner | Green | `./scripts/wails3-dev-macos.sh` is the branch smoke path; runner owns child cleanup and stale output-scoped MCP shutdown. | Keep using v3 script; do not use global v2 `wails` CLI for this branch. |
 | Bindings/service surface | Green | Shell capabilities, context menu, background shell, packaged OS and window lease methods exist behind the `App` service with runtime fallbacks. | Regenerate bindings only with `./scripts/wails3-generate-bindings.sh --write` and review generated churn separately. |
 | Surface/Applet promotion | Green | In-window `floating`, `snap`, `fullscreen`, `return-to-main` works for existing panels/previews without detached windows. | Detached remains Window Lease territory, not part of in-window promotion. |
-| Detached windows / Window Lease | Yellow | Browser Preview, Git, Problems and Terminal helper surfaces can create actual Wails detached windows only with `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`; live `.app` smoke proves native window ids and close/return to attached state. | Keep gated/default-off; manual IDE smoke is still needed for real terminal PTY focus/session ergonomics before default-on detach. |
+| Detached windows / Window Lease | Yellow | Browser Preview, Git, Problems and Terminal helper surfaces can create actual Wails detached windows only with `ARLECCHINO_ENABLE_WINDOW_LEASE_SPIKE=1`; live `.app` smoke proves native window ids and close/return to attached state; manual Terminal PTY/focus checklist now exists. | Run and record the manual Terminal helper smoke before any default-on detach discussion. |
 | Single instance/open-file | Green | Backend parser, frontend-ready queue and `ide:intent:open` dispatch are implemented behind `ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1`; real OS smoke now proves second-instance handoff into the first launched packaged app. | Keep gated/default-off until release packaging policy says this can be enabled by default. |
 | Protocol/file associations | Green | `arlecchino://` and file association payloads normalize through strict open-intent allowlist; real OS smoke now proves Wails handler entry and emitted dispatch through LaunchServices/AppleEvent routes. | Keep production default-handler claims scoped to signed/notarized release packaging. |
-| Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates projection, and live smoke proves tray startup, dock badge set, accepted/rejected action routing and tracked failure states. | Run `--include-notifications` permission smoke manually before claiming notification delivery; keep default-off until signed/bundled UX is acceptable. |
-| Auto-update verifier | Yellow | `.app` smoke reads/validates manifest schema, checks channel/platform artifact selection and can explicitly stage a signed artifact with checksum + Ed25519 signature verification. Production install/apply remains disabled. | Decide release channel hosting, artifact signing keys and installer/apply policy after release packaging is stable. |
-| Packaging/release OS integration | Yellow | Production-shaped `.app` packaging and ad-hoc signing now exist; packaged smoke launches the real `CFBundleExecutable`, not a wrapper, and real OS handoff passes in the ad-hoc smoke bundle. | Developer ID/notarization remains inactive until credentials exist; production DMG/release layout still needs release smoke. |
+| Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates projection, and live smoke proves tray startup, dock badge set, accepted/rejected action routing and tracked failure states. Notification manual smoke now records permission status and delivery result. | Run `--include-notifications` permission smoke manually before claiming notification delivery; keep default-off until signed/bundled UX is acceptable. |
+| Auto-update verifier | Yellow | `.app` smoke reads/validates manifest schema, checks channel/platform/universal artifact selection and can explicitly stage a signed artifact with checksum + Ed25519 signature verification. Manifest generation/signing helper exists for static HTTPS/GitHub Releases artifacts. Production install/apply remains disabled. | Decide release channel hosting and installer/apply policy after release packaging is stable; private signing key must remain outside repo. |
+| Packaging/release OS integration | Yellow | Local-alpha release profile now builds universal `arm64+x86_64` ad-hoc signed `.app`/ZIP with macOS 11+ Info.plist, optional `create-dmg`, structured evidence report and release smoke report. | Developer ID/notarization remains inactive until credentials exist; ad-hoc artifacts are local/tester alpha only and not trusted public distribution. |
 | Real OS handoff | Green | `wails3-real-os-smoke-macos.sh` launches a registered ad-hoc `.app`, traces Wails application-event handler entry, proves `ide:intent:open` emitted dispatch for protocol/file payloads and proves gated second-instance handoff. | Keep the evidence as smoke-gated; browser/Finder UX still depends on production registration/signing decisions. |
 
 Blockers before Arlehub:
 
 - Keep current shell contracts stable for surface read, open intent, Background Shell and Window Lease.
 - Keep detached helper lifecycle under spike free of stale state or lost return-to-main.
+- Keep local-alpha release smoke green for universal macOS artifacts before hub work starts.
 - Avoid adding Arlehub timeline/UI until Flight Recorder and Background Shell remain readable without hub.
 
 Blockers before default-on native delivery:
 
-- Package and run a production-shaped signed app bundle with real macOS bundle identity.
+- Keep packaging evidence current for universal Intel+Apple Silicon local-alpha artifacts.
 - Keep real OS handoff smoke green as packaging/signing evolves.
 - Verify notification permission/startup in the packaged app, not only in report projection.
 - Verify tray menu executes only Background Shell actions and does not expose unrelated app controls.
 - Verify protocol/file association payloads from Finder/browser reach `ide:intent:open`.
+- Obtain Developer ID credentials before any trusted external macOS distribution or notarization claim.
 - Decide per-platform status for Windows/Linux instead of inheriting macOS results.
+
+Ready for Arlehub checklist:
+
+- Green Surface Runtime read/focus and Applet Promotion contracts.
+- Green Open Intent parser/queue/real OS handoff smoke.
+- Green Background Shell and Flight Recorder backend readability without hub UI.
+- Yellow but stable Window Lease helper lifecycle with manual Terminal smoke recorded.
+- Yellow local-alpha release evidence for universal macOS artifacts without Developer ID.
 
 ## 1. Surface Runtime
 
@@ -1568,6 +1599,19 @@ risky action, user can return layout.
     now share the gated detached Wails window lifecycle with Browser Preview; the
     production-shaped live smoke proves detach, native window ids, close/return and
     attached cleanup for all four roles.
+31. Done: add No-Developer-ID local-alpha release profile. The new release script builds
+    ad-hoc signed universal `arm64+x86_64` `.app` artifacts for macOS 11+, creates ZIP
+    output, optionally uses `create-dmg`, and writes evidence without claiming trusted
+    Gatekeeper distribution.
+32. Done: add structured release smoke report. Release smoke now records packaged-app,
+    real OS handoff, native delivery and Window Lease steps as JSON evidence.
+33. Done: add native notification manual evidence. Permission request/status and delivery
+    result are now visible in the native delivery live smoke report.
+34. Done: add auto-update manifest prep helper. Signed manifests for static
+    HTTPS/GitHub Releases artifacts can be generated from an external Ed25519 key; app
+    install/apply remains disabled.
+35. Done: add Window Lease manual smoke checklist for Terminal detached PTY/focus/session
+    continuity before any default-on detach decision.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 

@@ -1,18 +1,23 @@
 # Alpha Release Checklist
 
-Status: practical release gate for the source alpha and unsigned macOS
-convenience bundle.
+Status: practical release gate for the source alpha and local macOS alpha
+bundle. There is still no Apple Developer ID, so this is not a trusted
+notarized distribution path.
 
 ## Release Formats
 
 - Primary path: source checkout through `git clone`, then run
   `./scripts/bootstrap-dev-macos.sh` once and `./scripts/wails-dev-macos.sh` for
   development launches.
-- Convenience path: unsigned DMG or app bundle for testers who accept macOS
-  Gatekeeper warnings and approve the app through Privacy & Security / Open
-  Anyway.
-- Do not present the unsigned DMG as notarized, hardened, or equivalent to an
-  Apple Developer ID release.
+- Convenience path: `./scripts/wails3-local-alpha-release-macos.sh` creates an
+  ad-hoc signed universal `arm64+x86_64` `.app` for macOS 11+, ZIP artifact,
+  JSON evidence report, and optional DMG through
+  `sindresorhus/create-dmg` (`create-dmg`/`npx create-dmg`).
+- Gatekeeper rejection for ad-hoc artifacts is expected. Do not present the
+  ad-hoc `.app`, ZIP, or DMG as notarized, hardened, or equivalent to an Apple
+  Developer ID release.
+- Intel Mac support must be checked through the release report `target.binaryArchs`
+  containing `x86_64`; Apple Silicon support through `arm64`.
 
 ## Must Be Included In Release Artifacts
 
@@ -43,6 +48,14 @@ convenience bundle.
 - Review `docs/trademark-clearance.md` before broader public launch.
 - Do a release dogfood pass: startup, project open, editor interaction,
   terminal command, autocomplete/ranking path, and one MCP approval flow.
+- Run `./scripts/wails3-release-smoke-macos.sh --report <path>` and attach the
+  report to the release notes or internal release evidence.
+- Run `./scripts/wails3-window-lease-manual-smoke-macos.sh --launch --report <path>`
+  and record Terminal detached PTY/focus/session behavior before enabling any
+  detached helper by default.
+- If using update manifests, generate them with
+  `./scripts/wails3-update-manifest.mjs`; keep the Ed25519 private key outside
+  the repository and publish only the manifest/artifacts/public verifier key.
 
 ## Security Gates
 
@@ -57,3 +70,6 @@ convenience bundle.
 - For the macOS alpha, `zls`, `marksman`, and `lua-language-server` should
   install through Homebrew instead of Arlecchino-managed direct binary
   downloads.
+- Auto-update install/apply remains disabled. Current updater work is limited
+  to manifest read, checksum verification, detached signature verification and
+  temp staging under explicit smoke flags.
