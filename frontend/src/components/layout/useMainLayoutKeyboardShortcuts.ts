@@ -287,8 +287,7 @@ export const useMainLayoutKeyboardShortcuts = ({
 
       if (shortcuts.switchProjectNext(e) || shortcuts.switchProjectPrev(e)) {
         if (
-          useEditorSettingsStore.getState().projectSwitchShortcutBehavior ===
-            "window-cycle" &&
+          useEditorSettingsStore.getState().projectWindowMode === "windows" &&
           isPhysicalMacProjectSwitchShortcut(e)
         ) {
           return;

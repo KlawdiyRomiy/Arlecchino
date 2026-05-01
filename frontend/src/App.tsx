@@ -134,6 +134,33 @@ const App: React.FC = () => {
   };
 
   const handleProjectOpen = async (projectPath: string) => {
+    const state = useWorkspaceStore.getState();
+    const existingProject = state.projects.find(
+      (project) => project.path === projectPath,
+    );
+    if (existingProject) {
+      if (existingProject.id !== state.activeId) {
+        await handleSwitchProject(existingProject.id);
+      }
+      return;
+    }
+
+    const projectWindowMode =
+      useEditorSettingsStore.getState().projectWindowMode;
+    if (projectWindowMode === "windows" && state.activeId) {
+      try {
+        const opened = await AppFunctions.OpenProjectWindow(projectPath);
+        if (opened === false) {
+          throw new Error("Project window launcher is unavailable.");
+        }
+        setFileToOpen(null);
+      } catch (error) {
+        console.error("Error opening project window:", error);
+        alert(`Error while opening project window: ${error}`);
+      }
+      return;
+    }
+
     const outgoingProjectPath =
       useWorkspaceStore
         .getState()

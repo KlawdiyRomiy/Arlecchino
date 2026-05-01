@@ -61,6 +61,16 @@ func main() {
 	}
 
 	app := NewApp()
+	mainWindowURL := "/"
+	mainWindowTitle := "Arlecchino"
+	mainWindowMac := mainWindowMacOptions()
+	if projectWindowPayload, ok := buildProjectWindowLaunchPayloadFromLaunchArgs(os.Args, currentWorkingDir()); ok {
+		if projectWindowURL, err := buildProjectWindowURL(projectWindowPayload); err == nil {
+			mainWindowURL = projectWindowURL
+		}
+		mainWindowTitle = "Arlecchino - " + filepath.Base(projectWindowPayload.ProjectPath)
+		mainWindowMac = projectWindowMacOptions()
+	}
 	wailsApp := application.New(application.Options{
 		Name:        "Arlecchino",
 		Description: "High-performance polyglot IDE",
@@ -86,7 +96,7 @@ func main() {
 
 	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:               "main",
-		Title:              "Arlecchino",
+		Title:              mainWindowTitle,
 		Width:              1440,
 		Height:             900,
 		MinWidth:           1024,
@@ -94,11 +104,11 @@ func main() {
 		Frameless:          runtime.GOOS != "darwin",
 		StartState:         application.WindowStateMaximised,
 		Hidden:             false,
-		URL:                "/",
+		URL:                mainWindowURL,
 		UseApplicationMenu: true,
 		BackgroundType:     application.BackgroundTypeTransparent,
 		BackgroundColour:   application.NewRGBA(10, 10, 10, 0),
-		Mac:                mainWindowMacOptions(),
+		Mac:                mainWindowMac,
 		Windows: application.WindowsWindow{
 			DisableIcon: false,
 		},

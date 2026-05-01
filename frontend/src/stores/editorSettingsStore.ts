@@ -8,7 +8,7 @@ import {
   getUiScaleStepOffset,
 } from "../utils/uiScale";
 
-export type ProjectSwitchShortcutBehavior = "project-switch" | "window-cycle";
+export type ProjectWindowMode = "projects" | "windows";
 
 interface EditorSettingsState {
   uiScale: number;
@@ -20,7 +20,7 @@ interface EditorSettingsState {
   showMinimap: boolean;
   showRainbowBrackets: boolean;
   zenModeEnabled: boolean;
-  projectSwitchShortcutBehavior: ProjectSwitchShortcutBehavior;
+  projectWindowMode: ProjectWindowMode;
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
@@ -31,9 +31,7 @@ interface EditorSettingsState {
   setShowMinimap: (value: boolean) => void;
   setShowRainbowBrackets: (value: boolean) => void;
   setZenModeEnabled: (value: boolean) => void;
-  setProjectSwitchShortcutBehavior: (
-    value: ProjectSwitchShortcutBehavior,
-  ) => void;
+  setProjectWindowMode: (value: ProjectWindowMode) => void;
   toggleZenMode: () => void;
 }
 
@@ -46,8 +44,7 @@ const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
 const DEFAULT_SHOW_MINIMAP = true;
 const DEFAULT_SHOW_RAINBOW_BRACKETS = true;
 const DEFAULT_ZEN_MODE_ENABLED = false;
-const DEFAULT_PROJECT_SWITCH_SHORTCUT_BEHAVIOR: ProjectSwitchShortcutBehavior =
-  "project-switch";
+const DEFAULT_PROJECT_WINDOW_MODE: ProjectWindowMode = "projects";
 
 type PersistedEditorSettingsState = Partial<
   Pick<
@@ -59,7 +56,7 @@ type PersistedEditorSettingsState = Partial<
     | "showMinimap"
     | "showRainbowBrackets"
     | "zenModeEnabled"
-    | "projectSwitchShortcutBehavior"
+    | "projectWindowMode"
   >
 >;
 
@@ -69,10 +66,23 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const clampEditorFontSize = (size: number): number =>
   Math.min(Math.max(size, MIN_FONT_SIZE), MAX_FONT_SIZE);
 
-const isProjectSwitchShortcutBehavior = (
+const isProjectWindowMode = (value: unknown): value is ProjectWindowMode =>
+  value === "projects" || value === "windows";
+
+const migratedProjectWindowMode = (
   value: unknown,
-): value is ProjectSwitchShortcutBehavior =>
-  value === "project-switch" || value === "window-cycle";
+): ProjectWindowMode | null => {
+  if (isProjectWindowMode(value)) {
+    return value;
+  }
+  if (value === "project-switch") {
+    return "projects";
+  }
+  if (value === "window-cycle") {
+    return "windows";
+  }
+  return null;
+};
 
 const sanitizePersistedEditorSettings = (
   persistedState: unknown,
@@ -113,13 +123,12 @@ const sanitizePersistedEditorSettings = (
     nextState.zenModeEnabled = persistedState.zenModeEnabled;
   }
 
-  if (
-    isProjectSwitchShortcutBehavior(
+  const projectWindowMode = migratedProjectWindowMode(
+    persistedState.projectWindowMode ??
       persistedState.projectSwitchShortcutBehavior,
-    )
-  ) {
-    nextState.projectSwitchShortcutBehavior =
-      persistedState.projectSwitchShortcutBehavior;
+  );
+  if (projectWindowMode) {
+    nextState.projectWindowMode = projectWindowMode;
   }
 
   return nextState;
@@ -152,7 +161,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       showMinimap: DEFAULT_SHOW_MINIMAP,
       showRainbowBrackets: DEFAULT_SHOW_RAINBOW_BRACKETS,
       zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
-      projectSwitchShortcutBehavior: DEFAULT_PROJECT_SWITCH_SHORTCUT_BEHAVIOR,
+      projectWindowMode: DEFAULT_PROJECT_WINDOW_MODE,
 
       zoomIn: () =>
         set((state) => ({
@@ -193,8 +202,8 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       setZenModeEnabled: (value: boolean) =>
         set(() => ({ zenModeEnabled: value })),
 
-      setProjectSwitchShortcutBehavior: (value) =>
-        set(() => ({ projectSwitchShortcutBehavior: value })),
+      setProjectWindowMode: (value) =>
+        set(() => ({ projectWindowMode: value })),
 
       toggleZenMode: () =>
         set((state) => ({ zenModeEnabled: !state.zenModeEnabled })),
@@ -220,6 +229,10 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
               : editorFontSize,
         };
       },
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...sanitizePersistedEditorSettings(persistedState),
+      }),
     },
   ),
 );

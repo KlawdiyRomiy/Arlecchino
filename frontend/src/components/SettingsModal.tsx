@@ -23,7 +23,7 @@ import { useTheme } from "../hooks/useTheme";
 import { useBrowserPreviewStore } from "../stores/browserPreviewStore";
 import {
   useEditorSettingsStore,
-  type ProjectSwitchShortcutBehavior,
+  type ProjectWindowMode,
 } from "../stores/editorSettingsStore";
 import { useKeybindingsStore } from "../stores/keybindingsStore";
 import { themeOptions as builtInThemeOptions } from "../styles/themes";
@@ -55,12 +55,21 @@ const settingsDropdownContentClass =
 const settingsDropdownItemClass =
   "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-[14px] px-4 text-[15px] text-[var(--text-secondary)] outline-none transition-colors data-[highlighted]:bg-[var(--surface-hover)] data-[highlighted]:text-[var(--text-primary)]";
 
-const projectSwitchShortcutBehaviorOptions: Array<{
-  value: ProjectSwitchShortcutBehavior;
+const projectWindowModeOptions: Array<{
+  value: ProjectWindowMode;
   label: string;
+  description: string;
 }> = [
-  { value: "project-switch", label: "Projects" },
-  { value: "window-cycle", label: "Windows" },
+  {
+    value: "projects",
+    label: "Projects",
+    description: "Open projects in this window.",
+  },
+  {
+    value: "windows",
+    label: "Windows",
+    description: "Open each project in a separate macOS window.",
+  },
 ];
 
 interface SettingsModalProps {
@@ -175,6 +184,47 @@ const ShortcutPill: React.FC<{ shortcut: string; active?: boolean }> = ({
   </span>
 );
 
+const ProjectOpeningModeControl: React.FC<{
+  value: ProjectWindowMode;
+  onChange: (value: ProjectWindowMode) => void;
+}> = ({ value, onChange }) => (
+  <div className={`${settingsPanelClass} p-4`}>
+    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+      <div>
+        <div className="text-sm font-semibold text-[var(--text-primary)]">
+          Project opening
+        </div>
+        <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+          Choose whether new projects stay in the current IDE window or open as
+          separate macOS project windows.
+        </div>
+      </div>
+      <div
+        role="group"
+        aria-label="Project opening"
+        className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+      >
+        {projectWindowModeOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={value === option.value}
+            title={option.description}
+            onClick={() => onChange(option.value)}
+            className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
+              value === option.value
+                ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
@@ -206,7 +256,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     showMinimap,
     showRainbowBrackets,
     zenModeEnabled,
-    projectSwitchShortcutBehavior,
+    projectWindowMode,
     setUiScale,
     setEditorFontSize,
     resetZoom,
@@ -215,7 +265,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowMinimap,
     setShowRainbowBrackets,
     setZenModeEnabled,
-    setProjectSwitchShortcutBehavior,
+    setProjectWindowMode,
   } = useEditorSettingsStore();
   const {
     autoOpenFromTerminal,
@@ -380,38 +430,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       </div>
 
       <div className={`${settingsPanelClass} p-3`}>
-        <div className="mb-3 grid gap-3 rounded-[20px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_82%,transparent)] p-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-          <div>
-            <div className="text-[13px] font-semibold text-[var(--text-primary)]">
-              Cmd+Backquote behavior
-            </div>
-            <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-              Choose whether the macOS project switch shortcut stays inside the
-              IDE or moves between app windows.
-            </div>
-          </div>
-          <div
-            role="group"
-            aria-label="Cmd+Backquote behavior"
-            className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
-          >
-            {projectSwitchShortcutBehaviorOptions.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={projectSwitchShortcutBehavior === option.value}
-                onClick={() => setProjectSwitchShortcutBehavior(option.value)}
-                className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
-                  projectSwitchShortcutBehavior === option.value
-                    ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
-                    : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </div>
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
           <label className="shell-cluster-soft flex min-h-[42px] min-w-0 items-center gap-2 px-3">
             <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
@@ -610,6 +628,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <SettingHeader
                     title="Appearance"
                     description="Customize the look and feel of the editor."
+                  />
+
+                  <ProjectOpeningModeControl
+                    value={projectWindowMode}
+                    onChange={setProjectWindowMode}
                   />
 
                   <div className={`${settingsPanelClass} p-4`}>

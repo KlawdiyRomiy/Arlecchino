@@ -15,8 +15,9 @@ func hasMacWindowCollectionBehavior(
 
 func TestMacWindowOptionsParticipateInWindowCycle(t *testing.T) {
 	for name, behavior := range map[string]application.MacWindowCollectionBehavior{
-		"main":     mainWindowMacOptions().CollectionBehavior,
-		"detached": detachedWindowMacOptions().CollectionBehavior,
+		"main":           mainWindowMacOptions().CollectionBehavior,
+		"detached":       detachedWindowMacOptions().CollectionBehavior,
+		"project-window": projectWindowMacOptions().CollectionBehavior,
 	} {
 		if !hasMacWindowCollectionBehavior(
 			behavior,
@@ -30,5 +31,15 @@ func TestMacWindowOptionsParticipateInWindowCycle(t *testing.T) {
 		) {
 			t.Fatalf("%s window collection behavior = %d, want FullScreenPrimary", name, behavior)
 		}
+	}
+}
+
+func TestProjectWindowMacOptionsUseNativeTitlebar(t *testing.T) {
+	options := projectWindowMacOptions()
+	if options.TitleBar != application.MacTitleBarDefault {
+		t.Fatalf("project window titlebar = %v, want default/native", options.TitleBar)
+	}
+	if options.InvisibleTitleBarHeight != 0 {
+		t.Fatalf("project window invisible titlebar height = %d, want 0", options.InvisibleTitleBarHeight)
 	}
 }

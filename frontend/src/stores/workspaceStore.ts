@@ -6,6 +6,10 @@ import {
   preloadProjectDiagnostics,
   resetProjectBoundStores,
 } from "../utils/projectBoundState";
+import {
+  readProjectWindowLaunchPayload,
+  workspaceStorageNameForProjectWindow,
+} from "../shell/projectWindowRoute";
 import { useTerminalStore } from "./terminalStore";
 
 export interface WorkspaceProject {
@@ -138,8 +142,12 @@ export const getAdjacentProject = (
 };
 
 let workspaceInitPromise: Promise<void> | null = null;
+const projectWindowLaunchPayload = readProjectWindowLaunchPayload();
+const workspaceStorageName = workspaceStorageNameForProjectWindow(
+  projectWindowLaunchPayload,
+);
 
-const createWorkspaceStore = () =>
+const createWorkspaceStore = (storageName: string) =>
   create<WorkspaceState>()(
     persist(
       (set, get) => ({
@@ -328,7 +336,7 @@ const createWorkspaceStore = () =>
         clearProjectSwitchBlockers: () => set({ uiBlockers: [] }),
       }),
       {
-        name: "workspace-storage",
+        name: storageName,
         partialize: (state) => ({
           projects: state.projects,
           activeId: state.activeId,
@@ -341,12 +349,58 @@ const createWorkspaceStore = () =>
 type WorkspaceStoreApi = ReturnType<typeof createWorkspaceStore>;
 
 const workspaceStoreGlobal = globalThis as typeof globalThis & {
-  __arlecchinoWorkspaceStore?: WorkspaceStoreApi;
+  __arlecchinoWorkspaceStores?: Record<string, WorkspaceStoreApi>;
 };
+const workspaceStores =
+  workspaceStoreGlobal.__arlecchinoWorkspaceStores ??
+  (workspaceStoreGlobal.__arlecchinoWorkspaceStores = {});
 
 export const useWorkspaceStore =
-  workspaceStoreGlobal.__arlecchinoWorkspaceStore ??
-  (workspaceStoreGlobal.__arlecchinoWorkspaceStore = createWorkspaceStore());
+  workspaceStores[workspaceStorageName] ??
+  (workspaceStores[workspaceStorageName] =
+    createWorkspaceStore(workspaceStorageName));
+
+const resetWorkspaceProjectWindowState = () => {
+  useWorkspaceStore.setState({
+    projects: [],
+    activeId: null,
+    activeFramework: null,
+    pendingId: null,
+    switchSourceId: null,
+    switchDirection: 1,
+    uiBlockers: [],
+  });
+};
+
+const initializeProjectWindowWorkspace = async (projectPath: string) => {
+  await Promise.resolve(useWorkspaceStore.persist.rehydrate());
+  resetWorkspaceProjectWindowState();
+
+  try {
+    const access = await inspectProjectAccess(projectPath);
+    if (!access.accessible) {
+      throw new Error(access.reason || "Project is not accessible.");
+    }
+
+    resetProjectBoundStores();
+    activateProjectScope(projectPath);
+    await AppFunctions.OpenProject(projectPath);
+    useWorkspaceStore.getState().addProject(projectPath);
+    useTerminalStore.getState().setActiveProject(projectPath);
+    useWorkspaceStore
+      .getState()
+      .setActiveFramework(
+        (await AppFunctions.GetCurrentProjectFramework()) || null,
+      );
+    void preloadProjectDiagnostics(projectPath);
+  } catch (error) {
+    useTerminalStore.getState().setActiveProject(null);
+    resetProjectBoundStores();
+    useWorkspaceStore.getState().clearActiveProject();
+    useWorkspaceStore.getState().setActiveFramework(null);
+    console.error("Error restoring project window:", error);
+  }
+};
 
 export const initializeWorkspace = async () => {
   if (workspaceInitPromise) {
@@ -359,6 +413,13 @@ export const initializeWorkspace = async () => {
   }
 
   workspaceInitPromise = (async () => {
+    if (projectWindowLaunchPayload) {
+      await initializeProjectWindowWorkspace(
+        projectWindowLaunchPayload.projectPath,
+      );
+      return;
+    }
+
     await Promise.resolve(useWorkspaceStore.persist.rehydrate());
 
     const { activeId, projects } = useWorkspaceStore.getState();

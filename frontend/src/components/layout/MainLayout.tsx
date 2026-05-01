@@ -71,6 +71,7 @@ import {
   runWindowLeaseAction,
   type WindowLeaseRole,
 } from "../../shell/windowLeaseBridge";
+import { isProjectWindowRoute } from "../../shell/projectWindowRoute";
 import type { ShortcutActionId } from "../../utils/keyboard";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 import {
@@ -4023,8 +4024,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const zenTopChromeVisible = !zenModeEnabled || zenTopChromeHovered;
   const zenBottomChromeVisible = !zenModeEnabled || zenBottomChromeHovered;
+  const isProjectWindowHost = isProjectWindowRoute();
 
   useEffect(() => {
+    if (isProjectWindowHost) {
+      return;
+    }
+
     const owner = nativeWindowControlsOwnerRef.current;
     nativeWindowControlsOwner = owner;
     if (nativeWindowControlsRestoreTimer !== null) {
@@ -4043,9 +4049,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     void SetNativeWindowControlsVisible(nativeWindowControlsVisible).catch(
       () => undefined,
     );
-  }, [zenModeEnabled, zenTopChromeVisible]);
+  }, [isProjectWindowHost, zenModeEnabled, zenTopChromeVisible]);
 
   useEffect(() => {
+    if (isProjectWindowHost) {
+      return;
+    }
+
     const owner = nativeWindowControlsOwnerRef.current;
 
     return () => {
@@ -4066,7 +4076,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         void SetNativeWindowControlsVisible(true).catch(() => undefined);
       }, 0);
     };
-  }, []);
+  }, [isProjectWindowHost]);
 
   const zenChromeTransition = reducePanelMotion
     ? "none"

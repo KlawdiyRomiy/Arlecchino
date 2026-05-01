@@ -24,3 +24,12 @@ func detachedWindowMacOptions() application.MacWindow {
 		CollectionBehavior:      macWindowCycleCollectionBehavior(),
 	}
 }
+
+func projectWindowMacOptions() application.MacWindow {
+	return application.MacWindow{
+		TitleBar:                application.MacTitleBarDefault,
+		InvisibleTitleBarHeight: 0,
+		Backdrop:                application.MacBackdropTransparent,
+		CollectionBehavior:      macWindowCycleCollectionBehavior(),
+	}
+}

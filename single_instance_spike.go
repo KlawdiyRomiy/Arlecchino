@@ -17,7 +17,7 @@ const (
 )
 
 func buildSingleInstanceOptions(app *App) *application.SingleInstanceOptions {
-	if !envFlagEnabled(envEnableSingleInstanceSpike) {
+	if !singleInstanceEnabledForLaunchArgs(os.Args) {
 		return nil
 	}
 
@@ -39,7 +39,14 @@ func buildSingleInstanceOptions(app *App) *application.SingleInstanceOptions {
 	}
 }
 
+func singleInstanceEnabledForLaunchArgs(args []string) bool {
+	return envFlagEnabled(envEnableSingleInstanceSpike) && !isProjectWindowLaunchArgs(args)
+}
+
 func (a *App) dispatchInitialLaunchOpenIntent() {
+	if isProjectWindowLaunchArgs(os.Args) {
+		return
+	}
 	if payload, ok := buildOpenIntentFromLaunchArgs(os.Args, currentWorkingDir()); ok {
 		payload["source"] = "launch-args"
 		a.dispatchOpenIntent(payload)
@@ -60,6 +67,8 @@ func buildOpenIntentFromLaunchArgs(args []string, workingDir string) (map[string
 		}
 
 		switch arg {
+		case projectWindowLaunchFlag:
+			continue
 		case "--line", "-l":
 			if i+1 < len(normalizedArgs) {
 				line = parsePositiveLine(normalizedArgs[i+1])

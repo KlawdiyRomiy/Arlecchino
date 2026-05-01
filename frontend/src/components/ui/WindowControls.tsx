@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Quit, WindowMinimise } from "../../wails/runtime";
+import { isProjectWindowRoute } from "../../shell/projectWindowRoute";
 import { toggleWindowFullscreen } from "../../utils/windowFullscreen";
 
 interface WailsWindow {
@@ -68,6 +69,7 @@ const nativeBackdropBubbleStyle: React.CSSProperties = {
 export const WindowControls: React.FC<WindowControlsProps> = ({
   visible = true,
 }) => {
+  const projectWindowRoute = isProjectWindowRoute();
   const reserveNativeMacControls = shouldReserveNativeMacControls();
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
   const handleClose = useCallback(() => Quit(), []);
@@ -77,13 +79,21 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!reserveNativeMacControls || typeof document === "undefined") {
+    if (
+      projectWindowRoute ||
+      !reserveNativeMacControls ||
+      typeof document === "undefined"
+    ) {
       setPortalRoot(null);
       return;
     }
 
     setPortalRoot(document.body);
-  }, [reserveNativeMacControls]);
+  }, [projectWindowRoute, reserveNativeMacControls]);
+
+  if (projectWindowRoute) {
+    return null;
+  }
 
   if (!reserveNativeMacControls) {
     return (

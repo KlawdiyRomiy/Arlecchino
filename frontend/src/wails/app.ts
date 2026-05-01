@@ -1,6 +1,6 @@
 export * from "../../bindings/arlecchino/app";
 
-interface NativeWindowControlsRuntimeModule {
+interface WailsRuntimeCallModule {
   Call?: {
     ByName?: <T = unknown>(
       methodName: string,
@@ -15,13 +15,25 @@ interface NativeWindowControlsBridge {
   ) => Promise<boolean> | boolean;
 }
 
+interface ProjectWindowBridge {
+  OpenProjectWindow?: (path: string) => Promise<unknown> | unknown;
+}
+
 const nativeWindowControlsMethodNames = [
   "main.App.SetNativeWindowControlsVisible",
   "arlecchino.App.SetNativeWindowControlsVisible",
 ] as const;
 
+const projectWindowMethodNames = [
+  "main.App.OpenProjectWindow",
+  "arlecchino.App.OpenProjectWindow",
+] as const;
+
 let nativeWindowControlsMethodName:
   | (typeof nativeWindowControlsMethodNames)[number]
+  | undefined;
+let projectWindowMethodName:
+  | (typeof projectWindowMethodNames)[number]
   | undefined;
 
 const getNativeWindowControlsBridge = ():
@@ -38,6 +50,27 @@ const getNativeWindowControlsBridge = ():
   ).go?.main?.App;
 };
 
+const getProjectWindowBridge = (): ProjectWindowBridge | undefined => {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (
+    window as unknown as {
+      go?: { main?: { App?: ProjectWindowBridge } };
+    }
+  ).go?.main?.App;
+};
+
+const loadRuntimeCallModule =
+  async (): Promise<WailsRuntimeCallModule | null> => {
+    try {
+      return (await import("/wails/runtime.js")) as WailsRuntimeCallModule;
+    } catch {
+      return null;
+    }
+  };
+
 export async function SetNativeWindowControlsVisible(
   visible: boolean,
 ): Promise<boolean> {
@@ -52,11 +85,8 @@ export async function SetNativeWindowControlsVisible(
     }
   }
 
-  let runtimeModule: NativeWindowControlsRuntimeModule;
-  try {
-    runtimeModule =
-      (await import("/wails/runtime.js")) as NativeWindowControlsRuntimeModule;
-  } catch {
+  const runtimeModule = await loadRuntimeCallModule();
+  if (!runtimeModule) {
     return false;
   }
 
@@ -78,6 +108,45 @@ export async function SetNativeWindowControlsVisible(
       const result = await callByName(methodName, visible);
       nativeWindowControlsMethodName = methodName;
       return Boolean(result);
+    } catch {
+      // Try the next known Wails v3 service namespace.
+    }
+  }
+
+  return false;
+}
+
+export async function OpenProjectWindow(path: string): Promise<boolean> {
+  const bridge = getProjectWindowBridge();
+  if (bridge?.OpenProjectWindow) {
+    try {
+      await Promise.resolve(bridge.OpenProjectWindow(path));
+      return true;
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  const runtimeModule = await loadRuntimeCallModule();
+  const callByName = runtimeModule?.Call?.ByName;
+  if (!callByName) {
+    return false;
+  }
+
+  if (projectWindowMethodName) {
+    try {
+      await callByName(projectWindowMethodName, path);
+      return true;
+    } catch {
+      projectWindowMethodName = undefined;
+    }
+  }
+
+  for (const methodName of projectWindowMethodNames) {
+    try {
+      await callByName(methodName, path);
+      projectWindowMethodName = methodName;
+      return true;
     } catch {
       // Try the next known Wails v3 service namespace.
     }
