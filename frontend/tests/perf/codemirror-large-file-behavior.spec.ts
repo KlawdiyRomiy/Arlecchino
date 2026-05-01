@@ -15,6 +15,22 @@ type OpenedFile = {
   name: string;
 };
 
+type GeometryBox = {
+  height: number;
+  left: number;
+  top: number;
+  width: number;
+};
+
+type IdleGeometrySample = {
+  activeLine: GeometryBox;
+  content: GeometryBox;
+  editor: GeometryBox;
+  gutters: GeometryBox;
+  scroller: GeometryBox;
+  visibleText: GeometryBox;
+};
+
 const smallFileContent = `package main
 
 import "fmt"
@@ -619,6 +635,110 @@ test("CodeMirror scroller uses non-strict containment for smooth WebKit repaint"
   expect(scrollerStyles.containment).not.toContain("strict");
   expect(scrollerStyles.overflowAnchor).toBe("none");
   expect(scrollerStyles.scrollbarGutter).toContain("stable");
+});
+
+test("CodeMirror keeps inner geometry stable during idle performance ticks", async ({
+  page,
+}) => {
+  await mountEditor(page, fastFilePath, fastFileContent);
+
+  const result = await page
+    .locator(".cm-editor")
+    .first()
+    .evaluate(async (editorElement) => {
+      const editor = editorElement as HTMLElement;
+      const scroller = editor.querySelector<HTMLElement>(".cm-scroller");
+      const gutters = editor.querySelector<HTMLElement>(".cm-gutters");
+      const content = editor.querySelector<HTMLElement>(".cm-content");
+      const activeLine = editor.querySelector<HTMLElement>(".cm-activeLine");
+      const visibleText = Array.from(
+        editor.querySelectorAll<HTMLElement>(".cm-line"),
+      ).find((line) => line.textContent?.trim());
+
+      if (!scroller || !gutters || !content || !activeLine || !visibleText) {
+        throw new Error("Expected CodeMirror inner geometry nodes to mount");
+      }
+
+      const waitForFrame = () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const round = (value: number) => Math.round(value * 100) / 100;
+      const readBox = (element: HTMLElement): GeometryBox => {
+        const rect = element.getBoundingClientRect();
+        return {
+          height: round(rect.height),
+          left: round(rect.left),
+          top: round(rect.top),
+          width: round(rect.width),
+        };
+      };
+      const readGeometry = (): IdleGeometrySample => ({
+        activeLine: readBox(activeLine),
+        content: readBox(content),
+        editor: readBox(editor),
+        gutters: readBox(gutters),
+        scroller: readBox(scroller),
+        visibleText: readBox(visibleText),
+      });
+      const readReconfigureCount = () => {
+        const rawCount = Number.parseInt(
+          editor.dataset.adaptiveReconfigureCount ?? "",
+          10,
+        );
+        return Number.isFinite(rawCount) ? rawCount : 0;
+      };
+
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 900));
+      await waitForFrame();
+      await waitForFrame();
+
+      const initialReconfigureCount = readReconfigureCount();
+      const samples: IdleGeometrySample[] = [readGeometry()];
+      const { usePerformanceStore } =
+        await import("/src/stores/performanceStore.ts");
+
+      for (let index = 0; index < 240; index += 1) {
+        if (index % 40 === 0) {
+          usePerformanceStore.getState().decayPressure();
+        }
+        await waitForFrame();
+        samples.push(readGeometry());
+      }
+
+      return {
+        finalReconfigureCount: readReconfigureCount(),
+        initialReconfigureCount,
+        samples,
+      };
+    });
+
+  const geometryKeys = [
+    "activeLine",
+    "content",
+    "editor",
+    "gutters",
+    "scroller",
+    "visibleText",
+  ] as const;
+  const metricKeys = ["height", "left", "top", "width"] as const;
+  const baseline = result.samples[0];
+  const maxGeometryDelta = result.samples
+    .slice(1)
+    .reduce((maxDelta, sample) => {
+      const sampleDelta = geometryKeys.reduce((boxMaxDelta, geometryKey) => {
+        const metricDelta = metricKeys.reduce((metricMaxDelta, metricKey) => {
+          const delta = Math.abs(
+            sample[geometryKey][metricKey] - baseline[geometryKey][metricKey],
+          );
+          return Math.max(metricMaxDelta, delta);
+        }, 0);
+        return Math.max(boxMaxDelta, metricDelta);
+      }, 0);
+      return Math.max(maxDelta, sampleDelta);
+    }, 0);
+
+  expect(result.initialReconfigureCount).toBeGreaterThan(0);
+  expect(result.finalReconfigureCount).toBe(result.initialReconfigureCount);
+  expect(maxGeometryDelta).toBeLessThanOrEqual(0.25);
 });
 
 test("CodeMirror preserves horizontal shift-scroll position across adaptive idle reconfigure", async ({

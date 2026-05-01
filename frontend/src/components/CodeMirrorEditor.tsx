@@ -197,6 +197,39 @@ const editorCanvasStyle = {
   boxShadow: "none",
 } as const;
 
+const makePrimitiveKeyPart = (part: unknown): string => {
+  if (part === null) return "null";
+  if (part === undefined) return "undefined";
+  return `${typeof part}:${String(part)}`;
+};
+
+const useStableReferenceKey = (parts: readonly unknown[]): string => {
+  const objectIdsRef = useRef<WeakMap<object, number>>(new WeakMap());
+  const nextObjectIdRef = useRef(1);
+
+  return parts
+    .map((part) => {
+      if (
+        (typeof part !== "object" && typeof part !== "function") ||
+        part === null
+      ) {
+        return makePrimitiveKeyPart(part);
+      }
+
+      const objectPart = part as object;
+      const existingId = objectIdsRef.current.get(objectPart);
+      if (existingId !== undefined) {
+        return `ref:${existingId}`;
+      }
+
+      const nextId = nextObjectIdRef.current;
+      nextObjectIdRef.current += 1;
+      objectIdsRef.current.set(objectPart, nextId);
+      return `ref:${nextId}`;
+    })
+    .join("|");
+};
+
 const getEditorScaleX = (view: EditorView): number => {
   const rootScale = Number.parseFloat(
     getComputedStyle(document.documentElement)
@@ -906,7 +939,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     () => getCodeMirrorLineCount(content),
     [content],
   );
-  const performanceSnapshot = usePerformanceStore((state) => state.snapshot);
+  const adaptivePerformanceMode = usePerformanceStore((state) => state.mode);
   const updatePerformanceBudget = usePerformanceStore(
     (state) => state.updateBudget,
   );
@@ -916,12 +949,22 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const editorFeatureBudget = useMemo(
     () =>
       resolveAdaptiveEditorFeatureBudget({
-        ...performanceSnapshot,
+        mode: adaptivePerformanceMode,
+        frameGapMs: 0,
+        eventPressure: 0,
         activeEditorCharCount: content.length,
         activeEditorLineCount: contentLineCount,
         activeEditorLargeDocument: largeDocumentMode,
+        indexerQueueDepth: 0,
+        projectFileCount: 0,
+        updatedAtMs: 0,
       }),
-    [content.length, contentLineCount, largeDocumentMode, performanceSnapshot],
+    [
+      adaptivePerformanceMode,
+      content.length,
+      contentLineCount,
+      largeDocumentMode,
+    ],
   );
   const notifyChangeDelayRef = useRef(editorFeatureBudget.notifyChangeDelayMs);
   const gitMarkers = useGitStore((state) =>
@@ -1814,10 +1857,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     [filePath, language, largeDocumentMode],
   );
 
-  const formatDocument = (view: EditorView) => {
-    void formatDocumentAsync(view);
-    return true;
-  };
+  const formatDocument = useCallback(
+    (view: EditorView) => {
+      void formatDocumentAsync(view);
+      return true;
+    },
+    [formatDocumentAsync],
+  );
 
   const saveKeymap = useMemo(
     () =>
@@ -2223,12 +2269,37 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     signatureHelpExtension,
   ]);
 
+  const adaptiveExtensionsKey = useStableReferenceKey([
+    "adaptive",
+    editorFeatureBudget.runtimeCompletions,
+    editorFeatureBudget.runtimeDiagnostics,
+    editorFeatureBudget.runtimeGhostText,
+    editorFeatureBudget.runtimeGitGutter,
+    editorFeatureBudget.runtimeHover,
+    editorFeatureBudget.runtimeRichEditorFeatures,
+    showRainbowBrackets,
+    filePath,
+    language,
+    backendCompletionSource,
+    definitionLinkExtension,
+    diagnosticsExtension,
+    ghost,
+    gitGutterExtension,
+    hoverExtension,
+    metrics,
+    orchestrator,
+    signatureHelpExtension,
+  ]);
+
   const {
     adaptiveCompartmentExtension,
     bindEditorView,
     reapplyAdaptiveExtensions,
     scrollGuardExtension,
-  } = useCodeMirrorAdaptiveExtensions(adaptiveExtensions);
+  } = useCodeMirrorAdaptiveExtensions(
+    adaptiveExtensions,
+    adaptiveExtensionsKey,
+  );
 
   const extensions = useMemo<Extension[]>(() => {
     const nextExtensions: Extension[] = [
