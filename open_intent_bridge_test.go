@@ -61,6 +61,24 @@ func TestDispatchOpenIntentFromOSTargetQueuesAllowedProtocolAndRejectsCommandPay
 	}
 }
 
+func TestTraceOpenIntentApplicationEventRecordsHandlerEntry(t *testing.T) {
+	tracePath := filepath.Join(t.TempDir(), "open-intent.jsonl")
+	t.Setenv(envOpenIntentTracePath, tracePath)
+
+	traceOpenIntentApplicationEvent(openIntentSourceOSURL, "arlecchino://open?file=main.go")
+
+	events := readOpenIntentTraceForTest(t, tracePath)
+	if len(events) != 1 {
+		t.Fatalf("trace event count = %d, want 1: %#v", len(events), events)
+	}
+	if events[0].Stage != "application-event" || events[0].Source != openIntentSourceOSURL {
+		t.Fatalf("application event trace = %#v", events[0])
+	}
+	if events[0].Target != "arlecchino://open?file=main.go" {
+		t.Fatalf("target = %q, want canonical URL", events[0].Target)
+	}
+}
+
 func readOpenIntentTraceForTest(t *testing.T, path string) []openIntentTraceEvent {
 	t.Helper()
 

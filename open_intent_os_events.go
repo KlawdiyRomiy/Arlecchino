@@ -21,7 +21,9 @@ func registerOpenIntentApplicationEvents(owner *App, wailsApp *application.App) 
 		if event == nil || event.Context() == nil {
 			return
 		}
-		owner.dispatchOpenIntentFromOSTarget(openIntentSourceOSURL, event.Context().URL(), currentWorkingDir())
+		target := event.Context().URL()
+		traceOpenIntentApplicationEvent(openIntentSourceOSURL, target)
+		owner.dispatchOpenIntentFromOSTarget(openIntentSourceOSURL, target, currentWorkingDir())
 	})
 
 	wailsApp.Event.OnApplicationEvent(events.Common.ApplicationOpenedWithFile, func(event *application.ApplicationEvent) {
@@ -30,6 +32,7 @@ func registerOpenIntentApplicationEvents(owner *App, wailsApp *application.App) 
 		}
 		context := event.Context()
 		if filename := strings.TrimSpace(context.Filename()); filename != "" {
+			traceOpenIntentApplicationEvent(openIntentSourceOSFile, filename)
 			owner.dispatchOpenIntentFromOSTarget(openIntentSourceOSFile, filename, currentWorkingDir())
 			return
 		}
@@ -37,8 +40,16 @@ func registerOpenIntentApplicationEvents(owner *App, wailsApp *application.App) 
 			if strings.TrimSpace(filename) == "" {
 				continue
 			}
+			traceOpenIntentApplicationEvent(openIntentSourceOSFile, filename)
 			owner.dispatchOpenIntentFromOSTarget(openIntentSourceOSFile, filename, currentWorkingDir())
 		}
+	})
+}
+
+func traceOpenIntentApplicationEvent(source string, target string) {
+	traceOpenIntent("application-event", map[string]any{
+		"source": strings.TrimSpace(source),
+		"target": strings.TrimSpace(target),
 	})
 }
 
