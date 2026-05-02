@@ -6,7 +6,7 @@ unsetopt XTRACE 2>/dev/null || true
 unsetopt VERBOSE 2>/dev/null || true
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_BRANCH="feature/wails3-shell-spike"
+EXPECTED_BRANCH="main"
 CURRENT_BRANCH="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || true)"
 
 if [[ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]]; then
