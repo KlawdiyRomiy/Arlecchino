@@ -153,7 +153,7 @@ func (c *CompletionCache) cacheKey(ctx CompletionContext) string {
 	// Note: Column removed from key intentionally - same line/prefix should hit cache
 	// regardless of exact cursor position within the same token
 	h.Write([]byte(fmt.Sprintf(
-		"%s:%d:%s:%s:%s:%t:%t:%s:%t:%t:%s",
+		"%s:%d:%s:%s:%s:%t:%t:%s:%t:%t:%s:%s",
 		ctx.FilePath,
 		ctx.Line,
 		ctx.Prefix,
@@ -165,6 +165,7 @@ func (c *CompletionCache) cacheKey(ctx CompletionContext) string {
 		ctx.IsMethodCall,
 		ctx.IsStaticCall,
 		ctx.TriggerChar,
+		ctx.ImportsHash,
 	)))
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -1826,6 +1827,9 @@ func (b *PredictionBrain) fromLSP(ctx CompletionContext) []Suggestion {
 		documentation := formatLSPDocumentation(item.Documentation)
 
 		additionalEdits := lspTextEditsToCore(item.AdditionalTextEdits)
+		if b.autoImporter != nil && b.autoImporter.planner != nil {
+			additionalEdits = b.autoImporter.planner.NormalizeTextEdits(ctx, additionalEdits)
+		}
 		suggestions = append(suggestions, Suggestion{
 			Text:                item.Label,
 			DisplayText:         item.Label,

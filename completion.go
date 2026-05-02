@@ -211,6 +211,7 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		prefix, prefixInfo.AccessChain, isStaticCall, isMethodCall, prefixInfo.InString)
 
 	contentWindow, contentStartLine := extractContextLines(ctx.FullText, ctx.Line, 50)
+	importsHash := computeCompletionImportsHash(ctx.FullText, ctx.Language, ctx.Imports)
 
 	brainCtx := brain.CompletionContext{
 		FilePath:          ctx.FilePath,
@@ -220,7 +221,7 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		Column:            ctx.Column,
 		Prefix:            prefix,
 		Language:          ctx.Language,
-		ImportsHash:       computeImportsHash(ctx.Imports),
+		ImportsHash:       importsHash,
 		TriggerChar:       ctx.TriggerChar,
 		Scope:             ctx.CurrentMethod,
 		ParentClass:       ctx.CurrentClass,
@@ -358,6 +359,93 @@ func computeImportsHash(imports []string) string {
 	}
 
 	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func computeCompletionImportsHash(fullText, language string, frontendImports []string) string {
+	parts := make([]string, 0, 2)
+	if hash := computeImportsHash(frontendImports); hash != "" {
+		parts = append(parts, hash)
+	}
+	if hash := computeImportSectionHash(fullText, language); hash != "" {
+		parts = append(parts, hash)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ":")
+}
+
+func computeImportSectionHash(fullText, language string) string {
+	if strings.TrimSpace(fullText) == "" {
+		return ""
+	}
+
+	lines := strings.Split(fullText, "\n")
+	importLines := make([]string, 0, 16)
+	inGoImportBlock := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if trimmed == "" {
+			continue
+		}
+		if inGoImportBlock {
+			importLines = append(importLines, trimmed)
+			if trimmed == ")" {
+				inGoImportBlock = false
+			}
+			continue
+		}
+		if language == "go" && strings.HasPrefix(trimmed, "import (") {
+			inGoImportBlock = true
+			importLines = append(importLines, trimmed)
+			continue
+		}
+		if isImportSectionLine(lower, trimmed, language) {
+			importLines = append(importLines, trimmed)
+		}
+	}
+
+	if len(importLines) == 0 {
+		return ""
+	}
+
+	hasher := sha1.New()
+	for _, line := range importLines {
+		hasher.Write([]byte(line))
+		hasher.Write([]byte{0})
+	}
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func isImportSectionLine(lower, trimmed, language string) bool {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "go":
+		return strings.HasPrefix(trimmed, "import ")
+	case "php", "php-laravel", "rust":
+		return strings.HasPrefix(trimmed, "use ")
+	case "python":
+		return strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "from ")
+	case "javascript", "typescript", "javascriptreact", "typescriptreact", "vue", "svelte", "astro", "scala", "dart", "solidity", "julia", "haskell", "matlab":
+		return strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "using ")
+	case "clojure":
+		return strings.HasPrefix(trimmed, "(:import ") || strings.HasPrefix(trimmed, "(:require ")
+	case "erlang":
+		return strings.HasPrefix(trimmed, "-import(")
+	case "fortran":
+		return strings.HasPrefix(lower, "use ")
+	case "ada":
+		return strings.HasPrefix(lower, "with ")
+	case "delphi", "pascal":
+		return strings.HasPrefix(lower, "uses ")
+	case "latex":
+		return strings.HasPrefix(trimmed, "\\usepackage")
+	case "perl":
+		return strings.HasPrefix(trimmed, "use ")
+	default:
+		return false
+	}
 }
 
 func (a *App) GetInlineSuggestion(filePath, content string, line, column int, prefix string) string {

@@ -52,3 +52,29 @@ func TestCompletionCache_KeyIncludesAccessChainAndContextFlags(t *testing.T) {
 		t.Fatalf("expected cache hit for ctxD")
 	}
 }
+
+func TestCompletionCache_KeyIncludesImportsHash(t *testing.T) {
+	cache := NewCompletionCache(10, time.Minute)
+
+	ctxA := CompletionContext{
+		FilePath:    "/tmp/main.go",
+		Line:        5,
+		Prefix:      "Pr",
+		Language:    "go",
+		ImportsHash: "imports-a",
+	}
+	ctxB := ctxA
+	ctxB.ImportsHash = "imports-b"
+
+	cache.Set(ctxA, []Suggestion{{Text: "Println"}})
+	cache.Set(ctxB, []Suggestion{{Text: "Printf"}})
+
+	a, ok := cache.Get(ctxA)
+	if !ok || len(a) != 1 || a[0].Text != "Println" {
+		t.Fatalf("expected cache hit for ctxA")
+	}
+	b, ok := cache.Get(ctxB)
+	if !ok || len(b) != 1 || b[0].Text != "Printf" {
+		t.Fatalf("expected cache hit for ctxB")
+	}
+}

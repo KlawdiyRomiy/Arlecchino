@@ -16,6 +16,7 @@ type AutoImporter struct {
 	pyFromRegex   *regexp.Regexp
 	rustUseRegex  *regexp.Regexp
 	rubyRequireRe *regexp.Regexp
+	planner       *ImportEditPlanner
 }
 
 var (
@@ -57,6 +58,7 @@ func NewAutoImporter() *AutoImporter {
 		pyFromRegex:   regexp.MustCompile(`^\s*from\s+\S+\s+import\s+`),
 		rustUseRegex:  regexp.MustCompile(`^\s*use\s+`),
 		rubyRequireRe: regexp.MustCompile(`^\s*require\s+`),
+		planner:       NewImportEditPlanner(),
 	}
 }
 
@@ -77,16 +79,30 @@ func (ai *AutoImporter) GenerateImportEdit(symbol *core.Symbol, ctx CompletionCo
 		return nil
 	}
 
-	currentNS := ai.extractCurrentNamespace(ctx.Content, ctx.Language)
+	content := importEditContent(ctx)
+
+	currentNS := ai.extractCurrentNamespace(content, ctx.Language)
 	if namespace == currentNS {
 		return nil
 	}
 
-	if ai.hasImport(ctx.Content, ctx.Language, namespace, symbol.Name, importStmt) {
+	if ai.planner != nil && ai.planner.HasImport(content, ctx.Language, importStmt) {
 		return nil
 	}
 
-	insertLine := ai.findImportInsertLine(ctx.Content, ctx.Language)
+	if ai.planner == nil && ai.hasImport(content, ctx.Language, namespace, symbol.Name, importStmt) {
+		return nil
+	}
+
+	insertLine := ai.findImportInsertLine(content, ctx.Language)
+	if ai.planner != nil {
+		if edit, changed := ai.planner.PlanImportEdit(ctx, importStmt, insertLine); changed && edit != nil {
+			return edit
+		}
+		if edit := ai.planner.FallbackInsertEdit(importStmt, insertLine); edit != nil {
+			return edit
+		}
+	}
 
 	return &core.TextEdit{
 		StartLine:   insertLine,

@@ -88,6 +88,32 @@ func (f *fakeBrain) InvalidateCompletionCache(filePath string) {
 func (f *fakeBrain) SetLSPManager(manager *lsp.Manager) {}
 func (f *fakeBrain) Close()                             {}
 
+func TestComputeCompletionImportsHashIncludesImportSection(t *testing.T) {
+	frontendImports := []string{"fmt"}
+	before := computeCompletionImportsHash(`package main
+
+import "fmt"
+
+func main() {}
+`, "go", frontendImports)
+	after := computeCompletionImportsHash(`package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func main() {}
+`, "go", frontendImports)
+
+	if before == "" || after == "" {
+		t.Fatal("expected non-empty import hashes")
+	}
+	if before == after {
+		t.Fatalf("expected import section change to alter completion hash, got %q", before)
+	}
+}
+
 func TestExtractContextLines_Windowed(t *testing.T) {
 	content := "a\nb\nc\nd\ne\nf\ng\nh\ni\nj"
 
