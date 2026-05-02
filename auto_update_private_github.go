@@ -71,8 +71,10 @@ type githubReleaseAsset struct {
 }
 
 type githubReleaseResponse struct {
-	TagName string               `json:"tag_name"`
-	Assets  []githubReleaseAsset `json:"assets"`
+	TagName    string               `json:"tag_name"`
+	Draft      bool                 `json:"draft"`
+	Prerelease bool                 `json:"prerelease"`
+	Assets     []githubReleaseAsset `json:"assets"`
 }
 
 func (a *App) GetPrivateUpdateAuthStatus() PrivateUpdateAuthStatus {
@@ -279,7 +281,7 @@ func (s *AutoUpdateService) fetchGitHubRelease(source githubReleaseSource, token
 	endpoint := strings.TrimRight(s.githubAPIBase, "/") + "/repos/" + url.PathEscape(source.Owner) + "/" + url.PathEscape(source.Repo)
 	switch source.Mode {
 	case "latest":
-		endpoint += "/releases/latest"
+		endpoint += "/releases?per_page=20"
 	case "tag":
 		endpoint += "/releases/tags/" + url.PathEscape(source.Tag)
 	default:
@@ -289,6 +291,24 @@ func (s *AutoUpdateService) fetchGitHubRelease(source githubReleaseSource, token
 	if err != nil {
 		return githubReleaseResponse{}, err
 	}
+	if source.Mode == "latest" {
+		var releases []githubReleaseResponse
+		if err := json.Unmarshal(data, &releases); err != nil {
+			return githubReleaseResponse{}, fmt.Errorf("GitHub release response is invalid JSON: %w", err)
+		}
+		for _, release := range releases {
+			if release.Draft {
+				continue
+			}
+			for _, asset := range release.Assets {
+				if asset.Name == source.Asset {
+					return release, nil
+				}
+			}
+		}
+		return githubReleaseResponse{}, fmt.Errorf("GitHub release asset %q was not found in recent releases", source.Asset)
+	}
+
 	var release githubReleaseResponse
 	if err := json.Unmarshal(data, &release); err != nil {
 		return githubReleaseResponse{}, fmt.Errorf("GitHub release response is invalid JSON: %w", err)

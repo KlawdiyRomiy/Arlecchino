@@ -87,15 +87,20 @@ func TestPrivateGitHubManifestUsesTokenAndAssetAPI(t *testing.T) {
 	var manifestAccept string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/KlawdiyRomiy/Arlecchino/releases/latest":
+		case "/repos/KlawdiyRomiy/Arlecchino/releases":
 			releaseAuth = r.Header.Get("Authorization")
-			_ = json.NewEncoder(w).Encode(githubReleaseResponse{
-				TagName: "v0.2.0",
+			if r.URL.Query().Get("per_page") != "20" {
+				t.Fatalf("per_page = %q, want 20", r.URL.Query().Get("per_page"))
+			}
+			_ = json.NewEncoder(w).Encode([]githubReleaseResponse{{
+				TagName:    "v0.2.0",
+				Draft:      false,
+				Prerelease: true,
 				Assets: []githubReleaseAsset{{
 					Name: "arlecchino-update-manifest.json",
 					URL:  serverAssetURL(r, "/repos/KlawdiyRomiy/Arlecchino/releases/assets/1"),
 				}},
-			})
+			}})
 		case "/repos/KlawdiyRomiy/Arlecchino/releases/assets/1":
 			manifestAuth = r.Header.Get("Authorization")
 			manifestAccept = r.Header.Get("Accept")
@@ -136,6 +141,69 @@ func TestPrivateGitHubManifestUsesTokenAndAssetAPI(t *testing.T) {
 	}
 	if manifestAccept != "application/octet-stream" {
 		t.Fatalf("manifest Accept = %q", manifestAccept)
+	}
+}
+
+func TestPrivateGitHubLatestSkipsDraftsAndReleasesWithoutManifest(t *testing.T) {
+	const token = "github_pat_test_secret"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/KlawdiyRomiy/Arlecchino/releases":
+			_ = json.NewEncoder(w).Encode([]githubReleaseResponse{
+				{
+					TagName: "v0.3.0-draft",
+					Draft:   true,
+					Assets: []githubReleaseAsset{{
+						Name: "arlecchino-update-manifest.json",
+						URL:  serverAssetURL(r, "/repos/KlawdiyRomiy/Arlecchino/releases/assets/draft"),
+					}},
+				},
+				{
+					TagName:    "v0.2.1-alpha.101",
+					Prerelease: true,
+					Assets: []githubReleaseAsset{{
+						Name: "release-evidence.json",
+						URL:  serverAssetURL(r, "/repos/KlawdiyRomiy/Arlecchino/releases/assets/evidence"),
+					}},
+				},
+				{
+					TagName:    "v0.2.0-alpha.100",
+					Prerelease: true,
+					Assets: []githubReleaseAsset{{
+						Name: "arlecchino-update-manifest.json",
+						URL:  serverAssetURL(r, "/repos/KlawdiyRomiy/Arlecchino/releases/assets/manifest"),
+					}},
+				},
+			})
+		case "/repos/KlawdiyRomiy/Arlecchino/releases/assets/manifest":
+			_, _ = w.Write([]byte(`{
+				"channel": "alpha",
+				"version": "0.2.0-alpha",
+				"artifacts": [{
+					"platform": "darwin",
+					"arch": "universal",
+					"kind": "zip",
+					"url": "https://api.github.com/repos/KlawdiyRomiy/Arlecchino/releases/assets/2",
+					"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					"signature": "bbbb"
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	service := NewAutoUpdateService()
+	service.githubAPIBase = server.URL
+	service.tokenStore = &fakeAutoUpdateTokenStore{token: token}
+
+	manifest, err := service.readManifest("github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-update-manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != "0.2.0-alpha" {
+		t.Fatalf("manifest version = %q", manifest.Version)
 	}
 }
 
