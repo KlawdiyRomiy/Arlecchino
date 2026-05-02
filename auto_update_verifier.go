@@ -74,7 +74,7 @@ func normalizeAutoUpdateArtifact(artifact PackagedOSAutoUpdateArtifact) Packaged
 	artifact.URL = strings.TrimSpace(artifact.URL)
 	artifact.SHA256 = strings.ToLower(strings.TrimSpace(artifact.SHA256))
 	artifact.Signature = strings.TrimSpace(artifact.Signature)
-	artifact.Kind = strings.TrimSpace(artifact.Kind)
+	artifact.Kind = strings.ToLower(strings.TrimSpace(artifact.Kind))
 	return artifact
 }
 

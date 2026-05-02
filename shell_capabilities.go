@@ -115,8 +115,8 @@ func buildShellCapabilities(platform string, appReady bool, mainWindowReady bool
 				"Single-instance routing requires packaged-app launch/open-file handling before it is enabled.",
 			),
 			"autoUpdate": shellCapability(
-				ShellCapabilityUnavailable,
-				"Auto-update is intentionally delayed until shell lifecycle and release flow are stable.",
+				ShellCapabilityExperimental,
+				"Auto-update can verify signed ZIP artifacts and apply user-confirmed relaunch installs without Developer ID.",
 			),
 			"materialBackdrop": shellCapability(materialStatus, materialReason),
 			"dockBadges":       shellCapability(dockBadgeStatus, dockBadgeReason),

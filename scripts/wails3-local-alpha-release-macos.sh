@@ -42,6 +42,13 @@ ARCH_TARGET="${ARLE_WAILS3_RELEASE_ARCH:-universal}"
 SIGN_MODE="${ARLE_WAILS3_SIGN_MODE:-adhoc}"
 CREATE_DMG="${ARLE_WAILS3_RELEASE_CREATE_DMG:-0}"
 RUN_SMOKE="${ARLE_WAILS3_RELEASE_RUN_SMOKE:-1}"
+UPDATE_CHANNEL="${ARLE_WAILS3_UPDATE_CHANNEL:-${ARLECCHINO_AUTO_UPDATE_CHANNEL:-alpha}}"
+UPDATE_MANIFEST_URL="${ARLE_WAILS3_UPDATE_MANIFEST_URL:-${ARLECCHINO_AUTO_UPDATE_MANIFEST_URL:-}}"
+UPDATE_PRIVATE_KEY="${ARLE_WAILS3_UPDATE_SIGNING_KEY:-}"
+UPDATE_MANIFEST_PATH="${ARLE_WAILS3_UPDATE_MANIFEST_OUT:-}"
+UPDATE_ARTIFACT_URL="${ARLE_WAILS3_UPDATE_ARTIFACT_URL:-}"
+UPDATE_PUBLIC_KEY="${ARLECCHINO_AUTO_UPDATE_PUBLIC_KEY:-}"
+UPDATE_PUBLIC_KEY_OUT="${ARLE_WAILS3_UPDATE_PUBLIC_KEY_OUT:-}"
 SKIP_FRONTEND="0"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 OUTPUT_ROOT="${ARLE_WAILS3_RELEASE_OUTPUT:-$BUILD_DIR/releases/local-alpha}"
@@ -66,6 +73,17 @@ Options:
   --run-smoke           Run the existing Wails v3 release smoke suite.
   --skip-smoke          Skip release smoke suite and mark it skipped in report.
   --skip-frontend       Reuse current frontend build for secondary arch builds.
+  --update-private-key <path>
+                         External Ed25519 PEM private key for signed updater manifest.
+  --update-manifest <path>
+                         Output manifest path. Default: artifacts/arlecchino-update-manifest.json.
+  --update-artifact-url <url>
+                         Public updater ZIP URL. Default: file:// URL for local candidate.
+  --update-channel <ch> Update channel. Default: alpha.
+  --update-public-key <base64>
+                         Embed/configure the Ed25519 public key for the app verifier.
+  --update-public-key-out <path>
+                         Output derived public key path.
   --report <path>       JSON evidence report path.
 
 This profile is for local alpha smoke without Apple Developer ID trust.
@@ -134,6 +152,36 @@ while [[ $# -gt 0 ]]; do
       SKIP_FRONTEND="1"
       shift
       ;;
+    --update-private-key)
+      shift
+      UPDATE_PRIVATE_KEY="${1:-}"
+      shift
+      ;;
+    --update-manifest)
+      shift
+      UPDATE_MANIFEST_PATH="${1:-}"
+      shift
+      ;;
+    --update-artifact-url)
+      shift
+      UPDATE_ARTIFACT_URL="${1:-}"
+      shift
+      ;;
+    --update-channel)
+      shift
+      UPDATE_CHANNEL="${1:-}"
+      shift
+      ;;
+    --update-public-key)
+      shift
+      UPDATE_PUBLIC_KEY="${1:-}"
+      shift
+      ;;
+    --update-public-key-out)
+      shift
+      UPDATE_PUBLIC_KEY_OUT="${1:-}"
+      shift
+      ;;
     --report)
       shift
       REPORT_PATH="${1:-}"
@@ -182,6 +230,12 @@ mkdir -p "$RELEASE_DIR/bin" "$RELEASE_DIR/artifacts" "$RELEASE_DIR/logs"
 if [[ -z "$REPORT_PATH" ]]; then
   REPORT_PATH="$RELEASE_DIR/release-evidence.json"
 fi
+if [[ -z "$UPDATE_MANIFEST_PATH" && -n "$UPDATE_PRIVATE_KEY" ]]; then
+  UPDATE_MANIFEST_PATH="$RELEASE_DIR/artifacts/arlecchino-update-manifest.json"
+fi
+if [[ -z "$UPDATE_PUBLIC_KEY_OUT" && -n "$UPDATE_PRIVATE_KEY" ]]; then
+  UPDATE_PUBLIC_KEY_OUT="$RELEASE_DIR/artifacts/arlecchino-update-public-key.txt"
+fi
 
 case "$ARCH_TARGET" in
   amd64)
@@ -195,6 +249,8 @@ PUBLIC_ASSET_STEM="arlecchino-macos-$PUBLIC_ARCH_LABEL"
 PUBLIC_ZIP_NAME="$PUBLIC_ASSET_STEM.zip"
 PUBLIC_DMG_NAME="$PUBLIC_ASSET_STEM.dmg"
 SUPPORTED_MACOS_RANGE="Big Sur 11.0 through Tahoe 26.x"
+BUILD_COMMIT="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo dev)"
+BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 APP_BUNDLE="$RELEASE_DIR/$APP_NAME.app"
 UNIVERSAL_BINARY="$RELEASE_DIR/bin/$APP_NAME-universal"
@@ -204,6 +260,33 @@ SMOKE_STATUS="skipped"
 SMOKE_EXIT="0"
 SMOKE_LOG="$RELEASE_DIR/logs/release-smoke.log"
 SMOKE_REPORT="$RELEASE_DIR/release-smoke-report.json"
+
+if [[ -n "$UPDATE_PRIVATE_KEY" && -z "$UPDATE_PUBLIC_KEY" ]]; then
+  UPDATE_PUBLIC_KEY="$(node - "$UPDATE_PRIVATE_KEY" <<'NODE'
+const crypto = require("crypto");
+const fs = require("fs");
+const privateKey = crypto.createPrivateKey(fs.readFileSync(process.argv[2]));
+if (privateKey.asymmetricKeyType !== "ed25519") {
+  throw new Error(`Private key must be Ed25519, got ${privateKey.asymmetricKeyType}`);
+}
+const publicJwk = crypto.createPublicKey(privateKey).export({ format: "jwk" });
+process.stdout.write(Buffer.from(publicJwk.x, "base64url").toString("base64"));
+NODE
+)"
+fi
+
+build_ldflags() {
+  local flags=(
+    "-X" "main.buildVersion=$VERSION"
+    "-X" "main.buildNumber=$BUILD_NUMBER"
+    "-X" "main.buildCommit=$BUILD_COMMIT"
+    "-X" "main.buildTime=$BUILD_TIME"
+    "-X" "main.buildChannel=$UPDATE_CHANNEL"
+    "-X" "main.buildManifestURL=$UPDATE_MANIFEST_URL"
+    "-X" "main.buildUpdatePubKey=$UPDATE_PUBLIC_KEY"
+  )
+  echo "${flags[*]}"
+}
 
 build_arch_binary() {
   local arch="$1"
@@ -224,6 +307,7 @@ build_arch_binary() {
     CGO_CXXFLAGS="${CGO_CXXFLAGS:-} -mmacosx-version-min=$MIN_MACOS_VERSION" \
     CGO_LDFLAGS="${CGO_LDFLAGS:-} -mmacosx-version-min=$MIN_MACOS_VERSION" \
     ARLE_WAILS3_GOCACHE="$RELEASE_DIR/go-build-cache-$arch" \
+    ARLE_WAILS3_LDFLAGS="$(build_ldflags)" \
     "$ROOT_DIR/scripts/wails3-dev-macos.sh" "${args[@]}"
 }
 
@@ -280,6 +364,28 @@ env ARLE_WAILS3_MIN_MACOS="$MIN_MACOS_VERSION" \
 
 ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
 
+if [[ -n "$UPDATE_PRIVATE_KEY" ]]; then
+  UPDATE_MANIFEST_ARCH="$ARCH_TARGET"
+  if [[ "$ARCH_TARGET" == "universal" ]]; then
+    UPDATE_MANIFEST_ARCH="universal"
+  fi
+  UPDATE_MANIFEST_URL_ARG=()
+  if [[ -n "$UPDATE_ARTIFACT_URL" ]]; then
+    UPDATE_MANIFEST_URL_ARG=(--url "$UPDATE_ARTIFACT_URL")
+  fi
+  node "$ROOT_DIR/scripts/wails3-update-manifest.mjs" \
+    --artifact "$ZIP_PATH" \
+    --private-key "$UPDATE_PRIVATE_KEY" \
+    --out "$UPDATE_MANIFEST_PATH" \
+    --version "$VERSION" \
+    --channel "$UPDATE_CHANNEL" \
+    --platform darwin \
+    --arch "$UPDATE_MANIFEST_ARCH" \
+    --kind zip \
+    --public-key-out "$UPDATE_PUBLIC_KEY_OUT" \
+    "${UPDATE_MANIFEST_URL_ARG[@]}" > "$RELEASE_DIR/logs/update-manifest.json"
+fi
+
 if [[ "$CREATE_DMG" == "1" ]]; then
   DMG_PATH="$(run_create_dmg "$RELEASE_DIR/artifacts")"
 fi
@@ -319,6 +425,8 @@ export ARLE_RELEASE_PUBLIC_ASSET_STEM="$PUBLIC_ASSET_STEM"
 export ARLE_RELEASE_PUBLIC_ZIP_NAME="$PUBLIC_ZIP_NAME"
 export ARLE_RELEASE_PUBLIC_DMG_NAME="$PUBLIC_DMG_NAME"
 export ARLE_RELEASE_SUPPORTED_MACOS_RANGE="$SUPPORTED_MACOS_RANGE"
+export ARLE_RELEASE_BUILD_COMMIT="$BUILD_COMMIT"
+export ARLE_RELEASE_BUILD_TIME="$BUILD_TIME"
 export ARLE_RELEASE_APP_BUNDLE="$APP_BUNDLE"
 export ARLE_RELEASE_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 export ARLE_RELEASE_ZIP_PATH="$ZIP_PATH"
@@ -335,6 +443,12 @@ export ARLE_RELEASE_SPCTL_OUTPUT="$SPCTL_OUTPUT"
 export ARLE_RELEASE_SPCTL_EXIT="$SPCTL_EXIT"
 export ARLE_RELEASE_LIPO_INFO="$LIPO_INFO"
 export ARLE_RELEASE_FILE_INFO="$FILE_INFO"
+export ARLE_RELEASE_UPDATE_CHANNEL="$UPDATE_CHANNEL"
+export ARLE_RELEASE_UPDATE_MANIFEST_URL="$UPDATE_MANIFEST_URL"
+export ARLE_RELEASE_UPDATE_MANIFEST_PATH="$UPDATE_MANIFEST_PATH"
+export ARLE_RELEASE_UPDATE_PRIVATE_KEY_CONFIGURED="$([[ -n "$UPDATE_PRIVATE_KEY" ]] && echo true || echo false)"
+export ARLE_RELEASE_UPDATE_PUBLIC_KEY_OUT="$UPDATE_PUBLIC_KEY_OUT"
+export ARLE_RELEASE_UPDATE_ARTIFACT_URL="$UPDATE_ARTIFACT_URL"
 node <<'NODE'
 const fs = require("fs");
 const { spawnSync } = require("child_process");
@@ -417,6 +531,8 @@ const report = {
     bundleId: env.ARLE_RELEASE_BUNDLE_ID,
     version: env.ARLE_RELEASE_VERSION,
     build: env.ARLE_RELEASE_BUILD,
+    gitSha: env.ARLE_RELEASE_BUILD_COMMIT,
+    builtAt: env.ARLE_RELEASE_BUILD_TIME,
     bundlePath: env.ARLE_RELEASE_APP_BUNDLE,
     executablePath: env.ARLE_RELEASE_EXECUTABLE,
     infoPlist: readPlist(env.ARLE_RELEASE_APP_BUNDLE),
@@ -455,6 +571,27 @@ const report = {
       size: statSize(env.ARLE_RELEASE_DMG_PATH),
       tool: env.ARLE_RELEASE_CREATE_DMG === "1" ? "sindresorhus/create-dmg" : "",
     },
+  },
+  autoUpdate: {
+    channel: env.ARLE_RELEASE_UPDATE_CHANNEL,
+    manifestUrl: env.ARLE_RELEASE_UPDATE_MANIFEST_URL || "",
+    manifestPath: env.ARLE_RELEASE_UPDATE_MANIFEST_PATH || "",
+    manifestExists: exists(env.ARLE_RELEASE_UPDATE_MANIFEST_PATH),
+    updaterArtifact: {
+      path: env.ARLE_RELEASE_ZIP_PATH,
+      name: basename(env.ARLE_RELEASE_ZIP_PATH),
+      kind: "zip",
+    },
+    publicInstaller: {
+      path: env.ARLE_RELEASE_DMG_PATH || "",
+      name: basename(env.ARLE_RELEASE_DMG_PATH) || env.ARLE_RELEASE_PUBLIC_DMG_NAME,
+      kind: "dmg",
+    },
+    signingKeyConfigured: env.ARLE_RELEASE_UPDATE_PRIVATE_KEY_CONFIGURED === "true",
+    publicKeyOut: env.ARLE_RELEASE_UPDATE_PUBLIC_KEY_OUT || "",
+    publicKeyOutExists: exists(env.ARLE_RELEASE_UPDATE_PUBLIC_KEY_OUT),
+    applyPolicy: "user-confirmed-relaunch-no-sudo",
+    trustRoot: "HTTPS plus pinned Ed25519 public key plus SHA256",
   },
   smoke: {
     requested: env.ARLE_RELEASE_RUN_SMOKE === "1",

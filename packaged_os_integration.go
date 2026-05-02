@@ -17,6 +17,7 @@ const (
 	packagedOSNativeNotificationsEnv = "ARLECCHINO_ENABLE_NATIVE_NOTIFICATIONS"
 	packagedOSDockBadgesEnv          = "ARLECCHINO_ENABLE_DOCK_BADGES"
 	packagedOSAutoUpdateManifestEnv  = "ARLECCHINO_AUTO_UPDATE_MANIFEST"
+	autoUpdateManifestURLEnv         = "ARLECCHINO_AUTO_UPDATE_MANIFEST_URL"
 	packagedOSAutoUpdateChannelEnv   = "ARLECCHINO_AUTO_UPDATE_CHANNEL"
 	packagedOSAutoUpdatePublicKeyEnv = "ARLECCHINO_AUTO_UPDATE_PUBLIC_KEY"
 	packagedOSAutoUpdateApplyEnv     = "ARLECCHINO_ENABLE_AUTO_UPDATE_APPLY_SMOKE"
@@ -151,11 +152,10 @@ func buildPackagedOSIntegrationSnapshot(
 		dockBadgeReason = "Dock/taskbar badge delivery is enabled by packaged OS spike flags."
 	}
 
-	autoUpdateStatus := ShellCapabilityUnavailable
-	autoUpdateReason := "Auto-update remains disabled; manifest reading is available only as a placeholder."
+	autoUpdateStatus := ShellCapabilityExperimental
+	autoUpdateReason := "Auto-update runtime can verify signed ZIP artifacts and stage user-confirmed relaunch installs."
 	if options.AutoUpdateManifest != nil {
-		autoUpdateStatus = ShellCapabilityExperimental
-		autoUpdateReason = "Auto-update manifest was read and can be verified; update install/apply remains gated."
+		autoUpdateReason = "Auto-update manifest was read and can be verified by the runtime updater."
 	} else if strings.TrimSpace(options.AutoUpdateManifestReason) != "" {
 		autoUpdateReason = options.AutoUpdateManifestReason
 	}
@@ -222,7 +222,7 @@ func buildPackagedOSIntegrationSnapshot(
 				Label:                 "Auto Update",
 				Capability:            "autoUpdate",
 				Status:                autoUpdateStatus,
-				Enabled:               false,
+				Enabled:               true,
 				RequiresPackagedBuild: true,
 				Reason:                autoUpdateReason,
 			},

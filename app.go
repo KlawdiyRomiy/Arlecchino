@@ -64,6 +64,7 @@ type App struct {
 	diagnosticsPreloadSeq    uint64
 	windowLeases             *WindowLeaseRegistry
 	packagedOSNative         *PackagedOSNativeDelivery
+	autoUpdater              *AutoUpdateService
 	projectSessions          *ProjectSessionRegistry
 	projectWindowSeq         atomic.Uint64
 
@@ -130,6 +131,7 @@ func NewApp() *App {
 		backgroundShell:  NewBackgroundShellStatusService(),
 		windowLeases:     NewWindowLeaseRegistry(),
 		packagedOSNative: NewPackagedOSNativeDelivery(defaultPackagedOSIntegrationOptions()),
+		autoUpdater:      NewAutoUpdateService(),
 	}
 	app.projectSessions = NewProjectSessionRegistry()
 	app.projectSessions.register(defaultProjectSessionFromApp(app))

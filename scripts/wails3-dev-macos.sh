@@ -166,7 +166,11 @@ fi
 
 mkdir -p "$(dirname "$OUTPUT")" "$GOCACHE"
 cd "$ROOT_DIR"
-go build -o "$OUTPUT" .
+GO_BUILD_ARGS=(-o "$OUTPUT")
+if [[ -n "${ARLE_WAILS3_LDFLAGS:-}" ]]; then
+  GO_BUILD_ARGS+=(-ldflags "$ARLE_WAILS3_LDFLAGS")
+fi
+go build "${GO_BUILD_ARGS[@]}" .
 
 echo "Built Wails v3 spike binary: $OUTPUT"
 

@@ -28,7 +28,7 @@ func TestBuildShellCapabilities_MainWindowReady(t *testing.T) {
 		{name: "customProtocol", status: ShellCapabilityRequiresBuild},
 		{name: "fileAssociations", status: ShellCapabilityRequiresBuild},
 		{name: "singleInstance", status: ShellCapabilityRequiresBuild},
-		{name: "autoUpdate", status: ShellCapabilityUnavailable},
+		{name: "autoUpdate", status: ShellCapabilityExperimental},
 	}
 
 	for _, tt := range tests {

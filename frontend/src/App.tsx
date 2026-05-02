@@ -34,6 +34,7 @@ import { useApplicationMenuBridge } from "./hooks/useApplicationMenuBridge";
 import { useBackgroundShellStatusBridge } from "./shell/backgroundShellStatus";
 import { useOpenIntentEventBridge } from "./shell/openIntentEventBridge";
 import { usePackagedOSIntegrationBridge } from "./shell/packagedOSIntegration";
+import { useAutoUpdateBridge } from "./shell/autoUpdate";
 import { useManualUpdateNotifications } from "./shell/manualUpdateNotifications";
 import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
 import { useWindowLeaseBridge } from "./shell/windowLeaseBridge";
@@ -77,6 +78,7 @@ const App: React.FC = () => {
   useOpenIntentEventBridge();
   useBackgroundShellStatusBridge();
   usePackagedOSIntegrationBridge();
+  useAutoUpdateBridge();
   useManualUpdateNotifications();
   useWindowLeaseBridge(syncSurfaceRuntimeWindowLeaseBackendStatus);
 

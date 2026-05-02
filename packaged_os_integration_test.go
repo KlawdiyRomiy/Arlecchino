@@ -57,8 +57,8 @@ func TestBuildPackagedOSIntegrationSnapshot_DefaultsOff(t *testing.T) {
 	if snapshot.Adapters["tray"].BackgroundActionCount != 1 {
 		t.Fatalf("tray action count = %d, want 1", snapshot.Adapters["tray"].BackgroundActionCount)
 	}
-	if snapshot.Adapters["autoUpdate"].Enabled {
-		t.Fatal("autoUpdate enabled = true, want false")
+	if !snapshot.Adapters["autoUpdate"].Enabled {
+		t.Fatal("autoUpdate enabled = false, want true")
 	}
 }
 
@@ -84,12 +84,12 @@ func TestBuildPackagedOSIntegrationSnapshot_PackagedSpikeStillExplicit(t *testin
 	if snapshot.Adapters["dockBadges"].Status != ShellCapabilityAvailable {
 		t.Fatalf("dockBadges status = %q, want available", snapshot.Adapters["dockBadges"].Status)
 	}
-	if snapshot.Adapters["autoUpdate"].Enabled {
-		t.Fatal("autoUpdate enabled = true, want false")
+	if !snapshot.Adapters["autoUpdate"].Enabled {
+		t.Fatal("autoUpdate enabled = false, want true")
 	}
 }
 
-func TestReadAutoUpdateManifest_ReadsButDoesNotEnableUpdates(t *testing.T) {
+func TestReadAutoUpdateManifest_ReadsAndEnablesRuntimeUpdates(t *testing.T) {
 	manifestPath := filepath.Join(t.TempDir(), "update.json")
 	if err := os.WriteFile(
 		manifestPath,
@@ -118,8 +118,8 @@ func TestReadAutoUpdateManifest_ReadsButDoesNotEnableUpdates(t *testing.T) {
 	if snapshot.Adapters["autoUpdate"].Status != ShellCapabilityExperimental {
 		t.Fatalf("autoUpdate status = %q, want experimental", snapshot.Adapters["autoUpdate"].Status)
 	}
-	if snapshot.Adapters["autoUpdate"].Enabled {
-		t.Fatal("autoUpdate enabled = true, want false")
+	if !snapshot.Adapters["autoUpdate"].Enabled {
+		t.Fatal("autoUpdate enabled = false, want true")
 	}
 }
 
