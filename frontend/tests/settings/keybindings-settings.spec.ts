@@ -47,12 +47,9 @@ test.beforeEach(async ({ page }) => {
                   capabilities: {
                     dialogs: {
                       status: "available",
-                      reason: "test shell dialog bridge",
+                      reason: "test dialog bridge",
                     },
                   },
-                  platform: "darwin",
-                  runtime: "test",
-                  version: 1,
                 };
               case "GetProjectWindowSession":
                 return {
@@ -189,6 +186,14 @@ async function openKeybindings(page: Page) {
 async function openAppearance(page: Page) {
   await page.getByTitle("Settings").click();
   await expect(page.getByRole("heading", { name: "Appearance" })).toBeVisible();
+}
+
+async function openBrowserPreviewSettings(page: Page) {
+  await page.getByTitle("Settings").click();
+  await page.getByRole("button", { name: /Browser Preview/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Browser Preview" }),
+  ).toBeVisible();
 }
 
 const dispatchShortcut = async (
@@ -501,6 +506,48 @@ test("project session route ignores shared workspace storage", async ({
       }),
     )
     .toEqual({ activeId: "/launched", projects: ["/launched"] });
+});
+
+test("Browser Preview settings persist Markdown links mode", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await openBrowserPreviewSettings(page);
+
+  const markdownLinksGroup = page.getByRole("group", {
+    name: "Markdown links",
+  });
+  const browserButton = markdownLinksGroup.getByRole("button", {
+    name: "Browser",
+  });
+  const previewButton = markdownLinksGroup.getByRole("button", {
+    name: "Preview",
+  });
+
+  await expect(browserButton).toHaveAttribute("aria-pressed", "true");
+  await expect(previewButton).toHaveAttribute("aria-pressed", "false");
+
+  await previewButton.click();
+  await expect(browserButton).toHaveAttribute("aria-pressed", "false");
+  await expect(previewButton).toHaveAttribute("aria-pressed", "true");
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const rawSettings = localStorage.getItem("browser-preview-settings.v1");
+        if (!rawSettings) return null;
+        return JSON.parse(rawSettings).state.markdownLinkOpenMode;
+      }),
+    )
+    .toBe("preview");
+
+  await page.reload();
+  await mountProjectUI(page);
+  await openBrowserPreviewSettings(page);
+
+  const reloadedGroup = page.getByRole("group", { name: "Markdown links" });
+  await expect(
+    reloadedGroup.getByRole("button", { name: "Preview" }),
+  ).toHaveAttribute("aria-pressed", "true");
 });
 
 test("appearance theme dropdown opens and selects a theme", async ({

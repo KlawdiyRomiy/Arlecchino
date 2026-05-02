@@ -2,11 +2,27 @@ import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FileText } from "lucide-react";
+import { openExternalUrlWithCapability } from "../shell/browser";
+import { useBrowserPreviewStore } from "../stores/browserPreviewStore";
 import type { MarkdownPreviewSource } from "./layout/MainLayout.types";
 
 interface MarkdownPreviewPanelContentProps {
   source: MarkdownPreviewSource | null;
+  onOpenExternalLinkPreview?: (url: string) => void;
 }
+
+const isAbsoluteHttpUrl = (href: string | undefined): href is string => {
+  if (!href) {
+    return false;
+  }
+
+  try {
+    const parsedUrl = new URL(href);
+    return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
 
 const markdownComponents = {
   h1: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
@@ -29,14 +45,6 @@ const markdownComponents = {
   ),
   p: (props: React.HTMLAttributes<HTMLParagraphElement>) => (
     <p className="mb-3 leading-7 text-[var(--text-secondary)]" {...props} />
-  ),
-  a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
-    <a
-      className="text-[var(--accent-primary)] underline decoration-[var(--accent-primary)]/45 underline-offset-4 hover:text-[var(--text-primary)]"
-      target="_blank"
-      rel="noreferrer"
-      {...props}
-    />
   ),
   ul: (props: React.HTMLAttributes<HTMLUListElement>) => (
     <ul
@@ -105,7 +113,48 @@ const markdownComponents = {
 
 export const MarkdownPreviewPanelContent: React.FC<
   MarkdownPreviewPanelContentProps
-> = ({ source }) => {
+> = ({ source, onOpenExternalLinkPreview }) => {
+  const markdownLinkOpenMode = useBrowserPreviewStore(
+    (state) => state.markdownLinkOpenMode,
+  );
+  const components = React.useMemo(
+    () => ({
+      ...markdownComponents,
+      a: ({
+        href,
+        onClick,
+        ...props
+      }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
+        const handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+          onClick?.(event);
+          if (event.defaultPrevented || !isAbsoluteHttpUrl(href)) {
+            return;
+          }
+
+          event.preventDefault();
+          if (markdownLinkOpenMode === "preview" && onOpenExternalLinkPreview) {
+            onOpenExternalLinkPreview(href);
+            return;
+          }
+
+          void openExternalUrlWithCapability(href);
+        };
+
+        return (
+          <a
+            className="text-[var(--accent-primary)] underline decoration-[var(--accent-primary)]/45 underline-offset-4 hover:text-[var(--text-primary)]"
+            target="_blank"
+            rel="noreferrer"
+            href={href}
+            onClick={handleClick}
+            {...props}
+          />
+        );
+      },
+    }),
+    [markdownLinkOpenMode, onOpenExternalLinkPreview],
+  );
+
   if (!source) {
     return (
       <div
@@ -127,10 +176,7 @@ export const MarkdownPreviewPanelContent: React.FC<
       data-source-path={source.path}
     >
       <div className="mx-auto max-w-[860px] px-6 py-5 text-sm">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={markdownComponents}
-        >
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
           {source.content}
         </ReactMarkdown>
       </div>

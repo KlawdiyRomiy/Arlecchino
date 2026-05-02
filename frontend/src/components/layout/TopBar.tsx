@@ -13,6 +13,7 @@ import {
   GitBranch,
   Terminal,
   RefreshCw,
+  DownloadCloud,
 } from "lucide-react";
 import { WindowControls } from "../ui";
 import { useIndexingProgress } from "../../hooks/useIndexingProgress";
@@ -37,6 +38,7 @@ interface TopBarProps {
   onOpenDebug?: () => void;
   onOpenPreview?: () => void;
   onOpenDependencyPolicy?: () => void;
+  onCheckForUpdates?: () => void;
   onBackToWelcome?: () => void;
   onProjectOpen?: (path: string) => void;
   onSwitchProject?: (id: string, direction?: number) => void;
@@ -60,6 +62,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onOpenDebug,
   onOpenPreview,
   onOpenDependencyPolicy,
+  onCheckForUpdates,
   onProjectOpen,
   onSwitchProject,
   onCloseProject,
@@ -320,6 +323,14 @@ export const TopBar: React.FC<TopBarProps> = ({
                 >
                   <RefreshCw size={menuIconSize} />
                   Sync dependencies...
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Item
+                  onSelect={() => onCheckForUpdates?.()}
+                  className={menuItemClass}
+                >
+                  <DownloadCloud size={menuIconSize} />
+                  Check for Updates
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>

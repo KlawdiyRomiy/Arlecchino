@@ -82,6 +82,7 @@ interface MainLayoutPanelRendererProps {
   onGitFullscreen: () => void;
   onProblemsFullscreen: () => void;
   onMarkdownPreviewFullscreen: () => void;
+  onMarkdownLinkPreviewOpen: (url: string) => void;
   onFileOpen: (
     path: string,
     content: string,
@@ -140,6 +141,7 @@ export const MainLayoutPanelRenderer: React.FC<
   onGitFullscreen,
   onProblemsFullscreen,
   onMarkdownPreviewFullscreen,
+  onMarkdownLinkPreviewOpen,
   onFileOpen,
   onFileOpenInPanel,
   onOpenFileFromPath,
@@ -420,7 +422,10 @@ export const MainLayoutPanelRenderer: React.FC<
           {...panelProps}
           onFullscreen={onMarkdownPreviewFullscreen}
         >
-          <MarkdownPreviewPanelContent source={markdownPreviewSource} />
+          <MarkdownPreviewPanelContent
+            source={markdownPreviewSource}
+            onOpenExternalLinkPreview={onMarkdownLinkPreviewOpen}
+          />
         </FloatingPanel>
       );
     default:

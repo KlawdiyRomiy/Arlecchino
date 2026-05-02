@@ -1150,23 +1150,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
 
     setIsSaving(true);
-    const saveNotificationId = useAppNotificationStore
-      .getState()
-      .addNotification({
-        id: `save:${tab.path}`,
-        kind: "progress",
-        title: "Saving file",
-        message: tab.path,
-        source: "Editor",
-        sticky: true,
-      });
 
     try {
       let contentToSave = fileContentsRef.current[activeTab];
       if (contentToSave === undefined) {
-        useAppNotificationStore
-          .getState()
-          .dismissNotification(saveNotificationId);
         return;
       }
 
@@ -1205,31 +1192,22 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       setTabs(
         tabs.map((t) => (t.id === activeTab ? { ...t, isDirty: false } : t)),
       );
-      console.log("File saved:", tab.path);
+      console.log("File write completed:", tab.path);
 
       window.dispatchEvent(
         new CustomEvent("file-saved", { detail: { path: tab.path } }),
       );
-      useAppNotificationStore
-        .getState()
-        .updateNotification(saveNotificationId, {
-          kind: "success",
-          title: "File saved",
-          message: getProjectPathBasename(tab.path),
-          sticky: false,
-          timeoutMs: 2200,
-        });
     } catch (error) {
       console.error("Error saving file:", error);
-      useAppNotificationStore
-        .getState()
-        .updateNotification(saveNotificationId, {
-          kind: "error",
-          title: "Failed to save file",
-          message: error instanceof Error ? error.message : String(error),
-          sticky: false,
-          timeoutMs: 7000,
-        });
+      useAppNotificationStore.getState().addNotification({
+        id: `save-error:${tab.path}`,
+        kind: "error",
+        title: "Failed to save file",
+        message: error instanceof Error ? error.message : String(error),
+        source: "Editor",
+        sticky: false,
+        timeoutMs: 7000,
+      });
     } finally {
       setIsSaving(false);
     }

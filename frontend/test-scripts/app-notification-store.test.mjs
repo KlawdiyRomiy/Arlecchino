@@ -40,20 +40,22 @@ test("app notification store adds, updates, and dismisses notifications", async 
 
   const id = store.addNotification({
     kind: "progress",
-    title: "Saving file",
-    message: "main.go",
+    title: "Checking for updates",
+    message: "alpha channel",
+    tag: "alpha",
     progress: 1.4,
   });
 
   let notifications = useAppNotificationStore.getState().notifications;
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0].id, id);
+  assert.equal(notifications[0].tag, "alpha");
   assert.equal(notifications[0].sticky, true);
   assert.equal(notifications[0].progress, 1);
 
   useAppNotificationStore.getState().updateNotification(id, {
     kind: "success",
-    title: "File saved",
+    title: "Update ready",
     progress: undefined,
     sticky: false,
     timeoutMs: 1200,
@@ -63,9 +65,36 @@ test("app notification store adds, updates, and dismisses notifications", async 
   assert.equal(notifications[0].kind, "success");
   assert.equal(notifications[0].sticky, false);
   assert.equal(notifications[0].timeoutMs, 1200);
+  assert.equal(notifications[0].revision, 1);
 
   useAppNotificationStore.getState().dismissNotification(id);
   assert.equal(useAppNotificationStore.getState().notifications.length, 0);
+});
+
+test("app notification store refreshes same-id notifications without duplicating them", async () => {
+  const { useAppNotificationStore } = await loadNotificationStore();
+  const store = useAppNotificationStore.getState();
+  store.clearNotifications();
+
+  store.addNotification({
+    id: "auto-update",
+    kind: "progress",
+    title: "Checking for Updates",
+    tag: "alpha",
+  });
+  store.addNotification({
+    id: "auto-update",
+    kind: "warning",
+    title: "Manual update required",
+    tag: "alpha",
+  });
+
+  const notifications = useAppNotificationStore.getState().notifications;
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].id, "auto-update");
+  assert.equal(notifications[0].title, "Manual update required");
+  assert.equal(notifications[0].tag, "alpha");
+  assert.equal(notifications[0].revision, 1);
 });
 
 test("app notification store keeps a bounded newest-first queue", async () => {

@@ -71,6 +71,7 @@ import {
   runWindowLeaseAction,
   type WindowLeaseRole,
 } from "../../shell/windowLeaseBridge";
+import { runAutoUpdateCheckWithNotification } from "../../shell/manualUpdateNotifications";
 import type { ShortcutActionId } from "../../utils/keyboard";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 import {
@@ -179,6 +180,7 @@ const ZEN_CHROME_HOVER_CLOSE_DELAY_MS = 140;
 const ZEN_EDGE_HOVER_SIZE = 32;
 const ZEN_CHROME_HOVER_Z_INDEX = zIndex.tooltip - 15;
 const ZEN_PANEL_HOVER_Z_INDEX = zIndex.tooltip + 2;
+const MARKDOWN_LINK_PREVIEW_WINDOW_ID = "markdown-link-preview";
 const NATIVE_FULLSCREEN_CHANGED_EVENT = "shell:native-fullscreen-changed";
 type FullscreenPanelId = "terminal" | "git" | "problems" | "markdownPreview";
 let nativeWindowControlsOwner: symbol | null = null;
@@ -220,6 +222,15 @@ const createEmptySnappedSlotSizes = (): Record<PanelPosition, number> => ({
   top: 0,
   bottom: 0,
 });
+
+const buildMarkdownLinkPreviewTitle = (url: string): string => {
+  try {
+    const parsedUrl = new URL(url);
+    return parsedUrl.host ? `Preview ${parsedUrl.host}` : "Markdown Preview";
+  } catch {
+    return "Markdown Preview";
+  }
+};
 
 const getPrimarySnappedSlotSize = (
   position: PanelPosition,
@@ -931,11 +942,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [panelExitSlotSizes, setPanelExitSlotSizes] = useState<
     Record<PanelPosition, number>
   >(createEmptySnappedSlotSizes);
+  const [panelExitCollapsingPositions, setPanelExitCollapsingPositions] =
+    useState<PanelPosition[]>([]);
   const [panelPresenceBypassPositions, setPanelPresenceBypassPositions] =
     useState<PanelPosition[]>([]);
   const panelPresenceBypassPositionsRef = useRef<PanelPosition[]>([]);
   const [floatingPresenceVersion, setFloatingPresenceVersion] = useState(0);
   const panelExitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const panelExitCollapseFrameRef = useRef<number | null>(null);
   const pendingPanelCloseFrameIdsRef = useRef<number[]>([]);
 
   useEffect(() => {
@@ -946,6 +960,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       if (panelExitTimerRef.current) {
         clearTimeout(panelExitTimerRef.current);
       }
+      if (
+        typeof window !== "undefined" &&
+        panelExitCollapseFrameRef.current !== null
+      ) {
+        window.cancelAnimationFrame(panelExitCollapseFrameRef.current);
+      }
+      panelExitCollapseFrameRef.current = null;
       if (zenTopChromeHoverTimerRef.current) {
         clearTimeout(zenTopChromeHoverTimerRef.current);
       }
@@ -1621,9 +1642,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
   const showNotification = useCallback(
     (type: "success" | "error", message: string) => {
+      if (type !== "error") {
+        return;
+      }
+
       useAppNotificationStore.getState().addNotification({
-        kind: type,
-        title: type === "success" ? "Done" : "Action failed",
+        kind: "error",
+        title: "Action failed",
         message,
         source: "IDE",
       });
@@ -1805,6 +1830,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const openDependencyPolicy = useCallback(() => {
     setIsDependencyPolicyOpen(true);
+  }, []);
+
+  const checkForUpdates = useCallback(() => {
+    void runAutoUpdateCheckWithNotification();
   }, []);
 
   const closeDependencyPolicy = useCallback(() => {
@@ -2134,6 +2163,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       if (panelExitTimerRef.current) {
         clearTimeout(panelExitTimerRef.current);
       }
+      if (
+        typeof window !== "undefined" &&
+        panelExitCollapseFrameRef.current !== null
+      ) {
+        window.cancelAnimationFrame(panelExitCollapseFrameRef.current);
+      }
 
       setPanelExitSlotSizes((currentSizes) => {
         if (currentSizes[position] === slotSize) {
@@ -2145,9 +2180,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setPanelExitPositions((currentPositions) =>
         uniquePanelPositions([...currentPositions, position]),
       );
+      panelExitCollapseFrameRef.current = window.requestAnimationFrame(() => {
+        panelExitCollapseFrameRef.current = null;
+        setPanelExitCollapsingPositions((currentPositions) =>
+          uniquePanelPositions([...currentPositions, position]),
+        );
+      });
       panelExitTimerRef.current = setTimeout(() => {
         panelExitTimerRef.current = null;
         setPanelExitPositions([]);
+        setPanelExitCollapsingPositions([]);
         setPanelExitSlotSizes(createEmptySnappedSlotSizes());
       }, FLOATING_PANEL_LAYOUT_TRANSITION_MS + 700);
     },
@@ -2156,6 +2198,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const finishSnappedSlotExit = useCallback((position: PanelPosition) => {
     setPanelExitPositions((currentPositions) =>
+      currentPositions.filter(
+        (currentPosition) => currentPosition !== position,
+      ),
+    );
+    setPanelExitCollapsingPositions((currentPositions) =>
       currentPositions.filter(
         (currentPosition) => currentPosition !== position,
       ),
@@ -3579,6 +3626,26 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     uiScale,
   });
 
+  const handleMarkdownLinkPreviewOpen = useCallback(
+    (url: string) => {
+      const title = buildMarkdownLinkPreviewTitle(url);
+      handlePreviewWindowOpenEvent({
+        id: MARKDOWN_LINK_PREVIEW_WINDOW_ID,
+        surface: "browser",
+        title,
+        payload: {
+          title,
+          url,
+          htmlContent: "",
+          sourceLabel: "",
+          revision: Date.now(),
+        },
+        mode: "floating",
+      });
+    },
+    [handlePreviewWindowOpenEvent],
+  );
+
   const { applyPanelOpenState, closeTerminalPanel, toggleNamedPanel } =
     useMainLayoutPanelEvents({
       applyPanelConfigsState,
@@ -3888,6 +3955,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           markdownPreviewPreFullscreenRef,
         )
       }
+      onMarkdownLinkPreviewOpen={handleMarkdownLinkPreviewOpen}
       onFileOpen={handleFileOpen}
       onFileOpenInPanel={handleFileOpenInPanel}
       onOpenFileFromPath={openFileFromPath}
@@ -4296,14 +4364,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   ): React.CSSProperties => {
     const isSettlingSlot = panelDropSettlingPositions.includes(position);
     const isExitingSlot = panelExitPositions.includes(position);
-    const resolvedWidth =
-      isExitingSlot && width <= 0 ? panelExitSlotSizes[position] : width;
-    const shouldExposeSlotOverflow = isSettlingSlot;
+    const isCollapsingExitSlot =
+      panelExitCollapsingPositions.includes(position);
+    const resolvedWidth = isCollapsingExitSlot
+      ? 0
+      : isExitingSlot && width <= 0
+        ? panelExitSlotSizes[position]
+        : width;
+    const shouldExposeSlotOverflow = isSettlingSlot || isExitingSlot;
     const slotTransitionSuspended =
       draggingPanel !== null ||
       draggingPreviewWindowId !== null ||
       isResizingSlot;
-    const shouldAnimateSlotSize = isSettlingSlot && !slotTransitionSuspended;
+    const shouldAnimateSlotSize =
+      (isSettlingSlot || isExitingSlot) && !slotTransitionSuspended;
     const transition =
       reducePanelMotion || !shouldAnimateSlotSize
         ? "none"
@@ -4324,7 +4398,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           : undefined,
       pointerEvents: isActive ? "auto" : "none",
       transition,
-      willChange: shouldExposeSlotOverflow ? "transform, opacity" : "auto",
+      willChange: shouldExposeSlotOverflow
+        ? "width, transform, opacity"
+        : "auto",
     };
   };
 
@@ -4336,14 +4412,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   ): React.CSSProperties => {
     const isSettlingSlot = panelDropSettlingPositions.includes(position);
     const isExitingSlot = panelExitPositions.includes(position);
-    const resolvedHeight =
-      isExitingSlot && height <= 0 ? panelExitSlotSizes[position] : height;
-    const shouldExposeSlotOverflow = isSettlingSlot;
+    const isCollapsingExitSlot =
+      panelExitCollapsingPositions.includes(position);
+    const resolvedHeight = isCollapsingExitSlot
+      ? 0
+      : isExitingSlot && height <= 0
+        ? panelExitSlotSizes[position]
+        : height;
+    const shouldExposeSlotOverflow = isSettlingSlot || isExitingSlot;
     const slotTransitionSuspended =
       draggingPanel !== null ||
       draggingPreviewWindowId !== null ||
       isResizingSlot;
-    const shouldAnimateSlotSize = isSettlingSlot && !slotTransitionSuspended;
+    const shouldAnimateSlotSize =
+      (isSettlingSlot || isExitingSlot) && !slotTransitionSuspended;
     const transition =
       reducePanelMotion || !shouldAnimateSlotSize
         ? "none"
@@ -4364,7 +4446,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           : undefined,
       pointerEvents: isActive ? "auto" : "none",
       transition,
-      willChange: shouldExposeSlotOverflow ? "transform, opacity" : "auto",
+      willChange: shouldExposeSlotOverflow
+        ? "height, transform, opacity"
+        : "auto",
     };
   };
 
@@ -4547,6 +4631,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               onOpenDebug={openDebugDialog}
               onOpenPreview={openCanonicalBrowserPreview}
               onOpenDependencyPolicy={openDependencyPolicy}
+              onCheckForUpdates={checkForUpdates}
               onBackToWelcome={onBackToWelcome}
               onProjectOpen={onProjectOpen}
               onSwitchProject={onSwitchProject}

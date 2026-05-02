@@ -1,9 +1,16 @@
-import React, { useEffect } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import {
+  AnimatePresence,
+  motion,
+  type Variants,
+  useReducedMotion,
+} from "framer-motion";
 import {
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
+  ExternalLink,
   Info,
   Loader2,
   X,
@@ -12,72 +19,159 @@ import {
   type AppNotification,
   useAppNotificationStore,
 } from "../../stores/appNotificationStore";
-import { radius, shadows, zIndex } from "../../styles/colors";
+import { radius, zIndex } from "../../styles/colors";
 
 const visibleNotificationLimit = 4;
+const collapsedStackOffset = 12;
+const expandedStackOffset = 166;
+const primaryRailHeight = 178;
 
 const kindAccent: Record<AppNotification["kind"], string> = {
-  info: "#78a8ff",
-  success: "#5dd48a",
-  warning: "#f2c76b",
-  error: "#ff6b77",
-  progress: "#91b7ff",
+  info: "var(--status-info)",
+  success: "var(--status-success)",
+  warning: "var(--status-warning)",
+  error: "var(--status-error)",
+  progress: "var(--status-info)",
+};
+
+interface RailMotionState {
+  expanded: boolean;
+  index: number;
+  reducedMotion: boolean;
+}
+
+const railVariants: Variants = {
+  enter: ({ reducedMotion }: RailMotionState) =>
+    reducedMotion ? { opacity: 0 } : { opacity: 0, x: 28, y: 10, scale: 0.97 },
+  active: ({ expanded, index, reducedMotion }: RailMotionState) => {
+    const collapsedOpacity = index < 3 ? 1 - index * 0.18 : 0;
+    if (reducedMotion) {
+      return {
+        opacity: expanded ? 1 : collapsedOpacity,
+      };
+    }
+
+    return {
+      opacity: expanded ? 1 : collapsedOpacity,
+      x: 0,
+      y: -index * (expanded ? expandedStackOffset : collapsedStackOffset),
+      scale: expanded ? 1 : Math.max(0.9, 1 - index * 0.035),
+      filter:
+        !expanded && index > 0
+          ? `blur(${Math.min(index * 0.45, 1)}px)`
+          : "blur(0px)",
+    };
+  },
+  exit: ({ reducedMotion }: RailMotionState) =>
+    reducedMotion ? { opacity: 0 } : { opacity: 0, x: 24, scale: 0.96 },
 };
 
 const stackStyle: React.CSSProperties = {
   position: "fixed",
-  top: "calc(18px + env(safe-area-inset-top, 0px))",
-  right: "calc(18px + env(safe-area-inset-right, 0px))",
-  width: "min(392px, calc(100vw - 32px))",
-  display: "flex",
-  flexDirection: "column",
-  gap: "10px",
+  right: "calc(24px + env(safe-area-inset-right, 0px))",
+  bottom: "calc(58px + env(safe-area-inset-bottom, 0px))",
+  width: "min(520px, calc(100vw - 40px))",
   pointerEvents: "none",
   zIndex: zIndex.notification,
 };
 
 const cardBaseStyle: React.CSSProperties = {
+  width: "100%",
   position: "relative",
   overflow: "hidden",
-  borderRadius: radius.lg,
-  border: "1px solid rgba(255, 255, 255, 0.11)",
+  borderRadius: "22px",
+  border: "1px solid var(--shell-border-strong)",
   background:
-    "linear-gradient(180deg, rgba(24, 27, 31, 0.96), rgba(13, 15, 18, 0.96))",
-  boxShadow: `${shadows.floating}, 0 0 0 1px rgba(0, 0, 0, 0.28)`,
-  color: "rgba(245, 247, 250, 0.94)",
+    "linear-gradient(150deg, color-mix(in srgb, var(--surface-shell-soft) 96%, transparent), color-mix(in srgb, var(--surface-shell-panel) 98%, transparent) 58%, color-mix(in srgb, var(--surface-shell) 94%, transparent))",
+  boxShadow:
+    "var(--shadow-overlay), inset 0 1px 0 var(--shell-inner-highlight), inset 0 0 0 1px color-mix(in srgb, var(--border-subtle) 64%, transparent)",
+  backdropFilter: "blur(22px) saturate(1.16)",
+  WebkitBackdropFilter: "blur(22px) saturate(1.16)",
+  color: "var(--text-primary)",
   pointerEvents: "auto",
+  transformOrigin: "100% 100%",
 };
 
-const contentStyle: React.CSSProperties = {
+const contentBaseStyle: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "24px minmax(0, 1fr) 28px",
-  gap: "10px",
-  padding: "13px 13px 13px 14px",
+  gridTemplateColumns: "32px minmax(0, 1fr) 28px",
+  columnGap: "12px",
+  position: "relative",
+  zIndex: 1,
 };
 
-const titleStyle: React.CSSProperties = {
-  fontSize: "13px",
-  fontWeight: 620,
-  lineHeight: 1.25,
-  letterSpacing: 0,
+const iconBubbleStyle: React.CSSProperties = {
+  width: "32px",
+  height: "32px",
+  flex: "0 0 32px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  borderRadius: radius.full,
+  lineHeight: 0,
 };
 
-const messageStyle: React.CSSProperties = {
-  marginTop: "4px",
-  color: "rgba(222, 228, 236, 0.72)",
-  fontSize: "12px",
-  lineHeight: 1.38,
-  overflowWrap: "anywhere",
-  whiteSpace: "pre-wrap",
+const iconStyle: React.CSSProperties = {
+  display: "block",
+  flexShrink: 0,
+};
+
+const headerRowStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  minWidth: 0,
 };
 
 const sourceStyle: React.CSSProperties = {
-  marginBottom: "4px",
-  color: "rgba(168, 179, 194, 0.66)",
-  fontSize: "10px",
-  fontWeight: 650,
-  letterSpacing: "0.08em",
+  color: "var(--text-secondary)",
+  fontSize: "11px",
+  fontWeight: 760,
+  letterSpacing: "0.16em",
+  lineHeight: 1.1,
   textTransform: "uppercase",
+};
+
+const tagChipStyle: React.CSSProperties = {
+  minHeight: "22px",
+  display: "inline-flex",
+  alignItems: "center",
+  border: "1px solid var(--border-subtle)",
+  borderRadius: radius.full,
+  padding: "0 9px",
+  background: "color-mix(in srgb, var(--surface-active) 72%, transparent)",
+  color: "var(--text-secondary)",
+  fontSize: "12px",
+  fontWeight: 650,
+  lineHeight: 1,
+};
+
+const titleStyle: React.CSSProperties = {
+  marginTop: "8px",
+  fontSize: "22px",
+  fontWeight: 720,
+  lineHeight: 1.16,
+  letterSpacing: 0,
+};
+
+const compactTitleStyle: React.CSSProperties = {
+  marginTop: "5px",
+  fontSize: "14px",
+  fontWeight: 680,
+  lineHeight: 1.2,
+  letterSpacing: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const messageStyle: React.CSSProperties = {
+  marginTop: "10px",
+  color: "var(--text-secondary)",
+  fontSize: "14px",
+  lineHeight: 1.38,
+  overflowWrap: "anywhere",
+  whiteSpace: "pre-wrap",
 };
 
 const closeButtonStyle: React.CSSProperties = {
@@ -86,31 +180,62 @@ const closeButtonStyle: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
-  border: "1px solid rgba(255, 255, 255, 0.08)",
-  borderRadius: radius.md,
-  background: "rgba(255, 255, 255, 0.04)",
-  color: "rgba(237, 241, 247, 0.66)",
+  border: "1px solid var(--border-subtle)",
+  borderRadius: radius.full,
+  background: "color-mix(in srgb, var(--surface-1) 76%, transparent)",
+  color: "var(--text-secondary)",
   cursor: "pointer",
 };
 
 const actionButtonStyle: React.CSSProperties = {
-  marginTop: "10px",
-  height: "30px",
-  padding: "0 12px",
-  border: "1px solid rgba(255, 255, 255, 0.12)",
-  borderRadius: radius.md,
-  background: "rgba(255, 255, 255, 0.08)",
-  color: "rgba(248, 250, 252, 0.94)",
+  minHeight: "34px",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "8px",
+  padding: "0 14px",
+  border: "1px solid var(--border-default)",
+  borderRadius: radius.full,
+  background: "color-mix(in srgb, var(--surface-active) 78%, transparent)",
+  color: "var(--text-primary)",
   cursor: "pointer",
-  fontSize: "12px",
-  fontWeight: 650,
+  fontSize: "13px",
+  fontWeight: 720,
 };
 
-const getIcon = (notification: AppNotification) => {
+const footerRowStyle: React.CSSProperties = {
+  marginTop: "16px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "12px",
+};
+
+const timeStyle: React.CSSProperties = {
+  flex: "0 0 auto",
+  color: "var(--text-muted)",
+  fontSize: "12px",
+  fontWeight: 620,
+};
+
+const getIconBubbleStyle = (
+  notificationKind: AppNotification["kind"],
+): React.CSSProperties => {
+  const accent = kindAccent[notificationKind];
+
+  return {
+    ...iconBubbleStyle,
+    background: `color-mix(in srgb, ${accent} 12%, var(--surface-1))`,
+    boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${accent} 34%, var(--border-subtle))`,
+    color: accent,
+  };
+};
+
+const getIcon = (notification: AppNotification, reducedMotion: boolean) => {
   const iconProps = {
-    size: 18,
-    strokeWidth: 2.2,
+    size: 17,
+    strokeWidth: 2.25,
     color: kindAccent[notification.kind],
+    style: iconStyle,
   };
 
   switch (notification.kind) {
@@ -121,11 +246,21 @@ const getIcon = (notification: AppNotification) => {
     case "error":
       return <AlertCircle {...iconProps} />;
     case "progress":
+      if (reducedMotion) {
+        return <Loader2 {...iconProps} />;
+      }
       return (
         <motion.span
           animate={{ rotate: 360 }}
           transition={{ repeat: Infinity, duration: 1.2, ease: "linear" }}
-          style={{ display: "inline-flex" }}
+          style={{
+            width: "17px",
+            height: "17px",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            lineHeight: 0,
+          }}
         >
           <Loader2 {...iconProps} />
         </motion.span>
@@ -136,13 +271,43 @@ const getIcon = (notification: AppNotification) => {
   }
 };
 
+const formatNotificationAge = (updatedAt: number): string => {
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor((Date.now() - updatedAt) / 1000),
+  );
+  if (elapsedSeconds < 45) {
+    return "just now";
+  }
+
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) {
+    return `${elapsedMinutes}m ago`;
+  }
+
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) {
+    return `${elapsedHours}h ago`;
+  }
+
+  return `${Math.floor(elapsedHours / 24)}d ago`;
+};
+
 interface NotificationCardProps {
   notification: AppNotification;
+  index: number;
+  expanded: boolean;
+  reducedMotion: boolean;
+  visibleCount: number;
   onDismiss: (id: string) => void;
 }
 
 const NotificationCard: React.FC<NotificationCardProps> = ({
   notification,
+  index,
+  expanded,
+  reducedMotion,
+  visibleCount,
   onDismiss,
 }) => {
   useEffect(() => {
@@ -165,104 +330,160 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
     onDismiss,
   ]);
 
-  const progress =
-    typeof notification.progress === "number"
-      ? Math.max(0, Math.min(1, notification.progress))
-      : null;
+  const isReadable = expanded || index === 0;
+  const canInteract = isReadable;
+  const motionState: RailMotionState = {
+    expanded,
+    index,
+    reducedMotion,
+  };
+  const stackOffset = expanded ? expandedStackOffset : collapsedStackOffset;
+  const shouldShowExternalIcon = /^open\b/i.test(
+    notification.action?.label ?? "",
+  );
 
   return (
     <motion.div
-      layout
-      initial={{ opacity: 0, y: -14, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, x: 18, scale: 0.98 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
-      style={cardBaseStyle}
+      custom={motionState}
+      variants={railVariants}
+      initial="enter"
+      animate="active"
+      exit="exit"
+      transition={
+        reducedMotion
+          ? { duration: 0 }
+          : { type: "spring", stiffness: 430, damping: 36, mass: 0.8 }
+      }
+      data-testid={`app-notification-${notification.id}`}
+      data-kind={notification.kind}
+      data-notification-state={isReadable ? "expanded" : "collapsed"}
+      style={{
+        ...cardBaseStyle,
+        minHeight: isReadable ? `${primaryRailHeight}px` : "68px",
+        position: "absolute",
+        right: 0,
+        bottom: reducedMotion ? `${index * stackOffset}px` : 0,
+        zIndex: visibleCount - index,
+        pointerEvents: canInteract ? "auto" : "none",
+      }}
     >
       <div
-        aria-hidden
         style={{
-          position: "absolute",
-          inset: 0,
-          borderLeft: `3px solid ${kindAccent[notification.kind]}`,
-          pointerEvents: "none",
+          ...contentBaseStyle,
+          padding: isReadable ? "18px 16px 26px 24px" : "13px 14px 18px 24px",
         }}
-      />
-      <div style={contentStyle}>
-        <div style={{ paddingTop: "1px" }}>{getIcon(notification)}</div>
+      >
+        <div style={getIconBubbleStyle(notification.kind)}>
+          {getIcon(notification, reducedMotion)}
+        </div>
         <div style={{ minWidth: 0 }}>
-          {notification.source ? (
-            <div style={sourceStyle}>{notification.source}</div>
-          ) : null}
-          <div style={titleStyle}>{notification.title}</div>
-          {notification.message ? (
+          <div style={headerRowStyle}>
+            {notification.source ? (
+              <div style={sourceStyle}>{notification.source}</div>
+            ) : null}
+            {notification.tag ? (
+              <div style={tagChipStyle}>{notification.tag}</div>
+            ) : null}
+          </div>
+          <div style={isReadable ? titleStyle : compactTitleStyle}>
+            {notification.title}
+          </div>
+          {isReadable && notification.message ? (
             <div style={messageStyle}>{notification.message}</div>
           ) : null}
-          {notification.action ? (
-            <button
-              type="button"
-              style={actionButtonStyle}
-              onClick={() => notification.action?.run()}
-            >
-              {notification.action.label}
-            </button>
+          {isReadable ? (
+            <div style={footerRowStyle}>
+              {notification.action ? (
+                <button
+                  type="button"
+                  style={actionButtonStyle}
+                  onClick={() => notification.action?.run()}
+                >
+                  {notification.action.label}
+                  {shouldShowExternalIcon ? (
+                    <ExternalLink size={14} strokeWidth={2.3} />
+                  ) : null}
+                </button>
+              ) : (
+                <span />
+              )}
+              <div style={timeStyle}>
+                {formatNotificationAge(notification.updatedAt)}
+              </div>
+            </div>
           ) : null}
         </div>
-        <button
-          type="button"
-          aria-label="Dismiss notification"
-          style={closeButtonStyle}
-          onClick={() => onDismiss(notification.id)}
-        >
-          <X size={15} strokeWidth={2.3} />
-        </button>
+        {isReadable ? (
+          <button
+            type="button"
+            aria-label={`Dismiss ${notification.title}`}
+            style={closeButtonStyle}
+            onClick={() => onDismiss(notification.id)}
+          >
+            <X size={16} strokeWidth={2.25} />
+          </button>
+        ) : (
+          <span />
+        )}
       </div>
-      {progress !== null ? (
-        <div
-          aria-hidden
-          style={{
-            height: "2px",
-            background: "rgba(255, 255, 255, 0.08)",
-          }}
-        >
-          <div
-            style={{
-              width: `${Math.round(progress * 100)}%`,
-              height: "100%",
-              background: kindAccent[notification.kind],
-              transition: "width 160ms ease-out",
-            }}
-          />
-        </div>
-      ) : null}
     </motion.div>
   );
 };
 
 export const AppNotificationStack: React.FC = () => {
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = Boolean(useReducedMotion());
+  const [expanded, setExpanded] = useState(false);
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const notifications = useAppNotificationStore((state) => state.notifications);
   const dismissNotification = useAppNotificationStore(
     (state) => state.dismissNotification,
   );
   const visibleNotifications = notifications.slice(0, visibleNotificationLimit);
+  const stackHeight =
+    primaryRailHeight +
+    Math.max(0, visibleNotifications.length - 1) *
+      (expanded ? expandedStackOffset : collapsedStackOffset);
 
-  if (visibleNotifications.length === 0) {
+  useEffect(() => {
+    setPortalTarget(document.body);
+  }, []);
+
+  if (visibleNotifications.length === 0 || !portalTarget) {
     return null;
   }
 
-  return (
+  return createPortal(
     <div
       aria-live="polite"
       aria-relevant="additions text"
-      style={stackStyle}
       data-testid="app-notification-stack"
+      data-stack-expanded={expanded ? "true" : "false"}
+      style={{
+        ...stackStyle,
+        height: stackHeight,
+      }}
+      onMouseEnter={() => setExpanded(true)}
+      onMouseLeave={() => setExpanded(false)}
+      onFocusCapture={() => setExpanded(true)}
+      onBlurCapture={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (
+          !(nextTarget instanceof Node) ||
+          !event.currentTarget.contains(nextTarget)
+        ) {
+          setExpanded(false);
+        }
+      }}
     >
       <AnimatePresence initial={false}>
-        {visibleNotifications.map((notification) => (
+        {visibleNotifications.map((notification, index) => (
           <NotificationCard
-            key={notification.id}
+            key={`${notification.id}:${notification.revision}`}
             notification={notification}
+            index={index}
+            expanded={expanded}
+            reducedMotion={reducedMotion}
+            visibleCount={visibleNotifications.length}
             onDismiss={dismissNotification}
           />
         ))}
@@ -273,12 +494,15 @@ export const AppNotificationStack: React.FC = () => {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -6 }}
           style={{
-            alignSelf: "flex-end",
+            position: "absolute",
+            right: 0,
+            bottom: stackHeight + (expanded ? 10 : 0),
             borderRadius: radius.full,
             padding: "5px 10px",
-            background: "rgba(11, 13, 16, 0.86)",
-            border: "1px solid rgba(255, 255, 255, 0.09)",
-            color: "rgba(222, 228, 236, 0.72)",
+            background:
+              "color-mix(in srgb, var(--surface-overlay) 92%, transparent)",
+            border: "1px solid var(--border-subtle)",
+            color: "var(--text-secondary)",
             fontSize: "11px",
             pointerEvents: "auto",
           }}
@@ -286,6 +510,7 @@ export const AppNotificationStack: React.FC = () => {
           +{notifications.length - visibleNotificationLimit} more
         </motion.div>
       ) : null}
-    </div>
+    </div>,
+    portalTarget,
   );
 };

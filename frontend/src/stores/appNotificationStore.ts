@@ -18,12 +18,14 @@ export interface AppNotification {
   title: string;
   message?: string;
   source?: string;
+  tag?: string;
   action?: AppNotificationAction;
   progress?: number;
   sticky: boolean;
   timeoutMs: number;
   createdAt: number;
   updatedAt: number;
+  revision: number;
 }
 
 export interface AppNotificationInput {
@@ -32,6 +34,7 @@ export interface AppNotificationInput {
   title: string;
   message?: string;
   source?: string;
+  tag?: string;
   action?: AppNotificationAction;
   progress?: number;
   sticky?: boolean;
@@ -89,6 +92,7 @@ const normalizeNotification = (
     title: input.title,
     message: input.message,
     source: input.source,
+    tag: input.tag,
     action: input.action,
     progress:
       typeof input.progress === "number"
@@ -98,6 +102,7 @@ const normalizeNotification = (
     timeoutMs,
     createdAt: timestamp,
     updatedAt: timestamp,
+    revision: 0,
   };
 };
 
@@ -108,11 +113,24 @@ export const useAppNotificationStore = create<AppNotificationState>(
     addNotification: (input) => {
       const next = normalizeNotification(input);
       set((state) => {
+        const previous = state.notifications.find(
+          (item) => item.id === next.id,
+        );
         const withoutExisting = state.notifications.filter(
           (item) => item.id !== next.id,
         );
+        const refreshed = previous
+          ? {
+              ...next,
+              createdAt: previous.createdAt,
+              revision: previous.revision + 1,
+            }
+          : next;
         return {
-          notifications: [next, ...withoutExisting].slice(0, MAX_NOTIFICATIONS),
+          notifications: [refreshed, ...withoutExisting].slice(
+            0,
+            MAX_NOTIFICATIONS,
+          ),
         };
       });
       return next.id;
@@ -142,6 +160,7 @@ export const useAppNotificationStore = create<AppNotificationState>(
             sticky: patch.sticky ?? item.sticky,
             timeoutMs: patch.timeoutMs ?? item.timeoutMs,
             updatedAt: Date.now(),
+            revision: item.revision + 1,
           };
         }),
       }));

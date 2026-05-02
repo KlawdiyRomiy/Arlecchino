@@ -6,11 +6,37 @@ test.beforeEach(async ({ page }) => {
     const files: Record<string, string> = {
       "/workspace/index.html":
         "<!doctype html><html><body>Main editor preview</body></html>",
-      "/workspace/README.md": "# Initial live preview\n\n- ready",
+      "/workspace/README.md":
+        "# Initial live preview\n\n- [docs](https://example.test/docs)\n\n- ready",
     };
     const imageDataUrl =
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
     (window as Window & { __writeCalls?: number }).__writeCalls = 0;
+    (
+      window as Window & {
+        __externalOpenCalls?: Array<{
+          url: string;
+          target: string | undefined;
+          features: string | undefined;
+        }>;
+      }
+    ).__externalOpenCalls = [];
+    window.open = ((url?: string | URL, target?: string, features?: string) => {
+      (
+        window as Window & {
+          __externalOpenCalls?: Array<{
+            url: string;
+            target: string | undefined;
+            features: string | undefined;
+          }>;
+        }
+      ).__externalOpenCalls?.push({
+        url: url?.toString() ?? "",
+        target,
+        features,
+      });
+      return window;
+    }) as typeof window.open;
 
     const appBridge = new Proxy(
       {},
@@ -236,4 +262,123 @@ test("Markdown preview panel follows the active tab and updates before autosave"
     page.getByTestId("editor-tabs-markdown-preview-toggle"),
   ).toHaveCount(0);
   await expect(panel).toContainText("Open a Markdown tab");
+});
+
+test("Markdown preview opens external links through the shell fallback", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await page.locator('[data-file-path="/workspace/README.md"]').click();
+  const toggle = page.getByTestId("editor-tabs-markdown-preview-toggle");
+  await expect(toggle).toBeEnabled();
+  await toggle.click();
+
+  await page.evaluate(async () => {
+    const { syncShellCapabilities } =
+      await import("/src/shell/shellCapabilities.ts");
+    syncShellCapabilities({
+      browserOpenURL: {
+        status: "unavailable",
+        reason: "Runtime browser open disabled for fallback test.",
+        source: "backend",
+      },
+    });
+  });
+
+  const panel = page.getByTestId("panel-markdownPreview");
+  const link = panel.getByRole("link", { name: "docs" });
+  await expect(link).toBeVisible();
+  await link.click();
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as Window & {
+              __externalOpenCalls?: Array<{
+                url: string;
+                target: string | undefined;
+                features: string | undefined;
+              }>;
+            }
+          ).__externalOpenCalls ?? [],
+      ),
+    )
+    .toEqual([
+      {
+        url: "https://example.test/docs",
+        target: "_blank",
+        features: "noopener,noreferrer",
+      },
+    ]);
+});
+
+test("Markdown preview opens external links in Browser Preview when configured", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await page.locator('[data-file-path="/workspace/README.md"]').click();
+  const toggle = page.getByTestId("editor-tabs-markdown-preview-toggle");
+  await expect(toggle).toBeEnabled();
+  await toggle.click();
+
+  await page.evaluate(async () => {
+    const { useBrowserPreviewStore } =
+      await import("/src/stores/browserPreviewStore.ts");
+    useBrowserPreviewStore.getState().setMarkdownLinkOpenMode("preview");
+  });
+
+  const panel = page.getByTestId("panel-markdownPreview");
+  const link = panel.getByRole("link", { name: "docs" });
+  await expect(link).toBeVisible();
+  await link.click();
+
+  await expect(page.getByTestId("panel-markdown-link-preview")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const { usePreviewWindowStore } =
+          await import("/src/stores/previewWindowStore.ts");
+        const windowState = usePreviewWindowStore
+          .getState()
+          .windows.find(
+            (candidate) => candidate.id === "markdown-link-preview",
+          );
+        return windowState
+          ? {
+              surface: windowState.surface,
+              mode: windowState.mode,
+              url: windowState.payload.url ?? null,
+              htmlContent: windowState.payload.htmlContent ?? null,
+              sourceLabel: windowState.payload.sourceLabel ?? null,
+            }
+          : null;
+      }),
+    )
+    .toEqual({
+      surface: "browser",
+      mode: "floating",
+      url: "https://example.test/docs",
+      htmlContent: "",
+      sourceLabel: "",
+    });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as Window & {
+              __externalOpenCalls?: Array<{
+                url: string;
+                target: string | undefined;
+                features: string | undefined;
+              }>;
+            }
+          ).__externalOpenCalls ?? [],
+      ),
+    )
+    .toEqual([]);
 });

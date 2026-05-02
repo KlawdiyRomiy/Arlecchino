@@ -12,6 +12,7 @@ import {
   Palette,
   Pencil,
   Plus,
+  RefreshCw,
   RotateCcw,
   Search,
   Settings,
@@ -20,7 +21,12 @@ import {
 } from "lucide-react";
 
 import { useTheme } from "../hooks/useTheme";
-import { useBrowserPreviewStore } from "../stores/browserPreviewStore";
+import {
+  type MarkdownLinkOpenMode,
+  useBrowserPreviewStore,
+} from "../stores/browserPreviewStore";
+import { useAutoUpdateStatus } from "../shell/autoUpdate";
+import { runAutoUpdateCheckWithNotification } from "../shell/manualUpdateNotifications";
 import {
   useEditorSettingsStore,
   type ProjectWindowMode,
@@ -70,6 +76,14 @@ const projectWindowModeOptions: Array<{
     label: "Windows",
     description: "Open each project in a separate macOS window.",
   },
+];
+
+const markdownLinkOpenModeOptions: Array<{
+  value: MarkdownLinkOpenMode;
+  label: string;
+}> = [
+  { value: "browser", label: "Browser" },
+  { value: "preview", label: "Preview" },
 ];
 
 interface SettingsModalProps {
@@ -271,9 +285,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     autoOpenFromTerminal,
     reuseWindowPerSession,
     closeAutoOpenedOnTerminalExit,
+    markdownLinkOpenMode,
     setAutoOpenFromTerminal,
     setReuseWindowPerSession,
     setCloseAutoOpenedOnTerminalExit,
+    setMarkdownLinkOpenMode,
   } = useBrowserPreviewStore();
   const overrides = useKeybindingsStore((state) => state.overrides);
   const setShortcut = useKeybindingsStore((state) => state.setShortcut);
@@ -281,6 +297,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const resetAllShortcuts = useKeybindingsStore(
     (state) => state.resetAllShortcuts,
   );
+  const autoUpdateStatus = useAutoUpdateStatus();
+  const buildInfo = autoUpdateStatus.current;
+  const autoUpdateBusy =
+    autoUpdateStatus.state === "checking" ||
+    autoUpdateStatus.state === "downloading" ||
+    autoUpdateStatus.state === "applying";
 
   const filteredShortcuts = useMemo(() => {
     const query = shortcutQuery.trim().toLowerCase();
@@ -916,6 +938,64 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onCheckedChange={setShowCompactDiagnostics}
                     />
                   </div>
+
+                  <div className={`${settingsPanelClass} p-4`}>
+                    <div className="text-sm font-semibold text-[var(--text-primary)]">
+                      Build identity
+                    </div>
+                    <div className="mt-3 grid gap-2 text-[12px] text-[var(--text-secondary)]">
+                      {[
+                        ["Mode", buildInfo.mode ?? "dev"],
+                        ["Version", buildInfo.version ?? "unknown"],
+                        ["Build", buildInfo.build ?? "unknown"],
+                        ["Commit", buildInfo.gitSha ?? "unknown"],
+                        ["Channel", buildInfo.channel ?? "alpha"],
+                        [
+                          "Package",
+                          buildInfo.packaged ? "packaged" : "development",
+                        ],
+                        [
+                          "Bundle",
+                          buildInfo.bundlePath ?? "not running from .app",
+                        ],
+                        [
+                          "Update manifest",
+                          buildInfo.updateManifestUrl ?? "not configured",
+                        ],
+                        [
+                          "Update status",
+                          `${autoUpdateStatus.state}${
+                            autoUpdateStatus.reason
+                              ? `: ${autoUpdateStatus.reason}`
+                              : ""
+                          }`,
+                        ],
+                      ].map(([label, value]) => (
+                        <div
+                          key={label}
+                          className="grid gap-2 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2 sm:grid-cols-[128px_minmax(0,1fr)]"
+                        >
+                          <span className="text-[var(--text-muted)]">
+                            {label}
+                          </span>
+                          <span className="min-w-0 break-words font-mono text-[11px] text-[var(--text-primary)]">
+                            {value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className={`${settingsActionButtonClass} mt-4`}
+                      disabled={autoUpdateBusy}
+                      onClick={() => {
+                        void runAutoUpdateCheckWithNotification();
+                      }}
+                    >
+                      <RefreshCw size={14} />
+                      Check for Updates
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -927,6 +1007,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   />
 
                   <div className={settingsPanelClass}>
+                    <div className="grid gap-4 border-b border-[var(--border-subtle)] px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                      <div className="min-w-0 pr-4">
+                        <div className="text-sm font-semibold text-[var(--text-primary)]">
+                          Markdown links
+                        </div>
+                        <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                          Choose whether Markdown preview links open directly in
+                          the system browser or first inside Browser Preview.
+                        </div>
+                      </div>
+                      <div
+                        role="group"
+                        aria-label="Markdown links"
+                        className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+                      >
+                        {markdownLinkOpenModeOptions.map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            aria-pressed={markdownLinkOpenMode === option.value}
+                            onClick={() =>
+                              setMarkdownLinkOpenMode(option.value)
+                            }
+                            className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
+                              markdownLinkOpenMode === option.value
+                                ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                                : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <SwitchRow
                       title="Auto-open Preview"
                       description="Open browser preview automatically when the terminal reports a local URL."
