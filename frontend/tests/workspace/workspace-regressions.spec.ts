@@ -282,7 +282,7 @@ test("workspace restore and indexing progress are no longer driven by useEffect"
   );
 });
 
-test("app uses a lightweight project switch shell while hydrating projects", async ({
+test("app renders real project shells during project switch hydration", async ({
   page,
 }) => {
   const [appSource, transitionSource] = await Promise.all([
@@ -292,10 +292,14 @@ test("app uses a lightweight project switch shell while hydrating projects", asy
 
   expect(appSource).not.toMatch(/ProjectSwitchPlaceholder/);
   expect(appSource).not.toMatch(/pendingId === activeId/);
-  expect(appSource).toMatch(/project-switch-lightweight-shell/);
+  expect(appSource).not.toMatch(/project-switch-lightweight-shell/);
+  expect(appSource).not.toMatch(/projectSwitchFallback/);
   expect(appSource).toMatch(/waitForProjectSwitchVisualSettle/);
-  expect(transitionSource).toMatch(/lightweight/);
-  expect(transitionSource).toMatch(/childrenMap\.current = \{\}/);
+  expect(transitionSource).not.toMatch(/lightweight/);
+  expect(transitionSource).not.toMatch(/childrenMap\.current = \{\}/);
+  expect(transitionSource).toMatch(
+    /childrenMap\.current\[layoutKey\] = children/,
+  );
   expect(transitionSource).toMatch(/useIndexingPhase/);
   expect(transitionSource).not.toMatch(/useIndexingProgress\(/);
 });
@@ -357,56 +361,66 @@ test("app and workspace restore explicitly sync terminal store to the active pro
   expect(workspaceSource).toMatch(/setActiveProject\(/);
 });
 
-test("project switching promotes a lightweight shell before backend open", async ({
+test("project switching activates target scope before visual promotion", async ({
   page,
 }) => {
   const appSource = await readSource(page, "/src/App.tsx");
 
   const switchBeginIndex = appSource.indexOf("state.beginProjectSwitch(id");
-  const switchHydrateIndex = appSource.indexOf(
-    "setHydratingProjectPath(project.path);",
+  const switchScopeIndex = appSource.indexOf(
+    "activateProjectScope(project.path);",
+    switchBeginIndex,
   );
   const switchOpenIndex = appSource.indexOf(
     "await AppFunctions.OpenProject(project.path);",
+    switchBeginIndex,
   );
   const switchConfirmIndex = appSource.indexOf(
     "workspace.confirmProjectSwitch(id);",
+    switchBeginIndex,
   );
   const switchSettleIndex = appSource.indexOf(
     "await waitForProjectSwitchVisualSettle();",
+    switchBeginIndex,
   );
   const switchTerminalIndex = appSource.indexOf(
     "useTerminalStore.getState().setActiveProject(project.path);",
+    switchBeginIndex,
   );
   const closeBeginIndex = appSource.indexOf(
     "state.beginProjectSwitch(nextProject.id",
   );
-  const closeHydrateIndex = appSource.indexOf(
-    "setHydratingProjectPath(nextProject.path);",
+  const closeScopeIndex = appSource.indexOf(
+    "activateProjectScope(nextProject.path);",
+    closeBeginIndex,
   );
   const closeOpenIndex = appSource.indexOf(
     "await AppFunctions.OpenProject(nextProject.path);",
+    closeBeginIndex,
   );
   const closeConfirmIndex = appSource.indexOf(
     "workspace.confirmProjectSwitch(nextProject.id);",
+    closeBeginIndex,
   );
-  const closeSettleIndex = appSource.lastIndexOf(
+  const closeSettleIndex = appSource.indexOf(
     "await waitForProjectSwitchVisualSettle();",
+    closeBeginIndex,
   );
   const closeTerminalIndex = appSource.indexOf(
     "useTerminalStore.getState().setActiveProject(nextProject.path);",
+    closeBeginIndex,
   );
 
   expect(switchBeginIndex).toBeGreaterThan(-1);
-  expect(switchHydrateIndex).toBeGreaterThan(switchBeginIndex);
-  expect(switchConfirmIndex).toBeGreaterThan(switchHydrateIndex);
+  expect(switchScopeIndex).toBeGreaterThan(switchBeginIndex);
+  expect(switchConfirmIndex).toBeGreaterThan(switchScopeIndex);
   expect(switchSettleIndex).toBeGreaterThan(switchConfirmIndex);
   expect(switchOpenIndex).toBeGreaterThan(-1);
   expect(switchOpenIndex).toBeGreaterThan(switchSettleIndex);
   expect(switchTerminalIndex).toBeGreaterThan(switchOpenIndex);
   expect(closeBeginIndex).toBeGreaterThan(-1);
-  expect(closeHydrateIndex).toBeGreaterThan(closeBeginIndex);
-  expect(closeConfirmIndex).toBeGreaterThan(closeHydrateIndex);
+  expect(closeScopeIndex).toBeGreaterThan(closeBeginIndex);
+  expect(closeConfirmIndex).toBeGreaterThan(closeScopeIndex);
   expect(closeSettleIndex).toBeGreaterThan(closeConfirmIndex);
   expect(closeOpenIndex).toBeGreaterThan(-1);
   expect(closeOpenIndex).toBeGreaterThan(closeSettleIndex);

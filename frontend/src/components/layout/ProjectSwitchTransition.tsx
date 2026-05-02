@@ -7,25 +7,16 @@ import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
 interface Props {
   layoutKey: string;
   direction: number;
-  lightweight?: boolean;
-  fallback?: React.ReactNode;
   children: React.ReactNode;
 }
 
 export const ProjectSwitchTransition: React.FC<Props> = ({
   layoutKey,
   direction,
-  lightweight = false,
-  fallback = null,
   children,
 }) => {
   const childrenMap = useRef<Record<string, React.ReactNode>>({});
-  if (lightweight) {
-    childrenMap.current = {};
-    childrenMap.current[layoutKey] = fallback;
-  } else {
-    childrenMap.current = { [layoutKey]: children };
-  }
+  childrenMap.current[layoutKey] = children;
   const indexingPhase = useIndexingPhase();
   const diagnosticsPreload = useProjectDiagnosticsPreload();
   const switchPending = useWorkspaceStore((state) => state.pendingId !== null);
@@ -71,9 +62,7 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
       }}
     >
       {transitions((style, item) => {
-        const renderedChildren = lightweight
-          ? fallback
-          : (childrenMap.current[item] ?? fallback);
+        const renderedChildren = childrenMap.current[item] ?? null;
         const { x, ...restStyle } = style;
 
         return (
