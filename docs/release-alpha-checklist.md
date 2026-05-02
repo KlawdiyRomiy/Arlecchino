@@ -95,6 +95,19 @@ notarized distribution path.
   `./scripts/wails3-local-alpha-release-macos.sh --update-private-key <external-ed25519.pem>`.
   This produces the public DMG, the updater ZIP, signed manifest, public key
   output, and release evidence. The ZIP must contain only `Arlecchino.app`.
+- For private GitHub alpha updates, use
+  `./scripts/wails3-private-github-alpha-release-macos.sh` first without
+  `--publish` to inspect the plan. Live publish requires `--publish`, `gh auth
+  status`, a clean tracked worktree, and an external Ed25519 private key. The
+  script uploads `arlecchino-macos-universal.zip` first, regenerates the update
+  manifest with the private GitHub release asset API URL, then uploads the
+  manifest, public verifier key, checksums, optional DMG and release evidence.
+- Installed private-alpha apps should embed
+  `github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-update-manifest.json`
+  as the manifest source. Users configure private release access in Settings;
+  Arlecchino stores the fine-grained GitHub token in macOS Keychain under
+  service `io.arlecchino.ide.updater` and account `github-release-token`.
+  `ARLECCHINO_GITHUB_TOKEN` is only a dev/smoke override.
 - Auto-update UX is user-confirmed: the app checks the manifest, downloads the
   ZIP to the user cache, verifies SHA256 + Ed25519, stages `Arlecchino.app`, then
   shows an in-app notification with `Install and relaunch`. If the installed
