@@ -114,6 +114,24 @@ func main() {}
 	}
 }
 
+func TestDetectLanguageFromPathUsesCanonicalResolver(t *testing.T) {
+	tests := []struct {
+		filePath string
+		want     string
+	}{
+		{filePath: "/tmp/App.tsx", want: "typescriptreact"},
+		{filePath: "/tmp/App.jsx", want: "javascriptreact"},
+		{filePath: "/tmp/welcome.blade.php", want: "blade"},
+		{filePath: "/tmp/file.unknown", want: "unknown"},
+	}
+
+	for _, tt := range tests {
+		if got := detectLanguageFromPath(tt.filePath); got != tt.want {
+			t.Fatalf("detectLanguageFromPath(%q)=%q want %q", tt.filePath, got, tt.want)
+		}
+	}
+}
+
 func TestExtractContextLines_Windowed(t *testing.T) {
 	content := "a\nb\nc\nd\ne\nf\ng\nh\ni\nj"
 

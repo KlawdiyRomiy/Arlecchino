@@ -17,9 +17,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"arlecchino/internal/autocomplete"
 	"arlecchino/internal/indexer/core"
 	"arlecchino/internal/indexer/lsp"
-	lspregistry "arlecchino/internal/lsp"
 	"arlecchino/internal/predictive"
 )
 
@@ -353,20 +353,21 @@ func (s *Suggestion) MatchType() predictive.MatchType {
 }
 
 type CompletionContext struct {
-	FilePath         string
-	Content          []byte
-	FullContent      []byte
-	Line             int
-	Column           int
-	Prefix           string
-	Language         string
-	ImportsHash      string
-	TriggerChar      string
-	Scope            string
-	ParentClass      string
-	ContentStartLine int
-	RequestID        string
-	Ctx              context.Context
+	FilePath           string
+	Content            []byte
+	FullContent        []byte
+	Line               int
+	Column             int
+	Prefix             string
+	Language           string
+	LanguageResolution autocomplete.LanguageResolution
+	ImportsHash        string
+	TriggerChar        string
+	Scope              string
+	ParentClass        string
+	ContentStartLine   int
+	RequestID          string
+	Ctx                context.Context
 
 	InString          bool
 	InComment         bool
@@ -849,6 +850,7 @@ func (b *PredictionBrain) collectExternalGroup(
 }
 
 func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
+	ctx = withResolvedLanguage(ctx)
 	trace := CompletionTrace{
 		RequestID:         ctx.RequestID,
 		FilePath:          ctx.FilePath,
@@ -903,7 +905,8 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 
 	var importSuggestions []Suggestion
 	if ctx.InImport && importCompletions != nil {
-		importSuggestions = importCompletions.GetCompletions(ctx)
+		importCtx := withSourceLanguage(ctx, completionLanguageResolution(ctx).CanonicalID)
+		importSuggestions = importCompletions.GetCompletions(importCtx)
 		if len(importSuggestions) > 0 {
 			debugLogf("[Complete] IMPORT: %d items", len(importSuggestions))
 		}
@@ -1053,6 +1056,31 @@ func cloneCounts(counts map[string]int) map[string]int {
 	return cloned
 }
 
+func withResolvedLanguage(ctx CompletionContext) CompletionContext {
+	if ctx.LanguageResolution.CanonicalID == "" {
+		ctx.LanguageResolution = autocomplete.Resolve(ctx.Language, ctx.FilePath)
+	}
+	if strings.TrimSpace(ctx.Language) == "" {
+		ctx.Language = ctx.LanguageResolution.CanonicalID
+	}
+	return ctx
+}
+
+func completionLanguageResolution(ctx CompletionContext) autocomplete.LanguageResolution {
+	if ctx.LanguageResolution.CanonicalID != "" {
+		return ctx.LanguageResolution
+	}
+	return autocomplete.Resolve(ctx.Language, ctx.FilePath)
+}
+
+func withSourceLanguage(ctx CompletionContext, language string) CompletionContext {
+	ctx = withResolvedLanguage(ctx)
+	if strings.TrimSpace(language) != "" {
+		ctx.Language = language
+	}
+	return ctx
+}
+
 func stripAdditionalTextEdits(suggestions []Suggestion) []Suggestion {
 	if len(suggestions) == 0 {
 		return suggestions
@@ -1083,10 +1111,15 @@ func (b *PredictionBrain) fromPredictive(ctx CompletionContext) []Suggestion {
 	if isCanceled(ctx) {
 		return nil
 	}
+	predictiveLanguage := completionLanguageResolution(ctx).PredictiveID
+	if predictiveLanguage == "" {
+		return nil
+	}
 
 	// Get completions from predictive engine
 	line := contentLine(ctx)
-	results := b.predictive.GetCompletions(
+	results := b.predictive.GetCompletionsForLanguage(
+		predictiveLanguage,
 		ctx.FilePath,
 		string(ctx.Content),
 		line,
@@ -1140,10 +1173,14 @@ func (b *PredictionBrain) fromLocal(ctx CompletionContext) []Suggestion {
 	if isCanceled(ctx) {
 		return nil
 	}
+	localLanguage := completionLanguageResolution(ctx).LocalID()
+	if localLanguage == "" {
+		return nil
+	}
 
 	// Get symbols from local file analysis
 	line := contentLine(ctx)
-	localSymbols := b.local.GetCompletions(ctx.FilePath, ctx.Content, line, ctx.Column, ctx.Prefix)
+	localSymbols := b.local.GetCompletionsForLanguage(ctx.FilePath, ctx.Content, line, ctx.Column, ctx.Prefix, localLanguage)
 	offset := contentLineOffset(ctx)
 	if offset > 0 {
 		for i := range localSymbols {
@@ -1210,15 +1247,20 @@ func (b *PredictionBrain) fromFillAll(ctx CompletionContext) []Suggestion {
 	if isCanceled(ctx) {
 		return nil
 	}
+	resolution := completionLanguageResolution(ctx)
+	fillLanguage := resolution.FillID
+	if fillLanguage == "" {
+		return nil
+	}
 
 	var signature *predictive.SignatureInfo
 
-	if b.lspManager != nil {
+	if b.lspManager != nil && resolution.LSPID != "" {
 		sigCtx := ctx.Ctx
 		if sigCtx == nil {
 			sigCtx = context.Background()
 		}
-		sigHelp, err := b.lspManager.SignatureHelpWithContext(sigCtx, ctx.Language, ctx.FilePath, ctx.Line, ctx.Column)
+		sigHelp, err := b.lspManager.SignatureHelpWithContext(sigCtx, resolution.LSPID, ctx.FilePath, ctx.Line, ctx.Column)
 		if err == nil && sigHelp != nil && len(sigHelp.Signatures) > 0 {
 			activeSig := sigHelp.Signatures[0]
 			if sigHelp.ActiveSignature < len(sigHelp.Signatures) {
@@ -1244,9 +1286,9 @@ func (b *PredictionBrain) fromFillAll(ctx CompletionContext) []Suggestion {
 	line := contentLine(ctx)
 	var fills []predictive.FillSuggestion
 	if signature != nil && len(signature.Parameters) > 0 {
-		fills = b.fillAll.GetFillSuggestionsWithSignature(ctx.FilePath, ctx.Content, line, ctx.Column, ctx.Language, signature)
+		fills = b.fillAll.GetFillSuggestionsWithSignature(ctx.FilePath, ctx.Content, line, ctx.Column, fillLanguage, signature)
 	} else {
-		fills = b.fillAll.GetFillSuggestions(ctx.FilePath, ctx.Content, line, ctx.Column, ctx.Language)
+		fills = b.fillAll.GetFillSuggestions(ctx.FilePath, ctx.Content, line, ctx.Column, fillLanguage)
 	}
 	if len(fills) == 0 {
 		return nil
@@ -1286,6 +1328,11 @@ func (b *PredictionBrain) getSignatureFromIndex(ctx CompletionContext) *predicti
 	if b.engine == nil {
 		return nil
 	}
+	resolution := completionLanguageResolution(ctx)
+	indexLanguage := resolution.IndexID
+	if indexLanguage == "" {
+		return nil
+	}
 
 	methodName := b.extractMethodNameAtCursor(ctx)
 	if methodName == "" {
@@ -1294,7 +1341,7 @@ func (b *PredictionBrain) getSignatureFromIndex(ctx CompletionContext) *predicti
 
 	query := core.SymbolQuery{
 		Name:     methodName,
-		Language: ctx.Language,
+		Language: indexLanguage,
 		Limit:    5,
 	}
 
@@ -1305,7 +1352,11 @@ func (b *PredictionBrain) getSignatureFromIndex(ctx CompletionContext) *predicti
 
 	for _, sym := range symbols {
 		if (sym.Kind == core.SymbolKindMethod || sym.Kind == core.SymbolKindFunction) && sym.Signature != "" {
-			params := parseSignatureParams(sym.Signature, ctx.Language)
+			signatureLanguage := resolution.FillID
+			if signatureLanguage == "" {
+				signatureLanguage = resolution.CanonicalID
+			}
+			params := parseSignatureParams(sym.Signature, signatureLanguage)
 			if len(params) > 0 {
 				return &predictive.SignatureInfo{
 					Label:      sym.Name + sym.Signature,
@@ -1509,6 +1560,8 @@ func (b *PredictionBrain) ResolveAccessChain(ctx *CompletionContext) {
 	if ctx.AccessChain == "" {
 		return
 	}
+	*ctx = withResolvedLanguage(*ctx)
+	resolution := completionLanguageResolution(*ctx)
 
 	reference := strings.TrimSpace(extractPackageReference(ctx.AccessChain))
 	if reference == "" {
@@ -1521,10 +1574,10 @@ func (b *PredictionBrain) ResolveAccessChain(ctx *CompletionContext) {
 		resolveContent = ctx.FullContent
 	}
 	if b.importResolver != nil {
-		resolved = b.importResolver.ResolveClassName(ctx.FilePath, resolveContent, reference, ctx.Language)
+		resolved = b.importResolver.ResolveClassName(ctx.FilePath, resolveContent, reference, resolution.CanonicalID)
 	}
 	if resolved == "" && b.stubProvider != nil {
-		stubLanguage := normalizeStubLanguage(ctx.Language, ctx.FilePath)
+		stubLanguage := resolution.StubID()
 		if stubLanguage != "" {
 			resolved = b.stubProvider.ResolvePackage(reference, stubLanguage)
 			if resolved == "" {
@@ -1536,7 +1589,7 @@ func (b *PredictionBrain) ResolveAccessChain(ctx *CompletionContext) {
 		}
 	}
 	if resolved == "" && b.importCompletions != nil && b.importCompletions.catalog != nil {
-		resolved = b.importCompletions.catalog.ResolveLibraryByOwner(ctx.Language, reference)
+		resolved = b.importCompletions.catalog.ResolveLibraryByOwner(resolution.CanonicalID, reference)
 	}
 	if resolved != "" {
 		ctx.ResolvedNamespace = resolved
@@ -1555,10 +1608,14 @@ func (b *PredictionBrain) fromIndex(ctx CompletionContext) []Suggestion {
 
 	prefix := strings.TrimSpace(ctx.Prefix)
 	accessClassName := extractClassFromAccessChain(ctx.AccessChain)
+	indexLanguage := completionLanguageResolution(ctx).IndexID
+	if indexLanguage == "" {
+		return suggestions
+	}
 
 	query := core.SymbolQuery{
 		Name:           prefix, // LIKE search: prefix%
-		Language:       ctx.Language,
+		Language:       indexLanguage,
 		Limit:          100,
 		IncludePending: true,
 	}
@@ -1786,31 +1843,32 @@ func (b *PredictionBrain) fromLSP(ctx CompletionContext) []Suggestion {
 	if isCanceled(ctx) {
 		return nil
 	}
-	if ctx.Language == "blade" {
+	lspLanguage := completionLanguageResolution(ctx).LSPID
+	if lspLanguage == "" {
 		return nil
 	}
-	if !b.lspManager.HasConfig(ctx.Language) {
+	if !b.lspManager.HasConfig(lspLanguage) {
 		return nil
 	}
 
-	debugLogf("[LSP] requesting completions for lang=%s file=%s line=%d col=%d",
-		ctx.Language, filepath.Base(ctx.FilePath), ctx.Line, ctx.Column)
+	debugLogf("[LSP] requesting completions for lang=%s original=%s file=%s line=%d col=%d",
+		lspLanguage, ctx.Language, filepath.Base(ctx.FilePath), ctx.Line, ctx.Column)
 
 	lspCtx := ctx.Ctx
 	if lspCtx == nil {
 		lspCtx = context.Background()
 	}
-	items, err := b.lspManager.CompleteWithContext(lspCtx, ctx.Language, ctx.FilePath, ctx.Line, ctx.Column)
+	items, err := b.lspManager.CompleteWithContext(lspCtx, lspLanguage, ctx.FilePath, ctx.Line, ctx.Column)
 	if err != nil {
 		log.Printf("[LSP] ERROR: %v", err)
 		return nil
 	}
 	if len(items) == 0 {
-		debugLogf("[LSP] no items returned for lang=%s", ctx.Language)
+		debugLogf("[LSP] no items returned for lang=%s", lspLanguage)
 		return nil
 	}
 
-	debugLogf("[LSP] got %d items for lang=%s", len(items), ctx.Language)
+	debugLogf("[LSP] got %d items for lang=%s", len(items), lspLanguage)
 
 	suggestions := make([]Suggestion, 0, len(items))
 	for _, item := range items {
@@ -1911,7 +1969,8 @@ func (b *PredictionBrain) fromStubs(ctx CompletionContext) []Suggestion {
 		return nil
 	}
 	stubCtx := ctx
-	stubCtx.Language = normalizeStubLanguage(ctx.Language, ctx.FilePath)
+	stubCtx.LanguageResolution = completionLanguageResolution(ctx)
+	stubCtx.Language = stubCtx.LanguageResolution.StubID()
 	if stubCtx.Language == "" {
 		return nil
 	}
@@ -2031,14 +2090,6 @@ func (b *PredictionBrain) stubPackageSuggestions(ctx CompletionContext) []Sugges
 	return suggestions
 }
 
-func normalizeStubLanguage(language, filePath string) string {
-	normalized := normalizeLanguage(language, filePath)
-	if normalized == "php-laravel" {
-		return "php"
-	}
-	return normalized
-}
-
 func packageSuggestionIdentifier(pkg, language string) string {
 	switch language {
 	case "javascript", "typescript":
@@ -2072,30 +2123,39 @@ func isHTMLLikeLanguage(language string) bool {
 }
 
 func (b *PredictionBrain) fromKeywords(ctx CompletionContext) []Suggestion {
-	language := normalizeLanguage(ctx.Language, ctx.FilePath)
+	resolution := completionLanguageResolution(ctx)
+	language := resolution.KeywordID
+	if language == "" {
+		return nil
+	}
+	keywordCtx := withSourceLanguage(ctx, language)
 	allowAccessKeywords := false
 	accessChain := strings.TrimSpace(ctx.AccessChain)
 	if ctx.Language == "astro" && strings.HasSuffix(accessChain, "Astro.") {
 		allowAccessKeywords = true
 		language = "astro"
+		keywordCtx.Language = "astro"
 	}
 	if ctx.Language == "astro" && ctx.TriggerChar == "<" {
 		language = "astro"
+		keywordCtx.Language = "astro"
 	}
 	if ctx.Language == "blade" && ctx.TriggerChar == "<" {
 		language = "blade"
+		keywordCtx.Language = "blade"
 	}
 
-	goContext := b.detectGoKeywordContext(ctx)
-	bashContext := b.detectBashKeywordContext(ctx)
+	goContext := b.detectGoKeywordContext(keywordCtx)
+	bashContext := b.detectBashKeywordContext(keywordCtx)
 	htmlContext := ""
 	cssContext := ""
 	astroContext := ""
 	if isHTMLLikeLanguage(ctx.Language) && ctx.TriggerChar == "<" {
 		htmlContext = "after_lt"
 		language = ctx.Language
+		keywordCtx.Language = ctx.Language
 	}
-	if language == "css" && (ctx.TriggerChar == ":" || b.detectCSSValueContext(ctx)) {
+	if language == "css" && (ctx.TriggerChar == ":" || b.detectCSSValueContext(keywordCtx)) {
 		cssContext = "after_colon"
 	}
 	if allowAccessKeywords {
@@ -2248,7 +2308,7 @@ func (b *PredictionBrain) detectBashKeywordContext(ctx CompletionContext) string
 }
 
 func (b *PredictionBrain) detectCSSValueContext(ctx CompletionContext) bool {
-	language := normalizeLanguage(ctx.Language, ctx.FilePath)
+	language := completionLanguageResolution(ctx).KeywordID
 	if language != "css" {
 		return false
 	}
@@ -3683,59 +3743,6 @@ func buildCompletionPrompt(ctx CompletionContext) string {
 
 	contextLines := lines[startLine:endLine]
 	return fmt.Sprintf("Complete this %s code:\n%s", ctx.Language, strings.Join(contextLines, "\n"))
-}
-
-func normalizeLanguage(monacoLang, filePath string) string {
-	if monacoLang == "" {
-		return ""
-	}
-
-	langMap := map[string]string{
-		"astro":           "typescript",
-		"php":             "php",
-		"go":              "go",
-		"python":          "python",
-		"typescript":      "typescript",
-		"typescriptreact": "typescript",
-		"javascript":      "javascript",
-		"javascriptreact": "javascript",
-		"vue":             "javascript",
-		"svelte":          "javascript",
-		"shell":           "bash",
-		"bash":            "bash",
-		"scss":            "css",
-		"sass":            "css",
-		"less":            "css",
-		"ruby":            "ruby",
-		"rust":            "rust",
-		"java":            "java",
-		"csharp":          "csharp",
-		"cpp":             "cpp",
-		"c":               "c",
-	}
-
-	if normalized, ok := langMap[monacoLang]; ok {
-		return normalized
-	}
-
-	if lspregistry.GetLanguageByID(monacoLang) != nil {
-		return monacoLang
-	}
-
-	ext := strings.ToLower(filepath.Ext(filePath))
-	if ext != "" {
-		if lang := lspregistry.GetLanguageByExtension(ext); lang != nil {
-			return lang.ID
-		}
-	}
-
-	if filePath != "" {
-		if lang := lspregistry.GetLanguageByFilename(filepath.Base(filePath)); lang != nil {
-			return lang.ID
-		}
-	}
-
-	return monacoLang
 }
 
 func formatDocumentation(docComment string) string {

@@ -29,6 +29,15 @@ type LocalSymbol struct {
 // GetCompletions returns completions from local file analysis
 func (lc *LocalCompletions) GetCompletions(filePath string, content []byte, line, column int, prefix string) []LocalSymbol {
 	language := lc.detectLanguage(filePath)
+	return lc.GetCompletionsForLanguage(filePath, content, line, column, prefix, language)
+}
+
+// GetCompletionsForLanguage returns local completions using an explicit source language.
+func (lc *LocalCompletions) GetCompletionsForLanguage(filePath string, content []byte, line, column int, prefix string, language string) []LocalSymbol {
+	language = strings.ToLower(strings.TrimSpace(language))
+	if language == "" {
+		language = lc.detectLanguage(filePath)
+	}
 
 	var symbols []LocalSymbol
 

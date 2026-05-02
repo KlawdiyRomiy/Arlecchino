@@ -280,6 +280,56 @@ func TestShouldOfferFillAll(t *testing.T) {
 	}
 }
 
+func TestCompletionSourceLanguageResolution(t *testing.T) {
+	tests := []struct {
+		name       string
+		ctx        CompletionContext
+		index      string
+		predictive string
+		local      string
+		fill       string
+		lsp        string
+	}{
+		{
+			name:       "tsx uses typescript native sources",
+			ctx:        CompletionContext{Language: "typescriptreact", FilePath: "/tmp/App.tsx"},
+			index:      "typescript",
+			predictive: "typescript",
+			local:      "typescript",
+			fill:       "typescript",
+			lsp:        "typescriptreact",
+		},
+		{
+			name:       "jsx uses javascript local and fill without cross-language predictive",
+			ctx:        CompletionContext{Language: "javascriptreact", FilePath: "/tmp/App.jsx"},
+			index:      "typescript",
+			predictive: "",
+			local:      "javascript",
+			fill:       "javascript",
+			lsp:        "javascriptreact",
+		},
+		{
+			name: "unknown stays out of indexed native sources",
+			ctx:  CompletionContext{Language: "unknown", FilePath: "/tmp/file.unknown"},
+		},
+		{
+			name: "blade keeps blade lsp id",
+			ctx:  CompletionContext{Language: "blade", FilePath: "/tmp/welcome.blade.php"},
+			lsp:  "blade",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolution := completionLanguageResolution(tt.ctx)
+			if resolution.IndexID != tt.index || resolution.PredictiveID != tt.predictive ||
+				resolution.LocalID() != tt.local || resolution.FillID != tt.fill || resolution.LSPID != tt.lsp {
+				t.Fatalf("completionLanguageResolution()=%+v", resolution)
+			}
+		})
+	}
+}
+
 func TestPredictionBrain_LastCompletionTrace(t *testing.T) {
 	brain := NewPredictionBrain(nil, BrainConfig{MaxSuggestions: 10, MinConfidence: 0.1, EnablePredictive: false, EnableLSP: false})
 	brain.stubProvider = NewStubProvider()

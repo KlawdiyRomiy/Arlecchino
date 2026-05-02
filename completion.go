@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"arlecchino/internal/autocomplete"
 	"arlecchino/internal/indexer"
 	"arlecchino/internal/indexer/brain"
 	"arlecchino/internal/predictive"
@@ -510,33 +511,11 @@ func (a *App) GetInlineSuggestion(filePath, content string, line, column int, pr
 }
 
 func detectLanguageFromPath(filePath string) string {
-	if strings.HasSuffix(filePath, ".blade.php") {
-		return "blade"
-	}
-
-	idx := strings.LastIndex(filePath, ".")
-	if idx == -1 {
+	resolution := autocomplete.Resolve("", filePath)
+	if resolution.CanonicalID == "" {
 		return "unknown"
 	}
-
-	ext := filePath[idx+1:]
-	langMap := map[string]string{
-		"php":    "php",
-		"go":     "go",
-		"ts":     "typescript",
-		"tsx":    "typescript",
-		"js":     "javascript",
-		"jsx":    "javascript",
-		"py":     "python",
-		"rb":     "ruby",
-		"vue":    "vue",
-		"svelte": "svelte",
-	}
-
-	if lang, ok := langMap[ext]; ok {
-		return lang
-	}
-	return "php"
+	return resolution.CanonicalID
 }
 
 func getCleanInsertText(s *brain.Suggestion) string {

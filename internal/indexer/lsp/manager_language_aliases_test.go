@@ -5,9 +5,11 @@ import "testing"
 func TestHasConfigResolvesAliases(t *testing.T) {
 	m := NewManager(t.TempDir())
 	m.RegisterServer(ServerConfig{Language: "typescriptreact", Command: "tsserver"})
+	m.RegisterServer(ServerConfig{Language: "javascriptreact", Command: "tsserver"})
 	m.RegisterServer(ServerConfig{Language: "bash", Command: "bash-language-server"})
+	m.RegisterServer(ServerConfig{Language: "blade", Command: "vscode-html-language-server"})
 
-	tests := []string{"tsx", ".tsx", "TypeScriptReact", "typescriptreact", "sh", "zsh", "shellscript"}
+	tests := []string{"tsx", ".tsx", "TypeScriptReact", "typescriptreact", "jsx", "javascriptreact", "sh", "zsh", "shellscript", "blade"}
 	for _, language := range tests {
 		if !m.HasConfig(language) {
 			t.Fatalf("expected HasConfig(%q) to resolve alias", language)

@@ -51,9 +51,20 @@ func (e *Engine) syncRegistryToMatcher() {
 }
 
 func (e *Engine) Predict(filePath, content string, line, column int) []Suggestion {
+	return e.predict(filePath, content, line, column, "")
+}
+
+func (e *Engine) PredictForLanguage(language, filePath, content string, line, column int) []Suggestion {
+	return e.predict(filePath, content, line, column, language)
+}
+
+func (e *Engine) predict(filePath, content string, line, column int, languageOverride string) []Suggestion {
 	ctx := e.analyzer.Analyze(filePath, []byte(content), line, column)
 	if ctx == nil {
 		return nil
+	}
+	if languageOverride != "" {
+		ctx.Language = languageOverride
 	}
 
 	prefixInfo := e.ExtractPrefix(filePath, []byte(content), line, column)
@@ -440,7 +451,11 @@ type CompletionResult struct {
 
 // GetCompletions returns completions in a format suitable for brain integration
 func (e *Engine) GetCompletions(filePath, content string, line, column int, limit int) []CompletionResult {
-	suggestions := e.Predict(filePath, content, line, column)
+	return e.GetCompletionsForLanguage("", filePath, content, line, column, limit)
+}
+
+func (e *Engine) GetCompletionsForLanguage(language, filePath, content string, line, column int, limit int) []CompletionResult {
+	suggestions := e.PredictForLanguage(language, filePath, content, line, column)
 	if len(suggestions) == 0 {
 		return nil
 	}
