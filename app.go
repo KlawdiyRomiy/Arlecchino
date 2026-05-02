@@ -114,7 +114,7 @@ type projectWarmupStep struct {
 func NewApp() *App {
 	pm, err := project.NewProjectManager("data/projects.db")
 	if err != nil {
-		return &App{}
+		fmt.Fprintf(os.Stderr, "[ARLE] project manager init failed: %v\n", err)
 	}
 
 	pluginRegistry := newProjectPluginRegistry()

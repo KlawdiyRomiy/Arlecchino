@@ -11,6 +11,8 @@ import (
 	"gorm.io/gorm"
 )
 
+var executablePath = os.Executable
+
 type Project struct {
 	ID         uint      `json:"id" gorm:"primaryKey"`
 	Name       string    `json:"name"`
@@ -61,13 +63,32 @@ func ResolveDBPath(dbPath string) string {
 		return filepath.Join(dataDir, filepath.Base(dbPath))
 	}
 
-	if envFlagString(os.Getenv("ARLECCHINO_PACKAGED_BUILD")) {
+	if envFlagString(os.Getenv("ARLECCHINO_PACKAGED_BUILD")) || runningFromAppBundle() {
 		if configDir, err := os.UserConfigDir(); err == nil && strings.TrimSpace(configDir) != "" {
 			return filepath.Join(configDir, "Arlecchino", filepath.Base(dbPath))
 		}
 	}
 
 	return dbPath
+}
+
+func runningFromAppBundle() bool {
+	executable, err := executablePath()
+	if err != nil {
+		return false
+	}
+	path := filepath.Clean(executable)
+	for path != "." && path != string(filepath.Separator) {
+		if strings.HasSuffix(path, ".app") {
+			return true
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			break
+		}
+		path = parent
+	}
+	return false
 }
 
 func envFlagString(value string) bool {
