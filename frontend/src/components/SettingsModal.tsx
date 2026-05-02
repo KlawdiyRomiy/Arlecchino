@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Switch from "@radix-ui/react-switch";
@@ -9,6 +15,7 @@ import {
   Code2,
   Globe,
   Keyboard,
+  KeyRound,
   Palette,
   Pencil,
   Plus,
@@ -16,6 +23,7 @@ import {
   RotateCcw,
   Search,
   Settings,
+  Trash2,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -25,7 +33,13 @@ import {
   type MarkdownLinkOpenMode,
   useBrowserPreviewStore,
 } from "../stores/browserPreviewStore";
-import { useAutoUpdateStatus } from "../shell/autoUpdate";
+import {
+  clearPrivateUpdateToken,
+  getPrivateUpdateAuthStatus,
+  savePrivateUpdateToken,
+  type PrivateUpdateAuthStatus,
+  useAutoUpdateStatus,
+} from "../shell/autoUpdate";
 import { runAutoUpdateCheckWithNotification } from "../shell/manualUpdateNotifications";
 import {
   useEditorSettingsStore,
@@ -246,6 +260,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [activeTab, setActiveTab] = useState<TabId>("appearance");
   const [shortcutQuery, setShortcutQuery] = useState("");
   const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
+  const [privateUpdateAuthStatus, setPrivateUpdateAuthStatus] =
+    useState<PrivateUpdateAuthStatus | null>(null);
+  const [privateUpdateToken, setPrivateUpdateToken] = useState("");
+  const [privateUpdateAuthBusy, setPrivateUpdateAuthBusy] = useState(false);
   const [customThemeStatus, setCustomThemeStatus] = useState<{
     tone: "success" | "error";
     message: string;
@@ -303,6 +321,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     autoUpdateStatus.state === "checking" ||
     autoUpdateStatus.state === "downloading" ||
     autoUpdateStatus.state === "applying";
+  const privateUpdateAccessLabel = privateUpdateAuthStatus
+    ? privateUpdateAuthStatus.configured
+      ? `configured via ${privateUpdateAuthStatus.source ?? "private access"}`
+      : (privateUpdateAuthStatus.reason ?? "not configured")
+    : "not loaded";
+
+  const refreshPrivateUpdateAuthStatus = useCallback(async () => {
+    const status = await getPrivateUpdateAuthStatus();
+    setPrivateUpdateAuthStatus(status);
+    return status;
+  }, []);
+
+  const savePrivateUpdateAccessToken = useCallback(async () => {
+    const token = privateUpdateToken.trim();
+    if (!token) {
+      return;
+    }
+    setPrivateUpdateAuthBusy(true);
+    try {
+      const status = await savePrivateUpdateToken(token);
+      setPrivateUpdateAuthStatus(status);
+      setPrivateUpdateToken("");
+    } finally {
+      setPrivateUpdateAuthBusy(false);
+    }
+  }, [privateUpdateToken]);
+
+  const clearPrivateUpdateAccessToken = useCallback(async () => {
+    setPrivateUpdateAuthBusy(true);
+    try {
+      const status = await clearPrivateUpdateToken();
+      setPrivateUpdateAuthStatus(status);
+      setPrivateUpdateToken("");
+    } finally {
+      setPrivateUpdateAuthBusy(false);
+    }
+  }, []);
 
   const filteredShortcuts = useMemo(() => {
     const query = shortcutQuery.trim().toLowerCase();
@@ -343,6 +398,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const options = [...settingsThemeOptions, ...customThemeOptions];
     return options.find((option) => option.value === theme)?.label ?? "System";
   }, [customThemeOptions, theme]);
+
+  useEffect(() => {
+    if (!isOpen || activeTab !== "diagnostics") {
+      return;
+    }
+
+    void refreshPrivateUpdateAuthStatus();
+  }, [activeTab, isOpen, refreshPrivateUpdateAuthStatus]);
 
   const clearThemePreview = () => {
     previewTheme(null);
@@ -962,6 +1025,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           "Update manifest",
                           buildInfo.updateManifestUrl ?? "not configured",
                         ],
+                        ["Private update access", privateUpdateAccessLabel],
                         [
                           "Update status",
                           `${autoUpdateStatus.state}${
@@ -983,6 +1047,71 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           </span>
                         </div>
                       ))}
+                    </div>
+                    <div className="mt-4 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--text-primary)]">
+                            <KeyRound size={14} />
+                            Private GitHub release access
+                          </div>
+                          <div className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">
+                            Token is stored in macOS Keychain and is never shown
+                            after saving.
+                          </div>
+                        </div>
+                        <span
+                          className={`${settingsPillClass} ${
+                            privateUpdateAuthStatus?.configured
+                              ? "text-[var(--status-success)]"
+                              : "text-[var(--status-warning)]"
+                          }`}
+                        >
+                          {privateUpdateAuthStatus?.configured
+                            ? "Configured"
+                            : "Missing token"}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+                        <input
+                          type="password"
+                          autoComplete="off"
+                          value={privateUpdateToken}
+                          onChange={(event) =>
+                            setPrivateUpdateToken(event.currentTarget.value)
+                          }
+                          placeholder="Fine-grained GitHub token"
+                          className="h-9 min-w-0 rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-3 font-mono text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
+                        />
+                        <button
+                          type="button"
+                          className={settingsActionButtonClass}
+                          disabled={
+                            privateUpdateAuthBusy || !privateUpdateToken.trim()
+                          }
+                          onClick={() => {
+                            void savePrivateUpdateAccessToken();
+                          }}
+                        >
+                          <Check size={14} />
+                          Save Token
+                        </button>
+                        <button
+                          type="button"
+                          className={settingsActionButtonClass}
+                          disabled={privateUpdateAuthBusy}
+                          onClick={() => {
+                            void clearPrivateUpdateAccessToken();
+                          }}
+                        >
+                          <Trash2 size={14} />
+                          Clear
+                        </button>
+                      </div>
+                      <div className="mt-2 break-words text-[11px] leading-5 text-[var(--text-muted)]">
+                        {privateUpdateAuthStatus?.reason ??
+                          "Open this tab to load private update access status."}
+                      </div>
                     </div>
                     <button
                       type="button"

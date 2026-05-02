@@ -23,6 +23,7 @@ async function loadManualUpdateContracts() {
         } from "./src/stores/appNotificationStore.ts";
         export {
           normalizeAutoUpdateStatusPayload,
+          normalizePrivateUpdateAuthStatusPayload,
           resetAutoUpdateStartupCheckForTests,
           runAutoUpdateStartupCheckIfNeeded,
           shouldRunAutoUpdateStartupCheck,
@@ -279,4 +280,28 @@ test("startup update check runs only for packaged apps with a manifest URL", asy
   assert.equal(firstRun, true);
   assert.equal(secondRun, false);
   assert.equal(checkCount, 1);
+});
+
+test("private update auth status normalization does not expose token values", async () => {
+  const { normalizePrivateUpdateAuthStatusPayload } =
+    await loadManualUpdateContracts();
+
+  const status = normalizePrivateUpdateAuthStatusPayload({
+    Provider: "github-release",
+    Repository: "KlawdiyRomiy/Arlecchino",
+    ManifestSource:
+      "github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-update-manifest.json",
+    Configured: true,
+    Source: "keychain",
+    EnvOverride: false,
+    KeychainService: "io.arlecchino.ide.updater",
+    KeychainAccount: "github-release-token",
+    Reason: "Private GitHub release token is stored in Keychain.",
+    Token: "github_pat_should_not_be_read",
+  });
+
+  assert.equal(status.configured, true);
+  assert.equal(status.source, "keychain");
+  assert.equal(status.repository, "KlawdiyRomiy/Arlecchino");
+  assert.equal(Object.hasOwn(status, "token"), false);
 });

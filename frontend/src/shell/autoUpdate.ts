@@ -93,6 +93,18 @@ export interface AutoUpdateStatus {
   loadedFromBackend: boolean;
 }
 
+export interface PrivateUpdateAuthStatus {
+  provider?: string;
+  repository?: string;
+  manifestSource?: string;
+  configured: boolean;
+  source?: string;
+  envOverride: boolean;
+  keychainService?: string;
+  keychainAccount?: string;
+  reason?: string;
+}
+
 interface RuntimeEvent {
   data?: unknown;
 }
@@ -125,6 +137,18 @@ const methodNames = {
   ],
   cancel: ["main.App.CancelAutoUpdate", "arlecchino.App.CancelAutoUpdate"],
   buildInfo: ["main.App.GetBuildInfo", "arlecchino.App.GetBuildInfo"],
+  privateAuthStatus: [
+    "main.App.GetPrivateUpdateAuthStatus",
+    "arlecchino.App.GetPrivateUpdateAuthStatus",
+  ],
+  savePrivateToken: [
+    "main.App.SavePrivateUpdateToken",
+    "arlecchino.App.SavePrivateUpdateToken",
+  ],
+  clearPrivateToken: [
+    "main.App.ClearPrivateUpdateToken",
+    "arlecchino.App.ClearPrivateUpdateToken",
+  ],
 } as const;
 
 type MethodKey = keyof typeof methodNames;
@@ -160,6 +184,14 @@ const fallbackStatus = (): AutoUpdateStatus => ({
   updatedAt: 0,
   revision: 0,
   loadedFromBackend: false,
+});
+
+const fallbackPrivateUpdateAuthStatus = (): PrivateUpdateAuthStatus => ({
+  provider: "github-release",
+  repository: "KlawdiyRomiy/Arlecchino",
+  configured: false,
+  envOverride: false,
+  reason: "Private GitHub release access status is unavailable.",
 });
 
 let status = fallbackStatus();
@@ -315,6 +347,35 @@ const normalizeVerification = (value: unknown): AutoUpdateVerification => {
   };
 };
 
+export const normalizePrivateUpdateAuthStatusPayload = (
+  payload: unknown,
+): PrivateUpdateAuthStatus => {
+  if (!isRecord(payload)) {
+    return fallbackPrivateUpdateAuthStatus();
+  }
+  return {
+    provider: readString(getRecordValue(payload, "provider", "Provider")),
+    repository: readString(getRecordValue(payload, "repository", "Repository")),
+    manifestSource: readString(
+      getRecordValue(payload, "manifestSource", "ManifestSource"),
+    ),
+    configured: readBoolean(
+      getRecordValue(payload, "configured", "Configured"),
+    ),
+    source: readString(getRecordValue(payload, "source", "Source")),
+    envOverride: readBoolean(
+      getRecordValue(payload, "envOverride", "EnvOverride"),
+    ),
+    keychainService: readString(
+      getRecordValue(payload, "keychainService", "KeychainService"),
+    ),
+    keychainAccount: readString(
+      getRecordValue(payload, "keychainAccount", "KeychainAccount"),
+    ),
+    reason: readString(getRecordValue(payload, "reason", "Reason")),
+  };
+};
+
 export const normalizeAutoUpdateStatusPayload = (
   payload: unknown,
 ): Omit<AutoUpdateStatus, "revision" | "loadedFromBackend"> => {
@@ -443,6 +504,23 @@ export async function loadAutoUpdateStatusFromBackend(): Promise<AutoUpdateStatu
 export async function loadBuildInfoFromBackend(): Promise<BuildInfo> {
   const payload = await callByKnownName("buildInfo");
   return normalizeBuildInfo(payload);
+}
+
+export async function getPrivateUpdateAuthStatus(): Promise<PrivateUpdateAuthStatus> {
+  const payload = await callByKnownName("privateAuthStatus");
+  return normalizePrivateUpdateAuthStatusPayload(payload);
+}
+
+export async function savePrivateUpdateToken(
+  token: string,
+): Promise<PrivateUpdateAuthStatus> {
+  const payload = await callByKnownName("savePrivateToken", token);
+  return normalizePrivateUpdateAuthStatusPayload(payload);
+}
+
+export async function clearPrivateUpdateToken(): Promise<PrivateUpdateAuthStatus> {
+  const payload = await callByKnownName("clearPrivateToken");
+  return normalizePrivateUpdateAuthStatusPayload(payload);
 }
 
 export async function checkForAutoUpdate(): Promise<AutoUpdateStatus> {
