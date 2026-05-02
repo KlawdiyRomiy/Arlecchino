@@ -7,9 +7,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Terminal Management - PTY session lifecycle and I/O
@@ -19,29 +18,42 @@ func (a *App) CreateTerminal(id, name string) error {
 }
 
 func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
+	projectSession := a.activeProjectSession()
+	projectSessionID := "main"
+	if projectSession != nil {
+		projectSessionID = projectSession.ID
+	}
+	termManager := a.activeTerminalManager()
+	if termManager == nil {
+		return fmt.Errorf("terminal manager not initialized")
+	}
 	workingDir := projectPath
 	if workingDir == "" {
 		home, _ := os.UserHomeDir()
 		workingDir = home
 	}
 
-	session, err := a.termManager.Create(id, name, workingDir)
+	session, err := termManager.Create(id, name, workingDir)
 	if err != nil {
 		return err
 	}
 
-	session.SetOnData(func(data []byte) {
+	dataEmitter := newTerminalDataEmitter(func(data []byte) {
 		encoded := base64.StdEncoding.EncodeToString(data)
-		runtime.EventsEmit(a.ctx, "terminal:data", map[string]interface{}{
-			"id":   id,
-			"data": encoded,
+		a.emitEvent("terminal:data", map[string]interface{}{
+			"id":        id,
+			"data":      encoded,
+			"sessionId": projectSessionID,
 		})
 	})
+	session.SetOnData(dataEmitter.Push)
 
 	session.SetOnExit(func(code int) {
-		runtime.EventsEmit(a.ctx, "terminal:exit", map[string]interface{}{
-			"id":   id,
-			"code": code,
+		dataEmitter.Flush()
+		a.emitEvent("terminal:exit", map[string]interface{}{
+			"id":        id,
+			"code":      code,
+			"sessionId": projectSessionID,
 		})
 	})
 
@@ -50,8 +62,9 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 			a.tryInjectAgentGuide(session, id)
 		}
 
-		runtime.EventsEmit(a.ctx, "terminal:mode", map[string]interface{}{
+		a.emitEvent("terminal:mode", map[string]interface{}{
 			"id":            id,
+			"sessionId":     projectSessionID,
 			"mode":          event.Mode,
 			"active":        event.Active,
 			"reason":        event.Reason,
@@ -63,40 +76,112 @@ func (a *App) CreateTerminalForProject(id, name, projectPath string) error {
 
 	session.SetOnShell(func(event terminal.ShellEvent) {
 		payload := map[string]interface{}{
-			"id":   id,
-			"type": event.Type,
-			"cwd":  event.CWD,
-			"raw":  event.Raw,
+			"id":        id,
+			"sessionId": projectSessionID,
+			"type":      event.Type,
+			"cwd":       event.CWD,
+			"raw":       event.Raw,
 		}
 		if event.ExitCode != nil {
 			payload["exitCode"] = *event.ExitCode
 		}
 
-		runtime.EventsEmit(a.ctx, "terminal:shell", payload)
+		a.emitEvent("terminal:shell", payload)
 	})
 
 	session.SetOnSemantic(func(event terminal.SemanticEvent) {
-		runtime.EventsEmit(a.ctx, "terminal:semantic", map[string]interface{}{
-			"id":       id,
-			"kind":     event.Kind,
-			"path":     event.Path,
-			"line":     event.Line,
-			"column":   event.Column,
-			"severity": event.Severity,
-			"message":  event.Message,
+		a.emitEvent("terminal:semantic", map[string]interface{}{
+			"id":        id,
+			"sessionId": projectSessionID,
+			"kind":      event.Kind,
+			"path":      event.Path,
+			"line":      event.Line,
+			"column":    event.Column,
+			"severity":  event.Severity,
+			"message":   event.Message,
 		})
 	})
 
-	runtime.EventsEmit(a.ctx, "terminal:created", map[string]interface{}{
-		"id":   id,
-		"name": name,
+	a.emitEvent("terminal:created", map[string]interface{}{
+		"id":        id,
+		"name":      name,
+		"sessionId": projectSessionID,
 	})
 
 	return nil
 }
 
+type terminalDataEmitter struct {
+	mu         sync.Mutex
+	buffer     []byte
+	timer      *time.Timer
+	emit       func([]byte)
+	flushDelay time.Duration
+	maxBytes   int
+}
+
+func newTerminalDataEmitter(emit func([]byte)) *terminalDataEmitter {
+	return &terminalDataEmitter{
+		emit:       emit,
+		flushDelay: 16 * time.Millisecond,
+		maxBytes:   32 << 10,
+	}
+}
+
+func (e *terminalDataEmitter) Push(data []byte) {
+	if e == nil || len(data) == 0 {
+		return
+	}
+
+	var flushData []byte
+	e.mu.Lock()
+	e.buffer = append(e.buffer, data...)
+	if len(e.buffer) >= e.maxBytes {
+		flushData = e.takeLocked()
+	} else if e.timer == nil {
+		e.timer = time.AfterFunc(e.flushDelay, e.Flush)
+	}
+	e.mu.Unlock()
+
+	if len(flushData) > 0 {
+		e.emit(flushData)
+	}
+}
+
+func (e *terminalDataEmitter) Flush() {
+	if e == nil {
+		return
+	}
+
+	e.mu.Lock()
+	flushData := e.takeLocked()
+	e.mu.Unlock()
+
+	if len(flushData) > 0 {
+		e.emit(flushData)
+	}
+}
+
+func (e *terminalDataEmitter) takeLocked() []byte {
+	if e.timer != nil {
+		e.timer.Stop()
+		e.timer = nil
+	}
+	if len(e.buffer) == 0 {
+		return nil
+	}
+	data := make([]byte, len(e.buffer))
+	copy(data, e.buffer)
+	e.buffer = e.buffer[:0]
+	return data
+}
+
 func (a *App) WriteTerminal(id string, data string) error {
-	session := a.termManager.Get(id)
+	termManager := a.activeTerminalManager()
+	if termManager == nil {
+		return fmt.Errorf("terminal manager not initialized")
+	}
+	session := termManager.Get(id)
 	if session == nil {
 		return fmt.Errorf("terminal session not found")
 	}
@@ -128,7 +213,11 @@ func (a *App) WriteTerminal(id string, data string) error {
 }
 
 func (a *App) ResizeTerminal(id string, rows, cols int) error {
-	session := a.termManager.Get(id)
+	termManager := a.activeTerminalManager()
+	if termManager == nil {
+		return fmt.Errorf("terminal manager not initialized")
+	}
+	session := termManager.Get(id)
 	if session == nil {
 		return fmt.Errorf("terminal session not found")
 	}
@@ -136,19 +225,31 @@ func (a *App) ResizeTerminal(id string, rows, cols int) error {
 }
 
 func (a *App) CloseTerminal(id string) error {
-	return a.termManager.Close(id)
+	if termManager := a.activeTerminalManager(); termManager != nil {
+		return termManager.Close(id)
+	}
+	return nil
 }
 
 func (a *App) CloseAllTerminals() {
-	a.termManager.CloseAll()
+	if termManager := a.activeTerminalManager(); termManager != nil {
+		termManager.CloseAll()
+	}
 }
 
 func (a *App) ListTerminalSessions() []string {
-	return a.termManager.List()
+	if termManager := a.activeTerminalManager(); termManager != nil {
+		return termManager.List()
+	}
+	return nil
 }
 
 func (a *App) SendTerminalText(id, text string) error {
-	session := a.termManager.Get(id)
+	termManager := a.activeTerminalManager()
+	if termManager == nil {
+		return fmt.Errorf("terminal manager not initialized")
+	}
+	session := termManager.Get(id)
 	if session == nil {
 		return fmt.Errorf("terminal session not found")
 	}
@@ -160,34 +261,34 @@ func (a *App) tryInjectAgentGuide(session *terminal.Session, sessionID string) {
 	projectRoot := a.GetCurrentProjectPath()
 	if projectRoot == "" {
 		session.RollbackAgentGuideInjection()
-		runtime.LogWarningf(a.ctx, "[Terminal] agent guide injection skipped for session %s: empty project root", sessionID)
+		a.logWarning(fmt.Sprintf("[Terminal] agent guide injection skipped for session %s: empty project root", sessionID))
 		return
 	}
 
 	guidePath, _, ensureErr := terminal.EnsureAgentGuideFile(projectRoot)
 	if ensureErr != nil {
 		session.RollbackAgentGuideInjection()
-		runtime.LogWarningf(a.ctx, "[Terminal] agent guide ensure failed for session %s: %v", sessionID, ensureErr)
+		a.logWarning(fmt.Sprintf("[Terminal] agent guide ensure failed for session %s: %v", sessionID, ensureErr))
 		return
 	}
 
 	contextPath, contextErr := mcp.EnsureAgentContextFile(projectRoot)
 	if contextErr != nil {
 		session.RollbackAgentGuideInjection()
-		runtime.LogWarningf(a.ctx, "[Terminal] agent context ensure failed for session %s: %v", sessionID, contextErr)
+		a.logWarning(fmt.Sprintf("[Terminal] agent context ensure failed for session %s: %v", sessionID, contextErr))
 		return
 	}
 
 	bootstrapMessage := terminal.BuildAgentGuideBootstrapMessage(guidePath, contextPath)
 	if bootstrapMessage == "" {
 		session.RollbackAgentGuideInjection()
-		runtime.LogWarningf(a.ctx, "[Terminal] agent guide bootstrap is empty for session %s", sessionID)
+		a.logWarning(fmt.Sprintf("[Terminal] agent guide bootstrap is empty for session %s", sessionID))
 		return
 	}
 
 	if writeErr := session.Write([]byte(bootstrapMessage)); writeErr != nil {
 		session.RollbackAgentGuideInjection()
-		runtime.LogWarningf(a.ctx, "[Terminal] agent guide bootstrap write failed for session %s: %v", sessionID, writeErr)
+		a.logWarning(fmt.Sprintf("[Terminal] agent guide bootstrap write failed for session %s: %v", sessionID, writeErr))
 	}
 }
 

@@ -8,6 +8,8 @@ import {
   getUiScaleStepOffset,
 } from "../utils/uiScale";
 
+export type ProjectWindowMode = "projects" | "windows";
+
 interface EditorSettingsState {
   uiScale: number;
   editorFontSize: number;
@@ -17,6 +19,8 @@ interface EditorSettingsState {
   showCompactDiagnostics: boolean;
   showMinimap: boolean;
   showRainbowBrackets: boolean;
+  zenModeEnabled: boolean;
+  projectWindowMode: ProjectWindowMode;
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
@@ -26,6 +30,9 @@ interface EditorSettingsState {
   setShowCompactDiagnostics: (value: boolean) => void;
   setShowMinimap: (value: boolean) => void;
   setShowRainbowBrackets: (value: boolean) => void;
+  setZenModeEnabled: (value: boolean) => void;
+  setProjectWindowMode: (value: ProjectWindowMode) => void;
+  toggleZenMode: () => void;
 }
 
 const EDITOR_SETTINGS_STORAGE_VERSION = 1;
@@ -36,6 +43,8 @@ const DEFAULT_SHOW_INLINE_DIAGNOSTICS = true;
 const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
 const DEFAULT_SHOW_MINIMAP = true;
 const DEFAULT_SHOW_RAINBOW_BRACKETS = true;
+const DEFAULT_ZEN_MODE_ENABLED = false;
+const DEFAULT_PROJECT_WINDOW_MODE: ProjectWindowMode = "projects";
 
 type PersistedEditorSettingsState = Partial<
   Pick<
@@ -46,6 +55,8 @@ type PersistedEditorSettingsState = Partial<
     | "showCompactDiagnostics"
     | "showMinimap"
     | "showRainbowBrackets"
+    | "zenModeEnabled"
+    | "projectWindowMode"
   >
 >;
 
@@ -54,6 +65,24 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const clampEditorFontSize = (size: number): number =>
   Math.min(Math.max(size, MIN_FONT_SIZE), MAX_FONT_SIZE);
+
+const isProjectWindowMode = (value: unknown): value is ProjectWindowMode =>
+  value === "projects" || value === "windows";
+
+const migratedProjectWindowMode = (
+  value: unknown,
+): ProjectWindowMode | null => {
+  if (isProjectWindowMode(value)) {
+    return value;
+  }
+  if (value === "project-switch") {
+    return "projects";
+  }
+  if (value === "window-cycle") {
+    return "windows";
+  }
+  return null;
+};
 
 const sanitizePersistedEditorSettings = (
   persistedState: unknown,
@@ -90,6 +119,18 @@ const sanitizePersistedEditorSettings = (
     nextState.showRainbowBrackets = persistedState.showRainbowBrackets;
   }
 
+  if (typeof persistedState.zenModeEnabled === "boolean") {
+    nextState.zenModeEnabled = persistedState.zenModeEnabled;
+  }
+
+  const projectWindowMode = migratedProjectWindowMode(
+    persistedState.projectWindowMode ??
+      persistedState.projectSwitchShortcutBehavior,
+  );
+  if (projectWindowMode) {
+    nextState.projectWindowMode = projectWindowMode;
+  }
+
   return nextState;
 };
 
@@ -119,6 +160,8 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       showCompactDiagnostics: DEFAULT_SHOW_COMPACT_DIAGNOSTICS,
       showMinimap: DEFAULT_SHOW_MINIMAP,
       showRainbowBrackets: DEFAULT_SHOW_RAINBOW_BRACKETS,
+      zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
+      projectWindowMode: DEFAULT_PROJECT_WINDOW_MODE,
 
       zoomIn: () =>
         set((state) => ({
@@ -155,6 +198,15 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setShowRainbowBrackets: (value: boolean) =>
         set(() => ({ showRainbowBrackets: value })),
+
+      setZenModeEnabled: (value: boolean) =>
+        set(() => ({ zenModeEnabled: value })),
+
+      setProjectWindowMode: (value) =>
+        set(() => ({ projectWindowMode: value })),
+
+      toggleZenMode: () =>
+        set((state) => ({ zenModeEnabled: !state.zenModeEnabled })),
     }),
     {
       name: "editor-settings",
@@ -177,6 +229,10 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
               : editorFontSize,
         };
       },
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...sanitizePersistedEditorSettings(persistedState),
+      }),
     },
   ),
 );

@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 
-import * as AppFunctions from "../../wailsjs/go/main/App";
+import * as AppFunctions from "../wails/app";
 import { useProjectEntryActions } from "../contexts/ProjectEntryActionsContext";
 import { useTheme } from "../hooks/useTheme";
 import { GitStashEntry, useGitStore } from "../stores/gitStore";

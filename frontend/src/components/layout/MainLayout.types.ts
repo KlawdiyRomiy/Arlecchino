@@ -2,24 +2,31 @@ import type { ReactNode } from "react";
 import type { ProjectEntryActionTarget } from "../../contexts/ProjectEntryActionsContext";
 import type { ShortcutActionId } from "../../utils/keyboard";
 import type { TUIAssistAnchor } from "../../utils/terminalLayout";
+import type {
+  EditorFileLoadState,
+  EditorFileOpenPayload,
+} from "../../utils/editorFileLoader";
 import type { PanelPosition, PanelSize } from "../ui/FloatingPanel";
 
 export type MainEditorFileOpenHandler = (
-  path: string,
-  content: string,
-  name: string,
-  line?: number,
+  payload: EditorFileOpenPayload,
 ) => void;
 
 export type MainEditorFileOpenRegistrar = (
   handler: MainEditorFileOpenHandler | null,
 ) => void;
 
+export interface MarkdownPreviewSource {
+  path: string;
+  name: string;
+  content: string;
+}
+
 export interface MainLayoutProps {
   children: ReactNode;
   onFileOpen?: MainEditorFileOpenHandler;
   onBackToWelcome?: () => void;
-  onProjectOpen?: (path: string) => void;
+  onProjectOpen?: (path: string) => void | Promise<void>;
   onSwitchProject?: (id: string, direction?: number) => void;
   onCloseProject?: (id: string) => void;
   onPerspectiveOpen?: () => void;
@@ -40,9 +47,14 @@ export type PanelId =
   | "aiChat"
   | "git"
   | "problems"
-  | "code";
-export type AssistPanelId = Exclude<PanelId, "terminal" | "problems" | "code">;
+  | "code"
+  | "markdownPreview";
+export type AssistPanelId = Exclude<
+  PanelId,
+  "terminal" | "problems" | "code" | "markdownPreview"
+>;
 export type PanelVisibility = Record<PanelId, boolean>;
+export type ZenPinnedPanels = Record<PanelId, boolean>;
 export type PanelFullscreenSnapshot = Pick<
   PanelConfig,
   "mode" | "x" | "y" | "size"
@@ -76,6 +88,7 @@ export interface HydratedPanelLayoutState {
   panels: PanelVisibility;
   panelConfigs: PanelConfigs;
   rememberedSnappedPositions: RememberedSnappedPositions;
+  zenPinnedPanels: ZenPinnedPanels;
 }
 
 export interface PanelOpenRequest {
@@ -110,6 +123,7 @@ export interface CodePanelTab {
   content: string;
   language: string;
   line?: number;
+  loadState?: EditorFileLoadState;
 }
 
 export interface ProjectEntryCreateDialogState {

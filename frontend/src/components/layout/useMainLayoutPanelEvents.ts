@@ -7,6 +7,14 @@ import {
 } from "react";
 
 import { useIDEEvents } from "../../hooks/useIDEEvents";
+import {
+  registerOpenIntentDispatcher,
+  type FocusSurfaceIntent,
+} from "../../shell/openIntentRouter";
+import {
+  getSurfaceRuntimeReadModel,
+  type SurfaceRuntimeReadOptions,
+} from "../../surfaces/surfaceRuntimeStore";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import {
@@ -45,6 +53,37 @@ import {
 } from "./mainLayoutEventParsers";
 
 type UnknownEventHandler = (payload: unknown) => void;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const parseSurfaceRuntimeReadOptions = (
+  payload: unknown,
+): SurfaceRuntimeReadOptions => {
+  if (!isRecord(payload)) {
+    return {};
+  }
+
+  const eventLimit =
+    typeof payload.eventLimit === "number" &&
+    Number.isFinite(payload.eventLimit)
+      ? payload.eventLimit
+      : typeof payload.event_limit === "number" &&
+          Number.isFinite(payload.event_limit)
+        ? payload.event_limit
+        : undefined;
+  const includeEvents =
+    typeof payload.includeEvents === "boolean"
+      ? payload.includeEvents
+      : typeof payload.include_events === "boolean"
+        ? payload.include_events
+        : undefined;
+
+  return {
+    eventLimit,
+    includeEvents,
+  };
+};
 
 interface MainLayoutPanelEventsDispatcher {
   close: () => void;
@@ -87,6 +126,7 @@ interface UseMainLayoutPanelEventsOptions {
   handlePreviewWindowFocusEvent: UnknownEventHandler;
   handlePreviewWindowOpenEvent: UnknownEventHandler;
   handlePreviewWindowUpdateEvent: UnknownEventHandler;
+  handleSurfacePromoteEvent: UnknownEventHandler;
   isSettingsOpen: boolean;
   logicalViewport: { width: number; height: number };
   moveBrowserPreviewToPosition: (position: PanelPosition) => boolean | void;
@@ -98,6 +138,7 @@ interface UseMainLayoutPanelEventsOptions {
   openCommandDispatcher: () => void;
   openDebugDialog: () => void;
   openFileFromPath: (path: string, line?: number) => Promise<void> | void;
+  onProjectOpen?: (projectPath: string) => Promise<void> | void;
   openRunDialog: () => void;
   openSettings: () => void;
   openTUIAssistPanel: UnknownEventHandler;
@@ -106,6 +147,7 @@ interface UseMainLayoutPanelEventsOptions {
   problemsPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   rememberedSnappedPositionsRef: MutableRefObject<RememberedSnappedPositions>;
   setPanelConfigs: Dispatch<SetStateAction<PanelConfigs>>;
+  setActivePanelId: (panelId: PanelId | null) => void;
   setTUIAssistRatio: (value: unknown) => void;
   shouldSuppressApplicationMenuAction: (actionId: ShortcutActionId) => boolean;
   submitTerminalCommand: (
@@ -152,6 +194,7 @@ export const useMainLayoutPanelEvents = ({
   handlePreviewWindowFocusEvent,
   handlePreviewWindowOpenEvent,
   handlePreviewWindowUpdateEvent,
+  handleSurfacePromoteEvent,
   isSettingsOpen,
   logicalViewport,
   moveBrowserPreviewToPosition,
@@ -160,6 +203,7 @@ export const useMainLayoutPanelEvents = ({
   openCommandDispatcher,
   openDebugDialog,
   openFileFromPath,
+  onProjectOpen,
   openRunDialog,
   openSettings,
   openTUIAssistPanel,
@@ -168,6 +212,7 @@ export const useMainLayoutPanelEvents = ({
   problemsPreFullscreenRef,
   rememberedSnappedPositionsRef,
   setPanelConfigs,
+  setActivePanelId,
   setTUIAssistRatio,
   shouldSuppressApplicationMenuAction,
   submitTerminalCommand,
@@ -223,6 +268,9 @@ export const useMainLayoutPanelEvents = ({
       applyPanelsState(nextPanels);
       applyPanelConfigsState(nextPanelConfigs);
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+      if (nextPanels[panelId]) {
+        setActivePanelId(panelId);
+      }
 
       return nextConfig;
     },
@@ -233,6 +281,7 @@ export const useMainLayoutPanelEvents = ({
       panelConfigsRef,
       panelsRef,
       rememberedSnappedPositionsRef,
+      setActivePanelId,
     ],
   );
 
@@ -537,6 +586,57 @@ export const useMainLayoutPanelEvents = ({
     );
   }, []);
 
+  const handleOpenIntentFocusSurface = useCallback(
+    (intent: FocusSurfaceIntent) => {
+      const surfaceId = intent.surfaceId?.trim();
+      const previewWindowId =
+        intent.previewWindowId ||
+        (surfaceId?.startsWith("preview:")
+          ? surfaceId.slice("preview:".length)
+          : undefined);
+      if (previewWindowId) {
+        handlePreviewWindowFocusEvent({ id: previewWindowId });
+        return;
+      }
+
+      const panelId =
+        intent.panelId ||
+        (surfaceId?.startsWith("panel:")
+          ? surfaceId.slice("panel:".length)
+          : undefined);
+      if (panelId) {
+        handlePanelOpenEvent({ panel: panelId, focus: true });
+      }
+    },
+    [handlePanelOpenEvent, handlePreviewWindowFocusEvent],
+  );
+
+  useEffect(() => {
+    const unregister = registerOpenIntentDispatcher({
+      openProject: async (projectPath) => {
+        if (!onProjectOpen) {
+          throw new Error("Project open handler is unavailable.");
+        }
+        await onProjectOpen(projectPath);
+      },
+      openFile: async (path, line) => {
+        await openFileFromPath(path, line);
+      },
+      openPreview: async (input) => {
+        await handlePreviewWindowOpenEvent(input);
+      },
+      focusSurface: async (intent) => {
+        handleOpenIntentFocusSurface(intent);
+      },
+    });
+    return unregister;
+  }, [
+    handleOpenIntentFocusSurface,
+    handlePreviewWindowOpenEvent,
+    onProjectOpen,
+    openFileFromPath,
+  ]);
+
   const toggleNamedPanel = useCallback(
     (panelId: PanelId) => {
       const isVisible = panelsRef.current[panelId];
@@ -578,10 +678,10 @@ export const useMainLayoutPanelEvents = ({
           togglePanelCompactFromShortcut("explorer");
           return;
         case "terminal.toggle":
-          toggleNamedPanel("terminal");
+          togglePanelCompactFromShortcut("terminal");
           return;
         case "ai.toggle":
-          toggleNamedPanel("aiChat");
+          togglePanelCompactFromShortcut("aiChat");
           return;
         case "settings.toggle":
           if (isSettingsOpen) {
@@ -589,6 +689,9 @@ export const useMainLayoutPanelEvents = ({
           } else {
             openSettings();
           }
+          return;
+        case "zenMode.toggle":
+          useEditorSettingsStore.getState().toggleZenMode();
           return;
         case "project.copyPath":
           void copyProjectPathFromShortcut();
@@ -704,6 +807,12 @@ export const useMainLayoutPanelEvents = ({
     onWindowCloseAll: closeAllPreviewWindows,
     onWindowCheckpointCreate: handlePreviewWindowCheckpointCreateEvent,
     onWindowCheckpointRestore: handlePreviewWindowCheckpointRestoreEvent,
+    onSurfaceRead: useCallback((payload: unknown) => {
+      return getSurfaceRuntimeReadModel(
+        parseSurfaceRuntimeReadOptions(payload),
+      );
+    }, []),
+    onSurfacePromote: handleSurfacePromoteEvent,
     onAppearancePreviewStart: handleAppearancePreviewStartEvent,
     onAppearancePreviewPatch: handleAppearancePreviewPatchEvent,
     onAppearancePreviewApply: handleAppearancePreviewApplyEvent,

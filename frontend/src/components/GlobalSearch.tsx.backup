@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Search, FileText, X } from "lucide-react";
-import * as AppFunctions from "../../wailsjs/go/main/App";
+import * as AppFunctions from "../wails/app";
 import { useTheme } from "../hooks/useTheme";
 import { colors, getThemeColors, radius, transitions } from "../styles/colors";
 

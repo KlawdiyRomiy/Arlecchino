@@ -10,7 +10,7 @@ import {
   ZapOff,
 } from "lucide-react";
 
-import { BrowserOpenURL } from "../../wailsjs/runtime/runtime";
+import { openExternalUrlWithCapability } from "../shell/browser";
 import { useTheme } from "../hooks/useTheme";
 import {
   isAllowedPreviewUrl,
@@ -75,6 +75,10 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
   const [inlineDocument, setInlineDocument] = useState<string | null>(
     initialInlineDocument,
   );
+
+  const focusPreviewFrame = useCallback(() => {
+    iframeRef.current?.focus();
+  }, []);
 
   const navigate = useCallback(
     (newUrl: string) => {
@@ -173,7 +177,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
     if (inlineDocument) {
       return;
     }
-    BrowserOpenURL(url);
+    void openExternalUrlWithCapability(url);
   };
 
   useEffect(() => {
@@ -236,6 +240,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
         display: "flex",
         flexDirection: "column",
         height: "100%",
+        minHeight: 0,
         background: theme.bg,
         fontSize: 14,
       }}
@@ -431,7 +436,14 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
         </div>
       )}
 
-      <div style={{ flex: 1, position: "relative" }}>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflow: "hidden",
+          position: "relative",
+        }}
+      >
         {isLoading && (
           <div
             style={{
@@ -448,14 +460,19 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
         <iframe
           key={lastRefresh}
           ref={iframeRef}
+          tabIndex={0}
           src={inlineDocument ? undefined : url}
           srcDoc={inlineDocument ?? undefined}
           style={{
+            display: "block",
             width: "100%",
             height: "100%",
             border: "none",
             background: isDark ? "#1F2937" : "#fff",
           }}
+          onPointerDown={focusPreviewFrame}
+          onPointerEnter={focusPreviewFrame}
+          onWheel={focusPreviewFrame}
           onLoad={() => setIsLoading(false)}
           sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
         />

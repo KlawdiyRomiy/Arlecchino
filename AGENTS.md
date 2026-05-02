@@ -2,153 +2,159 @@
 
 ## Purpose
 
-- This file defines a short, executable policy for agents working in this repository.
-- Keep it practical. Prefer rules that change behavior over long background explanations.
+- This file defines repository-local instructions for agents working in Arlecchino.
+- Keep it short, executable, and specific to this repo. Put long architecture notes in `docs/`.
+- Direct user instructions override this file. More specific nested `AGENTS.md` files override this file for their subtree.
+
+## Project Map
+
+- Arlecchino is a desktop IDE with a Go/Wails backend and a React/TypeScript frontend.
+- Go application and Wails bindings live mostly in root `*.go` files and `internal/**`.
+- Frontend source lives in `frontend/src/**`; Playwright tests live in `frontend/tests/**`.
+- Generated client artifacts live in `frontend/bindings/**` and `frontend/wailsjs/**`.
+- High-sensitivity areas: editor surfaces, Wails/runtime bridges, terminal PTY/TUI flows, LSP/DAP, Tree-sitter, indexer, autocomplete/ARLE brain, MCP, workspace state, and release packaging.
 
 ## Priority Order
 
-1. Safety, tool reality, and ask-first boundaries.
+1. Safety, secrets, sandboxing, and user-owned worktree changes.
 2. Direct user instructions.
-3. Default mode: one-shot complete implementation.
-4. Verification before claiming success.
-5. Style and local conventions.
+3. Repo-local generated-artifact and API/persistence contracts.
+4. Smallest complete implementation.
+5. Narrow verification before claiming success.
+6. Style and local conventions.
 
 If rules conflict:
 
 - prefer available tools over unavailable tools;
-- prefer narrow checks over heavy full-suite runs;
+- prefer the closest repo-local instruction file;
+- prefer narrow checks over broad suites;
 - ask one short question only when ambiguity changes the outcome.
+
+## Default Workflow
+
+1. Read relevant files and nearby patterns before editing.
+2. Search with `rg` / `rg --files` before broad file reads.
+3. Check whether the work falls under `Ask First`.
+4. Make the smallest complete change that solves the request end-to-end.
+5. Run the narrowest relevant checks.
+6. Report files changed, checks run, and any unverified risk.
+
+Do not stop at scaffolding, TODO-only patches, placeholders, or half-wired behavior when the remaining implementation is obvious and feasible.
 
 ## Commands
 
-### Prefer narrow, file-scoped commands
+### Setup And App Run
+
+Use these only when needed for the task. Ask first before broad install/build/dev-server flows unless the user explicitly requested them.
 
 ```bash
-# Go
-go fmt ./path/to/file.go
-go test ./path/to/package/...
-go test -run TestName ./path/to/package/...
-go vet ./path/to/package/...
-
-# Frontend
-npx prettier --check "path/to/file.tsx"
-npx prettier --write "path/to/file.tsx"
-npx playwright test path/to/test.spec.ts
+./scripts/bootstrap-dev-macos.sh
+./scripts/wails-dev-macos.sh
+./scripts/wails-build-macos.sh
 ```
 
-### Full project commands (ask first or use only when clearly necessary)
+### Go: Prefer Narrow Package Checks
 
 ```bash
-# Go
+gofmt -w path/to/file.go
+go test -run TestName ./path/to/package
+go test ./path/to/package
+go vet ./path/to/package
+```
+
+Examples:
+
+```bash
+go test -run TestName .
+go test ./internal/indexer/brain
+go test ./internal/indexer/lsp
+go test ./internal/terminal
+```
+
+### Frontend: Run From `frontend/`
+
+The frontend uses `npm` and `package-lock.json`. Do not switch package managers without explicit approval.
+
+```bash
+cd frontend && npm run typecheck
+cd frontend && npx prettier --check src/path/to/file.tsx
+cd frontend && npx prettier --write src/path/to/file.tsx
+cd frontend && npx playwright test tests/path/to/test.spec.ts
+cd frontend && node test-scripts/surface-runtime-contracts.test.mjs
+```
+
+### Broad Checks: Ask First
+
+```bash
 go test ./...
 go vet ./...
 go fmt ./...
-
-# Frontend
-npm run dev
-npm run build
-npm test
-npx prettier --check "**/*.{js,ts,tsx,md}"
+cd frontend && npm run build
+cd frontend && npm run test:smoke
+cd frontend && npx prettier --check "**/*.{js,ts,tsx,md}"
 ```
-
-Rule: prefer fast, scoped commands. Use broad builds or full suites only when explicitly requested or when broad verification is genuinely needed.
-
-## Default Mode: One-Shot
-
-- If the task is clear and local, complete it in one implementation pass.
-- Read the relevant files and existing patterns first.
-- Make the smallest complete change that solves the task end-to-end.
-- Do not stop at scaffolding when the remaining work is obvious and feasible now.
-- Do not leave TODO-only patches, placeholders, or half-wired behavior.
-- Do not report success without relevant verification.
-
-### One-shot means
-
-- one finished diff, not a chain of partial edits;
-- functional completeness, not setup-only work;
-- minimal scope, not speculative architecture;
-- verification before the final answer.
-
-## Execution Flow
-
-1. Read the relevant files and inspect nearby existing patterns.
-2. Check whether the task falls under `Ask First`.
-3. If the task is clear, implement it directly.
-4. If the task is non-trivial, make a short plan and proceed.
-5. Run the narrowest relevant checks.
-6. Report briefly: what changed, what was verified, what risks remain.
 
 ## Ask First
 
 - Add, remove, or upgrade dependencies.
-- Change schemas, persistence contracts, or public APIs.
-- Modify build config, release config, CI config, or environment contracts.
+- Change schemas, persistence contracts, public APIs, generated binding contracts, or MCP protocol contracts.
+- Modify build config, release config, CI config, signing/notarization config, or environment contracts.
 - Regenerate generated artifacts when a regeneration flow exists.
 - Delete or move files.
-- Run full build or full test suites.
-- Perform git write operations (`git add`, `commit`, `push`, `pull`, `merge`, `rebase`).
+- Run full builds, full test suites, bootstrap/install flows, or long-running dev servers.
+- Perform git write operations: `git add`, `commit`, `push`, `pull`, `merge`, `rebase`, branch creation, or tag creation.
+
+## Generated Artifacts
+
+- Do not hand-edit `frontend/bindings/**` or `frontend/wailsjs/**` when a regeneration flow exists.
+- For Wails v3 generated bindings, use `./scripts/wails3-generate-bindings.sh`.
+- Only write Wails v3 bindings with `./scripts/wails3-generate-bindings.sh --write` after user approval.
+- Treat generated binding diffs as separate review surface; inspect churn before mixing them with hand-written code changes.
 
 ## Never Do
 
-- Edit generated artifacts manually if a regeneration path exists.
-- Touch dependency directories, vendor directories, or `.git/`.
-- Add secrets, credentials, API keys, or tokens to the repo.
+- Touch dependency directories, vendor directories, build output, caches, or `.git/` unless explicitly requested.
+- Add secrets, credentials, API keys, OAuth tokens, cookies, or local credentials to files, logs, screenshots, prompts, or final responses.
 - Use `as any`, `@ts-ignore`, or `@ts-expect-error` without unavoidable, documented cause.
-- Delete failing tests just to make the suite pass.
-- Invent APIs or guess external signatures when docs or source are available.
-- Ignore error handling where validation or propagation is needed.
-- Leave partial implementation when the task can be finished now.
+- Delete or weaken failing tests just to make a suite pass.
+- Invent external API signatures when docs or source are available.
+- Ignore validation, cancellation, cleanup, or error propagation on protocol/runtime boundaries.
+- Revert, overwrite, or clean up user changes you did not make.
 - Claim completion without relevant verification.
+
+## High-Sensitivity Contracts
+
+When touching LSP, DAP, Tree-sitter, terminal PTY/TUI, preview/runtime bridges, indexing, autocomplete, MCP, or workspace state:
+
+- identify the contract being changed;
+- preserve failure paths, cancellation, cleanup, and stale-state handling;
+- add or update the closest focused test when practical;
+- run the closest package/test-script verification.
 
 ## Bug Fix Rule
 
-- When a user reports a bug, reproduce it with the narrowest practical check when possible.
-- Fix the root cause, not just the symptom.
+- Reproduce or characterize the bug with the narrowest practical check when possible.
+- Fix the root cause, not only the symptom.
 - Prove the fix with the closest passing test or focused verification.
-
-## Tool Preferences
-
-- Prefer dedicated file and search tools over ad-hoc shell pipelines.
-- Prefer file-scoped and package-scoped commands over repo-wide commands.
-- Use documentation tools for unfamiliar or fast-moving external APIs.
-- Use browser or UI automation tools for visible regressions when available.
-- Use subagents only for self-contained side investigations, not by default.
-
-## Verification
-
-- Always run the narrowest relevant checks for the touched files or packages.
-- For frontend changes, run formatting or type checks on changed files when practical.
-- For visible UI changes, verify with screenshots, automation, or a direct smoke check when feasible.
-- For backend or protocol changes, verify the closest affected package or user-facing path.
-- In the final response include:
-  - files changed;
-  - what was verified;
-  - any remaining risks or unverified areas.
-
-## Communication Style
-
-- Respond in the user's language unless they ask otherwise.
-- Be direct, concise, and factual by default.
-- Explain more only when the task is risky, subtle, or the user asks for detail.
-- Avoid filler and ceremony.
-- Prefer self-documenting code; add comments only when they genuinely reduce ambiguity.
-
-## Code Style Defaults
-
-- Keep diffs minimal and localized to the task.
-- Prefer existing repository patterns before introducing new abstractions.
-- Write deterministic code and avoid speculative architecture.
-- Think about edge cases, performance, and security, but do not expand scope without need.
-- Preserve strict typing where the project uses it.
 
 ## UI Defaults
 
-- Prefer clear interactions, visible loading states, large enough hit targets, and honest cancel paths.
-- Preserve the existing product style unless the user explicitly asks for redesign.
+- Preserve the existing desktop IDE style unless the user explicitly asks for redesign.
+- Prefer dense, clear, work-focused UI over marketing-style layouts.
+- Use visible loading/empty/error states, large enough hit targets, and honest cancel paths.
+- For visible UI changes, verify with focused Playwright, screenshots, or a direct browser/app smoke check when feasible.
 
-## Permissions And Integrations
+## Code Style Defaults
 
-- Prefer official OAuth-backed integrations over copied bearer tokens when supported.
-- Treat external services and MCP servers as privileged integrations.
-- Do not lower sandbox or approval discipline just to make something work.
-- Keep secrets out of repo files, logs, screenshots, and final reports.
+- Keep diffs minimal and localized.
+- Prefer existing repository patterns before introducing new abstractions.
+- Keep TypeScript strict and Go idiomatic.
+- Prefer deterministic behavior over hidden state or timing assumptions.
+- Add comments only when they reduce real ambiguity.
+
+## Communication
+
+- Respond in the user's language unless asked otherwise.
+- Be direct, concise, and factual.
+- Explain more only when the task is risky, subtle, or the user asks for detail.
+- Final responses should include files changed, checks run, and remaining risks or unverified areas.

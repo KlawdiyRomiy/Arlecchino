@@ -30,11 +30,11 @@ import {
   RecordCommandExecution,
   WriteTerminal,
   GetCurrentProjectID,
-} from "../../wailsjs/go/main/App";
+} from "../wails/app";
 import {
   ClipboardGetText,
   ClipboardSetText,
-} from "../../wailsjs/runtime/runtime";
+} from "../wails/runtime";
 
 interface TerminalPanelProps {
   onAddTab?: () => void;

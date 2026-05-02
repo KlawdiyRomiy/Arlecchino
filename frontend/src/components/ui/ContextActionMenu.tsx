@@ -1,8 +1,18 @@
 import React from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { AnimatePresence, motion } from "framer-motion";
+import {
+  buildNativeContextMenuItems,
+  getContextActionId,
+  NATIVE_CONTEXT_MENU_ACTION_EVENT,
+  openNativeContextMenu,
+  type NativeContextMenuActionPayload,
+} from "../../shell/nativeContextMenu";
+import { canUseShellCapability } from "../../shell/shellCapabilities";
+import { EventsOn } from "../../wails/runtime";
 
 export interface ContextActionMenuItem {
+  actionId?: string;
   key?: string;
   label?: string;
   icon?: React.ReactNode;
@@ -16,6 +26,10 @@ export interface ContextActionMenuItem {
 interface ContextActionMenuProps {
   children: React.ReactNode;
   items: ContextActionMenuItem[];
+  nativeScope?: string;
+  nativeContext?: Record<string, unknown>;
+  nativeSurfaceId?: string;
+  nativeTargetId?: string;
 }
 
 const baseItemClassName =
@@ -24,8 +38,16 @@ const baseItemClassName =
 export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   children,
   items,
+  nativeScope = "context-action-menu",
+  nativeContext,
+  nativeSurfaceId,
+  nativeTargetId,
 }) => {
   const [open, setOpen] = React.useState(false);
+  const menuInstanceIdRef = React.useRef(
+    `context-menu-${Math.random().toString(36).slice(2, 10)}`,
+  );
+  const actionRegistryRef = React.useRef(new Map<string, () => void>());
   const closeAndRun = React.useCallback((action?: () => void) => {
     setOpen(false);
 
@@ -79,13 +101,72 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
     [items],
   );
 
+  React.useEffect(() => {
+    return EventsOn<[NativeContextMenuActionPayload]>(
+      NATIVE_CONTEXT_MENU_ACTION_EVENT,
+      (payload) => {
+        if (payload.menuInstanceId !== menuInstanceIdRef.current) {
+          return;
+        }
+
+        const actionId = payload.actionId?.trim();
+        if (!actionId) {
+          return;
+        }
+
+        closeAndRun(actionRegistryRef.current.get(actionId));
+      },
+    );
+  }, [closeAndRun]);
+
   if (visibleItems.length === 0) {
     return <>{children}</>;
   }
 
+  const handleNativeContextMenuCapture = (
+    event: React.MouseEvent<HTMLElement>,
+  ) => {
+    if (!canUseShellCapability("contextMenu")) {
+      return;
+    }
+
+    const nativeItems = buildNativeContextMenuItems(visibleItems);
+    const actionRegistry = new Map<string, () => void>();
+    visibleItems.forEach((item, index) => {
+      if (item.separator || item.disabled || !item.onSelect) {
+        return;
+      }
+      actionRegistry.set(getContextActionId(item, index), item.onSelect);
+    });
+    if (actionRegistry.size === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setOpen(false);
+    actionRegistryRef.current = actionRegistry;
+
+    void openNativeContextMenu({
+      menuInstanceId: menuInstanceIdRef.current,
+      scope: nativeScope,
+      surfaceId: nativeSurfaceId,
+      targetId: nativeTargetId,
+      x: event.clientX,
+      y: event.clientY,
+      items: nativeItems,
+      context: nativeContext,
+    });
+  };
+
   return (
     <ContextMenu.Root onOpenChange={setOpen}>
-      <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
+      <ContextMenu.Trigger
+        asChild
+        onContextMenuCapture={handleNativeContextMenuCapture}
+      >
+        {children}
+      </ContextMenu.Trigger>
 
       <AnimatePresence>
         {open ? (

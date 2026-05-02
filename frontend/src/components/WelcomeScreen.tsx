@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { FolderOpen, GitBranch, Loader2, Sparkles } from "lucide-react";
 
-import * as App from "../../wailsjs/go/main/App";
+import * as App from "../wails/app";
+import { selectDirectoryWithCapability } from "../shell/shellDialogs";
 import { shortcuts } from "../utils/keyboard";
 import { toggleWindowFullscreen } from "../utils/windowFullscreen";
 import { CloneRepositoryDialog } from "./CloneRepositoryDialog";
@@ -105,8 +106,9 @@ const WelcomeScreen: React.FC<{
 
   const handleOpenProject = async () => {
     try {
-      const selectedPath = await App.SelectDirectory(
+      const selectedPath = await selectDirectoryWithCapability(
         "Choose project directory",
+        App.SelectDirectory,
       );
       if (selectedPath) {
         onProjectOpen(selectedPath);
@@ -150,7 +152,7 @@ const WelcomeScreen: React.FC<{
         style={{ "--wails-draggable": "drag" } as React.CSSProperties}
       />
       <div
-        className="absolute right-6 top-6 z-50 flex items-center gap-2"
+        className="absolute left-4 top-4 z-50 flex items-center gap-2"
         style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}
       >
         <WindowControls />
@@ -160,7 +162,7 @@ const WelcomeScreen: React.FC<{
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.24 }}
-        className="relative z-20 mx-auto flex h-full w-full max-w-[760px] flex-1 items-center px-6 pb-10 pt-20"
+        className="absolute inset-0 z-20 mx-auto flex w-full max-w-[760px] items-center justify-center overflow-y-auto px-6 pb-52 pt-12"
       >
         <div className="w-full overflow-hidden rounded-[22px] border border-[var(--border-default)] bg-[var(--surface-elevated)] shadow-[var(--shadow-overlay)]">
           <div className="border-b border-[var(--border-subtle)] bg-[var(--surface-2)] px-6 py-5">

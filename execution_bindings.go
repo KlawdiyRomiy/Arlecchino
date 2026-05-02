@@ -15,16 +15,14 @@ type ExecutionProfilesRequest struct {
 }
 
 func (a *App) GetExecutionProfiles(request ExecutionProfilesRequest) execution.ProfileSet {
-	if a.executionService == nil {
-		a.executionService = execution.NewService(a.plugins)
-	}
+	executionService := a.activeExecutionService()
 
 	projectPath := strings.TrimSpace(request.ProjectPath)
 	if projectPath == "" {
 		projectPath = a.currentProjectPath()
 	}
 
-	return a.executionService.ResolveProfiles(execution.ResolveRequest{
+	return executionService.ResolveProfiles(execution.ResolveRequest{
 		ProjectPath:        projectPath,
 		ActiveFilePath:     strings.TrimSpace(request.ActiveFilePath),
 		ActiveFileName:     strings.TrimSpace(request.ActiveFileName),

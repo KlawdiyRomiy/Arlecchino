@@ -12,6 +12,7 @@ import {
   Palette,
   Pencil,
   Plus,
+  RefreshCw,
   RotateCcw,
   Search,
   Settings,
@@ -20,8 +21,16 @@ import {
 } from "lucide-react";
 
 import { useTheme } from "../hooks/useTheme";
-import { useBrowserPreviewStore } from "../stores/browserPreviewStore";
-import { useEditorSettingsStore } from "../stores/editorSettingsStore";
+import {
+  type MarkdownLinkOpenMode,
+  useBrowserPreviewStore,
+} from "../stores/browserPreviewStore";
+import { useAutoUpdateStatus } from "../shell/autoUpdate";
+import { runAutoUpdateCheckWithNotification } from "../shell/manualUpdateNotifications";
+import {
+  useEditorSettingsStore,
+  type ProjectWindowMode,
+} from "../stores/editorSettingsStore";
 import { useKeybindingsStore } from "../stores/keybindingsStore";
 import { themeOptions as builtInThemeOptions } from "../styles/themes";
 import type { Theme } from "../types/theme";
@@ -51,6 +60,31 @@ const settingsDropdownContentClass =
   "z-[130] overflow-y-auto overscroll-contain rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-overlay)_98%,transparent)] p-2 shadow-[var(--shadow-overlay)] backdrop-blur-xl";
 const settingsDropdownItemClass =
   "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-[14px] px-4 text-[15px] text-[var(--text-secondary)] outline-none transition-colors data-[highlighted]:bg-[var(--surface-hover)] data-[highlighted]:text-[var(--text-primary)]";
+
+const projectWindowModeOptions: Array<{
+  value: ProjectWindowMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "projects",
+    label: "Projects",
+    description: "Open projects in this window.",
+  },
+  {
+    value: "windows",
+    label: "Windows",
+    description: "Open each project in a separate macOS window.",
+  },
+];
+
+const markdownLinkOpenModeOptions: Array<{
+  value: MarkdownLinkOpenMode;
+  label: string;
+}> = [
+  { value: "browser", label: "Browser" },
+  { value: "preview", label: "Preview" },
+];
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -142,9 +176,9 @@ const SwitchRow: React.FC<{
       checked={checked}
       onCheckedChange={onCheckedChange}
       aria-label={controlLabel ?? title}
-      className="relative h-7 w-12 shrink-0 rounded-full border border-[var(--border-default)] bg-[var(--surface-3)] transition-colors focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=checked]:border-[var(--text-primary)] data-[state=checked]:bg-[var(--text-primary)]"
+      className="relative h-7 w-12 shrink-0 rounded-full border border-[var(--switch-border)] bg-[var(--switch-track)] transition-colors focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=checked]:border-[var(--switch-border-checked)] data-[state=checked]:bg-[var(--switch-track-checked)]"
     >
-      <Switch.Thumb className="block h-6 w-6 translate-x-0.5 rounded-full bg-[var(--surface-canvas)] shadow-sm transition-transform data-[state=checked]:translate-x-[22px]" />
+      <Switch.Thumb className="block h-6 w-6 translate-x-0.5 rounded-full bg-[var(--switch-thumb)] shadow-sm transition-transform data-[state=checked]:translate-x-[22px]" />
     </Switch.Root>
   </div>
 );
@@ -162,6 +196,47 @@ const ShortcutPill: React.FC<{ shortcut: string; active?: boolean }> = ({
   >
     {formatShortcut(shortcut)}
   </span>
+);
+
+const ProjectOpeningModeControl: React.FC<{
+  value: ProjectWindowMode;
+  onChange: (value: ProjectWindowMode) => void;
+}> = ({ value, onChange }) => (
+  <div className={`${settingsPanelClass} p-4`}>
+    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+      <div>
+        <div className="text-sm font-semibold text-[var(--text-primary)]">
+          Project opening
+        </div>
+        <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+          Choose whether new projects stay in the current IDE window or open as
+          separate macOS project windows.
+        </div>
+      </div>
+      <div
+        role="group"
+        aria-label="Project opening"
+        className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+      >
+        {projectWindowModeOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={value === option.value}
+            title={option.description}
+            onClick={() => onChange(option.value)}
+            className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
+              value === option.value
+                ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  </div>
 );
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -194,6 +269,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     showCompactDiagnostics,
     showMinimap,
     showRainbowBrackets,
+    zenModeEnabled,
+    projectWindowMode,
     setUiScale,
     setEditorFontSize,
     resetZoom,
@@ -201,14 +278,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowCompactDiagnostics,
     setShowMinimap,
     setShowRainbowBrackets,
+    setZenModeEnabled,
+    setProjectWindowMode,
   } = useEditorSettingsStore();
   const {
     autoOpenFromTerminal,
     reuseWindowPerSession,
     closeAutoOpenedOnTerminalExit,
+    markdownLinkOpenMode,
     setAutoOpenFromTerminal,
     setReuseWindowPerSession,
     setCloseAutoOpenedOnTerminalExit,
+    setMarkdownLinkOpenMode,
   } = useBrowserPreviewStore();
   const overrides = useKeybindingsStore((state) => state.overrides);
   const setShortcut = useKeybindingsStore((state) => state.setShortcut);
@@ -216,6 +297,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const resetAllShortcuts = useKeybindingsStore(
     (state) => state.resetAllShortcuts,
   );
+  const autoUpdateStatus = useAutoUpdateStatus();
+  const buildInfo = autoUpdateStatus.current;
+  const autoUpdateBusy =
+    autoUpdateStatus.state === "checking" ||
+    autoUpdateStatus.state === "downloading" ||
+    autoUpdateStatus.state === "applying";
 
   const filteredShortcuts = useMemo(() => {
     const query = shortcutQuery.trim().toLowerCase();
@@ -565,6 +652,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     description="Customize the look and feel of the editor."
                   />
 
+                  <ProjectOpeningModeControl
+                    value={projectWindowMode}
+                    onChange={setProjectWindowMode}
+                  />
+
                   <div className={`${settingsPanelClass} p-4`}>
                     <div className="mb-3 flex items-center justify-between gap-3">
                       <div className="text-sm font-semibold text-[var(--text-primary)]">
@@ -725,6 +817,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                   <div className={settingsPanelClass}>
                     <SwitchRow
+                      title="Zen Mode"
+                      description="Hide the top bar, status bar, and snapped panels until their edge is hovered."
+                      checked={zenModeEnabled}
+                      onCheckedChange={setZenModeEnabled}
+                    />
+                    <SwitchRow
                       title="Rainbow brackets"
                       description="Color nested brackets with fixed depth colors. Turn off to use the current theme's bracket styling."
                       checked={showRainbowBrackets}
@@ -840,6 +938,64 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onCheckedChange={setShowCompactDiagnostics}
                     />
                   </div>
+
+                  <div className={`${settingsPanelClass} p-4`}>
+                    <div className="text-sm font-semibold text-[var(--text-primary)]">
+                      Build identity
+                    </div>
+                    <div className="mt-3 grid gap-2 text-[12px] text-[var(--text-secondary)]">
+                      {[
+                        ["Mode", buildInfo.mode ?? "dev"],
+                        ["Version", buildInfo.version ?? "unknown"],
+                        ["Build", buildInfo.build ?? "unknown"],
+                        ["Commit", buildInfo.gitSha ?? "unknown"],
+                        ["Channel", buildInfo.channel ?? "alpha"],
+                        [
+                          "Package",
+                          buildInfo.packaged ? "packaged" : "development",
+                        ],
+                        [
+                          "Bundle",
+                          buildInfo.bundlePath ?? "not running from .app",
+                        ],
+                        [
+                          "Update manifest",
+                          buildInfo.updateManifestUrl ?? "not configured",
+                        ],
+                        [
+                          "Update status",
+                          `${autoUpdateStatus.state}${
+                            autoUpdateStatus.reason
+                              ? `: ${autoUpdateStatus.reason}`
+                              : ""
+                          }`,
+                        ],
+                      ].map(([label, value]) => (
+                        <div
+                          key={label}
+                          className="grid gap-2 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2 sm:grid-cols-[128px_minmax(0,1fr)]"
+                        >
+                          <span className="text-[var(--text-muted)]">
+                            {label}
+                          </span>
+                          <span className="min-w-0 break-words font-mono text-[11px] text-[var(--text-primary)]">
+                            {value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className={`${settingsActionButtonClass} mt-4`}
+                      disabled={autoUpdateBusy}
+                      onClick={() => {
+                        void runAutoUpdateCheckWithNotification();
+                      }}
+                    >
+                      <RefreshCw size={14} />
+                      Check for Updates
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -851,6 +1007,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   />
 
                   <div className={settingsPanelClass}>
+                    <div className="grid gap-4 border-b border-[var(--border-subtle)] px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                      <div className="min-w-0 pr-4">
+                        <div className="text-sm font-semibold text-[var(--text-primary)]">
+                          Markdown links
+                        </div>
+                        <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                          Choose whether Markdown preview links open directly in
+                          the system browser or first inside Browser Preview.
+                        </div>
+                      </div>
+                      <div
+                        role="group"
+                        aria-label="Markdown links"
+                        className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+                      >
+                        {markdownLinkOpenModeOptions.map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            aria-pressed={markdownLinkOpenMode === option.value}
+                            onClick={() =>
+                              setMarkdownLinkOpenMode(option.value)
+                            }
+                            className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
+                              markdownLinkOpenMode === option.value
+                                ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                                : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <SwitchRow
                       title="Auto-open Preview"
                       description="Open browser preview automatically when the terminal reports a local URL."

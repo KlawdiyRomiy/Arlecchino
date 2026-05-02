@@ -55,14 +55,14 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
         width: "100%",
         height: "100%",
         overflow: "hidden",
-        contain: "strict",
+        contain: "layout paint style",
         clipPath: "inset(0)",
         backgroundColor: "var(--bg-blackprint, #0a0a0a)",
         overscrollBehavior: "none",
       }}
     >
       {transitions((style, item) => {
-        const renderedChildren = childrenMap.current[item];
+        const renderedChildren = childrenMap.current[item] ?? null;
         const { x, ...restStyle } = style;
 
         return (
@@ -75,7 +75,7 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
               inset: 0,
               width: "100%",
               height: "100%",
-              contain: "strict",
+              contain: "layout paint style",
               willChange: "transform",
               backgroundColor: "var(--bg-blackprint, #0a0a0a)",
               zIndex: 1,

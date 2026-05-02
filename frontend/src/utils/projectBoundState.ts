@@ -1,10 +1,12 @@
 import { useSyncExternalStore } from "react";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import { EventsOn } from "../wails/runtime";
 
 import {
   ensureDiagnosticsEventsBound,
   useDiagnosticsStore,
 } from "../stores/diagnosticsStore";
+import { usePerformanceStore } from "../stores/performanceStore";
+import { readProjectSessionRoutePayload } from "../shell/projectSessionRoute";
 
 type ProjectAppBridge = {
   LSPPreloadProjectDiagnostics?: (projectPath: string) => Promise<unknown>;
@@ -24,6 +26,7 @@ interface DiagnosticsPreloadState {
 interface DiagnosticsPreloadEventPayload {
   generation?: number;
   projectPath?: string;
+  sessionId?: string;
   bounded?: boolean;
   totalCandidates?: number;
   selectedCandidates?: number;
@@ -61,6 +64,8 @@ let currentProjectScope: ProjectScopeState = {
   generation: 0,
   projectPath: null,
 };
+const currentProjectSessionId =
+  readProjectSessionRoutePayload()?.sessionId ?? "main";
 
 const diagnosticsPreloadListeners = new Set<() => void>();
 
@@ -100,6 +105,16 @@ const normalizeProjectPath = (payload: DiagnosticsPreloadEventPayload) => {
     payload.projectPath.length > 0
     ? payload.projectPath
     : null;
+};
+
+const payloadMatchesCurrentProjectSession = (
+  payload: DiagnosticsPreloadEventPayload,
+) => {
+  const sessionId =
+    typeof payload.sessionId === "string" && payload.sessionId.length > 0
+      ? payload.sessionId
+      : "main";
+  return sessionId === currentProjectSessionId;
 };
 
 const normalizeCount = (value?: number) => {
@@ -169,20 +184,6 @@ const resolveMatchingProjectScope = (
   return null;
 };
 
-const hasWailsRuntimeEvents = () => {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  const runtimeWindow = window as typeof window & {
-    runtime?: {
-      EventsOnMultiple?: unknown;
-    };
-  };
-
-  return typeof runtimeWindow.runtime?.EventsOnMultiple === "function";
-};
-
 const scheduleDiagnosticsPreloadBind = () => {
   if (
     diagnosticsPreloadEventsBound ||
@@ -203,11 +204,6 @@ const bindDiagnosticsPreloadEvents = () => {
     return;
   }
 
-  if (!hasWailsRuntimeEvents()) {
-    scheduleDiagnosticsPreloadBind();
-    return;
-  }
-
   if (diagnosticsPreloadBindTimer) {
     window.clearTimeout(diagnosticsPreloadBindTimer);
     diagnosticsPreloadBindTimer = null;
@@ -216,6 +212,9 @@ const bindDiagnosticsPreloadEvents = () => {
   diagnosticsPreloadEventsBound = true;
   resolveDiagnosticsPreloadEventsBound();
   EventsOn("lsp:ready", (payload: LSPReadyEventPayload) => {
+    if (!payloadMatchesCurrentProjectSession(payload)) {
+      return;
+    }
     const projectPath = normalizeProjectPath(payload);
     const generation = normalizeGeneration(payload.generation);
     if (!projectPath || generation === 0) {
@@ -239,6 +238,9 @@ const bindDiagnosticsPreloadEvents = () => {
   EventsOn(
     "lsp:diagnostics:preload:start",
     (payload: DiagnosticsPreloadEventPayload) => {
+      if (!payloadMatchesCurrentProjectSession(payload)) {
+        return;
+      }
       const projectPath = normalizeProjectPath(payload);
       const generation = normalizeGeneration(payload.generation);
       const matchingScope = resolveMatchingProjectScope(
@@ -260,6 +262,9 @@ const bindDiagnosticsPreloadEvents = () => {
       currentProjectScope = matchingScope;
       syncProjectScopeToDiagnosticsStore();
       const metadata = getPreloadMetadata(payload);
+      usePerformanceStore
+        .getState()
+        .recordEventPressure("lsp", Math.max(1, metadata.selectedCandidates));
 
       setDiagnosticsPreloadState({
         active: true,
@@ -272,6 +277,9 @@ const bindDiagnosticsPreloadEvents = () => {
   EventsOn(
     "lsp:diagnostics:preload:complete",
     (payload: DiagnosticsPreloadEventPayload) => {
+      if (!payloadMatchesCurrentProjectSession(payload)) {
+        return;
+      }
       const projectPath = normalizeProjectPath(payload);
       const generation = normalizeGeneration(payload.generation);
       const matchingScope = resolveMatchingProjectScope(
@@ -354,6 +362,7 @@ export const resetProjectBoundStores = () => {
   currentProjectScope = { generation: 0, projectPath: null };
   setDiagnosticsPreloadState(preloadStateIdle);
   useDiagnosticsStore.getState().reset();
+  usePerformanceStore.getState().resetTransientBudget();
 };
 
 export const activateProjectScope = (projectPath: string | null) => {

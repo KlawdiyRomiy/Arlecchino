@@ -182,3 +182,142 @@ test("latest request guard marks only the newest request as current", async ({
     markedResponse: true,
   });
 });
+
+test("adaptive performance budget disables expensive editor features under pressure", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { resolveAdaptiveEditorFeatureBudget, usePerformanceStore } =
+      await import("/src/stores/performanceStore.ts");
+
+    usePerformanceStore.getState().updateBudget({
+      activeEditorCharCount: 1_250_000,
+      activeEditorLargeDocument: true,
+      eventPressure: 100,
+      frameGapMs: 90,
+    });
+
+    const snapshot = usePerformanceStore.getState().snapshot;
+    const budget = resolveAdaptiveEditorFeatureBudget(snapshot);
+
+    return {
+      mode: snapshot.mode,
+      completions: budget.completions,
+      diagnostics: budget.diagnostics,
+      gitGutter: budget.gitGutter,
+      layoutStableFoldGutter: budget.layoutStableFoldGutter,
+      layoutStableGitGutter: budget.layoutStableGitGutter,
+      layoutStableLineWrapping: budget.layoutStableLineWrapping,
+      minimap: budget.minimap,
+      notifyChangeDelayMs: budget.notifyChangeDelayMs,
+    };
+  });
+
+  expect(result).toEqual({
+    mode: "critical",
+    completions: false,
+    diagnostics: false,
+    gitGutter: false,
+    layoutStableFoldGutter: false,
+    layoutStableGitGutter: false,
+    layoutStableLineWrapping: false,
+    minimap: false,
+    notifyChangeDelayMs: 900,
+  });
+});
+
+test("adaptive performance budget reacts to indexer and project pressure", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { resolveAdaptiveEditorFeatureBudget, usePerformanceStore } =
+      await import("/src/stores/performanceStore.ts");
+
+    usePerformanceStore.getState().updateBudget({
+      activeEditorCharCount: 32_000,
+      activeEditorLineCount: 200,
+      activeEditorLargeDocument: false,
+      eventPressure: 0,
+      frameGapMs: 0,
+      indexerQueueDepth: 220,
+      projectFileCount: 7_500,
+    });
+
+    const constrainedSnapshot = usePerformanceStore.getState().snapshot;
+    const constrainedBudget =
+      resolveAdaptiveEditorFeatureBudget(constrainedSnapshot);
+
+    usePerformanceStore.getState().updateBudget({
+      indexerQueueDepth: 650,
+      projectFileCount: 16_000,
+    });
+
+    const criticalSnapshot = usePerformanceStore.getState().snapshot;
+    const criticalBudget = resolveAdaptiveEditorFeatureBudget(criticalSnapshot);
+
+    return {
+      constrainedMode: constrainedSnapshot.mode,
+      constrainedGitGutter: constrainedBudget.gitGutter,
+      constrainedLayoutStableGitGutter: constrainedBudget.layoutStableGitGutter,
+      constrainedLineWrapping: constrainedBudget.layoutStableLineWrapping,
+      constrainedCompletions: constrainedBudget.completions,
+      criticalMode: criticalSnapshot.mode,
+      criticalCompletions: criticalBudget.completions,
+      criticalLineWrapping: criticalBudget.layoutStableLineWrapping,
+      criticalNotifyDelay: criticalBudget.notifyChangeDelayMs,
+    };
+  });
+
+  expect(result).toEqual({
+    constrainedMode: "constrained",
+    constrainedGitGutter: false,
+    constrainedLayoutStableGitGutter: true,
+    constrainedLineWrapping: true,
+    constrainedCompletions: true,
+    criticalMode: "critical",
+    criticalCompletions: false,
+    criticalLineWrapping: true,
+    criticalNotifyDelay: 900,
+  });
+});
+
+test("adaptive performance budget resets transient editor pressure on project switch", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { usePerformanceStore } =
+      await import("/src/stores/performanceStore.ts");
+
+    usePerformanceStore.getState().updateBudget({
+      activeEditorCharCount: 3_000_000,
+      activeEditorLineCount: 30_000,
+      activeEditorLargeDocument: true,
+      eventPressure: 120,
+      frameGapMs: 95,
+      indexerQueueDepth: 0,
+      projectFileCount: 0,
+    });
+
+    const criticalMode = usePerformanceStore.getState().mode;
+    usePerformanceStore.getState().resetTransientBudget();
+    const resetSnapshot = usePerformanceStore.getState().snapshot;
+
+    return {
+      criticalMode,
+      resetMode: resetSnapshot.mode,
+      activeEditorCharCount: resetSnapshot.activeEditorCharCount,
+      activeEditorLargeDocument: resetSnapshot.activeEditorLargeDocument,
+      eventPressure: resetSnapshot.eventPressure,
+      frameGapMs: resetSnapshot.frameGapMs,
+    };
+  });
+
+  expect(result).toEqual({
+    criticalMode: "critical",
+    resetMode: "normal",
+    activeEditorCharCount: 0,
+    activeEditorLargeDocument: false,
+    eventPressure: 0,
+    frameGapMs: 0,
+  });
+});

@@ -1,8 +1,16 @@
 import { expect, test } from "@playwright/test";
 
 interface MountProjectUIOptions {
+  editorContent?: string;
   panelLayoutState?: unknown;
 }
+
+const largeEditorContent = Array.from({ length: 800 }, (_value, index) => {
+  const paddedIndex = String(index + 1).padStart(4, "0");
+  return `export const row${paddedIndex} = "${"stable-scroll-geometry ".repeat(
+    4,
+  )}${paddedIndex}";`;
+}).join("\n");
 
 const openGitPanel = async (
   page: Parameters<typeof test>[0]["page"],
@@ -18,6 +26,22 @@ const openGitPanel = async (
     window.dispatchEvent(new KeyboardEvent("keydown", eventInit));
     window.dispatchEvent(new KeyboardEvent("keyup", eventInit));
   });
+};
+
+const setZenMode = async (
+  page: Parameters<typeof test>[0]["page"],
+  enabled: boolean,
+): Promise<void> => {
+  await page.evaluate(async (nextEnabled) => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setZenModeEnabled(nextEnabled);
+  }, enabled);
+
+  await expect(page.getByTestId("main-layout")).toHaveAttribute(
+    "data-zen-mode",
+    enabled ? "true" : "false",
+  );
 };
 
 const moveHeldPanelShortcut = async (
@@ -53,8 +77,38 @@ const installBaseBridges = async (
   page: Parameters<typeof test>[0]["page"],
   options: MountProjectUIOptions = {},
 ): Promise<void> => {
-  await page.addInitScript(({ panelLayoutState }: MountProjectUIOptions) => {
+  await page.addInitScript(({ editorContent, panelLayoutState }) => {
     localStorage.clear();
+    const editorPath = "/workspace/index.tsx";
+    const defaultEditorContent = "export const ready = true;";
+    const mountedEditorContent = editorContent ?? defaultEditorContent;
+    const getMountedEditorContent = () =>
+      (
+        window as Window & {
+          __arlecchinoTestEditorContent?: string;
+        }
+      ).__arlecchinoTestEditorContent ?? mountedEditorContent;
+    const makeEditorInspection = (path: string, content: string) => {
+      const lines = content.split("\n");
+      return {
+        path,
+        name: path.split("/").pop() || path,
+        sizeBytes: content.length,
+        formattedSize: `${content.length} B`,
+        isText: true,
+        safeForEditor: true,
+        largeDocument: false,
+        reason: "safe for interactive editing",
+        lineCount: content.length === 0 ? 1 : lines.length,
+        maxLineLength: lines.reduce(
+          (max, line) => Math.max(max, line.length),
+          0,
+        ),
+        limitBytes: 2 * 1024 * 1024,
+        lineLimit: 20_000,
+        maxLineLengthLimit: 20_000,
+      };
+    };
 
     const appBridge = new Proxy(
       {},
@@ -101,6 +155,13 @@ const installBaseBridges = async (
                 return "diff --git a/file b/file\n@@ -1 +1 @@\n-old\n+new";
               case "RunGitCommand":
                 return "";
+              case "InspectEditorFile":
+                return makeEditorInspection(
+                  typeof _args[0] === "string" ? _args[0] : editorPath,
+                  getMountedEditorContent(),
+                );
+              case "ReadFile":
+                return getMountedEditorContent();
               default:
                 return null;
             }
@@ -176,7 +237,17 @@ const installBaseBridges = async (
         JSON.stringify(panelLayoutState),
       );
     }
-  }, options);
+
+    if (editorContent) {
+      localStorage.setItem(
+        "editorTabs:/workspace",
+        JSON.stringify({
+          tabs: [{ path: editorPath, label: "index.tsx" }],
+          activeTabId: "tab--workspace-index-tsx",
+        }),
+      );
+    }
+  }, options satisfies MountProjectUIOptions);
 };
 
 const mountProjectUI = async (
@@ -307,6 +378,207 @@ const readElementBox = async (
       width: rect.width,
     };
   }, selector);
+};
+
+const readElementRect = async (
+  page: Parameters<typeof test>[0]["page"],
+  selector: string,
+): Promise<{
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+} | null> => {
+  return page.evaluate((targetSelector) => {
+    const node = document.querySelector<HTMLElement>(targetSelector);
+    if (!node) {
+      return null;
+    }
+
+    const rect = node.getBoundingClientRect();
+    return {
+      height: rect.height,
+      width: rect.width,
+      x: rect.x,
+      y: rect.y,
+    };
+  }, selector);
+};
+
+const openLargeEditorContent = async (
+  page: Parameters<typeof test>[0]["page"],
+): Promise<void> => {
+  await page.evaluate((content) => {
+    (
+      window as Window & {
+        __arlecchinoTestEditorContent?: string;
+        runtime: { EventsEmit: (eventName: string, payload: unknown) => void };
+      }
+    ).__arlecchinoTestEditorContent = content;
+    (
+      window as Window & {
+        runtime: { EventsEmit: (eventName: string, payload: unknown) => void };
+      }
+    ).runtime.EventsEmit("ide:editor:open", {
+      path: "/workspace/index.tsx",
+    });
+  }, largeEditorContent);
+
+  await expect(page.locator(".cm-editor").first()).toBeVisible();
+  await expect
+    .poll(async () =>
+      page
+        .locator(".cm-scroller")
+        .first()
+        .evaluate((scroller) => scroller.scrollHeight > scroller.clientHeight),
+    )
+    .toBe(true);
+};
+
+const collectSnappedEditorGeometryFrames = async (
+  page: Parameters<typeof test>[0]["page"],
+  panelTestId: string,
+  frameCount = 8,
+): Promise<
+  Array<{
+    cmEditor: { height: number; width: number; x: number; y: number } | null;
+    editor: { height: number; width: number; x: number; y: number } | null;
+    panel: { height: number; width: number; x: number; y: number } | null;
+    scroller: { height: number; width: number; x: number; y: number } | null;
+    slot: {
+      height: number;
+      overflow: string;
+      width: number;
+      x: number;
+      y: number;
+    } | null;
+  }>
+> => {
+  return page.evaluate(
+    async ({ frameCount, panelTestId }) => {
+      type RectSample = {
+        height: number;
+        width: number;
+        x: number;
+        y: number;
+      };
+      const waitForFrame = () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const readRect = (element: Element | null): RectSample | null => {
+        if (!element) {
+          return null;
+        }
+
+        const rect = element.getBoundingClientRect();
+        return {
+          height: Math.round(rect.height * 100) / 100,
+          width: Math.round(rect.width * 100) / 100,
+          x: Math.round(rect.x * 100) / 100,
+          y: Math.round(rect.y * 100) / 100,
+        };
+      };
+      const readFrame = () => {
+        const panel = document.querySelector<HTMLElement>(
+          `[data-testid="${panelTestId}"]`,
+        );
+        const slot = panel?.parentElement ?? null;
+        const editor = document.querySelector<HTMLElement>(
+          '[data-testid="editor-area"]',
+        );
+        const cmEditor = document.querySelector<HTMLElement>(".cm-editor");
+        const scroller = document.querySelector<HTMLElement>(".cm-scroller");
+        return {
+          cmEditor: readRect(cmEditor),
+          editor: readRect(editor),
+          panel: readRect(panel),
+          scroller: readRect(scroller),
+          slot: slot
+            ? {
+                ...readRect(slot)!,
+                overflow: window.getComputedStyle(slot).overflow,
+              }
+            : null,
+        };
+      };
+      const samples: ReturnType<typeof readFrame>[] = [];
+
+      for (let index = 0; index < frameCount; index += 1) {
+        await waitForFrame();
+        samples.push(readFrame());
+      }
+
+      return samples;
+    },
+    { frameCount, panelTestId },
+  );
+};
+
+const collectCodeMirrorScrollGeometryFrames = async (
+  page: Parameters<typeof test>[0]["page"],
+): Promise<
+  Array<{
+    cmEditor: { height: number; left: number; top: number; width: number };
+    content: { left: number; width: number };
+    editor: { height: number; left: number; top: number; width: number };
+    gutters: { height: number; left: number; top: number; width: number };
+    scroller: { height: number; left: number; top: number; width: number };
+    scrollTop: number;
+  }>
+> => {
+  return page
+    .locator(".cm-scroller")
+    .first()
+    .evaluate(async (scroller) => {
+      type BoxSample = {
+        height: number;
+        left: number;
+        top: number;
+        width: number;
+      };
+      const cmEditor = scroller.closest<HTMLElement>(".cm-editor");
+      const editor = document.querySelector<HTMLElement>(
+        '[data-testid="editor-area"]',
+      );
+      const gutters = cmEditor?.querySelector<HTMLElement>(".cm-gutters");
+      const content = cmEditor?.querySelector<HTMLElement>(".cm-content");
+      if (!cmEditor || !editor || !gutters || !content) {
+        throw new Error("CodeMirror geometry nodes were not mounted");
+      }
+
+      const waitForFrame = () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const readBox = (element: HTMLElement): BoxSample => {
+        const rect = element.getBoundingClientRect();
+        return {
+          height: Math.round(rect.height * 100) / 100,
+          left: Math.round(rect.left * 100) / 100,
+          top: Math.round(rect.top * 100) / 100,
+          width: Math.round(rect.width * 100) / 100,
+        };
+      };
+      const readFrame = () => ({
+        cmEditor: readBox(cmEditor),
+        content: {
+          left: readBox(content).left,
+          width: readBox(content).width,
+        },
+        editor: readBox(editor),
+        gutters: readBox(gutters),
+        scroller: readBox(scroller),
+        scrollTop: scroller.scrollTop,
+      });
+      const samples = [readFrame()];
+      const scrollTargets = [160, 420, 760, 280, 920];
+
+      for (const target of scrollTargets) {
+        scroller.scrollTop = target;
+        scroller.dispatchEvent(new Event("scroll"));
+        await waitForFrame();
+        samples.push(readFrame());
+      }
+
+      return samples;
+    });
 };
 
 const expectDirectionalSlide = (
@@ -560,8 +832,365 @@ for (const position of ["left", "right", "top", "bottom"] as const) {
     }
 
     await expect(page.locator('[data-testid="panel-git"]')).toHaveCount(0);
+    const editorAfterClose = await readElementBox(
+      page,
+      '[data-testid="editor-area"]',
+    );
+    expect(editorAfterClose).not.toBeNull();
+    if (position === "left" || position === "right") {
+      expect(editorAfterClose?.width ?? 0).toBeGreaterThan(
+        (editorBeforeClose?.width ?? 0) + 4,
+      );
+    } else {
+      expect(editorAfterClose?.height ?? 0).toBeGreaterThan(
+        (editorBeforeClose?.height ?? 0) + 4,
+      );
+    }
   });
 }
+
+for (const position of ["top", "bottom"] as const) {
+  test(`snapped ${position} panel keeps editor geometry stable during open and scroll`, async ({
+    page,
+  }) => {
+    await mountProjectUI(page, {
+      panelLayoutState: {
+        panels: {
+          explorer: false,
+          terminal: false,
+          aiChat: false,
+          git: false,
+          problems: false,
+          code: false,
+          markdownPreview: false,
+        },
+        panelConfigs: {
+          git: {
+            position,
+            mode: "snapped",
+            size: { width: 0, height: 220 },
+            x: 0,
+            y: 0,
+          },
+        },
+      },
+    });
+    await openLargeEditorContent(page);
+
+    const panel = page.locator('[data-testid="panel-git"]');
+    await openGitPanel(page);
+    await expect(panel).toBeAttached();
+
+    const openingFrames = await collectSnappedEditorGeometryFrames(
+      page,
+      "panel-git",
+    );
+
+    for (const frame of openingFrames) {
+      expect(frame.panel).not.toBeNull();
+      expect(frame.slot).not.toBeNull();
+      expect(frame.editor).not.toBeNull();
+      expect(frame.cmEditor).not.toBeNull();
+      expect(frame.scroller).not.toBeNull();
+      expect(frame.slot?.height ?? 0).toBeGreaterThan(190);
+      expect(frame.slot?.overflow).toBe("hidden");
+      expect(boxesOverlap(frame.panel, frame.editor)).toBe(false);
+
+      if (position === "top") {
+        expect(
+          (frame.slot?.y ?? 0) + (frame.slot?.height ?? 0),
+        ).toBeLessThanOrEqual((frame.editor?.y ?? 0) + 1);
+      } else {
+        expect(
+          (frame.editor?.y ?? 0) + (frame.editor?.height ?? 0),
+        ).toBeLessThanOrEqual((frame.slot?.y ?? 0) + 1);
+      }
+
+      expect(frame.cmEditor?.x ?? 0).toBeGreaterThanOrEqual(
+        (frame.editor?.x ?? 0) - 1,
+      );
+      expect(
+        (frame.cmEditor?.x ?? 0) + (frame.cmEditor?.width ?? 0),
+      ).toBeLessThanOrEqual(
+        (frame.editor?.x ?? 0) + (frame.editor?.width ?? 0) + 1,
+      );
+      expect(frame.scroller?.x ?? 0).toBeGreaterThanOrEqual(
+        (frame.editor?.x ?? 0) - 1,
+      );
+      expect(
+        (frame.scroller?.x ?? 0) + (frame.scroller?.width ?? 0),
+      ).toBeLessThanOrEqual(
+        (frame.editor?.x ?? 0) + (frame.editor?.width ?? 0) + 1,
+      );
+    }
+
+    await waitForPanelSettled(page, "panel-git");
+
+    const scrollFrames = await collectCodeMirrorScrollGeometryFrames(page);
+    const baseline = scrollFrames[0];
+    const stableBoxKeys = ["cmEditor", "editor", "scroller"] as const;
+    const stableMetrics = ["height", "left", "top", "width"] as const;
+    const maxStableDelta = scrollFrames.slice(1).reduce((maxDelta, frame) => {
+      const frameDelta = stableBoxKeys.reduce((boxMaxDelta, key) => {
+        const metricDelta = stableMetrics.reduce((metricMaxDelta, metric) => {
+          const delta = Math.abs(frame[key][metric] - baseline[key][metric]);
+          return Math.max(metricMaxDelta, delta);
+        }, 0);
+        return Math.max(boxMaxDelta, metricDelta);
+      }, 0);
+      return Math.max(maxDelta, frameDelta);
+    }, 0);
+    const maxContentInlineDelta = scrollFrames
+      .slice(1)
+      .reduce((maxDelta, frame) => {
+        const leftDelta = Math.abs(frame.content.left - baseline.content.left);
+        const widthDelta = Math.abs(
+          frame.content.width - baseline.content.width,
+        );
+        const gutterLeftDelta = Math.abs(
+          frame.gutters.left - baseline.gutters.left,
+        );
+        const gutterWidthDelta = Math.abs(
+          frame.gutters.width - baseline.gutters.width,
+        );
+        return Math.max(
+          maxDelta,
+          leftDelta,
+          widthDelta,
+          gutterLeftDelta,
+          gutterWidthDelta,
+        );
+      }, 0);
+
+    expect(scrollFrames.at(-1)?.scrollTop ?? 0).toBeGreaterThan(
+      baseline.scrollTop,
+    );
+    expect(maxStableDelta).toBeLessThanOrEqual(1);
+    expect(maxContentInlineDelta).toBeLessThanOrEqual(1);
+  });
+}
+
+test("zen mode hides an open snapped panel until its edge is hovered", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await setZenMode(page, true);
+
+  const panel = page.locator('[data-testid="panel-explorer"]');
+  await expect(panel).toHaveCount(0);
+  await expect(page.getByTestId("zen-panel-hover-left")).toBeAttached();
+
+  await page.mouse.move(520, 320);
+  await page.mouse.move(1, 120);
+  await expect(panel).toBeVisible();
+  await expect(panel).toHaveAttribute("data-panel-position", "left");
+  await expect
+    .poll(async () => panel.getAttribute("data-panel-motion"))
+    .toBe("settled");
+
+  await page.mouse.move(520, 320);
+  await expect(panel).toHaveCount(0);
+});
+
+test("zen mode edge hover reveals unpinned snapped panels on every side", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: true,
+        terminal: false,
+        aiChat: true,
+        git: true,
+        problems: true,
+        code: false,
+      },
+      panelConfigs: {
+        explorer: {
+          position: "left",
+          mode: "snapped",
+          size: { width: 260, height: 0 },
+          x: 0,
+          y: 0,
+        },
+        git: {
+          position: "right",
+          mode: "snapped",
+          size: { width: 300, height: 0 },
+          x: 0,
+          y: 0,
+        },
+        aiChat: {
+          position: "top",
+          mode: "snapped",
+          size: { width: 0, height: 180 },
+          x: 0,
+          y: 0,
+        },
+        problems: {
+          position: "bottom",
+          mode: "snapped",
+          size: { width: 0, height: 220 },
+          x: 0,
+          y: 0,
+        },
+      },
+      rememberedSnappedPositions: {
+        explorer: "left",
+        git: "right",
+        aiChat: "top",
+        problems: "bottom",
+      },
+    },
+  });
+  await setZenMode(page, true);
+
+  const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
+  const cases = [
+    {
+      panelId: "explorer",
+      position: "left",
+      point: { x: 1, y: viewport.height / 2 },
+    },
+    {
+      panelId: "git",
+      position: "right",
+      point: { x: viewport.width - 1, y: viewport.height / 2 },
+    },
+    {
+      panelId: "aiChat",
+      position: "top",
+      point: { x: viewport.width / 2, y: 1 },
+    },
+    {
+      panelId: "problems",
+      position: "bottom",
+      point: { x: viewport.width / 2, y: viewport.height - 1 },
+    },
+  ] as const;
+
+  for (const { panelId, position, point } of cases) {
+    await expect(
+      page.getByTestId(`zen-panel-hover-${position}`),
+    ).toBeAttached();
+    await page.mouse.move(viewport.width / 2, viewport.height / 2);
+    await expect(page.getByTestId(`panel-${panelId}`)).toHaveCount(0);
+    await page.mouse.move(point.x, point.y);
+    await expect(page.getByTestId(`panel-${panelId}`)).toBeVisible();
+    await expect(page.getByTestId(`panel-${panelId}`)).toHaveAttribute(
+      "data-panel-position",
+      position,
+    );
+  }
+});
+
+test("cmd-clicking a zen-hovered panel header pins and unpins it", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await setZenMode(page, true);
+
+  const panel = page.locator('[data-testid="panel-explorer"]');
+  await page.getByTestId("zen-panel-hover-left").hover();
+  await expect(panel).toBeVisible();
+  await waitForPanelSettled(page, "panel-explorer");
+
+  await page
+    .getByTestId("panel-explorer-drag-handle")
+    .click({ modifiers: ["Meta"] });
+  await expect(panel).toHaveAttribute("data-panel-zen-pinned", "true");
+
+  await page.mouse.move(560, 320);
+  await page.waitForTimeout(220);
+  await expect(panel).toBeVisible();
+
+  await page
+    .getByTestId("panel-explorer-drag-handle")
+    .click({ modifiers: ["Meta"] });
+  await expect(panel).toHaveAttribute("data-panel-zen-pinned", "false");
+
+  await page.mouse.move(560, 320);
+  await expect(panel).toHaveCount(0);
+});
+
+test("keyboard shortcut opens a snapped panel pinned in zen and keeps arrow movement", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+      },
+    },
+  });
+  await setZenMode(page, true);
+
+  const panel = page.locator('[data-testid="panel-git"]').last();
+  await expect(panel).toHaveCount(0);
+
+  await page.evaluate(() => {
+    const shortcutInit = {
+      key: "g",
+      code: "KeyG",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    window.dispatchEvent(new KeyboardEvent("keydown", shortcutInit));
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        code: "ArrowRight",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    window.dispatchEvent(new KeyboardEvent("keyup", shortcutInit));
+  });
+
+  await expect(panel).toBeVisible();
+  await expect(panel).toHaveAttribute("data-panel-zen-pinned", "true");
+  await expect
+    .poll(async () => panel.getAttribute("data-panel-position"))
+    .toBe("right");
+
+  await page.mouse.move(560, 320);
+  await page.waitForTimeout(220);
+  await expect(panel).toBeVisible();
+});
+
+test("zen chrome hover insets keep a revealed side panel below the topbar", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await setZenMode(page, true);
+
+  await page.getByTestId("zen-topbar-hover").hover();
+  await expect(page.getByTestId("main-layout")).toHaveAttribute(
+    "data-zen-topbar-visible",
+    "true",
+  );
+  await page.getByTestId("zen-panel-hover-left").hover();
+  await expect(page.getByTestId("panel-explorer")).toBeVisible();
+
+  const topbarBox = await readElementRect(page, '[data-testid="topbar"]');
+  const panelBox = await readElementRect(
+    page,
+    '[data-testid="panel-explorer"]',
+  );
+  expect(topbarBox).not.toBeNull();
+  expect(panelBox).not.toBeNull();
+  expect((panelBox?.y ?? 0) + 1).toBeGreaterThanOrEqual(
+    (topbarBox?.y ?? 0) + (topbarBox?.height ?? 0),
+  );
+  expectNoBoxOverlap(topbarBox, panelBox);
+});
 
 test("fullscreen floating panel closes without a sideways slide under ui scale", async ({
   page,
@@ -1665,7 +2294,7 @@ test("lateral panel relocation does not promote occupied top and bottom slots", 
 
   expect(slotStyles.explorer).toEqual({
     overflow: "visible",
-    willChange: "transform, opacity",
+    willChange: "width, transform, opacity",
   });
   expect(slotStyles.git).toEqual({
     overflow: "hidden",
@@ -1888,6 +2517,93 @@ test("browser preview resizes from the inner edge across iframe content", async 
       return nextBox?.width ?? 0;
     })
     .toBeLessThan((startBox?.width ?? 0) - 60);
+});
+
+test("snapped panel close resizes the editor during exit motion", async ({
+  page,
+}) => {
+  await mountProjectUI(page, { editorContent: largeEditorContent });
+
+  const explorerPanel = page.locator('[data-testid="panel-explorer"]').last();
+  const editorArea = page.getByTestId("editor-area");
+  await expect(explorerPanel).toBeVisible();
+  await waitForPanelSettled(page, "panel-explorer");
+
+  const startBox = await editorArea.boundingBox();
+  expect(startBox).not.toBeNull();
+
+  await page.keyboard.press("Meta+E");
+
+  await expect
+    .poll(async () => {
+      const panelStillExiting = (await explorerPanel.count()) > 0;
+      const nextBox = await editorArea.boundingBox();
+      return (
+        panelStillExiting && (nextBox?.width ?? 0) > (startBox?.width ?? 0) + 20
+      );
+    })
+    .toBe(true);
+
+  await expect(explorerPanel).toHaveCount(0);
+});
+
+test("browser preview iframe scrolls with wheel input", async ({ page }) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(() => {
+    (
+      window as Window & {
+        runtime: { EventsEmit: (eventName: string, payload: unknown) => void };
+      }
+    ).runtime.EventsEmit("ide:window:open", {
+      id: "scroll-preview",
+      surface: "browser",
+      title: "Scroll Preview",
+      mode: "snapped",
+      position: "right",
+      payload: {
+        sourceLabel: "scroll-preview.html",
+        revision: 1,
+        htmlContent: `
+          <!doctype html>
+          <html>
+            <body style="margin:0; min-height: 2400px; font-family: sans-serif;">
+              <main style="height: 2400px; padding: 24px;">
+                <h1>Scrollable preview</h1>
+                <p>Wheel input should scroll this iframe.</p>
+              </main>
+            </body>
+          </html>
+        `,
+      },
+    });
+  });
+
+  const previewPanel = page
+    .locator('[data-testid="panel-scroll-preview"]')
+    .last();
+  await expect(previewPanel).toBeVisible();
+  await expect(
+    page.locator('[data-testid="browser-preview-root"] iframe'),
+  ).toBeVisible();
+
+  const iframe = page.locator('[data-testid="browser-preview-root"] iframe');
+  const iframeBox = await iframe.boundingBox();
+  expect(iframeBox).not.toBeNull();
+
+  await page.mouse.move(
+    (iframeBox?.x ?? 0) + (iframeBox?.width ?? 0) / 2,
+    (iframeBox?.y ?? 0) + (iframeBox?.height ?? 0) / 2,
+  );
+  await page.mouse.wheel(0, 700);
+
+  await expect
+    .poll(async () =>
+      iframe.evaluate(
+        (element) => (element as HTMLIFrameElement).contentWindow?.scrollY ?? 0,
+      ),
+    )
+    .toBeGreaterThan(120);
 });
 
 test("browser preview uses real layout slots on every edge", async ({

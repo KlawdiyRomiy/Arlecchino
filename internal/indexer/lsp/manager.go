@@ -84,6 +84,7 @@ type Server struct {
 	running   bool
 	id        int
 	mu        sync.Mutex
+	writeMu   sync.Mutex
 	pending   map[int]chan *Response
 	onNotify  func(method string, params json.RawMessage)
 	restarts  int
@@ -739,7 +740,7 @@ func (m *Manager) DidOpen(language, filePath, content string) error {
 	server, err := m.ensureStarted(language)
 	if err != nil {
 		log.Printf("[LSP-MGR] DidOpen: start failed lang=%s err=%v", language, err)
-		return nil
+		return err
 	}
 
 	langID := normalizeLanguageID(language)
@@ -765,7 +766,7 @@ func (m *Manager) DidChange(language, filePath string, version int, content stri
 	server, err := m.ensureStarted(language)
 	if err != nil {
 		log.Printf("[LSP-MGR] DidChange: start failed lang=%s err=%v", language, err)
-		return nil
+		return err
 	}
 
 	if err := server.DidChange(filePath, version, content); err != nil {
@@ -1564,18 +1565,75 @@ func (s *Server) notify(method string, params any) error {
 }
 
 func (s *Server) send(req Request) error {
-	data, err := json.Marshal(req)
+	return s.sendPayload(req)
+}
+
+func (s *Server) sendPayload(payload any) error {
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
 	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	_, err = s.stdin.Write([]byte(header))
 	if err != nil {
 		return err
 	}
 	_, err = s.stdin.Write(data)
 	return err
+}
+
+type serverRequestResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  any             `json:"result"`
+}
+
+func (s *Server) respond(id json.RawMessage, result any) error {
+	if len(id) == 0 {
+		return nil
+	}
+	return s.sendPayload(serverRequestResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result:  result,
+	})
+}
+
+func (s *Server) handleServerRequest(id json.RawMessage, method string, params json.RawMessage) {
+	result := serverRequestResult(method, params)
+	if err := s.respond(id, result); err != nil {
+		s.mu.Lock()
+		s.lastError = fmt.Sprintf("server request response error: %v", err)
+		s.mu.Unlock()
+	}
+}
+
+func serverRequestResult(method string, params json.RawMessage) any {
+	switch method {
+	case "workspace/configuration":
+		var payload struct {
+			Items []any `json:"items"`
+		}
+		if err := json.Unmarshal(params, &payload); err != nil || len(payload.Items) == 0 {
+			return []any{}
+		}
+		result := make([]any, len(payload.Items))
+		for i := range result {
+			result[i] = map[string]any{}
+		}
+		return result
+	case "workspace/workspaceFolders":
+		return nil
+	case "client/registerCapability",
+		"client/unregisterCapability",
+		"window/workDoneProgress/create":
+		return nil
+	default:
+		return nil
+	}
 }
 
 func (s *Server) readLoop() {
@@ -1617,10 +1675,15 @@ func (s *Server) readLoop() {
 		}
 
 		var envelope struct {
-			Method string          `json:"method"`
-			Params json.RawMessage `json:"params"`
+			ID     *json.RawMessage `json:"id,omitempty"`
+			Method string           `json:"method"`
+			Params json.RawMessage  `json:"params"`
 		}
 		if err := json.Unmarshal(body, &envelope); err == nil && envelope.Method != "" {
+			if envelope.ID != nil {
+				s.handleServerRequest(*envelope.ID, envelope.Method, envelope.Params)
+				continue
+			}
 			if s.onNotify != nil {
 				s.onNotify(envelope.Method, envelope.Params)
 			}

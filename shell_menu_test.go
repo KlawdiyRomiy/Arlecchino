@@ -1,30 +1,25 @@
 package main
 
 import (
-	"reflect"
 	"testing"
 
-	"github.com/wailsapp/wails/v2/pkg/menu"
-	"github.com/wailsapp/wails/v2/pkg/menu/keys"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 func TestShortcutToMenuAcceleratorRejectsFnShortcuts(t *testing.T) {
-	if accelerator, ok := shortcutToMenuAccelerator("fn+f"); ok || accelerator != nil {
+	if accelerator, ok := shortcutToMenuAccelerator("fn+f"); ok || accelerator != "" {
 		t.Fatalf("shortcutToMenuAccelerator(fn+f) = (%v, %v), want unsupported", accelerator, ok)
 	}
 }
 
 func TestShortcutToMenuAcceleratorSupportsOptionW(t *testing.T) {
 	accelerator, ok := shortcutToMenuAccelerator("option+w")
-	if !ok || accelerator == nil {
+	if !ok || accelerator == "" {
 		t.Fatalf("shortcutToMenuAccelerator(option+w) unsupported")
 	}
 
-	if accelerator.Key != "w" {
-		t.Fatalf("accelerator.Key = %q, want w", accelerator.Key)
-	}
-	if len(accelerator.Modifiers) != 1 {
-		t.Fatalf("accelerator.Modifiers len = %d, want 1", len(accelerator.Modifiers))
+	if accelerator != "option+w" {
+		t.Fatalf("accelerator = %q, want option+w", accelerator)
 	}
 }
 
@@ -32,8 +27,8 @@ func TestMenuAcceleratorForActionKeepsCmdWReservedForWebView(t *testing.T) {
 	accelerator := menuAcceleratorForAction("panel.closeFullscreen", map[string][]string{
 		"panel.closeFullscreen": {"cmd+w"},
 	})
-	if accelerator != nil {
-		t.Fatalf("panel.closeFullscreen cmd+w accelerator = %v, want nil", accelerator)
+	if accelerator != "" {
+		t.Fatalf("panel.closeFullscreen cmd+w accelerator = %q, want empty", accelerator)
 	}
 }
 
@@ -41,11 +36,11 @@ func TestMenuAcceleratorForActionUsesNativeShortcutWhenSupported(t *testing.T) {
 	accelerator := menuAcceleratorForAction("search.toggle", map[string][]string{
 		"search.toggle": {"cmd+f"},
 	})
-	if accelerator == nil {
-		t.Fatalf("search.toggle accelerator is nil")
+	if accelerator == "" {
+		t.Fatalf("search.toggle accelerator is empty")
 	}
-	if accelerator.Key != "f" {
-		t.Fatalf("search.toggle accelerator key = %q, want f", accelerator.Key)
+	if accelerator != "cmd+f" {
+		t.Fatalf("search.toggle accelerator = %q, want cmd+f", accelerator)
 	}
 }
 
@@ -59,26 +54,26 @@ func TestBuildApplicationMenuAddsViewFullscreenActions(t *testing.T) {
 
 	viewMenu := findSubmenu(t, menuModel, "View")
 	searchItem := findMenuItem(t, viewMenu, "Search")
-	if searchItem.Accelerator == nil {
-		t.Fatalf("Search accelerator is nil")
+	if searchItem.GetAccelerator() == "" {
+		t.Fatalf("Search accelerator is empty")
 	}
 
 	zoomInItem := findMenuItem(t, viewMenu, "Zoom In")
-	if zoomInItem.Accelerator == nil || zoomInItem.Accelerator.Key != "+" {
-		t.Fatalf("Zoom In accelerator = %v, want cmd+", zoomInItem.Accelerator)
+	if zoomInItem.GetAccelerator() == "" {
+		t.Fatalf("Zoom In accelerator is empty")
 	}
 
 	closeItem := findMenuItem(t, viewMenu, "Close Fullscreen Panel")
-	if closeItem.Accelerator == nil {
-		t.Fatalf("Close Fullscreen Panel accelerator is nil")
+	if closeItem.GetAccelerator() == "" {
+		t.Fatalf("Close Fullscreen Panel accelerator is empty")
 	}
 
 	fullscreenItem := findMenuItem(t, viewMenu, "Enter Full Screen")
-	if fullscreenItem.Accelerator != nil {
-		t.Fatalf("Enter Full Screen accelerator = %v, want nil for fn shortcut", fullscreenItem.Accelerator)
+	if fullscreenItem.GetAccelerator() != "" {
+		t.Fatalf("Enter Full Screen accelerator = %q, want empty for fn shortcut", fullscreenItem.GetAccelerator())
 	}
 
-	if viewMenu.Items[len(viewMenu.Items)-1] != fullscreenItem {
+	if lastMenuItem(viewMenu) != fullscreenItem {
 		t.Fatalf("Enter Full Screen should be the last View menu item")
 	}
 
@@ -100,32 +95,34 @@ func TestBuildApplicationMenuUsesUpdatedPanelAccelerators(t *testing.T) {
 	})
 
 	viewMenu := findSubmenu(t, menuModel, "View")
-	assertMenuAccelerator(t, findMenuItem(t, viewMenu, "Toggle Terminal"), "j", keys.CmdOrCtrlKey)
-	assertMenuAccelerator(t, findMenuItem(t, viewMenu, "Toggle Problems Panel"), "i", keys.CmdOrCtrlKey)
-	assertMenuAccelerator(
-		t,
-		findMenuItem(t, viewMenu, "Toggle Problems Fullscreen"),
-		"i",
-		keys.CmdOrCtrlKey,
-		keys.ShiftKey,
-	)
+	assertMenuAccelerator(t, findMenuItem(t, viewMenu, "Toggle Terminal"), "Cmd+J")
+	assertMenuAccelerator(t, findMenuItem(t, viewMenu, "Toggle Problems Panel"), "Cmd+I")
+	assertMenuAccelerator(t, findMenuItem(t, viewMenu, "Toggle Problems Fullscreen"), "Cmd+Shift+I")
 }
 
-func findSubmenu(t *testing.T, menuModel *menu.Menu, label string) *menu.Menu {
+func findSubmenu(t *testing.T, menuModel *application.Menu, label string) *application.Menu {
 	t.Helper()
-	for _, item := range menuModel.Items {
-		if item.Label == label && item.SubMenu != nil {
-			return item.SubMenu
+	for i := 0; ; i++ {
+		item := menuModel.ItemAt(i)
+		if item == nil {
+			break
+		}
+		if item.Label() == label && item.GetSubmenu() != nil {
+			return item.GetSubmenu()
 		}
 	}
 	t.Fatalf("submenu %q not found", label)
 	return nil
 }
 
-func findMenuItem(t *testing.T, menuModel *menu.Menu, label string) *menu.MenuItem {
+func findMenuItem(t *testing.T, menuModel *application.Menu, label string) *application.MenuItem {
 	t.Helper()
-	for _, item := range menuModel.Items {
-		if item.Label == label {
+	for i := 0; ; i++ {
+		item := menuModel.ItemAt(i)
+		if item == nil {
+			break
+		}
+		if item.Label() == label {
 			return item
 		}
 	}
@@ -133,24 +130,33 @@ func findMenuItem(t *testing.T, menuModel *menu.Menu, label string) *menu.MenuIt
 	return nil
 }
 
-func findOptionalMenuItem(menuModel *menu.Menu, label string) *menu.MenuItem {
-	for _, item := range menuModel.Items {
-		if item.Label == label {
+func findOptionalMenuItem(menuModel *application.Menu, label string) *application.MenuItem {
+	for i := 0; ; i++ {
+		item := menuModel.ItemAt(i)
+		if item == nil {
+			break
+		}
+		if item.Label() == label {
 			return item
 		}
 	}
 	return nil
 }
 
-func assertMenuAccelerator(t *testing.T, item *menu.MenuItem, key string, modifiers ...keys.Modifier) {
+func assertMenuAccelerator(t *testing.T, item *application.MenuItem, want string) {
 	t.Helper()
-	if item.Accelerator == nil {
-		t.Fatalf("%s accelerator is nil", item.Label)
+	if item.GetAccelerator() != want {
+		t.Fatalf("%s accelerator = %q, want %q", item.Label(), item.GetAccelerator(), want)
 	}
-	if item.Accelerator.Key != key {
-		t.Fatalf("%s accelerator key = %q, want %q", item.Label, item.Accelerator.Key, key)
-	}
-	if !reflect.DeepEqual(item.Accelerator.Modifiers, modifiers) {
-		t.Fatalf("%s accelerator modifiers = %v, want %v", item.Label, item.Accelerator.Modifiers, modifiers)
+}
+
+func lastMenuItem(menuModel *application.Menu) *application.MenuItem {
+	var last *application.MenuItem
+	for i := 0; ; i++ {
+		item := menuModel.ItemAt(i)
+		if item == nil {
+			return last
+		}
+		last = item
 	}
 }

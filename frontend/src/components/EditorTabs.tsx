@@ -1,6 +1,6 @@
 import React from "react";
 import { Reorder } from "framer-motion";
-import { X, Columns, Rows } from "lucide-react";
+import { X, Eye, Columns, Rows } from "lucide-react";
 import {
   ContextActionMenu,
   type ContextActionMenuItem,
@@ -21,6 +21,9 @@ interface EditorTabsProps {
   onTabsReorder?: (tabs: Tab[]) => void;
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
+  markdownPreviewAvailable?: boolean;
+  markdownPreviewActive?: boolean;
+  onToggleMarkdownPreview?: () => void;
   showSplitButtons?: boolean;
   getTabContextMenuItems?: (tab: Tab) => ContextActionMenuItem[];
 }
@@ -33,6 +36,9 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
   onTabsReorder,
   onSplitHorizontal,
   onSplitVertical,
+  markdownPreviewAvailable = false,
+  markdownPreviewActive = false,
+  onToggleMarkdownPreview,
   showSplitButtons = true,
   getTabContextMenuItems,
 }) => {
@@ -145,6 +151,27 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
             data-testid="editor-tabs-split-controls"
             className="shell-cluster-soft h-full max-h-full gap-1 px-1.5 py-0"
           >
+            {markdownPreviewAvailable && (
+              <button
+                type="button"
+                onClick={onToggleMarkdownPreview}
+                disabled={!onToggleMarkdownPreview}
+                aria-pressed={markdownPreviewActive}
+                data-testid="editor-tabs-markdown-preview-toggle"
+                className={`shell-control h-10 w-10 min-w-10 px-0 transition-[background-color,border-color,color,opacity] disabled:pointer-events-none disabled:opacity-35 ${
+                  markdownPreviewActive
+                    ? "border-[var(--accent-primary)]/45 bg-[var(--bg-tertiary)] text-[var(--text-primary)]"
+                    : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                }`}
+                title="Markdown Preview"
+              >
+                <Eye
+                  className="h-[13px] w-[13px] min-w-[13px] shrink-0"
+                  size={13}
+                  strokeWidth={2.2}
+                />
+              </button>
+            )}
             <button
               type="button"
               onClick={onSplitVertical}

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>__APP_DISPLAY_NAME__</string>
+  <key>CFBundleExecutable</key>
+  <string>__APP_EXECUTABLE__</string>
+  <key>CFBundleIconFile</key>
+  <string>iconfile</string>
+  <key>CFBundleIconName</key>
+  <string>appicon</string>
+  <key>CFBundleIdentifier</key>
+  <string>__BUNDLE_ID__</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>__APP_NAME__</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>__APP_VERSION__</string>
+  <key>CFBundleVersion</key>
+  <string>__APP_BUILD__</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>__MIN_MACOS_VERSION__</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>Copyright © __COPYRIGHT_YEAR__ Klawdiy Klowerson. All rights reserved.</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>Arlecchino URL</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>arlecchino</string>
+      </array>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+    </dict>
+  </array>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Arlecchino Workspace File</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.data</string>
+        <string>public.text</string>
+        <string>public.source-code</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>

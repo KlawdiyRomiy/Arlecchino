@@ -8,11 +8,12 @@ import (
 )
 
 func (a *App) GetRelatedFiles(filePath string) ([]indexer.FileRelation, error) {
-	if a.coreEngine == nil {
+	engine := a.activeCoreEngine()
+	if engine == nil {
 		return nil, nil
 	}
 
-	forward, err := a.coreEngine.QueryEdges(core.EdgeQuery{FilePath: filePath, Limit: 100})
+	forward, err := engine.QueryEdges(core.EdgeQuery{FilePath: filePath, Limit: 100})
 	if err != nil {
 		return nil, err
 	}
@@ -22,10 +23,10 @@ func (a *App) GetRelatedFiles(filePath string) ([]indexer.FileRelation, error) {
 		toSymbols = append(toSymbols, e.ToSymbol)
 	}
 
-	resolved, _ := a.coreEngine.ResolveImportFiles(toSymbols)
+	resolved, _ := engine.ResolveImportFiles(toSymbols)
 
 	basename := filepath.Base(filePath)
-	reverse, err := a.coreEngine.FindDependants(basename, 100)
+	reverse, err := engine.FindDependants(basename, 100)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +80,8 @@ func (a *App) GetRelatedFiles(filePath string) ([]indexer.FileRelation, error) {
 }
 
 func (a *App) GetDependencyGraph(filePath string, depth int) (*indexer.DependencyGraph, error) {
-	if a.coreEngine == nil {
+	engine := a.activeCoreEngine()
+	if engine == nil {
 		return &indexer.DependencyGraph{}, nil
 	}
 	if depth < 1 {
@@ -105,7 +107,7 @@ func (a *App) GetDependencyGraph(filePath string, depth int) (*indexer.Dependenc
 
 		nextFrontier := make([]string, 0, maxNodesPerDepth)
 		for _, fp := range frontier {
-			edges, err := a.coreEngine.QueryEdges(core.EdgeQuery{FilePath: fp, Limit: maxNodesPerDepth})
+			edges, err := engine.QueryEdges(core.EdgeQuery{FilePath: fp, Limit: maxNodesPerDepth})
 			if err != nil {
 				continue
 			}
@@ -115,7 +117,7 @@ func (a *App) GetDependencyGraph(filePath string, depth int) (*indexer.Dependenc
 				toSymbols = append(toSymbols, e.ToSymbol)
 			}
 
-			resolved, _ := a.coreEngine.ResolveImportFiles(toSymbols)
+			resolved, _ := engine.ResolveImportFiles(toSymbols)
 
 			for _, e := range edges {
 				if len(edgeBuf) >= maxEdgesTotal {
@@ -160,7 +162,7 @@ func (a *App) GetDependencyGraph(filePath string, depth int) (*indexer.Dependenc
 		allPaths = append(allPaths, nodePath)
 	}
 
-	symbolsByFile, _ := a.coreEngine.QuerySymbolsByFiles(allPaths)
+	symbolsByFile, _ := engine.QuerySymbolsByFiles(allPaths)
 
 	nodes := make([]indexer.DependencyNode, 0, len(nodeSet))
 	for _, nodePath := range allPaths {

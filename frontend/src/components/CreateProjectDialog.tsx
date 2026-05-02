@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
-import * as App from "../../wailsjs/go/main/App";
+import * as App from "../wails/app";
+import { selectDirectoryWithCapability } from "../shell/shellDialogs";
 import { shortcuts } from "../utils/keyboard";
 
 interface CreateProjectDialogProps {
@@ -35,8 +36,9 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
 
   const handleSelectDirectory = async () => {
     try {
-      const path = await App.SelectDirectory(
+      const path = await selectDirectoryWithCapability(
         "Select parent directory for new project",
+        App.SelectDirectory,
       );
       if (path) {
         setSelectedDir(path);

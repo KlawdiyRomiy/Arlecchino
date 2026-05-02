@@ -4,6 +4,7 @@ import { persist } from "zustand/middleware";
 const STORAGE_KEY = "browser-preview-settings.v1";
 
 const DEFAULT_ALLOWED_ORIGINS = ["localhost", "127.0.0.1", "0.0.0.0", "[::1]"];
+export type MarkdownLinkOpenMode = "browser" | "preview";
 
 export interface BrowserPreviewTarget {
   url: string;
@@ -16,6 +17,7 @@ interface BrowserPreviewSettings {
   autoOpenFromTerminal: boolean;
   reuseWindowPerSession: boolean;
   closeAutoOpenedOnTerminalExit: boolean;
+  markdownLinkOpenMode: MarkdownLinkOpenMode;
   allowedOrigins: string[];
   lastKnownTargetByProject: Record<string, BrowserPreviewTarget>;
 }
@@ -24,6 +26,7 @@ interface BrowserPreviewStoreState extends BrowserPreviewSettings {
   setAutoOpenFromTerminal: (value: boolean) => void;
   setReuseWindowPerSession: (value: boolean) => void;
   setCloseAutoOpenedOnTerminalExit: (value: boolean) => void;
+  setMarkdownLinkOpenMode: (value: MarkdownLinkOpenMode) => void;
   rememberProjectTarget: (
     projectPath: string,
     target: BrowserPreviewTarget,
@@ -37,6 +40,7 @@ export const useBrowserPreviewStore = create<BrowserPreviewStoreState>()(
       autoOpenFromTerminal: false,
       reuseWindowPerSession: true,
       closeAutoOpenedOnTerminalExit: false,
+      markdownLinkOpenMode: "browser",
       allowedOrigins: DEFAULT_ALLOWED_ORIGINS,
       lastKnownTargetByProject: {},
 
@@ -45,6 +49,7 @@ export const useBrowserPreviewStore = create<BrowserPreviewStoreState>()(
         set({ reuseWindowPerSession: value }),
       setCloseAutoOpenedOnTerminalExit: (value) =>
         set({ closeAutoOpenedOnTerminalExit: value }),
+      setMarkdownLinkOpenMode: (value) => set({ markdownLinkOpenMode: value }),
       rememberProjectTarget: (projectPath, target) => {
         const key = normalizeProjectPathKey(projectPath);
         if (!key || !isAllowedPreviewUrl(target.url)) {
@@ -72,6 +77,7 @@ export const useBrowserPreviewStore = create<BrowserPreviewStoreState>()(
         autoOpenFromTerminal: state.autoOpenFromTerminal,
         reuseWindowPerSession: state.reuseWindowPerSession,
         closeAutoOpenedOnTerminalExit: state.closeAutoOpenedOnTerminalExit,
+        markdownLinkOpenMode: state.markdownLinkOpenMode,
         allowedOrigins: state.allowedOrigins,
         lastKnownTargetByProject: state.lastKnownTargetByProject,
       }),

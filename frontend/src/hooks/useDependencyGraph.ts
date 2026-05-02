@@ -1,13 +1,16 @@
 import { useState, useMemo, useRef } from "react";
-import * as App from "../../wailsjs/go/main/App";
-import { indexer } from "../../wailsjs/go/models";
+import * as App from "../wails/app";
+import type {
+  DependencyGraph,
+  NodeSymbol,
+} from "../../bindings/arlecchino/internal/indexer/models";
 import dagre from "@dagrejs/dagre";
 import type { Node, Edge } from "@xyflow/react";
 
 export interface FileCardData extends Record<string, unknown> {
   label: string;
   fullPath: string;
-  symbols: indexer.NodeSymbol[];
+  symbols: NodeSymbol[];
   isRoot: boolean;
   animIndex: number;
 }
@@ -64,7 +67,7 @@ const layoutDagre = (
 };
 
 export const useDependencyGraph = (filePath: string, depth = 2) => {
-  const [graph, setGraph] = useState<indexer.DependencyGraph | null>(null);
+  const [graph, setGraph] = useState<DependencyGraph | null>(null);
   const [prevPath, setPrevPath] = useState("");
   const [resolvedPath, setResolvedPath] = useState("");
   const seqRef = useRef(0);

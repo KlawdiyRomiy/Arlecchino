@@ -17,18 +17,55 @@ test.beforeEach(async ({ page }) => {
       sessionStorage.setItem("__keybindings_settings_ready", "1");
     }
 
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      get: () => "MacIntel",
+    });
+
+    const testWindow = window as typeof window & {
+      __appCalls: Array<{ method: string; args: unknown[] }>;
+      __selectedDirectory?: string | null;
+    };
+    testWindow.__appCalls = [];
+    testWindow.__selectedDirectory = null;
+
     const appBridge = new Proxy(
       {},
       {
-        get: (_target, property: string) => {
-          return async () => {
+        get: (_target, property: string | symbol) => {
+          if (typeof property !== "string") {
+            return undefined;
+          }
+
+          return async (...args: unknown[]) => {
+            testWindow.__appCalls.push({ method: property, args });
             switch (property) {
               case "GetCurrentProjectFramework":
                 return null;
+              case "GetShellCapabilities":
+                return {
+                  capabilities: {
+                    dialogs: {
+                      status: "available",
+                      reason: "test dialog bridge",
+                    },
+                  },
+                };
+              case "GetProjectWindowSession":
+                return {
+                  sessionId: args[0],
+                  projectPath: "/launched",
+                  windowName: "project:project-session-1",
+                };
+              case "SelectDirectory":
+                return testWindow.__selectedDirectory ?? "";
               case "GetRecentProjects":
               case "GetDevToolsStatus":
                 return [];
+              case "InspectProjectAccess":
+                return { path: args[0], accessible: true, reason: "" };
               case "OpenProject":
+              case "OpenProjectWindow":
               case "CreateTerminal":
               case "WriteTerminal":
               case "SendTerminalText":
@@ -88,42 +125,54 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-async function mountProjectUI(page: Page) {
-  await page.evaluate(async () => {
-    const { useWorkspaceStore } = await import("/src/stores/workspaceStore.ts");
-    const { useExplorerStore } = await import("/src/stores/explorerStore.ts");
-    const { useEditorStore } = await import("/src/stores/editorStore.ts");
+async function mountProjectUI(
+  page: Page,
+  projects = [
+    {
+      id: "/workspace",
+      path: "/workspace",
+      name: "workspace",
+      openedAt: 1,
+    },
+  ],
+  activeId: string | null = "/workspace",
+) {
+  await page.evaluate(
+    async ({ nextProjects, nextActiveId }) => {
+      const { useWorkspaceStore } =
+        await import("/src/stores/workspaceStore.ts");
+      const { useExplorerStore } = await import("/src/stores/explorerStore.ts");
+      const { useEditorStore } = await import("/src/stores/editorStore.ts");
 
-    useWorkspaceStore.setState({
-      projects: [
-        {
-          id: "/workspace",
-          path: "/workspace",
-          name: "workspace",
-          openedAt: 1,
-        },
-      ],
-      activeId: "/workspace",
-      activeFramework: null,
-      pendingId: null,
-      ready: true,
-      switchDirection: 1,
-      uiBlockers: [],
-    });
+      useWorkspaceStore.setState({
+        projects: nextProjects,
+        activeId: nextActiveId,
+        activeFramework: null,
+        pendingId: null,
+        ready: true,
+        switchDirection: 1,
+        uiBlockers: [],
+      });
 
-    useExplorerStore.getState().setProjectPath("/workspace");
-    useEditorStore
-      .getState()
-      .openTab(
-        "pane-main",
-        "/workspace/index.tsx",
-        "index.tsx",
-        "export const ready = true;",
-        "tsx",
-      );
-  });
+      if (nextActiveId) {
+        useExplorerStore.getState().setProjectPath(nextActiveId);
+        useEditorStore
+          .getState()
+          .openTab(
+            "pane-main",
+            `${nextActiveId}/index.tsx`,
+            "index.tsx",
+            "export const ready = true;",
+            "tsx",
+          );
+      }
+    },
+    { nextProjects: projects, nextActiveId: activeId },
+  );
 
-  await expect(page.getByTitle("Settings")).toBeVisible();
+  if (activeId) {
+    await expect(page.getByTitle("Settings")).toBeVisible();
+  }
 }
 
 async function openKeybindings(page: Page) {
@@ -134,20 +183,62 @@ async function openKeybindings(page: Page) {
   ).toBeVisible();
 }
 
+async function openAppearance(page: Page) {
+  await page.getByTitle("Settings").click();
+  await expect(page.getByRole("heading", { name: "Appearance" })).toBeVisible();
+}
+
+async function openBrowserPreviewSettings(page: Page) {
+  await page.getByTitle("Settings").click();
+  await page.getByRole("button", { name: /Browser Preview/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Browser Preview" }),
+  ).toBeVisible();
+}
+
 const dispatchShortcut = async (
   page: Page,
   payload: { key: string; code: string; metaKey?: boolean; ctrlKey?: boolean },
-): Promise<void> => {
-  await page.evaluate((eventInit) => {
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        ...eventInit,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
+): Promise<boolean> =>
+  page.evaluate((eventInit) => {
+    const event = new KeyboardEvent("keydown", {
+      ...eventInit,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
   }, payload);
+
+const setSelectedDirectory = async (page: Page, projectPath: string | null) => {
+  await page.evaluate((selectedPath) => {
+    (
+      window as typeof window & {
+        __selectedDirectory?: string | null;
+      }
+    ).__selectedDirectory = selectedPath;
+  }, projectPath);
 };
+
+const clearAppCalls = async (page: Page) => {
+  await page.evaluate(() => {
+    (
+      window as typeof window & {
+        __appCalls: Array<{ method: string; args: unknown[] }>;
+      }
+    ).__appCalls = [];
+  });
+};
+
+const getAppCalls = async (page: Page) =>
+  page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          __appCalls: Array<{ method: string; args: unknown[] }>;
+        }
+      ).__appCalls,
+  );
 
 test("keybindings tab records shortcuts, blocks duplicates, persists, and resets", async ({
   page,
@@ -176,6 +267,287 @@ test("keybindings tab records shortcuts, blocks duplicates, persists, and resets
   await expect(
     page.getByTestId("keybinding-row-explorer.toggle"),
   ).toContainText("cmd+e");
+});
+
+test("appearance tab persists Project opening mode", async ({ page }) => {
+  await mountProjectUI(page);
+  await openAppearance(page);
+
+  const projectOpeningGroup = page.getByRole("group", {
+    name: "Project opening",
+  });
+  const projectsButton = projectOpeningGroup.getByRole("button", {
+    name: "Projects",
+  });
+  const windowsButton = projectOpeningGroup.getByRole("button", {
+    name: "Windows",
+  });
+
+  await expect(projectsButton).toHaveAttribute("aria-pressed", "true");
+  await expect(windowsButton).toHaveAttribute("aria-pressed", "false");
+
+  await windowsButton.click();
+  await expect(projectsButton).toHaveAttribute("aria-pressed", "false");
+  await expect(windowsButton).toHaveAttribute("aria-pressed", "true");
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const rawSettings = localStorage.getItem("editor-settings");
+        if (!rawSettings) return null;
+        return JSON.parse(rawSettings).state.projectWindowMode;
+      }),
+    )
+    .toBe("windows");
+
+  await page.reload();
+  await mountProjectUI(page);
+  await openAppearance(page);
+  const reloadedGroup = page.getByRole("group", { name: "Project opening" });
+  await expect(
+    reloadedGroup.getByRole("button", { name: "Windows" }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  await reloadedGroup.getByRole("button", { name: "Projects" }).click();
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const rawSettings = localStorage.getItem("editor-settings");
+        if (!rawSettings) return null;
+        return JSON.parse(rawSettings).state.projectWindowMode;
+      }),
+    )
+    .toBe("projects");
+});
+
+test("Cmd+Backquote switches projects or yields to native windows by setting", async ({
+  page,
+}) => {
+  const projects = [
+    { id: "/alpha", path: "/alpha", name: "alpha", openedAt: 1 },
+    { id: "/beta", path: "/beta", name: "beta", openedAt: 2 },
+  ];
+  const shortcut = { key: "`", code: "Backquote", metaKey: true };
+
+  await mountProjectUI(page, projects, "/alpha");
+
+  const projectSwitchPrevented = await dispatchShortcut(page, shortcut);
+  expect(projectSwitchPrevented).toBe(true);
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useWorkspaceStore } =
+          await import("/src/stores/workspaceStore.ts");
+        return useWorkspaceStore.getState().activeId;
+      }),
+    )
+    .toBe("/beta");
+
+  await page.evaluate(async () => {
+    const { useWorkspaceStore } = await import("/src/stores/workspaceStore.ts");
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useWorkspaceStore.setState({
+      activeId: "/alpha",
+      pendingId: null,
+      switchSourceId: null,
+      switchDirection: 1,
+      uiBlockers: [],
+    });
+    useEditorSettingsStore.getState().setProjectWindowMode("windows");
+  });
+
+  const windowCyclePrevented = await dispatchShortcut(page, shortcut);
+  expect(windowCyclePrevented).toBe(false);
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useWorkspaceStore } =
+          await import("/src/stores/workspaceStore.ts");
+        return useWorkspaceStore.getState().activeId;
+      }),
+    )
+    .toBe("/alpha");
+});
+
+test("project opening mode routes second project in current window or new macOS window", async ({
+  page,
+}) => {
+  await mountProjectUI(
+    page,
+    [{ id: "/alpha", path: "/alpha", name: "alpha", openedAt: 1 }],
+    "/alpha",
+  );
+
+  await setSelectedDirectory(page, "/beta");
+  await clearAppCalls(page);
+  await page.getByTitle("Add project").click();
+  await page.getByRole("menuitem", { name: /Open Project/ }).click();
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useWorkspaceStore } =
+          await import("/src/stores/workspaceStore.ts");
+        return useWorkspaceStore
+          .getState()
+          .projects.map((project) => project.path);
+      }),
+    )
+    .toEqual(["/alpha", "/beta"]);
+  let calls = await getAppCalls(page);
+  expect(
+    calls.some(
+      (call) => call.method === "OpenProject" && call.args[0] === "/beta",
+    ),
+  ).toBe(true);
+  expect(calls.some((call) => call.method === "OpenProjectWindow")).toBe(false);
+
+  await page.evaluate(async () => {
+    const { useWorkspaceStore } = await import("/src/stores/workspaceStore.ts");
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useWorkspaceStore.setState({
+      projects: [{ id: "/alpha", path: "/alpha", name: "alpha", openedAt: 1 }],
+      activeId: "/alpha",
+      pendingId: null,
+      switchSourceId: null,
+      switchDirection: 1,
+      uiBlockers: [],
+    });
+    useEditorSettingsStore.getState().setProjectWindowMode("windows");
+  });
+
+  await setSelectedDirectory(page, "/gamma");
+  await clearAppCalls(page);
+  await page.getByTitle("Add project").click();
+  await page.getByRole("menuitem", { name: /Open Project/ }).click();
+
+  await expect
+    .poll(async () => {
+      const calls = await getAppCalls(page);
+      return calls.some(
+        (call) =>
+          call.method === "OpenProjectWindow" && call.args[0] === "/gamma",
+      );
+    })
+    .toBe(true);
+  calls = await getAppCalls(page);
+  expect(
+    calls.some(
+      (call) => call.method === "OpenProject" && call.args[0] === "/gamma",
+    ),
+  ).toBe(false);
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useWorkspaceStore } =
+          await import("/src/stores/workspaceStore.ts");
+        return useWorkspaceStore
+          .getState()
+          .projects.map((project) => project.path);
+      }),
+    )
+    .toEqual(["/alpha"]);
+});
+
+test("windows project opening mode uses current window when welcome has no active project", async ({
+  page,
+}) => {
+  await mountProjectUI(page, [], null);
+  await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setProjectWindowMode("windows");
+  });
+  await expect(page.getByText("Open Project")).toBeVisible();
+
+  await setSelectedDirectory(page, "/alpha");
+  await clearAppCalls(page);
+  await page
+    .getByRole("button", { name: /Open Project/ })
+    .first()
+    .click();
+
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useWorkspaceStore } =
+          await import("/src/stores/workspaceStore.ts");
+        return useWorkspaceStore
+          .getState()
+          .projects.map((project) => project.path);
+      }),
+    )
+    .toEqual(["/alpha"]);
+  const calls = await getAppCalls(page);
+  expect(
+    calls.some(
+      (call) => call.method === "OpenProject" && call.args[0] === "/alpha",
+    ),
+  ).toBe(true);
+  expect(calls.some((call) => call.method === "OpenProjectWindow")).toBe(false);
+});
+
+test("project session route ignores shared workspace storage", async ({
+  page,
+}) => {
+  await page.goto("/?arleProjectSession=session-1");
+
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useWorkspaceStore } =
+          await import("/src/stores/workspaceStore.ts");
+        return {
+          activeId: useWorkspaceStore.getState().activeId,
+          projects: useWorkspaceStore
+            .getState()
+            .projects.map((project) => project.path),
+        };
+      }),
+    )
+    .toEqual({ activeId: "/launched", projects: ["/launched"] });
+});
+
+test("Browser Preview settings persist Markdown links mode", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await openBrowserPreviewSettings(page);
+
+  const markdownLinksGroup = page.getByRole("group", {
+    name: "Markdown links",
+  });
+  const browserButton = markdownLinksGroup.getByRole("button", {
+    name: "Browser",
+  });
+  const previewButton = markdownLinksGroup.getByRole("button", {
+    name: "Preview",
+  });
+
+  await expect(browserButton).toHaveAttribute("aria-pressed", "true");
+  await expect(previewButton).toHaveAttribute("aria-pressed", "false");
+
+  await previewButton.click();
+  await expect(browserButton).toHaveAttribute("aria-pressed", "false");
+  await expect(previewButton).toHaveAttribute("aria-pressed", "true");
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const rawSettings = localStorage.getItem("browser-preview-settings.v1");
+        if (!rawSettings) return null;
+        return JSON.parse(rawSettings).state.markdownLinkOpenMode;
+      }),
+    )
+    .toBe("preview");
+
+  await page.reload();
+  await mountProjectUI(page);
+  await openBrowserPreviewSettings(page);
+
+  const reloadedGroup = page.getByRole("group", { name: "Markdown links" });
+  await expect(
+    reloadedGroup.getByRole("button", { name: "Preview" }),
+  ).toHaveAttribute("aria-pressed", "true");
 });
 
 test("appearance theme dropdown opens and selects a theme", async ({
@@ -297,11 +669,96 @@ test("appearance toggles rainbow brackets setting", async ({ page }) => {
     .toBe(false);
 
   await page.reload();
+  await page.waitForLoadState("domcontentloaded");
   await mountProjectUI(page);
   await page.getByTitle("Settings").click();
   await expect(
     page.getByRole("switch", { name: "Rainbow brackets" }),
   ).toHaveAttribute("aria-checked", "false");
+});
+
+test("light theme switches use dark readable thumbs", async ({ page }) => {
+  await mountProjectUI(page);
+  await openAppearance(page);
+
+  const themeTrigger = page.getByTestId("theme-dropdown-trigger");
+  await themeTrigger.click();
+  await page.getByRole("menuitem", { name: /Catppuccin Latte/ }).click();
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-theme",
+    "catppuccin-latte",
+  );
+
+  const rainbowBracketsSwitch = page.getByRole("switch", {
+    name: "Rainbow brackets",
+  });
+  const thumbTone = await rainbowBracketsSwitch
+    .locator("span")
+    .evaluate((element) => {
+      const color = window.getComputedStyle(element).backgroundColor;
+      const channels = color
+        .match(/[\d.]+/g)
+        ?.slice(0, 3)
+        .map(Number);
+      if (!channels || channels.length < 3) {
+        return 255;
+      }
+      const rgb = channels.map((channel) =>
+        channel <= 1 ? channel * 255 : channel,
+      );
+      return rgb.reduce((sum, channel) => sum + channel, 0) / rgb.length;
+    });
+
+  expect(thumbTone).toBeLessThan(125);
+});
+
+test("Ctrl+Tab switcher inherits the active light theme surface", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    localStorage.setItem(
+      "editorTabs:/workspace",
+      JSON.stringify({
+        tabs: [
+          { path: "/workspace/index.tsx", label: "index.tsx" },
+          { path: "/workspace/second.ts", label: "second.ts" },
+        ],
+        activeTabId: "tab--workspace-index-tsx",
+      }),
+    );
+  });
+  await page.reload();
+  await page.waitForLoadState("domcontentloaded");
+
+  await mountProjectUI(page);
+  await openAppearance(page);
+
+  const themeTrigger = page.getByTestId("theme-dropdown-trigger");
+  await themeTrigger.click();
+  await page.getByRole("menuitem", { name: /Catppuccin Latte/ }).click();
+  await page.getByLabel("Close settings").click();
+  await expect(page.getByTestId("settings-modal")).toHaveCount(0);
+
+  await dispatchShortcut(page, { key: "Tab", code: "Tab", ctrlKey: true });
+
+  const switcherPanel = page.getByTestId("tab-switcher-panel");
+  await expect(switcherPanel).toBeVisible();
+  const panelTone = await switcherPanel.evaluate((element) => {
+    const color = window.getComputedStyle(element).backgroundColor;
+    const channels = color
+      .match(/[\d.]+/g)
+      ?.slice(0, 3)
+      .map(Number);
+    if (!channels || channels.length < 3) {
+      return 0;
+    }
+    const rgb = channels.map((channel) =>
+      channel <= 1 ? channel * 255 : channel,
+    );
+    return rgb.reduce((sum, channel) => sum + channel, 0) / rgb.length;
+  });
+
+  expect(panelTone).toBeGreaterThan(160);
 });
 
 test("settings modal scales with app zoom shortcuts", async ({ page }) => {

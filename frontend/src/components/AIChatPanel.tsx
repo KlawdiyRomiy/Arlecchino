@@ -3,6 +3,7 @@ import { Send, Sparkles, User, Copy, Check, RotateCcw } from "lucide-react";
 import { colors, getThemeColors, radius, transitions } from "../styles/colors";
 import { useTheme } from "../hooks/useTheme";
 import { useAIChatStore, ChatMessage } from "../stores/aiChatStore";
+import { writeClipboardTextWithFallback } from "../utils/clipboard";
 
 interface AIChatPanelProps {
   onClearChat?: () => void;
@@ -57,9 +58,11 @@ export const AIChatPanelContent: React.FC<AIChatPanelProps> = ({
   };
 
   const copyToClipboard = async (text: string, id: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+    const copied = await writeClipboardTextWithFallback(text);
+    if (copied) {
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    }
   };
 
   const clearChat = () => {

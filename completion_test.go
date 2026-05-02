@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,6 +230,52 @@ func TestNotifyFileChanged_InvalidatesCompletionCache(t *testing.T) {
 	fb.mu.Unlock()
 	if got != "/tmp/a.go" {
 		t.Fatalf("expected invalidated filePath %q, got %q", "/tmp/a.go", got)
+	}
+}
+
+func TestNotifyFileOpenedEmitsDiagnosticsStatusOnLSPError(t *testing.T) {
+	previous := runtimeEventsEmit
+	t.Cleanup(func() {
+		runtimeEventsEmit = previous
+	})
+
+	events := make(chan LSPDiagnosticsStatusEvent, 1)
+	runtimeEventsEmit = func(_ context.Context, name string, data ...interface{}) {
+		if name != "lsp:diagnostics:status" || len(data) == 0 {
+			return
+		}
+		event, ok := data[0].(LSPDiagnosticsStatusEvent)
+		if !ok {
+			t.Fatalf("expected LSPDiagnosticsStatusEvent, got %T", data[0])
+		}
+		events <- event
+	}
+
+	manager := lsp.NewManager(t.TempDir())
+	manager.RegisterServer(lsp.ServerConfig{
+		Language: "go",
+		Command:  "/definitely/missing/gopls",
+		RootURI:  "file://" + t.TempDir(),
+	})
+	app := &App{ctx: context.Background(), lspManager: manager}
+	app.setProjectPath("/tmp/project")
+	app.projectGeneration.Store(9)
+
+	app.NotifyFileOpened("/tmp/broken.go", "go", "package main\n")
+
+	select {
+	case event := <-events:
+		if event.ProjectPath != "/tmp/project" || event.Generation != 9 {
+			t.Fatalf("unexpected diagnostics status scope: %#v", event)
+		}
+		if event.Language != "go" || event.FilePath != "/tmp/broken.go" {
+			t.Fatalf("unexpected diagnostics status target: %#v", event)
+		}
+		if event.State != "error" || event.Message == "" {
+			t.Fatalf("unexpected diagnostics status: %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected diagnostics status event")
 	}
 }
 

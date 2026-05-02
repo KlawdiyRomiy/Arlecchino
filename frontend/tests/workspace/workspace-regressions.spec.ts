@@ -274,7 +274,7 @@ test("workspace restore and indexing progress are no longer driven by useEffect"
       readSource(page, "/src/components/layout/MainLayout.tsx"),
     ]);
 
-  expect(appSource).not.toMatch(/\buseEffect\b/);
+  expect(appSource).not.toMatch(/initializeWorkspace/);
   expect(indexingSource).not.toMatch(/\buseEffect\b/);
   expect(collapseSource).not.toMatch(/\buseEffect\b/);
   expect(layoutSource).not.toMatch(
@@ -282,7 +282,7 @@ test("workspace restore and indexing progress are no longer driven by useEffect"
   );
 });
 
-test("app no longer uses the project switch placeholder screen", async ({
+test("app renders real project shells during project switch hydration", async ({
   page,
 }) => {
   const [appSource, transitionSource] = await Promise.all([
@@ -292,6 +292,14 @@ test("app no longer uses the project switch placeholder screen", async ({
 
   expect(appSource).not.toMatch(/ProjectSwitchPlaceholder/);
   expect(appSource).not.toMatch(/pendingId === activeId/);
+  expect(appSource).not.toMatch(/project-switch-lightweight-shell/);
+  expect(appSource).not.toMatch(/projectSwitchFallback/);
+  expect(appSource).toMatch(/waitForProjectSwitchVisualSettle/);
+  expect(transitionSource).not.toMatch(/lightweight/);
+  expect(transitionSource).not.toMatch(/childrenMap\.current = \{\}/);
+  expect(transitionSource).toMatch(
+    /childrenMap\.current\[layoutKey\] = children/,
+  );
   expect(transitionSource).toMatch(/useIndexingPhase/);
   expect(transitionSource).not.toMatch(/useIndexingProgress\(/);
 });
@@ -326,43 +334,17 @@ test("terminal context follows the active project instead of caching workdir on 
 test("workspace restore syncs terminal project scope to the restored project", async ({
   page,
 }) => {
-  const result = await page.evaluate(async () => {
-    const workspace = await import("/src/stores/workspaceStore.ts");
-    const terminal = await import("/src/stores/terminalStore.ts");
+  const workspaceSource = await readSource(
+    page,
+    "/src/stores/workspaceStore.ts",
+  );
 
-    workspace.useWorkspaceStore.setState({
-      projects: [
-        {
-          id: "/alpha",
-          path: "/alpha",
-          name: "alpha",
-          openedAt: 1,
-        },
-      ],
-      activeId: "/alpha",
-      activeFramework: null,
-      pendingId: null,
-      switchSourceId: null,
-      ready: false,
-      switchDirection: 1,
-      uiBlockers: [],
-    });
-
-    terminal.useTerminalStore.setState({
-      activeProjectPath: null,
-    });
-
-    await workspace.initializeWorkspace();
-
-    return {
-      workspaceActiveId: workspace.useWorkspaceStore.getState().activeId,
-      terminalProjectPath:
-        terminal.useTerminalStore.getState().activeProjectPath,
-    };
-  });
-
-  expect(result.workspaceActiveId).toBe("/alpha");
-  expect(result.terminalProjectPath).toBe("/alpha");
+  expect(workspaceSource).toMatch(
+    /await AppFunctions\.OpenProject\(project\.path\);/,
+  );
+  expect(workspaceSource).toMatch(
+    /useTerminalStore\.getState\(\)\.setActiveProject\(project\.path\);/,
+  );
 });
 
 test("app and workspace restore explicitly sync terminal store to the active project", async ({
@@ -379,36 +361,96 @@ test("app and workspace restore explicitly sync terminal store to the active pro
   expect(workspaceSource).toMatch(/setActiveProject\(/);
 });
 
-test("project switching starts backend project open before promoting terminal project state", async ({
+test("project switching activates target scope before visual promotion", async ({
   page,
 }) => {
   const appSource = await readSource(page, "/src/App.tsx");
 
+  const switchBeginIndex = appSource.indexOf("state.beginProjectSwitch(id");
+  const switchScopeIndex = appSource.indexOf(
+    "activateProjectScope(project.path);",
+    switchBeginIndex,
+  );
   const switchOpenIndex = appSource.indexOf(
-    "const openProjectRequest = AppFunctions.OpenProject(project.path);",
+    "await AppFunctions.OpenProject(project.path);",
+    switchBeginIndex,
   );
   const switchConfirmIndex = appSource.indexOf(
-    "useWorkspaceStore.getState().confirmProjectSwitch(id);",
+    "workspace.confirmProjectSwitch(id);",
+    switchBeginIndex,
+  );
+  const switchSettleIndex = appSource.indexOf(
+    "await waitForProjectSwitchVisualSettle();",
+    switchBeginIndex,
   );
   const switchTerminalIndex = appSource.indexOf(
     "useTerminalStore.getState().setActiveProject(project.path);",
+    switchBeginIndex,
+  );
+  const closeBeginIndex = appSource.indexOf(
+    "state.beginProjectSwitch(nextProject.id",
+  );
+  const closeScopeIndex = appSource.indexOf(
+    "activateProjectScope(nextProject.path);",
+    closeBeginIndex,
   );
   const closeOpenIndex = appSource.indexOf(
-    "const openProjectRequest = AppFunctions.OpenProject(nextProject.path);",
+    "await AppFunctions.OpenProject(nextProject.path);",
+    closeBeginIndex,
   );
   const closeConfirmIndex = appSource.indexOf(
-    "useWorkspaceStore.getState().confirmProjectSwitch(nextProject.id);",
+    "workspace.confirmProjectSwitch(nextProject.id);",
+    closeBeginIndex,
+  );
+  const closeSettleIndex = appSource.indexOf(
+    "await waitForProjectSwitchVisualSettle();",
+    closeBeginIndex,
   );
   const closeTerminalIndex = appSource.indexOf(
     "useTerminalStore.getState().setActiveProject(nextProject.path);",
+    closeBeginIndex,
   );
 
+  expect(switchBeginIndex).toBeGreaterThan(-1);
+  expect(switchScopeIndex).toBeGreaterThan(switchBeginIndex);
+  expect(switchConfirmIndex).toBeGreaterThan(switchScopeIndex);
+  expect(switchSettleIndex).toBeGreaterThan(switchConfirmIndex);
   expect(switchOpenIndex).toBeGreaterThan(-1);
-  expect(switchConfirmIndex).toBeGreaterThan(switchOpenIndex);
+  expect(switchOpenIndex).toBeGreaterThan(switchSettleIndex);
   expect(switchTerminalIndex).toBeGreaterThan(switchOpenIndex);
+  expect(closeBeginIndex).toBeGreaterThan(-1);
+  expect(closeScopeIndex).toBeGreaterThan(closeBeginIndex);
+  expect(closeConfirmIndex).toBeGreaterThan(closeScopeIndex);
+  expect(closeSettleIndex).toBeGreaterThan(closeConfirmIndex);
   expect(closeOpenIndex).toBeGreaterThan(-1);
-  expect(closeConfirmIndex).toBeGreaterThan(closeOpenIndex);
+  expect(closeOpenIndex).toBeGreaterThan(closeSettleIndex);
   expect(closeTerminalIndex).toBeGreaterThan(closeOpenIndex);
+});
+
+test("zen native window controls cleanup is guarded across layout remounts", async ({
+  page,
+}) => {
+  const layoutSource = await readSource(
+    page,
+    "/src/components/layout/MainLayout.tsx",
+  );
+
+  expect(layoutSource).toMatch(
+    /let nativeWindowControlsOwner: symbol \| null = null;/,
+  );
+  expect(layoutSource).toMatch(/nativeWindowControlsOwnerRef/);
+  expect(layoutSource).toMatch(/nativeWindowControlsRestoreTimer = setTimeout/);
+  expect(layoutSource).toMatch(/let nativeWindowControlsLastVisible = true/);
+  expect(layoutSource).toMatch(
+    /nativeWindowControlsLastVisible = nativeWindowControlsVisible/,
+  );
+  expect(layoutSource).toMatch(/if \(!nativeWindowControlsLastVisible\) \{/);
+  expect(layoutSource).toMatch(
+    /SetNativeWindowControlsVisible\(nativeWindowControlsVisible\)/,
+  );
+  expect(layoutSource).not.toMatch(
+    /return \(\) => \{\s*void SetNativeWindowControlsVisible\(true\)/s,
+  );
 });
 
 test("layout and explorer resolve the active project from workspace state", async ({

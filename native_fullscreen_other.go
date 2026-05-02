@@ -2,22 +2,20 @@
 
 package main
 
-import wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
-
 func (a *App) ToggleNativeFullscreen() {
-	if a.ctx == nil {
+	if a == nil || a.mainWindow == nil {
 		return
 	}
-	if wailsruntime.WindowIsFullscreen(a.ctx) {
-		wailsruntime.WindowUnfullscreen(a.ctx)
+	if a.mainWindow.IsFullscreen() {
+		a.mainWindow.UnFullscreen()
 		return
 	}
-	wailsruntime.WindowFullscreen(a.ctx)
+	a.mainWindow.Fullscreen()
 }
 
 func (a *App) IsNativeFullscreen() bool {
-	if a.ctx == nil {
+	if a == nil || a.mainWindow == nil {
 		return false
 	}
-	return wailsruntime.WindowIsFullscreen(a.ctx)
+	return a.mainWindow.IsFullscreen()
 }

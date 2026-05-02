@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"arlecchino/internal/mcp"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const (
@@ -30,6 +28,7 @@ type mcpUIEventAck struct {
 	eventName string
 	handled   bool
 	errText   string
+	result    any
 }
 
 func (a *App) startMCPBridge() {
@@ -43,16 +42,22 @@ func (a *App) startMCPBridge() {
 
 	server, err := mcp.NewIDEBridgeServer(a.handleMCPBridgeCall)
 	if err != nil {
+		a.recordBackgroundMCPBridgeStatus(BackgroundShellJobFailed, err.Error())
 		fmt.Printf("[MCP Bridge] init failed: %v\n", err)
 		return
 	}
 
 	if err := server.Start(); err != nil {
+		a.recordBackgroundMCPBridgeStatus(BackgroundShellJobFailed, err.Error())
 		fmt.Printf("[MCP Bridge] start failed: %v\n", err)
 		return
 	}
 
 	a.mcpBridgeServer = server
+	a.recordBackgroundMCPBridgeStatus(
+		BackgroundShellJobRunning,
+		fmt.Sprintf("Listening on %s", server.SocketPath()),
+	)
 	fmt.Printf("[MCP Bridge] listening on %s\n", server.SocketPath())
 }
 
@@ -66,6 +71,7 @@ func (a *App) stopMCPBridge() {
 	}
 
 	a.mcpBridgeServer = nil
+	a.recordBackgroundMCPBridgeStatus(BackgroundShellJobCanceled, "MCP bridge stopped.")
 }
 
 func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, error) {
@@ -192,7 +198,7 @@ func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, er
 				return nil, err
 			}
 		}
-		runtime.EventsEmit(a.ctx, "ide:panel:open", map[string]any{
+		a.emitEvent("ide:panel:open", map[string]any{
 			"panel":    "terminal",
 			"focus":    true,
 			"position": "bottom",
@@ -333,9 +339,9 @@ func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, er
 			hasPayload = true
 		}
 		if hasPayload {
-			runtime.EventsEmit(a.ctx, eventName, payload)
+			a.emitEvent(eventName, payload)
 		} else {
-			runtime.EventsEmit(a.ctx, eventName)
+			a.emitEvent(eventName)
 		}
 
 		result := map[string]any{
@@ -352,6 +358,9 @@ func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, er
 		select {
 		case ack := <-ackCh:
 			result["confirmed"] = ack.handled
+			if ack.result != nil {
+				result["result"] = ack.result
+			}
 			if ack.errText != "" {
 				result["handlerError"] = ack.errText
 				return result, fmt.Errorf("ui event handler failed: %s", ack.errText)
@@ -368,7 +377,7 @@ func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, er
 
 func (a *App) waitForMCPUIEventAck(requestID, eventName string) (<-chan mcpUIEventAck, func()) {
 	responseCh := make(chan mcpUIEventAck, 1)
-	unsubscribe := runtime.EventsOn(a.ctx, mcpUIEventAckEvent, func(data ...interface{}) {
+	unsubscribe := a.onEvent(mcpUIEventAckEvent, func(data ...interface{}) {
 		if len(data) == 0 {
 			return
 		}
@@ -391,6 +400,7 @@ func (a *App) waitForMCPUIEventAck(requestID, eventName string) (<-chan mcpUIEve
 			eventName: bridgeMapString(payload, "event"),
 			handled:   bridgeMapBool(payload, "handled", false),
 			errText:   bridgeMapString(payload, "error"),
+			result:    payload["result"],
 		}
 
 		select {
@@ -440,7 +450,7 @@ func (a *App) requestMCPApproval(params map[string]any) (any, error) {
 
 	requestID := fmt.Sprintf("mcp-approval-%d", time.Now().UTC().UnixNano())
 	responseCh := make(chan mcpApprovalResponse, 1)
-	unsubscribe := runtime.EventsOn(a.ctx, mcpApprovalResponseEvent, func(data ...interface{}) {
+	unsubscribe := a.onEvent(mcpApprovalResponseEvent, func(data ...interface{}) {
 		if len(data) == 0 {
 			return
 		}
@@ -466,7 +476,7 @@ func (a *App) requestMCPApproval(params map[string]any) (any, error) {
 	})
 	defer unsubscribe()
 
-	runtime.EventsEmit(a.ctx, mcpApprovalRequestEvent, map[string]any{
+	a.emitEvent(mcpApprovalRequestEvent, map[string]any{
 		"requestId":   requestID,
 		"toolName":    toolName,
 		"risk":        risk,

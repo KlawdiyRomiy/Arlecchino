@@ -20,6 +20,16 @@ import type {
   PanelVisibility,
 } from "./MainLayout.types";
 
+const isMacPlatform = (): boolean =>
+  typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+
+const isPhysicalMacProjectSwitchShortcut = (event: KeyboardEvent): boolean =>
+  isMacPlatform() &&
+  event.metaKey &&
+  !event.ctrlKey &&
+  !event.altKey &&
+  event.code === "Backquote";
+
 interface MainLayoutKeyboardDispatcher {
   close: () => void;
   isOpen: boolean;
@@ -79,7 +89,6 @@ interface UseMainLayoutKeyboardShortcutsOptions {
   toggleCanonicalBrowserPreviewRef: MutableRefObject<() => void>;
   toggleCommandDispatcher: () => void;
   terminalThemeId: ThemeId;
-  toggleNamedPanel: (panelId: PanelId) => void;
   togglePanelCompactFromShortcut: (
     panelId: PanelId,
     snapshotRef?: MutableRefObject<PanelFullscreenSnapshot | null>,
@@ -124,7 +133,6 @@ export const useMainLayoutKeyboardShortcuts = ({
   toggleCanonicalBrowserPreviewRef,
   toggleCommandDispatcher,
   terminalThemeId,
-  toggleNamedPanel,
   togglePanelCompactFromShortcut,
   togglePanelFullscreenFromShortcut,
 }: UseMainLayoutKeyboardShortcutsOptions) => {
@@ -278,6 +286,13 @@ export const useMainLayoutKeyboardShortcuts = ({
       }
 
       if (shortcuts.switchProjectNext(e) || shortcuts.switchProjectPrev(e)) {
+        if (
+          useEditorSettingsStore.getState().projectWindowMode === "windows" &&
+          isPhysicalMacProjectSwitchShortcut(e)
+        ) {
+          return;
+        }
+
         const localProjectSwitchBlocked =
           dispatcher.isOpen || activeModal !== null || isPerspectiveOpen;
 
@@ -312,7 +327,7 @@ export const useMainLayoutKeyboardShortcuts = ({
           { kind: "panel", panelId: "terminal" },
           () => {
             if (!isTerminalShortcutContext) {
-              toggleNamedPanel("terminal");
+              togglePanelCompactFromShortcut("terminal");
             }
           },
           {
@@ -335,7 +350,7 @@ export const useMainLayoutKeyboardShortcuts = ({
         beginHeldPanelShortcut(
           e,
           { kind: "panel", panelId: "aiChat" },
-          () => toggleNamedPanel("aiChat"),
+          () => togglePanelCompactFromShortcut("aiChat"),
           { actionId: "ai.toggle", runTapActionImmediately: true },
         );
         return;
@@ -352,6 +367,18 @@ export const useMainLayoutKeyboardShortcuts = ({
         } else {
           openSettings();
         }
+        return;
+      }
+
+      if (shortcuts.toggleZenMode(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        markShortcutActionHandled("zenMode.toggle");
+        e.preventDefault();
+        e.stopPropagation();
+        useEditorSettingsStore.getState().toggleZenMode();
         return;
       }
 
@@ -637,7 +664,6 @@ export const useMainLayoutKeyboardShortcuts = ({
     toggleCanonicalBrowserPreviewRef,
     toggleCommandDispatcher,
     terminalThemeId,
-    toggleNamedPanel,
     togglePanelCompactFromShortcut,
     togglePanelFullscreenFromShortcut,
   ]);

@@ -516,6 +516,27 @@ body > [data-radix-portal] > * {
   transform: scale(1.2);
 }
 
+.topbar-project-chip {
+  background: transparent;
+  box-shadow: none;
+}
+
+.topbar-project-chip-active {
+  background: color-mix(in srgb, var(--surface-active) 68%, transparent);
+  box-shadow: inset 0 1px 0 var(--shell-inner-highlight);
+}
+
+.topbar-context-shell {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-shell-strong) 90%, transparent),
+    color-mix(in srgb, var(--surface-shell) 94%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 var(--shell-inner-highlight),
+    var(--shell-shadow);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

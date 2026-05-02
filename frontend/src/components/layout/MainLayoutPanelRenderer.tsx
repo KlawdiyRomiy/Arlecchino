@@ -1,6 +1,7 @@
 import React from "react";
 import {
   AlertCircle,
+  BookOpen,
   FileText,
   FolderTree,
   GitBranch,
@@ -11,6 +12,7 @@ import { AIChatPanelContent } from "../AIChatPanel";
 import { CodePanelSurface } from "../CodePanelSurface";
 import { FileExplorer } from "../FileExplorer";
 import { GitPanel } from "../GitPanel";
+import { MarkdownPreviewPanelContent } from "../MarkdownPreviewPanelContent";
 import { ProblemsPanel } from "../problems/ProblemsPanel";
 import { TerminalPanelContent } from "../TerminalPanel";
 import {
@@ -21,11 +23,13 @@ import {
 import type { PreviewWindow } from "../../stores/previewWindowStore";
 import type {
   CodePanelTab,
+  MarkdownPreviewSource,
   PanelConfig,
   PanelConfigs,
   PanelId,
   PanelOpenRequest,
   PanelVisibility,
+  ZenPinnedPanels,
 } from "./MainLayout.types";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 import { CodePanelTabs } from "./CodePanelTabs";
@@ -47,6 +51,8 @@ interface MainLayoutPanelRendererProps {
   panelId: PanelId;
   hostMode?: PanelHostMode;
   panels: PanelVisibility;
+  zenPinnedPanels: ZenPinnedPanels;
+  zenModeEnabled: boolean;
   panelConfigs: PanelConfigs;
   previewWindows: PreviewWindow[];
   dropTargetPosition: PanelPosition | null;
@@ -59,6 +65,7 @@ interface MainLayoutPanelRendererProps {
   activeEditorTabPath: string | null;
   activeCodePanelTab: CodePanelTab | null;
   codePanelTabs: CodePanelTab[];
+  markdownPreviewSource: MarkdownPreviewSource | null;
   tuiModeActive: boolean;
   tuiTerminalPaneStyle: React.CSSProperties;
   terminalZIndex?: number;
@@ -74,6 +81,8 @@ interface MainLayoutPanelRendererProps {
   onTerminalFullscreen: () => void;
   onGitFullscreen: () => void;
   onProblemsFullscreen: () => void;
+  onMarkdownPreviewFullscreen: () => void;
+  onMarkdownLinkPreviewOpen: (url: string) => void;
   onFileOpen: (
     path: string,
     content: string,
@@ -92,6 +101,7 @@ interface MainLayoutPanelRendererProps {
   onPerspectiveClose: () => void;
   onGitDiffFocusChange: (active: boolean) => void;
   onCodePanelActivate: (path: string) => void;
+  onZenPinToggle: (panelId: PanelId) => void;
 }
 
 export const MainLayoutPanelRenderer: React.FC<
@@ -100,6 +110,8 @@ export const MainLayoutPanelRenderer: React.FC<
   panelId,
   hostMode = "overlay",
   panels,
+  zenPinnedPanels,
+  zenModeEnabled,
   panelConfigs,
   previewWindows,
   dropTargetPosition,
@@ -112,6 +124,7 @@ export const MainLayoutPanelRenderer: React.FC<
   activeEditorTabPath,
   activeCodePanelTab,
   codePanelTabs,
+  markdownPreviewSource,
   tuiModeActive,
   tuiTerminalPaneStyle,
   terminalZIndex,
@@ -127,6 +140,8 @@ export const MainLayoutPanelRenderer: React.FC<
   onTerminalFullscreen,
   onGitFullscreen,
   onProblemsFullscreen,
+  onMarkdownPreviewFullscreen,
+  onMarkdownLinkPreviewOpen,
   onFileOpen,
   onFileOpenInPanel,
   onOpenFileFromPath,
@@ -135,6 +150,7 @@ export const MainLayoutPanelRenderer: React.FC<
   onPerspectiveClose,
   onGitDiffFocusChange,
   onCodePanelActivate,
+  onZenPinToggle,
 }) => {
   const isVisible = panels[panelId];
   const config = panelConfigs[panelId];
@@ -225,6 +241,9 @@ export const MainLayoutPanelRenderer: React.FC<
     uiScale,
     isFullscreen,
     isRelocating: relocatingPanelIds.includes(panelId),
+    zenModeEnabled,
+    isZenPinned: zenPinnedPanels[panelId],
+    onZenPinToggle: () => onZenPinToggle(panelId),
   };
 
   switch (panelId) {
@@ -376,6 +395,7 @@ export const MainLayoutPanelRenderer: React.FC<
                   name={activeCodePanelTab.name}
                   initialContent={activeCodePanelTab.content}
                   language={activeCodePanelTab.language}
+                  loadState={activeCodePanelTab.loadState}
                 />
               </div>
             </div>
@@ -384,6 +404,28 @@ export const MainLayoutPanelRenderer: React.FC<
               Open file from Explorer to start editing in panel
             </div>
           )}
+        </FloatingPanel>
+      );
+    case "markdownPreview":
+      return (
+        <FloatingPanel
+          key={panelId}
+          id="markdownPreview"
+          title={
+            markdownPreviewSource
+              ? `${markdownPreviewSource.name} (Preview)`
+              : "Markdown Preview"
+          }
+          icon={<BookOpen size={16} />}
+          minSize={320}
+          maxSize={1100}
+          {...panelProps}
+          onFullscreen={onMarkdownPreviewFullscreen}
+        >
+          <MarkdownPreviewPanelContent
+            source={markdownPreviewSource}
+            onOpenExternalLinkPreview={onMarkdownLinkPreviewOpen}
+          />
         </FloatingPanel>
       );
     default:

@@ -149,6 +149,9 @@ export interface FloatingPanelProps {
   isFullscreen?: boolean;
   activeDropTargetPosition?: PanelPosition | null;
   isRelocating?: boolean;
+  zenModeEnabled?: boolean;
+  isZenPinned?: boolean;
+  onZenPinToggle?: (id: string) => void;
 }
 
 export const FloatingPanel = React.forwardRef<
@@ -190,6 +193,9 @@ export const FloatingPanel = React.forwardRef<
       isFullscreen = false,
       activeDropTargetPosition = null,
       isRelocating = false,
+      zenModeEnabled = false,
+      isZenPinned = false,
+      onZenPinToggle,
     },
     forwardedRef,
   ) => {
@@ -211,6 +217,8 @@ export const FloatingPanel = React.forwardRef<
     const panelRef = useRef<HTMLDivElement>(null);
     const latestBoundsRef = useRef<PanelBounds | null>(null);
     const latestDragOffsetRef = useRef({ x: 0, y: 0 });
+    const zenHeaderPointerPinHandledRef = useRef(false);
+    const metaKeyPressedRef = useRef(false);
     const resizeFrameRef = useRef<number | null>(null);
     const pendingResizeRef = useRef<{
       width: number;
@@ -243,6 +251,31 @@ export const FloatingPanel = React.forwardRef<
       onResizeStartRef.current = onResizeStart;
       onResizeEndRef.current = onResizeEnd;
     }, [onResize, onResizeEnd, onResizeStart]);
+
+    useEffect(() => {
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Meta" || event.metaKey) {
+          metaKeyPressedRef.current = true;
+        }
+      };
+      const handleKeyUp = (event: KeyboardEvent) => {
+        if (event.key === "Meta" || !event.metaKey) {
+          metaKeyPressedRef.current = false;
+        }
+      };
+      const handleBlur = () => {
+        metaKeyPressedRef.current = false;
+      };
+
+      window.addEventListener("keydown", handleKeyDown, true);
+      window.addEventListener("keyup", handleKeyUp, true);
+      window.addEventListener("blur", handleBlur);
+      return () => {
+        window.removeEventListener("keydown", handleKeyDown, true);
+        window.removeEventListener("keyup", handleKeyUp, true);
+        window.removeEventListener("blur", handleBlur);
+      };
+    }, []);
 
     useLayoutEffect(() => {
       if (isDragging || isResizing) {
@@ -511,8 +544,46 @@ export const FloatingPanel = React.forwardRef<
       };
     }, [isResizing, handleResizeMove, handleResizeEnd, resizeEdge]);
 
+    const handleHeaderPointerDown = useCallback(
+      (e: React.PointerEvent) => {
+        if (
+          zenModeEnabled &&
+          mode === "snapped" &&
+          e.button === 0 &&
+          (e.metaKey || metaKeyPressedRef.current) &&
+          onZenPinToggle
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          zenHeaderPointerPinHandledRef.current = true;
+          onZenPinToggle(id);
+        }
+      },
+      [id, mode, onZenPinToggle, zenModeEnabled],
+    );
+
     const handleDragStartInternal = useCallback(
       (e: React.MouseEvent) => {
+        if (zenHeaderPointerPinHandledRef.current) {
+          zenHeaderPointerPinHandledRef.current = false;
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+
+        if (
+          zenModeEnabled &&
+          mode === "snapped" &&
+          e.button === 0 &&
+          (e.metaKey || metaKeyPressedRef.current) &&
+          onZenPinToggle
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          onZenPinToggle(id);
+          return;
+        }
+
         e.preventDefault();
         const rect = panelRef.current?.getBoundingClientRect();
         startRef.current = {
@@ -541,11 +612,14 @@ export const FloatingPanel = React.forwardRef<
         dragY,
         effectiveUiScale,
         id,
+        mode,
         onDragStart,
+        onZenPinToggle,
         size.height,
         size.width,
         x,
         y,
+        zenModeEnabled,
       ],
     );
 
@@ -1111,6 +1185,7 @@ export const FloatingPanel = React.forwardRef<
         data-panel-state={panelState}
         data-panel-motion={panelMotionState}
         data-panel-relocating={isRelocating ? "true" : "false"}
+        data-panel-zen-pinned={isZenPinned ? "true" : "false"}
       >
         {mode === "floating" ? (
           <>
@@ -1129,6 +1204,7 @@ export const FloatingPanel = React.forwardRef<
 
         <div
           style={headerStyle}
+          onPointerDown={handleHeaderPointerDown}
           onMouseDown={handleDragStartInternal}
           data-testid={`panel-${id}-drag-handle`}
         >

@@ -9,6 +9,7 @@ import type {
   PanelOpenRequest,
   PanelVisibility,
   RememberedSnappedPositions,
+  ZenPinnedPanels,
 } from "./MainLayout.types";
 
 const SNAPPED_PANEL_POSITIONS: readonly PanelPosition[] = [
@@ -25,6 +26,7 @@ const PANEL_POSITION_PREFERENCES: Record<PanelId, readonly PanelPosition[]> = {
   git: ["left", "right", "bottom", "top"],
   problems: ["bottom", "right", "left", "top"],
   code: ["right", "left", "bottom", "top"],
+  markdownPreview: ["right", "left", "bottom", "top"],
 };
 
 const PANEL_ID_ALIASES: Record<string, PanelId> = {
@@ -44,6 +46,10 @@ const PANEL_ID_ALIASES: Record<string, PanelId> = {
   diagnostics: "problems",
   code: "code",
   editor: "code",
+  markdown: "markdownPreview",
+  markdownpreview: "markdownPreview",
+  mdpreview: "markdownPreview",
+  previewmarkdown: "markdownPreview",
 };
 
 const APP_SURFACE_ALIASES: Record<string, AppSurfaceAction> = {
@@ -67,6 +73,17 @@ export const DEFAULT_PANELS: PanelVisibility = {
   git: false,
   problems: false,
   code: false,
+  markdownPreview: false,
+};
+
+export const DEFAULT_ZEN_PINNED_PANELS: ZenPinnedPanels = {
+  explorer: false,
+  terminal: false,
+  aiChat: false,
+  git: false,
+  problems: false,
+  code: false,
+  markdownPreview: false,
 };
 
 export const DEFAULT_PANEL_CONFIGS: PanelConfigs = {
@@ -108,6 +125,13 @@ export const DEFAULT_PANEL_CONFIGS: PanelConfigs = {
   code: {
     position: "right",
     size: { width: 620, height: 0 },
+    mode: "snapped",
+    x: 0,
+    y: 0,
+  },
+  markdownPreview: {
+    position: "right",
+    size: { width: 420, height: 0 },
     mode: "snapped",
     x: 0,
     y: 0,
@@ -481,6 +505,10 @@ export const cloneDefaultPanelConfigs = (): PanelConfigs => ({
     ...DEFAULT_PANEL_CONFIGS.code,
     size: { ...DEFAULT_PANEL_CONFIGS.code.size },
   },
+  markdownPreview: {
+    ...DEFAULT_PANEL_CONFIGS.markdownPreview,
+    size: { ...DEFAULT_PANEL_CONFIGS.markdownPreview.size },
+  },
 });
 
 export const createDefaultRememberedSnappedPositions =
@@ -491,6 +519,7 @@ export const createDefaultRememberedSnappedPositions =
     git: DEFAULT_PANEL_CONFIGS.git.position,
     problems: DEFAULT_PANEL_CONFIGS.problems.position,
     code: DEFAULT_PANEL_CONFIGS.code.position,
+    markdownPreview: DEFAULT_PANEL_CONFIGS.markdownPreview.position,
   });
 
 export const clonePanelConfigsValue = (source: PanelConfigs): PanelConfigs => ({
@@ -500,6 +529,10 @@ export const clonePanelConfigsValue = (source: PanelConfigs): PanelConfigs => ({
   git: { ...source.git, size: { ...source.git.size } },
   problems: { ...source.problems, size: { ...source.problems.size } },
   code: { ...source.code, size: { ...source.code.size } },
+  markdownPreview: {
+    ...source.markdownPreview,
+    size: { ...source.markdownPreview.size },
+  },
 });
 
 export const cloneRememberedSnappedPositionsValue = (
@@ -511,22 +544,41 @@ export const cloneRememberedSnappedPositionsValue = (
   git: source.git,
   problems: source.problems,
   code: source.code,
+  markdownPreview: source.markdownPreview,
+});
+
+export const cloneZenPinnedPanelsValue = (
+  source: ZenPinnedPanels,
+): ZenPinnedPanels => ({
+  explorer: source.explorer,
+  terminal: source.terminal,
+  aiChat: source.aiChat,
+  git: source.git,
+  problems: source.problems,
+  code: source.code,
+  markdownPreview: source.markdownPreview,
 });
 
 export const normalizeHydratedPanelLayoutState = (
   panels: PanelVisibility,
   panelConfigs: PanelConfigs,
   rememberedSnappedPositions: RememberedSnappedPositions,
+  zenPinnedPanels: ZenPinnedPanels = DEFAULT_ZEN_PINNED_PANELS,
 ): HydratedPanelLayoutState => {
   const nextPanels = { ...panels };
   const nextPanelConfigs = clonePanelConfigsValue(panelConfigs);
   const nextRememberedSnappedPositions = cloneRememberedSnappedPositionsValue(
     rememberedSnappedPositions,
   );
+  const nextZenPinnedPanels = cloneZenPinnedPanelsValue(zenPinnedPanels);
   const occupiedPositions = new Set<PanelPosition>();
 
   // Keep a single visible snapped owner per side during hydration.
   (Object.keys(nextPanels) as PanelId[]).forEach((panelId) => {
+    if (!nextPanels[panelId]) {
+      nextZenPinnedPanels[panelId] = false;
+    }
+
     if (!nextPanels[panelId]) {
       return;
     }
@@ -538,6 +590,7 @@ export const normalizeHydratedPanelLayoutState = (
 
     if (occupiedPositions.has(config.position)) {
       nextPanels[panelId] = false;
+      nextZenPinnedPanels[panelId] = false;
       return;
     }
 
@@ -548,6 +601,50 @@ export const normalizeHydratedPanelLayoutState = (
     panels: nextPanels,
     panelConfigs: nextPanelConfigs,
     rememberedSnappedPositions: nextRememberedSnappedPositions,
+    zenPinnedPanels: nextZenPinnedPanels,
+  };
+};
+
+const resolveStoredZenPinnedPanels = (
+  savedZenPinnedPanels: unknown,
+): ZenPinnedPanels => {
+  if (
+    typeof savedZenPinnedPanels !== "object" ||
+    savedZenPinnedPanels === null
+  ) {
+    return cloneZenPinnedPanelsValue(DEFAULT_ZEN_PINNED_PANELS);
+  }
+
+  const record = savedZenPinnedPanels as Record<string, unknown>;
+  return {
+    explorer:
+      typeof record.explorer === "boolean"
+        ? record.explorer
+        : DEFAULT_ZEN_PINNED_PANELS.explorer,
+    terminal:
+      typeof record.terminal === "boolean"
+        ? record.terminal
+        : DEFAULT_ZEN_PINNED_PANELS.terminal,
+    aiChat:
+      typeof record.aiChat === "boolean"
+        ? record.aiChat
+        : DEFAULT_ZEN_PINNED_PANELS.aiChat,
+    git:
+      typeof record.git === "boolean"
+        ? record.git
+        : DEFAULT_ZEN_PINNED_PANELS.git,
+    problems:
+      typeof record.problems === "boolean"
+        ? record.problems
+        : DEFAULT_ZEN_PINNED_PANELS.problems,
+    code:
+      typeof record.code === "boolean"
+        ? record.code
+        : DEFAULT_ZEN_PINNED_PANELS.code,
+    markdownPreview:
+      typeof record.markdownPreview === "boolean"
+        ? record.markdownPreview
+        : DEFAULT_ZEN_PINNED_PANELS.markdownPreview,
   };
 };
 
@@ -601,6 +698,10 @@ const resolveStoredPanelConfigs = (
       DEFAULT_PANEL_CONFIGS.problems,
     ),
     code: resolveStoredPanelConfig(rest.code, DEFAULT_PANEL_CONFIGS.code),
+    markdownPreview: resolveStoredPanelConfig(
+      rest.markdownPreview,
+      DEFAULT_PANEL_CONFIGS.markdownPreview,
+    ),
   };
 };
 
@@ -651,6 +752,7 @@ export const loadPersistedPanelLayoutState = (
       { ...DEFAULT_PANELS },
       cloneDefaultPanelConfigs(),
       createDefaultRememberedSnappedPositions(),
+      cloneZenPinnedPanelsValue(DEFAULT_ZEN_PINNED_PANELS),
     );
   }
 
@@ -661,6 +763,7 @@ export const loadPersistedPanelLayoutState = (
         { ...DEFAULT_PANELS },
         cloneDefaultPanelConfigs(),
         createDefaultRememberedSnappedPositions(),
+        cloneZenPinnedPanelsValue(DEFAULT_ZEN_PINNED_PANELS),
       );
     }
 
@@ -668,6 +771,7 @@ export const loadPersistedPanelLayoutState = (
       panels?: unknown;
       panelConfigs?: unknown;
       rememberedSnappedPositions?: unknown;
+      zenPinnedPanels?: unknown;
     };
     const savedPanels =
       typeof parsed.panels === "object" && parsed.panels !== null
@@ -683,17 +787,22 @@ export const loadPersistedPanelLayoutState = (
       parsed.panelConfigs,
       parsed.rememberedSnappedPositions,
     );
+    const zenPinnedPanels = resolveStoredZenPinnedPanels(
+      parsed.zenPinnedPanels,
+    );
 
     return normalizeHydratedPanelLayoutState(
       panels,
       panelConfigs,
       rememberedSnappedPositions,
+      zenPinnedPanels,
     );
   } catch {
     return normalizeHydratedPanelLayoutState(
       { ...DEFAULT_PANELS },
       cloneDefaultPanelConfigs(),
       createDefaultRememberedSnappedPositions(),
+      cloneZenPinnedPanelsValue(DEFAULT_ZEN_PINNED_PANELS),
     );
   }
 };

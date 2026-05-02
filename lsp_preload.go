@@ -69,13 +69,52 @@ func defaultDiagnosticsPreloadBudget() diagnosticsPreloadBudget {
 	}
 }
 
+func adaptDiagnosticsPreloadBudget(
+	budget diagnosticsPreloadBudget,
+	projectFileCount int,
+	queueDepth int,
+) diagnosticsPreloadBudget {
+	switch {
+	case projectFileCount >= 15000 || queueDepth >= 500:
+		budget.LargeProjectFileThreshold = 1
+		budget.MaxDominantLanguages = 1
+		budget.MaxFilesPerLanguage = 1
+		budget.MaxFiles = 4
+		budget.MaxTotalBytes = 512 << 10
+		budget.MaxFileSizeBytes = 128 << 10
+		budget.Timeout = 2 * time.Second
+		return budget
+	case projectFileCount >= 5000 || queueDepth >= 160:
+		budget.LargeProjectFileThreshold = 8
+		budget.MaxDominantLanguages = 2
+		budget.MaxFilesPerLanguage = 2
+		budget.MaxFiles = 8
+		budget.MaxTotalBytes = 1 << 20
+		budget.MaxFileSizeBytes = 192 << 10
+		budget.Timeout = 3 * time.Second
+		return budget
+	default:
+		return budget
+	}
+}
+
 func newLSPDiagnosticsPreloadEvent(
+	projectPath string,
+	generation uint64,
+	plan diagnosticsPreloadPlan,
+) LSPDiagnosticsPreloadEvent {
+	return newLSPDiagnosticsPreloadEventForSession("", projectPath, generation, plan)
+}
+
+func newLSPDiagnosticsPreloadEventForSession(
+	sessionID string,
 	projectPath string,
 	generation uint64,
 	plan diagnosticsPreloadPlan,
 ) LSPDiagnosticsPreloadEvent {
 	return LSPDiagnosticsPreloadEvent{
 		ProjectPath:        projectPath,
+		SessionID:          sessionID,
 		Generation:         generation,
 		Bounded:            plan.Bounded,
 		TotalCandidates:    plan.TotalCandidates,
@@ -97,9 +136,29 @@ func collectDiagnosticsPreloadPlanWithInventory(
 	inventory map[string]core.File,
 	budget diagnosticsPreloadBudget,
 ) (diagnosticsPreloadPlan, error) {
+	return collectDiagnosticsPreloadPlanWithInventoryContext(
+		context.Background(),
+		root,
+		inventory,
+		budget,
+	)
+}
+
+func collectDiagnosticsPreloadPlanWithInventoryContext(
+	ctx context.Context,
+	root string,
+	inventory map[string]core.File,
+	budget diagnosticsPreloadBudget,
+) (diagnosticsPreloadPlan, error) {
 	var candidates []diagnosticsPreloadCandidate
 
 	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if err != nil {
 			return nil
 		}
@@ -642,16 +701,23 @@ func (a *App) lspPreloadProjectDiagnostics(
 	projectPath string,
 	generation uint64,
 ) bool {
-	a.managerMu.Lock()
-	mgr := a.lspManager
-	engine := a.coreEngine
-	projectCtx := a.projectCtx
-	a.managerMu.Unlock()
-	currentProjectPath := a.currentProjectPath()
+	return a.lspPreloadProjectDiagnosticsForSession(a.activeProjectSession(), projectPath, generation)
+}
 
-	if mgr == nil {
-		return false
+func (a *App) lspPreloadProjectDiagnosticsForSession(
+	session *ProjectRuntimeSession,
+	projectPath string,
+	generation uint64,
+) bool {
+	if session == nil {
+		session = defaultProjectSessionFromApp(a)
 	}
+	a.managerMu.Lock()
+	mgr := session.lspManager
+	engine := session.coreEngine
+	projectCtx := session.projectCtx
+	a.managerMu.Unlock()
+	currentProjectPath := session.currentProjectPath()
 
 	root := projectPath
 	if root == "" {
@@ -660,23 +726,39 @@ func (a *App) lspPreloadProjectDiagnostics(
 	if root == "" {
 		return false
 	}
+	if mgr == nil {
+		a.emitLSPDiagnosticsStatusForSession(session.ID, root, generation, "", "", "unavailable", "LSP diagnostics manager is not available")
+		a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, diagnosticsPreloadPlan{}))
+		return false
+	}
 
-	budget := defaultDiagnosticsPreloadBudget()
 	ctx := context.Background()
 	if projectCtx != nil {
 		ctx = projectCtx
 	}
-	timedCtx, cancel := context.WithTimeout(ctx, budget.Timeout)
+	inventory := loadDiagnosticsPreloadInventory(engine)
+	budget := defaultDiagnosticsPreloadBudget()
+	queueDepth := 0
+	projectFileCount := len(inventory)
+	if engine != nil {
+		queueDepth = engine.SchedulerStats().Pending
+		stats := engine.Stats()
+		if projectFileCount == 0 {
+			projectFileCount = stats.TotalFiles
+		}
+	}
+	budget = adaptDiagnosticsPreloadBudget(budget, projectFileCount, queueDepth)
+	timedCtx, cancel, preloadSeq := a.beginDiagnosticsPreloadForSession(session, ctx, budget.Timeout)
 	defer cancel()
 
-	plan, err := collectDiagnosticsPreloadPlanWithInventory(root, loadDiagnosticsPreloadInventory(engine), budget)
+	plan, err := collectDiagnosticsPreloadPlanWithInventoryContext(timedCtx, root, inventory, budget)
 	if err != nil {
 		if err != context.Canceled {
 			a.logWarning("[DiagnosticsPreload] collect error: " + err.Error())
 		}
 		return false
 	}
-	event := newLSPDiagnosticsPreloadEvent(root, generation, plan)
+	event := newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, plan)
 	a.emitEvent("lsp:diagnostics:preload:start", event)
 	openedPaths := make([]string, 0, len(plan.Candidates))
 
@@ -688,7 +770,7 @@ preloadLoop:
 		default:
 		}
 
-		if a.projectGeneration.Load() != generation {
+		if session.projectGeneration.Load() != generation || !a.isCurrentDiagnosticsPreloadForSession(session, preloadSeq) {
 			return false
 		}
 
@@ -711,7 +793,7 @@ preloadLoop:
 		}
 	}
 
-	if a.projectGeneration.Load() != generation {
+	if session.projectGeneration.Load() != generation || !a.isCurrentDiagnosticsPreloadForSession(session, preloadSeq) {
 		return false
 	}
 
@@ -725,6 +807,78 @@ preloadLoop:
 	}
 
 	return false
+}
+
+func (a *App) beginDiagnosticsPreload(
+	ctx context.Context,
+	timeout time.Duration,
+) (context.Context, context.CancelFunc, uint64) {
+	return a.beginDiagnosticsPreloadForSession(a.activeProjectSession(), ctx, timeout)
+}
+
+func (a *App) beginDiagnosticsPreloadForSession(
+	session *ProjectRuntimeSession,
+	ctx context.Context,
+	timeout time.Duration,
+) (context.Context, context.CancelFunc, uint64) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if session == nil {
+		session = defaultProjectSessionFromApp(a)
+	}
+
+	timedCtx, cancel := context.WithTimeout(ctx, timeout)
+
+	session.diagnosticsPreloadMu.Lock()
+	if session.diagnosticsPreloadCancel != nil {
+		session.diagnosticsPreloadCancel()
+	}
+	session.diagnosticsPreloadSeq++
+	seq := session.diagnosticsPreloadSeq
+	session.diagnosticsPreloadCancel = cancel
+	session.diagnosticsPreloadMu.Unlock()
+
+	return timedCtx, func() {
+		cancel()
+		session.diagnosticsPreloadMu.Lock()
+		if session.diagnosticsPreloadSeq == seq {
+			session.diagnosticsPreloadCancel = nil
+		}
+		session.diagnosticsPreloadMu.Unlock()
+	}, seq
+}
+
+func (a *App) isCurrentDiagnosticsPreload(seq uint64) bool {
+	return a.isCurrentDiagnosticsPreloadForSession(a.activeProjectSession(), seq)
+}
+
+func (a *App) isCurrentDiagnosticsPreloadForSession(session *ProjectRuntimeSession, seq uint64) bool {
+	if session == nil {
+		session = defaultProjectSessionFromApp(a)
+	}
+	session.diagnosticsPreloadMu.Lock()
+	defer session.diagnosticsPreloadMu.Unlock()
+	return session.diagnosticsPreloadSeq == seq
+}
+
+func (a *App) cancelDiagnosticsPreload() {
+	a.cancelDiagnosticsPreloadForSession(a.activeProjectSession())
+}
+
+func (a *App) cancelDiagnosticsPreloadForSession(session *ProjectRuntimeSession) {
+	if session == nil {
+		session = defaultProjectSessionFromApp(a)
+	}
+	session.diagnosticsPreloadMu.Lock()
+	cancel := session.diagnosticsPreloadCancel
+	session.diagnosticsPreloadSeq++
+	session.diagnosticsPreloadCancel = nil
+	session.diagnosticsPreloadMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func loadDiagnosticsPreloadInventory(engine *core.Engine) map[string]core.File {

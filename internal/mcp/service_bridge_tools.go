@@ -194,6 +194,47 @@ func bridgeUIToolDefinitions() []ToolDefinition {
 			}),
 		},
 		{
+			Name:        "ide_ui.surface_read",
+			Description: "Read the current Surface Runtime state from the frontend",
+			InputSchema: objectSchema(nil, map[string]any{
+				"eventLimit":    map[string]any{"type": "number"},
+				"includeEvents": map[string]any{"type": "boolean"},
+			}),
+		},
+		{
+			Name:        "ide_ui.open_intent",
+			Description: "Route a typed open intent through the frontend Surface Runtime",
+			InputSchema: objectSchema([]string{"kind"}, map[string]any{
+				"kind":              map[string]any{"type": "string"},
+				"id":                map[string]any{"type": "string"},
+				"source":            map[string]any{"type": "string"},
+				"projectPath":       map[string]any{"type": "string"},
+				"project_path":      map[string]any{"type": "string"},
+				"path":              map[string]any{"type": "string"},
+				"filePath":          map[string]any{"type": "string"},
+				"file_path":         map[string]any{"type": "string"},
+				"url":               map[string]any{"type": "string"},
+				"surface":           map[string]any{"type": "string"},
+				"title":             map[string]any{"type": "string"},
+				"mode":              map[string]any{"type": "string"},
+				"position":          map[string]any{"type": "string"},
+				"side":              map[string]any{"type": "string"},
+				"line":              map[string]any{"type": "number"},
+				"width":             map[string]any{"type": "number"},
+				"height":            map[string]any{"type": "number"},
+				"pinned":            map[string]any{"type": "boolean"},
+				"surfaceId":         map[string]any{"type": "string"},
+				"surface_id":        map[string]any{"type": "string"},
+				"previewWindowId":   map[string]any{"type": "string"},
+				"preview_window_id": map[string]any{"type": "string"},
+				"windowId":          map[string]any{"type": "string"},
+				"window_id":         map[string]any{"type": "string"},
+				"panelId":           map[string]any{"type": "string"},
+				"panel_id":          map[string]any{"type": "string"},
+				"panel":             map[string]any{"type": "string"},
+			}),
+		},
+		{
 			Name:        "ide_ui.open_file_panel",
 			Description: "Open a project file in the visible side code panel",
 			InputSchema: objectSchema([]string{"path"}, map[string]any{
@@ -351,24 +392,40 @@ func (s *ToolService) Capabilities() map[string]any {
 	}
 
 	return map[string]any{
-		"mode":                s.modeName(),
-		"tools":               toolNames,
-		"permission":          s.PermissionStatus(),
-		"layoutProfiles":      layoutNames,
-		"bridgeMode":          bridgeMode,
-		"bridgeAvailable":     bridgeAvailable,
-		"sensitivePatterns":   append([]string(nil), s.sensitivePaths...),
-		"auditDiskPath":       s.audit.diskFilePath(),
-		"checkpointDiskPath":  projectStateFilePath(s.projectRoot, changeJournalStateFileName),
-		"layoutDiskPath":      projectStateFilePath(s.projectRoot, layoutStateFileName),
-		"memoryDiskPath":      s.memory.DiskFilePath(),
-		"memoryContextPath":   s.memory.ContextFilePath(),
-		"sessionID":           s.sessionID,
-		"runtimeHotSwitch":    true,
-		"supportsLayoutV1":    true,
-		"supportsBackendV1":   true,
-		"supportsUIControlV1": true,
-		"supportsMemoryV1":    true,
+		"mode":                     s.modeName(),
+		"tools":                    toolNames,
+		"permission":               s.PermissionStatus(),
+		"layoutProfiles":           layoutNames,
+		"bridgeMode":               bridgeMode,
+		"bridgeAvailable":          bridgeAvailable,
+		"sensitivePatterns":        append([]string(nil), s.sensitivePaths...),
+		"auditDiskPath":            s.audit.diskFilePath(),
+		"flightRecorderDiskPath":   s.flightRecorder.diskFilePath(),
+		"checkpointDiskPath":       projectStateFilePath(s.projectRoot, changeJournalStateFileName),
+		"layoutDiskPath":           projectStateFilePath(s.projectRoot, layoutStateFileName),
+		"memoryDiskPath":           s.memory.DiskFilePath(),
+		"memoryContextPath":        s.memory.ContextFilePath(),
+		"sessionID":                s.sessionID,
+		"runtimeHotSwitch":         true,
+		"supportsLayoutV1":         true,
+		"supportsBackendV1":        true,
+		"supportsUIControlV1":      true,
+		"supportsSurfaceRuntimeV1": true,
+		"supportsFlightRecorderV1": true,
+		"supportsMemoryV1":         true,
+	}
+}
+
+func (s *ToolService) FlightRecorder(limit int) map[string]any {
+	effectiveLimit := limit
+	if effectiveLimit <= 0 {
+		effectiveLimit = 50
+	}
+
+	return map[string]any{
+		"items":    s.flightRecorder.list(effectiveLimit),
+		"diskPath": s.flightRecorder.diskFilePath(),
+		"mode":     s.modeName(),
 	}
 }
 
@@ -392,6 +449,33 @@ func (s *ToolService) recordAudit(toolName string, args map[string]any, err erro
 		startedAt,
 	)
 	s.audit.append(entry)
+}
+
+func (s *ToolService) recordFlightEvent(record FlightRecord) {
+	if s == nil || s.flightRecorder == nil {
+		return
+	}
+	s.flightRecorder.append(record)
+}
+
+func (s *ToolService) recordToolFlightEvent(toolName string, args map[string]any, err error, startedAt time.Time) {
+	status := "success"
+	errText := ""
+	if err != nil {
+		status = "error"
+		errText = err.Error()
+	}
+
+	s.recordFlightEvent(FlightRecord{
+		Type:       "mcp.tool.completed",
+		Source:     "mcp",
+		Tool:       toolName,
+		Risk:       s.riskClassForTool(toolName, args),
+		Status:     status,
+		Error:      errText,
+		DurationMs: time.Since(startedAt).Milliseconds(),
+		Args:       s.sanitizeAuditArgs(args),
+	})
 }
 
 func (s *ToolService) sanitizeAuditArgs(args map[string]any) map[string]any {
@@ -488,17 +572,10 @@ func (s *ToolService) bridgeProjectOpen(path string) (any, error) {
 		return nil, err
 	}
 
-	if err := s.requireToolApproval("ide_backend.project_open", forceApproval); err != nil {
-		return nil, err
-	}
-
 	return s.bridgeCall("ide_backend.project_open", "project.open", map[string]any{"path": requestedPath})
 }
 
 func (s *ToolService) bridgeProjectClose() (any, error) {
-	if err := s.requireUserApproval("ide_backend.project_close"); err != nil {
-		return nil, err
-	}
 	if err := s.requireUserApproval("ide_backend.project_close"); err != nil {
 		return nil, err
 	}
@@ -517,16 +594,10 @@ func (s *ToolService) bridgeLSPRestart(language string) (any, error) {
 	if err := s.requireUserApproval("ide_backend.lsp_restart"); err != nil {
 		return nil, err
 	}
-	if err := s.requireUserApproval("ide_backend.lsp_restart"); err != nil {
-		return nil, err
-	}
 	return s.bridgeCall("ide_backend.lsp_restart", "lsp.restart", map[string]any{"language": language})
 }
 
 func (s *ToolService) bridgeLSPInstall(serverID string) (any, error) {
-	if err := s.requireUserApproval("ide_backend.lsp_install"); err != nil {
-		return nil, err
-	}
 	if err := s.requireUserApproval("ide_backend.lsp_install"); err != nil {
 		return nil, err
 	}
@@ -580,9 +651,6 @@ func (s *ToolService) bridgeTerminalCreate(id, name, command string) (any, error
 	if err := s.requireUserApproval("ide_backend.terminal_create"); err != nil {
 		return nil, err
 	}
-	if err := s.requireUserApproval("ide_backend.terminal_create"); err != nil {
-		return nil, err
-	}
 	params := map[string]any{"id": id, "name": name}
 	if strings.TrimSpace(command) != "" {
 		params["command"] = command
@@ -594,16 +662,10 @@ func (s *ToolService) bridgeTerminalWrite(id, data string) (any, error) {
 	if err := s.requireUserApproval("ide_backend.terminal_write"); err != nil {
 		return nil, err
 	}
-	if err := s.requireUserApproval("ide_backend.terminal_write"); err != nil {
-		return nil, err
-	}
 	return s.bridgeCall("ide_backend.terminal_write", "terminal.write", map[string]any{"id": id, "data": data})
 }
 
 func (s *ToolService) bridgeTerminalResize(id string, rows, cols int) (any, error) {
-	if err := s.requireUserApproval("ide_backend.terminal_resize"); err != nil {
-		return nil, err
-	}
 	if err := s.requireUserApproval("ide_backend.terminal_resize"); err != nil {
 		return nil, err
 	}
@@ -614,16 +676,10 @@ func (s *ToolService) bridgeTerminalClose(id string) (any, error) {
 	if err := s.requireUserApproval("ide_backend.terminal_close"); err != nil {
 		return nil, err
 	}
-	if err := s.requireUserApproval("ide_backend.terminal_close"); err != nil {
-		return nil, err
-	}
 	return s.bridgeCall("ide_backend.terminal_close", "terminal.close", map[string]any{"id": id})
 }
 
 func (s *ToolService) bridgeTerminalCloseAll() (any, error) {
-	if err := s.requireUserApproval("ide_backend.terminal_close_all"); err != nil {
-		return nil, err
-	}
 	if err := s.requireUserApproval("ide_backend.terminal_close_all"); err != nil {
 		return nil, err
 	}
@@ -655,9 +711,6 @@ func (s *ToolService) bridgeDispatchSearchSymbols(query string) (any, error) {
 }
 
 func (s *ToolService) bridgeDispatchCommand(input string) (any, error) {
-	if err := s.requireUserApproval("ide_backend.dispatch_command"); err != nil {
-		return nil, err
-	}
 	if err := s.requireUserApproval("ide_backend.dispatch_command"); err != nil {
 		return nil, err
 	}
@@ -695,15 +748,38 @@ func (s *ToolService) bridgeEmitUIEvent(eventName string, payload any) (any, err
 	if err := s.allowUIEventBurst(1); err != nil {
 		return nil, err
 	}
-	if err := s.requireUserApproval("ide_ui.emit_event"); err != nil {
-		return nil, err
-	}
 
 	params := map[string]any{"event": eventName}
 	if payload != nil {
 		params["payload"] = payload
 	}
-	return s.bridgeCall("ide_ui.emit_event", "ui.emit_event", params)
+	startedAt := time.Now()
+	s.recordFlightEvent(FlightRecord{
+		Type:   "agent.ui.requested",
+		Source: "mcp",
+		Tool:   "ide_ui.emit_event",
+		Risk:   s.riskClassForTool("ide_ui.emit_event", params),
+		Status: "pending",
+		Args:   s.sanitizeAuditArgs(params),
+	})
+	result, err := s.bridgeCall("ide_ui.emit_event", "ui.emit_event", params)
+	status := "acknowledged"
+	errText := ""
+	if err != nil {
+		status = "error"
+		errText = err.Error()
+	}
+	s.recordFlightEvent(FlightRecord{
+		Type:       "agent.ui.acknowledged",
+		Source:     "frontend",
+		Tool:       "ide_ui.emit_event",
+		Risk:       s.riskClassForTool("ide_ui.emit_event", params),
+		Status:     status,
+		Error:      errText,
+		DurationMs: time.Since(startedAt).Milliseconds(),
+		Args:       map[string]any{"event": eventName},
+	})
+	return result, err
 }
 
 func (s *ToolService) bridgeEmitConfirmedUIEvent(toolName, eventName string, payload any) (any, error) {
@@ -711,9 +787,6 @@ func (s *ToolService) bridgeEmitConfirmedUIEvent(toolName, eventName string, pay
 		return nil, err
 	}
 	if err := s.allowUIEventBurst(1); err != nil {
-		return nil, err
-	}
-	if err := s.requireUserApproval(toolName); err != nil {
 		return nil, err
 	}
 
@@ -726,20 +799,246 @@ func (s *ToolService) bridgeEmitConfirmedUIEvent(toolName, eventName string, pay
 		params["payload"] = payload
 	}
 
+	startedAt := time.Now()
+	s.recordFlightEvent(FlightRecord{
+		Type:          "agent.ui.requested",
+		Source:        "mcp",
+		Tool:          toolName,
+		Risk:          s.riskClassForTool(toolName, params),
+		Status:        "pending",
+		CorrelationID: requestID,
+		Args:          s.sanitizeAuditArgs(params),
+	})
 	result, err := s.bridgeCall(toolName, "ui.emit_event", params)
 	if err != nil {
+		s.recordFlightEvent(FlightRecord{
+			Type:          "agent.ui.acknowledged",
+			Source:        "frontend",
+			Tool:          toolName,
+			Risk:          s.riskClassForTool(toolName, params),
+			Status:        "error",
+			Error:         err.Error(),
+			DurationMs:    time.Since(startedAt).Milliseconds(),
+			CorrelationID: requestID,
+			Args:          map[string]any{"event": eventName},
+		})
 		return nil, err
 	}
 
 	if resultMap, ok := result.(map[string]any); ok {
+		status := "acknowledged"
+		errText := ""
+		if confirmed, ok := resultMap["confirmed"].(bool); ok && !confirmed {
+			status = "rejected"
+		}
+		if errorText, ok := resultMap["error"].(string); ok && strings.TrimSpace(errorText) != "" {
+			status = "error"
+			errText = strings.TrimSpace(errorText)
+		}
+		s.recordFlightEvent(FlightRecord{
+			Type:          "agent.ui.acknowledged",
+			Source:        "frontend",
+			Tool:          toolName,
+			Risk:          s.riskClassForTool(toolName, params),
+			Status:        status,
+			Error:         errText,
+			DurationMs:    time.Since(startedAt).Milliseconds(),
+			CorrelationID: requestID,
+			Args:          map[string]any{"event": eventName},
+		})
 		resultMap["mcpRequestId"] = requestID
 		return resultMap, nil
 	}
 
+	s.recordFlightEvent(FlightRecord{
+		Type:          "agent.ui.acknowledged",
+		Source:        "frontend",
+		Tool:          toolName,
+		Risk:          s.riskClassForTool(toolName, params),
+		Status:        "acknowledged",
+		DurationMs:    time.Since(startedAt).Milliseconds(),
+		CorrelationID: requestID,
+		Args:          map[string]any{"event": eventName},
+	})
 	return map[string]any{
 		"result":       result,
 		"mcpRequestId": requestID,
 	}, nil
+}
+
+func (s *ToolService) bridgeSurfaceRead(args map[string]any) (any, error) {
+	if err := s.allowUIEventBurst(1); err != nil {
+		return nil, err
+	}
+
+	eventLimit := optionalIntArg(args, "eventLimit", 25)
+	if _, ok := args["event_limit"]; ok {
+		eventLimit = optionalIntArg(args, "event_limit", eventLimit)
+	}
+	if eventLimit < 0 {
+		eventLimit = 0
+	}
+	if eventLimit > 100 {
+		eventLimit = 100
+	}
+
+	includeEvents := true
+	if _, ok := args["includeEvents"]; ok {
+		includeEvents = optionalBoolArg(args, "includeEvents")
+	} else if _, ok := args["include_events"]; ok {
+		includeEvents = optionalBoolArg(args, "include_events")
+	}
+
+	requestID := fmt.Sprintf("ide-ui-surface-read-%d", time.Now().UTC().UnixNano())
+	result, err := s.bridgeCall("ide_ui.surface_read", "ui.emit_event", map[string]any{
+		"event":        "ide:surface:read",
+		"mcpRequestId": requestID,
+		"payload": map[string]any{
+			"eventLimit":    eventLimit,
+			"includeEvents": includeEvents,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		return map[string]any{
+			"surface":      result,
+			"mcpRequestId": requestID,
+		}, nil
+	}
+
+	response := map[string]any{
+		"mcpRequestId": requestID,
+	}
+	if confirmed, ok := resultMap["confirmed"]; ok {
+		response["confirmed"] = confirmed
+	}
+	if surface, ok := resultMap["result"]; ok {
+		response["surface"] = surface
+	} else {
+		response["surface"] = resultMap
+	}
+
+	return response, nil
+}
+
+func normalizeBridgeOpenIntentKind(kind string) string {
+	normalized := strings.NewReplacer(".", "", "-", "", "_", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(kind)))
+	switch normalized {
+	case "openproject", "projectopen", "project":
+		return "openProject"
+	case "openfile", "fileopen", "file", "editoropen":
+		return "openFile"
+	case "openpreview", "previewopen", "preview", "openbrowser", "browseropen":
+		return "openPreview"
+	case "focussurface", "surfacefocus", "focus", "previewfocus", "panelfocus":
+		return "focusSurface"
+	default:
+		return ""
+	}
+}
+
+func copyOpenIntentStringArg(payload map[string]any, args map[string]any, targetKey string, sourceKeys ...string) {
+	for _, key := range sourceKeys {
+		if value := optionalStringArg(args, key); value != "" {
+			payload[targetKey] = value
+			return
+		}
+	}
+}
+
+func (s *ToolService) bridgeOpenIntent(args map[string]any) (any, error) {
+	rawKind, err := requiredStringArg(args, "kind")
+	if err != nil {
+		return nil, err
+	}
+
+	kind := normalizeBridgeOpenIntentKind(rawKind)
+	if kind == "" {
+		return nil, fmt.Errorf("unsupported open intent kind %q", rawKind)
+	}
+
+	payload := map[string]any{
+		"kind":   kind,
+		"source": "mcp",
+	}
+	copyOpenIntentStringArg(payload, args, "id", "id")
+	if source := optionalStringArg(args, "source"); source != "" {
+		payload["source"] = source
+	}
+
+	switch kind {
+	case "openProject":
+		projectPath := optionalStringArg(args, "projectPath")
+		if projectPath == "" {
+			projectPath = optionalStringArg(args, "project_path")
+		}
+		if projectPath == "" {
+			projectPath = optionalStringArg(args, "path")
+		}
+		if projectPath == "" {
+			return nil, fmt.Errorf("projectPath is required for openProject intent")
+		}
+		if err := s.requireToolApproval("ide_ui.open_intent", s.pathEscapesProjectRoot(projectPath)); err != nil {
+			return nil, err
+		}
+		payload["projectPath"] = projectPath
+	case "openFile":
+		filePath := optionalStringArg(args, "filePath")
+		if filePath == "" {
+			filePath = optionalStringArg(args, "file_path")
+		}
+		if filePath == "" {
+			filePath = optionalStringArg(args, "path")
+		}
+		if filePath == "" {
+			return nil, fmt.Errorf("path is required for openFile intent")
+		}
+		resolvedPath, err := s.prepareBridgeFilePath("ide_ui.open_intent", filePath)
+		if err != nil {
+			return nil, err
+		}
+		payload["path"] = resolvedPath
+		if line, ok := optionalNumericArg(args, "line"); ok {
+			payload["line"] = line
+		}
+	case "openPreview":
+		copyOpenIntentStringArg(payload, args, "surface", "surface")
+		copyOpenIntentStringArg(payload, args, "url", "url")
+		copyOpenIntentStringArg(payload, args, "path", "path", "filePath", "file_path")
+		copyOpenIntentStringArg(payload, args, "title", "title")
+		copyOpenIntentStringArg(payload, args, "mode", "mode")
+		copyOpenIntentStringArg(payload, args, "position", "position")
+		copyOpenIntentStringArg(payload, args, "side", "side")
+		if line, ok := optionalNumericArg(args, "line"); ok {
+			payload["line"] = line
+		}
+		if width, ok := optionalNumericArg(args, "width"); ok {
+			payload["width"] = width
+		}
+		if height, ok := optionalNumericArg(args, "height"); ok {
+			payload["height"] = height
+		}
+		if pinned, ok := args["pinned"].(bool); ok {
+			payload["pinned"] = pinned
+		}
+	case "focusSurface":
+		copyOpenIntentStringArg(payload, args, "surfaceId", "surfaceId", "surface_id")
+		copyOpenIntentStringArg(payload, args, "previewWindowId", "previewWindowId", "preview_window_id", "windowId", "window_id")
+		copyOpenIntentStringArg(payload, args, "panelId", "panelId", "panel_id", "panel")
+		if _, hasSurfaceID := payload["surfaceId"]; !hasSurfaceID {
+			if _, hasPreviewWindowID := payload["previewWindowId"]; !hasPreviewWindowID {
+				if _, hasPanelID := payload["panelId"]; !hasPanelID {
+					return nil, fmt.Errorf("surfaceId, previewWindowId, or panelId is required for focusSurface intent")
+				}
+			}
+		}
+	}
+
+	return s.bridgeEmitConfirmedUIEvent("ide_ui.open_intent", "ide:intent:open", payload)
 }
 
 func (s *ToolService) bridgeOpenFilePanel(args map[string]any) (any, error) {
@@ -938,9 +1237,6 @@ func (s *ToolService) applyLayoutProfile(name string) (any, error) {
 
 	appliedActions := 0
 	for _, action := range profile.Actions {
-		if err := s.requireUserApproval("ide_ui.apply_layout_profile"); err != nil {
-			return nil, err
-		}
 		_, err := s.bridgeCall("ide_ui.apply_layout_profile", "ui.emit_event", map[string]any{
 			"event":   action.Event,
 			"payload": action.Payload,
@@ -984,9 +1280,6 @@ func (s *ToolService) applyHotSwitch(actions []LayoutAction, label string) (any,
 
 	appliedActions := 0
 	for _, action := range actions {
-		if err := s.requireUserApproval("ide_ui.hot_switch"); err != nil {
-			return nil, err
-		}
 		_, err := s.bridgeCall("ide_ui.hot_switch", "ui.emit_event", map[string]any{
 			"event":   action.Event,
 			"payload": action.Payload,
@@ -1036,9 +1329,6 @@ func (s *ToolService) applyLayoutSnapshot(snapshotID string) (any, error) {
 
 	appliedActions := 0
 	for _, action := range snapshot.Actions {
-		if err := s.requireUserApproval("ide_ui.apply_layout_snapshot"); err != nil {
-			return nil, err
-		}
 		_, err := s.bridgeCall("ide_ui.apply_layout_snapshot", "ui.emit_event", map[string]any{
 			"event":    action.Event,
 			"payload":  action.Payload,

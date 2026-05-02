@@ -1,4 +1,4 @@
-import { GoToDefinition, LSPGoToDefinition } from "../../wailsjs/go/main/App";
+import { GoToDefinition, LSPGoToDefinition } from "../wails/app";
 
 export interface DefinitionItem {
   path: string;

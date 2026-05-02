@@ -10,14 +10,14 @@ import {
   X,
 } from "lucide-react";
 
-import * as App from "../../wailsjs/go/main/App";
-import { depsync } from "../../wailsjs/go/models";
+import * as App from "../wails/app";
+import {
+  ConsentMode,
+  ExecuteRequest,
+  type ExecuteResult,
+  type PolicyPlan,
+} from "../../bindings/arlecchino/internal/depsync/models";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
-
-type ConsentMode =
-  | "confirm-once-per-project"
-  | "confirm-each-time"
-  | "never-auto";
 
 interface DependencyPolicyModalProps {
   isOpen: boolean;
@@ -31,17 +31,17 @@ const CONSENT_OPTIONS: {
   description: string;
 }[] = [
   {
-    value: "confirm-once-per-project",
+    value: ConsentMode.ConsentModeConfirmOncePerProject,
     label: "Once per project",
     description: "Remember approved actions for this workspace.",
   },
   {
-    value: "confirm-each-time",
+    value: ConsentMode.ConsentModeConfirmEachTime,
     label: "Every run",
     description: "Ask again before medium or high-risk actions.",
   },
   {
-    value: "never-auto",
+    value: ConsentMode.ConsentModeNeverAuto,
     label: "Manual only",
     description: "Preview the plan and wait for explicit approval.",
   },
@@ -132,14 +132,14 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
 }) => {
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const [consentMode, setConsentMode] = useState<ConsentMode>(
-    "confirm-once-per-project",
+    ConsentMode.ConsentModeConfirmOncePerProject,
   );
   const [autoApproveLowRisk, setAutoApproveLowRisk] = useState(true);
   const [persistApprovals, setPersistApprovals] = useState(true);
-  const [plan, setPlan] = useState<depsync.PolicyPlan | null>(null);
+  const [plan, setPlan] = useState<PolicyPlan | null>(null);
   const [approvedActionIds, setApprovedActionIds] = useState<string[]>([]);
   const [rememberedActionIds, setRememberedActionIds] = useState<string[]>([]);
-  const [result, setResult] = useState<depsync.ExecuteResult | null>(null);
+  const [result, setResult] = useState<ExecuteResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -182,7 +182,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
   }, [isOpen, loadPlan]);
 
   useEffect(() => {
-    if (consentMode !== "confirm-once-per-project") {
+    if (consentMode !== ConsentMode.ConsentModeConfirmOncePerProject) {
       setPersistApprovals(false);
       return;
     }
@@ -241,14 +241,15 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
     setResult(null);
     try {
       const response = await App.RunDependencyPolicySync(
-        new depsync.ExecuteRequest({
+        new ExecuteRequest({
           policy: {
             consentMode,
             autoApproveLowRisk,
           },
           approvedActionIds,
           persistApprovals:
-            consentMode === "confirm-once-per-project" && persistApprovals,
+            consentMode === ConsentMode.ConsentModeConfirmOncePerProject &&
+              persistApprovals,
           dryRun: false,
         }),
       );
@@ -262,7 +263,10 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
           : `Dependency sync finished: ${resultCount} actions ran.`;
       onNotify?.("success", summary);
 
-      if (consentMode === "confirm-once-per-project" && persistApprovals) {
+      if (
+        consentMode === ConsentMode.ConsentModeConfirmOncePerProject &&
+        persistApprovals
+      ) {
         const remembered = normalizeApprovedActionIds(
           await App.ListApprovedDependencyActions(),
         );
@@ -385,7 +389,10 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                       description="Store approved action ids for this project."
                       checked={persistApprovals}
                       onCheckedChange={setPersistApprovals}
-                      disabled={consentMode !== "confirm-once-per-project"}
+                      disabled={
+                        consentMode !==
+                        ConsentMode.ConsentModeConfirmOncePerProject
+                      }
                     />
                   </div>
                   <button

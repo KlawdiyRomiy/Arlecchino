@@ -20,14 +20,17 @@ func (a *App) InitDispatcherForProject() {
 	if projectPath != "" {
 		globalDispatcher.SetProjectPath(projectPath)
 	}
-	if a.coreEngine != nil {
-		globalDispatcher.SetIndexEngine(a.coreEngine)
+	if engine := a.activeCoreEngine(); engine != nil {
+		globalDispatcher.SetIndexEngine(engine)
 	}
 	if a.carapaceProvider != nil {
 		globalDispatcher.SetCarapaceProvider(a.carapaceProvider)
 	}
 
-	ideEmitter := dispatcher.NewIDEEventEmitter(a.ctx)
+	ideEmitter := dispatcher.NewIDEEventEmitterWithEmit(a.ctx, func(event string, data ...interface{}) error {
+		a.emitEvent(event, data...)
+		return nil
+	})
 	ideEmitter.RegisterHandlers(globalDispatcher)
 }
 

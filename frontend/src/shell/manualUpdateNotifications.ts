@@ -1,0 +1,324 @@
+import { useEffect, useRef } from "react";
+
+import { useAppNotificationStore } from "../stores/appNotificationStore";
+import { openExternalUrlWithCapability } from "./browser";
+import {
+  applyStagedAutoUpdate,
+  checkForAutoUpdate,
+  downloadAutoUpdate,
+  getAutoUpdateStatusSnapshot,
+  type AutoUpdateState,
+  type AutoUpdateStatus,
+  useAutoUpdateStatus,
+} from "./autoUpdate";
+
+export const ARLECCHINO_GITHUB_RELEASES_URL =
+  "https://github.com/KlawdiyRomiy/Arlecchino/releases";
+
+type UpdateNotificationAction = "download" | "apply" | "manual" | null;
+
+interface ManualUpdateNotificationSummary {
+  key: string;
+  title: string;
+  message: string;
+  tag?: string;
+  kind: "info" | "success" | "warning" | "error" | "progress";
+  sticky: boolean;
+  timeoutMs: number;
+  progress?: number;
+  action: UpdateNotificationAction;
+}
+
+interface ManualUpdateNotificationOptions {
+  includePassive?: boolean;
+}
+
+interface PublishAutoUpdateNotificationOptions extends ManualUpdateNotificationOptions {
+  force?: boolean;
+}
+
+const actionableStates: readonly AutoUpdateState[] = [
+  "available",
+  "downloading",
+  "staged",
+  "applying",
+  "manual-required",
+  "failed",
+];
+
+const versionLabel = (status: AutoUpdateStatus): string =>
+  status.targetVersion ??
+  status.manifest?.version ??
+  status.verification.version ??
+  "unknown";
+
+const channelLabel = (status: AutoUpdateStatus): string =>
+  status.channel ??
+  status.manifest?.channel ??
+  status.current.channel ??
+  "alpha";
+
+export const buildManualUpdateNotification = (
+  status: AutoUpdateStatus,
+  options: ManualUpdateNotificationOptions = {},
+): ManualUpdateNotificationSummary | null => {
+  const includePassive = options.includePassive === true;
+  if (includePassive && status.state === "checking") {
+    const channel = channelLabel(status);
+    return {
+      key: `manual:${status.state}:${status.updatedAt}`,
+      title: "Checking for Updates",
+      message: status.reason ?? "Checking the configured update manifest.",
+      tag: channel,
+      kind: "progress",
+      sticky: true,
+      timeoutMs: 0,
+      progress: status.progress,
+      action: null,
+    };
+  }
+
+  if (includePassive && status.state === "not-available") {
+    const channel = channelLabel(status);
+    const version =
+      status.current.version && status.current.version !== "0.0.0-dev"
+        ? status.current.version
+        : versionLabel(status);
+    return {
+      key: `manual:${status.state}:${channel}:${version}:${status.reason ?? ""}`,
+      title: "Arlecchino is up to date",
+      message:
+        status.reason ??
+        `Current version ${version} is up to date for channel ${channel}.`,
+      tag: channel,
+      kind: "success",
+      sticky: false,
+      timeoutMs: 4200,
+      action: null,
+    };
+  }
+
+  if (!actionableStates.includes(status.state)) {
+    return null;
+  }
+
+  const version = versionLabel(status);
+  const channel = channelLabel(status);
+  const notes = status.releaseNotes ?? status.manifest?.releaseNotes;
+  const messageParts = [`Version ${version}`];
+  if (status.reason) {
+    messageParts.push(status.reason);
+  }
+  if (notes) {
+    messageParts.push(notes);
+  }
+
+  switch (status.state) {
+    case "available":
+      return {
+        key: `${status.state}:${channel}:${version}`,
+        title: status.mandatory
+          ? "Required update available"
+          : "Update available",
+        message: messageParts.join("\n"),
+        tag: channel,
+        kind: status.mandatory ? "warning" : "info",
+        sticky: status.mandatory,
+        timeoutMs: status.mandatory ? 0 : 14000,
+        action: "download",
+      };
+    case "downloading":
+      return {
+        key: `${status.state}:${channel}:${version}:${status.progress}`,
+        title: "Downloading update",
+        message: messageParts.join("\n"),
+        tag: channel,
+        kind: "progress",
+        sticky: true,
+        timeoutMs: 0,
+        progress: status.progress,
+        action: null,
+      };
+    case "staged":
+      return {
+        key: `${status.state}:${channel}:${version}`,
+        title: "Update ready",
+        message: messageParts.join("\n"),
+        tag: channel,
+        kind: "success",
+        sticky: true,
+        timeoutMs: 0,
+        progress: 1,
+        action: "apply",
+      };
+    case "applying":
+      return {
+        key: `${status.state}:${channel}:${version}`,
+        title: "Installing update",
+        message: messageParts.join("\n"),
+        tag: channel,
+        kind: "progress",
+        sticky: true,
+        timeoutMs: 0,
+        progress: 1,
+        action: null,
+      };
+    case "manual-required":
+      return {
+        key: `${status.state}:${channel}:${version}:${status.reason ?? ""}`,
+        title: "Manual update required",
+        message: messageParts.join("\n"),
+        tag: channel,
+        kind: "warning",
+        sticky: true,
+        timeoutMs: 0,
+        action: "manual",
+      };
+    case "failed":
+      return {
+        key: `${status.state}:${channel}:${version}:${status.reason ?? ""}`,
+        title: "Update failed",
+        message: messageParts.join("\n"),
+        tag: channel,
+        kind: "error",
+        sticky: true,
+        timeoutMs: 0,
+        action: "manual",
+      };
+    default:
+      return null;
+  }
+};
+
+const actionForSummary = (
+  summary: ManualUpdateNotificationSummary,
+  status: AutoUpdateStatus,
+) => {
+  switch (summary.action) {
+    case "download":
+      return {
+        label: "Download update",
+        run: () => {
+          void downloadAutoUpdate();
+        },
+      };
+    case "apply":
+      return {
+        label: "Install and relaunch",
+        run: () => {
+          void applyStagedAutoUpdate();
+        },
+      };
+    case "manual":
+      return {
+        label: "Open GitHub Releases",
+        run: () => {
+          void openExternalUrlWithCapability(
+            status.manualUrl || ARLECCHINO_GITHUB_RELEASES_URL,
+          );
+        },
+      };
+    case null:
+    default:
+      return undefined;
+  }
+};
+
+let lastAutoUpdateNotificationKey: string | null = null;
+
+export const publishAutoUpdateNotification = (
+  status: AutoUpdateStatus,
+  options: PublishAutoUpdateNotificationOptions = {},
+): boolean => {
+  const summary = buildManualUpdateNotification(status, {
+    includePassive: options.includePassive,
+  });
+  if (!summary) {
+    return false;
+  }
+  if (!options.force && lastAutoUpdateNotificationKey === summary.key) {
+    return false;
+  }
+
+  lastAutoUpdateNotificationKey = summary.key;
+  useAppNotificationStore.getState().addNotification({
+    id: "auto-update",
+    kind: summary.kind,
+    title: summary.title,
+    message: summary.message,
+    source: "Updates",
+    tag: summary.tag,
+    sticky: summary.sticky,
+    timeoutMs: summary.timeoutMs,
+    progress: summary.progress,
+    action: actionForSummary(summary, status),
+  });
+  return true;
+};
+
+export async function runAutoUpdateCheckWithNotification(
+  check: () => Promise<AutoUpdateStatus> = checkForAutoUpdate,
+): Promise<AutoUpdateStatus> {
+  const current = getAutoUpdateStatusSnapshot();
+  publishAutoUpdateNotification(
+    {
+      ...current,
+      state: "checking",
+      reason: "Checking the configured update manifest.",
+      progress: 0,
+      updatedAt: Date.now(),
+    },
+    { includePassive: true, force: true },
+  );
+
+  try {
+    const status = await check();
+    const published = publishAutoUpdateNotification(status, {
+      includePassive: true,
+      force: true,
+    });
+    if (!published) {
+      publishAutoUpdateNotification(
+        {
+          ...status,
+          state: "not-available",
+          reason: status.reason ?? "No update is available.",
+          updatedAt: Date.now(),
+        },
+        { includePassive: true, force: true },
+      );
+    }
+    return status;
+  } catch (error) {
+    const failedStatus: AutoUpdateStatus = {
+      ...getAutoUpdateStatusSnapshot(),
+      state: "failed",
+      reason: error instanceof Error ? error.message : "Update check failed.",
+      updatedAt: Date.now(),
+    };
+    publishAutoUpdateNotification(failedStatus, {
+      includePassive: true,
+      force: true,
+    });
+    return failedStatus;
+  }
+}
+
+export function resetManualUpdateNotificationStateForTests(): void {
+  lastAutoUpdateNotificationKey = null;
+}
+
+export function useManualUpdateNotifications(): void {
+  const status = useAutoUpdateStatus();
+  const lastNotificationKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const summary = buildManualUpdateNotification(status);
+    if (!summary || lastNotificationKeyRef.current === summary.key) {
+      return;
+    }
+
+    lastNotificationKeyRef.current = summary.key;
+    publishAutoUpdateNotification(status);
+  }, [status]);
+}

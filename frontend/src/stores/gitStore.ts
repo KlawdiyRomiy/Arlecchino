@@ -7,9 +7,9 @@ import {
   GetGitLog,
   GetGitStatus,
   RunGitCommand,
-} from "../../wailsjs/go/main/App";
-import { main } from "../../wailsjs/go/models";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+} from "../wails/app";
+import type { GitCommitInfo } from "../../bindings/arlecchino/models";
+import { EventsOn } from "../wails/runtime";
 import {
   GitBranchInfo,
   GitFileEntry,
@@ -23,6 +23,7 @@ import {
   parseUnifiedDiffLineMarkers,
 } from "../utils/git";
 import { isSameOrChildPath } from "../utils/projectPaths";
+import { usePerformanceStore } from "./performanceStore";
 
 const fileRefreshDebounceMs = 320;
 const fallbackPollIntervalMs = 15000;
@@ -48,7 +49,7 @@ interface GitStoreState {
   stagedFiles: GitFileEntry[];
   unstagedFiles: GitFileEntry[];
   conflictedFiles: GitFileEntry[];
-  historyCommits: main.GitCommitInfo[];
+  historyCommits: GitCommitInfo[];
   historyLoading: boolean;
   historyFilePath: string;
   stashEntries: GitStashEntry[];
@@ -138,6 +139,7 @@ const readStatus = async (): Promise<string> =>
 let stopGitSync: (() => void) | null = null;
 let refreshTimer: number | null = null;
 let fallbackPollTimer: number | null = null;
+const markerRefreshTimers = new Map<string, number>();
 
 const clearGitSync = (): void => {
   if (stopGitSync) {
@@ -152,6 +154,8 @@ const clearGitSync = (): void => {
     window.clearInterval(fallbackPollTimer);
     fallbackPollTimer = null;
   }
+  markerRefreshTimers.forEach((timer) => window.clearTimeout(timer));
+  markerRefreshTimers.clear();
 };
 
 const scheduleRefresh = (get: () => GitStoreState): void => {
@@ -162,6 +166,32 @@ const scheduleRefresh = (get: () => GitStoreState): void => {
     refreshTimer = null;
     void get().refresh();
   }, fileRefreshDebounceMs);
+};
+
+const scheduleFileMarkerRefresh = (
+  get: () => GitStoreState,
+  filePath: string,
+): void => {
+  if (!filePath) {
+    return;
+  }
+
+  const mode = usePerformanceStore.getState().mode;
+  if (mode === "critical") {
+    return;
+  }
+
+  const delay = mode === "constrained" ? 1400 : 500;
+  const existingTimer = markerRefreshTimers.get(filePath);
+  if (existingTimer !== undefined) {
+    window.clearTimeout(existingTimer);
+  }
+
+  const timer = window.setTimeout(() => {
+    markerRefreshTimers.delete(filePath);
+    void get().refreshFileMarkers(filePath, true);
+  }, delay);
+  markerRefreshTimers.set(filePath, timer);
 };
 
 const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
@@ -198,12 +228,14 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
   const unsubscribeFileChanged = EventsOn("file:changed", (value) => {
     if (typeof value === "string" && shouldRefreshForPath(value)) {
       scheduleRefresh(get);
+      scheduleFileMarkerRefresh(get, value);
     }
   });
 
   const unsubscribeFileCreated = EventsOn("file:created", (value) => {
     if (typeof value === "string" && shouldRefreshForPath(value)) {
       scheduleRefresh(get);
+      scheduleFileMarkerRefresh(get, value);
     }
   });
 

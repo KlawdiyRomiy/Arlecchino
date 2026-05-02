@@ -8,7 +8,7 @@ import {
   PinCommand,
   UnpinCommand,
   InitDispatcherForProject,
-} from "../../wailsjs/go/main/App";
+} from "../wails/app";
 import { useTerminalStore } from "../stores/terminalStore";
 
 interface DispatcherItem {

@@ -10,9 +10,9 @@ interface ProjectIndicatorsProps {
   onClose: (id: string) => void;
 }
 
-const blurTransition = { duration: 0.35, ease: "easeInOut" } as const;
-const blurInitial = { opacity: 0, filter: "blur(4px)" };
-const blurAnimate = { opacity: 1, filter: "blur(0px)" };
+const fadeTransition = { duration: 0.16, ease: "easeOut" } as const;
+const fadeInitial = { opacity: 0, y: -2 };
+const fadeAnimate = { opacity: 1, y: 0 };
 
 export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
   onSwitch,
@@ -46,10 +46,10 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
           <motion.div
             key="collapsed"
             className="flex items-center gap-1.5 py-1"
-            initial={blurInitial}
-            animate={blurAnimate}
-            exit={blurInitial}
-            transition={blurTransition}
+            initial={fadeInitial}
+            animate={fadeAnimate}
+            exit={fadeInitial}
+            transition={fadeTransition}
           >
             {projects.map((p) => (
               <div
@@ -75,10 +75,10 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
           <motion.div
             key="expanded"
             className="project-indicators-expanded flex items-center gap-1"
-            initial={blurInitial}
-            animate={blurAnimate}
-            exit={blurInitial}
-            transition={blurTransition}
+            initial={fadeInitial}
+            animate={fadeAnimate}
+            exit={fadeInitial}
+            transition={fadeTransition}
             onWheel={(e) => {
               if (e.deltaY !== 0) {
                 e.currentTarget.scrollLeft += e.deltaY;
@@ -93,9 +93,9 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
                   onSwitch(p.id);
                   stopTimer();
                 }}
-                className={`group flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-2 text-[12px] transition-colors ${
+                className={`topbar-project-chip group flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-2 text-[12px] transition-colors ${
                   activeId === p.id
-                    ? "border-[var(--shell-border-strong)] bg-[var(--surface-active)] text-[var(--text-primary)] shadow-[inset_0_1px_0_var(--shell-inner-highlight)]"
+                    ? "topbar-project-chip-active border-transparent text-[var(--text-primary)]"
                     : "border-transparent text-[var(--text-muted)] hover:border-[var(--shell-border)] hover:bg-[var(--surface-active)] hover:text-[var(--text-secondary)]"
                 }`}
               >

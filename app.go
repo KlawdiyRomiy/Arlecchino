@@ -18,46 +18,77 @@ import (
 	lspinstaller "arlecchino/internal/lsp"
 	"arlecchino/internal/mcp"
 	"arlecchino/internal/plugins"
-	"arlecchino/internal/plugins/common"
-	"arlecchino/internal/plugins/django"
 	"arlecchino/internal/plugins/laravel"
-	"arlecchino/internal/plugins/rails"
 	"arlecchino/internal/project"
 	"arlecchino/internal/system"
 	"arlecchino/internal/terminal"
 	"arlecchino/internal/ui/welcome"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
+const envDisableMCPBootstrap = "ARLECCHINO_DISABLE_MCP_BOOTSTRAP"
+
 type App struct {
-	ctx                context.Context
-	cmp                *composer.ComposerManager
-	sys                *system.SystemManager
-	projectManager     *project.ProjectManager
-	welcomeScreen      *welcome.WelcomeScreen
-	coreEngine         *core.Engine
-	brain              completionBrain
-	lspManager         *lsp.Manager
-	lspInstaller       *lspinstaller.Installer
-	plugins            *plugins.Registry
-	termManager        *terminal.Manager
-	carapaceProvider   *terminal.CarapaceProvider
-	executionService   *execution.Service
-	langDetector       *brain.LangDetector
-	projectPath        string
-	pathMu             sync.RWMutex
-	projectGeneration  atomic.Uint64
-	lastRequestID      atomic.Value
-	mcpBridgeServer    *mcp.IDEBridgeServer
-	mcpBridgeMu        sync.Mutex
-	shellMenuMu        sync.Mutex
-	shellMenuShortcuts map[string][]string
-	managerMu          sync.Mutex
+	ctx                      context.Context
+	wailsApp                 *application.App
+	mainWindow               *application.WebviewWindow
+	cmp                      *composer.ComposerManager
+	sys                      *system.SystemManager
+	projectManager           *project.ProjectManager
+	welcomeScreen            *welcome.WelcomeScreen
+	coreEngine               *core.Engine
+	brain                    completionBrain
+	lspManager               *lsp.Manager
+	lspInstaller             *lspinstaller.Installer
+	plugins                  *plugins.Registry
+	termManager              *terminal.Manager
+	carapaceProvider         *terminal.CarapaceProvider
+	executionService         *execution.Service
+	langDetector             *brain.LangDetector
+	projectPath              string
+	pathMu                   sync.RWMutex
+	projectGeneration        atomic.Uint64
+	lastRequestID            atomic.Value
+	mcpBridgeServer          *mcp.IDEBridgeServer
+	mcpBridgeMu              sync.Mutex
+	backgroundShell          *BackgroundShellStatusService
+	shellMenuMu              sync.Mutex
+	shellMenuShortcuts       map[string][]string
+	openIntentMu             sync.Mutex
+	openIntentReady          bool
+	pendingOpenIntents       []map[string]any
+	managerMu                sync.Mutex
+	diagnosticsPreloadMu     sync.Mutex
+	diagnosticsPreloadCancel context.CancelFunc
+	diagnosticsPreloadSeq    uint64
+	windowLeases             *WindowLeaseRegistry
+	packagedOSNative         *PackagedOSNativeDelivery
+	autoUpdater              *AutoUpdateService
+	projectSessions          *ProjectSessionRegistry
+	projectWindowSeq         atomic.Uint64
 
 	projectCtx    context.Context
 	projectCancel context.CancelFunc
 	wg            sync.WaitGroup
+}
+
+type ProjectAccessInspection struct {
+	Path       string `json:"path"`
+	Accessible bool   `json:"accessible"`
+	Reason     string `json:"reason"`
+}
+
+func (a *App) attachWailsApplication(app *application.App) {
+	a.wailsApp = app
+}
+
+func (a *App) attachMainWindow(window *application.WebviewWindow) {
+	a.mainWindow = window
+	if a != nil && window != nil {
+		a.ensureProjectSessions().attachWindow(defaultProjectSessionID, window)
+		registerNativeFullscreenEvents(window)
+	}
 }
 
 func (a *App) setProjectPath(path string) {
@@ -67,6 +98,9 @@ func (a *App) setProjectPath(path string) {
 }
 
 func (a *App) currentProjectPath() string {
+	if session := a.activeProjectSession(); session != nil {
+		return session.currentProjectPath()
+	}
 	a.pathMu.RLock()
 	defer a.pathMu.RUnlock()
 	return a.projectPath
@@ -83,30 +117,48 @@ func NewApp() *App {
 		return &App{}
 	}
 
-	pluginRegistry := plugins.NewRegistry()
-	pluginRegistry.Register(common.New())  // Git commands (always available)
-	pluginRegistry.Register(laravel.New()) // Laravel/PHP framework
-	pluginRegistry.Register(django.New())  // Django/Python framework
-	pluginRegistry.Register(rails.New())   // Rails/Ruby framework
+	pluginRegistry := newProjectPluginRegistry()
 
 	termManager := terminal.NewManager()
 
-	return &App{
+	app := &App{
 		projectManager:   pm,
 		welcomeScreen:    welcome.NewWelcomeScreen(pm),
 		termManager:      termManager,
 		carapaceProvider: terminal.NewCarapaceProvider(),
 		plugins:          pluginRegistry,
 		executionService: execution.NewService(pluginRegistry),
+		backgroundShell:  NewBackgroundShellStatusService(),
+		windowLeases:     NewWindowLeaseRegistry(),
+		packagedOSNative: NewPackagedOSNativeDelivery(defaultPackagedOSIntegrationOptions()),
+		autoUpdater:      NewAutoUpdateService(),
 	}
+	app.projectSessions = NewProjectSessionRegistry()
+	app.projectSessions.register(defaultProjectSessionFromApp(app))
+	return app
 }
+
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
+	a.startup(ctx)
+	a.startPackagedOSNativeLiveSmokeIfConfigured()
+	a.startWindowLeaseLiveSmokeIfConfigured()
+	return nil
+}
+
+func (a *App) ServiceShutdown() error {
+	a.shutdown(a.ctx)
+	return nil
+}
+
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.startOpenIntentBridge()
 	a.startMCPBridge()
 	a.ensureMCPConfigs()
 
 	installer, err := lspinstaller.NewInstaller(func(progress lspinstaller.InstallProgress) {
-		runtime.EventsEmit(ctx, "lsp:install:progress", progress)
+		a.recordBackgroundLSPInstallProgress(progress)
+		a.emitEvent("lsp:install:progress", progress)
 	})
 	if err == nil {
 		a.lspInstaller = installer
@@ -125,6 +177,10 @@ func (a *App) shutdown(_ context.Context) {
 }
 
 func (a *App) ensureMCPConfigs() {
+	if envFlagEnabled(envDisableMCPBootstrap) {
+		return
+	}
+
 	go func() {
 		exe, err := os.Executable()
 		if err != nil {
@@ -138,28 +194,96 @@ func (a *App) ensureMCPConfigs() {
 	}()
 }
 
+func envFlagEnabled(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello, %s. Let's create something!", name)
 }
 
 func (a *App) SelectDirectory(title string) (string, error) {
-	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: title,
+	if a == nil || a.wailsApp == nil {
+		return "", fmt.Errorf("application is not initialized")
+	}
+	return a.wailsApp.Dialog.OpenFile().
+		SetTitle(title).
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		PromptForSingleSelection()
+}
+
+func (a *App) InspectProjectAccess(path string) ProjectAccessInspection {
+	inspection := ProjectAccessInspection{
+		Path:       strings.TrimSpace(path),
+		Accessible: true,
+	}
+	if err := validateProjectOpenAccess(path); err != nil {
+		inspection.Accessible = false
+		inspection.Reason = err.Error()
+	}
+	return inspection
+}
+
+func (a *App) initProjectLSPManagerForSession(session *ProjectRuntimeSession, path string, projectGeneration uint64, installer *lspinstaller.Installer) *lsp.Manager {
+	manager := lsp.NewManager(path)
+	manager.SetDiagnosticsCallback(func(language, filePath string, diagnostics []lsp.Diagnostic) {
+		if session != nil && session.projectGeneration.Load() != projectGeneration {
+			return
+		}
+		sessionID := ""
+		if session != nil {
+			sessionID = session.ID
+		}
+		a.emitEvent(
+			"lsp:diagnostics",
+			newLSPDiagnosticsEventForSession(path, projectGeneration, sessionID, language, filePath, diagnostics),
+		)
 	})
-	return path, err
+
+	defaultConfigs := lsp.DefaultConfigs(path)
+	installerConfigs := lsp.ConfigsFromInstaller(path, installer)
+	for _, cfg := range lsp.MergeConfigs(defaultConfigs, installerConfigs) {
+		manager.RegisterServer(cfg)
+	}
+
+	if session != nil {
+		session.lspManager = manager
+		a.syncDefaultProjectSession(session)
+	} else {
+		a.lspManager = manager
+	}
+	return manager
 }
 
 func (a *App) OpenProject(path string) error {
-	if a.currentProjectPath() != "" {
-		_ = a.closeProject(false)
+	return a.openProjectInSession(a.activeProjectSession(), path)
+}
+
+func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) error {
+	if session == nil {
+		session = defaultProjectSessionFromApp(a)
+	}
+	if err := validateProjectOpenAccess(path); err != nil {
+		return err
 	}
 
-	projectGeneration := a.projectGeneration.Add(1)
-	a.setProjectPath(path)
-	a.projectCtx, a.projectCancel = context.WithCancel(context.Background())
+	if session.currentProjectPath() != "" {
+		_ = a.closeProjectInSession(session, false)
+	}
 
-	if a.projectManager != nil {
-		err := a.projectManager.OpenProject(path)
+	projectGeneration := session.projectGeneration.Add(1)
+	session.setProjectPath(path)
+	session.projectCtx, session.projectCancel = context.WithCancel(context.Background())
+	a.syncDefaultProjectSession(session)
+
+	if session.projectManager != nil {
+		err := session.projectManager.OpenProject(path)
 		if err != nil {
 			return err
 		}
@@ -167,27 +291,29 @@ func (a *App) OpenProject(path string) error {
 
 	var lspManager *lsp.Manager
 	lspInstaller := a.lspInstaller
-	pluginRegistry := a.plugins
+	pluginRegistry := session.plugins
+	lspManager = a.initProjectLSPManagerForSession(session, path, projectGeneration, lspInstaller)
 
 	// Initialize core engine and prediction brain
-	coreEngine, err := core.NewEngine(core.EngineConfig{
+	coreEngine, err := newCoreEngine(core.EngineConfig{
 		ProjectID:   path,
 		ProjectRoot: path,
 		DBPath:      filepath.Join(path, ".arlecchino", "brain.db"),
-		Workers:     4,
+		Workers:     2,
 	})
 	if err != nil {
 		a.logWarning(fmt.Sprintf("core engine init failed: %v", err))
 	} else {
-		a.coreEngine = coreEngine
-		a.coreEngine.Start()
+		session.coreEngine = coreEngine
+		session.coreEngine.Start()
+		a.syncDefaultProjectSession(session)
 
 		// Register language adapters for code indexing
 		// Detect framework via plugin system
 		framework := ""
 		version := ""
-		if a.plugins != nil {
-			framework = a.plugins.DetectFramework(path)
+		if session.plugins != nil {
+			framework = session.plugins.DetectFramework(path)
 			if framework == "laravel" {
 				if v, err := laravel.GetLaravelVersion(path); err == nil {
 					version = v
@@ -195,68 +321,64 @@ func (a *App) OpenProject(path string) error {
 			}
 		}
 		// Update project with detected framework
-		if a.projectManager != nil {
-			a.projectManager.UpdateFramework(framework, version)
+		if session.projectManager != nil {
+			session.projectManager.UpdateFramework(framework, version)
 		}
 		for _, adapter := range adapters.AllAdapters(framework) {
-			a.coreEngine.RegisterAdapter(adapter)
+			session.coreEngine.RegisterAdapter(adapter)
 		}
 
 		// Listen for indexing lifecycle events
-		a.coreEngine.OnIndexing(func(evt core.IndexingEvent) {
+		session.coreEngine.OnIndexing(func(evt core.IndexingEvent) {
+			a.recordBackgroundIndexerEvent(evt, path, projectGeneration)
+			schedulerStats := coreEngine.SchedulerStats()
+			engineStats := coreEngine.Stats()
+			payload := map[string]any{
+				"current":               evt.Current,
+				"total":                 evt.Total,
+				"queueDepth":            schedulerStats.Pending,
+				"projectFileCount":      engineStats.TotalFiles,
+				"mode":                  string(schedulerStats.Mode),
+				"backgroundDelayMs":     schedulerStats.BackgroundJobDelayMs,
+				"configuredWorkerCount": schedulerStats.Workers,
+				"projectPath":           path,
+				"sessionId":             session.ID,
+			}
 			switch evt.Type {
 			case core.IndexingStarted:
-				a.emitEvent("indexer:started", map[string]any{"total": evt.Total})
+				a.emitEvent("indexer:started", payload)
 			case core.IndexingProgress:
-				a.emitEvent("indexer:progress", map[string]any{"current": evt.Current, "total": evt.Total})
+				a.emitEvent("indexer:progress", payload)
 			case core.IndexingCompleted:
-				a.emitEvent("indexer:completed")
+				a.emitEvent("indexer:completed", payload)
 			}
 		})
-
-		// Initialize LSP manager for all languages
-		a.lspManager = lsp.NewManager(path)
-		a.lspManager.SetDiagnosticsCallback(func(language, filePath string, diagnostics []lsp.Diagnostic) {
-			if a.projectGeneration.Load() != projectGeneration {
-				return
-			}
-			a.emitEvent(
-				"lsp:diagnostics",
-				newLSPDiagnosticsEvent(path, projectGeneration, language, filePath, diagnostics),
-			)
-		})
-		lspManager = a.lspManager
-
-		defaultConfigs := lsp.DefaultConfigs(path)
-		installerConfigs := lsp.ConfigsFromInstaller(path, lspInstaller)
-		for _, cfg := range lsp.MergeConfigs(defaultConfigs, installerConfigs) {
-			lspManager.RegisterServer(cfg)
-		}
 
 		// Initialize prediction brain
-		a.brain = brain.NewPredictionBrain(coreEngine, brain.BrainConfig{
+		session.brain = brain.NewPredictionBrain(coreEngine, brain.BrainConfig{
 			MaxSuggestions:    50,
 			MinConfidence:     0.1,
 			EnableLSP:         true,
 			EnableVirtual:     true,
 			EnableSpeculative: true,
 		})
-		a.brain.SetLSPManager(a.lspManager)
+		session.brain.SetLSPManager(lspManager)
+		a.syncDefaultProjectSession(session)
 
-		projectCtx := a.projectCtx
-		a.wg.Add(1)
+		projectCtx := session.projectCtx
+		session.wg.Add(1)
 		go func() {
-			defer a.wg.Done()
+			defer session.wg.Done()
 			select {
 			case <-projectCtx.Done():
 				return
 			default:
-				a.coreEngine.IndexProject()
+				coreEngine.IndexProject()
 			}
 		}()
 	}
 
-	a.startDeferredProjectWarmup(
+	a.startDeferredProjectWarmupForSession(session,
 		projectWarmupStep{
 			name: "agent guide",
 			run: func(context.Context) error {
@@ -289,31 +411,61 @@ func (a *App) OpenProject(path string) error {
 				default:
 				}
 
-				a.lspPreloadProjectDiagnostics(path, projectGeneration)
+				a.lspPreloadProjectDiagnosticsForSession(session, path, projectGeneration)
 				return nil
 			},
 		},
 	)
 
-	a.emitEvent("lsp:ready", map[string]interface{}{
-		"message":     "LSP servers are starting...",
-		"projectPath": path,
-		"generation":  projectGeneration,
-	})
-	a.startProjectFilesystemWatcher(path, projectGeneration)
+	if lspManager != nil {
+		a.emitEvent("lsp:ready", map[string]interface{}{
+			"message":     "LSP servers are starting...",
+			"projectPath": path,
+			"generation":  projectGeneration,
+			"sessionId":   session.ID,
+		})
+		a.emitLSPDiagnosticsStatusForSession(session.ID, path, projectGeneration, "", "", "ready", "LSP diagnostics manager is ready")
+	} else {
+		a.emitLSPDiagnosticsStatusForSession(session.ID, path, projectGeneration, "", "", "unavailable", "LSP diagnostics manager is not available")
+	}
+	a.startProjectFilesystemWatcherForSession(session, path, projectGeneration)
+
+	return nil
+}
+
+func validateProjectOpenAccess(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("project path is required")
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("project path is not accessible: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("project path is not a directory: %s", path)
+	}
+	if _, err := os.ReadDir(path); err != nil {
+		return fmt.Errorf("project directory is not readable: %w", err)
+	}
 
 	return nil
 }
 
 func (a *App) startDeferredProjectWarmup(steps ...projectWarmupStep) {
-	if len(steps) == 0 || a.projectCtx == nil {
+	a.startDeferredProjectWarmupForSession(a.activeProjectSession(), steps...)
+}
+
+func (a *App) startDeferredProjectWarmupForSession(session *ProjectRuntimeSession, steps ...projectWarmupStep) {
+	if session == nil || len(steps) == 0 || session.projectCtx == nil {
 		return
 	}
 
-	ctx := a.projectCtx
-	a.wg.Add(1)
+	ctx := session.projectCtx
+	session.wg.Add(1)
 	go func() {
-		defer a.wg.Done()
+		defer session.wg.Done()
 
 		for _, step := range steps {
 			select {
@@ -330,59 +482,72 @@ func (a *App) startDeferredProjectWarmup(steps ...projectWarmupStep) {
 }
 
 func (a *App) CloseProject() error {
-	return a.closeProject(true)
+	return a.closeProjectInSession(a.activeProjectSession(), true)
 }
 
 func (a *App) closeProject(closeTerminals bool) error {
-	if a.projectCancel != nil {
-		a.projectCancel()
+	return a.closeProjectInSession(a.activeProjectSession(), closeTerminals)
+}
+
+func (a *App) closeProjectInSession(session *ProjectRuntimeSession, closeTerminals bool) error {
+	if session == nil {
+		session = defaultProjectSessionFromApp(a)
+	}
+	projectPath := session.currentProjectPath()
+	if session.projectCancel != nil {
+		session.projectCancel()
+	}
+	a.cancelDiagnosticsPreloadForSession(session)
+
+	session.wg.Wait()
+
+	if snapshot, changed := a.backgroundShell.CancelJobsForProject(projectPath, "Project closed."); changed {
+		a.emitBackgroundShellStatusSnapshot(snapshot)
 	}
 
-	a.wg.Wait()
-
-	if closeTerminals && a.termManager != nil {
-		a.termManager.CloseAll()
+	if closeTerminals && session.termManager != nil {
+		session.termManager.CloseAll()
 	}
 
-	if a.plugins != nil {
-		a.plugins.CloseAll()
+	if session.plugins != nil {
+		session.plugins.CloseAll()
 	}
 
-	if a.brain != nil {
-		a.brain.Close()
-		a.brain = nil
+	if session.brain != nil {
+		session.brain.Close()
+		session.brain = nil
 	}
 
-	if a.lspManager != nil {
-		a.lspManager.StopAll()
-		a.lspManager = nil
+	if session.lspManager != nil {
+		session.lspManager.StopAll()
+		session.lspManager = nil
 	}
 
-	if a.coreEngine != nil {
-		a.coreEngine.Stop()
-		a.coreEngine = nil
+	if session.coreEngine != nil {
+		session.coreEngine.Stop()
+		session.coreEngine = nil
 	}
 
-	a.managerMu.Lock()
-	a.cmp = nil
-	a.sys = nil
-	a.managerMu.Unlock()
-	a.setProjectPath("")
-	a.projectCtx = nil
-	a.projectCancel = nil
+	session.cmp = nil
+	session.sys = nil
+	session.setProjectPath("")
+	session.projectCtx = nil
+	session.projectCancel = nil
+	a.syncDefaultProjectSession(session)
 
-	if a.projectManager != nil {
-		return a.projectManager.CloseProject()
+	if session.projectManager != nil {
+		return session.projectManager.CloseProject()
 	}
 
 	return nil
 }
 
 func (a *App) GetCurrentProjectID() string {
-	if a.projectManager == nil || a.projectManager.CurrentProject == nil {
+	manager := a.activeProjectManager()
+	if manager == nil || manager.CurrentProject == nil {
 		return ""
 	}
-	return fmt.Sprintf("%d", a.projectManager.CurrentProject.ID)
+	return fmt.Sprintf("%d", manager.CurrentProject.ID)
 }
 
 func (a *App) GetCurrentWorkDir() string {
@@ -413,11 +578,12 @@ func (a *App) GetCurrentProjectPath() string {
 }
 
 func (a *App) GetCurrentProjectFramework() string {
-	if a.projectManager == nil || a.projectManager.CurrentProject == nil {
+	manager := a.activeProjectManager()
+	if manager == nil || manager.CurrentProject == nil {
 		return ""
 	}
 
-	return a.projectManager.CurrentProject.Framework
+	return manager.CurrentProject.Framework
 }
 
 func (a *App) CreateNewProject(name string, directory string, framework string) (string, error) {
@@ -445,11 +611,12 @@ func (a *App) CreateNewProject(name string, directory string, framework string) 
 		return projectPath, nil
 	}
 
-	if a.plugins == nil {
+	pluginRegistry := a.activePluginRegistry()
+	if pluginRegistry == nil {
 		return "", fmt.Errorf("plugin system not initialized")
 	}
 
-	creator := a.plugins.GetProjectCreator(framework)
+	creator := pluginRegistry.GetProjectCreator(framework)
 	if creator == nil {
 		return "", fmt.Errorf("no project creator available for framework: %s", framework)
 	}
@@ -459,18 +626,20 @@ func (a *App) CreateNewProject(name string, directory string, framework string) 
 
 // GetLSPStatus returns health status of all LSP servers
 func (a *App) GetLSPStatus() []lsp.ServerStatus {
-	if a.lspManager == nil {
+	manager := a.activeLSPManager()
+	if manager == nil {
 		return nil
 	}
-	return a.lspManager.HealthCheck()
+	return manager.HealthCheck()
 }
 
 // RestartLSPServer force-restarts a specific LSP server.
 func (a *App) RestartLSPServer(language string) (bool, error) {
-	if a.lspManager == nil {
+	manager := a.activeLSPManager()
+	if manager == nil {
 		return false, nil
 	}
-	return a.lspManager.ForceRestart(language)
+	return manager.ForceRestart(language)
 }
 
 // GetDevToolsStatus returns installation status of development tools (PHP, Go, Node, etc.)

@@ -19,6 +19,7 @@ func (r *ActionRegistry) registerDefaults() {
 	defaults := []IDEAction{
 		{Name: "Open Command Palette", Description: "Open the project command and search surface", Icon: "search", Handler: "panel.search", Keybinding: "cmd+f"},
 		{Name: "Open Settings", Description: "Open workspace settings", Icon: "settings", Handler: "app.settings", Keybinding: "cmd+,"},
+		{Name: "Toggle Zen Mode", Description: "Hide chrome and snapped panels until their edge is hovered", Icon: "focus", Handler: "shortcut.zenMode.toggle", Keybinding: "cmd+shift+."},
 		{Name: "Toggle Window Full Screen", Description: "Enter or exit macOS full screen", Icon: "maximize", Handler: "shortcut.window.toggleFullscreen", Keybinding: "fn+f"},
 		{Name: "Copy Project Path", Description: "Copy the active project path", Icon: "copy", Handler: "shortcut.project.copyPath", Keybinding: "cmd+shift+c"},
 		{Name: "Open Project", Description: "Open another project folder", Icon: "folder-open", Handler: "shortcut.project.open", Keybinding: "cmd+o"},

@@ -103,6 +103,28 @@ func TestSaveEdges_UsesBatchWrite(t *testing.T) {
 	}
 }
 
+func TestSaveFiles_UsesBatchWrite(t *testing.T) {
+	s := newTestStore(t)
+	counter := &sqlCounter{}
+	injectCounter(s, counter)
+
+	files := []File{
+		{Path: "/tmp/a.go", Language: "go", Kind: FileKindSource, Size: 12},
+		{Path: "/tmp/b.md", Kind: FileKindText, Size: 8},
+		{Path: "/tmp/c.png", Kind: FileKindAsset, Size: 4},
+	}
+
+	counter.reset()
+	if err := s.SaveFiles(files); err != nil {
+		t.Fatalf("SaveFiles: %v", err)
+	}
+
+	got := counter.count()
+	if got != 1 {
+		t.Errorf("SaveFiles(%d files) issued %d write statements, want 1 (batch)", len(files), got)
+	}
+}
+
 func TestSaveSymbols_ExtraJSONRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 

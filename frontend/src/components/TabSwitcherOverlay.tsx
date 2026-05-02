@@ -52,11 +52,20 @@ export const TabSwitcherOverlay: React.FC<TabSwitcherOverlayProps> = ({
   }, [selectedTabId]);
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center px-6">
-      <div className="absolute inset-0 bg-black/42" />
+    <div
+      className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center px-6"
+      data-testid="tab-switcher-overlay"
+    >
+      <div
+        className="absolute inset-0 bg-[color-mix(in_srgb,var(--surface-overlay)_70%,transparent)]"
+        data-testid="tab-switcher-backdrop"
+      />
 
       <div className="relative w-full max-w-[680px]">
-        <div className="overflow-hidden rounded-[16px] border border-[var(--border-default)] bg-[color:rgba(10,10,10,0.96)] shadow-[0_28px_72px_rgba(0,0,0,0.58)] backdrop-blur-[6px]">
+        <div
+          className="overflow-hidden rounded-[16px] border border-[var(--shell-border-strong)] bg-[color-mix(in_srgb,var(--surface-overlay)_96%,transparent)] shadow-[var(--shadow-overlay)] backdrop-blur-[6px]"
+          data-testid="tab-switcher-panel"
+        >
           <div ref={listRef} className="max-h-[420px] overflow-y-auto p-2">
             {tabs.map((tab) => {
               const isSelected = tab.id === selectedTabId;
@@ -68,7 +77,7 @@ export const TabSwitcherOverlay: React.FC<TabSwitcherOverlayProps> = ({
                   className={[
                     "flex min-h-[56px] scroll-mt-2 items-center gap-3 rounded-[12px] px-4 py-3 transition-all duration-150",
                     isSelected
-                      ? "bg-[var(--bg-hover)] text-[var(--text-primary)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.04)]"
+                      ? "bg-[var(--surface-hover)] text-[var(--text-primary)] shadow-[inset_0_0_0_1px_var(--shell-inner-highlight)]"
                       : "text-[var(--text-secondary)]",
                   ].join(" ")}
                 >
@@ -91,8 +100,8 @@ export const TabSwitcherOverlay: React.FC<TabSwitcherOverlayProps> = ({
                       className={[
                         "shrink-0 rounded-[999px] border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em]",
                         isSelected
-                          ? "border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.04)] text-[var(--text-primary)]"
-                          : "border-[var(--border-subtle)] bg-[rgba(255,255,255,0.02)] text-[var(--text-secondary)]",
+                          ? "border-[var(--border-strong)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                          : "border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)]",
                       ].join(" ")}
                     >
                       Current

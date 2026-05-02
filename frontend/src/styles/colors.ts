@@ -219,8 +219,8 @@ export const zIndex = {
   floatingPanel: 20,
   dropdown: 30,
   modal: 40,
-  notification: 50,
   tooltip: 60,
+  notification: 1000,
 } as const;
 
 export type Theme = "light" | "dark";

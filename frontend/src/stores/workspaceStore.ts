@@ -1,4 +1,4 @@
-import * as AppFunctions from "../../wailsjs/go/main/App";
+import * as AppFunctions from "../wails/app";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
@@ -6,6 +6,10 @@ import {
   preloadProjectDiagnostics,
   resetProjectBoundStores,
 } from "../utils/projectBoundState";
+import {
+  readProjectSessionRoutePayload,
+  workspaceStorageNameForProjectSession,
+} from "../shell/projectSessionRoute";
 import { useTerminalStore } from "./terminalStore";
 
 export interface WorkspaceProject {
@@ -13,6 +17,12 @@ export interface WorkspaceProject {
   path: string;
   name: string;
   openedAt: number;
+}
+
+interface ProjectAccessInspection {
+  path: string;
+  accessible: boolean;
+  reason: string;
 }
 
 interface WorkspaceState {
@@ -41,6 +51,31 @@ interface WorkspaceState {
 }
 
 const getProjectName = (path: string) => path.split("/").pop() || path;
+
+const inspectProjectAccess = async (
+  path: string,
+): Promise<ProjectAccessInspection> => {
+  try {
+    const inspection = (await AppFunctions.InspectProjectAccess(
+      path,
+    )) as ProjectAccessInspection;
+    if (inspection && typeof inspection.accessible === "boolean") {
+      return inspection;
+    }
+  } catch {
+    return {
+      path,
+      accessible: true,
+      reason: "",
+    };
+  }
+
+  return {
+    path,
+    accessible: true,
+    reason: "",
+  };
+};
 
 export const getProjectPathById = (
   projects: WorkspaceProject[],
@@ -107,8 +142,12 @@ export const getAdjacentProject = (
 };
 
 let workspaceInitPromise: Promise<void> | null = null;
+const projectSessionRoutePayload = readProjectSessionRoutePayload();
+const workspaceStorageName = workspaceStorageNameForProjectSession(
+  projectSessionRoutePayload,
+);
 
-const createWorkspaceStore = () =>
+const createWorkspaceStore = (storageName: string) =>
   create<WorkspaceState>()(
     persist(
       (set, get) => ({
@@ -297,7 +336,7 @@ const createWorkspaceStore = () =>
         clearProjectSwitchBlockers: () => set({ uiBlockers: [] }),
       }),
       {
-        name: "workspace-storage",
+        name: storageName,
         partialize: (state) => ({
           projects: state.projects,
           activeId: state.activeId,
@@ -310,12 +349,55 @@ const createWorkspaceStore = () =>
 type WorkspaceStoreApi = ReturnType<typeof createWorkspaceStore>;
 
 const workspaceStoreGlobal = globalThis as typeof globalThis & {
-  __arlecchinoWorkspaceStore?: WorkspaceStoreApi;
+  __arlecchinoWorkspaceStores?: Record<string, WorkspaceStoreApi>;
 };
+const workspaceStores =
+  workspaceStoreGlobal.__arlecchinoWorkspaceStores ??
+  (workspaceStoreGlobal.__arlecchinoWorkspaceStores = {});
 
 export const useWorkspaceStore =
-  workspaceStoreGlobal.__arlecchinoWorkspaceStore ??
-  (workspaceStoreGlobal.__arlecchinoWorkspaceStore = createWorkspaceStore());
+  workspaceStores[workspaceStorageName] ??
+  (workspaceStores[workspaceStorageName] =
+    createWorkspaceStore(workspaceStorageName));
+
+const resetWorkspaceProjectSessionState = () => {
+  useWorkspaceStore.setState({
+    projects: [],
+    activeId: null,
+    activeFramework: null,
+    pendingId: null,
+    switchSourceId: null,
+    switchDirection: 1,
+    uiBlockers: [],
+  });
+};
+
+const initializeProjectSessionWorkspace = async (sessionId: string) => {
+  await Promise.resolve(useWorkspaceStore.persist.rehydrate());
+  resetWorkspaceProjectSessionState();
+
+  try {
+    const session = await AppFunctions.GetProjectWindowSession(sessionId);
+    const projectPath = session.projectPath;
+
+    resetProjectBoundStores();
+    activateProjectScope(projectPath);
+    useWorkspaceStore.getState().addProject(projectPath);
+    useTerminalStore.getState().setActiveProject(projectPath);
+    useWorkspaceStore
+      .getState()
+      .setActiveFramework(
+        (await AppFunctions.GetCurrentProjectFramework()) || null,
+      );
+    void preloadProjectDiagnostics(projectPath);
+  } catch (error) {
+    useTerminalStore.getState().setActiveProject(null);
+    resetProjectBoundStores();
+    useWorkspaceStore.getState().clearActiveProject();
+    useWorkspaceStore.getState().setActiveFramework(null);
+    console.error("Error restoring project session window:", error);
+  }
+};
 
 export const initializeWorkspace = async () => {
   if (workspaceInitPromise) {
@@ -328,6 +410,13 @@ export const initializeWorkspace = async () => {
   }
 
   workspaceInitPromise = (async () => {
+    if (projectSessionRoutePayload) {
+      await initializeProjectSessionWorkspace(
+        projectSessionRoutePayload.sessionId,
+      );
+      return;
+    }
+
     await Promise.resolve(useWorkspaceStore.persist.rehydrate());
 
     const { activeId, projects } = useWorkspaceStore.getState();
@@ -336,31 +425,52 @@ export const initializeWorkspace = async () => {
       return;
     }
 
-    const project = projects.find((item) => item.id === activeId);
-    if (!project) {
+    const activeProject = projects.find((item) => item.id === activeId);
+    if (!activeProject) {
       useTerminalStore.getState().setActiveProject(null);
       useWorkspaceStore.getState().clearActiveProject();
       return;
     }
 
-    try {
-      resetProjectBoundStores();
-      activateProjectScope(project.path);
-      await AppFunctions.OpenProject(project.path);
-      useTerminalStore.getState().setActiveProject(project.path);
-      useWorkspaceStore
-        .getState()
-        .setActiveFramework(
-          (await AppFunctions.GetCurrentProjectFramework()) || null,
-        );
-      await preloadProjectDiagnostics(project.path);
-    } catch (error) {
-      useTerminalStore.getState().setActiveProject(null);
-      resetProjectBoundStores();
-      console.error("Error restoring workspace:", error);
-      useWorkspaceStore.getState().removeProject(activeId);
-      useWorkspaceStore.getState().setActiveFramework(null);
+    const restoreCandidates = [
+      activeProject,
+      ...projects.filter((project) => project.id !== activeId),
+    ];
+
+    for (const project of restoreCandidates) {
+      const access = await inspectProjectAccess(project.path);
+      if (!access.accessible) {
+        console.warn("Skipping inaccessible project:", access.reason);
+        useWorkspaceStore.getState().removeProject(project.id);
+        continue;
+      }
+
+      try {
+        resetProjectBoundStores();
+        activateProjectScope(project.path);
+        await AppFunctions.OpenProject(project.path);
+        useWorkspaceStore.getState().addProject(project.path);
+        useTerminalStore.getState().setActiveProject(project.path);
+        useWorkspaceStore
+          .getState()
+          .setActiveFramework(
+            (await AppFunctions.GetCurrentProjectFramework()) || null,
+          );
+        void preloadProjectDiagnostics(project.path);
+        return;
+      } catch (error) {
+        useTerminalStore.getState().setActiveProject(null);
+        resetProjectBoundStores();
+        console.error("Error restoring workspace:", error);
+        useWorkspaceStore.getState().removeProject(project.id);
+        useWorkspaceStore.getState().setActiveFramework(null);
+      }
     }
+
+    useTerminalStore.getState().setActiveProject(null);
+    resetProjectBoundStores();
+    useWorkspaceStore.getState().clearActiveProject();
+    useWorkspaceStore.getState().setActiveFramework(null);
   })().finally(() => {
     useWorkspaceStore.getState().setReady(true);
     workspaceInitPromise = null;

@@ -16,8 +16,8 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
-import * as App from "../../wailsjs/go/main/App";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import * as App from "../wails/app";
+import { EventsOn } from "../wails/runtime";
 import {
   useProjectEntryActions,
   type ProjectEntryActionTarget,
@@ -266,20 +266,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const handlePerspectiveFileSelect = async (path: string, line?: number) => {
     const requestId = latestFileOpenRequestRef.current + 1;
     latestFileOpenRequestRef.current = requestId;
-    const readPromise = App.ReadFile(path);
     closePerspective();
     void revealPath(path);
-    try {
-      const content = await readPromise;
-      if (latestFileOpenRequestRef.current !== requestId) {
-        return;
-      }
-      onFileOpenRef.current?.(path, content, path.split("/").pop() || "", line);
-    } catch (error) {
-      if (latestFileOpenRequestRef.current === requestId) {
-        console.error("Error reading file:", error);
-      }
+    if (latestFileOpenRequestRef.current !== requestId) {
+      return;
     }
+    onFileOpenRef.current?.(path, "", path.split("/").pop() || "", line);
   };
 
   const handleFileOpenInPanel = async (path: string, name: string) => {
@@ -603,11 +595,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const content = await App.ReadFile(createdPath);
         if (latestFileOpenRequestRef.current !== requestId) {
           return;
         }
-        onFileOpenRef.current?.(createdPath, content, fileName);
+        onFileOpenRef.current?.(createdPath, "", fileName);
         return;
       } catch (error) {
         if (latestFileOpenRequestRef.current !== requestId) {
@@ -961,8 +952,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       png: "IMG",
       jpg: "IMG",
       jpeg: "IMG",
+      jpe: "IMG",
+      jfif: "IMG",
       gif: "IMG",
       webp: "IMG",
+      bmp: "IMG",
+      avif: "IMG",
       ico: "ICO",
     };
 
@@ -987,7 +982,20 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     if (!ext) return theme.textMuted;
 
     // Images
-    if (["png", "jpg", "jpeg", "gif", "webp", "ico", "bmp"].includes(ext)) {
+    if (
+      [
+        "png",
+        "jpg",
+        "jpeg",
+        "jpe",
+        "jfif",
+        "gif",
+        "webp",
+        "ico",
+        "bmp",
+        "avif",
+      ].includes(ext)
+    ) {
       return colors.fileType.image;
     }
 
@@ -1027,7 +1035,18 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     const ext = fileName.split(".").pop()?.toLowerCase();
     return ext
       ? ext in extColorMap ||
-          ["png", "jpg", "jpeg", "gif", "webp", "ico", "bmp"].includes(ext)
+          [
+            "png",
+            "jpg",
+            "jpeg",
+            "jpe",
+            "jfif",
+            "gif",
+            "webp",
+            "ico",
+            "bmp",
+            "avif",
+          ].includes(ext)
       : false;
   };
 
@@ -1071,11 +1090,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       setHighlightedPath(node.path);
 
       try {
-        const content = await App.ReadFile(node.path);
         if (latestFileOpenRequestRef.current !== requestId) {
           return;
         }
-        onFileOpenRef.current?.(node.path, content, node.name);
+        onFileOpenRef.current?.(node.path, "", node.name);
       } catch (error) {
         if (latestFileOpenRequestRef.current === requestId) {
           console.error("Error reading file:", error);

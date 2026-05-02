@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Copy, ExternalLink, X } from "lucide-react";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
+import { EditorFileLoadingView } from "./EditorFileLoadingView";
 import { EditorTabs, Tab } from "./EditorTabs";
 import { TabSwitcherOverlay } from "./TabSwitcherOverlay";
 import QuickLookModal from "./QuickLookModal";
-import * as AppFunctions from "../../wailsjs/go/main/App";
-import { EventsOn } from "../../wailsjs/runtime/runtime";
+import { ImageEditorPreview } from "./ImageEditorPreview";
+import * as AppFunctions from "../wails/app";
+import { EventsOn } from "../wails/runtime";
 import { useProjectEntryActions } from "../contexts/ProjectEntryActionsContext";
 import { shortcuts } from "../utils/keyboard";
 import {
@@ -14,40 +16,49 @@ import {
   unblockProjectSwitch,
 } from "../utils/priorityUI";
 import { makeEditorTabId, useEditorStore } from "../stores/editorStore";
+import { useAppNotificationStore } from "../stores/appNotificationStore";
 import { editorCanvasBackground } from "../utils/codeMirrorTheme";
 import { type ContextActionMenuItem } from "./ui/ContextActionMenu";
+import { GuardedEditorPreview } from "./GuardedEditorPreview";
 import {
   getProjectPathBasename,
   isSameOrChildPath,
   normalizeProjectPath,
   remapProjectPathPrefix,
 } from "../utils/projectPaths";
+import {
+  createEditorFileLoadingLoad,
+  createEditableEditorFileLoad,
+  loadEditorFile,
+  type EditorFileLoadState,
+  type EditorFileOpenPayload,
+} from "../utils/editorFileLoader";
+import { usePerformanceStore } from "../stores/performanceStore";
+import type { MarkdownPreviewSource } from "./layout/MainLayout.types";
 
 type SplitDirection = "horizontal" | "vertical" | null;
 
-type EditorFileOpenHandler = (
-  path: string,
-  content: string,
-  name: string,
-  line?: number,
-) => void;
+type EditorFileOpenHandler = (payload: EditorFileOpenPayload) => void;
 
 interface ProjectScreenProps {
   projectPath: string;
-  fileToOpen?: {
-    path: string;
-    content: string;
-    name: string;
-    line?: number;
-  } | null;
+  fileToOpen?: EditorFileOpenPayload | null;
   onFileOpened?: () => void;
   onToggleProblems?: () => void;
+  markdownPreviewOpen?: boolean;
+  onToggleMarkdownPreview?: () => void;
+  onMarkdownPreviewSourceChange?: (
+    source: MarkdownPreviewSource | null,
+  ) => void;
   onPerspectiveOpen?: () => void;
   onPerspectiveClose?: () => void;
   onEditorFileOpenReady?: (handler: EditorFileOpenHandler | null) => void;
 }
 
 const AUTO_SAVE_DELAY = 1500;
+
+const isMarkdownPath = (path: string): boolean =>
+  /\.(md|mdx|markdown|mdown|mkdn)$/i.test(path);
 
 const getWrappedTabIndex = (
   currentIndex: number,
@@ -77,6 +88,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   fileToOpen,
   onFileOpened,
   onToggleProblems,
+  markdownPreviewOpen = false,
+  onToggleMarkdownPreview,
+  onMarkdownPreviewSourceChange,
   onPerspectiveOpen,
   onPerspectiveClose,
   onEditorFileOpenReady,
@@ -88,6 +102,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     (state) => state.syncActiveTab,
   );
   const closeEditorStoreTabPath = useEditorStore((state) => state.closePath);
+  const resetActiveEditorBudget = usePerformanceStore(
+    (state) => state.resetActiveEditorBudget,
+  );
   const { copyAbsolutePath, revealEntry } = useProjectEntryActions();
 
   const tabStorageKey = `editorTabs:${projectPath}`;
@@ -121,6 +138,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   });
 
   const [fileContents, setFileContents] = useState<Record<string, string>>({});
+  const [fileLoadStates, setFileLoadStates] = useState<
+    Record<string, EditorFileLoadState>
+  >({});
   const [isSaving, setIsSaving] = useState(false);
   const [highlightLine, setHighlightLine] = useState<number | undefined>(
     undefined,
@@ -149,11 +169,23 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   };
 
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contentStateFlushTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
+  const pendingContentStateRef = useRef<Record<string, string>>({});
+  const typingActivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const pendingTypingActivityRef = useRef(0);
   const tabsRef = useRef<Tab[]>([]);
   const fileContentsRef = useRef<Record<string, string>>({});
+  const fileLoadStatesRef = useRef<Record<string, EditorFileLoadState>>({});
   const activeTabRef = useRef<string | null>(activeTab);
   const secondaryActiveTabRef = useRef<string | null>(secondaryActiveTab);
   const openFileRequestRef = useRef(0);
+  const fileOpenLoadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const quickLookRequestRef = useRef(0);
   const reopenClosedTabRequestRef = useRef(0);
   const tabSwitcherSelectionRef = useRef<string | null>(null);
@@ -166,6 +198,25 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     tabSwitcherSelectionRef.current = tabId;
     setTabSwitcherSelectionState(tabId);
   }, []);
+
+  const storeFileLoadState = useCallback(
+    (tabId: string, file: EditorFileLoadState) => {
+      fileLoadStatesRef.current[tabId] = file;
+      setFileLoadStates((previous) => ({ ...previous, [tabId]: file }));
+      if (file.kind === "editable") {
+        fileContentsRef.current[tabId] = file.content;
+        setFileContents((previous) => ({ ...previous, [tabId]: file.content }));
+        return;
+      }
+
+      delete fileContentsRef.current[tabId];
+      setFileContents((previous) => {
+        const { [tabId]: _removed, ...remaining } = previous;
+        return remaining;
+      });
+    },
+    [],
+  );
 
   const closeTabSwitcher = useCallback(() => {
     setIsTabSwitcherOpen(false);
@@ -220,36 +271,36 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     let cancelled = false;
 
     Promise.allSettled(
-      restoredTabs.map((tab) => AppFunctions.ReadFile(tab.path)),
+      restoredTabs.map((tab) => loadEditorFile(tab.path)),
     ).then((results) => {
       if (cancelled) return;
 
       const currentTabIds = new Set(tabsRef.current.map((tab) => tab.id));
       const loaded: Record<string, string> = {};
-      const invalidIds = new Set<string>();
+      const nextLoadStates: Record<string, EditorFileLoadState> = {};
 
       restoredTabs.forEach((tab, i) => {
         if (!currentTabIds.has(tab.id)) {
           return;
         }
         if (results[i].status === "fulfilled") {
-          loaded[tab.id] = (results[i] as PromiseFulfilledResult<string>).value;
-        } else {
-          invalidIds.add(tab.id);
+          const file = (
+            results[i] as PromiseFulfilledResult<EditorFileLoadState>
+          ).value;
+          nextLoadStates[tab.id] = file;
+          if (file.kind === "editable") {
+            loaded[tab.id] = file.content;
+          }
         }
       });
 
+      fileContentsRef.current = { ...fileContentsRef.current, ...loaded };
+      fileLoadStatesRef.current = {
+        ...fileLoadStatesRef.current,
+        ...nextLoadStates,
+      };
       setFileContents((prev) => ({ ...prev, ...loaded }));
-
-      if (invalidIds.size > 0) {
-        setTabs((prev) => prev.filter((t) => !invalidIds.has(t.id)));
-        setActiveTab((prev) =>
-          prev && invalidIds.has(prev)
-            ? (tabsRef.current.filter((t) => !invalidIds.has(t.id)).pop()?.id ??
-              null)
-            : prev,
-        );
-      }
+      setFileLoadStates((prev) => ({ ...prev, ...nextLoadStates }));
     });
 
     return () => {
@@ -284,11 +335,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     if (!fileToOpen) return;
 
     // Prevent duplicate opens for the same file
-    const fileKey = `${fileToOpen.path}:${fileToOpen.line || 0}`;
+    const fileKey = `${fileToOpen.file.kind}:${fileToOpen.file.path}:${
+      fileToOpen.line || 0
+    }`;
     if (lastFileToOpenRef.current === fileKey) return;
     lastFileToOpenRef.current = fileKey;
 
-    handleFileOpen(fileToOpen.path, fileToOpen.content, fileToOpen.name);
+    handleFileOpen(fileToOpen);
     if (fileToOpen.line) {
       setHighlightLine(fileToOpen.line);
       setTimeout(() => setHighlightLine(undefined), 3000);
@@ -613,6 +666,43 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     return languageMap[ext || ""] || "plaintext";
   };
 
+  const buildMarkdownPreviewSource = useCallback(
+    (tabId: string | null): MarkdownPreviewSource | null => {
+      if (!tabId) {
+        return null;
+      }
+
+      const tab = tabs.find((candidate) => candidate.id === tabId);
+      if (!tab || !isMarkdownPath(tab.path)) {
+        return null;
+      }
+
+      const loadState = fileLoadStates[tab.id];
+      const content =
+        fileContents[tab.id] ??
+        (loadState?.kind === "editable"
+          ? loadState.content
+          : loadState?.kind === "guardedPreview"
+            ? loadState.preview.content
+            : null);
+
+      if (content === null || content === undefined) {
+        return null;
+      }
+
+      return {
+        path: tab.path,
+        name: tab.label,
+        content,
+      };
+    },
+    [fileContents, fileLoadStates, tabs],
+  );
+
+  useEffect(() => {
+    onMarkdownPreviewSourceChange?.(buildMarkdownPreviewSource(activeTab));
+  }, [activeTab, buildMarkdownPreviewSource, onMarkdownPreviewSourceChange]);
+
   useEffect(() => {
     const primaryActiveTab = tabs.find((tab) => tab.id === activeTab) ?? null;
     const secondaryTab =
@@ -625,12 +715,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
 
     const language = getLanguageFromPath(statusTab.path);
-    const content = fileContents[statusTab.id];
-    if (content === undefined) {
+    const loadState = fileLoadStates[statusTab.id];
+    if (!loadState || loadState.kind !== "editable") {
       setStatusFile(statusTab.path, statusTab.label, language);
       return;
     }
 
+    const content = fileContents[statusTab.id] ?? loadState.content;
     syncEditorStoreActiveTab(
       activeEditorPaneId,
       statusTab.path,
@@ -643,17 +734,58 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     activeEditorPaneId,
     activeTab,
     fileContents,
+    fileLoadStates,
     secondaryActiveTab,
     setStatusFile,
     syncEditorStoreActiveTab,
     tabs,
   ]);
 
+  const removeStaleLoadingTabs = useCallback((activePath: string) => {
+    const staleLoadingTabIds = new Set<string>();
+    Object.entries(fileLoadStatesRef.current).forEach(([tabId, file]) => {
+      if (file.kind === "loading" && file.path !== activePath) {
+        staleLoadingTabIds.add(tabId);
+      }
+    });
+
+    if (staleLoadingTabIds.size === 0) {
+      return;
+    }
+
+    const nextLoadStates = { ...fileLoadStatesRef.current };
+    staleLoadingTabIds.forEach((tabId) => {
+      delete nextLoadStates[tabId];
+      delete fileContentsRef.current[tabId];
+    });
+    fileLoadStatesRef.current = nextLoadStates;
+    setFileLoadStates(nextLoadStates);
+    setFileContents((previous) => {
+      const nextContents = { ...previous };
+      staleLoadingTabIds.forEach((tabId) => {
+        delete nextContents[tabId];
+      });
+      return nextContents;
+    });
+
+    tabsRef.current = tabsRef.current.filter(
+      (tab) => !staleLoadingTabIds.has(tab.id),
+    );
+    setTabs((previous) =>
+      previous.filter((tab) => !staleLoadingTabIds.has(tab.id)),
+    );
+  }, []);
+
   const handleFileOpen = useCallback(
-    (filePath: string, content: string, fileName: string, line?: number) => {
+    ({ file, line }: EditorFileOpenPayload) => {
+      const filePath = file.path;
+      removeStaleLoadingTabs(filePath);
       const tabId = makeEditorTabId(filePath);
       const existingTab = tabsRef.current.find((tab) => tab.path === filePath);
       if (existingTab) {
+        if (file.kind !== "loading") {
+          storeFileLoadState(existingTab.id, file);
+        }
         setActiveTab(existingTab.id);
         if (line) {
           setHighlightLine(line);
@@ -664,12 +796,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
       const newTab: Tab = {
         id: tabId,
-        label: fileName,
+        label: file.name,
         path: filePath,
         isDirty: false,
       };
 
-      setFileContents((prev) => ({ ...prev, [tabId]: content }));
+      storeFileLoadState(tabId, file);
       setTabs((prevTabs) =>
         prevTabs.some((tab) => tab.path === filePath)
           ? prevTabs
@@ -681,8 +813,37 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         window.setTimeout(() => setHighlightLine(undefined), 3000);
       }
     },
-    [],
+    [removeStaleLoadingTabs, storeFileLoadState],
   );
+
+  const clearFileOpenLoadingTimer = useCallback(() => {
+    if (fileOpenLoadingTimerRef.current === null) {
+      return;
+    }
+
+    clearTimeout(fileOpenLoadingTimerRef.current);
+    fileOpenLoadingTimerRef.current = null;
+  }, []);
+
+  const scheduleFileOpenLoading = useCallback(
+    (requestId: number, path: string, line?: number) => {
+      clearFileOpenLoadingTimer();
+      fileOpenLoadingTimerRef.current = setTimeout(() => {
+        fileOpenLoadingTimerRef.current = null;
+        if (openFileRequestRef.current !== requestId) {
+          return;
+        }
+
+        handleFileOpen({
+          file: createEditorFileLoadingLoad(path),
+          line,
+        });
+      }, 140);
+    },
+    [clearFileOpenLoadingTimer, handleFileOpen],
+  );
+
+  useEffect(() => clearFileOpenLoadingTimer, [clearFileOpenLoadingTimer]);
 
   useEffect(() => {
     onEditorFileOpenReady?.(handleFileOpen);
@@ -694,6 +855,17 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   useEffect(() => {
     setHighlightLine(undefined);
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!activeTab) {
+      resetActiveEditorBudget();
+      return;
+    }
+    const loadState = fileLoadStates[activeTab];
+    if (loadState && loadState.kind !== "editable") {
+      resetActiveEditorBudget();
+    }
+  }, [activeTab, fileLoadStates, resetActiveEditorBudget]);
 
   const handleTabClose = (tabId: string) => {
     const closedTab = tabs.find((tab) => tab.id === tabId);
@@ -708,11 +880,20 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
     const { [tabId]: _, ...remainingContents } = fileContents;
     setFileContents(remainingContents);
+    setFileLoadStates((previous) => {
+      const { [tabId]: _removed, ...remaining } = previous;
+      return remaining;
+    });
+    delete fileContentsRef.current[tabId];
+    delete fileLoadStatesRef.current[tabId];
 
     if (activeTab === tabId) {
       setActiveTab(
         updatedTabs.length > 0 ? updatedTabs[updatedTabs.length - 1].id : null,
       );
+      if (updatedTabs.length === 0) {
+        resetActiveEditorBudget();
+      }
     }
   };
 
@@ -726,6 +907,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setFileContents((previous) =>
       previous[tabId] !== undefined ? { [tabId]: previous[tabId] } : {},
     );
+    setFileLoadStates((previous) =>
+      previous[tabId] !== undefined ? { [tabId]: previous[tabId] } : {},
+    );
     setActiveTab(tabId);
     setSecondaryActiveTab(null);
     setSplitDirection(null);
@@ -736,10 +920,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     tabsRef.current.forEach((tab) => closeEditorStoreTabPath(tab.path));
     setTabs([]);
     setFileContents({});
+    setFileLoadStates({});
+    fileContentsRef.current = {};
+    fileLoadStatesRef.current = {};
     setActiveTab(null);
     setSecondaryActiveTab(null);
     setSplitDirection(null);
-  }, [closeEditorStoreTabPath]);
+    resetActiveEditorBudget();
+  }, [closeEditorStoreTabPath, resetActiveEditorBudget]);
 
   const handleReopenClosedTab = async () => {
     if (closedTabs.length === 0) return;
@@ -750,11 +938,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     reopenClosedTabRequestRef.current = requestId;
 
     try {
-      const content = await AppFunctions.ReadFile(lastClosedTab.path);
+      const file = await loadEditorFile(lastClosedTab.path);
       if (reopenClosedTabRequestRef.current !== requestId) {
         return;
       }
-      handleFileOpen(lastClosedTab.path, content, lastClosedTab.label);
+      handleFileOpen({ file });
     } catch (error) {
       if (reopenClosedTabRequestRef.current === requestId) {
         console.error("Failed to reopen closed tab:", error);
@@ -808,6 +996,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     fileContentsRef.current = fileContents;
   }, [fileContents]);
 
+  useEffect(() => {
+    fileLoadStatesRef.current = fileLoadStates;
+  }, [fileLoadStates]);
+
   const autoSaveFile = useCallback(async (tabId: string) => {
     const tab = tabsRef.current.find((t) => t.id === tabId);
     if (!tab || !tab.isDirty) {
@@ -822,12 +1014,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
 
     try {
-      console.log("Auto-saving:", tab.path);
       await AppFunctions.WriteFile(tab.path, content);
+      tabsRef.current = tabsRef.current.map((item) =>
+        item.id === tabId ? { ...item, isDirty: false } : item,
+      );
       setTabs((prevTabs) =>
         prevTabs.map((t) => (t.id === tabId ? { ...t, isDirty: false } : t)),
       );
-      console.log("Auto-saved successfully:", tab.path);
     } catch (error) {
       console.error("Auto-save error:", error);
     }
@@ -835,37 +1028,115 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   const scheduleAutoSave = useCallback(
     (tabId: string) => {
-      console.log("Scheduling auto-save for:", tabId);
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
       }
 
       autoSaveTimerRef.current = setTimeout(() => {
-        console.log("Auto-save timer triggered for:", tabId);
         autoSaveFile(tabId);
       }, AUTO_SAVE_DELAY);
     },
     [autoSaveFile],
   );
 
+  const flushPendingContentState = useCallback(() => {
+    const pending = pendingContentStateRef.current;
+    pendingContentStateRef.current = {};
+    contentStateFlushTimerRef.current = null;
+    if (Object.keys(pending).length === 0) {
+      return;
+    }
+    setFileContents((previous) => ({ ...previous, ...pending }));
+    setFileLoadStates((previous) => {
+      let changed = false;
+      const next = { ...previous };
+      Object.entries(pending).forEach(([tabId, content]) => {
+        const file = fileLoadStatesRef.current[tabId] ?? previous[tabId];
+        if (file?.kind !== "editable") {
+          return;
+        }
+        const updated: EditorFileLoadState = { ...file, content };
+        next[tabId] = updated;
+        fileLoadStatesRef.current[tabId] = updated;
+        changed = true;
+      });
+      return changed ? next : previous;
+    });
+  }, []);
+
+  const scheduleContentStateFlush = useCallback(
+    (tabId: string, value: string) => {
+      pendingContentStateRef.current[tabId] = value;
+      if (contentStateFlushTimerRef.current !== null) {
+        return;
+      }
+      contentStateFlushTimerRef.current = setTimeout(
+        flushPendingContentState,
+        250,
+      );
+    },
+    [flushPendingContentState],
+  );
+
+  const markTabDirty = useCallback((tabId: string) => {
+    tabsRef.current = tabsRef.current.map((tab) =>
+      tab.id === tabId && !tab.isDirty ? { ...tab, isDirty: true } : tab,
+    );
+    setTabs((previous) => {
+      let changed = false;
+      const next = previous.map((tab) => {
+        if (tab.id !== tabId || tab.isDirty) {
+          return tab;
+        }
+        changed = true;
+        return { ...tab, isDirty: true };
+      });
+      return changed ? next : previous;
+    });
+  }, []);
+
   const handleContentChange = (value: string | undefined) => {
     if (!activeTab || value === undefined) return;
 
-    console.log("Content changed for tab:", activeTab);
-
-    setFileContents((prev) => ({
-      ...prev,
-      [activeTab]: value,
-    }));
-
-    setTabs((prevTabs) =>
-      prevTabs.map((tab) =>
-        tab.id === activeTab ? { ...tab, isDirty: true } : tab,
-      ),
-    );
-
+    fileContentsRef.current[activeTab] = value;
+    const currentLoadState = fileLoadStatesRef.current[activeTab];
+    if (currentLoadState?.kind === "editable") {
+      const nextLoadState: EditorFileLoadState = {
+        ...currentLoadState,
+        content: value,
+      };
+      fileLoadStatesRef.current[activeTab] = nextLoadState;
+    }
+    const tab = tabsRef.current.find((item) => item.id === activeTab);
+    if (tab && isMarkdownPath(tab.path)) {
+      onMarkdownPreviewSourceChange?.({
+        path: tab.path,
+        name: tab.label,
+        content: value,
+      });
+    }
+    scheduleContentStateFlush(activeTab, value);
+    markTabDirty(activeTab);
     scheduleAutoSave(activeTab);
   };
+
+  const recordTypingActivity = useCallback((chars: number) => {
+    if (chars <= 0) {
+      return;
+    }
+    pendingTypingActivityRef.current += chars;
+    if (typingActivityTimerRef.current !== null) {
+      return;
+    }
+    typingActivityTimerRef.current = setTimeout(() => {
+      const pending = pendingTypingActivityRef.current;
+      pendingTypingActivityRef.current = 0;
+      typingActivityTimerRef.current = null;
+      if (pending > 0) {
+        AppFunctions.RecordTypingActivity(pending).catch(() => {});
+      }
+    }, 500);
+  }, []);
 
   const handleSaveFile = useCallback(async () => {
     if (!activeTab || isSaving) return;
@@ -881,7 +1152,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setIsSaving(true);
 
     try {
-      let contentToSave = fileContents[activeTab];
+      let contentToSave = fileContentsRef.current[activeTab];
+      if (contentToSave === undefined) {
+        return;
+      }
 
       // Try to format code before saving
       try {
@@ -892,11 +1166,19 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         if (formatted && formatted !== contentToSave) {
           console.log("File formatted successfully");
           contentToSave = formatted;
+          fileContentsRef.current[activeTab] = formatted;
           // Update editor content with formatted version
           setFileContents((prev) => ({
             ...prev,
             [activeTab]: formatted,
           }));
+          const currentLoadState = fileLoadStatesRef.current[activeTab];
+          if (currentLoadState?.kind === "editable") {
+            fileLoadStatesRef.current[activeTab] = {
+              ...currentLoadState,
+              content: formatted,
+            };
+          }
         }
       } catch (formatError) {
         // If formatting fails, continue with original content
@@ -904,21 +1186,32 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       }
 
       await AppFunctions.WriteFile(tab.path, contentToSave);
+      tabsRef.current = tabsRef.current.map((item) =>
+        item.id === activeTab ? { ...item, isDirty: false } : item,
+      );
       setTabs(
         tabs.map((t) => (t.id === activeTab ? { ...t, isDirty: false } : t)),
       );
-      console.log("File saved:", tab.path);
+      console.log("File write completed:", tab.path);
 
       window.dispatchEvent(
         new CustomEvent("file-saved", { detail: { path: tab.path } }),
       );
     } catch (error) {
       console.error("Error saving file:", error);
-      alert(`Failed to save file: ${error}`);
+      useAppNotificationStore.getState().addNotification({
+        id: `save-error:${tab.path}`,
+        kind: "error",
+        title: "Failed to save file",
+        message: error instanceof Error ? error.message : String(error),
+        source: "Editor",
+        sticky: false,
+        timeoutMs: 7000,
+      });
     } finally {
       setIsSaving(false);
     }
-  }, [activeTab, tabs, fileContents, isSaving]);
+  }, [activeTab, tabs, isSaving]);
 
   const handleOpenFileRequest = async (path: string, line?: number) => {
     const requestId = openFileRequestRef.current + 1;
@@ -930,18 +1223,20 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         fullPath = `${projectPath}/${path}`;
       }
 
-      const content = await AppFunctions.ReadFile(fullPath);
+      scheduleFileOpenLoading(requestId, fullPath, line);
+      const file = await loadEditorFile(fullPath);
       if (openFileRequestRef.current !== requestId) {
         return;
       }
-      const name = path.split("/").pop() || "unknown";
-      handleFileOpen(fullPath, content, name);
+      clearFileOpenLoadingTimer();
+      handleFileOpen({ file, line });
       if (line) {
         setHighlightLine(line);
         setTimeout(() => setHighlightLine(undefined), 3000);
       }
     } catch (error) {
       if (openFileRequestRef.current === requestId) {
+        clearFileOpenLoadingTimer();
         console.error("Failed to open file:", error);
         alert(`Failed to open file: ${path}`);
       }
@@ -983,6 +1278,17 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         const next: Record<string, string> = {};
         Object.entries(previous).forEach(([tabId, content]) => {
           next[tabIdMap.get(tabId) ?? tabId] = content;
+        });
+        return next;
+      });
+      setFileLoadStates((previous) => {
+        const next: Record<string, EditorFileLoadState> = {};
+        Object.entries(previous).forEach(([tabId, file]) => {
+          const nextTabId = tabIdMap.get(tabId) ?? tabId;
+          const nextTab = nextTabs.find((tab) => tab.id === nextTabId);
+          next[nextTabId] = nextTab
+            ? { ...file, path: nextTab.path, name: nextTab.label }
+            : file;
         });
         return next;
       });
@@ -1068,6 +1374,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     tabsRef.current = nextTabs;
     setTabs(nextTabs);
     setFileContents((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(([tabId]) => !removedTabIds.has(tabId)),
+      ),
+    );
+    setFileLoadStates((previous) =>
       Object.fromEntries(
         Object.entries(previous).filter(([tabId]) => !removedTabIds.has(tabId)),
       ),
@@ -1203,8 +1514,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         fullPath = `${projectPath}/${path}`;
       }
 
-      const content = await AppFunctions.ReadFile(fullPath);
+      const file = await loadEditorFile(fullPath);
       if (quickLookRequestRef.current !== requestId) {
+        return;
+      }
+      if (file.kind !== "editable") {
+        handleFileOpen({ file, line });
         return;
       }
       const language = getLanguageFromPath(fullPath);
@@ -1213,7 +1528,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       setQuickLook({
         isOpen: true,
         filePath: fullPath,
-        content,
+        content: file.content,
         language,
         highlightLine: line,
       });
@@ -1235,7 +1550,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
     closeQuickLook();
 
-    handleFileOpen(filePath, content, name);
+    handleFileOpen({ file: createEditableEditorFileLoad(filePath, content) });
     if (highlightLine) {
       setHighlightLine(highlightLine);
       setTimeout(() => setHighlightLine(undefined), 3000);
@@ -1323,10 +1638,22 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
       }
+      if (contentStateFlushTimerRef.current) {
+        clearTimeout(contentStateFlushTimerRef.current);
+      }
+      if (typingActivityTimerRef.current) {
+        clearTimeout(typingActivityTimerRef.current);
+        const pending = pendingTypingActivityRef.current;
+        pendingTypingActivityRef.current = 0;
+        if (pending > 0) {
+          AppFunctions.RecordTypingActivity(pending).catch(() => {});
+        }
+      }
     };
   }, []);
 
   const activeTabData = tabs.find((tab) => tab.id === activeTab);
+  const activeMarkdownPreviewSource = buildMarkdownPreviewSource(activeTab);
   const secondaryTabData = secondaryActiveTab
     ? tabs.find((tab) => tab.id === secondaryActiveTab)
     : null;
@@ -1359,9 +1686,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       onQuickLook={handleQuickLookRequest}
       onPerspectiveOpen={onPerspectiveOpen}
       onPerspectiveClose={onPerspectiveClose}
-      onTyping={(chars) => {
-        AppFunctions.RecordTypingActivity(chars).catch(() => {});
-      }}
+      onTyping={recordTypingActivity}
       onGhostShown={() => {
         AppFunctions.RecordGhostShown().catch(() => {});
       }}
@@ -1373,6 +1698,33 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     />
   );
 
+  const renderEditorSurface = (tabData: Tab, isSecondary = false) => {
+    const loadState = fileLoadStates[tabData.id];
+    if (!loadState && fileContents[tabData.id] === undefined) {
+      return (
+        <EditorFileLoadingView
+          file={createEditorFileLoadingLoad(tabData.path, tabData.label)}
+        />
+      );
+    }
+    if (loadState?.kind === "loading") {
+      return <EditorFileLoadingView file={loadState} />;
+    }
+    if (loadState?.kind === "visualPreview") {
+      return <ImageEditorPreview file={loadState} />;
+    }
+    if (loadState?.kind === "guardedPreview" || loadState?.kind === "error") {
+      return <GuardedEditorPreview file={loadState} />;
+    }
+
+    return renderEditor(
+      tabData,
+      fileContents[tabData.id] ??
+        (loadState?.kind === "editable" ? loadState.content : ""),
+      isSecondary,
+    );
+  };
+
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
       {tabs.length > 0 && (
@@ -1383,6 +1735,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           onTabClose={handleTabClose}
           onSplitHorizontal={() => handleSplit("vertical")}
           onSplitVertical={() => handleSplit("horizontal")}
+          markdownPreviewAvailable={activeMarkdownPreviewSource !== null}
+          markdownPreviewActive={
+            markdownPreviewOpen && activeMarkdownPreviewSource !== null
+          }
+          onToggleMarkdownPreview={onToggleMarkdownPreview}
           getTabContextMenuItems={buildTabContextMenuItems}
         />
       )}
@@ -1391,7 +1748,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         className="flex-1 min-h-0 overflow-hidden"
         style={{ background: activeTabData ? editorBgColor : "transparent" }}
       >
-        {activeTabData && activeTab && activeTab in fileContents ? (
+        {activeTabData && activeTab ? (
           splitDirection && secondaryTabData ? (
             <div
               className={`flex h-full ${splitDirection === "horizontal" ? "flex-row" : "flex-col"}`}
@@ -1400,7 +1757,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
               <div
                 className={`${splitDirection === "horizontal" ? "w-1/2 border-r" : "h-1/2 border-b"} border-gray-200 dark:border-gray-700`}
               >
-                {renderEditor(activeTabData, fileContents[activeTab!] || "")}
+                {renderEditorSurface(activeTabData)}
               </div>
               <div
                 className={`${splitDirection === "horizontal" ? "w-1/2" : "h-1/2"} relative`}
@@ -1424,26 +1781,16 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
                     <path d="M18 6L6 18M6 6l12 12" />
                   </svg>
                 </button>
-                {renderEditor(
-                  secondaryTabData,
-                  fileContents[secondaryActiveTab!] || "",
-                  true,
-                )}
+                {renderEditorSurface(secondaryTabData, true)}
               </div>
             </div>
           ) : (
-            renderEditor(activeTabData, fileContents[activeTab!] || "")
+            renderEditorSurface(activeTabData)
           )
         ) : (
           <div className="h-full w-full" />
         )}
       </div>
-
-      {isSaving && (
-        <div className="absolute bottom-8 right-4 px-3 py-1 bg-blue-500 text-white text-sm rounded-full shadow-lg">
-          Saving...
-        </div>
-      )}
 
       {isTabSwitcherOpen ? (
         <TabSwitcherOverlay

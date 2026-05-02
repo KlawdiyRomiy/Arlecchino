@@ -1,12 +1,17 @@
 import React, { startTransition, useEffect, useState } from "react";
 import WelcomeScreen from "./components/WelcomeScreen";
+import { AppNotificationStack } from "./components/layout/AppNotificationStack";
 import { MCPApprovalDialog } from "./components/MCPApprovalDialog";
+import {
+  DetachedAppletHost,
+  isDetachedAppletHostRoute,
+} from "./components/DetachedAppletHost";
 import { MainLayout } from "./components/layout/MainLayout";
 import { ProjectSwitchTransition } from "./components/layout/ProjectSwitchTransition";
 import ProjectScreen from "./components/ProjectScreen";
 import { CommandRegistryProvider } from "./contexts/CommandRegistryContext";
 import { PluginModalProvider } from "./contexts/PluginModalContext";
-import * as AppFunctions from "../wailsjs/go/main/App";
+import * as AppFunctions from "./wails/app";
 import { useEditorSettingsStore } from "./stores/editorSettingsStore";
 import {
   getAdjacentProject,
@@ -14,6 +19,11 @@ import {
   useWorkspaceStore,
 } from "./stores/workspaceStore";
 import { useTerminalStore } from "./stores/terminalStore";
+import {
+  startAdaptivePerformanceMonitor,
+  usePerformanceStore,
+} from "./stores/performanceStore";
+import { useTheme } from "./hooks/useTheme";
 import { clampUiScale } from "./utils/uiScale";
 import {
   activateProjectScope,
@@ -21,6 +31,24 @@ import {
   resetProjectBoundStores,
 } from "./utils/projectBoundState";
 import { useApplicationMenuBridge } from "./hooks/useApplicationMenuBridge";
+import { useBackgroundShellStatusBridge } from "./shell/backgroundShellStatus";
+import { useOpenIntentEventBridge } from "./shell/openIntentEventBridge";
+import { usePackagedOSIntegrationBridge } from "./shell/packagedOSIntegration";
+import { useAutoUpdateBridge } from "./shell/autoUpdate";
+import { useManualUpdateNotifications } from "./shell/manualUpdateNotifications";
+import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
+import { useWindowLeaseBridge } from "./shell/windowLeaseBridge";
+import { syncSurfaceRuntimeWindowLeaseBackendStatus } from "./surfaces/surfaceRuntimeStore";
+import type { EditorFileOpenPayload } from "./utils/editorFileLoader";
+
+const PROJECT_SWITCH_VISUAL_SETTLE_MS = 260;
+
+const waitForProjectSwitchVisualSettle = () =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(() => {
+      window.requestAnimationFrame(() => resolve());
+    }, PROJECT_SWITCH_VISUAL_SETTLE_MS);
+  });
 
 const buildScaledSurfaceStyle = (uiScale: number): React.CSSProperties => ({
   position: "absolute",
@@ -46,21 +74,29 @@ const appShellStyle: React.CSSProperties = {
 
 const App: React.FC = () => {
   useApplicationMenuBridge();
+  useShellCapabilitiesBridge(AppFunctions.GetShellCapabilities);
+  useOpenIntentEventBridge();
+  useBackgroundShellStatusBridge();
+  usePackagedOSIntegrationBridge();
+  useAutoUpdateBridge();
+  useManualUpdateNotifications();
+  useWindowLeaseBridge(syncSurfaceRuntimeWindowLeaseBackendStatus);
 
   const activeId = useWorkspaceStore((state) => state.activeId);
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
+  const { theme: currentTheme } = useTheme();
   const activeProject = useWorkspaceStore((state) =>
     state.projects.find((project) => project.id === state.activeId),
   );
   const ready = useWorkspaceStore((state) => state.ready);
   const switchDirection = useWorkspaceStore((state) => state.switchDirection);
-  const [fileToOpen, setFileToOpen] = useState<{
-    path: string;
-    content: string;
-    name: string;
-    line?: number;
-  } | null>(null);
+  const [fileToOpen, setFileToOpen] = useState<EditorFileOpenPayload | null>(
+    null,
+  );
   const effectiveUiScale = clampUiScale(uiScale);
+  const isDetachedHost = isDetachedAppletHostRoute();
+
+  useEffect(() => startAdaptivePerformanceMonitor(), []);
 
   useEffect(() => {
     document.documentElement.style.setProperty(
@@ -84,6 +120,33 @@ const App: React.FC = () => {
   };
 
   const handleProjectOpen = async (projectPath: string) => {
+    const state = useWorkspaceStore.getState();
+    const existingProject = state.projects.find(
+      (project) => project.path === projectPath,
+    );
+    if (existingProject) {
+      if (existingProject.id !== state.activeId) {
+        await handleSwitchProject(existingProject.id);
+      }
+      return;
+    }
+
+    const projectWindowMode =
+      useEditorSettingsStore.getState().projectWindowMode;
+    if (projectWindowMode === "windows" && state.activeId) {
+      try {
+        const opened = await AppFunctions.OpenProjectWindow(projectPath);
+        if (opened === false) {
+          throw new Error("Project window launcher is unavailable.");
+        }
+        setFileToOpen(null);
+      } catch (error) {
+        console.error("Error opening project window:", error);
+        alert(`Error while opening project window: ${error}`);
+      }
+      return;
+    }
+
     const outgoingProjectPath =
       useWorkspaceStore
         .getState()
@@ -98,7 +161,7 @@ const App: React.FC = () => {
       useWorkspaceStore.getState().addProject(projectPath);
       useTerminalStore.getState().setActiveProject(projectPath);
       await syncCurrentFramework();
-      await preloadProjectDiagnostics(projectPath);
+      void preloadProjectDiagnostics(projectPath);
       setFileToOpen(null);
     } catch (error) {
       useTerminalStore.getState().setActiveProject(outgoingProjectPath);
@@ -121,19 +184,24 @@ const App: React.FC = () => {
 
     const outgoingProjectPath =
       state.projects.find((item) => item.id === state.activeId)?.path ?? null;
+    usePerformanceStore.getState().resetTransientBudget();
     state.beginProjectSwitch(id, direction);
+    setFileToOpen(null);
 
     try {
+      const workspace = useWorkspaceStore.getState();
       activateProjectScope(project.path);
-      const openProjectRequest = AppFunctions.OpenProject(project.path);
-      useWorkspaceStore.getState().confirmProjectSwitch(id);
+      workspace.confirmProjectSwitch(id);
+      await waitForProjectSwitchVisualSettle();
+      await AppFunctions.OpenProject(project.path);
       useTerminalStore.getState().setActiveProject(project.path);
-      await openProjectRequest;
       await syncCurrentFramework();
-      await preloadProjectDiagnostics(project.path);
       startTransition(() => {
         useWorkspaceStore.getState().completeProjectSwitch(id);
         setFileToOpen(null);
+      });
+      window.requestAnimationFrame(() => {
+        void preloadProjectDiagnostics(project.path);
       });
     } catch (error) {
       activateProjectScope(outgoingProjectPath);
@@ -144,13 +212,8 @@ const App: React.FC = () => {
     }
   };
 
-  const handleFileOpen = (
-    path: string,
-    content: string,
-    name: string,
-    line?: number,
-  ) => {
-    setFileToOpen({ path, content, name, line });
+  const handleFileOpen = (payload: EditorFileOpenPayload) => {
+    setFileToOpen(payload);
   };
 
   const handleBackToWelcome = async () => {
@@ -208,21 +271,26 @@ const App: React.FC = () => {
     const outgoingProjectPath =
       state.projects.find((project) => project.id === state.activeId)?.path ??
       null;
+    usePerformanceStore.getState().resetTransientBudget();
     state.beginProjectSwitch(nextProject.id, direction);
+    setFileToOpen(null);
 
     try {
+      const workspace = useWorkspaceStore.getState();
       activateProjectScope(nextProject.path);
-      const openProjectRequest = AppFunctions.OpenProject(nextProject.path);
-      useWorkspaceStore.getState().confirmProjectSwitch(nextProject.id);
+      workspace.confirmProjectSwitch(nextProject.id);
+      await waitForProjectSwitchVisualSettle();
+      await AppFunctions.OpenProject(nextProject.path);
       useTerminalStore.getState().setActiveProject(nextProject.path);
-      await openProjectRequest;
       await syncCurrentFramework();
-      await preloadProjectDiagnostics(nextProject.path);
       startTransition(() => {
-        const workspace = useWorkspaceStore.getState();
-        workspace.completeProjectSwitch(nextProject.id);
-        workspace.removeProject(id);
+        const latestWorkspace = useWorkspaceStore.getState();
+        latestWorkspace.completeProjectSwitch(nextProject.id);
+        latestWorkspace.removeProject(id);
         setFileToOpen(null);
+      });
+      window.requestAnimationFrame(() => {
+        void preloadProjectDiagnostics(nextProject.path);
       });
     } catch (error) {
       activateProjectScope(outgoingProjectPath);
@@ -234,6 +302,18 @@ const App: React.FC = () => {
   };
 
   if (!ready) {
+    if (isDetachedHost) {
+      return (
+        <>
+          <DetachedAppletHost
+            currentTheme={currentTheme}
+            currentUiScale={effectiveUiScale}
+          />
+          <AppNotificationStack />
+        </>
+      );
+    }
+
     return (
       <div data-testid="app-shell" style={appShellStyle}>
         <div
@@ -243,7 +323,20 @@ const App: React.FC = () => {
           <div className="blackprint-bg" />
         </div>
         <MCPApprovalDialog />
+        <AppNotificationStack />
       </div>
+    );
+  }
+
+  if (isDetachedHost) {
+    return (
+      <>
+        <DetachedAppletHost
+          currentTheme={currentTheme}
+          currentUiScale={effectiveUiScale}
+        />
+        <AppNotificationStack />
+      </>
     );
   }
 
@@ -280,6 +373,7 @@ const App: React.FC = () => {
           </ProjectSwitchTransition>
         </div>
         <MCPApprovalDialog />
+        <AppNotificationStack />
       </div>
     );
   }
@@ -294,6 +388,7 @@ const App: React.FC = () => {
         <WelcomeScreen onProjectOpen={handleProjectOpen} />
       </div>
       <MCPApprovalDialog />
+      <AppNotificationStack />
     </div>
   );
 };

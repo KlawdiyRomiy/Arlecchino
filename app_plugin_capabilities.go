@@ -7,10 +7,11 @@ import (
 )
 
 func (a *App) getDefinitionProvider() plugins.DefinitionProvider {
-	if a.plugins == nil {
+	pluginRegistry := a.activePluginRegistry()
+	if pluginRegistry == nil {
 		return nil
 	}
-	p := a.plugins.Get("laravel")
+	p := pluginRegistry.Get("laravel")
 	if p == nil {
 		return nil
 	}
@@ -26,10 +27,11 @@ func (a *App) getDefinitionProvider() plugins.DefinitionProvider {
 }
 
 func (a *App) getArtisanExecutor() (plugins.ArtisanExecutor, error) {
-	if a.plugins == nil {
+	pluginRegistry := a.activePluginRegistry()
+	if pluginRegistry == nil {
 		return nil, fmt.Errorf("no Laravel project opened")
 	}
-	p := a.plugins.Get("laravel")
+	p := pluginRegistry.Get("laravel")
 	provider, ok := p.(plugins.ArtisanPlugin)
 	if !ok {
 		return nil, fmt.Errorf("no Laravel project opened")
@@ -38,10 +40,11 @@ func (a *App) getArtisanExecutor() (plugins.ArtisanExecutor, error) {
 }
 
 func (a *App) getRuntimeInspector() (plugins.RuntimeInspector, error) {
-	if a.plugins == nil {
+	pluginRegistry := a.activePluginRegistry()
+	if pluginRegistry == nil {
 		return nil, fmt.Errorf("no PHP Bridge available")
 	}
-	p := a.plugins.Get("laravel")
+	p := pluginRegistry.Get("laravel")
 	provider, ok := p.(plugins.RuntimePlugin)
 	if !ok {
 		return nil, fmt.Errorf("no PHP Bridge available")

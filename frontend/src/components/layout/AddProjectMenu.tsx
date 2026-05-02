@@ -1,7 +1,8 @@
 import React from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Plus, FolderOpen, Sparkles, GitBranch } from "lucide-react";
-import { SelectDirectory } from "../../../wailsjs/go/main/App";
+import { SelectDirectory } from "../../wails/app";
+import { selectDirectoryWithCapability } from "../../shell/shellDialogs";
 import { CloneRepositoryDialog } from "../CloneRepositoryDialog";
 import { CreateProjectDialog } from "../CreateProjectDialog";
 
@@ -20,7 +21,10 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
 
   const handleOpenProject = async () => {
     try {
-      const path = await SelectDirectory("Choose project directory");
+      const path = await selectDirectoryWithCapability(
+        "Choose project directory",
+        SelectDirectory,
+      );
       if (path) onProjectOpen(path);
     } catch (error) {
       console.error("Error selecting directory:", error);

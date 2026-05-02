@@ -34,6 +34,8 @@ dist/
 
 # Binaries
 arlecchino/
+!frontend/bindings/arlecchino/
+!frontend/bindings/arlecchino/**
 .bin/
 
 # Dependencies
@@ -55,6 +57,7 @@ perspective-*.png
 # Legacy/scratch directories
 docs/*
 !docs/wails-v3-spike.md
+!docs/wails-v3-surface-runtime-ideas.md
 !docs/privacy-policy.md
 !docs/model-provenance.md
 !docs/lsp-supply-chain.md

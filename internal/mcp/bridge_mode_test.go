@@ -86,7 +86,10 @@ func TestToolService_ToolDefinitionsAlwaysIncludeBridgeTools(t *testing.T) {
 		"ide_backend.git_status",
 		"agent_memory.save",
 		"agent_memory.context",
+		"ide_control.flight_recorder",
 		"ide_ui.emit_event",
+		"ide_ui.surface_read",
+		"ide_ui.open_intent",
 		"ide_ui.open_file_panel",
 		"ide_ui.preview_open",
 		"ide_ui.preview_navigate",
@@ -109,6 +112,76 @@ func TestToolService_ToolDefinitionsAlwaysIncludeBridgeTools(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "requires live IDE bridge") {
 		t.Fatalf("ide_backend.project_status error = %v, want contains %q", err, "requires live IDE bridge")
+	}
+}
+
+func TestToolService_OpenIntentEmitsConfirmedOpenIntentEvent(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "main.go")
+	if err := os.WriteFile(filePath, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(main.go) error = %v", err)
+	}
+	resolvedFilePath, err := filepath.EvalSymlinks(filePath)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(main.go) error = %v", err)
+	}
+
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "open-intent")
+	bridge := newFakeBridge()
+	bridge.response["ui.emit_event"] = map[string]any{
+		"emitted":   true,
+		"confirmed": true,
+	}
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "open-intent",
+		"ttl_seconds":   60,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_ui.open_intent", map[string]any{
+		"kind": "file.open",
+		"path": "main.go",
+		"line": 3,
+	})
+	if err != nil {
+		t.Fatalf("open_intent error = %v", err)
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("open_intent result type = %T, want map[string]any", result)
+	}
+	if resultMap["mcpRequestId"] == "" {
+		t.Fatalf("open_intent result missing mcpRequestId: %#v", resultMap)
+	}
+
+	calls := bridge.methodCalls("ui.emit_event")
+	if len(calls) != 1 {
+		t.Fatalf("ui.emit_event call count = %d, want 1", len(calls))
+	}
+	if calls[0].Params["event"] != "ide:intent:open" {
+		t.Fatalf("event = %v, want ide:intent:open", calls[0].Params["event"])
+	}
+	payload, ok := calls[0].Params["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", calls[0].Params["payload"])
+	}
+	if payload["kind"] != "openFile" {
+		t.Fatalf("payload kind = %v, want openFile", payload["kind"])
+	}
+	if payload["path"] != resolvedFilePath {
+		t.Fatalf("payload path = %v, want %v", payload["path"], resolvedFilePath)
+	}
+	if payload["line"] != 3 {
+		t.Fatalf("payload line = %v, want 3", payload["line"])
+	}
+	if payload["source"] != "mcp" {
+		t.Fatalf("payload source = %v, want mcp", payload["source"])
 	}
 }
 
@@ -184,6 +257,74 @@ func TestToolService_OpenFilePanelEmitsConfirmedPanelOpen(t *testing.T) {
 	}
 	if !equalBridgePayload(payload, wantPayload) {
 		t.Fatalf("payload = %#v, want %#v", payload, wantPayload)
+	}
+}
+
+func TestToolService_SurfaceReadReturnsFrontendReadModel(t *testing.T) {
+	root := t.TempDir()
+	bridge := newFakeBridge()
+	bridge.response["ui.emit_event"] = map[string]any{
+		"emitted":   true,
+		"event":     "ide:surface:read",
+		"confirmed": true,
+		"result": map[string]any{
+			"revision":        float64(7),
+			"activeSurfaceId": "panel:explorer",
+			"sessionIds":      []any{"panel:explorer"},
+		},
+	}
+
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_ui.surface_read", map[string]any{
+		"eventLimit":    3,
+		"includeEvents": false,
+	})
+	if err != nil {
+		t.Fatalf("surface_read error = %v", err)
+	}
+
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("surface_read result type = %T, want map[string]any", result)
+	}
+	if resultMap["confirmed"] != true {
+		t.Fatalf("surface_read confirmed = %v, want true", resultMap["confirmed"])
+	}
+	if requestID, ok := resultMap["mcpRequestId"].(string); !ok || requestID == "" {
+		t.Fatalf("surface_read result missing mcpRequestId: %#v", resultMap)
+	}
+	surface, ok := resultMap["surface"].(map[string]any)
+	if !ok {
+		t.Fatalf("surface_read surface type = %T, want map[string]any", resultMap["surface"])
+	}
+	if surface["activeSurfaceId"] != "panel:explorer" {
+		t.Fatalf("activeSurfaceId = %v, want panel:explorer", surface["activeSurfaceId"])
+	}
+
+	calls := bridge.methodCalls("ui.emit_event")
+	if len(calls) != 1 {
+		t.Fatalf("ui.emit_event calls = %d, want 1", len(calls))
+	}
+	call := calls[0]
+	if got := call.Params["event"]; got != "ide:surface:read" {
+		t.Fatalf("event = %v, want ide:surface:read", got)
+	}
+	if requestID, ok := call.Params["mcpRequestId"].(string); !ok || requestID == "" {
+		t.Fatalf("bridge call missing mcpRequestId: %#v", call.Params)
+	}
+	payload, ok := call.Params["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", call.Params["payload"])
+	}
+	if payload["eventLimit"] != 3 {
+		t.Fatalf("eventLimit = %v, want 3", payload["eventLimit"])
+	}
+	if payload["includeEvents"] != false {
+		t.Fatalf("includeEvents = %v, want false", payload["includeEvents"])
 	}
 }
 
@@ -350,6 +491,129 @@ func TestToolService_AuditLogsPersistToDisk(t *testing.T) {
 	}
 	if len(strings.TrimSpace(string(diskData))) == 0 {
 		t.Fatalf("audit disk log must not be empty")
+	}
+}
+
+func TestToolService_FlightRecorderRecordsUIAckAndRedactsArgs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "flight-code")
+
+	bridge := newFakeBridge()
+	bridge.response["ui.emit_event"] = map[string]any{
+		"confirmed": true,
+		"result":    map[string]any{"opened": true},
+	}
+
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "flight-code",
+		"ttl_seconds":   300,
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_ui.open_file_panel", map[string]any{
+		"path":    "src/main.go",
+		"content": "SECRET_TOKEN=123",
+	}); err != nil {
+		t.Fatalf("open_file_panel error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_control.flight_recorder", map[string]any{"limit": 20})
+	if err != nil {
+		t.Fatalf("flight_recorder error = %v", err)
+	}
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("flight_recorder result type = %T, want map[string]any", result)
+	}
+	items, ok := resultMap["items"].([]FlightRecord)
+	if !ok {
+		t.Fatalf("flight_recorder items type = %T, want []FlightRecord", resultMap["items"])
+	}
+
+	var sawRequested, sawAck, sawTool bool
+	for _, item := range items {
+		switch item.Type {
+		case "agent.ui.requested":
+			if item.Tool == "ide_ui.open_file_panel" && item.CorrelationID != "" {
+				sawRequested = true
+			}
+		case "agent.ui.acknowledged":
+			if item.Tool == "ide_ui.open_file_panel" && item.Status == "acknowledged" {
+				sawAck = true
+			}
+		case "mcp.tool.completed":
+			if item.Tool == "ide_ui.open_file_panel" {
+				sawTool = true
+				if item.Args["content"] != redactedValue {
+					t.Fatalf("flight recorder content arg = %#v, want redacted", item.Args["content"])
+				}
+			}
+		}
+	}
+	if !sawRequested || !sawAck || !sawTool {
+		t.Fatalf("flight recorder events requested=%v ack=%v tool=%v, want all true", sawRequested, sawAck, sawTool)
+	}
+	if diskPath, ok := resultMap["diskPath"].(string); !ok || strings.TrimSpace(diskPath) == "" {
+		t.Fatalf("flight_recorder diskPath = %#v, want non-empty string", resultMap["diskPath"])
+	} else {
+		diskData, err := os.ReadFile(diskPath)
+		if err != nil {
+			t.Fatalf("ReadFile(flight recorder disk) error = %v", err)
+		}
+		diskText := string(diskData)
+		if !strings.Contains(diskText, "mcp.tool.completed") {
+			t.Fatalf("flight recorder disk log missing tool completion event: %s", diskText)
+		}
+		if strings.Contains(diskText, "SECRET_TOKEN=123") {
+			t.Fatalf("flight recorder disk log contains unredacted secret: %s", diskText)
+		}
+	}
+}
+
+func TestToolService_FlightRecorderRecordsLiveApproval(t *testing.T) {
+	root := t.TempDir()
+
+	bridge := newFakeBridge()
+	bridge.response["mcp.request_approval"] = map[string]any{
+		"approved":    true,
+		"ttl_seconds": 120,
+	}
+
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_backend.terminal_create", map[string]any{
+		"id":   "term-1",
+		"name": "Terminal",
+	}); err != nil {
+		t.Fatalf("terminal_create error = %v", err)
+	}
+
+	result := service.FlightRecorder(20)
+	items, ok := result["items"].([]FlightRecord)
+	if !ok {
+		t.Fatalf("FlightRecorder items type = %T, want []FlightRecord", result["items"])
+	}
+
+	var requested, resolved bool
+	for _, item := range items {
+		if item.Type == "approval.requested" && item.Tool == "ide_backend.terminal_create" {
+			requested = true
+		}
+		if item.Type == "approval.resolved" && item.Tool == "ide_backend.terminal_create" && item.Status == "approved" {
+			resolved = true
+		}
+	}
+	if !requested || !resolved {
+		t.Fatalf("approval recorder events requested=%v resolved=%v, want both true", requested, resolved)
 	}
 }
 
@@ -643,6 +907,9 @@ func TestToolService_CapabilitiesExposeBridgeModeAndProfiles(t *testing.T) {
 
 	if resultMap["supportsUIControlV1"] != true {
 		t.Fatalf("supportsUIControlV1 = %v, want true", resultMap["supportsUIControlV1"])
+	}
+	if resultMap["supportsSurfaceRuntimeV1"] != true {
+		t.Fatalf("supportsSurfaceRuntimeV1 = %v, want true", resultMap["supportsSurfaceRuntimeV1"])
 	}
 
 	layoutProfiles, ok := resultMap["layoutProfiles"].([]string)

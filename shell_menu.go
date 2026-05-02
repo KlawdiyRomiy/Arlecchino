@@ -4,9 +4,7 @@ import (
 	stdRuntime "runtime"
 	"strings"
 
-	"github.com/wailsapp/wails/v2/pkg/menu"
-	"github.com/wailsapp/wails/v2/pkg/menu/keys"
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 const menuActionEventName = "ide:menu:action"
@@ -19,6 +17,7 @@ var nativeMenuAcceleratorActions = map[string]bool{
 	"project.new":             true,
 	"project.open":            true,
 	"settings.toggle":         true,
+	"zenMode.toggle":          true,
 	"browser.preview":         true,
 	"git.toggle":              true,
 	"git.fullscreen":          true,
@@ -63,27 +62,30 @@ func (a *App) SyncApplicationMenuShortcuts(payload []ApplicationMenuShortcutPayl
 	a.shellMenuMu.Unlock()
 
 	if a.ctx != nil {
-		wailsruntime.MenuSetApplicationMenu(a.ctx, a.buildApplicationMenu(shortcuts))
+		if a.wailsApp != nil {
+			a.wailsApp.Menu.SetApplicationMenu(a.buildApplicationMenu(shortcuts))
+		}
 		a.patchNativeApplicationMenu(shortcuts)
 	}
 }
 
-func (a *App) buildApplicationMenu(shortcuts map[string][]string) *menu.Menu {
-	appMenu := menu.NewMenu()
-	if stdRuntime.GOOS == "darwin" {
-		appMenu.Append(menu.AppMenu())
+func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.Menu {
+	appMenu := application.NewMenu()
+	if stdRuntime.GOOS == "darwin" && application.Get() != nil {
+		appMenu.AddRole(application.AppMenu)
 	}
 
 	fileMenu := appMenu.AddSubmenu("File")
 	a.addMenuAction(fileMenu, "New Project", "project.new", shortcuts)
 	a.addMenuAction(fileMenu, "Open Project...", "project.open", shortcuts)
 
-	if stdRuntime.GOOS == "darwin" {
-		appMenu.Append(menu.EditMenu())
+	if stdRuntime.GOOS == "darwin" && application.Get() != nil {
+		appMenu.AddRole(application.EditMenu)
 	}
 
 	viewMenu := appMenu.AddSubmenu("View")
 	a.addMenuAction(viewMenu, "Search", "search.toggle", shortcuts)
+	a.addMenuAction(viewMenu, "Toggle Zen Mode", "zenMode.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle Explorer", "explorer.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle Terminal", "terminal.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle AI Panel", "ai.toggle", shortcuts)
@@ -94,17 +96,17 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *menu.Menu {
 	a.addMenuAction(viewMenu, "Toggle Problems Panel", "problems.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle Problems Fullscreen", "problems.fullscreen", shortcuts)
 	viewMenu.AddSeparator()
-	viewMenu.AddText("Zoom In", keys.CmdOrCtrl("+"), a.emitViewZoom("in"))
-	viewMenu.AddText("Zoom Out", keys.CmdOrCtrl("-"), a.emitViewZoom("out"))
-	viewMenu.AddText("Actual Size", keys.CmdOrCtrl("0"), a.emitViewZoom("reset"))
+	viewMenu.Add("Zoom In").SetAccelerator("cmd+plus").OnClick(a.emitViewZoom("in"))
+	viewMenu.Add("Zoom Out").SetAccelerator("cmd+-").OnClick(a.emitViewZoom("out"))
+	viewMenu.Add("Actual Size").SetAccelerator("cmd+0").OnClick(a.emitViewZoom("reset"))
 	viewMenu.AddSeparator()
 	a.addMenuAction(viewMenu, "Close Fullscreen Panel", "panel.closeFullscreen", shortcuts)
 	a.addMenuAction(viewMenu, "Enter Full Screen", "window.toggleFullscreen", shortcuts)
 
 	windowMenu := appMenu.AddSubmenu("Window")
-	windowMenu.AddText("Minimize", keys.CmdOrCtrl("m"), func(_ *menu.CallbackData) {
-		if a.ctx != nil {
-			wailsruntime.WindowMinimise(a.ctx)
+	windowMenu.Add("Minimize").SetAccelerator("cmd+m").OnClick(func(_ *application.Context) {
+		if window := a.currentNativeWindow(); window != nil {
+			window.Minimise()
 		}
 	})
 
@@ -114,36 +116,59 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *menu.Menu {
 	return appMenu
 }
 
-func (a *App) addMenuAction(target *menu.Menu, label string, actionID string, shortcuts map[string][]string) {
-	target.AddText(label, menuAcceleratorForAction(actionID, shortcuts), a.emitMenuAction(actionID))
-}
-
-func (a *App) emitMenuAction(actionID string) menu.Callback {
-	return func(_ *menu.CallbackData) {
-		if a.ctx == nil {
-			return
-		}
-		wailsruntime.EventsEmit(a.ctx, menuActionEventName, actionID)
+func (a *App) addMenuAction(target *application.Menu, label string, actionID string, shortcuts map[string][]string) {
+	item := target.Add(label).OnClick(a.emitMenuAction(actionID))
+	if accelerator := menuAcceleratorForAction(actionID, shortcuts); accelerator != "" {
+		item.SetAccelerator(accelerator)
 	}
 }
 
-func (a *App) emitViewZoom(action string) menu.Callback {
-	return func(_ *menu.CallbackData) {
+func (a *App) emitMenuAction(actionID string) func(*application.Context) {
+	return func(_ *application.Context) {
 		if a.ctx == nil {
 			return
 		}
-		wailsruntime.EventsEmit(a.ctx, "ide:view:zoom", action)
+		if window := a.currentNativeWindow(); window != nil {
+			window.EmitEvent(menuActionEventName, actionID)
+			return
+		}
+		a.emitEvent(menuActionEventName, actionID)
 	}
 }
 
-func menuAcceleratorForAction(actionID string, shortcuts map[string][]string) *keys.Accelerator {
+func (a *App) emitViewZoom(action string) func(*application.Context) {
+	return func(_ *application.Context) {
+		if a.ctx == nil {
+			return
+		}
+		if window := a.currentNativeWindow(); window != nil {
+			window.EmitEvent("ide:view:zoom", action)
+			return
+		}
+		a.emitEvent("ide:view:zoom", action)
+	}
+}
+
+func (a *App) currentNativeWindow() application.Window {
+	if a != nil && a.wailsApp != nil {
+		if window := a.wailsApp.Window.Current(); window != nil {
+			return window
+		}
+	}
+	if a != nil {
+		return a.mainWindow
+	}
+	return nil
+}
+
+func menuAcceleratorForAction(actionID string, shortcuts map[string][]string) string {
 	actionShortcuts := shortcuts[actionID]
 	if len(actionShortcuts) == 0 {
-		return nil
+		return ""
 	}
 
 	if !nativeMenuAcceleratorActions[actionID] {
-		return nil
+		return ""
 	}
 
 	for _, shortcut := range actionShortcuts {
@@ -157,41 +182,41 @@ func menuAcceleratorForAction(actionID string, shortcuts map[string][]string) *k
 		}
 	}
 
-	return nil
+	return ""
 }
 
-func shortcutToMenuAccelerator(shortcut string) (*keys.Accelerator, bool) {
+func shortcutToMenuAccelerator(shortcut string) (string, bool) {
 	parts := strings.Split(strings.TrimSpace(strings.ToLower(shortcut)), "+")
 	if len(parts) == 0 {
-		return nil, false
+		return "", false
 	}
 
 	key := strings.TrimSpace(parts[len(parts)-1])
 	if key == "" {
-		return nil, false
+		return "", false
 	}
 
-	modifiers := make([]keys.Modifier, 0, len(parts)-1)
+	modifiers := make([]string, 0, len(parts)-1)
 	for _, part := range parts[:len(parts)-1] {
 		switch strings.TrimSpace(part) {
 		case "cmd", "command", "meta":
-			modifiers = append(modifiers, keys.CmdOrCtrlKey)
+			modifiers = append(modifiers, "cmd")
 		case "ctrl", "control":
-			modifiers = append(modifiers, keys.ControlKey)
+			modifiers = append(modifiers, "ctrl")
 		case "alt", "option", "opt":
-			modifiers = append(modifiers, keys.OptionOrAltKey)
+			modifiers = append(modifiers, "option")
 		case "shift":
-			modifiers = append(modifiers, keys.ShiftKey)
+			modifiers = append(modifiers, "shift")
 		case "fn", "function", "globe":
-			return nil, false
+			return "", false
 		case "":
 			continue
 		default:
-			return nil, false
+			return "", false
 		}
 	}
 
-	return &keys.Accelerator{Key: normalizeMenuAcceleratorKey(key), Modifiers: modifiers}, true
+	return strings.Join(append(modifiers, normalizeMenuAcceleratorKey(key)), "+"), true
 }
 
 func normalizeMenuShortcut(shortcut string) string {
@@ -229,6 +254,8 @@ func normalizeMenuAcceleratorKey(key string) string {
 		return "return"
 	case "escape":
 		return "esc"
+	case "+":
+		return "plus"
 	default:
 		return key
 	}

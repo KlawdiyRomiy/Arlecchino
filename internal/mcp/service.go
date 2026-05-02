@@ -48,6 +48,7 @@ type ToolService struct {
 	journal          *changeJournal
 	bridge           IDEBridge
 	audit            *auditLogger
+	flightRecorder   *flightRecorder
 	layouts          *layoutRegistry
 	memory           *agentMemoryStore
 	sessionID        string
@@ -142,6 +143,10 @@ func NewToolServiceWithOptions(projectRoot string, options ToolServiceOptions) (
 	if err != nil {
 		return nil, err
 	}
+	flightRecorder, err := newFlightRecorder(absRoot, options.FlightRecorderPath, options.FlightRecorderLimit)
+	if err != nil {
+		return nil, err
+	}
 
 	journal, err := loadChangeJournal(absRoot, defaultJournalCapacity)
 	if err != nil {
@@ -164,6 +169,7 @@ func NewToolServiceWithOptions(projectRoot string, options ToolServiceOptions) (
 		journal:          journal,
 		bridge:           bridge,
 		audit:            audit,
+		flightRecorder:   flightRecorder,
 		layouts:          layouts,
 		memory:           memory,
 		sessionID:        fmt.Sprintf("sess-%d", time.Now().UTC().UnixMilli()),
@@ -222,6 +228,13 @@ func (s *ToolService) ToolDefinitions() []ToolDefinition {
 		{
 			Name:        "ide_control.audit_logs",
 			Description: "Read in-memory and disk audit logs",
+			InputSchema: objectSchema(nil, map[string]any{
+				"limit": map[string]any{"type": "number"},
+			}),
+		},
+		{
+			Name:        "ide_control.flight_recorder",
+			Description: "Read the Agent Flight Recorder event timeline",
 			InputSchema: objectSchema(nil, map[string]any{
 				"limit": map[string]any{"type": "number"},
 			}),
@@ -437,6 +450,7 @@ func (s *ToolService) CallTool(name string, args map[string]any) (any, error) {
 	startedAt := time.Now()
 	result, err := s.callToolDispatch(name, args)
 	s.recordAudit(name, args, err, startedAt)
+	s.recordToolFlightEvent(name, args, err, startedAt)
 	return result, err
 }
 
@@ -485,6 +499,9 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 	case "ide_control.audit_logs":
 		limit := optionalIntArg(args, "limit", 50)
 		return s.AuditLogs(limit), nil
+	case "ide_control.flight_recorder":
+		limit := optionalIntArg(args, "limit", 50)
+		return s.FlightRecorder(limit), nil
 	case "ide_control.capabilities":
 		return s.Capabilities(), nil
 	case "change_journal.create_checkpoint":
@@ -688,6 +705,10 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 			return nil, err
 		}
 		return s.bridgeEmitUIEvent(eventName, args["payload"])
+	case "ide_ui.surface_read":
+		return s.bridgeSurfaceRead(args)
+	case "ide_ui.open_intent":
+		return s.bridgeOpenIntent(args)
 	case "ide_ui.open_file_panel":
 		return s.bridgeOpenFilePanel(args)
 	case "ide_ui.preview_open":
@@ -838,26 +859,79 @@ func (s *ToolService) requestLiveApproval(toolName string, ttlSeconds int) (int,
 	}
 
 	ttl := normalizeApprovalTTL(ttlSeconds)
+	requestedAt := time.Now()
+	risk := s.riskClassForTool(toolName, map[string]any{})
+	s.recordFlightEvent(FlightRecord{
+		Type:   "approval.requested",
+		Source: "mcp",
+		Tool:   toolName,
+		Risk:   risk,
+		Status: "pending",
+		Args: map[string]any{
+			"ttl_seconds": ttl,
+		},
+	})
 	result, err := s.bridge.Call("mcp.request_approval", map[string]any{
 		"tool_name":   strings.TrimSpace(toolName),
 		"ttl_seconds": ttl,
-		"risk":        s.riskClassForTool(toolName, map[string]any{}),
+		"risk":        risk,
 	})
 	if err != nil {
+		s.recordFlightEvent(FlightRecord{
+			Type:       "approval.resolved",
+			Source:     "mcp",
+			Tool:       toolName,
+			Risk:       risk,
+			Status:     "error",
+			Error:      err.Error(),
+			DurationMs: time.Since(requestedAt).Milliseconds(),
+		})
 		return 0, err
 	}
 
 	resultMap, ok := result.(map[string]any)
 	if !ok {
-		return 0, fmt.Errorf("approval response has unexpected type %T", result)
+		err := fmt.Errorf("approval response has unexpected type %T", result)
+		s.recordFlightEvent(FlightRecord{
+			Type:       "approval.resolved",
+			Source:     "mcp",
+			Tool:       toolName,
+			Risk:       risk,
+			Status:     "error",
+			Error:      err.Error(),
+			DurationMs: time.Since(requestedAt).Milliseconds(),
+		})
+		return 0, err
 	}
 
 	approved, _ := resultMap["approved"].(bool)
 	if !approved {
-		return 0, fmt.Errorf("approval denied")
+		err := fmt.Errorf("approval denied")
+		s.recordFlightEvent(FlightRecord{
+			Type:       "approval.resolved",
+			Source:     "mcp",
+			Tool:       toolName,
+			Risk:       risk,
+			Status:     "denied",
+			Error:      err.Error(),
+			DurationMs: time.Since(requestedAt).Milliseconds(),
+		})
+		return 0, err
 	}
 
-	return normalizeApprovalTTL(optionalIntArg(resultMap, "ttl_seconds", ttl)), nil
+	resolvedTTL := normalizeApprovalTTL(optionalIntArg(resultMap, "ttl_seconds", ttl))
+	s.recordFlightEvent(FlightRecord{
+		Type:       "approval.resolved",
+		Source:     "mcp",
+		Tool:       toolName,
+		Risk:       risk,
+		Status:     "approved",
+		DurationMs: time.Since(requestedAt).Milliseconds(),
+		Args: map[string]any{
+			"ttl_seconds": resolvedTTL,
+		},
+	})
+	return resolvedTTL, nil
 }
 
 func (s *ToolService) isSensitivePath(relPath string) bool {
