@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,6 +72,8 @@ type AutoUpdateService struct {
 	status         AutoUpdateStatus
 	client         *http.Client
 	verifyCodesign func(string) error
+	githubAPIBase  string
+	tokenStore     autoUpdateTokenStore
 }
 
 type autoUpdateStageResult struct {
@@ -94,6 +97,8 @@ func NewAutoUpdateService() *AutoUpdateService {
 		status:         status,
 		client:         &http.Client{Timeout: 45 * time.Second},
 		verifyCodesign: verifyAppCodesign,
+		githubAPIBase:  autoUpdateGitHubAPIBaseURL,
+		tokenStore:     defaultAutoUpdateTokenStore(),
 	}
 }
 
@@ -201,8 +206,14 @@ func (s *AutoUpdateService) check() AutoUpdateStatus {
 
 	manifest, err := s.readManifest(source)
 	if err != nil {
-		status.State = AutoUpdateStateFailed
-		status.Reason = err.Error()
+		var manualRequired autoUpdateManualRequiredError
+		if errors.As(err, &manualRequired) {
+			status.State = AutoUpdateStateManualRequired
+			status.Reason = manualRequired.Error()
+		} else {
+			status.State = AutoUpdateStateFailed
+			status.Reason = redactAutoUpdateError(err.Error())
+		}
 		return s.setStatus(status)
 	}
 	manifest = normalizeAutoUpdateManifest(manifest)
@@ -281,8 +292,14 @@ func (s *AutoUpdateService) downloadAndStage() AutoUpdateStatus {
 
 	data, err := s.readArtifact(*status.Artifact)
 	if err != nil {
-		status.State = AutoUpdateStateFailed
-		status.Reason = err.Error()
+		var manualRequired autoUpdateManualRequiredError
+		if errors.As(err, &manualRequired) {
+			status.State = AutoUpdateStateManualRequired
+			status.Reason = manualRequired.Error()
+		} else {
+			status.State = AutoUpdateStateFailed
+			status.Reason = redactAutoUpdateError(err.Error())
+		}
 		return s.setStatus(status)
 	}
 	downloadPath := filepath.Join(cacheDir, artifactCacheName(status.TargetVersion, *status.Artifact))
@@ -424,6 +441,9 @@ func (s *AutoUpdateService) cancel() AutoUpdateStatus {
 func (s *AutoUpdateService) readManifest(source string) (PackagedOSAutoUpdateManifest, error) {
 	source = strings.TrimSpace(source)
 	parsed, err := url.Parse(source)
+	if err == nil && parsed.Scheme == autoUpdateGitHubReleaseScheme {
+		return s.readGitHubReleaseManifest(source)
+	}
 	if err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "file") {
 		data, err := s.readURLBytes(source, autoUpdateMaxManifestBytes)
 		if err != nil {
@@ -463,7 +483,24 @@ func (s *AutoUpdateService) readURLBytes(rawURL string, limit int64) ([]byte, er
 		}
 		return data, nil
 	case "http", "https":
-		resp, err := s.client.Get(rawURL)
+		req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		if s.isGitHubReleaseAssetAPIURL(rawURL) {
+			token, tokenErr := s.resolveGitHubToken()
+			if tokenErr != nil {
+				var manualRequired autoUpdateManualRequiredError
+				if errors.As(tokenErr, &manualRequired) {
+					return nil, manualRequired
+				}
+				return nil, tokenErr
+			}
+			req.Header.Set("Accept", "application/octet-stream")
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("X-GitHub-Api-Version", autoUpdateGitHubAPIVersion)
+		}
+		resp, err := s.client.Do(req)
 		if err != nil {
 			return nil, err
 		}

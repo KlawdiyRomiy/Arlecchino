@@ -8,6 +8,8 @@ export {
 
 export {
     ApplicationMenuShortcutPayload,
+    AutoUpdateState,
+    AutoUpdateStatus,
     BackgroundShellAction,
     BackgroundShellActionResult,
     BackgroundShellEvent,
@@ -18,6 +20,7 @@ export {
     BackgroundShellProgress,
     BackgroundShellSeverity,
     BackgroundShellStatusSnapshot,
+    BuildInfo,
     ClassResult,
     CommandSuggestion,
     DefinitionResult,
@@ -53,8 +56,11 @@ export {
     PackagedOSIntegrationSnapshot,
     ParameterInfo,
     PluginCommandDefJS,
+    PrivateUpdateAuthStatus,
     ProjectAccessInspection,
     ProjectEntryRenameResult,
+    ProjectWindowLaunchResult,
+    ProjectWindowSessionPayload,
     ResultItemJS,
     SearchResult,
     ShellCapabilitiesSnapshot,
