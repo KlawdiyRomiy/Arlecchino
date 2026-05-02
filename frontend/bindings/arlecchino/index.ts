@@ -10,6 +10,7 @@ export {
     ApplicationMenuShortcutPayload,
     AutoUpdateState,
     AutoUpdateStatus,
+    AutocompleteLanguageCapability,
     BackgroundShellAction,
     BackgroundShellActionResult,
     BackgroundShellEvent,

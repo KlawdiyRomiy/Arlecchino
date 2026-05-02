@@ -7,6 +7,9 @@ import { Create as $Create } from "/wails/runtime.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as autocomplete$0 from "./internal/autocomplete/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as terminal$0 from "./internal/terminal/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -142,6 +145,9 @@ export class AutoUpdateStatus {
         return new AutoUpdateStatus($$parsedSource as Partial<AutoUpdateStatus>);
     }
 }
+
+export const AutocompleteLanguageCapability = autocomplete$0.LanguageCapability;
+export type AutocompleteLanguageCapability = autocomplete$0.LanguageCapability;
 
 export class BackgroundShellAction {
     "id": string;
