@@ -283,11 +283,13 @@ Baseline hardening для этой ветки теперь имеет отдел
   `arlecchino://focus?...`, native tray/notification/dock badge projection из
   Background Shell, valid/invalid auto-update manifest read и signed apply-smoke
   staging. Native delivery остается default-off и включается только explicit env flags.
-- Auto-update gate расширен до verifier v1: manifest schema проверяет
-  `channel`, `version`, platform artifacts, SHA256 и detached signature; explicit
-  `ARLECCHINO_ENABLE_AUTO_UPDATE_APPLY_SMOKE=1` скачивает artifact во временный stage,
-  сверяет checksum/signature через `ARLECCHINO_AUTO_UPDATE_PUBLIC_KEY` и возвращает
-  `staged-apply-ready`. Production install/apply намеренно остается disabled/default-off.
+- Auto-update gate расширен до runtime updater v1 без Apple Developer: manifest schema
+  проверяет `channel`, `version`, platform artifacts, SHA256 и detached signature;
+  runtime сервис скачивает updater ZIP в user cache, сверяет checksum/signature через
+  pinned Ed25519 public key, извлекает `Arlecchino.app` в staging, проверяет
+  `Info.plist`/executable/codesign и может по подтверждению пользователя запустить
+  helper для replace + relaunch без `sudo`. DMG остается public installer, ZIP -
+  updater artifact.
 - Добавлен production-shaped `.app` packaging path:
   `./scripts/wails3-package-macos.sh` создает настоящий `.app` layout из tracked
   `build/darwin/Info.wails3.plist`, кладет Wails binary напрямую в `Contents/MacOS`
@@ -320,14 +322,22 @@ Baseline hardening для этой ветки теперь имеет отдел
 - In-app notification UX заменен на нейтральный app-wide notification stack:
   старый single-toast и маленький save-status pill убраны, `AppNotificationStack`
   хостится на root shell level для main/detached windows, save progress/success/error
-  и текущие `showNotification` вызовы идут через единый Zustand store. Native macOS
-  notifications остаются separate default-off Background Shell delivery, чтобы не было
-  duplicate in-app/native notifications.
-- Manual update UX подключен без install/apply: frontend читает уже нормализованный
-  packaged OS `autoUpdateManifest`, показывает foreground notification через
-  `AppNotificationStack` и открывает GitHub Releases. Checksum/signature verification
-  остается release/smoke gate; self-replace/apply не включается без будущей trusted
-  release policy.
+  и текущие `showNotification` вызовы идут через единый Zustand store. Stack теперь
+  закреплен справа снизу, использует compact overlapped Motion cards и раскрывается
+  на hover/focus. Native macOS notifications остаются separate default-off Background
+  Shell delivery, чтобы не было duplicate in-app/native notifications.
+- Auto-update UX подключен в foreground stack: frontend читает runtime
+  `GetAutoUpdateStatus()`, показывает states `available`, `downloading`, `staged`,
+  `applying`, `failed` и `manual-required`, дает action `Download update` или
+  `Install and relaunch`, а при unwritable bundle откатывается к GitHub Releases/manual
+  DMG flow. Packaged app с configured manifest URL делает one-per-session startup check,
+  а ручной `Check for Updates` доступен в Settings/Diagnostics и topbar `Actions`.
+  Manual checks всегда дают visible feedback: сначала `Checking for Updates`, затем
+  result notification even if returned status is unchanged. Native notifications не
+  дублируются.
+- Build identity добавлен в backend и Settings/Diagnostics: `GetBuildInfo()` показывает
+  dev vs packaged, bundle path, version/build, git SHA, build time, channel и manifest
+  URL. Local-alpha release script injects metadata через ldflags.
 - Release draft flow зафиксирован в `docs/release-alpha-checklist.md`: one tag,
   split assets by platform/architecture, macOS primary
   `arlecchino-macos-universal.dmg`, fallback `arlecchino-macos-universal.zip`,
@@ -368,8 +378,9 @@ Baseline hardening для этой ветки теперь имеет отдел
 - Window Lease manual smoke получил checklist/report script:
   `./scripts/wails3-window-lease-manual-smoke-macos.sh`, основной manual gate -
   Terminal detached PTY/focus/session continuity.
-- Production auto-update install/apply и trusted Developer ID/notarized distribution
-  остаются next gates.
+- Trusted Developer ID/notarized distribution остается next gate; local-alpha
+  auto-update теперь работает на собственном trust root: HTTPS + SHA256 + pinned
+  Ed25519 public key. Private signing key остается вне repo.
 - Arlehub в этой реализации не трогается. Следующий план ниже описывает адаптацию уже
   готовых элементов на v3 без включения hub mode.
 - Проверки checkpoint: `./scripts/wails3-generate-bindings.sh`,
@@ -395,7 +406,7 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Single instance/open-file | Green | Backend parser, frontend-ready queue and `ide:intent:open` dispatch are implemented behind `ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1`; real OS smoke now proves second-instance handoff into the first launched packaged app. | Keep gated/default-off until release packaging policy says this can be enabled by default. |
 | Protocol/file associations | Green | `arlecchino://` and file association payloads normalize through strict open-intent allowlist; real OS smoke now proves Wails handler entry and emitted dispatch through LaunchServices/AppleEvent routes. | Keep production default-handler claims scoped to signed/notarized release packaging. |
 | Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates projection, and live smoke proves tray startup, dock badge set, accepted/rejected action routing and tracked failure states. Notification manual smoke now records permission status and delivery result. In-app notifications use a separate app-wide stack for foreground IDE feedback. | Run `--include-notifications` permission smoke manually before claiming native notification delivery; keep default-off until signed/bundled UX is acceptable. |
-| Auto-update verifier | Yellow | `.app` smoke reads/validates manifest schema, checks channel/platform/universal artifact selection and can explicitly stage a signed artifact with checksum + Ed25519 signature verification. Manifest generation/signing helper exists for static HTTPS/GitHub Releases artifacts. Foreground app can show a manual update notification that opens GitHub Releases. Production install/apply remains disabled. | Decide release channel hosting and installer/apply policy after release packaging is stable; private signing key must remain outside repo. |
+| Auto-update runtime | Yellow | Custom updater v1 is implemented without Sparkle/Wails alpha updater API: `GetBuildInfo()`, `GetAutoUpdateStatus()`, `CheckForAutoUpdate()`, `DownloadAutoUpdate()`, `ApplyStagedAutoUpdate()`, `CancelAutoUpdate()`. It verifies channel/platform/version, SHA256 and Ed25519, stages signed `arlecchino-macos-universal.zip` containing `Arlecchino.app`, then runs a user-confirmed helper to backup/replace/relaunch without `sudo`. Foreground update UX uses the neutral bottom-right `framer-motion` app notification stack, startup check runs once for packaged apps with a manifest URL, and manual checks live in Settings plus topbar `Actions` with forced visible refresh on unchanged results. Manual DMG fallback remains for unwritable bundles. | Run full old-app -> new ZIP/manifest -> apply/relaunch smoke on installed `Arlecchino.app`; keep Developer ID/notarization marked absent. |
 | Packaging/release OS integration | Yellow | Local-alpha release profile now builds universal `arm64+x86_64` ad-hoc signed `Arlecchino.app`, `arlecchino-macos-universal.zip` and optional `arlecchino-macos-universal.dmg` for Big Sur 11.0 through Tahoe 26.x. Evidence records split GitHub asset names, confirms public names do not contain `v3`, installed-app smoke distinguishes `wails://localhost` renderer labels from real TCP listeners, and release draft flow is documented as one tag with split assets. | Developer ID/notarization remains inactive until credentials exist; ad-hoc artifacts are local/tester alpha only and not trusted public distribution. Keep stale dev-orphan cleanup green before release evidence is accepted. |
 | Real OS handoff | Green | `wails3-real-os-smoke-macos.sh` launches a registered ad-hoc `.app`, traces Wails application-event handler entry, proves `ide:intent:open` emitted dispatch for protocol/file payloads and proves gated second-instance handoff. | Keep the evidence as smoke-gated; browser/Finder UX still depends on production registration/signing decisions. |
 
@@ -424,7 +435,8 @@ Ready for Arlehub checklist:
 - Green Background Shell and Flight Recorder backend readability without hub UI.
 - Yellow but stable Window Lease helper lifecycle with manual Terminal smoke recorded.
 - Yellow local-alpha release evidence for universal macOS artifacts without Developer ID.
-- Public GitHub release asset policy uses `arlecchino-macos-universal.dmg` as macOS primary and `arlecchino-macos-universal.zip` as fallback.
+- Yellow auto-update runtime with signed ZIP trust root, startup/manual trigger UX and manual fallback.
+- Public GitHub release asset policy uses `arlecchino-macos-universal.dmg` as macOS primary and `arlecchino-macos-universal.zip` as updater/fallback artifact.
 
 ## 1. Surface Runtime
 
@@ -1116,8 +1128,8 @@ Arlehub.
 ### Wails v3 Fit
 
 Wails v3 systray, notifications, native menus и services подходят для job status surface.
-Auto update docs также относятся к этой зоне, но auto-updates нужно отложить до stable
-shell.
+Auto-update теперь живет отдельным runtime service: foreground status/confirm flow остается
+внутри IDE, а native notifications используются только для background delivery gates.
 
 Документация:
 
@@ -1585,7 +1597,7 @@ risky action, user can return layout.
     default-off consumers of Background Shell state; native delivery remains off.
 19. Done: add auto-update verifier gate. Manifest read now validates channel/version/
     platform artifacts/SHA256/signature, and explicit smoke can download to temp,
-    verify checksum/signature and stage without enabling production install/apply.
+    verify checksum/signature and stage.
 20. Done: add packaged smoke harness. `wails3-packaged-smoke` and
     `./scripts/wails3-packaged-smoke-macos.sh` produce one report for shell
     capabilities, packaged OS adapters, Background Shell actions, single-instance gate,
@@ -1638,8 +1650,7 @@ risky action, user can return layout.
 33. Done: add native notification manual evidence. Permission request/status and delivery
     result are now visible in the native delivery live smoke report.
 34. Done: add auto-update manifest prep helper. Signed manifests for static
-    HTTPS/GitHub Releases artifacts can be generated from an external Ed25519 key; app
-    install/apply remains disabled.
+    HTTPS/GitHub Releases artifacts can be generated from an external Ed25519 key.
 35. Done: add Window Lease manual smoke checklist for Terminal detached PTY/focus/session
     continuity before any default-on detach decision.
 36. Done: lock release artifact naming. Public product artifacts use `Arlecchino.app`
@@ -1656,12 +1667,25 @@ risky action, user can return layout.
     pill are replaced by neutral `AppNotificationStack` + `appNotificationStore`, with
     save progress/success/error and existing IDE `showNotification` calls routed through
     the same foreground stack. Native notifications remain separate and default-off.
-40. Done: add manual update UX. `manualUpdateNotifications` watches the packaged OS
-    manifest read model, shows foreground update notifications and opens GitHub Releases;
-    install/apply remains disabled outside explicit smoke gates.
+40. Done: add manual update UX. `manualUpdateNotifications` initially watched the
+    packaged OS manifest read model, showed foreground update notifications and opened
+    GitHub Releases.
 41. Done: document release draft flow. Local alpha releases use one GitHub tag with
     split assets, macOS primary `arlecchino-macos-universal.dmg`, fallback ZIP and
     checksum/manifest sidecars. Product artifact names remain free of `v3`.
+42. Done: add custom Auto-Update v1 without Apple Developer. Backend build identity and
+    runtime updater methods are available, release scripts inject version/build/git SHA/
+    channel/manifest metadata, updater ZIPs are SHA256 + Ed25519 verified, `Arlecchino.app`
+    is staged outside the bundle, and a user-confirmed helper backs up/replaces/relaunches
+    without `sudo`. Frontend notification states now drive download/install/manual fallback.
+43. Done: add auto-update trigger UX. Packaged apps with a configured manifest URL run a
+    one-per-session startup check, Settings/Diagnostics shows `Check for Updates`, and the
+    topbar `Actions` menu exposes the same runtime check path. Notifications stay in the
+    neutral app-wide `framer-motion` stack, separate from native macOS notifications.
+44. Done: polish foreground notification stack and manual update feedback. The stack is
+    bottom-right, uses compact overlapped Motion cards that expand on hover/focus, and
+    manual update checks always refresh the visible `auto-update` notification even when
+    the returned updater state is unchanged.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 

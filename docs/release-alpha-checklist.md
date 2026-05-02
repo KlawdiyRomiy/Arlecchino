@@ -32,7 +32,8 @@ notarized distribution path.
 - Upload macOS assets as separate files:
   - `arlecchino-macos-universal.dmg`
   - `arlecchino-macos-universal.zip`
-  - checksum file and signed update manifest when the manifest is used.
+  - checksum file, signed update manifest, and public verifier key when the
+    updater channel is enabled.
 - Keep the app bundle inside the DMG named `Arlecchino.app`.
 - Do not put the version in the macOS asset filename; the version belongs to
   the GitHub tag, release title, release notes, and manifest metadata.
@@ -90,9 +91,22 @@ notarized distribution path.
 - If using update manifests, generate them with
   `./scripts/wails3-update-manifest.mjs`; keep the Ed25519 private key outside
   the repository and publish only the manifest/artifacts/public verifier key.
-- Manual update UX is notification-only: a validated manifest can show an
-  in-app foreground notification that opens GitHub Releases. The app must not
-  replace/apply itself until a future trusted release policy exists.
+- For updater-enabled local-alpha builds, generate release candidates with
+  `./scripts/wails3-local-alpha-release-macos.sh --update-private-key <external-ed25519.pem>`.
+  This produces the public DMG, the updater ZIP, signed manifest, public key
+  output, and release evidence. The ZIP must contain only `Arlecchino.app`.
+- Auto-update UX is user-confirmed: the app checks the manifest, downloads the
+  ZIP to the user cache, verifies SHA256 + Ed25519, stages `Arlecchino.app`, then
+  shows an in-app notification with `Install and relaunch`. If the installed
+  bundle is not writable, the notification falls back to GitHub Releases/manual
+  DMG replacement.
+- Installed updater smoke must verify both trigger paths: a packaged app with
+  an embedded manifest URL runs one startup check per session, and
+  `Settings -> Diagnostics -> Build identity -> Check for Updates` plus
+  `TopBar -> Actions -> Check for Updates` route through the same runtime
+  `CheckForAutoUpdate()` path. Repeat one trigger after an unchanged result and
+  confirm the bottom-right foreground notification visibly refreshes instead of
+  appearing inert.
 
 ## Security Gates
 
@@ -107,9 +121,12 @@ notarized distribution path.
 - For the macOS alpha, `zls`, `marksman`, and `lua-language-server` should
   install through Homebrew instead of Arlecchino-managed direct binary
   downloads.
-- Auto-update install/apply remains disabled. Current updater work is limited
-  to manifest read, checksum verification, detached signature verification and
-  temp staging under explicit smoke flags.
-- DMG users update by downloading the next `arlecchino-macos-universal.dmg` and
-  replacing `/Applications/Arlecchino.app`; source users update with `git pull`
-  and the dev scripts.
+- Auto-update install/apply is enabled only for signed updater ZIPs verified by
+  the pinned Ed25519 public key. It does not use `sudo`, does not write inside
+  the current `.app` during download/staging, and writes apply reports under the
+  user cache.
+- DMG users can still update manually by downloading the next
+  `arlecchino-macos-universal.dmg` and replacing `/Applications/Arlecchino.app`;
+  source users update with `git pull` and the dev scripts.
+- No Apple Developer ID means this is not a notarized public-trust updater.
+  Trust for the updater channel is HTTPS + SHA256 + pinned Ed25519 signature.
