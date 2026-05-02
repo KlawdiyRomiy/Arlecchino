@@ -233,6 +233,9 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const splitDiagnosticsHoldUntilRef = useRef(0);
   const [splitDiagnosticsHoldUntil, setSplitDiagnosticsHoldUntil] = useState(0);
   const byFile = useDiagnosticsStore((state) => state.byFile);
+  const diagnosticsRuntimeStatus = useDiagnosticsStore(
+    (state) => state.runtimeStatus,
+  );
   const statusFilePath = useEditorStore((state) => state.statusFile.path);
   const activeEditorFilePath = useEditorStore(
     (state) => state.getActiveTab(state.activePaneId)?.path ?? null,
@@ -364,10 +367,19 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const isBoundedDiagnosticsProject =
     diagnosticsPreload.projectPath === activeProjectPath &&
     diagnosticsPreload.bounded;
+  const isDiagnosticsRuntimeUnavailable =
+    diagnosticsRuntimeStatus.projectPath === activeProjectPath &&
+    (diagnosticsRuntimeStatus.state === "unavailable" ||
+      diagnosticsRuntimeStatus.state === "error");
+  const diagnosticsUnavailableMessage =
+    isDiagnosticsRuntimeUnavailable && diagnosticsRuntimeStatus.message
+      ? diagnosticsRuntimeStatus.message
+      : "Workspace diagnostics are not available for the detected files in this project yet.";
   const isWorkspaceDiagnosticsUnavailable =
-    diagnosticsPreload.projectPath === activeProjectPath &&
-    !diagnosticsPreload.active &&
-    diagnosticsPreload.totalCandidates === 0;
+    isDiagnosticsRuntimeUnavailable ||
+    (diagnosticsPreload.projectPath === activeProjectPath &&
+      !diagnosticsPreload.active &&
+      diagnosticsPreload.totalCandidates === 0);
   const isPartialWorkspaceDiagnostics =
     isBoundedDiagnosticsProject &&
     diagnosticsPreload.totalCandidates > diagnosticsPreload.selectedCandidates;
@@ -810,8 +822,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
                 Diagnostics unavailable
               </div>
               <div className="mt-1 text-[12px] text-[var(--problems-text-secondary)]">
-                Workspace diagnostics are not available for the detected files
-                in this project yet.
+                {diagnosticsUnavailableMessage}
               </div>
             </motion.div>
           ) : isPartialWorkspaceDiagnostics ? (

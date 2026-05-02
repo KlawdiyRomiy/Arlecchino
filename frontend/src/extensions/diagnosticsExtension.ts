@@ -53,8 +53,9 @@ const EMPTY_PROBLEMS: readonly DiagnosticsProblem[] = Object.freeze([]);
 const EMPTY_INLINE_SNAPSHOT: readonly InlineDiagnosticsLine[] = Object.freeze(
   [],
 );
-const INLINE_DIAGNOSTIC_MESSAGE_MAX_LENGTH = 180;
-const INLINE_DIAGNOSTIC_MARKER_HEIGHT = 18;
+const INLINE_DIAGNOSTIC_MARKER_HEIGHT = 25;
+const INLINE_DIAGNOSTIC_VIEWPORT_PADDING = 16;
+const INLINE_DIAGNOSTIC_MIN_READABLE_WIDTH = 420;
 const lastVisibleProblemsByView = new WeakMap<
   EditorView,
   readonly DiagnosticsProblem[]
@@ -112,15 +113,8 @@ const getOffset = (
   return clamp(line.from + column, line.from, line.to);
 };
 
-const truncateMessage = (message: string): string => {
-  if (message.length <= INLINE_DIAGNOSTIC_MESSAGE_MAX_LENGTH) {
-    return message;
-  }
-  return `${message.slice(0, INLINE_DIAGNOSTIC_MESSAGE_MAX_LENGTH - 3)}...`;
-};
-
 const buildExpandedMessageText = (snapshot: InlineDiagnosticsLine): string => {
-  const parts = [truncateMessage(snapshot.message)];
+  const parts = [snapshot.message];
   if (snapshot.count > 1) {
     parts.push(`+${snapshot.count - 1} more`);
   }
@@ -293,6 +287,10 @@ class DiagnosticsOverlayMarker implements LayerMarker {
     dom.style.left = `${this.left}px`;
     dom.style.top = `${this.top}px`;
     dom.style.maxWidth = `${this.maxWidth}px`;
+    dom.style.setProperty(
+      "--cm-diagnostic-overlay-readable-width",
+      `${this.maxWidth}px`,
+    );
     dom.dataset.diagnosticExpanded = this.expanded ? "true" : "false";
     dom.dataset.diagnosticLine = String(this.lineNumber);
     dom.title = buildFullMessageText(this.snapshot);
@@ -401,15 +399,34 @@ const buildInlineDiagnosticMarkers = (
     }
 
     const lineHeight = Math.max(coords.bottom - coords.top, 1);
-    const left = coords.right - base.left + 10;
+    const preferredLeft = coords.right - base.left + 10;
+    const visiblePreferredLeft = preferredLeft - view.scrollDOM.scrollLeft;
+    const maxViewportWidth = Math.max(
+      44,
+      view.scrollDOM.clientWidth - INLINE_DIAGNOSTIC_VIEWPORT_PADDING * 2,
+    );
+    const readableWidth = Math.min(
+      INLINE_DIAGNOSTIC_MIN_READABLE_WIDTH,
+      maxViewportWidth,
+    );
+    const hasReadableRightSpace =
+      view.scrollDOM.clientWidth -
+        visiblePreferredLeft -
+        INLINE_DIAGNOSTIC_VIEWPORT_PADDING >=
+      readableWidth;
+    const visibleLeft = hasReadableRightSpace
+      ? Math.max(INLINE_DIAGNOSTIC_VIEWPORT_PADDING, visiblePreferredLeft)
+      : INLINE_DIAGNOSTIC_VIEWPORT_PADDING;
+    const left = view.scrollDOM.scrollLeft + visibleLeft;
     const top =
       coords.top -
       base.top +
       Math.max((lineHeight - INLINE_DIAGNOSTIC_MARKER_HEIGHT) / 2, 0);
-    const visibleLeft = left - view.scrollDOM.scrollLeft;
     const maxWidth = Math.max(
       44,
-      view.scrollDOM.clientWidth - visibleLeft - 16,
+      view.scrollDOM.clientWidth -
+        visibleLeft -
+        INLINE_DIAGNOSTIC_VIEWPORT_PADDING,
     );
 
     markers.push(
@@ -465,18 +482,18 @@ export const diagnosticsTheme = EditorView.theme({
   },
   ".cm-diagnostic-overlay": {
     display: "inline-flex",
-    alignItems: "center",
-    gap: "5px",
-    minWidth: "14px",
-    height: `${INLINE_DIAGNOSTIC_MARKER_HEIGHT}px`,
-    padding: "0 6px",
+    alignItems: "flex-start",
+    gap: "8px",
+    minWidth: "22px",
+    minHeight: `${INLINE_DIAGNOSTIC_MARKER_HEIGHT}px`,
+    padding: "0 10px",
     borderRadius: "999px",
-    fontSize: "11px",
+    fontSize: "18px",
     letterSpacing: "0",
-    lineHeight: `${INLINE_DIAGNOSTIC_MARKER_HEIGHT}px`,
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
+    lineHeight: "21px",
+    whiteSpace: "normal",
+    overflow: "visible",
+    textOverflow: "clip",
     pointerEvents: "auto",
     userSelect: "none",
     border: "1px solid transparent",
@@ -484,27 +501,37 @@ export const diagnosticsTheme = EditorView.theme({
     opacity: "0.92",
     transform: "translateY(1px)",
   },
+  ".cm-diagnostic-overlay:hover, .cm-diagnostic-overlay[data-diagnostic-expanded='true']":
+    {
+      width: "var(--cm-diagnostic-overlay-readable-width)",
+      borderRadius: "14px",
+    },
   ".cm-diagnostic-overlay-dot": {
-    width: "6px",
-    height: "6px",
+    width: "8px",
+    height: "8px",
     flex: "0 0 auto",
     borderRadius: "999px",
+    marginTop: "8px",
   },
   ".cm-diagnostic-overlay-count": {
     display: "none",
-    minWidth: "10px",
-    fontSize: "10px",
+    minWidth: "18px",
+    fontSize: "16px",
     fontWeight: "700",
     textAlign: "center",
+    lineHeight: "21px",
   },
   ".cm-diagnostic-overlay-count:not(:empty)": {
     display: "inline-block",
   },
   ".cm-diagnostic-overlay-text": {
     display: "none",
+    flex: "1 1 auto",
     minWidth: "0",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
+    overflow: "visible",
+    overflowWrap: "break-word",
+    textOverflow: "clip",
+    wordBreak: "normal",
   },
   ".cm-diagnostic-overlay:hover .cm-diagnostic-overlay-text, .cm-diagnostic-overlay[data-diagnostic-expanded='true'] .cm-diagnostic-overlay-text":
     {
@@ -512,18 +539,18 @@ export const diagnosticsTheme = EditorView.theme({
     },
   ".cm-diagnostic-overlay-error": {
     color: "#fecaca",
-    backgroundColor: "rgba(127, 29, 29, 0.34)",
-    borderColor: "rgba(248, 113, 113, 0.24)",
+    backgroundColor: "rgba(127, 29, 29, 0.86)",
+    borderColor: "rgba(248, 113, 113, 0.48)",
   },
   ".cm-diagnostic-overlay-warning": {
     color: "#fde68a",
-    backgroundColor: "rgba(120, 53, 15, 0.3)",
-    borderColor: "rgba(251, 191, 36, 0.22)",
+    backgroundColor: "rgba(120, 53, 15, 0.82)",
+    borderColor: "rgba(251, 191, 36, 0.44)",
   },
   ".cm-diagnostic-overlay-info": {
     color: "#bfdbfe",
-    backgroundColor: "rgba(30, 58, 138, 0.26)",
-    borderColor: "rgba(96, 165, 250, 0.18)",
+    backgroundColor: "rgba(30, 58, 138, 0.78)",
+    borderColor: "rgba(96, 165, 250, 0.38)",
   },
   ".cm-diagnostic-overlay-error .cm-diagnostic-overlay-dot": {
     backgroundColor: "#f87171",

@@ -81,6 +81,23 @@ func TestClearDiagnosticsNotifiesWithEmptySnapshot(t *testing.T) {
 	}
 }
 
+func TestDidOpenReturnsStartError(t *testing.T) {
+	m := NewManager(t.TempDir())
+	m.RegisterServer(ServerConfig{
+		Language: "go",
+		Command:  "/definitely/missing/gopls",
+		RootURI:  "file://" + t.TempDir(),
+	})
+
+	err := m.DidOpen("go", "/tmp/broken.go", "package main\n")
+	if err == nil {
+		t.Fatal("expected DidOpen to return LSP start error")
+	}
+	if m.IsDocOpen("go", "/tmp/broken.go") {
+		t.Fatal("document should not be marked open when LSP start fails")
+	}
+}
+
 func TestWaitForDiagnosticsPublicationsWaitsForTrackedFiles(t *testing.T) {
 	m := NewManager(t.TempDir())
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

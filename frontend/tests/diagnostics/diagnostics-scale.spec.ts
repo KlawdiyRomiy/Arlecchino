@@ -276,6 +276,38 @@ test.beforeEach(async ({ page }) => {
                     isDirectory: false,
                   },
                 ];
+              case "InspectEditorFile": {
+                const path = typeof args[0] === "string" ? args[0] : "file.ts";
+                const diagnosticsWindow = window as typeof window & {
+                  __diagnosticsEditorContent?: string;
+                  __diagnosticsEditorPath?: string;
+                };
+                const content =
+                  diagnosticsWindow.__diagnosticsEditorPath === path &&
+                  diagnosticsWindow.__diagnosticsEditorContent !== undefined
+                    ? diagnosticsWindow.__diagnosticsEditorContent
+                    : `// ${path}\nexport const ready = true;\n`;
+                const lines = content.split("\n");
+                const name = path.split("/").pop() || path;
+                return {
+                  path,
+                  name,
+                  sizeBytes: new TextEncoder().encode(content).length,
+                  formattedSize: `${content.length} B`,
+                  isText: true,
+                  safeForEditor: true,
+                  largeDocument: false,
+                  reason: "safe for interactive editing",
+                  lineCount: lines.length,
+                  maxLineLength: Math.max(
+                    ...lines.map((line) => line.length),
+                    0,
+                  ),
+                  limitBytes: 2 * 1024 * 1024,
+                  lineLimit: 20_000,
+                  maxLineLengthLimit: 20_000,
+                };
+              }
               case "ReadFile": {
                 const path = typeof args[0] === "string" ? args[0] : "file.ts";
                 const diagnosticsWindow = window as typeof window & {
@@ -955,6 +987,45 @@ test("diagnostics bind through runtime wrapper without legacy window runtime", a
   expect(state.currentGeneration).toBe(1);
   expect(state.files).toEqual(["/projects/runtime-free/src/main.ts"]);
   expect(state.totals).toEqual([1]);
+});
+
+test("diagnostics status error shows unavailable problems state instead of false clear", async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const diagnostics = await import("/src/stores/diagnosticsStore.ts");
+    const projectState = await import("/src/utils/projectBoundState.ts");
+    const emit = (
+      window as typeof window & {
+        __emitRuntimeEvent: (eventName: string, payload: unknown) => void;
+      }
+    ).__emitRuntimeEvent;
+
+    projectState.resetProjectBoundStores();
+    projectState.activateProjectScope("/workspace");
+    diagnostics.useDiagnosticsStore.getState().setProjectScope("/workspace", 3);
+
+    emit("lsp:diagnostics:status", {
+      projectPath: "/workspace",
+      generation: 3,
+      language: "typescript",
+      filePath: "/workspace/diagnostics.ts",
+      state: "error",
+      message: "LSP didOpen failed for diagnostics.ts",
+    });
+  });
+
+  await expect(page.getByTestId("diagnostics-compact-indicator")).toBeVisible();
+  await expect(page.getByTestId("diagnostics-compact-indicator")).toHaveText(
+    /Unavailable/,
+  );
+  await page.getByTestId("diagnostics-compact-indicator").click();
+  await expect(page.getByTestId("problems-panel")).toBeVisible();
+  await expect(page.getByText("Diagnostics unavailable")).toBeVisible();
+  await expect(
+    page.getByText("LSP didOpen failed for diagnostics.ts"),
+  ).toBeVisible();
+  await expect(page.getByText("No matching problems")).toHaveCount(0);
 });
 
 test("preload waits for runtime listeners before backend diagnostics publish", async ({

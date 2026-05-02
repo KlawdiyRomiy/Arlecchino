@@ -16,6 +16,9 @@ interface StatusBarProps {
 
 export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
   const projectSummary = useDiagnosticsStore((state) => state.projectSummary);
+  const diagnosticsRuntimeStatus = useDiagnosticsStore(
+    (state) => state.runtimeStatus,
+  );
   const statusFile = useEditorStore((state) => state.statusFile);
   const cursorPosition = useEditorStore((state) => state.cursorPosition);
   const showCompactDiagnostics = useEditorSettingsStore(
@@ -96,6 +99,14 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
       return "default" as const;
     }
     if (
+      activeProjectPath &&
+      diagnosticsRuntimeStatus.projectPath === activeProjectPath &&
+      (diagnosticsRuntimeStatus.state === "unavailable" ||
+        diagnosticsRuntimeStatus.state === "error")
+    ) {
+      return "unavailable" as const;
+    }
+    if (
       diagnosticsPreload.active &&
       diagnosticsPreload.projectPath === activeProjectPath
     ) {
@@ -111,7 +122,12 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
       return "partial" as const;
     }
     return "default" as const;
-  }, [activeProjectPath, diagnosticsPreload, projectSummary.total]);
+  }, [
+    activeProjectPath,
+    diagnosticsPreload,
+    diagnosticsRuntimeStatus,
+    projectSummary.total,
+  ]);
 
   return (
     <div
