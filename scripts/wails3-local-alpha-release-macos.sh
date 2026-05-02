@@ -362,7 +362,7 @@ env ARLE_WAILS3_MIN_MACOS="$MIN_MACOS_VERSION" \
   --min-macos "$MIN_MACOS_VERSION" \
   --sign "$SIGN_MODE"
 
-ditto -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+COPYFILE_DISABLE=1 ditto --norsrc --noextattr --noqtn --noacl -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
 
 if [[ -n "$UPDATE_PRIVATE_KEY" ]]; then
   UPDATE_MANIFEST_ARCH="$ARCH_TARGET"

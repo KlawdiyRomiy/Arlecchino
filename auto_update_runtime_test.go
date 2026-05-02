@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -61,6 +62,22 @@ func TestStageAutoUpdateZipAcceptsArlecchinoApp(t *testing.T) {
 	}
 }
 
+func TestStageAutoUpdateZipSkipsAppleDoubleEntries(t *testing.T) {
+	data := buildTestUpdateZip(t, true, "Arlecchino.app/Contents/._Info.plist", "Arlecchino.app/Contents/MacOS/._Arlecchino", "__MACOSX/Arlecchino.app/._Contents")
+	stage, err := stageAutoUpdateZip(data, t.TempDir(), func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"Contents/._Info.plist",
+		"Contents/MacOS/._Arlecchino",
+	} {
+		if _, err := os.Stat(filepath.Join(stage.StagedAppPath, path)); !os.IsNotExist(err) {
+			t.Fatalf("AppleDouble entry %q was extracted", path)
+		}
+	}
+}
+
 func TestStageAutoUpdateZipRejectsMalformedOrMissingApp(t *testing.T) {
 	if _, err := stageAutoUpdateZip([]byte("not a zip"), t.TempDir(), nil); err == nil {
 		t.Fatal("stageAutoUpdateZip accepted malformed ZIP")
@@ -105,7 +122,7 @@ func TestCompareAutoUpdateVersions(t *testing.T) {
 	}
 }
 
-func buildTestUpdateZip(t *testing.T, includeApp bool) []byte {
+func buildTestUpdateZip(t *testing.T, includeApp bool, extraEntries ...string) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
@@ -124,6 +141,9 @@ func buildTestUpdateZip(t *testing.T, includeApp bool) []byte {
 		addZipFile(t, writer, "Arlecchino.app/Contents/MacOS/Arlecchino", 0o755, "#!/bin/zsh\nexit 0\n")
 	} else {
 		addZipFile(t, writer, "README.txt", 0o644, "no app here\n")
+	}
+	for _, entry := range extraEntries {
+		addZipFile(t, writer, entry, 0o644, "appledouble metadata\n")
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)

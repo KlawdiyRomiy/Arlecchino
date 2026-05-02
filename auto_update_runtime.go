@@ -588,6 +588,9 @@ func stageAutoUpdateZip(data []byte, stageRoot string, verifyCodesign func(strin
 	}
 
 	for _, file := range reader.File {
+		if shouldSkipAutoUpdateZipEntry(file.Name) {
+			continue
+		}
 		if err := extractZipFile(file, extractDir); err != nil {
 			return autoUpdateStageResult{}, err
 		}
@@ -598,6 +601,20 @@ func stageAutoUpdateZip(data []byte, stageRoot string, verifyCodesign func(strin
 		return autoUpdateStageResult{}, err
 	}
 	return autoUpdateStageResult{StagingDir: stagingDir, StagedAppPath: appPath}, nil
+}
+
+func shouldSkipAutoUpdateZipEntry(name string) bool {
+	name = filepath.ToSlash(filepath.Clean(name))
+	if name == "." {
+		return false
+	}
+	parts := strings.Split(name, "/")
+	for _, part := range parts {
+		if part == "__MACOSX" || strings.HasPrefix(part, "._") {
+			return true
+		}
+	}
+	return false
 }
 
 func extractZipFile(file *zip.File, destinationRoot string) error {
