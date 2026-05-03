@@ -44,10 +44,8 @@ import {
   unblockProjectSwitch,
 } from "../utils/priorityUI";
 import {
-  getProjectPathBasename,
   getProjectPathDirname,
   isSameOrChildPath,
-  normalizeProjectPath,
 } from "../utils/projectPaths";
 
 interface FileEntry {
@@ -513,7 +511,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       let nodes: FileNode[] = buildFileNodes(entries);
 
       // Восстанавливаем ранее открытые папки
-      if (expandedPaths.size > 0) {
+      if (expandedPathsRef.current.size > 0) {
         nodes = await restoreExpandedFolders(nodes);
       }
 
@@ -564,6 +562,30 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     } catch (error) {
       console.error("Error refreshing directory:", dirPath, error);
     }
+  };
+
+  const pruneDeletedPathFromTree = (deletedPath: string) => {
+    const pruneNodes = (nodes: FileNode[]): FileNode[] =>
+      nodes.reduce<FileNode[]>((nextNodes, node) => {
+        if (isSameOrChildPath(node.path, deletedPath)) {
+          return nextNodes;
+        }
+
+        if (!node.children) {
+          nextNodes.push(node);
+          return nextNodes;
+        }
+
+        nextNodes.push({
+          ...node,
+          children: pruneNodes(node.children),
+        });
+        return nextNodes;
+      }, []);
+
+    const updatedFiles = pruneNodes(filesRef.current);
+    filesRef.current = updatedFiles;
+    setFiles(updatedFiles);
   };
 
   const normalizeProjectPath = (path: string) =>
@@ -750,7 +772,14 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
           setHighlightedPath(null);
         }
 
-        void reloadExplorerTree();
+        pruneDeletedPathFromTree(deletedPath);
+
+        const parentPath = getProjectPathDirname(deletedPath);
+        const refreshTarget =
+          parentPath && isSameOrChildPath(parentPath, currentProjectPath)
+            ? parentPath
+            : currentProjectPath;
+        void refreshDirectoryPath(refreshTarget);
       },
     );
 
@@ -1611,7 +1640,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     };
 
     return (
-      <ContextActionMenu items={rootContextActions}>
+      <ContextActionMenu
+        items={rootContextActions}
+        ignoredTargetSelector=".file-explorer-node"
+      >
         <div
           ref={explorerRef}
           data-testid="file-explorer-scroll-region"
@@ -1693,7 +1725,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
 
   return (
     <>
-      <ContextActionMenu items={rootContextActions}>
+      <ContextActionMenu
+        items={rootContextActions}
+        ignoredTargetSelector=".file-explorer-node"
+      >
         <div
           ref={explorerRef}
           style={{

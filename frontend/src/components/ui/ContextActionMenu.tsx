@@ -6,6 +6,7 @@ import {
   getContextActionId,
   NATIVE_CONTEXT_MENU_ACTION_EVENT,
   openNativeContextMenu,
+  shouldIgnoreContextMenuTarget,
   type NativeContextMenuActionPayload,
 } from "../../shell/nativeContextMenu";
 import { canUseShellCapability } from "../../shell/shellCapabilities";
@@ -30,6 +31,7 @@ interface ContextActionMenuProps {
   nativeContext?: Record<string, unknown>;
   nativeSurfaceId?: string;
   nativeTargetId?: string;
+  ignoredTargetSelector?: string;
 }
 
 const baseItemClassName =
@@ -42,12 +44,14 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   nativeContext,
   nativeSurfaceId,
   nativeTargetId,
+  ignoredTargetSelector,
 }) => {
   const [open, setOpen] = React.useState(false);
   const menuInstanceIdRef = React.useRef(
     `context-menu-${Math.random().toString(36).slice(2, 10)}`,
   );
   const actionRegistryRef = React.useRef(new Map<string, () => void>());
+  const suppressNextOpenRef = React.useRef(false);
   const closeAndRun = React.useCallback((action?: () => void) => {
     setOpen(false);
 
@@ -58,6 +62,18 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
     window.setTimeout(() => {
       action();
     }, 0);
+  }, []);
+  const setContextMenuOpen = React.useCallback((nextOpen: boolean) => {
+    if (nextOpen && suppressNextOpenRef.current) {
+      suppressNextOpenRef.current = false;
+      return;
+    }
+
+    if (!nextOpen) {
+      suppressNextOpenRef.current = false;
+    }
+
+    setOpen(nextOpen);
   }, []);
 
   React.useEffect(() => {
@@ -126,6 +142,14 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   const handleNativeContextMenuCapture = (
     event: React.MouseEvent<HTMLElement>,
   ) => {
+    if (shouldIgnoreContextMenuTarget(event.target, ignoredTargetSelector)) {
+      suppressNextOpenRef.current = true;
+      window.setTimeout(() => {
+        suppressNextOpenRef.current = false;
+      }, 0);
+      return;
+    }
+
     if (!canUseShellCapability("contextMenu")) {
       return;
     }
@@ -160,7 +184,7 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   };
 
   return (
-    <ContextMenu.Root onOpenChange={setOpen}>
+    <ContextMenu.Root onOpenChange={setContextMenuOpen}>
       <ContextMenu.Trigger
         asChild
         onContextMenuCapture={handleNativeContextMenuCapture}

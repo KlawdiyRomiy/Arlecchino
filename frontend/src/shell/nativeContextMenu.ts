@@ -38,6 +38,27 @@ export interface NativeContextMenuActionPayload {
   context?: Record<string, unknown>;
 }
 
+type ClosestCapableTarget = {
+  closest?: (selector: string) => unknown;
+};
+
+export const shouldIgnoreContextMenuTarget = (
+  target: EventTarget | null,
+  ignoredTargetSelector?: string,
+): boolean => {
+  const selector = ignoredTargetSelector?.trim();
+  if (!selector) {
+    return false;
+  }
+
+  const closest = (target as ClosestCapableTarget | null)?.closest;
+  if (typeof closest !== "function") {
+    return false;
+  }
+
+  return Boolean(closest.call(target, selector));
+};
+
 interface NativeContextMenuBridge {
   OpenNativeContextMenu?: (
     request: NativeContextMenuRequest,

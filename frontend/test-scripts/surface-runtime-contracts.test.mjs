@@ -58,6 +58,7 @@ async function loadRuntimeContracts() {
           buildNativeContextMenuItems,
           getContextActionId,
           openNativeContextMenu,
+          shouldIgnoreContextMenuTarget,
         } from "./src/shell/nativeContextMenu.ts";
         export {
           clearPendingOpenIntents,
@@ -467,10 +468,11 @@ test("window lease read model gates detach to supported applets and cleans stale
     "panel:terminal",
     "preview:preview-browser-default",
   ]);
-  assert.deepEqual(gatedReadModel.unsupportedSurfaceIds, [
-    "panel:explorer",
-  ]);
-  assert.equal(gatedReadModel.leasesBySurfaceId["panel:git"].role, "git-helper");
+  assert.deepEqual(gatedReadModel.unsupportedSurfaceIds, ["panel:explorer"]);
+  assert.equal(
+    gatedReadModel.leasesBySurfaceId["panel:git"].role,
+    "git-helper",
+  );
   assert.equal(
     gatedReadModel.commandsBySurfaceId["panel:git"].find(
       (command) => command.kind === "detach",
@@ -1618,6 +1620,7 @@ test("native context menu adapter serializes current actions and bridge requests
     buildNativeContextMenuItems,
     getContextActionId,
     openNativeContextMenu,
+    shouldIgnoreContextMenuTarget,
   } = await loadRuntimeContracts();
 
   const items = buildNativeContextMenuItems([
@@ -1682,6 +1685,23 @@ test("native context menu adapter serializes current actions and bridge requests
   assert.equal(
     getContextActionId({ actionId: "custom.open", label: "Open File" }, 0),
     "custom.open",
+  );
+  assert.equal(
+    shouldIgnoreContextMenuTarget(
+      {
+        closest: (selector) =>
+          selector === ".file-explorer-node" ? { node: true } : null,
+      },
+      ".file-explorer-node",
+    ),
+    true,
+  );
+  assert.equal(
+    shouldIgnoreContextMenuTarget(
+      { closest: () => null },
+      ".file-explorer-node",
+    ),
+    false,
   );
 
   const requests = [];
