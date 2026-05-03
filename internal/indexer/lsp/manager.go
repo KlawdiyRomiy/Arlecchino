@@ -26,6 +26,9 @@ type Manager struct {
 	servers         map[string]*Server
 	configs         map[string]ServerConfig
 	starting        map[string]chan struct{}
+	startFailures   map[string]startFailure
+	startBackoff    time.Duration
+	startTimeoutGap time.Duration
 	noConfigLogged  map[string]bool
 	openDocsByLang  map[string]map[string]int
 	idleTimers      map[string]*time.Timer
@@ -56,6 +59,12 @@ type completionResult struct {
 	items     []CompletionItem
 	err       error
 	createdAt time.Time
+}
+
+type startFailure struct {
+	err     string
+	at      time.Time
+	retryAt time.Time
 }
 
 // ServerStatus represents the health status of an LSP server
@@ -216,6 +225,9 @@ func NewManager(rootPath string) *Manager {
 		servers:         make(map[string]*Server),
 		configs:         make(map[string]ServerConfig),
 		starting:        make(map[string]chan struct{}),
+		startFailures:   make(map[string]startFailure),
+		startBackoff:    30 * time.Second,
+		startTimeoutGap: 2 * time.Second,
 		noConfigLogged:  make(map[string]bool),
 		openDocsByLang:  make(map[string]map[string]int),
 		idleTimers:      make(map[string]*time.Timer),
@@ -297,8 +309,7 @@ func (m *Manager) beginStart(language string) (chan struct{}, bool) {
 	m.startMu.Lock()
 	if ch, ok := m.starting[language]; ok {
 		m.startMu.Unlock()
-		<-ch
-		return nil, false
+		return ch, false
 	}
 	ch := make(chan struct{})
 	m.starting[language] = ch
@@ -313,6 +324,48 @@ func (m *Manager) endStart(language string, ch chan struct{}) {
 	m.startMu.Unlock()
 }
 
+func (m *Manager) activeStartFailure(language string) (startFailure, bool) {
+	now := time.Now()
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	failure, ok := m.startFailures[language]
+	if !ok {
+		return startFailure{}, false
+	}
+	if now.Before(failure.retryAt) {
+		return failure, true
+	}
+	delete(m.startFailures, language)
+	return startFailure{}, false
+}
+
+func (m *Manager) recordStartFailure(language string, err error) {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	backoff := m.startBackoff
+	if errors.Is(err, context.DeadlineExceeded) {
+		backoff = m.startTimeoutGap
+	}
+	if backoff <= 0 {
+		return
+	}
+	now := time.Now()
+	m.startMu.Lock()
+	m.startFailures[language] = startFailure{
+		err:     err.Error(),
+		at:      now,
+		retryAt: now.Add(backoff),
+	}
+	m.startMu.Unlock()
+}
+
+func (m *Manager) clearStartFailure(language string) {
+	m.startMu.Lock()
+	delete(m.startFailures, language)
+	m.startMu.Unlock()
+}
+
 func (m *Manager) RegisterServer(cfg ServerConfig) {
 	cfg.Language = lspregistry.NormalizeLanguageToken(cfg.Language)
 	if cfg.Language == "" {
@@ -324,12 +377,20 @@ func (m *Manager) RegisterServer(cfg ServerConfig) {
 
 	m.startMu.Lock()
 	delete(m.noConfigLogged, cfg.Language)
+	delete(m.startFailures, cfg.Language)
 	m.startMu.Unlock()
 
 	log.Printf("[LSP-MGR] Registered server for lang=%s cmd=%s", cfg.Language, cfg.Command)
 }
 
 func (m *Manager) ensureStarted(language string) (*Server, error) {
+	return m.ensureStartedWithContext(context.Background(), language)
+}
+
+func (m *Manager) ensureStartedWithContext(ctx context.Context, language string) (*Server, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
 	if !ok {
 		m.logNoConfig(language)
@@ -342,25 +403,38 @@ func (m *Manager) ensureStarted(language string) (*Server, error) {
 	m.mu.RUnlock()
 
 	if ok && server.running && server.isProcessAlive() {
+		m.clearStartFailure(language)
 		return server, nil
 	}
 	if ok && (!server.running || !server.isProcessAlive()) {
 		m.cleanupServer(language, server)
 	}
 
+	if failure, ok := m.activeStartFailure(language); ok {
+		return nil, fmt.Errorf("recent start failure for language %s: %s", language, failure.err)
+	}
+
 	ch, shouldStart := m.beginStart(language)
 	if !shouldStart {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 		m.mu.RLock()
 		server = m.servers[language]
 		m.mu.RUnlock()
-		if server != nil {
+		if server != nil && server.running && server.isProcessAlive() {
 			return server, nil
+		}
+		if failure, ok := m.activeStartFailure(language); ok {
+			return nil, fmt.Errorf("recent start failure for language %s: %s", language, failure.err)
 		}
 		return nil, fmt.Errorf("server not started for language: %s", language)
 	}
 	defer m.endStart(language, ch)
 
-	if err := m.Start(language); err != nil {
+	if err := m.StartWithContext(ctx, language); err != nil {
 		return nil, err
 	}
 
@@ -375,16 +449,29 @@ func (m *Manager) ensureStarted(language string) (*Server, error) {
 }
 
 func (m *Manager) Start(language string) error {
+	return m.StartWithContext(context.Background(), language)
+}
+
+func (m *Manager) StartWithContext(ctx context.Context, language string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
 	if !ok {
 		return fmt.Errorf("no config for language: %s", language)
 	}
 	language = resolvedLanguage
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 
 	m.mu.RLock()
 	server, ok := m.servers[language]
 	if ok && server.running && server.isProcessAlive() {
 		m.mu.RUnlock()
+		m.clearStartFailure(language)
 		return nil
 	}
 	m.mu.RUnlock()
@@ -401,6 +488,7 @@ func (m *Manager) Start(language string) error {
 
 	server, err := m.startServer(cfg)
 	if err != nil {
+		m.recordStartFailure(language, err)
 		return err
 	}
 
@@ -408,7 +496,7 @@ func (m *Manager) Start(language string) error {
 	m.servers[language] = server
 	m.mu.Unlock()
 
-	if err := server.initialize(); err != nil {
+	if err := server.initializeWithContext(ctx); err != nil {
 		server.lastError = err.Error()
 		m.mu.Lock()
 		current, ok := m.servers[language]
@@ -416,10 +504,12 @@ func (m *Manager) Start(language string) error {
 			delete(m.servers, language)
 		}
 		m.mu.Unlock()
-		_ = server.shutdown()
+		_ = server.abortStartup()
+		m.recordStartFailure(language, err)
 		return err
 	}
 
+	m.clearStartFailure(language)
 	return nil
 }
 
@@ -526,6 +616,11 @@ func (m *Manager) HealthCheck() []ServerStatus {
 			status.LastError = server.lastError
 			status.Restarts = server.restarts
 		}
+		if status.LastError == "" {
+			if failure, ok := m.activeStartFailure(lang); ok {
+				status.LastError = failure.err
+			}
+		}
 		statuses = append(statuses, status)
 	}
 	return statuses
@@ -574,6 +669,7 @@ func (m *Manager) restartServer(language string, force bool) (bool, error) {
 	// Start new server
 	newServer, err := m.startServer(cfg)
 	if err != nil {
+		m.recordStartFailure(language, err)
 		return false, err
 	}
 	newServer.restarts = restartCount
@@ -581,12 +677,14 @@ func (m *Manager) restartServer(language string, force bool) (bool, error) {
 	if err := newServer.initialize(); err != nil {
 		newServer.lastError = err.Error()
 		_ = newServer.shutdown()
+		m.recordStartFailure(language, err)
 		return false, err
 	}
 
 	m.mu.Lock()
 	m.servers[language] = newServer
 	m.mu.Unlock()
+	m.clearStartFailure(language)
 
 	return true, nil
 }
@@ -645,7 +743,7 @@ func (m *Manager) CompleteWithContext(ctx context.Context, language, filePath st
 	}
 	defer m.endCompletion(cacheKey)
 
-	server, err := m.ensureStarted(language)
+	server, err := m.ensureStartedWithContext(ctx, language)
 	if err != nil {
 		log.Printf("[LSP-MGR] Complete: start failed lang=%s err=%v", language, err)
 		return nil, nil
@@ -663,7 +761,7 @@ func (m *Manager) CompleteWithContext(ctx context.Context, language, filePath st
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return nil, nil
 	}
-	items = m.resolveCompletionItems(server, items)
+	items = m.resolveCompletionItems(ctx, server, items)
 	result := completionResult{items: items, err: err, createdAt: time.Now()}
 	m.setCompletionCache(cacheKey, result)
 	if err != nil {
@@ -672,12 +770,15 @@ func (m *Manager) CompleteWithContext(ctx context.Context, language, filePath st
 	return items, err
 }
 
-func (m *Manager) resolveCompletionItems(server *Server, items []CompletionItem) []CompletionItem {
+func (m *Manager) resolveCompletionItems(ctx context.Context, server *Server, items []CompletionItem) []CompletionItem {
 	if server == nil || len(items) == 0 {
 		return items
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-	maxResolve := 20
+	maxResolve := 5
 	if len(items) < maxResolve {
 		maxResolve = len(items)
 	}
@@ -686,12 +787,20 @@ func (m *Manager) resolveCompletionItems(server *Server, items []CompletionItem)
 	copy(resolved, items)
 
 	for i := 0; i < maxResolve; i++ {
+		select {
+		case <-ctx.Done():
+			return resolved
+		default:
+		}
 		item := resolved[i]
 		if item.Data == nil || len(item.AdditionalTextEdits) > 0 {
 			continue
 		}
-		resolvedItem, err := server.resolveCompletionItem(item)
+		resolvedItem, err := server.resolveCompletionItemWithContext(ctx, item)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return resolved
+			}
 			continue
 		}
 		resolved[i] = normalizeCompletionItem(mergeCompletionItem(item, resolvedItem))
@@ -1290,6 +1399,13 @@ func (m *Manager) startServer(cfg ServerConfig) (*Server, error) {
 }
 
 func (s *Server) initialize() error {
+	return s.initializeWithContext(context.Background())
+}
+
+func (s *Server) initializeWithContext(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	params := map[string]any{
 		"processId": nil,
 		"rootUri":   s.config.RootURI,
@@ -1336,7 +1452,7 @@ func (s *Server) initialize() error {
 		params[k] = v
 	}
 
-	resp, err := s.request("initialize", params)
+	resp, err := s.requestWithContext(ctx, "initialize", params)
 	if err != nil {
 		return err
 	}
@@ -1378,6 +1494,30 @@ func (s *Server) shutdown() error {
 		return ctx.Err()
 	case err := <-done:
 		return err
+	}
+}
+
+func (s *Server) abortStartup() error {
+	if s == nil || s.cmd == nil || s.cmd.Process == nil {
+		return nil
+	}
+	s.running = false
+	if s.stdin != nil {
+		_ = s.stdin.Close()
+	}
+	if s.stdout != nil {
+		_ = s.stdout.Close()
+	}
+	_ = s.cmd.Process.Kill()
+
+	done := make(chan error, 1)
+	go func() { done <- s.cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(500 * time.Millisecond):
+		return context.DeadlineExceeded
 	}
 }
 
@@ -1433,7 +1573,14 @@ func (s *Server) completeWithContext(ctx context.Context, filePath string, line,
 }
 
 func (s *Server) resolveCompletionItem(item CompletionItem) (CompletionItem, error) {
-	resp, err := s.request("completionItem/resolve", item)
+	return s.resolveCompletionItemWithContext(context.Background(), item)
+}
+
+func (s *Server) resolveCompletionItemWithContext(ctx context.Context, item CompletionItem) (CompletionItem, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resp, err := s.requestWithContext(ctx, "completionItem/resolve", item)
 	if err != nil {
 		return CompletionItem{}, err
 	}

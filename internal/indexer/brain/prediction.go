@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -107,6 +108,13 @@ var snippetCleanupPatterns = []struct {
 
 var debugLoggingEnabled = strings.EqualFold(os.Getenv("ARLE_DEBUG"), "1") ||
 	strings.EqualFold(os.Getenv("ARLE_DEBUG"), "true")
+
+const (
+	lspCompletionTimeout     = 500 * time.Millisecond
+	lspFallbackFastWait      = 120 * time.Millisecond
+	lspNoFallbackGenericWait = 250 * time.Millisecond
+	lspNoFallbackFocusedWait = lspCompletionTimeout
+)
 
 func debugLogf(format string, args ...any) {
 	if !debugLoggingEnabled {
@@ -387,6 +395,9 @@ type CompletionTrace struct {
 	Prefix             string            `json:"prefix"`
 	AccessChain        string            `json:"accessChain"`
 	ResolvedNamespace  string            `json:"resolvedNamespace"`
+	DurationMs         int64             `json:"durationMs"`
+	SourceDurationsMs  map[string]int64  `json:"sourceDurationsMs"`
+	LSPStatus          string            `json:"lspStatus"`
 	CacheHit           bool              `json:"cacheHit"`
 	BeforeFilter       int               `json:"beforeFilter"`
 	AfterPrefixFilter  int               `json:"afterPrefixFilter"`
@@ -649,11 +660,46 @@ func NewPredictionBrain(engine *core.Engine, config BrainConfig) *PredictionBrai
 type providerGroupResult struct {
 	suggestions []Suggestion
 	counts      map[string]int
+	durations   map[string]int64
+	lspStatus   string
 }
 
 func mergeCounts(dst, src map[string]int) {
 	for key, value := range src {
 		dst[key] = value
+	}
+}
+
+func mergeDurations(dst, src map[string]int64) {
+	for key, value := range src {
+		dst[key] += value
+	}
+}
+
+func elapsedMs(start time.Time) int64 {
+	return time.Since(start).Milliseconds()
+}
+
+func lspWaitBudget(ctx CompletionContext, fallbackCount int) time.Duration {
+	if fallbackCount > 0 {
+		return lspFallbackFastWait
+	}
+	if ctx.InImport || ctx.AccessChain != "" || ctx.IsMethodCall || ctx.IsStaticCall {
+		return lspNoFallbackFocusedWait
+	}
+	return lspNoFallbackGenericWait
+}
+
+func contextStatus(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case err != nil:
+		return "error"
+	default:
+		return "complete"
 	}
 }
 
@@ -663,15 +709,20 @@ func (b *PredictionBrain) collectLocalGroup(
 	fillAll *predictive.FillAllFields,
 	local *predictive.LocalCompletions,
 	virtualStore *VirtualStore,
-) providerGroupResult {
-	result := providerGroupResult{
+) (result providerGroupResult) {
+	startedAt := time.Now()
+	result = providerGroupResult{
 		counts: map[string]int{
 			"fillAll":     0,
 			"local":       0,
 			"virtual":     0,
 			"speculative": 0,
 		},
+		durations: map[string]int64{},
 	}
+	defer func() {
+		result.durations["localGroup"] = elapsedMs(startedAt)
+	}()
 
 	if isCanceled(ctx) {
 		return result
@@ -724,14 +775,19 @@ func (b *PredictionBrain) collectLocalGroup(
 	return result
 }
 
-func (b *PredictionBrain) collectIndexGroup(ctx CompletionContext) providerGroupResult {
-	result := providerGroupResult{
+func (b *PredictionBrain) collectIndexGroup(ctx CompletionContext) (result providerGroupResult) {
+	startedAt := time.Now()
+	result = providerGroupResult{
 		counts: map[string]int{
 			"index":     0,
 			"crossFile": 0,
 			"facade":    0,
 		},
+		durations: map[string]int64{},
 	}
+	defer func() {
+		result.durations["indexGroup"] = elapsedMs(startedAt)
+	}()
 
 	if isCanceled(ctx) {
 		return result
@@ -767,14 +823,19 @@ func (b *PredictionBrain) collectIndexGroup(ctx CompletionContext) providerGroup
 func (b *PredictionBrain) collectPatternGroup(
 	ctx CompletionContext,
 	predictiveEngine *predictive.Engine,
-) providerGroupResult {
-	result := providerGroupResult{
+) (result providerGroupResult) {
+	startedAt := time.Now()
+	result = providerGroupResult{
 		counts: map[string]int{
 			"predictive": 0,
 			"stubs":      0,
 			"keywords":   0,
 		},
+		durations: map[string]int64{},
 	}
+	defer func() {
+		result.durations["patternGroup"] = elapsedMs(startedAt)
+	}()
 
 	if isCanceled(ctx) {
 		return result
@@ -818,38 +879,51 @@ func (b *PredictionBrain) collectExternalGroup(
 	ctx CompletionContext,
 	config BrainConfig,
 	lspManager *lsp.Manager,
-) providerGroupResult {
-	result := providerGroupResult{
+) (result providerGroupResult) {
+	startedAt := time.Now()
+	result = providerGroupResult{
 		counts: map[string]int{
 			"lsp": 0,
 		},
+		durations: map[string]int64{},
+		lspStatus: "not-run",
 	}
+	defer func() {
+		result.durations["lsp"] = elapsedMs(startedAt)
+	}()
 
 	if isCanceled(ctx) {
+		result.lspStatus = "canceled"
 		return result
 	}
 
 	if config.EnableLSP && lspManager != nil {
 		if isCanceled(ctx) {
+			result.lspStatus = "canceled"
 			return result
 		}
 		if shouldSkipLSP(ctx) {
 			result.counts["lsp"] = -4
+			result.lspStatus = "skipped-short-prefix"
 			return result
 		}
-		lspSuggestions := b.fromLSP(ctx)
+		lspSuggestions, status := b.fromLSPWithReason(ctx)
 		result.suggestions = append(result.suggestions, lspSuggestions...)
 		result.counts["lsp"] = len(lspSuggestions)
+		result.lspStatus = status
 	} else if !config.EnableLSP {
 		result.counts["lsp"] = -1
+		result.lspStatus = "disabled"
 	} else {
 		result.counts["lsp"] = -2
+		result.lspStatus = "missing-manager"
 	}
 
 	return result
 }
 
 func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
+	startedAt := time.Now()
 	ctx = withResolvedLanguage(ctx)
 	trace := CompletionTrace{
 		RequestID:         ctx.RequestID,
@@ -859,8 +933,11 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 		AccessChain:       ctx.AccessChain,
 		ResolvedNamespace: ctx.ResolvedNamespace,
 		SourceCounts:      map[string]int{},
+		SourceDurationsMs: map[string]int64{},
+		LSPStatus:         "not-run",
 	}
 	defer func() {
+		trace.DurationMs = elapsedMs(startedAt)
 		b.lastTrace.Store(trace)
 	}()
 
@@ -905,8 +982,10 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 
 	var importSuggestions []Suggestion
 	if ctx.InImport && importCompletions != nil {
+		importStartedAt := time.Now()
 		importCtx := withSourceLanguage(ctx, completionLanguageResolution(ctx).CanonicalID)
 		importSuggestions = importCompletions.GetCompletions(importCtx)
+		trace.SourceDurationsMs["import"] = elapsedMs(importStartedAt)
 		if len(importSuggestions) > 0 {
 			debugLogf("[Complete] IMPORT: %d items", len(importSuggestions))
 		}
@@ -939,7 +1018,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	if lspBaseCtx == nil {
 		lspBaseCtx = context.Background()
 	}
-	lspCtx, lspCancel := context.WithTimeout(lspBaseCtx, 500*time.Millisecond)
+	lspCtx, lspCancel := context.WithTimeout(lspBaseCtx, lspCompletionTimeout)
 	defer lspCancel()
 
 	externalCh := make(chan providerGroupResult, 1)
@@ -960,26 +1039,45 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	} else {
 		localGroup := b.collectLocalGroup(ctx, config, fillAll, local, virtualStore)
 		mergeCounts(counts, localGroup.counts)
+		mergeDurations(trace.SourceDurationsMs, localGroup.durations)
 		suggestions = append(suggestions, localGroup.suggestions...)
 
 		patternGroup := b.collectPatternGroup(ctx, predictiveEngine)
 		mergeCounts(counts, patternGroup.counts)
+		mergeDurations(trace.SourceDurationsMs, patternGroup.durations)
 		suggestions = append(suggestions, patternGroup.suggestions...)
 
 		indexGroup := b.collectIndexGroup(ctx)
 		mergeCounts(counts, indexGroup.counts)
+		mergeDurations(trace.SourceDurationsMs, indexGroup.durations)
 		suggestions = append(suggestions, indexGroup.suggestions...)
 	}
 
 	externalGroup := providerGroupResult{counts: map[string]int{"lsp": -3}}
+	lspWaitStartedAt := time.Now()
+	lspWait := lspWaitBudget(ctx, len(suggestions))
 	select {
 	case externalGroup = <-externalCh:
+		if externalGroup.lspStatus == "" {
+			externalGroup.lspStatus = "complete"
+		}
+	case <-time.After(lspWait):
+		externalGroup.lspStatus = "timeout"
 	case <-lspCtx.Done():
+		externalGroup.lspStatus = contextStatus(lspCtx.Err())
 		debugLogf("[Complete] LSP timeout: proceeding without external results")
 	}
 	if externalGroup.counts == nil {
 		externalGroup.counts = map[string]int{}
 	}
+	if externalGroup.durations == nil {
+		externalGroup.durations = map[string]int64{}
+	}
+	if _, ok := externalGroup.durations["lsp"]; !ok {
+		externalGroup.durations["lsp"] = elapsedMs(lspWaitStartedAt)
+	}
+	trace.LSPStatus = externalGroup.lspStatus
+	mergeDurations(trace.SourceDurationsMs, externalGroup.durations)
 	mergeCounts(counts, externalGroup.counts)
 	if ctx.InImport {
 		externalGroup.suggestions = stripAdditionalTextEdits(externalGroup.suggestions)
@@ -1836,19 +1934,24 @@ func (b *PredictionBrain) fromCrossFile(ctx CompletionContext) []Suggestion {
 }
 
 func (b *PredictionBrain) fromLSP(ctx CompletionContext) []Suggestion {
+	suggestions, _ := b.fromLSPWithReason(ctx)
+	return suggestions
+}
+
+func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion, string) {
 	if b.lspManager == nil {
 		debugLogf("[LSP] manager is nil")
-		return nil
+		return nil, "missing-manager"
 	}
 	if isCanceled(ctx) {
-		return nil
+		return nil, "canceled"
 	}
 	lspLanguage := completionLanguageResolution(ctx).LSPID
 	if lspLanguage == "" {
-		return nil
+		return nil, "no-language"
 	}
 	if !b.lspManager.HasConfig(lspLanguage) {
-		return nil
+		return nil, "no-config"
 	}
 
 	debugLogf("[LSP] requesting completions for lang=%s original=%s file=%s line=%d col=%d",
@@ -1861,11 +1964,14 @@ func (b *PredictionBrain) fromLSP(ctx CompletionContext) []Suggestion {
 	items, err := b.lspManager.CompleteWithContext(lspCtx, lspLanguage, ctx.FilePath, ctx.Line, ctx.Column)
 	if err != nil {
 		log.Printf("[LSP] ERROR: %v", err)
-		return nil
+		return nil, "error"
+	}
+	if lspCtx.Err() != nil {
+		return nil, contextStatus(lspCtx.Err())
 	}
 	if len(items) == 0 {
 		debugLogf("[LSP] no items returned for lang=%s", lspLanguage)
-		return nil
+		return nil, "empty"
 	}
 
 	debugLogf("[LSP] got %d items for lang=%s", len(items), lspLanguage)
@@ -1902,7 +2008,7 @@ func (b *PredictionBrain) fromLSP(ctx CompletionContext) []Suggestion {
 		})
 	}
 
-	return suggestions
+	return suggestions, "ok"
 }
 
 func formatLSPDocumentation(doc any) string {

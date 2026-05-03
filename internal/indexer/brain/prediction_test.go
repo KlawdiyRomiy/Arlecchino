@@ -2,8 +2,13 @@ package brain
 
 import (
 	"arlecchino/internal/indexer/core"
+	"arlecchino/internal/indexer/lsp"
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPredictionBrain_LocalCompletions(t *testing.T) {
@@ -76,6 +81,75 @@ class UserService
 		t.Error("Expected at least some local completions, got none")
 	} else {
 		t.Logf("Got %d local completions", localCount)
+	}
+}
+
+func TestPredictionBrainReturnsFallbackBeforeSlowLSP(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "slow-lsp")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
+		t.Fatalf("write slow lsp script: %v", err)
+	}
+
+	manager := lsp.NewManager(dir)
+	manager.RegisterServer(lsp.ServerConfig{Language: "php", Command: scriptPath})
+
+	brain := NewPredictionBrain(nil, BrainConfig{
+		MaxSuggestions:    50,
+		MinConfidence:     0.1,
+		EnableLSP:         true,
+		EnableVirtual:     false,
+		EnableSpeculative: false,
+		EnablePredictive:  true,
+	})
+	brain.SetLSPManager(manager)
+
+	content := []byte(`<?php
+class UserController
+{
+    private UserService $userService;
+
+    public function index()
+    {
+        $us
+    }
+}
+
+class UserService
+{
+    public function getUser($id) {}
+}
+`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	startedAt := time.Now()
+	suggestions := brain.Complete(CompletionContext{
+		RequestID: "slow-lsp-fallback",
+		FilePath:  filepath.Join(dir, "index.php"),
+		Content:   content,
+		Line:      7,
+		Column:    12,
+		Prefix:    "us",
+		Language:  "php",
+		Ctx:       ctx,
+	})
+	elapsed := time.Since(startedAt)
+
+	if elapsed > 300*time.Millisecond {
+		t.Fatalf("expected fallback before slow LSP, elapsed=%s suggestions=%d", elapsed, len(suggestions))
+	}
+	if len(suggestions) == 0 {
+		t.Fatalf("expected fallback suggestions")
+	}
+
+	trace := brain.LastCompletionTrace()
+	if trace.LSPStatus != "timeout" {
+		t.Fatalf("expected LSP timeout trace, got %#v", trace)
+	}
+	if trace.DurationMs > 300 {
+		t.Fatalf("expected trace duration to stay below popup budget, got %#v", trace)
 	}
 }
 
