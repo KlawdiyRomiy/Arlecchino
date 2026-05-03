@@ -42,9 +42,18 @@ func externalCompletionMinPrefixRunes(ctx CompletionContext) int {
 	return 2
 }
 
-func shouldSkipLSP(ctx CompletionContext) bool {
+func heavySourceSkipReason(ctx CompletionContext) string {
+	rawLanguage := strings.ToLower(strings.TrimSpace(ctx.Language))
+	language := rawLanguage
+	if rawLanguage != "" {
+		ctx = withResolvedLanguage(ctx)
+		language = strings.ToLower(strings.TrimSpace(ctx.Language))
+	}
+	if language == "unknown" || language == "plaintext" || language == "text" {
+		return "skipped-unknown-language"
+	}
 	if ctx.AccessChain != "" {
-		return false
+		return ""
 	}
 	if ctx.TriggerChar != "" {
 		// Only treat TriggerChar as meaningful when it contains at least one
@@ -59,11 +68,18 @@ func shouldSkipLSP(ctx CompletionContext) bool {
 					r == '_' ||
 					r == '$'
 			if !isWord {
-				return false
+				return ""
 			}
 		}
 	}
-	return utf8.RuneCountInString(ctx.Prefix) < externalCompletionMinPrefixRunes(ctx)
+	if utf8.RuneCountInString(ctx.Prefix) < externalCompletionMinPrefixRunes(ctx) {
+		return "skipped-short-prefix"
+	}
+	return ""
+}
+
+func shouldSkipLSP(ctx CompletionContext) bool {
+	return heavySourceSkipReason(ctx) != ""
 }
 
 func shouldSkipIndexGroup(ctx CompletionContext) bool {
@@ -114,6 +130,9 @@ const (
 	lspFallbackFastWait      = 120 * time.Millisecond
 	lspNoFallbackGenericWait = 250 * time.Millisecond
 	lspNoFallbackFocusedWait = lspCompletionTimeout
+	fastFallbackSourceWait   = 45 * time.Millisecond
+	genericSourceWait        = 120 * time.Millisecond
+	focusedSourceWait        = 220 * time.Millisecond
 )
 
 func debugLogf(format string, args ...any) {
@@ -394,9 +413,14 @@ type CompletionTrace struct {
 	Language           string            `json:"language"`
 	Prefix             string            `json:"prefix"`
 	AccessChain        string            `json:"accessChain"`
+	ResolvedOwner      string            `json:"resolvedOwner"`
+	ResolvedLibrary    string            `json:"resolvedLibrary"`
 	ResolvedNamespace  string            `json:"resolvedNamespace"`
 	DurationMs         int64             `json:"durationMs"`
 	SourceDurationsMs  map[string]int64  `json:"sourceDurationsMs"`
+	SourceStatuses     map[string]string `json:"sourceStatuses"`
+	CacheStatus        map[string]string `json:"cacheStatus"`
+	StaleDropped       int               `json:"staleDropped"`
 	LSPStatus          string            `json:"lspStatus"`
 	CacheHit           bool              `json:"cacheHit"`
 	BeforeFilter       int               `json:"beforeFilter"`
@@ -661,6 +685,7 @@ type providerGroupResult struct {
 	suggestions []Suggestion
 	counts      map[string]int
 	durations   map[string]int64
+	statuses    map[string]string
 	lspStatus   string
 }
 
@@ -676,8 +701,87 @@ func mergeDurations(dst, src map[string]int64) {
 	}
 }
 
+func mergeStatuses(dst, src map[string]string) {
+	for key, value := range src {
+		if value != "" {
+			dst[key] = value
+		}
+	}
+}
+
 func elapsedMs(start time.Time) int64 {
 	return time.Since(start).Milliseconds()
+}
+
+func sourceWaitBudget(ctx CompletionContext, fallbackCount int) time.Duration {
+	if ctx.InImport || ctx.AccessChain != "" || ctx.IsMethodCall || ctx.IsStaticCall {
+		if fallbackCount > 0 {
+			return genericSourceWait
+		}
+		return focusedSourceWait
+	}
+	if fallbackCount > 0 {
+		return fastFallbackSourceWait
+	}
+	return genericSourceWait
+}
+
+func runProviderGroupWithBudget(
+	ctx CompletionContext,
+	groupName string,
+	budget time.Duration,
+	timeoutCounts map[string]int,
+	fn func(CompletionContext) providerGroupResult,
+) providerGroupResult {
+	if budget <= 0 {
+		return fn(ctx)
+	}
+
+	startedAt := time.Now()
+	baseCtx := ctx.Ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	runCtx, cancel := context.WithTimeout(baseCtx, budget)
+	defer cancel()
+
+	ch := make(chan providerGroupResult, 1)
+	go func() {
+		groupCtx := ctx
+		groupCtx.Ctx = runCtx
+		result := fn(groupCtx)
+		if result.counts == nil {
+			result.counts = map[string]int{}
+		}
+		if result.durations == nil {
+			result.durations = map[string]int64{}
+		}
+		if result.statuses == nil {
+			result.statuses = map[string]string{}
+		}
+		if _, ok := result.statuses[groupName]; !ok {
+			result.statuses[groupName] = "complete"
+		}
+		select {
+		case ch <- result:
+		case <-runCtx.Done():
+		}
+	}()
+
+	select {
+	case result := <-ch:
+		return result
+	case <-runCtx.Done():
+		counts := make(map[string]int, len(timeoutCounts))
+		for key, value := range timeoutCounts {
+			counts[key] = value
+		}
+		return providerGroupResult{
+			counts:    counts,
+			durations: map[string]int64{groupName: elapsedMs(startedAt)},
+			statuses:  map[string]string{groupName: contextStatus(runCtx.Err())},
+		}
+	}
 }
 
 func lspWaitBudget(ctx CompletionContext, fallbackCount int) time.Duration {
@@ -719,22 +823,17 @@ func (b *PredictionBrain) collectLocalGroup(
 			"speculative": 0,
 		},
 		durations: map[string]int64{},
+		statuses:  map[string]string{},
 	}
 	defer func() {
 		result.durations["localGroup"] = elapsedMs(startedAt)
+		if result.statuses["localGroup"] == "" {
+			result.statuses["localGroup"] = "complete"
+		}
 	}()
 
 	if isCanceled(ctx) {
 		return result
-	}
-
-	if fillAll != nil {
-		if isCanceled(ctx) {
-			return result
-		}
-		fillSuggestions := b.fromFillAll(ctx)
-		result.suggestions = append(result.suggestions, fillSuggestions...)
-		result.counts["fillAll"] = len(fillSuggestions)
 	}
 
 	if local != nil {
@@ -744,6 +843,15 @@ func (b *PredictionBrain) collectLocalGroup(
 		localSuggestions := b.fromLocal(ctx)
 		result.suggestions = append(result.suggestions, localSuggestions...)
 		result.counts["local"] = len(localSuggestions)
+	}
+
+	if fillAll != nil {
+		if isCanceled(ctx) {
+			return result
+		}
+		fillSuggestions := b.fromFillAll(ctx)
+		result.suggestions = append(result.suggestions, fillSuggestions...)
+		result.counts["fillAll"] = len(fillSuggestions)
 	}
 
 	if config.EnableVirtual {
@@ -784,18 +892,23 @@ func (b *PredictionBrain) collectIndexGroup(ctx CompletionContext) (result provi
 			"facade":    0,
 		},
 		durations: map[string]int64{},
+		statuses:  map[string]string{},
 	}
 	defer func() {
 		result.durations["indexGroup"] = elapsedMs(startedAt)
+		if result.statuses["indexGroup"] == "" {
+			result.statuses["indexGroup"] = "complete"
+		}
 	}()
 
 	if isCanceled(ctx) {
 		return result
 	}
-	if shouldSkipIndexGroup(ctx) {
+	if reason := heavySourceSkipReason(ctx); reason != "" {
 		result.counts["index"] = -4
 		result.counts["crossFile"] = -4
 		result.counts["facade"] = -4
+		result.statuses["indexGroup"] = reason
 		return result
 	}
 
@@ -829,25 +942,29 @@ func (b *PredictionBrain) collectPatternGroup(
 		counts: map[string]int{
 			"predictive": 0,
 			"stubs":      0,
-			"keywords":   0,
 		},
 		durations: map[string]int64{},
+		statuses:  map[string]string{},
 	}
 	defer func() {
 		result.durations["patternGroup"] = elapsedMs(startedAt)
+		if result.statuses["patternGroup"] == "" {
+			result.statuses["patternGroup"] = "complete"
+		}
 	}()
 
 	if isCanceled(ctx) {
 		return result
 	}
 
-	skipHeavy := shouldSkipPatternGroup(ctx)
-	if skipHeavy {
+	if reason := heavySourceSkipReason(ctx); reason != "" && !ctx.InString && !ctx.InImport {
 		result.counts["predictive"] = -4
 		result.counts["stubs"] = -4
+		result.statuses["patternGroup"] = reason
+		return result
 	}
 
-	if predictiveEngine != nil && !skipHeavy {
+	if predictiveEngine != nil {
 		if isCanceled(ctx) {
 			return result
 		}
@@ -859,11 +976,26 @@ func (b *PredictionBrain) collectPatternGroup(
 	if isCanceled(ctx) {
 		return result
 	}
-	if !skipHeavy {
-		stubSuggestions := b.fromStubs(ctx)
-		result.suggestions = append(result.suggestions, stubSuggestions...)
-		result.counts["stubs"] = len(stubSuggestions)
+	stubSuggestions := b.fromStubs(ctx)
+	result.suggestions = append(result.suggestions, stubSuggestions...)
+	result.counts["stubs"] = len(stubSuggestions)
+
+	return result
+}
+
+func (b *PredictionBrain) collectKeywordGroup(ctx CompletionContext) (result providerGroupResult) {
+	startedAt := time.Now()
+	result = providerGroupResult{
+		counts:    map[string]int{"keywords": 0},
+		durations: map[string]int64{},
+		statuses:  map[string]string{},
 	}
+	defer func() {
+		result.durations["keywords"] = elapsedMs(startedAt)
+		if result.statuses["keywords"] == "" {
+			result.statuses["keywords"] = "complete"
+		}
+	}()
 
 	if isCanceled(ctx) {
 		return result
@@ -886,10 +1018,14 @@ func (b *PredictionBrain) collectExternalGroup(
 			"lsp": 0,
 		},
 		durations: map[string]int64{},
+		statuses:  map[string]string{},
 		lspStatus: "not-run",
 	}
 	defer func() {
 		result.durations["lsp"] = elapsedMs(startedAt)
+		if result.statuses["lsp"] == "" {
+			result.statuses["lsp"] = result.lspStatus
+		}
 	}()
 
 	if isCanceled(ctx) {
@@ -902,9 +1038,9 @@ func (b *PredictionBrain) collectExternalGroup(
 			result.lspStatus = "canceled"
 			return result
 		}
-		if shouldSkipLSP(ctx) {
+		if reason := heavySourceSkipReason(ctx); reason != "" {
 			result.counts["lsp"] = -4
-			result.lspStatus = "skipped-short-prefix"
+			result.lspStatus = reason
 			return result
 		}
 		lspSuggestions, status := b.fromLSPWithReason(ctx)
@@ -934,6 +1070,8 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 		ResolvedNamespace: ctx.ResolvedNamespace,
 		SourceCounts:      map[string]int{},
 		SourceDurationsMs: map[string]int64{},
+		SourceStatuses:    map[string]string{},
+		CacheStatus:       map[string]string{"completion": "miss"},
 		LSPStatus:         "not-run",
 	}
 	defer func() {
@@ -957,6 +1095,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	if b.completionCache != nil {
 		if cached, ok := b.completionCache.Get(ctx); ok {
 			trace.CacheHit = true
+			trace.CacheStatus["completion"] = "hit"
 			trace.ResultCount = len(cached)
 			trace.TopSuggestions = buildTraceSuggestions(cached)
 			debugLogf("[Complete] CACHE HIT: %d items", len(cached))
@@ -981,11 +1120,29 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 		lspManager != nil, local != nil, predictiveEngine != nil, fillAll != nil)
 
 	var importSuggestions []Suggestion
+	var importCounts map[string]int
 	if ctx.InImport && importCompletions != nil {
-		importStartedAt := time.Now()
-		importCtx := withSourceLanguage(ctx, completionLanguageResolution(ctx).CanonicalID)
-		importSuggestions = importCompletions.GetCompletions(importCtx)
-		trace.SourceDurationsMs["import"] = elapsedMs(importStartedAt)
+		importGroup := runProviderGroupWithBudget(
+			ctx,
+			"import",
+			sourceWaitBudget(ctx, 0),
+			map[string]int{"import": -3},
+			func(importCtx CompletionContext) providerGroupResult {
+				startedAt := time.Now()
+				importCtx = withSourceLanguage(importCtx, completionLanguageResolution(importCtx).CanonicalID)
+				suggestions := importCompletions.GetCompletions(importCtx)
+				return providerGroupResult{
+					suggestions: suggestions,
+					counts:      map[string]int{"import": len(suggestions)},
+					durations:   map[string]int64{"import": elapsedMs(startedAt)},
+					statuses:    map[string]string{"import": "complete"},
+				}
+			},
+		)
+		importSuggestions = importGroup.suggestions
+		importCounts = importGroup.counts
+		mergeDurations(trace.SourceDurationsMs, importGroup.durations)
+		mergeStatuses(trace.SourceStatuses, importGroup.statuses)
 		if len(importSuggestions) > 0 {
 			debugLogf("[Complete] IMPORT: %d items", len(importSuggestions))
 		}
@@ -1004,6 +1161,8 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	}
 
 	b.ResolveAccessChain(&ctx)
+	trace.ResolvedOwner = strings.TrimSpace(extractPackageReference(ctx.AccessChain))
+	trace.ResolvedLibrary = ctx.ResolvedNamespace
 
 	if isCanceled(ctx) {
 		return nil
@@ -1011,6 +1170,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 
 	var suggestions []Suggestion
 	counts := make(map[string]int)
+	mergeCounts(counts, importCounts)
 
 	// Use context with timeout to prevent goroutine leak
 	// When timeout fires, cancel is called which allows the goroutine to exit
@@ -1034,22 +1194,47 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	}()
 
 	if len(importSuggestions) > 0 {
-		counts["import"] = len(importSuggestions)
 		suggestions = append(suggestions, importSuggestions...)
 	} else {
 		localGroup := b.collectLocalGroup(ctx, config, fillAll, local, virtualStore)
 		mergeCounts(counts, localGroup.counts)
 		mergeDurations(trace.SourceDurationsMs, localGroup.durations)
+		mergeStatuses(trace.SourceStatuses, localGroup.statuses)
 		suggestions = append(suggestions, localGroup.suggestions...)
 
-		patternGroup := b.collectPatternGroup(ctx, predictiveEngine)
+		keywordGroup := b.collectKeywordGroup(ctx)
+		mergeCounts(counts, keywordGroup.counts)
+		mergeDurations(trace.SourceDurationsMs, keywordGroup.durations)
+		mergeStatuses(trace.SourceStatuses, keywordGroup.statuses)
+		suggestions = append(suggestions, keywordGroup.suggestions...)
+
+		fallbackCount := len(suggestions)
+		patternGroup := runProviderGroupWithBudget(
+			ctx,
+			"patternGroup",
+			sourceWaitBudget(ctx, fallbackCount),
+			map[string]int{"predictive": -3, "stubs": -3},
+			func(groupCtx CompletionContext) providerGroupResult {
+				return b.collectPatternGroup(groupCtx, predictiveEngine)
+			},
+		)
 		mergeCounts(counts, patternGroup.counts)
 		mergeDurations(trace.SourceDurationsMs, patternGroup.durations)
+		mergeStatuses(trace.SourceStatuses, patternGroup.statuses)
 		suggestions = append(suggestions, patternGroup.suggestions...)
 
-		indexGroup := b.collectIndexGroup(ctx)
+		indexGroup := runProviderGroupWithBudget(
+			ctx,
+			"indexGroup",
+			sourceWaitBudget(ctx, len(suggestions)),
+			map[string]int{"index": -3, "crossFile": -3, "facade": -3},
+			func(groupCtx CompletionContext) providerGroupResult {
+				return b.collectIndexGroup(groupCtx)
+			},
+		)
 		mergeCounts(counts, indexGroup.counts)
 		mergeDurations(trace.SourceDurationsMs, indexGroup.durations)
+		mergeStatuses(trace.SourceStatuses, indexGroup.statuses)
 		suggestions = append(suggestions, indexGroup.suggestions...)
 	}
 
@@ -1063,8 +1248,10 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 		}
 	case <-time.After(lspWait):
 		externalGroup.lspStatus = "timeout"
+		externalGroup.statuses = map[string]string{"lsp": "timeout"}
 	case <-lspCtx.Done():
 		externalGroup.lspStatus = contextStatus(lspCtx.Err())
+		externalGroup.statuses = map[string]string{"lsp": externalGroup.lspStatus}
 		debugLogf("[Complete] LSP timeout: proceeding without external results")
 	}
 	if externalGroup.counts == nil {
@@ -1073,11 +1260,18 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	if externalGroup.durations == nil {
 		externalGroup.durations = map[string]int64{}
 	}
+	if externalGroup.statuses == nil {
+		externalGroup.statuses = map[string]string{}
+	}
 	if _, ok := externalGroup.durations["lsp"]; !ok {
 		externalGroup.durations["lsp"] = elapsedMs(lspWaitStartedAt)
 	}
+	if externalGroup.statuses["lsp"] == "" {
+		externalGroup.statuses["lsp"] = externalGroup.lspStatus
+	}
 	trace.LSPStatus = externalGroup.lspStatus
 	mergeDurations(trace.SourceDurationsMs, externalGroup.durations)
+	mergeStatuses(trace.SourceStatuses, externalGroup.statuses)
 	mergeCounts(counts, externalGroup.counts)
 	if ctx.InImport {
 		externalGroup.suggestions = stripAdditionalTextEdits(externalGroup.suggestions)

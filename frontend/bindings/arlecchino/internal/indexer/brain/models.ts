@@ -15,9 +15,14 @@ export class CompletionTrace {
     "language": string;
     "prefix": string;
     "accessChain": string;
+    "resolvedOwner": string;
+    "resolvedLibrary": string;
     "resolvedNamespace": string;
     "durationMs": number;
     "sourceDurationsMs": { [_ in string]?: number };
+    "sourceStatuses": { [_ in string]?: string };
+    "cacheStatus": { [_ in string]?: string };
+    "staleDropped": number;
     "lspStatus": string;
     "cacheHit": boolean;
     "beforeFilter": number;
@@ -45,6 +50,12 @@ export class CompletionTrace {
         if (!("accessChain" in $$source)) {
             this["accessChain"] = "";
         }
+        if (!("resolvedOwner" in $$source)) {
+            this["resolvedOwner"] = "";
+        }
+        if (!("resolvedLibrary" in $$source)) {
+            this["resolvedLibrary"] = "";
+        }
         if (!("resolvedNamespace" in $$source)) {
             this["resolvedNamespace"] = "";
         }
@@ -53,6 +64,15 @@ export class CompletionTrace {
         }
         if (!("sourceDurationsMs" in $$source)) {
             this["sourceDurationsMs"] = {};
+        }
+        if (!("sourceStatuses" in $$source)) {
+            this["sourceStatuses"] = {};
+        }
+        if (!("cacheStatus" in $$source)) {
+            this["cacheStatus"] = {};
+        }
+        if (!("staleDropped" in $$source)) {
+            this["staleDropped"] = 0;
         }
         if (!("lspStatus" in $$source)) {
             this["lspStatus"] = "";
@@ -89,18 +109,26 @@ export class CompletionTrace {
      * Creates a new CompletionTrace instance from a string or object.
      */
     static createFrom($$source: any = {}): CompletionTrace {
-        const $$createField7_0 = $$createType0;
-        const $$createField15_0 = $$createType1;
-        const $$createField16_0 = $$createType3;
+        const $$createField9_0 = $$createType0;
+        const $$createField10_0 = $$createType1;
+        const $$createField11_0 = $$createType1;
+        const $$createField20_0 = $$createType2;
+        const $$createField21_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("sourceDurationsMs" in $$parsedSource) {
-            $$parsedSource["sourceDurationsMs"] = $$createField7_0($$parsedSource["sourceDurationsMs"]);
+            $$parsedSource["sourceDurationsMs"] = $$createField9_0($$parsedSource["sourceDurationsMs"]);
+        }
+        if ("sourceStatuses" in $$parsedSource) {
+            $$parsedSource["sourceStatuses"] = $$createField10_0($$parsedSource["sourceStatuses"]);
+        }
+        if ("cacheStatus" in $$parsedSource) {
+            $$parsedSource["cacheStatus"] = $$createField11_0($$parsedSource["cacheStatus"]);
         }
         if ("sourceCounts" in $$parsedSource) {
-            $$parsedSource["sourceCounts"] = $$createField15_0($$parsedSource["sourceCounts"]);
+            $$parsedSource["sourceCounts"] = $$createField20_0($$parsedSource["sourceCounts"]);
         }
         if ("topSuggestions" in $$parsedSource) {
-            $$parsedSource["topSuggestions"] = $$createField16_0($$parsedSource["topSuggestions"]);
+            $$parsedSource["topSuggestions"] = $$createField21_0($$parsedSource["topSuggestions"]);
         }
         return new CompletionTrace($$parsedSource as Partial<CompletionTrace>);
     }
@@ -143,5 +171,6 @@ export class TraceSuggestion {
 // Private type creation functions
 const $$createType0 = $Create.Map($Create.Any, $Create.Any);
 const $$createType1 = $Create.Map($Create.Any, $Create.Any);
-const $$createType2 = TraceSuggestion.createFrom;
-const $$createType3 = $Create.Array($$createType2);
+const $$createType2 = $Create.Map($Create.Any, $Create.Any);
+const $$createType3 = TraceSuggestion.createFrom;
+const $$createType4 = $Create.Array($$createType3);

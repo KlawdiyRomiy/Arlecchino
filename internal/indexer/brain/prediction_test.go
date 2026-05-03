@@ -153,6 +153,107 @@ class UserService
 	}
 }
 
+func TestPredictionBrainReturnsKeywordsBeforeSlowLSP(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "slow-go-lsp")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
+		t.Fatalf("write slow lsp script: %v", err)
+	}
+
+	manager := lsp.NewManager(dir)
+	manager.RegisterServer(lsp.ServerConfig{Language: "go", Command: scriptPath})
+
+	brain := NewPredictionBrain(nil, BrainConfig{
+		MaxSuggestions:    50,
+		MinConfidence:     0.1,
+		EnableLSP:         true,
+		EnableVirtual:     false,
+		EnableSpeculative: false,
+		EnablePredictive:  true,
+	})
+	brain.SetLSPManager(manager)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	startedAt := time.Now()
+	suggestions := brain.Complete(CompletionContext{
+		RequestID: "slow-lsp-keyword-fallback",
+		FilePath:  filepath.Join(dir, "main.go"),
+		Content:   []byte("package main\n\nfu"),
+		Line:      3,
+		Column:    3,
+		Prefix:    "fu",
+		Language:  "go",
+		Ctx:       ctx,
+	})
+	elapsed := time.Since(startedAt)
+
+	if elapsed > 250*time.Millisecond {
+		t.Fatalf("expected keyword fallback before slow LSP, elapsed=%s suggestions=%d", elapsed, len(suggestions))
+	}
+	if !hasSuggestionFromSource(suggestions, "func", core.SourceKeywords) {
+		t.Fatalf("expected Go keyword suggestion before LSP, got %#v", suggestions)
+	}
+
+	trace := brain.LastCompletionTrace()
+	if trace.SourceCounts["keywords"] == 0 {
+		t.Fatalf("expected keyword source count in trace, got %#v", trace.SourceCounts)
+	}
+	if trace.LSPStatus != "timeout" {
+		t.Fatalf("expected LSP timeout trace, got %#v", trace)
+	}
+}
+
+func TestPredictionBrainUnknownLanguageSkipsHeavySources(t *testing.T) {
+	dir := t.TempDir()
+	manager := lsp.NewManager(dir)
+	brain := NewPredictionBrain(nil, BrainConfig{
+		MaxSuggestions:    50,
+		MinConfidence:     0.1,
+		EnableLSP:         true,
+		EnableVirtual:     false,
+		EnableSpeculative: false,
+		EnablePredictive:  true,
+	})
+	brain.SetLSPManager(manager)
+
+	brain.Complete(CompletionContext{
+		RequestID: "unknown-heavy-skip",
+		FilePath:  filepath.Join(dir, "notes.txt"),
+		Content:   []byte("plain words"),
+		Line:      1,
+		Column:    6,
+		Prefix:    "words",
+		Language:  "unknown",
+	})
+
+	trace := brain.LastCompletionTrace()
+	for _, source := range []string{"predictive", "stubs", "index", "crossFile", "facade", "lsp"} {
+		if trace.SourceCounts[source] != -4 {
+			t.Fatalf("expected %s to be skipped for unknown language, got counts=%#v statuses=%#v", source, trace.SourceCounts, trace.SourceStatuses)
+		}
+	}
+	if trace.SourceStatuses["patternGroup"] != "skipped-unknown-language" {
+		t.Fatalf("expected pattern skip reason, got %#v", trace.SourceStatuses)
+	}
+	if trace.SourceStatuses["indexGroup"] != "skipped-unknown-language" {
+		t.Fatalf("expected index skip reason, got %#v", trace.SourceStatuses)
+	}
+	if trace.LSPStatus != "skipped-unknown-language" {
+		t.Fatalf("expected LSP skip reason, got %#v", trace)
+	}
+}
+
+func hasSuggestionFromSource(suggestions []Suggestion, text string, source core.SymbolSource) bool {
+	for _, suggestion := range suggestions {
+		if suggestion.Text == text && suggestion.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
 func TestPredictionBrain_TypeScriptCompletions(t *testing.T) {
 	config := BrainConfig{
 		MaxSuggestions:    50,
