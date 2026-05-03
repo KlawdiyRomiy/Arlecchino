@@ -19,6 +19,7 @@ interface EditorSettingsState {
   showCompactDiagnostics: boolean;
   showMinimap: boolean;
   showRainbowBrackets: boolean;
+  showOperatorLigatures: boolean;
   zenModeEnabled: boolean;
   projectWindowMode: ProjectWindowMode;
   zoomIn: () => void;
@@ -30,6 +31,7 @@ interface EditorSettingsState {
   setShowCompactDiagnostics: (value: boolean) => void;
   setShowMinimap: (value: boolean) => void;
   setShowRainbowBrackets: (value: boolean) => void;
+  setShowOperatorLigatures: (value: boolean) => void;
   setZenModeEnabled: (value: boolean) => void;
   setProjectWindowMode: (value: ProjectWindowMode) => void;
   toggleZenMode: () => void;
@@ -43,6 +45,7 @@ const DEFAULT_SHOW_INLINE_DIAGNOSTICS = true;
 const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
 const DEFAULT_SHOW_MINIMAP = true;
 const DEFAULT_SHOW_RAINBOW_BRACKETS = true;
+const DEFAULT_SHOW_OPERATOR_LIGATURES = true;
 const DEFAULT_ZEN_MODE_ENABLED = false;
 const DEFAULT_PROJECT_WINDOW_MODE: ProjectWindowMode = "projects";
 
@@ -55,6 +58,7 @@ type PersistedEditorSettingsState = Partial<
     | "showCompactDiagnostics"
     | "showMinimap"
     | "showRainbowBrackets"
+    | "showOperatorLigatures"
     | "zenModeEnabled"
     | "projectWindowMode"
   >
@@ -119,6 +123,10 @@ const sanitizePersistedEditorSettings = (
     nextState.showRainbowBrackets = persistedState.showRainbowBrackets;
   }
 
+  if (typeof persistedState.showOperatorLigatures === "boolean") {
+    nextState.showOperatorLigatures = persistedState.showOperatorLigatures;
+  }
+
   if (typeof persistedState.zenModeEnabled === "boolean") {
     nextState.zenModeEnabled = persistedState.zenModeEnabled;
   }
@@ -160,6 +168,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       showCompactDiagnostics: DEFAULT_SHOW_COMPACT_DIAGNOSTICS,
       showMinimap: DEFAULT_SHOW_MINIMAP,
       showRainbowBrackets: DEFAULT_SHOW_RAINBOW_BRACKETS,
+      showOperatorLigatures: DEFAULT_SHOW_OPERATOR_LIGATURES,
       zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
       projectWindowMode: DEFAULT_PROJECT_WINDOW_MODE,
 
@@ -198,6 +207,9 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setShowRainbowBrackets: (value: boolean) =>
         set(() => ({ showRainbowBrackets: value })),
+
+      setShowOperatorLigatures: (value: boolean) =>
+        set(() => ({ showOperatorLigatures: value })),
 
       setZenModeEnabled: (value: boolean) =>
         set(() => ({ zenModeEnabled: value })),

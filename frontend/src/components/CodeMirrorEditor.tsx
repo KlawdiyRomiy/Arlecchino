@@ -135,6 +135,7 @@ import {
   metricsExtension,
   type MetricsHandle,
 } from "../extensions/metricsExtension";
+import { createOperatorLigaturesExtension } from "../extensions/operatorLigaturesExtension";
 import { useGitStore } from "../stores/gitStore";
 import { createCompletionCache } from "../utils/completionCache";
 import {
@@ -930,6 +931,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
   const showRainbowBrackets = useEditorSettingsStore(
     (state) => state.showRainbowBrackets,
+  );
+  const showOperatorLigatures = useEditorSettingsStore(
+    (state) => state.showOperatorLigatures,
   );
   const largeDocumentMode = useMemo(
     () => shouldUseCodeMirrorLargeDocumentMode(content),
@@ -1902,6 +1906,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       }),
     [editorFontSize],
   );
+  const operatorLigaturesExtension = useMemo(
+    () => createOperatorLigaturesExtension(showOperatorLigatures),
+    [showOperatorLigatures],
+  );
 
   const definitionLinkExtension = useMemo<Extension[]>(() => {
     if (!editorFeatureBudget.hover) {
@@ -2304,6 +2312,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       codeEditorTheme,
       codeEditorStyles,
       fontSizeExtension,
+      operatorLigaturesExtension,
       highlightLineField,
       search(),
       keymap.of([...defaultKeymap, ...searchKeymap, indentWithTab]),
@@ -2343,6 +2352,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     fontSizeExtension,
     formatKeymap,
     languageExtension,
+    operatorLigaturesExtension,
     saveKeymap,
     scrollGuardExtension,
     shouldShowMinimap,

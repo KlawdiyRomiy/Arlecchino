@@ -378,6 +378,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     showCompactDiagnostics,
     showMinimap,
     showRainbowBrackets,
+    showOperatorLigatures,
     zenModeEnabled,
     projectWindowMode,
     setUiScale,
@@ -387,6 +388,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowCompactDiagnostics,
     setShowMinimap,
     setShowRainbowBrackets,
+    setShowOperatorLigatures,
     setZenModeEnabled,
     setProjectWindowMode,
   } = useEditorSettingsStore();
@@ -1510,6 +1512,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <RotateCcw size={14} />
                         Reset UI Zoom
                       </button>
+                    </div>
+
+                    <div className={settingsPanelClass}>
+                      <SwitchRow
+                        title="Operator ligatures"
+                        description="Render sequences like ->, <-, and => as visual arrows without changing file text."
+                        checked={showOperatorLigatures}
+                        onCheckedChange={setShowOperatorLigatures}
+                      />
                     </div>
                   </div>
                 </div>
