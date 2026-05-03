@@ -1,8 +1,8 @@
 package main
 
 import (
-	"path/filepath"
-	"strings"
+	"arlecchino/internal/autocomplete"
+	lspregistry "arlecchino/internal/lsp"
 )
 
 type LanguagePrediction struct {
@@ -27,30 +27,28 @@ func (a *App) DetectLanguage(code string) []LanguagePrediction {
 }
 
 func (a *App) DetectLanguageFromFile(filePath string, content string) string {
-	ext := strings.ToLower(filepath.Ext(filePath))
-	extMap := map[string]string{
-		".py": "Python", ".js": "JavaScript", ".ts": "TypeScript",
-		".go": "Go", ".rs": "Rust", ".php": "PHP", ".rb": "Ruby",
-		".java": "Java", ".kt": "Kotlin", ".swift": "Swift",
-		".c": "C", ".cpp": "C++", ".h": "C", ".hpp": "C++",
-		".cs": "C#", ".scala": "Scala", ".sh": "Shell",
-		".sql": "SQL", ".html": "HTML", ".json": "JSON",
-		".yaml": "YAML", ".yml": "YAML", ".xml": "XML",
-		".md": "Markdown", ".toml": "TOML",
-	}
-
-	if lang, ok := extMap[ext]; ok {
-		return lang
+	if language := knownCanonicalLanguage("", filePath); language != "" {
+		return language
 	}
 
 	if a.langDetector != nil && a.langDetector.IsLoaded() && content != "" {
 		lang, conf := a.langDetector.Detect(content)
 		if conf > 0.7 {
-			return lang
+			if language := knownCanonicalLanguage(lang, filePath); language != "" {
+				return language
+			}
 		}
 	}
 
 	return "unknown"
+}
+
+func knownCanonicalLanguage(language, filePath string) string {
+	resolution := autocomplete.Resolve(language, filePath)
+	if lspregistry.GetLanguageByID(resolution.CanonicalID) == nil {
+		return ""
+	}
+	return resolution.CanonicalID
 }
 
 func (a *App) GetSupportedLanguages() []string {

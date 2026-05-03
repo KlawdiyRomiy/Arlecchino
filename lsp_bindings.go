@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"arlecchino/internal/autocomplete"
 	indexerlsp "arlecchino/internal/indexer/lsp"
 	"arlecchino/internal/lsp"
 )
@@ -110,17 +111,20 @@ type LSPCodeAction struct {
 
 // detectLanguage detects the language from file path
 func detectLanguage(filePath string) string {
-	ext := filepath.Ext(filePath)
-	if ext == "" {
-		ext = filepath.Base(filePath)
+	info, resolution := resolveLanguageInfoForFile(filePath)
+	if info == nil || resolution.LSPID == "" {
+		return ""
 	}
-	if lang := lsp.GetLanguageByExtension(ext); lang != nil {
-		return lang.ID
+	return resolution.LSPID
+}
+
+func resolveLanguageInfoForFile(filePath string) (*lsp.LanguageInfo, autocomplete.LanguageResolution) {
+	resolution := autocomplete.Resolve("", filePath)
+	info := lsp.GetLanguageByID(resolution.CanonicalID)
+	if info == nil {
+		return nil, resolution
 	}
-	if lang := lsp.GetLanguageByFilename(filepath.Base(filePath)); lang != nil {
-		return lang.ID
-	}
-	return ""
+	return info, resolution
 }
 
 func ensureDocOpen(manager *indexerlsp.Manager, language, filePath, content string) (bool, error) {
@@ -716,12 +720,12 @@ func (a *App) GetLSPForFile(filePath string) *LSPServerInfo {
 		return nil
 	}
 
-	ext := filepath.Ext(filePath)
-	if ext == "" {
-		ext = filepath.Base(filePath)
+	lang, _ := resolveLanguageInfoForFile(filePath)
+	if lang == nil || lang.LSPServerID == "" {
+		return nil
 	}
 
-	server := a.lspInstaller.GetServerForExtension(ext)
+	server := a.lspInstaller.GetServerByID(lang.LSPServerID)
 	if server == nil {
 		return nil
 	}
@@ -739,15 +743,7 @@ func (a *App) GetLSPForFile(filePath string) *LSPServerInfo {
 }
 
 func (a *App) GetLanguageForFile(filePath string) *LanguageInfoResult {
-	ext := filepath.Ext(filePath)
-	if ext == "" {
-		ext = filepath.Base(filePath)
-	}
-
-	lang := lsp.GetLanguageByExtension(ext)
-	if lang == nil {
-		lang = lsp.GetLanguageByFilename(filepath.Base(filePath))
-	}
+	lang, _ := resolveLanguageInfoForFile(filePath)
 	if lang == nil {
 		return nil
 	}
