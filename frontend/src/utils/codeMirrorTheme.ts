@@ -71,17 +71,6 @@ export const codeEditorTheme = createTheme({
       color: editorPalette.keyword,
     },
     {
-      tag: [
-        t.operator,
-        t.punctuation,
-        t.paren,
-        t.squareBracket,
-        t.brace,
-        t.derefOperator,
-      ],
-      color: editorPalette.operator,
-    },
-    {
       tag: [t.className, t.definition(t.typeName), t.typeName, t.namespace],
       color: editorPalette.type,
     },
@@ -109,9 +98,10 @@ export const codeEditorStyles = EditorView.theme(
     "&": {
       height: "100%",
       color: editorPalette.text,
-      fontFamily: '"JetBrains Mono", "SF Mono", "Fira Code", monospace',
+      fontFamily:
+        '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace',
       backgroundColor: editorPalette.background,
-      letterSpacing: "0.01em",
+      letterSpacing: "0",
     },
     "&.cm-focused": {
       outline: "none",
@@ -120,6 +110,8 @@ export const codeEditorStyles = EditorView.theme(
     ".cm-scroller": {
       backgroundColor: editorPalette.background,
       color: editorPalette.text,
+      fontFamily:
+        '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace',
       overflow: "auto",
       lineHeight: "1.72",
       scrollbarWidth: "thin",
@@ -148,12 +140,16 @@ export const codeEditorStyles = EditorView.theme(
     ".cm-content": {
       padding: "14px 0 28px",
       color: editorPalette.text,
+      fontFamily:
+        '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace',
       caretColor: editorPalette.caret,
       backgroundColor: editorPalette.background,
     },
     ".cm-line": {
       padding: "0 18px 0 14px",
       color: editorPalette.text,
+      fontFamily:
+        '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace',
     },
     ".cm-gutters": {
       backgroundColor: editorPalette.gutter,

@@ -1,5 +1,15 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Arlecchino Fira Code";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src:
+    local(""),
+    url("../assets/fonts/FiraCode-Regular.woff2") format("woff2");
+}
+
 :root {
   --ui-scale: 1;
   --ui-inverse-scale: 1;

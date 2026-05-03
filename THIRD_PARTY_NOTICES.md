@@ -45,6 +45,11 @@ license text is included at:
 
 - `frontend/src/assets/fonts/OFL.txt`
 
+The bundled Fira Code Regular font is licensed under the SIL Open Font License
+1.1. The license text is included at:
+
+- `frontend/src/assets/fonts/FiraCode-OFL.txt`
+
 ### MPL-2.0 Packages
 
 The frontend lockfile includes `lightningcss` packages under MPL-2.0. If any
