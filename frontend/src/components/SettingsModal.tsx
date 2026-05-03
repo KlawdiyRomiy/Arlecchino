@@ -33,6 +33,7 @@ import {
   InstallLSPServer,
   IsLSPInstalling,
 } from "../wails/app";
+import { EventsOn } from "../wails/runtime";
 import type { AutocompleteLanguageCapability } from "../../bindings/arlecchino/models";
 import { useTheme } from "../hooks/useTheme";
 import {
@@ -113,6 +114,23 @@ const autocompleteBadgeClass = (active: boolean) =>
       ? "border-[color-mix(in_srgb,var(--status-success)_45%,var(--border-subtle))] text-[var(--status-success)]"
       : "opacity-45"
   }`;
+
+type LSPInstallEvent = {
+  id?: string;
+  lspId?: string;
+  stage?: string;
+  percent?: number;
+  message?: string;
+  error?: string;
+};
+
+type LocalLSPInstallState = {
+  stage: string;
+  percent: number;
+  message: string;
+  error: string;
+  running: boolean;
+};
 
 const autocompleteTierRank = (tier: string) => {
   const rank = autocompleteTierOrder.indexOf(
@@ -321,6 +339,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [autocompleteInstallingIds, setAutocompleteInstallingIds] = useState<
     Set<string>
   >(() => new Set());
+  const [autocompleteInstallEvents, setAutocompleteInstallEvents] = useState<
+    Record<string, LocalLSPInstallState>
+  >({});
   const [customThemeStatus, setCustomThemeStatus] = useState<{
     tone: "success" | "error";
     message: string;
@@ -425,6 +446,82 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }, []);
 
+  const recordAutocompleteInstallEvent = useCallback(
+    (event: LSPInstallEvent, fallbackRunning: boolean) => {
+      const serverId = (event.lspId || event.id || "").trim();
+      if (!serverId) {
+        return;
+      }
+      const stage = (event.stage || (fallbackRunning ? "installing" : "done"))
+        .trim()
+        .toLowerCase();
+      const terminal =
+        stage === "done" ||
+        stage === "complete" ||
+        stage === "completed" ||
+        stage === "error" ||
+        stage === "failed" ||
+        stage === "failure";
+      const running = fallbackRunning && !terminal;
+
+      setAutocompleteInstallingIds((previous) => {
+        const next = new Set(previous);
+        if (running) {
+          next.add(serverId);
+        } else {
+          next.delete(serverId);
+        }
+        return next;
+      });
+      setAutocompleteInstallEvents((previous) => ({
+        ...previous,
+        [serverId]: {
+          stage,
+          percent: event.percent ?? (terminal ? 100 : 0),
+          message: event.message || "",
+          error: event.error || "",
+          running,
+        },
+      }));
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const offProgress = EventsOn<[LSPInstallEvent]>(
+      "lsp:install:progress",
+      (event) => {
+        recordAutocompleteInstallEvent(event, true);
+      },
+    );
+    const offComplete = EventsOn<[LSPInstallEvent]>(
+      "lsp:install:complete",
+      (event) => {
+        recordAutocompleteInstallEvent(
+          { ...event, stage: event.stage || "done" },
+          false,
+        );
+        void refreshAutocompleteCapabilities();
+      },
+    );
+    const offError = EventsOn<[LSPInstallEvent]>(
+      "lsp:install:error",
+      (event) => {
+        recordAutocompleteInstallEvent(
+          { ...event, stage: event.stage || "error" },
+          false,
+        );
+        void refreshAutocompleteCapabilities();
+      },
+    );
+
+    return () => {
+      offProgress();
+      offComplete();
+      offError();
+    };
+  }, [recordAutocompleteInstallEvent, refreshAutocompleteCapabilities]);
+
   const savePrivateUpdateAccessToken = useCallback(async () => {
     const token = privateUpdateToken.trim();
     if (!token) {
@@ -464,6 +561,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         next.add(serverId);
         return next;
       });
+      setAutocompleteInstallEvents((previous) => ({
+        ...previous,
+        [serverId]: {
+          stage: "queued",
+          percent: 0,
+          message: "Queued installation...",
+          error: "",
+          running: true,
+        },
+      }));
       try {
         await InstallLSPServer(serverId);
         const installing = await IsLSPInstalling(serverId).catch(() => true);
@@ -473,17 +580,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             next.delete(serverId);
             return next;
           });
+          setAutocompleteInstallEvents((previous) => ({
+            ...previous,
+            [serverId]: {
+              ...(previous[serverId] ?? {
+                stage: "done",
+                percent: 100,
+                message: "",
+                error: "",
+              }),
+              running: false,
+            },
+          }));
         }
         await refreshAutocompleteCapabilities();
       } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unable to install LSP.";
         setAutocompleteInstallingIds((previous) => {
           const next = new Set(previous);
           next.delete(serverId);
           return next;
         });
-        setAutocompleteError(
-          error instanceof Error ? error.message : "Unable to install LSP.",
-        );
+        setAutocompleteInstallEvents((previous) => ({
+          ...previous,
+          [serverId]: {
+            stage: "error",
+            percent: 0,
+            message: "",
+            error: message,
+            running: false,
+          },
+        }));
+        setAutocompleteError(message);
       }
     },
     [refreshAutocompleteCapabilities],
@@ -736,25 +865,59 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
       <div className="mt-4 max-h-[420px] overflow-y-auto rounded-[18px] border border-[var(--border-subtle)]">
         {filteredAutocompleteCapabilities.map((capability) => {
+          const installEvent =
+            autocompleteInstallEvents[capability.lspServerId] ?? null;
           const lspInstalling =
             capability.lspInstalling ||
+            Boolean(installEvent?.running) ||
             autocompleteInstallingIds.has(capability.lspServerId);
-          const lspActive = capability.sources.lspAvailable;
+          const lspError =
+            installEvent?.error ||
+            capability.lspInstallError ||
+            capability.lspLastError ||
+            "";
+          const lspMissingDependency = /missing dependency/i.test(lspError);
+          const lspActive = capability.lspRunning;
+          const lspInstalled = capability.lspInstalled;
+          const lspAvailable = capability.sources.lspAvailable;
           const lspLabel = !capability.sources.lspDeclared
             ? "No LSP"
             : lspInstalling
               ? "Installing"
-              : lspActive
-                ? "Active"
-                : capability.lspInstalled
-                  ? "Installed"
-                  : capability.lspCanInstall
-                    ? "Missing"
-                    : "Declared";
-          const canInstall =
+              : lspError && !lspInstalled
+                ? lspMissingDependency
+                  ? "Missing dependency"
+                  : "Error"
+                : lspActive
+                  ? "Running"
+                  : lspInstalled
+                    ? "Installed"
+                    : capability.lspCanInstall
+                      ? "Missing"
+                      : capability.lspConfigured
+                        ? "Configured"
+                        : "Declared";
+          const showInstallButton =
             capability.sources.lspDeclared &&
             capability.lspCanInstall &&
-            !capability.lspInstalled;
+            !lspInstalled;
+          const canInstall = showInstallButton && !lspInstalling;
+          const installMessage =
+            installEvent?.message || capability.lspInstallMessage || "";
+          const installStage =
+            installEvent?.stage || capability.lspInstallStage || "";
+          const installPercent =
+            installEvent?.percent ?? capability.lspInstallPercent;
+          const installDetail = lspInstalling
+            ? [
+                installMessage || installStage || "Installing",
+                installPercent > 0 && installPercent < 100
+                  ? `${Math.round(installPercent)}%`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" ")
+            : "";
 
           return (
             <div
@@ -770,9 +933,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     {autocompleteTierLabels[capability.tier] ?? capability.tier}
                   </span>
                   <span
-                    className={autocompleteBadgeClass(
-                      capability.sources.lspAvailable,
-                    )}
+                    className={
+                      lspError && !lspInstalling
+                        ? `${settingsPillClass} min-h-[26px] border-[color-mix(in_srgb,var(--status-error)_45%,var(--border-subtle))] px-2.5 text-[var(--status-error)]`
+                        : autocompleteBadgeClass(lspActive || lspAvailable)
+                    }
                   >
                     LSP: {lspLabel}
                   </span>
@@ -781,6 +946,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span className="font-mono">{capability.id}</span>
                   {capability.lspServerId ? (
                     <span className="font-mono">{capability.lspServerId}</span>
+                  ) : null}
+                  {installDetail ? <span>{installDetail}</span> : null}
+                  {capability.lspBinaryPath ? (
+                    <span className="max-w-[260px] truncate font-mono">
+                      {capability.lspBinaryPath}
+                    </span>
+                  ) : null}
+                  {lspError ? (
+                    <span className="max-w-[360px] truncate text-[var(--status-error)]">
+                      {lspError}
+                    </span>
                   ) : null}
                   {capability.extensions.length ? (
                     <span className="truncate">
@@ -801,11 +977,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     {label}
                   </span>
                 ))}
-                {canInstall ? (
+                {showInstallButton ? (
                   <button
                     type="button"
                     className={settingsActionButtonClass}
-                    disabled={lspInstalling}
+                    disabled={!canInstall}
                     onClick={() => {
                       void installAutocompleteLSP(capability);
                     }}
