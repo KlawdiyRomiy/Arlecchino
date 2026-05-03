@@ -1,6 +1,7 @@
 package brain
 
 import (
+	"arlecchino/internal/indexer/core"
 	"path/filepath"
 	"testing"
 )
@@ -60,4 +61,49 @@ func TestDependencyCatalog_NodeCacheSharedAcrossLanguageFamily(t *testing.T) {
 
 	assertSuggestionText(t, typescript, "zustand")
 	assertSuggestionText(t, javascript, "zustand")
+}
+
+func TestDependencyCatalog_GoStdlibSkipsInternalPackages(t *testing.T) {
+	root := t.TempDir()
+	catalog := NewDependencyCatalog(root)
+	catalog.commandRunner = func(name string, args ...string) ([]byte, error) {
+		if name != "go" || len(args) != 2 || args[0] != "list" || args[1] != "std" {
+			t.Fatalf("unexpected command: %s %#v", name, args)
+		}
+		return []byte("crypto/internal/fips140deps/time\nfmt\ninternal/testenv\ntime\nvendor/foo\n"), nil
+	}
+
+	suggestions := catalog.Suggestions("go", "time")
+	assertSuggestionText(t, suggestions, "time")
+	for _, suggestion := range suggestions {
+		if suggestion.Text == "crypto/internal/fips140deps/time" {
+			t.Fatalf("internal stdlib package leaked into suggestions: %#v", suggestions)
+		}
+	}
+
+	if got := catalog.ResolveLibraryByOwner("go", "time"); got != "time" {
+		t.Fatalf("expected time owner to resolve to public stdlib package, got %q", got)
+	}
+	if got := catalog.ResolveLibraryByOwner("go", "fmt"); got != "fmt" {
+		t.Fatalf("expected fmt owner to resolve to public stdlib package, got %q", got)
+	}
+}
+
+func TestDependencyCatalog_ResolveAmbiguousSuffixReturnsEmpty(t *testing.T) {
+	catalog := &dependencyCatalog{
+		cache: map[string]dependencyCacheEntry{
+			"go": {
+				fingerprint: "",
+				entries: []dependencyEntry{
+					{Name: "github.com/acme/client", Kind: core.SymbolKindPackage, Source: core.SourceLibrary, Owner: "client"},
+					{Name: "github.com/example/client", Kind: core.SymbolKindPackage, Source: core.SourceLibrary, Owner: "client"},
+				},
+			},
+		},
+		cacheStatus: map[string]string{},
+	}
+
+	if got := catalog.ResolveLibraryByOwner("go", "client"); got != "" {
+		t.Fatalf("expected ambiguous owner to stay unresolved, got %q", got)
+	}
 }

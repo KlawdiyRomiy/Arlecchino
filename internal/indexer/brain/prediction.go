@@ -1314,6 +1314,12 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	if b.completionCache != nil && len(suggestions) > 0 {
 		b.completionCache.Set(ctx, suggestions)
 	}
+	if importCompletions != nil && importCompletions.catalog != nil {
+		catalogLanguage := completionLanguageResolution(ctx).CanonicalID
+		if status := importCompletions.catalog.CacheStatus(catalogLanguage); status != "" {
+			trace.CacheStatus["catalog:"+normalizeDependencyLanguage(catalogLanguage)] = status
+		}
+	}
 	trace.ResultCount = len(suggestions)
 	trace.TopSuggestions = buildTraceSuggestions(suggestions)
 

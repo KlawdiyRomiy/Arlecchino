@@ -17,12 +17,15 @@ import (
 )
 
 type dependencyEntry struct {
-	Name    string
-	Version string
-	Detail  string
-	Kind    core.SymbolKind
-	Source  core.SymbolSource
-	Insert  string
+	Name     string
+	Version  string
+	Detail   string
+	Kind     core.SymbolKind
+	Source   core.SymbolSource
+	Insert   string
+	Owner    string
+	Standard bool
+	Internal bool
 }
 
 type dependencyCacheEntry struct {
@@ -35,6 +38,7 @@ type dependencyCatalog struct {
 	root          string
 	mu            sync.RWMutex
 	cache         map[string]dependencyCacheEntry
+	cacheStatus   map[string]string
 	commandRunner func(name string, args ...string) ([]byte, error)
 }
 
@@ -42,6 +46,7 @@ func NewDependencyCatalog(root string) *dependencyCatalog {
 	return &dependencyCatalog{
 		root:          root,
 		cache:         make(map[string]dependencyCacheEntry),
+		cacheStatus:   make(map[string]string),
 		commandRunner: defaultDependencyCommandRunner,
 	}
 }
@@ -59,6 +64,9 @@ func (c *dependencyCatalog) Suggestions(language, prefix string) []Suggestion {
 	prefixLower := strings.ToLower(prefix)
 	suggestions := make([]Suggestion, 0, len(entries))
 	for _, entry := range entries {
+		if entry.Internal {
+			continue
+		}
 		nameLower := strings.ToLower(entry.Name)
 		if prefixLower != "" && !strings.HasPrefix(nameLower, prefixLower) && !strings.Contains(nameLower, prefixLower) {
 			continue
@@ -95,7 +103,8 @@ func (c *dependencyCatalog) ResolveLibraryByOwner(language, owner string) string
 		return ""
 	}
 
-	for _, entry := range c.entriesForLanguage(language) {
+	entries := c.entriesForLanguage(language)
+	for _, entry := range entries {
 		name := strings.TrimSpace(entry.Name)
 		if name == "" {
 			continue
@@ -104,22 +113,54 @@ func (c *dependencyCatalog) ResolveLibraryByOwner(language, owner string) string
 		if strings.ToLower(name) == owner {
 			return name
 		}
+	}
 
-		if packageSuggestionIdentifier(name, language) == owner {
-			return name
+	var ownerMatches []dependencyEntry
+	for _, entry := range entries {
+		if entry.Internal {
+			continue
 		}
+		name := strings.TrimSpace(entry.Name)
+		if name == "" {
+			continue
+		}
+		if dependencyEntryOwner(entry, language) == owner {
+			ownerMatches = append(ownerMatches, entry)
+		}
+	}
+	if len(ownerMatches) == 1 {
+		return ownerMatches[0].Name
+	}
+	if len(ownerMatches) > 1 {
+		return ""
+	}
 
-		if idx := strings.LastIndex(name, "/"); idx >= 0 {
-			if strings.ToLower(name[idx+1:]) == owner {
-				return name
-			}
+	var suffixMatches []dependencyEntry
+	for _, entry := range entries {
+		if entry.Internal {
+			continue
 		}
+		name := strings.TrimSpace(entry.Name)
+		if name == "" {
+			continue
+		}
+		if dependencyEntryBaseName(name) == owner {
+			suffixMatches = append(suffixMatches, entry)
+		}
+	}
+	if len(suffixMatches) == 1 {
+		return suffixMatches[0].Name
 	}
 
 	return ""
 }
 
 func (c *dependencyCatalog) entriesForLanguage(language string) []dependencyEntry {
+	entries, _ := c.entriesForLanguageWithCacheStatus(language)
+	return entries
+}
+
+func (c *dependencyCatalog) entriesForLanguageWithCacheStatus(language string) ([]dependencyEntry, bool) {
 	normalizedLanguage := normalizeDependencyLanguage(language)
 	files := c.manifestFiles(normalizedLanguage)
 	fingerprint := c.manifestFingerprint(files)
@@ -128,7 +169,8 @@ func (c *dependencyCatalog) entriesForLanguage(language string) []dependencyEntr
 	if cached, ok := c.cache[normalizedLanguage]; ok && cached.fingerprint == fingerprint {
 		entries := append([]dependencyEntry(nil), cached.entries...)
 		c.mu.RUnlock()
-		return entries
+		c.setCacheStatus(normalizedLanguage, "hit")
+		return entries, true
 	}
 	c.mu.RUnlock()
 
@@ -141,8 +183,36 @@ func (c *dependencyCatalog) entriesForLanguage(language string) []dependencyEntr
 		loadedAt:    time.Now(),
 	}
 	c.mu.Unlock()
+	c.setCacheStatus(normalizedLanguage, "miss")
 
-	return entries
+	return entries, false
+}
+
+func (c *dependencyCatalog) setCacheStatus(language, status string) {
+	c.mu.Lock()
+	if c.cacheStatus == nil {
+		c.cacheStatus = make(map[string]string)
+	}
+	c.cacheStatus[normalizeDependencyLanguage(language)] = status
+	c.mu.Unlock()
+}
+
+func (c *dependencyCatalog) CacheStatus(language string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.cacheStatus[normalizeDependencyLanguage(language)]
+}
+
+func (c *dependencyCatalog) Prewarm(languages ...string) {
+	for _, language := range languages {
+		normalized := normalizeDependencyLanguage(language)
+		if normalized == "" {
+			continue
+		}
+		go func(lang string) {
+			_ = c.entriesForLanguage(lang)
+		}(normalized)
+	}
 }
 
 func (c *dependencyCatalog) manifestFiles(language string) []string {
@@ -948,12 +1018,17 @@ func (c *dependencyCatalog) loadGoStdlibEntries() []dependencyEntry {
 		if name == "" {
 			continue
 		}
+		if isGoInternalOrVendorPackage(name) {
+			continue
+		}
 		entries = append(entries, dependencyEntry{
-			Name:   name,
-			Detail: "stdlib package",
-			Kind:   core.SymbolKindPackage,
-			Source: core.SourceLibrary,
-			Insert: quoteImportLiteral(name, "go"),
+			Name:     name,
+			Detail:   "stdlib package",
+			Kind:     core.SymbolKindPackage,
+			Source:   core.SourceLibrary,
+			Insert:   quoteImportLiteral(name, "go"),
+			Owner:    dependencyEntryBaseName(name),
+			Standard: true,
 		})
 	}
 	return entries
@@ -1376,6 +1451,38 @@ func normalizeDependencyLanguage(language string) string {
 	}
 }
 
+func dependencyEntryOwner(entry dependencyEntry, language string) string {
+	if owner := strings.ToLower(strings.TrimSpace(entry.Owner)); owner != "" {
+		return owner
+	}
+	normalized := normalizeDependencyLanguage(language)
+	if normalized == "node" {
+		return strings.ToLower(strings.TrimSpace(jsModuleIdentifier(entry.Name)))
+	}
+	return strings.ToLower(strings.TrimSpace(packageSuggestionIdentifier(entry.Name, normalized)))
+}
+
+func dependencyEntryBaseName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return ""
+	}
+	for _, sep := range []string{"/", "\\", "::", "."} {
+		if idx := strings.LastIndex(name, sep); idx >= 0 {
+			return strings.TrimSpace(name[idx+len(sep):])
+		}
+	}
+	return name
+}
+
+func isGoInternalOrVendorPackage(name string) bool {
+	name = strings.TrimSpace(name)
+	return strings.HasPrefix(name, "internal/") ||
+		strings.Contains(name, "/internal/") ||
+		strings.HasPrefix(name, "vendor/") ||
+		strings.Contains(name, "/vendor/")
+}
+
 func goDependencyEntry(line string) dependencyEntry {
 	fields := strings.Fields(line)
 	name := ""
@@ -1387,12 +1494,14 @@ func goDependencyEntry(line string) dependencyEntry {
 		version = fields[1]
 	}
 	return dependencyEntry{
-		Name:    name,
-		Version: version,
-		Detail:  versionDetail("module", version),
-		Kind:    core.SymbolKindPackage,
-		Source:  core.SourceLibrary,
-		Insert:  quoteImportLiteral(name, "go"),
+		Name:     name,
+		Version:  version,
+		Detail:   versionDetail("module", version),
+		Kind:     core.SymbolKindPackage,
+		Source:   core.SourceLibrary,
+		Insert:   quoteImportLiteral(name, "go"),
+		Owner:    dependencyEntryBaseName(name),
+		Internal: isGoInternalOrVendorPackage(name),
 	}
 }
 
@@ -1417,7 +1526,7 @@ func dedupeDependencyEntries(entries []dependencyEntry) []dependencyEntry {
 			continue
 		}
 		existing, ok := best[entry.Name]
-		if !ok || dependencySourcePriority(entry.Source) > dependencySourcePriority(existing.Source) {
+		if !ok || dependencyEntryPriority(entry) > dependencyEntryPriority(existing) {
 			best[entry.Name] = entry
 		}
 	}
@@ -1427,6 +1536,17 @@ func dedupeDependencyEntries(entries []dependencyEntry) []dependencyEntry {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
+}
+
+func dependencyEntryPriority(entry dependencyEntry) int {
+	priority := dependencySourcePriority(entry.Source) * 100
+	if entry.Standard {
+		priority += 20
+	}
+	if !entry.Internal {
+		priority += 10
+	}
+	return priority
 }
 
 func dependencySourcePriority(source core.SymbolSource) int {

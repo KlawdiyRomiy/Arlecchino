@@ -17,11 +17,20 @@ func NewImportCompletionProvider(engine *core.Engine) *ImportCompletionProvider 
 	if engine != nil {
 		root = engine.ProjectRoot()
 	}
-	return &ImportCompletionProvider{
+	provider := &ImportCompletionProvider{
 		engine:      engine,
 		projectRoot: root,
 		catalog:     NewDependencyCatalog(root),
 	}
+	provider.Prewarm()
+	return provider
+}
+
+func (p *ImportCompletionProvider) Prewarm() {
+	if p == nil || p.catalog == nil || p.projectRoot == "" {
+		return
+	}
+	p.catalog.Prewarm("go", "typescript", "javascript", "python", "php", "ruby")
 }
 
 func (p *ImportCompletionProvider) GetCompletions(ctx CompletionContext) []Suggestion {
