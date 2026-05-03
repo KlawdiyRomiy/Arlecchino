@@ -180,9 +180,10 @@ func (c *CompletionCache) cacheKey(ctx CompletionContext) string {
 	// Note: Column removed from key intentionally - same line/prefix should hit cache
 	// regardless of exact cursor position within the same token
 	h.Write([]byte(fmt.Sprintf(
-		"%s:%d:%s:%s:%s:%t:%t:%s:%t:%t:%s:%s",
+		"%s:%d:%d:%s:%s:%s:%t:%t:%s:%t:%t:%s:%s",
 		ctx.FilePath,
 		ctx.Line,
+		ctx.DocumentVersion,
 		ctx.Prefix,
 		ctx.Language,
 		ctx.AccessChain,
@@ -385,6 +386,7 @@ type CompletionContext struct {
 	FullContent        []byte
 	Line               int
 	Column             int
+	DocumentVersion    int
 	Prefix             string
 	Language           string
 	LanguageResolution autocomplete.LanguageResolution
@@ -1798,6 +1800,10 @@ func sanitizeInsertText(text string) string {
 	return strings.TrimSpace(cleaned)
 }
 
+func hasSnippetPlaceholder(text string) bool {
+	return regexp.MustCompile(`\$\{\d+(?::[^}]*)?\}|\$\d+`).MatchString(text)
+}
+
 func lspTextEditsToCore(edits []lsp.TextEdit) []core.TextEdit {
 	if len(edits) == 0 {
 		return nil
@@ -2161,6 +2167,18 @@ func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion
 	if lspCtx == nil {
 		lspCtx = context.Background()
 	}
+	if len(ctx.FullContent) > 0 && ctx.DocumentVersion > 0 {
+		if err := b.lspManager.DidChangeWithContext(lspCtx, lspLanguage, ctx.FilePath, ctx.DocumentVersion, string(ctx.FullContent)); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, contextStatus(err)
+			}
+			log.Printf("[LSP] document sync failed lang=%s file=%s: %v", lspLanguage, filepath.Base(ctx.FilePath), err)
+			return nil, "sync-error"
+		}
+		if lspCtx.Err() != nil {
+			return nil, contextStatus(lspCtx.Err())
+		}
+	}
 	items, err := b.lspManager.CompleteWithContext(lspCtx, lspLanguage, ctx.FilePath, ctx.Line, ctx.Column)
 	if err != nil {
 		log.Printf("[LSP] ERROR: %v", err)
@@ -2492,9 +2510,16 @@ func (b *PredictionBrain) fromKeywords(ctx CompletionContext) []Suggestion {
 	suggestions := make([]Suggestion, 0, len(keywords))
 	for _, kw := range keywords {
 		kind := b.mapKeywordKind(kw.Kind)
-		insertText := sanitizeInsertText(kw.InsertText)
+		insertText := kw.InsertText
 		if insertText == "" {
 			insertText = kw.Name
+		}
+		isSnippet := hasSnippetPlaceholder(insertText)
+		if !isSnippet {
+			insertText = sanitizeInsertText(insertText)
+			if insertText == "" {
+				insertText = kw.Name
+			}
 		}
 
 		s := Suggestion{
@@ -2505,7 +2530,7 @@ func (b *PredictionBrain) fromKeywords(ctx CompletionContext) []Suggestion {
 			Score:       float64(kw.Priority) / 10.0,
 			Detail:      kw.Kind,
 			InsertText:  insertText,
-			IsSnippet:   false,
+			IsSnippet:   isSnippet,
 		}
 
 		if b.autoImporter != nil && strings.Contains(kw.Name, ".") {
@@ -2540,13 +2565,20 @@ func (b *PredictionBrain) detectGoKeywordContext(ctx CompletionContext) string {
 
 	lineText := lines[line-1]
 	beforeCursor := lineText
-	if ctx.Column > 0 && ctx.Column <= len(lineText) {
-		beforeCursor = lineText[:ctx.Column]
+	if ctx.Column > 0 {
+		cursorIndex := ctx.Column - 1
+		if cursorIndex > len(lineText) {
+			cursorIndex = len(lineText)
+		}
+		if cursorIndex >= 0 {
+			beforeCursor = lineText[:cursorIndex]
+		}
 	}
+	rawBeforeCursor := beforeCursor
 	beforeCursor = strings.TrimSpace(beforeCursor)
 
-	typeNamePattern := regexp.MustCompile(`^type\s+\w+\s+$`)
-	if typeNamePattern.MatchString(beforeCursor + " ") {
+	typeNamePattern := regexp.MustCompile(`^type\s+\w+\s+\w*$`)
+	if typeNamePattern.MatchString(rawBeforeCursor) {
 		return "after_type"
 	}
 
@@ -2554,25 +2586,72 @@ func (b *PredictionBrain) detectGoKeywordContext(ctx CompletionContext) string {
 		return "struct_field_type"
 	}
 
-	for i := line - 2; i >= 0 && i >= line-10; i-- {
+	if isInsideGoStructDeclaration(lines, line) && looksLikeGoStructFieldTypePrefix(beforeCursor) {
+		return "struct_field_type"
+	}
+
+	return ""
+}
+
+func looksLikeGoStructFieldTypePrefix(beforeCursor string) bool {
+	beforeCursor = strings.TrimSpace(beforeCursor)
+	if beforeCursor == "" || strings.HasPrefix(beforeCursor, "//") {
+		return false
+	}
+	if strings.ContainsAny(beforeCursor, ":,()=") {
+		return false
+	}
+
+	words := strings.Fields(beforeCursor)
+	if len(words) == 0 || len(words) > 2 {
+		return false
+	}
+	for _, word := range words {
+		if !isGoIdentifierPrefix(word) && !strings.HasPrefix(word, "[]") && !strings.Contains(word, ".") {
+			return false
+		}
+	}
+	return true
+}
+
+func isInsideGoStructDeclaration(lines []string, line int) bool {
+	for i := line - 2; i >= 0 && i >= line-50; i-- {
 		if i < 0 || i >= len(lines) {
 			continue
 		}
 		prevLine := strings.TrimSpace(lines[i])
+		if prevLine == "" {
+			continue
+		}
+		if strings.Contains(prevLine, "}") {
+			return false
+		}
 		if strings.Contains(prevLine, "struct {") || strings.Contains(prevLine, "struct{") {
-			if !strings.Contains(prevLine, "}") {
-				words := strings.Fields(beforeCursor)
-				if len(words) == 1 && !strings.Contains(beforeCursor, " ") {
-					return "struct_field_type"
-				}
-			}
+			return true
 		}
 		if strings.HasPrefix(prevLine, "func ") || strings.HasPrefix(prevLine, "type ") {
-			break
+			return false
 		}
 	}
+	return false
+}
 
-	return ""
+func isGoIdentifierPrefix(word string) bool {
+	if word == "" {
+		return false
+	}
+	for i, r := range word {
+		if i == 0 {
+			if r != '_' && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') {
+				return false
+			}
+			continue
+		}
+		if r != '_' && r != '.' && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *PredictionBrain) detectBashKeywordContext(ctx CompletionContext) string {
@@ -3015,7 +3094,54 @@ func (b *PredictionBrain) rank(ctx CompletionContext, suggestions []Suggestion) 
 		suggestions = b.arle.Rerank(suggestions, ctx)
 	}
 
+	if b.detectGoKeywordContext(ctx) == "struct_field_type" {
+		sortGoStructFieldTypesFirst(suggestions)
+	}
+
 	return suggestions
+}
+
+var goStructFieldTypePriority = map[string]int{
+	"string":          100,
+	"int":             98,
+	"bool":            96,
+	"float32":         94,
+	"float64":         93,
+	"error":           90,
+	"[]byte":          86,
+	"rune":            84,
+	"byte":            83,
+	"int8":            78,
+	"int16":           77,
+	"int32":           76,
+	"int64":           75,
+	"uint":            74,
+	"uint8":           73,
+	"uint16":          72,
+	"uint32":          71,
+	"uint64":          70,
+	"time.time":       69,
+	"context.context": 68,
+	"interface":       -20,
+	"struct":          -20,
+}
+
+func sortGoStructFieldTypesFirst(suggestions []Suggestion) {
+	sort.SliceStable(suggestions, func(i, j int) bool {
+		iPriority := goStructFieldTypePriority[strings.ToLower(preferSuggestionText(suggestions[i]))]
+		jPriority := goStructFieldTypePriority[strings.ToLower(preferSuggestionText(suggestions[j]))]
+		if iPriority == jPriority {
+			return false
+		}
+		return iPriority > jPriority
+	})
+}
+
+func preferSuggestionText(s Suggestion) string {
+	if strings.TrimSpace(s.Text) != "" {
+		return s.Text
+	}
+	return s.DisplayText
 }
 
 func (b *PredictionBrain) calculateScore(ctx CompletionContext, s *Suggestion) float64 {

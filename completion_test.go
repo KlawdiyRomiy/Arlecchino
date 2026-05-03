@@ -263,6 +263,29 @@ func TestContextCancel(t *testing.T) {
 	}
 }
 
+func TestGetEditorCompletionsPassesDocumentVersion(t *testing.T) {
+	fb := &fakeBrain{}
+	a := &App{brain: fb}
+
+	_ = a.GetEditorCompletions(EditorCompletionContext{
+		FilePath:   "/tmp/a.go",
+		Language:   "go",
+		Line:       1,
+		Column:     4,
+		Version:    42,
+		LineText:   "foo",
+		TextBefore: "foo",
+		FullText:   "foo\n",
+	})
+
+	fb.mu.Lock()
+	got := fb.seenCtx.DocumentVersion
+	fb.mu.Unlock()
+	if got != 42 {
+		t.Fatalf("expected document version 42 in brain context, got %d", got)
+	}
+}
+
 func TestNotifyFileChanged_InvalidatesCompletionCache(t *testing.T) {
 	fb := &fakeBrain{}
 	a := &App{brain: fb}

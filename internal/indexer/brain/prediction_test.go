@@ -716,6 +716,151 @@ func removePredictionCursorMarker(input string) ([]byte, int, int) {
 	return []byte(clean), line, column
 }
 
+func TestPredictionBrain_GoStructFieldTypeKeywords(t *testing.T) {
+	brain := NewPredictionBrain(nil, BrainConfig{
+		MaxSuggestions:    20,
+		MinConfidence:     0.1,
+		EnableLSP:         false,
+		EnableVirtual:     false,
+		EnableSpeculative: false,
+		EnablePredictive:  false,
+	})
+
+	tests := []struct {
+		name            string
+		content         string
+		prefix          string
+		first           string
+		want            []string
+		forbid          []string
+		notBeforeTarget string
+	}{
+		{
+			name:    "int before sized ints and interface",
+			content: "package main\n\ntype Test struct {\n\tField i|\n}\n",
+			prefix:  "i",
+			first:   "int",
+			want:    []string{"int", "int8", "int16"},
+			forbid:  []string{"floa t", "float"},
+		},
+		{
+			name:    "string not struct",
+			content: "package main\n\ntype Test struct {\n\tField str|\n}\n",
+			prefix:  "str",
+			first:   "string",
+			want:    []string{"string"},
+			forbid:  []string{"struct"},
+		},
+		{
+			name:    "valid Go float candidates",
+			content: "package main\n\ntype Test struct {\n\tField flo|\n}\n",
+			prefix:  "flo",
+			first:   "float32",
+			want:    []string{"float32", "float64"},
+			forbid:  []string{"float", "floa t"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, line, column := removePredictionCursorMarker(tt.content)
+			suggestions := brain.Complete(CompletionContext{
+				FilePath:    "main.go",
+				Language:    "go",
+				Content:     content,
+				FullContent: content,
+				Line:        line,
+				Column:      column,
+				Prefix:      tt.prefix,
+			})
+			if len(suggestions) == 0 {
+				t.Fatalf("expected suggestions")
+			}
+			if suggestions[0].Text != tt.first {
+				t.Fatalf("first suggestion=%q want %q; suggestions=%v", suggestions[0].Text, tt.first, suggestionTexts(suggestions))
+			}
+			for _, want := range tt.want {
+				if findSuggestionIndex(suggestions, want) < 0 {
+					t.Fatalf("expected %q in suggestions; got %v", want, suggestionTexts(suggestions))
+				}
+			}
+			for _, forbid := range tt.forbid {
+				if findSuggestionIndex(suggestions, forbid) >= 0 {
+					t.Fatalf("did not expect %q in suggestions; got %v", forbid, suggestionTexts(suggestions))
+				}
+				for _, suggestion := range suggestions {
+					if suggestion.InsertText == forbid {
+						t.Fatalf("did not expect insertText %q in suggestions; got %+v", forbid, suggestion)
+					}
+				}
+			}
+			interfaceIndex := findSuggestionIndex(suggestions, "interface")
+			firstIndex := findSuggestionIndex(suggestions, tt.first)
+			if interfaceIndex >= 0 && firstIndex >= 0 && interfaceIndex < firstIndex {
+				t.Fatalf("interface ranked before %q; suggestions=%v", tt.first, suggestionTexts(suggestions))
+			}
+		})
+	}
+}
+
+func TestPredictionBrain_KeywordSnippetsPreservePlaceholders(t *testing.T) {
+	brain := NewPredictionBrain(nil, BrainConfig{
+		MaxSuggestions:    20,
+		MinConfidence:     0.1,
+		EnableLSP:         false,
+		EnableVirtual:     false,
+		EnableSpeculative: false,
+		EnablePredictive:  false,
+	})
+	content, line, column := removePredictionCursorMarker("package main\n\nfunc main() {\n\tfunc|\n}\n")
+
+	suggestions := brain.Complete(CompletionContext{
+		FilePath:    "main.go",
+		Language:    "go",
+		Content:     content,
+		FullContent: content,
+		Line:        line,
+		Column:      column,
+		Prefix:      "func",
+	})
+
+	index := findSuggestionIndex(suggestions, "func")
+	if index < 0 {
+		t.Fatalf("expected func keyword suggestion; got %v", suggestionTexts(suggestions))
+	}
+	suggestion := suggestions[index]
+	if !suggestion.IsSnippet {
+		t.Fatalf("expected func keyword to remain a snippet; got %+v", suggestion)
+	}
+	if !strings.Contains(suggestion.InsertText, "$0") || !strings.Contains(suggestion.InsertText, "${1:name}") {
+		t.Fatalf("expected snippet placeholders to be preserved, got %q", suggestion.InsertText)
+	}
+	if strings.Contains(suggestion.InsertText, "func ()  {}") {
+		t.Fatalf("snippet was flattened into malformed plain text: %q", suggestion.InsertText)
+	}
+}
+
+func findSuggestionIndex(suggestions []Suggestion, text string) int {
+	for i, suggestion := range suggestions {
+		if suggestion.Text == text || suggestion.DisplayText == text || suggestion.InsertText == text {
+			return i
+		}
+	}
+	return -1
+}
+
+func suggestionTexts(suggestions []Suggestion) []string {
+	limit := len(suggestions)
+	if limit > 10 {
+		limit = 10
+	}
+	texts := make([]string, 0, limit)
+	for _, suggestion := range suggestions[:limit] {
+		texts = append(texts, suggestion.Text)
+	}
+	return texts
+}
+
 func TestPredictionBrain_GoCompletions(t *testing.T) {
 	config := BrainConfig{
 		MaxSuggestions:    50,

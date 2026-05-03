@@ -78,3 +78,31 @@ func TestCompletionCache_KeyIncludesImportsHash(t *testing.T) {
 		t.Fatalf("expected cache hit for ctxB")
 	}
 }
+
+func TestCompletionCache_KeyIncludesDocumentVersion(t *testing.T) {
+	cache := NewCompletionCache(10, time.Minute)
+
+	ctxA := CompletionContext{
+		FilePath:        "/tmp/main.go",
+		Line:            8,
+		Prefix:          "",
+		Language:        "go",
+		AccessChain:     "account.",
+		IsMethodCall:    true,
+		DocumentVersion: 1,
+	}
+	ctxB := ctxA
+	ctxB.DocumentVersion = 2
+
+	cache.Set(ctxA, []Suggestion{{Text: "ID"}})
+	cache.Set(ctxB, []Suggestion{{Text: "DisplayName"}})
+
+	a, ok := cache.Get(ctxA)
+	if !ok || len(a) != 1 || a[0].Text != "ID" {
+		t.Fatalf("expected cache hit for ctxA")
+	}
+	b, ok := cache.Get(ctxB)
+	if !ok || len(b) != 1 || b[0].Text != "DisplayName" {
+		t.Fatalf("expected cache hit for ctxB")
+	}
+}

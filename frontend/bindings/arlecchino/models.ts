@@ -818,6 +818,7 @@ export class EditorCompletionContext {
     "language": string;
     "line": number;
     "column": number;
+    "version"?: number;
     "lineText": string;
     "textBefore": string;
     "textAfter": string;
@@ -874,10 +875,10 @@ export class EditorCompletionContext {
      * Creates a new EditorCompletionContext instance from a string or object.
      */
     static createFrom($$source: any = {}): EditorCompletionContext {
-        const $$createField10_0 = $$createType0;
+        const $$createField11_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("imports" in $$parsedSource) {
-            $$parsedSource["imports"] = $$createField10_0($$parsedSource["imports"]);
+            $$parsedSource["imports"] = $$createField11_0($$parsedSource["imports"]);
         }
         return new EditorCompletionContext($$parsedSource as Partial<EditorCompletionContext>);
     }

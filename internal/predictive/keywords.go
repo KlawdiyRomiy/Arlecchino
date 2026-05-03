@@ -121,9 +121,9 @@ var LanguageKeywords = map[string][]KeywordInfo{
 		{Name: "package", Kind: "keyword", InsertText: "package $1", Priority: 95},
 		{Name: "main", Kind: "package", InsertText: "main", Priority: 85},
 		{Name: "import", Kind: "keyword", InsertText: "import \"$1\"", Priority: 90},
-		{Name: "type", Kind: "keyword", InsertText: "type ${1:Name} struct {\n\t$0\n}", Priority: 90},
-		{Name: "struct", Kind: "keyword", InsertText: "struct {\n\t$0\n}", Priority: 85},
-		{Name: "interface", Kind: "keyword", InsertText: "interface {\n\t$0\n}", Priority: 85},
+		{Name: "type", Kind: "keyword", InsertText: "type ${1:Name} struct {\n$0\n}", Priority: 90},
+		{Name: "struct", Kind: "keyword", InsertText: "struct {\n$0\n}", Priority: 85},
+		{Name: "interface", Kind: "keyword", InsertText: "interface {\n$0\n}", Priority: 85},
 		{Name: "var", Kind: "keyword", InsertText: "var $1 $2", Priority: 85},
 		{Name: "const", Kind: "keyword", InsertText: "const $1 = $2", Priority: 85},
 		{Name: "if", Kind: "keyword", InsertText: "if $1 {\n\t$0\n}", Priority: 85},
@@ -640,6 +640,83 @@ type KeywordInfo struct {
 	Priority   int
 }
 
+var primitiveTypeKeywords = map[string][]KeywordInfo{
+	"go": {
+		{Name: "string", Kind: "type", InsertText: "string", Priority: 100},
+		{Name: "int", Kind: "type", InsertText: "int", Priority: 98},
+		{Name: "bool", Kind: "type", InsertText: "bool", Priority: 96},
+		{Name: "float32", Kind: "type", InsertText: "float32", Priority: 94},
+		{Name: "float64", Kind: "type", InsertText: "float64", Priority: 93},
+		{Name: "error", Kind: "type", InsertText: "error", Priority: 90},
+		{Name: "[]byte", Kind: "type", InsertText: "[]byte", Priority: 86},
+		{Name: "rune", Kind: "type", InsertText: "rune", Priority: 84},
+		{Name: "byte", Kind: "type", InsertText: "byte", Priority: 83},
+		{Name: "int8", Kind: "type", InsertText: "int8", Priority: 78},
+		{Name: "int16", Kind: "type", InsertText: "int16", Priority: 77},
+		{Name: "int32", Kind: "type", InsertText: "int32", Priority: 76},
+		{Name: "int64", Kind: "type", InsertText: "int64", Priority: 75},
+		{Name: "uint", Kind: "type", InsertText: "uint", Priority: 74},
+		{Name: "uint8", Kind: "type", InsertText: "uint8", Priority: 73},
+		{Name: "uint16", Kind: "type", InsertText: "uint16", Priority: 72},
+		{Name: "uint32", Kind: "type", InsertText: "uint32", Priority: 71},
+		{Name: "uint64", Kind: "type", InsertText: "uint64", Priority: 70},
+		{Name: "time.Time", Kind: "type", InsertText: "time.Time", Priority: 69},
+		{Name: "context.Context", Kind: "type", InsertText: "context.Context", Priority: 68},
+	},
+	"php": {
+		{Name: "string", Kind: "type", InsertText: "string", Priority: 100},
+		{Name: "int", Kind: "type", InsertText: "int", Priority: 98},
+		{Name: "float", Kind: "type", InsertText: "float", Priority: 96},
+		{Name: "bool", Kind: "type", InsertText: "bool", Priority: 94},
+		{Name: "array", Kind: "type", InsertText: "array", Priority: 90},
+		{Name: "mixed", Kind: "type", InsertText: "mixed", Priority: 86},
+		{Name: "object", Kind: "type", InsertText: "object", Priority: 82},
+	},
+	"typescript": {
+		{Name: "string", Kind: "type", InsertText: "string", Priority: 100},
+		{Name: "number", Kind: "type", InsertText: "number", Priority: 98},
+		{Name: "boolean", Kind: "type", InsertText: "boolean", Priority: 96},
+		{Name: "unknown", Kind: "type", InsertText: "unknown", Priority: 90},
+		{Name: "any", Kind: "type", InsertText: "any", Priority: 82},
+		{Name: "void", Kind: "type", InsertText: "void", Priority: 78},
+	},
+	"javascript": {
+		{Name: "string", Kind: "type", InsertText: "string", Priority: 100},
+		{Name: "number", Kind: "type", InsertText: "number", Priority: 98},
+		{Name: "boolean", Kind: "type", InsertText: "boolean", Priority: 96},
+		{Name: "object", Kind: "type", InsertText: "object", Priority: 90},
+		{Name: "Array", Kind: "type", InsertText: "Array", Priority: 86},
+	},
+	"java": {
+		{Name: "int", Kind: "type", InsertText: "int", Priority: 100},
+		{Name: "long", Kind: "type", InsertText: "long", Priority: 98},
+		{Name: "float", Kind: "type", InsertText: "float", Priority: 96},
+		{Name: "double", Kind: "type", InsertText: "double", Priority: 94},
+		{Name: "boolean", Kind: "type", InsertText: "boolean", Priority: 92},
+		{Name: "String", Kind: "type", InsertText: "String", Priority: 90},
+	},
+	"csharp": {
+		{Name: "int", Kind: "type", InsertText: "int", Priority: 100},
+		{Name: "long", Kind: "type", InsertText: "long", Priority: 98},
+		{Name: "float", Kind: "type", InsertText: "float", Priority: 96},
+		{Name: "double", Kind: "type", InsertText: "double", Priority: 94},
+		{Name: "decimal", Kind: "type", InsertText: "decimal", Priority: 92},
+		{Name: "bool", Kind: "type", InsertText: "bool", Priority: 90},
+		{Name: "string", Kind: "type", InsertText: "string", Priority: 88},
+	},
+	"rust": {
+		{Name: "String", Kind: "type", InsertText: "String", Priority: 100},
+		{Name: "str", Kind: "type", InsertText: "str", Priority: 98},
+		{Name: "i32", Kind: "type", InsertText: "i32", Priority: 96},
+		{Name: "i64", Kind: "type", InsertText: "i64", Priority: 94},
+		{Name: "u32", Kind: "type", InsertText: "u32", Priority: 92},
+		{Name: "u64", Kind: "type", InsertText: "u64", Priority: 90},
+		{Name: "f32", Kind: "type", InsertText: "f32", Priority: 88},
+		{Name: "f64", Kind: "type", InsertText: "f64", Priority: 86},
+		{Name: "bool", Kind: "type", InsertText: "bool", Priority: 84},
+	},
+}
+
 func GetKeywordsForLanguage(language string) []KeywordInfo {
 	if keywords, ok := LanguageKeywords[language]; ok {
 		return keywords
@@ -668,6 +745,22 @@ func GetMatchingKeywords(language, prefix string) []KeywordInfo {
 	return matched
 }
 
+func GetPrimitiveTypeKeywords(language, prefix string) []KeywordInfo {
+	keywords, ok := primitiveTypeKeywords[language]
+	if !ok {
+		return nil
+	}
+
+	prefixLower := strings.ToLower(prefix)
+	var matched []KeywordInfo
+	for _, kw := range keywords {
+		if prefixLower == "" || strings.HasPrefix(strings.ToLower(kw.Name), prefixLower) {
+			matched = append(matched, kw)
+		}
+	}
+	return matched
+}
+
 // GetContextualKeywords returns keywords appropriate for a specific context
 // For example, after "type" in Go, only return "struct" and "interface"
 func GetContextualKeywords(language, context, prefix string) []KeywordInfo {
@@ -679,22 +772,11 @@ func GetContextualKeywords(language, context, prefix string) []KeywordInfo {
 		case "after_type":
 			// After "type Name" only struct/interface make sense
 			contextKeywords = []KeywordInfo{
-				{Name: "struct", Kind: "keyword", InsertText: "struct {\n\t$0\n}", Priority: 95},
-				{Name: "interface", Kind: "keyword", InsertText: "interface {\n\t$0\n}", Priority: 90},
+				{Name: "struct", Kind: "keyword", InsertText: "struct {\n$0\n}", Priority: 95},
+				{Name: "interface", Kind: "keyword", InsertText: "interface {\n$0\n}", Priority: 90},
 			}
 		case "struct_field_type":
-			// Inside struct, show common types
-			contextKeywords = []KeywordInfo{
-				{Name: "string", Kind: "type", InsertText: "string", Priority: 95},
-				{Name: "int", Kind: "type", InsertText: "int", Priority: 95},
-				{Name: "int64", Kind: "type", InsertText: "int64", Priority: 90},
-				{Name: "bool", Kind: "type", InsertText: "bool", Priority: 90},
-				{Name: "float64", Kind: "type", InsertText: "float64", Priority: 85},
-				{Name: "error", Kind: "type", InsertText: "error", Priority: 85},
-				{Name: "[]byte", Kind: "type", InsertText: "[]byte", Priority: 80},
-				{Name: "time.Time", Kind: "type", InsertText: "time.Time", Priority: 80},
-				{Name: "context.Context", Kind: "type", InsertText: "context.Context", Priority: 75},
-			}
+			contextKeywords = GetPrimitiveTypeKeywords(language, prefix)
 		}
 	case "bash":
 		switch context {

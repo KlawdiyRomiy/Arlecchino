@@ -23,6 +23,7 @@ import {
   Prec,
   StateEffect,
   StateField,
+  Transaction,
 } from "@codemirror/state";
 import { defaultKeymap, indentWithTab } from "@codemirror/commands";
 import {
@@ -35,6 +36,9 @@ import {
   closeBrackets,
   completionStatus,
   completionKeymap,
+  insertCompletionText,
+  pickedCompletion,
+  snippet,
 } from "@codemirror/autocomplete";
 import {
   highlightSelectionMatches,
@@ -187,7 +191,13 @@ type CompletionPayload = {
   label?: string;
   text?: string;
   insertText?: string;
+  isSnippet?: boolean;
   additionalTextEdits?: TextEditJSON[];
+};
+type CompletionTextEditChange = {
+  from: number;
+  to: number;
+  insert: string;
 };
 const SIGNATURE_HIDE_MS = 2400;
 const COMPLETION_CACHE_TTL_MS = 2000;
@@ -622,6 +632,90 @@ function snippetToPlainText(snippetText: string): string {
       .replace(/\{[ᴸᴿ]?[FN]?\}/g, "")
       .replace(/[\u2070-\u209F]/g, "")
   );
+}
+
+function hasSnippetPlaceholder(snippetText: string): boolean {
+  return /\$\d+|\$\{\d+(?::[^}]*)?\}/.test(snippetText);
+}
+
+function toCodeMirrorSnippetTemplate(snippetText: string): string {
+  return snippetText.replace(/\$(\d+)/g, (_match, index: string) =>
+    index === "0" ? "${}" : `\${${index}}`,
+  );
+}
+
+function textEditToChange(
+  state: EditorState,
+  edit: TextEditJSON,
+): CompletionTextEditChange {
+  const startLine = state.doc.line(edit.startLine);
+  const endLine = state.doc.line(edit.endLine);
+  return {
+    from: startLine.from + edit.startColumn - 1,
+    to: endLine.from + edit.endColumn - 1,
+    insert: edit.text,
+  };
+}
+
+function applyAdditionalTextEdits(
+  view: EditorView,
+  edits?: TextEditJSON[],
+): { from: (position: number, assoc?: number) => number } | null {
+  if (!edits?.length) {
+    return null;
+  }
+
+  const changes = edits
+    .map((edit) => textEditToChange(view.state, edit))
+    .sort((a, b) => a.from - b.from);
+  const changeSet = view.state.changes(changes);
+  view.dispatch({
+    changes: changeSet,
+    annotations: Transaction.userEvent.of("input.complete"),
+  });
+
+  return {
+    from: (position, assoc = 1) => changeSet.mapPos(position, assoc),
+  };
+}
+
+function applyBackendCompletion(
+  view: EditorView,
+  completionToApply: Completion,
+  from: number,
+  to: number,
+  insertText: string,
+  plainText: string,
+  isSnippet: boolean,
+  additionalTextEdits?: TextEditJSON[],
+) {
+  const mapper = applyAdditionalTextEdits(view, additionalTextEdits);
+  const mappedFrom = mapper ? mapper.from(from, 1) : from;
+  const mappedTo = mapper ? mapper.from(to, -1) : to;
+
+  if (isSnippet && hasSnippetPlaceholder(insertText)) {
+    snippet(toCodeMirrorSnippetTemplate(insertText))(
+      view,
+      completionToApply,
+      mappedFrom,
+      mappedTo,
+    );
+    return;
+  }
+
+  const completionTransaction = insertCompletionText(
+    view.state,
+    plainText,
+    mappedFrom,
+    mappedTo,
+  );
+  view.dispatch({
+    ...completionTransaction,
+    annotations: [
+      pickedCompletion.of(completionToApply),
+      Transaction.userEvent.of("input.complete"),
+    ],
+  });
 }
 
 function completionAddsUsefulText(
@@ -1336,9 +1430,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       ghostIdleDelayMs: GHOST_IDLE_DELAY_MS,
       buildCompletionContext,
       fetchCompletions: async (payload) => {
-        const result = (await GetEditorCompletions(
-          payload,
-        )) as EditorCompletionResult | null;
+        const result = (await GetEditorCompletions({
+          ...payload,
+          version: documentVersionRef.current,
+        })) as EditorCompletionResult | null;
         if (!result) {
           return null;
         }
@@ -1575,6 +1670,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           language,
           line: lineNumber,
           column,
+          version: requestVersion,
           lineText,
           textBefore,
           textAfter,
@@ -1604,6 +1700,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             }
             const resolvedInsertText =
               snippetToPlainText(insertText) || insertText;
+            const isSnippet =
+              item.isSnippet === true || hasSnippetPlaceholder(insertText);
             if (
               isExactSelfEchoCompletion(item, currentPrefix, resolvedInsertText)
             ) {
@@ -1619,36 +1717,16 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
               from: number,
               to: number,
             ) => {
-              const changes = [
-                {
-                  from,
-                  to,
-                  insert: resolvedInsertText,
-                },
-              ];
-
-              if (item.additionalTextEdits?.length) {
-                const additionalChanges = item.additionalTextEdits
-                  .map((edit) => {
-                    const startLine = view.state.doc.line(edit.startLine);
-                    const endLine = view.state.doc.line(edit.endLine);
-                    return {
-                      from: startLine.from + edit.startColumn - 1,
-                      to: endLine.from + edit.endColumn - 1,
-                      insert: edit.text,
-                    };
-                  })
-                  .sort((a, b) => a.from - b.from);
-
-                changes.push(...additionalChanges);
-              }
-
-              const primaryInsertEnd = from + resolvedInsertText.length;
-              view.dispatch({
-                changes: changes.sort((a, b) => a.from - b.from),
-                selection: { anchor: primaryInsertEnd },
-              });
-
+              applyBackendCompletion(
+                view,
+                completionToApply,
+                from,
+                to,
+                insertText,
+                resolvedInsertText,
+                isSnippet,
+                item.additionalTextEdits,
+              );
               metrics.recordCompletionAccepted(completionToApply);
             };
 
@@ -1751,6 +1829,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       documentVersionRef.current += 1;
       completionDismissedVersionRef.current = null;
       autoStartedCompletionVersionRef.current = null;
+      completionCacheRef.current.invalidate();
       const version = documentVersionRef.current;
 
       if (largeDocumentMode) {

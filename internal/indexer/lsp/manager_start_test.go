@@ -29,6 +29,26 @@ func TestCompleteWithContextHonorsStartupContext(t *testing.T) {
 	}
 }
 
+func TestDidChangeWithContextHonorsStartupContext(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "slow-lsp")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
+		t.Fatalf("write slow lsp script: %v", err)
+	}
+
+	m := NewManager(dir)
+	m.RegisterServer(ServerConfig{Language: "php", Command: scriptPath})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	startedAt := time.Now()
+	_ = m.DidChangeWithContext(ctx, "php", filepath.Join(dir, "index.php"), 2, "<?php\n")
+	if elapsed := time.Since(startedAt); elapsed > 300*time.Millisecond {
+		t.Fatalf("didChange startup ignored context, elapsed=%s", elapsed)
+	}
+}
+
 func TestStartFailureBackoffSkipsRepeatedMissingServerStart(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir)

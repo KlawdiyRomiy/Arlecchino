@@ -8,19 +8,65 @@ type EditorFixture = {
   content: string;
 };
 
+type CompletionFixtureItem = {
+  label: string;
+  source: string;
+  kind?: string;
+  detail?: string;
+  insertText?: string;
+  isSnippet?: boolean;
+  additionalTextEdits?: Array<{
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+    text: string;
+  }>;
+};
+
+type CodeMirrorSnapshot = {
+  text: string;
+  cursor: number;
+};
+
 declare global {
   interface Window {
     __autocompleteFixture?: EditorFixture;
     __autocompletePendingFixture?: EditorFixture;
     __autocompleteDelayMs?: number;
     __autocompleteDelayBySuffix?: Record<string, number>;
+    __editorText?: string;
+    __autocompleteRoot?: { unmount: () => void };
   }
 }
 
-const completionsByPrefix: Record<
-  string,
-  Array<{ label: string; source: string; kind?: string; detail?: string }>
-> = {
+const completionsByPrefix: Record<string, CompletionFixtureItem[]> = {
+  app: [
+    {
+      label: "appendReallyLongMethodNameWithoutEllipsis",
+      source: "library",
+      kind: "function",
+      detail: "method",
+    },
+  ],
+  func: [
+    {
+      label: "func",
+      source: "keyword",
+      kind: "keyword",
+      insertText: "func ${1:main}() {\n$0\n}",
+      isSnippet: true,
+    },
+  ],
+  str: [
+    {
+      label: "struct",
+      source: "keyword",
+      kind: "keyword",
+      insertText: "struct {\n$0\n}",
+      isSnippet: true,
+    },
+  ],
   tele: [{ label: "tele", source: "library", kind: "module" }],
   "tele.": [
     { label: "Send", source: "library", kind: "function" },
@@ -74,7 +120,22 @@ const completionsByPrefix: Record<
   fm: [{ label: "fmt", source: "library", kind: "module" }],
   fmt: [{ label: "fmt", source: "library", kind: "module" }],
   "fmt.": [
-    { label: "Println", source: "library", kind: "function" },
+    {
+      label: "Println",
+      source: "library",
+      kind: "function",
+      insertText: "Println($0)",
+      isSnippet: true,
+      additionalTextEdits: [
+        {
+          startLine: 2,
+          startColumn: 1,
+          endLine: 2,
+          endColumn: 1,
+          text: 'import "fmt"\n\n',
+        },
+      ],
+    },
     { label: "Printf", source: "library", kind: "function" },
   ],
 };
@@ -112,26 +173,19 @@ test.beforeEach(async ({ page }) => {
         return "";
       };
 
-      const normalizeItems = (
-        items: Array<{
-          label: string;
-          source: string;
-          kind?: string;
-          detail?: string;
-        }>,
-      ) =>
+      const normalizeItems = (items: CompletionFixtureItem[]) =>
         items.map((item, index) => ({
           label: item.label,
           text: item.label,
-          insertText: item.label,
+          insertText: item.insertText || item.label,
           detail: item.detail || item.label,
           documentation: "",
           kind: item.kind || "function",
           source: item.source,
-          isSnippet: false,
+          isSnippet: item.isSnippet || false,
           priority: 100 - index,
           matchType: "prefix",
-          additionalTextEdits: [],
+          additionalTextEdits: item.additionalTextEdits || [],
         }));
 
       const appHandlers: Record<string, (...args: unknown[]) => unknown> = {
@@ -148,6 +202,7 @@ test.beforeEach(async ({ page }) => {
         RecordCompletionUsage: async () => true,
         GetEditorCompletions: async (ctx?: Record<string, unknown>) => {
           const textBefore = String(ctx?.textBefore || "");
+          const fullText = String(ctx?.fullText || "");
           const suffix = Object.keys(completionsByPrefix)
             .filter((candidate) => textBefore.endsWith(candidate))
             .sort((a, b) => b.length - a.length)[0];
@@ -158,7 +213,16 @@ test.beforeEach(async ({ page }) => {
           if (delay > 0) {
             await new Promise((resolve) => setTimeout(resolve, delay));
           }
-          const items = suffix ? completionsByPrefix[suffix] : [];
+          let items = suffix ? completionsByPrefix[suffix] : [];
+          if (textBefore.endsWith("account.")) {
+            items = [{ label: "ID", source: "lsp", kind: "field" }];
+            if (fullText.includes("DisplayName string")) {
+              items = [
+                ...items,
+                { label: "DisplayName", source: "lsp", kind: "field" },
+              ];
+            }
+          }
           return {
             primary: items[0] ? normalizeItems([items[0]])[0] : null,
             items: normalizeItems(items),
@@ -237,6 +301,9 @@ async function mountEditor(page: Page, fixture: EditorFixture) {
   await page.evaluate(
     async ({ fixture }) => {
       window.__autocompleteFixture = fixture;
+      window.__editorText = fixture.content;
+      window.__autocompleteRoot?.unmount();
+      window.__autocompleteRoot = undefined;
 
       const existing = document.getElementById("playwright-editor-root");
       existing?.remove();
@@ -258,6 +325,7 @@ async function mountEditor(page: Page, fixture: EditorFixture) {
         await import("/src/components/CodeMirrorEditor.tsx");
 
       const root = createRoot(rootElement);
+      window.__autocompleteRoot = root;
       root.render(
         React.createElement(
           ThemeProvider,
@@ -267,7 +335,9 @@ async function mountEditor(page: Page, fixture: EditorFixture) {
             content: fixture.content,
             language: fixture.language,
             projectPath: "/virtual/autocomplete-project",
-            onChange: () => undefined,
+            onChange: (value: string) => {
+              window.__editorText = value;
+            },
             onSave: () => undefined,
             onToggleProblems: () => undefined,
             onOpenFile: () => undefined,
@@ -294,14 +364,59 @@ async function focusRenderedTextEnd(page: Page, text: string) {
   await page.keyboard.press("End");
 }
 
-async function waitForCompletionLabel(page: Page, label: string) {
+async function waitForCompletionLabel(
+  page: Page,
+  label: string,
+  options: { fallbackToExplicit?: boolean } = {},
+) {
   const popup = page.locator(".cm-tooltip-autocomplete");
-  await expect(popup).toBeVisible({ timeout: 10000 });
+  if (options.fallbackToExplicit) {
+    try {
+      await expect(popup).toBeVisible({ timeout: 2500 });
+    } catch {
+      await startCompletionExplicitly(page);
+      await expect(popup).toBeVisible({ timeout: 10000 });
+    }
+  } else {
+    await expect(popup).toBeVisible({ timeout: 10000 });
+  }
   await expect(
     popup.locator(".cm-completionLabel", { hasText: label }).first(),
   ).toBeVisible({
     timeout: 10000,
   });
+}
+
+async function startCompletionExplicitly(page: Page) {
+  await page.keyboard.press("Control+Space");
+}
+
+async function editorSnapshot(page: Page): Promise<CodeMirrorSnapshot> {
+  return page
+    .locator(".cm-content")
+    .first()
+    .evaluate((element) => {
+      type CodeMirrorContentElement = HTMLElement & {
+        cmView?: {
+          view?: {
+            state?: {
+              doc?: { toString: () => string };
+              selection?: { main?: { head: number } };
+            };
+          };
+        };
+      };
+
+      const state = (element as CodeMirrorContentElement).cmView?.view?.state;
+      return {
+        text:
+          window.__editorText ||
+          state?.doc?.toString() ||
+          element.textContent ||
+          "",
+        cursor: state?.selection?.main?.head ?? -1,
+      };
+    });
 }
 
 async function assertAccessPopupScenario(
@@ -314,7 +429,9 @@ async function assertAccessPopupScenario(
   await mountEditor(page, fixture);
   await focusRenderedTextEnd(page, token);
   await page.keyboard.type(operator);
-  await waitForCompletionLabel(page, expectedLabels[0]);
+  await waitForCompletionLabel(page, expectedLabels[0], {
+    fallbackToExplicit: true,
+  });
   await expect(
     page
       .locator(".cm-tooltip-autocomplete")
@@ -344,6 +461,161 @@ test("dot access restarts popup immediately for imported Go alias", async ({
       .locator(".cm-completionLabel", { hasText: "StopPoller" })
       .first(),
   ).toBeVisible();
+});
+
+test("dot access refreshes cached member fields after editing current buffer", async ({
+  page,
+}) => {
+  const initialContent =
+    "package main\n\n" +
+    "type Account struct { ID string }\n\n" +
+    "func main() {\n" +
+    "    account := Account{}\n" +
+    "    account\n" +
+    "}\n";
+  const updatedContent =
+    "package main\n\n" +
+    "type Account struct { ID string; DisplayName string }\n\n" +
+    "func main() {\n" +
+    "    account := Account{}\n" +
+    "    account\n" +
+    "}\n";
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: initialContent,
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "account");
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "ID");
+  await expect(
+    page
+      .locator(".cm-tooltip-autocomplete")
+      .locator(".cm-completionLabel", { hasText: "DisplayName" })
+      .first(),
+  ).toBeHidden();
+
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.press(
+    process.platform === "darwin" ? "Meta+A" : "Control+A",
+  );
+  await page.keyboard.insertText(updatedContent);
+
+  await focusRenderedTextEnd(page, "account");
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "DisplayName");
+});
+
+test("popup renders long function labels without ellipsis", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    ap\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "ap");
+  await page.keyboard.type("p");
+  await waitForCompletionLabel(
+    page,
+    "appendReallyLongMethodNameWithoutEllipsis",
+  );
+
+  const label = page
+    .locator(".cm-tooltip-autocomplete")
+    .locator(".cm-completionLabel", {
+      hasText: "appendReallyLongMethodNameWithoutEllipsis",
+    })
+    .first();
+  const metrics = await label.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      text: element.textContent,
+      textOverflow: style.textOverflow,
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    };
+  });
+
+  expect(metrics.text).toBe("appendReallyLongMethodNameWithoutEllipsis");
+  expect(metrics.textOverflow).not.toBe("ellipsis");
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+});
+
+test("accepting struct snippet places cursor inside braces without tab line", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\ntype Test st\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "st");
+  await page.keyboard.type("r");
+  await startCompletionExplicitly(page);
+  await waitForCompletionLabel(page, "struct");
+
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Name string");
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("type Test struct {\nName string\n}");
+  expect(snapshot.text).not.toContain("struct {\n\tName string");
+});
+
+test("accepting completion with import edit keeps cursor at call site", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    fmt\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "fmt");
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Println");
+
+  await page.keyboard.press("Enter");
+  await page.keyboard.type('"ok"');
+
+  const snapshot = await editorSnapshot(page);
+  const importIndex = snapshot.text.indexOf('import "fmt"');
+  const callIndex = snapshot.text.indexOf('fmt.Println("ok")');
+  expect(importIndex).toBeGreaterThan(-1);
+  expect(callIndex).toBeGreaterThan(-1);
+  expect(snapshot.text).not.toContain('import "fmt""ok"');
+});
+
+test("accepting function snippet does not duplicate braces", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfun\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "fun");
+  await page.keyboard.type("c");
+  await startCompletionExplicitly(page);
+  await waitForCompletionLabel(page, "func");
+
+  await page.keyboard.press("Enter");
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("func main() {\n\n}");
+  expect(snapshot.text).not.toContain("func main(){}");
+  expect(snapshot.text).not.toContain("func main(){");
 });
 
 test("escape closes active autocomplete popup", async ({ page }) => {

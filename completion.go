@@ -48,6 +48,7 @@ type EditorCompletionContext struct {
 	Language      string   `json:"language"`
 	Line          int      `json:"line"`
 	Column        int      `json:"column"`
+	Version       int      `json:"version,omitempty"`
 	LineText      string   `json:"lineText"`
 	TextBefore    string   `json:"textBefore"`
 	TextAfter     string   `json:"textAfter"`
@@ -220,6 +221,7 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		FullContent:       []byte(ctx.FullText),
 		Line:              ctx.Line,
 		Column:            ctx.Column,
+		DocumentVersion:   ctx.Version,
 		Prefix:            prefix,
 		Language:          ctx.Language,
 		ImportsHash:       importsHash,

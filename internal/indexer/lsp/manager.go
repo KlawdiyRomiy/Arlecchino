@@ -834,19 +834,31 @@ func (m *Manager) GetServer(language string) (*Server, bool) {
 	return server, ok
 }
 
-// DidOpen notifies the LSP server that a file has been opened
+// DidOpen notifies the LSP server that a file has been opened.
 func (m *Manager) DidOpen(language, filePath, content string) error {
+	return m.DidOpenWithContext(context.Background(), language, filePath, content)
+}
+
+func (m *Manager) DidOpenWithContext(ctx context.Context, language, filePath, content string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
 	if !ok {
 		m.logNoConfig(language)
 		return nil
 	}
 	language = resolvedLanguage
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 	if m.isDocOpen(language, filePath) {
 		return nil
 	}
 
-	server, err := m.ensureStarted(language)
+	server, err := m.ensureStartedWithContext(ctx, language)
 	if err != nil {
 		log.Printf("[LSP-MGR] DidOpen: start failed lang=%s err=%v", language, err)
 		return err
@@ -862,17 +874,43 @@ func (m *Manager) DidOpen(language, filePath, content string) error {
 
 // DidChange notifies the LSP server that a file has been modified
 func (m *Manager) DidChange(language, filePath string, version int, content string) error {
+	return m.DidChangeWithContext(context.Background(), language, filePath, version, content)
+}
+
+func (m *Manager) DidChangeWithContext(ctx context.Context, language, filePath string, version int, content string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
 	if !ok {
 		m.logNoConfig(language)
 		return nil
 	}
 	language = resolvedLanguage
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	if version <= 0 {
+		version = m.docVersion(language, filePath) + 1
+		if version <= 0 {
+			version = 1
+		}
+	}
 	if !m.isDocOpen(language, filePath) {
-		return m.DidOpen(language, filePath, content)
+		if err := m.DidOpenWithContext(ctx, language, filePath, content); err != nil {
+			return err
+		}
+		if version <= 1 {
+			return nil
+		}
+	}
+	if current := m.docVersion(language, filePath); current >= version {
+		return nil
 	}
 
-	server, err := m.ensureStarted(language)
+	server, err := m.ensureStartedWithContext(ctx, language)
 	if err != nil {
 		log.Printf("[LSP-MGR] DidChange: start failed lang=%s err=%v", language, err)
 		return err
