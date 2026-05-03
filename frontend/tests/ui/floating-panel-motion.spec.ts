@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 
+const ZEN_CHROME_STATIONARY_REVEAL_DELAY_MS = 700;
+const ZEN_TOP_CHROME_OCCLUDED_REVEAL_DELAY_MS = 1400;
+
 interface MountProjectUIOptions {
   editorContent?: string;
   panelLayoutState?: unknown;
@@ -19,6 +22,22 @@ const openGitPanel = async (
     const eventInit = {
       key: "g",
       code: "KeyG",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    window.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+    window.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+  });
+};
+
+const openExplorerPanel = async (
+  page: Parameters<typeof test>[0]["page"],
+): Promise<void> => {
+  await page.evaluate(() => {
+    const eventInit = {
+      key: "e",
+      code: "KeyE",
       metaKey: true,
       bubbles: true,
       cancelable: true,
@@ -403,6 +422,44 @@ const readElementRect = async (
       y: rect.y,
     };
   }, selector);
+};
+
+const readNoDragStyles = async (
+  page: Parameters<typeof test>[0]["page"],
+  selector: string,
+): Promise<{ webkitAppRegion: string; wailsDraggable: string }> => {
+  return page.evaluate((targetSelector) => {
+    const element = document.querySelector(targetSelector);
+    if (!element) {
+      return { webkitAppRegion: "", wailsDraggable: "" };
+    }
+    const styles = getComputedStyle(element);
+    return {
+      webkitAppRegion: styles.getPropertyValue("-webkit-app-region").trim(),
+      wailsDraggable: styles.getPropertyValue("--wails-draggable").trim(),
+    };
+  }, selector);
+};
+
+const expectRectStable = (
+  current: Awaited<ReturnType<typeof readElementRect>>,
+  baseline: Awaited<ReturnType<typeof readElementRect>>,
+  tolerance = 1,
+) => {
+  expect(current).not.toBeNull();
+  expect(baseline).not.toBeNull();
+  expect(Math.abs((current?.x ?? 0) - (baseline?.x ?? 0))).toBeLessThanOrEqual(
+    tolerance,
+  );
+  expect(Math.abs((current?.y ?? 0) - (baseline?.y ?? 0))).toBeLessThanOrEqual(
+    tolerance,
+  );
+  expect(
+    Math.abs((current?.width ?? 0) - (baseline?.width ?? 0)),
+  ).toBeLessThanOrEqual(tolerance);
+  expect(
+    Math.abs((current?.height ?? 0) - (baseline?.height ?? 0)),
+  ).toBeLessThanOrEqual(tolerance);
 };
 
 const openLargeEditorContent = async (
@@ -970,29 +1027,7 @@ for (const position of ["top", "bottom"] as const) {
   });
 }
 
-test("zen mode hides an open snapped panel until its edge is hovered", async ({
-  page,
-}) => {
-  await mountProjectUI(page);
-  await setZenMode(page, true);
-
-  const panel = page.locator('[data-testid="panel-explorer"]');
-  await expect(panel).toHaveCount(0);
-  await expect(page.getByTestId("zen-panel-hover-left")).toBeAttached();
-
-  await page.mouse.move(520, 320);
-  await page.mouse.move(1, 120);
-  await expect(panel).toBeVisible();
-  await expect(panel).toHaveAttribute("data-panel-position", "left");
-  await expect
-    .poll(async () => panel.getAttribute("data-panel-motion"))
-    .toBe("settled");
-
-  await page.mouse.move(520, 320);
-  await expect(panel).toHaveCount(0);
-});
-
-test("zen mode edge hover reveals unpinned snapped panels on every side", async ({
+test("zen mode does not render panel edge hover or reveal unpinned snapped panels", async ({
   page,
 }) => {
   await mountProjectUI(page, {
@@ -1046,6 +1081,10 @@ test("zen mode edge hover reveals unpinned snapped panels on every side", async 
   await setZenMode(page, true);
 
   const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
+  const editorBeforeSweep = await readElementRect(
+    page,
+    '[data-testid="editor-area"]',
+  );
   const cases = [
     {
       panelId: "explorer",
@@ -1070,48 +1109,225 @@ test("zen mode edge hover reveals unpinned snapped panels on every side", async 
   ] as const;
 
   for (const { panelId, position, point } of cases) {
-    await expect(
-      page.getByTestId(`zen-panel-hover-${position}`),
-    ).toBeAttached();
+    await expect(page.getByTestId(`zen-panel-hover-${position}`)).toHaveCount(
+      0,
+    );
     await page.mouse.move(viewport.width / 2, viewport.height / 2);
     await expect(page.getByTestId(`panel-${panelId}`)).toHaveCount(0);
     await page.mouse.move(point.x, point.y);
-    await expect(page.getByTestId(`panel-${panelId}`)).toBeVisible();
-    await expect(page.getByTestId(`panel-${panelId}`)).toHaveAttribute(
-      "data-panel-position",
-      position,
+    await page.waitForTimeout(45);
+    await expect(page.getByTestId(`panel-${panelId}`)).toHaveCount(0);
+    expectRectStable(
+      await readElementRect(page, '[data-testid="editor-area"]'),
+      editorBeforeSweep,
     );
   }
 });
 
-test("cmd-clicking a zen-hovered panel header pins and unpins it", async ({
+test("cmd-clicking an explicitly opened zen panel header unpins and shortcut repins it", async ({
   page,
 }) => {
-  await mountProjectUI(page);
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+      },
+    },
+  });
   await setZenMode(page, true);
 
   const panel = page.locator('[data-testid="panel-explorer"]');
-  await page.getByTestId("zen-panel-hover-left").hover();
+  await openExplorerPanel(page);
+  await expect(panel).toBeVisible();
+  await waitForPanelSettled(page, "panel-explorer");
+  await expect(panel).toHaveAttribute("data-panel-zen-pinned", "true");
+
+  await page
+    .getByTestId("panel-explorer-drag-handle")
+    .click({ modifiers: ["Meta"] });
+  await expect(panel).toHaveCount(0);
+
+  await openExplorerPanel(page);
+  await expect(panel).toBeVisible();
+  await expect(panel).toHaveAttribute("data-panel-zen-pinned", "true");
+});
+
+test("zen explicit panel header stays no-drag and tracks panel drag", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+      },
+    },
+  });
+  await setZenMode(page, true);
+
+  const panel = page.locator('[data-testid="panel-explorer"]');
+  await openExplorerPanel(page);
   await expect(panel).toBeVisible();
   await waitForPanelSettled(page, "panel-explorer");
 
-  await page
+  for (const selector of [
+    '[data-testid="panel-explorer"]',
+    '[data-testid="panel-explorer-drag-handle"]',
+    '[data-testid="panel-explorer"] [data-panel-content="true"]',
+    '[data-testid="panel-explorer"] [data-panel-controls="true"]',
+    '[data-testid="panel-explorer-resize-e"]',
+  ]) {
+    await expect
+      .poll(() => readNoDragStyles(page, selector))
+      .toEqual({
+        webkitAppRegion: "no-drag",
+        wailsDraggable: "no-drag",
+      });
+  }
+
+  const startRect = await panel.boundingBox();
+  const headerRect = await page
     .getByTestId("panel-explorer-drag-handle")
-    .click({ modifiers: ["Meta"] });
-  await expect(panel).toHaveAttribute("data-panel-zen-pinned", "true");
+    .boundingBox();
+  expect(startRect).not.toBeNull();
+  expect(headerRect).not.toBeNull();
 
-  await page.mouse.move(560, 320);
-  await page.waitForTimeout(220);
-  await expect(panel).toBeVisible();
+  const grabPoint = {
+    x: (headerRect?.x ?? 0) + (headerRect?.width ?? 0) / 2,
+    y: (headerRect?.y ?? 0) + (headerRect?.height ?? 0) / 2,
+  };
 
-  await page
-    .getByTestId("panel-explorer-drag-handle")
-    .click({ modifiers: ["Meta"] });
-  await expect(panel).toHaveAttribute("data-panel-zen-pinned", "false");
+  await page.mouse.move(grabPoint.x, grabPoint.y);
+  await page.mouse.down();
+  await page.mouse.move(grabPoint.x + 180, grabPoint.y + 36, { steps: 8 });
+  await nextAnimationFrame(page);
 
-  await page.mouse.move(560, 320);
-  await expect(panel).toHaveCount(0);
+  const dragRect = await panel.boundingBox();
+  expect(dragRect).not.toBeNull();
+  expect(
+    Math.abs((dragRect?.x ?? 0) - ((startRect?.x ?? 0) + 180)),
+  ).toBeLessThan(32);
+  expect(
+    Math.abs((dragRect?.y ?? 0) - ((startRect?.y ?? 0) + 36)),
+  ).toBeLessThan(32);
+  await expect(panel).toHaveAttribute("data-panel-state", "dragging");
+
+  await page.mouse.up();
 });
+
+for (const scenario of [
+  {
+    panelId: "explorer",
+    position: "left",
+    size: { width: 260, height: 0 },
+    dragOffset: { x: 180, y: 48 },
+  },
+  {
+    panelId: "aiChat",
+    position: "right",
+    size: { width: 320, height: 0 },
+    dragOffset: { x: -180, y: 48 },
+  },
+  {
+    panelId: "git",
+    position: "top",
+    size: { width: 0, height: 190 },
+    dragOffset: { x: 160, y: 72 },
+  },
+] as const) {
+  test(`zen ${scenario.position} snapped panel header drag is not blocked by topbar edge`, async ({
+    page,
+  }) => {
+    await mountProjectUI(page, {
+      panelLayoutState: {
+        panels: {
+          explorer: scenario.panelId === "explorer",
+          terminal: false,
+          aiChat: scenario.panelId === "aiChat",
+          git: scenario.panelId === "git",
+          problems: false,
+          code: false,
+        },
+        panelConfigs: {
+          [scenario.panelId]: {
+            position: scenario.position,
+            mode: "snapped",
+            size: scenario.size,
+            x: 0,
+            y: 0,
+          },
+        },
+        rememberedSnappedPositions: {
+          [scenario.panelId]: scenario.position,
+        },
+        zenPinnedPanels: {
+          explorer: scenario.panelId === "explorer",
+          terminal: false,
+          aiChat: scenario.panelId === "aiChat",
+          git: scenario.panelId === "git",
+          problems: false,
+          code: false,
+          markdownPreview: false,
+        },
+      },
+    });
+    await setZenMode(page, true);
+
+    const layout = page.getByTestId("main-layout");
+    const panel = page.locator(`[data-testid="panel-${scenario.panelId}"]`);
+    const header = page.getByTestId(`panel-${scenario.panelId}-drag-handle`);
+    await expect(panel).toBeVisible();
+    await waitForPanelSettled(page, `panel-${scenario.panelId}`);
+
+    const startRect = await panel.boundingBox();
+    const headerRect = await header.boundingBox();
+    expect(startRect).not.toBeNull();
+    expect(headerRect).not.toBeNull();
+
+    const grabPoint = {
+      x: (headerRect?.x ?? 0) + (headerRect?.width ?? 0) / 2,
+      y: (headerRect?.y ?? 0) + (headerRect?.height ?? 0) / 2,
+    };
+
+    await page.mouse.move(grabPoint.x, grabPoint.y);
+    await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+
+    await page.mouse.down();
+    await page.mouse.move(
+      grabPoint.x + scenario.dragOffset.x,
+      grabPoint.y + scenario.dragOffset.y,
+      { steps: 8 },
+    );
+    await nextAnimationFrame(page);
+    await page.waitForTimeout(160);
+
+    const dragRect = await panel.boundingBox();
+    expect(dragRect).not.toBeNull();
+    expect(
+      Math.abs(
+        (dragRect?.x ?? 0) - ((startRect?.x ?? 0) + scenario.dragOffset.x),
+      ),
+    ).toBeLessThan(34);
+    expect(
+      Math.abs(
+        (dragRect?.y ?? 0) - ((startRect?.y ?? 0) + scenario.dragOffset.y),
+      ),
+    ).toBeLessThan(34);
+    await expect(panel).toHaveAttribute("data-panel-state", "dragging");
+    await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+
+    await page.mouse.up();
+  });
+}
 
 test("keyboard shortcut opens a snapped panel pinned in zen and keeps arrow movement", async ({
   page,
@@ -1165,31 +1381,243 @@ test("keyboard shortcut opens a snapped panel pinned in zen and keeps arrow move
   await expect(panel).toBeVisible();
 });
 
-test("zen chrome hover insets keep a revealed side panel below the topbar", async ({
+test("zen topbar hover does not reveal panels or resize the editor", async ({
   page,
 }) => {
   await mountProjectUI(page);
   await setZenMode(page, true);
+  const editorBeforeHover = await readElementRect(
+    page,
+    '[data-testid="editor-area"]',
+  );
 
-  await page.getByTestId("zen-topbar-hover").hover();
+  const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
+  await page.mouse.move(viewport.width / 2, 1);
+  await page.waitForTimeout(ZEN_CHROME_STATIONARY_REVEAL_DELAY_MS - 250);
+  await expect(page.getByTestId("main-layout")).toHaveAttribute(
+    "data-zen-topbar-visible",
+    "false",
+  );
   await expect(page.getByTestId("main-layout")).toHaveAttribute(
     "data-zen-topbar-visible",
     "true",
   );
-  await page.getByTestId("zen-panel-hover-left").hover();
-  await expect(page.getByTestId("panel-explorer")).toBeVisible();
+  expectRectStable(
+    await readElementRect(page, '[data-testid="editor-area"]'),
+    editorBeforeHover,
+  );
+  await page.mouse.move(1, viewport.height / 2);
+  await expect(page.getByTestId("panel-explorer")).toHaveCount(0);
+  expectRectStable(
+    await readElementRect(page, '[data-testid="editor-area"]'),
+    editorBeforeHover,
+  );
+});
 
-  const topbarBox = await readElementRect(page, '[data-testid="topbar"]');
-  const panelBox = await readElementRect(
+test("zen topbar dwell reveal works over side pinned panel headers and offsets the panel", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: true,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+      },
+      panelConfigs: {
+        explorer: {
+          position: "left",
+          mode: "snapped",
+          size: { width: 260, height: 0 },
+          x: 0,
+          y: 0,
+        },
+      },
+      rememberedSnappedPositions: {
+        explorer: "left",
+      },
+      zenPinnedPanels: {
+        explorer: true,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+        markdownPreview: false,
+      },
+    },
+  });
+  await setZenMode(page, true);
+
+  const layout = page.getByTestId("main-layout");
+  const panel = page.getByTestId("panel-explorer");
+  const header = page.getByTestId("panel-explorer-drag-handle");
+  await expect(panel).toBeVisible();
+  await waitForPanelSettled(page, "panel-explorer");
+
+  const editorBeforeHover = await readElementRect(
+    page,
+    '[data-testid="editor-area"]',
+  );
+  const panelBeforeHover = await readElementRect(
     page,
     '[data-testid="panel-explorer"]',
   );
-  expect(topbarBox).not.toBeNull();
-  expect(panelBox).not.toBeNull();
-  expect((panelBox?.y ?? 0) + 1).toBeGreaterThanOrEqual(
-    (topbarBox?.y ?? 0) + (topbarBox?.height ?? 0),
+  const headerRect = await header.boundingBox();
+  expect(panelBeforeHover).not.toBeNull();
+  expect(headerRect).not.toBeNull();
+
+  const hoverPoint = {
+    x: (headerRect?.x ?? 0) + (headerRect?.width ?? 0) / 2,
+    y: (headerRect?.y ?? 0) + (headerRect?.height ?? 0) / 2,
+  };
+  await page.mouse.move(hoverPoint.x, hoverPoint.y);
+
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+  await page.waitForTimeout(ZEN_TOP_CHROME_OCCLUDED_REVEAL_DELAY_MS - 650);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+  await expect(panel).toHaveAttribute("data-panel-top-chrome-avoidance", "0");
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+  await expect
+    .poll(async () =>
+      Number(
+        (await panel.getAttribute("data-panel-top-chrome-avoidance")) ?? "0",
+      ),
+    )
+    .toBeGreaterThan(0);
+  await page.mouse.move(hoverPoint.x + 12, hoverPoint.y);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+
+  await expect
+    .poll(async () => {
+      const topbarAfterHover = await readElementRect(
+        page,
+        '[data-testid="topbar"]',
+      );
+      const panelAfterHover = await readElementRect(
+        page,
+        '[data-testid="panel-explorer"]',
+      );
+      return (
+        (panelAfterHover?.y ?? 0) +
+        1 -
+        ((topbarAfterHover?.y ?? 0) + (topbarAfterHover?.height ?? 0))
+      );
+    })
+    .toBeGreaterThanOrEqual(0);
+
+  const panelAfterHover = await readElementRect(
+    page,
+    '[data-testid="panel-explorer"]',
   );
-  expectNoBoxOverlap(topbarBox, panelBox);
+  expect(panelAfterHover).not.toBeNull();
+  expect(
+    (panelAfterHover?.y ?? 0) - (panelBeforeHover?.y ?? 0),
+  ).toBeGreaterThan(8);
+  expectRectStable(
+    await readElementRect(page, '[data-testid="editor-area"]'),
+    editorBeforeHover,
+  );
+});
+
+test("zen topbar dwell reveal works over top snapped panel headers", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: true,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+      },
+      panelConfigs: {
+        explorer: {
+          position: "top",
+          mode: "snapped",
+          size: { width: 0, height: 190 },
+          x: 0,
+          y: 0,
+        },
+      },
+      rememberedSnappedPositions: {
+        explorer: "top",
+      },
+      zenPinnedPanels: {
+        explorer: true,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+        markdownPreview: false,
+      },
+    },
+  });
+  await setZenMode(page, true);
+
+  const layout = page.getByTestId("main-layout");
+  const panel = page.getByTestId("panel-explorer");
+  const header = page.getByTestId("panel-explorer-drag-handle");
+  await expect(panel).toBeVisible();
+  await waitForPanelSettled(page, "panel-explorer");
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+
+  const editorBeforeHover = await readElementRect(
+    page,
+    '[data-testid="editor-area"]',
+  );
+  const panelBeforeHover = await readElementRect(
+    page,
+    '[data-testid="panel-explorer"]',
+  );
+  const headerRect = await header.boundingBox();
+  expect(panelBeforeHover).not.toBeNull();
+  expect(headerRect).not.toBeNull();
+
+  const hoverPoint = {
+    x: (headerRect?.x ?? 0) + (headerRect?.width ?? 0) / 2,
+    y: (headerRect?.y ?? 0) + (headerRect?.height ?? 0) / 2,
+  };
+  expect(hoverPoint.y).toBeGreaterThan(12);
+  await page.mouse.move(hoverPoint.x, hoverPoint.y);
+
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+  await page.waitForTimeout(ZEN_TOP_CHROME_OCCLUDED_REVEAL_DELAY_MS - 650);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+  await expect(panel).toHaveAttribute("data-panel-top-chrome-avoidance", "0");
+  await page.mouse.move(hoverPoint.x + 12, hoverPoint.y);
+  await page.waitForTimeout(ZEN_TOP_CHROME_OCCLUDED_REVEAL_DELAY_MS - 650);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+  await expect(panel).toHaveAttribute("data-panel-top-chrome-avoidance", "0");
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+  await expect
+    .poll(async () =>
+      Number(
+        (await panel.getAttribute("data-panel-top-chrome-avoidance")) ?? "0",
+      ),
+    )
+    .toBeGreaterThan(0);
+  await page.mouse.move(hoverPoint.x + 12, hoverPoint.y);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+
+  const panelAfterHover = await readElementRect(
+    page,
+    '[data-testid="panel-explorer"]',
+  );
+  expect(panelAfterHover).not.toBeNull();
+  expect(
+    (panelAfterHover?.y ?? 0) - (panelBeforeHover?.y ?? 0),
+  ).toBeGreaterThan(8);
+  expectRectStable(
+    await readElementRect(page, '[data-testid="editor-area"]'),
+    editorBeforeHover,
+  );
 });
 
 test("fullscreen floating panel closes without a sideways slide under ui scale", async ({
@@ -1291,6 +1719,62 @@ test("free floating panel opens and closes without edge slide", async ({
   }
 
   await expect(page.locator('[data-testid="panel-problems"]')).toHaveCount(0);
+});
+
+test("free floating panel drags by the header", async ({ page }) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: true,
+        code: false,
+      },
+      panelConfigs: {
+        problems: {
+          position: "bottom",
+          mode: "floating",
+          size: { width: 420, height: 260 },
+          x: 140,
+          y: 120,
+        },
+      },
+    },
+  });
+
+  const panel = page.locator('[data-testid="panel-problems"]');
+  const header = page.getByTestId("panel-problems-drag-handle");
+  await expect(panel).toBeVisible();
+  await waitForPanelSettled(page, "panel-problems");
+
+  const startRect = await panel.boundingBox();
+  const headerRect = await header.boundingBox();
+  expect(startRect).not.toBeNull();
+  expect(headerRect).not.toBeNull();
+
+  const grabPoint = {
+    x: (headerRect?.x ?? 0) + (headerRect?.width ?? 0) / 2,
+    y: (headerRect?.y ?? 0) + (headerRect?.height ?? 0) / 2,
+  };
+
+  await page.mouse.move(grabPoint.x, grabPoint.y);
+  await page.mouse.down();
+  await page.mouse.move(grabPoint.x + 140, grabPoint.y + 48, { steps: 8 });
+  await nextAnimationFrame(page);
+
+  const dragRect = await panel.boundingBox();
+  expect(dragRect).not.toBeNull();
+  expect(
+    Math.abs((dragRect?.x ?? 0) - ((startRect?.x ?? 0) + 140)),
+  ).toBeLessThan(28);
+  expect(
+    Math.abs((dragRect?.y ?? 0) - ((startRect?.y ?? 0) + 48)),
+  ).toBeLessThan(28);
+  await expect(panel).toHaveAttribute("data-panel-state", "dragging");
+
+  await page.mouse.up();
 });
 
 test("panel shortcuts open hidden panels on keydown without waiting for hold", async ({
@@ -2156,6 +2640,213 @@ test("held panel shortcuts swap occupied horizontal edges with arrows", async ({
         .getAttribute("data-panel-position"),
     )
     .toBe("left");
+});
+
+test("hidden explorer reopens in a free slot when git occupies its last side", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: true,
+        problems: false,
+        code: false,
+      },
+      panelConfigs: {
+        explorer: {
+          position: "left",
+          size: { width: 260, height: 0 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+        git: {
+          position: "left",
+          size: { width: 280, height: 0 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+      },
+      rememberedSnappedPositions: {
+        explorer: "left",
+        git: "left",
+      },
+    },
+  });
+
+  await expect(
+    page.locator('[data-testid="panel-git"]').last(),
+  ).toHaveAttribute("data-panel-position", "left");
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent("arlecchino:application-menu-action", {
+        detail: { actionId: "explorer.toggle" },
+      }),
+    );
+  });
+
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-explorer"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("right");
+  await expect(
+    page.locator('[data-testid="panel-git"]').last(),
+  ).toHaveAttribute("data-panel-position", "left");
+});
+
+test("ordinary panel toggle opens hidden panel without duplicating snapped sides", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: true,
+        aiChat: true,
+        git: true,
+        problems: false,
+        code: false,
+      },
+      panelConfigs: {
+        explorer: {
+          position: "left",
+          size: { width: 260, height: 0 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+        terminal: {
+          position: "bottom",
+          size: { width: 0, height: 220 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+        aiChat: {
+          position: "right",
+          size: { width: 320, height: 0 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+        git: {
+          position: "left",
+          size: { width: 280, height: 0 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+      },
+      rememberedSnappedPositions: {
+        explorer: "left",
+        terminal: "bottom",
+        aiChat: "right",
+        git: "left",
+      },
+    },
+  });
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent("arlecchino:application-menu-action", {
+        detail: { actionId: "explorer.toggle" },
+      }),
+    );
+  });
+
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-explorer"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("top");
+
+  const positions = await page
+    .locator('[data-testid^="panel-"]')
+    .evaluateAll((nodes) =>
+      nodes
+        .map((node) => (node as HTMLElement).dataset.panelPosition)
+        .filter(Boolean),
+    );
+  expect(new Set(positions).size).toBe(positions.length);
+});
+
+test("panel remembered snapped side survives close and reopen when free", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+      },
+      panelConfigs: {
+        explorer: {
+          position: "left",
+          size: { width: 260, height: 0 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+      },
+      rememberedSnappedPositions: {
+        explorer: "right",
+      },
+    },
+  });
+
+  const toggleExplorer = async () => {
+    await page.evaluate(() => {
+      window.dispatchEvent(
+        new CustomEvent("arlecchino:application-menu-action", {
+          detail: { actionId: "explorer.toggle" },
+        }),
+      );
+    });
+  };
+
+  await toggleExplorer();
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-explorer"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("right");
+  await waitForPanelSettled(page, "panel-explorer");
+
+  await page
+    .locator('[data-testid="panel-explorer"]')
+    .last()
+    .locator('button[title="Закрыть панель"]')
+    .click();
+  await expect(page.locator('[data-testid="panel-explorer"]')).toHaveCount(0);
+
+  await toggleExplorer();
+  await expect
+    .poll(async () =>
+      page
+        .locator('[data-testid="panel-explorer"]')
+        .last()
+        .getAttribute("data-panel-position"),
+    )
+    .toBe("right");
 });
 
 test("held shortcut relocation preserves smooth snapped close", async ({

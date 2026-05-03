@@ -18,6 +18,7 @@ import {
   type PolicyPlan,
 } from "../../bindings/arlecchino/internal/depsync/models";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
+import { shortcuts } from "../utils/keyboard";
 
 interface DependencyPolicyModalProps {
   isOpen: boolean;
@@ -249,7 +250,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
           approvedActionIds,
           persistApprovals:
             consentMode === ConsentMode.ConsentModeConfirmOncePerProject &&
-              persistApprovals,
+            persistApprovals,
           dryRun: false,
         }),
       );
@@ -287,6 +288,34 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
     onNotify,
     persistApprovals,
   ]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    document.body.dataset.shellModalOpen = "true";
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!shortcuts.escape(event)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+
+      if (!running) {
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      delete document.body.dataset.shellModalOpen;
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [isOpen, onClose, running]);
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={(open) => !open && onClose()}>

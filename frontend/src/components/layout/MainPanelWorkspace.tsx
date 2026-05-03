@@ -36,14 +36,6 @@ interface MainPanelWorkspaceProps {
   floatingPresenceVersion: number;
   floatingPanelIds: PanelId[];
   floatingBrowserPreviewWindows: PreviewWindow[];
-  zenModeEnabled: boolean;
-  zenEdgeHoverSize: number;
-  zenPanelHoverZIndex: number;
-  zenPanelHoverPositions: PanelPosition[];
-  onZenPanelEdgeEnter: (position: PanelPosition) => void;
-  onZenPanelEdgeLeave: (position: PanelPosition) => void;
-  onZenPanelSlotEnter: (position: PanelPosition) => void;
-  onZenPanelSlotLeave: (position: PanelPosition) => void;
   renderDropZone: (position: PanelPosition) => React.ReactNode;
   renderPanel: (
     panelId: PanelId,
@@ -87,14 +79,6 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
   floatingPresenceVersion,
   floatingPanelIds,
   floatingBrowserPreviewWindows,
-  zenModeEnabled,
-  zenEdgeHoverSize,
-  zenPanelHoverZIndex,
-  zenPanelHoverPositions,
-  onZenPanelEdgeEnter,
-  onZenPanelEdgeLeave,
-  onZenPanelSlotEnter,
-  onZenPanelSlotLeave,
   renderDropZone,
   renderPanel,
   renderPreviewWindowPanel,
@@ -136,39 +120,6 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
     );
   };
 
-  const renderZenHoverSentinel = (position: PanelPosition) => {
-    if (!zenModeEnabled || !zenPanelHoverPositions.includes(position)) {
-      return null;
-    }
-
-    const baseStyle: React.CSSProperties = {
-      position: "fixed",
-      zIndex: zenPanelHoverZIndex,
-      pointerEvents: "auto",
-      background: "transparent",
-    };
-    const edgeSize = zenEdgeHoverSize;
-    const style: React.CSSProperties =
-      position === "left"
-        ? { ...baseStyle, left: 0, top: 0, bottom: 0, width: edgeSize }
-        : position === "right"
-          ? { ...baseStyle, right: 0, top: 0, bottom: 0, width: edgeSize }
-          : position === "top"
-            ? { ...baseStyle, left: 0, right: 0, top: 0, height: edgeSize }
-            : { ...baseStyle, left: 0, right: 0, bottom: 0, height: edgeSize };
-
-    return (
-      <div
-        key={`zen-hover-${position}`}
-        data-testid={`zen-panel-hover-${position}`}
-        style={style}
-        onMouseEnter={() => onZenPanelEdgeEnter(position)}
-        onMouseMove={() => onZenPanelEdgeEnter(position)}
-        onMouseLeave={() => onZenPanelEdgeLeave(position)}
-      />
-    );
-  };
-
   return (
     <LayoutGroup id="main-floating-panels">
       <motion.div
@@ -179,10 +130,6 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
         data-testid="panel-workspace"
         data-panel-drop-settling={panelDropSettling ? "true" : "false"}
       >
-        {(["top", "bottom", "left", "right"] as const).map(
-          renderZenHoverSentinel,
-        )}
-
         {isDraggingPanelOrPreview && (
           <>
             {renderDropZone("top")}
@@ -201,12 +148,6 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
             slots.left.active,
             slots.left.isResizing,
           )}
-          onMouseEnter={
-            zenModeEnabled ? () => onZenPanelSlotEnter("left") : undefined
-          }
-          onMouseLeave={
-            zenModeEnabled ? () => onZenPanelSlotLeave("left") : undefined
-          }
         >
           {fullscreenSnappedExitSuppression.left
             ? null
@@ -231,12 +172,6 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
               slots.top.active,
               slots.top.isResizing,
             )}
-            onMouseEnter={
-              zenModeEnabled ? () => onZenPanelSlotEnter("top") : undefined
-            }
-            onMouseLeave={
-              zenModeEnabled ? () => onZenPanelSlotLeave("top") : undefined
-            }
           >
             {fullscreenSnappedExitSuppression.top
               ? null
@@ -264,12 +199,6 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
               slots.bottom.active,
               slots.bottom.isResizing,
             )}
-            onMouseEnter={
-              zenModeEnabled ? () => onZenPanelSlotEnter("bottom") : undefined
-            }
-            onMouseLeave={
-              zenModeEnabled ? () => onZenPanelSlotLeave("bottom") : undefined
-            }
           >
             {fullscreenSnappedExitSuppression.bottom
               ? null
@@ -290,12 +219,6 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
             slots.right.active,
             slots.right.isResizing,
           )}
-          onMouseEnter={
-            zenModeEnabled ? () => onZenPanelSlotEnter("right") : undefined
-          }
-          onMouseLeave={
-            zenModeEnabled ? () => onZenPanelSlotLeave("right") : undefined
-          }
         >
           {fullscreenSnappedExitSuppression.right
             ? null

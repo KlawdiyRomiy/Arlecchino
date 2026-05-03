@@ -169,17 +169,41 @@ const PANEL_SHORTCUT_MOVE_POSITIONS: readonly PanelPosition[] = [
   "top",
   "bottom",
 ];
-const PANEL_POSITIONS: readonly PanelPosition[] = [
-  "left",
-  "right",
-  "top",
-  "bottom",
-];
-const ZEN_EDGE_HOVER_CLOSE_DELAY_MS = 140;
 const ZEN_CHROME_HOVER_CLOSE_DELAY_MS = 140;
 const ZEN_EDGE_HOVER_SIZE = 32;
-const ZEN_CHROME_HOVER_Z_INDEX = zIndex.tooltip - 15;
-const ZEN_PANEL_HOVER_Z_INDEX = zIndex.tooltip + 2;
+const ZEN_TOP_CHROME_HOVER_SIZE = 12;
+const ZEN_CHROME_STATIONARY_REVEAL_DELAY_MS = 700;
+const ZEN_TOP_CHROME_OCCLUDED_REVEAL_DELAY_MS = 1400;
+const ZEN_CHROME_STATIONARY_MOVE_TOLERANCE = 6;
+const ZEN_TOP_CHROME_PRE_OPEN_VETO_TARGET_SELECTOR = [
+  '[data-testid="editor-tabs-split-controls"]',
+  '[data-testid="editor-tabs-markdown-preview-toggle"]',
+].join(",");
+const ZEN_TOP_CHROME_OWNED_SELECTOR = [
+  '[data-zen-top-chrome="true"]',
+  '[data-testid="topbar"]',
+  "[data-shell-menu-content]",
+].join(",");
+const ZEN_TOP_CHROME_OCCLUDED_REVEAL_TARGET_SELECTOR =
+  '[data-panel-drag-handle="true"]';
+const ZEN_TOP_CHROME_OCCLUDED_REVEAL_BLOCK_SELECTOR = [
+  '[data-panel-controls="true"]',
+  '[data-panel-resize-handle="true"]',
+  ZEN_TOP_CHROME_PRE_OPEN_VETO_TARGET_SELECTOR,
+  "button",
+  "a",
+  "input",
+  "textarea",
+  "select",
+  '[role="button"]',
+].join(",");
+const ZEN_TOP_CHROME_INTERACTIVE_SELECTOR = [
+  '[data-testid="topbar"] button',
+  '[data-testid="topbar"] a',
+  '[data-testid="topbar"] input',
+  '[data-testid="topbar"] [role="button"]',
+  "[data-shell-menu-content]",
+].join(",");
 const MARKDOWN_LINK_PREVIEW_WINDOW_ID = "markdown-link-preview";
 const NATIVE_FULLSCREEN_CHANGED_EVENT = "shell:native-fullscreen-changed";
 type FullscreenPanelId = "terminal" | "git" | "problems" | "markdownPreview";
@@ -192,29 +216,114 @@ interface NativeFullscreenChangedEvent {
   fullscreen?: boolean;
 }
 
-type ZenPanelHoverSource = "edge" | "slot";
-type ZenPanelHoverSources = Record<
-  PanelPosition,
-  Record<ZenPanelHoverSource, boolean>
+type ZenViewportPointerSnapshot = Pick<
+  MouseEvent,
+  "clientX" | "clientY" | "buttons"
 >;
-type ZenPanelHoverLeaveTimers = Record<
-  PanelPosition,
-  Partial<Record<ZenPanelHoverSource, ReturnType<typeof setTimeout>>>
->;
+type ZenChromeRevealIntentSource =
+  | "top-edge"
+  | "top-occluded-header"
+  | "bottom-edge";
 
-const createEmptyZenPanelHoverSources = (): ZenPanelHoverSources => ({
-  left: { edge: false, slot: false },
-  right: { edge: false, slot: false },
-  top: { edge: false, slot: false },
-  bottom: { edge: false, slot: false },
+interface ZenChromeRevealIntent {
+  source: ZenChromeRevealIntentSource;
+  clientX: number;
+  clientY: number;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const createEmptyZenViewportChromeState = (): Record<
+  "top" | "bottom",
+  boolean
+> => ({
+  top: false,
+  bottom: false,
 });
 
-const createEmptyZenPanelHoverLeaveTimers = (): ZenPanelHoverLeaveTimers => ({
-  left: {},
-  right: {},
-  top: {},
-  bottom: {},
-});
+const getZenChromeRevealDelay = (
+  source: ZenChromeRevealIntentSource,
+): number =>
+  source === "top-occluded-header"
+    ? ZEN_TOP_CHROME_OCCLUDED_REVEAL_DELAY_MS
+    : ZEN_CHROME_STATIONARY_REVEAL_DELAY_MS;
+
+const getZenViewportElementsFromPoint = (
+  clientX: number,
+  clientY: number,
+): Element[] =>
+  typeof document.elementsFromPoint === "function"
+    ? document.elementsFromPoint(clientX, clientY)
+    : [document.elementFromPoint(clientX, clientY)].filter(
+        (element): element is Element => element !== null,
+      );
+
+const isZenTopChromeOwnedAtPoint = (
+  clientX: number,
+  clientY: number,
+): boolean => {
+  const elements = getZenViewportElementsFromPoint(clientX, clientY);
+  const topmostElement = elements[0];
+
+  return Boolean(topmostElement?.closest(ZEN_TOP_CHROME_OWNED_SELECTOR));
+};
+
+const isZenTopChromePreOpenVetoAtPoint = (
+  clientX: number,
+  clientY: number,
+): boolean => {
+  const elements = getZenViewportElementsFromPoint(clientX, clientY);
+  const topmostElement = elements[0];
+
+  if (topmostElement?.closest(ZEN_TOP_CHROME_OWNED_SELECTOR)) {
+    return false;
+  }
+
+  return elements.some((element) =>
+    Boolean(element.closest(ZEN_TOP_CHROME_PRE_OPEN_VETO_TARGET_SELECTOR)),
+  );
+};
+
+const isZenTopChromeOccludedRevealTargetAtPoint = (
+  clientX: number,
+  clientY: number,
+): boolean => {
+  const elements = getZenViewportElementsFromPoint(clientX, clientY);
+  const topmostElement = elements[0];
+  if (
+    !topmostElement ||
+    topmostElement.closest(ZEN_TOP_CHROME_OWNED_SELECTOR) ||
+    topmostElement.closest(ZEN_TOP_CHROME_INTERACTIVE_SELECTOR) ||
+    topmostElement.closest(ZEN_TOP_CHROME_OCCLUDED_REVEAL_BLOCK_SELECTOR)
+  ) {
+    return false;
+  }
+
+  const headerElement = elements
+    .map((element) =>
+      element.closest<HTMLElement>(
+        ZEN_TOP_CHROME_OCCLUDED_REVEAL_TARGET_SELECTOR,
+      ),
+    )
+    .find((element): element is HTMLElement => element !== null);
+  if (!headerElement) {
+    return false;
+  }
+
+  const panelElement = headerElement.closest<HTMLElement>("[data-panel-id]");
+  const headerRect = headerElement.getBoundingClientRect();
+  const panelRect = panelElement?.getBoundingClientRect() ?? headerRect;
+  const pointerInsideHeader =
+    clientX >= headerRect.left &&
+    clientX <= headerRect.right &&
+    clientY >= headerRect.top &&
+    clientY <= headerRect.bottom;
+
+  return (
+    pointerInsideHeader &&
+    (headerRect.top <= ZEN_EDGE_HOVER_SIZE ||
+      panelRect.top <= ZEN_EDGE_HOVER_SIZE)
+  );
+};
 
 const createEmptySnappedSlotSizes = (): Record<PanelPosition, number> => ({
   left: 0,
@@ -894,22 +1003,32 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const previousPanelWorkspaceSizeRef = React.useRef(panelWorkspaceSize);
   const [topChromeHeight, setTopChromeHeight] = useState(0);
   const [bottomChromeHeight, setBottomChromeHeight] = useState(0);
-  const [zenTopChromeHovered, setZenTopChromeHovered] = useState(false);
+  const [zenTopChromeEdgeActive, setZenTopChromeEdgeActive] = useState(false);
+  const [zenTopChromePointerInside, setZenTopChromePointerInside] =
+    useState(false);
+  const [zenTopChromePopupOpen, setZenTopChromePopupOpen] = useState(false);
+  const [
+    zenTopChromeOccludedHeaderActive,
+    setZenTopChromeOccludedHeaderActive,
+  ] = useState(false);
+  const [zenTopChromeInteractionLocked, setZenTopChromeInteractionLocked] =
+    useState(false);
   const [zenBottomChromeHovered, setZenBottomChromeHovered] = useState(false);
   const [nativeWindowFullscreen, setNativeWindowFullscreen] = useState(false);
-  const zenTopChromeHoverTimerRef = useRef<ReturnType<
-    typeof setTimeout
-  > | null>(null);
   const zenBottomChromeHoverTimerRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
-  const [zenPanelHoverSources, setZenPanelHoverSources] =
-    useState<ZenPanelHoverSources>(() => createEmptyZenPanelHoverSources());
-  const zenPanelHoverLeaveTimersRef = useRef<ZenPanelHoverLeaveTimers>(
-    createEmptyZenPanelHoverLeaveTimers(),
-  );
+  const zenChromeRevealIntentRef = useRef<ZenChromeRevealIntent | null>(null);
+  const zenTopChromeOccludedHeaderActiveRef = useRef(false);
   const effectivePanelsRef = useRef<PanelVisibility>(panels);
-  const previousEffectivePanelsRef = useRef<PanelVisibility | null>(null);
+  const layoutPanelsRef = useRef<PanelVisibility>(panels);
+  const previousLayoutPanelsRef = useRef<PanelVisibility | null>(null);
+  const zenViewportPointerRef = useRef<ZenViewportPointerSnapshot | null>(null);
+  const zenViewportMouseMoveFrameRef = useRef<number | null>(null);
+  const zenViewportChromeStateRef = useRef<Record<"top" | "bottom", boolean>>(
+    createEmptyZenViewportChromeState(),
+  );
+  const zenPanelInteractionActiveRef = useRef(false);
   const nativeWindowControlsOwnerRef = useRef<symbol>(
     Symbol("main-layout-native-window-controls"),
   );
@@ -967,27 +1086,26 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         window.cancelAnimationFrame(panelExitCollapseFrameRef.current);
       }
       panelExitCollapseFrameRef.current = null;
-      if (zenTopChromeHoverTimerRef.current) {
-        clearTimeout(zenTopChromeHoverTimerRef.current);
-      }
       if (zenBottomChromeHoverTimerRef.current) {
         clearTimeout(zenBottomChromeHoverTimerRef.current);
       }
-      PANEL_POSITIONS.forEach((position) => {
-        const timers = zenPanelHoverLeaveTimersRef.current[position];
-        if (timers.edge) {
-          clearTimeout(timers.edge);
-        }
-        if (timers.slot) {
-          clearTimeout(timers.slot);
-        }
-      });
+      if (zenChromeRevealIntentRef.current) {
+        clearTimeout(zenChromeRevealIntentRef.current.timer);
+      }
       if (typeof window !== "undefined") {
         pendingPanelCloseFrameIdsRef.current.forEach((frameId) =>
           window.cancelAnimationFrame(frameId),
         );
+        if (zenViewportMouseMoveFrameRef.current !== null) {
+          window.cancelAnimationFrame(zenViewportMouseMoveFrameRef.current);
+        }
       }
       pendingPanelCloseFrameIdsRef.current = [];
+      zenViewportMouseMoveFrameRef.current = null;
+      zenViewportPointerRef.current = null;
+      zenViewportChromeStateRef.current = createEmptyZenViewportChromeState();
+      zenChromeRevealIntentRef.current = null;
+      zenTopChromeOccludedHeaderActiveRef.current = false;
       setRelocatingPanelIds([]);
       setRelocatingPreviewWindowIds([]);
       setPanelDropSettlingPositions([]);
@@ -1082,18 +1200,29 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           fallbackPosition,
           DEFAULT_PANEL_CONFIGS[panelId].size,
         );
-
-        setPanelConfigs((prev) => ({
-          ...prev,
+        const restoredMode = saved?.mode ?? "snapped";
+        const restoredPosition = saved
+          ? currentConfig.position
+          : fallbackPosition;
+        const nextPanelConfigs = {
+          ...panelConfigsRef.current,
           [panelId]: {
-            ...prev[panelId],
-            mode: saved?.mode ?? "snapped",
-            position: saved ? prev[panelId].position : fallbackPosition,
+            ...panelConfigsRef.current[panelId],
+            mode: restoredMode,
+            position: restoredPosition,
             x: saved?.x ?? 0,
             y: saved?.y ?? 0,
             size: saved?.size ?? fallbackSize,
           },
-        }));
+        };
+
+        applyPanelConfigsState(nextPanelConfigs);
+        if (restoredMode === "snapped") {
+          applyRememberedSnappedPositionsState({
+            ...rememberedSnappedPositionsRef.current,
+            [panelId]: restoredPosition,
+          });
+        }
         return;
       }
 
@@ -1103,10 +1232,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         y: currentConfig.y,
         size: { ...currentConfig.size },
       };
-      setPanelConfigs((prev) => ({
-        ...prev,
+      applyPanelConfigsState({
+        ...panelConfigsRef.current,
         [panelId]: {
-          ...prev[panelId],
+          ...panelConfigsRef.current[panelId],
           mode: "floating",
           x: 0,
           y: 0,
@@ -1115,9 +1244,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             height: panelWorkspaceSize.height,
           },
         },
-      }));
+      });
     },
     [
+      applyPanelConfigsState,
+      applyRememberedSnappedPositionsState,
       isLogicalFullscreenPanel,
       panelWorkspaceSize.height,
       panelWorkspaceSize.width,
@@ -1145,6 +1276,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       );
     },
     [updateZenPinnedPanelsState, zenModeEnabled],
+  );
+
+  const isZenHiddenSnappedPanel = useCallback(
+    (panelId: PanelId) =>
+      zenModeEnabled &&
+      panelsRef.current[panelId] &&
+      panelConfigsRef.current[panelId].mode === "snapped" &&
+      !effectivePanelsRef.current[panelId],
+    [zenModeEnabled],
   );
 
   function togglePanelCompactFromShortcut(
@@ -1236,18 +1376,26 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       fallbackPosition,
       DEFAULT_PANEL_CONFIGS[panelId].size,
     );
+    const restoredMode = saved?.mode ?? "snapped";
+    const restoredPosition = saved ? currentConfig.position : fallbackPosition;
 
     applyPanelConfigsState({
       ...panelConfigsRef.current,
       [panelId]: {
         ...currentConfig,
-        mode: saved?.mode ?? "snapped",
-        position: saved ? currentConfig.position : fallbackPosition,
+        mode: restoredMode,
+        position: restoredPosition,
         x: saved?.x ?? 0,
         y: saved?.y ?? 0,
         size: saved?.size ?? fallbackSize,
       },
     });
+    if (restoredMode === "snapped") {
+      applyRememberedSnappedPositionsState({
+        ...rememberedSnappedPositionsRef.current,
+        [panelId]: restoredPosition,
+      });
+    }
     applyPanelsState({ ...panelsRef.current, [panelId]: false });
     return true;
   }
@@ -1401,23 +1549,37 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     };
   }, [uiScale]);
 
-  const showZenTopChrome = useCallback(() => {
-    if (zenTopChromeHoverTimerRef.current) {
-      clearTimeout(zenTopChromeHoverTimerRef.current);
-      zenTopChromeHoverTimerRef.current = null;
-    }
-    setZenTopChromeHovered((current) => (current ? current : true));
+  const setZenTopChromeEdgeSource = useCallback((active: boolean) => {
+    setZenTopChromeEdgeActive((current) =>
+      current === active ? current : active,
+    );
   }, []);
 
-  const hideZenTopChrome = useCallback(() => {
-    if (zenTopChromeHoverTimerRef.current) {
-      clearTimeout(zenTopChromeHoverTimerRef.current);
-    }
-    zenTopChromeHoverTimerRef.current = setTimeout(() => {
-      zenTopChromeHoverTimerRef.current = null;
-      setZenTopChromeHovered((current) => (current ? false : current));
-    }, ZEN_CHROME_HOVER_CLOSE_DELAY_MS);
+  const setZenTopChromePointerSource = useCallback((active: boolean) => {
+    setZenTopChromePointerInside((current) =>
+      current === active ? current : active,
+    );
   }, []);
+
+  const setZenTopChromeOccludedHeaderSource = useCallback((active: boolean) => {
+    zenTopChromeOccludedHeaderActiveRef.current = active;
+    setZenTopChromeOccludedHeaderActive((current) =>
+      current === active ? current : active,
+    );
+  }, []);
+
+  const clearZenChromeRevealIntent = useCallback(
+    (source?: ZenChromeRevealIntentSource) => {
+      const pendingIntent = zenChromeRevealIntentRef.current;
+      if (!pendingIntent || (source && pendingIntent.source !== source)) {
+        return;
+      }
+
+      clearTimeout(pendingIntent.timer);
+      zenChromeRevealIntentRef.current = null;
+    },
+    [],
+  );
 
   const showZenBottomChrome = useCallback(() => {
     if (zenBottomChromeHoverTimerRef.current) {
@@ -1437,131 +1599,115 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }, ZEN_CHROME_HOVER_CLOSE_DELAY_MS);
   }, []);
 
-  const clearZenPanelHoverLeaveTimer = useCallback(
-    (position: PanelPosition, source: ZenPanelHoverSource) => {
-      const timer = zenPanelHoverLeaveTimersRef.current[position][source];
-      if (!timer) {
+  const revealZenChromeIntentSource = useCallback(
+    (source: ZenChromeRevealIntentSource) => {
+      if (source === "top-edge") {
+        zenViewportChromeStateRef.current = {
+          ...zenViewportChromeStateRef.current,
+          top: true,
+        };
+        setZenTopChromeEdgeSource(true);
         return;
       }
 
-      clearTimeout(timer);
-      delete zenPanelHoverLeaveTimersRef.current[position][source];
-    },
-    [],
-  );
-
-  const clearAllZenPanelHoverLeaveTimers = useCallback(() => {
-    PANEL_POSITIONS.forEach((position) => {
-      clearZenPanelHoverLeaveTimer(position, "edge");
-      clearZenPanelHoverLeaveTimer(position, "slot");
-    });
-  }, [clearZenPanelHoverLeaveTimer]);
-
-  const setZenPanelHoverSource = useCallback(
-    (position: PanelPosition, source: ZenPanelHoverSource, active: boolean) => {
-      clearZenPanelHoverLeaveTimer(position, source);
-
-      if (active) {
-        setZenPanelHoverSources((currentSources) => {
-          if (currentSources[position][source]) {
-            return currentSources;
-          }
-
-          return {
-            ...currentSources,
-            [position]: {
-              ...currentSources[position],
-              [source]: true,
-            },
-          };
-        });
+      if (source === "top-occluded-header") {
+        setZenTopChromeOccludedHeaderSource(true);
         return;
       }
 
-      zenPanelHoverLeaveTimersRef.current[position][source] = setTimeout(() => {
-        delete zenPanelHoverLeaveTimersRef.current[position][source];
-        setZenPanelHoverSources((currentSources) => {
-          if (!currentSources[position][source]) {
-            return currentSources;
-          }
-
-          return {
-            ...currentSources,
-            [position]: {
-              ...currentSources[position],
-              [source]: false,
-            },
-          };
-        });
-      }, ZEN_EDGE_HOVER_CLOSE_DELAY_MS);
+      zenViewportChromeStateRef.current = {
+        ...zenViewportChromeStateRef.current,
+        bottom: true,
+      };
+      showZenBottomChrome();
     },
-    [clearZenPanelHoverLeaveTimer],
+    [
+      setZenTopChromeEdgeSource,
+      setZenTopChromeOccludedHeaderSource,
+      showZenBottomChrome,
+    ],
   );
 
-  const handleZenPanelEdgeEnter = useCallback(
-    (position: PanelPosition) => setZenPanelHoverSource(position, "edge", true),
-    [setZenPanelHoverSource],
-  );
-
-  const handleZenPanelEdgeLeave = useCallback(
-    (position: PanelPosition) =>
-      setZenPanelHoverSource(position, "edge", false),
-    [setZenPanelHoverSource],
-  );
-
-  const handleZenPanelSlotEnter = useCallback(
-    (position: PanelPosition) => setZenPanelHoverSource(position, "slot", true),
-    [setZenPanelHoverSource],
-  );
-
-  const handleZenPanelSlotLeave = useCallback(
-    (position: PanelPosition) =>
-      setZenPanelHoverSource(position, "slot", false),
-    [setZenPanelHoverSource],
-  );
-
-  const handleZenCornerEnter = useCallback(
-    (
-      verticalPosition: "top" | "bottom",
-      horizontalPosition: "left" | "right",
-    ) => {
-      if (verticalPosition === "top") {
-        showZenTopChrome();
-      } else {
-        showZenBottomChrome();
+  const scheduleZenChromeRevealIntent = useCallback(
+    (source: ZenChromeRevealIntentSource, clientX: number, clientY: number) => {
+      const pendingIntent = zenChromeRevealIntentRef.current;
+      if (pendingIntent?.source === source) {
+        const distance = Math.hypot(
+          clientX - pendingIntent.clientX,
+          clientY - pendingIntent.clientY,
+        );
+        if (distance <= ZEN_CHROME_STATIONARY_MOVE_TOLERANCE) {
+          return;
+        }
       }
-      handleZenPanelEdgeEnter(verticalPosition);
-      handleZenPanelEdgeEnter(horizontalPosition);
+
+      clearZenChromeRevealIntent();
+
+      const timer = setTimeout(() => {
+        const currentIntent = zenChromeRevealIntentRef.current;
+        if (!currentIntent || currentIntent.source !== source) {
+          return;
+        }
+
+        zenChromeRevealIntentRef.current = null;
+        revealZenChromeIntentSource(source);
+      }, getZenChromeRevealDelay(source));
+
+      zenChromeRevealIntentRef.current = {
+        clientX,
+        clientY,
+        source,
+        timer,
+      };
     },
-    [handleZenPanelEdgeEnter, showZenBottomChrome, showZenTopChrome],
+    [clearZenChromeRevealIntent, revealZenChromeIntentSource],
   );
 
-  const handleZenCornerLeave = useCallback(
-    (
-      verticalPosition: "top" | "bottom",
-      horizontalPosition: "left" | "right",
-    ) => {
-      if (verticalPosition === "top") {
-        hideZenTopChrome();
-      } else {
-        hideZenBottomChrome();
+  const clearZenTopChromeOccludedHeaderIntent = useCallback(
+    (hideSource = true) => {
+      clearZenChromeRevealIntent("top-occluded-header");
+      if (hideSource) {
+        setZenTopChromeOccludedHeaderSource(false);
       }
-      handleZenPanelEdgeLeave(verticalPosition);
-      handleZenPanelEdgeLeave(horizontalPosition);
     },
-    [handleZenPanelEdgeLeave, hideZenBottomChrome, hideZenTopChrome],
+    [clearZenChromeRevealIntent, setZenTopChromeOccludedHeaderSource],
   );
+
+  const setZenTopChromeInteractionLock = useCallback((active: boolean) => {
+    setZenTopChromeInteractionLocked((current) =>
+      current === active ? current : active,
+    );
+  }, []);
+
+  const handleTopChromePopupOpenChange = useCallback((open: boolean) => {
+    setZenTopChromePopupOpen((current) => (current === open ? current : open));
+  }, []);
 
   useEffect(() => {
     if (zenModeEnabled) {
       return;
     }
 
-    clearAllZenPanelHoverLeaveTimers();
-    setZenPanelHoverSources(createEmptyZenPanelHoverSources());
-    setZenTopChromeHovered(false);
+    setZenTopChromeEdgeActive(false);
+    setZenTopChromePointerInside(false);
+    setZenTopChromePopupOpen(false);
+    clearZenChromeRevealIntent();
+    clearZenTopChromeOccludedHeaderIntent();
     setZenBottomChromeHovered(false);
-  }, [clearAllZenPanelHoverLeaveTimers, zenModeEnabled]);
+    zenViewportPointerRef.current = null;
+    zenViewportChromeStateRef.current = createEmptyZenViewportChromeState();
+    if (
+      typeof window !== "undefined" &&
+      zenViewportMouseMoveFrameRef.current !== null
+    ) {
+      window.cancelAnimationFrame(zenViewportMouseMoveFrameRef.current);
+      zenViewportMouseMoveFrameRef.current = null;
+    }
+  }, [
+    clearZenChromeRevealIntent,
+    clearZenTopChromeOccludedHeaderIntent,
+    zenModeEnabled,
+  ]);
 
   useEffect(() => {
     const previousViewport = previousPanelWorkspaceSizeRef.current;
@@ -2229,12 +2375,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
+      if (zenModeEnabled && !layoutPanelsRef.current[panelId]) {
+        return;
+      }
+
       startSnappedSlotExit(
         currentConfig.position,
         getPrimarySnappedSlotSize(currentConfig.position, currentConfig.size),
       );
     },
-    [startSnappedSlotExit],
+    [startSnappedSlotExit, zenModeEnabled],
   );
 
   const startPreviewWindowExitMotion = useCallback(
@@ -2252,43 +2402,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     },
     [startSnappedSlotExit],
   );
-
-  const zenPanelHoverActive = useMemo(
-    () => ({
-      left: zenPanelHoverSources.left.edge || zenPanelHoverSources.left.slot,
-      right: zenPanelHoverSources.right.edge || zenPanelHoverSources.right.slot,
-      top: zenPanelHoverSources.top.edge || zenPanelHoverSources.top.slot,
-      bottom:
-        zenPanelHoverSources.bottom.edge || zenPanelHoverSources.bottom.slot,
-    }),
-    [zenPanelHoverSources],
-  );
-
-  const zenPanelHoverPositions = useMemo<PanelPosition[]>(() => {
-    if (!zenModeEnabled) {
-      return [];
-    }
-
-    const positions = new Set<PanelPosition>();
-    (Object.keys(panelConfigs) as PanelId[]).forEach((panelId) => {
-      if (!panels[panelId]) {
-        return;
-      }
-
-      const config = panelConfigs[panelId];
-      if (config.mode !== "snapped") {
-        return;
-      }
-
-      if (panelId === "terminal" && tuiModeActive) {
-        return;
-      }
-
-      positions.add(config.position);
-    });
-
-    return PANEL_POSITIONS.filter((position) => positions.has(position));
-  }, [panelConfigs, panels, tuiModeActive, zenModeEnabled]);
 
   const effectivePanels = useMemo<PanelVisibility>(() => {
     if (!zenModeEnabled) {
@@ -2311,37 +2424,60 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      nextPanels[panelId] =
-        zenPinnedPanels[panelId] || zenPanelHoverActive[config.position];
+      nextPanels[panelId] = zenPinnedPanels[panelId];
     });
 
     return nextPanels;
-  }, [
-    panelConfigs,
-    panels,
-    tuiModeActive,
-    zenModeEnabled,
-    zenPanelHoverActive,
-    zenPinnedPanels,
-  ]);
+  }, [panelConfigs, panels, tuiModeActive, zenModeEnabled, zenPinnedPanels]);
+
+  const layoutPanels = useMemo<PanelVisibility>(() => {
+    if (!zenModeEnabled) {
+      return panels;
+    }
+
+    const nextPanels = { ...panels };
+    (Object.keys(panelConfigs) as PanelId[]).forEach((panelId) => {
+      if (!panels[panelId]) {
+        nextPanels[panelId] = false;
+        return;
+      }
+
+      const config = panelConfigs[panelId];
+      if (
+        config.mode !== "snapped" ||
+        (panelId === "terminal" && tuiModeActive)
+      ) {
+        nextPanels[panelId] = true;
+        return;
+      }
+
+      nextPanels[panelId] = zenPinnedPanels[panelId];
+    });
+
+    return nextPanels;
+  }, [panelConfigs, panels, tuiModeActive, zenModeEnabled, zenPinnedPanels]);
 
   useEffect(() => {
     effectivePanelsRef.current = effectivePanels;
   }, [effectivePanels]);
 
   useEffect(() => {
-    const previousEffectivePanels = previousEffectivePanelsRef.current;
-    previousEffectivePanelsRef.current = effectivePanels;
+    layoutPanelsRef.current = layoutPanels;
+  }, [layoutPanels]);
 
-    if (!previousEffectivePanels || !zenModeEnabled) {
+  useEffect(() => {
+    const previousLayoutPanels = previousLayoutPanelsRef.current;
+    previousLayoutPanelsRef.current = layoutPanels;
+
+    if (!previousLayoutPanels || !zenModeEnabled) {
       return;
     }
 
-    (Object.keys(effectivePanels) as PanelId[]).forEach((panelId) => {
+    (Object.keys(layoutPanels) as PanelId[]).forEach((panelId) => {
       if (
         !panels[panelId] ||
-        !previousEffectivePanels[panelId] ||
-        effectivePanels[panelId]
+        !previousLayoutPanels[panelId] ||
+        layoutPanels[panelId]
       ) {
         return;
       }
@@ -2361,7 +2497,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       );
     });
   }, [
-    effectivePanels,
+    layoutPanels,
     panelConfigs,
     panels,
     startSnappedSlotExit,
@@ -2429,6 +2565,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const handleToggleMarkdownPreview = useCallback(() => {
+    if (isZenHiddenSnappedPanel("markdownPreview")) {
+      pinZenPanelIfShortcutOpened("markdownPreview");
+      markActivePanel("markdownPreview");
+      return;
+    }
+
     if (panelsRef.current.markdownPreview) {
       closePanelWithMotion("markdownPreview");
       return;
@@ -2454,11 +2596,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       markdownPreview: nextConfig,
     });
     applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+    pinZenPanelIfShortcutOpened("markdownPreview");
   }, [
     applyPanelConfigsState,
     applyPanelsState,
     applyRememberedSnappedPositionsState,
     closePanelWithMotion,
+    isZenHiddenSnappedPanel,
+    markActivePanel,
+    pinZenPanelIfShortcutOpened,
   ]);
 
   const closePreviewWindowWithMotion = useCallback(
@@ -3329,44 +3475,27 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         openEditorTab(activePaneId, path, name, content, language);
       }
 
-      const nextConfig = buildPanelConfigForOpen(
-        "code",
-        {
-          panel: "code",
-          mode: request?.mode ?? "snapped",
-          position: request?.position ?? "right",
-          width: request?.width ?? 560,
-          height: request?.height,
-          x: request?.x,
-          y: request?.y,
-        },
-        panelConfigsRef.current.code,
-      );
+      const { nextPanels, nextConfig, nextRememberedSnappedPositions } =
+        computeNextPanelOpenState(
+          "code",
+          {
+            panel: "code",
+            mode: request?.mode ?? "snapped",
+            position: request?.position,
+            width: request?.width ?? 560,
+            height: request?.height,
+            x: request?.x,
+            y: request?.y,
+          },
+          panelsRef.current,
+          panelConfigsRef.current,
+          rememberedSnappedPositionsRef.current,
+        );
       const nextPanelConfigs = {
         ...panelConfigsRef.current,
         code: nextConfig,
       };
-      const nextRememberedSnappedPositions = {
-        ...rememberedSnappedPositionsRef.current,
-        code: nextConfig.position,
-      };
-      const nextPanels = { ...panelsRef.current };
 
-      (Object.keys(panelConfigsRef.current) as PanelId[]).forEach((id) => {
-        if (id === "code" || !nextPanels[id]) {
-          return;
-        }
-
-        const otherConfig = panelConfigsRef.current[id];
-        if (
-          otherConfig.mode === "snapped" &&
-          otherConfig.position === nextConfig.position
-        ) {
-          nextPanels[id] = false;
-        }
-      });
-
-      nextPanels.code = true;
       applyPanelsState(nextPanels);
       applyPanelConfigsState(nextPanelConfigs);
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
@@ -3703,6 +3832,28 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       togglePanelFullscreenFromShortcut,
     });
 
+  const togglePanelFromExplicitAction = useCallback(
+    (panelId: PanelId) => {
+      const wasVisible = panelsRef.current[panelId];
+      if (isZenHiddenSnappedPanel(panelId)) {
+        pinZenPanelIfShortcutOpened(panelId);
+        markActivePanel(panelId);
+        return;
+      }
+
+      toggleNamedPanel(panelId);
+      if (!wasVisible) {
+        pinZenPanelIfShortcutOpened(panelId);
+      }
+    },
+    [
+      isZenHiddenSnappedPanel,
+      markActivePanel,
+      pinZenPanelIfShortcutOpened,
+      toggleNamedPanel,
+    ],
+  );
+
   useMainLayoutKeyboardShortcuts({
     activeModal,
     activateAdjacentCodePanelTab,
@@ -3742,15 +3893,37 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   });
 
   const togglePanel = (panel: keyof PanelVisibility) => {
-    if (panelsRef.current[panel]) {
+    if (panelsRef.current[panel] && !isZenHiddenSnappedPanel(panel)) {
       closePanelWithMotion(panel);
       return;
     }
 
-    updatePanelsState((previous) => ({
-      ...previous,
-      [panel]: true,
-    }));
+    togglePanelFromExplicitAction(panel);
+  };
+
+  const openProblemsFromStatusBar = () => {
+    if (panelsRef.current.problems && !isZenHiddenSnappedPanel("problems")) {
+      closePanelWithMotion("problems");
+      return;
+    }
+
+    if (isZenHiddenSnappedPanel("problems")) {
+      pinZenPanelIfShortcutOpened("problems");
+      markActivePanel("problems");
+      return;
+    }
+
+    const position = findAvailablePanelPosition({
+      preferred: "bottom",
+      exclude: ["problems"],
+    });
+
+    applyPanelOpenState("problems", {
+      panel: "problems",
+      mode: "snapped",
+      position: position ?? undefined,
+    });
+    pinZenPanelIfShortcutOpened("problems");
   };
 
   const {
@@ -3791,7 +3964,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   });
 
   const workspaceModel = useMainPanelWorkspaceModel({
-    panels: effectivePanels,
+    panels: layoutPanels,
     panelConfigs,
     previewWindows,
     browserPreviewWindows,
@@ -3929,6 +4102,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       tuiModeActive={tuiModeActive}
       tuiTerminalPaneStyle={tuiTerminalPaneStyle}
       terminalZIndex={tuiModeActive ? zIndex.tooltip + 10 : undefined}
+      snappedOverlayInsets={
+        hostMode === "overlay" && panelConfigs[panelId].mode === "snapped"
+          ? {
+              top: 0,
+              bottom: zenBottomChromeVisible ? bottomChromeHeight : 0,
+            }
+          : undefined
+      }
+      zenTopChromeAvoidanceTop={zenTopChromeAvoidanceTop}
       isLogicalFullscreenPanel={isLogicalFullscreenPanel}
       onPanelResize={handlePanelResize}
       onPanelResizeStart={setResizingPanel}
@@ -3940,7 +4122,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onPanelDragStart={handleDragStart}
       onPanelDragMove={handleDragMove}
       onPanelDragEnd={handleDragEnd}
-      onTogglePanel={toggleNamedPanel}
+      onTogglePanel={togglePanelFromExplicitAction}
       onCloseTerminalPanel={closeTerminalPanel}
       onTerminalFullscreen={handleTerminalPanelFullscreen}
       onGitFullscreen={() =>
@@ -3977,7 +4159,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     } = {};
 
     (Object.keys(panelConfigs) as PanelId[]).forEach((id) => {
-      if (!effectivePanels[id]) {
+      if (!layoutPanels[id]) {
         return;
       }
 
@@ -4099,10 +4281,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     );
   };
 
-  const zenTopChromeVisible = !zenModeEnabled || zenTopChromeHovered;
+  const zenTopChromeVisible =
+    !zenModeEnabled ||
+    zenTopChromePopupOpen ||
+    (!zenTopChromeInteractionLocked &&
+      (zenTopChromeEdgeActive ||
+        zenTopChromePointerInside ||
+        zenTopChromeOccludedHeaderActive));
   const zenBottomChromeVisible = !zenModeEnabled || zenBottomChromeHovered;
   const nativeWindowControlsVisible =
     zenTopChromeVisible && !nativeWindowFullscreen;
+  const zenTopChromeAvoidanceTop =
+    zenModeEnabled && zenTopChromeVisible && !zenTopChromeInteractionLocked
+      ? topChromeHeight + SNAPPED_PANEL_OUTER_GAP
+      : 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -4178,11 +4370,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const zenChromeTransition = reducePanelMotion
     ? "none"
     : `transform ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1), opacity 140ms ease`;
-  const zenWorkspaceInsetTransition = reducePanelMotion
-    ? "none"
-    : `padding ${FLOATING_PANEL_LAYOUT_TRANSITION_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`;
+
+  const topChromeDragStyle = {
+    "--wails-draggable": zenTopChromeVisible ? "drag" : "no-drag",
+    WebkitAppRegion: zenTopChromeVisible ? "drag" : "no-drag",
+  } as React.CSSProperties;
 
   const topChromeStyle: React.CSSProperties = {
+    ...topChromeDragStyle,
     left: zenModeEnabled ? 0 : undefined,
     maxHeight: 72,
     opacity: zenTopChromeVisible ? 1 : 0,
@@ -4214,109 +4409,299 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     zIndex: zIndex.tooltip + 4,
   };
 
-  const handleZenViewportMouseMove = useCallback(
-    (event: Pick<MouseEvent, "clientX" | "clientY">) => {
+  const applyZenViewportChromeState = useCallback(
+    (nextChrome: Record<"top" | "bottom", boolean>) => {
+      if (!zenModeEnabled) {
+        return;
+      }
+
+      const previousChrome = zenViewportChromeStateRef.current;
+      zenViewportChromeStateRef.current = nextChrome;
+
+      if (nextChrome.top) {
+        if (!previousChrome.top) {
+          setZenTopChromeEdgeSource(true);
+        }
+      } else if (previousChrome.top) {
+        setZenTopChromeEdgeSource(false);
+      }
+
+      if (nextChrome.bottom) {
+        if (!previousChrome.bottom || zenBottomChromeHoverTimerRef.current) {
+          showZenBottomChrome();
+        }
+      } else if (previousChrome.bottom) {
+        hideZenBottomChrome();
+      }
+    },
+    [
+      hideZenBottomChrome,
+      setZenTopChromeEdgeSource,
+      showZenBottomChrome,
+      zenModeEnabled,
+    ],
+  );
+
+  const handleZenViewportPointer = useCallback(
+    (event: ZenViewportPointerSnapshot) => {
       if (!zenModeEnabled) {
         return;
       }
 
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
-      const { clientX, clientY } = event;
+      const { buttons, clientX, clientY } = event;
+      const previousChrome = zenViewportChromeStateRef.current;
+      const bottomReleaseBoundary =
+        viewportHeight - bottomChromeHeight - ZEN_EDGE_HOVER_SIZE;
+      const chromeInteractionLocked = zenPanelInteractionActiveRef.current;
+      const topChromeInteractionLocked =
+        !zenTopChromePopupOpen && chromeInteractionLocked;
+      const topChromeOwned =
+        zenTopChromeVisible && isZenTopChromeOwnedAtPoint(clientX, clientY);
+      const topChromeReleaseBoundary = Math.max(
+        ZEN_EDGE_HOVER_SIZE,
+        topChromeHeight + SNAPPED_PANEL_OUTER_GAP,
+      );
+      const topChromeWithinVisibleBand =
+        zenTopChromeVisible && clientY <= topChromeReleaseBoundary;
+      const topChromePreOpenVetoed =
+        !zenTopChromeVisible &&
+        !topChromeInteractionLocked &&
+        !zenTopChromePopupOpen &&
+        isZenTopChromePreOpenVetoAtPoint(clientX, clientY);
+      const topChromeCornerActive =
+        clientY <= ZEN_EDGE_HOVER_SIZE &&
+        (clientX <= ZEN_EDGE_HOVER_SIZE ||
+          clientX >= viewportWidth - ZEN_EDGE_HOVER_SIZE);
+      const topChromeEdgeImmediate =
+        clientY <= ZEN_TOP_CHROME_HOVER_SIZE || topChromeCornerActive;
+      const topChromeOccludedHeaderTarget =
+        !zenTopChromeVisible &&
+        !topChromeEdgeImmediate &&
+        !topChromeInteractionLocked &&
+        !topChromePreOpenVetoed &&
+        buttons === 0 &&
+        isZenTopChromeOccludedRevealTargetAtPoint(clientX, clientY);
+      const bottomChromeEdgeTarget =
+        clientY >= viewportHeight - ZEN_EDGE_HOVER_SIZE;
+      const bottomChromeKeepActive =
+        previousChrome.bottom && clientY >= bottomReleaseBoundary;
+      const nextRevealIntentSource: ZenChromeRevealIntentSource | null =
+        buttons !== 0 || chromeInteractionLocked
+          ? null
+          : !zenTopChromeVisible &&
+              !zenTopChromePopupOpen &&
+              !topChromePreOpenVetoed &&
+              topChromeEdgeImmediate
+            ? "top-edge"
+            : topChromeOccludedHeaderTarget
+              ? "top-occluded-header"
+              : !zenBottomChromeVisible && bottomChromeEdgeTarget
+                ? "bottom-edge"
+                : null;
 
-      if (clientY <= ZEN_EDGE_HOVER_SIZE) {
-        showZenTopChrome();
-        handleZenPanelEdgeEnter("top");
-      } else if (clientY > topChromeHeight + ZEN_EDGE_HOVER_SIZE) {
-        if (zenTopChromeHoverTimerRef.current) {
-          clearTimeout(zenTopChromeHoverTimerRef.current);
-          zenTopChromeHoverTimerRef.current = null;
-        }
-        setZenTopChromeHovered((current) => (current ? false : current));
-        handleZenPanelEdgeLeave("top");
-      }
-      if (clientY >= viewportHeight - ZEN_EDGE_HOVER_SIZE) {
-        showZenBottomChrome();
-        handleZenPanelEdgeEnter("bottom");
-      } else if (
-        clientY <
-        viewportHeight - bottomChromeHeight - ZEN_EDGE_HOVER_SIZE
-      ) {
-        if (zenBottomChromeHoverTimerRef.current) {
-          clearTimeout(zenBottomChromeHoverTimerRef.current);
-          zenBottomChromeHoverTimerRef.current = null;
-        }
-        setZenBottomChromeHovered((current) => (current ? false : current));
-        handleZenPanelEdgeLeave("bottom");
-      }
-      if (clientX <= ZEN_EDGE_HOVER_SIZE) {
-        handleZenPanelEdgeEnter("left");
+      setZenTopChromeInteractionLock(topChromeInteractionLocked);
+      if (topChromeInteractionLocked || topChromePreOpenVetoed) {
+        setZenTopChromePointerSource(false);
       } else {
-        handleZenPanelEdgeLeave("left");
+        setZenTopChromePointerSource(
+          topChromeOwned || topChromeWithinVisibleBand,
+        );
       }
-      if (clientX >= viewportWidth - ZEN_EDGE_HOVER_SIZE) {
-        handleZenPanelEdgeEnter("right");
+      if (nextRevealIntentSource) {
+        scheduleZenChromeRevealIntent(nextRevealIntentSource, clientX, clientY);
       } else {
-        handleZenPanelEdgeLeave("right");
+        clearZenChromeRevealIntent();
       }
+      if (topChromeOccludedHeaderTarget) {
+        setZenTopChromeOccludedHeaderSource(false);
+      } else {
+        clearZenTopChromeOccludedHeaderIntent();
+      }
+
+      applyZenViewportChromeState({
+        top:
+          !topChromeInteractionLocked &&
+          !topChromePreOpenVetoed &&
+          zenTopChromeVisible &&
+          topChromeEdgeImmediate,
+        bottom: bottomChromeKeepActive,
+      });
     },
     [
+      applyZenViewportChromeState,
       bottomChromeHeight,
-      handleZenPanelEdgeEnter,
-      handleZenPanelEdgeLeave,
-      showZenBottomChrome,
-      showZenTopChrome,
+      clearZenChromeRevealIntent,
+      clearZenTopChromeOccludedHeaderIntent,
+      scheduleZenChromeRevealIntent,
+      setZenTopChromeOccludedHeaderSource,
+      setZenTopChromeInteractionLock,
+      setZenTopChromePointerSource,
       topChromeHeight,
       zenModeEnabled,
+      zenBottomChromeVisible,
+      zenTopChromeVisible,
+      zenTopChromePopupOpen,
     ],
   );
+
+  const flushZenViewportMouseMove = useCallback(() => {
+    zenViewportMouseMoveFrameRef.current = null;
+    const pointer = zenViewportPointerRef.current;
+    if (!pointer) {
+      return;
+    }
+
+    handleZenViewportPointer(pointer);
+  }, [handleZenViewportPointer]);
+
+  const handleZenViewportMouseMove = useCallback(
+    (event: ZenViewportPointerSnapshot) => {
+      if (!zenModeEnabled) {
+        return;
+      }
+
+      zenViewportPointerRef.current = {
+        buttons: event.buttons ?? 0,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      };
+
+      if (zenViewportMouseMoveFrameRef.current !== null) {
+        return;
+      }
+
+      zenViewportMouseMoveFrameRef.current = window.requestAnimationFrame(
+        flushZenViewportMouseMove,
+      );
+    },
+    [flushZenViewportMouseMove, zenModeEnabled],
+  );
+
+  const handleZenViewportMouseDown = useCallback(
+    (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : undefined;
+      const preserveVisibleChrome = Boolean(
+        target?.closest('[data-testid="topbar"],[data-shell-menu-content]'),
+      );
+      clearZenChromeRevealIntent();
+      clearZenTopChromeOccludedHeaderIntent(!preserveVisibleChrome);
+    },
+    [clearZenChromeRevealIntent, clearZenTopChromeOccludedHeaderIntent],
+  );
+
+  useEffect(() => {
+    if (!zenModeEnabled) {
+      zenPanelInteractionActiveRef.current = false;
+      setZenTopChromeInteractionLock(false);
+      clearZenChromeRevealIntent();
+      clearZenTopChromeOccludedHeaderIntent();
+      return;
+    }
+
+    window.addEventListener("mousemove", handleZenViewportMouseMove, true);
+    window.addEventListener("mousedown", handleZenViewportMouseDown, true);
+    return () => {
+      window.removeEventListener("mousemove", handleZenViewportMouseMove, true);
+      window.removeEventListener("mousedown", handleZenViewportMouseDown, true);
+      zenViewportPointerRef.current = null;
+      zenViewportChromeStateRef.current = createEmptyZenViewportChromeState();
+      zenPanelInteractionActiveRef.current = false;
+      setZenTopChromeInteractionLock(false);
+      clearZenChromeRevealIntent();
+      clearZenTopChromeOccludedHeaderIntent();
+      if (zenViewportMouseMoveFrameRef.current !== null) {
+        window.cancelAnimationFrame(zenViewportMouseMoveFrameRef.current);
+        zenViewportMouseMoveFrameRef.current = null;
+      }
+    };
+  }, [
+    clearZenTopChromeOccludedHeaderIntent,
+    clearZenChromeRevealIntent,
+    handleZenViewportMouseDown,
+    handleZenViewportMouseMove,
+    setZenTopChromeInteractionLock,
+    zenModeEnabled,
+  ]);
 
   useEffect(() => {
     if (!zenModeEnabled) {
       return;
     }
 
-    window.addEventListener("mousemove", handleZenViewportMouseMove, true);
-    return () => {
-      window.removeEventListener("mousemove", handleZenViewportMouseMove, true);
+    const interactionActive =
+      draggingPanel !== null ||
+      resizingPanel !== null ||
+      draggingPreviewWindowId !== null ||
+      resizingPreviewWindowId !== null;
+
+    zenPanelInteractionActiveRef.current = interactionActive;
+    setZenTopChromeInteractionLock(interactionActive);
+
+    if (!interactionActive) {
+      return;
+    }
+
+    clearZenChromeRevealIntent();
+    clearZenTopChromeOccludedHeaderIntent();
+    zenViewportChromeStateRef.current = {
+      ...zenViewportChromeStateRef.current,
+      top: false,
     };
-  }, [handleZenViewportMouseMove, zenModeEnabled]);
+    setZenTopChromeEdgeSource(false);
+    setZenTopChromePointerSource(false);
+  }, [
+    draggingPanel,
+    draggingPreviewWindowId,
+    resizingPanel,
+    resizingPreviewWindowId,
+    clearZenChromeRevealIntent,
+    clearZenTopChromeOccludedHeaderIntent,
+    setZenTopChromeEdgeSource,
+    setZenTopChromeInteractionLock,
+    setZenTopChromePointerSource,
+    zenModeEnabled,
+  ]);
 
-  const topChromeHoverSentinelStyle: React.CSSProperties = {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: ZEN_EDGE_HOVER_SIZE,
-    zIndex: ZEN_CHROME_HOVER_Z_INDEX,
-    pointerEvents: zenModeEnabled ? "auto" : "none",
-    background: "transparent",
-  };
+  useEffect(() => {
+    if (!zenModeEnabled) {
+      return;
+    }
 
-  const bottomChromeHoverSentinelStyle: React.CSSProperties = {
-    position: "fixed",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: ZEN_EDGE_HOVER_SIZE,
-    zIndex: ZEN_CHROME_HOVER_Z_INDEX,
-    pointerEvents: zenModeEnabled ? "auto" : "none",
-    background: "transparent",
-  };
+    const handlePanelDragStart = () => {
+      clearZenChromeRevealIntent();
+      clearZenTopChromeOccludedHeaderIntent();
+      zenPanelInteractionActiveRef.current = true;
+      zenViewportChromeStateRef.current = {
+        ...zenViewportChromeStateRef.current,
+        top: false,
+      };
+      setZenTopChromeInteractionLock(true);
+      setZenTopChromeEdgeSource(false);
+      setZenTopChromePointerSource(false);
+    };
+    const handlePanelDragEnd = () => {
+      zenPanelInteractionActiveRef.current = false;
+      setZenTopChromeInteractionLock(false);
+    };
 
-  const getZenCornerHoverSentinelStyle = (
-    verticalPosition: "top" | "bottom",
-    horizontalPosition: "left" | "right",
-  ): React.CSSProperties => ({
-    position: "fixed",
-    [verticalPosition]: 0,
-    [horizontalPosition]: 0,
-    width: ZEN_EDGE_HOVER_SIZE,
-    height: ZEN_EDGE_HOVER_SIZE,
-    zIndex: zIndex.tooltip + 5,
-    pointerEvents: zenModeEnabled ? "auto" : "none",
-    background: "transparent",
-  });
+    window.addEventListener("panel-drag-start", handlePanelDragStart);
+    window.addEventListener("panel-drag-end", handlePanelDragEnd);
+    return () => {
+      window.removeEventListener("panel-drag-start", handlePanelDragStart);
+      window.removeEventListener("panel-drag-end", handlePanelDragEnd);
+      zenPanelInteractionActiveRef.current = false;
+      setZenTopChromeInteractionLock(false);
+    };
+  }, [
+    clearZenChromeRevealIntent,
+    clearZenTopChromeOccludedHeaderIntent,
+    setZenTopChromeEdgeSource,
+    setZenTopChromeInteractionLock,
+    setZenTopChromePointerSource,
+    zenModeEnabled,
+  ]);
 
   const normalWorkspaceStyle: React.CSSProperties = {
     position: "relative",
@@ -4328,22 +4713,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     minHeight: 0,
     minWidth: 0,
     opacity: 1,
-    paddingTop: zenModeEnabled
-      ? zenTopChromeVisible
-        ? topChromeHeight
-        : 0
-      : undefined,
-    paddingBottom: zenModeEnabled
-      ? zenBottomChromeVisible
-        ? bottomChromeHeight
-        : 0
-      : undefined,
     pointerEvents: "auto",
     isolation:
       panelDropSettling || panelExitPositions.length > 0
         ? "isolate"
         : undefined,
-    transition: zenModeEnabled ? zenWorkspaceInsetTransition : undefined,
   };
 
   const centerWorkspaceStyle: React.CSSProperties = {
@@ -4372,6 +4746,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         ? panelExitSlotSizes[position]
         : width;
     const shouldExposeSlotOverflow = isSettlingSlot || isExitingSlot;
+    const shouldExposeTopChromeAvoidance =
+      zenTopChromeAvoidanceTop > 0 && position !== "bottom" && isActive;
     const slotTransitionSuspended =
       draggingPanel !== null ||
       draggingPreviewWindowId !== null ||
@@ -4391,16 +4767,22 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       minHeight: 0,
       flexShrink: 0,
       position: "relative",
-      overflow: shouldExposeSlotOverflow ? "visible" : "hidden",
+      overflow:
+        shouldExposeSlotOverflow || shouldExposeTopChromeAvoidance
+          ? "visible"
+          : "hidden",
       zIndex:
-        shouldExposeSlotOverflow && (isActive || isExitingSlot)
+        (shouldExposeSlotOverflow || shouldExposeTopChromeAvoidance) &&
+        (isActive || isExitingSlot)
           ? 120
           : undefined,
       pointerEvents: isActive ? "auto" : "none",
       transition,
       willChange: shouldExposeSlotOverflow
         ? "width, transform, opacity"
-        : "auto",
+        : shouldExposeTopChromeAvoidance
+          ? "transform"
+          : "auto",
     };
   };
 
@@ -4420,6 +4802,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         ? panelExitSlotSizes[position]
         : height;
     const shouldExposeSlotOverflow = isSettlingSlot || isExitingSlot;
+    const shouldExposeTopChromeAvoidance =
+      zenTopChromeAvoidanceTop > 0 && position !== "bottom" && isActive;
     const slotTransitionSuspended =
       draggingPanel !== null ||
       draggingPreviewWindowId !== null ||
@@ -4439,16 +4823,22 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       minWidth: 0,
       flexShrink: 0,
       position: "relative",
-      overflow: shouldExposeSlotOverflow ? "visible" : "hidden",
+      overflow:
+        shouldExposeSlotOverflow || shouldExposeTopChromeAvoidance
+          ? "visible"
+          : "hidden",
       zIndex:
-        shouldExposeSlotOverflow && (isActive || isExitingSlot)
+        (shouldExposeSlotOverflow || shouldExposeTopChromeAvoidance) &&
+        (isActive || isExitingSlot)
           ? 120
           : undefined,
       pointerEvents: isActive ? "auto" : "none",
       transition,
       willChange: shouldExposeSlotOverflow
         ? "height, transform, opacity"
-        : "auto",
+        : shouldExposeTopChromeAvoidance
+          ? "transform"
+          : "auto",
     };
   };
 
@@ -4516,91 +4906,33 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         data-zen-statusbar-visible={zenBottomChromeVisible ? "true" : "false"}
       >
         <div style={shellFrameStyle}>
-          {zenModeEnabled && (
-            <>
-              <div
-                data-testid="zen-topbar-hover"
-                style={topChromeHoverSentinelStyle}
-                onMouseEnter={() => {
-                  showZenTopChrome();
-                  handleZenPanelEdgeEnter("top");
-                }}
-                onMouseMove={() => {
-                  showZenTopChrome();
-                  handleZenPanelEdgeEnter("top");
-                }}
-                onMouseLeave={() => {
-                  hideZenTopChrome();
-                  handleZenPanelEdgeLeave("top");
-                }}
-              />
-              <div
-                data-testid="zen-statusbar-hover"
-                style={bottomChromeHoverSentinelStyle}
-                onMouseEnter={() => {
-                  showZenBottomChrome();
-                  handleZenPanelEdgeEnter("bottom");
-                }}
-                onMouseMove={() => {
-                  showZenBottomChrome();
-                  handleZenPanelEdgeEnter("bottom");
-                }}
-                onMouseLeave={() => {
-                  hideZenBottomChrome();
-                  handleZenPanelEdgeLeave("bottom");
-                }}
-              />
-              {(["top", "bottom"] as const).flatMap((verticalPosition) =>
-                (["left", "right"] as const).map((horizontalPosition) => (
-                  <div
-                    key={`zen-corner-hover-${verticalPosition}-${horizontalPosition}`}
-                    data-testid={`zen-corner-hover-${verticalPosition}-${horizontalPosition}`}
-                    style={getZenCornerHoverSentinelStyle(
-                      verticalPosition,
-                      horizontalPosition,
-                    )}
-                    onMouseEnter={() =>
-                      handleZenCornerEnter(verticalPosition, horizontalPosition)
-                    }
-                    onMouseMove={() =>
-                      handleZenCornerEnter(verticalPosition, horizontalPosition)
-                    }
-                    onMouseLeave={() =>
-                      handleZenCornerLeave(verticalPosition, horizontalPosition)
-                    }
-                  />
-                )),
-              )}
-            </>
-          )}
-
           <div
             ref={topChromeRef}
+            data-zen-top-chrome="true"
             style={topChromeStyle}
             onMouseEnter={() => {
               if (!zenModeEnabled) {
                 return;
               }
-              showZenTopChrome();
-              handleZenPanelEdgeEnter("top");
+              setZenTopChromePointerSource(true);
             }}
             onMouseLeave={() => {
               if (!zenModeEnabled) {
                 return;
               }
-              hideZenTopChrome();
-              handleZenPanelEdgeLeave("top");
+              setZenTopChromePointerSource(false);
             }}
           >
             <TopBar
+              onChromePopupOpenChange={handleTopChromePopupOpenChange}
               onOpenSearch={openCommandDispatcher}
               onOpenSettings={openSettings}
               onToggleExplorer={() => {
                 if (tuiModeActive) {
-                  toggleNamedPanel("explorer");
+                  togglePanelFromExplicitAction("explorer");
                   return;
                 }
-                toggleNamedPanel("explorer");
+                togglePanelFromExplicitAction("explorer");
               }}
               onToggleTerminal={() => {
                 if (tuiModeActive) {
@@ -4611,21 +4943,21 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                   );
                   return;
                 }
-                toggleNamedPanel("terminal");
+                togglePanelFromExplicitAction("terminal");
               }}
               onToggleAIChat={() => {
                 if (tuiModeActive) {
-                  toggleNamedPanel("aiChat");
+                  togglePanelFromExplicitAction("aiChat");
                   return;
                 }
-                toggleNamedPanel("aiChat");
+                togglePanelFromExplicitAction("aiChat");
               }}
               onToggleGit={() => {
                 if (tuiModeActive) {
-                  toggleNamedPanel("git");
+                  togglePanelFromExplicitAction("git");
                   return;
                 }
-                toggleNamedPanel("git");
+                togglePanelFromExplicitAction("git");
               }}
               onRun={openRunDialog}
               onOpenDebug={openDebugDialog}
@@ -4636,6 +4968,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               onProjectOpen={onProjectOpen}
               onSwitchProject={onSwitchProject}
               onCloseProject={onCloseProject}
+              windowDragEnabled={zenTopChromeVisible}
               panels={{
                 explorer: panels.explorer,
                 terminal: tuiModeActive ? true : panels.terminal,
@@ -4676,14 +5009,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               floatingBrowserPreviewWindows={
                 workspaceModel.floatingBrowserPreviewWindows
               }
-              zenModeEnabled={zenModeEnabled}
-              zenEdgeHoverSize={ZEN_EDGE_HOVER_SIZE}
-              zenPanelHoverZIndex={ZEN_PANEL_HOVER_Z_INDEX}
-              zenPanelHoverPositions={zenPanelHoverPositions}
-              onZenPanelEdgeEnter={handleZenPanelEdgeEnter}
-              onZenPanelEdgeLeave={handleZenPanelEdgeLeave}
-              onZenPanelSlotEnter={handleZenPanelSlotEnter}
-              onZenPanelSlotLeave={handleZenPanelSlotLeave}
               renderDropZone={renderDropZone}
               renderPanel={renderPanel}
               renderPreviewWindowPanel={renderPreviewWindowPanel}
@@ -4724,17 +5049,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 return;
               }
               showZenBottomChrome();
-              handleZenPanelEdgeEnter("bottom");
             }}
             onMouseLeave={() => {
               if (!zenModeEnabled) {
                 return;
               }
               hideZenBottomChrome();
-              handleZenPanelEdgeLeave("bottom");
             }}
           >
-            <StatusBar onToggleProblems={() => togglePanel("problems")} />
+            <StatusBar onToggleProblems={openProblemsFromStatusBar} />
           </div>
         </div>
 

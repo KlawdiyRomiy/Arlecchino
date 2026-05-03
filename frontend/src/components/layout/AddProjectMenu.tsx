@@ -11,10 +11,12 @@ const NEW_PROJECT_EVENT = "arlecchino:new-project";
 
 interface AddProjectMenuProps {
   onProjectOpen: (path: string) => void | Promise<void>;
+  onMenuOpenChange?: (open: boolean) => void;
 }
 
 export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
   onProjectOpen,
+  onMenuOpenChange,
 }) => {
   const [showCreateDialog, setShowCreateDialog] = React.useState(false);
   const [showCloneDialog, setShowCloneDialog] = React.useState(false);
@@ -55,7 +57,7 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
 
   return (
     <>
-      <DropdownMenu.Root>
+      <DropdownMenu.Root onOpenChange={onMenuOpenChange}>
         <DropdownMenu.Trigger asChild>
           <button
             className="shell-control h-12 w-12 px-0 text-[var(--text-secondary)]"

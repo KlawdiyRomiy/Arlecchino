@@ -69,6 +69,8 @@ interface MainLayoutPanelRendererProps {
   tuiModeActive: boolean;
   tuiTerminalPaneStyle: React.CSSProperties;
   terminalZIndex?: number;
+  snappedOverlayInsets?: { top: number; bottom: number };
+  zenTopChromeAvoidanceTop?: number;
   isLogicalFullscreenPanel: (config: PanelConfig) => boolean;
   onPanelResize: (panelId: PanelId, updates: PanelResizeUpdates) => void;
   onPanelResizeStart: (panelId: PanelId) => void;
@@ -128,6 +130,8 @@ export const MainLayoutPanelRenderer: React.FC<
   tuiModeActive,
   tuiTerminalPaneStyle,
   terminalZIndex,
+  snappedOverlayInsets,
+  zenTopChromeAvoidanceTop,
   isLogicalFullscreenPanel,
   onPanelResize,
   onPanelResizeStart,
@@ -241,6 +245,8 @@ export const MainLayoutPanelRenderer: React.FC<
     uiScale,
     isFullscreen,
     isRelocating: relocatingPanelIds.includes(panelId),
+    snappedOverlayInsets,
+    zenTopChromeAvoidanceTop,
     zenModeEnabled,
     isZenPinned: zenPinnedPanels[panelId],
     onZenPinToggle: () => onZenPinToggle(panelId),

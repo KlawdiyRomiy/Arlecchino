@@ -49,6 +49,8 @@ interface TopBarProps {
   previewActive?: boolean;
   previewTitle?: string;
   windowControlsVisible?: boolean;
+  windowDragEnabled?: boolean;
+  onChromePopupOpenChange?: (open: boolean) => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -72,7 +74,11 @@ export const TopBar: React.FC<TopBarProps> = ({
   previewActive = false,
   previewTitle = "Preview unavailable for the current context.",
   windowControlsVisible = true,
+  windowDragEnabled = true,
+  onChromePopupOpenChange,
 }) => {
+  const [addProjectMenuOpen, setAddProjectMenuOpen] = React.useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = React.useState(false);
   const indexing = useIndexingProgress();
   const projectName = projectPath
     ? projectPath.split("/").filter(Boolean).at(-1)
@@ -102,11 +108,26 @@ export const TopBar: React.FC<TopBarProps> = ({
     "truncate whitespace-nowrap text-[18px] font-medium tracking-[0.02em] text-[var(--text-primary)]";
   const indexingBubbleClass =
     "flex items-center gap-3 font-mono leading-none text-[12px] tracking-[0.1em] text-[var(--text-secondary)]";
+  const topBarDragStyle = {
+    "--wails-draggable": windowDragEnabled ? "drag" : "no-drag",
+    WebkitAppRegion: windowDragEnabled ? "drag" : "no-drag",
+  } as React.CSSProperties;
+
+  React.useEffect(() => {
+    onChromePopupOpenChange?.(addProjectMenuOpen || moreMenuOpen);
+  }, [addProjectMenuOpen, moreMenuOpen, onChromePopupOpenChange]);
+
+  React.useEffect(
+    () => () => {
+      onChromePopupOpenChange?.(false);
+    },
+    [onChromePopupOpenChange],
+  );
 
   return (
     <div
       className="relative z-50 flex h-14 items-center gap-2 rounded-b-[18px] border-b border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3"
-      style={{ "--wails-draggable": "drag" } as React.CSSProperties}
+      style={topBarDragStyle}
       data-testid="topbar"
     >
       <WindowControls visible={windowControlsVisible} />
@@ -154,7 +175,10 @@ export const TopBar: React.FC<TopBarProps> = ({
             onClose={(id) => onCloseProject?.(id)}
           />
           <div className="shell-divider" />
-          <AddProjectMenu onProjectOpen={(path) => onProjectOpen?.(path)} />
+          <AddProjectMenu
+            onProjectOpen={(path) => onProjectOpen?.(path)}
+            onMenuOpenChange={setAddProjectMenuOpen}
+          />
         </div>
       </div>
 
@@ -257,7 +281,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             <Globe size={topBarIconSize} />
           </button>
 
-          <DropdownMenu.Root>
+          <DropdownMenu.Root onOpenChange={setMoreMenuOpen}>
             <DropdownMenu.Trigger asChild>
               <button
                 className={`${topBarActionClass} outline-none`}

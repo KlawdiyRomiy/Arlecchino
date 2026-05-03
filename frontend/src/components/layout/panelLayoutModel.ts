@@ -299,7 +299,7 @@ export const buildPanelConfigForOpen = (
 
 const hasExplicitPanelPlacement = (request: PanelOpenRequest): boolean =>
   request.position !== undefined ||
-  request.mode !== undefined ||
+  request.mode === "floating" ||
   typeof request.x === "number" ||
   typeof request.y === "number";
 
@@ -409,6 +409,13 @@ const resolvePanelOpenRequest = (
     return request;
   }
 
+  if (panels[panelId] && currentConfig.mode === "snapped") {
+    return {
+      ...request,
+      position: currentConfig.position,
+    };
+  }
+
   const resolvedPosition = resolveSmartSnappedPosition(
     panelId,
     rememberedPosition,
@@ -453,10 +460,7 @@ export const computeNextPanelOpenState = (
   const nextPanels = { ...panels };
   const nextRememberedSnappedPositions = { ...rememberedSnappedPositions };
 
-  if (
-    nextConfig.mode === "snapped" &&
-    (request.position !== undefined || request.mode === "snapped")
-  ) {
+  if (nextConfig.mode === "snapped") {
     nextRememberedSnappedPositions[panelId] = nextConfig.position;
   }
 

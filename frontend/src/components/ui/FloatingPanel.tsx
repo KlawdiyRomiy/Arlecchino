@@ -57,6 +57,10 @@ const FLOATING_PANEL_DROP_HIT_WIDTH =
   FLOATING_PANEL_DROP_PREVIEW_WIDTH + FLOATING_PANEL_DROP_HIT_EXPANSION;
 const FLOATING_PANEL_DROP_HIT_HEIGHT =
   FLOATING_PANEL_DROP_PREVIEW_HEIGHT + FLOATING_PANEL_DROP_HIT_EXPANSION;
+const WAILS_NO_DRAG_STYLE = {
+  "--wails-draggable": "no-drag",
+  WebkitAppRegion: "no-drag",
+} as React.CSSProperties;
 
 const getSlideVectorForEdge = (
   edge: PanelPosition,
@@ -145,6 +149,8 @@ export interface FloatingPanelProps {
   zIndex?: number;
   useViewportPositioning?: boolean;
   hostMode?: "overlay" | "flow";
+  snappedOverlayInsets?: { top: number; bottom: number };
+  zenTopChromeAvoidanceTop?: number;
   uiScale?: number;
   isFullscreen?: boolean;
   activeDropTargetPosition?: PanelPosition | null;
@@ -189,6 +195,8 @@ export const FloatingPanel = React.forwardRef<
       zIndex: customZIndex,
       useViewportPositioning = false,
       hostMode = "overlay",
+      snappedOverlayInsets,
+      zenTopChromeAvoidanceTop = 0,
       uiScale,
       isFullscreen = false,
       activeDropTargetPosition = null,
@@ -304,6 +312,7 @@ export const FloatingPanel = React.forwardRef<
       size.width,
       x,
       y,
+      zenTopChromeAvoidanceTop,
     ]);
 
     const setPanelNode = useCallback(
@@ -585,6 +594,7 @@ export const FloatingPanel = React.forwardRef<
         }
 
         e.preventDefault();
+        e.stopPropagation();
         const rect = panelRef.current?.getBoundingClientRect();
         startRef.current = {
           ...startRef.current,
@@ -735,6 +745,40 @@ export const FloatingPanel = React.forwardRef<
       };
     }, [isDragging, handleDragMove, handleDragEndInternal, isResizing]);
 
+    const getTopChromeAvoidanceOffset = (): number => {
+      const avoidanceTop = Math.max(0, zenTopChromeAvoidanceTop);
+      if (
+        avoidanceTop <= 0 ||
+        isDragging ||
+        isResizing ||
+        isFullscreen ||
+        !isPresent
+      ) {
+        return 0;
+      }
+
+      if (mode === "floating") {
+        return Math.max(0, avoidanceTop - y);
+      }
+
+      if (position === "bottom") {
+        return 0;
+      }
+
+      const adjacentTop = adjacentPanels.top || 0;
+      const snappedTop =
+        hostMode === "flow"
+          ? 0
+          : Math.max(
+              adjacentTop > 0 ? adjacentTop : SNAPPED_PANEL_OUTER_GAP,
+              hostMode === "overlay" ? (snappedOverlayInsets?.top ?? 0) : 0,
+            );
+
+      return Math.max(0, avoidanceTop - snappedTop);
+    };
+
+    const zenTopChromeAvoidanceOffset = getTopChromeAvoidanceOffset();
+
     const getContainerStyle = (): React.CSSProperties => {
       const isSnapped = mode === "snapped";
       const isFlowHosted = isSnapped && hostMode === "flow" && !isDragging;
@@ -749,6 +793,7 @@ export const FloatingPanel = React.forwardRef<
         mode === "snapped" && !reduceMotion && (!hasEntered || !isPresent);
       const panelFrameRadius = "var(--radius-lg)";
       const base: React.CSSProperties = {
+        ...WAILS_NO_DRAG_STYLE,
         position: isFlowHosted
           ? "relative"
           : useViewportPositioning
@@ -787,7 +832,9 @@ export const FloatingPanel = React.forwardRef<
               ? "transform, opacity"
               : shouldPromoteForMotion
                 ? "transform"
-                : "auto",
+                : zenTopChromeAvoidanceOffset > 0
+                  ? "transform"
+                  : "auto",
         backfaceVisibility: "hidden" as const,
         transition:
           reduceMotion || isResizing || isDragging
@@ -906,22 +953,34 @@ export const FloatingPanel = React.forwardRef<
       const rightPanelWidth = adjacentPanels.right || 0;
       const topPanelHeight = adjacentPanels.top || 0;
       const bottomPanelHeight = adjacentPanels.bottom || 0;
+      const overlayTopInset =
+        hostMode === "overlay" ? (snappedOverlayInsets?.top ?? 0) : 0;
+      const overlayBottomInset =
+        hostMode === "overlay" ? (snappedOverlayInsets?.bottom ?? 0) : 0;
+      const resolvedTopInset = Math.max(
+        topPanelHeight > 0 ? topPanelHeight : gap,
+        overlayTopInset,
+      );
+      const resolvedBottomInset = Math.max(
+        bottomPanelHeight > 0 ? bottomPanelHeight : gap,
+        overlayBottomInset,
+      );
 
       switch (position) {
         case "left":
           return {
             ...base,
             left: gap,
-            top: topPanelHeight > 0 ? topPanelHeight : gap,
-            bottom: bottomPanelHeight > 0 ? bottomPanelHeight : gap,
+            top: resolvedTopInset,
+            bottom: resolvedBottomInset,
             width: size.width,
           };
         case "right":
           return {
             ...base,
             right: gap,
-            top: topPanelHeight > 0 ? topPanelHeight : gap,
-            bottom: bottomPanelHeight > 0 ? bottomPanelHeight : gap,
+            top: resolvedTopInset,
+            bottom: resolvedBottomInset,
             width: size.width,
           };
         case "bottom":
@@ -929,7 +988,7 @@ export const FloatingPanel = React.forwardRef<
             ...base,
             left: leftPanelWidth > 0 ? leftPanelWidth : gap,
             right: rightPanelWidth > 0 ? rightPanelWidth : gap,
-            bottom: gap,
+            bottom: resolvedBottomInset,
             height: size.height,
           };
         case "top":
@@ -937,7 +996,7 @@ export const FloatingPanel = React.forwardRef<
             ...base,
             left: leftPanelWidth > 0 ? leftPanelWidth : gap,
             right: rightPanelWidth > 0 ? rightPanelWidth : gap,
-            top: gap,
+            top: resolvedTopInset,
             height: size.height,
           };
       }
@@ -945,6 +1004,7 @@ export const FloatingPanel = React.forwardRef<
 
     const edgeStyle = (edge: string): React.CSSProperties => {
       const base: React.CSSProperties = {
+        ...WAILS_NO_DRAG_STYLE,
         position: "absolute",
         zIndex: 30,
         backgroundColor: "transparent",
@@ -1043,7 +1103,7 @@ export const FloatingPanel = React.forwardRef<
     const slideVector = shouldResolveSlideVector
       ? getSlideVector()
       : { x: 0, y: 0 };
-    const slideMotionTarget = { x: 0, y: 0 };
+    const slideMotionTarget = { x: 0, y: zenTopChromeAvoidanceOffset };
     const exitSlideVector =
       snappedSlideMotionEnabled && !isRelocating
         ? getExitSlideVector()
@@ -1103,6 +1163,7 @@ export const FloatingPanel = React.forwardRef<
       zIndex: 20,
       cursor: isDragging ? "grabbing" : "grab",
       boxShadow: "inset 0 1px 0 var(--shell-inner-highlight)",
+      ...WAILS_NO_DRAG_STYLE,
     };
 
     const titleStyle: React.CSSProperties = {
@@ -1121,9 +1182,11 @@ export const FloatingPanel = React.forwardRef<
       display: "flex",
       alignItems: "center",
       gap: "6px",
+      ...WAILS_NO_DRAG_STYLE,
     };
 
     const closeButtonStyle: React.CSSProperties = {
+      ...WAILS_NO_DRAG_STYLE,
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
@@ -1139,6 +1202,7 @@ export const FloatingPanel = React.forwardRef<
     };
 
     const contentStyle: React.CSSProperties = {
+      ...WAILS_NO_DRAG_STYLE,
       flex: 1,
       overflow: "hidden",
       minHeight: 0,
@@ -1152,6 +1216,7 @@ export const FloatingPanel = React.forwardRef<
       <div
         key={edge}
         data-testid={`panel-${id}-resize-${edge}`}
+        data-panel-resize-handle="true"
         style={edgeStyle(edge)}
         onMouseDown={(e) => handleResizeStart(e, edge)}
       />
@@ -1186,6 +1251,9 @@ export const FloatingPanel = React.forwardRef<
         data-panel-motion={panelMotionState}
         data-panel-relocating={isRelocating ? "true" : "false"}
         data-panel-zen-pinned={isZenPinned ? "true" : "false"}
+        data-panel-top-chrome-avoidance={Math.round(
+          zenTopChromeAvoidanceOffset,
+        )}
       >
         {mode === "floating" ? (
           <>
@@ -1207,13 +1275,14 @@ export const FloatingPanel = React.forwardRef<
           onPointerDown={handleHeaderPointerDown}
           onMouseDown={handleDragStartInternal}
           data-testid={`panel-${id}-drag-handle`}
+          data-panel-drag-handle="true"
         >
           <div style={titleStyle}>
             {icon}
             <span>{title}</span>
           </div>
 
-          <div style={controlsStyle}>
+          <div style={controlsStyle} data-panel-controls="true">
             {headerExtra}
 
             {onFullscreen && (

@@ -239,12 +239,25 @@ const SwitchRow: React.FC<{
   description: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
+  badge?: string;
   controlLabel?: string;
-}> = ({ title, description, checked, onCheckedChange, controlLabel }) => (
+}> = ({
+  title,
+  description,
+  checked,
+  onCheckedChange,
+  badge,
+  controlLabel,
+}) => (
   <div className="flex flex-col gap-3 border-b border-[var(--border-subtle)] px-4 py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between">
     <div className="pr-4">
-      <div className="text-sm font-semibold text-[var(--text-primary)]">
+      <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
         {title}
+        {badge ? (
+          <span className="inline-flex min-h-[20px] items-center rounded-full border border-[color-mix(in_srgb,var(--focus-ring)_35%,var(--border-subtle))] bg-[color-mix(in_srgb,var(--focus-ring)_10%,transparent)] px-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+            {badge}
+          </span>
+        ) : null}
       </div>
       <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
         {description}
@@ -1399,6 +1412,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       description="Hide the top bar, status bar, and snapped panels until their edge is hovered."
                       checked={zenModeEnabled}
                       onCheckedChange={setZenModeEnabled}
+                      badge="Beta"
                     />
                     <SwitchRow
                       title="Rainbow brackets"

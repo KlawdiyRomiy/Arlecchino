@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const ZEN_CHROME_STATIONARY_REVEAL_DELAY_MS = 700;
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.clear();
@@ -161,6 +163,52 @@ async function mountProjectUI(
   await expect(page.getByTitle("Search")).toBeVisible();
 }
 
+async function enterZenMode(page: Parameters<typeof test>[0]["page"]) {
+  await page.evaluate(() => {
+    const eventInit = {
+      key: ".",
+      code: "Period",
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    window.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+    window.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+  });
+
+  await expect(page.getByTestId("main-layout")).toHaveAttribute(
+    "data-zen-mode",
+    "true",
+  );
+}
+
+async function revealZenTopbar(page: Parameters<typeof test>[0]["page"]) {
+  const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
+  await page.mouse.move(viewport.width / 2, 1);
+  await expect(page.getByTestId("main-layout")).toHaveAttribute(
+    "data-zen-topbar-visible",
+    "true",
+  );
+}
+
+async function readWindowDragStyles(
+  page: Parameters<typeof test>[0]["page"],
+  selector: string,
+) {
+  return page.evaluate((targetSelector) => {
+    const element = document.querySelector(targetSelector);
+    if (!element) {
+      return { webkitAppRegion: "", wailsDraggable: "" };
+    }
+    const styles = getComputedStyle(element);
+    return {
+      webkitAppRegion: styles.getPropertyValue("-webkit-app-region").trim(),
+      wailsDraggable: styles.getPropertyValue("--wails-draggable").trim(),
+    };
+  }, selector);
+}
+
 test("search button opens command dispatcher", async ({ page }) => {
   await mountProjectUI(page);
 
@@ -239,6 +287,12 @@ test("Cmd+Shift+. toggles zen chrome and edge hover reveals it", async ({
   await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
   await expect(layout).toHaveAttribute("data-zen-statusbar-visible", "false");
   await expect
+    .poll(() => readWindowDragStyles(page, '[data-testid="topbar"]'))
+    .toEqual({
+      webkitAppRegion: "no-drag",
+      wailsDraggable: "no-drag",
+    });
+  await expect
     .poll(() =>
       page.evaluate(() =>
         (
@@ -250,8 +304,17 @@ test("Cmd+Shift+. toggles zen chrome and edge hover reveals it", async ({
     )
     .toBe(false);
 
-  await page.mouse.move(1, 1);
+  const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
+  await page.mouse.move(viewport.width / 2, 1);
+  await page.waitForTimeout(ZEN_CHROME_STATIONARY_REVEAL_DELAY_MS - 250);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
   await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+  await expect
+    .poll(() => readWindowDragStyles(page, '[data-testid="topbar"]'))
+    .toEqual({
+      webkitAppRegion: "drag",
+      wailsDraggable: "drag",
+    });
   await expect
     .poll(() =>
       page.evaluate(() =>
@@ -266,6 +329,12 @@ test("Cmd+Shift+. toggles zen chrome and edge hover reveals it", async ({
   await page.mouse.move(520, 320);
   await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
   await expect
+    .poll(() => readWindowDragStyles(page, '[data-testid="topbar"]'))
+    .toEqual({
+      webkitAppRegion: "no-drag",
+      wailsDraggable: "no-drag",
+    });
+  await expect
     .poll(() =>
       page.evaluate(() =>
         (
@@ -277,8 +346,9 @@ test("Cmd+Shift+. toggles zen chrome and edge hover reveals it", async ({
     )
     .toBe(false);
 
-  const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
   await page.mouse.move(viewport.width - 1, viewport.height - 1);
+  await page.waitForTimeout(ZEN_CHROME_STATIONARY_REVEAL_DELAY_MS - 250);
+  await expect(layout).toHaveAttribute("data-zen-statusbar-visible", "false");
   await expect(layout).toHaveAttribute("data-zen-statusbar-visible", "true");
   await page.mouse.move(520, 320);
   await expect(layout).toHaveAttribute("data-zen-statusbar-visible", "false");
@@ -416,6 +486,121 @@ test("native fullscreen exit does not restore backdrop while Zen topbar is hidde
     .toBe(false);
 });
 
+test("zen topbar reveal avoids editor split and markdown preview controls before opening", async ({
+  page,
+}) => {
+  await mountProjectUI(page, "/workspace/AGENT_CONTEXT.md");
+  await enterZenMode(page);
+
+  const layout = page.getByTestId("main-layout");
+  const splitControls = page.getByTestId("editor-tabs-split-controls");
+  const markdownToggle = page.getByTestId(
+    "editor-tabs-markdown-preview-toggle",
+  );
+  await expect(splitControls).toBeVisible();
+  await expect(markdownToggle).toBeVisible();
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+
+  const splitBox = await splitControls.boundingBox();
+  expect(splitBox).not.toBeNull();
+  await page.mouse.move(
+    (splitBox?.x ?? 0) + (splitBox?.width ?? 0) / 2,
+    (splitBox?.y ?? 0) + (splitBox?.height ?? 0) / 2,
+  );
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+
+  await splitControls.locator('button[title^="Split Right"]').click();
+  await expect(page.getByTitle("Close split")).toBeVisible();
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+
+  const markdownBox = await markdownToggle.boundingBox();
+  expect(markdownBox).not.toBeNull();
+  await page.mouse.move(
+    (markdownBox?.x ?? 0) + (markdownBox?.width ?? 0) / 2,
+    (markdownBox?.y ?? 0) + (markdownBox?.height ?? 0) / 2,
+  );
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+
+  await markdownToggle.click();
+  await expect(markdownToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+
+  const viewport = page.viewportSize() ?? { width: 1280, height: 720 };
+  await page.mouse.move(viewport.width / 2, 1);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+
+  await page.mouse.move(
+    (splitBox?.x ?? 0) + (splitBox?.width ?? 0) / 2,
+    (splitBox?.y ?? 0) + (splitBox?.height ?? 0) / 2,
+  );
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+
+  await page.mouse.move(
+    (markdownBox?.x ?? 0) + (markdownBox?.width ?? 0) / 2,
+    (markdownBox?.y ?? 0) + (markdownBox?.height ?? 0) / 2,
+  );
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+});
+
+test("zen topbar stays visible while the more menu popup is open", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await enterZenMode(page);
+
+  const layout = page.getByTestId("main-layout");
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+  await revealZenTopbar(page);
+
+  await page.getByTitle("More").click();
+  const menuItem = page.getByRole("menuitem", { name: /AI Chat/ });
+  await expect(menuItem).toBeVisible();
+
+  const menuBox = await menuItem.boundingBox();
+  expect(menuBox).not.toBeNull();
+  await page.mouse.move(
+    (menuBox?.x ?? 0) + (menuBox?.width ?? 0) / 2,
+    (menuBox?.y ?? 0) + (menuBox?.height ?? 0) / 2,
+  );
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+
+  await page.mouse.move(520, 320);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+
+  await page.keyboard.press("Escape");
+  await expect(menuItem).toHaveCount(0);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+});
+
+test("zen topbar stays visible while the add project popup is open", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await enterZenMode(page);
+
+  const layout = page.getByTestId("main-layout");
+  await revealZenTopbar(page);
+
+  await page.getByTitle("Add project").click();
+  const menuItem = page.getByRole("menuitem", { name: /Open Project/ });
+  await expect(menuItem).toBeVisible();
+
+  const menuBox = await menuItem.boundingBox();
+  expect(menuBox).not.toBeNull();
+  await page.mouse.move(
+    (menuBox?.x ?? 0) + (menuBox?.width ?? 0) / 2,
+    (menuBox?.y ?? 0) + (menuBox?.height ?? 0) / 2,
+  );
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+
+  await page.mouse.move(520, 320);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "true");
+
+  await page.keyboard.press("Escape");
+  await expect(menuItem).toHaveCount(0);
+  await expect(layout).toHaveAttribute("data-zen-topbar-visible", "false");
+});
+
 test("topbar more menu closes on Escape and omits removed actions", async ({
   page,
 }) => {
@@ -434,6 +619,25 @@ test("topbar more menu closes on Escape and omits removed actions", async ({
   await page.keyboard.press("Escape");
 
   await expect(page.getByRole("menuitem", { name: /AI Chat/ })).toHaveCount(0);
+});
+
+test("sync dependencies modal closes on Escape", async ({ page }) => {
+  await mountProjectUI(page);
+
+  await page.getByTitle("More").click();
+  await page.getByRole("menuitem", { name: /Sync dependencies/i }).click();
+
+  await expect(page.getByTestId("dependency-policy-modal")).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => document.body.dataset.shellModalOpen ?? ""))
+    .toBe("true");
+
+  await page.keyboard.press("Escape");
+
+  await expect(page.getByTestId("dependency-policy-modal")).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => document.body.dataset.shellModalOpen ?? ""))
+    .toBe("");
 });
 
 test("add project menu closes on Escape", async ({ page }) => {
