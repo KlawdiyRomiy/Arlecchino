@@ -22,8 +22,12 @@ var languageAliases = map[string][]string{
 	"py":              {"python"},
 	"rb":              {"ruby"},
 	"rs":              {"rust"},
+	"c++":             {"cpp"},
+	"cxx":             {"cpp"},
 	"objective-c":     {"objectivec"},
+	"objective-c++":   {"objectivec"},
 	"objc":            {"objectivec"},
+	"objcpp":          {"objectivec"},
 	"c#":              {"csharp"},
 }
 

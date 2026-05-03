@@ -8,8 +8,11 @@ func TestLanguageCandidates(t *testing.T) {
 		expected []string
 	}{
 		{input: "tsx", expected: []string{"tsx", "typescriptreact", "typescript"}},
+		{input: "jsx", expected: []string{"jsx", "javascriptreact", "javascript"}},
 		{input: ".sh", expected: []string{"sh", "bash"}},
+		{input: "c++", expected: []string{"c++", "cpp"}},
 		{input: "Objective-C", expected: []string{"objective-c", "objectivec"}},
+		{input: "objcpp", expected: []string{"objcpp", "objectivec"}},
 		{input: "c#", expected: []string{"c#", "csharp"}},
 	}
 
@@ -35,6 +38,9 @@ func TestTextDocumentLanguageID(t *testing.T) {
 		{input: "bash", want: "shellscript"},
 		{input: "blade", want: "html"},
 		{input: "objectivec", want: "objective-c"},
+		{input: "typescriptreact", want: "typescriptreact"},
+		{input: "javascriptreact", want: "javascriptreact"},
+		{input: "cpp", want: "cpp"},
 		{input: "typescript", want: "typescript"},
 	}
 
