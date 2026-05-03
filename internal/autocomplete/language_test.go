@@ -1,6 +1,10 @@
 package autocomplete
 
-import "testing"
+import (
+	"testing"
+
+	"arlecchino/internal/predictive"
+)
 
 func TestResolveLanguage(t *testing.T) {
 	tests := []struct {
@@ -77,6 +81,30 @@ func TestCapabilityTiers(t *testing.T) {
 			got := CapabilityForLanguage(language, "", nil)
 			if got.Tier != TierSyntaxOnly {
 				t.Fatalf("expected syntax-only tier for %s, got %+v", language, got)
+			}
+		})
+	}
+}
+
+func TestKeywordCapabilityHasBackendSource(t *testing.T) {
+	contextualOnly := map[string]bool{
+		"html": true,
+	}
+
+	for _, language := range []string{
+		"python", "go", "php", "blade", "astro", "typescript", "javascript", "java", "csharp", "clojure", "rust", "css", "scala",
+		"groovy", "erlang", "bash", "dockerfile", "yaml", "terraform", "makefile", "nginx", "ini", "env", "sql", "html", "vue", "svelte",
+	} {
+		t.Run(language, func(t *testing.T) {
+			resolution := Resolve(language, "")
+			if !supportsKeywords(resolution.KeywordID) {
+				t.Fatalf("expected supportsKeywords(%q) for %s", resolution.KeywordID, language)
+			}
+			if contextualOnly[resolution.KeywordID] {
+				return
+			}
+			if got := predictive.GetKeywordsForLanguage(resolution.KeywordID); len(got) == 0 {
+				t.Fatalf("supportsKeywords(%q) is true, but predictive keyword source is empty", resolution.KeywordID)
 			}
 		})
 	}

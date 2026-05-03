@@ -205,6 +205,53 @@ func TestPredictionBrainReturnsKeywordsBeforeSlowLSP(t *testing.T) {
 	}
 }
 
+func TestPredictionBrainSQLKeywordsCoverCommonClauses(t *testing.T) {
+	brain := NewPredictionBrain(nil, BrainConfig{
+		MaxSuggestions:    50,
+		MinConfidence:     0.1,
+		EnableLSP:         false,
+		EnableVirtual:     false,
+		EnableSpeculative: false,
+		EnablePredictive:  false,
+	})
+
+	tests := []struct {
+		name   string
+		prefix string
+		want   string
+	}{
+		{name: "where", prefix: "w", want: "WHERE"},
+		{name: "join", prefix: "j", want: "JOIN"},
+		{name: "group by", prefix: "g", want: "GROUP BY"},
+		{name: "order by", prefix: "o", want: "ORDER BY"},
+		{name: "insert", prefix: "i", want: "INSERT"},
+		{name: "update", prefix: "u", want: "UPDATE"},
+		{name: "delete", prefix: "d", want: "DELETE"},
+		{name: "count", prefix: "c", want: "COUNT"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			suggestions := brain.Complete(CompletionContext{
+				FilePath: "query.sql",
+				Content:  []byte(tt.prefix),
+				Line:     1,
+				Column:   len(tt.prefix) + 1,
+				Prefix:   tt.prefix,
+				Language: "sql",
+			})
+			if !hasSuggestionFromSource(suggestions, tt.want, core.SourceKeywords) {
+				t.Fatalf("expected SQL keyword %q for prefix %q, got %#v", tt.want, tt.prefix, suggestions)
+			}
+		})
+	}
+
+	trace := brain.LastCompletionTrace()
+	if trace.SourceCounts["keywords"] == 0 {
+		t.Fatalf("expected SQL keywords in trace, got counts=%#v statuses=%#v", trace.SourceCounts, trace.SourceStatuses)
+	}
+}
+
 func TestPredictionBrainUnknownLanguageSkipsHeavySources(t *testing.T) {
 	dir := t.TempDir()
 	manager := lsp.NewManager(dir)

@@ -343,7 +343,7 @@ func supportsStubs(language string) bool {
 
 func supportsKeywords(language string) bool {
 	switch language {
-	case "python", "go", "php", "blade", "astro", "typescript", "javascript", "java", "csharp", "clojure", "rust", "css", "scala", "groovy", "erlang", "bash", "dockerfile", "yaml", "terraform", "makefile", "nginx", "ini", "env", "html", "vue", "svelte":
+	case "python", "go", "php", "blade", "astro", "typescript", "javascript", "java", "csharp", "clojure", "rust", "css", "scala", "groovy", "erlang", "bash", "dockerfile", "yaml", "terraform", "makefile", "nginx", "ini", "env", "sql", "html", "vue", "svelte":
 		return true
 	default:
 		return false
