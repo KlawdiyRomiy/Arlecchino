@@ -62,6 +62,61 @@ test.beforeEach(async ({ page }) => {
               case "GetRecentProjects":
               case "GetDevToolsStatus":
                 return [];
+              case "GetAutocompleteLanguageCapabilities":
+                return [
+                  {
+                    id: "typescript",
+                    name: "TypeScript",
+                    extensions: [".ts", ".mts", ".cts"],
+                    canonicalId: "typescript",
+                    tier: "native",
+                    sources: {
+                      syntax: true,
+                      lspDeclared: true,
+                      lspAvailable: true,
+                      index: true,
+                      local: true,
+                      predictive: true,
+                      imports: true,
+                      stubs: true,
+                      keywords: true,
+                      fillAll: true,
+                    },
+                    lspServerId: "typescript-language-server",
+                    lspInstalled: true,
+                    lspCanInstall: true,
+                    lspInstalling: false,
+                    notes: [],
+                  },
+                  {
+                    id: "rust",
+                    name: "Rust",
+                    extensions: [".rs"],
+                    canonicalId: "rust",
+                    tier: "lsp-only",
+                    sources: {
+                      syntax: true,
+                      lspDeclared: true,
+                      lspAvailable: false,
+                      index: false,
+                      local: false,
+                      predictive: false,
+                      imports: true,
+                      stubs: true,
+                      keywords: true,
+                      fillAll: false,
+                    },
+                    lspServerId: "rust-analyzer",
+                    lspInstalled: false,
+                    lspCanInstall: true,
+                    lspInstalling: false,
+                    notes: ["Autocomplete is LSP-first"],
+                  },
+                ];
+              case "InstallLSPServer":
+                return true;
+              case "IsLSPInstalling":
+                return true;
               case "InspectProjectAccess":
                 return { path: args[0], accessible: true, reason: "" };
               case "OpenProject":
@@ -193,6 +248,14 @@ async function openBrowserPreviewSettings(page: Page) {
   await page.getByRole("button", { name: /Browser Preview/ }).click();
   await expect(
     page.getByRole("heading", { name: "Browser Preview" }),
+  ).toBeVisible();
+}
+
+async function openDiagnosticsSettings(page: Page) {
+  await page.getByTitle("Settings").click();
+  await page.getByRole("button", { name: /Diagnostics/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Diagnostics" }),
   ).toBeVisible();
 }
 
@@ -548,6 +611,39 @@ test("Browser Preview settings persist Markdown links mode", async ({
   await expect(
     reloadedGroup.getByRole("button", { name: "Preview" }),
   ).toHaveAttribute("aria-pressed", "true");
+});
+
+test("diagnostics tab shows autocomplete capability matrix and install action", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await openDiagnosticsSettings(page);
+
+  const support = page.getByTestId("autocomplete-support");
+  await expect(support).toContainText("Autocomplete support");
+  await expect(support).toContainText("Native");
+  await expect(support).toContainText("LSP only");
+  await expect(support).toContainText("TypeScript");
+  await expect(support).toContainText("Rust");
+
+  await page.getByTestId("autocomplete-support-search").fill("rust");
+  await expect(support).toContainText("Rust");
+  await expect(support).not.toContainText("TypeScript");
+
+  const installButton = support.getByRole("button", { name: /Install LSP/ });
+  await expect(installButton).toBeVisible();
+  await installButton.click();
+
+  await expect
+    .poll(async () => {
+      const calls = await getAppCalls(page);
+      return calls.some(
+        (call) =>
+          call.method === "InstallLSPServer" &&
+          call.args[0] === "rust-analyzer",
+      );
+    })
+    .toBe(true);
 });
 
 test("appearance theme dropdown opens and selects a theme", async ({
