@@ -43,13 +43,28 @@ type InstallProgress struct {
 	BytesDone  int64   `json:"bytesDone"`
 }
 
+type InstallState struct {
+	LSPID      string    `json:"lspId"`
+	Stage      string    `json:"stage"`
+	Percent    float64   `json:"percent"`
+	Message    string    `json:"message"`
+	Error      string    `json:"error"`
+	Running    bool      `json:"running"`
+	StartedAt  time.Time `json:"startedAt"`
+	FinishedAt time.Time `json:"finishedAt,omitempty"`
+	BytesTotal int64     `json:"bytesTotal"`
+	BytesDone  int64     `json:"bytesDone"`
+}
+
 type Installer struct {
-	mu         sync.RWMutex
-	lspDir     string
-	servers    map[string]*LSPInfo
-	installing map[string]bool
-	onProgress func(progress InstallProgress)
-	httpClient *http.Client
+	mu             sync.RWMutex
+	lspDir         string
+	servers        map[string]*LSPInfo
+	installing     map[string]bool
+	installStates  map[string]InstallState
+	installTimeout time.Duration
+	onProgress     func(progress InstallProgress)
+	httpClient     *http.Client
 }
 
 func NewInstaller(onProgress func(InstallProgress)) (*Installer, error) {
@@ -64,11 +79,13 @@ func NewInstaller(onProgress func(InstallProgress)) (*Installer, error) {
 	}
 
 	i := &Installer{
-		lspDir:     lspDir,
-		servers:    make(map[string]*LSPInfo),
-		installing: make(map[string]bool),
-		onProgress: onProgress,
-		httpClient: &http.Client{Timeout: 5 * time.Minute},
+		lspDir:         lspDir,
+		servers:        make(map[string]*LSPInfo),
+		installing:     make(map[string]bool),
+		installStates:  make(map[string]InstallState),
+		installTimeout: 10 * time.Minute,
+		onProgress:     onProgress,
+		httpClient:     &http.Client{Timeout: 5 * time.Minute},
 	}
 
 	i.registerServers()
@@ -217,25 +234,79 @@ func (i *Installer) IsInstalling(id string) bool {
 	return i.installing[id]
 }
 
+func (i *Installer) GetInstallState(id string) InstallState {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.installStates[id]
+}
+
+func (i *Installer) InstallAsync(ctx context.Context, id string, onDone func(error)) error {
+	server, already, err := i.beginInstall(id)
+	if err != nil {
+		return err
+	}
+	if already {
+		return nil
+	}
+
+	go func() {
+		err := i.runInstall(ctx, server)
+		if onDone != nil {
+			onDone(err)
+		}
+	}()
+	return nil
+}
+
 func (i *Installer) Install(ctx context.Context, id string) error {
+	server, already, err := i.beginInstall(id)
+	if err != nil {
+		return err
+	}
+	if already {
+		return fmt.Errorf("already installing: %s", id)
+	}
+	return i.runInstall(ctx, server)
+}
+
+func (i *Installer) beginInstall(id string) (*LSPInfo, bool, error) {
 	i.mu.Lock()
 	server, ok := i.servers[id]
 	if !ok {
 		i.mu.Unlock()
-		return fmt.Errorf("unknown LSP server: %s", id)
+		return nil, false, fmt.Errorf("unknown LSP server: %s", id)
 	}
 	if i.installing[id] {
 		i.mu.Unlock()
-		return fmt.Errorf("already installing: %s", id)
+		return nil, true, nil
 	}
+	serverCopy := *server
 	i.installing[id] = true
+	i.installStates[id] = InstallState{
+		LSPID:     id,
+		Stage:     "queued",
+		Percent:   0,
+		Message:   "Queued installation...",
+		Running:   true,
+		StartedAt: time.Now(),
+	}
 	i.mu.Unlock()
 
-	defer func() {
-		i.mu.Lock()
-		delete(i.installing, id)
-		i.mu.Unlock()
-	}()
+	i.emitProgress(id, "queued", 0, "Queued installation...", "")
+	return &serverCopy, false, nil
+}
+
+func (i *Installer) runInstall(ctx context.Context, server *LSPInfo) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if i.installTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, i.installTimeout)
+		defer cancel()
+	}
+
+	id := server.ID
 
 	for _, dep := range server.Dependencies {
 		if _, err := exec.LookPath(dep); err != nil {
@@ -275,6 +346,12 @@ func (i *Installer) Install(ctx context.Context, id string) error {
 		return err
 	}
 
+	if installed, _ := i.checkInstalled(server); !installed {
+		err := fmt.Errorf("%s finished but %s was not found", server.Name, server.BinaryName)
+		i.emitProgress(id, "error", 0, "", err.Error())
+		return err
+	}
+
 	i.emitProgress(id, "done", 100, "Installation complete!", "")
 	return nil
 }
@@ -287,10 +364,8 @@ func (i *Installer) installNPM(ctx context.Context, server *LSPInfo) error {
 		return fmt.Errorf("invalid npm install command")
 	}
 
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("npm install failed: %w\n%s", err, string(output))
+	if err := runInstallCommand(ctx, "npm install failed", parts); err != nil {
+		return err
 	}
 
 	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
@@ -301,10 +376,8 @@ func (i *Installer) installGo(ctx context.Context, server *LSPInfo) error {
 	i.emitProgress(server.ID, "installing", 20, "Running go install...", "")
 
 	parts := strings.Fields(server.InstallCmd)
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("go install failed: %w\n%s", err, string(output))
+	if err := runInstallCommand(ctx, "go install failed", parts); err != nil {
+		return err
 	}
 
 	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
@@ -321,12 +394,11 @@ func (i *Installer) installPip(ctx context.Context, server *LSPInfo) error {
 
 	parts := strings.Fields(server.InstallCmd)
 	parts[0] = pipCmd
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("pip install failed: %w\n%s", err, string(output))
+	if err := runInstallCommand(ctx, "pip install failed", parts); err != nil {
+		return err
 	}
 
+	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
 	return nil
 }
 
@@ -334,12 +406,11 @@ func (i *Installer) installComposer(ctx context.Context, server *LSPInfo) error 
 	i.emitProgress(server.ID, "installing", 20, "Running composer global require...", "")
 
 	parts := strings.Fields(server.InstallCmd)
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("composer install failed: %w\n%s", err, string(output))
+	if err := runInstallCommand(ctx, "composer install failed", parts); err != nil {
+		return err
 	}
 
+	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
 	return nil
 }
 
@@ -347,12 +418,11 @@ func (i *Installer) installCargo(ctx context.Context, server *LSPInfo) error {
 	i.emitProgress(server.ID, "installing", 20, "Running cargo install...", "")
 
 	parts := strings.Fields(server.InstallCmd)
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("cargo install failed: %w\n%s", err, string(output))
+	if err := runInstallCommand(ctx, "cargo install failed", parts); err != nil {
+		return err
 	}
 
+	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
 	return nil
 }
 
@@ -360,12 +430,11 @@ func (i *Installer) installRustup(ctx context.Context, server *LSPInfo) error {
 	i.emitProgress(server.ID, "installing", 20, "Running rustup component add...", "")
 
 	parts := strings.Fields(server.InstallCmd)
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("rustup failed: %w\n%s", err, string(output))
+	if err := runInstallCommand(ctx, "rustup failed", parts); err != nil {
+		return err
 	}
 
+	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
 	return nil
 }
 
@@ -373,12 +442,11 @@ func (i *Installer) installGem(ctx context.Context, server *LSPInfo) error {
 	i.emitProgress(server.ID, "installing", 20, "Running gem install...", "")
 
 	parts := strings.Fields(server.InstallCmd)
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("gem install failed: %w\n%s", err, string(output))
+	if err := runInstallCommand(ctx, "gem install failed", parts); err != nil {
+		return err
 	}
 
+	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
 	return nil
 }
 
@@ -390,14 +458,42 @@ func (i *Installer) installBrew(ctx context.Context, server *LSPInfo) error {
 		return fmt.Errorf("invalid brew install command")
 	}
 
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("brew install failed: %w\n%s", err, string(output))
+	if err := runInstallCommand(ctx, "brew install failed", parts); err != nil {
+		return err
 	}
 
 	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
 	return nil
+}
+
+func runInstallCommand(ctx context.Context, label string, parts []string) error {
+	if len(parts) == 0 {
+		return fmt.Errorf("%s: empty command", label)
+	}
+	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	outputText := trimCommandOutput(string(output), 2000)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if outputText != "" {
+			return fmt.Errorf("%s: %w\n%s", label, ctxErr, outputText)
+		}
+		return fmt.Errorf("%s: %w", label, ctxErr)
+	}
+	if outputText != "" {
+		return fmt.Errorf("%s: %w\n%s", label, err, outputText)
+	}
+	return fmt.Errorf("%s: %w", label, err)
+}
+
+func trimCommandOutput(output string, max int) string {
+	output = strings.TrimSpace(output)
+	if max <= 0 || len(output) <= max {
+		return output
+	}
+	return output[len(output)-max:]
 }
 
 func (i *Installer) installBinary(ctx context.Context, server *LSPInfo) error {
@@ -639,17 +735,49 @@ func (i *Installer) emitProgress(id, stage string, percent float64, message, err
 }
 
 func (i *Installer) emitProgressWithBytes(id, stage string, percent float64, message, errMsg string, total, done int64) {
-	if i.onProgress != nil {
-		i.onProgress(InstallProgress{
-			LSPID:      id,
-			Stage:      stage,
-			Percent:    percent,
-			Message:    message,
-			Error:      errMsg,
-			BytesTotal: total,
-			BytesDone:  done,
-		})
+	progress := InstallProgress{
+		LSPID:      id,
+		Stage:      stage,
+		Percent:    percent,
+		Message:    message,
+		Error:      errMsg,
+		BytesTotal: total,
+		BytesDone:  done,
 	}
+
+	i.mu.Lock()
+	state := i.installStates[id]
+	if state.LSPID == "" {
+		state.LSPID = id
+	}
+	if state.StartedAt.IsZero() {
+		state.StartedAt = time.Now()
+	}
+	state.Stage = stage
+	state.Percent = percent
+	state.Message = message
+	state.Error = errMsg
+	state.BytesTotal = total
+	state.BytesDone = done
+	switch normalizedInstallStage(stage) {
+	case "done", "complete", "completed", "error", "failed", "failure":
+		state.Running = false
+		state.FinishedAt = time.Now()
+		delete(i.installing, id)
+	default:
+		state.Running = true
+		i.installing[id] = true
+	}
+	i.installStates[id] = state
+	i.mu.Unlock()
+
+	if i.onProgress != nil {
+		i.onProgress(progress)
+	}
+}
+
+func normalizedInstallStage(stage string) string {
+	return strings.ToLower(strings.TrimSpace(stage))
 }
 
 func safeExtractPath(dest, archivePath string) (string, error) {

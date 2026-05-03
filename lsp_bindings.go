@@ -775,9 +775,11 @@ func (a *App) InstallLSPServer(serverID string) error {
 		return fmt.Errorf("LSP installer not available")
 	}
 
-	go func() {
-		ctx := context.Background()
-		err := a.lspInstaller.Install(ctx, serverID)
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return a.lspInstaller.InstallAsync(ctx, serverID, func(err error) {
 		if err != nil {
 			a.emitEvent("lsp:install:error", map[string]string{
 				"id":    serverID,
@@ -788,9 +790,7 @@ func (a *App) InstallLSPServer(serverID string) error {
 				"id": serverID,
 			})
 		}
-	}()
-
-	return nil
+	})
 }
 
 func (a *App) IsLSPInstalling(serverID string) bool {

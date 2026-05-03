@@ -4,11 +4,13 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewInstaller(t *testing.T) {
@@ -104,6 +106,125 @@ func TestPublicAlphaDoesNotExposeInstallableBinaryDownloads(t *testing.T) {
 	}
 }
 
+func TestInstallAsyncMarksInstallingBeforeReturn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture uses POSIX sh")
+	}
+
+	installer, binDir := newInstallerCommandFixture(t)
+	writeExecutable(t, binDir, "fake-install", `#!/bin/sh
+sleep 0.2
+cat > "$TEST_BIN/fake-server" <<'EOF'
+#!/bin/sh
+echo fake-server 1.0
+EOF
+chmod +x "$TEST_BIN/fake-server"
+`)
+	installer.servers["fake-server"] = &LSPInfo{
+		ID:           "fake-server",
+		Name:         "Fake Server",
+		InstallType:  "go",
+		InstallCmd:   "fake-install",
+		BinaryName:   "fake-server",
+		CanInstall:   true,
+		Dependencies: []string{"fake-install"},
+	}
+
+	done := make(chan error, 1)
+	if err := installer.InstallAsync(context.Background(), "fake-server", func(err error) {
+		done <- err
+	}); err != nil {
+		t.Fatalf("InstallAsync: %v", err)
+	}
+	if !installer.IsInstalling("fake-server") {
+		t.Fatalf("expected installer to be marked running before InstallAsync returns")
+	}
+	if err := installer.InstallAsync(context.Background(), "fake-server", nil); err != nil {
+		t.Fatalf("duplicate InstallAsync should preserve running state, got %v", err)
+	}
+	if !installer.IsInstalling("fake-server") {
+		t.Fatalf("duplicate InstallAsync cleared running state")
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("install finished with error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for fake install")
+	}
+	if installer.IsInstalling("fake-server") {
+		t.Fatalf("expected installer state to be cleared after success")
+	}
+	state := installer.GetInstallState("fake-server")
+	if state.Stage != "done" || state.Running {
+		t.Fatalf("unexpected final state: %+v", state)
+	}
+}
+
+func TestInstallTimeoutClearsInstallingState(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture uses POSIX sh")
+	}
+
+	installer, binDir := newInstallerCommandFixture(t)
+	installer.installTimeout = 25 * time.Millisecond
+	writeExecutable(t, binDir, "slow-install", `#!/bin/sh
+sleep 2
+`)
+	installer.servers["slow-server"] = &LSPInfo{
+		ID:           "slow-server",
+		Name:         "Slow Server",
+		InstallType:  "go",
+		InstallCmd:   "slow-install",
+		BinaryName:   "slow-server",
+		CanInstall:   true,
+		Dependencies: []string{"slow-install"},
+	}
+
+	err := installer.Install(context.Background(), "slow-server")
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if installer.IsInstalling("slow-server") {
+		t.Fatalf("timeout left installer marked running")
+	}
+	state := installer.GetInstallState("slow-server")
+	if state.Stage != "error" || state.Error == "" || state.Running {
+		t.Fatalf("unexpected timeout state: %+v", state)
+	}
+}
+
+func TestInstallMissingDependencyReportsState(t *testing.T) {
+	installer, err := NewInstaller(nil)
+	if err != nil {
+		t.Fatalf("NewInstaller failed: %v", err)
+	}
+	installer.lspDir = t.TempDir()
+	installer.servers["missing-dep-server"] = &LSPInfo{
+		ID:           "missing-dep-server",
+		Name:         "Missing Dep Server",
+		InstallType:  "go",
+		InstallCmd:   "missing-dep-install",
+		BinaryName:   "missing-dep-server",
+		CanInstall:   true,
+		Dependencies: []string{"arlecchino-definitely-missing-dep"},
+	}
+
+	err = installer.Install(context.Background(), "missing-dep-server")
+	if err == nil {
+		t.Fatal("expected missing dependency error")
+	}
+	if installer.IsInstalling("missing-dep-server") {
+		t.Fatalf("missing dependency left installer marked running")
+	}
+	state := installer.GetInstallState("missing-dep-server")
+	if state.Stage != "error" || !strings.Contains(state.Error, "missing dependency") {
+		t.Fatalf("unexpected missing dependency state: %+v", state)
+	}
+}
+
 func TestMacAlphaUsesHomebrewForFormerBinaryDownloads(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS Homebrew policy is only asserted on darwin")
@@ -129,6 +250,28 @@ func TestMacAlphaUsesHomebrewForFormerBinaryDownloads(t *testing.T) {
 			t.Fatalf("%s install command = %q, want brew install", id, server.InstallCmd)
 		}
 	}
+}
+
+func newInstallerCommandFixture(t *testing.T) (*Installer, string) {
+	t.Helper()
+	installer, err := NewInstaller(nil)
+	if err != nil {
+		t.Fatalf("NewInstaller failed: %v", err)
+	}
+	installer.lspDir = t.TempDir()
+	binDir := t.TempDir()
+	t.Setenv("TEST_BIN", binDir)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return installer, binDir
+}
+
+func writeExecutable(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0755); err != nil {
+		t.Fatalf("WriteFile(%s): %v", path, err)
+	}
+	return path
 }
 
 func TestLanguagesRegistry(t *testing.T) {
