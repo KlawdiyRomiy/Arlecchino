@@ -960,19 +960,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {capability.lspServerId ? (
                     <span className="font-mono">{capability.lspServerId}</span>
                   ) : null}
-                  {installDetail ? <span>{installDetail}</span> : null}
                   {capability.lspBinaryPath ? (
-                    <span className="max-w-[260px] truncate font-mono">
+                    <span
+                      className="max-w-full break-all font-mono lg:max-w-[520px]"
+                      title={capability.lspBinaryPath}
+                    >
                       {capability.lspBinaryPath}
                     </span>
                   ) : null}
-                  {lspError ? (
-                    <span className="max-w-[360px] truncate text-[var(--status-error)]">
-                      {lspError}
-                    </span>
-                  ) : null}
                   {capability.extensions.length ? (
-                    <span className="truncate">
+                    <span className="break-words">
                       {capability.extensions.join(", ")}
                     </span>
                   ) : null}
@@ -1008,6 +1005,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                 ) : null}
               </div>
+
+              {(installDetail || lspError) && (
+                <div className="min-w-0 space-y-1 lg:col-span-2">
+                  {installDetail ? (
+                    <div className="whitespace-pre-wrap break-words text-[12px] leading-5 text-[var(--text-muted)]">
+                      {installDetail}
+                    </div>
+                  ) : null}
+                  {lspError ? (
+                    <div className="whitespace-pre-wrap break-words text-[12px] leading-5 text-[var(--status-error)]">
+                      {lspError}
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
           );
         })}

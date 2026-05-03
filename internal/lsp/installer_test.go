@@ -5,6 +5,8 @@ import (
 	"archive/zip"
 	"compress/gzip"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -103,6 +105,80 @@ func TestPublicAlphaDoesNotExposeInstallableBinaryDownloads(t *testing.T) {
 		if server.CanInstall && server.InstallType == "binary" {
 			t.Fatalf("%s must not expose direct binary download install without pin/checksum", server.ID)
 		}
+	}
+}
+
+func TestPHPActorInstallUsesStandalonePHARForPlainPHP(t *testing.T) {
+	installer, err := NewInstaller(nil)
+	if err != nil {
+		t.Fatalf("NewInstaller failed: %v", err)
+	}
+
+	server := installer.GetServerByID("phpactor")
+	if server == nil {
+		t.Fatal("phpactor should exist")
+	}
+	if server.InstallType != "phar" {
+		t.Fatalf("phpactor install type = %q, want phar", server.InstallType)
+	}
+	if strings.Contains(server.InstallCmd, "composer") {
+		t.Fatalf("phpactor plain PHP install must not require composer, got %q", server.InstallCmd)
+	}
+	if len(server.Dependencies) != 1 || server.Dependencies[0] != "php" {
+		t.Fatalf("phpactor dependencies = %#v, want only php", server.Dependencies)
+	}
+	if !strings.HasSuffix(server.DownloadURL, "/phpactor.phar") {
+		t.Fatalf("phpactor download URL = %q, want phpactor.phar", server.DownloadURL)
+	}
+}
+
+func TestInstallPHARDownloadsExecutable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PHAR executable fixture uses POSIX shebang")
+	}
+
+	installer, err := NewInstaller(nil)
+	if err != nil {
+		t.Fatalf("NewInstaller failed: %v", err)
+	}
+	installer.lspDir = t.TempDir()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("#!/bin/sh\necho fake-phar 1.0\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	installer.servers["fake-phar"] = &LSPInfo{
+		ID:          "fake-phar",
+		Name:        "Fake PHAR",
+		InstallType: "phar",
+		DownloadURL: server.URL + "/fake.phar",
+		BinaryName:  "fake-phar",
+		CanInstall:  true,
+	}
+
+	if err := installer.Install(context.Background(), "fake-phar"); err != nil {
+		t.Fatalf("Install fake PHAR: %v", err)
+	}
+	path := filepath.Join(installer.lspDir, "fake-phar", "fake-phar")
+	if !executableFileExists(path) {
+		t.Fatalf("expected executable PHAR at %s", path)
+	}
+}
+
+func TestSolargraphInstallCommandPinsLegacyVersionForOldRuby(t *testing.T) {
+	parts, message := solargraphGemInstallParts([]string{"gem", "install", "solargraph"}, "2.6.10")
+	if !containsAdjacent(parts, "-v", "0.50.0") {
+		t.Fatalf("expected Ruby 2.6 solargraph install to pin 0.50.0, got %#v", parts)
+	}
+	if !strings.Contains(message, "0.50.0") {
+		t.Fatalf("expected install message to mention pinned version, got %q", message)
+	}
+
+	parts, _ = solargraphGemInstallParts([]string{"gem", "install", "solargraph"}, "3.2.2")
+	if containsAdjacent(parts, "-v", "0.50.0") {
+		t.Fatalf("expected Ruby 3.2 solargraph install to use latest, got %#v", parts)
 	}
 }
 
@@ -297,6 +373,15 @@ func writeExecutable(t *testing.T, dir, name, body string) string {
 		t.Fatalf("WriteFile(%s): %v", path, err)
 	}
 	return path
+}
+
+func containsAdjacent(values []string, first, second string) bool {
+	for i := 0; i+1 < len(values); i++ {
+		if values[i] == first && values[i+1] == second {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLanguagesRegistry(t *testing.T) {

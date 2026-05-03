@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -100,7 +101,7 @@ func (i *Installer) registerServers() {
 		{ID: "gopls", Name: "Go Language Server", Languages: []string{"go"}, Extensions: []string{".go", ".mod", ".sum"}, InstallType: "go", InstallCmd: "go install golang.org/x/tools/gopls@latest", BinaryName: "gopls", CanInstall: true, Dependencies: []string{"go"}},
 		{ID: "typescript-language-server", Name: "TypeScript/JavaScript", Languages: []string{"typescript", "javascript", "typescriptreact", "javascriptreact"}, Extensions: []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}, InstallType: "npm", InstallCmd: "npm install -g typescript-language-server typescript", BinaryName: "typescript-language-server", CanInstall: true, Dependencies: []string{"node", "npm"}},
 		{ID: "pyright", Name: "Python (Pyright)", Languages: []string{"python"}, Extensions: []string{".py", ".pyi", ".pyw"}, InstallType: "npm", InstallCmd: "npm install -g pyright", BinaryName: "pyright-langserver", CanInstall: true, Dependencies: []string{"node", "npm"}},
-		{ID: "phpactor", Name: "PHP Language Server", Languages: []string{"php"}, Extensions: []string{".php", ".phtml"}, InstallType: "composer", InstallCmd: "composer global require phpactor/phpactor", BinaryName: "phpactor", CanInstall: true, Dependencies: []string{"php", "composer"}},
+		{ID: "phpactor", Name: "PHP Language Server", Languages: []string{"php"}, Extensions: []string{".php", ".phtml"}, InstallType: "phar", InstallCmd: "Download standalone phpactor.phar", DownloadURL: "https://github.com/phpactor/phpactor/releases/latest/download/phpactor.phar", BinaryName: "phpactor", CanInstall: true, Dependencies: []string{"php"}},
 		{ID: "rust-analyzer", Name: "Rust Language Server", Languages: []string{"rust"}, Extensions: []string{".rs"}, InstallType: "rustup", InstallCmd: "rustup component add rust-analyzer", BinaryName: "rust-analyzer", CanInstall: true, Dependencies: []string{"rustup"}},
 		{ID: "vscode-css-language-server", Name: "CSS/SCSS/Less", Languages: []string{"css", "scss", "sass", "less"}, Extensions: []string{".css", ".scss", ".sass", ".less"}, InstallType: "npm", InstallCmd: "npm install -g vscode-langservers-extracted", BinaryName: "vscode-css-language-server", CanInstall: true, Dependencies: []string{"node", "npm"}},
 		{ID: "vscode-html-language-server", Name: "HTML Language Server", Languages: []string{"html", "blade"}, Extensions: []string{".html", ".htm", ".blade.php"}, InstallType: "npm", InstallCmd: "npm install -g vscode-langservers-extracted", BinaryName: "vscode-html-language-server", CanInstall: true, Dependencies: []string{"node", "npm"}},
@@ -437,6 +438,8 @@ func (i *Installer) runInstall(ctx context.Context, server *LSPInfo) error {
 		err = i.installPip(ctx, server)
 	case "composer":
 		err = i.installComposer(ctx, server)
+	case "phar":
+		err = i.installPHAR(ctx, server)
 	case "cargo":
 		err = i.installCargo(ctx, server)
 	case "rustup":
@@ -524,6 +527,16 @@ func (i *Installer) installComposer(ctx context.Context, server *LSPInfo) error 
 	return nil
 }
 
+func (i *Installer) installPHAR(ctx context.Context, server *LSPInfo) error {
+	if server.ID == "phpactor" {
+		if err := ensurePHPActorRuntime(ctx); err != nil {
+			return err
+		}
+		i.emitProgress(server.ID, "downloading", 10, "Downloading standalone PHPactor PHAR...", "")
+	}
+	return i.installBinary(ctx, server)
+}
+
 func (i *Installer) installCargo(ctx context.Context, server *LSPInfo) error {
 	i.emitProgress(server.ID, "installing", 20, "Running cargo install...", "")
 
@@ -549,9 +562,17 @@ func (i *Installer) installRustup(ctx context.Context, server *LSPInfo) error {
 }
 
 func (i *Installer) installGem(ctx context.Context, server *LSPInfo) error {
-	i.emitProgress(server.ID, "installing", 20, "Running gem install...", "")
-
 	parts := strings.Fields(server.InstallCmd)
+	message := "Running gem install..."
+	if server.ID == "solargraph" {
+		rubyVersion, err := currentRubyVersion(ctx)
+		if err != nil {
+			return err
+		}
+		parts, message = solargraphGemInstallParts(parts, rubyVersion)
+	}
+	i.emitProgress(server.ID, "installing", 20, message, "")
+
 	if !hasCommandArg(parts, "--user-install") && !hasCommandArg(parts, "-n") {
 		parts = append(parts, "--user-install")
 	}
@@ -561,6 +582,15 @@ func (i *Installer) installGem(ctx context.Context, server *LSPInfo) error {
 
 	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
 	return nil
+}
+
+func solargraphGemInstallParts(parts []string, rubyVersion string) ([]string, string) {
+	result := append([]string(nil), parts...)
+	if !versionAtLeast(rubyVersion, 3, 0) && !hasCommandArg(result, "-v") && !hasCommandArg(result, "--version") {
+		result = append(result, "-v", "0.50.0")
+		return result, "Running gem install solargraph 0.50.0 for Ruby < 3.0..."
+	}
+	return result, "Running gem install..."
 }
 
 func hasCommandArg(parts []string, arg string) bool {
@@ -608,6 +638,117 @@ func runInstallCommand(ctx context.Context, label string, parts []string) error 
 		return fmt.Errorf("%s: %w\n%s", label, err, outputText)
 	}
 	return fmt.Errorf("%s: %w", label, err)
+}
+
+func ensurePHPActorRuntime(ctx context.Context) error {
+	version, err := currentPHPVersion(ctx)
+	if err != nil {
+		return err
+	}
+	if !versionAtLeast(version, 8, 1) {
+		return fmt.Errorf("phpactor requires PHP >= 8.1; current PHP is %s", version)
+	}
+	ok, err := phpExtensionAvailable(ctx, "mbstring")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("missing PHP extension: mbstring (required by phpactor)")
+	}
+	return nil
+}
+
+func currentPHPVersion(ctx context.Context) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, "php", "-r", "echo PHP_VERSION;")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("php version check failed: %w", err)
+	}
+	version := strings.TrimSpace(string(output))
+	if version == "" {
+		return "", fmt.Errorf("php version check failed: empty PHP_VERSION")
+	}
+	return version, nil
+}
+
+func phpExtensionAvailable(ctx context.Context, extension string) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, "php", "-m")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("php extension check failed: %w", err)
+	}
+	extension = strings.ToLower(strings.TrimSpace(extension))
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.EqualFold(strings.TrimSpace(line), extension) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func currentRubyVersion(ctx context.Context) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, "ruby", "-e", "print RUBY_VERSION")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("ruby version check failed: %w", err)
+	}
+	version := strings.TrimSpace(string(output))
+	if version == "" {
+		return "", fmt.Errorf("ruby version check failed: empty RUBY_VERSION")
+	}
+	return version, nil
+}
+
+func versionAtLeast(version string, minMajor, minMinor int) bool {
+	major, minor, ok := parseMajorMinorVersion(version)
+	if !ok {
+		return false
+	}
+	if major != minMajor {
+		return major > minMajor
+	}
+	return minor >= minMinor
+}
+
+func parseMajorMinorVersion(version string) (int, int, bool) {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return 0, 0, false
+	}
+	token := strings.Fields(version)[0]
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+	major, err := strconv.Atoi(numericPrefix(parts[0]))
+	if err != nil {
+		return 0, 0, false
+	}
+	minor, err := strconv.Atoi(numericPrefix(parts[1]))
+	if err != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
+}
+
+func numericPrefix(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func trimCommandOutput(output string, max int) string {
@@ -674,7 +815,14 @@ func (i *Installer) installBinary(ctx context.Context, server *LSPInfo) error {
 
 	tmpFile.Close()
 
-	i.emitProgress(server.ID, "extracting", 70, "Extracting...", "")
+	isArchive := strings.HasSuffix(server.DownloadURL, ".zip") ||
+		strings.HasSuffix(server.DownloadURL, ".tar.gz") ||
+		strings.HasSuffix(server.DownloadURL, ".tgz")
+	if isArchive {
+		i.emitProgress(server.ID, "extracting", 70, "Extracting...", "")
+	} else {
+		i.emitProgress(server.ID, "installing", 70, "Installing executable...", "")
+	}
 
 	destDir := filepath.Join(i.lspDir, server.ID)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
