@@ -779,6 +779,7 @@ func (a *App) InstallLSPServer(serverID string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	session := a.activeProjectSession()
 	return a.lspInstaller.InstallAsync(ctx, serverID, func(err error) {
 		if err != nil {
 			a.emitEvent("lsp:install:error", map[string]string{
@@ -786,11 +787,55 @@ func (a *App) InstallLSPServer(serverID string) error {
 				"error": err.Error(),
 			})
 		} else {
+			a.refreshLSPConfigsFromInstallerForSession(session)
 			a.emitEvent("lsp:install:complete", map[string]string{
 				"id": serverID,
 			})
 		}
 	})
+}
+
+func (a *App) refreshLSPConfigsFromInstallerForSession(session *ProjectRuntimeSession) {
+	if a == nil || a.lspInstaller == nil {
+		return
+	}
+	if session == nil {
+		session = a.activeProjectSession()
+	}
+
+	var manager *indexerlsp.Manager
+	projectPath := ""
+	generation := uint64(0)
+	if session != nil {
+		manager = session.lspManager
+		projectPath = session.currentProjectPath()
+		generation = session.projectGeneration.Load()
+	} else {
+		manager = a.lspManager
+		projectPath = a.currentProjectPath()
+		generation = a.projectGeneration.Load()
+	}
+	if projectPath == "" {
+		return
+	}
+	if manager == nil {
+		manager = a.initProjectLSPManagerForSession(session, projectPath, generation, a.lspInstaller)
+	}
+	for _, cfg := range indexerlsp.ConfigsFromInstaller(projectPath, a.lspInstaller) {
+		manager.RegisterServer(cfg)
+	}
+	if session != nil {
+		session.lspManager = manager
+		if session.brain != nil {
+			session.brain.SetLSPManager(manager)
+		}
+		a.syncDefaultProjectSession(session)
+		return
+	}
+	a.lspManager = manager
+	if a.brain != nil {
+		a.brain.SetLSPManager(manager)
+	}
 }
 
 func (a *App) IsLSPInstalling(serverID string) bool {

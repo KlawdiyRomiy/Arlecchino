@@ -2,49 +2,12 @@ package lsp
 
 import (
 	"log"
-	"os"
-	"os/exec"
-	"path/filepath"
 
 	lspregistry "arlecchino/internal/lsp"
 )
 
-// findPhpactorPath finds phpactor executable, trying local first then global
-func findPhpactorPath(rootPath string) string {
-	// 1. Try project-local phpactor
-	localPath := filepath.Join(rootPath, "vendor", "bin", "phpactor")
-	if _, err := os.Stat(localPath); err == nil {
-		return localPath
-	}
-
-	// 2. Try PATH
-	if path, err := exec.LookPath("phpactor"); err == nil {
-		return path
-	}
-
-	// 3. Try common global installation paths
-	home, _ := os.UserHomeDir()
-	globalPaths := []string{
-		filepath.Join(home, ".composer", "vendor", "bin", "phpactor"),
-		filepath.Join(home, ".config", "composer", "vendor", "bin", "phpactor"),
-		"/usr/local/bin/phpactor",
-	}
-
-	for _, p := range globalPaths {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-
-	// Fallback to "phpactor" - will fail at runtime if not found
-	return "phpactor"
-}
-
-func findExecutable(name string) string {
-	if path, err := exec.LookPath(name); err == nil {
-		return path
-	}
-	return ""
+func findExecutable(rootPath, name string) string {
+	return lspregistry.FindBinaryPath(rootPath, "", "", name)
 }
 
 var serverArgsByID = map[string][]string{
@@ -140,7 +103,7 @@ func DefaultConfigs(rootPath string) []ServerConfig {
 		{"javascriptreact", "typescript-language-server", []string{"--stdio"}, nil, nil, "tsserver"},
 		{"astro", "astro-ls", []string{"--stdio"}, nil, nil, ""},
 		{"python", "pyright-langserver", []string{"--stdio"}, nil, pyrightInit, ""},
-		{"php", "", []string{"language-server"}, func() string { return findPhpactorPath(rootPath) }, phpactorInit, ""},
+		{"php", "phpactor", []string{"language-server"}, nil, phpactorInit, ""},
 		{"blade", "vscode-html-language-server", []string{"--stdio"}, nil, nil, "vscode-html"},
 		{"ruby", "solargraph", []string{"stdio"}, nil, nil, ""},
 		{"vue", "vue-language-server", []string{"--stdio"}, nil, nil, ""},
@@ -198,7 +161,7 @@ func DefaultConfigs(rootPath string) []ServerConfig {
 		if c.finder != nil {
 			cmd = c.finder()
 		} else {
-			cmd = findExecutable(c.cmd)
+			cmd = findExecutable(rootPath, c.cmd)
 		}
 
 		if cmd == "" {
@@ -238,7 +201,7 @@ func ConfigsFromInstaller(rootPath string, installer *lspregistry.Installer) []S
 		if lang == nil || lang.LSPServerID == "" {
 			continue
 		}
-		cmd := installer.GetBinaryPath(lang.LSPServerID)
+		cmd := installer.GetBinaryPathForRoot(lang.LSPServerID, rootPath)
 		if cmd == "" {
 			continue
 		}

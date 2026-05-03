@@ -225,6 +225,28 @@ func TestInstallMissingDependencyReportsState(t *testing.T) {
 	}
 }
 
+func TestFindBinaryPathDiscoversProjectComposerAndUserGemBins(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable fixture uses POSIX permissions")
+	}
+
+	home := t.TempDir()
+	pathDir := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", pathDir)
+
+	root := t.TempDir()
+	projectPhpactor := writeExecutable(t, filepath.Join(root, "vendor", "bin"), "phpactor", "#!/bin/sh\necho phpactor\n")
+	if got := FindBinaryPath(root, "", "phpactor", "phpactor"); got != projectPhpactor {
+		t.Fatalf("project phpactor path = %q, want %q", got, projectPhpactor)
+	}
+
+	userSolargraph := writeExecutable(t, filepath.Join(home, ".gem", "ruby", "3.2.0", "bin"), "solargraph", "#!/bin/sh\necho solargraph\n")
+	if got := FindBinaryPath("", "", "solargraph", "solargraph"); got != userSolargraph {
+		t.Fatalf("user solargraph path = %q, want %q", got, userSolargraph)
+	}
+}
+
 func TestMacAlphaUsesHomebrewForFormerBinaryDownloads(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS Homebrew policy is only asserted on darwin")
@@ -267,6 +289,9 @@ func newInstallerCommandFixture(t *testing.T) (*Installer, string) {
 
 func writeExecutable(t *testing.T, dir, name, body string) string {
 	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("MkdirAll(%s): %v", dir, err)
+	}
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(body), 0755); err != nil {
 		t.Fatalf("WriteFile(%s): %v", path, err)

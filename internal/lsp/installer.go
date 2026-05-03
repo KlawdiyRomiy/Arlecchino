@@ -73,7 +73,10 @@ func NewInstaller(onProgress func(InstallProgress)) (*Installer, error) {
 		return nil, fmt.Errorf("failed to get home dir: %w", err)
 	}
 
-	lspDir := filepath.Join(home, ".arlecchino", "lsp")
+	lspDir := DefaultLSPDir()
+	if lspDir == "" {
+		lspDir = filepath.Join(home, ".arlecchino", "lsp")
+	}
 	if err := os.MkdirAll(lspDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create lsp dir: %w", err)
 	}
@@ -180,6 +183,113 @@ func brewInstallableServer(id, name string, languages, extensions []string, form
 
 func (i *Installer) GetLSPDir() string {
 	return i.lspDir
+}
+
+func DefaultLSPDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".arlecchino", "lsp")
+}
+
+func FindBinaryPath(rootPath, lspDir, serverID, binaryName string) string {
+	binaryName = strings.TrimSpace(binaryName)
+	if binaryName == "" {
+		return ""
+	}
+
+	for _, candidate := range binaryPathCandidates(rootPath, lspDir, serverID, binaryName) {
+		if executableFileExists(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func binaryPathCandidates(rootPath, lspDir, serverID, binaryName string) []string {
+	var candidates []string
+	add := func(parts ...string) {
+		path := filepath.Join(parts...)
+		if strings.TrimSpace(path) != "" {
+			candidates = append(candidates, path)
+		}
+	}
+	addRaw := func(path string) {
+		if strings.TrimSpace(path) != "" {
+			candidates = append(candidates, path)
+		}
+	}
+	addGlob := func(pattern string) {
+		matches, _ := filepath.Glob(pattern)
+		for i := len(matches) - 1; i >= 0; i-- {
+			addRaw(matches[i])
+		}
+	}
+
+	if rootPath != "" {
+		add(rootPath, "vendor", "bin", binaryName)
+		add(rootPath, "node_modules", ".bin", binaryName)
+		add(rootPath, ".venv", "bin", binaryName)
+		add(rootPath, "venv", "bin", binaryName)
+	}
+	if lspDir == "" {
+		lspDir = DefaultLSPDir()
+	}
+	if lspDir != "" && serverID != "" {
+		add(lspDir, serverID, binaryName)
+	}
+	if path, err := exec.LookPath(binaryName); err == nil {
+		addRaw(path)
+	}
+
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		if composerHome := os.Getenv("COMPOSER_HOME"); composerHome != "" {
+			add(composerHome, "vendor", "bin", binaryName)
+		}
+		add(home, ".composer", "vendor", "bin", binaryName)
+		add(home, ".config", "composer", "vendor", "bin", binaryName)
+		add(home, "Library", "Application Support", "Composer", "vendor", "bin", binaryName)
+		add(home, ".local", "bin", binaryName)
+		add(home, "go", "bin", binaryName)
+		add(home, ".cargo", "bin", binaryName)
+		add(home, ".npm-global", "bin", binaryName)
+		addGlob(filepath.Join(home, ".gem", "ruby", "*", "bin", binaryName))
+		addGlob(filepath.Join(home, "Library", "Python", "*", "bin", binaryName))
+	}
+	if npmPrefix := os.Getenv("NPM_CONFIG_PREFIX"); npmPrefix != "" {
+		add(npmPrefix, "bin", binaryName)
+	}
+	add("/opt/homebrew", "bin", binaryName)
+	add("/usr/local", "bin", binaryName)
+	addGlob(filepath.Join("/Library", "Ruby", "Gems", "*", "bin", binaryName))
+
+	return uniqueStrings(candidates)
+}
+
+func executableFileExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return info.Mode()&0111 != 0
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
 }
 
 func (i *Installer) GetAllServers() []*LSPInfo {
@@ -442,12 +552,24 @@ func (i *Installer) installGem(ctx context.Context, server *LSPInfo) error {
 	i.emitProgress(server.ID, "installing", 20, "Running gem install...", "")
 
 	parts := strings.Fields(server.InstallCmd)
+	if !hasCommandArg(parts, "--user-install") && !hasCommandArg(parts, "-n") {
+		parts = append(parts, "--user-install")
+	}
 	if err := runInstallCommand(ctx, "gem install failed", parts); err != nil {
 		return err
 	}
 
 	i.emitProgress(server.ID, "installing", 90, "Verifying installation...", "")
 	return nil
+}
+
+func hasCommandArg(parts []string, arg string) bool {
+	for _, part := range parts {
+		if part == arg {
+			return true
+		}
+	}
+	return false
 }
 
 func (i *Installer) installBrew(ctx context.Context, server *LSPInfo) error {
@@ -676,17 +798,10 @@ func (i *Installer) extractTarGz(src, dest string) error {
 }
 
 func (i *Installer) checkInstalled(server *LSPInfo) (bool, string) {
-	localPath := filepath.Join(i.lspDir, server.ID, server.BinaryName)
-	if _, err := os.Stat(localPath); err == nil {
-		version := i.getVersion(localPath, server.ID)
-		return true, version
-	}
-
-	path, err := exec.LookPath(server.BinaryName)
-	if err != nil {
+	path := i.findBinaryPath(server, "")
+	if path == "" {
 		return false, ""
 	}
-
 	version := i.getVersion(path, server.ID)
 	return true, version
 }
@@ -713,21 +828,22 @@ func (i *Installer) getVersion(path, id string) string {
 }
 
 func (i *Installer) GetBinaryPath(id string) string {
+	return i.GetBinaryPathForRoot(id, "")
+}
+
+func (i *Installer) GetBinaryPathForRoot(id, rootPath string) string {
 	server := i.GetServerByID(id)
 	if server == nil {
 		return ""
 	}
+	return i.findBinaryPath(server, rootPath)
+}
 
-	localPath := filepath.Join(i.lspDir, id, server.BinaryName)
-	if _, err := os.Stat(localPath); err == nil {
-		return localPath
+func (i *Installer) findBinaryPath(server *LSPInfo, rootPath string) string {
+	if server == nil {
+		return ""
 	}
-
-	if path, err := exec.LookPath(server.BinaryName); err == nil {
-		return path
-	}
-
-	return ""
+	return FindBinaryPath(rootPath, i.lspDir, server.ID, server.BinaryName)
 }
 
 func (i *Installer) emitProgress(id, stage string, percent float64, message, errMsg string) {
