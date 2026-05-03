@@ -42,14 +42,17 @@ type CapabilitySources struct {
 }
 
 type LanguageCapability struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Extensions  []string          `json:"extensions"`
-	CanonicalID string            `json:"canonicalId"`
-	Tier        CapabilityTier    `json:"tier"`
-	Sources     CapabilitySources `json:"sources"`
-	LSPServerID string            `json:"lspServerId"`
-	Notes       []string          `json:"notes"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Extensions    []string          `json:"extensions"`
+	CanonicalID   string            `json:"canonicalId"`
+	Tier          CapabilityTier    `json:"tier"`
+	Sources       CapabilitySources `json:"sources"`
+	LSPServerID   string            `json:"lspServerId"`
+	LSPInstalled  bool              `json:"lspInstalled"`
+	LSPCanInstall bool              `json:"lspCanInstall"`
+	LSPInstalling bool              `json:"lspInstalling"`
+	Notes         []string          `json:"notes"`
 }
 
 type LSPAvailabilityFunc func(language string) bool

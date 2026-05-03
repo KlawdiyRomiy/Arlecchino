@@ -28,6 +28,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import {
+  GetAutocompleteLanguageCapabilities,
+  InstallLSPServer,
+  IsLSPInstalling,
+} from "../wails/app";
+import type { AutocompleteLanguageCapability } from "../../bindings/arlecchino/models";
 import { useTheme } from "../hooks/useTheme";
 import {
   type MarkdownLinkOpenMode,
@@ -74,6 +80,46 @@ const settingsDropdownContentClass =
   "z-[130] overflow-y-auto overscroll-contain rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-overlay)_98%,transparent)] p-2 shadow-[var(--shadow-overlay)] backdrop-blur-xl";
 const settingsDropdownItemClass =
   "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-[14px] px-4 text-[15px] text-[var(--text-secondary)] outline-none transition-colors data-[highlighted]:bg-[var(--surface-hover)] data-[highlighted]:text-[var(--text-primary)]";
+
+const autocompleteTierOrder = [
+  "native",
+  "hybrid",
+  "lsp-only",
+  "syntax-only",
+  "unknown",
+] as const;
+
+const autocompleteTierLabels: Record<string, string> = {
+  native: "Native",
+  hybrid: "Hybrid",
+  "lsp-only": "LSP only",
+  "syntax-only": "Syntax",
+  unknown: "Unknown",
+};
+
+const autocompleteSourceLabels: Array<
+  [keyof AutocompleteLanguageCapability["sources"], string]
+> = [
+  ["index", "Index"],
+  ["local", "Local"],
+  ["predictive", "Predictive"],
+  ["keywords", "Keywords"],
+  ["fillAll", "Fill"],
+];
+
+const autocompleteBadgeClass = (active: boolean) =>
+  `${settingsPillClass} min-h-[26px] px-2.5 ${
+    active
+      ? "border-[color-mix(in_srgb,var(--status-success)_45%,var(--border-subtle))] text-[var(--status-success)]"
+      : "opacity-45"
+  }`;
+
+const autocompleteTierRank = (tier: string) => {
+  const rank = autocompleteTierOrder.indexOf(
+    tier as (typeof autocompleteTierOrder)[number],
+  );
+  return rank === -1 ? autocompleteTierOrder.length : rank;
+};
 
 const projectWindowModeOptions: Array<{
   value: ProjectWindowMode;
@@ -264,6 +310,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     useState<PrivateUpdateAuthStatus | null>(null);
   const [privateUpdateToken, setPrivateUpdateToken] = useState("");
   const [privateUpdateAuthBusy, setPrivateUpdateAuthBusy] = useState(false);
+  const [autocompleteCapabilities, setAutocompleteCapabilities] = useState<
+    AutocompleteLanguageCapability[]
+  >([]);
+  const [autocompleteQuery, setAutocompleteQuery] = useState("");
+  const [autocompleteLoading, setAutocompleteLoading] = useState(false);
+  const [autocompleteError, setAutocompleteError] = useState<string | null>(
+    null,
+  );
+  const [autocompleteInstallingIds, setAutocompleteInstallingIds] = useState<
+    Set<string>
+  >(() => new Set());
   const [customThemeStatus, setCustomThemeStatus] = useState<{
     tone: "success" | "error";
     message: string;
@@ -333,6 +390,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     return status;
   }, []);
 
+  const refreshAutocompleteCapabilities = useCallback(async () => {
+    setAutocompleteLoading(true);
+    setAutocompleteError(null);
+    try {
+      const capabilities = await GetAutocompleteLanguageCapabilities();
+      const nextCapabilities = capabilities ?? [];
+      setAutocompleteCapabilities(nextCapabilities);
+      setAutocompleteInstallingIds((previous) => {
+        if (previous.size === 0) {
+          return previous;
+        }
+        const installingServerIds = new Set(
+          nextCapabilities
+            .filter((capability) => capability.lspInstalling)
+            .map((capability) => capability.lspServerId)
+            .filter(Boolean),
+        );
+        const retained = new Set(
+          [...previous].filter((serverId) => installingServerIds.has(serverId)),
+        );
+        return retained.size === previous.size ? previous : retained;
+      });
+      return nextCapabilities;
+    } catch (error) {
+      setAutocompleteError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load autocomplete support.",
+      );
+      return [];
+    } finally {
+      setAutocompleteLoading(false);
+    }
+  }, []);
+
   const savePrivateUpdateAccessToken = useCallback(async () => {
     const token = privateUpdateToken.trim();
     if (!token) {
@@ -358,6 +450,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setPrivateUpdateAuthBusy(false);
     }
   }, []);
+
+  const installAutocompleteLSP = useCallback(
+    async (capability: AutocompleteLanguageCapability) => {
+      const serverId = capability.lspServerId;
+      if (!serverId) {
+        return;
+      }
+
+      setAutocompleteError(null);
+      setAutocompleteInstallingIds((previous) => {
+        const next = new Set(previous);
+        next.add(serverId);
+        return next;
+      });
+      try {
+        await InstallLSPServer(serverId);
+        const installing = await IsLSPInstalling(serverId).catch(() => true);
+        if (!installing) {
+          setAutocompleteInstallingIds((previous) => {
+            const next = new Set(previous);
+            next.delete(serverId);
+            return next;
+          });
+        }
+        await refreshAutocompleteCapabilities();
+      } catch (error) {
+        setAutocompleteInstallingIds((previous) => {
+          const next = new Set(previous);
+          next.delete(serverId);
+          return next;
+        });
+        setAutocompleteError(
+          error instanceof Error ? error.message : "Unable to install LSP.",
+        );
+      }
+    },
+    [refreshAutocompleteCapabilities],
+  );
 
   const filteredShortcuts = useMemo(() => {
     const query = shortcutQuery.trim().toLowerCase();
@@ -399,13 +529,60 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     return options.find((option) => option.value === theme)?.label ?? "System";
   }, [customThemeOptions, theme]);
 
+  const autocompleteTierCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const capability of autocompleteCapabilities) {
+      counts.set(capability.tier, (counts.get(capability.tier) ?? 0) + 1);
+    }
+    return autocompleteTierOrder.map((tier) => ({
+      tier,
+      label: autocompleteTierLabels[tier],
+      count: counts.get(tier) ?? 0,
+    }));
+  }, [autocompleteCapabilities]);
+
+  const filteredAutocompleteCapabilities = useMemo(() => {
+    const query = autocompleteQuery.trim().toLowerCase();
+    return autocompleteCapabilities
+      .filter((capability) => {
+        if (!query) {
+          return true;
+        }
+        const haystack = [
+          capability.id,
+          capability.name,
+          capability.canonicalId,
+          capability.tier,
+          capability.lspServerId,
+          ...capability.extensions,
+        ]
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(query);
+      })
+      .sort((a, b) => {
+        const tierDelta =
+          autocompleteTierRank(a.tier) - autocompleteTierRank(b.tier);
+        if (tierDelta !== 0) {
+          return tierDelta;
+        }
+        return a.name.localeCompare(b.name);
+      });
+  }, [autocompleteCapabilities, autocompleteQuery]);
+
   useEffect(() => {
     if (!isOpen || activeTab !== "diagnostics") {
       return;
     }
 
     void refreshPrivateUpdateAuthStatus();
-  }, [activeTab, isOpen, refreshPrivateUpdateAuthStatus]);
+    void refreshAutocompleteCapabilities();
+  }, [
+    activeTab,
+    isOpen,
+    refreshAutocompleteCapabilities,
+    refreshPrivateUpdateAuthStatus,
+  ]);
 
   const clearThemePreview = () => {
     previewTheme(null);
@@ -492,6 +669,168 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     return () =>
       window.removeEventListener("keydown", handleShortcutCapture, true);
   }, [recordingActionId, setShortcut]);
+
+  const renderAutocompleteSupport = () => (
+    <div
+      className={`${settingsPanelClass} p-4`}
+      data-testid="autocomplete-support"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-[var(--text-primary)]">
+            Autocomplete support
+          </div>
+          <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+            Language capability matrix for editor completions.
+          </div>
+        </div>
+        <button
+          type="button"
+          className={settingsActionButtonClass}
+          disabled={autocompleteLoading}
+          onClick={() => {
+            void refreshAutocompleteCapabilities();
+          }}
+        >
+          <RefreshCw
+            size={14}
+            className={autocompleteLoading ? "animate-spin" : ""}
+          />
+          Refresh
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-5">
+        {autocompleteTierCounts.map((item) => (
+          <div
+            key={item.tier}
+            className="rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2"
+          >
+            <div className="text-[11px] text-[var(--text-muted)]">
+              {item.label}
+            </div>
+            <div className="mt-1 font-mono text-[18px] text-[var(--text-primary)]">
+              {item.count}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <label className="shell-cluster-soft mt-4 flex min-h-[42px] min-w-0 items-center gap-2 px-3">
+        <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
+        <input
+          value={autocompleteQuery}
+          onChange={(event) => setAutocompleteQuery(event.currentTarget.value)}
+          placeholder="Search languages, extensions, or LSP servers"
+          data-testid="autocomplete-support-search"
+          className="h-9 min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+        />
+      </label>
+
+      {autocompleteError ? (
+        <div className="mt-3 flex items-center gap-2 rounded-[16px] border border-[color-mix(in_srgb,var(--status-error)_55%,var(--border-subtle))] bg-[color-mix(in_srgb,var(--status-error)_10%,transparent)] px-3 py-2 text-[12px] text-[var(--status-error)]">
+          <AlertCircle size={14} />
+          {autocompleteError}
+        </div>
+      ) : null}
+
+      <div className="mt-4 max-h-[420px] overflow-y-auto rounded-[18px] border border-[var(--border-subtle)]">
+        {filteredAutocompleteCapabilities.map((capability) => {
+          const lspInstalling =
+            capability.lspInstalling ||
+            autocompleteInstallingIds.has(capability.lspServerId);
+          const lspActive = capability.sources.lspAvailable;
+          const lspLabel = !capability.sources.lspDeclared
+            ? "No LSP"
+            : lspInstalling
+              ? "Installing"
+              : lspActive
+                ? "Active"
+                : capability.lspInstalled
+                  ? "Installed"
+                  : capability.lspCanInstall
+                    ? "Missing"
+                    : "Declared";
+          const canInstall =
+            capability.sources.lspDeclared &&
+            capability.lspCanInstall &&
+            !capability.lspInstalled;
+
+          return (
+            <div
+              key={capability.id}
+              className="grid gap-3 border-b border-[var(--border-subtle)] px-4 py-3 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[13px] font-semibold text-[var(--text-primary)]">
+                    {capability.name}
+                  </span>
+                  <span className={settingsPillClass}>
+                    {autocompleteTierLabels[capability.tier] ?? capability.tier}
+                  </span>
+                  <span
+                    className={autocompleteBadgeClass(
+                      capability.sources.lspAvailable,
+                    )}
+                  >
+                    LSP: {lspLabel}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--text-muted)]">
+                  <span className="font-mono">{capability.id}</span>
+                  {capability.lspServerId ? (
+                    <span className="font-mono">{capability.lspServerId}</span>
+                  ) : null}
+                  {capability.extensions.length ? (
+                    <span className="truncate">
+                      {capability.extensions.join(", ")}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                {autocompleteSourceLabels.map(([source, label]) => (
+                  <span
+                    key={String(source)}
+                    className={autocompleteBadgeClass(
+                      Boolean(capability.sources[source]),
+                    )}
+                  >
+                    {label}
+                  </span>
+                ))}
+                {canInstall ? (
+                  <button
+                    type="button"
+                    className={settingsActionButtonClass}
+                    disabled={lspInstalling}
+                    onClick={() => {
+                      void installAutocompleteLSP(capability);
+                    }}
+                  >
+                    {lspInstalling ? (
+                      <RefreshCw size={14} className="animate-spin" />
+                    ) : (
+                      <Plus size={14} />
+                    )}
+                    {lspInstalling ? "Installing" : "Install LSP"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+
+        {filteredAutocompleteCapabilities.length === 0 ? (
+          <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
+            No autocomplete capabilities match this filter.
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 
   const renderKeybindings = () => (
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
@@ -1001,6 +1340,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onCheckedChange={setShowCompactDiagnostics}
                     />
                   </div>
+
+                  {renderAutocompleteSupport()}
 
                   <div className={`${settingsPanelClass} p-4`}>
                     <div className="text-sm font-semibold text-[var(--text-primary)]">

@@ -83,6 +83,9 @@ export class LanguageCapability {
     "tier": CapabilityTier;
     "sources": CapabilitySources;
     "lspServerId": string;
+    "lspInstalled": boolean;
+    "lspCanInstall": boolean;
+    "lspInstalling": boolean;
     "notes": string[];
 
     /** Creates a new LanguageCapability instance. */
@@ -108,6 +111,15 @@ export class LanguageCapability {
         if (!("lspServerId" in $$source)) {
             this["lspServerId"] = "";
         }
+        if (!("lspInstalled" in $$source)) {
+            this["lspInstalled"] = false;
+        }
+        if (!("lspCanInstall" in $$source)) {
+            this["lspCanInstall"] = false;
+        }
+        if (!("lspInstalling" in $$source)) {
+            this["lspInstalling"] = false;
+        }
         if (!("notes" in $$source)) {
             this["notes"] = [];
         }
@@ -121,7 +133,7 @@ export class LanguageCapability {
     static createFrom($$source: any = {}): LanguageCapability {
         const $$createField2_0 = $$createType0;
         const $$createField5_0 = $$createType1;
-        const $$createField7_0 = $$createType0;
+        const $$createField10_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("extensions" in $$parsedSource) {
             $$parsedSource["extensions"] = $$createField2_0($$parsedSource["extensions"]);
@@ -130,7 +142,7 @@ export class LanguageCapability {
             $$parsedSource["sources"] = $$createField5_0($$parsedSource["sources"]);
         }
         if ("notes" in $$parsedSource) {
-            $$parsedSource["notes"] = $$createField7_0($$parsedSource["notes"]);
+            $$parsedSource["notes"] = $$createField10_0($$parsedSource["notes"]);
         }
         return new LanguageCapability($$parsedSource as Partial<LanguageCapability>);
     }

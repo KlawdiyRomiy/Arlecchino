@@ -12,5 +12,22 @@ func (a *App) GetAutocompleteLanguageCapabilities() []AutocompleteLanguageCapabi
 	if manager != nil {
 		hasLSP = manager.HasConfig
 	}
-	return autocomplete.BuildLanguageCapabilities(hasLSP)
+	capabilities := autocomplete.BuildLanguageCapabilities(hasLSP)
+	if a.lspInstaller == nil {
+		return capabilities
+	}
+	for i := range capabilities {
+		serverID := capabilities[i].LSPServerID
+		if serverID == "" {
+			continue
+		}
+		server := a.lspInstaller.GetServerByID(serverID)
+		if server == nil {
+			continue
+		}
+		capabilities[i].LSPInstalled = server.Installed
+		capabilities[i].LSPCanInstall = server.CanInstall
+		capabilities[i].LSPInstalling = a.lspInstaller.IsInstalling(serverID)
+	}
+	return capabilities
 }
