@@ -330,6 +330,10 @@ func (s *AutoUpdateService) downloadAndStage() AutoUpdateStatus {
 	}
 	stage, err := stageAutoUpdateZip(data, stageRoot, s.verifyCodesign)
 	if err != nil {
+		_ = os.RemoveAll(stageRoot)
+		status.StagingDir = ""
+		status.StagedAppPath = ""
+		status.ApplyAvailable = false
 		status.State = AutoUpdateStateFailed
 		status.Reason = err.Error()
 		return s.setStatus(status)

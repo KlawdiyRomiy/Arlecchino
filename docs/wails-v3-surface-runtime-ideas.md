@@ -331,10 +331,12 @@ Baseline hardening для этой ветки теперь имеет отдел
   `applying`, `failed` и `manual-required`, дает action `Download update` или
   `Install and relaunch`, а при unwritable bundle откатывается к GitHub Releases/manual
   DMG flow. Packaged app с configured manifest URL делает one-per-session startup check,
-  а ручной `Check for Updates` доступен в Settings/Diagnostics и topbar `Actions`.
-  Manual checks всегда дают visible feedback: сначала `Checking for Updates`, затем
-  result notification even if returned status is unchanged. Native notifications не
-  дублируются.
+  но background/startup policy остается quiet: foreground notification появляется
+  только если найдено обновление или уже есть staged update (`available`/`staged`).
+  `checking`, `not-available`, `manual-required` и `failed` не перебивают startup
+  UX. Ручной `Check for Updates` доступен в Settings/Diagnostics и topbar `Actions`
+  и всегда дает visible feedback: сначала `Checking for Updates`, затем result
+  notification even if returned status is unchanged. Native notifications не дублируются.
 - Private GitHub auto-update provider добавлен для закрытого repo:
   manifest source `github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-update-manifest.json`
   резолвится через GitHub Release API, ZIP скачивается из private release asset API,
@@ -344,6 +346,12 @@ Baseline hardening для этой ветки теперь имеет отдел
   `manual-required` вместо ложного updater failure.
 - Future note: when the repository becomes public, replace the private GitHub
   Keychain-token updater path with the public GitHub release/no-auth flow.
+- Private updater smoke прошел на local-alpha path `0.1.3-alpha.103`: установленный
+  app нашел private GitHub release, скачал signed `arlecchino-macos-universal.zip`,
+  прошел SHA256 + Ed25519 verify/stage, затем `Install and relaunch` заменил
+  `/Applications/Arlecchino.app` и поднял новый BuildInfo. `0.1.1-alpha.101` и
+  `0.1.2-alpha.102` считаются superseded: первый упирался в prerelease/latest
+  resolution, второй - в AppleDouble entries внутри updater ZIP.
 - Build identity добавлен в backend и Settings/Diagnostics: `GetBuildInfo()` показывает
   dev vs packaged, bundle path, version/build, git SHA, build time, channel и manifest
   URL. Local-alpha release script injects metadata через ldflags.
@@ -415,7 +423,7 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Single instance/open-file | Green | Backend parser, frontend-ready queue and `ide:intent:open` dispatch are implemented behind `ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1`; real OS smoke now proves second-instance handoff into the first launched packaged app. | Keep gated/default-off until release packaging policy says this can be enabled by default. |
 | Protocol/file associations | Green | `arlecchino://` and file association payloads normalize through strict open-intent allowlist; real OS smoke now proves Wails handler entry and emitted dispatch through LaunchServices/AppleEvent routes. | Keep production default-handler claims scoped to signed/notarized release packaging. |
 | Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates projection, and live smoke proves tray startup, dock badge set, accepted/rejected action routing and tracked failure states. Notification manual smoke now records permission status and delivery result. In-app notifications use a separate app-wide stack for foreground IDE feedback. | Run `--include-notifications` permission smoke manually before claiming native notification delivery; keep default-off until signed/bundled UX is acceptable. |
-| Auto-update runtime | Yellow | Custom updater v1 is implemented without Sparkle/Wails alpha updater API: `GetBuildInfo()`, `GetAutoUpdateStatus()`, `CheckForAutoUpdate()`, `DownloadAutoUpdate()`, `ApplyStagedAutoUpdate()`, `CancelAutoUpdate()`, plus private GitHub release access methods for Keychain token status/save/clear. It verifies channel/platform/version, SHA256 and Ed25519, stages signed `arlecchino-macos-universal.zip` containing `Arlecchino.app`, then runs a user-confirmed helper to backup/replace/relaunch without `sudo`. Foreground update UX uses the neutral bottom-right `framer-motion` app notification stack, startup check runs once for packaged apps with a manifest URL, and manual checks live in Settings plus topbar `Actions` with forced visible refresh on unchanged results. Private repo updates use `github-release://` manifest source and macOS Keychain token storage; manual-required is returned when private access is missing. Manual DMG fallback remains for unwritable bundles. | Run full old-app -> private GitHub release manifest/ZIP -> apply/relaunch smoke on installed `Arlecchino.app`; keep Developer ID/notarization marked absent. |
+| Auto-update runtime | Yellow | Custom updater v1 is implemented without Sparkle/Wails alpha updater API: `GetBuildInfo()`, `GetAutoUpdateStatus()`, `CheckForAutoUpdate()`, `DownloadAutoUpdate()`, `ApplyStagedAutoUpdate()`, `CancelAutoUpdate()`, plus private GitHub release access methods for Keychain token status/save/clear. It verifies channel/platform/version, SHA256 and Ed25519, stages signed `arlecchino-macos-universal.zip` containing `Arlecchino.app`, then runs a user-confirmed helper to backup/replace/relaunch without `sudo`. Private smoke passed for `0.1.3-alpha.103`; `0.1.1`/`0.1.2` are superseded. Foreground update UX uses the neutral bottom-right `framer-motion` app notification stack; startup/background checks are quiet unless an update is present, while manual checks in Settings/topbar remain explicit and refresh unchanged results. Private repo updates use `github-release://` manifest source and temporary macOS Keychain token storage; manual-required is returned when private access is missing during manual checks. Manual DMG fallback remains for unwritable bundles. | Keep recording old-app -> private GitHub release manifest/ZIP -> apply/relaunch smoke evidence with `wails3-private-updater-live-smoke-macos.sh`; migrate to public no-auth releases when the repo opens; keep Developer ID/notarization marked absent. |
 | Packaging/release OS integration | Yellow | Local-alpha release profile now builds universal `arm64+x86_64` ad-hoc signed `Arlecchino.app`, `arlecchino-macos-universal.zip` and optional `arlecchino-macos-universal.dmg` for Big Sur 11.0 through Tahoe 26.x. Evidence records split GitHub asset names, confirms public names do not contain `v3`, installed-app smoke distinguishes `wails://localhost` renderer labels from real TCP listeners, and release draft flow is documented as one tag with split assets. | Developer ID/notarization remains inactive until credentials exist; ad-hoc artifacts are local/tester alpha only and not trusted public distribution. Keep stale dev-orphan cleanup green before release evidence is accepted. |
 | Real OS handoff | Green | `wails3-real-os-smoke-macos.sh` launches a registered ad-hoc `.app`, traces Wails application-event handler entry, proves `ide:intent:open` emitted dispatch for protocol/file payloads and proves gated second-instance handoff. | Keep the evidence as smoke-gated; browser/Finder UX still depends on production registration/signing decisions. |
 
@@ -444,7 +452,7 @@ Ready for Arlehub checklist:
 - Green Background Shell and Flight Recorder backend readability without hub UI.
 - Yellow but stable Window Lease helper lifecycle with manual Terminal smoke recorded.
 - Yellow local-alpha release evidence for universal macOS artifacts without Developer ID.
-- Yellow auto-update runtime with signed ZIP trust root, startup/manual trigger UX and manual fallback.
+- Yellow auto-update runtime with signed ZIP trust root, quiet startup check, explicit manual trigger UX, private updater smoke evidence and manual fallback.
 - Public GitHub release asset policy uses `arlecchino-macos-universal.dmg` as macOS primary and `arlecchino-macos-universal.zip` as updater/fallback artifact.
 
 ## 1. Surface Runtime
@@ -1700,6 +1708,14 @@ risky action, user can return layout.
     private update access setup, and `wails3-private-github-alpha-release-macos.sh`
     prepares the private release upload flow. Future note: when the repo becomes public,
     replace this private Keychain-token path with a public GitHub release/no-auth updater.
+46. Done: record updater evidence and quiet startup policy. Private updater smoke passed
+    for `0.1.3-alpha.103` via signed ZIP -> verify/stage -> user-confirmed
+    install/relaunch, with `0.1.1`/`0.1.2` marked superseded. Startup/background
+    checks now stay silent for `checking`, `not-available`, `manual-required` and
+    `failed`, only surfacing foreground notifications when an update exists or is
+    staged. Long backend diagnostics remain in updater status/report while notification
+    cards show short user-facing messages. `wails3-private-updater-live-smoke-macos.sh`
+    records release/app ZIP evidence without committing artifacts.
 
 ## Next Plan: Adapt Existing Elements To Wails v3, No Arlehub
 

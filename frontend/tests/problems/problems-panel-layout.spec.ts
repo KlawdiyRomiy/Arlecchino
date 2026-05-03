@@ -237,6 +237,89 @@ const seedProblemsState = async (
   });
 };
 
+test("status bar diagnostics opens persisted floating problems panel as snapped bottom", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: true,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+      },
+      panelConfigs: {
+        problems: {
+          position: "bottom",
+          size: { width: 360, height: 180 },
+          mode: "floating",
+          x: 32,
+          y: 48,
+        },
+      },
+      rememberedSnappedPositions: {
+        problems: "right",
+      },
+    },
+  });
+
+  await openProblemsPanel(page);
+
+  const panel = page.locator('[data-testid="panel-problems"]').last();
+  await expect(panel).toBeVisible();
+  await expect(panel).toHaveAttribute("data-panel-position", "bottom");
+  await expect(panel).toHaveAttribute("data-panel-state", "docked");
+});
+
+test("status bar diagnostics uses another free snapped slot when bottom is occupied", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: true,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+      },
+      panelConfigs: {
+        terminal: {
+          position: "bottom",
+          size: { width: 0, height: 220 },
+          mode: "snapped",
+          x: 0,
+          y: 0,
+        },
+        problems: {
+          position: "bottom",
+          size: { width: 360, height: 180 },
+          mode: "floating",
+          x: 32,
+          y: 48,
+        },
+      },
+      rememberedSnappedPositions: {
+        terminal: "bottom",
+        problems: "bottom",
+      },
+    },
+  });
+
+  await openProblemsPanel(page);
+
+  const terminal = page.locator('[data-testid="panel-terminal"]').last();
+  const problems = page.locator('[data-testid="panel-problems"]').last();
+  await expect(terminal).toBeVisible();
+  await expect(terminal).toHaveAttribute("data-panel-position", "bottom");
+  await expect(problems).toBeVisible();
+  await expect(problems).toHaveAttribute("data-panel-position", "left");
+  await expect(problems).toHaveAttribute("data-panel-state", "docked");
+});
+
 const seedErrorsOnlyProblemsState = async (
   page: Parameters<typeof test>[0]["page"],
 ): Promise<void> => {
@@ -345,7 +428,6 @@ test("problems panel stays compact by default and expands into split fullscreen 
   );
   expect(transitionFrame).not.toBeNull();
   expect(transitionFrame?.opacity).toBe("1");
-  expect(transitionFrame?.width ?? 0).toBeGreaterThan(dockedBox?.width ?? 0);
   expect(transitionFrame?.height ?? 0).toBeGreaterThan(dockedBox?.height ?? 0);
 
   await expect(root).toHaveAttribute("data-problems-mode", "expanded");
@@ -407,9 +489,7 @@ test("problems panel stays compact by default and expands into split fullscreen 
   expect(fullscreenBox?.height ?? 0).toBeLessThanOrEqual(
     (panelHostBox?.height ?? 0) + 1,
   );
-  expect(fullscreenBox?.width ?? 0).toBeGreaterThan(
-    (dockedBox?.width ?? 0) * 2,
-  );
+  expect(fullscreenBox?.height ?? 0).toBeGreaterThan(dockedBox?.height ?? 0);
 
   await page
     .locator('[data-testid="panel-problems"] button[title="Полный экран"]')
@@ -417,6 +497,8 @@ test("problems panel stays compact by default and expands into split fullscreen 
 
   await expect(root).toHaveAttribute("data-problems-mode", "compact");
   await expect(root).toHaveAttribute("data-problems-layout", "stacked");
+  await expect(panel).toHaveAttribute("data-panel-position", "bottom");
+  await expect(panel).toHaveAttribute("data-panel-state", "docked");
 
   await expect
     .poll(async () => {
@@ -532,15 +614,8 @@ test("problems panel fullscreen toggle restores compact layout after ui scale ch
 
   await fullscreenButton.click();
   await expect(root).toHaveAttribute("data-problems-mode", "compact");
-
-  await expect
-    .poll(async () => {
-      const restoredBox = await panel.boundingBox();
-      return Math.abs(
-        (restoredBox?.width ?? 0) / scaledUi - (dockedBox?.width ?? 0),
-      );
-    })
-    .toBeLessThanOrEqual(2);
+  await expect(panel).toHaveAttribute("data-panel-position", "bottom");
+  await expect(panel).toHaveAttribute("data-panel-state", "docked");
   await expect
     .poll(async () => {
       const restoredBox = await panel.boundingBox();

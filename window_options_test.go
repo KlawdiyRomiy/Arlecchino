@@ -38,7 +38,7 @@ func TestProjectWindowsUseMainWindowMacOptions(t *testing.T) {
 	if options.TitleBar != application.MacTitleBarHiddenInsetUnified {
 		t.Fatalf("project window titlebar = %v, want main hidden inset unified", options.TitleBar)
 	}
-	if options.InvisibleTitleBarHeight == 0 {
-		t.Fatalf("project window invisible titlebar height = 0, want main chrome spacer")
+	if options.InvisibleTitleBarHeight != 0 {
+		t.Fatalf("project window invisible titlebar height = %d, want webview-owned drag regions", options.InvisibleTitleBarHeight)
 	}
 }

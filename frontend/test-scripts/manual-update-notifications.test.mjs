@@ -15,6 +15,7 @@ async function loadManualUpdateContracts() {
       contents: `
         export {
           buildManualUpdateNotification,
+          publishBackgroundAutoUpdateNotification,
           resetManualUpdateNotificationStateForTests,
           runAutoUpdateCheckWithNotification,
         } from "./src/shell/manualUpdateNotifications.ts";
@@ -103,6 +104,60 @@ test("manual update check shows not-available feedback", async () => {
   assert.match(summary.message, /up to date/);
 });
 
+test("background update check stays silent unless an update is present", async () => {
+  const {
+    buildManualUpdateNotification,
+    normalizeAutoUpdateStatusPayload,
+    publishBackgroundAutoUpdateNotification,
+    resetManualUpdateNotificationStateForTests,
+    useAppNotificationStore,
+  } = await loadManualUpdateContracts();
+
+  useAppNotificationStore.getState().clearNotifications();
+  resetManualUpdateNotificationStateForTests();
+
+  for (const state of [
+    "checking",
+    "not-available",
+    "manual-required",
+    "failed",
+  ]) {
+    const status = normalizeStatus(normalizeAutoUpdateStatusPayload, {
+      state,
+      channel: "alpha",
+      reason: "Background checks should not interrupt the IDE.",
+      current: {
+        packaged: true,
+        updateManifestUrl: "file:///tmp/arlecchino-update-manifest.json",
+      },
+    });
+
+    assert.equal(
+      buildManualUpdateNotification(status, {
+        includePassive: true,
+        policy: "background",
+      }),
+      null,
+    );
+    assert.equal(publishBackgroundAutoUpdateNotification(status), false);
+  }
+
+  assert.equal(useAppNotificationStore.getState().notifications.length, 0);
+
+  const availableStatus = normalizeStatus(normalizeAutoUpdateStatusPayload, {
+    state: "available",
+    channel: "alpha",
+    targetVersion: "0.2.0",
+    reason: "Version 0.2.0 is available.",
+  });
+
+  assert.equal(publishBackgroundAutoUpdateNotification(availableStatus), true);
+  assert.equal(
+    useAppNotificationStore.getState().notifications[0].title,
+    "Update available",
+  );
+});
+
 test("update notification offers download for an available signed update", async () => {
   const { buildManualUpdateNotification, normalizeAutoUpdateStatusPayload } =
     await loadManualUpdateContracts();
@@ -125,6 +180,29 @@ test("update notification offers download for an available signed update", async
   assert.equal(summary.action, "download");
   assert.equal(summary.tag, "alpha");
   assert.match(summary.message, /ZIP is signed and ready/);
+});
+
+test("update failure notification keeps filesystem diagnostics out of the card body", async () => {
+  const { buildManualUpdateNotification, normalizeAutoUpdateStatusPayload } =
+    await loadManualUpdateContracts();
+
+  const status = normalizeStatus(normalizeAutoUpdateStatusPayload, {
+    state: "failed",
+    channel: "alpha",
+    targetVersion: "0.2.0",
+    reason:
+      "staged Arlecchino.app codesign verification failed: /Users/klawdiy/Library/Caches/Arlecchino/updates/staged/candidate/extract/Arlecchino.app: a sealed resource is missing or invalid\nfile added: /Users/klawdiy/Library/Caches/Arlecchino/updates/staged/candidate/extract/Arlecchino.app/Contents/._Info.plist",
+  });
+
+  const summary = buildManualUpdateNotification(status, {
+    policy: "manual",
+  });
+
+  assert.ok(summary);
+  assert.equal(summary.kind, "error");
+  assert.doesNotMatch(summary.message, /\/Users\/klawdiy/);
+  assert.doesNotMatch(summary.message, /sealed resource/);
+  assert.match(summary.message, /Settings diagnostics/);
 });
 
 test("update notification offers relaunch after staging", async () => {

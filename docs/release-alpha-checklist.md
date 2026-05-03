@@ -113,13 +113,30 @@ notarized distribution path.
   shows an in-app notification with `Install and relaunch`. If the installed
   bundle is not writable, the notification falls back to GitHub Releases/manual
   DMG replacement.
+- Startup/background update checks must be quiet unless an update is present or
+  already staged. They must not show foreground cards for `checking`,
+  `not-available`, missing private token/manual-required, or failed background
+  checks. Manual checks stay explicit and must show visible feedback for every
+  result.
 - Installed updater smoke must verify both trigger paths: a packaged app with
-  an embedded manifest URL runs one startup check per session, and
+  an embedded manifest URL runs one quiet startup check per session, and
   `Settings -> Diagnostics -> Build identity -> Check for Updates` plus
   `TopBar -> Actions -> Check for Updates` route through the same runtime
   `CheckForAutoUpdate()` path. Repeat one trigger after an unchanged result and
   confirm the bottom-right foreground notification visibly refreshes instead of
   appearing inert.
+- Private updater smoke evidence for `0.1.3-alpha.103` passed through:
+  signed updater ZIP -> SHA256/Ed25519 verify -> stage `Arlecchino.app` ->
+  user-confirmed `Install and relaunch` -> new BuildInfo. Releases/builds
+  `0.1.1-alpha.101` and `0.1.2-alpha.102` are superseded and should not be used
+  as updater evidence.
+- Use `./scripts/wails3-private-updater-live-smoke-macos.sh --report <path>`
+  before and after the in-app update flow to record private release asset,
+  updater ZIP, installed-app, and post-relaunch BuildInfo evidence. Reports stay
+  outside git.
+- The private Keychain-token updater path is temporary while the repository is
+  private. When the repo becomes public, replace it with a public GitHub
+  release/no-auth updater flow.
 
 ## Security Gates
 

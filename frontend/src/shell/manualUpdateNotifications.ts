@@ -31,6 +31,7 @@ interface ManualUpdateNotificationSummary {
 
 interface ManualUpdateNotificationOptions {
   includePassive?: boolean;
+  policy?: "manual" | "background";
 }
 
 interface PublishAutoUpdateNotificationOptions extends ManualUpdateNotificationOptions {
@@ -46,6 +47,11 @@ const actionableStates: readonly AutoUpdateState[] = [
   "failed",
 ];
 
+const backgroundVisibleStates: readonly AutoUpdateState[] = [
+  "available",
+  "staged",
+];
+
 const versionLabel = (status: AutoUpdateStatus): string =>
   status.targetVersion ??
   status.manifest?.version ??
@@ -58,11 +64,35 @@ const channelLabel = (status: AutoUpdateStatus): string =>
   status.current.channel ??
   "alpha";
 
+const isVerboseDiagnosticReason = (reason: string): boolean =>
+  reason.length > 220 ||
+  reason.includes("\n") ||
+  /\/(?:Users|var|tmp|private)\//.test(reason) ||
+  /codesign|sealed resource|file added:|__CodeSignature|AppleDouble/i.test(
+    reason,
+  );
+
+const userFacingReason = (status: AutoUpdateStatus): string | undefined => {
+  if (!status.reason) {
+    return undefined;
+  }
+  if (status.state === "failed" && isVerboseDiagnosticReason(status.reason)) {
+    return "The update could not be completed. Open Settings diagnostics for technical details.";
+  }
+  return status.reason;
+};
+
 export const buildManualUpdateNotification = (
   status: AutoUpdateStatus,
   options: ManualUpdateNotificationOptions = {},
 ): ManualUpdateNotificationSummary | null => {
   const includePassive = options.includePassive === true;
+  const isBackground = options.policy === "background";
+
+  if (isBackground && !backgroundVisibleStates.includes(status.state)) {
+    return null;
+  }
+
   if (includePassive && status.state === "checking") {
     const channel = channelLabel(status);
     return {
@@ -106,8 +136,9 @@ export const buildManualUpdateNotification = (
   const channel = channelLabel(status);
   const notes = status.releaseNotes ?? status.manifest?.releaseNotes;
   const messageParts = [`Version ${version}`];
-  if (status.reason) {
-    messageParts.push(status.reason);
+  const reason = userFacingReason(status);
+  if (reason) {
+    messageParts.push(reason);
   }
   if (notes) {
     messageParts.push(notes);
@@ -199,14 +230,14 @@ const actionForSummary = (
       return {
         label: "Download update",
         run: () => {
-          void downloadAutoUpdate();
+          void runAutoUpdateDownloadWithNotification();
         },
       };
     case "apply":
       return {
         label: "Install and relaunch",
         run: () => {
-          void applyStagedAutoUpdate();
+          void runAutoUpdateApplyWithNotification();
         },
       };
     case "manual":
@@ -232,6 +263,7 @@ export const publishAutoUpdateNotification = (
 ): boolean => {
   const summary = buildManualUpdateNotification(status, {
     includePassive: options.includePassive,
+    policy: options.policy,
   });
   if (!summary) {
     return false;
@@ -256,6 +288,88 @@ export const publishAutoUpdateNotification = (
   return true;
 };
 
+export const publishBackgroundAutoUpdateNotification = (
+  status: AutoUpdateStatus,
+): boolean =>
+  publishAutoUpdateNotification(status, {
+    policy: "background",
+  });
+
+export async function runAutoUpdateDownloadWithNotification(
+  download: () => Promise<AutoUpdateStatus> = downloadAutoUpdate,
+): Promise<AutoUpdateStatus> {
+  const current = getAutoUpdateStatusSnapshot();
+  publishAutoUpdateNotification(
+    {
+      ...current,
+      state: "downloading",
+      reason: "Downloading update artifact.",
+      progress: current.progress > 0 ? current.progress : 0.05,
+      updatedAt: Date.now(),
+    },
+    { force: true, policy: "manual" },
+  );
+
+  try {
+    const status = await download();
+    publishAutoUpdateNotification(status, {
+      force: true,
+      policy: "manual",
+    });
+    return status;
+  } catch (error) {
+    const failedStatus: AutoUpdateStatus = {
+      ...getAutoUpdateStatusSnapshot(),
+      state: "failed",
+      reason:
+        error instanceof Error ? error.message : "Update download failed.",
+      updatedAt: Date.now(),
+    };
+    publishAutoUpdateNotification(failedStatus, {
+      force: true,
+      policy: "manual",
+    });
+    return failedStatus;
+  }
+}
+
+export async function runAutoUpdateApplyWithNotification(
+  apply: () => Promise<AutoUpdateStatus> = applyStagedAutoUpdate,
+): Promise<AutoUpdateStatus> {
+  const current = getAutoUpdateStatusSnapshot();
+  publishAutoUpdateNotification(
+    {
+      ...current,
+      state: "applying",
+      reason: "Installing update and preparing relaunch.",
+      progress: 1,
+      updatedAt: Date.now(),
+    },
+    { force: true, policy: "manual" },
+  );
+
+  try {
+    const status = await apply();
+    publishAutoUpdateNotification(status, {
+      force: true,
+      policy: "manual",
+    });
+    return status;
+  } catch (error) {
+    const failedStatus: AutoUpdateStatus = {
+      ...getAutoUpdateStatusSnapshot(),
+      state: "failed",
+      reason: error instanceof Error ? error.message : "Update install failed.",
+      updatedAt: Date.now(),
+    };
+    publishAutoUpdateNotification(failedStatus, {
+      force: true,
+      policy: "manual",
+    });
+    return failedStatus;
+  }
+}
+
 export async function runAutoUpdateCheckWithNotification(
   check: () => Promise<AutoUpdateStatus> = checkForAutoUpdate,
 ): Promise<AutoUpdateStatus> {
@@ -268,7 +382,7 @@ export async function runAutoUpdateCheckWithNotification(
       progress: 0,
       updatedAt: Date.now(),
     },
-    { includePassive: true, force: true },
+    { includePassive: true, force: true, policy: "manual" },
   );
 
   try {
@@ -276,6 +390,7 @@ export async function runAutoUpdateCheckWithNotification(
     const published = publishAutoUpdateNotification(status, {
       includePassive: true,
       force: true,
+      policy: "manual",
     });
     if (!published) {
       publishAutoUpdateNotification(
@@ -285,7 +400,7 @@ export async function runAutoUpdateCheckWithNotification(
           reason: status.reason ?? "No update is available.",
           updatedAt: Date.now(),
         },
-        { includePassive: true, force: true },
+        { includePassive: true, force: true, policy: "manual" },
       );
     }
     return status;
@@ -299,6 +414,7 @@ export async function runAutoUpdateCheckWithNotification(
     publishAutoUpdateNotification(failedStatus, {
       includePassive: true,
       force: true,
+      policy: "manual",
     });
     return failedStatus;
   }
@@ -313,12 +429,14 @@ export function useManualUpdateNotifications(): void {
   const lastNotificationKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const summary = buildManualUpdateNotification(status);
+    const summary = buildManualUpdateNotification(status, {
+      policy: "background",
+    });
     if (!summary || lastNotificationKeyRef.current === summary.key) {
       return;
     }
 
     lastNotificationKeyRef.current = summary.key;
-    publishAutoUpdateNotification(status);
+    publishBackgroundAutoUpdateNotification(status);
   }, [status]);
 }
