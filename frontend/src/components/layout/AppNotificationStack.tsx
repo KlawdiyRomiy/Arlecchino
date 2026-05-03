@@ -202,6 +202,24 @@ const actionButtonStyle: React.CSSProperties = {
   fontWeight: 720,
 };
 
+const detailsButtonStyle: React.CSSProperties = {
+  ...actionButtonStyle,
+  minHeight: "30px",
+  padding: "0 12px",
+  background: "color-mix(in srgb, var(--surface-1) 76%, transparent)",
+  color: "var(--text-secondary)",
+  fontSize: "12px",
+  fontWeight: 680,
+};
+
+const footerActionsStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  minWidth: 0,
+  flexWrap: "wrap",
+};
+
 const footerRowStyle: React.CSSProperties = {
   marginTop: "16px",
   display: "flex",
@@ -215,6 +233,30 @@ const timeStyle: React.CSSProperties = {
   color: "var(--text-muted)",
   fontSize: "12px",
   fontWeight: 620,
+};
+
+const detailsPanelStyle: React.CSSProperties = {
+  marginTop: "12px",
+  maxHeight: "168px",
+  overflow: "auto",
+  border: "1px solid var(--border-subtle)",
+  borderRadius: "14px",
+  padding: "10px 12px",
+  background: "color-mix(in srgb, var(--surface-1) 68%, transparent)",
+  color: "var(--text-secondary)",
+  fontSize: "12px",
+  lineHeight: 1.45,
+  whiteSpace: "pre-wrap",
+  overflowWrap: "anywhere",
+};
+
+const progressTrackStyle: React.CSSProperties = {
+  position: "absolute",
+  left: 0,
+  right: 0,
+  bottom: 0,
+  height: "3px",
+  background: "color-mix(in srgb, var(--border-subtle) 46%, transparent)",
 };
 
 const getIconBubbleStyle = (
@@ -299,7 +341,9 @@ interface NotificationCardProps {
   expanded: boolean;
   reducedMotion: boolean;
   visibleCount: number;
+  detailsExpanded: boolean;
   onDismiss: (id: string) => void;
+  onToggleDetails: (id: string) => void;
 }
 
 const NotificationCard: React.FC<NotificationCardProps> = ({
@@ -308,7 +352,9 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
   expanded,
   reducedMotion,
   visibleCount,
+  detailsExpanded,
   onDismiss,
+  onToggleDetails,
 }) => {
   useEffect(() => {
     if (notification.sticky || notification.timeoutMs <= 0) {
@@ -341,6 +387,14 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
   const shouldShowExternalIcon = /^open\b/i.test(
     notification.action?.label ?? "",
   );
+  const hasDetails = Boolean(notification.details);
+  const showProgress =
+    notification.kind === "progress" ||
+    typeof notification.progress === "number";
+  const progressValue =
+    typeof notification.progress === "number"
+      ? Math.max(0.08, Math.min(1, notification.progress))
+      : 0.28;
 
   return (
     <motion.div
@@ -391,22 +445,37 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
           {isReadable && notification.message ? (
             <div style={messageStyle}>{notification.message}</div>
           ) : null}
+          {isReadable && hasDetails && detailsExpanded ? (
+            <div style={detailsPanelStyle}>{notification.details}</div>
+          ) : null}
           {isReadable ? (
             <div style={footerRowStyle}>
-              {notification.action ? (
-                <button
-                  type="button"
-                  style={actionButtonStyle}
-                  onClick={() => notification.action?.run()}
-                >
-                  {notification.action.label}
-                  {shouldShowExternalIcon ? (
-                    <ExternalLink size={14} strokeWidth={2.3} />
-                  ) : null}
-                </button>
-              ) : (
-                <span />
-              )}
+              <div style={footerActionsStyle}>
+                {notification.action ? (
+                  <button
+                    type="button"
+                    style={actionButtonStyle}
+                    onClick={() => notification.action?.run()}
+                  >
+                    {notification.action.label}
+                    {shouldShowExternalIcon ? (
+                      <ExternalLink size={14} strokeWidth={2.3} />
+                    ) : null}
+                  </button>
+                ) : null}
+                {hasDetails ? (
+                  <button
+                    type="button"
+                    aria-expanded={detailsExpanded}
+                    style={detailsButtonStyle}
+                    onClick={() => onToggleDetails(notification.id)}
+                  >
+                    {detailsExpanded
+                      ? "Hide details"
+                      : (notification.detailsLabel ?? "Details")}
+                  </button>
+                ) : null}
+              </div>
               <div style={timeStyle}>
                 {formatNotificationAge(notification.updatedAt)}
               </div>
@@ -426,6 +495,25 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
           <span />
         )}
       </div>
+      {showProgress ? (
+        <div style={progressTrackStyle}>
+          <motion.div
+            initial={false}
+            animate={{ width: `${progressValue * 100}%` }}
+            transition={
+              reducedMotion
+                ? { duration: 0 }
+                : { duration: 0.22, ease: "easeOut" }
+            }
+            style={{
+              height: "100%",
+              borderRadius: radius.full,
+              background: kindAccent[notification.kind],
+              boxShadow: `0 0 14px color-mix(in srgb, ${kindAccent[notification.kind]} 42%, transparent)`,
+            }}
+          />
+        </div>
+      ) : null}
     </motion.div>
   );
 };
@@ -433,6 +521,9 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
 export const AppNotificationStack: React.FC = () => {
   const reducedMotion = Boolean(useReducedMotion());
   const [expanded, setExpanded] = useState(false);
+  const [expandedDetails, setExpandedDetails] = useState<
+    Record<string, boolean>
+  >({});
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const notifications = useAppNotificationStore((state) => state.notifications);
   const dismissNotification = useAppNotificationStore(
@@ -484,7 +575,14 @@ export const AppNotificationStack: React.FC = () => {
             expanded={expanded}
             reducedMotion={reducedMotion}
             visibleCount={visibleNotifications.length}
+            detailsExpanded={Boolean(expandedDetails[notification.id])}
             onDismiss={dismissNotification}
+            onToggleDetails={(id) =>
+              setExpandedDetails((current) => ({
+                ...current,
+                [id]: !current[id],
+              }))
+            }
           />
         ))}
       </AnimatePresence>

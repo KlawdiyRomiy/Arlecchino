@@ -17,6 +17,8 @@ export interface AppNotification {
   kind: AppNotificationKind;
   title: string;
   message?: string;
+  details?: string;
+  detailsLabel?: string;
   source?: string;
   tag?: string;
   action?: AppNotificationAction;
@@ -33,6 +35,8 @@ export interface AppNotificationInput {
   kind?: AppNotificationKind;
   title: string;
   message?: string;
+  details?: string;
+  detailsLabel?: string;
   source?: string;
   tag?: string;
   action?: AppNotificationAction;
@@ -91,6 +95,8 @@ const normalizeNotification = (
     kind,
     title: input.title,
     message: input.message,
+    details: input.details,
+    detailsLabel: input.detailsLabel,
     source: input.source,
     tag: input.tag,
     action: input.action,

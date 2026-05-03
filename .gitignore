@@ -62,6 +62,7 @@ docs/*
 !docs/model-provenance.md
 !docs/lsp-supply-chain.md
 !docs/release-alpha-checklist.md
+!docs/release-notes-template.md
 !docs/trademark-clearance.md
 !docs/themes.md
 redesign/

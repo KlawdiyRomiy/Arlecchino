@@ -37,6 +37,11 @@ notarized distribution path.
 - Keep the app bundle inside the DMG named `Arlecchino.app`.
 - Do not put the version in the macOS asset filename; the version belongs to
   the GitHub tag, release title, release notes, and manifest metadata.
+- Release notes used for updater manifests must be curated user-facing notes,
+  not raw `git log` digests. Use short sections such as `Improved`, `Fixed`,
+  `Changed`, and `Security`; start from `docs/release-notes-template.md`.
+  `scripts/wails3-update-manifest.mjs` rejects notes that look like commit
+  hash lists.
 - Do not publish a trusted macOS distribution claim until Developer ID signing
   and notarization are available. Local-alpha ad-hoc assets are for local/tester
   workflows only.
@@ -113,6 +118,12 @@ notarized distribution path.
   shows an in-app notification with `Install and relaunch`. If the installed
   bundle is not writable, the notification falls back to GitHub Releases/manual
   DMG replacement.
+- Auto-update notifications must stay compact: show the target version, a short
+  curated summary, and an expandable details section for longer curated notes.
+  They must never display raw commit hash lists in the foreground card.
+- `Download update` and `Install and relaunch` must immediately switch the
+  foreground card to progress states and block repeated clicks while the current
+  updater operation is running.
 - Startup/background update checks must be quiet unless an update is present or
   already staged. They must not show foreground cards for `checking`,
   `not-available`, missing private token/manual-required, or failed background

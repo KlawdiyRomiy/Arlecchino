@@ -168,6 +168,9 @@ if [[ "$OWNER" != "KlawdiyRomiy" || "$REPO" != "Arlecchino" ]]; then
   echo "ERROR: updater private provider currently allows only KlawdiyRomiy/Arlecchino." >&2
   exit 1
 fi
+if [[ -n "$NOTES_FILE" ]]; then
+  node "$ROOT_DIR/scripts/wails3-release-notes-policy.mjs" --validate "$NOTES_FILE"
+fi
 
 write_dry_run_report() {
   local out="$1"

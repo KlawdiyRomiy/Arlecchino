@@ -15,9 +15,12 @@ async function loadManualUpdateContracts() {
       contents: `
         export {
           buildManualUpdateNotification,
+          buildReleaseNotesPresentation,
+          isRawCommitDigestReleaseNotes,
           publishBackgroundAutoUpdateNotification,
           resetManualUpdateNotificationStateForTests,
           runAutoUpdateCheckWithNotification,
+          runAutoUpdateDownloadWithNotification,
         } from "./src/shell/manualUpdateNotifications.ts";
         export {
           useAppNotificationStore,
@@ -180,6 +183,65 @@ test("update notification offers download for an available signed update", async
   assert.equal(summary.action, "download");
   assert.equal(summary.tag, "alpha");
   assert.match(summary.message, /ZIP is signed and ready/);
+  assert.match(summary.details, /ZIP is signed and ready/);
+});
+
+test("update notification summarizes curated notes and hides raw commit digests", async () => {
+  const {
+    buildManualUpdateNotification,
+    buildReleaseNotesPresentation,
+    isRawCommitDigestReleaseNotes,
+    normalizeAutoUpdateStatusPayload,
+  } = await loadManualUpdateContracts();
+
+  const curatedNotes = `Improved
+- Faster update cards while downloading packages.
+- Wails updated to v3.0.0-alpha.83.
+- Private updater smoke is easier to audit.
+- Release artifacts stay outside the repo.
+- Extra detail remains available on GitHub.`;
+  const rawNotes = `Includes changes since v0.1.3-alpha.103:
+
+4032b7f Add grouped auto-import edits
+2629e24 Add autocomplete language resolver
+a21fc1d Route autocomplete sources through resolver
+654a39e Expose autocomplete language capabilities`;
+
+  assert.equal(isRawCommitDigestReleaseNotes(rawNotes), true);
+  assert.deepEqual(buildReleaseNotesPresentation(rawNotes), {
+    summary: [],
+    rejectedRaw: true,
+  });
+
+  const curatedStatus = normalizeStatus(normalizeAutoUpdateStatusPayload, {
+    state: "available",
+    channel: "alpha",
+    targetVersion: "0.2.0",
+    releaseNotes: curatedNotes,
+    reason: "Version 0.2.0 is available.",
+  });
+  const curatedSummary = buildManualUpdateNotification(curatedStatus);
+
+  assert.ok(curatedSummary);
+  assert.match(curatedSummary.message, /Faster update cards/);
+  assert.match(curatedSummary.message, /Release artifacts stay outside/);
+  assert.doesNotMatch(curatedSummary.message, /Extra detail remains/);
+  assert.match(curatedSummary.details, /Extra detail remains/);
+  assert.equal(curatedSummary.detailsLabel, "Details");
+
+  const rawStatus = normalizeStatus(normalizeAutoUpdateStatusPayload, {
+    state: "available",
+    channel: "alpha",
+    targetVersion: "0.2.0",
+    releaseNotes: rawNotes,
+    reason: "Version 0.2.0 is available.",
+  });
+  const rawSummary = buildManualUpdateNotification(rawStatus);
+
+  assert.ok(rawSummary);
+  assert.doesNotMatch(rawSummary.message, /4032b7f/);
+  assert.doesNotMatch(rawSummary.details ?? "", /4032b7f/);
+  assert.match(rawSummary.message, /View release notes on GitHub/);
 });
 
 test("update failure notification keeps filesystem diagnostics out of the card body", async () => {
@@ -301,6 +363,58 @@ test("manual update check does not leave checking notification stuck after a sil
   assert.equal(notification.id, "auto-update");
   assert.equal(notification.title, "Arlecchino is up to date");
   assert.equal(notification.kind, "success");
+});
+
+test("download action publishes progress immediately and ignores repeated clicks", async () => {
+  const {
+    normalizeAutoUpdateStatusPayload,
+    resetManualUpdateNotificationStateForTests,
+    runAutoUpdateDownloadWithNotification,
+    useAppNotificationStore,
+  } = await loadManualUpdateContracts();
+
+  useAppNotificationStore.getState().clearNotifications();
+  resetManualUpdateNotificationStateForTests();
+
+  let calls = 0;
+  let finishDownload;
+  const pendingDownload = new Promise((resolve) => {
+    finishDownload = resolve;
+  });
+  const stagedStatus = normalizeStatus(normalizeAutoUpdateStatusPayload, {
+    state: "staged",
+    channel: "alpha",
+    targetVersion: "0.2.0",
+    progress: 1,
+  });
+
+  const firstRun = runAutoUpdateDownloadWithNotification(async () => {
+    calls += 1;
+    await pendingDownload;
+    return stagedStatus;
+  });
+  const secondRun = runAutoUpdateDownloadWithNotification(async () => {
+    calls += 1;
+    return stagedStatus;
+  });
+
+  assert.equal(calls, 1);
+  const progressNotification =
+    useAppNotificationStore.getState().notifications[0];
+  assert.equal(progressNotification.id, "auto-update");
+  assert.equal(progressNotification.title, "Downloading update");
+  assert.equal(progressNotification.kind, "progress");
+  assert.equal(progressNotification.action, undefined);
+  assert.ok(progressNotification.progress > 0);
+
+  finishDownload();
+  await firstRun;
+  await secondRun;
+
+  const readyNotification = useAppNotificationStore.getState().notifications[0];
+  assert.equal(readyNotification.title, "Update ready");
+  assert.equal(readyNotification.action?.label, "Install and relaunch");
+  assert.equal(calls, 1);
 });
 
 test("startup update check runs only for packaged apps with a manifest URL", async () => {

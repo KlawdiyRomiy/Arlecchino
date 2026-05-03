@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { assertReleaseNotesPolicy } from "./wails3-release-notes-policy.mjs";
+
 const args = process.argv.slice(2);
 
 const usage = () => {
@@ -41,7 +43,8 @@ if (args.includes("-h") || args.includes("--help")) {
 
 const artifactPath = readOption("--artifact");
 const privateKeyPath = readOption("--private-key");
-const outPath = readOption("--out") || process.env.ARLE_WAILS3_UPDATE_MANIFEST_OUT || "";
+const outPath =
+  readOption("--out") || process.env.ARLE_WAILS3_UPDATE_MANIFEST_OUT || "";
 if (!artifactPath || !privateKeyPath || !outPath) {
   usage();
   throw new Error("--artifact, --private-key and --out are required");
@@ -53,18 +56,22 @@ const platform = readOption("--platform") || "darwin";
 const archInput = readOption("--arch") || "universal";
 const arch = archInput === "universal" ? "universal" : archInput;
 const kind = readOption("--kind") || "zip";
-const url = readOption("--url") || pathToFileURL(path.resolve(artifactPath)).href;
+const url =
+  readOption("--url") || pathToFileURL(path.resolve(artifactPath)).href;
 const notesFile = readOption("--release-notes-file");
 const releaseNotes = notesFile
   ? fs.readFileSync(notesFile, "utf8").trim()
   : (readOption("--release-notes") || "").trim();
+assertReleaseNotesPolicy(releaseNotes, notesFile || "--release-notes");
 const mandatory = args.includes("--mandatory");
 const publicKeyOut = readOption("--public-key-out");
 
 const artifact = fs.readFileSync(artifactPath);
 const privateKey = crypto.createPrivateKey(fs.readFileSync(privateKeyPath));
 if (privateKey.asymmetricKeyType !== "ed25519") {
-  throw new Error(`Private key must be Ed25519, got ${privateKey.asymmetricKeyType}`);
+  throw new Error(
+    `Private key must be Ed25519, got ${privateKey.asymmetricKeyType}`,
+  );
 }
 const signature = crypto.sign(null, artifact, privateKey).toString("base64");
 const sha256 = crypto.createHash("sha256").update(artifact).digest("hex");
@@ -90,21 +97,29 @@ const manifest = {
 };
 
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
-fs.writeFileSync(outPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644 });
+fs.writeFileSync(outPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+  mode: 0o644,
+});
 if (publicKeyOut) {
   fs.mkdirSync(path.dirname(publicKeyOut), { recursive: true });
   fs.writeFileSync(publicKeyOut, `${publicKeyRaw}\n`, { mode: 0o600 });
 }
 
-console.log(JSON.stringify({
-  manifest: outPath,
-  artifact: artifactPath,
-  publicKey: publicKeyOut || "",
-  channel,
-  version,
-  platform,
-  arch,
-  kind,
-  size: artifact.length,
-  sha256,
-}, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      manifest: outPath,
+      artifact: artifactPath,
+      publicKey: publicKeyOut || "",
+      channel,
+      version,
+      platform,
+      arch,
+      kind,
+      size: artifact.length,
+      sha256,
+    },
+    null,
+    2,
+  ),
+);

@@ -21,6 +21,8 @@ interface ManualUpdateNotificationSummary {
   key: string;
   title: string;
   message: string;
+  details?: string;
+  detailsLabel?: string;
   tag?: string;
   kind: "info" | "success" | "warning" | "error" | "progress";
   sticky: boolean;
@@ -52,6 +54,9 @@ const backgroundVisibleStates: readonly AutoUpdateState[] = [
   "staged",
 ];
 
+const curatedSummaryLimit = 4;
+const rawCommitLinePattern = /^\s*(?:[-*]\s*)?[0-9a-f]{7,40}\s+[A-Z][^\n]*$/i;
+
 const versionLabel = (status: AutoUpdateStatus): string =>
   status.targetVersion ??
   status.manifest?.version ??
@@ -81,6 +86,85 @@ const userFacingReason = (status: AutoUpdateStatus): string | undefined => {
   }
   return status.reason;
 };
+
+export const isRawCommitDigestReleaseNotes = (notes?: string): boolean => {
+  const lines = (notes ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    return false;
+  }
+
+  const rawCommitLines = lines.filter((line) =>
+    rawCommitLinePattern.test(line),
+  ).length;
+  const hasDigestHeader = lines.some((line) =>
+    /^includes changes since\b/i.test(line),
+  );
+
+  return (
+    hasDigestHeader ||
+    rawCommitLines >= 4 ||
+    (rawCommitLines >= 2 && rawCommitLines / lines.length >= 0.45)
+  );
+};
+
+const stripMarkdownListMarker = (line: string): string =>
+  line.replace(/^\s*(?:[-*+]|\d+\.)\s+/, "").trim();
+
+const isReleaseNotesHeading = (line: string): boolean =>
+  /^#{1,6}\s+\S/.test(line) ||
+  /^(added|changed|fixed|improved|removed|security|updated|highlights):?$/i.test(
+    line.trim(),
+  );
+
+const releaseNoteSummaryItems = (notes: string): string[] => {
+  const lines = notes
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const bulletItems = lines
+    .filter((line) => /^\s*(?:[-*+]|\d+\.)\s+/.test(line))
+    .map(stripMarkdownListMarker)
+    .filter(Boolean);
+
+  if (bulletItems.length > 0) {
+    return bulletItems.slice(0, curatedSummaryLimit);
+  }
+
+  return lines
+    .filter((line) => !isReleaseNotesHeading(line))
+    .slice(0, 2)
+    .map(stripMarkdownListMarker)
+    .filter(Boolean);
+};
+
+export const buildReleaseNotesPresentation = (
+  notes?: string,
+): { summary: string[]; details?: string; rejectedRaw: boolean } => {
+  const trimmed = (notes ?? "").trim();
+  if (!trimmed) {
+    return { summary: [], rejectedRaw: false };
+  }
+  if (isRawCommitDigestReleaseNotes(trimmed)) {
+    return { summary: [], rejectedRaw: true };
+  }
+
+  return {
+    summary: releaseNoteSummaryItems(trimmed),
+    details: trimmed,
+    rejectedRaw: false,
+  };
+};
+
+const releaseNotesFallback =
+  "View release notes on GitHub for the full curated changelog.";
+
+const releaseNotesForStatus = (status: AutoUpdateStatus) =>
+  buildReleaseNotesPresentation(
+    status.releaseNotes ?? status.manifest?.releaseNotes,
+  );
 
 export const buildManualUpdateNotification = (
   status: AutoUpdateStatus,
@@ -134,24 +218,28 @@ export const buildManualUpdateNotification = (
 
   const version = versionLabel(status);
   const channel = channelLabel(status);
-  const notes = status.releaseNotes ?? status.manifest?.releaseNotes;
   const messageParts = [`Version ${version}`];
   const reason = userFacingReason(status);
   if (reason) {
     messageParts.push(reason);
   }
-  if (notes) {
-    messageParts.push(notes);
-  }
+  const notes = releaseNotesForStatus(status);
 
   switch (status.state) {
     case "available":
+      if (notes.summary.length > 0) {
+        messageParts.push(...notes.summary.map((item) => `• ${item}`));
+      } else {
+        messageParts.push(releaseNotesFallback);
+      }
       return {
         key: `${status.state}:${channel}:${version}`,
         title: status.mandatory
           ? "Required update available"
           : "Update available",
         message: messageParts.join("\n"),
+        details: notes.details,
+        detailsLabel: notes.details ? "Details" : undefined,
         tag: channel,
         kind: status.mandatory ? "warning" : "info",
         sticky: status.mandatory,
@@ -162,7 +250,7 @@ export const buildManualUpdateNotification = (
       return {
         key: `${status.state}:${channel}:${version}:${status.progress}`,
         title: "Downloading update",
-        message: messageParts.join("\n"),
+        message: `Version ${version}\nDownloading and verifying the update package.`,
         tag: channel,
         kind: "progress",
         sticky: true,
@@ -174,7 +262,9 @@ export const buildManualUpdateNotification = (
       return {
         key: `${status.state}:${channel}:${version}`,
         title: "Update ready",
-        message: messageParts.join("\n"),
+        message: `Version ${version}\nUpdate is verified and ready to install after confirmation.`,
+        details: notes.details,
+        detailsLabel: notes.details ? "Details" : undefined,
         tag: channel,
         kind: "success",
         sticky: true,
@@ -186,7 +276,7 @@ export const buildManualUpdateNotification = (
       return {
         key: `${status.state}:${channel}:${version}`,
         title: "Installing update",
-        message: messageParts.join("\n"),
+        message: `Version ${version}\nArlecchino will quit, replace the app bundle, and relaunch.`,
         tag: channel,
         kind: "progress",
         sticky: true,
@@ -255,6 +345,7 @@ const actionForSummary = (
   }
 };
 
+let activeAutoUpdateOperation: "download" | "apply" | null = null;
 let lastAutoUpdateNotificationKey: string | null = null;
 
 export const publishAutoUpdateNotification = (
@@ -283,6 +374,8 @@ export const publishAutoUpdateNotification = (
     sticky: summary.sticky,
     timeoutMs: summary.timeoutMs,
     progress: summary.progress,
+    details: summary.details,
+    detailsLabel: summary.detailsLabel,
     action: actionForSummary(summary, status),
   });
   return true;
@@ -298,6 +391,11 @@ export const publishBackgroundAutoUpdateNotification = (
 export async function runAutoUpdateDownloadWithNotification(
   download: () => Promise<AutoUpdateStatus> = downloadAutoUpdate,
 ): Promise<AutoUpdateStatus> {
+  if (activeAutoUpdateOperation !== null) {
+    return getAutoUpdateStatusSnapshot();
+  }
+
+  activeAutoUpdateOperation = "download";
   const current = getAutoUpdateStatusSnapshot();
   publishAutoUpdateNotification(
     {
@@ -330,12 +428,19 @@ export async function runAutoUpdateDownloadWithNotification(
       policy: "manual",
     });
     return failedStatus;
+  } finally {
+    activeAutoUpdateOperation = null;
   }
 }
 
 export async function runAutoUpdateApplyWithNotification(
   apply: () => Promise<AutoUpdateStatus> = applyStagedAutoUpdate,
 ): Promise<AutoUpdateStatus> {
+  if (activeAutoUpdateOperation !== null) {
+    return getAutoUpdateStatusSnapshot();
+  }
+
+  activeAutoUpdateOperation = "apply";
   const current = getAutoUpdateStatusSnapshot();
   publishAutoUpdateNotification(
     {
@@ -367,6 +472,8 @@ export async function runAutoUpdateApplyWithNotification(
       policy: "manual",
     });
     return failedStatus;
+  } finally {
+    activeAutoUpdateOperation = null;
   }
 }
 
@@ -422,6 +529,7 @@ export async function runAutoUpdateCheckWithNotification(
 
 export function resetManualUpdateNotificationStateForTests(): void {
   lastAutoUpdateNotificationKey = null;
+  activeAutoUpdateOperation = null;
 }
 
 export function useManualUpdateNotifications(): void {

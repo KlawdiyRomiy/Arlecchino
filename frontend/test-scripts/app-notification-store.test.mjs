@@ -42,6 +42,8 @@ test("app notification store adds, updates, and dismisses notifications", async 
     kind: "progress",
     title: "Checking for updates",
     message: "alpha channel",
+    details: "Full release notes",
+    detailsLabel: "Details",
     tag: "alpha",
     progress: 1.4,
   });
@@ -50,6 +52,8 @@ test("app notification store adds, updates, and dismisses notifications", async 
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0].id, id);
   assert.equal(notifications[0].tag, "alpha");
+  assert.equal(notifications[0].details, "Full release notes");
+  assert.equal(notifications[0].detailsLabel, "Details");
   assert.equal(notifications[0].sticky, true);
   assert.equal(notifications[0].progress, 1);
 
