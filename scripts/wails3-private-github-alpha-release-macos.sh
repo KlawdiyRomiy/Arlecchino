@@ -242,7 +242,7 @@ LOCAL_ARGS=(
   --update-private-key "$UPDATE_PRIVATE_KEY"
 )
 if [[ -z "$OUTPUT_DIR" ]]; then
-  OUTPUT_DIR="$ROOT_DIR/build/releases/private-github-alpha"
+  OUTPUT_DIR="${TMPDIR:-/tmp}/arlecchino-private-github-alpha"
 fi
 RELEASE_DIR="$OUTPUT_DIR/$VERSION-$BUILD_NUMBER-$TAG-$RUN_ID"
 LOCAL_ARGS+=(--output-dir "$RELEASE_DIR")
