@@ -7,13 +7,14 @@ require (
 	github.com/dgraph-io/ristretto/v2 v2.3.0
 	github.com/sahilm/fuzzy v0.1.1
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
-	github.com/wailsapp/wails/v3 v3.0.0-alpha.78
+	github.com/wailsapp/wails/v3 v3.0.0-alpha.83
 	github.com/yalue/onnxruntime_go v1.25.0
 	mvdan.cc/sh/v3 v3.12.0
 )
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
+	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.3.0 // indirect
 	github.com/adrg/xdg v0.5.3 // indirect
@@ -40,6 +41,7 @@ require (
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/skeema/knownhosts v1.3.2 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
+	golang.org/x/image v0.35.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
 
