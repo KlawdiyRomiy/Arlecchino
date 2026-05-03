@@ -58,10 +58,20 @@ const curatedSummaryLimit = 4;
 const rawCommitLinePattern = /^\s*(?:[-*]\s*)?[0-9a-f]{7,40}\s+[A-Z][^\n]*$/i;
 
 const versionLabel = (status: AutoUpdateStatus): string =>
-  status.targetVersion ??
-  status.manifest?.version ??
-  status.verification.version ??
-  "unknown";
+  buildVersionLabel(
+    status.targetVersion ??
+      status.manifest?.version ??
+      status.verification.version,
+    status.targetBuild ?? status.manifest?.build,
+  );
+
+const buildVersionLabel = (version?: string, build?: string): string => {
+  const normalizedVersion = version?.trim() || "unknown";
+  const normalizedBuild = build?.trim();
+  return normalizedBuild
+    ? `${normalizedVersion} build ${normalizedBuild}`
+    : normalizedVersion;
+};
 
 const channelLabel = (status: AutoUpdateStatus): string =>
   status.channel ??

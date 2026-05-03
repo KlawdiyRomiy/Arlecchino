@@ -14,6 +14,7 @@ const usage = () => {
 
 Options:
   --version <version>       Release version. Default: 0.0.0-alpha
+  --build <build>           Release build number. Optional.
   --channel <channel>       Update channel. Default: alpha
   --platform <platform>     Artifact platform. Default: darwin
   --arch <arch>             arm64, amd64, universal, or empty. Default: universal
@@ -51,6 +52,7 @@ if (!artifactPath || !privateKeyPath || !outPath) {
 }
 
 const version = readOption("--version") || "0.0.0-alpha";
+const build = readOption("--build");
 const channel = readOption("--channel") || "alpha";
 const platform = readOption("--platform") || "darwin";
 const archInput = readOption("--arch") || "universal";
@@ -81,6 +83,7 @@ const publicKeyRaw = Buffer.from(publicJwk.x, "base64url").toString("base64");
 const manifest = {
   channel,
   version,
+  ...(build ? { build } : {}),
   releaseNotes,
   mandatory,
   artifacts: [
@@ -113,6 +116,7 @@ console.log(
       publicKey: publicKeyOut || "",
       channel,
       version,
+      build,
       platform,
       arch,
       kind,

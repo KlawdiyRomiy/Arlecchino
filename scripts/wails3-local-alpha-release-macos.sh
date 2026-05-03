@@ -378,6 +378,7 @@ if [[ -n "$UPDATE_PRIVATE_KEY" ]]; then
     --private-key "$UPDATE_PRIVATE_KEY" \
     --out "$UPDATE_MANIFEST_PATH" \
     --version "$VERSION" \
+    --build "$BUILD_NUMBER" \
     --channel "$UPDATE_CHANNEL" \
     --platform darwin \
     --arch "$UPDATE_MANIFEST_ARCH" \

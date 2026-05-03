@@ -122,6 +122,22 @@ func TestCompareAutoUpdateVersions(t *testing.T) {
 	}
 }
 
+func TestCompareAutoUpdateTargetUsesBuildWhenVersionMatches(t *testing.T) {
+	current := BuildInfo{Version: "0.1.4-alpha", Build: "104"}
+	if compareAutoUpdateTarget(PackagedOSAutoUpdateManifest{Version: "0.1.4-alpha", Build: "105"}, current) <= 0 {
+		t.Fatal("same version with newer build should be available")
+	}
+	if compareAutoUpdateTarget(PackagedOSAutoUpdateManifest{Version: "0.1.4-alpha", Build: "104"}, current) != 0 {
+		t.Fatal("same version and build should compare equal")
+	}
+	if compareAutoUpdateTarget(PackagedOSAutoUpdateManifest{Version: "0.1.4-alpha", Build: "103"}, current) >= 0 {
+		t.Fatal("same version with older build should not be newer")
+	}
+	if compareAutoUpdateTarget(PackagedOSAutoUpdateManifest{Version: "0.1.5-alpha", Build: "1"}, current) <= 0 {
+		t.Fatal("newer version should win regardless of build")
+	}
+}
+
 func buildTestUpdateZip(t *testing.T, includeApp bool, extraEntries ...string) []byte {
 	t.Helper()
 	var buffer bytes.Buffer

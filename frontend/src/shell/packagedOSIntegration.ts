@@ -46,6 +46,7 @@ export interface PackagedOSNotificationCandidate {
 export interface PackagedOSAutoUpdateManifest {
   channel?: string;
   version?: string;
+  build?: string;
   artifacts?: readonly PackagedOSAutoUpdateArtifact[];
   releaseNotes?: string;
   mandatory?: boolean;
@@ -355,6 +356,7 @@ const normalizeManifest = (
   const manifest = {
     channel: readString(getRecordValue(value, "channel", "Channel")),
     version: readString(getRecordValue(value, "version", "Version")),
+    build: readString(getRecordValue(value, "build", "Build")),
     artifacts: normalizeArtifacts(
       getRecordValue(value, "artifacts", "Artifacts"),
     ),

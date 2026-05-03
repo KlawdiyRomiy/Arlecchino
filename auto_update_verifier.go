@@ -39,6 +39,7 @@ type PackagedOSAutoUpdateVerification struct {
 func normalizeAutoUpdateManifest(manifest PackagedOSAutoUpdateManifest) PackagedOSAutoUpdateManifest {
 	manifest.Channel = strings.TrimSpace(manifest.Channel)
 	manifest.Version = strings.TrimSpace(manifest.Version)
+	manifest.Build = strings.TrimSpace(manifest.Build)
 	manifest.URL = strings.TrimSpace(manifest.URL)
 	manifest.SHA256 = strings.ToLower(strings.TrimSpace(manifest.SHA256))
 	manifest.Signature = strings.TrimSpace(manifest.Signature)

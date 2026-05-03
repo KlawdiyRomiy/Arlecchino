@@ -39,6 +39,7 @@ type PackagedOSAdapter struct {
 type PackagedOSAutoUpdateManifest struct {
 	Channel      string                         `json:"channel,omitempty"`
 	Version      string                         `json:"version,omitempty"`
+	Build        string                         `json:"build,omitempty"`
 	Artifacts    []PackagedOSAutoUpdateArtifact `json:"artifacts,omitempty"`
 	ReleaseNotes string                         `json:"releaseNotes,omitempty"`
 	Mandatory    bool                           `json:"mandatory,omitempty"`

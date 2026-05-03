@@ -58,6 +58,7 @@ type AutoUpdateStatus struct {
 	StagingDir     string                           `json:"stagingDir,omitempty"`
 	StagedAppPath  string                           `json:"stagedAppPath,omitempty"`
 	TargetVersion  string                           `json:"targetVersion,omitempty"`
+	TargetBuild    string                           `json:"targetBuild,omitempty"`
 	ReleaseNotes   string                           `json:"releaseNotes,omitempty"`
 	Mandatory      bool                             `json:"mandatory"`
 	Progress       float64                          `json:"progress"`
@@ -224,6 +225,7 @@ func (s *AutoUpdateService) check() AutoUpdateStatus {
 	}
 	status.Manifest = &manifest
 	status.TargetVersion = manifest.Version
+	status.TargetBuild = manifest.Build
 	status.ReleaseNotes = manifest.ReleaseNotes
 	status.Mandatory = manifest.Mandatory
 	status.Verification.Version = manifest.Version
@@ -244,10 +246,10 @@ func (s *AutoUpdateService) check() AutoUpdateStatus {
 	status.Artifact = cloneAutoUpdateArtifactPtr(artifact)
 	status.Verification.Artifact = cloneAutoUpdateArtifactPtr(artifact)
 
-	compare := compareAutoUpdateVersions(manifest.Version, status.Current.Version)
+	compare := compareAutoUpdateTarget(manifest, status.Current)
 	if compare <= 0 && status.Current.Version != "" && status.Current.Version != "0.0.0-dev" {
 		status.State = AutoUpdateStateNotAvailable
-		status.Reason = fmt.Sprintf("Current version %s is up to date for channel %s.", status.Current.Version, status.Channel)
+		status.Reason = fmt.Sprintf("Current version %s is up to date for channel %s.", autoUpdateBuildLabel(status.Current.Version, status.Current.Build), status.Channel)
 		return s.setStatus(status)
 	}
 
@@ -258,7 +260,7 @@ func (s *AutoUpdateService) check() AutoUpdateStatus {
 	}
 
 	status.State = AutoUpdateStateAvailable
-	status.Reason = fmt.Sprintf("Version %s is available.", manifest.Version)
+	status.Reason = fmt.Sprintf("Version %s is available.", autoUpdateBuildLabel(manifest.Version, manifest.Build))
 	status.Progress = 0
 	status.ApplyAvailable = false
 	return s.setStatus(status)
@@ -847,6 +849,51 @@ func compareAutoUpdateVersions(left string, right string) int {
 		}
 	}
 	return strings.Compare(strings.TrimSpace(left), strings.TrimSpace(right))
+}
+
+func compareAutoUpdateTarget(manifest PackagedOSAutoUpdateManifest, current BuildInfo) int {
+	versionCompare := compareAutoUpdateVersions(manifest.Version, current.Version)
+	if versionCompare != 0 {
+		return versionCompare
+	}
+	return compareAutoUpdateBuilds(manifest.Build, current.Build)
+}
+
+func compareAutoUpdateBuilds(left string, right string) int {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == right {
+		return 0
+	}
+	if left == "" {
+		return 0
+	}
+	if right == "" {
+		return 1
+	}
+
+	leftNumber, leftErr := strconv.Atoi(left)
+	rightNumber, rightErr := strconv.Atoi(right)
+	if leftErr == nil && rightErr == nil {
+		if leftNumber > rightNumber {
+			return 1
+		}
+		if leftNumber < rightNumber {
+			return -1
+		}
+		return 0
+	}
+
+	return strings.Compare(left, right)
+}
+
+func autoUpdateBuildLabel(version string, build string) string {
+	version = strings.TrimSpace(version)
+	build = strings.TrimSpace(build)
+	if build == "" {
+		return version
+	}
+	return fmt.Sprintf("%s build %s", version, build)
 }
 
 func parseAutoUpdateVersionParts(version string) [3]int {

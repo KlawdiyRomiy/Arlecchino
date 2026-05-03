@@ -307,6 +307,7 @@ MANIFEST_ARGS=(
   --private-key "$UPDATE_PRIVATE_KEY"
   --out "$MANIFEST_PATH"
   --version "$VERSION"
+  --build "$BUILD_NUMBER"
   --channel "$CHANNEL"
   --platform darwin
   --arch universal

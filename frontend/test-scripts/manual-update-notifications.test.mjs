@@ -169,6 +169,7 @@ test("update notification offers download for an available signed update", async
     state: "available",
     channel: "alpha",
     targetVersion: "0.2.0",
+    targetBuild: "42",
     releaseNotes: "ZIP is signed and ready.",
     mandatory: true,
     reason: "Version 0.2.0 is available.",
@@ -177,11 +178,12 @@ test("update notification offers download for an available signed update", async
   const summary = buildManualUpdateNotification(status);
 
   assert.ok(summary);
-  assert.equal(summary.key, "available:alpha:0.2.0");
+  assert.equal(summary.key, "available:alpha:0.2.0 build 42");
   assert.equal(summary.kind, "warning");
   assert.equal(summary.sticky, true);
   assert.equal(summary.action, "download");
   assert.equal(summary.tag, "alpha");
+  assert.match(summary.message, /Version 0\.2\.0 build 42/);
   assert.match(summary.message, /ZIP is signed and ready/);
   assert.match(summary.details, /ZIP is signed and ready/);
 });

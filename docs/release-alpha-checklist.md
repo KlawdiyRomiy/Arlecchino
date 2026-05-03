@@ -37,6 +37,9 @@ notarized distribution path.
 - Keep the app bundle inside the DMG named `Arlecchino.app`.
 - Do not put the version in the macOS asset filename; the version belongs to
   the GitHub tag, release title, release notes, and manifest metadata.
+- Updater manifests must include both `version` and `build`. Installed apps
+  compare `version` first and `build` second, so build-only alpha patches are
+  detectable after this gate.
 - Release notes used for updater manifests must be curated user-facing notes,
   not raw `git log` digests. Use short sections such as `Improved`, `Fixed`,
   `Changed`, and `Security`; start from `docs/release-notes-template.md`.
@@ -102,8 +105,8 @@ notarized distribution path.
   output, and release evidence. The ZIP must contain only `Arlecchino.app`.
 - For private GitHub alpha updates, use
   `./scripts/wails3-private-github-alpha-release-macos.sh` first without
-  `--publish` to inspect the plan. Live publish requires `--publish`, `gh auth
-  status`, a clean tracked worktree, and an external Ed25519 private key. The
+  `--publish` to inspect the plan. Live publish requires `--publish`, GitHub CLI
+  authentication, a clean tracked worktree, and an external Ed25519 private key. The
   script uploads `arlecchino-macos-universal.zip` first, regenerates the update
   manifest with the private GitHub release asset API URL, then uploads the
   manifest, public verifier key, checksums, optional DMG and release evidence.

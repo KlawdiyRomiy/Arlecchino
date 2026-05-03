@@ -43,6 +43,7 @@ export interface AutoUpdateArtifact {
 export interface AutoUpdateManifest {
   channel?: string;
   version?: string;
+  build?: string;
   artifacts?: readonly AutoUpdateArtifact[];
   releaseNotes?: string;
   mandatory?: boolean;
@@ -82,6 +83,7 @@ export interface AutoUpdateStatus {
   stagingDir?: string;
   stagedAppPath?: string;
   targetVersion?: string;
+  targetBuild?: string;
   releaseNotes?: string;
   mandatory: boolean;
   progress: number;
@@ -299,6 +301,7 @@ const normalizeManifest = (value: unknown): AutoUpdateManifest | undefined => {
   const manifest: AutoUpdateManifest = {
     channel: readString(getRecordValue(value, "channel", "Channel")),
     version: readString(getRecordValue(value, "version", "Version")),
+    build: readString(getRecordValue(value, "build", "Build")),
     artifacts: normalizeArtifacts(
       getRecordValue(value, "artifacts", "Artifacts"),
     ),
@@ -409,6 +412,9 @@ export const normalizeAutoUpdateStatusPayload = (
     ),
     targetVersion: readString(
       getRecordValue(payload, "targetVersion", "TargetVersion"),
+    ),
+    targetBuild: readString(
+      getRecordValue(payload, "targetBuild", "TargetBuild"),
     ),
     releaseNotes: readString(
       getRecordValue(payload, "releaseNotes", "ReleaseNotes"),
