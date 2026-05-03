@@ -12,6 +12,8 @@ declare global {
   interface Window {
     __autocompleteFixture?: EditorFixture;
     __autocompletePendingFixture?: EditorFixture;
+    __autocompleteDelayMs?: number;
+    __autocompleteDelayBySuffix?: Record<string, number>;
   }
 }
 
@@ -68,6 +70,12 @@ const completionsByPrefix: Record<
   "sse.": [
     { label: "Decode", source: "library", kind: "function" },
     { label: "Encode", source: "library", kind: "function" },
+  ],
+  fm: [{ label: "fmt", source: "library", kind: "module" }],
+  fmt: [{ label: "fmt", source: "library", kind: "module" }],
+  "fmt.": [
+    { label: "Println", source: "library", kind: "function" },
+    { label: "Printf", source: "library", kind: "function" },
   ],
 };
 
@@ -143,6 +151,13 @@ test.beforeEach(async ({ page }) => {
           const suffix = Object.keys(completionsByPrefix)
             .filter((candidate) => textBefore.endsWith(candidate))
             .sort((a, b) => b.length - a.length)[0];
+          const delay =
+            (suffix ? window.__autocompleteDelayBySuffix?.[suffix] : 0) ??
+            window.__autocompleteDelayMs ??
+            0;
+          if (delay > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delay));
+          }
           const items = suffix ? completionsByPrefix[suffix] : [];
           return {
             primary: items[0] ? normalizeItems([items[0]])[0] : null,
@@ -349,6 +364,26 @@ test("escape closes active autocomplete popup", async ({ page }) => {
   await expect(page.locator(".cm-tooltip-autocomplete")).toBeHidden();
   await page.waitForTimeout(250);
   await expect(page.locator(".cm-tooltip-autocomplete")).toBeHidden();
+});
+
+test("fast typing restarts pending autocomplete for the latest prefix", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    f\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "f");
+  await page.keyboard.press("Backspace");
+  await page.evaluate(() => {
+    window.__autocompleteDelayBySuffix = { f: 300 };
+  });
+
+  await page.keyboard.type("fm", { delay: 5 });
+  await waitForCompletionLabel(page, "fmt");
 });
 
 test("dot access restarts popup immediately for TypeScript namespace alias", async ({

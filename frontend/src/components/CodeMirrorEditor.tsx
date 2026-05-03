@@ -2194,7 +2194,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           );
           const isAccessTrigger = endsWithAccessTrigger(recentText);
 
-          if (completionStatus(update.state) !== null && !isAccessTrigger) {
+          if (completionStatus(update.state) === "active" && !isAccessTrigger) {
             return;
           }
 
@@ -2206,11 +2206,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             const version = documentVersionRef.current;
             if (completionDismissedVersionRef.current === version) return;
             const status = completionStatus(view.state);
-            if (status !== null && !isAccessTrigger) return;
+            if (status === "active" && !isAccessTrigger) return;
             if (view.composing || view.compositionStarted) return;
-            if (isAccessTrigger && status !== null) {
-              closeCompletion(view);
-            }
             metrics.recordAutocompleteRequested();
             autoStartedCompletionVersionRef.current = version;
             startCompletion(view);
