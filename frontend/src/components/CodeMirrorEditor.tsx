@@ -261,11 +261,18 @@ const getCurrentMinimapDockOffset = (gutter: HTMLElement): number => {
   return Number.isFinite(offset) ? offset : 0;
 };
 
+const PANEL_LAYOUT_CONTAINER_SELECTOR =
+  "[data-panel-layout-changing], [data-panel-drop-settling]";
+const PANEL_LAYOUT_CHANGING_SELECTOR =
+  '[data-panel-layout-changing="true"], [data-panel-drop-settling="true"]';
+
 const minimapDockingExtension = ViewPlugin.fromClass(
   class {
     private animationFrame: number | null = null;
     private mutationObserver: MutationObserver | null = null;
+    private panelLayoutObserver: MutationObserver | null = null;
     private resizeObserver: ResizeObserver | null = null;
+    private deferredPanelLayoutMeasure = false;
 
     constructor(private readonly view: EditorView) {
       if (typeof ResizeObserver !== "undefined") {
@@ -294,6 +301,12 @@ const minimapDockingExtension = ViewPlugin.fromClass(
     }
 
     requestMeasure() {
+      if (this.isPanelLayoutChanging()) {
+        this.deferredPanelLayoutMeasure = true;
+        this.ensurePanelLayoutObserver();
+        return;
+      }
+
       if (this.animationFrame !== null) {
         return;
       }
@@ -304,7 +317,60 @@ const minimapDockingExtension = ViewPlugin.fromClass(
       });
     }
 
+    private getPanelLayoutContainer(): HTMLElement | null {
+      return this.view.dom.closest<HTMLElement>(
+        PANEL_LAYOUT_CONTAINER_SELECTOR,
+      );
+    }
+
+    private isPanelLayoutChanging(): boolean {
+      return this.view.dom.closest(PANEL_LAYOUT_CHANGING_SELECTOR) !== null;
+    }
+
+    private ensurePanelLayoutObserver() {
+      if (
+        typeof MutationObserver === "undefined" ||
+        this.panelLayoutObserver !== null
+      ) {
+        return;
+      }
+
+      const container = this.getPanelLayoutContainer();
+      if (!container) {
+        return;
+      }
+
+      this.panelLayoutObserver = new MutationObserver(() => {
+        if (this.isPanelLayoutChanging()) {
+          return;
+        }
+
+        this.panelLayoutObserver?.disconnect();
+        this.panelLayoutObserver = null;
+
+        if (!this.deferredPanelLayoutMeasure) {
+          return;
+        }
+
+        this.deferredPanelLayoutMeasure = false;
+        this.requestMeasure();
+      });
+      this.panelLayoutObserver.observe(container, {
+        attributeFilter: [
+          "data-panel-layout-changing",
+          "data-panel-drop-settling",
+        ],
+        attributes: true,
+      });
+    }
+
     private updateDockOffset() {
+      if (this.isPanelLayoutChanging()) {
+        this.deferredPanelLayoutMeasure = true;
+        this.ensurePanelLayoutObserver();
+        return;
+      }
+
       const gutter = this.view.scrollDOM.querySelector<HTMLElement>(
         MINIMAP_GUTTER_SELECTOR,
       );
@@ -333,6 +399,9 @@ const minimapDockingExtension = ViewPlugin.fromClass(
       }
       this.resizeObserver?.disconnect();
       this.mutationObserver?.disconnect();
+      this.panelLayoutObserver?.disconnect();
+      this.panelLayoutObserver = null;
+      this.deferredPanelLayoutMeasure = false;
 
       const gutter = this.view.scrollDOM.querySelector<HTMLElement>(
         MINIMAP_GUTTER_SELECTOR,

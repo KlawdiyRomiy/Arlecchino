@@ -247,9 +247,15 @@ export const useMainLayoutPanelDrag = ({
     (panelId: string) => {
       resetDragSettlingState();
       setDraggingPreviewWindowId(null);
+      setDropTargetPosition(null);
       setDraggingPanel(panelId as PanelId);
     },
-    [resetDragSettlingState, setDraggingPanel, setDraggingPreviewWindowId],
+    [
+      resetDragSettlingState,
+      setDraggingPanel,
+      setDraggingPreviewWindowId,
+      setDropTargetPosition,
+    ],
   );
 
   const handleDragMove = useCallback(
@@ -265,6 +271,7 @@ export const useMainLayoutPanelDrag = ({
     (windowId: string) => {
       resetDragSettlingState();
       setDraggingPanel(null);
+      setDropTargetPosition(null);
       setDraggingPreviewWindowId(windowId);
       focusPreviewWindow(windowId);
     },
@@ -273,6 +280,7 @@ export const useMainLayoutPanelDrag = ({
       resetDragSettlingState,
       setDraggingPanel,
       setDraggingPreviewWindowId,
+      setDropTargetPosition,
     ],
   );
 

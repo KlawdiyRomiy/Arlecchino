@@ -54,6 +54,9 @@ const createSearchViewState = (
   visible,
 });
 
+const PANEL_DROP_SETTLING_CONTAINER_SELECTOR = "[data-panel-drop-settling]";
+const PANEL_DROP_SETTLING_SELECTOR = '[data-panel-drop-settling="true"]';
+
 export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   onAddTab,
   onOpenFileRef,
@@ -893,8 +896,71 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   );
 
   useEffect(() => {
-    const handleResize = () => {
-      requestAnimationFrame(() => {
+    let resizeFrame: number | null = null;
+    let panelLayoutObserver: MutationObserver | null = null;
+    let deferredPanelLayoutFit = false;
+
+    const isPanelDropSettling = (): boolean =>
+      Array.from(containerRefs.current.values()).some(
+        (container) => container.closest(PANEL_DROP_SETTLING_SELECTOR) !== null,
+      );
+
+    const disconnectPanelLayoutObserver = () => {
+      panelLayoutObserver?.disconnect();
+      panelLayoutObserver = null;
+    };
+
+    const ensurePanelLayoutObserver = () => {
+      if (
+        typeof MutationObserver === "undefined" ||
+        panelLayoutObserver !== null
+      ) {
+        return;
+      }
+
+      const observedContainer = Array.from(containerRefs.current.values())
+        .map((container) =>
+          container.closest<HTMLElement>(
+            PANEL_DROP_SETTLING_CONTAINER_SELECTOR,
+          ),
+        )
+        .find((container): container is HTMLElement => Boolean(container));
+      if (!observedContainer) {
+        return;
+      }
+
+      panelLayoutObserver = new MutationObserver(() => {
+        if (isPanelDropSettling()) {
+          return;
+        }
+
+        disconnectPanelLayoutObserver();
+        if (!deferredPanelLayoutFit) {
+          return;
+        }
+
+        deferredPanelLayoutFit = false;
+        handleResize();
+      });
+      panelLayoutObserver.observe(observedContainer, {
+        attributeFilter: ["data-panel-drop-settling"],
+        attributes: true,
+      });
+    };
+
+    function handleResize() {
+      if (isPanelDropSettling()) {
+        deferredPanelLayoutFit = true;
+        ensurePanelLayoutObserver();
+        return;
+      }
+
+      if (resizeFrame !== null) {
+        return;
+      }
+
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
         sessions.forEach((session) => {
           const element = session.terminal.element;
           if (element && element.offsetWidth > 0 && element.offsetHeight > 0) {
@@ -902,7 +968,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           }
         });
       });
-    };
+    }
 
     window.addEventListener("resize", handleResize);
 
@@ -922,6 +988,10 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     return () => {
       window.removeEventListener("resize", handleResize);
       resizeObserver.disconnect();
+      disconnectPanelLayoutObserver();
+      if (resizeFrame !== null) {
+        cancelAnimationFrame(resizeFrame);
+      }
     };
   }, [sessions, panes]);
 

@@ -225,6 +225,9 @@ export const FloatingPanel = React.forwardRef<
     const panelRef = useRef<HTMLDivElement>(null);
     const latestBoundsRef = useRef<PanelBounds | null>(null);
     const latestDragOffsetRef = useRef({ x: 0, y: 0 });
+    const latestDragTargetRef = useRef<PanelPosition | null>(null);
+    const pendingDragTargetRef = useRef<{ x: number; y: number } | null>(null);
+    const dragMoveFrameRef = useRef<number | null>(null);
     const zenHeaderPointerPinHandledRef = useRef(false);
     const metaKeyPressedRef = useRef(false);
     const resizeFrameRef = useRef<number | null>(null);
@@ -611,6 +614,12 @@ export const FloatingPanel = React.forwardRef<
         };
         setIsDragging(true);
         latestDragOffsetRef.current = { x: 0, y: 0 };
+        latestDragTargetRef.current = null;
+        pendingDragTargetRef.current = null;
+        if (dragMoveFrameRef.current !== null) {
+          window.cancelAnimationFrame(dragMoveFrameRef.current);
+          dragMoveFrameRef.current = null;
+        }
         dragX.set(0);
         dragY.set(0);
         // Tell global snap zones that a panel drag started
@@ -673,6 +682,44 @@ export const FloatingPanel = React.forwardRef<
       [effectiveUiScale],
     );
 
+    const scheduleDragTargetUpdate = useCallback(
+      (x: number, y: number) => {
+        pendingDragTargetRef.current = { x, y };
+        if (dragMoveFrameRef.current !== null) {
+          return;
+        }
+
+        dragMoveFrameRef.current = window.requestAnimationFrame(() => {
+          dragMoveFrameRef.current = null;
+          const pendingTarget = pendingDragTargetRef.current;
+          pendingDragTargetRef.current = null;
+          if (!pendingTarget) {
+            return;
+          }
+
+          const nextTarget = detectDropZone(pendingTarget.x, pendingTarget.y);
+          if (latestDragTargetRef.current === nextTarget) {
+            return;
+          }
+
+          latestDragTargetRef.current = nextTarget;
+          onDragMove?.(id, nextTarget);
+        });
+      },
+      [detectDropZone, id, onDragMove],
+    );
+
+    const cancelDragTargetUpdate = useCallback(() => {
+      pendingDragTargetRef.current = null;
+      latestDragTargetRef.current = null;
+      if (dragMoveFrameRef.current === null) {
+        return;
+      }
+
+      window.cancelAnimationFrame(dragMoveFrameRef.current);
+      dragMoveFrameRef.current = null;
+    }, []);
+
     const handleDragMove = useCallback(
       (e: MouseEvent) => {
         if (!isDragging) return;
@@ -687,22 +734,15 @@ export const FloatingPanel = React.forwardRef<
         latestDragOffsetRef.current = { x: dx, y: dy };
         dragX.set(dx);
         dragY.set(dy);
-        onDragMove?.(id, detectDropZone(e.clientX, e.clientY));
+        scheduleDragTargetUpdate(e.clientX, e.clientY);
       },
-      [
-        detectDropZone,
-        dragX,
-        dragY,
-        effectiveUiScale,
-        id,
-        isDragging,
-        onDragMove,
-      ],
+      [dragX, dragY, effectiveUiScale, isDragging, scheduleDragTargetUpdate],
     );
 
     const handleDragEndInternal = useCallback(
       (e: MouseEvent) => {
         if (isDragging) {
+          cancelDragTargetUpdate();
           const targetZone = detectDropZone(e.clientX, e.clientY);
           const dropX = startRef.current.panelX + latestDragOffsetRef.current.x;
           const dropY = startRef.current.panelY + latestDragOffsetRef.current.y;
@@ -725,7 +765,15 @@ export const FloatingPanel = React.forwardRef<
           window.dispatchEvent(new CustomEvent("panel-drag-end"));
         }
       },
-      [detectDropZone, dragX, dragY, id, isDragging, onDragEnd],
+      [
+        cancelDragTargetUpdate,
+        detectDropZone,
+        dragX,
+        dragY,
+        id,
+        isDragging,
+        onDragEnd,
+      ],
     );
 
     useEffect(() => {
@@ -738,12 +786,19 @@ export const FloatingPanel = React.forwardRef<
       return () => {
         document.removeEventListener("mousemove", handleDragMove);
         document.removeEventListener("mouseup", handleDragEndInternal);
+        cancelDragTargetUpdate();
         if (!isResizing) {
           document.body.style.cursor = "";
         }
         document.body.style.userSelect = "";
       };
-    }, [isDragging, handleDragMove, handleDragEndInternal, isResizing]);
+    }, [
+      isDragging,
+      handleDragMove,
+      handleDragEndInternal,
+      cancelDragTargetUpdate,
+      isResizing,
+    ]);
 
     const getTopChromeAvoidanceOffset = (): number => {
       const avoidanceTop = Math.max(0, zenTopChromeAvoidanceTop);
