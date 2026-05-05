@@ -688,13 +688,14 @@ function completionFromItem(
   item: InstantItem,
   detail: string,
   boostOffset: number,
+  rankBoost: number = 0,
 ): Completion {
   const completion: Completion = {
     label: item.label,
     detail: item.detail || detail,
     type: item.kind,
     apply: item.insertText || item.label,
-    boost: boostOffset + (item.boost || 0),
+    boost: boostOffset + rankBoost + (item.boost || 0),
   };
   (completion as unknown as Record<string, unknown>).__source = "Instant";
   return completion;
@@ -741,6 +742,26 @@ function stubAliases(stub: InstantStub): string[] {
   return [stub.packageName, ...stub.aliases];
 }
 
+function accessKindPriority(kind: string): number {
+  switch (kind) {
+    case "function":
+    case "method":
+      return 5;
+    case "property":
+    case "field":
+    case "variable":
+      return 4;
+    case "constant":
+      return 3;
+    case "class":
+    case "type":
+    case "interface":
+      return 2;
+    default:
+      return 1;
+  }
+}
+
 export function getInstantAccessCompletions(
   language: string,
   accessChain: string,
@@ -762,9 +783,23 @@ export function getInstantAccessCompletions(
   }
 
   return stub.exports
-    .filter((item) => startsWithPrefix(item.label, prefix))
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => startsWithPrefix(item.label, prefix))
+    .sort(
+      (left, right) =>
+        accessKindPriority(right.item.kind) -
+          accessKindPriority(left.item.kind) || left.index - right.index,
+    )
     .slice(0, MAX_INSTANT_OPTIONS)
-    .map((item) => completionFromItem(item, stub.packageName, 0.35));
+    .map(({ item }, rank) =>
+      completionFromItem(
+        item,
+        stub.packageName,
+        0.2,
+        accessKindPriority(item.kind) / 100 +
+          (MAX_INSTANT_OPTIONS - rank) / 1000,
+      ),
+    );
 }
 
 export function getInstantDocumentCompletions(

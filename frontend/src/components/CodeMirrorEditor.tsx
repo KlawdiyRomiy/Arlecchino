@@ -164,6 +164,7 @@ import { createLatestRequestGuard } from "../utils/latestRequestGuard";
 
 const GHOST_DEBOUNCE_MS = 50;
 const GHOST_IDLE_DELAY_MS = 900;
+const COMPLETION_FAST_BACKEND_GRACE_MS = 32;
 const EMPTY_GIT_MARKERS: GitLineMarker[] = [];
 const EMPTY_EXTENSION: Extension = [];
 const NOOP_METRICS: MetricsHandle = {
@@ -1674,8 +1675,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     [editorFeatureBudget.completions, language, metrics],
   );
 
-  const instantCompletionSource = useCallback(
-    (context: CompletionContext): CompletionResult | null => {
+  const buildInstantCompletionResult = useCallback(
+    (
+      context: CompletionContext,
+      buildOptions: { recordMetrics?: boolean } = {},
+    ): CompletionResult | null => {
       if (!editorFeatureBudget.completions) return null;
       if (context.aborted) return null;
 
@@ -1721,7 +1725,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
               currentPrefix,
             )
           : [];
-      const options = accessInfo
+      const completionOptions = accessInfo
         ? getInstantAccessCompletions(
             language,
             accessInfo.accessChain,
@@ -1732,19 +1736,27 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             instantDocumentOptions,
           );
 
-      if (options.length === 0) {
+      if (completionOptions.length === 0) {
         return null;
       }
 
-      metrics.recordInstantFallbackUsed();
-      metrics.recordCompletionList(options);
+      if (buildOptions.recordMetrics !== false) {
+        metrics.recordInstantFallbackUsed();
+        metrics.recordCompletionList(completionOptions);
+      }
       return {
         from,
-        options,
+        options: completionOptions,
         validFor: getValidForRegex(language, false),
       };
     },
     [editorFeatureBudget.completions, language, metrics],
+  );
+
+  const instantCompletionSource = useCallback(
+    (context: CompletionContext): CompletionResult | null =>
+      buildInstantCompletionResult(context, { recordMetrics: true }),
+    [buildInstantCompletionResult],
   );
 
   const backendCompletionSource = useCallback(
@@ -1934,6 +1946,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
               (item.additionalTextEdits?.length || 0) > 0;
             const backendPriority = item.priority || 0;
             const stableIndexTiebreak = -itemIndex / 100000;
+            const richCompletionBoost =
+              isSnippet || hasAdditionalTextEdits ? 1.5 : 0;
 
             const completion: CompletionWithInsertText = {
               label: item.label || "",
@@ -1941,7 +1955,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
               info: item.documentation || undefined,
               type: mapCompletionKindString(kind),
               apply: applyCompletion,
-              boost: backendPriority / 1000 + stableIndexTiebreak,
+              boost:
+                richCompletionBoost +
+                backendPriority / 1000 +
+                stableIndexTiebreak,
               __insertText: resolvedInsertText,
               __hasAdditionalTextEdits: hasAdditionalTextEdits,
             };
@@ -2003,18 +2020,41 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       metrics.recordCacheMiss();
 
       const requestId = orchestrator.nextRequestId();
-      const promise = buildCompletionResult(requestId, requestVersion).catch(
-        (err) => {
-          console.warn("Completion error:", err);
-          return null;
-        },
-      );
+      const backendPromise = buildCompletionResult(
+        requestId,
+        requestVersion,
+      ).catch((err) => {
+        console.warn("Completion error:", err);
+        return null;
+      });
+      const instantResult = buildInstantCompletionResult(context, {
+        recordMetrics: false,
+      });
+      if (instantResult) {
+        return new Promise<CompletionResult | null>((resolve) => {
+          let settled = false;
+          const settle = (result: CompletionResult | null) => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timer);
+            resolve(result);
+          };
+          const timer = window.setTimeout(() => {
+            settle(null);
+          }, COMPLETION_FAST_BACKEND_GRACE_MS);
 
-      return promise;
+          backendPromise.then((result) => {
+            settle(result);
+          });
+        });
+      }
+
+      return backendPromise;
     },
     [
       filePath,
       language,
+      buildInstantCompletionResult,
       editorFeatureBudget.completions,
       fetchPendingClassCompletions,
       metrics,
@@ -2504,7 +2544,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           override: [instantCompletionSource, backendCompletionSource],
           activateOnTyping: false,
           activateOnTypingDelay: 0,
-          updateSyncTime: 0,
+          updateSyncTime: COMPLETION_FAST_BACKEND_GRACE_MS,
           maxRenderedOptions: 50,
           defaultKeymap: false,
           closeOnBlur: true,

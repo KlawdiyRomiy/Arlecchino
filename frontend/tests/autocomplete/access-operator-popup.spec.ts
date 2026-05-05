@@ -29,6 +29,19 @@ type CodeMirrorSnapshot = {
   cursor: number;
 };
 
+const wideMemberCompletions = Array.from(
+  { length: 36 },
+  (_, index): CompletionFixtureItem => ({
+    label: `member${String(index + 1).padStart(2, "0")}`,
+    source: "library",
+    kind: index % 3 === 0 ? "property" : "function",
+    detail:
+      index % 2 === 0
+        ? "long signature with several arguments and a return type"
+        : "member",
+  }),
+);
+
 declare global {
   interface Window {
     __autocompleteFixture?: EditorFixture;
@@ -147,6 +160,8 @@ const completionsByPrefix: Record<string, CompletionFixtureItem[]> = {
     { label: "Println", source: "library", kind: "function" },
     { label: "Printf", source: "library", kind: "function" },
   ],
+  wide: [{ label: "wide", source: "library", kind: "module" }],
+  "wide.": wideMemberCompletions,
 };
 
 test.beforeEach(async ({ page }) => {
@@ -433,6 +448,22 @@ async function editorSnapshot(page: Page): Promise<CodeMirrorSnapshot> {
     });
 }
 
+async function popupBox(page: Page) {
+  const box = await page.locator(".cm-tooltip-autocomplete").boundingBox();
+  expect(box).not.toBeNull();
+  return box!;
+}
+
+async function selectedCompletionLabel(page: Page): Promise<string> {
+  return (
+    (await page
+      .locator(".cm-tooltip-autocomplete > ul > li[aria-selected]")
+      .locator(".cm-completionLabel")
+      .first()
+      .textContent()) || ""
+  ).trim();
+}
+
 async function assertAccessPopupScenario(
   page: Page,
   fixture: EditorFixture,
@@ -475,6 +506,92 @@ test("dot access restarts popup immediately for imported Go alias", async ({
       .locator(".cm-completionLabel", { hasText: "StopPoller" })
       .first(),
   ).toBeVisible();
+});
+
+test("instant member popup keeps first option and geometry while backend warms", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    fmt\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "fmt");
+  await page.evaluate(() => {
+    window.__autocompleteRequests = [];
+    window.__autocompleteDelayBySuffix = { "fmt.": 300 };
+  });
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Println", { timeout: 500 });
+
+  const initialBox = await popupBox(page);
+  expect(await selectedCompletionLabel(page)).toBe("Println");
+
+  await page.waitForFunction(() =>
+    window.__autocompleteRequests?.some((request) => request.endsWith("fmt.")),
+  );
+  await page.waitForTimeout(450);
+
+  const warmedBox = await popupBox(page);
+  expect(await selectedCompletionLabel(page)).toBe("Println");
+  expect(Math.abs(warmedBox.width - initialBox.width)).toBeLessThanOrEqual(4);
+  expect(Math.abs(warmedBox.x - initialBox.x)).toBeLessThanOrEqual(4);
+});
+
+test("popup row selection does not resize the tooltip", async ({ page }) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    context\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "context");
+  await page.evaluate(() => {
+    window.__autocompleteDelayMs = 1200;
+    window.__autocompleteRequests = [];
+  });
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Background", { timeout: 500 });
+
+  const initialBox = await popupBox(page);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(".cm-tooltip-autocomplete")).toBeVisible();
+
+  const movedBox = await popupBox(page);
+  expect(Math.abs(movedBox.width - initialBox.width)).toBeLessThanOrEqual(4);
+  expect(Math.abs(movedBox.x - initialBox.x)).toBeLessThanOrEqual(4);
+});
+
+test("popup stays open when its result list scrolls", async ({ page }) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    wide\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "wide");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "member01");
+
+  const list = page.locator(".cm-tooltip-autocomplete > ul").first();
+  const scrollable = await list.evaluate(
+    (element) => element.scrollHeight > element.clientHeight,
+  );
+  expect(scrollable).toBe(true);
+
+  await list.hover();
+  await page.mouse.wheel(0, 420);
+  await expect(page.locator(".cm-tooltip-autocomplete")).toBeVisible();
+  await expect(list).toBeVisible();
 });
 
 test("dot access refreshes cached member fields after editing current buffer", async ({
