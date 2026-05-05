@@ -380,23 +380,24 @@ async function focusRenderedTextEnd(page: Page, text: string) {
 async function waitForCompletionLabel(
   page: Page,
   label: string,
-  options: { fallbackToExplicit?: boolean } = {},
+  options: { fallbackToExplicit?: boolean; timeout?: number } = {},
 ) {
   const popup = page.locator(".cm-tooltip-autocomplete");
+  const timeout = options.timeout ?? 10000;
   if (options.fallbackToExplicit) {
     try {
-      await expect(popup).toBeVisible({ timeout: 2500 });
+      await expect(popup).toBeVisible({ timeout: Math.min(timeout, 2500) });
     } catch {
       await startCompletionExplicitly(page);
       await expect(popup).toBeVisible({ timeout: 10000 });
     }
   } else {
-    await expect(popup).toBeVisible({ timeout: 10000 });
+    await expect(popup).toBeVisible({ timeout });
   }
   await expect(
     popup.locator(".cm-completionLabel", { hasText: label }).first(),
   ).toBeVisible({
-    timeout: 10000,
+    timeout,
   });
 }
 
@@ -695,6 +696,108 @@ test("fast typing after dot restarts pending member autocomplete", async ({
     ),
   );
   await waitForCompletionLabel(page, "Println");
+});
+
+test("active member popup stays open while filtering typed prefix", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    fmt\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "fmt");
+  await page.evaluate(() => {
+    window.__autocompleteRequests = [];
+    window.__autocompleteDelayBySuffix = {};
+  });
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "Println");
+
+  await page.keyboard.type("Pr", { delay: 5 });
+  await expect(page.locator(".cm-tooltip-autocomplete")).toBeVisible();
+  await waitForCompletionLabel(page, "Println");
+
+  const memberPrefixRequests = await page.evaluate(
+    () =>
+      window.__autocompleteRequests?.filter((request) =>
+        request.endsWith("fmt.Pr"),
+      ) || [],
+  );
+  expect(memberPrefixRequests).toEqual([]);
+});
+
+test("instant keyword popup appears before delayed backend", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.locator(".cm-content").first().click();
+  await page.evaluate(() => {
+    window.__autocompleteDelayMs = 1200;
+    window.__autocompleteRequests = [];
+  });
+
+  await page.keyboard.type("pa", { delay: 5 });
+  await waitForCompletionLabel(page, "package", { timeout: 500 });
+});
+
+test("instant access popup covers non-Go library stubs before delayed backend", async ({
+  page,
+}) => {
+  const cases = [
+    {
+      language: "typescript",
+      fileName: "main.ts",
+      content: "axios\n",
+      token: "axios",
+      label: "get",
+    },
+    {
+      language: "python",
+      fileName: "main.py",
+      content: "requests\n",
+      token: "requests",
+      label: "get",
+    },
+    {
+      language: "ruby",
+      fileName: "main.rb",
+      content: "JSON\n",
+      token: "JSON",
+      label: "parse",
+    },
+  ] satisfies Array<{
+    language: string;
+    fileName: string;
+    content: string;
+    token: string;
+    label: string;
+  }>;
+
+  for (const item of cases) {
+    await mountEditor(page, {
+      filePath: `${projectPath}/${item.fileName}`,
+      language: item.language,
+      content: item.content,
+    });
+    await focusRenderedTextEnd(page, item.token);
+    await page.evaluate(() => {
+      window.__autocompleteDelayMs = 1200;
+      window.__autocompleteRequests = [];
+    });
+
+    await page.keyboard.type(".");
+    await waitForCompletionLabel(page, item.label, { timeout: 500 });
+  }
 });
 
 test("dot access restarts popup immediately for TypeScript namespace alias", async ({

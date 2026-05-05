@@ -143,6 +143,12 @@ import { createOperatorLigaturesExtension } from "../extensions/operatorLigature
 import { useGitStore } from "../stores/gitStore";
 import { createCompletionCache } from "../utils/completionCache";
 import {
+  getInstantAccessCompletions,
+  getInstantDocumentCompletions,
+  getInstantKeywordCompletions,
+  mergeInstantCompletions,
+} from "../utils/instantCompletions";
+import {
   getCodeMirrorLineCount,
   shouldEnableCodeMirrorMinimap,
   shouldUseCodeMirrorLargeDocumentMode,
@@ -582,13 +588,6 @@ function extractAccessPrefix(textBefore: string): {
   return null;
 }
 
-function isAccessCompletionContext(textBeforeLine: string) {
-  return (
-    endsWithAccessTrigger(textBeforeLine) ||
-    extractAccessPrefix(textBeforeLine) !== null
-  );
-}
-
 function extractStringPrefix(textBefore: string): string | null {
   if (!textBefore) return null;
   const stringArgPatterns = [
@@ -904,6 +903,48 @@ function buildCompletionCacheKey(
 
 function endsWithAccessTrigger(text: string) {
   return text.endsWith(".") || text.endsWith("->") || text.endsWith("::");
+}
+
+function isProbablyLineComment(textBeforeLine: string, language: string) {
+  const trimmed = textBeforeLine.trimStart();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("//") || trimmed.startsWith("/*")) return true;
+  if (
+    ["python", "ruby", "bash", "shell", "yaml", "dockerfile"].includes(
+      language,
+    ) &&
+    trimmed.startsWith("#")
+  ) {
+    return true;
+  }
+  return language === "sql" && trimmed.startsWith("--");
+}
+
+function hasOpenStringLiteral(textBeforeLine: string) {
+  let quote: "'" | '"' | "`" | null = null;
+  let escaped = false;
+
+  for (const char of textBeforeLine) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+    }
+  }
+
+  return quote !== null;
 }
 
 function buildDefinitionContext(
@@ -1629,6 +1670,79 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       } catch {
         return [];
       }
+    },
+    [editorFeatureBudget.completions, language, metrics],
+  );
+
+  const instantCompletionSource = useCallback(
+    (context: CompletionContext): CompletionResult | null => {
+      if (!editorFeatureBudget.completions) return null;
+      if (context.aborted) return null;
+
+      const pos = context.pos;
+      const line = context.state.doc.lineAt(pos);
+      const column = pos - line.from + 1;
+      const textBeforeLine = line.text.slice(0, column - 1);
+      const accessInfo = extractAccessPrefix(textBeforeLine);
+      const stringPrefix = extractStringPrefix(textBeforeLine);
+
+      if (
+        stringPrefix !== null ||
+        isProbablyLineComment(textBeforeLine, language) ||
+        hasOpenStringLiteral(textBeforeLine)
+      ) {
+        return null;
+      }
+
+      const prefixMatch = getPrefixMatch(textBeforeLine, language);
+      const rawPrefix = accessInfo?.prefix ?? prefixMatch?.prefix ?? "";
+      const currentPrefix = normalizePrefixForLanguage(
+        rawPrefix,
+        language,
+        prefixMatch?.hasDollarPrefix ?? false,
+      );
+
+      if (!accessInfo && currentPrefix.length === 0) {
+        return null;
+      }
+
+      const from = accessInfo
+        ? line.from + column - accessInfo.prefix.length - 1
+        : prefixMatch
+          ? line.from + prefixMatch.startColumn - 1
+          : pos;
+
+      const instantDocumentOptions =
+        !accessInfo &&
+        currentPrefix.length >= 2 &&
+        context.state.doc.length <= 160_000
+          ? getInstantDocumentCompletions(
+              context.state.doc.toString(),
+              currentPrefix,
+            )
+          : [];
+      const options = accessInfo
+        ? getInstantAccessCompletions(
+            language,
+            accessInfo.accessChain,
+            currentPrefix,
+          )
+        : mergeInstantCompletions(
+            getInstantKeywordCompletions(language, currentPrefix),
+            instantDocumentOptions,
+          );
+
+      if (options.length === 0) {
+        return null;
+      }
+
+      metrics.recordInstantFallbackUsed();
+      metrics.recordCompletionList(options);
+      return {
+        from,
+        options,
+        validFor: getValidForRegex(language, false),
+      };
     },
     [editorFeatureBudget.completions, language, metrics],
   );
@@ -2361,11 +2475,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           if (!insertedNonWhitespace) return;
 
           const currentPos = update.state.selection.main.head;
-          const line = update.state.doc.lineAt(currentPos);
-          const textBeforeLine = line.text.slice(0, currentPos - line.from);
-          const isAccessContext = isAccessCompletionContext(textBeforeLine);
+          const recentText = update.state.doc.sliceString(
+            Math.max(0, currentPos - 2),
+            currentPos,
+          );
+          const isAccessTrigger = endsWithAccessTrigger(recentText);
 
-          if (completionStatus(update.state) === "active" && !isAccessContext) {
+          if (completionStatus(update.state) === "active" && !isAccessTrigger) {
             return;
           }
 
@@ -2377,7 +2493,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             const version = documentVersionRef.current;
             if (completionDismissedVersionRef.current === version) return;
             const status = completionStatus(view.state);
-            if (status === "active" && !isAccessContext) return;
+            if (status === "active" && !isAccessTrigger) return;
             if (view.composing || view.compositionStarted) return;
             metrics.recordAutocompleteRequested();
             autoStartedCompletionVersionRef.current = version;
@@ -2385,7 +2501,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           });
         }),
         autocompletion({
-          override: [backendCompletionSource],
+          override: [instantCompletionSource, backendCompletionSource],
           activateOnTyping: false,
           activateOnTypingDelay: 0,
           updateSyncTime: 0,
@@ -2432,6 +2548,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     ghost,
     gitGutterExtension,
     hoverExtension,
+    instantCompletionSource,
     metrics,
     orchestrator,
     showRainbowBrackets,
@@ -2450,6 +2567,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     filePath,
     language,
     backendCompletionSource,
+    instantCompletionSource,
     definitionLinkExtension,
     diagnosticsExtension,
     ghost,
