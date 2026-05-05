@@ -716,16 +716,17 @@ func elapsedMs(start time.Time) int64 {
 }
 
 func sourceWaitBudget(ctx CompletionContext, fallbackCount int) time.Duration {
-	if ctx.InImport || ctx.AccessChain != "" || ctx.IsMethodCall || ctx.IsStaticCall {
-		if fallbackCount > 0 {
-			return genericSourceWait
-		}
-		return focusedSourceWait
-	}
 	if fallbackCount > 0 {
 		return fastFallbackSourceWait
 	}
+	if ctx.InImport || ctx.AccessChain != "" || ctx.IsMethodCall || ctx.IsStaticCall {
+		return focusedSourceWait
+	}
 	return genericSourceWait
+}
+
+func isAccessCompletionRequest(ctx CompletionContext) bool {
+	return ctx.AccessChain != "" || ctx.IsMethodCall || ctx.IsStaticCall
 }
 
 func runProviderGroupWithBudget(
@@ -966,6 +967,16 @@ func (b *PredictionBrain) collectPatternGroup(
 		return result
 	}
 
+	if isAccessCompletionRequest(ctx) {
+		stubSuggestions := b.fromStubs(ctx)
+		result.suggestions = append(result.suggestions, stubSuggestions...)
+		result.counts["stubs"] = len(stubSuggestions)
+		if len(stubSuggestions) > 0 {
+			result.statuses["predictive"] = "skipped-library-fast-path"
+			return result
+		}
+	}
+
 	if predictiveEngine != nil {
 		if isCanceled(ctx) {
 			return result
@@ -978,9 +989,11 @@ func (b *PredictionBrain) collectPatternGroup(
 	if isCanceled(ctx) {
 		return result
 	}
-	stubSuggestions := b.fromStubs(ctx)
-	result.suggestions = append(result.suggestions, stubSuggestions...)
-	result.counts["stubs"] = len(stubSuggestions)
+	if !isAccessCompletionRequest(ctx) {
+		stubSuggestions := b.fromStubs(ctx)
+		result.suggestions = append(result.suggestions, stubSuggestions...)
+		result.counts["stubs"] = len(stubSuggestions)
+	}
 
 	return result
 }

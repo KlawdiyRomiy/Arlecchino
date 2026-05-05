@@ -35,6 +35,7 @@ declare global {
     __autocompletePendingFixture?: EditorFixture;
     __autocompleteDelayMs?: number;
     __autocompleteDelayBySuffix?: Record<string, number>;
+    __autocompleteRequests?: string[];
     __editorText?: string;
     __autocompleteRoot?: { unmount: () => void };
   }
@@ -138,6 +139,14 @@ const completionsByPrefix: Record<string, CompletionFixtureItem[]> = {
     },
     { label: "Printf", source: "library", kind: "function" },
   ],
+  "fmt.P": [
+    { label: "Println", source: "library", kind: "function" },
+    { label: "Printf", source: "library", kind: "function" },
+  ],
+  "fmt.Pr": [
+    { label: "Println", source: "library", kind: "function" },
+    { label: "Printf", source: "library", kind: "function" },
+  ],
 };
 
 test.beforeEach(async ({ page }) => {
@@ -203,6 +212,10 @@ test.beforeEach(async ({ page }) => {
         GetEditorCompletions: async (ctx?: Record<string, unknown>) => {
           const textBefore = String(ctx?.textBefore || "");
           const fullText = String(ctx?.fullText || "");
+          window.__autocompleteRequests = [
+            ...(window.__autocompleteRequests || []),
+            textBefore,
+          ];
           const suffix = Object.keys(completionsByPrefix)
             .filter((candidate) => textBefore.endsWith(candidate))
             .sort((a, b) => b.length - a.length)[0];
@@ -656,6 +669,32 @@ test("fast typing restarts pending autocomplete for the latest prefix", async ({
 
   await page.keyboard.type("fm", { delay: 5 });
   await waitForCompletionLabel(page, "fmt");
+});
+
+test("fast typing after dot restarts pending member autocomplete", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    fmt\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "fmt");
+  await page.evaluate(() => {
+    window.__autocompleteRequests = [];
+    window.__autocompleteDelayBySuffix = { "fmt.": 300 };
+  });
+
+  await page.keyboard.type(".");
+  await page.keyboard.type("Pr", { delay: 5 });
+  await page.waitForFunction(() =>
+    window.__autocompleteRequests?.some((request) =>
+      request.endsWith("fmt.Pr"),
+    ),
+  );
+  await waitForCompletionLabel(page, "Println");
 });
 
 test("dot access restarts popup immediately for TypeScript namespace alias", async ({

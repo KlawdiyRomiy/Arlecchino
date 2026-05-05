@@ -477,6 +477,26 @@ func TestShouldSkipPatternGroup(t *testing.T) {
 	}
 }
 
+func TestSourceWaitBudget_UsesFastFollowupAfterAnyFallback(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  CompletionContext
+	}{
+		{name: "normal prefix", ctx: CompletionContext{Prefix: "app"}},
+		{name: "access chain", ctx: CompletionContext{AccessChain: "fmt.", IsMethodCall: true}},
+		{name: "import context", ctx: CompletionContext{InImport: true}},
+		{name: "static call", ctx: CompletionContext{AccessChain: "Route::", IsStaticCall: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sourceWaitBudget(tt.ctx, 1); got != fastFallbackSourceWait {
+				t.Fatalf("sourceWaitBudget(%+v, fallback=1) = %s, want %s", tt.ctx, got, fastFallbackSourceWait)
+			}
+		})
+	}
+}
+
 func TestShouldOfferFillAll(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -545,6 +545,16 @@ function extractAccessPrefix(textBefore: string): {
 } | null {
   if (!textBefore) return null;
 
+  const generalAccessMatch = textBefore.match(
+    /((?:\$?[A-Za-z_][\w$]*|\\?[A-Za-z_][\w$]*)(?:(?:\\|\.|::|->)[A-Za-z_][\w$]*)*(?:->|::|\.))([A-Za-z_$][\w$]*)?$/,
+  );
+  if (generalAccessMatch) {
+    return {
+      accessChain: generalAccessMatch[1],
+      prefix: generalAccessMatch[2] || "",
+    };
+  }
+
   const accessPatterns = [
     /(\$\w+)->(\w*)$/,
     /(\$this)->(\w*)$/,
@@ -570,6 +580,13 @@ function extractAccessPrefix(textBefore: string): {
     }
   }
   return null;
+}
+
+function isAccessCompletionContext(textBeforeLine: string) {
+  return (
+    endsWithAccessTrigger(textBeforeLine) ||
+    extractAccessPrefix(textBeforeLine) !== null
+  );
 }
 
 function extractStringPrefix(textBefore: string): string | null {
@@ -2344,13 +2361,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           if (!insertedNonWhitespace) return;
 
           const currentPos = update.state.selection.main.head;
-          const recentText = update.state.doc.sliceString(
-            Math.max(0, currentPos - 2),
-            currentPos,
-          );
-          const isAccessTrigger = endsWithAccessTrigger(recentText);
+          const line = update.state.doc.lineAt(currentPos);
+          const textBeforeLine = line.text.slice(0, currentPos - line.from);
+          const isAccessContext = isAccessCompletionContext(textBeforeLine);
 
-          if (completionStatus(update.state) === "active" && !isAccessTrigger) {
+          if (completionStatus(update.state) === "active" && !isAccessContext) {
             return;
           }
 
@@ -2362,7 +2377,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             const version = documentVersionRef.current;
             if (completionDismissedVersionRef.current === version) return;
             const status = completionStatus(view.state);
-            if (status === "active" && !isAccessTrigger) return;
+            if (status === "active" && !isAccessContext) return;
             if (view.composing || view.compositionStarted) return;
             metrics.recordAutocompleteRequested();
             autoStartedCompletionVersionRef.current = version;

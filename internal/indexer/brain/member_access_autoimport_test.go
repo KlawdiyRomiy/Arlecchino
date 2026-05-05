@@ -121,6 +121,46 @@ func main() {
 	}
 }
 
+func TestPredictionBrain_Complete_BuiltinLibraryAccessReturnsMembersAtOperator(t *testing.T) {
+	tests := []struct {
+		name        string
+		language    string
+		accessChain string
+		want        string
+	}{
+		{name: "go package", language: "go", accessChain: "fmt.", want: "Println"},
+		{name: "typescript namespace", language: "typescript", accessChain: "z.", want: "string"},
+		{name: "python module", language: "python", accessChain: "requests.", want: "get"},
+		{name: "php static class", language: "php", accessChain: "Carbon::", want: "parse"},
+		{name: "ruby module", language: "ruby", accessChain: "JSON.", want: "parse"},
+		{name: "swift type", language: "swift", accessChain: "URLSession.", want: "shared"},
+		{name: "dart package", language: "dart", accessChain: "http.", want: "get"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			brain := NewPredictionBrain(nil, BrainConfig{
+				MaxSuggestions:    50,
+				MinConfidence:     0.1,
+				EnableLSP:         false,
+				EnableVirtual:     false,
+				EnableSpeculative: false,
+				EnablePredictive:  false,
+			})
+			ctx := CompletionContext{
+				Language:     tt.language,
+				Prefix:       "",
+				AccessChain:  tt.accessChain,
+				IsMethodCall: strings.Contains(tt.accessChain, ".") || strings.Contains(tt.accessChain, "->"),
+				IsStaticCall: strings.Contains(tt.accessChain, "::"),
+			}
+
+			suggestions := brain.Complete(ctx)
+			assertHasSuggestion(t, suggestions, tt.want, core.SourceLibrary)
+		})
+	}
+}
+
 func TestResolveAccessChain_FallsBackToDependencyCatalog(t *testing.T) {
 	brain := NewPredictionBrain(nil, BrainConfig{MaxSuggestions: 50, MinConfidence: 0.1})
 	brain.stubProvider = NewStubProvider()
