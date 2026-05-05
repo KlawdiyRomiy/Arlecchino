@@ -121,6 +121,7 @@ test.beforeEach(async ({ page }) => {
 async function mountProjectUI(
   page: Parameters<typeof test>[0]["page"],
   activePath = "/workspace/index.html",
+  projectPath = "/workspace",
 ) {
   await page.evaluate(
     async ({ projectPath, filePath }) => {
@@ -157,10 +158,10 @@ async function mountProjectUI(
           "html",
         );
     },
-    { projectPath: "/workspace", filePath: activePath },
+    { projectPath, filePath: activePath },
   );
 
-  await expect(page.getByTitle("Search")).toBeVisible();
+  await expect(page.getByTitle("Search").first()).toBeVisible();
 }
 
 async function enterZenMode(page: Parameters<typeof test>[0]["page"]) {
@@ -262,6 +263,127 @@ test("settings button opens settings modal", async ({ page }) => {
   await page.getByTitle("Settings").click();
 
   await expect(page.getByTestId("settings-modal")).toBeVisible();
+});
+
+async function setCompactTopbarActions(
+  page: Parameters<typeof test>[0]["page"],
+) {
+  await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setShowTopbarProjectPath(false);
+  });
+}
+
+test("default topbar keeps panel and update actions in the More menu", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await expect(page.getByTestId("topbar-action-bubble")).toBeVisible();
+  await expect(page.getByTestId("topbar-sync-dependencies-button")).toHaveCount(
+    0,
+  );
+  await expect(page.getByTestId("topbar-ai-chat-button")).toHaveCount(0);
+  await expect(page.getByTitle("More")).toBeVisible();
+
+  await page.getByTitle("More").click();
+
+  await expect(page.getByRole("menuitem", { name: /AI Chat/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Terminal/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Git/ })).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: /Sync dependencies/i }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: /Check for Updates/ }),
+  ).toBeVisible();
+});
+
+test("compact topbar promotes dropdown actions and hides project label", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await setCompactTopbarActions(page);
+
+  await expect(page.getByTestId("topbar-project-path")).toHaveCount(0);
+  await expect(page.getByTestId("topbar-ai-chat-button")).toBeVisible();
+  await expect(page.getByTestId("topbar-terminal-button")).toBeVisible();
+  await expect(page.getByTestId("topbar-git-button")).toBeVisible();
+  await expect(
+    page.getByTestId("topbar-sync-dependencies-button"),
+  ).toBeVisible();
+  await expect(page.getByTestId("topbar-check-updates-button")).toBeVisible();
+  await expect(page.getByTitle("More")).toHaveCount(0);
+});
+
+test("promoted panel buttons toggle panels and active indicators", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await setCompactTopbarActions(page);
+
+  const aiChatButton = page.getByTestId("topbar-ai-chat-button");
+  const terminalButton = page.getByTestId("topbar-terminal-button");
+  const gitButton = page.getByTestId("topbar-git-button");
+
+  await aiChatButton.click();
+  await expect(page.getByTestId("panel-aiChat")).toBeVisible();
+  await expect(aiChatButton).toHaveAttribute("aria-pressed", "true");
+
+  await terminalButton.click();
+  await expect(page.getByTestId("panel-terminal")).toBeVisible();
+  await expect(terminalButton).toHaveAttribute("aria-pressed", "true");
+
+  await gitButton.click();
+  await expect(page.getByTestId("panel-git")).toBeVisible();
+  await expect(gitButton).toHaveAttribute("aria-pressed", "true");
+});
+
+test("compact topbar setting hides the whole project label", async ({
+  page,
+}) => {
+  await mountProjectUI(
+    page,
+    "/Users/klawdiy/workspace/index.html",
+    "/Users/klawdiy/workspace",
+  );
+
+  const projectPathStrip = page.getByTestId("topbar-project-path").first();
+
+  await expect(projectPathStrip).toContainText("/Users/klawdiy/");
+
+  await setCompactTopbarActions(page);
+
+  await expect(page.getByTestId("topbar-project-parent-path")).toHaveCount(0);
+  await expect(page.getByTestId("topbar-project-path")).toHaveCount(0);
+});
+
+test("indexing state remains visible in the compact topbar context bubble", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await setCompactTopbarActions(page);
+
+  await page.evaluate(() => {
+    (
+      window as unknown as {
+        runtime: {
+          EventsEmit: (eventName: string, payload?: unknown) => void;
+        };
+      }
+    ).runtime.EventsEmit("indexer:started", {
+      current: 0,
+      total: 10,
+    });
+  });
+
+  await expect(page.getByTestId("topbar-indexing-status")).toBeVisible();
+  await expect(page.getByTestId("topbar-indexing-status")).toContainText(
+    "Indexing",
+  );
+  await expect(page.getByTestId("topbar-indexing-progress")).toBeVisible();
+  await expect(page.getByTestId("topbar-project-path")).toHaveCount(0);
 });
 
 test("Cmd+Shift+. toggles zen chrome and edge hover reveals it", async ({

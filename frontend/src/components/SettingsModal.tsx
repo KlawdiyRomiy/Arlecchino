@@ -379,6 +379,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     showMinimap,
     showRainbowBrackets,
     showOperatorLigatures,
+    showTopbarProjectPath,
     zenModeEnabled,
     projectWindowMode,
     setUiScale,
@@ -389,6 +390,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowMinimap,
     setShowRainbowBrackets,
     setShowOperatorLigatures,
+    setShowTopbarProjectPath,
     setZenModeEnabled,
     setProjectWindowMode,
   } = useEditorSettingsStore();
@@ -1427,6 +1429,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       checked={zenModeEnabled}
                       onCheckedChange={setZenModeEnabled}
                       badge="Beta"
+                    />
+                    <SwitchRow
+                      title="Compact topbar actions"
+                      description="Hide the project label and show panel and update actions directly in the topbar."
+                      checked={!showTopbarProjectPath}
+                      onCheckedChange={(checked) =>
+                        setShowTopbarProjectPath(!checked)
+                      }
                     />
                     <SwitchRow
                       title="Rainbow brackets"

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { WindowControls } from "../ui";
 import { useIndexingProgress } from "../../hooks/useIndexingProgress";
+import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { ProjectIndicators } from "./ProjectIndicators";
 import { AddProjectMenu } from "./AddProjectMenu";
 
@@ -80,6 +81,10 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [addProjectMenuOpen, setAddProjectMenuOpen] = React.useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = React.useState(false);
   const indexing = useIndexingProgress();
+  const showTopbarProjectPath = useEditorSettingsStore(
+    (state) => state.showTopbarProjectPath,
+  );
+  const compactTopbarMode = !showTopbarProjectPath;
   const projectName = projectPath
     ? projectPath.split("/").filter(Boolean).at(-1)
     : null;
@@ -92,7 +97,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const menuItemClass = "shell-menu-item text-[13px]";
   const centerChipClass = "shell-pill font-mono text-[10px] tracking-[0.14em]";
   const topBarGroupClass =
-    "relative flex h-full -translate-y-[2px] items-center gap-2";
+    "relative flex h-full shrink-0 -translate-y-[2px] items-center gap-2";
   const topBarIconSize = 25;
   const menuIconSize = 16;
   const isIndexingActive =
@@ -101,13 +106,19 @@ export const TopBar: React.FC<TopBarProps> = ({
   const fadeInitial = { opacity: 0, y: -2 };
   const fadeAnimate = { opacity: 1, y: 0 };
   const contextPathRootClass =
-    "flex min-w-0 max-w-[620px] items-center gap-0 overflow-hidden font-mono leading-none";
+    "flex min-w-0 max-w-[520px] items-center gap-0 overflow-hidden font-mono leading-none";
   const contextPathParentClass =
     "truncate whitespace-nowrap text-[18px] font-medium tracking-[0.02em] text-[var(--text-muted)]";
   const contextPathNameClass =
     "truncate whitespace-nowrap text-[18px] font-medium tracking-[0.02em] text-[var(--text-primary)]";
   const indexingBubbleClass =
-    "flex items-center gap-3 font-mono leading-none text-[12px] tracking-[0.1em] text-[var(--text-secondary)]";
+    "flex min-w-[188px] items-center justify-center gap-3 font-mono leading-none text-[12px] tracking-[0.1em] text-[var(--text-secondary)]";
+  const getPanelActionClass = (active?: boolean) =>
+    `${topBarButtonClass} ${
+      active
+        ? "border-[var(--shell-border-strong)] bg-[var(--surface-active)] text-[var(--text-primary)] shadow-[inset_0_1px_0_var(--shell-inner-highlight)]"
+        : "text-[var(--text-secondary)]"
+    }`;
   const topBarDragStyle = {
     "--wails-draggable": windowDragEnabled ? "drag" : "no-drag",
     WebkitAppRegion: windowDragEnabled ? "drag" : "no-drag",
@@ -126,7 +137,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   return (
     <div
-      className="relative z-50 flex h-14 items-center gap-2 rounded-b-[18px] border-b border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3"
+      className="relative z-50 flex h-14 min-w-0 items-center gap-2 rounded-b-[18px] border-b border-[var(--border-subtle)] bg-[var(--surface-canvas)] px-3"
       style={topBarDragStyle}
       data-testid="topbar"
     >
@@ -185,14 +196,14 @@ export const TopBar: React.FC<TopBarProps> = ({
       <div className="relative flex h-full -translate-y-[2px] flex-1 items-center justify-center px-2">
         <div className="flex max-w-[860px] flex-1 items-center justify-center gap-2 overflow-hidden">
           <AnimatePresence mode="wait">
-            {projectPath ? (
+            {projectPath && (isIndexingActive || showTopbarProjectPath) ? (
               <motion.div
                 key="context-strip"
                 initial={fadeInitial}
                 animate={fadeAnimate}
                 exit={fadeInitial}
                 transition={fadeTransition}
-                className="topbar-context-shell shell-cluster min-w-0 max-w-[620px] items-center overflow-hidden px-3 py-1.5"
+                className="topbar-context-shell shell-cluster min-w-0 max-w-[560px] items-center overflow-hidden px-3 py-1.5"
               >
                 <AnimatePresence mode="wait" initial={false}>
                   {isIndexingActive ? (
@@ -203,9 +214,13 @@ export const TopBar: React.FC<TopBarProps> = ({
                       exit={fadeInitial}
                       transition={fadeTransition}
                       className={indexingBubbleClass}
+                      data-testid="topbar-indexing-status"
                     >
                       <span>Indexing</span>
-                      <span className="inline-flex h-2 w-28 overflow-hidden rounded-full bg-white/8">
+                      <span
+                        className="inline-flex h-2 w-28 overflow-hidden rounded-full bg-white/8"
+                        data-testid="topbar-indexing-progress"
+                      >
                         <motion.span
                           className="h-full rounded-full bg-[var(--text-primary)]"
                           initial={{ width: "0%" }}
@@ -224,7 +239,10 @@ export const TopBar: React.FC<TopBarProps> = ({
                       className={contextPathRootClass}
                       data-testid="topbar-project-path"
                     >
-                      <span className={contextPathParentClass}>
+                      <span
+                        className={contextPathParentClass}
+                        data-testid="topbar-project-parent-path"
+                      >
                         {projectParent}
                       </span>
                       <span className={contextPathNameClass}>
@@ -234,7 +252,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   )}
                 </AnimatePresence>
               </motion.div>
-            ) : (
+            ) : !projectPath ? (
               <motion.div
                 key="empty-context-strip"
                 initial={fadeInitial}
@@ -245,6 +263,15 @@ export const TopBar: React.FC<TopBarProps> = ({
               >
                 <span className={centerChipClass}>No project open</span>
               </motion.div>
+            ) : (
+              <motion.div
+                key="compact-context-spacer"
+                initial={false}
+                animate={{ opacity: 0 }}
+                exit={{ opacity: 0 }}
+                className="h-0 w-0"
+                aria-hidden="true"
+              />
             )}
           </AnimatePresence>
         </div>
@@ -254,7 +281,10 @@ export const TopBar: React.FC<TopBarProps> = ({
         className={topBarGroupClass}
         style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}
       >
-        <div className="shell-cluster px-1.5">
+        <div
+          className="shell-cluster max-w-[min(58vw,470px)] overflow-x-auto px-1.5"
+          data-testid="topbar-action-bubble"
+        >
           <button
             onClick={onOpenDebug}
             className={topBarActionClass}
@@ -281,84 +311,132 @@ export const TopBar: React.FC<TopBarProps> = ({
             <Globe size={topBarIconSize} />
           </button>
 
-          <DropdownMenu.Root onOpenChange={setMoreMenuOpen}>
-            <DropdownMenu.Trigger asChild>
+          {compactTopbarMode ? (
+            <>
               <button
-                className={`${topBarActionClass} outline-none`}
-                title="More"
+                onClick={onToggleAIChat}
+                className={getPanelActionClass(panels.aiChat)}
+                title="AI Chat"
+                aria-pressed={Boolean(panels.aiChat)}
+                data-testid="topbar-ai-chat-button"
               >
-                <MoreVertical size={topBarIconSize} />
+                <MessageSquare size={topBarIconSize} />
               </button>
-            </DropdownMenu.Trigger>
-
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content
-                align="end"
-                sideOffset={8}
-                className="shell-menu-content min-w-[240px]"
-                data-shell-menu-content
+              <button
+                onClick={onToggleTerminal}
+                className={getPanelActionClass(panels.terminal)}
+                title="Terminal"
+                aria-pressed={Boolean(panels.terminal)}
+                data-testid="topbar-terminal-button"
               >
-                <DropdownMenu.Label className="px-3 py-2 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                  Panels
-                </DropdownMenu.Label>
-
-                <DropdownMenu.Item
-                  onSelect={() => onToggleAIChat?.()}
-                  className={menuItemClass}
+                <Terminal size={topBarIconSize} />
+              </button>
+              <button
+                onClick={onToggleGit}
+                className={getPanelActionClass(panels.git)}
+                title="Git"
+                aria-pressed={Boolean(panels.git)}
+                data-testid="topbar-git-button"
+              >
+                <GitBranch size={topBarIconSize} />
+              </button>
+              <button
+                onClick={onOpenDependencyPolicy}
+                className={topBarActionClass}
+                title="Sync dependencies..."
+                data-testid="topbar-sync-dependencies-button"
+              >
+                <RefreshCw size={topBarIconSize} />
+              </button>
+              <button
+                onClick={onCheckForUpdates}
+                className={topBarActionClass}
+                title="Check for Updates"
+                data-testid="topbar-check-updates-button"
+              >
+                <DownloadCloud size={topBarIconSize} />
+              </button>
+            </>
+          ) : (
+            <DropdownMenu.Root onOpenChange={setMoreMenuOpen}>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  className={`${topBarActionClass} outline-none`}
+                  title="More"
                 >
-                  <MessageSquare size={menuIconSize} />
-                  AI Chat
-                  {panels.aiChat && (
-                    <span className="ml-auto h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
-                  )}
-                </DropdownMenu.Item>
+                  <MoreVertical size={topBarIconSize} />
+                </button>
+              </DropdownMenu.Trigger>
 
-                <DropdownMenu.Item
-                  onSelect={() => onToggleTerminal?.()}
-                  className={menuItemClass}
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  align="end"
+                  sideOffset={8}
+                  className="shell-menu-content min-w-[240px]"
+                  data-shell-menu-content
                 >
-                  <Terminal size={menuIconSize} />
-                  Terminal
-                  {panels.terminal && (
-                    <span className="ml-auto h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
-                  )}
-                </DropdownMenu.Item>
+                  <DropdownMenu.Label className="px-3 py-2 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                    Panels
+                  </DropdownMenu.Label>
 
-                <DropdownMenu.Item
-                  onSelect={() => onToggleGit?.()}
-                  className={menuItemClass}
-                >
-                  <GitBranch size={menuIconSize} />
-                  Git
-                  {panels.git && (
-                    <span className="ml-auto h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
-                  )}
-                </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    onSelect={() => onToggleAIChat?.()}
+                    className={menuItemClass}
+                  >
+                    <MessageSquare size={menuIconSize} />
+                    AI Chat
+                    {panels.aiChat && (
+                      <span className="ml-auto h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
+                    )}
+                  </DropdownMenu.Item>
 
-                <DropdownMenu.Separator className="my-1 h-px bg-[var(--shell-inline-divider)]" />
+                  <DropdownMenu.Item
+                    onSelect={() => onToggleTerminal?.()}
+                    className={menuItemClass}
+                  >
+                    <Terminal size={menuIconSize} />
+                    Terminal
+                    {panels.terminal && (
+                      <span className="ml-auto h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
+                    )}
+                  </DropdownMenu.Item>
 
-                <DropdownMenu.Label className="px-3 py-2 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                  Actions
-                </DropdownMenu.Label>
+                  <DropdownMenu.Item
+                    onSelect={() => onToggleGit?.()}
+                    className={menuItemClass}
+                  >
+                    <GitBranch size={menuIconSize} />
+                    Git
+                    {panels.git && (
+                      <span className="ml-auto h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
+                    )}
+                  </DropdownMenu.Item>
 
-                <DropdownMenu.Item
-                  onSelect={() => onOpenDependencyPolicy?.()}
-                  className={menuItemClass}
-                >
-                  <RefreshCw size={menuIconSize} />
-                  Sync dependencies...
-                </DropdownMenu.Item>
+                  <DropdownMenu.Separator className="my-1 h-px bg-[var(--shell-inline-divider)]" />
 
-                <DropdownMenu.Item
-                  onSelect={() => onCheckForUpdates?.()}
-                  className={menuItemClass}
-                >
-                  <DownloadCloud size={menuIconSize} />
-                  Check for Updates
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
+                  <DropdownMenu.Label className="px-3 py-2 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                    Actions
+                  </DropdownMenu.Label>
+
+                  <DropdownMenu.Item
+                    onSelect={() => onOpenDependencyPolicy?.()}
+                    className={menuItemClass}
+                  >
+                    <RefreshCw size={menuIconSize} />
+                    Sync dependencies...
+                  </DropdownMenu.Item>
+
+                  <DropdownMenu.Item
+                    onSelect={() => onCheckForUpdates?.()}
+                    className={menuItemClass}
+                  >
+                    <DownloadCloud size={menuIconSize} />
+                    Check for Updates
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          )}
         </div>
       </div>
     </div>
