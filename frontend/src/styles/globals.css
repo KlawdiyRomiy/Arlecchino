@@ -1016,3 +1016,214 @@ body,
 .cm-tooltip-autocomplete {
   z-index: 60;
 }
+
+.arle-ai-mode-plan {
+  border-color: rgba(243, 201, 107, 0.44);
+  background: color-mix(in srgb, #f3c96b 15%, var(--surface-1));
+  color: #f3c96b;
+}
+
+.arle-ai-mode-build {
+  border-color: rgba(114, 209, 189, 0.42);
+  background: color-mix(in srgb, #72d1bd 14%, var(--surface-1));
+  color: #72d1bd;
+}
+
+.arle-ai-mode-debug {
+  border-color: rgba(255, 127, 114, 0.44);
+  background: color-mix(in srgb, #ff7f72 13%, var(--surface-1));
+  color: #ff7f72;
+}
+
+.arle-ai-bubble {
+  position: relative;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 22px;
+  padding: 18px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 18px 34px -28px rgba(0, 0, 0, 0.82);
+}
+
+.arle-ai-bubble::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  pointer-events: none;
+  border-radius: 21px;
+  background: radial-gradient(
+    circle at 18% 8%,
+    rgba(255, 255, 255, 0.06),
+    transparent 34%
+  );
+}
+
+.arle-ai-bubble-icon {
+  display: inline-flex;
+  height: 38px;
+  width: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, currentColor 36%, transparent);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.arle-ai-mode-pill {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  border-radius: 999px;
+  padding: 0 13px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.arle-ai-action {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: currentColor;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.arle-ai-action:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, currentColor 44%, transparent);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.arle-ai-action:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.arle-ai-action-primary {
+  background: color-mix(in srgb, currentColor 12%, rgba(255, 255, 255, 0.035));
+}
+
+.arle-ai-thinking-row {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(215, 169, 82, 0.18);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 0 14px;
+  color: var(--text-secondary);
+}
+
+.arle-ai-step {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.arle-ai-mode-selector {
+  display: inline-flex;
+  min-height: 38px;
+  overflow: hidden;
+  border: 1px solid rgba(215, 169, 82, 0.22);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.arle-ai-mode-selector-compact {
+  min-height: 32px;
+}
+
+.arle-ai-mode-option {
+  display: inline-flex;
+  min-width: 78px;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0 13px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+.arle-ai-mode-selector-compact .arle-ai-mode-option {
+  min-width: 64px;
+  padding: 0 11px;
+  font-size: 10px;
+}
+
+.arle-ai-mode-option:last-child {
+  border-right: 0;
+}
+
+.arle-ai-mode-option:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.arle-ai-top-tab {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  padding: 0 11px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+.arle-ai-top-tab:hover,
+.arle-ai-top-tab-active {
+  border-color: rgba(215, 169, 82, 0.24);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-primary);
+}
+
+.arle-ai-branch-tab {
+  padding-right: 13px;
+}
+
+.arle-ai-sidebar {
+  width: 300px;
+  flex: 0 0 300px;
+  overflow-y: auto;
+  border-right: 1px solid rgba(215, 169, 82, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 24%),
+    rgba(12, 13, 13, 0.96);
+  padding: 14px;
+}
+
+.arle-ai-sidebar-branch {
+  width: 332px;
+  flex-basis: 332px;
+}
