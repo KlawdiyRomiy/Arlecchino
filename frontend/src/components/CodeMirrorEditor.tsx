@@ -1194,7 +1194,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
   const notifyChangeDelayRef = useRef(editorFeatureBudget.notifyChangeDelayMs);
   const gitMarkers = useGitStore((state) =>
-    !editorFeatureBudget.runtimeGitGutter
+    !editorFeatureBudget.layoutStableGitGutter
       ? EMPTY_GIT_MARKERS
       : (state.fileMarkers[filePath] ?? EMPTY_GIT_MARKERS),
   );

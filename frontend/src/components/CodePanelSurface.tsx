@@ -154,7 +154,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     (state) => state.showInlineDiagnostics,
   );
   const gitMarkers = useGitStore((state) =>
-    editorFeatureBudget.runtimeGitGutter
+    editorFeatureBudget.layoutStableGitGutter
       ? (state.fileMarkers[path] ?? EMPTY_GIT_MARKERS)
       : EMPTY_GIT_MARKERS,
   );

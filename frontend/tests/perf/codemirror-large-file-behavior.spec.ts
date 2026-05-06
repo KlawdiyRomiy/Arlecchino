@@ -853,6 +853,90 @@ test("CodeMirror reserves git gutter geometry across adaptive recovery", async (
   expect(maxGeometryDelta).toBeLessThanOrEqual(0.25);
 });
 
+test("CodeMirror keeps cached git gutter markers visible during transient pressure", async ({
+  page,
+}) => {
+  await mountEditor(page, fastFilePath, fastFileContent);
+
+  await page.evaluate(
+    async ({ filePath, projectPath }) => {
+      const { useGitStore } = await import("/src/stores/gitStore.ts");
+      const now = Date.now();
+      useGitStore.setState({
+        projectPath,
+        fileMarkers: {
+          [filePath]: [
+            { line: 1, type: "modified", count: 1, source: "unstaged" },
+            { line: 3, type: "deleted", count: 3, source: "unstaged" },
+            { line: 4, type: "added", count: 1, source: "staged" },
+          ],
+        },
+        markerUpdatedAt: { [filePath]: now },
+        markerLoading: {},
+      });
+    },
+    { filePath: fastFilePath, projectPath },
+  );
+
+  const modifiedMarker = page.locator(
+    '.cm-git-marker[data-diff-type="modified"][data-diff-count="1"][data-diff-source="unstaged"]',
+  );
+  const deletedMarker = page.locator(
+    '.cm-git-marker[data-diff-type="deleted"][data-diff-count="3"][data-diff-source="unstaged"]',
+  );
+  const addedMarker = page.locator(
+    '.cm-git-marker[data-diff-type="added"][data-diff-count="1"][data-diff-source="staged"]',
+  );
+
+  await expect(modifiedMarker).toHaveCount(1);
+  await expect(deletedMarker).toHaveCount(1);
+  await expect(addedMarker).toHaveCount(1);
+  await expect(deletedMarker.locator(".cm-git-marker-delete-count")).toHaveText(
+    "3",
+  );
+
+  await page.evaluate(async () => {
+    const { usePerformanceStore } =
+      await import("/src/stores/performanceStore.ts");
+    usePerformanceStore.getState().updateBudget({
+      activeEditorCharCount: 32_000,
+      activeEditorLineCount: 200,
+      activeEditorLargeDocument: false,
+      eventPressure: 40,
+      frameGapMs: 40,
+    });
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+  });
+
+  await expect(modifiedMarker).toHaveCount(1);
+  await expect(deletedMarker).toHaveCount(1);
+  await expect(addedMarker).toHaveCount(1);
+
+  await page.evaluate(async () => {
+    const { usePerformanceStore } =
+      await import("/src/stores/performanceStore.ts");
+    usePerformanceStore.getState().updateBudget({
+      eventPressure: 120,
+      frameGapMs: 95,
+    });
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+  });
+
+  await expect(modifiedMarker).toHaveCount(1);
+  await expect(deletedMarker).toHaveCount(1);
+  await expect(addedMarker).toHaveCount(1);
+});
+
 test("CodeMirror ignores shift wheel when there is no horizontal overflow", async ({
   page,
 }) => {

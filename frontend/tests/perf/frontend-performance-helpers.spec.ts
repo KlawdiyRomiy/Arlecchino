@@ -270,7 +270,7 @@ test("adaptive performance budget reacts to indexer and project pressure", async
 
   expect(result).toEqual({
     constrainedMode: "constrained",
-    constrainedGitGutter: false,
+    constrainedGitGutter: true,
     constrainedLayoutStableGitGutter: true,
     constrainedLineWrapping: true,
     constrainedCompletions: true,
