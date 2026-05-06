@@ -206,7 +206,13 @@ const ZEN_TOP_CHROME_INTERACTIVE_SELECTOR = [
 ].join(",");
 const MARKDOWN_LINK_PREVIEW_WINDOW_ID = "markdown-link-preview";
 const NATIVE_FULLSCREEN_CHANGED_EVENT = "shell:native-fullscreen-changed";
-type FullscreenPanelId = "terminal" | "git" | "problems" | "markdownPreview";
+type FullscreenPanelId =
+  | "terminal"
+  | "aiChat"
+  | "git"
+  | "problems"
+  | "markdownPreview";
+
 let nativeWindowControlsOwner: symbol | null = null;
 let nativeWindowControlsRestoreTimer: ReturnType<typeof setTimeout> | null =
   null;
@@ -987,6 +993,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const terminalPreFullscreenRef = React.useRef<PanelFullscreenSnapshot | null>(
     null,
   );
+  const aiChatPreFullscreenRef = React.useRef<PanelFullscreenSnapshot | null>(
+    null,
+  );
   const gitPreFullscreenRef = React.useRef<PanelFullscreenSnapshot | null>(
     null,
   );
@@ -1401,6 +1410,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }
 
   function closeActiveFullscreenPanelFromShortcut(): boolean {
+    if (closePanelFullscreenFromShortcut("aiChat", aiChatPreFullscreenRef)) {
+      return true;
+    }
+
     if (closePanelFullscreenFromShortcut("git", gitPreFullscreenRef)) {
       return true;
     }
@@ -1785,6 +1798,35 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       return true;
     },
     [activeCodePanelTab?.path, codePanelTabs],
+  );
+  const closeCodePanelTab = useCallback(
+    (path: string) => {
+      const tabIndex = codePanelTabs.findIndex((tab) => tab.path === path);
+      if (tabIndex === -1) {
+        return;
+      }
+
+      const nextTabs = codePanelTabs.filter((tab) => tab.path !== path);
+      setCodePanelTabs(nextTabs);
+      if (activeCodePanelPath === path) {
+        setActiveCodePanelPath(
+          nextTabs[Math.min(tabIndex, nextTabs.length - 1)]?.path ?? null,
+        );
+      }
+    },
+    [activeCodePanelPath, codePanelTabs],
+  );
+  const closeOtherCodePanelTabs = useCallback(
+    (path: string) => {
+      const tab = codePanelTabs.find((candidate) => candidate.path === path);
+      if (!tab) {
+        return;
+      }
+
+      setCodePanelTabs([tab]);
+      setActiveCodePanelPath(path);
+    },
+    [codePanelTabs],
   );
   const showNotification = useCallback(
     (type: "success" | "error", message: string) => {
@@ -3372,6 +3414,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     handleHeldPanelShortcutMove,
     markShortcutActionHandled,
     moveBrowserPreviewToPosition,
+    movePanelToPosition,
     moveSnappedPanelBetweenSides,
     shouldSuppressApplicationMenuAction,
   } = useMainLayoutShortcutBridge({
@@ -4123,8 +4166,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onPanelDragMove={handleDragMove}
       onPanelDragEnd={handleDragEnd}
       onTogglePanel={togglePanelFromExplicitAction}
+      onMovePanelToPosition={movePanelToPosition}
       onCloseTerminalPanel={closeTerminalPanel}
       onTerminalFullscreen={handleTerminalPanelFullscreen}
+      onAIChatFullscreen={() =>
+        restoreOrEnterPanelFullscreen("aiChat", aiChatPreFullscreenRef)
+      }
       onGitFullscreen={() =>
         restoreOrEnterPanelFullscreen("git", gitPreFullscreenRef)
       }
@@ -4146,6 +4193,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onPerspectiveClose={handlePerspectiveClose}
       onGitDiffFocusChange={handleGitDiffFocusChange}
       onCodePanelActivate={setActiveCodePanelPath}
+      onCodePanelClose={closeCodePanelTab}
+      onCodePanelCloseOthers={closeOtherCodePanelTabs}
       onZenPinToggle={toggleZenPinnedPanel}
     />
   );

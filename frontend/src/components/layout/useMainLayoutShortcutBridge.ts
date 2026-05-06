@@ -664,6 +664,7 @@ export const useMainLayoutShortcutBridge = ({
     handleHeldPanelShortcutMove,
     markShortcutActionHandled,
     moveBrowserPreviewToPosition,
+    movePanelToPosition: movePanelFromHeldShortcut,
     moveSnappedPanelBetweenSides,
     shouldSuppressApplicationMenuAction,
   };

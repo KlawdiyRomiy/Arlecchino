@@ -79,8 +79,10 @@ interface MainLayoutPanelRendererProps {
   onPanelDragMove: NonNullable<FloatingPanelProps["onDragMove"]>;
   onPanelDragEnd: NonNullable<FloatingPanelProps["onDragEnd"]>;
   onTogglePanel: (panelId: PanelId) => void;
+  onMovePanelToPosition: (panelId: PanelId, position: PanelPosition) => boolean;
   onCloseTerminalPanel: () => void;
   onTerminalFullscreen: () => void;
+  onAIChatFullscreen: () => void;
   onGitFullscreen: () => void;
   onProblemsFullscreen: () => void;
   onMarkdownPreviewFullscreen: () => void;
@@ -103,6 +105,8 @@ interface MainLayoutPanelRendererProps {
   onPerspectiveClose: () => void;
   onGitDiffFocusChange: (active: boolean) => void;
   onCodePanelActivate: (path: string) => void;
+  onCodePanelClose: (path: string) => void;
+  onCodePanelCloseOthers: (path: string) => void;
   onZenPinToggle: (panelId: PanelId) => void;
 }
 
@@ -140,8 +144,10 @@ export const MainLayoutPanelRenderer: React.FC<
   onPanelDragMove,
   onPanelDragEnd,
   onTogglePanel,
+  onMovePanelToPosition,
   onCloseTerminalPanel,
   onTerminalFullscreen,
+  onAIChatFullscreen,
   onGitFullscreen,
   onProblemsFullscreen,
   onMarkdownPreviewFullscreen,
@@ -154,6 +160,8 @@ export const MainLayoutPanelRenderer: React.FC<
   onPerspectiveClose,
   onGitDiffFocusChange,
   onCodePanelActivate,
+  onCodePanelClose,
+  onCodePanelCloseOthers,
   onZenPinToggle,
 }) => {
   const isVisible = panels[panelId];
@@ -237,6 +245,8 @@ export const MainLayoutPanelRenderer: React.FC<
     onDragStart: onPanelDragStart,
     onDragMove: onPanelDragMove,
     onDragEnd: onPanelDragEnd,
+    onMoveToPosition: (position: PanelPosition) =>
+      onMovePanelToPosition(panelId, position),
     onClose: () => onTogglePanel(panelId),
     isDropTarget,
     activeDropTargetPosition:
@@ -328,6 +338,7 @@ export const MainLayoutPanelRenderer: React.FC<
           minSize={280}
           maxSize={600}
           {...panelProps}
+          onFullscreen={onAIChatFullscreen}
         >
           <AIChatPanelContent />
         </FloatingPanel>
@@ -392,7 +403,10 @@ export const MainLayoutPanelRenderer: React.FC<
               <CodePanelTabs
                 tabs={codePanelTabs}
                 activePath={activeCodePanelTab.path}
+                projectPath={activeProjectPath}
                 onActivate={onCodePanelActivate}
+                onClose={onCodePanelClose}
+                onCloseOthers={onCodePanelCloseOthers}
               />
               <div className="min-h-0 flex-1">
                 <CodePanelSurface

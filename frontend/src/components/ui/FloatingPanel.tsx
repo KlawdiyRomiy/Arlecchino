@@ -12,7 +12,15 @@ import {
   useMotionValue,
   useReducedMotion,
 } from "framer-motion";
-import { X, Pin, Maximize2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  Maximize2,
+  Pin,
+  X,
+} from "lucide-react";
 import { useIndexingProgress } from "../../hooks/useIndexingProgress";
 import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
@@ -21,6 +29,10 @@ import {
   logicalToScreenPixels,
   screenToLogicalPixels,
 } from "../../utils/logicalViewport";
+import {
+  ContextActionMenu,
+  type ContextActionMenuItem,
+} from "./ContextActionMenu";
 
 export type PanelPosition = "left" | "right" | "bottom" | "top";
 
@@ -130,6 +142,7 @@ export interface FloatingPanelProps {
     dropWidth?: number,
     dropHeight?: number,
   ) => void;
+  onMoveToPosition?: (position: PanelPosition) => void;
   headerExtra?: React.ReactNode;
   isDropTarget?: boolean;
   adjacentPanels?: {
@@ -181,6 +194,7 @@ export const FloatingPanel = React.forwardRef<
       onDragStart,
       onDragMove,
       onDragEnd,
+      onMoveToPosition,
       headerExtra,
       isDropTarget = false,
       adjacentPanels = {},
@@ -576,6 +590,10 @@ export const FloatingPanel = React.forwardRef<
 
     const handleDragStartInternal = useCallback(
       (e: React.MouseEvent) => {
+        if (e.button !== 0) {
+          return;
+        }
+
         if (zenHeaderPointerPinHandledRef.current) {
           zenHeaderPointerPinHandledRef.current = false;
           e.preventDefault();
@@ -1277,6 +1295,133 @@ export const FloatingPanel = React.forwardRef<
       />
     );
 
+    const panelHeaderContextMenuItems: ContextActionMenuItem[] = [
+      {
+        label: "Move to Left",
+        icon: <ArrowLeft size={14} />,
+        hidden: !onMoveToPosition,
+        disabled: mode === "snapped" && position === "left",
+        onSelect: () => onMoveToPosition?.("left"),
+      },
+      {
+        label: "Move to Right",
+        icon: <ArrowRight size={14} />,
+        hidden: !onMoveToPosition,
+        disabled: mode === "snapped" && position === "right",
+        onSelect: () => onMoveToPosition?.("right"),
+      },
+      {
+        label: "Move to Top",
+        icon: <ArrowUp size={14} />,
+        hidden: !onMoveToPosition,
+        disabled: mode === "snapped" && position === "top",
+        onSelect: () => onMoveToPosition?.("top"),
+      },
+      {
+        label: "Move to Bottom",
+        icon: <ArrowDown size={14} />,
+        hidden: !onMoveToPosition,
+        disabled: mode === "snapped" && position === "bottom",
+        onSelect: () => onMoveToPosition?.("bottom"),
+      },
+      { separator: true, hidden: !onFullscreen && !onPin && !onZenPinToggle },
+      {
+        label: isFullscreen ? "Exit Full Screen" : "Full Screen",
+        icon: <Maximize2 size={14} />,
+        hidden: !onFullscreen,
+        onSelect: onFullscreen,
+      },
+      {
+        label: isZenPinned ? "Unpin in Zen" : "Pin in Zen",
+        icon: <Pin size={14} />,
+        hidden: !zenModeEnabled || mode !== "snapped" || !onZenPinToggle,
+        onSelect: () => onZenPinToggle?.(id),
+      },
+      {
+        label: isPinned ? "Unpin Panel" : "Pin Panel",
+        icon: <Pin size={14} />,
+        hidden: !onPin,
+        onSelect: onPin,
+      },
+      { separator: true, hidden: !onClose },
+      {
+        label: "Close Panel",
+        icon: <X size={14} />,
+        danger: true,
+        hidden: !onClose,
+        onSelect: onClose,
+      },
+    ];
+
+    const panelHeader = (
+      <div
+        style={headerStyle}
+        onPointerDown={handleHeaderPointerDown}
+        onMouseDown={handleDragStartInternal}
+        data-testid={`panel-${id}-drag-handle`}
+        data-panel-drag-handle="true"
+      >
+        <div style={titleStyle}>
+          {icon}
+          <span>{title}</span>
+        </div>
+
+        <div style={controlsStyle} data-panel-controls="true">
+          {headerExtra}
+
+          {onFullscreen && (
+            <button
+              style={closeButtonStyle}
+              className="panel-control-button topbar-control-button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onFullscreen();
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              title="Полный экран"
+            >
+              <Maximize2 size={14} />
+            </button>
+          )}
+
+          {onPin && (
+            <button
+              style={{
+                ...closeButtonStyle,
+                transform: isPinned ? "rotate(45deg)" : undefined,
+              }}
+              className={`panel-control-button topbar-control-button ${
+                isPinned ? "panel-control-button-accent" : ""
+              }`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onPin();
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              title={isPinned ? "Открепить панель" : "Закрепить панель"}
+            >
+              <Pin size={14} />
+            </button>
+          )}
+
+          {onClose && (
+            <button
+              style={closeButtonStyle}
+              className="panel-control-button panel-control-button-danger topbar-control-button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose();
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              title="Закрыть панель"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+
     return (
       <motion.div
         ref={setPanelNode}
@@ -1325,72 +1470,14 @@ export const FloatingPanel = React.forwardRef<
           </>
         )}
 
-        <div
-          style={headerStyle}
-          onPointerDown={handleHeaderPointerDown}
-          onMouseDown={handleDragStartInternal}
-          data-testid={`panel-${id}-drag-handle`}
-          data-panel-drag-handle="true"
+        <ContextActionMenu
+          items={panelHeaderContextMenuItems}
+          nativeScope="floating-panel-header"
+          nativeTargetId={id}
+          nativeContext={{ panelId: id, position, mode }}
         >
-          <div style={titleStyle}>
-            {icon}
-            <span>{title}</span>
-          </div>
-
-          <div style={controlsStyle} data-panel-controls="true">
-            {headerExtra}
-
-            {onFullscreen && (
-              <button
-                style={closeButtonStyle}
-                className="panel-control-button topbar-control-button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onFullscreen();
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-                title="Полный экран"
-              >
-                <Maximize2 size={14} />
-              </button>
-            )}
-
-            {onPin && (
-              <button
-                style={{
-                  ...closeButtonStyle,
-                  transform: isPinned ? "rotate(45deg)" : undefined,
-                }}
-                className={`panel-control-button topbar-control-button ${
-                  isPinned ? "panel-control-button-accent" : ""
-                }`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onPin();
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-                title={isPinned ? "Открепить панель" : "Закрепить панель"}
-              >
-                <Pin size={14} />
-              </button>
-            )}
-
-            {onClose && (
-              <button
-                style={closeButtonStyle}
-                className="panel-control-button panel-control-button-danger topbar-control-button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClose();
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-                title="Закрыть панель"
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-        </div>
+          {panelHeader}
+        </ContextActionMenu>
 
         <div style={contentStyle} data-panel-content="true">
           {children}

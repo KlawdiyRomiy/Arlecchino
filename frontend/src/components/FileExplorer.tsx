@@ -1398,6 +1398,62 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     },
   ];
 
+  const createEntryMenuItemClassName =
+    "flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]";
+  const fileExplorerScrollbarGutter = 8;
+  const fileExplorerNodeRightInset = 8;
+  const folderCreateButtonSize = 22;
+  const headerCreateButtonSize = 24;
+  const headerCreateButtonPaddingRight =
+    fileExplorerScrollbarGutter +
+    fileExplorerNodeRightInset * 2 +
+    folderCreateButtonSize / 2 -
+    headerCreateButtonSize / 2;
+
+  const renderCreateEntryMenu = (
+    directoryPath: string,
+    trigger: React.ReactElement,
+    options?: {
+      align?: "start" | "center" | "end";
+      side?: "top" | "right" | "bottom" | "left";
+      sideOffset?: number;
+    },
+  ) => {
+    const targetDirectory =
+      directoryPath || projectPathRef.current || contextProjectPath;
+
+    return (
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>{trigger}</DropdownMenu.Trigger>
+
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            align={options?.align ?? "end"}
+            side={options?.side ?? "bottom"}
+            sideOffset={options?.sideOffset ?? 8}
+            className="z-[100] min-w-[220px] overflow-hidden rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] shadow-2xl animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
+            data-shell-menu-content
+          >
+            <DropdownMenu.Item
+              onSelect={() => requestCreateEntry("file", targetDirectory)}
+              className={createEntryMenuItemClassName}
+            >
+              <FilePlus size={16} />
+              New File
+            </DropdownMenu.Item>
+            <DropdownMenu.Item
+              onSelect={() => requestCreateEntry("folder", targetDirectory)}
+              className={createEntryMenuItemClassName}
+            >
+              <FolderPlus size={16} />
+              New Folder
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+    );
+  };
+
   const renderFileNode = (
     node: FileNode,
     level: number = 0,
@@ -1423,9 +1479,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       alignItems: "center",
       height: "30px",
       paddingLeft: "8px",
-      paddingRight: "8px",
+      paddingRight: `${fileExplorerNodeRightInset}px`,
       marginLeft: "8px",
-      marginRight: "8px",
+      marginRight: `${fileExplorerNodeRightInset}px`,
       borderRadius: "var(--radius-sm)",
       cursor: "pointer",
       "--file-explorer-hover-bg": hoverBackground,
@@ -1510,7 +1566,26 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       overflow: "hidden",
       textOverflow: "ellipsis",
       whiteSpace: "nowrap",
+      flex: 1,
+      minWidth: 0,
       fontWeight: node.isDirectory ? 500 : 400,
+    };
+
+    const folderCreateButtonStyle: React.CSSProperties = {
+      width: `${folderCreateButtonSize}px`,
+      height: `${folderCreateButtonSize}px`,
+      marginLeft: "6px",
+      borderRadius: "6px",
+      border: "none",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      color: "var(--text-muted)",
+      background: "transparent",
+      cursor: "pointer",
+      padding: 0,
+      opacity: 0.72,
+      flexShrink: 0,
     };
 
     const childGuides = [...parentGuides, !isLast];
@@ -1549,6 +1624,20 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
                   <Folder size={16} style={folderIconStyle} />
                 )}
                 <span style={textStyle}>{node.name}</span>
+                {renderCreateEntryMenu(
+                  node.path,
+                  <button
+                    type="button"
+                    title={`Create inside ${node.name}`}
+                    aria-label={`Create inside ${node.name}`}
+                    style={folderCreateButtonStyle}
+                    onClick={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
+                  >
+                    <Plus size={13} />
+                  </button>,
+                  { align: "end", sideOffset: 4 },
+                )}
               </>
             ) : (
               // INLINE EXTENSION STYLE: filename.EXT
@@ -1705,7 +1794,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const projectName = projectPath.split("/").pop() || "Project";
 
   const headerStyle: React.CSSProperties = {
-    padding: "8px 12px",
+    padding: `8px ${headerCreateButtonPaddingRight}px 8px 12px`,
     position: "relative",
     zIndex: 5,
     flexShrink: 0,
@@ -1750,63 +1839,28 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
           >
             <div style={projectNameStyle}>{projectName}</div>
 
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <button
-                  type="button"
-                  title="Create"
-                  style={{
-                    width: "24px",
-                    height: "24px",
-                    borderRadius: "6px",
-                    border: "none",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: theme.textMuted,
-                    background: "transparent",
-                    cursor: "pointer",
-                    padding: 0,
-                  }}
-                >
-                  <Plus size={14} />
-                </button>
-              </DropdownMenu.Trigger>
-
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content
-                  align="end"
-                  sideOffset={8}
-                  className="z-[100] min-w-[220px] overflow-hidden rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] shadow-2xl animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
-                  data-shell-menu-content
-                >
-                  <DropdownMenu.Item
-                    onSelect={() =>
-                      requestCreateEntry(
-                        "file",
-                        projectPathRef.current || contextProjectPath,
-                      )
-                    }
-                    className="flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-                  >
-                    <FilePlus size={16} />
-                    New File
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item
-                    onSelect={() =>
-                      requestCreateEntry(
-                        "folder",
-                        projectPathRef.current || contextProjectPath,
-                      )
-                    }
-                    className="flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-                  >
-                    <FolderPlus size={16} />
-                    New Folder
-                  </DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
+            {renderCreateEntryMenu(
+              projectPathRef.current || contextProjectPath,
+              <button
+                type="button"
+                title="Create"
+                style={{
+                  width: `${headerCreateButtonSize}px`,
+                  height: `${headerCreateButtonSize}px`,
+                  borderRadius: "6px",
+                  border: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: theme.textMuted,
+                  background: "transparent",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                <Plus size={14} />
+              </button>,
+            )}
           </div>
 
           <div

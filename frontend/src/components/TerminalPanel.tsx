@@ -1,7 +1,12 @@
 import React, { useRef, useEffect, useCallback, useState } from "react";
 import ReactDOM from "react-dom";
 import {
+  ClipboardPaste,
+  Copy,
+  Eraser,
   Plus,
+  RotateCcw,
+  Search,
   X,
   SplitSquareHorizontal,
   SplitSquareVertical,
@@ -26,15 +31,16 @@ import {
 } from "../utils/clipboard";
 import { CommandAutocomplete } from "./CommandAutocomplete";
 import {
+  ContextActionMenu,
+  type ContextActionMenuItem,
+} from "./ui/ContextActionMenu";
+import {
   PredictTerminalCommand,
   RecordCommandExecution,
   WriteTerminal,
   GetCurrentProjectID,
 } from "../wails/app";
-import {
-  ClipboardGetText,
-  ClipboardSetText,
-} from "../wails/runtime";
+import { ClipboardGetText, ClipboardSetText } from "../wails/runtime";
 
 interface TerminalPanelProps {
   onAddTab?: () => void;
@@ -1099,6 +1105,175 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     color: "var(--text-primary)",
   };
 
+  const copyTerminalSelection = async (tabId: string) => {
+    const session = sessions.get(tabId);
+    if (!session) {
+      return;
+    }
+
+    const selectedText = session.terminal.getSelection();
+    if (!selectedText) {
+      return;
+    }
+
+    await writeClipboardTextWithFallback(selectedText, ClipboardSetText);
+    session.terminal.focus();
+  };
+
+  const pasteIntoTerminal = async (tabId: string) => {
+    const session = sessions.get(tabId);
+    if (!session) {
+      return;
+    }
+
+    const text = await readClipboardTextWithFallback(ClipboardGetText);
+    if (text) {
+      session.terminal.paste(text);
+      session.terminal.focus();
+    }
+  };
+
+  const selectAllTerminal = (tabId: string) => {
+    const session = sessions.get(tabId);
+    if (!session) {
+      return;
+    }
+
+    session.terminal.selectAll();
+    session.terminal.focus();
+  };
+
+  const clearTerminal = (tabId: string) => {
+    const session = sessions.get(tabId);
+    if (!session) {
+      return;
+    }
+
+    session.terminal.clear();
+    session.terminal.focus();
+  };
+
+  const openTerminalSearch = (tabId: string) => {
+    const session = sessions.get(tabId);
+    const selectedText = session?.terminal.getSelection().trim() ?? "";
+    const nextQuery = selectedText || searchQueryRef.current;
+    searchQueryRef.current = nextQuery;
+    setSearchState((prev) => ({
+      ...prev,
+      ...createEmptyTerminalSearchStats(nextQuery),
+      visible: true,
+    }));
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
+  };
+
+  const getTerminalBodyContextMenuItems = (
+    paneId: string,
+    tabId: string,
+  ): ContextActionMenuItem[] => {
+    const hasSession = Boolean(tabId && sessions.has(tabId));
+
+    return [
+      {
+        label: "Copy Selection",
+        shortcut: "Cmd C",
+        icon: <Copy size={14} />,
+        disabled: !hasSession,
+        onSelect: () => void copyTerminalSelection(tabId),
+      },
+      {
+        label: "Paste",
+        shortcut: "Cmd V",
+        icon: <ClipboardPaste size={14} />,
+        disabled: !hasSession,
+        onSelect: () => void pasteIntoTerminal(tabId),
+      },
+      {
+        label: "Select All",
+        shortcut: "Cmd A",
+        icon: <Copy size={14} />,
+        disabled: !hasSession,
+        onSelect: () => selectAllTerminal(tabId),
+      },
+      {
+        label: "Find",
+        shortcut: "Cmd F",
+        icon: <Search size={14} />,
+        disabled: !hasSession,
+        onSelect: () => openTerminalSearch(tabId),
+      },
+      {
+        label: "Clear",
+        shortcut: "Cmd K",
+        icon: <Eraser size={14} />,
+        disabled: !hasSession,
+        onSelect: () => clearTerminal(tabId),
+      },
+      { separator: true },
+      {
+        label: "New Terminal",
+        shortcut: "Cmd T",
+        icon: <Plus size={14} />,
+        onSelect: () => void createTerminal(paneId, resolvedThemeId),
+      },
+      {
+        label: "Split Down",
+        icon: <SplitSquareVertical size={14} />,
+        disabled: panesForRender.length > 1,
+        onSelect: () => handleSplitPane("horizontal"),
+      },
+      {
+        label: "Split Right",
+        icon: <SplitSquareHorizontal size={14} />,
+        disabled: panesForRender.length > 1,
+        onSelect: () => handleSplitPane("vertical"),
+      },
+    ];
+  };
+
+  const getTerminalTabContextMenuItems = (
+    paneId: string,
+    tabId: string,
+  ): ContextActionMenuItem[] => [
+    {
+      label: "Activate Terminal",
+      onSelect: () => {
+        const session = sessions.get(tabId);
+        setActiveTab(paneId, tabId);
+        window.requestAnimationFrame(() => {
+          session?.fitAddon.fit();
+          session?.terminal.focus();
+        });
+      },
+    },
+    {
+      label: "Copy Session Name",
+      icon: <Copy size={14} />,
+      onSelect: () => {
+        const session = sessions.get(tabId);
+        if (session) {
+          void writeClipboardTextWithFallback(session.name, ClipboardSetText);
+        }
+      },
+    },
+    { separator: true },
+    {
+      label: "New Terminal",
+      icon: <Plus size={14} />,
+      onSelect: () => void createTerminal(paneId, resolvedThemeId),
+    },
+    {
+      label: "Reopen Closed Terminal",
+      icon: <RotateCcw size={14} />,
+      onSelect: () => void reopenLastClosedTab(resolvedThemeId),
+    },
+    {
+      label: "Close Terminal",
+      icon: <X size={14} />,
+      danger: true,
+      onSelect: () => void closeTerminal(paneId, tabId),
+    },
+  ];
+
   const renderPane = (pane: (typeof panes)[0]) => {
     const activeTabId = pane.activeTabId;
     const semanticEntries = activeTabId
@@ -1132,28 +1307,35 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
             if (!session) return null;
 
             return (
-              <div
+              <ContextActionMenu
                 key={tabId}
-                style={tabStyle(tabId === activeTabId)}
-                onClick={() => {
-                  setActiveTab(pane.id, tabId);
-                  requestAnimationFrame(() => {
-                    session.fitAddon.fit();
-                    session.terminal.focus();
-                  });
-                }}
+                items={getTerminalTabContextMenuItems(pane.id, tabId)}
+                nativeScope="terminal-tab"
+                nativeTargetId={tabId}
+                nativeContext={{ paneId: pane.id, tabId }}
               >
-                <span>{session.name}</span>
-                <button
-                  style={closeTabBtnStyle}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCloseTab(pane.id, tabId);
+                <div
+                  style={tabStyle(tabId === activeTabId)}
+                  onClick={() => {
+                    setActiveTab(pane.id, tabId);
+                    requestAnimationFrame(() => {
+                      session.fitAddon.fit();
+                      session.terminal.focus();
+                    });
                   }}
                 >
-                  <X size={12} />
-                </button>
-              </div>
+                  <span>{session.name}</span>
+                  <button
+                    style={closeTabBtnStyle}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCloseTab(pane.id, tabId);
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              </ContextActionMenu>
             );
           })}
           <button
@@ -1183,52 +1365,59 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           )}
         </div>
 
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            backgroundColor: "var(--surface-canvas)",
-            display: pane.tabIds.length > 0 ? "block" : "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
+        <ContextActionMenu
+          items={getTerminalBodyContextMenuItems(pane.id, activeTabId)}
+          nativeScope="terminal-body"
+          nativeTargetId={activeTabId}
+          nativeContext={{ paneId: pane.id, tabId: activeTabId }}
         >
-          {pane.tabIds.map((tabId) => (
-            <div
-              key={tabId}
-              ref={(el) => {
-                if (el) {
-                  containerRefs.current.set(tabId, el);
-                  if (tabId === activeTabId) {
-                    attachTerminal(tabId, el);
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              backgroundColor: "var(--surface-canvas)",
+              display: pane.tabIds.length > 0 ? "block" : "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {pane.tabIds.map((tabId) => (
+              <div
+                key={tabId}
+                ref={(el) => {
+                  if (el) {
+                    containerRefs.current.set(tabId, el);
+                    if (tabId === activeTabId) {
+                      attachTerminal(tabId, el);
+                    }
                   }
-                }
-              }}
-              style={{
-                width: "100%",
-                height: "100%",
-                display: tabId === activeTabId ? "block" : "none",
-                padding: "4px",
-                position: "relative",
-              }}
-            />
-          ))}
-          {pane.tabIds.length === 0 && (
-            <div className="flex flex-col items-center gap-3 text-[var(--text-muted)]">
-              <div style={{ fontSize: "13px" }}>
-                No terminal session in this pane.
+                }}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  display: tabId === activeTabId ? "block" : "none",
+                  padding: "4px",
+                  position: "relative",
+                }}
+              />
+            ))}
+            {pane.tabIds.length === 0 && (
+              <div className="flex flex-col items-center gap-3 text-[var(--text-muted)]">
+                <div style={{ fontSize: "13px" }}>
+                  No terminal session in this pane.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => createTerminal(pane.id, resolvedThemeId)}
+                  style={addTabBtnStyle}
+                >
+                  <Plus size={13} />
+                  New terminal
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => createTerminal(pane.id, resolvedThemeId)}
-                style={addTabBtnStyle}
-              >
-                <Plus size={13} />
-                New terminal
-              </button>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        </ContextActionMenu>
 
         {!tuiModeActive && visibleSemanticEntries.length > 0 && (
           <div
