@@ -33,6 +33,39 @@ RELEASE_DIR=""
 RELEASE_REPORT=""
 DRY_RUN_REPORT=""
 
+derive_git_release_tag() {
+  local exact_tag latest_tag
+  exact_tag="$(git -C "$ROOT_DIR" tag --points-at HEAD --list 'v*-alpha.*' --sort=-creatordate | head -1)"
+  if [[ -n "$exact_tag" ]]; then
+    echo "$exact_tag"
+    return 0
+  fi
+
+  latest_tag="$(git -C "$ROOT_DIR" describe --tags --match 'v*-alpha.*' --abbrev=0 2>/dev/null || true)"
+  if [[ -n "$latest_tag" ]]; then
+    echo "$latest_tag"
+  fi
+}
+
+apply_git_release_tag_defaults() {
+  local release_tag="$1"
+  local tag_body="${release_tag#v}"
+
+  if [[ ! "$tag_body" =~ '^(.+-alpha)\.([0-9]+)$' ]]; then
+    return 0
+  fi
+
+  if [[ "$VERSION" == "0.0.0-alpha" ]]; then
+    VERSION="${match[1]}"
+  fi
+  if [[ "$BUILD_NUMBER" == "1" ]]; then
+    BUILD_NUMBER="${match[2]}"
+  fi
+  if [[ -z "$TAG" ]]; then
+    TAG="$release_tag"
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage: scripts/wails3-private-github-alpha-release-macos.sh [options]
@@ -44,10 +77,10 @@ Options:
   --publish                 Build and upload release assets. Default: dry-run.
   --owner <owner>           GitHub owner. Default: KlawdiyRomiy.
   --repo <repo>             GitHub repo. Default: Arlecchino.
-  --tag <tag>               Release tag. Default: v<version>-alpha.<build>.
+  --tag <tag>               Release tag. Default: current git tag or v<version>-alpha.<build>.
   --title <title>           Release title. Default: Arlecchino <tag>.
-  --version <version>       App version. Default: 0.0.0-alpha.
-  --build <number>          App build number. Default: 1.
+  --version <version>       App version. Default: current git tag version or 0.0.0-alpha.
+  --build <number>          App build number. Default: current git tag build or 1.
   --channel <channel>       Update channel. Default: alpha.
   --update-private-key <p>  External Ed25519 PEM private key.
   --output-dir <path>       Release output root.
@@ -151,6 +184,12 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+GIT_RELEASE_TAG="$(derive_git_release_tag)"
+RELEASE_TAG_FOR_DEFAULTS="${TAG:-$GIT_RELEASE_TAG}"
+if [[ -n "$RELEASE_TAG_FOR_DEFAULTS" ]]; then
+  apply_git_release_tag_defaults "$RELEASE_TAG_FOR_DEFAULTS"
+fi
 
 if [[ -z "$TAG" ]]; then
   if [[ "$VERSION" == *alpha* ]]; then

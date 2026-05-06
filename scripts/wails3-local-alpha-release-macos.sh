@@ -55,6 +55,36 @@ OUTPUT_ROOT="${ARLE_WAILS3_RELEASE_OUTPUT:-$BUILD_DIR/releases/local-alpha}"
 RELEASE_DIR=""
 REPORT_PATH=""
 
+derive_git_release_tag() {
+  local exact_tag latest_tag
+  exact_tag="$(git -C "$ROOT_DIR" tag --points-at HEAD --list 'v*-alpha.*' --sort=-creatordate | head -1)"
+  if [[ -n "$exact_tag" ]]; then
+    echo "$exact_tag"
+    return 0
+  fi
+
+  latest_tag="$(git -C "$ROOT_DIR" describe --tags --match 'v*-alpha.*' --abbrev=0 2>/dev/null || true)"
+  if [[ -n "$latest_tag" ]]; then
+    echo "$latest_tag"
+  fi
+}
+
+apply_git_release_tag_defaults() {
+  local release_tag="$1"
+  local tag_body="${release_tag#v}"
+
+  if [[ ! "$tag_body" =~ '^(.+-alpha)\.([0-9]+)$' ]]; then
+    return 0
+  fi
+
+  if [[ "$VERSION" == "0.0.0-alpha" ]]; then
+    VERSION="${match[1]}"
+  fi
+  if [[ "$BUILD_NUMBER" == "1" ]]; then
+    BUILD_NUMBER="${match[2]}"
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage: scripts/wails3-local-alpha-release-macos.sh [options]
@@ -62,8 +92,8 @@ Usage: scripts/wails3-local-alpha-release-macos.sh [options]
 Options:
   --profile <name>      Release profile. Only local-alpha is supported.
   --output-dir <path>   Release output directory.
-  --version <version>   CFBundleShortVersionString.
-  --build <number>      CFBundleVersion.
+  --version <version>   CFBundleShortVersionString. Default: current git tag version.
+  --build <number>      CFBundleVersion. Default: current git tag build.
   --bundle-id <id>      CFBundleIdentifier.
   --min-macos <version> Minimum macOS version. Default: 11.0.
   --arch <target>       arm64, amd64, or universal. Default: universal.
@@ -198,6 +228,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+GIT_RELEASE_TAG="$(derive_git_release_tag)"
+if [[ -n "$GIT_RELEASE_TAG" ]]; then
+  apply_git_release_tag_defaults "$GIT_RELEASE_TAG"
+fi
 
 if [[ "$PROFILE" != "local-alpha" ]]; then
   echo "ERROR: unsupported release profile: $PROFILE" >&2
