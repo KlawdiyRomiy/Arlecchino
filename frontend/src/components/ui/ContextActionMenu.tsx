@@ -16,6 +16,7 @@ export interface ContextActionMenuItem {
   actionId?: string;
   key?: string;
   label?: string;
+  shortcut?: string;
   icon?: React.ReactNode;
   danger?: boolean;
   disabled?: boolean;
@@ -32,10 +33,11 @@ interface ContextActionMenuProps {
   nativeSurfaceId?: string;
   nativeTargetId?: string;
   ignoredTargetSelector?: string;
+  onContextMenuCapture?: (event: React.MouseEvent<HTMLElement>) => void;
 }
 
 const baseItemClassName =
-  "flex w-full items-center gap-2 px-3 py-1.5 text-[13px] outline-none transition-colors";
+  "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-[13px] outline-none transition-colors";
 
 export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   children,
@@ -45,6 +47,7 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   nativeSurfaceId,
   nativeTargetId,
   ignoredTargetSelector,
+  onContextMenuCapture,
 }) => {
   const [open, setOpen] = React.useState(false);
   const menuInstanceIdRef = React.useRef(
@@ -142,6 +145,8 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   const handleNativeContextMenuCapture = (
     event: React.MouseEvent<HTMLElement>,
   ) => {
+    onContextMenuCapture?.(event);
+
     if (shouldIgnoreContextMenuTarget(event.target, ignoredTargetSelector)) {
       suppressNextOpenRef.current = true;
       window.setTimeout(() => {
@@ -239,10 +244,17 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
                             : "text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:hover:bg-transparent"
                         } ${item.disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
                       >
-                        {item.icon ? (
-                          <span className="shrink-0">{item.icon}</span>
+                        <span className="flex min-w-0 items-center gap-2">
+                          {item.icon ? (
+                            <span className="shrink-0">{item.icon}</span>
+                          ) : null}
+                          <span className="truncate">{item.label}</span>
+                        </span>
+                        {item.shortcut ? (
+                          <span className="ml-6 shrink-0 font-mono text-[11px] text-[var(--text-muted)]">
+                            {item.shortcut}
+                          </span>
                         ) : null}
-                        <span>{item.label}</span>
                       </div>
                     </ContextMenu.Item>
                   );

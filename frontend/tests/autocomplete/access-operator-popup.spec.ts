@@ -50,7 +50,11 @@ declare global {
     __autocompleteDelayBySuffix?: Record<string, number>;
     __autocompleteRequests?: string[];
     __editorText?: string;
-    __autocompleteRoot?: { unmount: () => void };
+    __autocompleteRoot?: {
+      render?: (node: unknown) => void;
+      unmount: () => void;
+    };
+    __autocompleteAutosaveRenderCount?: number;
   }
 }
 
@@ -159,6 +163,10 @@ const completionsByPrefix: Record<string, CompletionFixtureItem[]> = {
   "fmt.Pr": [
     { label: "Println", source: "library", kind: "function" },
     { label: "Printf", source: "library", kind: "function" },
+  ],
+  "context.": [
+    { label: "NewRequest", source: "lsp", kind: "function" },
+    { label: "WithCancel", source: "lsp", kind: "function" },
   ],
   wide: [{ label: "wide", source: "library", kind: "module" }],
   "wide.": wideMemberCompletions,
@@ -385,6 +393,55 @@ async function mountEditor(page: Page, fixture: EditorFixture) {
   });
 }
 
+async function rerenderEditorWithFreshAutosaveCallbacks(
+  page: Page,
+  fixture: EditorFixture,
+) {
+  await page.evaluate(
+    async ({ fixture }) => {
+      const ReactModule = await import("/node_modules/.vite/deps/react.js");
+      const React = ReactModule.default;
+      const { ThemeProvider } = await import("/src/contexts/ThemeContext.tsx");
+      const { CodeMirrorEditor } =
+        await import("/src/components/CodeMirrorEditor.tsx");
+
+      const root = window.__autocompleteRoot;
+      if (!root?.render) {
+        throw new Error("Autocomplete test root is not mounted");
+      }
+
+      window.__autocompleteAutosaveRenderCount =
+        (window.__autocompleteAutosaveRenderCount || 0) + 1;
+      root.render(
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(CodeMirrorEditor, {
+            filePath: fixture.filePath,
+            content: window.__editorText || fixture.content,
+            language: fixture.language,
+            projectPath: "/virtual/autocomplete-project",
+            onChange: (value: string) => {
+              window.__editorText = value;
+            },
+            onSave: () => {
+              window.__autocompleteAutosaveRenderCount =
+                (window.__autocompleteAutosaveRenderCount || 0) + 1;
+            },
+            onToggleProblems: () => undefined,
+            onOpenFile: () => undefined,
+            onQuickLook: () => undefined,
+            onTyping: () => undefined,
+            onGhostShown: () => undefined,
+            onGhostRejected: () => undefined,
+          }),
+        ),
+      );
+    },
+    { fixture },
+  );
+}
+
 async function focusRenderedTextEnd(page: Page, text: string) {
   const token = page.getByText(text, { exact: true }).last();
   await expect(token).toBeVisible({ timeout: 10000 });
@@ -417,7 +474,61 @@ async function waitForCompletionLabel(
 }
 
 async function startCompletionExplicitly(page: Page) {
-  await page.keyboard.press("Control+Space");
+  await page
+    .locator(".cm-content")
+    .first()
+    .evaluate(async (element) => {
+      const { EditorView } =
+        await import("/node_modules/.vite/deps/@codemirror_view.js");
+      const { startCompletion } =
+        await import("/node_modules/.vite/deps/@codemirror_autocomplete.js");
+      type CodeMirrorContentElement = HTMLElement & {
+        cmView?: {
+          view?: unknown;
+        };
+      };
+      const view =
+        (element as CodeMirrorContentElement).cmView?.view ??
+        EditorView.findFromDOM(element);
+      if (!view) {
+        throw new Error("CodeMirror view is not available");
+      }
+      startCompletion(view);
+    });
+}
+
+async function moveCursorToDocumentEnd(page: Page) {
+  await page
+    .locator(".cm-content")
+    .first()
+    .evaluate(async (element) => {
+      const { EditorView } =
+        await import("/node_modules/.vite/deps/@codemirror_view.js");
+      type CodeMirrorContentElement = HTMLElement & {
+        cmView?: {
+          view?: {
+            state: { doc: { length: number } };
+            dispatch: (spec: {
+              selection: { anchor: number };
+              scrollIntoView?: boolean;
+            }) => void;
+            focus: () => void;
+          };
+        };
+      };
+
+      const view =
+        (element as CodeMirrorContentElement).cmView?.view ??
+        EditorView.findFromDOM(element);
+      if (!view) {
+        throw new Error("CodeMirror view is not available");
+      }
+      view.dispatch({
+        selection: { anchor: view.state.doc.length },
+        scrollIntoView: true,
+      });
+      view.focus();
+    });
 }
 
 async function editorSnapshot(page: Page): Promise<CodeMirrorSnapshot> {
@@ -589,9 +700,138 @@ test("popup stays open when its result list scrolls", async ({ page }) => {
   expect(scrollable).toBe(true);
 
   await list.hover();
-  await page.mouse.wheel(0, 420);
+  for (let index = 0; index < 5; index += 1) {
+    await page.mouse.wheel(0, 140);
+    await page.waitForTimeout(80);
+    await expect(page.locator(".cm-tooltip-autocomplete")).toBeVisible();
+    await expect(list).toBeVisible();
+  }
+
+  await page.keyboard.press("Enter");
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("wide.member01");
+  expect(snapshot.text).not.toContain("wide.\n");
+});
+
+test("popup stays compact for short keyword results", async ({ page }) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.locator(".cm-content").first().click();
+  await page.evaluate(() => {
+    window.__autocompleteDelayMs = 1200;
+    window.__autocompleteRequests = [];
+  });
+
+  await page.keyboard.type("pack", { delay: 5 });
+  await waitForCompletionLabel(page, "package", { timeout: 500 });
+
+  const box = await popupBox(page);
+  expect(box.width).toBeLessThanOrEqual(520);
+});
+
+test("enter accepts Go package name completion after package keyword", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package ",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await moveCursorToDocumentEnd(page);
+  await waitForCompletionLabel(page, "main", {
+    fallbackToExplicit: true,
+    timeout: 500,
+  });
+  await page.keyboard.press("Enter");
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toBe("package main");
+});
+
+test("member popup opens immediately after dot and keeps backend results", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    context\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "context");
+  await page.evaluate(() => {
+    window.__autocompleteDelayBySuffix = { "context.": 450 };
+    window.__autocompleteRequests = [];
+  });
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "AfterFunc", { timeout: 500 });
+  await waitForCompletionLabel(page, "NewRequest", { timeout: 2000 });
+
+  const requests = await page.evaluate(
+    () => window.__autocompleteRequests || [],
+  );
+  expect(requests.some((request) => request.endsWith("context."))).toBe(true);
+});
+
+test("popup survives autosave parent rerender", async ({ page }) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    wide\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "wide");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "member01");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  expect(await selectedCompletionLabel(page)).toBe("member03");
+
+  await rerenderEditorWithFreshAutosaveCallbacks(page, fixture);
+  await page.waitForTimeout(100);
+
   await expect(page.locator(".cm-tooltip-autocomplete")).toBeVisible();
-  await expect(list).toBeVisible();
+  expect(await selectedCompletionLabel(page)).toBe("member03");
+
+  await page.keyboard.press("Enter");
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("wide.member03");
+  expect(snapshot.text).not.toContain("wide.\n");
+});
+
+test("enter accepts selected completion after popup navigation", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    wide\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "wide");
+
+  await page.keyboard.type(".");
+  await waitForCompletionLabel(page, "member01");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  expect(await selectedCompletionLabel(page)).toBe("member04");
+
+  await page.keyboard.press("Enter");
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain("wide.member04");
+  expect(snapshot.text).not.toContain("wide.\n");
 });
 
 test("dot access refreshes cached member fields after editing current buffer", async ({

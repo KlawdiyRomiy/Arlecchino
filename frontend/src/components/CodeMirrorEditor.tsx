@@ -36,6 +36,7 @@ import {
   closeBrackets,
   completionStatus,
   completionKeymap,
+  acceptCompletion,
   insertCompletionText,
   pickedCompletion,
   snippet,
@@ -45,6 +46,14 @@ import {
   search,
   searchKeymap,
 } from "@codemirror/search";
+import {
+  ClipboardPaste,
+  Copy,
+  ExternalLink,
+  FileText,
+  Search as SearchIcon,
+  Scissors,
+} from "lucide-react";
 import {
   bracketMatching,
   indentOnInput,
@@ -91,13 +100,6 @@ import { xml } from "@codemirror/lang-xml";
 import { yaml } from "@codemirror/lang-yaml";
 import rainbowBrackets from "rainbowbrackets";
 import { showMinimap } from "@replit/codemirror-minimap";
-import prettier from "prettier/standalone";
-import prettierPluginBabel from "prettier/plugins/babel";
-import prettierPluginEstree from "prettier/plugins/estree";
-import prettierPluginHtml from "prettier/plugins/html";
-import prettierPluginPostcss from "prettier/plugins/postcss";
-import prettierPluginTypescript from "prettier/plugins/typescript";
-import prettierPluginPhp from "@prettier/plugin-php";
 import { useEditorStore } from "../stores/editorStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { useCodeMirrorAdaptiveExtensions } from "../hooks/useCodeMirrorAdaptiveExtensions";
@@ -113,6 +115,10 @@ import {
   DefinitionChooserMenu,
   DefinitionItem as MenuDefinitionItem,
 } from "./DefinitionChooserMenu";
+import {
+  ContextActionMenu,
+  type ContextActionMenuItem,
+} from "./ui/ContextActionMenu";
 import type {
   EditorCompletionResult,
   TextEditJSON,
@@ -126,6 +132,7 @@ import {
   LSPSignatureHelp,
   RecordCompletionUsage,
   RecordFileAccess,
+  RevealProjectEntry,
   SearchClasses,
 } from "../wails/app";
 import { createCompletionOrchestrator } from "../extensions/completionOrchestrator";
@@ -149,6 +156,10 @@ import {
   mergeInstantCompletions,
 } from "../utils/instantCompletions";
 import {
+  readClipboardTextWithFallback,
+  writeClipboardTextWithFallback,
+} from "../utils/clipboard";
+import {
   getCodeMirrorLineCount,
   shouldEnableCodeMirrorMinimap,
   shouldUseCodeMirrorLargeDocumentMode,
@@ -161,6 +172,7 @@ import {
 } from "../utils/codeMirrorTheme";
 import type { GitLineMarker } from "../utils/git";
 import { createLatestRequestGuard } from "../utils/latestRequestGuard";
+import { relativeProjectPath } from "../utils/projectPaths";
 
 const GHOST_DEBOUNCE_MS = 50;
 const GHOST_IDLE_DELAY_MS = 900;
@@ -186,9 +198,25 @@ const NOOP_GHOST: GhostExtensionHandle = {
   cleanup: () => undefined,
   ghostField: EMPTY_EXTENSION,
 };
-const COMPLETION_KEYMAP_WITHOUT_ESCAPE = completionKeymap.filter(
-  (binding) => binding.key !== "Escape",
+const COMPLETION_KEYMAP_WITHOUT_ESCAPE_OR_ENTER = completionKeymap.filter(
+  (binding) => binding.key !== "Escape" && binding.key !== "Enter",
 );
+
+function acceptVisibleCompletion(view: EditorView): boolean {
+  if (completionStatus(view.state) !== "active") {
+    return false;
+  }
+  if (acceptCompletion(view)) {
+    return true;
+  }
+
+  window.setTimeout(() => {
+    if (completionStatus(view.state) === "active") {
+      acceptCompletion(view);
+    }
+  }, COMPLETION_FAST_BACKEND_GRACE_MS);
+  return true;
+}
 
 type CompletionWithInsertText = Completion & {
   __insertText: string;
@@ -628,6 +656,13 @@ function extractKeywordPrefix(textBefore: string): string | null {
   if (!textBefore) return null;
   const match = textBefore.match(/(\w+)$/);
   return match ? match[1] : null;
+}
+
+function extractGoPackageNamePrefix(textBeforeLine: string): string | null {
+  const match = textBeforeLine.match(
+    /^\s*package\s+([A-Za-z_][A-Za-z0-9_]*)?$/,
+  );
+  return match ? (match[1] ?? "") : null;
 }
 
 const CSS_LANGUAGES = new Set(["css", "scss", "sass", "less"]);
@@ -1130,6 +1165,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   highlightLine,
 }) => {
   const editorRef = useRef<ReactCodeMirrorRef>(null);
+  const onChangeRef = useRef(onChange);
+  const onSaveRef = useRef(onSave);
+  const onTypingRef = useRef(onTyping);
+  const onGhostShownRef = useRef(onGhostShown);
+  const onGhostRejectedRef = useRef(onGhostRejected);
   const documentVersionRef = useRef<number>(0);
   const cursorSyncFrameRef = useRef<number | null>(null);
   const pendingCursorPositionRef = useRef<{ line: number; col: number } | null>(
@@ -1142,6 +1182,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     createCompletionCache(COMPLETION_CACHE_TTL_MS),
   );
   const signatureRequestGuardRef = useRef(createLatestRequestGuard());
+
+  onChangeRef.current = onChange;
+  onSaveRef.current = onSave;
+  onTypingRef.current = onTyping;
+  onGhostShownRef.current = onGhostShown;
+  onGhostRejectedRef.current = onGhostRejected;
+
   const editorFontSize = useEditorSettingsStore(
     (state) => state.editorFontSize,
   );
@@ -1417,9 +1464,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
     return metricsExtension(
       {
-        onTyping,
-        onGhostShown,
-        onGhostRejected,
+        onTyping: (chars) => onTypingRef.current?.(chars),
+        onGhostShown: () => onGhostShownRef.current?.(),
+        onGhostRejected: () => onGhostRejectedRef.current?.(),
         onCompletionAccepted: (item) => {
           const label = item.label || "";
           if (label) {
@@ -1458,12 +1505,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       },
       initialDocLengthRef.current,
     );
-  }, [
-    editorFeatureBudget.richEditorFeatures,
-    onGhostRejected,
-    onGhostShown,
-    onTyping,
-  ]);
+  }, [editorFeatureBudget.richEditorFeatures]);
 
   const shouldShowMinimap = useMemo(
     () =>
@@ -1689,9 +1731,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       const textBeforeLine = line.text.slice(0, column - 1);
       const accessInfo = extractAccessPrefix(textBeforeLine);
       const stringPrefix = extractStringPrefix(textBeforeLine);
+      const packageNamePrefix =
+        language === "go" ? extractGoPackageNamePrefix(textBeforeLine) : null;
 
       if (
-        stringPrefix !== null ||
+        (stringPrefix !== null && packageNamePrefix === null) ||
         isProbablyLineComment(textBeforeLine, language) ||
         hasOpenStringLiteral(textBeforeLine)
       ) {
@@ -1699,25 +1743,34 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       }
 
       const prefixMatch = getPrefixMatch(textBeforeLine, language);
-      const rawPrefix = accessInfo?.prefix ?? prefixMatch?.prefix ?? "";
+      const rawPrefix =
+        packageNamePrefix ?? accessInfo?.prefix ?? prefixMatch?.prefix ?? "";
       const currentPrefix = normalizePrefixForLanguage(
         rawPrefix,
         language,
         prefixMatch?.hasDollarPrefix ?? false,
       );
 
-      if (!accessInfo && currentPrefix.length === 0) {
+      if (
+        !accessInfo &&
+        packageNamePrefix === null &&
+        currentPrefix.length === 0
+      ) {
         return null;
       }
 
-      const from = accessInfo
-        ? line.from + column - accessInfo.prefix.length - 1
-        : prefixMatch
-          ? line.from + prefixMatch.startColumn - 1
-          : pos;
+      const from =
+        packageNamePrefix !== null
+          ? pos - packageNamePrefix.length
+          : accessInfo
+            ? line.from + column - accessInfo.prefix.length - 1
+            : prefixMatch
+              ? line.from + prefixMatch.startColumn - 1
+              : pos;
 
       const instantDocumentOptions =
         !accessInfo &&
+        packageNamePrefix === null &&
         currentPrefix.length >= 2 &&
         context.state.doc.length <= 160_000
           ? getInstantDocumentCompletions(
@@ -1725,16 +1778,29 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
               currentPrefix,
             )
           : [];
-      const completionOptions = accessInfo
-        ? getInstantAccessCompletions(
-            language,
-            accessInfo.accessChain,
-            currentPrefix,
-          )
-        : mergeInstantCompletions(
-            getInstantKeywordCompletions(language, currentPrefix),
-            instantDocumentOptions,
-          );
+      const completionOptions =
+        packageNamePrefix !== null
+          ? [
+              {
+                label: "main",
+                detail: "package name",
+                type: "keyword",
+                apply: "main",
+                boost: 1.25,
+              } satisfies Completion,
+            ].filter((item) =>
+              item.label.toLowerCase().startsWith(currentPrefix.toLowerCase()),
+            )
+          : accessInfo
+            ? getInstantAccessCompletions(
+                language,
+                accessInfo.accessChain,
+                currentPrefix,
+              )
+            : mergeInstantCompletions(
+                getInstantKeywordCompletions(language, currentPrefix),
+                instantDocumentOptions,
+              );
 
       if (completionOptions.length === 0) {
         return null;
@@ -1770,6 +1836,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       const textBeforeLine = line.text.slice(0, column - 1);
       const accessInfo = extractAccessPrefix(textBeforeLine);
       const stringPrefix = extractStringPrefix(textBeforeLine);
+      const packageNamePrefix =
+        language === "go" ? extractGoPackageNamePrefix(textBeforeLine) : null;
       const prefixMatch = getPrefixMatch(textBeforeLine, language);
       const braceCharClass = getPrefixCharClass(language);
       const braceTailRegex = new RegExp(
@@ -1788,6 +1856,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
       const rawPrefix =
         stringPrefix ??
+        packageNamePrefix ??
         accessInfo?.prefix ??
         (bracePrefix.length > 0 ? bracePrefix : null) ??
         prefixMatch?.prefix ??
@@ -1831,6 +1900,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         stringPrefix !== null ||
         hasDollarPrefix ||
         hasAccessTrigger ||
+        packageNamePrefix !== null ||
         triggerChar === "<" ||
         triggerChar === ":" ||
         triggerChar === "{";
@@ -1841,13 +1911,15 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       const from =
         stringPrefix !== null
           ? line.from + column - stringPrefix.length - 1
-          : accessInfo
-            ? line.from + column - accessInfo.prefix.length - 1
-            : braceTailStartColumn !== null
-              ? line.from + braceTailStartColumn - 1
-              : prefixMatch
-                ? line.from + prefixMatch.startColumn - 1
-                : pos;
+          : packageNamePrefix !== null
+            ? pos - packageNamePrefix.length
+            : accessInfo
+              ? line.from + column - accessInfo.prefix.length - 1
+              : braceTailStartColumn !== null
+                ? line.from + braceTailStartColumn - 1
+                : prefixMatch
+                  ? line.from + prefixMatch.startColumn - 1
+                  : pos;
 
       const cacheKey = buildCompletionCacheKey(
         lineNumber,
@@ -2019,6 +2091,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
       metrics.recordCacheMiss();
 
+      const instantResult = buildInstantCompletionResult(context, {
+        recordMetrics: false,
+      });
       const requestId = orchestrator.nextRequestId();
       const backendPromise = buildCompletionResult(
         requestId,
@@ -2026,9 +2101,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       ).catch((err) => {
         console.warn("Completion error:", err);
         return null;
-      });
-      const instantResult = buildInstantCompletionResult(context, {
-        recordMetrics: false,
       });
       if (instantResult) {
         return new Promise<CompletionResult | null>((resolve) => {
@@ -2039,12 +2111,21 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             window.clearTimeout(timer);
             resolve(result);
           };
+          const settleInstant = () => {
+            metrics.recordInstantFallbackUsed();
+            metrics.recordCompletionList([...instantResult.options]);
+            settle(instantResult);
+          };
           const timer = window.setTimeout(() => {
-            settle(null);
+            settleInstant();
           }, COMPLETION_FAST_BACKEND_GRACE_MS);
 
           backendPromise.then((result) => {
-            settle(result);
+            if (result) {
+              settle(result);
+            } else {
+              settleInstant();
+            }
           });
         });
       }
@@ -2064,7 +2145,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   const handleChange = useCallback(
     (value: string) => {
-      onChange(value);
+      onChangeRef.current(value);
 
       documentVersionRef.current += 1;
       completionDismissedVersionRef.current = null;
@@ -2084,7 +2165,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         NotifyFileChanged(filePath, language, version, value).catch(() => {});
       }, notifyChangeDelayRef.current);
     },
-    [filePath, language, largeDocumentMode, onChange],
+    [filePath, language, largeDocumentMode],
   );
 
   const formatDocumentAsync = useCallback(
@@ -2097,8 +2178,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       const lowerPath = filePath.toLowerCase();
 
       try {
+        const { default: prettier } = await import("prettier/standalone");
         let formatted: string | null = null;
         if (language === "php") {
+          const { default: prettierPluginPhp } =
+            await import("@prettier/plugin-php");
           formatted = await prettier.format(contentText, {
             parser: "php",
             plugins: [prettierPluginPhp],
@@ -2109,6 +2193,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             singleQuote: false,
           });
         } else if (language === "html" || lowerPath.endsWith(".blade.php")) {
+          const { default: prettierPluginHtml } =
+            await import("prettier/plugins/html");
           formatted = await prettier.format(contentText, {
             parser: "html",
             plugins: [prettierPluginHtml],
@@ -2123,6 +2209,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           language === "javascript" ||
           language === "javascriptreact"
         ) {
+          const [
+            { default: prettierPluginBabel },
+            { default: prettierPluginEstree },
+          ] = await Promise.all([
+            import("prettier/plugins/babel"),
+            import("prettier/plugins/estree"),
+          ]);
           formatted = await prettier.format(contentText, {
             parser: "babel",
             plugins: [prettierPluginBabel, prettierPluginEstree],
@@ -2137,6 +2230,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           language === "typescript" ||
           language === "typescriptreact"
         ) {
+          const [
+            { default: prettierPluginTypescript },
+            { default: prettierPluginEstree },
+          ] = await Promise.all([
+            import("prettier/plugins/typescript"),
+            import("prettier/plugins/estree"),
+          ]);
           formatted = await prettier.format(contentText, {
             parser: "typescript",
             plugins: [prettierPluginTypescript, prettierPluginEstree],
@@ -2148,6 +2248,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             arrowParens: "always",
           });
         } else if (language === "css" || language === "scss") {
+          const { default: prettierPluginPostcss } =
+            await import("prettier/plugins/postcss");
           formatted = await prettier.format(contentText, {
             parser: "css",
             plugins: [prettierPluginPostcss],
@@ -2157,6 +2259,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             singleQuote: false,
           });
         } else if (language === "json") {
+          const [
+            { default: prettierPluginBabel },
+            { default: prettierPluginEstree },
+          ] = await Promise.all([
+            import("prettier/plugins/babel"),
+            import("prettier/plugins/estree"),
+          ]);
           formatted = await prettier.format(contentText, {
             parser: "json",
             plugins: [prettierPluginBabel, prettierPluginEstree],
@@ -2194,12 +2303,12 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         {
           key: "Mod-s",
           run: () => {
-            onSave?.();
+            onSaveRef.current?.();
             return true;
           },
         },
       ]),
-    [onSave],
+    [],
   );
 
   const formatKeymap = useMemo(
@@ -2216,35 +2325,119 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     [formatDocument],
   );
 
-  const fontSizeExtension = useMemo(
-    () =>
-      EditorView.theme({
-        "&": {
-          fontSize: `${editorFontSize}px`,
-        },
-      }),
-    [editorFontSize],
-  );
-  const operatorLigaturesExtension = useMemo(
-    () => createOperatorLigaturesExtension(showOperatorLigatures),
-    [showOperatorLigatures],
+  const getEditorView = useCallback(
+    (): EditorView | null => editorRef.current?.view ?? null,
+    [],
   );
 
-  const definitionLinkExtension = useMemo<Extension[]>(() => {
-    if (!editorFeatureBudget.hover) {
-      return [];
+  const getSelectedText = useCallback((view: EditorView): string => {
+    const selections = view.state.selection.ranges
+      .filter((range) => !range.empty)
+      .map((range) => view.state.doc.sliceString(range.from, range.to));
+
+    if (selections.length > 0) {
+      return selections.join("\n");
     }
 
-    const clearDefinitionLink = (view: EditorView) => {
-      view.dispatch({ effects: setDefinitionLinkEffect.of(null) });
-      view.dom.style.cursor = "";
-    };
+    const line = view.state.doc.lineAt(view.state.selection.main.head);
+    return line.text;
+  }, []);
 
-    const resolveDefinitionMenu = async (
-      view: EditorView,
-      pos: number,
-      mode: "goto" | "quickLook",
-    ) => {
+  const copyEditorText = useCallback(async () => {
+    const view = getEditorView();
+    if (!view) {
+      return;
+    }
+
+    await writeClipboardTextWithFallback(getSelectedText(view));
+    view.focus();
+  }, [getEditorView, getSelectedText]);
+
+  const cutEditorSelection = useCallback(async () => {
+    const view = getEditorView();
+    if (!view || view.state.selection.ranges.every((range) => range.empty)) {
+      return;
+    }
+
+    const copied = await writeClipboardTextWithFallback(getSelectedText(view));
+    if (!copied) {
+      return;
+    }
+
+    view.dispatch(view.state.replaceSelection(""));
+    view.focus();
+  }, [getEditorView, getSelectedText]);
+
+  const pasteIntoEditor = useCallback(async () => {
+    const view = getEditorView();
+    if (!view) {
+      return;
+    }
+
+    const text = await readClipboardTextWithFallback();
+    if (!text) {
+      return;
+    }
+
+    view.dispatch(view.state.replaceSelection(text));
+    view.focus();
+  }, [getEditorView]);
+
+  const selectAllEditorText = useCallback(() => {
+    const view = getEditorView();
+    if (!view) {
+      return;
+    }
+
+    view.dispatch({
+      selection: { anchor: 0, head: view.state.doc.length },
+      scrollIntoView: true,
+      userEvent: "select",
+    });
+    view.focus();
+  }, [getEditorView]);
+
+  const copyCurrentLineReference = useCallback(async () => {
+    const view = getEditorView();
+    if (!view || !filePath) {
+      return;
+    }
+
+    const line = view.state.doc.lineAt(view.state.selection.main.head);
+    await writeClipboardTextWithFallback(`${filePath}:${line.number}`);
+    view.focus();
+  }, [filePath, getEditorView]);
+
+  const copyEditorRelativePath = useCallback(async () => {
+    if (!filePath) {
+      return;
+    }
+
+    await writeClipboardTextWithFallback(
+      relativeProjectPath(filePath, projectPath),
+    );
+  }, [filePath, projectPath]);
+
+  const copyEditorAbsolutePath = useCallback(async () => {
+    if (!filePath) {
+      return;
+    }
+
+    await writeClipboardTextWithFallback(filePath);
+  }, [filePath]);
+
+  const revealEditorFile = useCallback(() => {
+    if (!filePath) {
+      return;
+    }
+
+    void RevealProjectEntry(filePath).catch((error) => {
+      console.error("[Editor] Reveal file failed", error);
+    });
+  }, [filePath]);
+
+  const resolveDefinitionAtPosition = useCallback(
+    async (view: EditorView, pos: number, mode: "goto" | "quickLook") => {
       if (!projectPath) return;
 
       const line = view.state.doc.lineAt(pos);
@@ -2292,6 +2485,167 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         items: results,
         mode,
       });
+    },
+    [filePath, language, onOpenFile, onQuickLook, projectPath],
+  );
+
+  const runDefinitionAction = useCallback(
+    (mode: "goto" | "quickLook") => {
+      const view = getEditorView();
+      if (!view) {
+        return;
+      }
+
+      void resolveDefinitionAtPosition(
+        view,
+        view.state.selection.main.head,
+        mode,
+      );
+      view.focus();
+    },
+    [getEditorView, resolveDefinitionAtPosition],
+  );
+
+  const handleEditorContextMenuCapture = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => {
+      const view = getEditorView();
+      if (!view) {
+        return;
+      }
+
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (pos === null) {
+        return;
+      }
+
+      const selection = view.state.selection.main;
+      if (!selection.empty && pos >= selection.from && pos <= selection.to) {
+        return;
+      }
+
+      view.dispatch({ selection: { anchor: pos } });
+    },
+    [getEditorView],
+  );
+
+  const editorContextMenuItems = useMemo<ContextActionMenuItem[]>(
+    () => [
+      {
+        label: "Copy",
+        shortcut: "Cmd C",
+        icon: <Copy size={14} />,
+        onSelect: () => void copyEditorText(),
+      },
+      {
+        label: "Cut",
+        shortcut: "Cmd X",
+        icon: <Scissors size={14} />,
+        onSelect: () => void cutEditorSelection(),
+      },
+      {
+        label: "Paste",
+        shortcut: "Cmd V",
+        icon: <ClipboardPaste size={14} />,
+        onSelect: () => void pasteIntoEditor(),
+      },
+      {
+        label: "Select All",
+        shortcut: "Cmd A",
+        icon: <FileText size={14} />,
+        onSelect: selectAllEditorText,
+      },
+      { separator: true },
+      {
+        label: "Go to Definition",
+        shortcut: "Cmd Click",
+        icon: <SearchIcon size={14} />,
+        disabled: !projectPath || !onOpenFile,
+        onSelect: () => runDefinitionAction("goto"),
+      },
+      {
+        label: "Quick Look Definition",
+        shortcut: "Alt Click",
+        icon: <SearchIcon size={14} />,
+        disabled: !projectPath || !onQuickLook,
+        onSelect: () => runDefinitionAction("quickLook"),
+      },
+      {
+        label: "Format Document",
+        shortcut: "Shift Alt F",
+        icon: <FileText size={14} />,
+        disabled: largeDocumentMode,
+        onSelect: () => {
+          const view = getEditorView();
+          if (view) {
+            void formatDocument(view);
+          }
+        },
+      },
+      { separator: true },
+      {
+        label: "Copy Relative Path",
+        icon: <Copy size={14} />,
+        onSelect: () => void copyEditorRelativePath(),
+      },
+      {
+        label: "Copy Absolute Path",
+        icon: <Copy size={14} />,
+        onSelect: () => void copyEditorAbsolutePath(),
+      },
+      {
+        label: "Copy Path:Line",
+        icon: <Copy size={14} />,
+        onSelect: () => void copyCurrentLineReference(),
+      },
+      {
+        label: "Reveal in File Manager",
+        icon: <ExternalLink size={14} />,
+        disabled: !filePath,
+        onSelect: revealEditorFile,
+      },
+    ],
+    [
+      copyCurrentLineReference,
+      copyEditorAbsolutePath,
+      copyEditorRelativePath,
+      copyEditorText,
+      cutEditorSelection,
+      filePath,
+      formatDocument,
+      getEditorView,
+      largeDocumentMode,
+      onOpenFile,
+      onQuickLook,
+      pasteIntoEditor,
+      projectPath,
+      revealEditorFile,
+      runDefinitionAction,
+      selectAllEditorText,
+    ],
+  );
+
+  const fontSizeExtension = useMemo(
+    () =>
+      EditorView.theme({
+        "&": {
+          fontSize: `${editorFontSize}px`,
+        },
+      }),
+    [editorFontSize],
+  );
+  const operatorLigaturesExtension = useMemo(
+    () => createOperatorLigaturesExtension(showOperatorLigatures),
+    [showOperatorLigatures],
+  );
+
+  const definitionLinkExtension = useMemo<Extension[]>(() => {
+    if (!editorFeatureBudget.hover) {
+      return [];
+    }
+
+    const clearDefinitionLink = (view: EditorView) => {
+      view.dispatch({ effects: setDefinitionLinkEffect.of(null) });
+      view.dom.style.cursor = "";
     };
 
     return [
@@ -2351,11 +2705,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           if (pos === null) return false;
 
           if (event.altKey && !event.metaKey && !event.ctrlKey) {
-            resolveDefinitionMenu(view, pos, "quickLook");
+            void resolveDefinitionAtPosition(view, pos, "quickLook");
             return true;
           }
           if ((event.metaKey || event.ctrlKey) && !event.altKey) {
-            resolveDefinitionMenu(view, pos, "goto");
+            void resolveDefinitionAtPosition(view, pos, "goto");
             return true;
           }
           return false;
@@ -2366,9 +2720,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     editorFeatureBudget.hover,
     filePath,
     language,
-    onOpenFile,
-    onQuickLook,
     projectPath,
+    resolveDefinitionAtPosition,
   ]);
 
   const hoverExtension = useMemo<Extension[]>(() => {
@@ -2487,12 +2840,21 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     if (editorFeatureBudget.runtimeCompletions) {
       nextExtensions.push(
         orchestrator.extension,
-        Prec.highest(keymap.of(COMPLETION_KEYMAP_WITHOUT_ESCAPE)),
+        Prec.highest(
+          keymap.of([
+            {
+              key: "Enter",
+              run: acceptVisibleCompletion,
+            },
+            ...COMPLETION_KEYMAP_WITHOUT_ESCAPE_OR_ENTER,
+          ]),
+        ),
         EditorView.updateListener.of((update) => {
           if (!update.docChanged) return;
           if (update.view.composing || update.view.compositionStarted) return;
 
           let insertedNonWhitespace = false;
+          let insertedAutocompleteWhitespace = false;
           update.transactions.forEach((transaction) => {
             if (!transaction.isUserEvent("input")) return;
             if (transaction.isUserEvent("input.type.compose")) return;
@@ -2505,23 +2867,39 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             }
             transaction.changes.iterChanges(
               (_fromA, _toA, _fromB, _toB, inserted) => {
-                if (/\S/.test(inserted.toString())) {
+                const insertedText = inserted.toString();
+                if (/\S/.test(insertedText)) {
                   insertedNonWhitespace = true;
+                } else if (/[^\S\r\n]/.test(insertedText)) {
+                  insertedAutocompleteWhitespace = true;
                 }
               },
             );
           });
 
-          if (!insertedNonWhitespace) return;
-
           const currentPos = update.state.selection.main.head;
+          const currentLine = update.state.doc.lineAt(currentPos);
+          const textBeforeLine = currentLine.text.slice(
+            0,
+            currentPos - currentLine.from,
+          );
+          const isWhitespaceCompletionTrigger =
+            insertedAutocompleteWhitespace &&
+            language === "go" &&
+            extractGoPackageNamePrefix(textBeforeLine) !== null;
+          if (!insertedNonWhitespace && !isWhitespaceCompletionTrigger) return;
+
           const recentText = update.state.doc.sliceString(
             Math.max(0, currentPos - 2),
             currentPos,
           );
           const isAccessTrigger = endsWithAccessTrigger(recentText);
 
-          if (completionStatus(update.state) === "active" && !isAccessTrigger) {
+          if (
+            completionStatus(update.state) === "active" &&
+            !isAccessTrigger &&
+            !isWhitespaceCompletionTrigger
+          ) {
             return;
           }
 
@@ -2533,7 +2911,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             const version = documentVersionRef.current;
             if (completionDismissedVersionRef.current === version) return;
             const status = completionStatus(view.state);
-            if (status === "active" && !isAccessTrigger) return;
+            if (
+              status === "active" &&
+              !isAccessTrigger &&
+              !isWhitespaceCompletionTrigger
+            ) {
+              return;
+            }
             if (view.composing || view.compositionStarted) return;
             metrics.recordAutocompleteRequested();
             autoStartedCompletionVersionRef.current = version;
@@ -2706,54 +3090,63 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   }, [extensions, reapplyAdaptiveExtensions]);
 
   return (
-    <div
-      className="relative h-full w-full overflow-hidden"
-      style={editorCanvasStyle}
+    <ContextActionMenu
+      items={editorContextMenuItems}
+      nativeScope="editor"
+      nativeSurfaceId="editor"
+      nativeTargetId={filePath}
+      nativeContext={{ filePath, language, projectPath }}
+      onContextMenuCapture={handleEditorContextMenuCapture}
     >
-      <CodeMirror
-        ref={editorRef}
-        value={content}
-        onChange={handleChange}
-        extensions={extensions}
-        basicSetup={basicSetup}
-        theme="none"
-        className={codeEditorSurfaceClassName}
-        onCreateEditor={(view) => {
-          bindEditorView(view);
-          syncCursorPosition(view.state);
-        }}
-      />
+      <div
+        className="relative h-full w-full overflow-hidden"
+        style={editorCanvasStyle}
+      >
+        <CodeMirror
+          ref={editorRef}
+          value={content}
+          onChange={handleChange}
+          extensions={extensions}
+          basicSetup={basicSetup}
+          theme="none"
+          className={codeEditorSurfaceClassName}
+          onCreateEditor={(view) => {
+            bindEditorView(view);
+            syncCursorPosition(view.state);
+          }}
+        />
 
-      <DefinitionChooserMenu
-        isOpen={definitionMenu.isOpen}
-        x={definitionMenu.x}
-        y={definitionMenu.y}
-        items={definitionMenu.items}
-        onSelect={(path, line) => {
-          if (definitionMenu.mode === "quickLook" && onQuickLook) {
-            onQuickLook(path, line);
-          } else if (onOpenFile) {
-            onOpenFile(path, line);
-          }
-          setDefinitionMenu({
-            isOpen: false,
-            x: 0,
-            y: 0,
-            items: [],
-            mode: "goto",
-          });
-        }}
-        onClose={() => {
-          setDefinitionMenu({
-            isOpen: false,
-            x: 0,
-            y: 0,
-            items: [],
-            mode: "goto",
-          });
-        }}
-      />
-    </div>
+        <DefinitionChooserMenu
+          isOpen={definitionMenu.isOpen}
+          x={definitionMenu.x}
+          y={definitionMenu.y}
+          items={definitionMenu.items}
+          onSelect={(path, line) => {
+            if (definitionMenu.mode === "quickLook" && onQuickLook) {
+              onQuickLook(path, line);
+            } else if (onOpenFile) {
+              onOpenFile(path, line);
+            }
+            setDefinitionMenu({
+              isOpen: false,
+              x: 0,
+              y: 0,
+              items: [],
+              mode: "goto",
+            });
+          }}
+          onClose={() => {
+            setDefinitionMenu({
+              isOpen: false,
+              x: 0,
+              y: 0,
+              items: [],
+              mode: "goto",
+            });
+          }}
+        />
+      </div>
+    </ContextActionMenu>
   );
 };
 
