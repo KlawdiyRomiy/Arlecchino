@@ -38,8 +38,12 @@ import { useAutoUpdateBridge } from "./shell/autoUpdate";
 import { useManualUpdateNotifications } from "./shell/manualUpdateNotifications";
 import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
 import { useWindowLeaseBridge } from "./shell/windowLeaseBridge";
+import { registerOpenIntentDispatcher } from "./shell/openIntentRouter";
 import { syncSurfaceRuntimeWindowLeaseBackendStatus } from "./surfaces/surfaceRuntimeStore";
-import type { EditorFileOpenPayload } from "./utils/editorFileLoader";
+import {
+  createEditorFileLoadingLoad,
+  type EditorFileOpenPayload,
+} from "./utils/editorFileLoader";
 
 const PROJECT_SWITCH_VISUAL_SETTLE_MS = 260;
 
@@ -70,6 +74,18 @@ const appShellStyle: React.CSSProperties = {
   borderRadius: "var(--radius-window)",
   clipPath: "inset(0 round var(--radius-window))",
   background: "transparent",
+};
+
+const parentDirectoryForFilePath = (path: string): string | null => {
+  const normalizedPath = path.trim();
+  const separatorIndex = normalizedPath.lastIndexOf("/");
+  if (separatorIndex > 0) {
+    return normalizedPath.slice(0, separatorIndex);
+  }
+  if (separatorIndex === 0) {
+    return "/";
+  }
+  return null;
 };
 
 const App: React.FC = () => {
@@ -300,6 +316,38 @@ const App: React.FC = () => {
       alert(`Error while switching project: ${error}`);
     }
   };
+
+  useEffect(() => {
+    if (!ready || activeId || isDetachedHost) {
+      return;
+    }
+
+    const unregister = registerOpenIntentDispatcher({
+      openProject: async (projectPath) => {
+        await handleProjectOpen(projectPath);
+      },
+      openFile: async (path, line) => {
+        const projectPath = parentDirectoryForFilePath(path);
+        if (!projectPath) {
+          throw new Error(`Cannot infer a project folder for file: ${path}`);
+        }
+
+        await handleProjectOpen(projectPath);
+        if (!useWorkspaceStore.getState().activeId) {
+          return;
+        }
+
+        setFileToOpen({
+          file: createEditorFileLoadingLoad(path),
+          line,
+        });
+      },
+      openPreview: async () => {},
+      focusSurface: async () => {},
+    });
+
+    return unregister;
+  }, [activeId, handleProjectOpen, isDetachedHost, ready]);
 
   if (!ready) {
     if (isDetachedHost) {

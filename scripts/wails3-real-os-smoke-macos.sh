@@ -343,6 +343,9 @@ wait_for_trace_match "protocol-rejected-command" 'entries.some((e) => e.source =
 open_registered_target "file-association" "$MAIN_FILE"
 wait_for_trace_match "file-association" 'entries.some((e) => e.source === "os-file-open" && e.kind === "openFile" && e.payload && e.payload.path && e.payload.path.endsWith("/main.go") && e.stage === "emitted")'
 
+open_registered_target "folder-association" "$FIXTURE_DIR"
+wait_for_trace_match "folder-association" 'entries.some((e) => e.source === "os-file-open" && e.kind === "openProject" && e.payload && e.payload.projectPath && e.payload.projectPath.endsWith("/fixture") && e.stage === "emitted")'
+
 open -n \
   --env "ARLECCHINO_DISABLE_MCP_BOOTSTRAP=1" \
   --env "ARLECCHINO_DATA_DIR=$TMP_ROOT/app-data" \
@@ -375,6 +378,7 @@ const checks = [
   has("protocol-rejects-arbitrary-command", (e) => e.source === "os-url-open" && e.stage === "rejected"),
   has("file-handler-entry", (e) => e.source === "os-file-open" && e.stage === "application-event"),
   has("file-association-open", (e) => e.source === "os-file-open" && e.kind === "openFile" && e.stage === "emitted"),
+  has("folder-association-open", (e) => e.source === "os-file-open" && e.kind === "openProject" && e.stage === "emitted"),
   has("single-instance-handoff", (e) => e.source === "single-instance" && e.kind === "openFile" && e.stage === "emitted"),
 ];
 const routes = fs.existsSync(routesPath)

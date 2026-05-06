@@ -61,6 +61,28 @@ func TestDispatchOpenIntentFromOSTargetQueuesAllowedProtocolAndRejectsCommandPay
 	}
 }
 
+func TestDispatchOpenIntentFromOSTargetQueuesFolderAsProject(t *testing.T) {
+	root := t.TempDir()
+	tracePath := filepath.Join(root, "trace.jsonl")
+	t.Setenv(envOpenIntentTracePath, tracePath)
+
+	app := &App{}
+	if !app.dispatchOpenIntentFromOSTarget(openIntentSourceOSFile, root, "/") {
+		t.Fatal("dispatchOpenIntentFromOSTarget folder = false, want true")
+	}
+
+	events := readOpenIntentTraceForTest(t, tracePath)
+	if len(events) != 1 {
+		t.Fatalf("trace event count = %d, want 1: %#v", len(events), events)
+	}
+	if events[0].Stage != "queued" || events[0].Source != openIntentSourceOSFile || events[0].Kind != "openProject" {
+		t.Fatalf("folder trace = %#v", events[0])
+	}
+	if events[0].Payload["projectPath"] != root {
+		t.Fatalf("projectPath = %#v, want %q", events[0].Payload["projectPath"], root)
+	}
+}
+
 func TestTraceOpenIntentApplicationEventRecordsHandlerEntry(t *testing.T) {
 	tracePath := filepath.Join(t.TempDir(), "open-intent.jsonl")
 	t.Setenv(envOpenIntentTracePath, tracePath)

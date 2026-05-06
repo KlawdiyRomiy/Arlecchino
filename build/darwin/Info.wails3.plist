@@ -55,6 +55,7 @@
       <key>LSItemContentTypes</key>
       <array>
         <string>public.data</string>
+        <string>public.folder</string>
         <string>public.text</string>
         <string>public.source-code</string>
       </array>

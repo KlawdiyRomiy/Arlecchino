@@ -138,6 +138,22 @@ func TestBuildOpenIntentFromLaunchArgsSupportsFileURLAssociation(t *testing.T) {
 	}
 }
 
+func TestBuildOpenIntentFromLaunchArgsSupportsFolderURLAssociation(t *testing.T) {
+	root := t.TempDir()
+	folderURL := url.URL{Scheme: "file", Path: root}
+
+	payload, ok := buildOpenIntentFromLaunchArgs(
+		[]string{"/tmp/Arlecchino", folderURL.String()},
+		"/",
+	)
+	if !ok {
+		t.Fatalf("buildOpenIntentFromLaunchArgs() ok = false, want true")
+	}
+	if payload["kind"] != "openProject" || payload["projectPath"] != root {
+		t.Fatalf("payload = %#v, want file association openProject", payload)
+	}
+}
+
 func TestBuildOpenIntentFromLaunchArgsRejectsUnsafeCustomProtocolPayloads(t *testing.T) {
 	unsupported := []string{
 		"arlecchino://open?command=rm%20-rf%20/",
