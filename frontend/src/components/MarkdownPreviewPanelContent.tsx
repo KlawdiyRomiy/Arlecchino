@@ -1,5 +1,6 @@
 import React from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import { FileText } from "lucide-react";
 import { openExternalUrlWithCapability } from "../shell/browser";
@@ -176,7 +177,11 @@ export const MarkdownPreviewPanelContent: React.FC<
       data-source-path={source.path}
     >
       <div className="mx-auto max-w-[860px] px-6 py-5 text-sm">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeRaw]}
+          components={components}
+        >
           {source.content}
         </ReactMarkdown>
       </div>

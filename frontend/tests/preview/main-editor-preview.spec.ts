@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
       "/workspace/index.html":
         "<!doctype html><html><body>Main editor preview</body></html>",
       "/workspace/README.md":
-        "# Initial live preview\n\n- [docs](https://example.test/docs)\n\n- ready",
+        '# Initial live preview\n\n<p align="center"><img src="https://example.test/badge.svg" alt="Preview badge" width="128" /></p>\n\n<h2 align="center">HTML heading</h2>\n\n- [docs](https://example.test/docs)\n\n- ready',
     };
     const imageDataUrl =
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
@@ -244,6 +244,14 @@ test("Markdown preview panel follows the active tab and updates before autosave"
   const panel = page.getByTestId("panel-markdownPreview");
   await expect(panel).toBeVisible();
   await expect(panel).toContainText("Initial live preview");
+  await expect(panel).not.toContainText('<p align="center">');
+  await expect(
+    panel.getByRole("heading", { name: "HTML heading" }),
+  ).toBeVisible();
+  await expect(panel.locator('img[alt="Preview badge"]')).toHaveAttribute(
+    "width",
+    "128",
+  );
 
   await page.locator(".cm-content").first().click();
   await page.keyboard.press(
