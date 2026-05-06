@@ -221,6 +221,19 @@ test("search button opens command dispatcher", async ({ page }) => {
   ).toHaveCount(0);
 });
 
+test("smart quote activates grep mode in command dispatcher", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.getByTitle("Search").click();
+  await page.locator('input[placeholder="Search..."]').fill("«needle");
+
+  await expect(
+    page.locator(".shell-pill").filter({ hasText: "Grep" }),
+  ).toBeVisible();
+});
+
 test("Cmd+F opens command dispatcher", async ({ page }) => {
   await mountProjectUI(page);
 

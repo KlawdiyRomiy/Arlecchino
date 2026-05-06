@@ -75,6 +75,37 @@ interface AnsiSpan {
   bold?: boolean;
 }
 
+const GREP_QUOTE_CLOSERS: Record<string, string> = {
+  '"': '"',
+  "'": "'",
+  "“": "”",
+  "”": "”",
+  "„": "“",
+  "‟": "”",
+  "«": "»",
+  "»": "»",
+  "‘": "’",
+  "’": "’",
+  "‚": "‘",
+  "‛": "’",
+};
+
+const getGrepQuotePrefix = (input: string): string | null => {
+  const [prefix] = input;
+  return prefix && prefix in GREP_QUOTE_CLOSERS ? prefix : null;
+};
+
+const stripGrepQuotePrefix = (input: string): string => {
+  const prefix = getGrepQuotePrefix(input);
+  if (!prefix) return input;
+
+  const closingQuote = GREP_QUOTE_CLOSERS[prefix];
+  const query = input.slice(prefix.length);
+  return query.endsWith(closingQuote)
+    ? query.slice(0, -closingQuote.length)
+    : query;
+};
+
 const parseAnsi = (text: string): AnsiSpan[] => {
   const spans: AnsiSpan[] = [];
   const regex = /\x1b\[([0-9;]*)m/g;
@@ -136,7 +167,7 @@ const parseAnsi = (text: string): AnsiSpan[] => {
 const getModeFromInput = (input: string): InputMode => {
   if (input.startsWith(">>")) return "file";
   if (input.startsWith(">")) return "ide";
-  if (input.startsWith('"') || input.startsWith("'")) return "grep";
+  if (getGrepQuotePrefix(input)) return "grep";
   if (input.startsWith("#")) return "symbol";
   if (input.startsWith("@ai ")) return "ai";
   if (input.startsWith("@")) return "tag";
@@ -334,11 +365,7 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
             break;
           case "grep":
             try {
-              let query = input;
-              if (input.startsWith('"'))
-                query = input.slice(1).replace(/"$/, "");
-              else if (input.startsWith("'"))
-                query = input.slice(1).replace(/'$/, "");
+              const query = stripGrepQuotePrefix(input);
               const results = await SearchContent(query);
               results?.forEach((r, i) => {
                 newItems.push({

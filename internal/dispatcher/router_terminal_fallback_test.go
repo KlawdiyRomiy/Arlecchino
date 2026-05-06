@@ -27,6 +27,40 @@ func TestRouterParse_TagCommandStillWorks(t *testing.T) {
 	}
 }
 
+func TestRouterParse_GrepQuotePrefixes(t *testing.T) {
+	router := NewRouter(DefaultConfig())
+
+	tests := []struct {
+		name   string
+		input  string
+		prefix string
+		query  string
+	}{
+		{name: "double quote", input: `"needle"`, prefix: `"`, query: "needle"},
+		{name: "single quote", input: `'needle'`, prefix: `'`, query: "needle"},
+		{name: "guillemet", input: `«needle»`, prefix: `«`, query: "needle"},
+		{name: "guillemet without closer", input: `«needle`, prefix: `«`, query: "needle"},
+		{name: "curly double quote", input: `“needle”`, prefix: `“`, query: "needle"},
+		{name: "curly single quote", input: `‘needle’`, prefix: `‘`, query: "needle"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := router.Parse(tt.input)
+
+			if parsed.Type != InputTypeGrepSearch {
+				t.Fatalf("Type = %v, want %v", parsed.Type, InputTypeGrepSearch)
+			}
+			if parsed.Prefix != tt.prefix {
+				t.Fatalf("Prefix = %q, want %q", parsed.Prefix, tt.prefix)
+			}
+			if parsed.Query != tt.query {
+				t.Fatalf("Query = %q, want %q", parsed.Query, tt.query)
+			}
+		})
+	}
+}
+
 func TestDispatcherDispatch_QuotedAtCommandFallsBackToTerminal(t *testing.T) {
 	dispatcher := New(DefaultConfig())
 	input := `@"spawn" codex write tests --task-scope=task:71`

@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 type Router struct {
@@ -11,6 +12,21 @@ type Router struct {
 	actions    *ActionRegistry
 	config     DispatcherConfig
 	recentCmds []string
+}
+
+var grepQuoteClosers = map[rune]rune{
+	'"':  '"',
+	'\'': '\'',
+	'“':  '”',
+	'”':  '”',
+	'„':  '“',
+	'‟':  '”',
+	'«':  '»',
+	'»':  '»',
+	'‘':  '’',
+	'’':  '’',
+	'‚':  '‘',
+	'‛':  '’',
 }
 
 func NewRouter(config DispatcherConfig) *Router {
@@ -36,7 +52,7 @@ func (r *Router) Parse(input string) ParsedInput {
 		return r.parseIDEAction(input)
 	}
 
-	if strings.HasPrefix(input, "\"") || strings.HasPrefix(input, "'") {
+	if _, _, ok := grepQuotePrefix(input); ok {
 		return r.parseGrepSearch(input)
 	}
 
@@ -57,6 +73,15 @@ func (r *Router) Parse(input string) ParsedInput {
 		Type:  InputTypeTerminal,
 		Query: input,
 	}
+}
+
+func grepQuotePrefix(input string) (rune, int, bool) {
+	prefix, size := utf8.DecodeRuneInString(input)
+	if prefix == utf8.RuneError && size == 0 {
+		return 0, 0, false
+	}
+	_, ok := grepQuoteClosers[prefix]
+	return prefix, size, ok
 }
 
 func (r *Router) parseFileSearch(input string) ParsedInput {
@@ -82,10 +107,15 @@ func (r *Router) parseIDEAction(input string) ParsedInput {
 }
 
 func (r *Router) parseGrepSearch(input string) ParsedInput {
-	query := strings.Trim(input, "\"'")
+	prefixRune, prefixSize, ok := grepQuotePrefix(input)
 	prefix := "\""
-	if strings.HasPrefix(input, "'") {
-		prefix = "'"
+	query := input
+	if ok {
+		prefix = string(prefixRune)
+		query = input[prefixSize:]
+		if closing, found := grepQuoteClosers[prefixRune]; found {
+			query = strings.TrimSuffix(query, string(closing))
+		}
 	}
 	return ParsedInput{
 		Raw:    input,
