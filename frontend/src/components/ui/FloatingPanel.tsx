@@ -300,6 +300,20 @@ export const FloatingPanel = React.forwardRef<
     ]);
 
     useEffect(() => {
+      if (hasEntered || reduceMotion || mode === "floating" || !isPresent) {
+        return;
+      }
+
+      const timer = window.setTimeout(() => {
+        warmedPanelContentIds.add(id);
+        setHasEntered(true);
+        setContentReady(true);
+      }, FLOATING_PANEL_LAYOUT_TRANSITION_MS + 80);
+
+      return () => window.clearTimeout(timer);
+    }, [hasEntered, id, isPresent, mode, reduceMotion]);
+
+    useEffect(() => {
       onResizeRef.current = onResize;
       onResizeStartRef.current = onResizeStart;
       onResizeEndRef.current = onResizeEnd;

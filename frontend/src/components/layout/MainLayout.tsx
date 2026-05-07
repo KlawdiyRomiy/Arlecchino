@@ -1369,7 +1369,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       return;
     }
 
-    toggleNamedPanel(panelId);
+    if (panelId === "problems" && !wasVisible) {
+      openProblemsInAvailableSlot();
+    } else {
+      toggleNamedPanel(panelId);
+    }
     if (!wasVisible) {
       pinZenPanelIfShortcutOpened(panelId);
     }
@@ -4264,6 +4268,45 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       togglePanelFullscreenFromShortcut,
     });
 
+  const openProblemsInAvailableSlot = useCallback(() => {
+    const position = findAvailablePanelPosition({
+      preferred: "bottom",
+      exclude: ["problems"],
+    });
+
+    if (position) {
+      applyPanelOpenState("problems", {
+        panel: "problems",
+        mode: "snapped",
+        position,
+      });
+      pinZenPanelIfShortcutOpened("problems");
+      return;
+    }
+
+    const currentConfig = panelConfigsRef.current.problems;
+    const floatingConfig =
+      currentConfig.mode === "floating"
+        ? currentConfig
+        : DEFAULT_PANEL_CONFIGS.problems;
+
+    applyPanelOpenState("problems", {
+      panel: "problems",
+      mode: "floating",
+      x: floatingConfig.x,
+      y: floatingConfig.y,
+      width:
+        floatingConfig.size.width || DEFAULT_PANEL_CONFIGS.problems.size.width,
+      height:
+        floatingConfig.size.height ||
+        DEFAULT_PANEL_CONFIGS.problems.size.height,
+    });
+  }, [
+    applyPanelOpenState,
+    findAvailablePanelPosition,
+    pinZenPanelIfShortcutOpened,
+  ]);
+
   const togglePanelFromExplicitAction = useCallback(
     (panelId: PanelId) => {
       const wasVisible = panelsRef.current[panelId];
@@ -4273,7 +4316,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
-      toggleNamedPanel(panelId);
+      if (panelId === "problems" && !wasVisible) {
+        openProblemsInAvailableSlot();
+      } else {
+        toggleNamedPanel(panelId);
+      }
       if (!wasVisible) {
         pinZenPanelIfShortcutOpened(panelId);
       }
@@ -4281,6 +4328,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [
       isZenHiddenSnappedPanel,
       markActivePanel,
+      openProblemsInAvailableSlot,
       pinZenPanelIfShortcutOpened,
       toggleNamedPanel,
     ],
@@ -4345,17 +4393,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       return;
     }
 
-    const position = findAvailablePanelPosition({
-      preferred: "bottom",
-      exclude: ["problems"],
-    });
-
-    applyPanelOpenState("problems", {
-      panel: "problems",
-      mode: "snapped",
-      position: position ?? undefined,
-    });
-    pinZenPanelIfShortcutOpened("problems");
+    openProblemsInAvailableSlot();
   };
 
   const {

@@ -409,6 +409,19 @@ const readPanelFrame = async (
   }, selector);
 };
 
+test("initial snapped panel renders content on first project mount", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  const panel = page.getByTestId("panel-explorer");
+  await expect(panel).toBeVisible();
+  await expect(panel.locator('[data-panel-content="true"]')).toHaveAttribute(
+    "data-panel-content-ready",
+    "true",
+  );
+});
+
 const readElementBox = async (
   page: Parameters<typeof test>[0]["page"],
   selector: string,
@@ -1892,7 +1905,7 @@ test("fullscreen floating panel closes without a sideways slide under ui scale",
   await expect(page.locator('[data-testid="panel-git"]')).toHaveCount(0);
 });
 
-test("free floating panel opens and closes without edge slide", async ({
+test("problems shortcut opens a persisted floating panel into a free snapped side", async ({
   page,
 }) => {
   await mountProjectUI(page, {
@@ -1931,11 +1944,83 @@ test("free floating panel opens and closes without edge slide", async ({
   await expect(panel).toBeAttached();
   await nextAnimationFrame(page);
 
+  await expect(panel).toHaveAttribute("data-panel-state", "docked");
+  await expect(panel).toHaveAttribute("data-panel-position", "bottom");
+});
+
+test("problems shortcut falls back to floating when every side is occupied", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: true,
+        terminal: true,
+        aiChat: true,
+        git: true,
+        problems: false,
+        code: false,
+      },
+      panelConfigs: {
+        explorer: {
+          position: "left",
+          mode: "snapped",
+          size: { width: 260, height: 0 },
+          x: 0,
+          y: 0,
+        },
+        terminal: {
+          position: "bottom",
+          mode: "snapped",
+          size: { width: 0, height: 220 },
+          x: 0,
+          y: 0,
+        },
+        aiChat: {
+          position: "right",
+          mode: "snapped",
+          size: { width: 320, height: 0 },
+          x: 0,
+          y: 0,
+        },
+        git: {
+          position: "top",
+          mode: "snapped",
+          size: { width: 0, height: 220 },
+          x: 0,
+          y: 0,
+        },
+        problems: {
+          position: "bottom",
+          mode: "floating",
+          size: { width: 420, height: 260 },
+          x: 140,
+          y: 120,
+        },
+      },
+    },
+  });
+
+  const panel = page.locator('[data-testid="panel-problems"]');
+  await expect(panel).toHaveCount(0);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent("arlecchino:application-menu-action", {
+        detail: { actionId: "problems.toggle" },
+      }),
+    );
+  });
+
+  await expect(panel).toBeAttached();
+  await nextAnimationFrame(page);
+
   const openingFrame = await readPanelFrame(
     page,
     '[data-testid="panel-problems"]',
   );
   expect(openingFrame).not.toBeNull();
+  await expect(panel).toHaveAttribute("data-panel-state", "floating");
   expect(openingFrame?.motion).toBe("settled");
   expect(Math.abs(openingFrame?.translateX ?? 0)).toBeLessThanOrEqual(1);
   expect(Math.abs(openingFrame?.translateY ?? 0)).toBeLessThanOrEqual(1);
