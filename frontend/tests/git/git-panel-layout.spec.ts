@@ -7,11 +7,16 @@ type GitPanelFixture = {
   branch: string;
   branches: string[];
   remoteOutput: string;
+  remoteUrl?: string;
+  failDiff?: string;
+  failNextCommand?: string;
 };
 
 declare global {
   interface Window {
     __gitPanelFixture?: GitPanelFixture;
+    __gitCommandLog?: string[][];
+    __openedGitPrUrl?: string | null;
   }
 }
 
@@ -44,8 +49,15 @@ const installBaseBridges = async (
       branch: "feature/bubble-git-panel",
       branches: ["feature/bubble-git-panel", "main"],
       remoteOutput: "",
+      remoteUrl: "git@github.com:KlawdiyRomiy/Arlecchino.git",
     };
     window.__gitPanelFixture = defaultGitFixture;
+    window.__gitCommandLog = [];
+    window.__openedGitPrUrl = null;
+    window.open = (url?: string | URL | undefined) => {
+      window.__openedGitPrUrl = String(url ?? "");
+      return null;
+    };
 
     const getGitFixture = (): GitPanelFixture =>
       window.__gitPanelFixture ?? defaultGitFixture;
@@ -89,6 +101,9 @@ const installBaseBridges = async (
               case "GetGitLog":
                 return [];
               case "GetGitDiff":
+                if (getGitFixture().failDiff) {
+                  throw new Error(getGitFixture().failDiff);
+                }
                 return [
                   "diff --git a/frontend/src/components/GitPanel.tsx b/frontend/src/components/GitPanel.tsx",
                   "index 1111111..2222222 100644",
@@ -105,10 +120,19 @@ const installBaseBridges = async (
               case "RunGitCommand": {
                 const args = (_args[0] ?? []) as string[];
                 const fixture = getGitFixture();
+                window.__gitCommandLog?.push(args);
+                if (fixture.failNextCommand) {
+                  window.__gitPanelFixture = {
+                    ...fixture,
+                    failNextCommand: undefined,
+                  };
+                  throw new Error(fixture.failNextCommand);
+                }
                 if (args[0] === "init") {
                   window.__gitPanelFixture = {
                     ...defaultGitFixture,
                     remoteOutput: fixture.remoteOutput,
+                    remoteUrl: fixture.remoteUrl,
                   };
                   return "Initialized empty Git repository";
                 }
@@ -117,6 +141,12 @@ const installBaseBridges = async (
                 }
                 if (args[0] === "status") {
                   return fixture.statusV2;
+                }
+                if (args[0] === "remote" && args[1] === "get-url") {
+                  return (
+                    fixture.remoteUrl ??
+                    "git@github.com:KlawdiyRomiy/Arlecchino.git"
+                  );
                 }
                 if (args[0] === "remote") {
                   return fixture.remoteOutput;
@@ -490,6 +520,191 @@ test("git panel keeps list regions scrollable in compact and expanded modes", as
     return node.scrollTop;
   });
   expect(expandedScrollTop).toBeGreaterThan(0);
+});
+
+test("git panel routes stage commit and pull request actions through the git bridge", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await openGitPanel(page);
+
+  await expect(page.getByTestId("panel-git")).toBeVisible();
+  await waitForGitPanelInitialRefresh(page);
+  await seedGitState(page);
+
+  await page
+    .locator(
+      '[title="frontend/src/components/layout/MainLayout.tsx"] button[title="Stage file"]',
+    )
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          window.__gitCommandLog?.some(
+            (args) =>
+              args[0] === "add" &&
+              args[1] === "--" &&
+              args[2] === "frontend/src/components/layout/MainLayout.tsx",
+          ),
+        ),
+      ),
+    )
+    .toBe(true);
+
+  await page.getByRole("button", { name: "Commit..." }).click();
+  await page.getByPlaceholder("Commit message").fill("test git panel commit");
+  await page
+    .getByTestId("git-compact-detail-workspace")
+    .getByRole("button", { name: "Commit" })
+    .last()
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          window.__gitCommandLog?.some(
+            (args) =>
+              args[0] === "commit" &&
+              args[1] === "-m" &&
+              args[2] === "test git panel commit",
+          ),
+        ),
+      ),
+    )
+    .toBe(true);
+
+  const detailWorkspace = page.getByTestId("git-compact-detail-workspace");
+  await detailWorkspace.getByRole("button", { name: "Fetch" }).click();
+  await detailWorkspace.getByRole("button", { name: "Pull" }).click();
+  await detailWorkspace.getByRole("button", { name: "Push" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const log = window.__gitCommandLog ?? [];
+        return (
+          log.some((args) => args[0] === "fetch" && args[1] === "origin") &&
+          log.some(
+            (args) =>
+              args[0] === "pull" &&
+              args[1] === "origin" &&
+              args[2] === "feature/bubble-git-panel",
+          ) &&
+          log.some(
+            (args) =>
+              args[0] === "push" &&
+              args[1] === "origin" &&
+              args[2] === "feature/bubble-git-panel",
+          )
+        );
+      }),
+    )
+    .toBe(true);
+
+  await detailWorkspace.getByRole("button", { name: "PR" }).click();
+  await detailWorkspace.getByRole("button", { name: "Push -u" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          window.__gitCommandLog?.some(
+            (args) =>
+              args[0] === "push" &&
+              args[1] === "-u" &&
+              args[2] === "origin" &&
+              args[3] === "feature/bubble-git-panel",
+          ),
+        ),
+      ),
+    )
+    .toBe(true);
+
+  await detailWorkspace.getByLabel("Base branch").fill("main");
+  await detailWorkspace.getByRole("button", { name: "Open PR" }).click();
+
+  await expect
+    .poll(() => page.evaluate(() => window.__openedGitPrUrl))
+    .toBe(
+      "https://github.com/KlawdiyRomiy/Arlecchino/compare/main...feature%2Fbubble-git-panel?expand=1",
+    );
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          window.__gitCommandLog?.some(
+            (args) =>
+              args[0] === "remote" &&
+              args[1] === "get-url" &&
+              args[2] === "origin",
+          ),
+        ),
+      ),
+    )
+    .toBe(true);
+
+  await detailWorkspace.getByRole("button", { name: "Stash" }).click();
+  await detailWorkspace
+    .getByPlaceholder("Optional stash message")
+    .fill("work in progress");
+  await detailWorkspace.getByRole("button", { name: "Stash" }).last().click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          window.__gitCommandLog?.some(
+            (args) =>
+              args[0] === "stash" &&
+              args[1] === "push" &&
+              args[2] === "-u" &&
+              args[3] === "-m" &&
+              args[4] === "work in progress",
+          ),
+        ),
+      ),
+    )
+    .toBe(true);
+});
+
+test("git panel reports git failures through app notifications", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await openGitPanel(page);
+
+  await expect(page.getByTestId("panel-git")).toBeVisible();
+  await waitForGitPanelInitialRefresh(page);
+  await seedGitState(page);
+
+  await page.evaluate(() => {
+    window.__gitPanelFixture = {
+      ...(window.__gitPanelFixture as GitPanelFixture),
+      failDiff: JSON.stringify({
+        message:
+          "git error: error: pathspec '.arlecchino/' did not match any file(s) known to git",
+        cause: {},
+        kind: "RuntimeError",
+      }),
+    };
+  });
+
+  await page.getByTitle("View diff").first().click();
+
+  await expect(page.getByTestId("app-notification-stack")).toBeVisible();
+  await expect(page.getByText("Git operation failed")).toBeVisible();
+  await expect(
+    page.getByText(
+      "git error: error: pathspec '.arlecchino/' did not match any file(s) known to git",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId("git-panel-root").getByText('{"message"'),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId("app-notification-stack").getByText('{"message"'),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId("app-notification-stack").getByText("RuntimeError"),
+  ).toHaveCount(0);
 });
 
 test("git panel shows only initialization action when project is not a git repository", async ({

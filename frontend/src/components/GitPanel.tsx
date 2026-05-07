@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -27,8 +33,10 @@ import { useShallow } from "zustand/react/shallow";
 import * as AppFunctions from "../wails/app";
 import { useProjectEntryActions } from "../contexts/ProjectEntryActionsContext";
 import { useTheme } from "../hooks/useTheme";
+import { useAppNotificationStore } from "../stores/appNotificationStore";
 import { GitStashEntry, useGitStore } from "../stores/gitStore";
 import { getThemeColors, transitions } from "../styles/colors";
+import { toErrorMessage } from "../utils/errorMessages";
 import type { GitFileEntry, GitFileStatus } from "../utils/git";
 import {
   getProjectPathDirname,
@@ -578,7 +586,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   const [conflictedOpen, setConflictedOpen] = useState(true);
   const [prBaseOverride, setPrBaseOverride] = useState("");
   const [prUrl, setPrUrl] = useState<string | null>(null);
-  const [localError, setLocalError] = useState<string | null>(null);
+  const lastStoreErrorRef = useRef<string | null>(null);
   const isDiffFocused =
     presentationMode === "compact" && detailOpen && detailTab === "diff";
 
@@ -620,9 +628,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     git.stagedFiles.length +
     git.unstagedFiles.length +
     git.conflictedFiles.length;
-  const humanError = toHumanError(git.error) || localError;
   const showInitializeRepository = git.isRepositoryMissing;
-  const visibleError = showInitializeRepository ? localError : humanError;
 
   const panelVars = useMemo(
     () =>
@@ -668,14 +674,43 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     [projectPath, resolvePathForOpen],
   );
 
-  const withErrorGuard = useCallback(async (action: () => Promise<void>) => {
-    setLocalError(null);
-    try {
-      await action();
-    } catch (error) {
-      setLocalError(error instanceof Error ? error.message : String(error));
-    }
+  const notifyGitError = useCallback((error: unknown) => {
+    const rawMessage = toErrorMessage(error);
+    const message = toHumanError(rawMessage) ?? rawMessage;
+
+    useAppNotificationStore.getState().addNotification({
+      id: "git-panel-error",
+      kind: "error",
+      title: "Git operation failed",
+      message,
+      details: rawMessage !== message ? rawMessage : undefined,
+      source: "Git",
+    });
   }, []);
+
+  useEffect(() => {
+    if (!git.error) {
+      lastStoreErrorRef.current = null;
+      return;
+    }
+    if (git.isRepositoryMissing || lastStoreErrorRef.current === git.error) {
+      return;
+    }
+
+    lastStoreErrorRef.current = git.error;
+    notifyGitError(git.error);
+  }, [git.error, git.isRepositoryMissing, notifyGitError]);
+
+  const withErrorGuard = useCallback(
+    async (action: () => Promise<void>) => {
+      try {
+        await action();
+      } catch (error) {
+        notifyGitError(error);
+      }
+    },
+    [notifyGitError],
+  );
 
   const runPanelAction = useCallback(
     async (action: () => Promise<void>) => {
@@ -738,7 +773,6 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   const viewFileDiff = useCallback(
     async (file: GitFileEntry) => {
       setSelectedPath(file.path);
-      setLocalError(null);
       try {
         const diff = await AppFunctions.GetGitDiff(file.path, file.staged);
         setDiffReturnTab(
@@ -754,16 +788,15 @@ export const GitPanel: React.FC<GitPanelProps> = ({
         }
         setDetailTab("diff");
       } catch (error) {
-        setLocalError(error instanceof Error ? error.message : String(error));
+        notifyGitError(error);
       }
     },
-    [detailOpen, detailTab, presentationMode],
+    [detailOpen, detailTab, notifyGitError, presentationMode],
   );
 
   const viewCommitDiff = useCallback(
     async (hash: string) => {
       setSelectedPath(null);
-      setLocalError(null);
       try {
         const diff = await AppFunctions.GetGitCommitDiff(hash);
         setDiffReturnTab(
@@ -779,10 +812,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({
         }
         setDetailTab("diff");
       } catch (error) {
-        setLocalError(error instanceof Error ? error.message : String(error));
+        notifyGitError(error);
       }
     },
-    [detailOpen, detailTab, presentationMode],
+    [detailOpen, detailTab, notifyGitError, presentationMode],
   );
 
   const buildFileContextMenuItems = useCallback(
@@ -902,28 +935,26 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   );
 
   const previewPullRequestUrl = useCallback(async () => {
-    setLocalError(null);
     const url = await git.getPullRequestUrl(effectivePrBase);
     if (!url) {
-      setLocalError(
+      notifyGitError(
         "Unable to build PR URL. Make sure a GitHub remote is configured.",
       );
       return;
     }
     setPrUrl(url);
-  }, [effectivePrBase, git]);
+  }, [effectivePrBase, git, notifyGitError]);
 
   const openPullRequestUrl = useCallback(async () => {
-    setLocalError(null);
     const url = await git.openPullRequest(effectivePrBase);
     if (!url) {
-      setLocalError(
+      notifyGitError(
         "Unable to open PR URL. Make sure a GitHub remote is configured.",
       );
       return;
     }
     setPrUrl(url);
-  }, [effectivePrBase, git]);
+  }, [effectivePrBase, git, notifyGitError]);
 
   const selectedRemoteLabel =
     git.selectedRemote || git.remotes[0] || "no remote";
@@ -1626,11 +1657,6 @@ export const GitPanel: React.FC<GitPanelProps> = ({
           <Plus size={15} className="text-[var(--status-success)]" />
           {git.busy ? "Initializing..." : "Initialize Git"}
         </button>
-        {localError && (
-          <div className="max-w-full rounded-[18px] border border-[color:var(--status-error)]/30 bg-[color:var(--status-error)]/10 px-3 py-2 text-[11px] leading-4 text-[var(--git-text)]">
-            {localError}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1752,12 +1778,6 @@ export const GitPanel: React.FC<GitPanelProps> = ({
             </div>
           </div>
         </>
-      )}
-
-      {!showInitializeRepository && visibleError && (
-        <div className="border-t border-[var(--git-border)] bg-[color:var(--status-error)]/10 px-3 py-2 text-[11px] text-[var(--git-text)]">
-          {visibleError}
-        </div>
       )}
 
       {!isExpanded && !showInitializeRepository && (

@@ -168,8 +168,8 @@ const compactTitleStyle: React.CSSProperties = {
 const messageStyle: React.CSSProperties = {
   marginTop: "10px",
   color: "var(--text-secondary)",
-  fontSize: "14px",
-  lineHeight: 1.38,
+  fontSize: "18px",
+  lineHeight: 1.34,
   overflowWrap: "anywhere",
   whiteSpace: "pre-wrap",
 };

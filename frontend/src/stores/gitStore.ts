@@ -22,6 +22,7 @@ import {
   parseRemoteNameList,
   parseUnifiedDiffLineMarkers,
 } from "../utils/git";
+import { toErrorMessage } from "../utils/errorMessages";
 import { isSameOrChildPath } from "../utils/projectPaths";
 import { usePerformanceStore } from "./performanceStore";
 
@@ -93,13 +94,6 @@ const emptyBranchInfo = (): GitBranchInfo => ({
   detached: false,
   oid: "",
 });
-
-const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-  return String(error);
-};
 
 const isMissingRepositoryError = (error: unknown): boolean =>
   toErrorMessage(error).toLowerCase().includes("not a git repository");

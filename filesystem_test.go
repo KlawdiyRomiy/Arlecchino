@@ -575,6 +575,39 @@ func TestRunGitCommandStatus(t *testing.T) {
 	}
 }
 
+func TestRunGitCommandStagesAndCommitsFile(t *testing.T) {
+	repo := createGitRepoForFilesystemTest(t)
+	app := &App{}
+	app.setProjectPath(repo)
+
+	featurePath := filepath.Join(repo, "feature.txt")
+	if err := os.WriteFile(featurePath, []byte("ready\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(feature.txt) error = %v", err)
+	}
+
+	if _, err := app.RunGitCommand([]string{"add", "--", "feature.txt"}); err != nil {
+		t.Fatalf("RunGitCommand(add feature.txt) error = %v", err)
+	}
+	status, err := app.RunGitCommand([]string{"status", "--short"})
+	if err != nil {
+		t.Fatalf("RunGitCommand(status --short) error = %v", err)
+	}
+	if !strings.Contains(status, "A  feature.txt") {
+		t.Fatalf("RunGitCommand(status --short) = %q, want staged feature.txt", status)
+	}
+
+	if _, err := app.RunGitCommand([]string{"commit", "-m", "add feature"}); err != nil {
+		t.Fatalf("RunGitCommand(commit) error = %v", err)
+	}
+	commits, err := app.GetGitLog(1, "")
+	if err != nil {
+		t.Fatalf("GetGitLog() error = %v", err)
+	}
+	if len(commits) != 1 || commits[0].Subject != "add feature" {
+		t.Fatalf("GetGitLog() latest commit = %#v, want add feature", commits)
+	}
+}
+
 func TestRunGitCommandInitInitializesEmptyProject(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git is unavailable: %v", err)
