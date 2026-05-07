@@ -15,7 +15,6 @@ import { ProjectEntryDialogs } from "./ProjectEntryDialogs";
 import { ProjectPathCopyConfirmation } from "./ProjectPathCopyConfirmation";
 import { PreviewWindowPanelRenderer } from "./PreviewWindowPanelRenderer";
 import { TUITerminalWorkspaceContent } from "./TUITerminalWorkspaceContent";
-import { useIndexingPhase } from "../../hooks/useIndexingProgress";
 import { useTheme } from "../../hooks/useTheme";
 import { useBrowserPreviewBridge } from "../../hooks/useBrowserPreviewBridge";
 import { usePreviewableContext } from "../../hooks/usePreviewableContext";
@@ -42,8 +41,8 @@ import {
 import { zIndex } from "../../styles/colors";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { usePerformanceStore } from "../../stores/performanceStore";
 import { usePluginModal } from "../../contexts/PluginModalContext";
-import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
 import {
   usePreviewWindowStore,
   type OpenPreviewWindowInput,
@@ -494,16 +493,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   onPerspectiveClose: externalPerspectiveClose,
 }) => {
   const { isDark, theme: currentTheme, setTheme, resolvedThemeId } = useTheme();
-  const indexingPhase = useIndexingPhase();
-  const diagnosticsPreload = useProjectDiagnosticsPreload();
   const prefersReducedMotion = useReducedMotion();
-  const reducePanelMotion =
-    prefersReducedMotion ||
-    indexingPhase === "indexing" ||
-    diagnosticsPreload.active;
+  const reducePanelMotion = prefersReducedMotion;
   const panelLayoutTransition = reducePanelMotion
     ? { duration: 0 }
     : FLOATING_PANEL_LAYOUT_TRANSITION;
+  const beginPanelMotionWindow = useCallback(() => {
+    if (reducePanelMotion) {
+      return;
+    }
+
+    usePerformanceStore
+      .getState()
+      .beginPanelMotionWindow(FLOATING_PANEL_LAYOUT_TRANSITION_MS + 160);
+  }, [reducePanelMotion]);
   const [isPerspectiveOpen, setIsPerspectiveOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDependencyPolicyOpen, setIsDependencyPolicyOpen] = useState(false);
@@ -2321,6 +2324,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         clearTimeout(panelDropSettlingTimerRef.current);
       }
 
+      beginPanelMotionWindow();
       setPanelDropSettling(true);
       setRelocatingPanelIds(options.panels ?? []);
       setRelocatingPreviewWindowIds(options.previewWindows ?? []);
@@ -2339,7 +2343,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         setPanelDropSettlingPositions([]);
       }, FLOATING_PANEL_LAYOUT_TRANSITION_MS + 120);
     },
-    [updatePanelPresenceBypassPositionsState],
+    [beginPanelMotionWindow, updatePanelPresenceBypassPositionsState],
   );
 
   const startSnappedSlotExit = useCallback(
@@ -2348,6 +2352,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
+      beginPanelMotionWindow();
       if (panelExitTimerRef.current) {
         clearTimeout(panelExitTimerRef.current);
       }
@@ -2381,7 +2386,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         setPanelExitSlotSizes(createEmptySnappedSlotSizes());
       }, FLOATING_PANEL_LAYOUT_TRANSITION_MS + 700);
     },
-    [reducePanelMotion],
+    [beginPanelMotionWindow, reducePanelMotion],
   );
 
   const finishSnappedSlotExit = useCallback((position: PanelPosition) => {
@@ -2408,6 +2413,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
+      beginPanelMotionWindow();
       const currentConfig = panelConfigsRef.current[panelId];
       if (currentConfig.mode !== "snapped") {
         return;
@@ -2426,7 +2432,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         getPrimarySnappedSlotSize(currentConfig.position, currentConfig.size),
       );
     },
-    [startSnappedSlotExit, zenModeEnabled],
+    [beginPanelMotionWindow, startSnappedSlotExit, zenModeEnabled],
   );
 
   const startPreviewWindowExitMotion = useCallback(
@@ -4165,7 +4171,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onPanelDragStart={handleDragStart}
       onPanelDragMove={handleDragMove}
       onPanelDragEnd={handleDragEnd}
-      onTogglePanel={togglePanelFromExplicitAction}
+      onClosePanel={closePanelWithMotion}
       onMovePanelToPosition={movePanelToPosition}
       onCloseTerminalPanel={closeTerminalPanel}
       onTerminalFullscreen={handleTerminalPanelFullscreen}

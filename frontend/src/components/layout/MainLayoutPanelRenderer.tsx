@@ -78,7 +78,7 @@ interface MainLayoutPanelRendererProps {
   onPanelDragStart: NonNullable<FloatingPanelProps["onDragStart"]>;
   onPanelDragMove: NonNullable<FloatingPanelProps["onDragMove"]>;
   onPanelDragEnd: NonNullable<FloatingPanelProps["onDragEnd"]>;
-  onTogglePanel: (panelId: PanelId) => void;
+  onClosePanel: (panelId: PanelId) => void;
   onMovePanelToPosition: (panelId: PanelId, position: PanelPosition) => boolean;
   onCloseTerminalPanel: () => void;
   onTerminalFullscreen: () => void;
@@ -143,7 +143,7 @@ export const MainLayoutPanelRenderer: React.FC<
   onPanelDragStart,
   onPanelDragMove,
   onPanelDragEnd,
-  onTogglePanel,
+  onClosePanel,
   onMovePanelToPosition,
   onCloseTerminalPanel,
   onTerminalFullscreen,
@@ -247,7 +247,7 @@ export const MainLayoutPanelRenderer: React.FC<
     onDragEnd: onPanelDragEnd,
     onMoveToPosition: (position: PanelPosition) =>
       onMovePanelToPosition(panelId, position),
-    onClose: () => onTogglePanel(panelId),
+    onClose: () => onClosePanel(panelId),
     isDropTarget,
     activeDropTargetPosition:
       draggingPanel === panelId ? dropTargetPosition : null,

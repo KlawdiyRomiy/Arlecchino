@@ -48,6 +48,8 @@ export interface AdaptiveEditorFeatureBudget {
 interface PerformanceState {
   mode: AdaptivePerformanceMode;
   snapshot: PerformanceBudgetSnapshot;
+  panelMotionActive: boolean;
+  beginPanelMotionWindow: (durationMs?: number) => void;
   updateBudget: (patch: Partial<PerformanceBudgetSnapshot>) => void;
   recordEventPressure: (scope: PerfScope, units?: number) => void;
   recordMetric: (metric: PerfMetric) => void;
@@ -98,9 +100,39 @@ const resolveMode = (
 
 const clampPressure = (value: number) => Math.max(0, Math.min(160, value));
 
+const defaultPanelMotionWindowMs = 420;
+let panelMotionTimer: ReturnType<typeof setTimeout> | null = null;
+
 export const usePerformanceStore = create<PerformanceState>((set, get) => ({
   mode: "normal",
   snapshot: defaultSnapshot(),
+  panelMotionActive: false,
+
+  beginPanelMotionWindow: (durationMs = defaultPanelMotionWindowMs) => {
+    if (panelMotionTimer !== null) {
+      clearTimeout(panelMotionTimer);
+    }
+
+    set({ panelMotionActive: true });
+    panelMotionTimer = setTimeout(
+      () => {
+        panelMotionTimer = null;
+        set((state) => {
+          const nextMode = resolveMode(state.snapshot);
+          return {
+            panelMotionActive: false,
+            mode: nextMode,
+            snapshot: {
+              ...state.snapshot,
+              mode: nextMode,
+              updatedAtMs: nowPerf(),
+            },
+          };
+        });
+      },
+      Math.max(0, durationMs),
+    );
+  },
 
   updateBudget: (patch) => {
     set((state) => {
@@ -109,7 +141,9 @@ export const usePerformanceStore = create<PerformanceState>((set, get) => ({
         ...patch,
         updatedAtMs: nowPerf(),
       };
-      const nextMode = resolveMode(nextSnapshot);
+      const nextMode = state.panelMotionActive
+        ? state.mode
+        : resolveMode(nextSnapshot);
       nextSnapshot.mode = nextMode;
       return { mode: nextMode, snapshot: nextSnapshot };
     });

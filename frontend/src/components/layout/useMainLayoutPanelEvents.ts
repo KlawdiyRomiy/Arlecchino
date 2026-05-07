@@ -16,6 +16,7 @@ import {
   type SurfaceRuntimeReadOptions,
 } from "../../surfaces/surfaceRuntimeStore";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
+import { usePerformanceStore } from "../../stores/performanceStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import {
   APPLICATION_MENU_ACTION_EVENT,
@@ -30,7 +31,10 @@ import {
   normalizeTUIAssistAnchor,
 } from "../../utils/terminalLayout";
 import { toggleWindowFullscreen } from "../../utils/windowFullscreen";
-import type { PanelPosition } from "../ui/FloatingPanel";
+import {
+  FLOATING_PANEL_LAYOUT_TRANSITION_MS,
+  type PanelPosition,
+} from "../ui/FloatingPanel";
 import type {
   AppSurfaceAction,
   PanelConfigs,
@@ -264,6 +268,12 @@ export const useMainLayoutPanelEvents = ({
         ...panelConfigsRef.current,
         [panelId]: nextConfig,
       };
+
+      if (nextPanels[panelId]) {
+        usePerformanceStore
+          .getState()
+          .beginPanelMotionWindow(FLOATING_PANEL_LAYOUT_TRANSITION_MS + 160);
+      }
 
       applyPanelsState(nextPanels);
       applyPanelConfigsState(nextPanelConfigs);

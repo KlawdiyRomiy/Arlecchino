@@ -47,6 +47,41 @@ const openExplorerPanel = async (
   });
 };
 
+const mountHiddenGitPanelAtPosition = async (
+  page: Parameters<typeof test>[0]["page"],
+  position: "left" | "right" | "top" | "bottom",
+): Promise<void> => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+        markdownPreview: false,
+      },
+      panelConfigs: {
+        git: {
+          position,
+          mode: "snapped",
+          size:
+            position === "left" || position === "right"
+              ? { width: 320, height: 0 }
+              : { width: 0, height: 220 },
+          x: 0,
+          y: 0,
+        },
+      },
+    },
+  });
+
+  await openGitPanel(page);
+  await expect(page.locator('[data-testid="panel-git"]')).toBeVisible();
+  await waitForPanelSettled(page, "panel-git");
+};
+
 const setZenMode = async (
   page: Parameters<typeof test>[0]["page"],
   enabled: boolean,
@@ -718,6 +753,7 @@ const expectSnappedPanelCloseMotion = async (
   page: Parameters<typeof test>[0]["page"],
   selector: string,
   position: "left" | "right" | "top" | "bottom",
+  expectedSize?: { width: number; height: number },
 ): Promise<void> => {
   await nextAnimationFrame(page);
   await page.waitForTimeout(80);
@@ -738,6 +774,14 @@ const expectSnappedPanelCloseMotion = async (
   expect(exitFrame).not.toBeNull();
   expect(exitFrame?.motion).toBe("exit");
   expect(exitFrame?.parentOverflow).toBe("visible");
+  if (expectedSize) {
+    expect(
+      Math.abs((exitFrame?.width ?? 0) - expectedSize.width),
+    ).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs((exitFrame?.height ?? 0) - expectedSize.height),
+    ).toBeLessThanOrEqual(2);
+  }
   expectDirectionalSlide(exitFrame, position);
 
   await expect(page.locator(selector)).toHaveCount(0);
@@ -905,6 +949,198 @@ for (const position of ["left", "right", "top", "bottom"] as const) {
     }
   });
 }
+
+test("snapped panel keeps slide motion while indexing and diagnostics preload are active", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+        markdownPreview: false,
+      },
+    },
+  });
+
+  await page.evaluate(async () => {
+    const { activateProjectScope } =
+      await import("/src/utils/projectBoundState.ts");
+    activateProjectScope("/workspace");
+    const runtimeWindow = window as Window & {
+      runtime: { EventsEmit: (eventName: string, payload: unknown) => void };
+    };
+    runtimeWindow.runtime.EventsEmit("indexer:started", {
+      current: 0,
+      total: 500,
+      queueDepth: 240,
+      projectFileCount: 7500,
+      sessionId: "main",
+    });
+    runtimeWindow.runtime.EventsEmit("lsp:diagnostics:preload:start", {
+      projectPath: "/workspace",
+      generation: 1,
+      selectedCandidates: 4,
+      totalCandidates: 8,
+      sessionId: "main",
+    });
+  });
+
+  const panel = page.locator('[data-testid="panel-git"]');
+  await openGitPanel(page);
+  await expect(panel).toBeAttached();
+
+  const openingFrame = await readPanelFrame(page, '[data-testid="panel-git"]');
+  expect(openingFrame).not.toBeNull();
+  expect(openingFrame?.motion).toBe("enter");
+
+  const panelPosition = await panel.getAttribute("data-panel-position");
+  await waitForPanelSettled(page, "panel-git");
+  await panel.locator('button[title="Закрыть панель"]').click();
+
+  await expectSnappedPanelCloseMotion(
+    page,
+    '[data-testid="panel-git"]',
+    panelPosition as "left" | "right" | "top" | "bottom",
+  );
+});
+
+test("first snapped panel open warms content after the enter frame", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+        markdownPreview: false,
+      },
+    },
+  });
+
+  const panel = page.locator('[data-testid="panel-git"]');
+  const panelContent = panel.locator('[data-panel-content="true"]');
+
+  await openGitPanel(page);
+  await expect(panel).toBeAttached();
+  expect(await panelContent.getAttribute("data-panel-content-ready")).toBe(
+    "false",
+  );
+
+  await waitForPanelSettled(page, "panel-git");
+  await expect(panelContent).toHaveAttribute(
+    "data-panel-content-ready",
+    "true",
+  );
+
+  await page.keyboard.press("Meta+G");
+  await expect(panel).toHaveCount(0);
+
+  await openGitPanel(page);
+  await expect(panel).toBeAttached();
+  await expect(panelContent).toHaveAttribute(
+    "data-panel-content-ready",
+    "true",
+  );
+});
+
+test("snapped panel close control matches shortcut exit geometry", async ({
+  page,
+}) => {
+  for (const position of ["left", "right", "top", "bottom"] as const) {
+    await mountHiddenGitPanelAtPosition(page, position);
+    const panel = page.locator('[data-testid="panel-git"]');
+    const closeControlStart = await readPanelFrame(
+      page,
+      '[data-testid="panel-git"]',
+    );
+    expect(closeControlStart).not.toBeNull();
+
+    await panel.locator('button[title="Закрыть панель"]').click();
+    await expectSnappedPanelCloseMotion(
+      page,
+      '[data-testid="panel-git"]',
+      position,
+      {
+        width: closeControlStart?.width ?? 0,
+        height: closeControlStart?.height ?? 0,
+      },
+    );
+
+    await mountHiddenGitPanelAtPosition(page, position);
+    const shortcutStart = await readPanelFrame(
+      page,
+      '[data-testid="panel-git"]',
+    );
+    expect(shortcutStart).not.toBeNull();
+
+    await page.keyboard.press("Meta+G");
+    await expectSnappedPanelCloseMotion(
+      page,
+      '[data-testid="panel-git"]',
+      position,
+      {
+        width: shortcutStart?.width ?? 0,
+        height: shortcutStart?.height ?? 0,
+      },
+    );
+  }
+});
+
+test("close control stays above the snapped resize rail", async ({ page }) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+      },
+      panelConfigs: {
+        git: {
+          position: "bottom",
+          mode: "snapped",
+          size: { width: 0, height: 220 },
+          x: 0,
+          y: 0,
+        },
+      },
+    },
+  });
+
+  const panel = page.locator('[data-testid="panel-git"]');
+  await openGitPanel(page);
+  await expect(panel).toBeVisible();
+  await waitForPanelSettled(page, "panel-git");
+
+  const closeButton = panel.locator('button[title="Закрыть панель"]');
+  const closeButtonBox = await closeButton.boundingBox();
+  expect(closeButtonBox).not.toBeNull();
+  if (!closeButtonBox) {
+    throw new Error("Close button should be measurable");
+  }
+
+  await page.mouse.click(
+    closeButtonBox.x + closeButtonBox.width / 2,
+    closeButtonBox.y + 4,
+  );
+
+  await expectSnappedPanelCloseMotion(
+    page,
+    '[data-testid="panel-git"]',
+    "bottom",
+  );
+});
 
 for (const position of ["top", "bottom"] as const) {
   test(`snapped ${position} panel keeps editor geometry stable during open and scroll`, async ({

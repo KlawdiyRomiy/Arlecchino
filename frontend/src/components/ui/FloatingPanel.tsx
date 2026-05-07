@@ -21,8 +21,6 @@ import {
   Pin,
   X,
 } from "lucide-react";
-import { useIndexingProgress } from "../../hooks/useIndexingProgress";
-import { useProjectDiagnosticsPreload } from "../../utils/projectBoundState";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 import {
   getEffectiveUiScale,
@@ -73,6 +71,7 @@ const WAILS_NO_DRAG_STYLE = {
   "--wails-draggable": "no-drag",
   WebkitAppRegion: "no-drag",
 } as React.CSSProperties;
+const warmedPanelContentIds = new Set<string>();
 
 const getSlideVectorForEdge = (
   edge: PanelPosition,
@@ -222,19 +221,17 @@ export const FloatingPanel = React.forwardRef<
     forwardedRef,
   ) => {
     const effectiveUiScale = getEffectiveUiScale(uiScale);
-    const indexing = useIndexingProgress();
-    const diagnosticsPreload = useProjectDiagnosticsPreload();
     const prefersReducedMotion = useReducedMotion();
-    const reduceMotion =
-      prefersReducedMotion ||
-      indexing.phase === "indexing" ||
-      diagnosticsPreload.active;
+    const reduceMotion = prefersReducedMotion;
     const isPresent = useIsPresent();
     const [isResizing, setIsResizing] = useState(false);
     const [resizeEdge, setResizeEdge] = useState<string | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [hasEntered, setHasEntered] = useState(
       reduceMotion || mode === "floating",
+    );
+    const [contentReady, setContentReady] = useState(
+      reduceMotion || mode === "floating" || warmedPanelContentIds.has(id),
     );
     const panelRef = useRef<HTMLDivElement>(null);
     const latestBoundsRef = useRef<PanelBounds | null>(null);
@@ -270,6 +267,37 @@ export const FloatingPanel = React.forwardRef<
         setHasEntered(true);
       }
     }, [mode, reduceMotion]);
+
+    useEffect(() => {
+      if (
+        contentReady ||
+        reduceMotion ||
+        mode === "floating" ||
+        isRelocating ||
+        !isPresent
+      ) {
+        if (!contentReady) {
+          warmedPanelContentIds.add(id);
+          setContentReady(true);
+        }
+        return;
+      }
+
+      if (!hasEntered) {
+        return;
+      }
+
+      warmedPanelContentIds.add(id);
+      setContentReady(true);
+    }, [
+      contentReady,
+      hasEntered,
+      id,
+      isPresent,
+      isRelocating,
+      mode,
+      reduceMotion,
+    ]);
 
     useEffect(() => {
       onResizeRef.current = onResize;
@@ -329,6 +357,10 @@ export const FloatingPanel = React.forwardRef<
       size.width,
       x,
       y,
+      adjacentPanels.bottom,
+      adjacentPanels.left,
+      adjacentPanels.right,
+      adjacentPanels.top,
       zenTopChromeAvoidanceTop,
     ]);
 
@@ -345,6 +377,21 @@ export const FloatingPanel = React.forwardRef<
       },
       [forwardedRef],
     );
+
+    const captureLatestBounds = useCallback(() => {
+      const node = panelRef.current;
+      if (!node) {
+        return;
+      }
+
+      const rect = node.getBoundingClientRect();
+      latestBoundsRef.current = {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+      };
+    }, []);
 
     const isLogicalFullscreen = useCallback(() => {
       if (isFullscreen) {
@@ -949,21 +996,35 @@ export const FloatingPanel = React.forwardRef<
 
       if (isFlowHosted) {
         const exitingBounds = latestBoundsRef.current;
-        if (!isPresent && exitingBounds) {
+        if (!isPresent) {
           const flowExitAnchor: React.CSSProperties =
             position === "right"
               ? { right: 0, top: 0 }
               : position === "bottom"
                 ? { left: 0, bottom: 0 }
                 : { left: 0, top: 0 };
+          const fallbackWidth =
+            position === "left" || position === "right" ? size.width : "100%";
+          const fallbackHeight =
+            position === "top" || position === "bottom" ? size.height : "100%";
+          const exitWidth = exitingBounds?.width ?? fallbackWidth;
+          const exitHeight = exitingBounds?.height ?? fallbackHeight;
 
           return {
             ...base,
             position: "absolute",
-            width: exitingBounds.width,
-            height: exitingBounds.height,
-            minWidth: exitingBounds.width,
-            minHeight: exitingBounds.height,
+            width: exitWidth,
+            height: exitHeight,
+            minWidth:
+              typeof exitWidth === "number" &&
+              (position === "left" || position === "right")
+                ? exitWidth
+                : 0,
+            minHeight:
+              typeof exitHeight === "number" &&
+              (position === "top" || position === "bottom")
+                ? exitHeight
+                : 0,
             ...flowExitAnchor,
           };
         }
@@ -1233,7 +1294,6 @@ export const FloatingPanel = React.forwardRef<
       userSelect: "none",
       flexShrink: 0,
       position: "relative",
-      zIndex: 20,
       cursor: isDragging ? "grabbing" : "grab",
       boxShadow: "inset 0 1px 0 var(--shell-inner-highlight)",
       ...WAILS_NO_DRAG_STYLE,
@@ -1255,6 +1315,8 @@ export const FloatingPanel = React.forwardRef<
       display: "flex",
       alignItems: "center",
       gap: "6px",
+      position: "relative",
+      zIndex: 40,
       ...WAILS_NO_DRAG_STYLE,
     };
 
@@ -1349,7 +1411,10 @@ export const FloatingPanel = React.forwardRef<
         icon: <X size={14} />,
         danger: true,
         hidden: !onClose,
-        onSelect: onClose,
+        onSelect: () => {
+          captureLatestBounds();
+          onClose?.();
+        },
       },
     ];
 
@@ -1410,6 +1475,7 @@ export const FloatingPanel = React.forwardRef<
               className="panel-control-button panel-control-button-danger topbar-control-button"
               onClick={(e) => {
                 e.stopPropagation();
+                captureLatestBounds();
                 onClose();
               }}
               onMouseDown={(e) => e.stopPropagation()}
@@ -1440,7 +1506,9 @@ export const FloatingPanel = React.forwardRef<
         transition={motionTransition}
         onAnimationComplete={() => {
           if (isPresent && !hasEntered) {
+            warmedPanelContentIds.add(id);
             setHasEntered(true);
+            setContentReady(true);
           }
         }}
         style={containerMotionStyle}
@@ -1479,8 +1547,12 @@ export const FloatingPanel = React.forwardRef<
           {panelHeader}
         </ContextActionMenu>
 
-        <div style={contentStyle} data-panel-content="true">
-          {children}
+        <div
+          style={contentStyle}
+          data-panel-content="true"
+          data-panel-content-ready={contentReady ? "true" : "false"}
+        >
+          {contentReady ? children : null}
         </div>
       </motion.div>
     );
