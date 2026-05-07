@@ -234,10 +234,10 @@ test("smart quote activates grep mode in command dispatcher", async ({
   ).toBeVisible();
 });
 
-test("Cmd+F opens command dispatcher", async ({ page }) => {
+test("Cmd+Shift+F opens command dispatcher", async ({ page }) => {
   await mountProjectUI(page);
 
-  await page.keyboard.press("Meta+F");
+  await page.keyboard.press("Meta+Shift+F");
 
   await expect(page.locator('input[placeholder="Search..."]')).toBeVisible();
   await expect(
@@ -245,7 +245,7 @@ test("Cmd+F opens command dispatcher", async ({ page }) => {
   ).toHaveCount(0);
 });
 
-test("Cmd+F does not open command dispatcher when terminal search is focused", async ({
+test("Cmd+Shift+F does not open command dispatcher when terminal search is focused", async ({
   page,
 }) => {
   await mountProjectUI(page);
@@ -261,6 +261,7 @@ test("Cmd+F does not open command dispatcher when terminal search is focused", a
         key: "f",
         code: "KeyF",
         metaKey: true,
+        shiftKey: true,
         bubbles: true,
         cancelable: true,
       }),

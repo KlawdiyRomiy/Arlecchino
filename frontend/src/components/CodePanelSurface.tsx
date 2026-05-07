@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { closeBrackets } from "@codemirror/autocomplete";
-import { highlightSelectionMatches } from "@codemirror/search";
+import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { Extension } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
 import { javascript } from "@codemirror/lang-javascript";
 import { php } from "@codemirror/lang-php";
 import { go } from "@codemirror/lang-go";
@@ -41,6 +41,7 @@ import {
   codeEditorSurfaceClassName,
   codeEditorTheme,
 } from "../utils/codeMirrorTheme";
+import { codeMirrorFileSearchExtension } from "../utils/codeMirrorFileSearch";
 import {
   getCodeMirrorLineCount,
   shouldUseCodeMirrorLargeDocumentMode,
@@ -267,6 +268,8 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     const result: Extension[] = [
       codeEditorTheme,
       codeEditorStyles,
+      codeMirrorFileSearchExtension,
+      keymap.of(searchKeymap),
       scrollGuardExtension,
       adaptiveCompartmentExtension,
     ];

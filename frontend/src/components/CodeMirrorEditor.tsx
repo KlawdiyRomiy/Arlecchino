@@ -41,11 +41,7 @@ import {
   pickedCompletion,
   snippet,
 } from "@codemirror/autocomplete";
-import {
-  highlightSelectionMatches,
-  search,
-  searchKeymap,
-} from "@codemirror/search";
+import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import {
   ClipboardPaste,
   Copy,
@@ -170,6 +166,7 @@ import {
   codeEditorSurfaceClassName,
   codeEditorTheme,
 } from "../utils/codeMirrorTheme";
+import { codeMirrorFileSearchExtension } from "../utils/codeMirrorFileSearch";
 import type { GitLineMarker } from "../utils/git";
 import { createLatestRequestGuard } from "../utils/latestRequestGuard";
 import { relativeProjectPath } from "../utils/projectPaths";
@@ -3019,7 +3016,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       fontSizeExtension,
       operatorLigaturesExtension,
       highlightLineField,
-      search(),
+      codeMirrorFileSearchExtension,
       keymap.of([...defaultKeymap, ...searchKeymap, indentWithTab]),
       saveKeymap,
       formatKeymap,

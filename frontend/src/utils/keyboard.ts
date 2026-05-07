@@ -226,7 +226,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Open the project search surface.",
     group: "App",
     scope: "global",
-    defaultShortcuts: ["cmd+f", "ctrl+f"],
+    defaultShortcuts: ["cmd+shift+f", "ctrl+shift+f"],
   },
   {
     id: "settings.toggle",
