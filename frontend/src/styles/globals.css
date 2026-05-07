@@ -617,6 +617,60 @@ body > [data-radix-portal] > * {
   animation: fileExplorerFlash 0.6s ease-out;
 }
 
+.arle-drag-ghost {
+  position: fixed;
+  z-index: 10000;
+  display: flex;
+  max-width: 280px;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: none;
+  border: 1px solid
+    color-mix(in srgb, var(--shell-border-strong) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-shell-strong) 94%, transparent);
+  box-shadow: var(--shell-shadow);
+  padding: 7px 10px;
+  color: var(--text-primary);
+  backdrop-filter: blur(18px);
+  transform: translate3d(0, 0, 0);
+}
+
+.arle-drag-ghost-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "SF Mono", "JetBrains Mono", "Fira Code", monospace;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.arle-drag-ghost-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.arle-dragging-no-select,
+.arle-dragging-no-select * {
+  cursor: grabbing !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+.editor-tabs-code-drop-target {
+  background: color-mix(
+    in srgb,
+    var(--accent-primary) 12%,
+    var(--bg-blackprint)
+  ) !important;
+  box-shadow: inset 0 -2px 0
+    color-mix(in srgb, var(--accent-primary) 72%, transparent);
+}
+
 .file-explorer-chevron {
   transform: rotate(-90deg);
   transition: transform 150ms ease-out;

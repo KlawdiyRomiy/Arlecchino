@@ -26,7 +26,7 @@ import { SettingsModal } from "../SettingsModal";
 import { CommandDispatcher } from "../CommandDispatcher";
 import { useDispatcher } from "../../hooks/useDispatcher";
 import { ProjectEntryActionsProvider } from "../../contexts/ProjectEntryActionsContext";
-import { useEditorStore } from "../../stores/editorStore";
+import { makeEditorTabId, useEditorStore } from "../../stores/editorStore";
 import { useAppNotificationStore } from "../../stores/appNotificationStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useExplorerStore } from "../../stores/explorerStore";
@@ -118,6 +118,7 @@ import type {
   HydratedPanelLayoutState,
   MainEditorFileOpenHandler,
   MainEditorFileOpenRegistrar,
+  MainEditorDirtyFlushRegistrar,
   MainLayoutProps,
   MarkdownPreviewSource,
   PanelConfig,
@@ -489,6 +490,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   onProjectOpen,
   onSwitchProject,
   onCloseProject,
+  onDetachProject,
+  onReorderProjects,
   onPerspectiveOpen: externalPerspectiveOpen,
   onPerspectiveClose: externalPerspectiveClose,
 }) => {
@@ -603,14 +606,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [focusPreviewWindowFromStore, markActivePanel],
   );
   const previewButtonState = usePreviewableContext();
-  const browserPreviewWindows = useMemo(
+  const workspacePreviewWindows = useMemo(
     () =>
-      previewWindows.filter((windowState) => windowState.surface === "browser"),
+      previewWindows.filter(
+        (windowState) =>
+          windowState.mode === "snapped" || windowState.surface === "browser",
+      ),
     [previewWindows],
   );
   const layeredPreviewWindows = useMemo(
     () =>
-      previewWindows.filter((windowState) => windowState.surface !== "browser"),
+      previewWindows.filter(
+        (windowState) =>
+          windowState.mode !== "snapped" && windowState.surface !== "browser",
+      ),
     [previewWindows],
   );
   const { openPreviewFromTerminal } = useBrowserPreviewBridge({
@@ -685,10 +694,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   > | null>(null);
   const editorFileOpenHandlerRef =
     React.useRef<MainEditorFileOpenHandler | null>(null);
+  const dirtyEditorFlushHandlerRef = React.useRef<(() => Promise<void>) | null>(
+    null,
+  );
 
   const registerEditorFileOpenHandler: MainEditorFileOpenRegistrar =
     useCallback((handler) => {
       editorFileOpenHandlerRef.current = handler;
+    }, []);
+
+  const registerDirtyEditorFlushHandler: MainEditorDirtyFlushRegistrar =
+    useCallback((handler) => {
+      dirtyEditorFlushHandlerRef.current = handler;
     }, []);
 
   const openFileInMainEditor = useCallback(
@@ -1050,6 +1067,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [draggingPreviewWindowId, setDraggingPreviewWindowId] = useState<
     string | null
   >(null);
+  const [draggingFilePanel, setDraggingFilePanel] = useState(false);
   const [resizingPanel, setResizingPanel] = useState<PanelId | null>(null);
   const [resizingPreviewWindowId, setResizingPreviewWindowId] = useState<
     string | null
@@ -1860,6 +1878,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     activeProjectPath,
     tuiModeActive,
     canAccessPath,
+    onBeforeMoveEntry: async () => {
+      await dirtyEditorFlushHandlerRef.current?.();
+    },
     showNotification,
     setProjectPathCopiedVisible,
   });
@@ -2756,6 +2777,42 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     return null;
   };
 
+  const getFloatingDisplacementFrame = (
+    position: PanelPosition,
+    size: PanelSize,
+  ): { x: number; y: number; width: number; height: number } => {
+    const width =
+      position === "left" || position === "right"
+        ? Math.max(size.width || 380, 380)
+        : Math.max(size.width || 560, 560);
+    const height =
+      position === "top" || position === "bottom"
+        ? Math.max(size.height || 300, 300)
+        : Math.max(size.height || 420, 420);
+    const safeWidth = Math.min(
+      width,
+      Math.max(320, logicalViewport.width - 64),
+    );
+    const safeHeight = Math.min(
+      height,
+      Math.max(220, logicalViewport.height - 96),
+    );
+    const x =
+      position === "right"
+        ? Math.max(16, logicalViewport.width - safeWidth - 32)
+        : position === "left"
+          ? 32
+          : Math.max(16, Math.round((logicalViewport.width - safeWidth) / 2));
+    const y =
+      position === "bottom"
+        ? Math.max(64, logicalViewport.height - safeHeight - 48)
+        : position === "top"
+          ? 72
+          : Math.max(64, Math.round((logicalViewport.height - safeHeight) / 2));
+
+    return { x, y, width: safeWidth, height: safeHeight };
+  };
+
   const snapPreviewWindowToPosition = (
     windowState: PreviewWindow,
     position: PanelPosition,
@@ -2826,28 +2883,41 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               excludePositions: [targetPosition],
             });
 
-      if (!fallbackPosition) {
-        return false;
-      }
-      settlingPositions.push(fallbackPosition);
-
       const targetConfig = panelConfigsRef.current[targetPanel];
       const nextPanelConfigs = clonePanelConfigs(panelConfigsRef.current);
       const nextRememberedSnappedPositions = cloneRememberedSnappedPositions(
         rememberedSnappedPositionsRef.current,
       );
-      nextPanelConfigs[targetPanel] = {
-        ...nextPanelConfigs[targetPanel],
-        mode: "snapped",
-        position: fallbackPosition,
-        x: 0,
-        y: 0,
-        size: normalizePanelSizeForPosition(
-          fallbackPosition,
+      if (fallbackPosition) {
+        settlingPositions.push(fallbackPosition);
+        nextPanelConfigs[targetPanel] = {
+          ...nextPanelConfigs[targetPanel],
+          mode: "snapped",
+          position: fallbackPosition,
+          x: 0,
+          y: 0,
+          size: normalizePanelSizeForPosition(
+            fallbackPosition,
+            targetConfig.size,
+          ),
+        };
+        nextRememberedSnappedPositions[targetPanel] = fallbackPosition;
+      } else {
+        const fallbackFrame = getFloatingDisplacementFrame(
+          targetPosition,
           targetConfig.size,
-        ),
-      };
-      nextRememberedSnappedPositions[targetPanel] = fallbackPosition;
+        );
+        nextPanelConfigs[targetPanel] = {
+          ...nextPanelConfigs[targetPanel],
+          mode: "floating",
+          x: fallbackFrame.x,
+          y: fallbackFrame.y,
+          size: {
+            width: fallbackFrame.width,
+            height: fallbackFrame.height,
+          },
+        };
+      }
 
       applyPanelConfigsState(nextPanelConfigs);
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
@@ -2865,13 +2935,30 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               excludePositions: [targetPosition],
             });
 
-      if (!fallbackPosition) {
-        return false;
-      }
-      settlingPositions.push(fallbackPosition);
+      if (fallbackPosition) {
+        settlingPositions.push(fallbackPosition);
 
-      if (!snapPreviewWindowToPosition(targetPreviewWindow, fallbackPosition)) {
-        return false;
+        if (
+          !snapPreviewWindowToPosition(targetPreviewWindow, fallbackPosition)
+        ) {
+          return false;
+        }
+      } else {
+        const fallbackFrame = getFloatingDisplacementFrame(targetPosition, {
+          width: targetPreviewWindow.width,
+          height: targetPreviewWindow.height,
+        });
+        if (
+          !updatePreviewWindow(targetPreviewWindow.id, {
+            mode: "floating",
+            x: fallbackFrame.x,
+            y: fallbackFrame.y,
+            width: fallbackFrame.width,
+            height: fallbackFrame.height,
+          })
+        ) {
+          return false;
+        }
       }
     }
 
@@ -2881,6 +2968,192 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       positions: uniquePanelPositions(settlingPositions),
     });
     return snapPreviewWindowToPosition(previewWindow, targetPosition);
+  };
+
+  const movePanelToPositionWithReflow = (
+    panelId: PanelId,
+    targetPosition: PanelPosition,
+    size?: Partial<PanelSize>,
+  ): boolean => {
+    if (useTerminalStore.getState().tuiModeActive) {
+      return false;
+    }
+
+    const currentPanels = panelsRef.current;
+    const currentConfigs = panelConfigsRef.current;
+    const currentConfig = currentConfigs[panelId];
+    const sourcePosition =
+      currentPanels[panelId] && currentConfig.mode === "snapped"
+        ? currentConfig.position
+        : null;
+
+    if (
+      currentPanels[panelId] &&
+      currentConfig.mode === "snapped" &&
+      currentConfig.position === targetPosition
+    ) {
+      const normalizedSize = normalizePanelSizeForPosition(targetPosition, {
+        width: size?.width ?? currentConfig.size.width,
+        height: size?.height ?? currentConfig.size.height,
+      });
+      const nextSize = {
+        width: size?.width ?? normalizedSize.width,
+        height: size?.height ?? normalizedSize.height,
+      };
+      if (
+        nextSize.width !== currentConfig.size.width ||
+        nextSize.height !== currentConfig.size.height
+      ) {
+        applyPanelConfigsState({
+          ...panelConfigsRef.current,
+          [panelId]: {
+            ...panelConfigsRef.current[panelId],
+            size: nextSize,
+          },
+        });
+      }
+      return true;
+    }
+
+    const targetPanel = findVisibleSnappedPanelAtPosition(targetPosition, {
+      exclude: [panelId],
+    });
+    const targetPreviewWindow = targetPanel
+      ? null
+      : findSnappedPreviewWindowAtPosition(targetPosition);
+    const relocatingPanels: PanelId[] = [panelId];
+    const relocatingPreviewWindows: string[] = [];
+    const settlingPositions: Array<PanelPosition | null | undefined> = [
+      targetPosition,
+      sourcePosition,
+    ];
+    const nextPanels = { ...currentPanels, [panelId]: true };
+    const nextPanelConfigs = clonePanelConfigs(panelConfigsRef.current);
+    const nextRememberedSnappedPositions = cloneRememberedSnappedPositions(
+      rememberedSnappedPositionsRef.current,
+    );
+
+    if (targetPanel) {
+      relocatingPanels.push(targetPanel);
+      const fallbackPosition =
+        sourcePosition &&
+        sourcePosition !== targetPosition &&
+        !isSnappedPositionOccupied(sourcePosition, {
+          exclude: [panelId, targetPanel],
+        })
+          ? sourcePosition
+          : findAvailablePanelPosition({
+              preferred: rememberedSnappedPositionsRef.current[targetPanel],
+              exclude: [panelId, targetPanel],
+              excludePositions: [targetPosition],
+            });
+
+      const targetConfig = panelConfigsRef.current[targetPanel];
+      if (fallbackPosition) {
+        settlingPositions.push(fallbackPosition);
+        nextPanelConfigs[targetPanel] = {
+          ...nextPanelConfigs[targetPanel],
+          mode: "snapped",
+          position: fallbackPosition,
+          x: 0,
+          y: 0,
+          size: normalizePanelSizeForPosition(
+            fallbackPosition,
+            targetConfig.size,
+          ),
+        };
+        nextRememberedSnappedPositions[targetPanel] = fallbackPosition;
+      } else {
+        const fallbackFrame = getFloatingDisplacementFrame(
+          targetPosition,
+          targetConfig.size,
+        );
+        nextPanelConfigs[targetPanel] = {
+          ...nextPanelConfigs[targetPanel],
+          mode: "floating",
+          x: fallbackFrame.x,
+          y: fallbackFrame.y,
+          size: {
+            width: fallbackFrame.width,
+            height: fallbackFrame.height,
+          },
+        };
+      }
+      nextPanels[targetPanel] = true;
+    } else if (targetPreviewWindow) {
+      relocatingPreviewWindows.push(targetPreviewWindow.id);
+      const fallbackPosition =
+        sourcePosition &&
+        sourcePosition !== targetPosition &&
+        !isSnappedPositionOccupied(sourcePosition, {
+          exclude: [panelId],
+          excludeWindowIds: [targetPreviewWindow.id],
+        })
+          ? sourcePosition
+          : findAvailablePanelPosition({
+              preferred: targetPreviewWindow.position,
+              exclude: [panelId],
+              excludeWindowIds: [targetPreviewWindow.id],
+              excludePositions: [targetPosition],
+            });
+
+      if (fallbackPosition) {
+        settlingPositions.push(fallbackPosition);
+        if (
+          !snapPreviewWindowToPosition(targetPreviewWindow, fallbackPosition)
+        ) {
+          return false;
+        }
+      } else {
+        const fallbackFrame = getFloatingDisplacementFrame(targetPosition, {
+          width: targetPreviewWindow.width,
+          height: targetPreviewWindow.height,
+        });
+        if (
+          !updatePreviewWindow(targetPreviewWindow.id, {
+            mode: "floating",
+            x: fallbackFrame.x,
+            y: fallbackFrame.y,
+            width: fallbackFrame.width,
+            height: fallbackFrame.height,
+          })
+        ) {
+          return false;
+        }
+      }
+    }
+
+    const normalizedSize = normalizePanelSizeForPosition(targetPosition, {
+      width: size?.width ?? currentConfig.size.width,
+      height: size?.height ?? currentConfig.size.height,
+    });
+    nextPanelConfigs[panelId] = {
+      ...nextPanelConfigs[panelId],
+      mode: "snapped",
+      position: targetPosition,
+      x: 0,
+      y: 0,
+      size: {
+        width: size?.width ?? normalizedSize.width,
+        height: size?.height ?? normalizedSize.height,
+      },
+    };
+    nextRememberedSnappedPositions[panelId] = targetPosition;
+
+    if (currentPanels[panelId] && currentConfig.mode === "floating") {
+      setFloatingPresenceVersion((version) => version + 1);
+    }
+
+    startPanelDropSettling({
+      panels: relocatingPanels,
+      previewWindows: relocatingPreviewWindows,
+      positions: uniquePanelPositions(settlingPositions),
+    });
+    applyPanelsState(nextPanels);
+    applyPanelConfigsState(nextPanelConfigs);
+    applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+    markActivePanel(panelId);
+    return true;
   };
 
   const resolvePromotionSnapPosition = useCallback(
@@ -3524,6 +3797,21 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         openEditorTab(activePaneId, path, name, content, language);
       }
 
+      if (
+        request?.reflowOnSnap &&
+        request.mode === "snapped" &&
+        request.position
+      ) {
+        if (
+          movePanelToPositionWithReflow("code", request.position, {
+            width: request.width,
+            height: request.height,
+          })
+        ) {
+          return;
+        }
+      }
+
       const { nextPanels, nextConfig, nextRememberedSnappedPositions } =
         computeNextPanelOpenState(
           "code",
@@ -3555,6 +3843,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       applyPanelsState,
       applyRememberedSnappedPositionsState,
       ensureProjectEntryAccess,
+      movePanelToPositionWithReflow,
       openEditorTab,
       showNotification,
     ],
@@ -3824,6 +4113,100 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [handlePreviewWindowOpenEvent],
   );
 
+  const resolveLiveCodePanelTab = useCallback((tab: CodePanelTab) => {
+    const editorTab = useEditorStore
+      .getState()
+      .tabs.get(makeEditorTabId(tab.path));
+    if (!editorTab) {
+      return tab;
+    }
+    return {
+      ...tab,
+      content: editorTab.content,
+      language: editorTab.language,
+      name: editorTab.name || tab.name,
+    };
+  }, []);
+
+  const closeTransferredCodePanelTab = useCallback(
+    (path: string) => {
+      closeCodePanelTab(path);
+      if (codePanelTabs.length <= 1) {
+        closePanelWithMotion("code");
+      }
+    },
+    [closeCodePanelTab, closePanelWithMotion, codePanelTabs.length],
+  );
+
+  const handleCodePanelTabMoveToEditorTabs = useCallback(
+    (tab: CodePanelTab) => {
+      const liveTab = resolveLiveCodePanelTab(tab);
+      const file =
+        liveTab.loadState && liveTab.loadState.kind !== "editable"
+          ? liveTab.loadState
+          : createEditableEditorFileLoad(liveTab.path, liveTab.content);
+      openFileInMainEditor(file, liveTab.line);
+      closeTransferredCodePanelTab(liveTab.path);
+    },
+    [
+      closeTransferredCodePanelTab,
+      openFileInMainEditor,
+      resolveLiveCodePanelTab,
+    ],
+  );
+
+  const handleCodePanelTabDetachToPanel = useCallback(
+    (
+      tab: CodePanelTab,
+      point: { x: number; y: number },
+      options?: { snapPosition?: PanelOpenRequest["position"] | null },
+    ) => {
+      const liveTab = resolveLiveCodePanelTab(tab);
+      const input: OpenPreviewWindowInput = {
+        surface: "code",
+        title: liveTab.name,
+        payload: {
+          title: liveTab.name,
+          path: liveTab.path,
+          content: liveTab.content,
+          language: liveTab.language,
+          line: liveTab.line,
+        },
+        mode: "floating",
+        x: Math.max(16, point.x - 280),
+        y: Math.max(64, point.y - 24),
+        width: 560,
+        height: 360,
+      };
+
+      if (options?.snapPosition) {
+        const openResult = openPreviewWindow(input);
+        if (!openResult.opened) {
+          if (openResult.reason) {
+            showNotification("error", openResult.reason);
+          }
+          return;
+        }
+        if (openResult.id) {
+          focusPreviewWindow(openResult.id);
+          movePreviewWindowToPosition(openResult.id, options.snapPosition);
+        }
+      } else {
+        handlePreviewWindowOpenEvent(input);
+      }
+      closeTransferredCodePanelTab(liveTab.path);
+    },
+    [
+      closeTransferredCodePanelTab,
+      focusPreviewWindow,
+      handlePreviewWindowOpenEvent,
+      movePreviewWindowToPosition,
+      openPreviewWindow,
+      resolveLiveCodePanelTab,
+      showNotification,
+    ],
+  );
+
   const { applyPanelOpenState, closeTerminalPanel, toggleNamedPanel } =
     useMainLayoutPanelEvents({
       applyPanelConfigsState,
@@ -4012,11 +4395,47 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     updatePreviewWindow,
   });
 
+  const handleFilePanelSnapDragStart = useCallback(() => {
+    setDraggingPanel(null);
+    setDraggingPreviewWindowId(null);
+    setDraggingFilePanel(true);
+    setDropTargetPosition(null);
+    window.dispatchEvent(new CustomEvent("panel-drag-start"));
+  }, []);
+
+  const handleFilePanelSnapDragMove = useCallback(
+    (position: PanelPosition | null) => {
+      setDropTargetPosition((current) =>
+        current === position ? current : position,
+      );
+    },
+    [],
+  );
+
+  const handleFilePanelSnapDragEnd = useCallback(() => {
+    setDraggingFilePanel(false);
+    setDropTargetPosition(null);
+    window.dispatchEvent(new CustomEvent("panel-drag-end"));
+  }, []);
+
+  const filePanelSnapDrag = useMemo(
+    () => ({
+      onPanelSnapDragStart: handleFilePanelSnapDragStart,
+      onPanelSnapDragMove: handleFilePanelSnapDragMove,
+      onPanelSnapDragEnd: handleFilePanelSnapDragEnd,
+    }),
+    [
+      handleFilePanelSnapDragEnd,
+      handleFilePanelSnapDragMove,
+      handleFilePanelSnapDragStart,
+    ],
+  );
+
   const workspaceModel = useMainPanelWorkspaceModel({
     panels: layoutPanels,
     panelConfigs,
     previewWindows,
-    browserPreviewWindows,
+    workspacePreviewWindows,
     tuiModeActive,
     resizingPanel,
     resizingPreviewWindowId,
@@ -4076,7 +4495,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const renderDropZone = (position: PanelPosition) => {
     const isPanelDragActive =
-      draggingPanel !== null || draggingPreviewWindowId !== null;
+      draggingPanel !== null ||
+      draggingPreviewWindowId !== null ||
+      draggingFilePanel;
     const isActive = isPanelDragActive && dropTargetPosition === position;
     const targetPanel = getActivePanelsAtPosition(position);
     const targetPreviewWindow = getActivePreviewWindowAtPosition(
@@ -4140,6 +4561,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       dropTargetPosition={dropTargetPosition}
       draggingPanel={draggingPanel}
       draggingPreviewWindowId={draggingPreviewWindowId}
+      draggingFilePanel={draggingFilePanel}
       relocatingPanelIds={relocatingPanelIds}
       uiScale={uiScale}
       activeProjectPath={activeProjectPath}
@@ -4193,6 +4615,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onMarkdownLinkPreviewOpen={handleMarkdownLinkPreviewOpen}
       onFileOpen={handleFileOpen}
       onFileOpenInPanel={handleFileOpenInPanel}
+      filePanelSnapDrag={filePanelSnapDrag}
       onOpenFileFromPath={openFileFromPath}
       onOpenPreviewFromTerminal={openPreviewFromTerminal}
       onPerspectiveOpen={handlePerspectiveOpen}
@@ -4201,6 +4624,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onCodePanelActivate={setActiveCodePanelPath}
       onCodePanelClose={closeCodePanelTab}
       onCodePanelCloseOthers={closeOtherCodePanelTabs}
+      onCodePanelDetachToPanel={handleCodePanelTabDetachToPanel}
+      onCodePanelMoveToEditorTabs={handleCodePanelTabMoveToEditorTabs}
       onZenPinToggle={toggleZenPinnedPanel}
     />
   );
@@ -4292,7 +4717,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       dropTargetPosition === windowState.position &&
       ((draggingPanel !== null && draggingPreviewWindowId !== windowState.id) ||
         (draggingPreviewWindowId !== null &&
-          draggingPreviewWindowId !== windowState.id));
+          draggingPreviewWindowId !== windowState.id) ||
+        draggingFilePanel);
 
     return (
       <PreviewWindowPanelRenderer
@@ -4687,6 +5113,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
     const interactionActive =
       draggingPanel !== null ||
+      draggingFilePanel ||
       resizingPanel !== null ||
       draggingPreviewWindowId !== null ||
       resizingPreviewWindowId !== null;
@@ -4708,6 +5135,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     setZenTopChromePointerSource(false);
   }, [
     draggingPanel,
+    draggingFilePanel,
     draggingPreviewWindowId,
     resizingPanel,
     resizingPreviewWindowId,
@@ -4806,6 +5234,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     const slotTransitionSuspended =
       draggingPanel !== null ||
       draggingPreviewWindowId !== null ||
+      draggingFilePanel ||
       isResizingSlot;
     const shouldAnimateSlotSize =
       (isSettlingSlot || isExitingSlot) && !slotTransitionSuspended;
@@ -4862,6 +5291,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     const slotTransitionSuspended =
       draggingPanel !== null ||
       draggingPreviewWindowId !== null ||
+      draggingFilePanel ||
       isResizingSlot;
     const shouldAnimateSlotSize =
       (isSettlingSlot || isExitingSlot) && !slotTransitionSuspended;
@@ -4937,6 +5367,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         onPerspectiveOpen?: () => void;
         onPerspectiveClose?: () => void;
         onEditorFileOpenReady?: MainEditorFileOpenRegistrar;
+        onDirtyEditorFlushReady?: MainEditorDirtyFlushRegistrar;
+        onFileOpenInPanel?: typeof handleFileOpenInPanel;
+        onPanelSnapDragStart?: typeof handleFilePanelSnapDragStart;
+        onPanelSnapDragMove?: typeof handleFilePanelSnapDragMove;
+        onPanelSnapDragEnd?: typeof handleFilePanelSnapDragEnd;
       }>,
       {
         markdownPreviewOpen: panels.markdownPreview,
@@ -4946,6 +5381,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         onPerspectiveOpen: handlePerspectiveOpen,
         onPerspectiveClose: handlePerspectiveClose,
         onEditorFileOpenReady: registerEditorFileOpenHandler,
+        onDirtyEditorFlushReady: registerDirtyEditorFlushHandler,
+        onFileOpenInPanel: handleFileOpenInPanel,
+        ...filePanelSnapDrag,
       },
     )
   );
@@ -5023,6 +5461,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               onProjectOpen={onProjectOpen}
               onSwitchProject={onSwitchProject}
               onCloseProject={onCloseProject}
+              onDetachProject={onDetachProject}
+              onReorderProjects={onReorderProjects}
               windowDragEnabled={zenTopChromeVisible}
               panels={{
                 explorer: panels.explorer,
@@ -5054,6 +5494,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               panelDropSettling={panelDropSettling}
               draggingPanel={draggingPanel}
               draggingPreviewWindowId={draggingPreviewWindowId}
+              draggingFilePanel={draggingFilePanel}
               panelPresenceBypassPositions={panelPresenceBypassPositions}
               fullscreenSnappedExitSuppression={
                 workspaceModel.fullscreenSnappedExitSuppression
@@ -5089,7 +5530,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               mainSnappedPanels={workspaceModel.mainSnappedPanels}
               draggingWindowId={draggingPreviewWindowId}
               activeDropTargetPosition={dropTargetPosition}
-              isExternalPanelDragActive={draggingPanel !== null}
+              isExternalPanelDragActive={
+                draggingPanel !== null || draggingFilePanel
+              }
               onPreviewDragStart={handlePreviewWindowDragStart}
               onPreviewDragMove={handlePreviewWindowDragMove}
               onPreviewDragEnd={handlePreviewWindowDragEnd}

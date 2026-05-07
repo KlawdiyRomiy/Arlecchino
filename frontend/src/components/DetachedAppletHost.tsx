@@ -216,6 +216,7 @@ const DetachedHelperApplet: React.FC<{
         }
       },
       requestCreateEntry: () => undefined,
+      requestMoveEntry: async () => false,
       requestRenameEntry: () => undefined,
       requestTrashEntry: () => undefined,
     }),

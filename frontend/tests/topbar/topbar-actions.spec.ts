@@ -397,6 +397,22 @@ test("indexing state remains visible in the compact topbar context bubble", asyn
     "Indexing",
   );
   await expect(page.getByTestId("topbar-indexing-progress")).toBeVisible();
+  await page.evaluate(() => {
+    (
+      window as unknown as {
+        runtime: {
+          EventsEmit: (eventName: string, payload?: unknown) => void;
+        };
+      }
+    ).runtime.EventsEmit("indexer:progress", {
+      current: 4,
+      total: 10,
+    });
+  });
+  await expect(page.getByTestId("topbar-indexing-progress")).toHaveAttribute(
+    "aria-valuenow",
+    "40",
+  );
   await expect(page.getByTestId("topbar-project-path")).toHaveCount(0);
 });
 

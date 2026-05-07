@@ -16,6 +16,12 @@ export type MainEditorFileOpenRegistrar = (
   handler: MainEditorFileOpenHandler | null,
 ) => void;
 
+export type MainEditorDirtyFlushHandler = () => Promise<void>;
+
+export type MainEditorDirtyFlushRegistrar = (
+  handler: MainEditorDirtyFlushHandler | null,
+) => void;
+
 export interface MarkdownPreviewSource {
   path: string;
   name: string;
@@ -29,6 +35,8 @@ export interface MainLayoutProps {
   onProjectOpen?: (path: string) => void | Promise<void>;
   onSwitchProject?: (id: string, direction?: number) => void;
   onCloseProject?: (id: string) => void;
+  onDetachProject?: (id: string) => void;
+  onReorderProjects?: (ids: string[]) => void;
   onPerspectiveOpen?: () => void;
   onPerspectiveClose?: () => void;
 }
@@ -110,6 +118,7 @@ export interface PanelOpenRequest {
   command?: string;
   terminalName?: string;
   focus?: boolean;
+  reflowOnSnap?: boolean;
 }
 
 export interface PanelSideMoveRequest {

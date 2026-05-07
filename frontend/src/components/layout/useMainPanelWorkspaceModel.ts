@@ -12,7 +12,7 @@ interface UseMainPanelWorkspaceModelOptions {
   panels: PanelVisibility;
   panelConfigs: PanelConfigs;
   previewWindows: PreviewWindow[];
-  browserPreviewWindows: PreviewWindow[];
+  workspacePreviewWindows: PreviewWindow[];
   tuiModeActive: boolean;
   resizingPanel: PanelId | null;
   resizingPreviewWindowId: string | null;
@@ -23,7 +23,7 @@ export const useMainPanelWorkspaceModel = ({
   panels,
   panelConfigs,
   previewWindows,
-  browserPreviewWindows,
+  workspacePreviewWindows,
   tuiModeActive,
   resizingPanel,
   resizingPreviewWindowId,
@@ -55,13 +55,13 @@ export const useMainPanelWorkspaceModel = ({
     [previewWindows],
   );
 
-  const getBrowserPreviewWindowAtPosition = useCallback(
+  const getWorkspacePreviewWindowAtPosition = useCallback(
     (position: PanelPosition): PreviewWindow | null =>
-      browserPreviewWindows.find(
+      workspacePreviewWindows.find(
         (windowState) =>
           windowState.mode === "snapped" && windowState.position === position,
       ) ?? null,
-    [browserPreviewWindows],
+    [workspacePreviewWindows],
   );
 
   return useMemo(() => {
@@ -69,12 +69,13 @@ export const useMainPanelWorkspaceModel = ({
     const rightSnappedPanel = getActivePanelsAtPosition("right");
     const topSnappedPanel = getActivePanelsAtPosition("top");
     const bottomSnappedPanel = getActivePanelsAtPosition("bottom");
-    const leftSnappedPreviewWindow = getBrowserPreviewWindowAtPosition("left");
+    const leftSnappedPreviewWindow =
+      getWorkspacePreviewWindowAtPosition("left");
     const rightSnappedPreviewWindow =
-      getBrowserPreviewWindowAtPosition("right");
-    const topSnappedPreviewWindow = getBrowserPreviewWindowAtPosition("top");
+      getWorkspacePreviewWindowAtPosition("right");
+    const topSnappedPreviewWindow = getWorkspacePreviewWindowAtPosition("top");
     const bottomSnappedPreviewWindow =
-      getBrowserPreviewWindowAtPosition("bottom");
+      getWorkspacePreviewWindowAtPosition("bottom");
 
     const leftSlotWidth = leftSnappedPanel
       ? panelConfigs[leftSnappedPanel].size.width
@@ -114,7 +115,7 @@ export const useMainPanelWorkspaceModel = ({
         panels[panelId] &&
         panelConfigs[panelId].mode === "floating",
     );
-    const floatingBrowserPreviewWindows = browserPreviewWindows.filter(
+    const floatingBrowserPreviewWindows = workspacePreviewWindows.filter(
       (windowState) => windowState.mode === "floating",
     );
     const shouldSuppressSnappedExitForPosition = (position: PanelPosition) =>
@@ -126,7 +127,7 @@ export const useMainPanelWorkspaceModel = ({
     return {
       getActivePanelsAtPosition,
       getActivePreviewWindowAtPosition,
-      getBrowserPreviewWindowAtPosition,
+      getWorkspacePreviewWindowAtPosition,
       fullscreenSnappedExitSuppression: {
         left: shouldSuppressSnappedExitForPosition("left"),
         right: shouldSuppressSnappedExitForPosition("right"),
@@ -187,15 +188,15 @@ export const useMainPanelWorkspaceModel = ({
       },
     };
   }, [
-    browserPreviewWindows,
     getActivePanelsAtPosition,
     getActivePreviewWindowAtPosition,
-    getBrowserPreviewWindowAtPosition,
+    getWorkspacePreviewWindowAtPosition,
     isLogicalFullscreenPanel,
     panelConfigs,
     panels,
     resizingPanel,
     resizingPreviewWindowId,
     tuiModeActive,
+    workspacePreviewWindows,
   ]);
 };

@@ -45,6 +45,13 @@ const matchesCurrentProjectSession = (data?: IndexerEventPayload) => {
 
 const listeners = new Set<() => void>();
 
+const toPercentage = (current: number, total: number) => {
+  if (total <= 0) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, (current / total) * 100));
+};
+
 function emit(next: IndexingState | ((prev: IndexingState) => IndexingState)) {
   state = typeof next === "function" ? next(state) : next;
   listeners.forEach((fn) => fn());
@@ -147,12 +154,12 @@ EventsOn("indexer:progress", (data: IndexerEventPayload) => {
   recordIndexerBudget(data);
   const current = data.current ?? 0;
   const total = data.total ?? 0;
-  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+  const boundedCurrent = total > 0 ? Math.min(Math.max(0, current), total) : 0;
   emit({
     phase: "indexing",
-    current,
+    current: boundedCurrent,
     total,
-    percentage: pct,
+    percentage: toPercentage(boundedCurrent, total),
   });
 });
 

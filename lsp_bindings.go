@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -59,7 +60,18 @@ type LSPTextEdit struct {
 }
 
 type LSPWorkspaceEdit struct {
-	Changes map[string][]LSPTextEdit `json:"changes"`
+	Changes         map[string][]LSPTextEdit `json:"changes,omitempty"`
+	DocumentChanges []LSPDocumentChange      `json:"documentChanges,omitempty"`
+}
+
+type LSPTextDocumentIdentifier struct {
+	URI string `json:"uri"`
+}
+
+type LSPDocumentChange struct {
+	TextDocument *LSPTextDocumentIdentifier `json:"textDocument,omitempty"`
+	Edits        []LSPTextEdit              `json:"edits,omitempty"`
+	Kind         string                     `json:"kind,omitempty"`
 }
 
 type LSPDiagnostic struct {
@@ -431,21 +443,8 @@ func (a *App) LSPGetCodeActions(filePath string, content string, line int, chara
 			IsPreferred: action.IsPreferred,
 			HasCommand:  action.Command != nil,
 		}
-		if action.Edit != nil && len(action.Edit.Changes) > 0 {
-			item.Edit = &LSPWorkspaceEdit{Changes: make(map[string][]LSPTextEdit, len(action.Edit.Changes))}
-			for uri, edits := range action.Edit.Changes {
-				converted := make([]LSPTextEdit, 0, len(edits))
-				for _, edit := range edits {
-					converted = append(converted, LSPTextEdit{
-						Range: LSPRange{
-							Start: LSPPosition{Line: edit.Range.Start.Line, Character: edit.Range.Start.Character},
-							End:   LSPPosition{Line: edit.Range.End.Line, Character: edit.Range.End.Character},
-						},
-						NewText: edit.NewText,
-					})
-				}
-				item.Edit.Changes[uri] = converted
-			}
+		if action.Edit != nil {
+			item.Edit = convertIndexerWorkspaceEdit(action.Edit)
 		}
 		result = append(result, item)
 	}
@@ -454,58 +453,149 @@ func (a *App) LSPGetCodeActions(filePath string, content string, line int, chara
 }
 
 func (a *App) LSPApplyWorkspaceEdit(edit *LSPWorkspaceEdit) error {
-	if edit == nil || len(edit.Changes) == 0 {
-		return nil
+	_, err := a.applyLSPWorkspaceEdit(edit)
+	return err
+}
+
+func (a *App) applyLSPWorkspaceEdit(edit *LSPWorkspaceEdit) (int, error) {
+	if edit == nil || (len(edit.Changes) == 0 && len(edit.DocumentChanges) == 0) {
+		return 0, nil
 	}
 
 	projectPath := strings.TrimSpace(a.currentProjectPath())
 	if projectPath == "" {
-		return fmt.Errorf("project path is required for workspace edits")
+		return 0, fmt.Errorf("project path is required for workspace edits")
 	}
 
+	changes, err := collectWorkspaceTextEdits(edit)
+	if err != nil {
+		return 0, err
+	}
+	changedFiles := 0
 	for uri, edits := range edit.Changes {
 		path, err := normalizeEditPath(uri)
 		if err != nil {
-			return fmt.Errorf("failed to normalize workspace edit path %q: %w", uri, err)
+			return 0, fmt.Errorf("failed to normalize workspace edit path %q: %w", uri, err)
 		}
 		if path == "" || len(edits) == 0 {
 			continue
 		}
+		changes[path] = append(changes[path], edits...)
+	}
 
+	for path, edits := range changes {
 		withinRoot, err := isPathWithinRoot(projectPath, path)
 		if err != nil {
-			return fmt.Errorf("failed to validate workspace edit path %s: %w", path, err)
+			return 0, fmt.Errorf("failed to validate workspace edit path %s: %w", path, err)
 		}
 		if !withinRoot {
-			return fmt.Errorf("workspace edit target outside project root: %s", path)
+			return 0, fmt.Errorf("workspace edit target outside project root: %s", path)
 		}
 
 		info, err := os.Stat(path)
 		if err != nil {
-			return fmt.Errorf("failed to stat %s: %w", path, err)
+			return 0, fmt.Errorf("failed to stat %s: %w", path, err)
 		}
 		if !info.Mode().IsRegular() {
-			return fmt.Errorf("workspace edit target is not regular file: %s", path)
+			return 0, fmt.Errorf("workspace edit target is not regular file: %s", path)
 		}
 
 		content, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("failed to read %s: %w", path, err)
+			return 0, fmt.Errorf("failed to read %s: %w", path, err)
 		}
 
 		updated, err := applyTextEditsToString(string(content), edits)
 		if err != nil {
-			return fmt.Errorf("failed to apply edits for %s: %w", path, err)
+			return 0, fmt.Errorf("failed to apply edits for %s: %w", path, err)
+		}
+		if updated == string(content) {
+			continue
 		}
 
 		if err := os.WriteFile(path, []byte(updated), info.Mode()); err != nil {
-			return fmt.Errorf("failed to write %s: %w", path, err)
+			return 0, fmt.Errorf("failed to write %s: %w", path, err)
 		}
 
+		changedFiles++
 		a.emitEvent("file:changed", path)
 	}
 
-	return nil
+	return changedFiles, nil
+}
+
+func convertIndexerWorkspaceEdit(edit *indexerlsp.WorkspaceEdit) *LSPWorkspaceEdit {
+	if edit == nil {
+		return nil
+	}
+
+	converted := &LSPWorkspaceEdit{}
+	if len(edit.Changes) > 0 {
+		converted.Changes = make(map[string][]LSPTextEdit, len(edit.Changes))
+		for uri, edits := range edit.Changes {
+			converted.Changes[uri] = convertIndexerTextEdits(edits)
+		}
+	}
+	if len(edit.DocumentChanges) > 0 {
+		converted.DocumentChanges = make([]LSPDocumentChange, 0, len(edit.DocumentChanges))
+		for _, raw := range edit.DocumentChanges {
+			if len(raw) == 0 {
+				continue
+			}
+			var change LSPDocumentChange
+			if err := json.Unmarshal(raw, &change); err != nil {
+				continue
+			}
+			converted.DocumentChanges = append(converted.DocumentChanges, change)
+		}
+	}
+	if len(converted.Changes) == 0 && len(converted.DocumentChanges) == 0 {
+		return nil
+	}
+	return converted
+}
+
+func convertIndexerTextEdits(edits []indexerlsp.TextEdit) []LSPTextEdit {
+	if len(edits) == 0 {
+		return nil
+	}
+	converted := make([]LSPTextEdit, 0, len(edits))
+	for _, edit := range edits {
+		converted = append(converted, LSPTextEdit{
+			Range: LSPRange{
+				Start: LSPPosition{Line: edit.Range.Start.Line, Character: edit.Range.Start.Character},
+				End:   LSPPosition{Line: edit.Range.End.Line, Character: edit.Range.End.Character},
+			},
+			NewText: edit.NewText,
+		})
+	}
+	return converted
+}
+
+func collectWorkspaceTextEdits(edit *LSPWorkspaceEdit) (map[string][]LSPTextEdit, error) {
+	changes := make(map[string][]LSPTextEdit)
+	if edit == nil {
+		return changes, nil
+	}
+
+	for _, change := range edit.DocumentChanges {
+		if change.Kind != "" {
+			return nil, fmt.Errorf("workspace edit resource operation is unsupported: %s", change.Kind)
+		}
+		if change.TextDocument == nil || strings.TrimSpace(change.TextDocument.URI) == "" || len(change.Edits) == 0 {
+			continue
+		}
+		path, err := normalizeEditPath(change.TextDocument.URI)
+		if err != nil {
+			return nil, fmt.Errorf("failed to normalize workspace edit path %q: %w", change.TextDocument.URI, err)
+		}
+		if path == "" {
+			continue
+		}
+		changes[path] = append(changes[path], change.Edits...)
+	}
+
+	return changes, nil
 }
 
 func normalizeEditPath(uri string) (string, error) {

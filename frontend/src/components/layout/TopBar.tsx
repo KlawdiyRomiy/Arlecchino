@@ -44,6 +44,8 @@ interface TopBarProps {
   onProjectOpen?: (path: string) => void;
   onSwitchProject?: (id: string, direction?: number) => void;
   onCloseProject?: (id: string) => void;
+  onDetachProject?: (id: string) => void;
+  onReorderProjects?: (ids: string[]) => void;
   panels?: PanelVisibility;
   projectPath?: string;
   previewEnabled?: boolean;
@@ -69,6 +71,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onProjectOpen,
   onSwitchProject,
   onCloseProject,
+  onDetachProject,
+  onReorderProjects,
   panels = { explorer: false, terminal: false, aiChat: false },
   projectPath = "",
   previewEnabled = false,
@@ -102,6 +106,11 @@ export const TopBar: React.FC<TopBarProps> = ({
   const menuIconSize = 16;
   const isIndexingActive =
     Boolean(projectPath) && indexing.phase === "indexing";
+  const indexingProgressRatio = Math.max(
+    0,
+    Math.min(1, indexing.percentage / 100),
+  );
+  const indexingProgressValue = Number(indexing.percentage.toFixed(1));
   const fadeTransition = { duration: 0.16, ease: "easeOut" } as const;
   const fadeInitial = { opacity: 0, y: -2 };
   const fadeAnimate = { opacity: 1, y: 0 };
@@ -184,6 +193,8 @@ export const TopBar: React.FC<TopBarProps> = ({
           <ProjectIndicators
             onSwitch={(id) => onSwitchProject?.(id)}
             onClose={(id) => onCloseProject?.(id)}
+            onDetach={(id) => onDetachProject?.(id)}
+            onReorder={(ids) => onReorderProjects?.(ids)}
           />
           <div className="shell-divider" />
           <AddProjectMenu
@@ -220,12 +231,22 @@ export const TopBar: React.FC<TopBarProps> = ({
                       <span
                         className="inline-flex h-2 w-28 overflow-hidden rounded-full bg-white/8"
                         data-testid="topbar-indexing-progress"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={indexingProgressValue}
+                        data-progress={indexingProgressValue}
                       >
                         <motion.span
-                          className="h-full rounded-full bg-[var(--text-primary)]"
-                          initial={{ width: "0%" }}
-                          animate={{ width: `${indexing.percentage}%` }}
-                          transition={{ duration: 0.18, ease: "easeOut" }}
+                          className="h-full w-full origin-left rounded-full bg-[var(--text-primary)] will-change-transform"
+                          initial={{ scaleX: 0 }}
+                          animate={{ scaleX: indexingProgressRatio }}
+                          transition={{
+                            type: "spring",
+                            stiffness: 210,
+                            damping: 28,
+                            mass: 0.45,
+                          }}
                         />
                       </span>
                     </motion.div>

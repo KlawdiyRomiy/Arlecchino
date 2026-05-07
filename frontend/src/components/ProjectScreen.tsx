@@ -34,13 +34,17 @@ import {
   type EditorFileOpenPayload,
 } from "../utils/editorFileLoader";
 import { usePerformanceStore } from "../stores/performanceStore";
-import type { MarkdownPreviewSource } from "./layout/MainLayout.types";
+import type {
+  MarkdownPreviewSource,
+  PanelOpenRequest,
+} from "./layout/MainLayout.types";
+import type { PanelSnapDragCallbacks } from "../utils/panelSnapDrag";
 
 type SplitDirection = "horizontal" | "vertical" | null;
 
 type EditorFileOpenHandler = (payload: EditorFileOpenPayload) => void;
 
-interface ProjectScreenProps {
+interface ProjectScreenProps extends PanelSnapDragCallbacks {
   projectPath: string;
   fileToOpen?: EditorFileOpenPayload | null;
   onFileOpened?: () => void;
@@ -53,6 +57,13 @@ interface ProjectScreenProps {
   onPerspectiveOpen?: () => void;
   onPerspectiveClose?: () => void;
   onEditorFileOpenReady?: (handler: EditorFileOpenHandler | null) => void;
+  onDirtyEditorFlushReady?: (handler: (() => Promise<void>) | null) => void;
+  onFileOpenInPanel?: (
+    path: string,
+    name: string,
+    line?: number,
+    request?: Partial<PanelOpenRequest>,
+  ) => void | Promise<void>;
 }
 
 const AUTO_SAVE_DELAY = 1500;
@@ -94,6 +105,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   onPerspectiveOpen,
   onPerspectiveClose,
   onEditorFileOpenReady,
+  onDirtyEditorFlushReady,
+  onFileOpenInPanel,
+  onPanelSnapDragStart,
+  onPanelSnapDragMove,
+  onPanelSnapDragEnd,
 }) => {
   const editorBgColor = editorCanvasBackground;
   const setStatusFile = useEditorStore((state) => state.setStatusFile);
@@ -1064,6 +1080,44 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     });
   }, []);
 
+  const flushDirtyTabsForProjectMove = useCallback(async () => {
+    flushPendingContentState();
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    const dirtyTabs = tabsRef.current.filter((tab) => tab.isDirty);
+    if (dirtyTabs.length === 0) {
+      return;
+    }
+
+    for (const tab of dirtyTabs) {
+      const content = fileContentsRef.current[tab.id];
+      if (content === undefined) {
+        continue;
+      }
+      await AppFunctions.WriteFile(tab.path, content);
+    }
+
+    const dirtyIds = new Set(dirtyTabs.map((tab) => tab.id));
+    tabsRef.current = tabsRef.current.map((tab) =>
+      dirtyIds.has(tab.id) ? { ...tab, isDirty: false } : tab,
+    );
+    setTabs((previous) =>
+      previous.map((tab) =>
+        dirtyIds.has(tab.id) ? { ...tab, isDirty: false } : tab,
+      ),
+    );
+  }, [flushPendingContentState]);
+
+  useEffect(() => {
+    onDirtyEditorFlushReady?.(flushDirtyTabsForProjectMove);
+    return () => {
+      onDirtyEditorFlushReady?.(null);
+    };
+  }, [flushDirtyTabsForProjectMove, onDirtyEditorFlushReady]);
+
   const scheduleContentStateFlush = useCallback(
     (tabId: string, value: string) => {
       pendingContentStateRef.current[tabId] = value;
@@ -1460,6 +1514,58 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     };
   }, [applyDeletedProjectEntry, applyRenamedProjectEntry, projectPath]);
 
+  const handleTabsReorder = useCallback((nextTabs: Tab[]) => {
+    tabsRef.current = nextTabs;
+    setTabs(nextTabs);
+  }, []);
+
+  const handleTabDetachToPanel = useCallback(
+    async (
+      tab: Tab,
+      point: { x: number; y: number },
+      options?: { snapPosition?: PanelOpenRequest["position"] | null },
+    ) => {
+      if (!onFileOpenInPanel) {
+        return;
+      }
+
+      const loadState = fileLoadStatesRef.current[tab.id];
+      const request: Partial<PanelOpenRequest> = options?.snapPosition
+        ? {
+            mode: "snapped",
+            position: options.snapPosition,
+            width: 560,
+            height: 360,
+            reflowOnSnap: true,
+          }
+        : {
+            mode: "floating",
+            x: Math.max(16, point.x - 280),
+            y: Math.max(64, point.y - 24),
+            width: 560,
+            height: 360,
+          };
+      if (loadState?.kind === "editable") {
+        request.content = fileContentsRef.current[tab.id] ?? loadState.content;
+      }
+
+      try {
+        await onFileOpenInPanel(tab.path, tab.label, undefined, request);
+        handleTabClose(tab.id);
+      } catch (error) {
+        useAppNotificationStore.getState().addNotification({
+          id: `detach-tab:${tab.path}`,
+          kind: "error",
+          title: "Failed to detach tab",
+          message: error instanceof Error ? error.message : String(error),
+          source: "Editor",
+          timeoutMs: 7000,
+        });
+      }
+    },
+    [onFileOpenInPanel],
+  );
+
   const buildTabContextMenuItems = useCallback(
     (tab: Tab): ContextActionMenuItem[] => [
       {
@@ -1733,6 +1839,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           activeTab={activeTab}
           onTabClick={setActiveTab}
           onTabClose={handleTabClose}
+          onTabsReorder={handleTabsReorder}
+          onTabDetachToPanel={handleTabDetachToPanel}
+          onPanelSnapDragStart={onPanelSnapDragStart}
+          onPanelSnapDragMove={onPanelSnapDragMove}
+          onPanelSnapDragEnd={onPanelSnapDragEnd}
           onSplitHorizontal={() => handleSplit("vertical")}
           onSplitVertical={() => handleSplit("horizontal")}
           markdownPreviewAvailable={activeMarkdownPreviewSource !== null}

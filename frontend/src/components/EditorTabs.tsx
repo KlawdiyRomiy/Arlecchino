@@ -5,6 +5,12 @@ import {
   ContextActionMenu,
   type ContextActionMenuItem,
 } from "./ui/ContextActionMenu";
+import { DragGhost, type DragGhostState } from "./ui/DragGhost";
+import { beginDragSelectionLock } from "../utils/dragSelectionLock";
+import {
+  detectPanelSnapDropTarget,
+  type PanelSnapDragCallbacks,
+} from "../utils/panelSnapDrag";
 
 export interface Tab {
   id: string;
@@ -13,12 +19,21 @@ export interface Tab {
   isDirty?: boolean;
 }
 
-interface EditorTabsProps {
+interface EditorTabDetachOptions {
+  snapPosition?: ReturnType<typeof detectPanelSnapDropTarget>;
+}
+
+interface EditorTabsProps extends PanelSnapDragCallbacks {
   tabs: Tab[];
   activeTab: string | null;
   onTabClick: (tabId: string) => void;
   onTabClose: (tabId: string) => void;
   onTabsReorder?: (tabs: Tab[]) => void;
+  onTabDetachToPanel?: (
+    tab: Tab,
+    point: { x: number; y: number },
+    options?: EditorTabDetachOptions,
+  ) => void;
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
   markdownPreviewAvailable?: boolean;
@@ -34,6 +49,10 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
   onTabClick,
   onTabClose,
   onTabsReorder,
+  onTabDetachToPanel,
+  onPanelSnapDragStart,
+  onPanelSnapDragMove,
+  onPanelSnapDragEnd,
   onSplitHorizontal,
   onSplitVertical,
   markdownPreviewAvailable = false,
@@ -42,6 +61,136 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
   showSplitButtons = true,
   getTabContextMenuItems,
 }) => {
+  const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const [dragGhost, setDragGhost] = React.useState<DragGhostState | null>(null);
+
+  const handleTabPointerDown = (
+    tab: Tab,
+    event: React.PointerEvent<HTMLElement>,
+  ) => {
+    if (!onTabDetachToPanel || event.button !== 0) {
+      return;
+    }
+
+    const releaseSelectionLock = beginDragSelectionLock();
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let moved = false;
+    let latestSnapTarget: ReturnType<typeof detectPanelSnapDropTarget> = null;
+    let snapDragStarted = false;
+
+    const updatePanelSnapDrag = (nextSnapTarget: typeof latestSnapTarget) => {
+      if (!snapDragStarted) {
+        snapDragStarted = true;
+        onPanelSnapDragStart?.();
+      }
+      if (latestSnapTarget !== nextSnapTarget) {
+        onPanelSnapDragMove?.(nextSnapTarget);
+      }
+      latestSnapTarget = nextSnapTarget;
+    };
+
+    const handlePointerMove = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId !== pointerId) {
+        return;
+      }
+      pointerEvent.preventDefault();
+      document.getSelection()?.removeAllRanges();
+
+      const dx = pointerEvent.clientX - startX;
+      const dy = pointerEvent.clientY - startY;
+      if (Math.hypot(dx, dy) > 8) {
+        moved = true;
+        const container = scrollContainerRef.current;
+        const rect = container?.getBoundingClientRect();
+        const insideTabs = Boolean(
+          rect &&
+          pointerEvent.clientX >= rect.left &&
+          pointerEvent.clientX <= rect.right &&
+          pointerEvent.clientY >= rect.top &&
+          pointerEvent.clientY <= rect.bottom,
+        );
+        const snapTarget = !insideTabs
+          ? detectPanelSnapDropTarget(
+              pointerEvent.clientX,
+              pointerEvent.clientY,
+            )
+          : null;
+        updatePanelSnapDrag(snapTarget);
+        setDragGhost({
+          x: pointerEvent.clientX,
+          y: pointerEvent.clientY,
+          label: tab.label,
+          detail: insideTabs
+            ? "Reorder tab"
+            : snapTarget
+              ? `Snap to ${snapTarget}`
+              : "Open as floating panel",
+        });
+      }
+
+      const container = scrollContainerRef.current;
+      if (!container) {
+        return;
+      }
+      const rect = container.getBoundingClientRect();
+      if (
+        pointerEvent.clientY < rect.top - 24 ||
+        pointerEvent.clientY > rect.bottom + 24
+      ) {
+        return;
+      }
+      if (pointerEvent.clientX < rect.left + 40) {
+        container.scrollLeft -= 18;
+      } else if (pointerEvent.clientX > rect.right - 40) {
+        container.scrollLeft += 18;
+      }
+    };
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove, true);
+      window.removeEventListener("pointerup", handlePointerUp, true);
+      window.removeEventListener("pointercancel", cleanup, true);
+      if (snapDragStarted) {
+        onPanelSnapDragEnd?.();
+      }
+      releaseSelectionLock();
+      setDragGhost(null);
+    };
+
+    const handlePointerUp = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId !== pointerId) {
+        return;
+      }
+      cleanup();
+      const container = scrollContainerRef.current;
+      if (!moved || !container) {
+        return;
+      }
+      const rect = container.getBoundingClientRect();
+      const inside =
+        pointerEvent.clientX >= rect.left &&
+        pointerEvent.clientX <= rect.right &&
+        pointerEvent.clientY >= rect.top &&
+        pointerEvent.clientY <= rect.bottom;
+      if (!inside) {
+        onTabDetachToPanel(
+          tab,
+          {
+            x: pointerEvent.clientX,
+            y: pointerEvent.clientY,
+          },
+          { snapPosition: latestSnapTarget },
+        );
+      }
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, true);
+    window.addEventListener("pointerup", handlePointerUp, true);
+    window.addEventListener("pointercancel", cleanup, true);
+  };
+
   const renderTabContent = (tab: Tab) => (
     <>
       <span className="truncate flex-1">{tab.label}</span>
@@ -56,6 +205,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
           e.stopPropagation();
           onTabClose(tab.id);
         }}
+        onPointerDown={(e) => e.stopPropagation()}
         className="rounded p-0.5 opacity-0 transition-[opacity,background-color,color] group-hover:opacity-100 hover:bg-[var(--bg-hover)]"
       >
         <X size={14} />
@@ -84,6 +234,8 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         key={tab.id}
         value={tab}
         onClick={() => onTabClick(tab.id)}
+        onPointerDown={(event) => handleTabPointerDown(tab, event)}
+        data-tab-id={tab.id}
         className={`${tabClassName(tab)} cursor-grab`}
         style={{
           borderRadius: activeTab === tab.id ? "8px 8px 0 0" : "0",
@@ -95,6 +247,8 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
       <div
         key={tab.id}
         onClick={() => onTabClick(tab.id)}
+        onPointerDown={(event) => handleTabPointerDown(tab, event)}
+        data-tab-id={tab.id}
         className={`${tabClassName(tab)} cursor-pointer`}
         style={{
           borderRadius: activeTab === tab.id ? "8px 8px 0 0" : "0",
@@ -132,6 +286,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
       {onTabsReorder ? (
         <Reorder.Group
           as="div"
+          ref={scrollContainerRef}
           axis="x"
           values={tabs}
           onReorder={onTabsReorder}
@@ -140,7 +295,10 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
           {tabItems}
         </Reorder.Group>
       ) : (
-        <div className="shell-mini-x-scroll flex min-w-0 flex-1 self-stretch overflow-x-auto overflow-y-hidden bg-[var(--bg-blackprint)]">
+        <div
+          ref={scrollContainerRef}
+          className="shell-mini-x-scroll flex min-w-0 flex-1 self-stretch overflow-x-auto overflow-y-hidden bg-[var(--bg-blackprint)]"
+        >
           {tabItems}
         </div>
       )}
@@ -199,6 +357,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
           </div>
         </div>
       )}
+      <DragGhost ghost={dragGhost} />
     </div>
   );
 };

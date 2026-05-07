@@ -22,6 +22,7 @@ import {
   useProjectEntryActions,
   type ProjectEntryActionTarget,
 } from "../contexts/ProjectEntryActionsContext";
+import type { PanelOpenRequest } from "./layout/MainLayout.types";
 import { colors, getThemeColors } from "../styles/colors";
 import { useTheme } from "../hooks/useTheme";
 import { useFileRelations } from "../hooks/useFileRelations";
@@ -36,6 +37,7 @@ import {
   ContextActionMenu,
   type ContextActionMenuItem,
 } from "./ui/ContextActionMenu";
+import { DragGhost, type DragGhostState } from "./ui/DragGhost";
 import { buildFileNodes } from "../utils/fileTreeHelpers";
 import { shortcuts } from "../utils/keyboard";
 import {
@@ -47,6 +49,11 @@ import {
   getProjectPathDirname,
   isSameOrChildPath,
 } from "../utils/projectPaths";
+import { beginDragSelectionLock } from "../utils/dragSelectionLock";
+import {
+  detectPanelSnapDropTarget,
+  type PanelSnapDragCallbacks,
+} from "../utils/panelSnapDrag";
 
 interface FileEntry {
   name: string;
@@ -85,14 +92,19 @@ interface DeletedEntryEvent {
   isDirectory?: boolean;
 }
 
-export interface FileExplorerProps {
+export interface FileExplorerProps extends PanelSnapDragCallbacks {
   onFileOpen?: (
     path: string,
     content: string,
     name: string,
     line?: number,
   ) => void;
-  onFileOpenInPanel?: (path: string, name: string, line?: number) => void;
+  onFileOpenInPanel?: (
+    path: string,
+    name: string,
+    line?: number,
+    request?: Partial<PanelOpenRequest>,
+  ) => void;
   projectPath?: string;
   isHorizontal?: boolean;
   onPerspectiveOpen?: () => void;
@@ -102,6 +114,9 @@ export interface FileExplorerProps {
 const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   onFileOpen,
   onFileOpenInPanel,
+  onPanelSnapDragStart,
+  onPanelSnapDragMove,
+  onPanelSnapDragEnd,
   projectPath: initialProjectPath = "",
   isHorizontal = false,
   onPerspectiveOpen,
@@ -116,6 +131,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     copyProjectPath,
     revealEntry,
     requestCreateEntry,
+    requestMoveEntry,
     requestRenameEntry,
     requestTrashEntry,
   } = useProjectEntryActions();
@@ -152,6 +168,8 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     y: number;
   }>({ isOpen: false, x: 0, y: 0 });
   const [treeOpen, setTreeOpen] = useState(false);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+  const [dragGhost, setDragGhost] = useState<DragGhostState | null>(null);
   const explorerRef = useRef<HTMLDivElement>(null);
   const filesRef = useRef<FileNode[]>([]);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -163,6 +181,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const onFileOpenInPanelRef = useRef(onFileOpenInPanel);
   const highlightedPathRef = useRef<string | null>(null);
   const latestFileOpenRequestRef = useRef(0);
+  const suppressNodeClickRef = useRef(false);
   const relations = useFileRelations(perspectiveTarget || "");
   filesRef.current = files;
   expandedPathsRef.current = expandedPaths;
@@ -272,8 +291,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     onFileOpenRef.current?.(path, "", path.split("/").pop() || "", line);
   };
 
-  const handleFileOpenInPanel = async (path: string, name: string) => {
-    onFileOpenInPanelRef.current?.(path, name);
+  const handleFileOpenInPanel = async (
+    path: string,
+    name: string,
+    request?: Partial<PanelOpenRequest>,
+  ) => {
+    onFileOpenInPanelRef.current?.(path, name, undefined, request);
   };
 
   const renderPerspectiveOverlays = () => (
@@ -1079,7 +1102,277 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       : false;
   };
 
+  const findNodeByPath = useCallback((path: string): FileNode | null => {
+    const walk = (nodes: FileNode[]): FileNode | null => {
+      for (const current of nodes) {
+        if (current.path === path) {
+          return current;
+        }
+        if (current.children) {
+          const child = walk(current.children);
+          if (child) {
+            return child;
+          }
+        }
+      }
+      return null;
+    };
+    return walk(filesRef.current);
+  }, []);
+
+  const getExplorerScrollElement = useCallback((): HTMLElement | null => {
+    const root = explorerRef.current;
+    if (!root) {
+      return null;
+    }
+    return (
+      root.querySelector<HTMLElement>(
+        '[data-testid="file-explorer-scroll-region"]',
+      ) ?? root
+    );
+  }, []);
+
+  const getExplorerDropDirectory = useCallback(
+    (clientX: number, clientY: number, draggedNode: FileNode) => {
+      const root = explorerRef.current;
+      if (!root) {
+        return null;
+      }
+      const element = document.elementFromPoint(clientX, clientY);
+      if (!element || !root.contains(element)) {
+        return null;
+      }
+
+      const nodeElement = element.closest<HTMLElement>(".file-explorer-node");
+      let targetDirectory = projectPathRef.current;
+      if (nodeElement && root.contains(nodeElement)) {
+        const targetPath = nodeElement.dataset.filePath ?? "";
+        const targetNode = targetPath ? findNodeByPath(targetPath) : null;
+        if (targetNode?.isDirectory) {
+          targetDirectory = targetNode.path;
+        } else if (targetPath) {
+          targetDirectory =
+            getProjectPathDirname(targetPath) || projectPathRef.current;
+        }
+      }
+
+      if (!targetDirectory) {
+        return null;
+      }
+      if (
+        draggedNode.isDirectory &&
+        isSameOrChildPath(targetDirectory, draggedNode.path)
+      ) {
+        return null;
+      }
+      return targetDirectory;
+    },
+    [findNodeByPath],
+  );
+
+  const autoScrollExplorerForDrag = useCallback(
+    (clientY: number) => {
+      const scrollElement = getExplorerScrollElement();
+      if (!scrollElement) {
+        return;
+      }
+      const rect = scrollElement.getBoundingClientRect();
+      if (clientY < rect.top + 34) {
+        scrollElement.scrollTop -= 18;
+      } else if (clientY > rect.bottom - 34) {
+        scrollElement.scrollTop += 18;
+      }
+    },
+    [getExplorerScrollElement],
+  );
+
+  const handleNodePointerDown = (
+    node: FileNode,
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+
+    const releaseSelectionLock = beginDragSelectionLock();
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let activeDrag = false;
+    let latestDropTarget: string | null = null;
+    let latestSnapTarget: ReturnType<typeof detectPanelSnapDropTarget> = null;
+    let snapDragStarted = false;
+
+    const updatePanelSnapDrag = (nextSnapTarget: typeof latestSnapTarget) => {
+      if (!snapDragStarted) {
+        snapDragStarted = true;
+        onPanelSnapDragStart?.();
+      }
+      if (latestSnapTarget !== nextSnapTarget) {
+        onPanelSnapDragMove?.(nextSnapTarget);
+      }
+      latestSnapTarget = nextSnapTarget;
+    };
+
+    const handlePointerMove = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId !== pointerId) {
+        return;
+      }
+
+      const dx = pointerEvent.clientX - startX;
+      const dy = pointerEvent.clientY - startY;
+      if (!activeDrag && Math.hypot(dx, dy) > 7) {
+        activeDrag = true;
+        suppressNodeClickRef.current = true;
+      }
+      if (!activeDrag) {
+        return;
+      }
+
+      pointerEvent.preventDefault();
+      document.getSelection()?.removeAllRanges();
+      autoScrollExplorerForDrag(pointerEvent.clientY);
+      const root = explorerRef.current;
+      const rect = root?.getBoundingClientRect();
+      const insideExplorer = Boolean(
+        rect &&
+        pointerEvent.clientX >= rect.left &&
+        pointerEvent.clientX <= rect.right &&
+        pointerEvent.clientY >= rect.top &&
+        pointerEvent.clientY <= rect.bottom,
+      );
+      const snapTarget =
+        !insideExplorer && !node.isDirectory
+          ? detectPanelSnapDropTarget(
+              pointerEvent.clientX,
+              pointerEvent.clientY,
+            )
+          : null;
+      updatePanelSnapDrag(snapTarget);
+      latestDropTarget = getExplorerDropDirectory(
+        pointerEvent.clientX,
+        pointerEvent.clientY,
+        node,
+      );
+      setDropTargetPath(latestDropTarget);
+      setDragGhost({
+        x: pointerEvent.clientX,
+        y: pointerEvent.clientY,
+        label: node.name,
+        detail: snapTarget
+          ? `Snap to ${snapTarget}`
+          : latestDropTarget
+            ? `Move to ${latestDropTarget.split("/").pop() || latestDropTarget}`
+            : node.isDirectory
+              ? "Folder can be moved inside Explorer"
+              : "Release outside Explorer to open as panel",
+      });
+    };
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", handlePointerMove, true);
+      window.removeEventListener("pointerup", handlePointerUp, true);
+      window.removeEventListener("pointercancel", handlePointerCancel, true);
+      if (snapDragStarted) {
+        onPanelSnapDragEnd?.();
+      }
+      releaseSelectionLock();
+    };
+
+    const resetClickSuppression = () => {
+      window.setTimeout(() => {
+        suppressNodeClickRef.current = false;
+      }, 0);
+    };
+
+    const handlePointerCancel = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId !== pointerId) {
+        return;
+      }
+      cleanup();
+      setDropTargetPath(null);
+      setDragGhost(null);
+      resetClickSuppression();
+    };
+
+    const handlePointerUp = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId !== pointerId) {
+        return;
+      }
+      cleanup();
+      const wasActiveDrag = activeDrag;
+      const dropTarget = latestDropTarget;
+      setDropTargetPath(null);
+      setDragGhost(null);
+      if (!wasActiveDrag) {
+        return;
+      }
+
+      resetClickSuppression();
+      const root = explorerRef.current;
+      const rect = root?.getBoundingClientRect();
+      const insideExplorer = Boolean(
+        rect &&
+        pointerEvent.clientX >= rect.left &&
+        pointerEvent.clientX <= rect.right &&
+        pointerEvent.clientY >= rect.top &&
+        pointerEvent.clientY <= rect.bottom,
+      );
+
+      if (!insideExplorer) {
+        if (!node.isDirectory) {
+          void handleFileOpenInPanel(
+            node.path,
+            node.name,
+            latestSnapTarget
+              ? {
+                  mode: "snapped",
+                  position: latestSnapTarget,
+                  width: 560,
+                  height: 360,
+                  reflowOnSnap: true,
+                }
+              : {
+                  mode: "floating",
+                  x: Math.max(16, pointerEvent.clientX - 280),
+                  y: Math.max(64, pointerEvent.clientY - 24),
+                  width: 560,
+                  height: 360,
+                },
+          );
+        }
+        return;
+      }
+
+      if (!dropTarget) {
+        return;
+      }
+      const sourceParent =
+        getProjectPathDirname(node.path) || projectPathRef.current;
+      if (sourceParent === dropTarget) {
+        return;
+      }
+
+      void requestMoveEntry({
+        path: node.path,
+        isDirectory: node.isDirectory,
+        targetDirectory: dropTarget,
+      });
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, true);
+    window.addEventListener("pointerup", handlePointerUp, true);
+    window.addEventListener("pointercancel", handlePointerCancel, true);
+  };
+
   const handleNodeClick = async (node: FileNode, e?: React.MouseEvent) => {
+    if (suppressNodeClickRef.current) {
+      e?.preventDefault();
+      e?.stopPropagation();
+      return;
+    }
+
     if (e && !node.isDirectory) {
       if (e.altKey && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
@@ -1468,6 +1761,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     const flashPeakBackground = isDark
       ? "rgba(255,255,255,0.15)"
       : "rgba(0,0,0,0.12)";
+    const isDropTarget = node.isDirectory && dropTargetPath === node.path;
 
     const nodeStyle: React.CSSProperties & {
       "--file-explorer-hover-bg": string;
@@ -1484,6 +1778,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       marginRight: `${fileExplorerNodeRightInset}px`,
       borderRadius: "var(--radius-sm)",
       cursor: "pointer",
+      outline: isDropTarget
+        ? "1px solid color-mix(in srgb, var(--accent-primary) 60%, transparent)"
+        : undefined,
+      background: isDropTarget
+        ? "color-mix(in srgb, var(--accent-primary) 14%, transparent)"
+        : undefined,
       "--file-explorer-hover-bg": hoverBackground,
       "--file-explorer-highlight-bg": highlightBackground,
       "--file-explorer-flash-base": highlightBackground,
@@ -1601,6 +1901,8 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
                 : ""
             }`}
             data-file-path={node.path}
+            data-file-directory={node.isDirectory ? "true" : "false"}
+            onPointerDown={(event) => handleNodePointerDown(node, event)}
             onClick={(e) => handleNodeClick(node, e)}
           >
             {renderTreeGuides()}
@@ -1752,6 +2054,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
           </div>
 
           {renderPerspectiveOverlays()}
+          <DragGhost ghost={dragGhost} />
         </div>
       </ContextActionMenu>
     );
@@ -1878,6 +2181,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
           </div>
 
           {renderPerspectiveOverlays()}
+          <DragGhost ghost={dragGhost} />
         </div>
       </ContextActionMenu>
     </>

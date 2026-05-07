@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ProjectEntryActionsContextValue,
   ProjectEntryActionTarget,
+  ProjectEntryMoveRequest,
   ProjectEntryTrashRequest,
 } from "../../contexts/ProjectEntryActionsContext";
 import { writeClipboardTextWithFallback } from "../../utils/clipboard";
@@ -14,6 +15,7 @@ import {
 } from "../../utils/projectPaths";
 import {
   CreateDirectory,
+  MoveProjectEntry,
   RenameProjectEntry,
   RevealProjectEntry,
   TrashProjectEntry,
@@ -39,6 +41,7 @@ interface UseMainLayoutProjectEntriesOptions {
     path: string,
     mode: ProjectEntryAccessMode,
   ) => ProjectEntryAccessDecision;
+  onBeforeMoveEntry?: () => Promise<void>;
   showNotification: (type: NotificationType, message: string) => void;
   setProjectPathCopiedVisible: (visible: boolean) => void;
 }
@@ -47,6 +50,7 @@ export const useMainLayoutProjectEntries = ({
   activeProjectPath,
   tuiModeActive,
   canAccessPath,
+  onBeforeMoveEntry,
   showNotification,
   setProjectPathCopiedVisible,
 }: UseMainLayoutProjectEntriesOptions) => {
@@ -309,6 +313,52 @@ export const useMainLayoutProjectEntries = ({
     [ensureProjectEntryAccess],
   );
 
+  const requestMoveEntry = useCallback(
+    async (entry: ProjectEntryMoveRequest) => {
+      const normalizedSource = normalizeProjectPath(entry.path);
+      const normalizedTargetDirectory = normalizeProjectPath(
+        entry.targetDirectory,
+      );
+      if (!normalizedSource || !normalizedTargetDirectory) {
+        showNotification("error", "[Files] Move target is invalid");
+        return false;
+      }
+
+      if (!ensureProjectEntryAccess(normalizedSource, "write")) {
+        return false;
+      }
+      if (
+        !ensureProjectEntryAccess(normalizedTargetDirectory, "write", {
+          userInitiatedWrite: true,
+        })
+      ) {
+        return false;
+      }
+
+      try {
+        await onBeforeMoveEntry?.();
+        const result = await MoveProjectEntry(
+          normalizedSource,
+          normalizedTargetDirectory,
+        );
+        showNotification(
+          "success",
+          result.rewrittenImports
+            ? `Moved and rewrote ${result.rewrittenImports} import${result.rewrittenImports === 1 ? "" : "s"}`
+            : "Entry moved",
+        );
+        return true;
+      } catch (error) {
+        showNotification(
+          "error",
+          `[Files] ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return false;
+      }
+    },
+    [ensureProjectEntryAccess, onBeforeMoveEntry, showNotification],
+  );
+
   const handleCreateEntrySubmit = useCallback(async () => {
     if (!createEntryDialog) {
       return;
@@ -514,6 +564,7 @@ export const useMainLayoutProjectEntries = ({
       copyProjectPath,
       revealEntry,
       requestCreateEntry,
+      requestMoveEntry,
       requestRenameEntry,
       requestTrashEntry,
     }),
@@ -525,6 +576,7 @@ export const useMainLayoutProjectEntries = ({
       copyText,
       getRelativePath,
       requestCreateEntry,
+      requestMoveEntry,
       requestRenameEntry,
       requestTrashEntry,
       revealEntry,

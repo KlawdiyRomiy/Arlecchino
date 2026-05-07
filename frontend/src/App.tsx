@@ -169,18 +169,39 @@ const App: React.FC = () => {
         .projects.find(
           (project) => project.id === useWorkspaceStore.getState().activeId,
         )?.path ?? null;
+    const hadActiveProject = Boolean(state.activeId);
+    usePerformanceStore.getState().resetTransientBudget();
+    const openedProjectId = useWorkspaceStore
+      .getState()
+      .beginProjectOpen(projectPath, 1);
+    setFileToOpen(null);
 
     try {
-      resetProjectBoundStores();
+      if (!hadActiveProject) {
+        resetProjectBoundStores();
+      }
       activateProjectScope(projectPath);
-      await AppFunctions.OpenProject(projectPath);
-      useWorkspaceStore.getState().addProject(projectPath);
+      const openProjectPromise = AppFunctions.OpenProject(projectPath);
+      const workspace = useWorkspaceStore.getState();
+      workspace.confirmProjectSwitch(openedProjectId);
+      await Promise.all([
+        openProjectPromise,
+        waitForProjectSwitchVisualSettle(),
+      ]);
       useTerminalStore.getState().setActiveProject(projectPath);
       await syncCurrentFramework();
-      void preloadProjectDiagnostics(projectPath);
-      setFileToOpen(null);
+      startTransition(() => {
+        useWorkspaceStore.getState().completeProjectSwitch(openedProjectId);
+        setFileToOpen(null);
+      });
+      window.requestAnimationFrame(() => {
+        void preloadProjectDiagnostics(projectPath);
+      });
     } catch (error) {
+      activateProjectScope(outgoingProjectPath);
       useTerminalStore.getState().setActiveProject(outgoingProjectPath);
+      useWorkspaceStore.getState().cancelProjectSwitch(openedProjectId);
+      useWorkspaceStore.getState().removeProject(openedProjectId);
       resetProjectBoundStores();
       console.error("Error opening project:", error);
       alert(`Error while opening project: ${error}`);
@@ -205,11 +226,14 @@ const App: React.FC = () => {
     setFileToOpen(null);
 
     try {
-      const workspace = useWorkspaceStore.getState();
       activateProjectScope(project.path);
+      const openProjectPromise = AppFunctions.OpenProject(project.path);
+      const workspace = useWorkspaceStore.getState();
       workspace.confirmProjectSwitch(id);
-      await waitForProjectSwitchVisualSettle();
-      await AppFunctions.OpenProject(project.path);
+      await Promise.all([
+        openProjectPromise,
+        waitForProjectSwitchVisualSettle(),
+      ]);
       useTerminalStore.getState().setActiveProject(project.path);
       await syncCurrentFramework();
       startTransition(() => {
@@ -292,11 +316,14 @@ const App: React.FC = () => {
     setFileToOpen(null);
 
     try {
-      const workspace = useWorkspaceStore.getState();
       activateProjectScope(nextProject.path);
+      const openProjectPromise = AppFunctions.OpenProject(nextProject.path);
+      const workspace = useWorkspaceStore.getState();
       workspace.confirmProjectSwitch(nextProject.id);
-      await waitForProjectSwitchVisualSettle();
-      await AppFunctions.OpenProject(nextProject.path);
+      await Promise.all([
+        openProjectPromise,
+        waitForProjectSwitchVisualSettle(),
+      ]);
       useTerminalStore.getState().setActiveProject(nextProject.path);
       await syncCurrentFramework();
       startTransition(() => {
@@ -315,6 +342,33 @@ const App: React.FC = () => {
       console.error("Error switching after close:", error);
       alert(`Error while switching project: ${error}`);
     }
+  };
+
+  const handleDetachProject = async (id: string) => {
+    const state = useWorkspaceStore.getState();
+    if (state.pendingId) {
+      return;
+    }
+
+    const project = state.projects.find((item) => item.id === id);
+    if (!project) {
+      return;
+    }
+
+    try {
+      const opened = await AppFunctions.OpenProjectWindow(project.path);
+      if (opened === false) {
+        throw new Error("Project window launcher is unavailable.");
+      }
+      await handleCloseProject(id);
+    } catch (error) {
+      console.error("Error detaching project:", error);
+      alert(`Error while opening project window: ${error}`);
+    }
+  };
+
+  const handleReorderProjects = (ids: string[]) => {
+    useWorkspaceStore.getState().reorderProjects(ids);
   };
 
   useEffect(() => {
@@ -388,18 +442,18 @@ const App: React.FC = () => {
     );
   }
 
-  if (activeId && activeProject) {
-    return (
-      <div data-testid="app-shell" style={appShellStyle}>
-        <div
-          data-testid="app-scaled-surface"
-          style={buildScaledSurfaceStyle(effectiveUiScale)}
+  return (
+    <div data-testid="app-shell" style={appShellStyle}>
+      <div
+        data-testid="app-scaled-surface"
+        style={buildScaledSurfaceStyle(effectiveUiScale)}
+      >
+        <div className="blackprint-bg" />
+        <ProjectSwitchTransition
+          layoutKey={activeProject?.path ?? "__welcome__"}
+          direction={activeProject ? switchDirection : 0}
         >
-          <div className="blackprint-bg" />
-          <ProjectSwitchTransition
-            layoutKey={activeProject.path}
-            direction={switchDirection}
-          >
+          {activeId && activeProject ? (
             <PluginModalProvider key={activeProject.path}>
               <CommandRegistryProvider>
                 <MainLayout
@@ -409,6 +463,8 @@ const App: React.FC = () => {
                   onProjectOpen={handleProjectOpen}
                   onSwitchProject={handleSwitchProject}
                   onCloseProject={handleCloseProject}
+                  onDetachProject={handleDetachProject}
+                  onReorderProjects={handleReorderProjects}
                 >
                   <ProjectScreen
                     projectPath={activeProject.path}
@@ -418,22 +474,10 @@ const App: React.FC = () => {
                 </MainLayout>
               </CommandRegistryProvider>
             </PluginModalProvider>
-          </ProjectSwitchTransition>
-        </div>
-        <MCPApprovalDialog />
-        <AppNotificationStack />
-      </div>
-    );
-  }
-
-  return (
-    <div data-testid="app-shell" style={appShellStyle}>
-      <div
-        data-testid="app-scaled-surface"
-        style={buildScaledSurfaceStyle(effectiveUiScale)}
-      >
-        <div className="blackprint-bg" />
-        <WelcomeScreen onProjectOpen={handleProjectOpen} />
+          ) : (
+            <WelcomeScreen onProjectOpen={handleProjectOpen} />
+          )}
+        </ProjectSwitchTransition>
       </div>
       <MCPApprovalDialog />
       <AppNotificationStack />

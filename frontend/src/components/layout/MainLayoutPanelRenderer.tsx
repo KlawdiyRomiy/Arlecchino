@@ -21,6 +21,7 @@ import {
   type PanelPosition,
 } from "../ui/FloatingPanel";
 import type { PreviewWindow } from "../../stores/previewWindowStore";
+import type { PanelSnapDragCallbacks } from "../../utils/panelSnapDrag";
 import type {
   CodePanelTab,
   MarkdownPreviewSource,
@@ -58,6 +59,7 @@ interface MainLayoutPanelRendererProps {
   dropTargetPosition: PanelPosition | null;
   draggingPanel: PanelId | null;
   draggingPreviewWindowId: string | null;
+  draggingFilePanel: boolean;
   relocatingPanelIds: PanelId[];
   uiScale: number;
   activeProjectPath: string;
@@ -99,6 +101,7 @@ interface MainLayoutPanelRendererProps {
     line?: number,
     request?: Partial<PanelOpenRequest>,
   ) => void | Promise<void>;
+  filePanelSnapDrag: PanelSnapDragCallbacks;
   onOpenFileFromPath: (path: string, line?: number) => void;
   onOpenPreviewFromTerminal: (input: OpenTerminalPreviewInput) => void;
   onPerspectiveOpen: () => void;
@@ -107,6 +110,12 @@ interface MainLayoutPanelRendererProps {
   onCodePanelActivate: (path: string) => void;
   onCodePanelClose: (path: string) => void;
   onCodePanelCloseOthers: (path: string) => void;
+  onCodePanelDetachToPanel: (
+    tab: CodePanelTab,
+    point: { x: number; y: number },
+    options?: { snapPosition?: PanelOpenRequest["position"] | null },
+  ) => void;
+  onCodePanelMoveToEditorTabs: (tab: CodePanelTab) => void;
   onZenPinToggle: (panelId: PanelId) => void;
 }
 
@@ -123,6 +132,7 @@ export const MainLayoutPanelRenderer: React.FC<
   dropTargetPosition,
   draggingPanel,
   draggingPreviewWindowId,
+  draggingFilePanel,
   relocatingPanelIds,
   uiScale,
   activeProjectPath,
@@ -154,6 +164,7 @@ export const MainLayoutPanelRenderer: React.FC<
   onMarkdownLinkPreviewOpen,
   onFileOpen,
   onFileOpenInPanel,
+  filePanelSnapDrag,
   onOpenFileFromPath,
   onOpenPreviewFromTerminal,
   onPerspectiveOpen,
@@ -162,6 +173,8 @@ export const MainLayoutPanelRenderer: React.FC<
   onCodePanelActivate,
   onCodePanelClose,
   onCodePanelCloseOthers,
+  onCodePanelDetachToPanel,
+  onCodePanelMoveToEditorTabs,
   onZenPinToggle,
 }) => {
   const isVisible = panels[panelId];
@@ -170,7 +183,8 @@ export const MainLayoutPanelRenderer: React.FC<
     config.mode === "snapped" &&
     dropTargetPosition === config.position &&
     ((draggingPanel !== null && draggingPanel !== panelId) ||
-      draggingPreviewWindowId !== null);
+      draggingPreviewWindowId !== null ||
+      draggingFilePanel);
   const isFullscreen = isLogicalFullscreenPanel(config);
 
   const getAdjacentPanels = () => {
@@ -278,6 +292,7 @@ export const MainLayoutPanelRenderer: React.FC<
             projectPath={activeProjectPath}
             onFileOpen={onFileOpen}
             onFileOpenInPanel={onFileOpenInPanel}
+            {...filePanelSnapDrag}
             isHorizontal={
               config.position === "bottom" || config.position === "top"
             }
@@ -407,6 +422,9 @@ export const MainLayoutPanelRenderer: React.FC<
                 onActivate={onCodePanelActivate}
                 onClose={onCodePanelClose}
                 onCloseOthers={onCodePanelCloseOthers}
+                onDetachToPanel={onCodePanelDetachToPanel}
+                onMoveToEditorTabs={onCodePanelMoveToEditorTabs}
+                {...filePanelSnapDrag}
               />
               <div className="min-h-0 flex-1">
                 <CodePanelSurface

@@ -9,6 +9,10 @@ export interface ProjectEntryTrashRequest extends ProjectEntryActionTarget {
   displayName?: string;
 }
 
+export interface ProjectEntryMoveRequest extends ProjectEntryActionTarget {
+  targetDirectory: string;
+}
+
 export interface ProjectEntryActionsContextValue {
   projectPath: string;
   getRelativePath: (path: string) => string;
@@ -17,10 +21,8 @@ export interface ProjectEntryActionsContextValue {
   copyRelativePath: (path: string) => Promise<boolean>;
   copyProjectPath: () => Promise<boolean>;
   revealEntry: (path: string) => Promise<boolean>;
-  requestCreateEntry: (
-    type: "file" | "folder",
-    directoryPath?: string,
-  ) => void;
+  requestCreateEntry: (type: "file" | "folder", directoryPath?: string) => void;
+  requestMoveEntry: (entry: ProjectEntryMoveRequest) => Promise<boolean>;
   requestRenameEntry: (entry: ProjectEntryActionTarget) => void;
   requestTrashEntry: (entry: ProjectEntryTrashRequest) => void;
 }

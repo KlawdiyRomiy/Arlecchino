@@ -312,6 +312,42 @@ func (a *App) activeCoreEngine() *core.Engine {
 	return a.coreEngine
 }
 
+func (a *App) activeCoreEngineForPath(path string) *core.Engine {
+	if a == nil {
+		return nil
+	}
+	fallback := a.activeCoreEngine()
+
+	cleanPath := filepath.Clean(strings.TrimSpace(path))
+	if cleanPath == "" || cleanPath == "." {
+		return fallback
+	}
+
+	registry := a.ensureProjectSessions()
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+
+	var bestSession *ProjectRuntimeSession
+	bestRootLength := -1
+	for _, session := range registry.sessions {
+		if session == nil || session.coreEngine == nil {
+			continue
+		}
+		root := filepath.Clean(strings.TrimSpace(session.currentProjectPath()))
+		if root == "" || root == "." || !pathWithinRoot(cleanPath, root) {
+			continue
+		}
+		if len(root) > bestRootLength {
+			bestRootLength = len(root)
+			bestSession = session
+		}
+	}
+	if bestSession != nil {
+		return bestSession.coreEngine
+	}
+	return fallback
+}
+
 func (a *App) activeCompletionBrain() completionBrain {
 	if session := a.activeProjectSession(); session != nil {
 		return session.brain

@@ -219,6 +219,60 @@ test("workspace store cancels promoted switch back to the previous project", asy
   expect(result.switchSourceId).toBeNull();
 });
 
+test("workspace store stages newly opened projects for the transition path", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const workspace = await import("/src/stores/workspaceStore.ts");
+    const store = workspace.useWorkspaceStore;
+
+    store.setState({
+      projects: [{ id: "/alpha", path: "/alpha", name: "alpha", openedAt: 1 }],
+      activeId: "/alpha",
+      switchSourceId: null,
+      switchDirection: 1,
+      ready: true,
+      pendingId: null,
+      uiBlockers: [],
+    });
+
+    const state = store.getState() as {
+      beginProjectOpen: (path: string, direction?: number) => string;
+      confirmProjectSwitch: (id: string) => void;
+      completeProjectSwitch: (id: string) => void;
+    };
+
+    const openedId = state.beginProjectOpen("/gamma", 1);
+    const staged = store.getState();
+    state.confirmProjectSwitch(openedId);
+    const confirmed = store.getState();
+    state.completeProjectSwitch(openedId);
+    const completed = store.getState();
+
+    return {
+      openedId,
+      stagedActiveId: staged.activeId,
+      stagedPendingId: staged.pendingId,
+      stagedSourceId: staged.switchSourceId,
+      stagedProjects: staged.projects.map((project) => project.id),
+      confirmedActiveId: confirmed.activeId,
+      confirmedPendingId: confirmed.pendingId,
+      completedPendingId: completed.pendingId,
+      completedSourceId: completed.switchSourceId,
+    };
+  });
+
+  expect(result.openedId).toBe("/gamma");
+  expect(result.stagedActiveId).toBe("/alpha");
+  expect(result.stagedPendingId).toBe("/gamma");
+  expect(result.stagedSourceId).toBe("/alpha");
+  expect(result.stagedProjects).toEqual(["/alpha", "/gamma"]);
+  expect(result.confirmedActiveId).toBe("/gamma");
+  expect(result.confirmedPendingId).toBe("/gamma");
+  expect(result.completedPendingId).toBeNull();
+  expect(result.completedSourceId).toBeNull();
+});
+
 test("project switch blockers are keyed store state, not a module-global counter", async ({
   page,
 }) => {
@@ -361,7 +415,7 @@ test("app and workspace restore explicitly sync terminal store to the active pro
   expect(workspaceSource).toMatch(/setActiveProject\(/);
 });
 
-test("project switching activates target scope before visual promotion", async ({
+test("project switching starts backend open while preserving switch animation", async ({
   page,
 }) => {
   const appSource = await readSource(page, "/src/App.tsx");
@@ -372,7 +426,7 @@ test("project switching activates target scope before visual promotion", async (
     switchBeginIndex,
   );
   const switchOpenIndex = appSource.indexOf(
-    "await AppFunctions.OpenProject(project.path);",
+    "const openProjectPromise = AppFunctions.OpenProject(project.path);",
     switchBeginIndex,
   );
   const switchConfirmIndex = appSource.indexOf(
@@ -380,8 +434,16 @@ test("project switching activates target scope before visual promotion", async (
     switchBeginIndex,
   );
   const switchSettleIndex = appSource.indexOf(
-    "await waitForProjectSwitchVisualSettle();",
+    "await Promise.all([",
     switchBeginIndex,
+  );
+  const switchSettleOpenPromiseIndex = appSource.indexOf(
+    "openProjectPromise,",
+    switchSettleIndex,
+  );
+  const switchSettleAnimationIndex = appSource.indexOf(
+    "waitForProjectSwitchVisualSettle(),",
+    switchSettleIndex,
   );
   const switchTerminalIndex = appSource.indexOf(
     "useTerminalStore.getState().setActiveProject(project.path);",
@@ -395,7 +457,7 @@ test("project switching activates target scope before visual promotion", async (
     closeBeginIndex,
   );
   const closeOpenIndex = appSource.indexOf(
-    "await AppFunctions.OpenProject(nextProject.path);",
+    "const openProjectPromise = AppFunctions.OpenProject(nextProject.path);",
     closeBeginIndex,
   );
   const closeConfirmIndex = appSource.indexOf(
@@ -403,8 +465,16 @@ test("project switching activates target scope before visual promotion", async (
     closeBeginIndex,
   );
   const closeSettleIndex = appSource.indexOf(
-    "await waitForProjectSwitchVisualSettle();",
+    "await Promise.all([",
     closeBeginIndex,
+  );
+  const closeSettleOpenPromiseIndex = appSource.indexOf(
+    "openProjectPromise,",
+    closeSettleIndex,
+  );
+  const closeSettleAnimationIndex = appSource.indexOf(
+    "waitForProjectSwitchVisualSettle(),",
+    closeSettleIndex,
   );
   const closeTerminalIndex = appSource.indexOf(
     "useTerminalStore.getState().setActiveProject(nextProject.path);",
@@ -413,18 +483,114 @@ test("project switching activates target scope before visual promotion", async (
 
   expect(switchBeginIndex).toBeGreaterThan(-1);
   expect(switchScopeIndex).toBeGreaterThan(switchBeginIndex);
-  expect(switchConfirmIndex).toBeGreaterThan(switchScopeIndex);
-  expect(switchSettleIndex).toBeGreaterThan(switchConfirmIndex);
   expect(switchOpenIndex).toBeGreaterThan(-1);
-  expect(switchOpenIndex).toBeGreaterThan(switchSettleIndex);
-  expect(switchTerminalIndex).toBeGreaterThan(switchOpenIndex);
+  expect(switchOpenIndex).toBeGreaterThan(switchScopeIndex);
+  expect(switchConfirmIndex).toBeGreaterThan(switchOpenIndex);
+  expect(switchSettleIndex).toBeGreaterThan(switchConfirmIndex);
+  expect(switchSettleOpenPromiseIndex).toBeGreaterThan(switchSettleIndex);
+  expect(switchSettleAnimationIndex).toBeGreaterThan(switchSettleIndex);
+  expect(switchTerminalIndex).toBeGreaterThan(switchSettleIndex);
   expect(closeBeginIndex).toBeGreaterThan(-1);
   expect(closeScopeIndex).toBeGreaterThan(closeBeginIndex);
-  expect(closeConfirmIndex).toBeGreaterThan(closeScopeIndex);
-  expect(closeSettleIndex).toBeGreaterThan(closeConfirmIndex);
   expect(closeOpenIndex).toBeGreaterThan(-1);
-  expect(closeOpenIndex).toBeGreaterThan(closeSettleIndex);
-  expect(closeTerminalIndex).toBeGreaterThan(closeOpenIndex);
+  expect(closeOpenIndex).toBeGreaterThan(closeScopeIndex);
+  expect(closeConfirmIndex).toBeGreaterThan(closeOpenIndex);
+  expect(closeSettleIndex).toBeGreaterThan(closeConfirmIndex);
+  expect(closeSettleOpenPromiseIndex).toBeGreaterThan(closeSettleIndex);
+  expect(closeSettleAnimationIndex).toBeGreaterThan(closeSettleIndex);
+  expect(closeTerminalIndex).toBeGreaterThan(closeSettleIndex);
+});
+
+test("opening a new project uses the same transition path as project switching", async ({
+  page,
+}) => {
+  const appSource = await readSource(page, "/src/App.tsx");
+
+  const openHandlerIndex = appSource.indexOf(
+    "const handleProjectOpen = async (projectPath: string)",
+  );
+  const openStageIndex = appSource.indexOf(
+    ".beginProjectOpen(projectPath, 1);",
+    openHandlerIndex,
+  );
+  const openScopeIndex = appSource.indexOf(
+    "activateProjectScope(projectPath);",
+    openStageIndex,
+  );
+  const openBackendIndex = appSource.indexOf(
+    "const openProjectPromise = AppFunctions.OpenProject(projectPath);",
+    openStageIndex,
+  );
+  const openConfirmIndex = appSource.indexOf(
+    "workspace.confirmProjectSwitch(openedProjectId);",
+    openStageIndex,
+  );
+  const openSettleIndex = appSource.indexOf(
+    "await Promise.all([",
+    openConfirmIndex,
+  );
+  const openSettleBackendIndex = appSource.indexOf(
+    "openProjectPromise,",
+    openSettleIndex,
+  );
+  const openSettleAnimationIndex = appSource.indexOf(
+    "waitForProjectSwitchVisualSettle(),",
+    openSettleIndex,
+  );
+  const openCompleteIndex = appSource.indexOf(
+    "useWorkspaceStore.getState().completeProjectSwitch(openedProjectId);",
+    openSettleIndex,
+  );
+  const transitionIndex = appSource.indexOf("<ProjectSwitchTransition");
+  const welcomeIndex = appSource.indexOf(
+    "<WelcomeScreen onProjectOpen={handleProjectOpen} />",
+    transitionIndex,
+  );
+
+  expect(openHandlerIndex).toBeGreaterThan(-1);
+  expect(openStageIndex).toBeGreaterThan(openHandlerIndex);
+  expect(openScopeIndex).toBeGreaterThan(openStageIndex);
+  expect(openBackendIndex).toBeGreaterThan(openScopeIndex);
+  expect(openConfirmIndex).toBeGreaterThan(openBackendIndex);
+  expect(openSettleIndex).toBeGreaterThan(openConfirmIndex);
+  expect(openSettleBackendIndex).toBeGreaterThan(openSettleIndex);
+  expect(openSettleAnimationIndex).toBeGreaterThan(openSettleIndex);
+  expect(openCompleteIndex).toBeGreaterThan(openSettleIndex);
+  expect(transitionIndex).toBeGreaterThan(-1);
+  expect(welcomeIndex).toBeGreaterThan(transitionIndex);
+  expect(appSource).toContain("layoutKey");
+  expect(appSource).toContain("activeProject?.path ??");
+  expect(appSource).toContain("__welcome__");
+});
+
+test("workspace startup reveals the restored project before backend warmup finishes", async ({
+  page,
+}) => {
+  const workspaceSource = await readSource(
+    page,
+    "/src/stores/workspaceStore.ts",
+  );
+
+  const restoreLoopIndex = workspaceSource.indexOf(
+    "for (const project of restoreCandidates)",
+  );
+  const restoreAddIndex = workspaceSource.indexOf(
+    "useWorkspaceStore.getState().addProject(project.path);",
+    restoreLoopIndex,
+  );
+  const restoreReadyIndex = workspaceSource.indexOf(
+    "useWorkspaceStore.getState().setReady(true);",
+    restoreLoopIndex,
+  );
+  const restoreOpenIndex = workspaceSource.indexOf(
+    "await AppFunctions.OpenProject(project.path);",
+    restoreLoopIndex,
+  );
+
+  expect(restoreLoopIndex).toBeGreaterThan(-1);
+  expect(restoreAddIndex).toBeGreaterThan(restoreLoopIndex);
+  expect(restoreReadyIndex).toBeGreaterThan(restoreAddIndex);
+  expect(restoreOpenIndex).toBeGreaterThan(restoreReadyIndex);
 });
 
 test("zen native window controls cleanup is guarded across layout remounts", async ({

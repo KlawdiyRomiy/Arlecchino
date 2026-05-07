@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/url"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -202,7 +203,13 @@ type PublishDiagnosticsParams struct {
 }
 
 type WorkspaceEdit struct {
-	Changes map[string][]TextEdit `json:"changes,omitempty"`
+	Changes         map[string][]TextEdit `json:"changes,omitempty"`
+	DocumentChanges []json.RawMessage     `json:"documentChanges,omitempty"`
+}
+
+type FileRename struct {
+	OldURI string `json:"oldUri"`
+	NewURI string `json:"newUri"`
 }
 
 type Command struct {
@@ -1000,6 +1007,73 @@ func (m *Manager) CodeAction(language, filePath string, line, column int, diagno
 	return actions, nil
 }
 
+func (m *Manager) WillRenameFiles(ctx context.Context, files []FileRename) (*WorkspaceEdit, error) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	m.mu.RLock()
+	servers := make([]*Server, 0, len(m.servers))
+	for _, server := range m.servers {
+		if server != nil && server.running && server.isProcessAlive() {
+			servers = append(servers, server)
+		}
+	}
+	m.mu.RUnlock()
+
+	var merged *WorkspaceEdit
+	for _, server := range servers {
+		edit, err := server.WillRenameFilesWithContext(ctx, files)
+		if err != nil {
+			log.Printf("[LSP-MGR] willRenameFiles ignored: %v", err)
+			continue
+		}
+		if edit == nil {
+			continue
+		}
+		if merged == nil {
+			merged = &WorkspaceEdit{}
+		}
+		if len(edit.Changes) > 0 {
+			if merged.Changes == nil {
+				merged.Changes = make(map[string][]TextEdit, len(edit.Changes))
+			}
+			for uri, edits := range edit.Changes {
+				merged.Changes[uri] = append(merged.Changes[uri], edits...)
+			}
+		}
+		if len(edit.DocumentChanges) > 0 {
+			merged.DocumentChanges = append(merged.DocumentChanges, edit.DocumentChanges...)
+		}
+	}
+
+	return merged, nil
+}
+
+func (m *Manager) DidRenameFiles(files []FileRename) {
+	if len(files) == 0 {
+		return
+	}
+
+	m.mu.RLock()
+	servers := make([]*Server, 0, len(m.servers))
+	for _, server := range m.servers {
+		if server != nil && server.running && server.isProcessAlive() {
+			servers = append(servers, server)
+		}
+	}
+	m.mu.RUnlock()
+
+	for _, server := range servers {
+		if err := server.DidRenameFiles(files); err != nil {
+			log.Printf("[LSP-MGR] didRenameFiles ignored: %v", err)
+		}
+	}
+}
+
 func (m *Manager) handleNotification(language, method string, params json.RawMessage) {
 	if method != "textDocument/publishDiagnostics" {
 		return
@@ -1149,6 +1223,22 @@ func fileURIToPath(uri string) string {
 	}
 
 	return uri
+}
+
+func FilePathToURI(path string) string {
+	if path == "" {
+		return ""
+	}
+	clean := filepath.Clean(path)
+	if runtime.GOOS == "windows" {
+		clean = filepath.ToSlash(clean)
+		if len(clean) >= 2 && clean[1] == ':' {
+			clean = "/" + clean
+		}
+	} else {
+		clean = filepath.ToSlash(clean)
+	}
+	return (&url.URL{Scheme: "file", Path: clean}).String()
 }
 
 func (m *Manager) IsDocOpen(language, filePath string) bool {
@@ -1448,6 +1538,13 @@ func (s *Server) initializeWithContext(ctx context.Context) error {
 		"processId": nil,
 		"rootUri":   s.config.RootURI,
 		"capabilities": map[string]any{
+			"workspace": map[string]any{
+				"fileOperations": map[string]any{
+					"dynamicRegistration": false,
+					"willRename":          true,
+					"didRename":           true,
+				},
+			},
 			"textDocument": map[string]any{
 				"completion": map[string]any{
 					"completionItem": map[string]any{
@@ -2086,6 +2183,39 @@ func (s *Server) CodeActionWithContext(ctx context.Context, filePath string, lin
 	}
 
 	return actions, nil
+}
+
+func (s *Server) WillRenameFilesWithContext(ctx context.Context, files []FileRename) (*WorkspaceEdit, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resp, err := s.requestWithContext(ctx, "workspace/willRenameFiles", map[string]any{
+		"files": files,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		if resp.Error.Code == -32601 {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("willRenameFiles error: %s", resp.Error.Message)
+	}
+	if resp.Result == nil || string(resp.Result) == "null" {
+		return nil, nil
+	}
+
+	var edit WorkspaceEdit
+	if err := json.Unmarshal(resp.Result, &edit); err != nil {
+		return nil, err
+	}
+	return &edit, nil
+}
+
+func (s *Server) DidRenameFiles(files []FileRename) error {
+	return s.notify("workspace/didRenameFiles", map[string]any{
+		"files": files,
+	})
 }
 
 // SignatureHelp returns signature help for a function call at the given position

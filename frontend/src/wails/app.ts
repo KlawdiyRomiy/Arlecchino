@@ -20,10 +20,26 @@ interface ProjectWindowBridge {
   GetProjectWindowSession?: (sessionId: string) => Promise<unknown> | unknown;
 }
 
+interface ProjectEntryMoveBridge {
+  MoveProjectEntry?: (
+    path: string,
+    targetDirectory: string,
+  ) => Promise<unknown> | unknown;
+}
+
 export interface ProjectWindowSessionPayload {
   sessionId: string;
   projectPath: string;
   windowName: string;
+}
+
+export interface ProjectEntryMoveResult {
+  oldPath: string;
+  newPath: string;
+  isDirectory: boolean;
+  lspWorkspaceFiles?: number;
+  rewrittenFiles?: number;
+  rewrittenImports?: number;
 }
 
 const nativeWindowControlsMethodNames = [
@@ -41,6 +57,11 @@ const projectWindowSessionMethodNames = [
   "arlecchino.App.GetProjectWindowSession",
 ] as const;
 
+const projectEntryMoveMethodNames = [
+  "main.App.MoveProjectEntry",
+  "arlecchino.App.MoveProjectEntry",
+] as const;
+
 let nativeWindowControlsMethodName:
   | (typeof nativeWindowControlsMethodNames)[number]
   | undefined;
@@ -49,6 +70,9 @@ let projectWindowMethodName:
   | undefined;
 let projectWindowSessionMethodName:
   | (typeof projectWindowSessionMethodNames)[number]
+  | undefined;
+let projectEntryMoveMethodName:
+  | (typeof projectEntryMoveMethodNames)[number]
   | undefined;
 
 const getNativeWindowControlsBridge = ():
@@ -73,6 +97,18 @@ const getProjectWindowBridge = (): ProjectWindowBridge | undefined => {
   return (
     window as unknown as {
       go?: { main?: { App?: ProjectWindowBridge } };
+    }
+  ).go?.main?.App;
+};
+
+const getProjectEntryMoveBridge = (): ProjectEntryMoveBridge | undefined => {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (
+    window as unknown as {
+      go?: { main?: { App?: ProjectEntryMoveBridge } };
     }
   ).go?.main?.App;
 };
@@ -230,4 +266,50 @@ export async function GetProjectWindowSession(
   }
 
   throw new Error("Project window session bridge is unavailable.");
+}
+
+export async function MoveProjectEntry(
+  path: string,
+  targetDirectory: string,
+): Promise<ProjectEntryMoveResult> {
+  const bridge = getProjectEntryMoveBridge();
+  if (bridge?.MoveProjectEntry) {
+    try {
+      return (await Promise.resolve(
+        bridge.MoveProjectEntry(path, targetDirectory),
+      )) as ProjectEntryMoveResult;
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  const runtimeModule = await loadRuntimeCallModule();
+  const callByName = runtimeModule?.Call?.ByName;
+  if (!callByName) {
+    throw new Error("Project entry move bridge is unavailable.");
+  }
+
+  if (projectEntryMoveMethodName) {
+    try {
+      return (await callByName(
+        projectEntryMoveMethodName,
+        path,
+        targetDirectory,
+      )) as ProjectEntryMoveResult;
+    } catch {
+      projectEntryMoveMethodName = undefined;
+    }
+  }
+
+  for (const methodName of projectEntryMoveMethodNames) {
+    try {
+      const result = await callByName(methodName, path, targetDirectory);
+      projectEntryMoveMethodName = methodName;
+      return result as ProjectEntryMoveResult;
+    } catch {
+      // Try the next known Wails v3 service namespace.
+    }
+  }
+
+  throw new Error("Project entry move bridge is unavailable.");
 }

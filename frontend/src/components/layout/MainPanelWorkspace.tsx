@@ -25,6 +25,7 @@ interface MainPanelWorkspaceProps {
   panelDropSettling: boolean;
   draggingPanel: PanelId | null;
   draggingPreviewWindowId: string | null;
+  draggingFilePanel: boolean;
   panelPresenceBypassPositions: PanelPosition[];
   fullscreenSnappedExitSuppression: Record<PanelPosition, boolean>;
   slots: {
@@ -73,6 +74,7 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
   panelDropSettling,
   draggingPanel,
   draggingPreviewWindowId,
+  draggingFilePanel,
   panelPresenceBypassPositions,
   fullscreenSnappedExitSuppression,
   slots,
@@ -87,7 +89,9 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
   finishSnappedSlotExit,
 }) => {
   const isDraggingPanelOrPreview =
-    draggingPanel !== null || draggingPreviewWindowId !== null;
+    draggingPanel !== null ||
+    draggingPreviewWindowId !== null ||
+    draggingFilePanel;
 
   const renderSnappedSlotContent = (
     panelId: PanelId | null,

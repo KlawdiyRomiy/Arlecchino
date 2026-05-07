@@ -35,7 +35,9 @@ interface WorkspaceState {
   switchDirection: number;
   uiBlockers: string[];
   addProject: (path: string) => void;
+  beginProjectOpen: (path: string, direction?: number) => string;
   removeProject: (id: string) => void;
+  reorderProjects: (ids: string[]) => void;
   clearActiveProject: () => void;
   beginProjectSwitch: (id: string, direction?: number) => void;
   confirmProjectSwitch: (id: string) => void;
@@ -197,6 +199,35 @@ const createWorkspaceStore = (storageName: string) =>
           }));
         },
 
+        beginProjectOpen: (path: string, direction = 1) => {
+          const existing = get().projects.find(
+            (project) => project.path === path,
+          );
+          if (existing) {
+            get().beginProjectSwitch(existing.id, direction);
+            return existing.id;
+          }
+
+          const id = path;
+          set((state) => ({
+            projects: [
+              ...state.projects,
+              {
+                id,
+                path,
+                name: getProjectName(path),
+                openedAt: Date.now(),
+              },
+            ],
+            pendingId: id,
+            switchSourceId: state.activeId,
+            switchDirection: direction,
+            uiBlockers: [],
+          }));
+
+          return id;
+        },
+
         removeProject: (id: string) => {
           set((state) => {
             const idx = state.projects.findIndex(
@@ -219,6 +250,33 @@ const createWorkspaceStore = (storageName: string) =>
                 state.switchSourceId === id ? null : state.switchSourceId,
               uiBlockers: activeId === null ? [] : state.uiBlockers,
             };
+          });
+        },
+
+        reorderProjects: (ids: string[]) => {
+          set((state) => {
+            if (ids.length === 0) {
+              return state;
+            }
+            const orderedIds = new Set(ids);
+            const orderedProjects = ids
+              .map((id) => state.projects.find((project) => project.id === id))
+              .filter((project): project is WorkspaceProject =>
+                Boolean(project),
+              );
+            const remainingProjects = state.projects.filter(
+              (project) => !orderedIds.has(project.id),
+            );
+            const projects = [...orderedProjects, ...remainingProjects];
+            if (
+              projects.length === state.projects.length &&
+              projects.every(
+                (project, index) => project === state.projects[index],
+              )
+            ) {
+              return state;
+            }
+            return { projects };
           });
         },
 
@@ -448,9 +506,10 @@ export const initializeWorkspace = async () => {
       try {
         resetProjectBoundStores();
         activateProjectScope(project.path);
-        await AppFunctions.OpenProject(project.path);
         useWorkspaceStore.getState().addProject(project.path);
         useTerminalStore.getState().setActiveProject(project.path);
+        useWorkspaceStore.getState().setReady(true);
+        await AppFunctions.OpenProject(project.path);
         useWorkspaceStore
           .getState()
           .setActiveFramework(
