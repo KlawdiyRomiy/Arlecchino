@@ -6,6 +6,8 @@ test.beforeEach(async ({ page }) => {
     const files: Record<string, string> = {
       "/workspace/index.html":
         "<!doctype html><html><body>Main editor preview</body></html>",
+      "/workspace/about.html":
+        "<!doctype html><html><body>Secondary editor preview</body></html>",
       "/workspace/README.md":
         '# Initial live preview\n\n<p align="center"><img src="https://example.test/badge.svg" alt="Preview badge" width="128" /></p>\n\n<h2 align="center">HTML heading</h2>\n\n- [docs](https://example.test/docs)\n\n- ready',
     };
@@ -68,6 +70,11 @@ test.beforeEach(async ({ page }) => {
                   {
                     name: "index.html",
                     path: "/workspace/index.html",
+                    isDirectory: false,
+                  },
+                  {
+                    name: "about.html",
+                    path: "/workspace/about.html",
                     isDirectory: false,
                   },
                   {
@@ -199,6 +206,65 @@ test("Browser Preview uses file opened in the main editor", async ({
   expect(previewPayload?.url).toBe("");
   expect(previewPayload?.sourceLabel).toBe("index.html");
   expect(previewPayload?.htmlContent).toContain("Main editor preview");
+});
+
+test("Browser Preview follows the active static HTML file while open", async ({
+  page,
+}) => {
+  await page.goto("/");
+
+  await page.locator('[data-file-path="/workspace/index.html"]').click();
+  await expect(page.getByText("Main editor preview")).toBeVisible();
+
+  await page.getByTestId("topbar-preview-button").click();
+
+  const previewPanel = page.getByTestId("panel-preview-browser-default");
+  await expect(previewPanel).toBeVisible();
+  await expect(previewPanel.getByText("Preview index.html")).toBeVisible();
+
+  const iframe = previewPanel.locator("iframe");
+  await expect
+    .poll(() =>
+      iframe.evaluate(
+        (element) =>
+          (element as HTMLIFrameElement).contentDocument?.body.textContent ??
+          "",
+      ),
+    )
+    .toContain("Main editor preview");
+
+  await page.locator('[data-file-path="/workspace/about.html"]').click();
+  await expect(page.getByText("Secondary editor preview")).toBeVisible();
+
+  await expect(previewPanel.getByText("Preview about.html")).toBeVisible();
+  await expect
+    .poll(() =>
+      iframe.evaluate(
+        (element) =>
+          (element as HTMLIFrameElement).contentDocument?.body.textContent ??
+          "",
+      ),
+    )
+    .toContain("Secondary editor preview");
+
+  const previewPayload = await page.evaluate(async () => {
+    const { usePreviewWindowStore } =
+      await import("/src/stores/previewWindowStore.ts");
+
+    const windowState = usePreviewWindowStore.getState().windows[0];
+    return windowState
+      ? {
+          title: windowState.title,
+          htmlContent: windowState.payload.htmlContent ?? null,
+          sourceLabel: windowState.payload.sourceLabel ?? null,
+        }
+      : null;
+  });
+
+  expect(previewPayload).not.toBeNull();
+  expect(previewPayload?.title).toBe("Preview about.html");
+  expect(previewPayload?.sourceLabel).toBe("about.html");
+  expect(previewPayload?.htmlContent).toContain("Secondary editor preview");
 });
 
 test("image files open inline in the main editor surface", async ({ page }) => {

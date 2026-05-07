@@ -26,6 +26,40 @@ interface QueuedPreviewWindowUpdate {
   queuedAt: number;
 }
 
+const shouldSyncBrowserPreviewLaunchInput = (
+  windowState: PreviewWindow,
+  input: OpenPreviewWindowInput,
+): boolean => {
+  if (windowState.surface !== "browser" || input.surface !== "browser") {
+    return false;
+  }
+
+  if (typeof input.title === "string" && input.title !== windowState.title) {
+    return true;
+  }
+
+  const nextPayload = input.payload ?? {};
+  return Object.entries(nextPayload).some(
+    ([key, value]) => key !== "revision" && windowState.payload[key] !== value,
+  );
+};
+
+const buildBrowserPreviewLaunchUpdate = (
+  input: OpenPreviewWindowInput,
+): UpdatePreviewWindowInput => {
+  const payload = {
+    ...(input.payload ?? {}),
+    revision: Date.now(),
+  };
+
+  return {
+    title:
+      input.title ??
+      (typeof payload.title === "string" ? payload.title : undefined),
+    payload,
+  };
+};
+
 interface UseMainLayoutPreviewEventsOptions {
   appearancePreview: AppearancePreviewState | null;
   closePreviewWindowWithMotion: (id: string) => void;
@@ -387,6 +421,36 @@ export const useMainLayoutPreviewEvents = ({
   useEffect(() => {
     openCanonicalBrowserPreviewRef.current = openCanonicalBrowserPreview;
   }, [openCanonicalBrowserPreview, openCanonicalBrowserPreviewRef]);
+
+  useEffect(() => {
+    if (
+      !previewLaunchInput ||
+      previewLaunchInput.surface !== "browser" ||
+      !previewLaunchInput.id
+    ) {
+      return;
+    }
+
+    const existingWindow = usePreviewWindowStore
+      .getState()
+      .windows.find(
+        (windowState) =>
+          windowState.id === previewLaunchInput.id &&
+          windowState.surface === "browser",
+      );
+
+    if (
+      !existingWindow ||
+      !shouldSyncBrowserPreviewLaunchInput(existingWindow, previewLaunchInput)
+    ) {
+      return;
+    }
+
+    updatePreviewWindow(
+      existingWindow.id,
+      buildBrowserPreviewLaunchUpdate(previewLaunchInput),
+    );
+  }, [previewLaunchInput, updatePreviewWindow]);
 
   const toggleCanonicalBrowserPreview = useCallback(() => {
     const existingPreviewWindow = getBrowserPreviewWindowForShortcut();
