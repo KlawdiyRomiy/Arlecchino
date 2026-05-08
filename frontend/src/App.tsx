@@ -39,6 +39,10 @@ import { useManualUpdateNotifications } from "./shell/manualUpdateNotifications"
 import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
 import { useWindowLeaseBridge } from "./shell/windowLeaseBridge";
 import { registerOpenIntentDispatcher } from "./shell/openIntentRouter";
+import {
+  forgetProjectWindowRestorePath,
+  rememberProjectWindowRestorePath,
+} from "./shell/projectWindowRestore";
 import { syncSurfaceRuntimeWindowLeaseBackendStatus } from "./surfaces/surfaceRuntimeStore";
 import {
   createEditorFileLoadingLoad,
@@ -155,6 +159,7 @@ const App: React.FC = () => {
         if (opened === false) {
           throw new Error("Project window launcher is unavailable.");
         }
+        rememberProjectWindowRestorePath(projectPath);
         setFileToOpen(null);
       } catch (error) {
         console.error("Error opening project window:", error);
@@ -265,6 +270,7 @@ const App: React.FC = () => {
     try {
       await AppFunctions.CloseProject();
       resetProjectBoundStores();
+      forgetProjectWindowRestorePath(currentId);
       useWorkspaceStore.getState().removeProject(currentId);
       useWorkspaceStore.getState().setActiveFramework(null);
       useTerminalStore.getState().setActiveProject(null);
@@ -275,14 +281,22 @@ const App: React.FC = () => {
     }
   };
 
-  const handleCloseProject = async (id: string) => {
+  const handleCloseProject = async (
+    id: string,
+    options?: { preserveProjectWindowRestore?: boolean },
+  ) => {
     const state = useWorkspaceStore.getState();
     if (state.pendingId) {
       return;
     }
 
+    const shouldForgetProjectWindowRestore =
+      !options?.preserveProjectWindowRestore;
     const closingActive = state.activeId === id;
     if (!closingActive) {
+      if (shouldForgetProjectWindowRestore) {
+        forgetProjectWindowRestorePath(id);
+      }
       state.removeProject(id);
       return;
     }
@@ -292,6 +306,9 @@ const App: React.FC = () => {
       try {
         await AppFunctions.CloseProject();
         resetProjectBoundStores();
+        if (shouldForgetProjectWindowRestore) {
+          forgetProjectWindowRestorePath(id);
+        }
         useWorkspaceStore.getState().removeProject(id);
         useWorkspaceStore.getState().setActiveFramework(null);
         useTerminalStore.getState().setActiveProject(null);
@@ -329,6 +346,9 @@ const App: React.FC = () => {
       startTransition(() => {
         const latestWorkspace = useWorkspaceStore.getState();
         latestWorkspace.completeProjectSwitch(nextProject.id);
+        if (shouldForgetProjectWindowRestore) {
+          forgetProjectWindowRestorePath(id);
+        }
         latestWorkspace.removeProject(id);
         setFileToOpen(null);
       });
@@ -360,7 +380,8 @@ const App: React.FC = () => {
       if (opened === false) {
         throw new Error("Project window launcher is unavailable.");
       }
-      await handleCloseProject(id);
+      rememberProjectWindowRestorePath(project.path);
+      await handleCloseProject(id, { preserveProjectWindowRestore: true });
     } catch (error) {
       console.error("Error detaching project:", error);
       alert(`Error while opening project window: ${error}`);

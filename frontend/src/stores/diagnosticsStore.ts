@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { EventsOn } from "../wails/runtime";
-import { readProjectSessionRoutePayload } from "../shell/projectSessionRoute";
+import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
 import {
   getProjectPathBasename,
   isSameOrChildPath,
@@ -378,9 +378,6 @@ const normalizeRuntimeState = (state?: string): DiagnosticsRuntimeState => {
 let diagnosticsEventsBound = false;
 let diagnosticsEventsBindTimer: number | null = null;
 let diagnosticsEventsBoundWaiters: Array<() => void> = [];
-const currentProjectSessionId =
-  readProjectSessionRoutePayload()?.sessionId ?? "main";
-
 const diagnosticPayloadMatchesCurrentSession = (
   payload: DiagnosticsEventPayload | DiagnosticsStatusEventPayload,
 ) => {
@@ -388,7 +385,7 @@ const diagnosticPayloadMatchesCurrentSession = (
     typeof payload.sessionId === "string" && payload.sessionId.length > 0
       ? payload.sessionId
       : "main";
-  return sessionId === currentProjectSessionId;
+  return sessionId === getCurrentProjectSessionId();
 };
 
 const resolveDiagnosticsEventsBound = () => {

@@ -28,6 +28,7 @@ type ProjectWindowSessionPayload struct {
 }
 
 type projectWindowHandle interface {
+	Name() string
 	Show() application.Window
 	Focus()
 	OnWindowEvent(events.WindowEventType, func(event *application.WindowEvent)) func()
@@ -52,7 +53,7 @@ func (a *App) OpenProjectWindow(path string) (ProjectWindowLaunchResult, error) 
 		a.focusProjectSessionWindow(existing)
 		return ProjectWindowLaunchResult{
 			Handled:     true,
-			ProjectPath: existing.currentProjectPath(),
+			ProjectPath: existing.projectWindowProjectPath(),
 			SessionID:   existing.ID,
 			WindowName:  existing.WindowName,
 			Reused:      true,
@@ -62,12 +63,8 @@ func (a *App) OpenProjectWindow(path string) (ProjectWindowLaunchResult, error) 
 	sessionID := a.nextProjectWindowSessionID()
 	windowName := "project:" + sessionID
 	session := newProjectRuntimeSession(sessionID, windowName)
+	session.launchProjectPath = path
 	registry.register(session)
-
-	if err := a.openProjectInSession(session, path); err != nil {
-		registry.remove(sessionID)
-		return ProjectWindowLaunchResult{}, err
-	}
 
 	windowURL := buildProjectSessionURL(sessionID)
 	window, err := newProjectWebviewWindow(a, application.WebviewWindowOptions{
@@ -91,10 +88,11 @@ func (a *App) OpenProjectWindow(path string) (ProjectWindowLaunchResult, error) 
 		},
 	})
 	if err != nil {
-		_ = a.closeProjectInSession(session, true)
 		registry.remove(sessionID)
 		return ProjectWindowLaunchResult{}, err
 	}
+	registry.attachWindowName(sessionID, window.Name())
+	actualWindowName := session.WindowName
 
 	window.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
 		a.closeProjectWindowSession(sessionID)
@@ -107,7 +105,7 @@ func (a *App) OpenProjectWindow(path string) (ProjectWindowLaunchResult, error) 
 		Handled:     true,
 		ProjectPath: path,
 		SessionID:   sessionID,
-		WindowName:  windowName,
+		WindowName:  actualWindowName,
 	}, nil
 }
 
@@ -122,8 +120,23 @@ func (a *App) GetProjectWindowSession(sessionID string) (ProjectWindowSessionPay
 	if session == nil {
 		return ProjectWindowSessionPayload{}, fmt.Errorf("project window session not found")
 	}
+	return projectWindowSessionPayload(session)
+}
+
+func (a *App) GetCurrentProjectWindowSession() (ProjectWindowSessionPayload, error) {
+	session := a.activeProjectSession()
+	if session == nil || session.IsDefault {
+		return ProjectWindowSessionPayload{}, fmt.Errorf("current window is not a project session")
+	}
+	return projectWindowSessionPayload(session)
+}
+
+func projectWindowSessionPayload(session *ProjectRuntimeSession) (ProjectWindowSessionPayload, error) {
 	projectPath := session.currentProjectPath()
 	if projectPath == "" {
+		projectPath = session.projectWindowProjectPath()
+	}
+	if projectPath == "" || projectPath == "." {
 		return ProjectWindowSessionPayload{}, fmt.Errorf("project window session has no project")
 	}
 	return ProjectWindowSessionPayload{

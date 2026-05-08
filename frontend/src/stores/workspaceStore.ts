@@ -8,8 +8,15 @@ import {
 } from "../utils/projectBoundState";
 import {
   readProjectSessionRoutePayload,
+  setProjectSessionRoutePayloadOverride,
   workspaceStorageNameForProjectSession,
 } from "../shell/projectSessionRoute";
+import {
+  bindProjectWindowRestoreLifecycle,
+  forgetProjectWindowRestorePath,
+  readProjectWindowRestorePaths,
+} from "../shell/projectWindowRestore";
+import { useEditorSettingsStore } from "./editorSettingsStore";
 import { useTerminalStore } from "./terminalStore";
 
 export interface WorkspaceProject {
@@ -430,18 +437,90 @@ const resetWorkspaceProjectSessionState = () => {
   });
 };
 
-const initializeProjectSessionWorkspace = async (sessionId: string) => {
+const uniqueProjectPaths = (paths: string[]): string[] =>
+  Array.from(
+    new Set(paths.map((path) => path.trim()).filter((path) => path.length > 0)),
+  );
+
+const restoreProjectWindows = async (paths: string[]) => {
+  for (const path of uniqueProjectPaths(paths)) {
+    const access = await inspectProjectAccess(path);
+    if (!access.accessible) {
+      console.warn("Skipping inaccessible project window:", access.reason);
+      forgetProjectWindowRestorePath(path);
+      continue;
+    }
+
+    try {
+      await AppFunctions.OpenProjectWindow(path);
+    } catch (error) {
+      console.error("Error restoring project window:", error);
+    }
+  }
+};
+
+const activateProjectSessionWorkspaceStorage = (sessionId: string) => {
+  const payload = { sessionId };
+  setProjectSessionRoutePayloadOverride(payload);
+  useWorkspaceStore.persist.setOptions({
+    name: workspaceStorageNameForProjectSession(payload),
+  });
+};
+
+type ProjectSessionWorkspaceResolution =
+  | {
+      handled: true;
+      session: AppFunctions.ProjectWindowSessionPayload | null;
+    }
+  | {
+      handled: false;
+      session: null;
+    };
+
+const resolveProjectSessionWorkspace =
+  async (): Promise<ProjectSessionWorkspaceResolution> => {
+    const routePayload = readProjectSessionRoutePayload();
+    if (routePayload) {
+      activateProjectSessionWorkspaceStorage(routePayload.sessionId);
+      try {
+        return {
+          handled: true,
+          session: await AppFunctions.GetProjectWindowSession(
+            routePayload.sessionId,
+          ),
+        };
+      } catch (error) {
+        console.error("Error resolving project session window:", error);
+        return { handled: true, session: null };
+      }
+    }
+
+    const session = await AppFunctions.GetCurrentProjectWindowSession();
+    if (!session) {
+      return { handled: false, session: null };
+    }
+
+    activateProjectSessionWorkspaceStorage(session.sessionId);
+    return { handled: true, session };
+  };
+
+const initializeProjectSessionWorkspace = async (
+  session: AppFunctions.ProjectWindowSessionPayload,
+) => {
   await Promise.resolve(useWorkspaceStore.persist.rehydrate());
   resetWorkspaceProjectSessionState();
 
   try {
-    const session = await AppFunctions.GetProjectWindowSession(sessionId);
     const projectPath = session.projectPath;
 
+    bindProjectWindowRestoreLifecycle(projectPath);
     resetProjectBoundStores();
     activateProjectScope(projectPath);
     useWorkspaceStore.getState().addProject(projectPath);
     useTerminalStore.getState().setActiveProject(projectPath);
+    const openProjectPromise = AppFunctions.OpenProject(projectPath);
+    useWorkspaceStore.getState().setReady(true);
+    await openProjectPromise;
     useWorkspaceStore
       .getState()
       .setActiveFramework(
@@ -468,22 +547,46 @@ export const initializeWorkspace = async () => {
   }
 
   workspaceInitPromise = (async () => {
-    if (projectSessionRoutePayload) {
-      await initializeProjectSessionWorkspace(
-        projectSessionRoutePayload.sessionId,
-      );
+    const projectSessionResolution = await resolveProjectSessionWorkspace();
+    if (projectSessionResolution.handled) {
+      if (projectSessionResolution.session) {
+        await initializeProjectSessionWorkspace(
+          projectSessionResolution.session,
+        );
+      } else {
+        await Promise.resolve(useWorkspaceStore.persist.rehydrate());
+        resetWorkspaceProjectSessionState();
+        resetProjectBoundStores();
+        useTerminalStore.getState().setActiveProject(null);
+        useWorkspaceStore.getState().setActiveFramework(null);
+      }
       return;
     }
 
     await Promise.resolve(useWorkspaceStore.persist.rehydrate());
+    await Promise.resolve(useEditorSettingsStore.persist.rehydrate());
 
     const { activeId, projects } = useWorkspaceStore.getState();
-    if (!activeId) {
+    const projectWindowMode =
+      useEditorSettingsStore.getState().projectWindowMode;
+    const savedProjectWindowPaths =
+      projectWindowMode === "windows" ? readProjectWindowRestorePaths() : [];
+
+    if (!activeId && savedProjectWindowPaths.length === 0) {
       useTerminalStore.getState().setActiveProject(null);
       return;
     }
 
-    const activeProject = projects.find((item) => item.id === activeId);
+    const activeProject =
+      projects.find((item) => item.id === activeId) ??
+      (savedProjectWindowPaths[0]
+        ? {
+            id: savedProjectWindowPaths[0],
+            path: savedProjectWindowPaths[0],
+            name: getProjectName(savedProjectWindowPaths[0]),
+            openedAt: Date.now(),
+          }
+        : null);
     if (!activeProject) {
       useTerminalStore.getState().setActiveProject(null);
       useWorkspaceStore.getState().clearActiveProject();
@@ -516,6 +619,15 @@ export const initializeWorkspace = async () => {
             (await AppFunctions.GetCurrentProjectFramework()) || null,
           );
         void preloadProjectDiagnostics(project.path);
+        if (projectWindowMode === "windows") {
+          const windowRestorePaths = uniqueProjectPaths([
+            ...savedProjectWindowPaths,
+            ...projects
+              .filter((candidate) => candidate.path !== project.path)
+              .map((candidate) => candidate.path),
+          ]).filter((candidate) => candidate !== project.path);
+          await restoreProjectWindows(windowRestorePaths);
+        }
         return;
       } catch (error) {
         useTerminalStore.getState().setActiveProject(null);

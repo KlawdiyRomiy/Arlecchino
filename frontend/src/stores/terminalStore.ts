@@ -13,7 +13,7 @@ import {
   CloseTerminal,
 } from "../wails/app";
 import { EventsOn } from "../wails/runtime";
-import { readProjectSessionRoutePayload } from "../shell/projectSessionRoute";
+import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
 import {
   getThemeTerminalById,
   isThemeId,
@@ -34,15 +34,12 @@ import type {
   TUIAssistState,
 } from "../types/terminal";
 
-const currentProjectSessionId =
-  readProjectSessionRoutePayload()?.sessionId ?? "main";
-
 const terminalEventMatchesCurrentSession = (event: { sessionId?: string }) => {
   const sessionId =
     typeof event.sessionId === "string" && event.sessionId.length > 0
       ? event.sessionId
       : "main";
-  return sessionId === currentProjectSessionId;
+  return sessionId === getCurrentProjectSessionId();
 };
 
 const terminalOutputQueues = new Map<

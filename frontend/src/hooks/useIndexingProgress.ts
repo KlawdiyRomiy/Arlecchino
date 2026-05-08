@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { EventsOn } from "../wails/runtime";
 import { usePerformanceStore } from "../stores/performanceStore";
-import { readProjectSessionRoutePayload } from "../shell/projectSessionRoute";
+import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
 
 export type IndexingPhase = "idle" | "indexing" | "complete" | "revealed";
 
@@ -32,15 +32,12 @@ let state: IndexingState = {
   total: 0,
   percentage: 0,
 };
-const currentProjectSessionId =
-  readProjectSessionRoutePayload()?.sessionId ?? "main";
-
 const matchesCurrentProjectSession = (data?: IndexerEventPayload) => {
   const sessionId =
     typeof data?.sessionId === "string" && data.sessionId.length > 0
       ? data.sessionId
       : "main";
-  return sessionId === currentProjectSessionId;
+  return sessionId === getCurrentProjectSessionId();
 };
 
 const listeners = new Set<() => void>();

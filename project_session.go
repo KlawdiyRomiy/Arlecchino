@@ -43,6 +43,7 @@ type ProjectRuntimeSession struct {
 	lspManager *indexerlsp.Manager
 
 	projectPath       string
+	launchProjectPath string
 	pathMu            sync.RWMutex
 	projectGeneration atomic.Uint64
 
@@ -124,6 +125,16 @@ func (s *ProjectRuntimeSession) currentProjectPath() string {
 	return s.projectPath
 }
 
+func (s *ProjectRuntimeSession) projectWindowProjectPath() string {
+	if s == nil {
+		return ""
+	}
+	if path := strings.TrimSpace(s.currentProjectPath()); path != "" {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(strings.TrimSpace(s.launchProjectPath))
+}
+
 func (s *ProjectRuntimeSession) setProjectPath(path string) {
 	if s == nil {
 		return
@@ -149,14 +160,24 @@ func (r *ProjectSessionRegistry) attachWindow(sessionID string, window applicati
 	if r == nil || window == nil {
 		return
 	}
+	r.attachWindowName(sessionID, window.Name())
+}
+
+func (r *ProjectSessionRegistry) attachWindowName(sessionID string, windowName string) {
+	if r == nil || strings.TrimSpace(windowName) == "" {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	session := r.sessions[sessionID]
 	if session == nil {
 		return
 	}
-	session.WindowName = window.Name()
-	r.windowIndex[window.Name()] = session.ID
+	if session.WindowName != "" && session.WindowName != windowName {
+		delete(r.windowIndex, session.WindowName)
+	}
+	session.WindowName = windowName
+	r.windowIndex[windowName] = session.ID
 }
 
 func (r *ProjectSessionRegistry) get(sessionID string) *ProjectRuntimeSession {
@@ -188,7 +209,7 @@ func (r *ProjectSessionRegistry) findProjectWindowByPath(path string) *ProjectRu
 		if session == nil || session.IsDefault {
 			continue
 		}
-		if filepath.Clean(session.currentProjectPath()) == clean {
+		if session.projectWindowProjectPath() == clean {
 			return session
 		}
 	}

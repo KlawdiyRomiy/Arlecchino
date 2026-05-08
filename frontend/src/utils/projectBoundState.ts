@@ -6,7 +6,7 @@ import {
   useDiagnosticsStore,
 } from "../stores/diagnosticsStore";
 import { usePerformanceStore } from "../stores/performanceStore";
-import { readProjectSessionRoutePayload } from "../shell/projectSessionRoute";
+import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
 
 type ProjectAppBridge = {
   LSPPreloadProjectDiagnostics?: (projectPath: string) => Promise<unknown>;
@@ -64,9 +64,6 @@ let currentProjectScope: ProjectScopeState = {
   generation: 0,
   projectPath: null,
 };
-const currentProjectSessionId =
-  readProjectSessionRoutePayload()?.sessionId ?? "main";
-
 const diagnosticsPreloadListeners = new Set<() => void>();
 
 const emitDiagnosticsPreloadState = (next: DiagnosticsPreloadState) => {
@@ -114,7 +111,7 @@ const payloadMatchesCurrentProjectSession = (
     typeof payload.sessionId === "string" && payload.sessionId.length > 0
       ? payload.sessionId
       : "main";
-  return sessionId === currentProjectSessionId;
+  return sessionId === getCurrentProjectSessionId();
 };
 
 const normalizeCount = (value?: number) => {

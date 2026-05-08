@@ -4,6 +4,8 @@ export interface ProjectSessionRoutePayload {
   sessionId: string;
 }
 
+let projectSessionRouteOverride: ProjectSessionRoutePayload | null = null;
+
 const storageHash = (value: string): string => {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -14,17 +16,31 @@ const storageHash = (value: string): string => {
 };
 
 export const readProjectSessionRoutePayload = (
-  search: string = typeof window === "undefined" ? "" : window.location.search,
+  search?: string,
 ): ProjectSessionRoutePayload | null => {
-  const sessionId = new URLSearchParams(search)
+  const hasExplicitSearch = typeof search === "string";
+  const source =
+    search ?? (typeof window === "undefined" ? "" : window.location.search);
+  const sessionId = new URLSearchParams(source)
     .get(PROJECT_SESSION_ROUTE_PARAM)
     ?.trim();
-  return sessionId ? { sessionId } : null;
+  if (sessionId) {
+    return { sessionId };
+  }
+  return hasExplicitSearch ? null : projectSessionRouteOverride;
 };
 
-export const isProjectSessionRoute = (
-  search: string = typeof window === "undefined" ? "" : window.location.search,
-): boolean => readProjectSessionRoutePayload(search) !== null;
+export const isProjectSessionRoute = (search?: string): boolean =>
+  readProjectSessionRoutePayload(search) !== null;
+
+export const setProjectSessionRoutePayloadOverride = (
+  payload: ProjectSessionRoutePayload | null,
+) => {
+  projectSessionRouteOverride = payload?.sessionId ? payload : null;
+};
+
+export const getCurrentProjectSessionId = (): string =>
+  readProjectSessionRoutePayload()?.sessionId ?? "main";
 
 export const workspaceStorageNameForProjectSession = (
   payload: ProjectSessionRoutePayload | null,

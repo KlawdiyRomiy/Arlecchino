@@ -24,9 +24,15 @@ test.beforeEach(async ({ page }) => {
 
     const testWindow = window as typeof window & {
       __appCalls: Array<{ method: string; args: unknown[] }>;
+      __currentProjectWindowSession?: {
+        sessionId: string;
+        projectPath: string;
+        windowName: string;
+      } | null;
       __selectedDirectory?: string | null;
     };
     testWindow.__appCalls = [];
+    testWindow.__currentProjectWindowSession = null;
     testWindow.__selectedDirectory = null;
 
     const appBridge = new Proxy(
@@ -57,6 +63,11 @@ test.beforeEach(async ({ page }) => {
                   projectPath: "/launched",
                   windowName: "project:project-session-1",
                 };
+              case "GetCurrentProjectWindowSession":
+                if (!testWindow.__currentProjectWindowSession) {
+                  throw new Error("not a project session window");
+                }
+                return testWindow.__currentProjectWindowSession;
               case "SelectDirectory":
                 return testWindow.__selectedDirectory ?? "";
               case "GetRecentProjects":
@@ -157,24 +168,26 @@ test.beforeEach(async ({ page }) => {
       runtime: runtimeBridge,
     });
 
-    localStorage.setItem(
-      "workspace-storage",
-      JSON.stringify({
-        state: {
-          projects: [
-            {
-              id: "/workspace",
-              path: "/workspace",
-              name: "workspace",
-              openedAt: 1,
-            },
-          ],
-          activeId: "/workspace",
-          switchDirection: 1,
-        },
-        version: 0,
-      }),
-    );
+    if (!localStorage.getItem("workspace-storage")) {
+      localStorage.setItem(
+        "workspace-storage",
+        JSON.stringify({
+          state: {
+            projects: [
+              {
+                id: "/workspace",
+                path: "/workspace",
+                name: "workspace",
+                openedAt: 1,
+              },
+            ],
+            activeId: "/workspace",
+            switchDirection: 1,
+          },
+          version: 0,
+        }),
+      );
+    }
   });
 
   await page.goto("/");
@@ -226,12 +239,12 @@ async function mountProjectUI(
   );
 
   if (activeId) {
-    await expect(page.getByTitle("Settings")).toBeVisible();
+    await expect(page.getByTitle("Settings").first()).toBeVisible();
   }
 }
 
 async function openKeybindings(page: Page) {
-  await page.getByTitle("Settings").click();
+  await page.getByTitle("Settings").first().click();
   await page.getByRole("button", { name: /Keybindings/ }).click();
   await expect(
     page.getByRole("heading", { name: "Keybindings" }),
@@ -239,12 +252,12 @@ async function openKeybindings(page: Page) {
 }
 
 async function openAppearance(page: Page) {
-  await page.getByTitle("Settings").click();
+  await page.getByTitle("Settings").first().click();
   await expect(page.getByRole("heading", { name: "Appearance" })).toBeVisible();
 }
 
 async function openBrowserPreviewSettings(page: Page) {
-  await page.getByTitle("Settings").click();
+  await page.getByTitle("Settings").first().click();
   await page.getByRole("button", { name: /Browser Preview/ }).click();
   await expect(
     page.getByRole("heading", { name: "Browser Preview" }),
@@ -252,7 +265,7 @@ async function openBrowserPreviewSettings(page: Page) {
 }
 
 async function openDiagnosticsSettings(page: Page) {
-  await page.getByTitle("Settings").click();
+  await page.getByTitle("Settings").first().click();
   await page.getByRole("button", { name: /Diagnostics/ }).click();
   await expect(
     page.getByRole("heading", { name: "Diagnostics" }),
@@ -302,6 +315,15 @@ const getAppCalls = async (page: Page) =>
         }
       ).__appCalls,
   );
+
+const getProjectWindowRestorePaths = async (page: Page) =>
+  page.evaluate(() => {
+    const raw = localStorage.getItem("project-window-restore.v1");
+    if (!raw) {
+      return [];
+    }
+    return JSON.parse(raw).paths as string[];
+  });
 
 test("keybindings tab records shortcuts, blocks duplicates, persists, and resets", async ({
   page,
@@ -430,6 +452,27 @@ test("Cmd+Backquote switches projects or yields to native windows by setting", a
       }),
     )
     .toBe("/alpha");
+
+  await page.evaluate(async () => {
+    const { useWorkspaceStore } = await import("/src/stores/workspaceStore.ts");
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useWorkspaceStore.setState({
+      projects: [{ id: "/alpha", path: "/alpha", name: "alpha", openedAt: 1 }],
+      activeId: "/alpha",
+      pendingId: null,
+      switchSourceId: null,
+      switchDirection: 1,
+      uiBlockers: [],
+    });
+    useEditorSettingsStore.getState().setProjectWindowMode("projects");
+  });
+
+  const singleProjectWindowCyclePrevented = await dispatchShortcut(
+    page,
+    shortcut,
+  );
+  expect(singleProjectWindowCyclePrevented).toBe(false);
 });
 
 test("project opening mode routes second project in current window or new macOS window", async ({
@@ -443,7 +486,7 @@ test("project opening mode routes second project in current window or new macOS 
 
   await setSelectedDirectory(page, "/beta");
   await clearAppCalls(page);
-  await page.getByTitle("Add project").click();
+  await page.getByTitle("Add project").first().click();
   await page.getByRole("menuitem", { name: /Open Project/ }).click();
   await expect
     .poll(async () =>
@@ -481,7 +524,7 @@ test("project opening mode routes second project in current window or new macOS 
 
   await setSelectedDirectory(page, "/gamma");
   await clearAppCalls(page);
-  await page.getByTitle("Add project").click();
+  await page.getByTitle("Add project").first().click();
   await page.getByRole("menuitem", { name: /Open Project/ }).click();
 
   await expect
@@ -510,6 +553,103 @@ test("project opening mode routes second project in current window or new macOS 
       }),
     )
     .toEqual(["/alpha"]);
+  await expect
+    .poll(async () => getProjectWindowRestorePaths(page))
+    .toEqual(["/gamma"]);
+});
+
+test("dragging an inactive project chip detaches that exact project path", async ({
+  page,
+}) => {
+  await mountProjectUI(
+    page,
+    [
+      { id: "/alpha", path: "/alpha", name: "alpha", openedAt: 1 },
+      { id: "/beta", path: "/beta", name: "beta", openedAt: 2 },
+    ],
+    "/alpha",
+  );
+
+  await clearAppCalls(page);
+  await page.waitForTimeout(350);
+  await page.evaluate(async () => {
+    const { useWorkspaceStore } = await import("/src/stores/workspaceStore.ts");
+    useWorkspaceStore.setState({
+      projects: [
+        { id: "/alpha", path: "/alpha", name: "alpha", openedAt: 1 },
+        { id: "/beta", path: "/beta", name: "beta", openedAt: 2 },
+      ],
+      activeId: "/alpha",
+      pendingId: null,
+      switchSourceId: null,
+      switchDirection: 1,
+      uiBlockers: [],
+    });
+  });
+  const betaChip = page
+    .getByTestId("project-indicators-expanded")
+    .getByRole("button", { name: /beta/ })
+    .first();
+  await betaChip.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const startX = rect.left + rect.width / 2;
+    const startY = rect.top + rect.height / 2;
+    const pointerId = 7;
+    element.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        clientX: startX,
+        clientY: startY,
+        pointerId,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent("pointermove", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        clientX: startX,
+        clientY: startY + 160,
+        pointerId,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent("pointerup", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 0,
+        clientX: startX,
+        clientY: startY + 160,
+        pointerId,
+      }),
+    );
+  });
+
+  await expect
+    .poll(async () => {
+      const calls = await getAppCalls(page);
+      return calls.find((call) => call.method === "OpenProjectWindow")?.args;
+    })
+    .toEqual(["/beta"]);
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useWorkspaceStore } =
+          await import("/src/stores/workspaceStore.ts");
+        return useWorkspaceStore
+          .getState()
+          .projects.map((project) => project.path);
+      }),
+    )
+    .toEqual(["/alpha"]);
+  await expect
+    .poll(async () => getProjectWindowRestorePaths(page))
+    .toEqual(["/beta"]);
 });
 
 test("windows project opening mode uses current window when welcome has no active project", async ({
@@ -550,6 +690,63 @@ test("windows project opening mode uses current window when welcome has no activ
   expect(calls.some((call) => call.method === "OpenProjectWindow")).toBe(false);
 });
 
+test("windows project opening mode restores other project windows on startup", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    localStorage.setItem(
+      "editor-settings",
+      JSON.stringify({
+        state: { projectWindowMode: "windows" },
+        version: 1,
+      }),
+    );
+    localStorage.setItem(
+      "workspace-storage",
+      JSON.stringify({
+        state: {
+          projects: [
+            { id: "/alpha", path: "/alpha", name: "alpha", openedAt: 1 },
+            { id: "/beta", path: "/beta", name: "beta", openedAt: 2 },
+          ],
+          activeId: "/beta",
+          switchDirection: 1,
+        },
+        version: 0,
+      }),
+    );
+    localStorage.setItem(
+      "project-window-restore.v1",
+      JSON.stringify({ version: 1, paths: ["/gamma"] }),
+    );
+    (
+      window as typeof window & {
+        __appCalls: Array<{ method: string; args: unknown[] }>;
+      }
+    ).__appCalls = [];
+  });
+
+  await page.reload();
+
+  await expect
+    .poll(async () => {
+      const calls = await getAppCalls(page);
+      return {
+        mainProjects: calls
+          .filter((call) => call.method === "OpenProject")
+          .map((call) => call.args[0]),
+        projectWindows: calls
+          .filter((call) => call.method === "OpenProjectWindow")
+          .map((call) => call.args[0])
+          .sort(),
+      };
+    })
+    .toEqual({
+      mainProjects: ["/beta"],
+      projectWindows: ["/alpha", "/gamma"],
+    });
+});
+
 test("project session route ignores shared workspace storage", async ({
   page,
 }) => {
@@ -569,6 +766,59 @@ test("project session route ignores shared workspace storage", async ({
       }),
     )
     .toEqual({ activeId: "/launched", projects: ["/launched"] });
+
+  const windowCyclePrevented = await dispatchShortcut(page, {
+    key: "`",
+    code: "Backquote",
+    metaKey: true,
+  });
+  expect(windowCyclePrevented).toBe(false);
+});
+
+test("project session fallback ignores shared workspace storage when route is missing", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (
+      window as typeof window & {
+        __currentProjectWindowSession?: {
+          sessionId: string;
+          projectPath: string;
+          windowName: string;
+        } | null;
+      }
+    ).__currentProjectWindowSession = {
+      sessionId: "session-dragged",
+      projectPath: "/dragged",
+      windowName: "project:session-dragged",
+    };
+  });
+  await page.goto("/");
+
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useWorkspaceStore } =
+          await import("/src/stores/workspaceStore.ts");
+        return {
+          activeId: useWorkspaceStore.getState().activeId,
+          projects: useWorkspaceStore
+            .getState()
+            .projects.map((project) => project.path),
+        };
+      }),
+    )
+    .toEqual({ activeId: "/dragged", projects: ["/dragged"] });
+
+  const storedSharedWorkspace = await page.evaluate(() => {
+    const raw = localStorage.getItem("workspace-storage");
+    return raw
+      ? JSON.parse(raw).state.projects.map(
+          (project: { path: string }) => project.path,
+        )
+      : [];
+  });
+  expect(storedSharedWorkspace).toEqual(["/workspace"]);
 });
 
 test("Browser Preview settings persist Markdown links mode", async ({

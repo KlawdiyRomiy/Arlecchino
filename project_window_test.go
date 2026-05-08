@@ -10,8 +10,13 @@ import (
 )
 
 type fakeProjectWindow struct {
+	name    string
 	shown   bool
 	focused bool
+}
+
+func (f *fakeProjectWindow) Name() string {
+	return f.name
 }
 
 func (f *fakeProjectWindow) Show() application.Window {
@@ -58,10 +63,13 @@ func TestOpenProjectWindowCreatesInProcessWailsWindow(t *testing.T) {
 	app := NewApp()
 
 	var gotOptions application.WebviewWindowOptions
+	var createCount int
 	fakeWindow := &fakeProjectWindow{}
 	previousFactory := newProjectWebviewWindow
 	newProjectWebviewWindow = func(_ *App, options application.WebviewWindowOptions) (projectWindowHandle, error) {
+		createCount++
 		gotOptions = options
+		fakeWindow.name = "actual-" + options.Name
 		return fakeWindow, nil
 	}
 	defer func() {
@@ -79,8 +87,25 @@ func TestOpenProjectWindowCreatesInProcessWailsWindow(t *testing.T) {
 	if result.Reused {
 		t.Fatal("first project window was marked as reused")
 	}
-	if gotOptions.Name != result.WindowName {
-		t.Fatalf("window name = %q, want %q", gotOptions.Name, result.WindowName)
+	reused, err := app.OpenProjectWindow(projectPath)
+	if err != nil {
+		t.Fatalf("second OpenProjectWindow returned error: %v", err)
+	}
+	if !reused.Reused || reused.SessionID != result.SessionID {
+		t.Fatalf("reused result = %#v, want existing pending session %q", reused, result.SessionID)
+	}
+	if reused.ProjectPath != filepath.Clean(projectPath) || reused.WindowName != fakeWindow.Name() {
+		t.Fatalf("reused project/window = %q/%q, want %q/%q", reused.ProjectPath, reused.WindowName, filepath.Clean(projectPath), fakeWindow.Name())
+	}
+	if createCount != 1 {
+		t.Fatalf("window create count = %d, want one window before frontend hydration", createCount)
+	}
+	expectedWindowName := "project:" + result.SessionID
+	if gotOptions.Name != expectedWindowName {
+		t.Fatalf("window name = %q, want %q", gotOptions.Name, expectedWindowName)
+	}
+	if result.WindowName != fakeWindow.Name() {
+		t.Fatalf("result window name = %q, want actual window name %q", result.WindowName, fakeWindow.Name())
 	}
 	if gotOptions.URL != buildProjectSessionURL(result.SessionID) {
 		t.Fatalf("window URL = %q, want project session URL", gotOptions.URL)
@@ -94,6 +119,16 @@ func TestOpenProjectWindowCreatesInProcessWailsWindow(t *testing.T) {
 	if !fakeWindow.shown || !fakeWindow.focused {
 		t.Fatalf("fake window shown=%v focused=%v, want both true", fakeWindow.shown, fakeWindow.focused)
 	}
+	session := app.projectSessionByID(result.SessionID)
+	if session == nil {
+		t.Fatalf("project session %q was not registered", result.SessionID)
+	}
+	if got := session.currentProjectPath(); got != "" {
+		t.Fatalf("session current project path = %q, want deferred open before frontend hydration", got)
+	}
+	if session.projectManager != nil && session.projectManager.CurrentProject != nil {
+		t.Fatal("project manager was opened before the project window frontend hydrated")
+	}
 
 	payload, err := app.GetProjectWindowSession(result.SessionID)
 	if err != nil {
@@ -101,6 +136,13 @@ func TestOpenProjectWindowCreatesInProcessWailsWindow(t *testing.T) {
 	}
 	if payload.ProjectPath != filepath.Clean(projectPath) || payload.SessionID != result.SessionID {
 		t.Fatalf("payload = %#v, want project session payload", payload)
+	}
+	registry := app.ensureProjectSessions()
+	registry.mu.RLock()
+	currentSessionID := registry.windowIndex[fakeWindow.Name()]
+	registry.mu.RUnlock()
+	if currentSessionID != result.SessionID {
+		t.Fatalf("current window resolved to %q, want session %q", currentSessionID, result.SessionID)
 	}
 }
 
