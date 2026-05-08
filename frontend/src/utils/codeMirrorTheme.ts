@@ -4,6 +4,49 @@ import { createTheme } from "thememirror";
 
 import { radius, transitions, zIndex } from "../styles/colors";
 
+const rainbowBracketPalette = {
+  red: "var(--editor-rainbow-bracket-red, #ff5c7a)",
+  orange: "var(--editor-rainbow-bracket-orange, #ff9f43)",
+  yellow: "var(--editor-rainbow-bracket-yellow, #d6b300)",
+  green: "var(--editor-rainbow-bracket-green, #2fd17c)",
+  blue: "var(--editor-rainbow-bracket-blue, #4da3ff)",
+  indigo: "var(--editor-rainbow-bracket-indigo, #9b7bff)",
+  violet: "var(--editor-rainbow-bracket-violet, #e46bff)",
+};
+
+const rainbowBracketColor = (color: string) => `${color} !important`;
+
+const rainbowBracketRules = {
+  ".cm-content .rainbow-bracket-red, .cm-content .rainbow-bracket-red > span, .cm-content .rainbow-bracket-red span":
+    {
+      color: rainbowBracketColor(rainbowBracketPalette.red),
+    },
+  ".cm-content .rainbow-bracket-orange, .cm-content .rainbow-bracket-orange > span, .cm-content .rainbow-bracket-orange span":
+    {
+      color: rainbowBracketColor(rainbowBracketPalette.orange),
+    },
+  ".cm-content .rainbow-bracket-yellow, .cm-content .rainbow-bracket-yellow > span, .cm-content .rainbow-bracket-yellow span":
+    {
+      color: rainbowBracketColor(rainbowBracketPalette.yellow),
+    },
+  ".cm-content .rainbow-bracket-green, .cm-content .rainbow-bracket-green > span, .cm-content .rainbow-bracket-green span":
+    {
+      color: rainbowBracketColor(rainbowBracketPalette.green),
+    },
+  ".cm-content .rainbow-bracket-blue, .cm-content .rainbow-bracket-blue > span, .cm-content .rainbow-bracket-blue span":
+    {
+      color: rainbowBracketColor(rainbowBracketPalette.blue),
+    },
+  ".cm-content .rainbow-bracket-indigo, .cm-content .rainbow-bracket-indigo > span, .cm-content .rainbow-bracket-indigo span":
+    {
+      color: rainbowBracketColor(rainbowBracketPalette.indigo),
+    },
+  ".cm-content .rainbow-bracket-violet, .cm-content .rainbow-bracket-violet > span, .cm-content .rainbow-bracket-violet span":
+    {
+      color: rainbowBracketColor(rainbowBracketPalette.violet),
+    },
+};
+
 const editorPalette = {
   background: "var(--editor-bg, #050505)",
   surface: "var(--editor-surface, #080808)",
@@ -592,6 +635,7 @@ export const codeEditorStyles = EditorView.theme(
       outline: `1px solid ${editorPalette.borderStrong}`,
       color: editorPalette.text,
     },
+    ...rainbowBracketRules,
     ".cm-searchMatch": {
       backgroundColor: editorPalette.searchMatch,
       outline: `1px solid color-mix(in srgb, ${editorPalette.accent} 42%, transparent)`,

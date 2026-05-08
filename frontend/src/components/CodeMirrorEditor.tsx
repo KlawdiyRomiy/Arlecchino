@@ -2806,6 +2806,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     [language],
   );
 
+  const rainbowBracketsExtension = useMemo<Extension>(
+    () => (showRainbowBrackets && !largeDocumentMode ? rainbowBrackets() : []),
+    [largeDocumentMode, showRainbowBrackets],
+  );
+
   const adaptiveExtensions = useMemo<Extension[]>(() => {
     const nextExtensions: Extension[] = [];
 
@@ -2828,7 +2833,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         bracketMatching(),
         closeBrackets(),
         highlightSelectionMatches(),
-        ...(showRainbowBrackets ? [rainbowBrackets()] : []),
       );
     }
 
@@ -2972,7 +2976,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     instantCompletionSource,
     metrics,
     orchestrator,
-    showRainbowBrackets,
     signatureHelpExtension,
   ]);
 
@@ -2984,7 +2987,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     editorFeatureBudget.layoutStableGitGutter,
     editorFeatureBudget.runtimeHover,
     editorFeatureBudget.runtimeRichEditorFeatures,
-    showRainbowBrackets,
     filePath,
     language,
     backendCompletionSource,
@@ -3014,6 +3016,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       codeEditorTheme,
       codeEditorStyles,
       fontSizeExtension,
+      rainbowBracketsExtension,
       operatorLigaturesExtension,
       highlightLineField,
       codeMirrorFileSearchExtension,
@@ -3055,6 +3058,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     formatKeymap,
     languageExtension,
     operatorLigaturesExtension,
+    rainbowBracketsExtension,
     saveKeymap,
     scrollGuardExtension,
     shouldShowMinimap,
