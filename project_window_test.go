@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/url"
 	"path/filepath"
 	"testing"
@@ -164,5 +165,89 @@ func TestOpenProjectWindowValidatesAccessBeforeCreatingWindow(t *testing.T) {
 	}
 	if createCount != 0 {
 		t.Fatalf("window create count = %d, want 0", createCount)
+	}
+}
+
+func TestGetCurrentProjectWindowSessionFallsBackToSinglePendingWindow(t *testing.T) {
+	projectPath := t.TempDir()
+	app := NewApp()
+
+	previousFactory := newProjectWebviewWindow
+	newProjectWebviewWindow = func(_ *App, options application.WebviewWindowOptions) (projectWindowHandle, error) {
+		return &fakeProjectWindow{name: "actual-" + options.Name}, nil
+	}
+	defer func() {
+		newProjectWebviewWindow = previousFactory
+	}()
+
+	result, err := app.OpenProjectWindow(projectPath)
+	if err != nil {
+		t.Fatalf("OpenProjectWindow returned error: %v", err)
+	}
+	defer app.closeProjectWindowSession(result.SessionID)
+
+	payload, err := app.GetCurrentProjectWindowSession(context.Background())
+	if err != nil {
+		t.Fatalf("GetCurrentProjectWindowSession returned error: %v", err)
+	}
+	if payload.SessionID != result.SessionID || payload.ProjectPath != filepath.Clean(projectPath) {
+		t.Fatalf("payload = %#v, want pending session %q for %q", payload, result.SessionID, filepath.Clean(projectPath))
+	}
+}
+
+func TestOpenProjectWindowSessionOpensExplicitSession(t *testing.T) {
+	projectPath := t.TempDir()
+	app := NewApp()
+
+	previousFactory := newProjectWebviewWindow
+	newProjectWebviewWindow = func(_ *App, options application.WebviewWindowOptions) (projectWindowHandle, error) {
+		return &fakeProjectWindow{name: "actual-" + options.Name}, nil
+	}
+	defer func() {
+		newProjectWebviewWindow = previousFactory
+	}()
+
+	result, err := app.OpenProjectWindow(projectPath)
+	if err != nil {
+		t.Fatalf("OpenProjectWindow returned error: %v", err)
+	}
+	defer app.closeProjectWindowSession(result.SessionID)
+
+	if err := app.OpenProjectWindowSession(result.SessionID, projectPath); err != nil {
+		t.Fatalf("OpenProjectWindowSession returned error: %v", err)
+	}
+	session := app.projectSessionByID(result.SessionID)
+	if session == nil {
+		t.Fatalf("project session %q was not registered", result.SessionID)
+	}
+	if got := session.currentProjectPath(); got != filepath.Clean(projectPath) {
+		t.Fatalf("session current project path = %q, want %q", got, filepath.Clean(projectPath))
+	}
+	if got := app.projectSessionByID(defaultProjectSessionID).currentProjectPath(); got != "" {
+		t.Fatalf("default session project path = %q, want untouched", got)
+	}
+}
+
+func TestOpenProjectWindowSessionRejectsMismatchedProject(t *testing.T) {
+	projectPath := t.TempDir()
+	otherPath := t.TempDir()
+	app := NewApp()
+
+	previousFactory := newProjectWebviewWindow
+	newProjectWebviewWindow = func(_ *App, options application.WebviewWindowOptions) (projectWindowHandle, error) {
+		return &fakeProjectWindow{name: "actual-" + options.Name}, nil
+	}
+	defer func() {
+		newProjectWebviewWindow = previousFactory
+	}()
+
+	result, err := app.OpenProjectWindow(projectPath)
+	if err != nil {
+		t.Fatalf("OpenProjectWindow returned error: %v", err)
+	}
+	defer app.closeProjectWindowSession(result.SessionID)
+
+	if err := app.OpenProjectWindowSession(result.SessionID, otherPath); err == nil {
+		t.Fatal("OpenProjectWindowSession accepted a project path that does not match the session launch path")
 	}
 }

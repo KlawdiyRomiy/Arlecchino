@@ -173,7 +173,7 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(_ context.Context) {
 	a.stopMCPBridge()
-	_ = a.CloseProject()
+	_ = a.CloseProject(context.Background())
 }
 
 func (a *App) ensureMCPConfigs() {
@@ -261,8 +261,8 @@ func (a *App) initProjectLSPManagerForSession(session *ProjectRuntimeSession, pa
 	return manager
 }
 
-func (a *App) OpenProject(path string) error {
-	return a.openProjectInSession(a.activeProjectSession(), path)
+func (a *App) OpenProject(ctx context.Context, path string) error {
+	return a.openProjectInSession(a.projectSessionForContext(ctx), path)
 }
 
 func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) error {
@@ -481,8 +481,8 @@ func (a *App) startDeferredProjectWarmupForSession(session *ProjectRuntimeSessio
 	}()
 }
 
-func (a *App) CloseProject() error {
-	return a.closeProjectInSession(a.activeProjectSession(), true)
+func (a *App) CloseProject(ctx context.Context) error {
+	return a.closeProjectInSession(a.projectSessionForContext(ctx), true)
 }
 
 func (a *App) closeProject(closeTerminals bool) error {
@@ -528,12 +528,14 @@ func (a *App) closeProjectInSession(session *ProjectRuntimeSession, closeTermina
 		session.coreEngine = nil
 	}
 
+	a.managerMu.Lock()
 	session.cmp = nil
 	session.sys = nil
 	session.setProjectPath("")
 	session.projectCtx = nil
 	session.projectCancel = nil
 	a.syncDefaultProjectSession(session)
+	a.managerMu.Unlock()
 
 	if session.projectManager != nil {
 		return session.projectManager.CloseProject()

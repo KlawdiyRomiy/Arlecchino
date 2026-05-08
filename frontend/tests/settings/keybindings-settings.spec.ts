@@ -132,6 +132,7 @@ test.beforeEach(async ({ page }) => {
                 return { path: args[0], accessible: true, reason: "" };
               case "OpenProject":
               case "OpenProjectWindow":
+              case "OpenProjectWindowSession":
               case "CreateTerminal":
               case "WriteTerminal":
               case "SendTerminalText":
@@ -647,6 +648,109 @@ test("dragging an inactive project chip detaches that exact project path", async
       }),
     )
     .toEqual(["/alpha"]);
+  await expect
+    .poll(async () => getProjectWindowRestorePaths(page))
+    .toEqual(["/beta"]);
+});
+
+test("dragging the active project chip detaches that project before switching back", async ({
+  page,
+}) => {
+  await mountProjectUI(
+    page,
+    [
+      { id: "/alpha", path: "/alpha", name: "alpha", openedAt: 1 },
+      { id: "/beta", path: "/beta", name: "beta", openedAt: 2 },
+    ],
+    "/beta",
+  );
+
+  await clearAppCalls(page);
+  await page.waitForTimeout(350);
+  await page.evaluate(async () => {
+    const { useWorkspaceStore } = await import("/src/stores/workspaceStore.ts");
+    useWorkspaceStore.setState({
+      projects: [
+        { id: "/alpha", path: "/alpha", name: "alpha", openedAt: 1 },
+        { id: "/beta", path: "/beta", name: "beta", openedAt: 2 },
+      ],
+      activeId: "/beta",
+      pendingId: null,
+      switchSourceId: null,
+      switchDirection: 1,
+      uiBlockers: [],
+    });
+  });
+
+  const betaChip = page
+    .getByTestId("project-indicators-expanded")
+    .getByRole("button", { name: /beta/ })
+    .first();
+  await betaChip.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const startX = rect.left + rect.width / 2;
+    const startY = rect.top + rect.height / 2;
+    const pointerId = 8;
+    element.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        clientX: startX,
+        clientY: startY,
+        pointerId,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent("pointermove", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 1,
+        clientX: startX,
+        clientY: startY + 160,
+        pointerId,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent("pointerup", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        buttons: 0,
+        clientX: startX,
+        clientY: startY + 160,
+        pointerId,
+      }),
+    );
+  });
+
+  await expect
+    .poll(async () => {
+      const calls = await getAppCalls(page);
+      return {
+        projectWindow: calls.find((call) => call.method === "OpenProjectWindow")
+          ?.args,
+        switchedProject: calls.find((call) => call.method === "OpenProject")
+          ?.args,
+      };
+    })
+    .toEqual({ projectWindow: ["/beta"], switchedProject: ["/alpha"] });
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useWorkspaceStore } =
+          await import("/src/stores/workspaceStore.ts");
+        return {
+          activeId: useWorkspaceStore.getState().activeId,
+          projects: useWorkspaceStore
+            .getState()
+            .projects.map((project) => project.path),
+        };
+      }),
+    )
+    .toEqual({ activeId: "/alpha", projects: ["/alpha"] });
   await expect
     .poll(async () => getProjectWindowRestorePaths(page))
     .toEqual(["/beta"]);

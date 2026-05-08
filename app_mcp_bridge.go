@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -90,7 +91,7 @@ func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, er
 		if err != nil {
 			return nil, err
 		}
-		if err := a.OpenProject(path); err != nil {
+		if err := a.OpenProject(context.Background(), path); err != nil {
 			return nil, err
 		}
 		return map[string]any{"opened": true, "path": path}, nil

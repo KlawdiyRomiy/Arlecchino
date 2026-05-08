@@ -216,6 +216,32 @@ func (r *ProjectSessionRegistry) findProjectWindowByPath(path string) *ProjectRu
 	return nil
 }
 
+func (r *ProjectSessionRegistry) singlePendingProjectWindow() *ProjectRuntimeSession {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var pending *ProjectRuntimeSession
+	for _, session := range r.sessions {
+		if session == nil || session.IsDefault {
+			continue
+		}
+		if strings.TrimSpace(session.currentProjectPath()) != "" {
+			continue
+		}
+		if strings.TrimSpace(session.launchProjectPath) == "" {
+			continue
+		}
+		if pending != nil {
+			return nil
+		}
+		pending = session
+	}
+	return pending
+}
+
 func (r *ProjectSessionRegistry) remove(sessionID string) *ProjectRuntimeSession {
 	if r == nil {
 		return nil
@@ -254,6 +280,18 @@ func (a *App) activeProjectSession() *ProjectRuntimeSession {
 		}
 	}
 	return registry.get(defaultProjectSessionID)
+}
+
+func (a *App) projectSessionForContext(ctx context.Context) *ProjectRuntimeSession {
+	if a == nil {
+		return nil
+	}
+	if window := bindingContextWindow(ctx); window != nil {
+		if session := a.ensureProjectSessions().getByWindow(window); session != nil {
+			return session
+		}
+	}
+	return a.activeProjectSession()
 }
 
 func (a *App) projectSessionByID(sessionID string) *ProjectRuntimeSession {

@@ -17,6 +17,10 @@ interface NativeWindowControlsBridge {
 
 interface ProjectWindowBridge {
   OpenProjectWindow?: (path: string) => Promise<unknown> | unknown;
+  OpenProjectWindowSession?: (
+    sessionId: string,
+    path: string,
+  ) => Promise<unknown> | unknown;
   GetProjectWindowSession?: (sessionId: string) => Promise<unknown> | unknown;
   GetCurrentProjectWindowSession?: () => Promise<unknown> | unknown;
 }
@@ -58,6 +62,11 @@ const projectWindowSessionMethodNames = [
   "arlecchino.App.GetProjectWindowSession",
 ] as const;
 
+const openProjectWindowSessionMethodNames = [
+  "main.App.OpenProjectWindowSession",
+  "arlecchino.App.OpenProjectWindowSession",
+] as const;
+
 const currentProjectWindowSessionMethodNames = [
   "main.App.GetCurrentProjectWindowSession",
   "arlecchino.App.GetCurrentProjectWindowSession",
@@ -76,6 +85,9 @@ let projectWindowMethodName:
   | undefined;
 let projectWindowSessionMethodName:
   | (typeof projectWindowSessionMethodNames)[number]
+  | undefined;
+let openProjectWindowSessionMethodName:
+  | (typeof openProjectWindowSessionMethodNames)[number]
   | undefined;
 let currentProjectWindowSessionMethodName:
   | (typeof currentProjectWindowSessionMethodNames)[number]
@@ -275,6 +287,48 @@ export async function GetProjectWindowSession(
   }
 
   throw new Error("Project window session bridge is unavailable.");
+}
+
+export async function OpenProjectWindowSession(
+  sessionId: string,
+  path: string,
+): Promise<boolean> {
+  const bridge = getProjectWindowBridge();
+  if (bridge?.OpenProjectWindowSession) {
+    try {
+      await Promise.resolve(bridge.OpenProjectWindowSession(sessionId, path));
+      return true;
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  const runtimeModule = await loadRuntimeCallModule();
+  const callByName = runtimeModule?.Call?.ByName;
+  if (!callByName) {
+    return false;
+  }
+
+  if (openProjectWindowSessionMethodName) {
+    try {
+      await callByName(openProjectWindowSessionMethodName, sessionId, path);
+      return true;
+    } catch {
+      openProjectWindowSessionMethodName = undefined;
+    }
+  }
+
+  for (const methodName of openProjectWindowSessionMethodNames) {
+    try {
+      await callByName(methodName, sessionId, path);
+      openProjectWindowSessionMethodName = methodName;
+      return true;
+    } catch {
+      // Try the next known Wails v3 service namespace.
+    }
+  }
+
+  return false;
 }
 
 export async function GetCurrentProjectWindowSession(): Promise<ProjectWindowSessionPayload | null> {

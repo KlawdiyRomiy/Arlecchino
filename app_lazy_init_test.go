@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -38,10 +39,10 @@ func TestOpenProject_DoesNotInitializePHPSpecificManagersEagerly(t *testing.T) {
 	projectPath := t.TempDir()
 	app := &App{}
 	t.Cleanup(func() {
-		_ = app.CloseProject()
+		_ = app.CloseProject(context.Background())
 	})
 
-	if err := app.OpenProject(projectPath); err != nil {
+	if err := app.OpenProject(context.Background(), projectPath); err != nil {
 		t.Fatalf("OpenProject returned error for non-Laravel project: %v", err)
 	}
 
@@ -66,10 +67,10 @@ func TestOpenProject_InitializesLSPWhenCoreEngineFails(t *testing.T) {
 	app := &App{}
 	projectPath := t.TempDir()
 	t.Cleanup(func() {
-		_ = app.CloseProject()
+		_ = app.CloseProject(context.Background())
 	})
 
-	if err := app.OpenProject(projectPath); err != nil {
+	if err := app.OpenProject(context.Background(), projectPath); err != nil {
 		t.Fatalf("OpenProject returned error when only core engine failed: %v", err)
 	}
 	if app.lspManager == nil {
@@ -91,7 +92,7 @@ func TestOpenProject_RejectsUnreadableProjectBeforeChangingState(t *testing.T) {
 	})
 
 	app := &App{}
-	err := app.OpenProject(projectPath)
+	err := app.OpenProject(context.Background(), projectPath)
 	if err == nil {
 		t.Fatal("OpenProject returned nil for unreadable project")
 	}
@@ -320,7 +321,7 @@ func TestCloseProject_WaitsForManagerMutexBeforeClearingManagers(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = app.CloseProject()
+		_ = app.CloseProject(context.Background())
 	}()
 
 	select {
@@ -359,7 +360,7 @@ func TestCloseProject_ClosesAllTerminalSessions(t *testing.T) {
 		t.Fatalf("terminal sessions before CloseProject = %d, want 1", got)
 	}
 
-	if err := app.CloseProject(); err != nil {
+	if err := app.CloseProject(context.Background()); err != nil {
 		t.Fatalf("CloseProject error = %v", err)
 	}
 
@@ -379,14 +380,14 @@ func TestOpenProject_PreservesTerminalSessionsAcrossProjectSwitch(t *testing.T) 
 
 	app := &App{termManager: termManager, projectPath: fromDir}
 	t.Cleanup(func() {
-		_ = app.CloseProject()
+		_ = app.CloseProject(context.Background())
 	})
 
 	if got := len(termManager.List()); got != 1 {
 		t.Fatalf("terminal sessions before OpenProject = %d, want 1", got)
 	}
 
-	if err := app.OpenProject(toDir); err != nil {
+	if err := app.OpenProject(context.Background(), toDir); err != nil {
 		t.Fatalf("OpenProject error = %v", err)
 	}
 

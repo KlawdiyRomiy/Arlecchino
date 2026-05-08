@@ -518,9 +518,15 @@ const initializeProjectSessionWorkspace = async (
     activateProjectScope(projectPath);
     useWorkspaceStore.getState().addProject(projectPath);
     useTerminalStore.getState().setActiveProject(projectPath);
-    const openProjectPromise = AppFunctions.OpenProject(projectPath);
+    const openProjectPromise = AppFunctions.OpenProjectWindowSession(
+      session.sessionId,
+      projectPath,
+    );
     useWorkspaceStore.getState().setReady(true);
-    await openProjectPromise;
+    const opened = await openProjectPromise;
+    if (opened === false) {
+      throw new Error("Project window session opener is unavailable.");
+    }
     useWorkspaceStore
       .getState()
       .setActiveFramework(

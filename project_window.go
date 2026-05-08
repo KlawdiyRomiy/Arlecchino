@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -123,12 +124,48 @@ func (a *App) GetProjectWindowSession(sessionID string) (ProjectWindowSessionPay
 	return projectWindowSessionPayload(session)
 }
 
-func (a *App) GetCurrentProjectWindowSession() (ProjectWindowSessionPayload, error) {
+func (a *App) GetCurrentProjectWindowSession(ctx context.Context) (ProjectWindowSessionPayload, error) {
+	registry := a.ensureProjectSessions()
+	if window := bindingContextWindow(ctx); window != nil {
+		if session := registry.getByWindow(window); session != nil {
+			if !session.IsDefault {
+				return projectWindowSessionPayload(session)
+			}
+			return ProjectWindowSessionPayload{}, fmt.Errorf("current window is not a project session")
+		}
+	}
+
 	session := a.activeProjectSession()
 	if session == nil || session.IsDefault {
+		if pending := registry.singlePendingProjectWindow(); pending != nil {
+			return projectWindowSessionPayload(pending)
+		}
 		return ProjectWindowSessionPayload{}, fmt.Errorf("current window is not a project session")
 	}
 	return projectWindowSessionPayload(session)
+}
+
+func bindingContextWindow(ctx context.Context) application.Window {
+	if ctx == nil {
+		return nil
+	}
+	window, _ := ctx.Value(application.WindowKey).(application.Window)
+	return window
+}
+
+func (a *App) OpenProjectWindowSession(sessionID string, path string) error {
+	session := a.projectSessionByID(sessionID)
+	if session == nil || session.IsDefault {
+		return fmt.Errorf("project window session not found")
+	}
+
+	path = filepath.Clean(strings.TrimSpace(path))
+	expectedPath := session.projectWindowProjectPath()
+	if expectedPath != "" && expectedPath != "." && expectedPath != path {
+		return fmt.Errorf("project window session %s is bound to %s, not %s", sessionID, expectedPath, path)
+	}
+
+	return a.openProjectInSession(session, path)
 }
 
 func projectWindowSessionPayload(session *ProjectRuntimeSession) (ProjectWindowSessionPayload, error) {
