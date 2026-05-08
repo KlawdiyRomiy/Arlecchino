@@ -579,7 +579,8 @@ export const codeEditorStyles = EditorView.theme(
     },
     ".definition-link-hover": {
       textDecoration: "underline",
-      textDecorationColor: "rgba(120, 196, 255, 0.55)",
+      textDecorationColor:
+        "color-mix(in srgb, var(--editor-accent) 55%, transparent)",
       textUnderlineOffset: "0.18em",
     },
     ".perspective-highlight": {
@@ -592,13 +593,13 @@ export const codeEditorStyles = EditorView.theme(
       color: editorPalette.text,
     },
     ".cm-searchMatch": {
-      backgroundColor: "rgba(255, 255, 255, 0.28)",
-      outline: "1px solid rgba(255, 255, 255, 0.42)",
+      backgroundColor: editorPalette.searchMatch,
+      outline: `1px solid color-mix(in srgb, ${editorPalette.accent} 42%, transparent)`,
     },
     ".cm-searchMatch-selected": {
-      backgroundColor: "rgba(255, 255, 255, 0.92)",
-      color: "#050505",
-      outline: "1px solid rgba(255, 255, 255, 0.98)",
+      backgroundColor: editorPalette.accent,
+      color: editorPalette.background,
+      outline: `1px solid ${editorPalette.accent}`,
     },
     ".cm-selectionMatch": {
       backgroundColor: editorPalette.selectionMatch,
