@@ -671,6 +671,16 @@ body > [data-radix-portal] > * {
     color-mix(in srgb, var(--accent-primary) 72%, transparent);
 }
 
+.file-explorer-code-drop-target {
+  background: color-mix(
+    in srgb,
+    var(--accent-primary) 10%,
+    transparent
+  ) !important;
+  box-shadow: inset 2px 0 0
+    color-mix(in srgb, var(--accent-primary) 72%, transparent);
+}
+
 .file-explorer-chevron {
   transform: rotate(-90deg);
   transition: transform 150ms ease-out;

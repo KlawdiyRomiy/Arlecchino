@@ -115,6 +115,7 @@ interface MainLayoutPanelRendererProps {
     point: { x: number; y: number },
     options?: { snapPosition?: PanelOpenRequest["position"] | null },
   ) => void;
+  onCodePanelRevealInExplorer: (tab: CodePanelTab) => void;
   onCodePanelMoveToEditorTabs: (tab: CodePanelTab) => void;
   onZenPinToggle: (panelId: PanelId) => void;
 }
@@ -174,6 +175,7 @@ export const MainLayoutPanelRenderer: React.FC<
   onCodePanelClose,
   onCodePanelCloseOthers,
   onCodePanelDetachToPanel,
+  onCodePanelRevealInExplorer,
   onCodePanelMoveToEditorTabs,
   onZenPinToggle,
 }) => {
@@ -423,6 +425,7 @@ export const MainLayoutPanelRenderer: React.FC<
                 onClose={onCodePanelClose}
                 onCloseOthers={onCodePanelCloseOthers}
                 onDetachToPanel={onCodePanelDetachToPanel}
+                onRevealInExplorer={onCodePanelRevealInExplorer}
                 onMoveToEditorTabs={onCodePanelMoveToEditorTabs}
                 {...filePanelSnapDrag}
               />

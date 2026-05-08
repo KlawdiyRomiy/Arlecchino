@@ -31,6 +31,7 @@ interface CodePanelTabsProps extends PanelSnapDragCallbacks {
     point: { x: number; y: number },
     options?: CodePanelTabDetachOptions,
   ) => void;
+  onRevealInExplorer?: (tab: CodePanelTab) => void;
   onMoveToEditorTabs?: (tab: CodePanelTab) => void;
 }
 
@@ -42,6 +43,7 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
   onClose,
   onCloseOthers,
   onDetachToPanel,
+  onRevealInExplorer,
   onMoveToEditorTabs,
   onPanelSnapDragStart,
   onPanelSnapDragMove,
@@ -50,6 +52,7 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const suppressClickRef = React.useRef(false);
   const highlightedEditorTabsRef = React.useRef<HTMLElement | null>(null);
+  const highlightedExplorerRef = React.useRef<HTMLElement | null>(null);
   const [dragGhost, setDragGhost] = React.useState<DragGhostState | null>(null);
 
   const clearEditorTabsHighlight = React.useCallback(() => {
@@ -59,10 +62,28 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
     highlightedEditorTabsRef.current = null;
   }, []);
 
+  const clearExplorerHighlight = React.useCallback(() => {
+    highlightedExplorerRef.current?.classList.remove(
+      "file-explorer-code-drop-target",
+    );
+    highlightedExplorerRef.current = null;
+  }, []);
+
   const getEditorTabsDropTarget = (clientX: number, clientY: number) => {
     const element = document.elementFromPoint(clientX, clientY);
     return (
       element?.closest<HTMLElement>('[data-testid="editor-tabs-bar"]') ?? null
+    );
+  };
+
+  const getExplorerDropTarget = (clientX: number, clientY: number) => {
+    const element = document.elementFromPoint(clientX, clientY);
+    return (
+      element?.closest<HTMLElement>(
+        '[data-testid="file-explorer-scroll-region"]',
+      ) ??
+      element?.closest<HTMLElement>('[data-testid="panel-explorer"]') ??
+      null
     );
   };
 
@@ -126,6 +147,17 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
         }
       }
 
+      const explorerTarget = editorTabsTarget
+        ? null
+        : getExplorerDropTarget(pointerEvent.clientX, pointerEvent.clientY);
+      if (highlightedExplorerRef.current !== explorerTarget) {
+        clearExplorerHighlight();
+        if (explorerTarget) {
+          explorerTarget.classList.add("file-explorer-code-drop-target");
+          highlightedExplorerRef.current = explorerTarget;
+        }
+      }
+
       const panelRect = panelElement?.getBoundingClientRect();
       const insidePanel = Boolean(
         panelRect &&
@@ -134,8 +166,12 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
         pointerEvent.clientY >= panelRect.top &&
         pointerEvent.clientY <= panelRect.bottom,
       );
+      const canOpenSeparatePanel = tabs.length > 1;
       const snapTarget =
-        !editorTabsTarget && !insidePanel
+        canOpenSeparatePanel &&
+        !editorTabsTarget &&
+        !explorerTarget &&
+        !insidePanel
           ? detectPanelSnapDropTarget(
               pointerEvent.clientX,
               pointerEvent.clientY,
@@ -148,11 +184,15 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
         label: tab.name,
         detail: editorTabsTarget
           ? "Move to editor tabs"
-          : snapTarget
-            ? `Snap to ${snapTarget}`
-            : insidePanel
-              ? "Drag outside panel"
-              : "Open as separate panel",
+          : explorerTarget
+            ? "Reveal in Explorer"
+            : snapTarget
+              ? `Snap to ${snapTarget}`
+              : insidePanel
+                ? "Drag outside panel"
+                : canOpenSeparatePanel
+                  ? "Open as separate panel"
+                  : "Drop on editor tabs or Explorer",
       });
     };
 
@@ -167,6 +207,7 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
       window.removeEventListener("pointerup", handlePointerUp, true);
       window.removeEventListener("pointercancel", handlePointerCancel, true);
       clearEditorTabsHighlight();
+      clearExplorerHighlight();
       setDragGhost(null);
       if (snapDragStarted) {
         onPanelSnapDragEnd?.();
@@ -201,6 +242,15 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
         return;
       }
 
+      const explorerTarget = getExplorerDropTarget(
+        pointerEvent.clientX,
+        pointerEvent.clientY,
+      );
+      if (explorerTarget) {
+        onRevealInExplorer?.(tab);
+        return;
+      }
+
       const panelRect = panelElement?.getBoundingClientRect();
       const insidePanel = Boolean(
         panelRect &&
@@ -209,7 +259,7 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
         pointerEvent.clientY >= panelRect.top &&
         pointerEvent.clientY <= panelRect.bottom,
       );
-      if (!insidePanel) {
+      if (!insidePanel && tabs.length > 1) {
         onDetachToPanel?.(
           tab,
           {
@@ -225,10 +275,6 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
     window.addEventListener("pointerup", handlePointerUp, true);
     window.addEventListener("pointercancel", handlePointerCancel, true);
   };
-
-  if (tabs.length <= 1) {
-    return null;
-  }
 
   return (
     <div

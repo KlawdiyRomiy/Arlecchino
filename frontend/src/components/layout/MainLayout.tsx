@@ -556,6 +556,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const pruneExplorerPathPrefix = useExplorerStore(
     (state) => state.prunePathPrefix,
   );
+  const requestExplorerRevealFile = useExplorerStore(
+    (state) => state.requestRevealFile,
+  );
   const renamePathDiagnostics = useDiagnosticsStore(
     (state) => state.renamePathDiagnostics,
   );
@@ -3862,7 +3865,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           return;
         }
 
-        void handleFileOpenInPanel(path, name, line, { content });
+        void handleFileOpenInPanel(
+          path,
+          name,
+          line,
+          content.length > 0 ? { content } : undefined,
+        );
         return;
       }
 
@@ -4155,6 +4163,19 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [
       closeTransferredCodePanelTab,
       openFileInMainEditor,
+      resolveLiveCodePanelTab,
+    ],
+  );
+
+  const handleCodePanelTabRevealInExplorer = useCallback(
+    (tab: CodePanelTab) => {
+      const liveTab = resolveLiveCodePanelTab(tab);
+      requestExplorerRevealFile(liveTab.path);
+      closeTransferredCodePanelTab(liveTab.path);
+    },
+    [
+      closeTransferredCodePanelTab,
+      requestExplorerRevealFile,
       resolveLiveCodePanelTab,
     ],
   );
@@ -4663,6 +4684,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onCodePanelClose={closeCodePanelTab}
       onCodePanelCloseOthers={closeOtherCodePanelTabs}
       onCodePanelDetachToPanel={handleCodePanelTabDetachToPanel}
+      onCodePanelRevealInExplorer={handleCodePanelTabRevealInExplorer}
       onCodePanelMoveToEditorTabs={handleCodePanelTabMoveToEditorTabs}
       onZenPinToggle={toggleZenPinnedPanel}
     />

@@ -117,6 +117,33 @@ const installMCPFilePanelBridges = async (
                     isDirectory: false,
                   },
                 ];
+              case "InspectEditorFile": {
+                const path = String(args[0] ?? "");
+                const content =
+                  path === "/workspace/Makefile"
+                    ? "dev-start:\n\tvite --host 127.0.0.1\n"
+                    : path === "/workspace/package.json"
+                      ? '{\n  "name": "workspace"\n}\n'
+                      : path === "/workspace/src/main.ts"
+                        ? "export const ready = true;\n"
+                        : "";
+                const lines = content.split("\n");
+                return {
+                  path,
+                  name: path.split("/").pop() || path,
+                  sizeBytes: content.length,
+                  formattedSize: `${content.length} B`,
+                  isText: true,
+                  safeForEditor: true,
+                  largeDocument: false,
+                  reason: "safe for interactive editing",
+                  lineCount: lines.length,
+                  maxLineLength: Math.max(...lines.map((line) => line.length)),
+                  limitBytes: 2 * 1024 * 1024,
+                  lineLimit: 20_000,
+                  maxLineLengthLimit: 20_000,
+                };
+              }
               case "ReadFile":
                 if (args[0] === "/workspace/Makefile") {
                   return "dev-start:\n\tvite --host 127.0.0.1\n";
@@ -425,6 +452,143 @@ test("TUI explorer file clicks open code panel tabs and keeps New File working",
   const codePanel = page.getByTestId("panel-code").last();
   await expect(codePanel).toBeVisible();
   await expect(codePanel.locator(".cm-content")).toContainText("dev-start:");
+  await expect(page.getByTestId("code-panel-tabs")).toBeVisible();
+  await expect(
+    page.getByTestId("code-panel-tab-workspace-Makefile"),
+  ).toBeVisible();
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { usePreviewWindowStore } =
+          await import("/src/stores/previewWindowStore.ts");
+        return usePreviewWindowStore.getState().windows.length;
+      }),
+    )
+    .toBe(0);
+
+  await page
+    .getByTestId("code-panel-tab-workspace-Makefile")
+    .evaluate((element) => {
+      const tabRect = element.getBoundingClientRect();
+      const panelRect = document
+        .querySelector('[data-testid="panel-code"]')
+        ?.getBoundingClientRect();
+      const startX = tabRect.left + tabRect.width / 2;
+      const startY = tabRect.top + tabRect.height / 2;
+      const dropX = Math.max(
+        260,
+        Math.min(window.innerWidth - 260, (panelRect?.left ?? startX) - 120),
+      );
+      const dropY = Math.max(
+        220,
+        Math.min(
+          window.innerHeight - 220,
+          panelRect ? panelRect.top + panelRect.height / 2 : startY,
+        ),
+      );
+      const pointerId = 11;
+
+      element.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 1,
+          clientX: startX,
+          clientY: startY,
+          pointerId,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent("pointermove", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 1,
+          clientX: dropX,
+          clientY: dropY,
+          pointerId,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent("pointerup", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 0,
+          clientX: dropX,
+          clientY: dropY,
+          pointerId,
+        }),
+      );
+    });
+
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { usePreviewWindowStore } =
+          await import("/src/stores/previewWindowStore.ts");
+        return usePreviewWindowStore.getState().windows.length;
+      }),
+    )
+    .toBe(0);
+  await expect(codePanel).toBeVisible();
+  await expect(codePanel.locator(".cm-content")).toContainText("dev-start:");
+
+  await page
+    .getByTestId("code-panel-tab-workspace-Makefile")
+    .evaluate((element) => {
+      const tabRect = element.getBoundingClientRect();
+      const startX = tabRect.left + tabRect.width / 2;
+      const startY = tabRect.top + tabRect.height / 2;
+      const pointerId = 12;
+
+      element.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 1,
+          clientX: startX,
+          clientY: startY,
+          pointerId,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent("pointermove", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 1,
+          clientX: window.innerWidth / 2,
+          clientY: 24,
+          pointerId,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent("pointerup", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 0,
+          clientX: window.innerWidth / 2,
+          clientY: 24,
+          pointerId,
+        }),
+      );
+    });
+
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { usePreviewWindowStore } =
+          await import("/src/stores/previewWindowStore.ts");
+        return usePreviewWindowStore.getState().windows.length;
+      }),
+    )
+    .toBe(0);
+  await expect(codePanel).toBeVisible();
+  await expect(codePanel.locator(".cm-content")).toContainText("dev-start:");
   await expectNoOverlap(page, "tui-center-terminal", "panel-code");
 
   await explorerPanel
@@ -449,7 +613,9 @@ test("TUI explorer file clicks open code panel tabs and keeps New File working",
     '"name": "workspace"',
   );
 
-  await explorerPanel.getByTitle("Create").click();
+  await explorerPanel
+    .getByRole("button", { name: "Create", exact: true })
+    .click();
   await page.getByRole("menuitem", { name: "New File" }).click();
   await expect(page.locator('input[placeholder="notes.txt"]')).toBeVisible();
   await page.locator('input[placeholder="notes.txt"]').fill("created.txt");
@@ -460,6 +626,114 @@ test("TUI explorer file clicks open code panel tabs and keeps New File working",
     path: "/workspace/created.txt",
     content: "",
   });
+});
+
+test("code panel tab drops back into Explorer without creating another panel", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(async () => {
+    const { useTerminalStore } = await import("/src/stores/terminalStore.ts");
+    const terminalStore = useTerminalStore.getState();
+    terminalStore.initialize();
+    const terminalId = await terminalStore.createTerminal(
+      "pane-1",
+      true,
+      "Codex",
+    );
+    terminalStore.enterTUIMode(terminalId, "playwright");
+  });
+
+  await page.evaluate(() => {
+    window.runtime.EventsEmit("ide:panel:open", {
+      panel: "explorer",
+      position: "left",
+      mode: "snapped",
+    });
+  });
+
+  const explorerPanel = page.getByTestId("panel-explorer").last();
+  await expect(explorerPanel).toBeVisible();
+  await explorerPanel.locator('[data-file-path="/workspace/Makefile"]').click();
+
+  const codePanel = page.getByTestId("panel-code").last();
+  await expect(codePanel).toBeVisible();
+  await expect(
+    page.getByTestId("code-panel-tab-workspace-Makefile"),
+  ).toBeVisible();
+
+  await page
+    .getByTestId("code-panel-tab-workspace-Makefile")
+    .evaluate((element) => {
+      const tabRect = element.getBoundingClientRect();
+      const explorerRect = document
+        .querySelector('[data-testid="file-explorer-scroll-region"]')
+        ?.getBoundingClientRect();
+      if (!explorerRect) {
+        throw new Error("Explorer drop target is missing");
+      }
+
+      const startX = tabRect.left + tabRect.width / 2;
+      const startY = tabRect.top + tabRect.height / 2;
+      const dropX = explorerRect.left + explorerRect.width / 2;
+      const dropY = explorerRect.top + explorerRect.height / 2;
+      const pointerId = 13;
+
+      element.dispatchEvent(
+        new PointerEvent("pointerdown", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 1,
+          clientX: startX,
+          clientY: startY,
+          pointerId,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent("pointermove", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 1,
+          clientX: dropX,
+          clientY: dropY,
+          pointerId,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent("pointerup", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          buttons: 0,
+          clientX: dropX,
+          clientY: dropY,
+          pointerId,
+        }),
+      );
+    });
+
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { usePreviewWindowStore } =
+          await import("/src/stores/previewWindowStore.ts");
+        return usePreviewWindowStore.getState().windows.length;
+      }),
+    )
+    .toBe(0);
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useExplorerSelectionStore } =
+          await import("/src/stores/explorerStore.ts");
+        return useExplorerSelectionStore.getState().highlightedPath;
+      }),
+    )
+    .toBe("/workspace/Makefile");
+  await expect(page.getByTestId("panel-code")).toHaveCount(0);
 });
 
 test("Explorer create menu closes on Escape and stays visible while scrolled", async ({
