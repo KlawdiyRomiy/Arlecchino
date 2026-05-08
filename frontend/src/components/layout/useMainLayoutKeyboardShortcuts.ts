@@ -4,6 +4,7 @@ import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { usePreviewWindowStore } from "../../stores/previewWindowStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { isProjectSessionRoute } from "../../shell/projectSessionRoute";
 import type { ThemeId } from "../../styles/themes";
 import { shortcuts, type ShortcutActionId } from "../../utils/keyboard";
 import { measurePerf } from "../../utils/perf";
@@ -286,9 +287,12 @@ export const useMainLayoutKeyboardShortcuts = ({
       }
 
       if (shortcuts.switchProjectNext(e) || shortcuts.switchProjectPrev(e)) {
+        const workspaceState = useWorkspaceStore.getState();
         if (
-          useEditorSettingsStore.getState().projectWindowMode === "windows" &&
-          isPhysicalMacProjectSwitchShortcut(e)
+          isPhysicalMacProjectSwitchShortcut(e) &&
+          (useEditorSettingsStore.getState().projectWindowMode === "windows" ||
+            isProjectSessionRoute() ||
+            workspaceState.projects.length < 2)
         ) {
           return;
         }
@@ -306,7 +310,7 @@ export const useMainLayoutKeyboardShortcuts = ({
         }
         e.preventDefault();
         e.stopPropagation();
-        const { projects, activeId: curId } = useWorkspaceStore.getState();
+        const { projects, activeId: curId } = workspaceState;
         if (projects.length < 2) return;
         const idx = projects.findIndex((p) => p.id === curId);
         const isNext = !shortcuts.switchProjectPrev(e);
