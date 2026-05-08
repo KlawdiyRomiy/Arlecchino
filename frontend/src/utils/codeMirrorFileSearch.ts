@@ -3,6 +3,7 @@ import {
   findNext,
   findPrevious,
   getSearchQuery,
+  openSearchPanel,
   SearchQuery,
   search,
   setSearchQuery,
@@ -14,8 +15,21 @@ import {
   type Panel,
   type ViewUpdate,
 } from "@codemirror/view";
+import { EDITOR_FIND_IN_FILE_EVENT } from "./searchEvents";
 
 const maxCountedMatches = 999;
+export { EDITOR_FIND_IN_FILE_EVENT };
+
+export const shouldHandleEditorFindInFile = (view: EditorView): boolean => {
+  const activeElement = document.activeElement;
+  return (
+    activeElement instanceof HTMLElement && view.dom.contains(activeElement)
+  );
+};
+
+export const openEditorFileSearch = (view: EditorView): boolean => {
+  return openSearchPanel(view);
+};
 
 const createButton = (
   name: string,

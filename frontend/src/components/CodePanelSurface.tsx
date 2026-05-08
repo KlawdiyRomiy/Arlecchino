@@ -41,7 +41,12 @@ import {
   codeEditorSurfaceClassName,
   codeEditorTheme,
 } from "../utils/codeMirrorTheme";
-import { codeMirrorFileSearchExtension } from "../utils/codeMirrorFileSearch";
+import {
+  EDITOR_FIND_IN_FILE_EVENT,
+  codeMirrorFileSearchExtension,
+  openEditorFileSearch,
+  shouldHandleEditorFindInFile,
+} from "../utils/codeMirrorFileSearch";
 import {
   getCodeMirrorLineCount,
   shouldUseCodeMirrorLargeDocumentMode,
@@ -164,6 +169,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   const saveTimeoutRef = useRef<number | null>(null);
   const diagnosticsTimeoutRef = useRef<number | null>(null);
   const diagnosticsVersionRef = useRef(1);
+  const editorViewRef = useRef<EditorView | null>(null);
 
   const gitGutterExtension = useMemo(
     () => createGitGutterExtension({ markers: gitMarkers }),
@@ -204,6 +210,20 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   useEffect(() => {
     notifyChangeDelayRef.current = editorFeatureBudget.notifyChangeDelayMs;
   }, [editorFeatureBudget.notifyChangeDelayMs]);
+
+  useEffect(() => {
+    const handleFindInFile = () => {
+      const view = editorViewRef.current;
+      if (!view || !shouldHandleEditorFindInFile(view)) {
+        return;
+      }
+      openEditorFileSearch(view);
+    };
+
+    window.addEventListener(EDITOR_FIND_IN_FILE_EVENT, handleFindInFile);
+    return () =>
+      window.removeEventListener(EDITOR_FIND_IN_FILE_EVENT, handleFindInFile);
+  }, []);
 
   useEffect(() => {
     if (!isEditable) return;
@@ -263,6 +283,14 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     reapplyAdaptiveExtensions,
     scrollGuardExtension,
   } = useCodeMirrorAdaptiveExtensions(adaptiveExtensions);
+
+  const handleCreateEditor = useCallback(
+    (view: EditorView) => {
+      editorViewRef.current = view;
+      bindEditorView(view);
+    },
+    [bindEditorView],
+  );
 
   const extensions = useMemo(() => {
     const result: Extension[] = [
@@ -399,7 +427,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
         basicSetup={basicSetup}
         theme="none"
         className={codeEditorSurfaceClassName}
-        onCreateEditor={bindEditorView}
+        onCreateEditor={handleCreateEditor}
       />
     </div>
   );

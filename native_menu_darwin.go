@@ -160,7 +160,7 @@ func parseShortcutParts(shortcut string) shortcutParts {
 }
 
 func firstMenuShortcut(shortcuts map[string][]string, actionID string) string {
-	for _, shortcut := range shortcuts[actionID] {
+	for _, shortcut := range menuShortcutsForAction(actionID, shortcuts) {
 		if strings.TrimSpace(shortcut) != "" {
 			return shortcut
 		}

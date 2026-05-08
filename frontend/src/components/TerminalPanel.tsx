@@ -24,6 +24,7 @@ import {
   type TerminalSearchDirection,
   type TerminalSearchStats,
 } from "../utils/terminalSearch";
+import { TERMINAL_FIND_EVENT } from "../utils/searchEvents";
 import { recordTerminalPerf } from "../utils/terminalPerf";
 import {
   readClipboardTextWithFallback,
@@ -149,6 +150,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   const searchStatsBySessionRef = useRef<Map<string, TerminalSearchStats>>(
     new Map(),
   );
+  const terminalFindHandledAtRef = useRef(0);
   const ghostTextRef = useRef<HTMLDivElement | null>(null);
   const ghostTextValueRef = useRef("");
   const suggestDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -264,6 +266,44 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     setSearchState((prev) => ({ ...prev, visible: false }));
     activeSession?.terminal.focus();
   }, [activeSession]);
+
+  const openActiveTerminalSearchFromShortcut = useCallback(() => {
+    const terminal = activeSession?.terminal;
+    if (!terminal) {
+      return;
+    }
+
+    const selectedText = terminal.getSelection().trim();
+    const nextQuery = selectedText || searchQueryRef.current;
+    searchQueryRef.current = nextQuery;
+    setSearchState((prev) => ({
+      ...prev,
+      visible: true,
+      query: nextQuery,
+    }));
+    findInTerminal(nextQuery, "next", "input");
+  }, [activeSession, findInTerminal]);
+
+  const openTerminalSearchFromShortcut = useCallback(() => {
+    const now = performance.now();
+    if (now - terminalFindHandledAtRef.current < 120) {
+      return;
+    }
+    terminalFindHandledAtRef.current = now;
+    openActiveTerminalSearchFromShortcut();
+  }, [openActiveTerminalSearchFromShortcut]);
+
+  useEffect(() => {
+    window.addEventListener(
+      TERMINAL_FIND_EVENT,
+      openTerminalSearchFromShortcut,
+    );
+    return () =>
+      window.removeEventListener(
+        TERMINAL_FIND_EVENT,
+        openTerminalSearchFromShortcut,
+      );
+  }, [openTerminalSearchFromShortcut]);
 
   useEffect(() => {
     if (!activeSession) {
@@ -761,19 +801,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       if (shortcuts.terminalFind(e)) {
         e.preventDefault();
         e.stopPropagation();
-        const selectedText = terminal.getSelection().trim();
-        const nextQuery = selectedText || searchQueryRef.current;
-        searchQueryRef.current = nextQuery;
-        setSearchState((prev) => ({
-          ...prev,
-          visible: true,
-          query: nextQuery,
-        }));
-        if (nextQuery) {
-          findInTerminal(nextQuery, "next", "input");
-        } else {
-          findInTerminal("", "next", "input");
-        }
+        openTerminalSearchFromShortcut();
         return false;
       }
 
@@ -832,6 +860,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     closeTerminal,
     createTerminal,
     findInTerminal,
+    openTerminalSearchFromShortcut,
     reopenLastClosedTab,
     resolvedThemeId,
   ]);

@@ -97,6 +97,7 @@ export type ShortcutScope = "global" | "terminal";
 export type ShortcutGroup = "Panels" | "App" | "Window" | "Editor" | "Terminal";
 
 export type ShortcutActionId =
+  | "editor.find"
   | "search.toggle"
   | "project.open"
   | "project.new"
@@ -147,6 +148,14 @@ export interface ParsedShortcut {
 }
 
 export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
+  {
+    id: "editor.find",
+    label: "Find in file",
+    description: "Open search for the active editor file.",
+    group: "Editor",
+    scope: "global",
+    defaultShortcuts: ["cmd+f", "ctrl+f"],
+  },
   {
     id: "explorer.toggle",
     label: "Explorer",
@@ -764,6 +773,7 @@ export const shortcuts = {
 
   // File operations
   save: (e: KeyboardEvent) => matchesActionShortcut(e, "editor.save"),
+  findInFile: (e: KeyboardEvent) => matchesActionShortcut(e, "editor.find"),
   closeTab: (e: KeyboardEvent) => matchesActionShortcut(e, "editor.closeTab"),
   reopenTab: (e: KeyboardEvent) => matchesActionShortcut(e, "editor.reopenTab"),
   switchEditorTabNext: (e: KeyboardEvent) =>

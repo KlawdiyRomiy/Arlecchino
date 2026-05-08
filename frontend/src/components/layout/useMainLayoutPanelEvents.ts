@@ -26,6 +26,11 @@ import type { ShortcutActionId } from "../../utils/keyboard";
 import { measurePerf } from "../../utils/perf";
 import { getProjectPathBasename } from "../../utils/projectPaths";
 import {
+  EDITOR_FIND_IN_FILE_EVENT,
+  TERMINAL_FIND_EVENT,
+} from "../../utils/searchEvents";
+import { isTerminalShortcutContext } from "../../utils/terminalFocus";
+import {
   flipTUIAssistAnchor,
   getTUIFloatingTerminalConfig,
   normalizeTUIAssistAnchor,
@@ -679,6 +684,19 @@ export const useMainLayoutPanelEvents = ({
       }
 
       switch (actionId) {
+        case "editor.find":
+          if (
+            isTerminalShortcutContext({
+              activeElement: document.activeElement,
+              tuiModeActive: useTerminalStore.getState().tuiModeActive,
+              terminalPanelVisible: panelsRef.current.terminal,
+            })
+          ) {
+            window.dispatchEvent(new Event(TERMINAL_FIND_EVENT));
+            return;
+          }
+          window.dispatchEvent(new Event(EDITOR_FIND_IN_FILE_EVENT));
+          return;
         case "search.toggle":
           if (!useTerminalStore.getState().isDispatcherPaused) {
             openCommandDispatcher();

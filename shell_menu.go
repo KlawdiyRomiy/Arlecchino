@@ -10,6 +10,7 @@ import (
 const menuActionEventName = "ide:menu:action"
 
 var nativeMenuAcceleratorActions = map[string]bool{
+	"editor.find":             true,
 	"search.toggle":           true,
 	"explorer.toggle":         true,
 	"terminal.toggle":         true,
@@ -25,6 +26,25 @@ var nativeMenuAcceleratorActions = map[string]bool{
 	"problems.fullscreen":     true,
 	"panel.closeFullscreen":   true,
 	"window.toggleFullscreen": true,
+}
+
+var defaultApplicationMenuShortcuts = map[string][]string{
+	"editor.find":             {"cmd+f", "ctrl+f"},
+	"search.toggle":           {"cmd+shift+f", "ctrl+shift+f"},
+	"explorer.toggle":         {"cmd+e"},
+	"terminal.toggle":         {"cmd+j"},
+	"ai.toggle":               {"cmd+r", "ctrl+r"},
+	"project.new":             {"cmd+n", "ctrl+n"},
+	"project.open":            {"cmd+o", "ctrl+o"},
+	"settings.toggle":         {"cmd+,", "ctrl+,"},
+	"zenMode.toggle":          {"cmd+shift+."},
+	"browser.preview":         {"cmd+b"},
+	"git.toggle":              {"cmd+g"},
+	"git.fullscreen":          {"cmd+shift+g"},
+	"problems.toggle":         {"cmd+i"},
+	"problems.fullscreen":     {"cmd+shift+i"},
+	"panel.closeFullscreen":   {"option+w"},
+	"window.toggleFullscreen": {"fn+f"},
 }
 
 var reservedWebViewShortcuts = map[string]bool{
@@ -84,6 +104,7 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.M
 	}
 
 	viewMenu := appMenu.AddSubmenu("View")
+	a.addMenuAction(viewMenu, "Find in File", "editor.find", shortcuts)
 	a.addMenuAction(viewMenu, "Search", "search.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle Zen Mode", "zenMode.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle Explorer", "explorer.toggle", shortcuts)
@@ -162,7 +183,7 @@ func (a *App) currentNativeWindow() application.Window {
 }
 
 func menuAcceleratorForAction(actionID string, shortcuts map[string][]string) string {
-	actionShortcuts := shortcuts[actionID]
+	actionShortcuts := menuShortcutsForAction(actionID, shortcuts)
 	if len(actionShortcuts) == 0 {
 		return ""
 	}
@@ -183,6 +204,15 @@ func menuAcceleratorForAction(actionID string, shortcuts map[string][]string) st
 	}
 
 	return ""
+}
+
+func menuShortcutsForAction(actionID string, shortcuts map[string][]string) []string {
+	if shortcuts != nil {
+		if actionShortcuts, ok := shortcuts[actionID]; ok {
+			return actionShortcuts
+		}
+	}
+	return defaultApplicationMenuShortcuts[actionID]
 }
 
 func shortcutToMenuAccelerator(shortcut string) (string, bool) {

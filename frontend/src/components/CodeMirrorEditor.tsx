@@ -166,7 +166,12 @@ import {
   codeEditorSurfaceClassName,
   codeEditorTheme,
 } from "../utils/codeMirrorTheme";
-import { codeMirrorFileSearchExtension } from "../utils/codeMirrorFileSearch";
+import {
+  EDITOR_FIND_IN_FILE_EVENT,
+  codeMirrorFileSearchExtension,
+  openEditorFileSearch,
+  shouldHandleEditorFindInFile,
+} from "../utils/codeMirrorFileSearch";
 import type { GitLineMarker } from "../utils/git";
 import { createLatestRequestGuard } from "../utils/latestRequestGuard";
 import { relativeProjectPath } from "../utils/projectPaths";
@@ -1201,6 +1206,21 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const showOperatorLigatures = useEditorSettingsStore(
     (state) => state.showOperatorLigatures,
   );
+
+  useEffect(() => {
+    const handleFindInFile = () => {
+      const view = editorRef.current?.view;
+      if (!view || !shouldHandleEditorFindInFile(view)) {
+        return;
+      }
+      openEditorFileSearch(view);
+    };
+
+    window.addEventListener(EDITOR_FIND_IN_FILE_EVENT, handleFindInFile);
+    return () =>
+      window.removeEventListener(EDITOR_FIND_IN_FILE_EVENT, handleFindInFile);
+  }, []);
+
   const largeDocumentMode = useMemo(
     () => shouldUseCodeMirrorLargeDocumentMode(content),
     [content],
