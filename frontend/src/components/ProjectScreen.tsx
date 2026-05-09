@@ -358,11 +358,18 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     lastFileToOpenRef.current = fileKey;
 
     handleFileOpen(fileToOpen);
+    let highlightTimeout: ReturnType<typeof setTimeout> | undefined;
     if (fileToOpen.line) {
       setHighlightLine(fileToOpen.line);
-      setTimeout(() => setHighlightLine(undefined), 3000);
+      highlightTimeout = setTimeout(() => setHighlightLine(undefined), 3000);
     }
     onFileOpened?.();
+
+    return () => {
+      if (highlightTimeout) {
+        clearTimeout(highlightTimeout);
+      }
+    };
   }, [fileToOpen]);
 
   useEffect(() => {

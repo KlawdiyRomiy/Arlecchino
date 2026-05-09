@@ -1,10 +1,8 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 export function useCollapseTimer(delay = 60_000, enabled = true) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const initializedRef = useRef(false);
-  const prevEnabledRef = useRef(enabled);
 
   const clear = useCallback(() => {
     if (timerRef.current) {
@@ -27,23 +25,16 @@ export function useCollapseTimer(delay = 60_000, enabled = true) {
     setIsCollapsed(false);
   }, [clear]);
 
-  if (!initializedRef.current) {
-    initializedRef.current = true;
-    if (enabled) {
-      timerRef.current = setTimeout(() => setIsCollapsed(true), delay);
-    }
-  } else if (enabled !== prevEnabledRef.current) {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
+  useEffect(() => {
+    clear();
     setIsCollapsed(false);
+
     if (enabled) {
       timerRef.current = setTimeout(() => setIsCollapsed(true), delay);
     }
-  }
 
-  prevEnabledRef.current = enabled;
+    return clear;
+  }, [clear, delay, enabled]);
 
   return {
     isCollapsed: enabled ? isCollapsed : false,

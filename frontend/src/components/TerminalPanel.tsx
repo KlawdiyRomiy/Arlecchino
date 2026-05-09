@@ -546,6 +546,20 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     if (!activeSession?.terminal) return;
 
     const terminal = activeSession.terminal;
+    const keyHandlerTimers = new Set<ReturnType<typeof setTimeout>>();
+    let disposed = false;
+    const scheduleKeyHandlerTimeout = (
+      callback: () => void | Promise<void>,
+      delay: number,
+    ) => {
+      const timer = setTimeout(() => {
+        keyHandlerTimers.delete(timer);
+        if (!disposed) {
+          void callback();
+        }
+      }, delay);
+      keyHandlerTimers.add(timer);
+    };
 
     const getCompletionSuffix = async (input: string): Promise<string> => {
       if (!input || input.length < 2) return "";
@@ -695,8 +709,11 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
 
           // Get new suggestions after a short delay
           const newInput = inputBufferRef.current.trim();
-          setTimeout(async () => {
+          scheduleKeyHandlerTimeout(async () => {
             const suffix = await getCompletionSuffix(newInput);
+            if (disposed) {
+              return;
+            }
             ghostTextValueRef.current = suffix;
             setGhostText(suffix);
           }, 150);
@@ -717,7 +734,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
         clearGhostImmediate();
 
         // After shell processes arrow, read the current line from terminal buffer
-        setTimeout(() => {
+        scheduleKeyHandlerTimeout(() => {
           const currentLine = readCurrentLineFromTerminal();
           if (currentLine !== null) {
             inputBufferRef.current = currentLine;
@@ -850,6 +867,9 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     terminal.attachCustomKeyEventHandler(customKeyHandler);
 
     return () => {
+      disposed = true;
+      keyHandlerTimers.forEach((timer) => clearTimeout(timer));
+      keyHandlerTimers.clear();
       terminal.attachCustomKeyEventHandler(() => true);
     };
   }, [
