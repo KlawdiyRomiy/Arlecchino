@@ -53,6 +53,7 @@ import {
 } from "../utils/codeMirrorDisplay";
 import type { GitLineMarker } from "../utils/git";
 import type { EditorFileLoadState } from "../utils/editorFileLoader";
+import { BinaryEditorPreview } from "./BinaryEditorPreview";
 import { EditorFileLoadingView } from "./EditorFileLoadingView";
 import { GuardedEditorPreview } from "./GuardedEditorPreview";
 import { ImageEditorPreview } from "./ImageEditorPreview";
@@ -410,6 +411,9 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   }
   if (loadState?.kind === "visualPreview") {
     return <ImageEditorPreview file={loadState} />;
+  }
+  if (loadState?.kind === "binaryPreview") {
+    return <BinaryEditorPreview file={loadState} />;
   }
   if (loadState?.kind === "loading") {
     return <EditorFileLoadingView file={loadState} />;

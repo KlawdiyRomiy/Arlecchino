@@ -1,5 +1,6 @@
 import {
   InspectEditorFile,
+  ReadEditorBinaryFile,
   ReadEditorFilePreview,
   ReadEditorVisualFile,
   ReadFile,
@@ -37,6 +38,31 @@ export interface EditorVisualFile {
   dataUrl: string;
 }
 
+export interface EditorBinaryFieldPair {
+  label: string;
+  value: string;
+}
+
+export interface EditorBinarySection {
+  title: string;
+  rows: EditorBinaryFieldPair[];
+}
+
+export interface EditorBinaryFile {
+  path: string;
+  name: string;
+  sizeBytes: number;
+  formattedSize: string;
+  format: string;
+  mimeType: string;
+  reason: string;
+  hexPreview: string;
+  stringsPreview: string[];
+  sections: EditorBinarySection[];
+  previewBytes: number;
+  truncated: boolean;
+}
+
 export type EditorFileLoadingState = {
   kind: "loading";
   path: string;
@@ -64,6 +90,13 @@ export type EditorFileLoadState =
       path: string;
       name: string;
       visual: EditorVisualFile;
+    }
+  | {
+      kind: "binaryPreview";
+      path: string;
+      name: string;
+      binary: EditorBinaryFile;
+      inspection?: EditorFileInspection;
     }
   | {
       kind: "error";
@@ -185,6 +218,17 @@ export const loadEditorFile = async (
         path,
         name: inspection.name || getEditorFileName(path),
         preview,
+        inspection,
+      };
+    }
+
+    if (!inspection.isText) {
+      const binary = (await ReadEditorBinaryFile(path)) as EditorBinaryFile;
+      return {
+        kind: "binaryPreview",
+        path,
+        name: binary.name || inspection.name || getEditorFileName(path),
+        binary,
         inspection,
       };
     }

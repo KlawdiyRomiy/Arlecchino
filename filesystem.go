@@ -388,16 +388,16 @@ func inspectEditorFile(filePath string) (EditorFileInspection, error) {
 		inspection.Reason = fmt.Sprintf("cannot open directory as a file: %s", filePath)
 		return inspection, nil
 	}
-	if info.Size() > maxEditorFileBytes {
-		inspection.SafeForEditor = false
-		inspection.LargeDocument = true
-		inspection.Reason = fmt.Sprintf("file is too large to open in the editor (%s, limit %s): %s", formatFileSize(info.Size()), formatFileSize(maxEditorFileBytes), filePath)
-		return inspection, nil
-	}
 	if isKnownNonTextEditorPath(filePath) {
 		inspection.IsText = false
 		inspection.SafeForEditor = false
 		inspection.Reason = fmt.Sprintf("file is not a text document and cannot be opened in the editor: %s", filePath)
+		return inspection, nil
+	}
+	if info.Size() > maxEditorFileBytes {
+		inspection.SafeForEditor = false
+		inspection.LargeDocument = true
+		inspection.Reason = fmt.Sprintf("file is too large to open in the editor (%s, limit %s): %s", formatFileSize(info.Size()), formatFileSize(maxEditorFileBytes), filePath)
 		return inspection, nil
 	}
 

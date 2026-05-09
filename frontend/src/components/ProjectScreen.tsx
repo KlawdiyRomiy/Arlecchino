@@ -5,6 +5,7 @@ import { EditorFileLoadingView } from "./EditorFileLoadingView";
 import { EditorTabs, Tab } from "./EditorTabs";
 import { TabSwitcherOverlay } from "./TabSwitcherOverlay";
 import QuickLookModal from "./QuickLookModal";
+import { BinaryEditorPreview } from "./BinaryEditorPreview";
 import { ImageEditorPreview } from "./ImageEditorPreview";
 import * as AppFunctions from "../wails/app";
 import { EventsOn } from "../wails/runtime";
@@ -1825,6 +1826,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
     if (loadState?.kind === "visualPreview") {
       return <ImageEditorPreview file={loadState} />;
+    }
+    if (loadState?.kind === "binaryPreview") {
+      return <BinaryEditorPreview file={loadState} />;
     }
     if (loadState?.kind === "guardedPreview" || loadState?.kind === "error") {
       return <GuardedEditorPreview file={loadState} />;

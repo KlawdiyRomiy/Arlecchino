@@ -1,7 +1,10 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"database/sql"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -366,6 +369,204 @@ func TestReadEditorFilePreview_TrimsUTF8Boundary(t *testing.T) {
 	if preview.Content != "123456789" {
 		t.Fatalf("ReadEditorFilePreview() Content = %q, want %q", preview.Content, "123456789")
 	}
+}
+
+func TestReadEditorBinaryFile_ReturnsGenericPreviewForBin(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "payload.bin")
+	content := []byte{0x00, 0x01, 0x02, 'A', 'r', 'l', 'e', 'c', 'c', 'h', 'i', 'n', 'o', 0x00}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := (&App{}).ReadEditorBinaryFile(path)
+	if err != nil {
+		t.Fatalf("ReadEditorBinaryFile() error = %v", err)
+	}
+	if got.Format != "Binary file" {
+		t.Fatalf("ReadEditorBinaryFile() Format = %q, want Binary file", got.Format)
+	}
+	if got.MimeType != "application/octet-stream" {
+		t.Fatalf("ReadEditorBinaryFile() MimeType = %q, want application/octet-stream", got.MimeType)
+	}
+	if !strings.Contains(got.HexPreview, "00 01 02") {
+		t.Fatalf("ReadEditorBinaryFile() HexPreview = %q, want byte preview", got.HexPreview)
+	}
+	if !containsStringPreview(got.StringsPreview, "Arlecchino") {
+		t.Fatalf("ReadEditorBinaryFile() StringsPreview = %#v, want printable payload", got.StringsPreview)
+	}
+}
+
+func TestReadEditorBinaryFile_ReturnsSQLiteMetadata(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.sqlite")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	if _, err := db.Exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)"); err != nil {
+		_ = db.Close()
+		t.Fatalf("Create table error = %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	got, err := (&App{}).ReadEditorBinaryFile(path)
+	if err != nil {
+		t.Fatalf("ReadEditorBinaryFile() error = %v", err)
+	}
+	if got.Format != "SQLite database" {
+		t.Fatalf("ReadEditorBinaryFile() Format = %q, want SQLite database", got.Format)
+	}
+	if !binarySectionsContain(got.Sections, "table notes") {
+		t.Fatalf("ReadEditorBinaryFile() Sections = %#v, want notes table", got.Sections)
+	}
+}
+
+func TestReadEditorBinaryFile_ReturnsZIPDirectory(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "archive.zip")
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	entry, err := writer.Create("docs/readme.txt")
+	if err != nil {
+		t.Fatalf("Create zip entry error = %v", err)
+	}
+	if _, err := entry.Write([]byte("hello")); err != nil {
+		t.Fatalf("Write zip entry error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close zip writer error = %v", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := (&App{}).ReadEditorBinaryFile(path)
+	if err != nil {
+		t.Fatalf("ReadEditorBinaryFile() error = %v", err)
+	}
+	if got.Format != "ZIP archive" {
+		t.Fatalf("ReadEditorBinaryFile() Format = %q, want ZIP archive", got.Format)
+	}
+	if !binarySectionsContain(got.Sections, "docs/readme.txt") {
+		t.Fatalf("ReadEditorBinaryFile() Sections = %#v, want zip entry", got.Sections)
+	}
+}
+
+func TestReadEditorBinaryFile_ReturnsPDFStructure(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sample.pdf")
+	content := []byte("%PDF-1.7\n1 0 obj\n<< /Type /Page >>\nstream\nHello PDF\nendstream\n%%EOF\n")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := (&App{}).ReadEditorBinaryFile(path)
+	if err != nil {
+		t.Fatalf("ReadEditorBinaryFile() error = %v", err)
+	}
+	if got.Format != "PDF document" {
+		t.Fatalf("ReadEditorBinaryFile() Format = %q, want PDF document", got.Format)
+	}
+	if !binarySectionsContain(got.Sections, "%PDF-1.7") {
+		t.Fatalf("ReadEditorBinaryFile() Sections = %#v, want PDF header", got.Sections)
+	}
+}
+
+func TestReadEditorBinaryFile_ReturnsWASMSections(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "module.wasm")
+	content := []byte{
+		0x00, 0x61, 0x73, 0x6d,
+		0x01, 0x00, 0x00, 0x00,
+		0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := (&App{}).ReadEditorBinaryFile(path)
+	if err != nil {
+		t.Fatalf("ReadEditorBinaryFile() error = %v", err)
+	}
+	if got.Format != "WebAssembly module" {
+		t.Fatalf("ReadEditorBinaryFile() Format = %q, want WebAssembly module", got.Format)
+	}
+	if !binarySectionsContain(got.Sections, "Type section") {
+		t.Fatalf("ReadEditorBinaryFile() Sections = %#v, want WASM type section", got.Sections)
+	}
+}
+
+func TestReadEditorBinaryFile_ReturnsTruncatedPreviewForOversizedBinary(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "payload.bin")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := file.Truncate(maxEditorFileBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatalf("Truncate() error = %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	inspection, err := (&App{}).InspectEditorFile(path)
+	if err != nil {
+		t.Fatalf("InspectEditorFile() error = %v", err)
+	}
+	if inspection.IsText {
+		t.Fatal("InspectEditorFile() IsText = true, want binary classification")
+	}
+
+	got, err := (&App{}).ReadEditorBinaryFile(path)
+	if err != nil {
+		t.Fatalf("ReadEditorBinaryFile() error = %v", err)
+	}
+	if !got.Truncated {
+		t.Fatal("ReadEditorBinaryFile() Truncated = false, want true")
+	}
+	if got.PreviewBytes != maxEditorBinaryPreviewBytes {
+		t.Fatalf("ReadEditorBinaryFile() PreviewBytes = %d, want %d", got.PreviewBytes, maxEditorBinaryPreviewBytes)
+	}
+}
+
+func containsStringPreview(values []string, want string) bool {
+	for _, value := range values {
+		if strings.Contains(value, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func binarySectionsContain(sections []EditorBinarySection, want string) bool {
+	for _, section := range sections {
+		if strings.Contains(section.Title, want) {
+			return true
+		}
+		for _, row := range section.Rows {
+			if strings.Contains(row.Label, want) || strings.Contains(row.Value, want) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type capturedRuntimeEvent struct {

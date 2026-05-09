@@ -296,25 +296,31 @@ export function GetCurrentProjectPath(): $CancellablePromise<string> {
     return $Call.ByID(3018154166);
 }
 
+export function GetCurrentProjectWindowSession(): $CancellablePromise<$models.ProjectWindowSessionPayload> {
+    return $Call.ByID(2957557135).then(($result: any) => {
+        return $$createType12($result);
+    });
+}
+
 export function GetCurrentWorkDir(): $CancellablePromise<string> {
     return $Call.ByID(3338697468);
 }
 
 export function GetDependencyGraph(filePath: string, depth: number): $CancellablePromise<indexer$0.DependencyGraph | null> {
     return $Call.ByID(2819839938, filePath, depth).then(($result: any) => {
-        return $$createType13($result);
+        return $$createType14($result);
     });
 }
 
 export function GetDependencyPolicyPlan(consentMode: string): $CancellablePromise<depsync$0.PolicyPlan> {
     return $Call.ByID(3641574495, consentMode).then(($result: any) => {
-        return $$createType14($result);
+        return $$createType15($result);
     });
 }
 
 export function GetDependencySyncPlan(mode: string): $CancellablePromise<depsync$0.Plan> {
     return $Call.ByID(2260871246, mode).then(($result: any) => {
-        return $$createType15($result);
+        return $$createType16($result);
     });
 }
 
@@ -323,37 +329,37 @@ export function GetDependencySyncPlan(mode: string): $CancellablePromise<depsync
  */
 export function GetDevToolsStatus(): $CancellablePromise<welcome$0.ToolStatus[]> {
     return $Call.ByID(4288915571).then(($result: any) => {
-        return $$createType17($result);
+        return $$createType18($result);
     });
 }
 
 export function GetDispatcherPinned(): $CancellablePromise<$models.ResultItemJS[]> {
     return $Call.ByID(806680864).then(($result: any) => {
-        return $$createType19($result);
+        return $$createType20($result);
     });
 }
 
 export function GetDispatcherRecent(): $CancellablePromise<$models.ResultItemJS[]> {
     return $Call.ByID(3736626413).then(($result: any) => {
-        return $$createType19($result);
+        return $$createType20($result);
     });
 }
 
 export function GetDispatcherSuggestions(input: string): $CancellablePromise<$models.ResultItemJS[]> {
     return $Call.ByID(199250443, input).then(($result: any) => {
-        return $$createType19($result);
+        return $$createType20($result);
     });
 }
 
 export function GetEditorCompletions(ctx: $models.EditorCompletionContext): $CancellablePromise<$models.EditorCompletionResult> {
     return $Call.ByID(780159089, ctx).then(($result: any) => {
-        return $$createType20($result);
+        return $$createType21($result);
     });
 }
 
 export function GetExecutionProfiles(request: $models.ExecutionProfilesRequest): $CancellablePromise<execution$0.ProfileSet> {
     return $Call.ByID(3099827953, request).then(($result: any) => {
-        return $$createType21($result);
+        return $$createType22($result);
     });
 }
 
@@ -413,7 +419,7 @@ export function GetGitFileDiffBetweenCommits(filePath: string, fromCommit: strin
  */
 export function GetGitLog(limit: number, filePath: string): $CancellablePromise<$models.GitCommitInfo[]> {
     return $Call.ByID(662482465, limit, filePath).then(($result: any) => {
-        return $$createType23($result);
+        return $$createType24($result);
     });
 }
 
@@ -441,7 +447,7 @@ export function GetLSPBinaryPath(serverID: string): $CancellablePromise<string> 
 
 export function GetLSPForFile(filePath: string): $CancellablePromise<$models.LSPServerInfo | null> {
     return $Call.ByID(2936946335, filePath).then(($result: any) => {
-        return $$createType24($result);
+        return $$createType25($result);
     });
 }
 
@@ -450,7 +456,7 @@ export function GetLSPForFile(filePath: string): $CancellablePromise<$models.LSP
  */
 export function GetLSPInstallStatus(): $CancellablePromise<welcome$0.ToolStatus[]> {
     return $Call.ByID(1376901355).then(($result: any) => {
-        return $$createType17($result);
+        return $$createType18($result);
     });
 }
 
@@ -459,13 +465,13 @@ export function GetLSPInstallStatus(): $CancellablePromise<welcome$0.ToolStatus[
  */
 export function GetLSPStatus(): $CancellablePromise<lsp$0.ServerStatus[]> {
     return $Call.ByID(2864636116).then(($result: any) => {
-        return $$createType26($result);
+        return $$createType27($result);
     });
 }
 
 export function GetLanguageForFile(filePath: string): $CancellablePromise<$models.LanguageInfoResult | null> {
     return $Call.ByID(3010003138, filePath).then(($result: any) => {
-        return $$createType28($result);
+        return $$createType29($result);
     });
 }
 
@@ -475,7 +481,7 @@ export function GetLaravelVersion(path: string): $CancellablePromise<string> {
 
 export function GetLastAutocompleteTrace(): $CancellablePromise<brain$0.CompletionTrace> {
     return $Call.ByID(3298020088).then(($result: any) => {
-        return $$createType29($result);
+        return $$createType30($result);
     });
 }
 
@@ -485,13 +491,13 @@ export function GetMiddlewareList(): $CancellablePromise<any> {
 
 export function GetPackagedOSIntegrationStatus(): $CancellablePromise<$models.PackagedOSIntegrationSnapshot> {
     return $Call.ByID(306335991).then(($result: any) => {
-        return $$createType30($result);
+        return $$createType31($result);
     });
 }
 
 export function GetPluginCommands(): $CancellablePromise<$models.PluginCommandDefJS[]> {
     return $Call.ByID(657640170).then(($result: any) => {
-        return $$createType32($result);
+        return $$createType33($result);
     });
 }
 
@@ -503,7 +509,7 @@ export function GetPrivateUpdateAuthStatus(): $CancellablePromise<$models.Privat
 
 export function GetProjectWindowSession(sessionID: string): $CancellablePromise<$models.ProjectWindowSessionPayload> {
     return $Call.ByID(3914333180, sessionID).then(($result: any) => {
-        return $$createType33($result);
+        return $$createType12($result);
     });
 }
 
@@ -759,6 +765,12 @@ export function MigrateStatus(): $CancellablePromise<string> {
     return $Call.ByID(3450203256);
 }
 
+export function MoveProjectEntry(path: string, targetDirectory: string): $CancellablePromise<$models.ProjectEntryMoveResult> {
+    return $Call.ByID(2860771743, path, targetDirectory).then(($result: any) => {
+        return $$createType55($result);
+    });
+}
+
 /**
  * NotifyFileChanged notifies LSP servers when a file content changes
  */
@@ -782,7 +794,7 @@ export function NotifyFileOpened(filePath: string, language: string, content: st
 
 export function OpenNativeContextMenu(request: $models.NativeContextMenuRequest): $CancellablePromise<$models.NativeContextMenuResponse> {
     return $Call.ByID(2956928310, request).then(($result: any) => {
-        return $$createType55($result);
+        return $$createType56($result);
     });
 }
 
@@ -792,8 +804,12 @@ export function OpenProject(path: string): $CancellablePromise<void> {
 
 export function OpenProjectWindow(path: string): $CancellablePromise<$models.ProjectWindowLaunchResult> {
     return $Call.ByID(206289462, path).then(($result: any) => {
-        return $$createType56($result);
+        return $$createType57($result);
     });
+}
+
+export function OpenProjectWindowSession(sessionID: string, path: string): $CancellablePromise<void> {
+    return $Call.ByID(3016106250, sessionID, path);
 }
 
 export function ParseCommand(input: string): $CancellablePromise<{ [_ in string]?: any }> {
@@ -808,13 +824,13 @@ export function PinCommand(cmd: string): $CancellablePromise<void> {
 
 export function PredictCommand(input: string): $CancellablePromise<$models.ClassResult | null> {
     return $Call.ByID(57982963, input).then(($result: any) => {
-        return $$createType58($result);
+        return $$createType59($result);
     });
 }
 
 export function PredictTerminalCommand(req: $models.TerminalPredictionRequest): $CancellablePromise<$models.TerminalPredictionResponse> {
     return $Call.ByID(3772631451, req).then(($result: any) => {
-        return $$createType59($result);
+        return $$createType60($result);
     });
 }
 
@@ -828,19 +844,25 @@ export function QueueWork(connection: string, queue: string): $CancellablePromis
 
 export function ReadDirectory(dirPath: string): $CancellablePromise<$models.FileEntry[]> {
     return $Call.ByID(3882613584, dirPath).then(($result: any) => {
-        return $$createType61($result);
+        return $$createType62($result);
+    });
+}
+
+export function ReadEditorBinaryFile(filePath: string): $CancellablePromise<$models.EditorBinaryFile> {
+    return $Call.ByID(38130499, filePath).then(($result: any) => {
+        return $$createType63($result);
     });
 }
 
 export function ReadEditorFilePreview(filePath: string, maxBytes: number): $CancellablePromise<$models.EditorFilePreview> {
     return $Call.ByID(3674158986, filePath, maxBytes).then(($result: any) => {
-        return $$createType62($result);
+        return $$createType64($result);
     });
 }
 
 export function ReadEditorVisualFile(filePath: string): $CancellablePromise<$models.EditorVisualFile> {
     return $Call.ByID(963892010, filePath).then(($result: any) => {
-        return $$createType63($result);
+        return $$createType65($result);
     });
 }
 
@@ -878,7 +900,7 @@ export function RemovePackage(name: string, opts: composer$0.RemoveOptions): $Ca
 
 export function RenameProjectEntry(path: string, newName: string): $CancellablePromise<$models.ProjectEntryRenameResult> {
     return $Call.ByID(121090124, path, newName).then(($result: any) => {
-        return $$createType64($result);
+        return $$createType66($result);
     });
 }
 
@@ -903,13 +925,13 @@ export function RouteCache(): $CancellablePromise<string> {
 
 export function RunBackgroundShellAction(actionID: string): $CancellablePromise<$models.BackgroundShellActionResult> {
     return $Call.ByID(2677002422, actionID).then(($result: any) => {
-        return $$createType65($result);
+        return $$createType67($result);
     });
 }
 
 export function RunDependencyPolicySync(req: depsync$0.ExecuteRequest): $CancellablePromise<depsync$0.ExecuteResult> {
     return $Call.ByID(4055326678, req).then(($result: any) => {
-        return $$createType66($result);
+        return $$createType68($result);
     });
 }
 
@@ -926,13 +948,13 @@ export function RunMigrate(): $CancellablePromise<void> {
 
 export function RunPackagedOSIntegrationAction(actionID: string): $CancellablePromise<$models.PackagedOSActionResult> {
     return $Call.ByID(212070764, actionID).then(($result: any) => {
-        return $$createType67($result);
+        return $$createType69($result);
     });
 }
 
 export function RunWindowLeaseAction(actionID: string): $CancellablePromise<$models.WindowLeaseActionResult> {
     return $Call.ByID(1355862670, actionID).then(($result: any) => {
-        return $$createType68($result);
+        return $$createType70($result);
     });
 }
 
@@ -948,19 +970,19 @@ export function ScheduleRun(): $CancellablePromise<string> {
 
 export function SearchClasses(prefix: string): $CancellablePromise<$models.ClassResult[]> {
     return $Call.ByID(1440811547, prefix).then(($result: any) => {
-        return $$createType69($result);
+        return $$createType71($result);
     });
 }
 
 export function SearchContent(query: string): $CancellablePromise<$models.ResultItemJS[]> {
     return $Call.ByID(837782406, query).then(($result: any) => {
-        return $$createType19($result);
+        return $$createType20($result);
     });
 }
 
 export function SearchFiles(pattern: string): $CancellablePromise<$models.ResultItemJS[]> {
     return $Call.ByID(3203090108, pattern).then(($result: any) => {
-        return $$createType19($result);
+        return $$createType20($result);
     });
 }
 
@@ -969,18 +991,24 @@ export function SearchFiles(pattern: string): $CancellablePromise<$models.Result
  */
 export function SearchInProject(query: string, caseSensitive: boolean, useRegex: boolean, wholeWord: boolean): $CancellablePromise<$models.SearchResult[]> {
     return $Call.ByID(1951647779, query, caseSensitive, useRegex, wholeWord).then(($result: any) => {
-        return $$createType71($result);
+        return $$createType73($result);
     });
 }
 
 export function SearchSymbols(query: string): $CancellablePromise<$models.ResultItemJS[]> {
     return $Call.ByID(342316914, query).then(($result: any) => {
-        return $$createType19($result);
+        return $$createType20($result);
     });
 }
 
 export function SelectDirectory(title: string): $CancellablePromise<string> {
     return $Call.ByID(1735672136, title);
+}
+
+export function SelectOpenTarget(title: string): $CancellablePromise<{ [_ in string]?: any }> {
+    return $Call.ByID(620958940, title).then(($result: any) => {
+        return $$createType44($result);
+    });
 }
 
 export function SendTerminalText(id: string, text: string): $CancellablePromise<void> {
@@ -989,6 +1017,10 @@ export function SendTerminalText(id: string, text: string): $CancellablePromise<
 
 export function Serve(opts: system$0.ServeOptions): $CancellablePromise<void> {
     return $Call.ByID(1252611052, opts);
+}
+
+export function SetApplicationIconAppearance(appearance: string): $CancellablePromise<boolean> {
+    return $Call.ByID(1321818672, appearance);
 }
 
 export function SetNativeWindowControlsVisible(visible: boolean): $CancellablePromise<boolean> {
@@ -1005,7 +1037,7 @@ export function StorageLink(): $CancellablePromise<string> {
 
 export function SuggestCommand(input: string): $CancellablePromise<$models.CommandSuggestion[]> {
     return $Call.ByID(21596122, input).then(($result: any) => {
-        return $$createType73($result);
+        return $$createType75($result);
     });
 }
 
@@ -1015,7 +1047,7 @@ export function SyncApplicationMenuShortcuts(payload: $models.ApplicationMenuSho
 
 export function SyncProjectDependencies(mode: string): $CancellablePromise<{ [_ in string]?: string }> {
     return $Call.ByID(2790870830, mode).then(($result: any) => {
-        return $$createType74($result);
+        return $$createType76($result);
     });
 }
 
@@ -1052,7 +1084,7 @@ export function UpdatePrediction(input: string): $CancellablePromise<void> {
 
 export function ValidateEnvironment(): $CancellablePromise<{ [_ in string]?: boolean }> {
     return $Call.ByID(1433890444).then(($result: any) => {
-        return $$createType75($result);
+        return $$createType77($result);
     });
 }
 
@@ -1081,28 +1113,28 @@ const $$createType8 = autocomplete$0.LanguageCapability.createFrom;
 const $$createType9 = $Create.Array($$createType8);
 const $$createType10 = $models.BackgroundShellStatusSnapshot.createFrom;
 const $$createType11 = $models.BuildInfo.createFrom;
-const $$createType12 = indexer$0.DependencyGraph.createFrom;
-const $$createType13 = $Create.Nullable($$createType12);
-const $$createType14 = depsync$0.PolicyPlan.createFrom;
-const $$createType15 = depsync$0.Plan.createFrom;
-const $$createType16 = welcome$0.ToolStatus.createFrom;
-const $$createType17 = $Create.Array($$createType16);
-const $$createType18 = $models.ResultItemJS.createFrom;
-const $$createType19 = $Create.Array($$createType18);
-const $$createType20 = $models.EditorCompletionResult.createFrom;
-const $$createType21 = execution$0.ProfileSet.createFrom;
-const $$createType22 = $models.GitCommitInfo.createFrom;
-const $$createType23 = $Create.Array($$createType22);
-const $$createType24 = $Create.Nullable($$createType6);
-const $$createType25 = lsp$0.ServerStatus.createFrom;
-const $$createType26 = $Create.Array($$createType25);
-const $$createType27 = $models.LanguageInfoResult.createFrom;
-const $$createType28 = $Create.Nullable($$createType27);
-const $$createType29 = brain$0.CompletionTrace.createFrom;
-const $$createType30 = $models.PackagedOSIntegrationSnapshot.createFrom;
-const $$createType31 = $models.PluginCommandDefJS.createFrom;
-const $$createType32 = $Create.Array($$createType31);
-const $$createType33 = $models.ProjectWindowSessionPayload.createFrom;
+const $$createType12 = $models.ProjectWindowSessionPayload.createFrom;
+const $$createType13 = indexer$0.DependencyGraph.createFrom;
+const $$createType14 = $Create.Nullable($$createType13);
+const $$createType15 = depsync$0.PolicyPlan.createFrom;
+const $$createType16 = depsync$0.Plan.createFrom;
+const $$createType17 = welcome$0.ToolStatus.createFrom;
+const $$createType18 = $Create.Array($$createType17);
+const $$createType19 = $models.ResultItemJS.createFrom;
+const $$createType20 = $Create.Array($$createType19);
+const $$createType21 = $models.EditorCompletionResult.createFrom;
+const $$createType22 = execution$0.ProfileSet.createFrom;
+const $$createType23 = $models.GitCommitInfo.createFrom;
+const $$createType24 = $Create.Array($$createType23);
+const $$createType25 = $Create.Nullable($$createType6);
+const $$createType26 = lsp$0.ServerStatus.createFrom;
+const $$createType27 = $Create.Array($$createType26);
+const $$createType28 = $models.LanguageInfoResult.createFrom;
+const $$createType29 = $Create.Nullable($$createType28);
+const $$createType30 = brain$0.CompletionTrace.createFrom;
+const $$createType31 = $models.PackagedOSIntegrationSnapshot.createFrom;
+const $$createType32 = $models.PluginCommandDefJS.createFrom;
+const $$createType33 = $Create.Array($$createType32);
 const $$createType34 = project$0.Project.createFrom;
 const $$createType35 = $Create.Array($$createType34);
 const $$createType36 = indexer$0.FileRelation.createFrom;
@@ -1124,24 +1156,26 @@ const $$createType51 = $models.LSPDefinitionResult.createFrom;
 const $$createType52 = $Create.Array($$createType51);
 const $$createType53 = $models.SignatureHelpResult.createFrom;
 const $$createType54 = $Create.Nullable($$createType53);
-const $$createType55 = $models.NativeContextMenuResponse.createFrom;
-const $$createType56 = $models.ProjectWindowLaunchResult.createFrom;
-const $$createType57 = $models.ClassResult.createFrom;
-const $$createType58 = $Create.Nullable($$createType57);
-const $$createType59 = $models.TerminalPredictionResponse.createFrom;
-const $$createType60 = $models.FileEntry.createFrom;
-const $$createType61 = $Create.Array($$createType60);
-const $$createType62 = $models.EditorFilePreview.createFrom;
-const $$createType63 = $models.EditorVisualFile.createFrom;
-const $$createType64 = $models.ProjectEntryRenameResult.createFrom;
-const $$createType65 = $models.BackgroundShellActionResult.createFrom;
-const $$createType66 = depsync$0.ExecuteResult.createFrom;
-const $$createType67 = $models.PackagedOSActionResult.createFrom;
-const $$createType68 = $models.WindowLeaseActionResult.createFrom;
-const $$createType69 = $Create.Array($$createType57);
-const $$createType70 = $models.SearchResult.createFrom;
-const $$createType71 = $Create.Array($$createType70);
-const $$createType72 = $models.CommandSuggestion.createFrom;
+const $$createType55 = $models.ProjectEntryMoveResult.createFrom;
+const $$createType56 = $models.NativeContextMenuResponse.createFrom;
+const $$createType57 = $models.ProjectWindowLaunchResult.createFrom;
+const $$createType58 = $models.ClassResult.createFrom;
+const $$createType59 = $Create.Nullable($$createType58);
+const $$createType60 = $models.TerminalPredictionResponse.createFrom;
+const $$createType61 = $models.FileEntry.createFrom;
+const $$createType62 = $Create.Array($$createType61);
+const $$createType63 = $models.EditorBinaryFile.createFrom;
+const $$createType64 = $models.EditorFilePreview.createFrom;
+const $$createType65 = $models.EditorVisualFile.createFrom;
+const $$createType66 = $models.ProjectEntryRenameResult.createFrom;
+const $$createType67 = $models.BackgroundShellActionResult.createFrom;
+const $$createType68 = depsync$0.ExecuteResult.createFrom;
+const $$createType69 = $models.PackagedOSActionResult.createFrom;
+const $$createType70 = $models.WindowLeaseActionResult.createFrom;
+const $$createType71 = $Create.Array($$createType58);
+const $$createType72 = $models.SearchResult.createFrom;
 const $$createType73 = $Create.Array($$createType72);
-const $$createType74 = $Create.Map($Create.Any, $Create.Any);
-const $$createType75 = $Create.Map($Create.Any, $Create.Any);
+const $$createType74 = $models.CommandSuggestion.createFrom;
+const $$createType75 = $Create.Array($$createType74);
+const $$createType76 = $Create.Map($Create.Any, $Create.Any);
+const $$createType77 = $Create.Map($Create.Any, $Create.Any);

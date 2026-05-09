@@ -83,6 +83,7 @@ export class AutoUpdateStatus {
     "stagingDir"?: string;
     "stagedAppPath"?: string;
     "targetVersion"?: string;
+    "targetBuild"?: string;
     "releaseNotes"?: string;
     "mandatory": boolean;
     "progress": number;
@@ -748,6 +749,133 @@ export class DispatcherResultJS {
     }
 }
 
+export class EditorBinaryFieldPair {
+    "label": string;
+    "value": string;
+
+    /** Creates a new EditorBinaryFieldPair instance. */
+    constructor($$source: Partial<EditorBinaryFieldPair> = {}) {
+        if (!("label" in $$source)) {
+            this["label"] = "";
+        }
+        if (!("value" in $$source)) {
+            this["value"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new EditorBinaryFieldPair instance from a string or object.
+     */
+    static createFrom($$source: any = {}): EditorBinaryFieldPair {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new EditorBinaryFieldPair($$parsedSource as Partial<EditorBinaryFieldPair>);
+    }
+}
+
+export class EditorBinaryFile {
+    "path": string;
+    "name": string;
+    "sizeBytes": number;
+    "formattedSize": string;
+    "format": string;
+    "mimeType": string;
+    "reason": string;
+    "hexPreview": string;
+    "stringsPreview": string[];
+    "sections": EditorBinarySection[];
+    "previewBytes": number;
+    "truncated": boolean;
+
+    /** Creates a new EditorBinaryFile instance. */
+    constructor($$source: Partial<EditorBinaryFile> = {}) {
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("sizeBytes" in $$source)) {
+            this["sizeBytes"] = 0;
+        }
+        if (!("formattedSize" in $$source)) {
+            this["formattedSize"] = "";
+        }
+        if (!("format" in $$source)) {
+            this["format"] = "";
+        }
+        if (!("mimeType" in $$source)) {
+            this["mimeType"] = "";
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+        if (!("hexPreview" in $$source)) {
+            this["hexPreview"] = "";
+        }
+        if (!("stringsPreview" in $$source)) {
+            this["stringsPreview"] = [];
+        }
+        if (!("sections" in $$source)) {
+            this["sections"] = [];
+        }
+        if (!("previewBytes" in $$source)) {
+            this["previewBytes"] = 0;
+        }
+        if (!("truncated" in $$source)) {
+            this["truncated"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new EditorBinaryFile instance from a string or object.
+     */
+    static createFrom($$source: any = {}): EditorBinaryFile {
+        const $$createField8_0 = $$createType0;
+        const $$createField9_0 = $$createType23;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("stringsPreview" in $$parsedSource) {
+            $$parsedSource["stringsPreview"] = $$createField8_0($$parsedSource["stringsPreview"]);
+        }
+        if ("sections" in $$parsedSource) {
+            $$parsedSource["sections"] = $$createField9_0($$parsedSource["sections"]);
+        }
+        return new EditorBinaryFile($$parsedSource as Partial<EditorBinaryFile>);
+    }
+}
+
+export class EditorBinarySection {
+    "title": string;
+    "rows": EditorBinaryFieldPair[];
+
+    /** Creates a new EditorBinarySection instance. */
+    constructor($$source: Partial<EditorBinarySection> = {}) {
+        if (!("title" in $$source)) {
+            this["title"] = "";
+        }
+        if (!("rows" in $$source)) {
+            this["rows"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new EditorBinarySection instance from a string or object.
+     */
+    static createFrom($$source: any = {}): EditorBinarySection {
+        const $$createField1_0 = $$createType25;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("rows" in $$parsedSource) {
+            $$parsedSource["rows"] = $$createField1_0($$parsedSource["rows"]);
+        }
+        return new EditorBinarySection($$parsedSource as Partial<EditorBinarySection>);
+    }
+}
+
 export class EditorCompletion {
     "label": string;
     "text": string;
@@ -797,8 +925,8 @@ export class EditorCompletion {
      * Creates a new EditorCompletion instance from a string or object.
      */
     static createFrom($$source: any = {}): EditorCompletion {
-        const $$createField10_0 = $$createType22;
-        const $$createField12_0 = $$createType24;
+        const $$createField10_0 = $$createType26;
+        const $$createField12_0 = $$createType28;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("highlightPositions" in $$parsedSource) {
             $$parsedSource["highlightPositions"] = $$createField10_0($$parsedSource["highlightPositions"]);
@@ -915,8 +1043,8 @@ export class EditorCompletionResult {
      * Creates a new EditorCompletionResult instance from a string or object.
      */
     static createFrom($$source: any = {}): EditorCompletionResult {
-        const $$createField0_0 = $$createType26;
-        const $$createField1_0 = $$createType27;
+        const $$createField0_0 = $$createType30;
+        const $$createField1_0 = $$createType31;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("primary" in $$parsedSource) {
             $$parsedSource["primary"] = $$createField0_0($$parsedSource["primary"]);
@@ -1025,7 +1153,7 @@ export class EditorFilePreview {
      * Creates a new EditorFilePreview instance from a string or object.
      */
     static createFrom($$source: any = {}): EditorFilePreview {
-        const $$createField0_0 = $$createType28;
+        const $$createField0_0 = $$createType32;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("inspection" in $$parsedSource) {
             $$parsedSource["inspection"] = $$createField0_0($$parsedSource["inspection"]);
@@ -1249,7 +1377,7 @@ export class LSPCodeAction {
      * Creates a new LSPCodeAction instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPCodeAction {
-        const $$createField3_0 = $$createType30;
+        const $$createField3_0 = $$createType34;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("edit" in $$parsedSource) {
             $$parsedSource["edit"] = $$createField3_0($$parsedSource["edit"]);
@@ -1316,12 +1444,40 @@ export class LSPDiagnostic {
      * Creates a new LSPDiagnostic instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPDiagnostic {
-        const $$createField0_0 = $$createType31;
+        const $$createField0_0 = $$createType35;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("range" in $$parsedSource) {
             $$parsedSource["range"] = $$createField0_0($$parsedSource["range"]);
         }
         return new LSPDiagnostic($$parsedSource as Partial<LSPDiagnostic>);
+    }
+}
+
+export class LSPDocumentChange {
+    "textDocument"?: LSPTextDocumentIdentifier | null;
+    "edits"?: LSPTextEdit[];
+    "kind"?: string;
+
+    /** Creates a new LSPDocumentChange instance. */
+    constructor($$source: Partial<LSPDocumentChange> = {}) {
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LSPDocumentChange instance from a string or object.
+     */
+    static createFrom($$source: any = {}): LSPDocumentChange {
+        const $$createField0_0 = $$createType37;
+        const $$createField1_0 = $$createType39;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("textDocument" in $$parsedSource) {
+            $$parsedSource["textDocument"] = $$createField0_0($$parsedSource["textDocument"]);
+        }
+        if ("edits" in $$parsedSource) {
+            $$parsedSource["edits"] = $$createField1_0($$parsedSource["edits"]);
+        }
+        return new LSPDocumentChange($$parsedSource as Partial<LSPDocumentChange>);
     }
 }
 
@@ -1370,8 +1526,8 @@ export class LSPRange {
      * Creates a new LSPRange instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPRange {
-        const $$createField0_0 = $$createType32;
-        const $$createField1_0 = $$createType32;
+        const $$createField0_0 = $$createType40;
+        const $$createField1_0 = $$createType40;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("start" in $$parsedSource) {
             $$parsedSource["start"] = $$createField0_0($$parsedSource["start"]);
@@ -1440,6 +1596,27 @@ export class LSPServerInfo {
     }
 }
 
+export class LSPTextDocumentIdentifier {
+    "uri": string;
+
+    /** Creates a new LSPTextDocumentIdentifier instance. */
+    constructor($$source: Partial<LSPTextDocumentIdentifier> = {}) {
+        if (!("uri" in $$source)) {
+            this["uri"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LSPTextDocumentIdentifier instance from a string or object.
+     */
+    static createFrom($$source: any = {}): LSPTextDocumentIdentifier {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new LSPTextDocumentIdentifier($$parsedSource as Partial<LSPTextDocumentIdentifier>);
+    }
+}
+
 export class LSPTextEdit {
     "range": LSPRange;
     "newText": string;
@@ -1460,7 +1637,7 @@ export class LSPTextEdit {
      * Creates a new LSPTextEdit instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPTextEdit {
-        const $$createField0_0 = $$createType31;
+        const $$createField0_0 = $$createType35;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("range" in $$parsedSource) {
             $$parsedSource["range"] = $$createField0_0($$parsedSource["range"]);
@@ -1470,13 +1647,11 @@ export class LSPTextEdit {
 }
 
 export class LSPWorkspaceEdit {
-    "changes": { [_ in string]?: LSPTextEdit[] };
+    "changes"?: { [_ in string]?: LSPTextEdit[] };
+    "documentChanges"?: LSPDocumentChange[];
 
     /** Creates a new LSPWorkspaceEdit instance. */
     constructor($$source: Partial<LSPWorkspaceEdit> = {}) {
-        if (!("changes" in $$source)) {
-            this["changes"] = {};
-        }
 
         Object.assign(this, $$source);
     }
@@ -1485,10 +1660,14 @@ export class LSPWorkspaceEdit {
      * Creates a new LSPWorkspaceEdit instance from a string or object.
      */
     static createFrom($$source: any = {}): LSPWorkspaceEdit {
-        const $$createField0_0 = $$createType35;
+        const $$createField0_0 = $$createType41;
+        const $$createField1_0 = $$createType43;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("changes" in $$parsedSource) {
             $$parsedSource["changes"] = $$createField0_0($$parsedSource["changes"]);
+        }
+        if ("documentChanges" in $$parsedSource) {
+            $$parsedSource["documentChanges"] = $$createField1_0($$parsedSource["documentChanges"]);
         }
         return new LSPWorkspaceEdit($$parsedSource as Partial<LSPWorkspaceEdit>);
     }
@@ -1645,8 +1824,8 @@ export class NativeContextMenuRequest {
      * Creates a new NativeContextMenuRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): NativeContextMenuRequest {
-        const $$createField6_0 = $$createType37;
-        const $$createField7_0 = $$createType38;
+        const $$createField6_0 = $$createType45;
+        const $$createField7_0 = $$createType46;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("items" in $$parsedSource) {
             $$parsedSource["items"] = $$createField6_0($$parsedSource["items"]);
@@ -1706,7 +1885,7 @@ export class PackagedOSActionResult {
      */
     static createFrom($$source: any = {}): PackagedOSActionResult {
         const $$createField2_0 = $$createType11;
-        const $$createField3_0 = $$createType40;
+        const $$createField3_0 = $$createType48;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("backgroundAction" in $$parsedSource) {
             $$parsedSource["backgroundAction"] = $$createField2_0($$parsedSource["backgroundAction"]);
@@ -1796,6 +1975,7 @@ export class PackagedOSAutoUpdateArtifact {
 export class PackagedOSAutoUpdateManifest {
     "channel"?: string;
     "version"?: string;
+    "build"?: string;
     "artifacts"?: PackagedOSAutoUpdateArtifact[];
     "releaseNotes"?: string;
     "mandatory"?: boolean;
@@ -1815,14 +1995,14 @@ export class PackagedOSAutoUpdateManifest {
      * Creates a new PackagedOSAutoUpdateManifest instance from a string or object.
      */
     static createFrom($$source: any = {}): PackagedOSAutoUpdateManifest {
-        const $$createField2_0 = $$createType41;
-        const $$createField9_0 = $$createType42;
+        const $$createField3_0 = $$createType49;
+        const $$createField10_0 = $$createType50;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("artifacts" in $$parsedSource) {
-            $$parsedSource["artifacts"] = $$createField2_0($$parsedSource["artifacts"]);
+            $$parsedSource["artifacts"] = $$createField3_0($$parsedSource["artifacts"]);
         }
         if ("metadata" in $$parsedSource) {
-            $$parsedSource["metadata"] = $$createField9_0($$parsedSource["metadata"]);
+            $$parsedSource["metadata"] = $$createField10_0($$parsedSource["metadata"]);
         }
         return new PackagedOSAutoUpdateManifest($$parsedSource as Partial<PackagedOSAutoUpdateManifest>);
     }
@@ -1936,7 +2116,7 @@ export class PackagedOSIntegrationSnapshot {
      * Creates a new PackagedOSIntegrationSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): PackagedOSIntegrationSnapshot {
-        const $$createField7_0 = $$createType44;
+        const $$createField7_0 = $$createType52;
         const $$createField8_0 = $$createType18;
         const $$createField9_0 = $$createType17;
         const $$createField10_0 = $$createType3;
@@ -2029,7 +2209,7 @@ export class PluginCommandDefJS {
      * Creates a new PluginCommandDefJS instance from a string or object.
      */
     static createFrom($$source: any = {}): PluginCommandDefJS {
-        const $$createField7_0 = $$createType46;
+        const $$createField7_0 = $$createType54;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("flags" in $$parsedSource) {
             $$parsedSource["flags"] = $$createField7_0($$parsedSource["flags"]);
@@ -2099,6 +2279,47 @@ export class ProjectAccessInspection {
     static createFrom($$source: any = {}): ProjectAccessInspection {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new ProjectAccessInspection($$parsedSource as Partial<ProjectAccessInspection>);
+    }
+}
+
+export class ProjectEntryMoveResult {
+    "oldPath": string;
+    "newPath": string;
+    "isDirectory": boolean;
+    "lspWorkspaceFiles": number;
+    "rewrittenFiles": number;
+    "rewrittenImports": number;
+
+    /** Creates a new ProjectEntryMoveResult instance. */
+    constructor($$source: Partial<ProjectEntryMoveResult> = {}) {
+        if (!("oldPath" in $$source)) {
+            this["oldPath"] = "";
+        }
+        if (!("newPath" in $$source)) {
+            this["newPath"] = "";
+        }
+        if (!("isDirectory" in $$source)) {
+            this["isDirectory"] = false;
+        }
+        if (!("lspWorkspaceFiles" in $$source)) {
+            this["lspWorkspaceFiles"] = 0;
+        }
+        if (!("rewrittenFiles" in $$source)) {
+            this["rewrittenFiles"] = 0;
+        }
+        if (!("rewrittenImports" in $$source)) {
+            this["rewrittenImports"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProjectEntryMoveResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProjectEntryMoveResult {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProjectEntryMoveResult($$parsedSource as Partial<ProjectEntryMoveResult>);
     }
 }
 
@@ -2322,7 +2543,7 @@ export class ShellCapabilitiesSnapshot {
      * Creates a new ShellCapabilitiesSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): ShellCapabilitiesSnapshot {
-        const $$createField0_0 = $$createType48;
+        const $$createField0_0 = $$createType56;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("capabilities" in $$parsedSource) {
             $$parsedSource["capabilities"] = $$createField0_0($$parsedSource["capabilities"]);
@@ -2401,7 +2622,7 @@ export class SignatureHelpResult {
      * Creates a new SignatureHelpResult instance from a string or object.
      */
     static createFrom($$source: any = {}): SignatureHelpResult {
-        const $$createField0_0 = $$createType50;
+        const $$createField0_0 = $$createType58;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("signatures" in $$parsedSource) {
             $$parsedSource["signatures"] = $$createField0_0($$parsedSource["signatures"]);
@@ -2437,7 +2658,7 @@ export class SignatureInfo {
      * Creates a new SignatureInfo instance from a string or object.
      */
     static createFrom($$source: any = {}): SignatureInfo {
-        const $$createField2_0 = $$createType52;
+        const $$createField2_0 = $$createType60;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("parameters" in $$parsedSource) {
             $$parsedSource["parameters"] = $$createField2_0($$parsedSource["parameters"]);
@@ -2491,7 +2712,7 @@ export class TerminalPredictionResponse {
      * Creates a new TerminalPredictionResponse instance from a string or object.
      */
     static createFrom($$source: any = {}): TerminalPredictionResponse {
-        const $$createField0_0 = $$createType54;
+        const $$createField0_0 = $$createType62;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("predictions" in $$parsedSource) {
             $$parsedSource["predictions"] = $$createField0_0($$parsedSource["predictions"]);
@@ -2648,17 +2869,17 @@ export class Wails3PackagedSmokeReport {
      */
     static createFrom($$source: any = {}): Wails3PackagedSmokeReport {
         const $$createField6_0 = $$createType0;
-        const $$createField7_0 = $$createType38;
-        const $$createField9_0 = $$createType55;
-        const $$createField10_0 = $$createType56;
+        const $$createField7_0 = $$createType46;
+        const $$createField9_0 = $$createType63;
+        const $$createField10_0 = $$createType64;
         const $$createField11_0 = $$createType8;
-        const $$createField12_0 = $$createType57;
-        const $$createField13_0 = $$createType58;
-        const $$createField14_0 = $$createType59;
-        const $$createField15_0 = $$createType60;
-        const $$createField16_0 = $$createType61;
-        const $$createField17_0 = $$createType62;
-        const $$createField18_0 = $$createType64;
+        const $$createField12_0 = $$createType65;
+        const $$createField13_0 = $$createType66;
+        const $$createField14_0 = $$createType67;
+        const $$createField15_0 = $$createType68;
+        const $$createField16_0 = $$createType69;
+        const $$createField17_0 = $$createType70;
+        const $$createField18_0 = $$createType72;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("launchArgs" in $$parsedSource) {
             $$parsedSource["launchArgs"] = $$createField6_0($$parsedSource["launchArgs"]);
@@ -2922,9 +3143,9 @@ export class Wails3SmokeNativeDeliveryProbe {
      */
     static createFrom($$source: any = {}): Wails3SmokeNativeDeliveryProbe {
         const $$createField2_0 = $$createType0;
-        const $$createField4_0 = $$createType65;
-        const $$createField5_0 = $$createType65;
-        const $$createField6_0 = $$createType66;
+        const $$createField4_0 = $$createType73;
+        const $$createField5_0 = $$createType73;
+        const $$createField6_0 = $$createType74;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("trackedFailureStates" in $$parsedSource) {
             $$parsedSource["trackedFailureStates"] = $$createField2_0($$parsedSource["trackedFailureStates"]);
@@ -3006,7 +3227,7 @@ export class Wails3SmokeSecondInstanceProbe {
      */
     static createFrom($$source: any = {}): Wails3SmokeSecondInstanceProbe {
         const $$createField2_0 = $$createType0;
-        const $$createField3_0 = $$createType38;
+        const $$createField3_0 = $$createType46;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("args" in $$parsedSource) {
             $$parsedSource["args"] = $$createField2_0($$parsedSource["args"]);
@@ -3083,8 +3304,8 @@ export class WindowLeaseActionResult {
      * Creates a new WindowLeaseActionResult instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseActionResult {
-        const $$createField4_0 = $$createType68;
-        const $$createField5_0 = $$createType69;
+        const $$createField4_0 = $$createType76;
+        const $$createField5_0 = $$createType77;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("record" in $$parsedSource) {
             $$parsedSource["record"] = $$createField4_0($$parsedSource["record"]);
@@ -3149,8 +3370,8 @@ export class WindowLeaseRecord {
      * Creates a new WindowLeaseRecord instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseRecord {
-        const $$createField8_0 = $$createType70;
-        const $$createField12_0 = $$createType38;
+        const $$createField8_0 = $$createType78;
+        const $$createField12_0 = $$createType46;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("returnTarget" in $$parsedSource) {
             $$parsedSource["returnTarget"] = $$createField8_0($$parsedSource["returnTarget"]);
@@ -3239,10 +3460,10 @@ export class WindowLeaseSnapshot {
      * Creates a new WindowLeaseSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseSnapshot {
-        const $$createField5_0 = $$createType71;
+        const $$createField5_0 = $$createType79;
         const $$createField6_0 = $$createType0;
-        const $$createField7_0 = $$createType72;
-        const $$createField8_0 = $$createType73;
+        const $$createField7_0 = $$createType80;
+        const $$createField8_0 = $$createType81;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("supportedRoles" in $$parsedSource) {
             $$parsedSource["supportedRoles"] = $$createField5_0($$parsedSource["supportedRoles"]);
@@ -3295,55 +3516,63 @@ const $$createType18 = $Create.Array($$createType7);
 const $$createType19 = $Create.Map($Create.Any, $Create.Any);
 const $$createType20 = ResultItemJS.createFrom;
 const $$createType21 = $Create.Array($$createType20);
-const $$createType22 = $Create.Array($Create.Any);
-const $$createType23 = TextEditJSON.createFrom;
-const $$createType24 = $Create.Array($$createType23);
-const $$createType25 = EditorCompletion.createFrom;
-const $$createType26 = $Create.Nullable($$createType25);
-const $$createType27 = $Create.Array($$createType25);
-const $$createType28 = EditorFileInspection.createFrom;
-const $$createType29 = LSPWorkspaceEdit.createFrom;
+const $$createType22 = EditorBinarySection.createFrom;
+const $$createType23 = $Create.Array($$createType22);
+const $$createType24 = EditorBinaryFieldPair.createFrom;
+const $$createType25 = $Create.Array($$createType24);
+const $$createType26 = $Create.Array($Create.Any);
+const $$createType27 = TextEditJSON.createFrom;
+const $$createType28 = $Create.Array($$createType27);
+const $$createType29 = EditorCompletion.createFrom;
 const $$createType30 = $Create.Nullable($$createType29);
-const $$createType31 = LSPRange.createFrom;
-const $$createType32 = LSPPosition.createFrom;
-const $$createType33 = LSPTextEdit.createFrom;
-const $$createType34 = $Create.Array($$createType33);
-const $$createType35 = $Create.Map($Create.Any, $$createType34);
-const $$createType36 = NativeContextMenuItem.createFrom;
-const $$createType37 = $Create.Array($$createType36);
-const $$createType38 = $Create.Map($Create.Any, $Create.Any);
-const $$createType39 = BackgroundShellActionResult.createFrom;
-const $$createType40 = $Create.Nullable($$createType39);
-const $$createType41 = $Create.Array($$createType4);
-const $$createType42 = $Create.Map($Create.Any, $Create.Any);
-const $$createType43 = PackagedOSAdapter.createFrom;
-const $$createType44 = $Create.Map($Create.Any, $$createType43);
-const $$createType45 = FlagDefJS.createFrom;
-const $$createType46 = $Create.Array($$createType45);
-const $$createType47 = ShellCapabilityDescriptor.createFrom;
-const $$createType48 = $Create.Map($Create.Any, $$createType47);
-const $$createType49 = SignatureInfo.createFrom;
-const $$createType50 = $Create.Array($$createType49);
-const $$createType51 = ParameterInfo.createFrom;
-const $$createType52 = $Create.Array($$createType51);
-const $$createType53 = terminal$0.PredictionResult.createFrom;
+const $$createType31 = $Create.Array($$createType29);
+const $$createType32 = EditorFileInspection.createFrom;
+const $$createType33 = LSPWorkspaceEdit.createFrom;
+const $$createType34 = $Create.Nullable($$createType33);
+const $$createType35 = LSPRange.createFrom;
+const $$createType36 = LSPTextDocumentIdentifier.createFrom;
+const $$createType37 = $Create.Nullable($$createType36);
+const $$createType38 = LSPTextEdit.createFrom;
+const $$createType39 = $Create.Array($$createType38);
+const $$createType40 = LSPPosition.createFrom;
+const $$createType41 = $Create.Map($Create.Any, $$createType39);
+const $$createType42 = LSPDocumentChange.createFrom;
+const $$createType43 = $Create.Array($$createType42);
+const $$createType44 = NativeContextMenuItem.createFrom;
+const $$createType45 = $Create.Array($$createType44);
+const $$createType46 = $Create.Map($Create.Any, $Create.Any);
+const $$createType47 = BackgroundShellActionResult.createFrom;
+const $$createType48 = $Create.Nullable($$createType47);
+const $$createType49 = $Create.Array($$createType4);
+const $$createType50 = $Create.Map($Create.Any, $Create.Any);
+const $$createType51 = PackagedOSAdapter.createFrom;
+const $$createType52 = $Create.Map($Create.Any, $$createType51);
+const $$createType53 = FlagDefJS.createFrom;
 const $$createType54 = $Create.Array($$createType53);
-const $$createType55 = ShellCapabilitiesSnapshot.createFrom;
-const $$createType56 = PackagedOSIntegrationSnapshot.createFrom;
-const $$createType57 = Wails3SmokeNativeDeliveryProbe.createFrom;
-const $$createType58 = Wails3SmokeAutoUpdateProbe.createFrom;
-const $$createType59 = Wails3SmokeGateStatus.createFrom;
-const $$createType60 = Wails3SmokeSecondInstanceProbe.createFrom;
-const $$createType61 = Wails3SmokeWindowLeaseSnapshot.createFrom;
-const $$createType62 = Wails3SmokeAppBundleSnapshot.createFrom;
-const $$createType63 = Wails3SmokeCheck.createFrom;
-const $$createType64 = $Create.Array($$createType63);
-const $$createType65 = Wails3SmokeNativeAdapterProbe.createFrom;
-const $$createType66 = Wails3SmokeNativeDockBadgeProbe.createFrom;
-const $$createType67 = WindowLeaseRecord.createFrom;
-const $$createType68 = $Create.Nullable($$createType67);
-const $$createType69 = WindowLeaseSnapshot.createFrom;
-const $$createType70 = WindowLeaseReturnTarget.createFrom;
-const $$createType71 = $Create.Array($Create.Any);
-const $$createType72 = $Create.Array($$createType67);
-const $$createType73 = $Create.Map($Create.Any, $$createType67);
+const $$createType55 = ShellCapabilityDescriptor.createFrom;
+const $$createType56 = $Create.Map($Create.Any, $$createType55);
+const $$createType57 = SignatureInfo.createFrom;
+const $$createType58 = $Create.Array($$createType57);
+const $$createType59 = ParameterInfo.createFrom;
+const $$createType60 = $Create.Array($$createType59);
+const $$createType61 = terminal$0.PredictionResult.createFrom;
+const $$createType62 = $Create.Array($$createType61);
+const $$createType63 = ShellCapabilitiesSnapshot.createFrom;
+const $$createType64 = PackagedOSIntegrationSnapshot.createFrom;
+const $$createType65 = Wails3SmokeNativeDeliveryProbe.createFrom;
+const $$createType66 = Wails3SmokeAutoUpdateProbe.createFrom;
+const $$createType67 = Wails3SmokeGateStatus.createFrom;
+const $$createType68 = Wails3SmokeSecondInstanceProbe.createFrom;
+const $$createType69 = Wails3SmokeWindowLeaseSnapshot.createFrom;
+const $$createType70 = Wails3SmokeAppBundleSnapshot.createFrom;
+const $$createType71 = Wails3SmokeCheck.createFrom;
+const $$createType72 = $Create.Array($$createType71);
+const $$createType73 = Wails3SmokeNativeAdapterProbe.createFrom;
+const $$createType74 = Wails3SmokeNativeDockBadgeProbe.createFrom;
+const $$createType75 = WindowLeaseRecord.createFrom;
+const $$createType76 = $Create.Nullable($$createType75);
+const $$createType77 = WindowLeaseSnapshot.createFrom;
+const $$createType78 = WindowLeaseReturnTarget.createFrom;
+const $$createType79 = $Create.Array($Create.Any);
+const $$createType80 = $Create.Array($$createType75);
+const $$createType81 = $Create.Map($Create.Any, $$createType75);

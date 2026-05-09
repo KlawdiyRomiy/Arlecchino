@@ -44,6 +44,7 @@ const callIDToMethod = new Map<number, string>([
   [517162042, "OpenProject"],
   [3352504172, "InstallLSPServer"],
   [3882613584, "ReadDirectory"],
+  [38130499, "ReadEditorBinaryFile"],
   [3674158986, "ReadEditorFilePreview"],
   [963892010, "ReadEditorVisualFile"],
   [1160596971, "ReadFile"],

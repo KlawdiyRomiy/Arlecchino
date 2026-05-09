@@ -87,8 +87,31 @@ test.beforeEach(async ({ page }) => {
                     path: "/workspace/logo.png",
                     isDirectory: false,
                   },
+                  {
+                    name: "payload.bin",
+                    path: "/workspace/payload.bin",
+                    isDirectory: false,
+                  },
                 ];
               case "InspectEditorFile":
+                if (args[0] === "/workspace/payload.bin") {
+                  return {
+                    path: "/workspace/payload.bin",
+                    name: "payload.bin",
+                    sizeBytes: 14,
+                    formattedSize: "14 B",
+                    isText: false,
+                    safeForEditor: false,
+                    largeDocument: false,
+                    reason:
+                      "file appears to be binary and cannot be opened in the editor: /workspace/payload.bin",
+                    lineCount: 0,
+                    maxLineLength: 0,
+                    limitBytes: 2 * 1024 * 1024,
+                    lineLimit: 20_000,
+                    maxLineLengthLimit: 20_000,
+                  };
+                }
                 if (typeof args[0] === "string" && args[0] in files) {
                   const content = files[args[0]];
                   return {
@@ -118,6 +141,30 @@ test.beforeEach(async ({ page }) => {
                   formattedSize: "68 B",
                   mimeType: "image/png",
                   dataUrl: imageDataUrl,
+                };
+              case "ReadEditorBinaryFile":
+                return {
+                  path: "/workspace/payload.bin",
+                  name: "payload.bin",
+                  sizeBytes: 14,
+                  formattedSize: "14 B",
+                  format: "Binary file",
+                  mimeType: "application/octet-stream",
+                  reason: "Binary file opened as a read-only byte preview.",
+                  hexPreview:
+                    "00000000  00 01 02 41 72 6c 65 63  63 68 69 6e 6f 00        |...Arlecchino.|",
+                  stringsPreview: ["Arlecchino"],
+                  previewBytes: 14,
+                  truncated: false,
+                  sections: [
+                    {
+                      title: "File metadata",
+                      rows: [
+                        { label: "Format", value: "Binary file" },
+                        { label: "MIME", value: "application/octet-stream" },
+                      ],
+                    },
+                  ],
                 };
               case "ReadFile":
                 return files[typeof args[0] === "string" ? args[0] : ""] ?? "";
@@ -295,6 +342,37 @@ test("image files open inline in the main editor surface", async ({ page }) => {
     return usePreviewWindowStore.getState().windows.length;
   });
   expect(previewWindowCount).toBe(0);
+});
+
+test("binary files open as read-only binary preview", async ({ page }) => {
+  await page.goto("/");
+
+  const loaderResult = await page.evaluate(async () => {
+    const { loadEditorFile } = await import("/src/utils/editorFileLoader.ts");
+    const file = await loadEditorFile("/workspace/payload.bin");
+    return { kind: file.kind, name: file.name };
+  });
+  expect(loaderResult).toEqual({
+    kind: "binaryPreview",
+    name: "payload.bin",
+  });
+
+  await page.locator('[data-file-path="/workspace/payload.bin"]').click();
+
+  const preview = page.getByTestId("binary-editor-preview");
+  await expect(preview).toBeVisible();
+  await expect(preview).toContainText("Binary file");
+  await expect(preview).toContainText("application/octet-stream");
+  await expect(page.getByTestId("binary-hex-preview")).toContainText(
+    "00 01 02",
+  );
+  await expect(page.getByTestId("binary-strings-preview")).toContainText(
+    "Arlecchino",
+  );
+  await expect(preview.locator(".cm-content")).toHaveCount(0);
+  await expect(
+    page.getByTestId("editor-tabs-markdown-preview-toggle"),
+  ).toHaveCount(0);
 });
 
 test("Markdown preview panel follows the active tab and updates before autosave", async ({
