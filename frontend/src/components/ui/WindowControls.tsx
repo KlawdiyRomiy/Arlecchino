@@ -211,7 +211,12 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
       window.removeEventListener("resize", schedulePosition);
       resizeObserver?.disconnect();
     };
-  }, [positionNativeControls, reserveNativeMacControls, visible]);
+  }, [
+    backdropVisible,
+    positionNativeControls,
+    reserveNativeMacControls,
+    visible,
+  ]);
 
   if (!reserveNativeMacControls) {
     return (
