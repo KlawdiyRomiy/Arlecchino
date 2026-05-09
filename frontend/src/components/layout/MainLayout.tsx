@@ -4836,8 +4836,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         zenTopChromePointerInside ||
         zenTopChromeOccludedHeaderActive));
   const zenBottomChromeVisible = !zenModeEnabled || zenBottomChromeHovered;
-  const nativeWindowControlsVisible =
-    zenTopChromeVisible && !nativeWindowFullscreen;
+  const nativeWindowControlsVisible = zenTopChromeVisible;
+  const nativeWindowControlsBackdropVisible =
+    nativeWindowControlsVisible && !nativeWindowFullscreen;
   const zenTopChromeAvoidanceTop =
     zenModeEnabled && zenTopChromeVisible && !zenTopChromeInteractionLocked
       ? topChromeHeight + SNAPPED_PANEL_OUTER_GAP
@@ -5541,6 +5542,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               previewActive={previewButtonState.active}
               previewTitle={previewButtonState.buttonTitle}
               windowControlsVisible={nativeWindowControlsVisible}
+              windowControlsBackdropVisible={
+                nativeWindowControlsBackdropVisible
+              }
             />
           </div>
 

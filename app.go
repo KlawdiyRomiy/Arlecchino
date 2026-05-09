@@ -59,6 +59,9 @@ type App struct {
 	openIntentReady          bool
 	pendingOpenIntents       []map[string]any
 	managerMu                sync.Mutex
+	nativeControlsMu         sync.Mutex
+	nativeControlsSet        bool
+	nativeControls           [6]float64
 	diagnosticsPreloadMu     sync.Mutex
 	diagnosticsPreloadCancel context.CancelFunc
 	diagnosticsPreloadSeq    uint64

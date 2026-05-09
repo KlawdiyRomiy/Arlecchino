@@ -9,7 +9,7 @@ func macWindowCycleCollectionBehavior() application.MacWindowCollectionBehavior 
 
 func mainWindowMacOptions() application.MacWindow {
 	return application.MacWindow{
-		TitleBar:                application.MacTitleBarHiddenInsetUnified,
+		TitleBar:                application.MacTitleBarHidden,
 		InvisibleTitleBarHeight: 0,
 		Backdrop:                application.MacBackdropTransparent,
 		CollectionBehavior:      macWindowCycleCollectionBehavior(),

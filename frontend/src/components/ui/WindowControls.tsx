@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { PositionNativeWindowControls } from "../../wails/app";
 import { Quit, WindowMinimise } from "../../wails/runtime";
 import { toggleWindowFullscreen } from "../../utils/windowFullscreen";
 
@@ -19,6 +20,14 @@ interface NavigatorWithUserAgentData extends Navigator {
 
 interface WindowControlsProps {
   visible?: boolean;
+  backdropVisible?: boolean;
+}
+
+interface NativeBackdropRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
 }
 
 const isMacPlatform = (): boolean => {
@@ -47,43 +56,162 @@ const shouldReserveNativeMacControls = (): boolean => {
 
 const nativeBackdropStyle = {
   "--wails-draggable": "no-drag",
-  width: "calc(76px * var(--ui-inverse-scale))",
+  width: "calc(84px * var(--ui-inverse-scale))",
   height: "calc(48px * var(--ui-inverse-scale))",
   transform: "translateY(calc(-2px * var(--ui-inverse-scale)))",
+  display: "flex",
+  alignItems: "center",
 } as React.CSSProperties;
 
-const nativeBackdropPortalStyle: React.CSSProperties = {
-  position: "fixed",
-  left: "11px",
-  top: "12px",
-  zIndex: 120,
-  pointerEvents: "none",
+const nativeBackdropBubbleStyle: React.CSSProperties = {
+  position: "relative",
+  width: "calc(84px * var(--ui-inverse-scale))",
+  height: "calc(28px * var(--ui-inverse-scale))",
 };
 
-const nativeBackdropBubbleStyle: React.CSSProperties = {
-  width: "76px",
-  height: "28px",
+const nativeBackdropPortalBubbleStyle: React.CSSProperties = {
+  width: "100%",
+  height: "100%",
 };
+
+const nativeBackdropMeasurementStyle: React.CSSProperties = {
+  ...nativeBackdropBubbleStyle,
+  visibility: "hidden",
+};
+
+const nativeButtonTargetsStyle: React.CSSProperties = {
+  position: "absolute",
+  left: "calc(12px * var(--ui-inverse-scale))",
+  top: "50%",
+  display: "flex",
+  alignItems: "center",
+  gap: "calc(10px * var(--ui-inverse-scale))",
+  transform: "translateY(-50%)",
+};
+
+const nativeButtonTargetStyle: React.CSSProperties = {
+  width: "calc(13px * var(--ui-inverse-scale))",
+  height: "calc(13px * var(--ui-inverse-scale))",
+  borderRadius: "9999px",
+  opacity: 0,
+};
+
+const areNativeBackdropRectsEqual = (
+  a: NativeBackdropRect | null,
+  b: NativeBackdropRect,
+) => {
+  if (!a) {
+    return false;
+  }
+
+  return (
+    Math.abs(a.left - b.left) < 0.5 &&
+    Math.abs(a.top - b.top) < 0.5 &&
+    Math.abs(a.width - b.width) < 0.5 &&
+    Math.abs(a.height - b.height) < 0.5
+  );
+};
+
+const buildNativeBackdropPortalStyle = (
+  rect: NativeBackdropRect,
+): React.CSSProperties => ({
+  position: "fixed",
+  left: `${rect.left}px`,
+  top: `${rect.top}px`,
+  width: `${rect.width}px`,
+  height: `${rect.height}px`,
+  zIndex: 120,
+  pointerEvents: "none",
+});
 
 export const WindowControls: React.FC<WindowControlsProps> = ({
   visible = true,
+  backdropVisible = true,
 }) => {
   const reserveNativeMacControls = shouldReserveNativeMacControls();
-  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
+  const placeholderRef = useRef<HTMLDivElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLSpanElement>(null);
+  const minimizeRef = useRef<HTMLSpanElement>(null);
+  const fullscreenRef = useRef<HTMLSpanElement>(null);
+  const [nativeBackdropRect, setNativeBackdropRect] =
+    useState<NativeBackdropRect | null>(null);
   const handleClose = useCallback(() => Quit(), []);
   const handleMinimize = useCallback(() => WindowMinimise(), []);
   const handleFullscreen = useCallback(() => {
     void toggleWindowFullscreen();
   }, []);
 
-  useEffect(() => {
-    if (!reserveNativeMacControls || typeof document === "undefined") {
-      setPortalRoot(null);
+  const positionNativeControls = useCallback(() => {
+    if (!visible) {
       return;
     }
 
-    setPortalRoot(document.body);
-  }, [reserveNativeMacControls]);
+    const closeRect = closeRef.current?.getBoundingClientRect();
+    const minimizeRect = minimizeRef.current?.getBoundingClientRect();
+    const fullscreenRect = fullscreenRef.current?.getBoundingClientRect();
+    const backdropRect = backdropRef.current?.getBoundingClientRect();
+
+    if (!closeRect || !minimizeRect || !fullscreenRect) {
+      return;
+    }
+
+    if (backdropRect) {
+      const nextBackdropRect = {
+        left: backdropRect.left,
+        top: backdropRect.top,
+        width: backdropRect.width,
+        height: backdropRect.height,
+      };
+      setNativeBackdropRect((current) =>
+        areNativeBackdropRectsEqual(current, nextBackdropRect)
+          ? current
+          : nextBackdropRect,
+      );
+    }
+
+    void PositionNativeWindowControls(
+      closeRect.left + closeRect.width / 2,
+      closeRect.top + closeRect.height / 2,
+      minimizeRect.left + minimizeRect.width / 2,
+      minimizeRect.top + minimizeRect.height / 2,
+      fullscreenRect.left + fullscreenRect.width / 2,
+      fullscreenRect.top + fullscreenRect.height / 2,
+    ).catch(() => undefined);
+  }, [visible]);
+
+  useLayoutEffect(() => {
+    if (!reserveNativeMacControls || !visible) {
+      return;
+    }
+
+    let animationFrame = 0;
+    const schedulePosition = () => {
+      cancelAnimationFrame(animationFrame);
+      animationFrame = requestAnimationFrame(positionNativeControls);
+    };
+
+    schedulePosition();
+    const retryTimers = [50, 250, 1000].map((delay) =>
+      window.setTimeout(schedulePosition, delay),
+    );
+    window.addEventListener("resize", schedulePosition);
+
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(schedulePosition);
+    if (placeholderRef.current) {
+      resizeObserver?.observe(placeholderRef.current);
+    }
+
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      retryTimers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener("resize", schedulePosition);
+      resizeObserver?.disconnect();
+    };
+  }, [positionNativeControls, reserveNativeMacControls, visible]);
 
   if (!reserveNativeMacControls) {
     return (
@@ -113,24 +241,45 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
     );
   }
 
+  const portalRoot =
+    typeof document === "undefined" || !visible || !backdropVisible
+      ? null
+      : document.body;
+
   return (
     <>
       <div
+        ref={placeholderRef}
         className="pointer-events-none shrink-0"
         style={nativeBackdropStyle}
         aria-hidden="true"
         data-testid="window-controls-native-spacer"
-      />
-      {portalRoot && visible
+      >
+        {visible ? (
+          <div
+            ref={backdropRef}
+            className="shell-cluster"
+            aria-hidden="true"
+            style={nativeBackdropMeasurementStyle}
+          >
+            <div style={nativeButtonTargetsStyle}>
+              <span ref={closeRef} style={nativeButtonTargetStyle} />
+              <span ref={minimizeRef} style={nativeButtonTargetStyle} />
+              <span ref={fullscreenRef} style={nativeButtonTargetStyle} />
+            </div>
+          </div>
+        ) : null}
+      </div>
+      {portalRoot && nativeBackdropRect
         ? createPortal(
             <div
               aria-hidden="true"
               data-testid="window-controls-native-backdrop"
-              style={nativeBackdropPortalStyle}
+              style={buildNativeBackdropPortalStyle(nativeBackdropRect)}
             >
               <div
                 className="shell-cluster"
-                style={nativeBackdropBubbleStyle}
+                style={nativeBackdropPortalBubbleStyle}
               />
             </div>,
             portalRoot,

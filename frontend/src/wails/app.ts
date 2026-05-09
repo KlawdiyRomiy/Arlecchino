@@ -13,6 +13,14 @@ interface NativeWindowControlsBridge {
   SetNativeWindowControlsVisible?: (
     visible: boolean,
   ) => Promise<boolean> | boolean;
+  PositionNativeWindowControls?: (
+    closeX: number,
+    closeY: number,
+    minimiseX: number,
+    minimiseY: number,
+    maximiseX: number,
+    maximiseY: number,
+  ) => Promise<boolean> | boolean;
 }
 
 interface ProjectWindowBridge {
@@ -60,6 +68,11 @@ const nativeWindowControlsMethodNames = [
   "arlecchino.App.SetNativeWindowControlsVisible",
 ] as const;
 
+const nativeWindowControlsPositionMethodNames = [
+  "main.App.PositionNativeWindowControls",
+  "arlecchino.App.PositionNativeWindowControls",
+] as const;
+
 const projectWindowMethodNames = [
   "main.App.OpenProjectWindow",
   "arlecchino.App.OpenProjectWindow",
@@ -92,6 +105,9 @@ const selectOpenTargetMethodNames = [
 
 let nativeWindowControlsMethodName:
   | (typeof nativeWindowControlsMethodNames)[number]
+  | undefined;
+let nativeWindowControlsPositionMethodName:
+  | (typeof nativeWindowControlsPositionMethodNames)[number]
   | undefined;
 let projectWindowMethodName:
   | (typeof projectWindowMethodNames)[number]
@@ -207,6 +223,66 @@ export async function SetNativeWindowControlsVisible(
     try {
       const result = await callByName(methodName, visible);
       nativeWindowControlsMethodName = methodName;
+      return Boolean(result);
+    } catch {
+      // Try the next known Wails v3 service namespace.
+    }
+  }
+
+  return false;
+}
+
+export async function PositionNativeWindowControls(
+  closeX: number,
+  closeY: number,
+  minimiseX: number,
+  minimiseY: number,
+  maximiseX: number,
+  maximiseY: number,
+): Promise<boolean> {
+  const bridge = getNativeWindowControlsBridge();
+  const args: [number, number, number, number, number, number] = [
+    closeX,
+    closeY,
+    minimiseX,
+    minimiseY,
+    maximiseX,
+    maximiseY,
+  ];
+  if (bridge?.PositionNativeWindowControls) {
+    try {
+      return Boolean(
+        await Promise.resolve(bridge.PositionNativeWindowControls(...args)),
+      );
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  const runtimeModule = await loadRuntimeCallModule();
+  if (!runtimeModule) {
+    return false;
+  }
+
+  const callByName = runtimeModule.Call?.ByName;
+  if (!callByName) {
+    return false;
+  }
+
+  if (nativeWindowControlsPositionMethodName) {
+    try {
+      return Boolean(
+        await callByName(nativeWindowControlsPositionMethodName, ...args),
+      );
+    } catch {
+      nativeWindowControlsPositionMethodName = undefined;
+    }
+  }
+
+  for (const methodName of nativeWindowControlsPositionMethodNames) {
+    try {
+      const result = await callByName(methodName, ...args);
+      nativeWindowControlsPositionMethodName = methodName;
       return Boolean(result);
     } catch {
       // Try the next known Wails v3 service namespace.
