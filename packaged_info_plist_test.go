@@ -8,20 +8,38 @@ import (
 )
 
 func TestWails3InfoPlistAcceptsDockDroppedFilesAndFolders(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("build", "darwin", "Info.wails3.plist"))
-	if err != nil {
-		t.Fatalf("ReadFile(Info.wails3.plist) error = %v", err)
-	}
+	for _, plistName := range []string{"Info.wails3.plist", "Info.plist", "Info.dev.plist"} {
+		t.Run(plistName, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("build", "darwin", plistName))
+			if err != nil {
+				t.Fatalf("ReadFile(%s) error = %v", plistName, err)
+			}
 
-	content := string(data)
+			assertOpenFileDocumentTypes(t, plistName, string(data))
+		})
+	}
+}
+
+func assertOpenFileDocumentTypes(t *testing.T, plistName string, content string) {
+	t.Helper()
+
 	for _, expected := range []string{
 		"<key>CFBundleDocumentTypes</key>",
+		"<key>CFBundleTypeExtensions</key>",
 		"<key>LSItemContentTypes</key>",
+		"<string>Arlecchino Source File</string>",
+		"<string>Editor</string>",
+		"<string>go</string>",
+		"<string>ts</string>",
+		"<string>md</string>",
 		"<string>public.data</string>",
+		"<string>public.text</string>",
+		"<string>public.source-code</string>",
+		"<string>Arlecchino Folder</string>",
 		"<string>public.folder</string>",
 	} {
 		if !strings.Contains(content, expected) {
-			t.Fatalf("Info.wails3.plist missing %s", expected)
+			t.Fatalf("%s missing %s", plistName, expected)
 		}
 	}
 }

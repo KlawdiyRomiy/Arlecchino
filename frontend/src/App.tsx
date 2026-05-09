@@ -38,7 +38,11 @@ import { useAutoUpdateBridge } from "./shell/autoUpdate";
 import { useManualUpdateNotifications } from "./shell/manualUpdateNotifications";
 import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
 import { useWindowLeaseBridge } from "./shell/windowLeaseBridge";
-import { registerOpenIntentDispatcher } from "./shell/openIntentRouter";
+import {
+  registerOpenIntentDispatcher,
+  routeOpenIntent,
+} from "./shell/openIntentRouter";
+import { selectOpenTargetWithCapability } from "./shell/shellDialogs";
 import {
   forgetProjectWindowRestorePath,
   rememberProjectWindowRestorePath,
@@ -50,6 +54,7 @@ import {
 } from "./utils/editorFileLoader";
 
 const PROJECT_SWITCH_VISUAL_SETTLE_MS = 260;
+const OPEN_TARGET_EVENT = "arlecchino:open";
 
 const waitForProjectSwitchVisualSettle = () =>
   new Promise<void>((resolve) => {
@@ -260,6 +265,38 @@ const App: React.FC = () => {
   const handleFileOpen = (payload: EditorFileOpenPayload) => {
     setFileToOpen(payload);
   };
+
+  useEffect(() => {
+    const handleOpenTargetEvent = () => {
+      if (isDetachedHost) {
+        return;
+      }
+
+      void (async () => {
+        try {
+          const selectedIntent = await selectOpenTargetWithCapability(
+            "Open",
+            AppFunctions.SelectOpenTarget,
+          );
+          if (!selectedIntent) {
+            return;
+          }
+
+          await routeOpenIntent({
+            ...selectedIntent,
+            source: "manual-open",
+          });
+        } catch (error) {
+          console.error("Error opening target:", error);
+        }
+      })();
+    };
+
+    window.addEventListener(OPEN_TARGET_EVENT, handleOpenTargetEvent);
+    return () => {
+      window.removeEventListener(OPEN_TARGET_EVENT, handleOpenTargetEvent);
+    };
+  }, [isDetachedHost]);
 
   const handleBackToWelcome = async () => {
     const { activeId: currentId } = useWorkspaceStore.getState();

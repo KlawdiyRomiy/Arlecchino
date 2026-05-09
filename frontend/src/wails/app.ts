@@ -32,6 +32,14 @@ interface ProjectEntryMoveBridge {
   ) => Promise<unknown> | unknown;
 }
 
+interface FileDialogBridge {
+  SelectOpenTarget?: (title: string) => Promise<unknown> | unknown;
+}
+
+export type SelectedOpenTargetIntent =
+  | { kind: "openProject"; projectPath: string; source?: string }
+  | { kind: "openFile"; path: string; line?: number; source?: string };
+
 export interface ProjectWindowSessionPayload {
   sessionId: string;
   projectPath: string;
@@ -77,6 +85,11 @@ const projectEntryMoveMethodNames = [
   "arlecchino.App.MoveProjectEntry",
 ] as const;
 
+const selectOpenTargetMethodNames = [
+  "main.App.SelectOpenTarget",
+  "arlecchino.App.SelectOpenTarget",
+] as const;
+
 let nativeWindowControlsMethodName:
   | (typeof nativeWindowControlsMethodNames)[number]
   | undefined;
@@ -94,6 +107,9 @@ let currentProjectWindowSessionMethodName:
   | undefined;
 let projectEntryMoveMethodName:
   | (typeof projectEntryMoveMethodNames)[number]
+  | undefined;
+let selectOpenTargetMethodName:
+  | (typeof selectOpenTargetMethodNames)[number]
   | undefined;
 
 const getNativeWindowControlsBridge = ():
@@ -130,6 +146,18 @@ const getProjectEntryMoveBridge = (): ProjectEntryMoveBridge | undefined => {
   return (
     window as unknown as {
       go?: { main?: { App?: ProjectEntryMoveBridge } };
+    }
+  ).go?.main?.App;
+};
+
+const getFileDialogBridge = (): FileDialogBridge | undefined => {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (
+    window as unknown as {
+      go?: { main?: { App?: FileDialogBridge } };
     }
   ).go?.main?.App;
 };
@@ -188,6 +216,78 @@ export async function SetNativeWindowControlsVisible(
   return false;
 }
 
+const normalizeSelectedOpenTargetIntent = (
+  payload: unknown,
+): SelectedOpenTargetIntent | null => {
+  if (payload === null || payload === undefined) {
+    return null;
+  }
+  if (typeof payload !== "object") {
+    throw new Error("Invalid open target payload.");
+  }
+
+  const record = payload as Record<string, unknown>;
+  if (record.kind === "openProject" && typeof record.projectPath === "string") {
+    return {
+      kind: "openProject",
+      projectPath: record.projectPath,
+      source: typeof record.source === "string" ? record.source : undefined,
+    };
+  }
+  if (record.kind === "openFile" && typeof record.path === "string") {
+    return {
+      kind: "openFile",
+      path: record.path,
+      line: typeof record.line === "number" ? record.line : undefined,
+      source: typeof record.source === "string" ? record.source : undefined,
+    };
+  }
+
+  throw new Error("Invalid open target payload.");
+};
+
+export async function SelectOpenTarget(
+  title: string,
+): Promise<SelectedOpenTargetIntent | null> {
+  const bridge = getFileDialogBridge();
+  if (bridge?.SelectOpenTarget) {
+    try {
+      return normalizeSelectedOpenTargetIntent(
+        await Promise.resolve(bridge.SelectOpenTarget(title)),
+      );
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  const runtimeModule = await loadRuntimeCallModule();
+  const callByName = runtimeModule?.Call?.ByName;
+  if (!callByName) {
+    throw new Error("Open target dialog bridge is unavailable.");
+  }
+
+  if (selectOpenTargetMethodName) {
+    try {
+      return normalizeSelectedOpenTargetIntent(
+        await callByName(selectOpenTargetMethodName, title),
+      );
+    } catch {
+      selectOpenTargetMethodName = undefined;
+    }
+  }
+
+  for (const methodName of selectOpenTargetMethodNames) {
+    try {
+      const result = await callByName(methodName, title);
+      selectOpenTargetMethodName = methodName;
+      return normalizeSelectedOpenTargetIntent(result);
+    } catch {
+      // Try the next known Wails v3 service namespace.
+    }
+  }
+
+  throw new Error("Open target dialog bridge is unavailable.");
+}
 export async function OpenProjectWindow(path: string): Promise<boolean> {
   const bridge = getProjectWindowBridge();
   if (bridge?.OpenProjectWindow) {

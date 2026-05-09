@@ -253,7 +253,7 @@ export const useMainLayoutKeyboardShortcuts = ({
 
         e.preventDefault();
         e.stopPropagation();
-        window.dispatchEvent(new Event("arlecchino:open-project"));
+        window.dispatchEvent(new Event("arlecchino:open"));
         return;
       }
 

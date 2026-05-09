@@ -86,6 +86,22 @@ func TestBuildApplicationMenuAddsViewFullscreenActions(t *testing.T) {
 	}
 }
 
+func TestBuildApplicationMenuAddsOpenAction(t *testing.T) {
+	app := NewApp()
+	menuModel := app.buildApplicationMenu(map[string][]string{
+		"project.open": {"cmd+o"},
+	})
+
+	fileMenu := findSubmenu(t, menuModel, "File")
+	assertMenuAccelerator(t, findMenuItem(t, fileMenu, "Open..."), "Cmd+O")
+	if findOptionalMenuItem(fileMenu, "Open File...") != nil {
+		t.Fatalf("File menu should use one Open action")
+	}
+	if findOptionalMenuItem(fileMenu, "Open Project...") != nil {
+		t.Fatalf("File menu should use one Open action")
+	}
+}
+
 func TestBuildApplicationMenuUsesUpdatedPanelAccelerators(t *testing.T) {
 	app := NewApp()
 	menuModel := app.buildApplicationMenu(map[string][]string{

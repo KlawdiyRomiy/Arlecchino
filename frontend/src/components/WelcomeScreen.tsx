@@ -3,14 +3,13 @@ import { motion } from "framer-motion";
 import { FolderOpen, GitBranch, Loader2, Sparkles } from "lucide-react";
 
 import * as App from "../wails/app";
-import { selectDirectoryWithCapability } from "../shell/shellDialogs";
 import { shortcuts } from "../utils/keyboard";
 import { toggleWindowFullscreen } from "../utils/windowFullscreen";
 import { CloneRepositoryDialog } from "./CloneRepositoryDialog";
 import { CreateProjectDialog } from "./CreateProjectDialog";
 import { WindowControls } from "./ui";
 
-const OPEN_PROJECT_EVENT = "arlecchino:open-project";
+const OPEN_TARGET_EVENT = "arlecchino:open";
 const NEW_PROJECT_EVENT = "arlecchino:new-project";
 
 interface Project {
@@ -58,7 +57,7 @@ const WelcomeScreen: React.FC<{
         !showCloneDialog
       ) {
         event.preventDefault();
-        void handleOpenProject();
+        handleOpenTarget();
         return;
       }
 
@@ -72,12 +71,6 @@ const WelcomeScreen: React.FC<{
       }
     };
 
-    const handleOpenProjectEvent = () => {
-      if (!showCreateDialog && !showCloneDialog) {
-        void handleOpenProject();
-      }
-    };
-
     const handleNewProjectEvent = () => {
       if (!showCloneDialog) {
         setShowCreateDialog(true);
@@ -85,12 +78,10 @@ const WelcomeScreen: React.FC<{
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
-    window.addEventListener(OPEN_PROJECT_EVENT, handleOpenProjectEvent);
     window.addEventListener(NEW_PROJECT_EVENT, handleNewProjectEvent);
 
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true);
-      window.removeEventListener(OPEN_PROJECT_EVENT, handleOpenProjectEvent);
       window.removeEventListener(NEW_PROJECT_EVENT, handleNewProjectEvent);
     };
   }, [showCreateDialog, showCloneDialog]);
@@ -104,18 +95,8 @@ const WelcomeScreen: React.FC<{
     }
   };
 
-  const handleOpenProject = async () => {
-    try {
-      const selectedPath = await selectDirectoryWithCapability(
-        "Choose project directory",
-        App.SelectDirectory,
-      );
-      if (selectedPath) {
-        onProjectOpen(selectedPath);
-      }
-    } catch (error) {
-      console.error("Error opening project:", error);
-    }
+  const handleOpenTarget = () => {
+    window.dispatchEvent(new Event(OPEN_TARGET_EVENT));
   };
 
   if (loading) {
@@ -177,7 +158,7 @@ const WelcomeScreen: React.FC<{
           <div className="px-6 py-6">
             <div className="grid gap-3 sm:grid-cols-3">
               <button
-                onClick={handleOpenProject}
+                onClick={handleOpenTarget}
                 className="flex items-center gap-3 rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-4 text-left transition-colors hover:border-[var(--border-default)] hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-primary)]">
@@ -185,10 +166,10 @@ const WelcomeScreen: React.FC<{
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium text-[var(--text-primary)]">
-                    Open Project
+                    Open...
                   </div>
                   <div className="mt-1 text-xs text-[var(--text-muted)]">
-                    Select a directory and load it into the workspace.
+                    Choose a project folder or file.
                   </div>
                 </div>
                 <span className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-2)] px-2 py-1 font-mono text-[10px] text-[var(--text-muted)]">

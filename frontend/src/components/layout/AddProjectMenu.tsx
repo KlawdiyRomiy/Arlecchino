@@ -1,12 +1,10 @@
 import React from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Plus, FolderOpen, Sparkles, GitBranch } from "lucide-react";
-import { SelectDirectory } from "../../wails/app";
-import { selectDirectoryWithCapability } from "../../shell/shellDialogs";
 import { CloneRepositoryDialog } from "../CloneRepositoryDialog";
 import { CreateProjectDialog } from "../CreateProjectDialog";
 
-const OPEN_PROJECT_EVENT = "arlecchino:open-project";
+const OPEN_TARGET_EVENT = "arlecchino:open";
 const NEW_PROJECT_EVENT = "arlecchino:new-project";
 
 interface AddProjectMenuProps {
@@ -21,36 +19,20 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
   const [showCreateDialog, setShowCreateDialog] = React.useState(false);
   const [showCloneDialog, setShowCloneDialog] = React.useState(false);
 
-  const handleOpenProject = async () => {
-    try {
-      const path = await selectDirectoryWithCapability(
-        "Choose project directory",
-        SelectDirectory,
-      );
-      if (path) onProjectOpen(path);
-    } catch (error) {
-      console.error("Error selecting directory:", error);
-    }
+  const handleOpenTarget = () => {
+    window.dispatchEvent(new Event(OPEN_TARGET_EVENT));
   };
 
   React.useEffect(() => {
-    const openProject = () => {
-      if (!showCreateDialog && !showCloneDialog) {
-        void handleOpenProject();
-      }
-    };
-
     const newProject = () => {
       if (!showCloneDialog) {
         setShowCreateDialog(true);
       }
     };
 
-    window.addEventListener(OPEN_PROJECT_EVENT, openProject);
     window.addEventListener(NEW_PROJECT_EVENT, newProject);
 
     return () => {
-      window.removeEventListener(OPEN_PROJECT_EVENT, openProject);
       window.removeEventListener(NEW_PROJECT_EVENT, newProject);
     };
   }, [showCreateDialog, showCloneDialog]);
@@ -75,11 +57,11 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
             data-shell-menu-content
           >
             <DropdownMenu.Item
-              onSelect={handleOpenProject}
+              onSelect={handleOpenTarget}
               className="shell-menu-item cursor-pointer text-[13px]"
             >
               <FolderOpen size={16} />
-              <span className="flex-1">Open Project</span>
+              <span className="flex-1">Open...</span>
               <span className="shell-kbd font-mono">⌘O</span>
             </DropdownMenu.Item>
 

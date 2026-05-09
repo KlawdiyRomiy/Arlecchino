@@ -10,7 +10,7 @@ import {
 import { isShortcutActionId, type ShortcutActionId } from "../utils/keyboard";
 import { toggleWindowFullscreen } from "../utils/windowFullscreen";
 
-const OPEN_PROJECT_EVENT = "arlecchino:open-project";
+const OPEN_TARGET_EVENT = "arlecchino:open";
 const NEW_PROJECT_EVENT = "arlecchino:new-project";
 
 interface WailsAppBridge {
@@ -78,7 +78,7 @@ export const useApplicationMenuBridge = (): void => {
           void toggleWindowFullscreen();
           return;
         case "project.open":
-          window.dispatchEvent(new Event(OPEN_PROJECT_EVENT));
+          window.dispatchEvent(new Event(OPEN_TARGET_EVENT));
           return;
         case "project.new":
           window.dispatchEvent(new Event(NEW_PROJECT_EVENT));

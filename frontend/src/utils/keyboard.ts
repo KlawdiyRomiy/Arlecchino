@@ -263,8 +263,8 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   },
   {
     id: "project.open",
-    label: "Open project",
-    description: "Open another project folder.",
+    label: "Open",
+    description: "Open a project folder or file.",
     group: "App",
     scope: "global",
     defaultShortcuts: ["cmd+o", "ctrl+o"],

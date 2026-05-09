@@ -97,7 +97,7 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.M
 
 	fileMenu := appMenu.AddSubmenu("File")
 	a.addMenuAction(fileMenu, "New Project", "project.new", shortcuts)
-	a.addMenuAction(fileMenu, "Open Project...", "project.open", shortcuts)
+	a.addMenuAction(fileMenu, "Open...", "project.open", shortcuts)
 
 	if stdRuntime.GOOS == "darwin" && application.Get() != nil {
 		appMenu.AddRole(application.EditMenu)

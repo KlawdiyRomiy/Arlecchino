@@ -218,6 +218,28 @@ func (a *App) SelectDirectory(title string) (string, error) {
 		PromptForSingleSelection()
 }
 
+func (a *App) SelectOpenTarget(title string) (map[string]any, error) {
+	if a == nil || a.wailsApp == nil {
+		return nil, fmt.Errorf("application is not initialized")
+	}
+	target, err := a.wailsApp.Dialog.OpenFile().
+		SetTitle(title).
+		CanChooseDirectories(true).
+		CanChooseFiles(true).
+		PromptForSingleSelection()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(target) == "" {
+		return nil, nil
+	}
+	payload, ok := inferOpenIntentFromLaunchTarget(target, currentWorkingDir(), 0)
+	if !ok {
+		return nil, fmt.Errorf("unsupported open target: %s", target)
+	}
+	return payload, nil
+}
+
 func (a *App) InspectProjectAccess(path string) ProjectAccessInspection {
 	inspection := ProjectAccessInspection{
 		Path:       strings.TrimSpace(path),

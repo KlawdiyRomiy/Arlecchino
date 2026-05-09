@@ -25,9 +25,66 @@
         <string>true</string>
         <key>NSHumanReadableCopyright</key>
         <string>{{.Info.Copyright}}</string>
-        {{if .Info.FileAssociations}}
         <key>CFBundleDocumentTypes</key>
         <array>
+          <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+              <string>go</string>
+              <string>ts</string>
+              <string>tsx</string>
+              <string>js</string>
+              <string>jsx</string>
+              <string>mjs</string>
+              <string>cjs</string>
+              <string>json</string>
+              <string>md</string>
+              <string>markdown</string>
+              <string>txt</string>
+              <string>css</string>
+              <string>html</string>
+              <string>yml</string>
+              <string>yaml</string>
+              <string>toml</string>
+              <string>xml</string>
+              <string>sql</string>
+              <string>py</string>
+              <string>rs</string>
+              <string>java</string>
+              <string>c</string>
+              <string>cpp</string>
+              <string>h</string>
+              <string>hpp</string>
+              <string>sh</string>
+              <string>zsh</string>
+              <string>bash</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>Arlecchino Source File</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+              <string>public.data</string>
+              <string>public.text</string>
+              <string>public.source-code</string>
+            </array>
+          </dict>
+          <dict>
+            <key>CFBundleTypeName</key>
+            <string>Arlecchino Folder</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+              <string>public.folder</string>
+            </array>
+          </dict>
+          {{if .Info.FileAssociations}}
           {{range .Info.FileAssociations}}
           <dict>
             <key>CFBundleTypeExtensions</key>
@@ -42,8 +99,8 @@
             <string>{{.IconName}}</string>
           </dict>
           {{end}}
+          {{end}}
         </array>
-        {{end}}
         {{if .Info.Protocols}}
         <key>CFBundleURLTypes</key>
         <array>
