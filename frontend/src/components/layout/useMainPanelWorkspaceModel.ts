@@ -110,10 +110,7 @@ export const useMainPanelWorkspaceModel = ({
     );
 
     const floatingPanelIds = (Object.keys(panelConfigs) as PanelId[]).filter(
-      (panelId) =>
-        !(tuiModeActive && panelId === "terminal") &&
-        panels[panelId] &&
-        panelConfigs[panelId].mode === "floating",
+      (panelId) => panels[panelId] && panelConfigs[panelId].mode === "floating",
     );
     const floatingBrowserPreviewWindows = workspacePreviewWindows.filter(
       (windowState) => windowState.mode === "floating",

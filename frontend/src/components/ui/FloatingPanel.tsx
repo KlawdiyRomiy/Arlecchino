@@ -160,6 +160,7 @@ export interface FloatingPanelProps {
   isVisible?: boolean;
   zIndex?: number;
   useViewportPositioning?: boolean;
+  immersiveOverlay?: boolean;
   hostMode?: "overlay" | "flow";
   snappedOverlayInsets?: { top: number; bottom: number };
   zenTopChromeAvoidanceTop?: number;
@@ -207,6 +208,7 @@ export const FloatingPanel = React.forwardRef<
       isVisible = true,
       zIndex: customZIndex,
       useViewportPositioning = false,
+      immersiveOverlay = false,
       hostMode = "overlay",
       snappedOverlayInsets,
       zenTopChromeAvoidanceTop = 0,
@@ -912,6 +914,24 @@ export const FloatingPanel = React.forwardRef<
     };
 
     const zenTopChromeAvoidanceOffset = getTopChromeAvoidanceOffset();
+    const viewportWidth =
+      typeof window === "undefined"
+        ? size.width
+        : screenToLogicalPixels(window.innerWidth, effectiveUiScale);
+    const viewportHeight =
+      typeof window === "undefined"
+        ? size.height
+        : screenToLogicalPixels(window.innerHeight, effectiveUiScale);
+    const immersiveOverlayCoversViewport =
+      immersiveOverlay &&
+      useViewportPositioning &&
+      mode === "floating" &&
+      x <= 1 &&
+      y <= 1 &&
+      x + size.width >= viewportWidth - 1 &&
+      y + size.height >= viewportHeight - 1;
+    const immersiveFrameActive =
+      immersiveOverlayCoversViewport && !isDragging && !isResizing;
 
     const getContainerStyle = (): React.CSSProperties => {
       const isSnapped = mode === "snapped";
@@ -925,7 +945,7 @@ export const FloatingPanel = React.forwardRef<
         isPinned;
       const shouldPromoteForMotion =
         mode === "snapped" && !reduceMotion && (!hasEntered || !isPresent);
-      const panelFrameRadius = "var(--radius-lg)";
+      const panelFrameRadius = immersiveFrameActive ? 0 : "var(--radius-lg)";
       const base: React.CSSProperties = {
         ...WAILS_NO_DRAG_STYLE,
         position: isFlowHosted
@@ -937,19 +957,22 @@ export const FloatingPanel = React.forwardRef<
               : "absolute",
         display: "flex",
         flexDirection: "column",
-        background:
-          "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 97%, transparent), color-mix(in srgb, var(--surface-shell-panel) 99%, transparent))",
+        background: immersiveFrameActive
+          ? "var(--terminal-bg)"
+          : "linear-gradient(180deg, color-mix(in srgb, var(--surface-shell-soft) 97%, transparent), color-mix(in srgb, var(--surface-shell-panel) 99%, transparent))",
         border: "1px solid var(--shell-border)",
         borderRadius: panelFrameRadius,
-        boxShadow: isSnapped
-          ? isActivePanel
-            ? "var(--shell-shadow-active)"
-            : "var(--shell-shadow)"
-          : isDragging
-            ? "var(--shadow-drag)"
-            : isResizing || isActivePanel
+        boxShadow: immersiveFrameActive
+          ? "none"
+          : isSnapped
+            ? isActivePanel
               ? "var(--shell-shadow-active)"
-              : "var(--shell-shadow)",
+              : "var(--shell-shadow)"
+            : isDragging
+              ? "var(--shadow-drag)"
+              : isResizing || isActivePanel
+                ? "var(--shell-shadow-active)"
+                : "var(--shell-shadow)",
         zIndex: isDragging
           ? 140
           : isRelocating
@@ -976,7 +999,9 @@ export const FloatingPanel = React.forwardRef<
             : "box-shadow 0.18s ease, border-color 0.18s ease",
       };
 
-      if (isDropTarget) {
+      if (immersiveFrameActive) {
+        base.border = "0";
+      } else if (isDropTarget) {
         base.border = "1px solid var(--accent-brand)";
         base.boxShadow =
           "inset 0 0 0 1px var(--accent-brand), inset 0 0 0 999px color-mix(in srgb, var(--accent-brand) 6%, transparent), var(--shadow-overlay)";
@@ -1311,10 +1336,25 @@ export const FloatingPanel = React.forwardRef<
       cursor: isDragging ? "grabbing" : "grab",
       boxShadow: "inset 0 1px 0 var(--shell-inner-highlight)",
       ...WAILS_NO_DRAG_STYLE,
+      ...(immersiveFrameActive
+        ? {
+            position: "absolute",
+            top: 0,
+            right: "8px",
+            height: "40px",
+            width: "160px",
+            padding: "0",
+            background: "transparent",
+            borderBottom: "0",
+            boxShadow: "none",
+            justifyContent: "flex-end",
+            zIndex: 80,
+          }
+        : null),
     };
 
     const titleStyle: React.CSSProperties = {
-      display: "flex",
+      display: immersiveFrameActive ? "none" : "flex",
       alignItems: "center",
       gap: "8px",
       fontSize: "11px",
@@ -1325,13 +1365,27 @@ export const FloatingPanel = React.forwardRef<
       pointerEvents: "none",
     };
 
+    const controlsBubbleStyle: React.CSSProperties = {
+      padding: "4px",
+      borderRadius: 9999,
+      background:
+        "color-mix(in srgb, var(--surface-shell-soft) 74%, transparent)",
+      border:
+        "1px solid color-mix(in srgb, var(--shell-border) 72%, transparent)",
+      boxShadow: "var(--shell-shadow)",
+      backdropFilter: "blur(12px)",
+      WebkitBackdropFilter: "blur(12px)",
+    };
+
     const controlsStyle: React.CSSProperties = {
       display: "flex",
       alignItems: "center",
       gap: "6px",
       position: "relative",
       zIndex: 40,
+      flexShrink: 0,
       ...WAILS_NO_DRAG_STYLE,
+      ...controlsBubbleStyle,
     };
 
     const closeButtonStyle: React.CSSProperties = {
@@ -1445,7 +1499,11 @@ export const FloatingPanel = React.forwardRef<
           <span>{title}</span>
         </div>
 
-        <div style={controlsStyle} data-panel-controls="true">
+        <div
+          style={controlsStyle}
+          data-panel-controls="true"
+          data-panel-controls-variant="bubble"
+        >
           {headerExtra}
 
           {onFullscreen && (
@@ -1531,6 +1589,7 @@ export const FloatingPanel = React.forwardRef<
         data-panel-position={position}
         data-panel-state={panelState}
         data-panel-motion={panelMotionState}
+        data-panel-immersive={immersiveFrameActive ? "true" : "false"}
         data-panel-relocating={isRelocating ? "true" : "false"}
         data-panel-zen-pinned={isZenPinned ? "true" : "false"}
         data-panel-top-chrome-avoidance={Math.round(

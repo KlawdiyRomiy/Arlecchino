@@ -293,7 +293,7 @@ const arlecchinoMatineeTerminal: ITheme = {
   blue: "#2E6F9E",
   magenta: "#8D4C78",
   cyan: "#247F77",
-  white: "#F5EFDF",
+  white: "#4F4B45",
   brightBlack: "#6F6B63",
   brightRed: "#D14A4B",
   brightGreen: "#3E9A72",
@@ -301,7 +301,7 @@ const arlecchinoMatineeTerminal: ITheme = {
   brightBlue: "#4D8CB8",
   brightMagenta: "#A96292",
   brightCyan: "#2FA79A",
-  brightWhite: "#FFFCF4",
+  brightWhite: "#1E1E1E",
 };
 
 const createThemeCssVariables = (
@@ -627,7 +627,7 @@ const lightTheme = createThemeDefinition({
     blue: "#2563eb",
     magenta: "#9333ea",
     cyan: "#0891b2",
-    white: "#f5f5f5",
+    white: "#525252",
     brightBlack: "#737373",
     brightRed: "#ef4444",
     brightGreen: "#22c55e",
@@ -635,7 +635,7 @@ const lightTheme = createThemeDefinition({
     brightBlue: "#3b82f6",
     brightMagenta: "#a855f7",
     brightCyan: "#06b6d4",
-    brightWhite: "#ffffff",
+    brightWhite: "#171717",
   },
   variableOptions: {
     gridLine: "rgba(0, 0, 0, 0.05)",

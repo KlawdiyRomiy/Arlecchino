@@ -188,6 +188,7 @@ export const MainLayoutPanelRenderer: React.FC<
       draggingPreviewWindowId !== null ||
       draggingFilePanel);
   const isFullscreen = isLogicalFullscreenPanel(config);
+  const isTUITerminalPanel = panelId === "terminal" && tuiModeActive;
 
   const getAdjacentPanels = () => {
     const adjacent: {
@@ -259,14 +260,39 @@ export const MainLayoutPanelRenderer: React.FC<
     onResizeStart: () => onPanelResizeStart(panelId),
     onResizeEnd: () => onPanelResizeEnd(panelId),
     onDragStart: onPanelDragStart,
-    onDragMove: onPanelDragMove,
-    onDragEnd: onPanelDragEnd,
-    onMoveToPosition: (position: PanelPosition) =>
-      onMovePanelToPosition(panelId, position),
+    onDragMove: (
+      draggedPanelId: string,
+      targetPosition: PanelPosition | null,
+    ) =>
+      onPanelDragMove(
+        draggedPanelId,
+        isTUITerminalPanel ? null : targetPosition,
+      ),
+    onDragEnd: (
+      draggedPanelId: string,
+      targetPosition: PanelPosition | null,
+      dropX?: number,
+      dropY?: number,
+      dropWidth?: number,
+      dropHeight?: number,
+    ) =>
+      onPanelDragEnd(
+        draggedPanelId,
+        isTUITerminalPanel ? null : targetPosition,
+        dropX,
+        dropY,
+        dropWidth,
+        dropHeight,
+      ),
+    onMoveToPosition: isTUITerminalPanel
+      ? undefined
+      : (position: PanelPosition) => onMovePanelToPosition(panelId, position),
     onClose: () => onClosePanel(panelId),
     isDropTarget,
     activeDropTargetPosition:
-      draggingPanel === panelId ? dropTargetPosition : null,
+      draggingPanel === panelId && !isTUITerminalPanel
+        ? dropTargetPosition
+        : null,
     adjacentPanels: getAdjacentPanels(),
     uiScale,
     isFullscreen,
@@ -315,6 +341,7 @@ export const MainLayoutPanelRenderer: React.FC<
           {...panelProps}
           onClose={onCloseTerminalPanel}
           useViewportPositioning={tuiModeActive}
+          immersiveOverlay={tuiModeActive}
           zIndex={terminalZIndex}
           onFullscreen={onTerminalFullscreen}
         >

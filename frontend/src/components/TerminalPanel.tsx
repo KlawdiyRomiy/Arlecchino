@@ -927,8 +927,19 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       const session = getSession(tabId);
       if (!session) return;
 
+      const stretchTerminalElement = () => {
+        const element = session.terminal.element;
+        if (!element) {
+          return;
+        }
+
+        element.style.width = "100%";
+        element.style.height = "100%";
+      };
+
       const existingXterm = container.querySelector(".xterm");
       if (existingXterm) {
+        stretchTerminalElement();
         requestAnimationFrame(() => {
           session.fitAddon.fit();
         });
@@ -940,6 +951,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
         if (termElement.parentElement !== container) {
           container.appendChild(termElement);
         }
+        stretchTerminalElement();
         requestAnimationFrame(() => {
           session.fitAddon.fit();
           session.terminal.focus();
@@ -948,6 +960,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       }
 
       session.terminal.open(container);
+      stretchTerminalElement();
 
       requestAnimationFrame(() => {
         session.fitAddon.fit();
@@ -1055,37 +1068,51 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
         cancelAnimationFrame(resizeFrame);
       }
     };
-  }, [sessions, panes]);
+  }, [sessions, panes, tuiModeActive]);
 
   useEffect(() => {
     if (!tuiModeActive) {
       return;
     }
 
-    const raf = requestAnimationFrame(() => {
-      panesForRender.forEach((pane) => {
-        const tabId = pane.activeTabId;
-        if (!tabId) {
-          return;
-        }
+    let raf = 0;
+    const timers: number[] = [];
 
-        const session = sessions.get(tabId);
-        const container = containerRefs.current.get(tabId);
-        if (
-          !session ||
-          !container ||
-          container.offsetWidth <= 0 ||
-          container.offsetHeight <= 0
-        ) {
-          return;
-        }
+    const fitActiveTUIPane = () => {
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        panesForRender.forEach((pane) => {
+          const tabId = pane.activeTabId;
+          if (!tabId) {
+            return;
+          }
 
-        session.fitAddon.fit();
+          const session = sessions.get(tabId);
+          const container = containerRefs.current.get(tabId);
+          if (
+            !session ||
+            !container ||
+            container.offsetWidth <= 0 ||
+            container.offsetHeight <= 0
+          ) {
+            return;
+          }
+
+          session.fitAddon.fit();
+        });
       });
+    };
+
+    fitActiveTUIPane();
+    [60, 180, 360].forEach((delay) => {
+      timers.push(window.setTimeout(fitActiveTUIPane, delay));
     });
 
     return () => {
-      cancelAnimationFrame(raf);
+      if (raf !== 0) {
+        cancelAnimationFrame(raf);
+      }
+      timers.forEach((timer) => window.clearTimeout(timer));
     };
   }, [panesForRender, sessions, tuiModeActive]);
 
@@ -1097,17 +1124,51 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     splitPane(direction, resolvedThemeId);
   };
 
-  const tabBarStyle: React.CSSProperties = {
+  const terminalChromeBubbleStyle: React.CSSProperties = {
+    borderRadius: 9999,
+    background:
+      "color-mix(in srgb, var(--surface-shell-soft) 74%, transparent)",
+    border:
+      "1px solid color-mix(in srgb, var(--shell-border) 72%, transparent)",
+    boxShadow: "var(--shell-shadow)",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+  };
+
+  const tabBarStyle: React.CSSProperties = tuiModeActive
+    ? {
+        display: "flex",
+        alignItems: "center",
+        alignSelf: "flex-start",
+        gap: "8px",
+        maxWidth: "calc(100% - 184px)",
+        margin: "8px 0 0 8px",
+        padding: 0,
+        overflowX: "auto",
+        position: "relative",
+        zIndex: 70,
+      }
+    : {
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        padding: "8px 12px",
+        backgroundColor: "var(--surface-2)",
+        borderBottom: `1px solid var(--border-subtle)`,
+        overflowX: "auto",
+      };
+
+  const terminalControlsBubbleStyle: React.CSSProperties = {
+    ...terminalChromeBubbleStyle,
     display: "flex",
     alignItems: "center",
-    gap: "4px",
-    padding: "6px 12px",
-    backgroundColor: "var(--surface-2)",
-    borderBottom: `1px solid var(--border-subtle)`,
-    overflowX: "auto",
+    gap: "6px",
+    padding: "4px",
+    flexShrink: 0,
   };
 
   const tabStyle = (isActive: boolean): React.CSSProperties => ({
+    ...terminalChromeBubbleStyle,
     display: "flex",
     alignItems: "center",
     gap: "8px",
@@ -1116,21 +1177,25 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     fontFamily: "'JetBrains Mono', monospace",
     fontWeight: isActive ? 500 : 400,
     color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
-    backgroundColor: isActive ? "var(--surface-1)" : "transparent",
-    borderRadius: 10,
+    backgroundColor: isActive
+      ? "color-mix(in srgb, var(--surface-shell-soft) 84%, transparent)"
+      : "color-mix(in srgb, var(--surface-shell-soft) 58%, transparent)",
+    borderRadius: 9999,
     cursor: "pointer",
     transition:
       "background-color 150ms ease, color 150ms ease, border-color 150ms ease",
-    border: `1px solid ${isActive ? "var(--border-default)" : "transparent"}`,
+    border: `1px solid color-mix(in srgb, var(--shell-border) ${
+      isActive ? "82%" : "58%"
+    }, transparent)`,
   });
 
   const closeTabBtnStyle: React.CSSProperties = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    width: "16px",
-    height: "16px",
-    borderRadius: "4px",
+    width: "20px",
+    height: "20px",
+    borderRadius: 9999,
     backgroundColor: "transparent",
     border: "1px solid transparent",
     color: "var(--text-muted)",
@@ -1146,12 +1211,11 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     justifyContent: "center",
     width: "28px",
     height: "28px",
-    borderRadius: 6,
-    backgroundColor: "var(--surface-1)",
-    border: `1px solid var(--border-subtle)`,
+    borderRadius: 9999,
+    backgroundColor: "transparent",
+    border: "1px solid transparent",
     color: "var(--text-secondary)",
     cursor: "pointer",
-    marginLeft: "4px",
     transition:
       "background-color 150ms ease, color 150ms ease, border-color 150ms ease",
   };
@@ -1159,6 +1223,18 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   const addTabBtnStyle: React.CSSProperties = {
     ...actionBtnStyle,
     color: "var(--text-primary)",
+  };
+
+  const emptyTerminalButtonStyle: React.CSSProperties = {
+    ...terminalChromeBubbleStyle,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "8px",
+    width: "auto",
+    height: "auto",
+    padding: "7px 12px",
+    color: "var(--text-primary)",
+    cursor: "pointer",
   };
 
   const copyTerminalSelection = async (tabId: string) => {
@@ -1335,7 +1411,50 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     const semanticEntries = activeTabId
       ? (sessionSemanticEntries.get(activeTabId) ?? [])
       : [];
-    const visibleSemanticEntries = semanticEntries.slice(-5).reverse();
+    const visibleSemanticEntries = semanticEntries
+      .filter((entry) => {
+        if (entry.kind === "file_ref") {
+          return entry.path.trim() !== "";
+        }
+        if (entry.kind === "preview_url") {
+          return entry.message.trim() !== "";
+        }
+        if (entry.kind === "image_ref") {
+          return entry.imageDataUrl !== "";
+        }
+        return false;
+      })
+      .slice(-5)
+      .reverse();
+    const terminalActionButtons = (
+      <>
+        <button
+          style={addTabBtnStyle}
+          onClick={() => createTerminal(pane.id, resolvedThemeId)}
+          title="New Terminal"
+        >
+          <Plus size={14} />
+        </button>
+        {panesForRender.length === 1 && (
+          <>
+            <button
+              style={actionBtnStyle}
+              onClick={() => handleSplitPane("horizontal")}
+              title="Split Horizontally"
+            >
+              <SplitSquareVertical size={14} />
+            </button>
+            <button
+              style={actionBtnStyle}
+              onClick={() => handleSplitPane("vertical")}
+              title="Split Vertically"
+            >
+              <SplitSquareHorizontal size={14} />
+            </button>
+          </>
+        )}
+      </>
+    );
 
     return (
       <div
@@ -1357,7 +1476,12 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
         }}
         onClick={() => setActivePane(pane.id)}
       >
-        <div style={tabBarStyle}>
+        <div
+          style={tabBarStyle}
+          data-testid="terminal-tab-bar"
+          data-terminal-tabbar-immersive={tuiModeActive ? "true" : "false"}
+          data-terminal-tabbar-variant="split-bubbles"
+        >
           {pane.tabIds.map((tabId) => {
             const session = sessions.get(tabId);
             if (!session) return null;
@@ -1372,6 +1496,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
               >
                 <div
                   style={tabStyle(tabId === activeTabId)}
+                  data-terminal-tab-variant="bubble"
                   onClick={() => {
                     setActiveTab(pane.id, tabId);
                     requestAnimationFrame(() => {
@@ -1387,6 +1512,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
                       e.stopPropagation();
                       handleCloseTab(pane.id, tabId);
                     }}
+                    title="Close Terminal"
                   >
                     <X size={12} />
                   </button>
@@ -1394,31 +1520,12 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
               </ContextActionMenu>
             );
           })}
-          <button
-            style={addTabBtnStyle}
-            onClick={() => createTerminal(pane.id, resolvedThemeId)}
-            title="New Terminal"
+          <div
+            style={terminalControlsBubbleStyle}
+            data-terminal-controls-variant="bubble"
           >
-            <Plus size={14} />
-          </button>
-          {panesForRender.length === 1 && (
-            <>
-              <button
-                style={actionBtnStyle}
-                onClick={() => handleSplitPane("horizontal")}
-                title="Split Horizontally"
-              >
-                <SplitSquareVertical size={14} />
-              </button>
-              <button
-                style={actionBtnStyle}
-                onClick={() => handleSplitPane("vertical")}
-                title="Split Vertically"
-              >
-                <SplitSquareHorizontal size={14} />
-              </button>
-            </>
-          )}
+            {terminalActionButtons}
+          </div>
         </div>
 
         <ContextActionMenu
@@ -1431,10 +1538,13 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
             style={{
               flex: 1,
               minHeight: 0,
-              backgroundColor: "var(--surface-canvas)",
-              display: pane.tabIds.length > 0 ? "block" : "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              backgroundColor: tuiModeActive
+                ? "var(--terminal-bg)"
+                : "var(--surface-canvas)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: pane.tabIds.length > 0 ? "stretch" : "center",
+              justifyContent: pane.tabIds.length > 0 ? "stretch" : "center",
             }}
           >
             {pane.tabIds.map((tabId) => (
@@ -1450,9 +1560,12 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
                 }}
                 style={{
                   width: "100%",
-                  height: "100%",
+                  height: tabId === activeTabId ? undefined : "100%",
+                  flex: tabId === activeTabId ? 1 : undefined,
+                  minHeight: 0,
+                  minWidth: 0,
                   display: tabId === activeTabId ? "block" : "none",
-                  padding: "4px",
+                  padding: tuiModeActive ? 0 : "4px",
                   position: "relative",
                 }}
               />
@@ -1465,7 +1578,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
                 <button
                   type="button"
                   onClick={() => createTerminal(pane.id, resolvedThemeId)}
-                  style={addTabBtnStyle}
+                  style={emptyTerminalButtonStyle}
                 >
                   <Plus size={13} />
                   New terminal

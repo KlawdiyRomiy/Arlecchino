@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"net"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -237,10 +238,12 @@ func (p *semanticParser) parseSemanticsFromText(text []byte) []SemanticEvent {
 func parseLineSemanticEvents(line string) []SemanticEvent {
 	events := make([]SemanticEvent, 0, 2)
 
-	if errorRegex.MatchString(line) {
-		events = append(events, SemanticEvent{Kind: "trigger", Severity: "error", Message: line})
-	} else if warnRegex.MatchString(line) {
-		events = append(events, SemanticEvent{Kind: "trigger", Severity: "warning", Message: line})
+	if !isNoisyTerminalStatusLine(line) {
+		if errorRegex.MatchString(line) {
+			events = append(events, SemanticEvent{Kind: "trigger", Severity: "error", Message: line})
+		} else if warnRegex.MatchString(line) {
+			events = append(events, SemanticEvent{Kind: "trigger", Severity: "warning", Message: line})
+		}
 	}
 
 	matches := fileRefRegex.FindAllStringSubmatch(line, -1)
@@ -250,6 +253,10 @@ func parseLineSemanticEvents(line string) []SemanticEvent {
 		}
 
 		path := match[1]
+		if isLikelyHostReference(path) {
+			continue
+		}
+
 		lineNumber, err := strconv.Atoi(match[2])
 		if err != nil || lineNumber <= 0 {
 			continue
@@ -281,4 +288,32 @@ func parseLineSemanticEvents(line string) []SemanticEvent {
 	}
 
 	return events
+}
+
+func isLikelyHostReference(path string) bool {
+	normalized := strings.Trim(path, "[]/\\")
+	return net.ParseIP(normalized) != nil
+}
+
+func isNoisyTerminalStatusLine(line string) bool {
+	lower := strings.ToLower(line)
+	if strings.Contains(lower, "mcp client for") && strings.Contains(lower, "failed to start") {
+		return true
+	}
+
+	noiseFragments := []string{
+		"mcp startup failed",
+		"handshaking with mcp server failed",
+		"streamablehttpclientadapter",
+		"send initialize",
+		"deserialize error",
+		"unexpected content type",
+	}
+	for _, fragment := range noiseFragments {
+		if strings.Contains(lower, fragment) {
+			return true
+		}
+	}
+
+	return false
 }

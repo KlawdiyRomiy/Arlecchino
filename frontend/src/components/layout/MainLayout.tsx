@@ -14,7 +14,6 @@ import { PanelDropZone } from "./PanelDropZone";
 import { ProjectEntryDialogs } from "./ProjectEntryDialogs";
 import { ProjectPathCopyConfirmation } from "./ProjectPathCopyConfirmation";
 import { PreviewWindowPanelRenderer } from "./PreviewWindowPanelRenderer";
-import { TUITerminalWorkspaceContent } from "./TUITerminalWorkspaceContent";
 import { useTheme } from "../../hooks/useTheme";
 import { useBrowserPreviewBridge } from "../../hooks/useBrowserPreviewBridge";
 import { usePreviewableContext } from "../../hooks/usePreviewableContext";
@@ -206,6 +205,8 @@ const ZEN_TOP_CHROME_INTERACTIVE_SELECTOR = [
 ].join(",");
 const MARKDOWN_LINK_PREVIEW_WINDOW_ID = "markdown-link-preview";
 const NATIVE_FULLSCREEN_CHANGED_EVENT = "shell:native-fullscreen-changed";
+const NATIVE_WINDOW_CONTROLS_OCCLUSION_WIDTH = 112;
+const NATIVE_WINDOW_CONTROLS_OCCLUSION_HEIGHT = 56;
 type FullscreenPanelId =
   | "terminal"
   | "aiChat"
@@ -975,12 +976,32 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setTUIAssist({ active: false, panel: null, anchor: "right" });
 
       if (tuiLayoutSnapshot) {
-        const normalizedSnapshot = normalizeHydratedPanelLayoutState(
-          shouldHideTerminalPanel
-            ? { ...tuiLayoutSnapshot.panels, terminal: false }
-            : tuiLayoutSnapshot.panels,
+        const restoredPanels = shouldHideTerminalPanel
+          ? { ...tuiLayoutSnapshot.panels, terminal: false }
+          : { ...tuiLayoutSnapshot.panels };
+        const restoredPanelConfigs = clonePanelConfigs(
           tuiLayoutSnapshot.panelConfigs,
-          tuiLayoutSnapshot.rememberedSnappedPositions,
+        );
+        const restoredRememberedSnappedPositions =
+          cloneRememberedSnappedPositions(
+            tuiLayoutSnapshot.rememberedSnappedPositions,
+          );
+
+        (Object.keys(panels) as PanelId[]).forEach((panelId) => {
+          if (panelId === "terminal" || !panels[panelId]) {
+            return;
+          }
+
+          restoredPanels[panelId] = true;
+          restoredPanelConfigs[panelId] = panelConfigs[panelId];
+          restoredRememberedSnappedPositions[panelId] =
+            rememberedSnappedPositions[panelId];
+        });
+
+        const normalizedSnapshot = normalizeHydratedPanelLayoutState(
+          restoredPanels,
+          restoredPanelConfigs,
+          restoredRememberedSnappedPositions,
         );
         applyPanelsState(normalizedSnapshot.panels);
         applyPanelConfigsState(normalizedSnapshot.panelConfigs);
@@ -4836,7 +4857,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         zenTopChromePointerInside ||
         zenTopChromeOccludedHeaderActive));
   const zenBottomChromeVisible = !zenModeEnabled || zenBottomChromeHovered;
-  const nativeWindowControlsVisible = zenTopChromeVisible;
+  const terminalPanelConfig = panelConfigs.terminal;
+  const tuiTerminalOccludesNativeWindowControls =
+    tuiModeActive &&
+    panels.terminal &&
+    terminalPanelConfig.mode === "floating" &&
+    terminalPanelConfig.x < NATIVE_WINDOW_CONTROLS_OCCLUSION_WIDTH &&
+    terminalPanelConfig.y < NATIVE_WINDOW_CONTROLS_OCCLUSION_HEIGHT &&
+    terminalPanelConfig.x + terminalPanelConfig.size.width > 0 &&
+    terminalPanelConfig.y + terminalPanelConfig.size.height > 0;
+  const nativeWindowControlsVisible =
+    zenTopChromeVisible && !tuiTerminalOccludesNativeWindowControls;
   const nativeWindowControlsBackdropVisible =
     nativeWindowControlsVisible && !nativeWindowFullscreen;
   const zenTopChromeAvoidanceTop =
@@ -5396,6 +5427,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const tuiTerminalPaneStyle: React.CSSProperties = {
     flex: 1,
+    width: "100%",
+    height: "100%",
     minWidth: 0,
     minHeight: 0,
     display: "flex",
@@ -5408,51 +5441,35 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const workspaceLayoutMotionEnabled = false;
   const panelLayoutChanging =
     panelDropSettling || panelExitPositions.length > 0;
-  const workspaceEditorContent = tuiModeActive ? (
-    <TUITerminalWorkspaceContent
-      paneStyle={tuiTerminalPaneStyle}
-      onOpenFileRef={(path, line) => {
-        void openFileFromPath(path, line);
-      }}
-      onOpenPreviewUrl={(url, sessionId) => {
-        openPreviewFromTerminal({
-          url,
-          sessionId,
-          forceOpen: true,
-        });
-      }}
-    />
-  ) : (
-    React.cloneElement(
-      children as React.ReactElement<{
-        markdownPreviewOpen?: boolean;
-        onToggleProblems?: () => void;
-        onToggleMarkdownPreview?: () => void;
-        onMarkdownPreviewSourceChange?: (
-          source: MarkdownPreviewSource | null,
-        ) => void;
-        onPerspectiveOpen?: () => void;
-        onPerspectiveClose?: () => void;
-        onEditorFileOpenReady?: MainEditorFileOpenRegistrar;
-        onDirtyEditorFlushReady?: MainEditorDirtyFlushRegistrar;
-        onFileOpenInPanel?: typeof handleFileOpenInPanel;
-        onPanelSnapDragStart?: typeof handleFilePanelSnapDragStart;
-        onPanelSnapDragMove?: typeof handleFilePanelSnapDragMove;
-        onPanelSnapDragEnd?: typeof handleFilePanelSnapDragEnd;
-      }>,
-      {
-        markdownPreviewOpen: panels.markdownPreview,
-        onToggleProblems: () => togglePanel("problems"),
-        onToggleMarkdownPreview: handleToggleMarkdownPreview,
-        onMarkdownPreviewSourceChange: handleMarkdownPreviewSourceChange,
-        onPerspectiveOpen: handlePerspectiveOpen,
-        onPerspectiveClose: handlePerspectiveClose,
-        onEditorFileOpenReady: registerEditorFileOpenHandler,
-        onDirtyEditorFlushReady: registerDirtyEditorFlushHandler,
-        onFileOpenInPanel: handleFileOpenInPanel,
-        ...filePanelSnapDrag,
-      },
-    )
+  const workspaceEditorContent = React.cloneElement(
+    children as React.ReactElement<{
+      markdownPreviewOpen?: boolean;
+      onToggleProblems?: () => void;
+      onToggleMarkdownPreview?: () => void;
+      onMarkdownPreviewSourceChange?: (
+        source: MarkdownPreviewSource | null,
+      ) => void;
+      onPerspectiveOpen?: () => void;
+      onPerspectiveClose?: () => void;
+      onEditorFileOpenReady?: MainEditorFileOpenRegistrar;
+      onDirtyEditorFlushReady?: MainEditorDirtyFlushRegistrar;
+      onFileOpenInPanel?: typeof handleFileOpenInPanel;
+      onPanelSnapDragStart?: typeof handleFilePanelSnapDragStart;
+      onPanelSnapDragMove?: typeof handleFilePanelSnapDragMove;
+      onPanelSnapDragEnd?: typeof handleFilePanelSnapDragEnd;
+    }>,
+    {
+      markdownPreviewOpen: panels.markdownPreview,
+      onToggleProblems: () => togglePanel("problems"),
+      onToggleMarkdownPreview: handleToggleMarkdownPreview,
+      onMarkdownPreviewSourceChange: handleMarkdownPreviewSourceChange,
+      onPerspectiveOpen: handlePerspectiveOpen,
+      onPerspectiveClose: handlePerspectiveClose,
+      onEditorFileOpenReady: registerEditorFileOpenHandler,
+      onDirtyEditorFlushReady: registerDirtyEditorFlushHandler,
+      onFileOpenInPanel: handleFileOpenInPanel,
+      ...filePanelSnapDrag,
+    },
   );
 
   return (
@@ -5461,6 +5478,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         style={containerStyle}
         data-testid="main-layout"
         data-tui-session-id={tuiActiveSessionId || ""}
+        data-tui-terminal-occludes-native-controls={
+          tuiTerminalOccludesNativeWindowControls ? "true" : "false"
+        }
         data-zen-mode={zenModeEnabled ? "true" : "false"}
         data-zen-topbar-visible={zenTopChromeVisible ? "true" : "false"}
         data-zen-statusbar-visible={zenBottomChromeVisible ? "true" : "false"}
@@ -5556,9 +5576,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               normalWorkspaceStyle={normalWorkspaceStyle}
               centerWorkspaceStyle={centerWorkspaceStyle}
               editorAreaStyle={editorAreaStyle}
-              editorAreaTestId={
-                tuiModeActive ? "tui-center-terminal" : "editor-area"
-              }
+              editorAreaTestId="editor-area"
               editorContent={workspaceEditorContent}
               panelLayoutChanging={panelLayoutChanging}
               panelDropSettling={panelDropSettling}
