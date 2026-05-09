@@ -23,6 +23,14 @@ interface NativeWindowControlsBridge {
   ) => Promise<boolean> | boolean;
 }
 
+export type ApplicationIconAppearance = "system" | "light" | "dark";
+
+interface ApplicationIconBridge {
+  SetApplicationIconAppearance?: (
+    appearance: ApplicationIconAppearance,
+  ) => Promise<boolean> | boolean;
+}
+
 interface ProjectWindowBridge {
   OpenProjectWindow?: (path: string) => Promise<unknown> | unknown;
   OpenProjectWindowSession?: (
@@ -73,6 +81,11 @@ const nativeWindowControlsPositionMethodNames = [
   "arlecchino.App.PositionNativeWindowControls",
 ] as const;
 
+const applicationIconMethodNames = [
+  "main.App.SetApplicationIconAppearance",
+  "arlecchino.App.SetApplicationIconAppearance",
+] as const;
+
 const projectWindowMethodNames = [
   "main.App.OpenProjectWindow",
   "arlecchino.App.OpenProjectWindow",
@@ -109,6 +122,9 @@ let nativeWindowControlsMethodName:
 let nativeWindowControlsPositionMethodName:
   | (typeof nativeWindowControlsPositionMethodNames)[number]
   | undefined;
+let applicationIconMethodName:
+  | (typeof applicationIconMethodNames)[number]
+  | undefined;
 let projectWindowMethodName:
   | (typeof projectWindowMethodNames)[number]
   | undefined;
@@ -138,6 +154,18 @@ const getNativeWindowControlsBridge = ():
   return (
     window as unknown as {
       go?: { main?: { App?: NativeWindowControlsBridge } };
+    }
+  ).go?.main?.App;
+};
+
+const getApplicationIconBridge = (): ApplicationIconBridge | undefined => {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (
+    window as unknown as {
+      go?: { main?: { App?: ApplicationIconBridge } };
     }
   ).go?.main?.App;
 };
@@ -283,6 +311,51 @@ export async function PositionNativeWindowControls(
     try {
       const result = await callByName(methodName, ...args);
       nativeWindowControlsPositionMethodName = methodName;
+      return Boolean(result);
+    } catch {
+      // Try the next known Wails v3 service namespace.
+    }
+  }
+
+  return false;
+}
+
+export async function SetApplicationIconAppearance(
+  appearance: ApplicationIconAppearance,
+): Promise<boolean> {
+  const bridge = getApplicationIconBridge();
+  if (bridge?.SetApplicationIconAppearance) {
+    try {
+      return Boolean(
+        await Promise.resolve(bridge.SetApplicationIconAppearance(appearance)),
+      );
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  const runtimeModule = await loadRuntimeCallModule();
+  if (!runtimeModule) {
+    return false;
+  }
+
+  const callByName = runtimeModule.Call?.ByName;
+  if (!callByName) {
+    return false;
+  }
+
+  if (applicationIconMethodName) {
+    try {
+      return Boolean(await callByName(applicationIconMethodName, appearance));
+    } catch {
+      applicationIconMethodName = undefined;
+    }
+  }
+
+  for (const methodName of applicationIconMethodNames) {
+    try {
+      const result = await callByName(methodName, appearance);
+      applicationIconMethodName = methodName;
       return Boolean(result);
     } catch {
       // Try the next known Wails v3 service namespace.

@@ -405,6 +405,56 @@ test("appearance tab persists Project opening mode", async ({ page }) => {
     .toBe("projects");
 });
 
+test("appearance tab persists app icon appearance", async ({ page }) => {
+  await mountProjectUI(page);
+  await clearAppCalls(page);
+  await openAppearance(page);
+
+  const appIconGroup = page.getByRole("group", {
+    name: "App icon appearance",
+  });
+  const systemButton = appIconGroup.getByRole("button", { name: "System" });
+  const lightButton = appIconGroup.getByRole("button", { name: "Light" });
+  const darkButton = appIconGroup.getByRole("button", { name: "Dark" });
+
+  await expect(systemButton).toHaveAttribute("aria-pressed", "true");
+  await expect(lightButton).toHaveAttribute("aria-pressed", "false");
+  await expect(darkButton).toHaveAttribute("aria-pressed", "false");
+
+  await darkButton.click();
+  await expect(systemButton).toHaveAttribute("aria-pressed", "false");
+  await expect(darkButton).toHaveAttribute("aria-pressed", "true");
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const rawSettings = localStorage.getItem("editor-settings");
+        if (!rawSettings) return null;
+        return JSON.parse(rawSettings).state.appIconAppearance;
+      }),
+    )
+    .toBe("dark");
+  await expect
+    .poll(async () => {
+      const calls = await getAppCalls(page);
+      return calls.some(
+        (call) =>
+          call.method === "SetApplicationIconAppearance" &&
+          call.args[0] === "dark",
+      );
+    })
+    .toBe(true);
+
+  await page.reload();
+  await mountProjectUI(page);
+  await openAppearance(page);
+  const reloadedGroup = page.getByRole("group", {
+    name: "App icon appearance",
+  });
+  await expect(
+    reloadedGroup.getByRole("button", { name: "Dark" }),
+  ).toHaveAttribute("aria-pressed", "true");
+});
+
 test("Cmd+Backquote switches projects or yields to native windows by setting", async ({
   page,
 }) => {

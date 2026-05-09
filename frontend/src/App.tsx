@@ -113,6 +113,9 @@ const App: React.FC = () => {
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const uiFontFamily = useEditorSettingsStore((state) => state.uiFontFamily);
   const customFonts = useEditorSettingsStore((state) => state.customFonts);
+  const appIconAppearance = useEditorSettingsStore(
+    (state) => state.appIconAppearance,
+  );
   const { theme: currentTheme } = useTheme();
   const activeProject = useWorkspaceStore((state) =>
     state.projects.find((project) => project.id === state.activeId),
@@ -126,6 +129,12 @@ const App: React.FC = () => {
   const isDetachedHost = isDetachedAppletHostRoute();
 
   useEffect(() => startAdaptivePerformanceMonitor(), []);
+
+  useEffect(() => {
+    void AppFunctions.SetApplicationIconAppearance(appIconAppearance).catch(
+      () => undefined,
+    );
+  }, [appIconAppearance]);
 
   useEffect(() => {
     document.documentElement.style.setProperty(

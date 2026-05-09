@@ -9,6 +9,7 @@ import {
 } from "../utils/uiScale";
 
 export type ProjectWindowMode = "projects" | "windows";
+export type AppIconAppearance = "system" | "light" | "dark";
 export const TOPBAR_ITEM_IDS = [
   "explorer",
   "search",
@@ -83,6 +84,7 @@ interface EditorSettingsState {
   topbarItemOrder: TopbarItemId[];
   zenModeEnabled: boolean;
   projectWindowMode: ProjectWindowMode;
+  appIconAppearance: AppIconAppearance;
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
@@ -103,6 +105,7 @@ interface EditorSettingsState {
   resetTopbarItemOrder: () => void;
   setZenModeEnabled: (value: boolean) => void;
   setProjectWindowMode: (value: ProjectWindowMode) => void;
+  setAppIconAppearance: (value: AppIconAppearance) => void;
   toggleZenMode: () => void;
 }
 
@@ -125,6 +128,7 @@ const DEFAULT_SHOW_OPERATOR_LIGATURES = true;
 const DEFAULT_SHOW_TOPBAR_PROJECT_PATH = true;
 const DEFAULT_ZEN_MODE_ENABLED = false;
 const DEFAULT_PROJECT_WINDOW_MODE: ProjectWindowMode = "projects";
+const DEFAULT_APP_ICON_APPEARANCE: AppIconAppearance = "system";
 
 type PersistedEditorSettingsState = Partial<
   Pick<
@@ -143,6 +147,7 @@ type PersistedEditorSettingsState = Partial<
     | "topbarItemOrder"
     | "zenModeEnabled"
     | "projectWindowMode"
+    | "appIconAppearance"
   >
 >;
 
@@ -209,6 +214,9 @@ const normalizeCustomFonts = (fonts: unknown): CustomFontFaceDefinition[] => {
 
 const isProjectWindowMode = (value: unknown): value is ProjectWindowMode =>
   value === "projects" || value === "windows";
+
+const isAppIconAppearance = (value: unknown): value is AppIconAppearance =>
+  value === "system" || value === "light" || value === "dark";
 
 const migratedProjectWindowMode = (
   value: unknown,
@@ -298,6 +306,10 @@ const sanitizePersistedEditorSettings = (
     nextState.projectWindowMode = projectWindowMode;
   }
 
+  if (isAppIconAppearance(persistedState.appIconAppearance)) {
+    nextState.appIconAppearance = persistedState.appIconAppearance;
+  }
+
   return nextState;
 };
 
@@ -335,6 +347,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       topbarItemOrder: [...DEFAULT_TOPBAR_ITEM_ORDER],
       zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
       projectWindowMode: DEFAULT_PROJECT_WINDOW_MODE,
+      appIconAppearance: DEFAULT_APP_ICON_APPEARANCE,
 
       zoomIn: () =>
         set((state) => ({
@@ -427,6 +440,9 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setProjectWindowMode: (value) =>
         set(() => ({ projectWindowMode: value })),
+
+      setAppIconAppearance: (value) =>
+        set(() => ({ appIconAppearance: value })),
 
       toggleZenMode: () =>
         set((state) => ({ zenModeEnabled: !state.zenModeEnabled })),

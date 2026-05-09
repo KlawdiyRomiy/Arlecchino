@@ -52,6 +52,7 @@ import {
   DEFAULT_EDITOR_FONT_FAMILY,
   DEFAULT_UI_FONT_FAMILY,
   useEditorSettingsStore,
+  type AppIconAppearance,
   type CustomFontFaceDefinition,
   type ProjectWindowMode,
 } from "../stores/editorSettingsStore";
@@ -156,6 +157,28 @@ const projectWindowModeOptions: Array<{
     value: "windows",
     label: "Windows",
     description: "Open each project in a separate macOS window.",
+  },
+];
+
+const appIconAppearanceOptions: Array<{
+  value: AppIconAppearance;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "system",
+    label: "System",
+    description: "Use the macOS icon style chosen in System Settings.",
+  },
+  {
+    value: "light",
+    label: "Light",
+    description: "Use the light app icon while Arlecchino is running.",
+  },
+  {
+    value: "dark",
+    label: "Dark",
+    description: "Use the dark app icon while Arlecchino is running.",
   },
 ];
 
@@ -495,6 +518,46 @@ const ProjectOpeningModeControl: React.FC<{
   </div>
 );
 
+const AppIconAppearanceControl: React.FC<{
+  value: AppIconAppearance;
+  onChange: (value: AppIconAppearance) => void;
+}> = ({ value, onChange }) => (
+  <div className={`${settingsPanelClass} p-4`}>
+    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+      <div>
+        <div className="text-sm font-semibold text-[var(--text-primary)]">
+          App icon
+        </div>
+        <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+          Choose the running macOS app icon or keep the system icon style.
+        </div>
+      </div>
+      <div
+        role="group"
+        aria-label="App icon appearance"
+        className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+      >
+        {appIconAppearanceOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={value === option.value}
+            title={option.description}
+            onClick={() => onChange(option.value)}
+            className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
+              value === option.value
+                ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
@@ -557,6 +620,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     showTopbarProjectPath,
     zenModeEnabled,
     projectWindowMode,
+    appIconAppearance,
     setUiScale,
     setUiFontFamily,
     resetUiFontFamily,
@@ -574,6 +638,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     resetTopbarItemOrder,
     setZenModeEnabled,
     setProjectWindowMode,
+    setAppIconAppearance,
   } = useEditorSettingsStore();
   const {
     autoOpenFromTerminal,
@@ -1581,6 +1646,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <ProjectOpeningModeControl
                     value={projectWindowMode}
                     onChange={setProjectWindowMode}
+                  />
+
+                  <AppIconAppearanceControl
+                    value={appIconAppearance}
+                    onChange={setAppIconAppearance}
                   />
 
                   <div className={`${settingsPanelClass} p-4`}>
