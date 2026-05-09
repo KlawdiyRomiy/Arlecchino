@@ -1873,7 +1873,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
               style={{ background: editorBgColor }}
             >
               <div
-                className={`${splitDirection === "horizontal" ? "w-1/2 border-r" : "h-1/2 border-b"} border-gray-200 dark:border-gray-700`}
+                className={`${splitDirection === "horizontal" ? "w-1/2 border-r" : "h-1/2 border-b"} border-[var(--editor-border)]`}
               >
                 {renderEditorSurface(activeTabData)}
               </div>

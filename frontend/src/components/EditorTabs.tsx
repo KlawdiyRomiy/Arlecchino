@@ -274,13 +274,13 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
   return (
     <div
       data-testid="editor-tabs-bar"
-      className="flex h-[41px] min-h-[41px] items-center gap-2 border-b border-[var(--shell-border)] bg-[var(--bg-blackprint)] pr-2"
+      className="relative isolate flex h-10 min-h-10 items-center gap-2 border-b border-[var(--shell-inline-divider)] bg-[var(--editor-surface-elevated)] pr-0"
       style={{
         zIndex: 15,
         flexShrink: 0,
-        height: 41,
-        minHeight: 41,
-        maxHeight: 41,
+        height: 40,
+        minHeight: 40,
+        maxHeight: 40,
       }}
     >
       {onTabsReorder ? (
@@ -290,24 +290,27 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
           axis="x"
           values={tabs}
           onReorder={onTabsReorder}
-          className="shell-mini-x-scroll flex min-w-0 flex-1 self-stretch overflow-x-auto overflow-y-hidden bg-[var(--bg-blackprint)]"
+          className="shell-mini-x-scroll relative z-10 flex min-w-0 flex-1 self-stretch overflow-x-auto overflow-y-hidden bg-transparent"
         >
           {tabItems}
         </Reorder.Group>
       ) : (
         <div
           ref={scrollContainerRef}
-          className="shell-mini-x-scroll flex min-w-0 flex-1 self-stretch overflow-x-auto overflow-y-hidden bg-[var(--bg-blackprint)]"
+          className="shell-mini-x-scroll relative z-10 flex min-w-0 flex-1 self-stretch overflow-x-auto overflow-y-hidden bg-transparent"
         >
           {tabItems}
         </div>
       )}
 
       {showSplitButtons && tabs.length > 0 && (
-        <div className="flex h-full items-stretch">
+        <div className="relative z-10 flex h-full items-stretch">
           <div
             data-testid="editor-tabs-split-controls"
-            className="shell-cluster-soft h-full max-h-full gap-1 px-1.5 py-0"
+            className="flex h-full max-h-full items-center gap-1 border-l border-[var(--shell-inline-divider)] bg-[var(--editor-surface-elevated)] px-1.5 py-0"
+            style={{
+              borderTopRightRadius: "calc(var(--radius-panel) - 1px)",
+            }}
           >
             {markdownPreviewAvailable && (
               <button

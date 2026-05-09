@@ -677,7 +677,7 @@ export const codeEditorStyles = EditorView.theme(
 );
 
 export const codeEditorSurfaceClassName =
-  "h-full rounded-none border-0 bg-transparent shadow-none";
+  "h-full rounded-none border-0 bg-transparent shadow-none overflow-hidden";
 
 export const editorCanvasBackground = editorPalette.background;
 

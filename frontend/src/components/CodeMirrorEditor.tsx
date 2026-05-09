@@ -3146,7 +3146,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       onContextMenuCapture={handleEditorContextMenuCapture}
     >
       <div
-        className="relative h-full w-full overflow-hidden"
+        className="relative h-full w-full overflow-hidden bg-[var(--editor-bg)]"
         style={editorCanvasDynamicStyle}
       >
         <CodeMirror
