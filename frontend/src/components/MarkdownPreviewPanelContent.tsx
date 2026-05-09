@@ -103,8 +103,9 @@ const markdownComponents = {
   td: (props: React.TdHTMLAttributes<HTMLTableCellElement>) => (
     <td className="border border-[var(--shell-border)] px-3 py-2" {...props} />
   ),
-  img: (props: React.ImgHTMLAttributes<HTMLImageElement>) => (
+  img: ({ alt = "", ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => (
     <img
+      alt={alt}
       className="my-4 max-w-full rounded-md border border-[var(--shell-border)]"
       draggable={false}
       {...props}
