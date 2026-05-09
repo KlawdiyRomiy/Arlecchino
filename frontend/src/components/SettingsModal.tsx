@@ -1703,6 +1703,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             sideOffset={8}
                             className={`${settingsDropdownContentClass} w-[var(--radix-dropdown-menu-trigger-width)]`}
                             data-testid="ui-font-family-content"
+                            data-shell-menu-content
                             style={{
                               maxHeight:
                                 "min(420px, var(--radix-dropdown-menu-content-available-height))",
@@ -2028,6 +2029,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               sideOffset={8}
                               className={`${settingsDropdownContentClass} w-[var(--radix-dropdown-menu-trigger-width)]`}
                               data-testid="editor-font-family-content"
+                              data-shell-menu-content
                               style={{
                                 maxHeight:
                                   "min(420px, var(--radix-dropdown-menu-content-available-height))",
