@@ -49,6 +49,7 @@ import {
 } from "../shell/autoUpdate";
 import { runAutoUpdateCheckWithNotification } from "../shell/manualUpdateNotifications";
 import {
+  DEFAULT_EDITOR_FONT_FAMILY,
   useEditorSettingsStore,
   type ProjectWindowMode,
 } from "../stores/editorSettingsStore";
@@ -156,6 +157,27 @@ const projectWindowModeOptions: Array<{
   },
 ];
 
+const editorFontFamilyPresets: Array<{
+  label: string;
+  value: string;
+}> = [
+  {
+    label: "Fira Code",
+    value: DEFAULT_EDITOR_FONT_FAMILY,
+  },
+  {
+    label: "JetBrains Mono",
+    value: '"JetBrains Mono", "SF Mono", Menlo, monospace',
+  },
+  {
+    label: "SF Mono",
+    value: '"SF Mono", Menlo, Monaco, monospace',
+  },
+  {
+    label: "Menlo",
+    value: "Menlo, Monaco, monospace",
+  },
+];
 const markdownLinkOpenModeOptions: Array<{
   value: MarkdownLinkOpenMode;
   label: string;
@@ -371,6 +393,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     useTheme();
   const {
     uiScale,
+    editorFontFamily,
     editorFontSize,
     minFontSize,
     maxFontSize,
@@ -383,6 +406,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     zenModeEnabled,
     projectWindowMode,
     setUiScale,
+    setEditorFontFamily,
+    resetEditorFontFamily,
     setEditorFontSize,
     resetZoom,
     setShowInlineDiagnostics,
@@ -421,6 +446,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       ? `configured via ${privateUpdateAuthStatus.source ?? "private access"}`
       : (privateUpdateAuthStatus.reason ?? "not configured")
     : "not loaded";
+  const activeEditorFontFamilyPreset =
+    editorFontFamilyPresets.find(
+      (preset) => preset.value === editorFontFamily,
+    ) ?? null;
+  const activeEditorFontFamilyLabel =
+    activeEditorFontFamilyPreset?.label ?? "Custom";
 
   const refreshPrivateUpdateAuthStatus = useCallback(async () => {
     const status = await getPrivateUpdateAuthStatus();
@@ -1456,6 +1487,82 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   />
 
                   <div className="space-y-4">
+                    <div className={`${settingsPanelClass} p-4`}>
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-sm font-semibold text-[var(--text-primary)]">
+                            Editor Font Family
+                          </div>
+                          <div className="mt-1 text-xs text-[var(--text-muted)]">
+                            Choose the font used by the code editor.
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={resetEditorFontFamily}
+                          className={settingsIconButtonClass}
+                          aria-label="Reset editor font family"
+                          title="Reset editor font family"
+                        >
+                          <RotateCcw size={14} />
+                        </button>
+                      </div>
+                      <div className={`${settingsInsetClass} mt-4 p-3`}>
+                        <DropdownMenu.Root>
+                          <DropdownMenu.Trigger asChild>
+                            <button
+                              type="button"
+                              className={settingsDropdownTriggerClass}
+                              data-testid="editor-font-family-trigger"
+                              aria-label="Editor font family"
+                            >
+                              <span
+                                className="min-w-0 truncate font-mono"
+                                style={{
+                                  fontFamily:
+                                    activeEditorFontFamilyPreset?.value ??
+                                    editorFontFamily,
+                                }}
+                              >
+                                {activeEditorFontFamilyLabel}
+                              </span>
+                              <ChevronDown size={16} />
+                            </button>
+                          </DropdownMenu.Trigger>
+                          <DropdownMenu.Portal>
+                            <DropdownMenu.Content
+                              align="start"
+                              sideOffset={8}
+                              className={`${settingsDropdownContentClass} w-[var(--radix-dropdown-menu-trigger-width)]`}
+                              data-testid="editor-font-family-content"
+                            >
+                              {editorFontFamilyPresets.map((preset) => {
+                                const isActive =
+                                  editorFontFamily === preset.value;
+                                return (
+                                  <DropdownMenu.Item
+                                    key={preset.label}
+                                    className={settingsDropdownItemClass}
+                                    onSelect={() =>
+                                      setEditorFontFamily(preset.value)
+                                    }
+                                  >
+                                    <span
+                                      className="min-w-0 flex-1 truncate font-mono"
+                                      style={{ fontFamily: preset.value }}
+                                    >
+                                      {preset.label}
+                                    </span>
+                                    {isActive ? <Check size={15} /> : null}
+                                  </DropdownMenu.Item>
+                                );
+                              })}
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Portal>
+                        </DropdownMenu.Root>
+                      </div>
+                    </div>
+
                     <label className={`${settingsPanelClass} block p-4`}>
                       <div className="flex items-center justify-between gap-4">
                         <div>

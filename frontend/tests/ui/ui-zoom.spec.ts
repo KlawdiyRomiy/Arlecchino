@@ -247,6 +247,109 @@ test("custom editor font size survives zoom migration", async ({ page }) => {
   expect(state.editorFontSize).toBe(18);
 });
 
+test("custom editor font family survives settings hydration", async ({
+  page,
+}) => {
+  await installBaseBridges(page);
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "editor-settings",
+      JSON.stringify({
+        state: {
+          editorFontFamily: "  Menlo,   Monaco, monospace  ",
+        },
+        version: 1,
+      }),
+    );
+  });
+
+  await page.goto("/");
+
+  const state = await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    const current = useEditorSettingsStore.getState();
+
+    return {
+      editorFontFamily: current.editorFontFamily,
+    };
+  });
+
+  expect(state.editorFontFamily).toBe("Menlo, Monaco, monospace");
+});
+
+test("settings editor tab persists dropdown font family", async ({ page }) => {
+  await installBaseBridges(page);
+  await page.goto("/");
+
+  await page.getByTitle("Settings").click();
+  await page.getByRole("button", { name: /^Editor$/ }).click();
+
+  const fontFamilyTrigger = page.getByTestId("editor-font-family-trigger");
+  await expect(fontFamilyTrigger).toBeVisible();
+  await fontFamilyTrigger.click();
+
+  const fontFamilyContent = page.getByTestId("editor-font-family-content");
+  await expect(fontFamilyContent).toBeVisible();
+  await fontFamilyContent.getByRole("menuitem", { name: "Menlo" }).click();
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const rawSettings = localStorage.getItem("editor-settings");
+        if (!rawSettings) return null;
+        return JSON.parse(rawSettings).state.editorFontFamily;
+      }),
+    )
+    .toBe("Menlo, Monaco, monospace");
+});
+
+test("editor typography variables update CodeMirror without changing UI zoom", async ({
+  page,
+}) => {
+  await installBaseBridges(page);
+  await page.goto("/");
+
+  const typography = await page.evaluate(async () => {
+    const { EditorState } =
+      await import("/node_modules/.vite/deps/@codemirror_state.js");
+    const { EditorView } =
+      await import("/node_modules/.vite/deps/@codemirror_view.js");
+    const { codeEditorStyles } = await import("/src/utils/codeMirrorTheme.ts");
+
+    const parent = document.createElement("div");
+    parent.style.setProperty(
+      "--editor-font-family",
+      "Menlo, Monaco, monospace",
+    );
+    parent.style.setProperty("--editor-font-size", "19px");
+    document.body.appendChild(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: "const value = 1;",
+        extensions: [codeEditorStyles],
+      }),
+    });
+    const line = view.dom.querySelector<HTMLElement>(".cm-line");
+    const result = {
+      fontSize: window.getComputedStyle(view.dom).fontSize,
+      lineFontFamily: window.getComputedStyle(line ?? view.dom).fontFamily,
+      uiScale: window
+        .getComputedStyle(document.documentElement)
+        .getPropertyValue("--ui-scale")
+        .trim(),
+    };
+    view.destroy();
+    parent.remove();
+    return result;
+  });
+
+  expect(typography.fontSize).toBe("19px");
+  expect(typography.lineFontFamily).toContain("Menlo");
+  expect(typography.uiScale).toBe("1");
+});
+
 test("keyboard zoom shortcuts update the global UI zoom state", async ({
   page,
 }) => {

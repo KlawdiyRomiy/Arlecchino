@@ -245,6 +245,16 @@ const editorCanvasStyle = {
   boxShadow: "none",
 } as const;
 
+const buildEditorCanvasStyle = (
+  fontFamily: string,
+  fontSize: number,
+): React.CSSProperties =>
+  ({
+    ...editorCanvasStyle,
+    "--editor-font-family": fontFamily,
+    "--editor-font-size": `${fontSize}px`,
+  }) as React.CSSProperties;
+
 const makePrimitiveKeyPart = (part: unknown): string => {
   if (part === null) return "null";
   if (part === undefined) return "undefined";
@@ -1193,6 +1203,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   const editorFontSize = useEditorSettingsStore(
     (state) => state.editorFontSize,
+  );
+  const editorFontFamily = useEditorSettingsStore(
+    (state) => state.editorFontFamily,
   );
   const showInlineDiagnostics = useEditorSettingsStore(
     (state) => state.showInlineDiagnostics,
@@ -2641,15 +2654,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     ],
   );
 
-  const fontSizeExtension = useMemo(
-    () =>
-      EditorView.theme({
-        "&": {
-          fontSize: `${editorFontSize}px`,
-        },
-      }),
-    [editorFontSize],
-  );
   const operatorLigaturesExtension = useMemo(
     () => createOperatorLigaturesExtension(showOperatorLigatures),
     [showOperatorLigatures],
@@ -3035,7 +3039,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     const nextExtensions: Extension[] = [
       codeEditorTheme,
       codeEditorStyles,
-      fontSizeExtension,
       rainbowBracketsExtension,
       operatorLigaturesExtension,
       highlightLineField,
@@ -3074,7 +3077,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   }, [
     adaptiveCompartmentExtension,
     editorFeatureBudget.layoutStableLineWrapping,
-    fontSizeExtension,
     formatKeymap,
     languageExtension,
     operatorLigaturesExtension,
@@ -3110,6 +3112,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     reapplyAdaptiveExtensions();
   }, [extensions, reapplyAdaptiveExtensions]);
 
+  const editorCanvasDynamicStyle = useMemo(
+    () => buildEditorCanvasStyle(editorFontFamily, editorFontSize),
+    [editorFontFamily, editorFontSize],
+  );
+
   return (
     <ContextActionMenu
       items={editorContextMenuItems}
@@ -3121,7 +3128,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     >
       <div
         className="relative h-full w-full overflow-hidden"
-        style={editorCanvasStyle}
+        style={editorCanvasDynamicStyle}
       >
         <CodeMirror
           ref={editorRef}

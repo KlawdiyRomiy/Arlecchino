@@ -12,6 +12,7 @@ export type ProjectWindowMode = "projects" | "windows";
 
 interface EditorSettingsState {
   uiScale: number;
+  editorFontFamily: string;
   editorFontSize: number;
   minFontSize: number;
   maxFontSize: number;
@@ -26,6 +27,8 @@ interface EditorSettingsState {
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
+  setEditorFontFamily: (fontFamily: string) => void;
+  resetEditorFontFamily: () => void;
   setEditorFontSize: (size: number) => void;
   setUiScale: (scale: number) => void;
   setShowInlineDiagnostics: (value: boolean) => void;
@@ -40,9 +43,12 @@ interface EditorSettingsState {
 }
 
 const EDITOR_SETTINGS_STORAGE_VERSION = 1;
+export const DEFAULT_EDITOR_FONT_FAMILY =
+  '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace';
 const DEFAULT_EDITOR_FONT_SIZE = 14;
 const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 48;
+const MAX_EDITOR_FONT_FAMILY_LENGTH = 240;
 const DEFAULT_SHOW_INLINE_DIAGNOSTICS = true;
 const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
 const DEFAULT_SHOW_MINIMAP = true;
@@ -56,6 +62,7 @@ type PersistedEditorSettingsState = Partial<
   Pick<
     EditorSettingsState,
     | "uiScale"
+    | "editorFontFamily"
     | "editorFontSize"
     | "showInlineDiagnostics"
     | "showCompactDiagnostics"
@@ -73,6 +80,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const clampEditorFontSize = (size: number): number =>
   Math.min(Math.max(size, MIN_FONT_SIZE), MAX_FONT_SIZE);
+
+export const normalizeEditorFontFamily = (fontFamily: string): string => {
+  const normalized = fontFamily.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return DEFAULT_EDITOR_FONT_FAMILY;
+  }
+  return normalized.slice(0, MAX_EDITOR_FONT_FAMILY_LENGTH).trim();
+};
 
 const isProjectWindowMode = (value: unknown): value is ProjectWindowMode =>
   value === "projects" || value === "windows";
@@ -103,6 +118,12 @@ const sanitizePersistedEditorSettings = (
 
   if (typeof persistedState.uiScale === "number") {
     nextState.uiScale = clampUiScale(persistedState.uiScale);
+  }
+
+  if (typeof persistedState.editorFontFamily === "string") {
+    nextState.editorFontFamily = normalizeEditorFontFamily(
+      persistedState.editorFontFamily,
+    );
   }
 
   if (typeof persistedState.editorFontSize === "number") {
@@ -169,6 +190,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
   persist(
     (set) => ({
       uiScale: DEFAULT_UI_SCALE,
+      editorFontFamily: DEFAULT_EDITOR_FONT_FAMILY,
       editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
       minFontSize: MIN_FONT_SIZE,
       maxFontSize: MAX_FONT_SIZE,
@@ -194,6 +216,16 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       resetZoom: () =>
         set(() => ({
           uiScale: DEFAULT_UI_SCALE,
+        })),
+
+      setEditorFontFamily: (fontFamily: string) =>
+        set(() => ({
+          editorFontFamily: normalizeEditorFontFamily(fontFamily),
+        })),
+
+      resetEditorFontFamily: () =>
+        set(() => ({
+          editorFontFamily: DEFAULT_EDITOR_FONT_FAMILY,
         })),
 
       setEditorFontSize: (size: number) =>

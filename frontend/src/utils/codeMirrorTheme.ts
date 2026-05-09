@@ -4,6 +4,11 @@ import { createTheme } from "thememirror";
 
 import { radius, transitions, zIndex } from "../styles/colors";
 
+const defaultEditorFontFamily =
+  '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace';
+const editorFontFamily = `var(--editor-font-family, ${defaultEditorFontFamily})`;
+const editorFontSize = "var(--editor-font-size, 14px)";
+
 const rainbowBracketPalette = {
   red: "var(--editor-rainbow-bracket-red, #ff5c7a)",
   orange: "var(--editor-rainbow-bracket-orange, #ff9f43)",
@@ -141,8 +146,8 @@ export const codeEditorStyles = EditorView.theme(
     "&": {
       height: "100%",
       color: editorPalette.text,
-      fontFamily:
-        '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace',
+      fontFamily: editorFontFamily,
+      fontSize: editorFontSize,
       backgroundColor: editorPalette.background,
       letterSpacing: "0",
     },
@@ -153,8 +158,7 @@ export const codeEditorStyles = EditorView.theme(
     ".cm-scroller": {
       backgroundColor: editorPalette.background,
       color: editorPalette.text,
-      fontFamily:
-        '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace',
+      fontFamily: editorFontFamily,
       overflow: "auto",
       lineHeight: "1.72",
       scrollbarWidth: "thin",
@@ -183,16 +187,14 @@ export const codeEditorStyles = EditorView.theme(
     ".cm-content": {
       padding: "14px 0 28px",
       color: editorPalette.text,
-      fontFamily:
-        '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace',
+      fontFamily: editorFontFamily,
       caretColor: editorPalette.caret,
       backgroundColor: editorPalette.background,
     },
     ".cm-line": {
       padding: "0 18px 0 14px",
       color: editorPalette.text,
-      fontFamily:
-        '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace',
+      fontFamily: editorFontFamily,
     },
     ".cm-gutters": {
       backgroundColor: editorPalette.gutter,
@@ -358,7 +360,7 @@ export const codeEditorStyles = EditorView.theme(
       animation: "codeEditorPopupIn 150ms cubic-bezier(0.2, 0.9, 0.28, 1.03)",
     },
     ".cm-tooltip-autocomplete > ul": {
-      fontFamily: '"JetBrains Mono", "SF Mono", "Fira Code", monospace',
+      fontFamily: editorFontFamily,
       fontSize: "13px",
       lineHeight: "1.45",
       maxHeight: "282px",
@@ -580,7 +582,7 @@ export const codeEditorStyles = EditorView.theme(
       backgroundColor: editorPalette.surface,
       padding: "3px 7px",
       borderRadius: radius.sm,
-      fontFamily: '"JetBrains Mono", "SF Mono", monospace',
+      fontFamily: editorFontFamily,
       fontSize: "11px",
     },
     ".cm-tooltip-hover": {
