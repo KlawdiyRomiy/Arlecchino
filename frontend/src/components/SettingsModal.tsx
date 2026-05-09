@@ -571,6 +571,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowRainbowBrackets,
     setShowOperatorLigatures,
     setShowTopbarProjectPath,
+    resetTopbarItemOrder,
     setZenModeEnabled,
     setProjectWindowMode,
   } = useEditorSettingsStore();
@@ -1872,6 +1873,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         setShowTopbarProjectPath(!checked)
                       }
                     />
+                    <div className="flex flex-col gap-3 border-b border-[var(--border-subtle)] px-4 py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="pr-4">
+                        <div className="text-sm font-semibold text-[var(--text-primary)]">
+                          Topbar icon order
+                        </div>
+                        <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                          Restore the default order for draggable topbar
+                          controls.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={resetTopbarItemOrder}
+                        className={settingsActionButtonClass}
+                      >
+                        <RotateCcw size={14} />
+                        Reset order
+                      </button>
+                    </div>
                     <SwitchRow
                       title="Rainbow brackets"
                       description="Color nested brackets with fixed depth colors. Turn off to use the current theme's bracket styling."

@@ -630,7 +630,23 @@ body > [data-radix-portal] > * {
   padding: 7px 10px;
   color: var(--text-primary);
   backdrop-filter: blur(18px);
-  transform: translate3d(0, 0, 0);
+}
+
+.arle-drag-ghost-icon {
+  width: 48px;
+  height: 48px;
+  max-width: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-control);
+  padding: 0;
+}
+
+.arle-drag-ghost-symbol {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-primary);
 }
 
 .arle-drag-ghost-label {

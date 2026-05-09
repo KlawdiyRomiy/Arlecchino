@@ -9,6 +9,55 @@ import {
 } from "../utils/uiScale";
 
 export type ProjectWindowMode = "projects" | "windows";
+export const TOPBAR_ITEM_IDS = [
+  "explorer",
+  "search",
+  "settings",
+  "projects",
+  "addProject",
+  "context",
+  "debug",
+  "run",
+  "preview",
+  "aiChat",
+  "terminal",
+  "git",
+  "syncDependencies",
+  "checkUpdates",
+] as const;
+
+export type TopbarItemId = (typeof TOPBAR_ITEM_IDS)[number];
+export const DEFAULT_TOPBAR_ITEM_ORDER: TopbarItemId[] = [...TOPBAR_ITEM_IDS];
+
+const TOPBAR_ITEM_ID_SET = new Set<string>(TOPBAR_ITEM_IDS);
+
+const isTopbarItemId = (value: unknown): value is TopbarItemId =>
+  typeof value === "string" && TOPBAR_ITEM_ID_SET.has(value);
+
+export const normalizeTopbarItemOrder = (order: unknown): TopbarItemId[] => {
+  const nextOrder: TopbarItemId[] = [];
+  const seen = new Set<TopbarItemId>();
+
+  if (Array.isArray(order)) {
+    order.forEach((item) => {
+      if (!isTopbarItemId(item) || seen.has(item)) {
+        return;
+      }
+      seen.add(item);
+      nextOrder.push(item);
+    });
+  }
+
+  DEFAULT_TOPBAR_ITEM_ORDER.forEach((item) => {
+    if (seen.has(item)) {
+      return;
+    }
+    seen.add(item);
+    nextOrder.push(item);
+  });
+
+  return nextOrder;
+};
 
 export interface CustomFontFaceDefinition {
   id: string;
@@ -31,6 +80,7 @@ interface EditorSettingsState {
   showRainbowBrackets: boolean;
   showOperatorLigatures: boolean;
   showTopbarProjectPath: boolean;
+  topbarItemOrder: TopbarItemId[];
   zenModeEnabled: boolean;
   projectWindowMode: ProjectWindowMode;
   zoomIn: () => void;
@@ -49,6 +99,8 @@ interface EditorSettingsState {
   setShowRainbowBrackets: (value: boolean) => void;
   setShowOperatorLigatures: (value: boolean) => void;
   setShowTopbarProjectPath: (value: boolean) => void;
+  setTopbarItemOrder: (order: TopbarItemId[]) => void;
+  resetTopbarItemOrder: () => void;
   setZenModeEnabled: (value: boolean) => void;
   setProjectWindowMode: (value: ProjectWindowMode) => void;
   toggleZenMode: () => void;
@@ -88,6 +140,7 @@ type PersistedEditorSettingsState = Partial<
     | "showRainbowBrackets"
     | "showOperatorLigatures"
     | "showTopbarProjectPath"
+    | "topbarItemOrder"
     | "zenModeEnabled"
     | "projectWindowMode"
   >
@@ -227,6 +280,12 @@ const sanitizePersistedEditorSettings = (
     nextState.showTopbarProjectPath = persistedState.showTopbarProjectPath;
   }
 
+  if (Array.isArray(persistedState.topbarItemOrder)) {
+    nextState.topbarItemOrder = normalizeTopbarItemOrder(
+      persistedState.topbarItemOrder,
+    );
+  }
+
   if (typeof persistedState.zenModeEnabled === "boolean") {
     nextState.zenModeEnabled = persistedState.zenModeEnabled;
   }
@@ -273,6 +332,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       showRainbowBrackets: DEFAULT_SHOW_RAINBOW_BRACKETS,
       showOperatorLigatures: DEFAULT_SHOW_OPERATOR_LIGATURES,
       showTopbarProjectPath: DEFAULT_SHOW_TOPBAR_PROJECT_PATH,
+      topbarItemOrder: [...DEFAULT_TOPBAR_ITEM_ORDER],
       zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
       projectWindowMode: DEFAULT_PROJECT_WINDOW_MODE,
 
@@ -355,6 +415,12 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setShowTopbarProjectPath: (value: boolean) =>
         set(() => ({ showTopbarProjectPath: value })),
+
+      setTopbarItemOrder: (order) =>
+        set(() => ({ topbarItemOrder: normalizeTopbarItemOrder(order) })),
+
+      resetTopbarItemOrder: () =>
+        set(() => ({ topbarItemOrder: [...DEFAULT_TOPBAR_ITEM_ORDER] })),
 
       setZenModeEnabled: (value: boolean) =>
         set(() => ({ zenModeEnabled: value })),

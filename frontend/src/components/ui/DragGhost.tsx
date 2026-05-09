@@ -6,6 +6,8 @@ export interface DragGhostState {
   y: number;
   label: string;
   detail?: string;
+  icon?: React.ReactNode;
+  variant?: "default" | "icon";
 }
 
 interface DragGhostProps {
@@ -17,17 +19,30 @@ export const DragGhost: React.FC<DragGhostProps> = ({ ghost }) => {
     return null;
   }
 
+  const iconVariant = ghost.variant === "icon";
+
   return createPortal(
     <div
-      className="arle-drag-ghost"
+      className={`arle-drag-ghost ${iconVariant ? "arle-drag-ghost-icon" : ""}`}
       style={{
-        left: ghost.x + 14,
-        top: ghost.y + 14,
+        left: iconVariant ? ghost.x : ghost.x + 14,
+        top: iconVariant ? ghost.y : ghost.y + 14,
+        transform: iconVariant
+          ? "translate3d(-50%, -50%, 0)"
+          : "translate3d(0, 0, 0)",
       }}
     >
-      <span className="arle-drag-ghost-label">{ghost.label}</span>
-      {ghost.detail && (
-        <span className="arle-drag-ghost-detail">{ghost.detail}</span>
+      {iconVariant && ghost.icon ? (
+        <span className="arle-drag-ghost-symbol" aria-label={ghost.label}>
+          {ghost.icon}
+        </span>
+      ) : (
+        <>
+          <span className="arle-drag-ghost-label">{ghost.label}</span>
+          {ghost.detail && (
+            <span className="arle-drag-ghost-detail">{ghost.detail}</span>
+          )}
+        </>
       )}
     </div>,
     document.body,
