@@ -14,6 +14,8 @@
   --ui-scale: 1;
   --ui-inverse-scale: 1;
   --ui-font-size: 14px;
+  --ui-font-family:
+    "Inter", "SF Pro", -apple-system, BlinkMacSystemFont, sans-serif;
 
   /* BLACKPRINT Color Scheme */
   --bg-blackprint: #0a0a0a;
@@ -152,12 +154,7 @@ body,
   height: 100%;
   overflow: hidden;
   background: transparent;
-  font-family:
-    "Inter",
-    "SF Pro",
-    -apple-system,
-    BlinkMacSystemFont,
-    sans-serif;
+  font-family: var(--ui-font-family);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-size: var(--ui-font-size);

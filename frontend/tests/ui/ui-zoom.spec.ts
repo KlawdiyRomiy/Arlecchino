@@ -304,6 +304,43 @@ test("settings editor tab persists dropdown font family", async ({ page }) => {
     .toBe("Menlo, Monaco, monospace");
 });
 
+test("settings appearance tab persists system font family", async ({
+  page,
+}) => {
+  await installBaseBridges(page);
+  await page.goto("/");
+
+  await page.getByTitle("Settings").click();
+
+  const fontFamilyTrigger = page.getByTestId("ui-font-family-trigger");
+  await expect(fontFamilyTrigger).toBeVisible();
+  await fontFamilyTrigger.click();
+
+  const fontFamilyContent = page.getByTestId("ui-font-family-content");
+  await expect(fontFamilyContent).toBeVisible();
+  await fontFamilyContent
+    .getByRole("menuitem", { name: "Avenir Next" })
+    .click();
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const rawSettings = localStorage.getItem("editor-settings");
+        if (!rawSettings) return null;
+        return {
+          stored: JSON.parse(rawSettings).state.uiFontFamily,
+          applied: getComputedStyle(document.documentElement)
+            .getPropertyValue("--ui-font-family")
+            .trim(),
+        };
+      }),
+    )
+    .toEqual({
+      stored: '"Avenir Next", Avenir, sans-serif',
+      applied: '"Avenir Next", Avenir, sans-serif',
+    });
+});
+
 test("editor typography variables update CodeMirror without changing UI zoom", async ({
   page,
 }) => {

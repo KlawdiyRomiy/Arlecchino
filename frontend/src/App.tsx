@@ -85,6 +85,8 @@ const appShellStyle: React.CSSProperties = {
   background: "transparent",
 };
 
+const registeredCustomFontFaces = new Map<string, FontFace>();
+
 const parentDirectoryForFilePath = (path: string): string | null => {
   const normalizedPath = path.trim();
   const separatorIndex = normalizedPath.lastIndexOf("/");
@@ -109,6 +111,8 @@ const App: React.FC = () => {
 
   const activeId = useWorkspaceStore((state) => state.activeId);
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
+  const uiFontFamily = useEditorSettingsStore((state) => state.uiFontFamily);
+  const customFonts = useEditorSettingsStore((state) => state.customFonts);
   const { theme: currentTheme } = useTheme();
   const activeProject = useWorkspaceStore((state) =>
     state.projects.find((project) => project.id === state.activeId),
@@ -122,6 +126,39 @@ const App: React.FC = () => {
   const isDetachedHost = isDetachedAppletHostRoute();
 
   useEffect(() => startAdaptivePerformanceMonitor(), []);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--ui-font-family",
+      uiFontFamily,
+    );
+    return () => {
+      document.documentElement.style.removeProperty("--ui-font-family");
+    };
+  }, [uiFontFamily]);
+
+  useEffect(() => {
+    if (typeof FontFace === "undefined" || !document.fonts) {
+      return;
+    }
+
+    for (const customFont of customFonts) {
+      if (registeredCustomFontFaces.has(customFont.id)) {
+        continue;
+      }
+
+      const fontFace = new FontFace(
+        customFont.fontFamily,
+        `url(${customFont.dataUrl})`,
+      );
+      registeredCustomFontFaces.set(customFont.id, fontFace);
+      document.fonts.add(fontFace);
+      void fontFace.load().catch(() => {
+        document.fonts.delete(fontFace);
+        registeredCustomFontFaces.delete(customFont.id);
+      });
+    }
+  }, [customFonts]);
 
   useEffect(() => {
     document.documentElement.style.setProperty(

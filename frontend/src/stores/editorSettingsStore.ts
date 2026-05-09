@@ -10,8 +10,17 @@ import {
 
 export type ProjectWindowMode = "projects" | "windows";
 
+export interface CustomFontFaceDefinition {
+  id: string;
+  label: string;
+  fontFamily: string;
+  dataUrl: string;
+}
+
 interface EditorSettingsState {
   uiScale: number;
+  uiFontFamily: string;
+  customFonts: CustomFontFaceDefinition[];
   editorFontFamily: string;
   editorFontSize: number;
   minFontSize: number;
@@ -27,6 +36,9 @@ interface EditorSettingsState {
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
+  setUiFontFamily: (fontFamily: string) => void;
+  resetUiFontFamily: () => void;
+  addCustomFont: (font: CustomFontFaceDefinition) => void;
   setEditorFontFamily: (fontFamily: string) => void;
   resetEditorFontFamily: () => void;
   setEditorFontSize: (size: number) => void;
@@ -43,12 +55,16 @@ interface EditorSettingsState {
 }
 
 const EDITOR_SETTINGS_STORAGE_VERSION = 1;
+export const DEFAULT_UI_FONT_FAMILY =
+  '"Inter", "SF Pro", -apple-system, BlinkMacSystemFont, sans-serif';
 export const DEFAULT_EDITOR_FONT_FAMILY =
   '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace';
 const DEFAULT_EDITOR_FONT_SIZE = 14;
 const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 48;
 const MAX_EDITOR_FONT_FAMILY_LENGTH = 240;
+const MAX_CUSTOM_FONTS = 16;
+const MAX_CUSTOM_FONT_DATA_URL_LENGTH = 7_000_000;
 const DEFAULT_SHOW_INLINE_DIAGNOSTICS = true;
 const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
 const DEFAULT_SHOW_MINIMAP = true;
@@ -62,6 +78,8 @@ type PersistedEditorSettingsState = Partial<
   Pick<
     EditorSettingsState,
     | "uiScale"
+    | "uiFontFamily"
+    | "customFonts"
     | "editorFontFamily"
     | "editorFontSize"
     | "showInlineDiagnostics"
@@ -87,6 +105,53 @@ export const normalizeEditorFontFamily = (fontFamily: string): string => {
     return DEFAULT_EDITOR_FONT_FAMILY;
   }
   return normalized.slice(0, MAX_EDITOR_FONT_FAMILY_LENGTH).trim();
+};
+
+export const normalizeUiFontFamily = (fontFamily: string): string => {
+  const normalized = fontFamily.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return DEFAULT_UI_FONT_FAMILY;
+  }
+  return normalized.slice(0, MAX_EDITOR_FONT_FAMILY_LENGTH).trim();
+};
+
+const normalizeCustomFonts = (fonts: unknown): CustomFontFaceDefinition[] => {
+  if (!Array.isArray(fonts)) {
+    return [];
+  }
+
+  return fonts
+    .filter(isRecord)
+    .map((font) => {
+      if (
+        typeof font.id !== "string" ||
+        typeof font.label !== "string" ||
+        typeof font.fontFamily !== "string" ||
+        typeof font.dataUrl !== "string" ||
+        font.dataUrl.length > MAX_CUSTOM_FONT_DATA_URL_LENGTH
+      ) {
+        return null;
+      }
+
+      const id = font.id.trim().slice(0, 120);
+      const label = font.label.replace(/\s+/g, " ").trim().slice(0, 80);
+      const fontFamily = font.fontFamily
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 120);
+      if (!id || !label || !fontFamily || !font.dataUrl.startsWith("data:")) {
+        return null;
+      }
+
+      return {
+        id,
+        label,
+        fontFamily,
+        dataUrl: font.dataUrl,
+      };
+    })
+    .filter((font): font is CustomFontFaceDefinition => font !== null)
+    .slice(0, MAX_CUSTOM_FONTS);
 };
 
 const isProjectWindowMode = (value: unknown): value is ProjectWindowMode =>
@@ -119,6 +184,12 @@ const sanitizePersistedEditorSettings = (
   if (typeof persistedState.uiScale === "number") {
     nextState.uiScale = clampUiScale(persistedState.uiScale);
   }
+
+  if (typeof persistedState.uiFontFamily === "string") {
+    nextState.uiFontFamily = normalizeUiFontFamily(persistedState.uiFontFamily);
+  }
+
+  nextState.customFonts = normalizeCustomFonts(persistedState.customFonts);
 
   if (typeof persistedState.editorFontFamily === "string") {
     nextState.editorFontFamily = normalizeEditorFontFamily(
@@ -190,6 +261,8 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
   persist(
     (set) => ({
       uiScale: DEFAULT_UI_SCALE,
+      uiFontFamily: DEFAULT_UI_FONT_FAMILY,
+      customFonts: [],
       editorFontFamily: DEFAULT_EDITOR_FONT_FAMILY,
       editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
       minFontSize: MIN_FONT_SIZE,
@@ -217,6 +290,34 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
         set(() => ({
           uiScale: DEFAULT_UI_SCALE,
         })),
+
+      setUiFontFamily: (fontFamily: string) =>
+        set(() => ({
+          uiFontFamily: normalizeUiFontFamily(fontFamily),
+        })),
+
+      resetUiFontFamily: () =>
+        set(() => ({
+          uiFontFamily: DEFAULT_UI_FONT_FAMILY,
+        })),
+
+      addCustomFont: (font: CustomFontFaceDefinition) =>
+        set((state) => {
+          const [normalizedFont] = normalizeCustomFonts([font]);
+          if (!normalizedFont) {
+            return {};
+          }
+
+          const withoutDuplicate = state.customFonts.filter(
+            (existing) => existing.id !== normalizedFont.id,
+          );
+          return {
+            customFonts: [normalizedFont, ...withoutDuplicate].slice(
+              0,
+              MAX_CUSTOM_FONTS,
+            ),
+          };
+        }),
 
       setEditorFontFamily: (fontFamily: string) =>
         set(() => ({

@@ -1221,6 +1221,20 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
 
   useEffect(() => {
+    const view = editorRef.current?.view;
+    if (!view) {
+      return;
+    }
+
+    view.requestMeasure();
+    void document.fonts?.ready.then(() => {
+      if (editorRef.current?.view === view) {
+        view.requestMeasure();
+      }
+    });
+  }, [editorFontFamily, editorFontSize]);
+
+  useEffect(() => {
     const handleFindInFile = () => {
       const view = editorRef.current?.view;
       if (!view || !shouldHandleEditorFindInFile(view)) {

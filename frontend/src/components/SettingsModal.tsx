@@ -50,7 +50,9 @@ import {
 import { runAutoUpdateCheckWithNotification } from "../shell/manualUpdateNotifications";
 import {
   DEFAULT_EDITOR_FONT_FAMILY,
+  DEFAULT_UI_FONT_FAMILY,
   useEditorSettingsStore,
+  type CustomFontFaceDefinition,
   type ProjectWindowMode,
 } from "../stores/editorSettingsStore";
 import { useKeybindingsStore } from "../stores/keybindingsStore";
@@ -170,6 +172,22 @@ const editorFontFamilyPresets: Array<{
     value: '"JetBrains Mono", "SF Mono", Menlo, monospace',
   },
   {
+    label: "Berkeley Mono",
+    value: '"Berkeley Mono", "SF Mono", Menlo, monospace',
+  },
+  {
+    label: "Commit Mono",
+    value: '"Commit Mono", "SF Mono", Menlo, monospace',
+  },
+  {
+    label: "Cascadia Code",
+    value: '"Cascadia Code", "SF Mono", Menlo, monospace',
+  },
+  {
+    label: "Iosevka",
+    value: 'Iosevka, "SF Mono", Menlo, monospace',
+  },
+  {
     label: "SF Mono",
     value: '"SF Mono", Menlo, Monaco, monospace',
   },
@@ -177,7 +195,132 @@ const editorFontFamilyPresets: Array<{
     label: "Menlo",
     value: "Menlo, Monaco, monospace",
   },
+  {
+    label: "Monaco",
+    value: "Monaco, Menlo, monospace",
+  },
+  {
+    label: "Consolas",
+    value: 'Consolas, "SF Mono", Menlo, monospace',
+  },
 ];
+
+const uiFontFamilyPresets: Array<{
+  label: string;
+  value: string;
+}> = [
+  {
+    label: "Inter",
+    value: DEFAULT_UI_FONT_FAMILY,
+  },
+  {
+    label: "SF Pro",
+    value: '"SF Pro", -apple-system, BlinkMacSystemFont, sans-serif',
+  },
+  {
+    label: "Helvetica Neue",
+    value: '"Helvetica Neue", Arial, sans-serif',
+  },
+  {
+    label: "Avenir Next",
+    value: '"Avenir Next", Avenir, sans-serif',
+  },
+  {
+    label: "IBM Plex Sans",
+    value: '"IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif',
+  },
+  {
+    label: "Roboto",
+    value: "Roboto, -apple-system, BlinkMacSystemFont, sans-serif",
+  },
+];
+
+const commonSystemFontFamilies = [
+  "SF Pro",
+  "SF Pro Display",
+  "SF Pro Text",
+  "Avenir Next",
+  "Helvetica Neue",
+  "Arial",
+  "Inter",
+  "Roboto",
+  "IBM Plex Sans",
+  "JetBrains Mono",
+  "SF Mono",
+  "Menlo",
+  "Monaco",
+  "Fira Code",
+  "Cascadia Code",
+  "Iosevka",
+  "Consolas",
+];
+
+type FontOption = {
+  label: string;
+  value: string;
+  sampleFamily: string;
+};
+
+type LocalFontAccessNavigator = Navigator & {
+  queryLocalFonts?: () => Promise<
+    Array<{ family?: string; fullName?: string }>
+  >;
+};
+
+const CUSTOM_FONT_MAX_BYTES = 5 * 1024 * 1024;
+
+const quoteFontFamily = (fontFamily: string): string =>
+  `"${fontFamily.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
+const trimFontLabel = (label: string): string =>
+  label
+    .replace(/\.[^.]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+
+const buildUiFontValue = (fontFamily: string): string =>
+  `${quoteFontFamily(fontFamily)}, -apple-system, BlinkMacSystemFont, sans-serif`;
+
+const buildEditorFontValue = (fontFamily: string): string =>
+  `${quoteFontFamily(fontFamily)}, "SF Mono", Menlo, Monaco, monospace`;
+
+const uniqueFontOptions = (options: FontOption[]): FontOption[] => {
+  const seen = new Set<string>();
+  return options.filter((option) => {
+    const key = option.value.toLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+};
+
+const customFontOptions = (
+  customFonts: CustomFontFaceDefinition[],
+  valueForFamily: (fontFamily: string) => string,
+): FontOption[] =>
+  customFonts.map((font) => ({
+    label: font.label,
+    value: valueForFamily(font.fontFamily),
+    sampleFamily: quoteFontFamily(font.fontFamily),
+  }));
+
+const fileToDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Font file could not be read."));
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("Font file could not be read."));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+
 const markdownLinkOpenModeOptions: Array<{
   value: MarkdownLinkOpenMode;
   label: string;
@@ -381,6 +524,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     tone: "success" | "error";
     message: string;
   } | null>(null);
+  const [customFontStatus, setCustomFontStatus] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
+  const [localFontFamilies, setLocalFontFamilies] = useState<string[]>([]);
   const [shortcutGroup, setShortcutGroup] = useState<"All" | ShortcutGroup>(
     "All",
   );
@@ -388,11 +536,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     useState<ShortcutActionId | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const customThemeInputRef = useRef<HTMLInputElement | null>(null);
+  const customFontInputRef = useRef<HTMLInputElement | null>(null);
+  const customFontTargetRef = useRef<"ui" | "editor">("ui");
 
   const { theme, setTheme, previewTheme, customThemes, addCustomTheme } =
     useTheme();
   const {
     uiScale,
+    uiFontFamily,
+    customFonts,
     editorFontFamily,
     editorFontSize,
     minFontSize,
@@ -406,6 +558,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     zenModeEnabled,
     projectWindowMode,
     setUiScale,
+    setUiFontFamily,
+    resetUiFontFamily,
+    addCustomFont,
     setEditorFontFamily,
     resetEditorFontFamily,
     setEditorFontSize,
@@ -450,8 +605,59 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     editorFontFamilyPresets.find(
       (preset) => preset.value === editorFontFamily,
     ) ?? null;
+  const localFontOptions = useMemo<FontOption[]>(
+    () =>
+      uniqueFontOptions(
+        [...localFontFamilies, ...commonSystemFontFamilies]
+          .filter((family) => family.trim().length > 0)
+          .sort((a, b) => a.localeCompare(b))
+          .map((family) => ({
+            label: family,
+            value: buildUiFontValue(family),
+            sampleFamily: quoteFontFamily(family),
+          })),
+      ),
+    [localFontFamilies],
+  );
+  const uiFontOptions = useMemo<FontOption[]>(
+    () =>
+      uniqueFontOptions([
+        ...uiFontFamilyPresets.map((preset) => ({
+          ...preset,
+          sampleFamily: preset.value,
+        })),
+        ...localFontOptions,
+        ...customFontOptions(customFonts, buildUiFontValue),
+      ]),
+    [customFonts, localFontOptions],
+  );
+  const editorFontOptions = useMemo<FontOption[]>(
+    () =>
+      uniqueFontOptions([
+        ...editorFontFamilyPresets.map((preset) => ({
+          ...preset,
+          sampleFamily: preset.value,
+        })),
+        ...localFontFamilies
+          .filter((family) => family.trim().length > 0)
+          .sort((a, b) => a.localeCompare(b))
+          .map((family) => ({
+            label: family,
+            value: buildEditorFontValue(family),
+            sampleFamily: quoteFontFamily(family),
+          })),
+        ...customFontOptions(customFonts, buildEditorFontValue),
+      ]),
+    [customFonts, localFontFamilies],
+  );
+  const activeUiFontFamilyOption =
+    uiFontOptions.find((option) => option.value === uiFontFamily) ?? null;
+  const activeUiFontFamilyLabel = activeUiFontFamilyOption?.label ?? "Custom";
+  const activeEditorFontFamilyOption =
+    editorFontOptions.find((option) => option.value === editorFontFamily) ??
+    activeEditorFontFamilyPreset;
   const activeEditorFontFamilyLabel =
-    activeEditorFontFamilyPreset?.label ?? "Custom";
+    activeEditorFontFamilyOption?.label ?? "Custom";
 
   const refreshPrivateUpdateAuthStatus = useCallback(async () => {
     const status = await getPrivateUpdateAuthStatus();
@@ -534,6 +740,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     },
     [],
   );
+
+  useEffect(() => {
+    const queryLocalFonts = (navigator as LocalFontAccessNavigator)
+      .queryLocalFonts;
+    if (!queryLocalFonts) {
+      return;
+    }
+
+    let cancelled = false;
+    void queryLocalFonts
+      .call(navigator)
+      .then((fonts) => {
+        if (cancelled) {
+          return;
+        }
+        const families = Array.from(
+          new Set(
+            fonts
+              .map((font) => (font.family || font.fullName || "").trim())
+              .filter(Boolean),
+          ),
+        );
+        setLocalFontFamilies(families);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLocalFontFamilies([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const offProgress = EventsOn<[LSPInstallEvent]>(
@@ -792,6 +1032,53 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         tone: "error",
         message:
           error instanceof Error ? error.message : "Unable to import theme.",
+      });
+    }
+  };
+
+  const handleCustomFontFile = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    if (file.size > CUSTOM_FONT_MAX_BYTES) {
+      setCustomFontStatus({
+        tone: "error",
+        message: "Font file is larger than 5 MB.",
+      });
+      return;
+    }
+
+    try {
+      const label = trimFontLabel(file.name) || "Custom font";
+      const fontFamily = `Arlecchino Custom ${label} ${Date.now()}`;
+      const customFont: CustomFontFaceDefinition = {
+        id: `${fontFamily}-${file.size}`,
+        label,
+        fontFamily,
+        dataUrl: await fileToDataUrl(file),
+      };
+
+      addCustomFont(customFont);
+      if (customFontTargetRef.current === "editor") {
+        setEditorFontFamily(buildEditorFontValue(customFont.fontFamily));
+      } else {
+        setUiFontFamily(buildUiFontValue(customFont.fontFamily));
+      }
+      setCustomFontStatus({
+        tone: "success",
+        message: `Added ${label}`,
+      });
+    } catch (error) {
+      setCustomFontStatus({
+        tone: "error",
+        message:
+          error instanceof Error ? error.message : "Unable to import font.",
       });
     }
   };
@@ -1296,6 +1583,122 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   />
 
                   <div className={`${settingsPanelClass} p-4`}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="text-sm font-semibold text-[var(--text-primary)]">
+                          System Font Family
+                        </div>
+                        <div className="mt-1 text-xs text-[var(--text-muted)]">
+                          Choose the font used by Arlecchino outside the code
+                          editor.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={resetUiFontFamily}
+                        className={settingsIconButtonClass}
+                        aria-label="Reset system font family"
+                        title="Reset system font family"
+                      >
+                        <RotateCcw size={14} />
+                      </button>
+                    </div>
+
+                    <div className={`${settingsInsetClass} mt-4 p-3`}>
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <button
+                            type="button"
+                            className={settingsDropdownTriggerClass}
+                            data-testid="ui-font-family-trigger"
+                            aria-label="System font family"
+                          >
+                            <span
+                              className="min-w-0 truncate"
+                              style={{
+                                fontFamily:
+                                  activeUiFontFamilyOption?.sampleFamily ??
+                                  uiFontFamily,
+                              }}
+                            >
+                              {activeUiFontFamilyLabel}
+                            </span>
+                            <ChevronDown size={16} />
+                          </button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            align="start"
+                            sideOffset={8}
+                            className={`${settingsDropdownContentClass} w-[var(--radix-dropdown-menu-trigger-width)]`}
+                            data-testid="ui-font-family-content"
+                            style={{
+                              maxHeight:
+                                "min(420px, var(--radix-dropdown-menu-content-available-height))",
+                            }}
+                          >
+                            {uiFontOptions.map((option) => {
+                              const isActive = uiFontFamily === option.value;
+                              return (
+                                <DropdownMenu.Item
+                                  key={`${option.label}-${option.value}`}
+                                  className={settingsDropdownItemClass}
+                                  onSelect={() => setUiFontFamily(option.value)}
+                                >
+                                  <span
+                                    className="min-w-0 flex-1 truncate"
+                                    style={{
+                                      fontFamily: option.sampleFamily,
+                                    }}
+                                  >
+                                    {option.label}
+                                  </span>
+                                  {isActive ? <Check size={15} /> : null}
+                                </DropdownMenu.Item>
+                              );
+                            })}
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
+
+                      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="text-[12px] text-[var(--text-muted)]">
+                          Local fonts appear when the system grants font access.
+                        </div>
+                        <button
+                          type="button"
+                          className={settingsActionButtonClass}
+                          onClick={() => {
+                            customFontTargetRef.current = "ui";
+                            customFontInputRef.current?.click();
+                          }}
+                        >
+                          <Plus size={14} />
+                          Add font
+                        </button>
+                      </div>
+                      <input
+                        ref={customFontInputRef}
+                        type="file"
+                        accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                        className="hidden"
+                        onChange={handleCustomFontFile}
+                      />
+                      {customFontStatus && (
+                        <div
+                          className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
+                            customFontStatus.tone === "success"
+                              ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
+                              : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
+                          }`}
+                        >
+                          {customFontStatus.message}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className={`${settingsPanelClass} p-4`}>
                     <div className="mb-3 flex items-center justify-between gap-3">
                       <div className="text-sm font-semibold text-[var(--text-primary)]">
                         Theme
@@ -1520,7 +1923,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 className="min-w-0 truncate font-mono"
                                 style={{
                                   fontFamily:
-                                    activeEditorFontFamilyPreset?.value ??
+                                    activeEditorFontFamilyOption?.value ??
                                     editorFontFamily,
                                 }}
                               >
@@ -1535,13 +1938,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               sideOffset={8}
                               className={`${settingsDropdownContentClass} w-[var(--radix-dropdown-menu-trigger-width)]`}
                               data-testid="editor-font-family-content"
+                              style={{
+                                maxHeight:
+                                  "min(420px, var(--radix-dropdown-menu-content-available-height))",
+                              }}
                             >
-                              {editorFontFamilyPresets.map((preset) => {
+                              {editorFontOptions.map((preset) => {
                                 const isActive =
                                   editorFontFamily === preset.value;
                                 return (
                                   <DropdownMenu.Item
-                                    key={preset.label}
+                                    key={`${preset.label}-${preset.value}`}
                                     className={settingsDropdownItemClass}
                                     onSelect={() =>
                                       setEditorFontFamily(preset.value)
@@ -1549,7 +1956,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   >
                                     <span
                                       className="min-w-0 flex-1 truncate font-mono"
-                                      style={{ fontFamily: preset.value }}
+                                      style={{
+                                        fontFamily: preset.sampleFamily,
+                                      }}
                                     >
                                       {preset.label}
                                     </span>
@@ -1560,6 +1969,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             </DropdownMenu.Content>
                           </DropdownMenu.Portal>
                         </DropdownMenu.Root>
+                        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="text-[12px] text-[var(--text-muted)]">
+                            Local fonts appear when the system grants font
+                            access.
+                          </div>
+                          <button
+                            type="button"
+                            className={settingsActionButtonClass}
+                            onClick={() => {
+                              customFontTargetRef.current = "editor";
+                              customFontInputRef.current?.click();
+                            }}
+                          >
+                            <Plus size={14} />
+                            Add font
+                          </button>
+                        </div>
+                        <input
+                          ref={customFontInputRef}
+                          type="file"
+                          accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                          className="hidden"
+                          onChange={handleCustomFontFile}
+                        />
+                        {customFontStatus && (
+                          <div
+                            className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
+                              customFontStatus.tone === "success"
+                                ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
+                                : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
+                            }`}
+                          >
+                            {customFontStatus.message}
+                          </div>
+                        )}
                       </div>
                     </div>
 
