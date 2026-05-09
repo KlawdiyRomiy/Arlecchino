@@ -10,17 +10,19 @@ data files.
 
 ## Current Alpha Install Paths
 
-### `scripts/wails-dev-macos.sh`
+### `scripts/wails3-dev-macos.sh`
 
-This script does not install language servers. It prepares macOS app assets,
-watches the dev app bundle for icon metadata drift, and runs `wails dev`.
+This script does not install language servers. It builds the current Wails v3
+alpha app through the repo-local Go module, runs the frontend build, writes the
+dev binary under `/tmp/Arlecchino-wails-build`, and owns cleanup for stale dev
+MCP server processes.
 
 ### `scripts/bootstrap-dev-macos.sh`
 
 This script installs the required alpha toolchain and recommended extras:
 
-- Homebrew formulae for Go, Node.js 22, Wails, carapace, onnxruntime, gopls,
-  TypeScript language server, and pyright;
+- Homebrew formulae for Go, Node.js 22, legacy Wails CLI diagnostics, carapace,
+  onnxruntime, gopls, TypeScript language server, and pyright;
 - npm global packages for VS Code extracted language servers, YAML, Bash, and
   Dockerfile language servers;
 - Go modules via `go mod download`;
@@ -102,6 +104,6 @@ Unsigned macOS alpha bundles or DMGs are acceptable for early testers if the
 release notes state that the app is not notarized and users may need to approve
 it through macOS Privacy & Security using Open Anyway.
 
-Source builds through `git clone` and `./scripts/wails-dev-macos.sh` remain the
+Source builds through `git clone` and `./scripts/wails3-dev-macos.sh` remain the
 lowest-friction alpha path, but users should run `scripts/bootstrap-dev-macos.sh`
 first and understand that it installs local development tools.

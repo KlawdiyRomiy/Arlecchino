@@ -1,83 +1,76 @@
-# Wails v3 Shell Spike
+# Wails v3 Shell Status
 
 ## Status
 
-As of **2026-04-22**, Arlecchino keeps `main` on **Wails v2.12**.
+As of **2026-05-05**, Arlecchino `main` is on the pinned
+`github.com/wailsapp/wails/v3 v3.0.0-alpha.87` module.
 
-Wails v3 remains a separate shell exploration track in:
+This is now the source-alpha shell baseline, not a separate future-only branch.
+The public product message should still call this an Editor/Shell Alpha because
+Wails v3 is still an alpha dependency and several native delivery surfaces are
+gated behind explicit smoke paths.
 
-```text
-feature/wails3-shell-spike
-```
+## Current Source-Alpha Path
 
-The reason is straightforward:
-
-- the current product can keep shipping on v2
-- the bubble shell redesign does not depend on v3
-- the main value of v3 is future shell capability, not immediate UI polish
-- Wails v3 is still documented under the `v3alpha` docs track
+- Use `./scripts/wails3-dev-macos.sh` on `main`.
+- Do not use the global Wails v2 CLI for current `main` verification.
+- Generated bindings are controlled by `./scripts/wails3-generate-bindings.sh`.
+- Release packaging uses the `wails3-*` macOS scripts, but public product and
+  artifact names must not include `v3`.
 
 ## Why Arlecchino Cares About v3
 
-Arlecchino's future shell needs more than a single custom window:
+Arlecchino's shell needs more than a single custom window:
 
-- multi-window applets
-- detachable terminal / AI chat / browser preview windows
-- native-feeling window lifecycle and menus
-- tray, notifications, single-instance routing
-- file associations, custom protocols, updater flow
-- future material backends such as Liquid Glass on supported macOS
+- multi-window applets;
+- detachable terminal, preview, Git, and Problems helper surfaces;
+- native-feeling window lifecycle and menus;
+- tray, notifications, single-instance routing;
+- file associations, custom protocols, updater flow;
+- future material backends such as Liquid Glass on supported macOS.
 
-That is why v3 matters. It is a shell foundation question, not a “new version looks nicer” question.
+That is why v3 matters. It is a shell foundation question, not a "new version
+looks nicer" question.
 
-## Spike Scope
+## Release Positioning
 
-The spike is only successful if it proves shell value for Arlecchino.
+The current alpha should be described as:
 
-### Shell checks to verify
+- editor and shell first;
+- local-first by default;
+- no accounts or product analytics by default;
+- no cloud AI/chat integration in the current alpha;
+- local ARLE autocomplete/ranking as experimental;
+- no Apple Developer ID signing or notarization yet.
 
-- app boots and the existing frontend loads
-- bindings/events still work cleanly
-- multi-window behavior works
-- detached applet prototypes work for:
-  - Terminal
-  - AI Chat
-  - Browser Preview
-- native menus and context menus are credible
-- tray and notifications are usable
-- single-instance flow is viable
-- file associations and custom protocol hooks are prototypeable
-- updater path can at least check a manifest
+## Demo Video Slots
 
-### Out of scope for the spike
-
-- moving `main` to v3 immediately
-- rewriting the product around v3 APIs
-- treating Liquid Glass as already-proven production support
-- mixing the spike with release packaging promises
+- Wails v3 source-alpha launch: TBD
+- Bubble shell panel lifecycle: TBD
+- Detached helper surface behind gate: TBD
+- Native menu/context menu path: TBD
+- Single-instance/open-intent path: TBD
+- Local-alpha packaging/install flow: TBD
+- Auto-update check/apply flow: TBD
 
 ## Decision Gate
 
-Do not move `main` to v3 unless all of these are true:
+Do not call the Wails v3 shell complete unless all of these are true:
 
-- terminal focus and input remain stable
-- editor behavior remains stable
-- detached window lifecycle is reliable
-- shortcut behavior across windows is sane
-- packaging/build flow is credible on target platforms
-- migration effort is understood
-- rollback back to v2 is clear
-- no alpha blocker threatens release confidence
+- terminal focus and input remain stable;
+- editor behavior remains stable;
+- detached window lifecycle is reliable where enabled;
+- shortcut behavior across windows is sane;
+- packaging/build flow is credible on target platforms;
+- migration effort and rollback path are understood;
+- no alpha blocker threatens release confidence;
+- release smoke and installed-app smoke evidence are current.
 
-If these do not pass, Arlecchino keeps shipping on v2 while v3 stays a spike branch.
+If these do not pass, Arlecchino can still ship as a technical source alpha, but
+the affected native shell capability must remain gated or explicitly documented
+as experimental.
 
-## Current Direction
-
-- `main` = bubble shell + Wails v2.12 + macOS-first source alpha
-- `feature/wails3-shell-spike` = shell exploration branch
-- Liquid Glass is part of the **future shell track**, not the current alpha baseline
-
-## Current Official Docs Used For This Spike
+## Current Official Docs Used For This Track
 
 - [Wails v3 changelog](https://v3alpha.wails.io/changelog/)
 - [Multiple Windows](https://v3alpha.wails.io/features/windows/multiple/)

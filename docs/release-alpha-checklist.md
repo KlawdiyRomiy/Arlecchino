@@ -1,13 +1,17 @@
 # Alpha Release Checklist
 
-Status: practical release gate for the source alpha and local macOS alpha
-bundle. There is still no Apple Developer ID, so this is not a trusted
-notarized distribution path.
+Status: practical release gate for the macOS-first Editor/Shell Alpha, source
+alpha path, and local macOS alpha bundle. There is still no Apple Developer ID,
+so this is not a trusted notarized distribution path.
+
+The public alpha message is: editor shell first, AI later. Do not position the
+current release as a complete AI IDE. Cloud AI/chat integration is planned but
+not shipped in this alpha; local ARLE autocomplete/ranking remains experimental.
 
 ## Release Formats
 
 - Primary path: source checkout through `git clone`, then run
-  `./scripts/bootstrap-dev-macos.sh` once and `./scripts/wails-dev-macos.sh` for
+  `./scripts/bootstrap-dev-macos.sh` once and `./scripts/wails3-dev-macos.sh` for
   development launches.
 - Convenience path: `./scripts/wails3-local-alpha-release-macos.sh` creates an
   ad-hoc signed universal `arm64+x86_64` `Arlecchino.app` for macOS Big Sur
@@ -61,6 +65,8 @@ notarized distribution path.
 - `docs/trademark-clearance.md`
 - clear release notes stating that telemetry, accounts, and cloud AI providers
   are disabled by default in the current alpha.
+- README feature sections and release notes with demo-video placeholders or
+  links for every public feature being claimed.
 
 ## Manual Gates Before Public Alpha
 
@@ -78,8 +84,15 @@ notarized distribution path.
 - Resolve packages with missing local license metadata, including
   `codemirror-extension-inline-suggestion`.
 - Review `docs/trademark-clearance.md` before broader public launch.
+- Confirm README and public release notes describe this as an Editor/Shell Alpha,
+  not as a finished AI IDE.
+- Confirm every public feature claim has either a demo video link or a visible
+  `TBD` placeholder that makes the missing demo explicit.
 - Do a release dogfood pass: startup, project open, editor interaction,
   terminal command, autocomplete/ranking path, and one MCP approval flow.
+- Run the narrow release checks for the current tree and do not publish with
+  known red checks unless the release notes explicitly classify the issue as an
+  accepted alpha limitation.
 - Verify in-app notifications through the neutral notification stack: save
   progress, save success/error, dispatcher result, and terminal/git errors.
   Native macOS notifications remain separate and default-off.

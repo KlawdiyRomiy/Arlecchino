@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 EXPECTED_BRANCH="main"
 CURRENT_BRANCH="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || true)"
-WAILS3_VERSION="${ARLE_WAILS3_VERSION:-v3.0.0-alpha.83}"
+WAILS3_VERSION="${ARLE_WAILS3_VERSION:-v3.0.0-alpha.87}"
 OUTPUT_DIR="${ARLE_WAILS3_BINDINGS_DIR:-frontend/bindings}"
 OUTPUT_DIR_SET="0"
 WRITE="0"
@@ -59,4 +59,21 @@ if [[ "$WRITE" != "1" ]]; then
 fi
 
 cd "$ROOT_DIR"
-go run "github.com/wailsapp/wails/v3/cmd/wails3@$WAILS3_VERSION" generate bindings "${FLAGS[@]}" "${EXTRA_ARGS[@]}" .
+MODULE_VERSION="$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)"
+if [[ "$MODULE_VERSION" != "$WAILS3_VERSION" ]]; then
+  echo "ERROR: go.mod pins github.com/wailsapp/wails/v3@$MODULE_VERSION, expected $WAILS3_VERSION." >&2
+  echo "Update go.mod or set ARLE_WAILS3_VERSION to match the pinned module." >&2
+  exit 1
+fi
+
+TOOL_DIR="$(mktemp -d "${TMPDIR:-/tmp}/arlecchino-wails3-tool.XXXXXX")"
+trap 'rm -rf "$TOOL_DIR"' EXIT
+
+(
+  cd "$TOOL_DIR"
+  go mod init arlecchino-wails3-tool >/dev/null
+  go mod edit -require "github.com/wailsapp/wails/v3@$WAILS3_VERSION"
+  go build -mod=mod -o "$TOOL_DIR/wails3" github.com/wailsapp/wails/v3/cmd/wails3
+)
+
+"$TOOL_DIR/wails3" generate bindings "${FLAGS[@]}" "${EXTRA_ARGS[@]}" .

@@ -87,7 +87,7 @@ func newProjectManager() *project.ProjectManager {
 }
 
 func defaultProjectSessionFromApp(a *App) *ProjectRuntimeSession {
-	return &ProjectRuntimeSession{
+	session := &ProjectRuntimeSession{
 		ID:               defaultProjectSessionID,
 		WindowName:       "main",
 		IsDefault:        true,
@@ -104,6 +104,8 @@ func defaultProjectSessionFromApp(a *App) *ProjectRuntimeSession {
 		projectCtx:       a.projectCtx,
 		projectCancel:    a.projectCancel,
 	}
+	session.projectGeneration.Store(a.projectGeneration.Load())
+	return session
 }
 
 func newProjectRuntimeSession(id string, windowName string) *ProjectRuntimeSession {
