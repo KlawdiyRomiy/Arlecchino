@@ -822,6 +822,10 @@ export function PinCommand(cmd: string): $CancellablePromise<void> {
     return $Call.ByID(1809965573, cmd);
 }
 
+export function PositionNativeWindowControls(closeX: number, closeY: number, minimiseX: number, minimiseY: number, maximiseX: number, maximiseY: number): $CancellablePromise<boolean> {
+    return $Call.ByID(106707367, closeX, closeY, minimiseX, minimiseY, maximiseX, maximiseY);
+}
+
 export function PredictCommand(input: string): $CancellablePromise<$models.ClassResult | null> {
     return $Call.ByID(57982963, input).then(($result: any) => {
         return $$createType59($result);
@@ -892,6 +896,10 @@ export function RecordGhostShown(): $CancellablePromise<void> {
 
 export function RecordTypingActivity(chars: number): $CancellablePromise<void> {
     return $Call.ByID(438320990, chars);
+}
+
+export function RefreshNativeWindowControls(): $CancellablePromise<boolean> {
+    return $Call.ByID(2428329793);
 }
 
 export function RemovePackage(name: string, opts: composer$0.RemoveOptions): $CancellablePromise<void> {
@@ -1017,10 +1025,6 @@ export function SendTerminalText(id: string, text: string): $CancellablePromise<
 
 export function Serve(opts: system$0.ServeOptions): $CancellablePromise<void> {
     return $Call.ByID(1252611052, opts);
-}
-
-export function SetApplicationIconAppearance(appearance: string): $CancellablePromise<boolean> {
-    return $Call.ByID(1321818672, appearance);
 }
 
 export function SetNativeWindowControlsVisible(visible: boolean): $CancellablePromise<boolean> {
