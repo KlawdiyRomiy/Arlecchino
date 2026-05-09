@@ -632,6 +632,26 @@ body > [data-radix-portal] > * {
   backdrop-filter: blur(18px);
 }
 
+.arle-drag-ghost-layout {
+  max-width: none;
+  flex-direction: row;
+  gap: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  color: inherit;
+  opacity: 0.94;
+  filter: drop-shadow(0 16px 28px rgba(0, 0, 0, 0.22));
+  backdrop-filter: none;
+  contain: layout paint style;
+}
+
+.arle-drag-ghost-layout > * {
+  pointer-events: none;
+}
+
 .arle-drag-ghost-icon {
   width: 48px;
   height: 48px;

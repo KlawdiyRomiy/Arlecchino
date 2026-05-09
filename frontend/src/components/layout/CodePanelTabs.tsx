@@ -54,6 +54,33 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
   const highlightedEditorTabsRef = React.useRef<HTMLElement | null>(null);
   const highlightedExplorerRef = React.useRef<HTMLElement | null>(null);
   const [dragGhost, setDragGhost] = React.useState<DragGhostState | null>(null);
+  const codePanelTabClassName =
+    "h-7 max-w-48 min-w-0 flex-shrink-0 truncate rounded-md border px-2.5 text-left text-xs font-medium transition-colors";
+
+  const getCodePanelTabStyle = (
+    isActive: boolean,
+    options: { ghost?: boolean } = {},
+  ): React.CSSProperties => ({
+    borderColor: isActive ? "var(--shell-border-strong)" : "transparent",
+    backgroundColor: isActive ? "var(--surface-hover)" : "transparent",
+    color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
+    width: options.ghost ? "100%" : undefined,
+    height: options.ghost ? "100%" : undefined,
+    maxWidth: options.ghost ? "none" : undefined,
+  });
+
+  const renderCodePanelTabGhostContent = (
+    tab: CodePanelTab,
+    isActive: boolean,
+  ) => (
+    <div
+      className={`${codePanelTabClassName} arle-code-panel-tab-drag-copy`}
+      data-drag-ghost-source="code-panel-tab"
+      style={getCodePanelTabStyle(isActive, { ghost: true })}
+    >
+      {tab.name}
+    </div>
+  );
 
   const clearEditorTabsHighlight = React.useCallback(() => {
     highlightedEditorTabsRef.current?.classList.remove(
@@ -100,6 +127,10 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
     const pointerId = event.pointerId;
     const startX = event.clientX;
     const startY = event.clientY;
+    const sourceRect = event.currentTarget.getBoundingClientRect();
+    const offsetX = startX - sourceRect.left;
+    const offsetY = startY - sourceRect.top;
+    const sourceActive = tab.path === activePath;
     const panelElement = containerRef.current?.closest<HTMLElement>(
       '[data-panel-id="code"]',
     );
@@ -182,17 +213,13 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
         x: pointerEvent.clientX,
         y: pointerEvent.clientY,
         label: tab.name,
-        detail: editorTabsTarget
-          ? "Move to editor tabs"
-          : explorerTarget
-            ? "Reveal in Explorer"
-            : snapTarget
-              ? `Snap to ${snapTarget}`
-              : insidePanel
-                ? "Drag outside panel"
-                : canOpenSeparatePanel
-                  ? "Open as separate panel"
-                  : "Drop on editor tabs or Explorer",
+        variant: "layout",
+        layout: "code-panel-tab",
+        content: renderCodePanelTabGhostContent(tab, sourceActive),
+        width: sourceRect.width,
+        height: sourceRect.height,
+        offsetX,
+        offsetY,
       });
     };
 
@@ -333,18 +360,8 @@ export const CodePanelTabs: React.FC<CodePanelTabsProps> = ({
               type="button"
               data-testid={getCodePanelTabTestId(tab.path)}
               title={tab.path}
-              className="h-7 max-w-48 min-w-0 flex-shrink-0 truncate rounded-md border px-2.5 text-left text-xs font-medium transition-colors"
-              style={{
-                borderColor: isActive
-                  ? "var(--shell-border-strong)"
-                  : "transparent",
-                backgroundColor: isActive
-                  ? "var(--surface-hover)"
-                  : "transparent",
-                color: isActive
-                  ? "var(--text-primary)"
-                  : "var(--text-secondary)",
-              }}
+              className={codePanelTabClassName}
+              style={getCodePanelTabStyle(isActive)}
               onPointerDown={(event) => handleTabPointerDown(tab, event)}
               onClick={() => {
                 if (suppressClickRef.current) {

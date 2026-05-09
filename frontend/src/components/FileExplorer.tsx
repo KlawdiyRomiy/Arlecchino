@@ -92,6 +92,9 @@ interface DeletedEntryEvent {
   isDirectory?: boolean;
 }
 
+const FILE_EXPLORER_NODE_RIGHT_INSET = 8;
+const FOLDER_CREATE_BUTTON_SIZE = 22;
+
 export interface FileExplorerProps extends PanelSnapDragCallbacks {
   onFileOpen?: (
     path: string,
@@ -1102,6 +1105,133 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       : false;
   };
 
+  const renderFileNameLabel = (fileName: string) => (
+    <span
+      style={{
+        fontSize: "13px",
+        color: "var(--text-secondary)",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {getFileBaseName(fileName)}
+      {hasKnownExtension(fileName) && (
+        <>
+          <span style={{ color: "var(--text-muted)" }}>.</span>
+          <span
+            style={{
+              color: getExtColor(fileName),
+              fontWeight: 700,
+              fontSize: "11px",
+              letterSpacing: "0.3px",
+              fontFamily: "'SF Mono', 'JetBrains Mono', 'Fira Code', monospace",
+            }}
+          >
+            {getExtLabel(fileName)}
+          </span>
+        </>
+      )}
+      {!hasKnownExtension(fileName) && fileName}
+    </span>
+  );
+
+  const renderExplorerTreeGuides = (
+    level: number,
+    isLast: boolean,
+    parentGuides: boolean[],
+    guideColor: string,
+  ) => {
+    if (level === 0) return null;
+    return (
+      <div style={{ display: "flex", alignItems: "stretch", height: "30px" }}>
+        {parentGuides.map((showLine, i) => (
+          <div
+            key={i}
+            style={{
+              width: "16px",
+              position: "relative",
+              flexShrink: 0,
+            }}
+          >
+            {showLine && (
+              <div
+                style={{
+                  position: "absolute",
+                  left: "7px",
+                  top: 0,
+                  bottom: 0,
+                  width: "1px",
+                  backgroundColor: guideColor,
+                }}
+              />
+            )}
+          </div>
+        ))}
+        <div
+          style={{
+            width: "16px",
+            position: "relative",
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              left: "7px",
+              top: 0,
+              height: isLast ? "15px" : "100%",
+              width: "1px",
+              backgroundColor: guideColor,
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              left: "7px",
+              top: "14px",
+              width: "9px",
+              height: "1px",
+              backgroundColor: guideColor,
+            }}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  const renderFileExplorerDragGhostContent = (
+    node: FileNode,
+    level: number,
+    isLast: boolean,
+    parentGuides: boolean[],
+  ) => {
+    const guideColor = isDark ? "var(--border-subtle)" : "rgba(0,0,0,0.15)";
+    const hoverBackground = isDark ? "var(--bg-tertiary)" : "rgba(0,0,0,0.03)";
+
+    return (
+      <div
+        className="file-explorer-node file-explorer-node-drag-copy"
+        data-drag-ghost-source="file-explorer-node"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          width: "100%",
+          height: "100%",
+          minHeight: "30px",
+          paddingLeft: "8px",
+          paddingRight: `${FILE_EXPLORER_NODE_RIGHT_INSET}px`,
+          borderRadius: "var(--radius-sm)",
+          cursor: "grabbing",
+          background: hoverBackground,
+        }}
+      >
+        {renderExplorerTreeGuides(level, isLast, parentGuides, guideColor)}
+        {renderFileNameLabel(node.name)}
+      </div>
+    );
+  };
+
   const findNodeByPath = useCallback((path: string): FileNode | null => {
     const walk = (nodes: FileNode[]): FileNode | null => {
       for (const current of nodes) {
@@ -1189,6 +1319,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const handleNodePointerDown = (
     node: FileNode,
     event: React.PointerEvent<HTMLDivElement>,
+    level: number,
+    isLast: boolean,
+    parentGuides: boolean[],
   ) => {
     if (event.button !== 0) {
       return;
@@ -1199,6 +1332,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     const pointerId = event.pointerId;
     const startX = event.clientX;
     const startY = event.clientY;
+    const sourceRect = event.currentTarget.getBoundingClientRect();
+    const offsetX = startX - sourceRect.left;
+    const offsetY = startY - sourceRect.top;
     let activeDrag = false;
     let latestDropTarget: string | null = null;
     let latestSnapTarget: ReturnType<typeof detectPanelSnapDropTarget> = null;
@@ -1256,17 +1392,34 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         node,
       );
       setDropTargetPath(latestDropTarget);
+      if (node.isDirectory) {
+        setDragGhost({
+          x: pointerEvent.clientX,
+          y: pointerEvent.clientY,
+          label: node.name,
+          detail: latestDropTarget
+            ? `Move to ${latestDropTarget.split("/").pop() || latestDropTarget}`
+            : "Folder can be moved inside Explorer",
+        });
+        return;
+      }
+
       setDragGhost({
         x: pointerEvent.clientX,
         y: pointerEvent.clientY,
         label: node.name,
-        detail: snapTarget
-          ? `Snap to ${snapTarget}`
-          : latestDropTarget
-            ? `Move to ${latestDropTarget.split("/").pop() || latestDropTarget}`
-            : node.isDirectory
-              ? "Folder can be moved inside Explorer"
-              : "Release outside Explorer to open as panel",
+        variant: "layout",
+        layout: "file-explorer-node",
+        content: renderFileExplorerDragGhostContent(
+          node,
+          level,
+          isLast,
+          parentGuides,
+        ),
+        width: sourceRect.width,
+        height: sourceRect.height,
+        offsetX,
+        offsetY,
       });
     };
 
@@ -1694,8 +1847,8 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const createEntryMenuItemClassName =
     "flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-[var(--text-secondary)] outline-none transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]";
   const fileExplorerScrollbarGutter = 8;
-  const fileExplorerNodeRightInset = 8;
-  const folderCreateButtonSize = 22;
+  const fileExplorerNodeRightInset = FILE_EXPLORER_NODE_RIGHT_INSET;
+  const folderCreateButtonSize = FOLDER_CREATE_BUTTON_SIZE;
   const headerCreateButtonSize = 24;
   const headerCreateButtonPaddingRight =
     fileExplorerScrollbarGutter +
@@ -1790,65 +1943,6 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       "--file-explorer-flash-peak": flashPeakBackground,
     };
 
-    const renderTreeGuides = () => {
-      if (level === 0) return null;
-      return (
-        <div style={{ display: "flex", alignItems: "stretch", height: "30px" }}>
-          {parentGuides.map((showLine, i) => (
-            <div
-              key={i}
-              style={{
-                width: "16px",
-                position: "relative",
-                flexShrink: 0,
-              }}
-            >
-              {showLine && (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: "7px",
-                    top: 0,
-                    bottom: 0,
-                    width: "1px",
-                    backgroundColor: guideColor,
-                  }}
-                />
-              )}
-            </div>
-          ))}
-          <div
-            style={{
-              width: "16px",
-              position: "relative",
-              flexShrink: 0,
-            }}
-          >
-            <div
-              style={{
-                position: "absolute",
-                left: "7px",
-                top: 0,
-                height: isLast ? "15px" : "100%",
-                width: "1px",
-                backgroundColor: guideColor,
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                left: "7px",
-                top: "14px",
-                width: "9px",
-                height: "1px",
-                backgroundColor: guideColor,
-              }}
-            />
-          </div>
-        </div>
-      );
-    };
-
     const chevronStyle: React.CSSProperties = {
       marginRight: "4px",
       color: "var(--text-muted)",
@@ -1902,10 +1996,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
             }`}
             data-file-path={node.path}
             data-file-directory={node.isDirectory ? "true" : "false"}
-            onPointerDown={(event) => handleNodePointerDown(node, event)}
+            onPointerDown={(event) =>
+              handleNodePointerDown(node, event, level, isLast, parentGuides)
+            }
             onClick={(e) => handleNodeClick(node, e)}
           >
-            {renderTreeGuides()}
+            {renderExplorerTreeGuides(level, isLast, parentGuides, guideColor)}
 
             {node.isDirectory && (
               <span
@@ -1943,35 +2039,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
               </>
             ) : (
               // INLINE EXTENSION STYLE: filename.EXT
-              <span
-                style={{
-                  fontSize: "13px",
-                  color: "var(--text-secondary)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {getFileBaseName(node.name)}
-                {hasKnownExtension(node.name) && (
-                  <>
-                    <span style={{ color: "var(--text-muted)" }}>.</span>
-                    <span
-                      style={{
-                        color: getExtColor(node.name),
-                        fontWeight: 700,
-                        fontSize: "11px",
-                        letterSpacing: "0.3px",
-                        fontFamily:
-                          "'SF Mono', 'JetBrains Mono', 'Fira Code', monospace",
-                      }}
-                    >
-                      {getExtLabel(node.name)}
-                    </span>
-                  </>
-                )}
-                {!hasKnownExtension(node.name) && node.name}
-              </span>
+              renderFileNameLabel(node.name)
             )}
           </div>
         </ContextActionMenu>

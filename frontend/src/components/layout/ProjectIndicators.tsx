@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { FolderOpen, X } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
+import type { WorkspaceProject } from "../../stores/workspaceStore";
 import { useCollapseTimer } from "../../hooks/useCollapseTimer";
 import { DragGhost, type DragGhostState } from "../ui/DragGhost";
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
@@ -17,6 +18,62 @@ interface ProjectIndicatorsProps {
 const fadeTransition = { duration: 0.16, ease: "easeOut" } as const;
 const fadeInitial = { opacity: 0, y: -2 };
 const fadeAnimate = { opacity: 1, y: 0 };
+const projectChipBaseClassName =
+  "topbar-project-chip group flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-2 text-[12px] transition-colors";
+const projectChipActiveClassName =
+  "topbar-project-chip-active border-transparent text-[var(--text-primary)]";
+const projectChipInactiveClassName =
+  "border-transparent text-[var(--text-muted)] hover:border-[var(--shell-border)] hover:bg-[var(--surface-active)] hover:text-[var(--text-secondary)]";
+const projectChipCloseClassName =
+  "ml-0.5 shrink-0 cursor-pointer rounded-full p-0.5 opacity-0 transition-all group-hover:bg-black/10 group-hover:opacity-70 hover:!opacity-100";
+const projectChipGhostCloseClassName =
+  "ml-0.5 shrink-0 rounded-full bg-black/10 p-0.5 opacity-70";
+
+const getProjectChipClassName = (isActive: boolean) =>
+  `${projectChipBaseClassName} ${
+    isActive ? projectChipActiveClassName : projectChipInactiveClassName
+  }`;
+
+const renderProjectChipInner = (
+  project: Pick<WorkspaceProject, "name">,
+  options: { ghost?: boolean } = {},
+) => (
+  <>
+    <FolderOpen size={20} className="shrink-0 opacity-80" />
+    <span>{project.name}</span>
+    <span
+      role={options.ghost ? undefined : "button"}
+      tabIndex={options.ghost ? undefined : -1}
+      className={
+        options.ghost
+          ? projectChipGhostCloseClassName
+          : projectChipCloseClassName
+      }
+    >
+      <X size={12} />
+    </span>
+  </>
+);
+
+const renderProjectChipGhostContent = (
+  project: Pick<WorkspaceProject, "name">,
+  isActive: boolean,
+) => (
+  <div
+    className={`${getProjectChipClassName(isActive)} arle-topbar-project-chip-drag-copy`}
+    data-drag-ghost-source="topbar-project-chip"
+    style={{
+      width: "100%",
+      height: "100%",
+      cursor: "grabbing",
+      borderColor: isActive ? undefined : "var(--shell-border)",
+      background: isActive ? undefined : "var(--surface-active)",
+      color: isActive ? undefined : "var(--text-secondary)",
+    }}
+  >
+    {renderProjectChipInner(project, { ghost: true })}
+  </div>
+);
 
 export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
   onSwitch,
@@ -51,6 +108,12 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
     const pointerId = event.pointerId;
     const startX = event.clientX;
     const startY = event.clientY;
+    const sourceRect = event.currentTarget.getBoundingClientRect();
+    const offsetX = startX - sourceRect.left;
+    const offsetY = startY - sourceRect.top;
+    const sourceProject = projects.find((item) => item.id === projectId);
+    const sourceName = sourceProject?.name ?? projectId;
+    const sourceActive = activeId === projectId;
     let activeDrag = false;
 
     const handlePointerMove = (pointerEvent: PointerEvent) => {
@@ -71,12 +134,20 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
       }
 
       const container = expandedRef.current;
-      const project = projects.find((item) => item.id === projectId);
       setDragGhost({
         x: pointerEvent.clientX,
         y: pointerEvent.clientY,
-        label: project?.name ?? projectId,
-        detail: "Reorder or open in separate window",
+        label: sourceName,
+        variant: "layout",
+        layout: "topbar-project-chip",
+        content: renderProjectChipGhostContent(
+          { name: sourceName },
+          sourceActive,
+        ),
+        width: sourceRect.width,
+        height: sourceRect.height,
+        offsetX,
+        offsetY,
       });
       if (!container) {
         return;
@@ -256,11 +327,7 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
                   onSwitch(p.id);
                   stopTimer();
                 }}
-                className={`topbar-project-chip group flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-2 text-[12px] transition-colors ${
-                  activeId === p.id
-                    ? "topbar-project-chip-active border-transparent text-[var(--text-primary)]"
-                    : "border-transparent text-[var(--text-muted)] hover:border-[var(--shell-border)] hover:bg-[var(--surface-active)] hover:text-[var(--text-secondary)]"
-                }`}
+                className={getProjectChipClassName(activeId === p.id)}
               >
                 <FolderOpen size={20} className="shrink-0 opacity-80" />
                 <span>{p.name}</span>
@@ -273,7 +340,7 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
                     stopTimer();
                   }}
                   onPointerDown={(e) => e.stopPropagation()}
-                  className="ml-0.5 shrink-0 cursor-pointer rounded-full p-0.5 opacity-0 transition-all group-hover:bg-black/10 group-hover:opacity-70 hover:!opacity-100"
+                  className={projectChipCloseClassName}
                 >
                   <X size={12} />
                 </span>

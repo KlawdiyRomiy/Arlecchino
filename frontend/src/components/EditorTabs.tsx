@@ -33,7 +33,7 @@ interface EditorTabsProps extends PanelSnapDragCallbacks {
     tab: Tab,
     point: { x: number; y: number },
     options?: EditorTabDetachOptions,
-  ) => void;
+  ) => void | Promise<void>;
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
   markdownPreviewAvailable?: boolean;
@@ -63,6 +63,91 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
 }) => {
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
   const [dragGhost, setDragGhost] = React.useState<DragGhostState | null>(null);
+  const [draggedOutTabId, setDraggedOutTabId] = React.useState<string | null>(
+    null,
+  );
+  const draggedOutTabIdRef = React.useRef<string | null>(null);
+
+  const setDraggedOutSourceTab = React.useCallback((tabId: string | null) => {
+    if (draggedOutTabIdRef.current === tabId) {
+      return;
+    }
+    draggedOutTabIdRef.current = tabId;
+    setDraggedOutTabId(tabId);
+  }, []);
+
+  React.useEffect(() => {
+    if (draggedOutTabId && !tabs.some((tab) => tab.id === draggedOutTabId)) {
+      setDraggedOutSourceTab(null);
+    }
+  }, [draggedOutTabId, setDraggedOutSourceTab, tabs]);
+
+  const handleMotionReorder = React.useCallback(
+    (nextTabs: Tab[]) => {
+      if (draggedOutTabIdRef.current) {
+        return;
+      }
+      onTabsReorder?.(nextTabs);
+    },
+    [onTabsReorder],
+  );
+
+  const renderTabContent = (tab: Tab, options: { ghost?: boolean } = {}) => (
+    <>
+      <span className="truncate flex-1">{tab.label}</span>
+      {tab.isDirty && (
+        <span className="ml-6 flex items-center justify-center text-[18px] leading-none text-[var(--text-primary)]">
+          ●
+        </span>
+      )}
+      {options.ghost ? (
+        <span className="rounded p-0.5 opacity-100 text-[var(--text-secondary)]">
+          <X size={14} />
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onTabClose(tab.id);
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="rounded p-0.5 opacity-0 transition-[opacity,background-color,color] group-hover:opacity-100 hover:bg-[var(--bg-hover)]"
+        >
+          <X size={14} />
+        </button>
+      )}
+      {activeTab === tab.id && (
+        <div
+          data-testid="active-tab-indicator"
+          className="absolute bottom-0 left-0 right-0 h-[2px] bg-[var(--text-primary)]"
+        />
+      )}
+    </>
+  );
+
+  const tabClassName = (tab: Tab) => `
+    group relative flex min-w-[120px] max-w-[200px] items-center gap-2 self-stretch px-3 py-2 text-[12px] font-mono
+    ${
+      activeTab === tab.id
+        ? "bg-[var(--bg-secondary)] text-[var(--text-primary)]"
+        : "bg-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]/72 hover:text-[var(--text-primary)]"
+    }
+  `;
+
+  const renderEditorTabGhostContent = (tab: Tab) => (
+    <div
+      className={`${tabClassName(tab)} arle-editor-tab-drag-copy`}
+      data-drag-ghost-source="editor-tab"
+      style={{
+        borderRadius: activeTab === tab.id ? "8px 8px 0 0" : "0",
+        width: "100%",
+        height: "100%",
+      }}
+    >
+      {renderTabContent(tab, { ghost: true })}
+    </div>
+  );
 
   const handleTabPointerDown = (
     tab: Tab,
@@ -76,6 +161,9 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
     const pointerId = event.pointerId;
     const startX = event.clientX;
     const startY = event.clientY;
+    const sourceRect = event.currentTarget.getBoundingClientRect();
+    const offsetX = startX - sourceRect.left;
+    const offsetY = startY - sourceRect.top;
     let moved = false;
     let latestSnapTarget: ReturnType<typeof detectPanelSnapDropTarget> = null;
     let snapDragStarted = false;
@@ -117,16 +205,19 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
               pointerEvent.clientY,
             )
           : null;
+        setDraggedOutSourceTab(insideTabs ? null : tab.id);
         updatePanelSnapDrag(snapTarget);
         setDragGhost({
           x: pointerEvent.clientX,
           y: pointerEvent.clientY,
           label: tab.label,
-          detail: insideTabs
-            ? "Reorder tab"
-            : snapTarget
-              ? `Snap to ${snapTarget}`
-              : "Open as floating panel",
+          variant: "layout",
+          layout: "editor-tab",
+          content: renderEditorTabGhostContent(tab),
+          width: sourceRect.width,
+          height: sourceRect.height,
+          offsetX,
+          offsetY,
         });
       }
 
@@ -151,12 +242,24 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
     const cleanup = () => {
       window.removeEventListener("pointermove", handlePointerMove, true);
       window.removeEventListener("pointerup", handlePointerUp, true);
-      window.removeEventListener("pointercancel", cleanup, true);
+      window.removeEventListener("pointercancel", handlePointerCancel, true);
       if (snapDragStarted) {
         onPanelSnapDragEnd?.();
       }
       releaseSelectionLock();
       setDragGhost(null);
+    };
+
+    const restoreDraggedSource = () => {
+      setDraggedOutSourceTab(null);
+    };
+
+    const handlePointerCancel = (pointerEvent: PointerEvent) => {
+      if (pointerEvent.pointerId !== pointerId) {
+        return;
+      }
+      cleanup();
+      restoreDraggedSource();
     };
 
     const handlePointerUp = (pointerEvent: PointerEvent) => {
@@ -166,6 +269,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
       cleanup();
       const container = scrollContainerRef.current;
       if (!moved || !container) {
+        restoreDraggedSource();
         return;
       }
       const rect = container.getBoundingClientRect();
@@ -175,7 +279,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         pointerEvent.clientY >= rect.top &&
         pointerEvent.clientY <= rect.bottom;
       if (!inside) {
-        onTabDetachToPanel(
+        const detachResult = onTabDetachToPanel(
           tab,
           {
             x: pointerEvent.clientX,
@@ -183,52 +287,24 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
           },
           { snapPosition: latestSnapTarget },
         );
+        void Promise.resolve(detachResult).finally(restoreDraggedSource);
+        return;
       }
+      restoreDraggedSource();
     };
 
     window.addEventListener("pointermove", handlePointerMove, true);
     window.addEventListener("pointerup", handlePointerUp, true);
-    window.addEventListener("pointercancel", cleanup, true);
+    window.addEventListener("pointercancel", handlePointerCancel, true);
   };
 
-  const renderTabContent = (tab: Tab) => (
-    <>
-      <span className="truncate flex-1">{tab.label}</span>
-      {tab.isDirty && (
-        <span className="ml-6 flex items-center justify-center text-[18px] leading-none text-[var(--text-primary)]">
-          ●
-        </span>
-      )}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onTabClose(tab.id);
-        }}
-        onPointerDown={(e) => e.stopPropagation()}
-        className="rounded p-0.5 opacity-0 transition-[opacity,background-color,color] group-hover:opacity-100 hover:bg-[var(--bg-hover)]"
-      >
-        <X size={14} />
-      </button>
-      {activeTab === tab.id && (
-        <div
-          data-testid="active-tab-indicator"
-          className="absolute bottom-0 left-0 right-0 h-[2px] bg-[var(--text-primary)]"
-        />
-      )}
-    </>
-  );
-
-  const tabClassName = (tab: Tab) => `
-    group relative flex min-w-[120px] max-w-[200px] items-center gap-2 self-stretch px-3 py-2 text-[12px] font-mono
-    ${
-      activeTab === tab.id
-        ? "bg-[var(--bg-secondary)] text-[var(--text-primary)]"
-        : "bg-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]/72 hover:text-[var(--text-primary)]"
-    }
-  `;
-
   const renderTab = (tab: Tab) => {
+    const sourceHidden = draggedOutTabId === tab.id;
+    const tabStyle: React.CSSProperties = {
+      borderRadius: activeTab === tab.id ? "8px 8px 0 0" : "0",
+      visibility: sourceHidden ? "hidden" : undefined,
+      pointerEvents: sourceHidden ? "none" : undefined,
+    };
     const tabNode = onTabsReorder ? (
       <Reorder.Item
         key={tab.id}
@@ -236,10 +312,9 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         onClick={() => onTabClick(tab.id)}
         onPointerDown={(event) => handleTabPointerDown(tab, event)}
         data-tab-id={tab.id}
+        data-drag-source-hidden={sourceHidden ? "true" : undefined}
         className={`${tabClassName(tab)} cursor-grab`}
-        style={{
-          borderRadius: activeTab === tab.id ? "8px 8px 0 0" : "0",
-        }}
+        style={tabStyle}
       >
         {renderTabContent(tab)}
       </Reorder.Item>
@@ -249,10 +324,9 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         onClick={() => onTabClick(tab.id)}
         onPointerDown={(event) => handleTabPointerDown(tab, event)}
         data-tab-id={tab.id}
+        data-drag-source-hidden={sourceHidden ? "true" : undefined}
         className={`${tabClassName(tab)} cursor-pointer`}
-        style={{
-          borderRadius: activeTab === tab.id ? "8px 8px 0 0" : "0",
-        }}
+        style={tabStyle}
       >
         {renderTabContent(tab)}
       </div>
@@ -289,7 +363,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
           ref={scrollContainerRef}
           axis="x"
           values={tabs}
-          onReorder={onTabsReorder}
+          onReorder={handleMotionReorder}
           className="shell-mini-x-scroll relative z-10 flex min-w-0 flex-1 self-stretch overflow-x-auto overflow-y-hidden bg-transparent"
         >
           {tabItems}
