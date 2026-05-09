@@ -33,7 +33,12 @@ export function useCollapseTimer(delay = 60_000, enabled = true) {
       timerRef.current = setTimeout(() => setIsCollapsed(true), delay);
     }
 
-    return clear;
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, [clear, delay, enabled]);
 
   return {

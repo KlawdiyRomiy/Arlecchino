@@ -1346,6 +1346,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     RecordFileAccess(filePath).catch(() => {});
 
     return () => {
+      if (notifyChangeDebounceRef.current) {
+        clearTimeout(notifyChangeDebounceRef.current);
+        notifyChangeDebounceRef.current = null;
+      }
       if (!largeDocumentMode) {
         NotifyFileClosed(filePath, language).catch(console.warn);
       }
@@ -2192,6 +2196,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       }
 
       notifyChangeDebounceRef.current = setTimeout(() => {
+        notifyChangeDebounceRef.current = null;
         NotifyFileChanged(filePath, language, version, value).catch(() => {});
       }, notifyChangeDelayRef.current);
     },

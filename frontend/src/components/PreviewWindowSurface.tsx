@@ -95,7 +95,7 @@ const terminalPreviewButtonStyle: React.CSSProperties = {
 };
 
 export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
-  window,
+  window: previewWindow,
   appearancePreview,
   currentTheme,
   currentUiScale,
@@ -120,12 +120,14 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
   const [fileError, setFileError] = useState<string | null>(null);
 
   const filePath =
-    typeof window.payload.path === "string" ? window.payload.path : "";
+    typeof previewWindow.payload.path === "string"
+      ? previewWindow.payload.path
+      : "";
 
   useEffect(() => {
     let cancelled = false;
 
-    if (window.surface !== "file" && window.surface !== "code") {
+    if (previewWindow.surface !== "file" && previewWindow.surface !== "code") {
       setLoadedFileContent(null);
       setIsLoadingFile(false);
       setFileError(null);
@@ -133,7 +135,9 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
     }
 
     const inlineContent =
-      typeof window.payload.content === "string" ? window.payload.content : "";
+      typeof previewWindow.payload.content === "string"
+        ? previewWindow.payload.content
+        : "";
 
     if (inlineContent.length > 0) {
       setLoadedFileContent(inlineContent);
@@ -175,7 +179,12 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [activeTab?.content, filePath, window.payload.content, window.surface]);
+  }, [
+    activeTab?.content,
+    filePath,
+    previewWindow.payload.content,
+    previewWindow.surface,
+  ]);
 
   const previewCode = useMemo(() => {
     const matchedTab = filePath
@@ -183,10 +192,10 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
       : null;
 
     if (
-      typeof window.payload.content === "string" &&
-      window.payload.content.length > 0
+      typeof previewWindow.payload.content === "string" &&
+      previewWindow.payload.content.length > 0
     ) {
-      return window.payload.content;
+      return previewWindow.payload.content;
     }
     if (matchedTab?.content) {
       return matchedTab.content;
@@ -203,41 +212,42 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
     filePath,
     loadedFileContent,
     tabs,
-    window.payload.content,
+    previewWindow.payload.content,
   ]);
 
   const codeLanguage = useMemo(() => {
-    if (typeof window.payload.language === "string") {
-      return window.payload.language;
+    if (typeof previewWindow.payload.language === "string") {
+      return previewWindow.payload.language;
     }
     if (filePath.includes(".")) {
       return filePath.split(".").pop() || "";
     }
     return activeTab?.language || "";
-  }, [activeTab?.language, filePath, window.payload.language]);
+  }, [activeTab?.language, filePath, previewWindow.payload.language]);
 
   const appearanceTheme = appearancePreview?.theme ?? currentTheme;
   const appearanceScale = appearancePreview?.uiScale ?? currentUiScale;
 
-  if (window.surface === "browser") {
+  if (previewWindow.surface === "browser") {
     const browserUrl =
-      typeof window.payload.url === "string" && window.payload.url.trim()
-        ? window.payload.url
+      typeof previewWindow.payload.url === "string" &&
+      previewWindow.payload.url.trim()
+        ? previewWindow.payload.url
         : undefined;
     const htmlContent =
-      typeof window.payload.htmlContent === "string" &&
-      window.payload.htmlContent.trim()
-        ? window.payload.htmlContent
+      typeof previewWindow.payload.htmlContent === "string" &&
+      previewWindow.payload.htmlContent.trim()
+        ? previewWindow.payload.htmlContent
         : undefined;
     const sourceLabel =
-      typeof window.payload.sourceLabel === "string" &&
-      window.payload.sourceLabel.trim()
-        ? window.payload.sourceLabel
+      typeof previewWindow.payload.sourceLabel === "string" &&
+      previewWindow.payload.sourceLabel.trim()
+        ? previewWindow.payload.sourceLabel
         : undefined;
     const revision =
-      typeof window.payload.revision === "number" &&
-      Number.isFinite(window.payload.revision)
-        ? window.payload.revision
+      typeof previewWindow.payload.revision === "number" &&
+      Number.isFinite(previewWindow.payload.revision)
+        ? previewWindow.payload.revision
         : undefined;
 
     return (
@@ -251,11 +261,11 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
     );
   }
 
-  if (window.surface === "git") {
+  if (previewWindow.surface === "git") {
     return (
       <GitPanel
         projectPath={projectPath}
-        panelPosition={window.position}
+        panelPosition={previewWindow.position}
         onFileOpen={(path) => {
           onFileOpen?.(path, "", path.split("/").pop() || path);
         }}
@@ -263,11 +273,11 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
     );
   }
 
-  if (window.surface === "chat") {
+  if (previewWindow.surface === "chat") {
     return <AIChatPanelContent />;
   }
 
-  if (window.surface === "terminal") {
+  if (previewWindow.surface === "terminal") {
     return (
       <div style={terminalPreviewContainerStyle}>
         <div style={{ fontSize: 13, color: palette.textPrimary }}>
@@ -287,7 +297,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
     );
   }
 
-  if (window.surface === "appearance") {
+  if (previewWindow.surface === "appearance") {
     return (
       <div style={appearanceContainerStyle}>
         <div
@@ -375,7 +385,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
     );
   }
 
-  if (window.surface === "code" || window.surface === "file") {
+  if (previewWindow.surface === "code" || previewWindow.surface === "file") {
     if (!filePath) {
       return (
         <pre

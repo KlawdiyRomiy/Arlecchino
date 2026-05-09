@@ -745,6 +745,9 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
               }
               suggestDebounceRef.current = setTimeout(async () => {
                 const suffix = await getCompletionSuffix(currentLine.trim());
+                if (disposed) {
+                  return;
+                }
                 ghostTextValueRef.current = suffix;
                 setGhostText(suffix);
               }, 100);
@@ -870,6 +873,10 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       disposed = true;
       keyHandlerTimers.forEach((timer) => clearTimeout(timer));
       keyHandlerTimers.clear();
+      if (suggestDebounceRef.current) {
+        clearTimeout(suggestDebounceRef.current);
+        suggestDebounceRef.current = undefined;
+      }
       terminal.attachCustomKeyEventHandler(() => true);
     };
   }, [
