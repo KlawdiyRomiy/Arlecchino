@@ -3,6 +3,7 @@ package core
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -40,6 +41,7 @@ type Engine struct {
 	activeBatchID     atomic.Int64
 	batchTotal        atomic.Int64
 	batchDone         atomic.Int64
+	batchProgressAt   atomic.Int64
 }
 
 type EngineConfig struct {
@@ -57,14 +59,27 @@ type EngineStats struct {
 }
 
 const (
-	indexProjectInventoryBatchSize = 128
-	indexProjectScanYieldEvery     = 256
-	indexProjectScanYieldDelay     = 2 * time.Millisecond
-	largeProjectFileCount          = 5000
-	criticalProjectFileCount       = 15000
-	speculativeChangeMaxBytes      = 256 << 10
-	foregroundIndexMaxBytes        = 1 << 20
+	indexProjectInventoryBatchSize  = 128
+	indexProjectScanYieldEvery      = 256
+	indexProjectProgressMinInterval = 80 * time.Millisecond
+	indexProjectSmallProgressBatch  = 64
+	indexProjectWorkerCap           = 12
+	largeProjectFileCount           = 5000
+	criticalProjectFileCount        = 15000
+	speculativeChangeMaxBytes       = 256 << 10
+	foregroundIndexMaxBytes         = 1 << 20
 )
+
+func RecommendedWorkerCount() int {
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 2 {
+		return 2
+	}
+	if workers > indexProjectWorkerCap {
+		return indexProjectWorkerCap
+	}
+	return workers
+}
 
 func NewEngine(cfg EngineConfig) (*Engine, error) {
 	store, err := NewStore(cfg.DBPath, cfg.ProjectID)
@@ -72,7 +87,11 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		return nil, err
 	}
 
-	scheduler := NewScheduler(cfg.Workers, store)
+	workers := cfg.Workers
+	if workers <= 0 {
+		workers = RecommendedWorkerCount()
+	}
+	scheduler := NewScheduler(workers, store)
 
 	e := &Engine{
 		projectID:   cfg.ProjectID,
@@ -91,7 +110,7 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		}
 		done := e.batchDone.Add(1)
 		total := e.batchTotal.Load()
-		if done%5 == 0 || done == total {
+		if e.shouldEmitIndexingProgress(done, total) {
 			e.notifyIndexing(IndexingEvent{
 				Type:    IndexingProgress,
 				Current: int(done),
@@ -104,6 +123,22 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	})
 
 	return e, nil
+}
+
+func (e *Engine) shouldEmitIndexingProgress(done int64, total int64) bool {
+	if total <= 0 {
+		return false
+	}
+	if done >= total || total <= indexProjectSmallProgressBatch {
+		return true
+	}
+
+	now := time.Now().UnixNano()
+	last := e.batchProgressAt.Load()
+	if last != 0 && time.Duration(now-last) < indexProjectProgressMinInterval {
+		return false
+	}
+	return e.batchProgressAt.CompareAndSwap(last, now)
 }
 
 func (e *Engine) Scheduler() *Scheduler {
@@ -222,7 +257,7 @@ func (e *Engine) IndexProject() {
 		}
 		count++
 		if count%indexProjectScanYieldEvery == 0 {
-			time.Sleep(indexProjectScanYieldDelay)
+			runtime.Gosched()
 		}
 		if lang == "" {
 			return nil
@@ -248,6 +283,13 @@ func (e *Engine) IndexProject() {
 	e.activeBatchID.Store(batchID)
 	e.batchTotal.Store(int64(total))
 	e.batchDone.Store(0)
+	e.batchProgressAt.Store(0)
+
+	e.mu.Lock()
+	e.stats.TotalFiles = count
+	e.stats.LastIndexedAt = time.Now()
+	e.stats.LastIndexTime = time.Since(start)
+	e.mu.Unlock()
 
 	e.notifyIndexing(IndexingEvent{Type: IndexingStarted, Total: total})
 
@@ -267,11 +309,6 @@ func (e *Engine) IndexProject() {
 		}
 	}
 
-	e.mu.Lock()
-	e.stats.TotalFiles = count
-	e.stats.LastIndexedAt = time.Now()
-	e.stats.LastIndexTime = time.Since(start)
-	e.mu.Unlock()
 }
 
 func (e *Engine) applyProjectSizePolicy(fileCount int) {

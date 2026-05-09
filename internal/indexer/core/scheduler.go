@@ -259,21 +259,7 @@ func (s *Scheduler) processFile(job Job) error {
 		return err
 	}
 
-	if err := s.store.DeleteFileSymbols(job.FilePath); err != nil {
-		return err
-	}
-	if err := s.store.DeleteFileEdges(job.FilePath); err != nil {
-		return err
-	}
-
-	if err := s.store.SaveSymbols(symbols); err != nil {
-		return err
-	}
-	if err := s.store.SaveEdges(edges); err != nil {
-		return err
-	}
-
-	return s.saveFileMeta(job.FilePath, job.Language, len(symbols) > 0)
+	return s.store.ReplaceFileIndex(job.FilePath, job.Language, symbols, edges)
 }
 
 func (s *Scheduler) processFull(job Job) error {
@@ -337,12 +323,7 @@ func (s *Scheduler) processFull(job Job) error {
 			return nil // Skip files that fail to parse
 		}
 
-		// Save to store
-		_ = s.store.DeleteFileSymbols(path)
-		_ = s.store.DeleteFileEdges(path)
-		_ = s.store.SaveSymbols(symbols)
-		_ = s.store.SaveEdges(edges)
-		_ = s.saveFileMeta(path, adapter.Language(), len(symbols) > 0)
+		_ = s.store.ReplaceFileIndex(path, adapter.Language(), symbols, edges)
 
 		return nil
 	})
@@ -404,11 +385,7 @@ func (s *Scheduler) processLanguage(job Job) error {
 			return nil
 		}
 
-		_ = s.store.DeleteFileSymbols(path)
-		_ = s.store.DeleteFileEdges(path)
-		_ = s.store.SaveSymbols(symbols)
-		_ = s.store.SaveEdges(edges)
-		_ = s.saveFileMeta(path, adapter.Language(), len(symbols) > 0)
+		_ = s.store.ReplaceFileIndex(path, adapter.Language(), symbols, edges)
 
 		return nil
 	})

@@ -43,15 +43,18 @@ func NewStore(dbPath string, projectID string) (*Store, error) {
 		return nil, fmt.Errorf("create db dir: %w", err)
 	}
 
-	db, err := gorm.Open(sqlite.Open(dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_busy_timeout=10000"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
+	db, err := openStoreDB(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("open db: %w", err)
-	}
-
-	if err := db.AutoMigrate(&Symbol{}, &Edge{}, &File{}, &Project{}, &CommandHistory{}, &CommandOutput{}, &SymbolUsage{}, &Cooccurrence{}); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
+		if !isSQLiteDatabaseCorruption(err) {
+			return nil, err
+		}
+		if quarantineErr := quarantineCorruptStoreDB(dbPath); quarantineErr != nil {
+			return nil, fmt.Errorf("%w; quarantine corrupt db: %v", err, quarantineErr)
+		}
+		db, err = openStoreDB(dbPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	sqlDB, _ := db.DB()
@@ -61,6 +64,72 @@ func NewStore(dbPath string, projectID string) (*Store, error) {
 		db:        db,
 		projectID: projectID,
 	}, nil
+}
+
+func openStoreDB(dbPath string) (*gorm.DB, error) {
+	db, err := gorm.Open(sqlite.Open(dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=10000&_busy_timeout=10000"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+
+	if err := db.AutoMigrate(&Symbol{}, &Edge{}, &File{}, &Project{}, &CommandHistory{}, &CommandOutput{}, &SymbolUsage{}, &Cooccurrence{}); err != nil {
+		if sqlDB, dbErr := db.DB(); dbErr == nil {
+			_ = sqlDB.Close()
+		}
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+
+	return db, nil
+}
+
+func isSQLiteDatabaseCorruption(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not a database") ||
+		strings.Contains(msg, "database disk image is malformed") ||
+		strings.Contains(msg, "malformed")
+}
+
+func quarantineCorruptStoreDB(dbPath string) error {
+	if _, err := os.Stat(dbPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	stamp := time.Now().UTC().Format("20060102T150405Z")
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		path := dbPath + suffix
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		target := nextQuarantinePath(dbPath, suffix, stamp)
+		if err := os.Rename(path, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func nextQuarantinePath(dbPath string, suffix string, stamp string) string {
+	base := dbPath + ".corrupt-" + stamp + suffix
+	if _, err := os.Stat(base); os.IsNotExist(err) {
+		return base
+	}
+	for i := 1; ; i++ {
+		candidate := fmt.Sprintf("%s.%d", base, i)
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+	}
 }
 
 func (s *Store) SaveSymbols(symbols []Symbol) error {
@@ -100,6 +169,10 @@ func (s *Store) prepareSymbols(symbols []Symbol) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.prepareSymbolsLocked(symbols)
+}
+
+func (s *Store) prepareSymbolsLocked(symbols []Symbol) error {
 	for i := range symbols {
 		symbols[i].ProjectID = s.projectID
 		if symbols[i].ID == "" {
@@ -121,9 +194,59 @@ func (s *Store) prepareEdges(edges []Edge) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.prepareEdgesLocked(edges)
+}
+
+func (s *Store) prepareEdgesLocked(edges []Edge) {
 	for i := range edges {
 		edges[i].ProjectID = s.projectID
 	}
+}
+
+func (s *Store) ReplaceFileIndex(path string, language string, symbols []Symbol, edges []Edge) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.prepareSymbolsLocked(symbols); err != nil {
+		return err
+	}
+	s.prepareEdgesLocked(edges)
+
+	file := File{
+		Path:       path,
+		Language:   language,
+		Kind:       classifyFileKind(path, language),
+		Hash:       fileFingerprint(info),
+		Size:       info.Size(),
+		HasSymbols: len(symbols) > 0,
+	}
+	s.prepareFileLocked(&file)
+
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("project_id = ? AND file_path = ?", s.projectID, path).Delete(&Symbol{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("project_id = ? AND file_path = ?", s.projectID, path).Delete(&Edge{}).Error; err != nil {
+			return err
+		}
+		if len(symbols) > 0 {
+			if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).
+				CreateInBatches(symbols, symbolBatchSize).Error; err != nil {
+				return err
+			}
+		}
+		if len(edges) > 0 {
+			if err := tx.CreateInBatches(edges, edgeBatchSize).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&file).Error
+	})
 }
 
 func (s *Store) SaveFile(f File) error {

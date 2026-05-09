@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"runtime"
 	"sync"
 )
 
@@ -14,6 +15,19 @@ type Engine struct {
 
 	mu        sync.RWMutex
 	projectID string
+}
+
+const engineWorkerCap = 12
+
+func recommendedWorkerCount() int {
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 2 {
+		return 2
+	}
+	if workers > engineWorkerCap {
+		return engineWorkerCap
+	}
+	return workers
 }
 
 func NewEngine(projectPath string) (*Engine, error) {
@@ -34,7 +48,7 @@ func NewEngine(projectPath string) (*Engine, error) {
 		projectID:   projectPath,
 	}
 
-	e.scheduler = NewScheduler(e.handleJob, 4)
+	e.scheduler = NewScheduler(e.handleJob, recommendedWorkerCount())
 	e.scheduler.Start()
 
 	return e, nil

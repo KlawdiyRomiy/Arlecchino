@@ -321,7 +321,7 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 		ProjectID:   path,
 		ProjectRoot: path,
 		DBPath:      filepath.Join(path, ".arlecchino", "brain.db"),
-		Workers:     2,
+		Workers:     core.RecommendedWorkerCount(),
 	})
 	if err != nil {
 		a.logWarning(fmt.Sprintf("core engine init failed: %v", err))

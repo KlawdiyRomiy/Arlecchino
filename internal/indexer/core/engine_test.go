@@ -3,8 +3,11 @@ package core
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 type stubAdapter struct {
@@ -29,6 +32,16 @@ func drainQueuedPaths(s *Scheduler) []string {
 			return paths
 		}
 		paths = append(paths, job.FilePath)
+	}
+}
+
+func TestRecommendedWorkerCountUsesAvailableGoParallelism(t *testing.T) {
+	got := RecommendedWorkerCount()
+	if got < 2 {
+		t.Fatalf("RecommendedWorkerCount() = %d, want at least 2", got)
+	}
+	if got > indexProjectWorkerCap {
+		t.Fatalf("RecommendedWorkerCount() = %d, want <= %d", got, indexProjectWorkerCap)
 	}
 }
 
@@ -109,6 +122,57 @@ func TestIndexProject_QueuesChangedFiles(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("changed file was not enqueued; queued: %v", queued)
+	}
+}
+
+func TestIndexProject_ReportsEachSmallBatchProgress(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 3; i++ {
+		goFile := filepath.Join(dir, "file"+strconv.Itoa(i)+".go")
+		if err := os.WriteFile(goFile, []byte("package main"), 0644); err != nil {
+			t.Fatalf("write %s: %v", goFile, err)
+		}
+	}
+
+	eng, err := NewEngine(EngineConfig{
+		ProjectID:   "progress-project",
+		ProjectRoot: dir,
+		DBPath:      filepath.Join(dir, ".arlecchino", "brain.db"),
+		Workers:     1,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Stop()
+	eng.RegisterAdapter(&stubAdapter{})
+
+	events := make(chan IndexingEvent, 16)
+	eng.OnIndexing(func(evt IndexingEvent) {
+		events <- evt
+	})
+	eng.Start()
+	eng.IndexProject()
+
+	var progress []int
+	completed := false
+	timeout := time.After(2 * time.Second)
+	for !completed {
+		select {
+		case evt := <-events:
+			if evt.Type == IndexingProgress {
+				progress = append(progress, evt.Current)
+			}
+			if evt.Type == IndexingCompleted {
+				completed = true
+			}
+		case <-timeout:
+			t.Fatalf("timed out waiting for indexing completion; progress=%v", progress)
+		}
+	}
+
+	want := []int{1, 2, 3}
+	if !reflect.DeepEqual(progress, want) {
+		t.Fatalf("progress = %v, want %v", progress, want)
 	}
 }
 

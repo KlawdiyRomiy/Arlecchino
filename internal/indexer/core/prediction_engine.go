@@ -20,7 +20,7 @@ type PredictionConfig struct {
 
 func NewPredictionEngine(cfg PredictionConfig) (*PredictionEngine, error) {
 	if cfg.Workers == 0 {
-		cfg.Workers = 4
+		cfg.Workers = RecommendedWorkerCount()
 	}
 	if cfg.DataDir == "" {
 		cfg.DataDir = filepath.Join(cfg.ProjectRoot, ".arlecchino")

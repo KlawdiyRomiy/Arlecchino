@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -27,6 +28,81 @@ func (c *sqlCounter) Trace(_ context.Context, _ time.Time, fc func() (string, in
 	sql, _ := fc()
 	if strings.HasPrefix(sql, "INSERT") || strings.HasPrefix(sql, "UPDATE") {
 		c.writes.Add(1)
+	}
+}
+
+func TestReplaceFileIndex_ReplacesSymbolsEdgesAndMetadata(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(filePath, []byte("package main\nfunc next() {}\n"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	s := newTestStore(t)
+	if err := s.SaveSymbols([]Symbol{{
+		Name:     "stale",
+		Kind:     SymbolKindFunction,
+		Language: "go",
+		FilePath: filePath,
+		Line:     1,
+	}}); err != nil {
+		t.Fatalf("seed symbol: %v", err)
+	}
+	if err := s.SaveEdges([]Edge{{
+		FromSymbol: "stale",
+		ToSymbol:   "old",
+		Kind:       EdgeKindCalls,
+		FilePath:   filePath,
+	}}); err != nil {
+		t.Fatalf("seed edge: %v", err)
+	}
+
+	err := s.ReplaceFileIndex(
+		filePath,
+		"go",
+		[]Symbol{{
+			Name:     "next",
+			Kind:     SymbolKindFunction,
+			Language: "go",
+			FilePath: filePath,
+			Line:     2,
+		}},
+		[]Edge{{
+			FromSymbol: "next",
+			ToSymbol:   "fmt.Println",
+			Kind:       EdgeKindCalls,
+			FilePath:   filePath,
+		}},
+	)
+	if err != nil {
+		t.Fatalf("ReplaceFileIndex: %v", err)
+	}
+
+	symbols, err := s.QuerySymbols(SymbolQuery{FilePath: filePath})
+	if err != nil {
+		t.Fatalf("QuerySymbols: %v", err)
+	}
+	if len(symbols) != 1 || symbols[0].Name != "next" {
+		t.Fatalf("symbols = %#v, want only next", symbols)
+	}
+
+	edges, err := s.QueryEdges(EdgeQuery{FilePath: filePath})
+	if err != nil {
+		t.Fatalf("QueryEdges: %v", err)
+	}
+	if len(edges) != 1 || edges[0].FromSymbol != "next" {
+		t.Fatalf("edges = %#v, want only next edge", edges)
+	}
+
+	meta, err := s.GetFile(filePath)
+	if err != nil {
+		t.Fatalf("GetFile: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected file metadata")
+	}
+	if meta.Language != "go" || !meta.HasSymbols {
+		t.Fatalf("metadata = %#v, want go file with symbols", meta)
 	}
 }
 
