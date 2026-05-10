@@ -97,6 +97,7 @@ func TestHandleRequestInitialize_IncludesProjectMemoryInstructions(t *testing.T)
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "project-memory-code",
 		"ttl_seconds":   300,
+		"tool_name":     "agent_memory.save",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}

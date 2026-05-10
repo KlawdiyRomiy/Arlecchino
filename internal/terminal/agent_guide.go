@@ -76,6 +76,8 @@ IDE backend tools:
 
 IDE UI tools:
 - ide_ui.emit_event
+- ide_ui.surface_read
+- ide_ui.open_intent
 - ide_ui.open_file_panel
 - ide_ui.preview_open
 - ide_ui.preview_navigate
@@ -95,7 +97,14 @@ Interaction rules:
 - Avoid destructive git operations unless the user explicitly asks.
 - Use checkpoints before risky file edits.
 - Save durable decisions, bug fixes, and workflow context into local memory.
+- Approvals are tool-scoped. Request ide_control.request_permission with tool_name set to the exact next tool you need; one approval does not authorize other tools.
+- For agent_memory.save/search, pass tags as an array of strings.
 - Use ide_ui.open_file_panel for visible side-panel file opens. Do not use dispatch_command, raw ide:file:open, or preview windows for this.
+- Treat raw event emission as lower confidence than confirmed tools. Prefer tools that return confirmed:true and inspect mcpRequestId when validating UI work.
+- Use ide_ui.surface_read after UI-control actions when visible state matters.
+- Do not read, checkpoint, write, or search for secret-like files without explicit approval. Sensitive paths include .env files, SSH keys, certificates, credentials, and secret-named files.
+- MCP read_file is for bounded UTF-8 text. Use app/editor preview flows for binary, image, database, archive, and oversized files.
+- Terminal, dispatcher, git, project-open, layout, and generic UI-event tools can cause external or destructive effects; request/confirm approval before using them unless the user has already authorized the action.
 - Prefer existing project conventions over generic scaffolding.
 - Explain actions directly and keep the user informed about meaningful progress.
 `) + "\n"
@@ -123,6 +132,18 @@ func shouldRefreshManagedAgentGuide(content string) bool {
 	}
 
 	if !strings.Contains(trimmed, "IDE control tools:") {
+		return true
+	}
+
+	if !strings.Contains(trimmed, "ide_ui.surface_read") || !strings.Contains(trimmed, "ide_ui.open_intent") {
+		return true
+	}
+
+	if !strings.Contains(trimmed, "confirmed:true") {
+		return true
+	}
+
+	if !strings.Contains(trimmed, "tool-scoped") {
 		return true
 	}
 

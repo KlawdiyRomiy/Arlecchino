@@ -37,6 +37,7 @@ func TestToolService_WriteAndRollback(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "allow-write-rollback",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_control.write_file",
 	}); err != nil {
 		t.Fatalf("CallTool(request_permission) error = %v", err)
 	}
@@ -47,6 +48,14 @@ func TestToolService_WriteAndRollback(t *testing.T) {
 	}
 	if writeResult.CheckpointID == "" {
 		t.Fatalf("WriteFile() should return checkpoint id")
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "allow-write-rollback",
+		"ttl_seconds":   300,
+		"tool_name":     "change_journal.rollback_checkpoint",
+	}); err != nil {
+		t.Fatalf("CallTool(request_permission rollback) error = %v", err)
 	}
 
 	readResult, err := service.ReadFile("src/main.go")
@@ -164,6 +173,7 @@ func TestToolService_RequestPermissionRejectsInvalidApprovalCode(t *testing.T) {
 
 	_, err = service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "wrong-code",
+		"tool_name":     "ide_control.write_file",
 	})
 	if err == nil {
 		t.Fatalf("CallTool(request_permission) should fail on invalid approval code")
@@ -181,7 +191,9 @@ func TestToolService_RequestPermissionRequiresLiveApprovalWithoutCode(t *testing
 		t.Fatalf("NewToolService() error = %v", err)
 	}
 
-	_, err = service.CallTool("ide_control.request_permission", map[string]any{})
+	_, err = service.CallTool("ide_control.request_permission", map[string]any{
+		"tool_name": "ide_control.write_file",
+	})
 	if err == nil {
 		t.Fatalf("CallTool(request_permission) should fail without approval code or live UI")
 	}
@@ -251,6 +263,7 @@ func TestToolService_ReadSensitiveFileRequiresUserApproval(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "sensitive-read-code",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_control.read_file",
 	}); err != nil {
 		t.Fatalf("CallTool(request_permission) error = %v", err)
 	}
@@ -339,6 +352,7 @@ func TestToolService_SearchFilesHidesSensitivePathsWithoutApproval(t *testing.T)
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "search-sensitive",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_control.search_files",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -401,6 +415,7 @@ func TestToolService_CheckpointsPersistAcrossServiceRecreation(t *testing.T) {
 	if _, err := reloaded.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "checkpoint-persist",
 		"ttl_seconds":   300,
+		"tool_name":     "change_journal.rollback_checkpoint",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -429,6 +444,7 @@ func TestToolService_AgentMemoryPersistsAcrossServiceRecreation(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "memory-persist-code",
 		"ttl_seconds":   300,
+		"tool_name":     "agent_memory.save",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -502,6 +518,7 @@ func TestToolService_SearchContentHidesSensitiveContentWithoutApproval(t *testin
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "content-sensitive",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_control.search_content",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -599,6 +616,7 @@ func TestToolService_SensitiveNestedPathRequiresApproval(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "nested-sensitive",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_control.read_file",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -609,6 +627,14 @@ func TestToolService_SensitiveNestedPathRequiresApproval(t *testing.T) {
 	}
 	if readAfterApproval.Content != "NESTED_SECRET=true" {
 		t.Fatalf("ReadFile(nested sensitive) content = %q, want %q", readAfterApproval.Content, "NESTED_SECRET=true")
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "nested-sensitive",
+		"ttl_seconds":   300,
+		"tool_name":     "ide_control.search_files",
+	}); err != nil {
+		t.Fatalf("request_permission search_files error = %v", err)
 	}
 
 	searchAfterApproval, err := service.CallTool("ide_control.search_files", map[string]any{"pattern": "secret.txt"})
@@ -639,6 +665,7 @@ func TestToolService_ListCheckpointsWithFilterAndLimit(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "list-checkpoints-code",
 		"ttl_seconds":   300,
+		"tool_name":     "change_journal.create_checkpoint",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}

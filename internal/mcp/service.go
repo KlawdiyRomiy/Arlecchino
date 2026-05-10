@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"arlecchino/internal/dispatcher"
+	"bytes"
 	"crypto/subtle"
 	"fmt"
 	"os"
@@ -10,12 +11,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
 	defaultJournalCapacity    = 512
 	defaultApprovalTTLSeconds = 300
 	maxApprovalTTLSeconds     = 3600
+	maxMCPTextFileBytes       = int64(2 * 1024 * 1024)
+	maxMCPWriteFileBytes      = int64(2 * 1024 * 1024)
+	mcpFileSniffBytes         = int64(64 * 1024)
 	envMCPRequireApproval     = "ARLECCHINO_MCP_REQUIRE_APPROVAL"
 	envMCPApprovalCode        = "ARLECCHINO_MCP_APPROVAL_CODE"
 )
@@ -42,6 +47,77 @@ var defaultSensitivePathPatterns = []string{
 	"*secret*",
 }
 
+var mcpNonTextFileExtensions = map[string]struct{}{
+	".7z":      {},
+	".app":     {},
+	".avif":    {},
+	".bin":     {},
+	".bmp":     {},
+	".bz2":     {},
+	".class":   {},
+	".db":      {},
+	".db3":     {},
+	".dll":     {},
+	".doc":     {},
+	".docx":    {},
+	".dylib":   {},
+	".exe":     {},
+	".gif":     {},
+	".gz":      {},
+	".heic":    {},
+	".icns":    {},
+	".ico":     {},
+	".jar":     {},
+	".jpeg":    {},
+	".jpg":     {},
+	".mov":     {},
+	".mp3":     {},
+	".mp4":     {},
+	".o":       {},
+	".otf":     {},
+	".pdf":     {},
+	".png":     {},
+	".ppt":     {},
+	".pptx":    {},
+	".rar":     {},
+	".sqlite":  {},
+	".sqlite3": {},
+	".so":      {},
+	".tar":     {},
+	".tif":     {},
+	".tiff":    {},
+	".ttf":     {},
+	".wasm":    {},
+	".wav":     {},
+	".webm":    {},
+	".webp":    {},
+	".woff":    {},
+	".woff2":   {},
+	".xls":     {},
+	".xlsx":    {},
+	".xz":      {},
+	".zip":     {},
+}
+
+var mcpBinaryMagicPrefixes = [][]byte{
+	{0x00, 0x61, 0x73, 0x6d},
+	{0x1f, 0x8b},
+	{0x25, 0x50, 0x44, 0x46, 0x2d},
+	{0x42, 0x4d},
+	{0x49, 0x44, 0x33},
+	{0x4d, 0x5a},
+	{0x50, 0x4b, 0x03, 0x04},
+	{0x50, 0x4b, 0x05, 0x06},
+	{0x50, 0x4b, 0x07, 0x08},
+	{0x52, 0x61, 0x72, 0x21},
+	{0x7f, 0x45, 0x4c, 0x46},
+	{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a},
+	{0xff, 0xd8, 0xff},
+	[]byte("GIF87a"),
+	[]byte("GIF89a"),
+	[]byte("SQLite format 3"),
+}
+
 type ToolService struct {
 	projectRoot      string
 	search           *dispatcher.SearchEngine
@@ -55,6 +131,7 @@ type ToolService struct {
 	approvalRequired bool
 	approvalCode     string
 	approvalExpires  time.Time
+	approvalGrants   map[string]time.Time
 	approvalMu       sync.RWMutex
 	sensitivePaths   []string
 	uiRateMu         sync.Mutex
@@ -90,6 +167,7 @@ type ToolDefinition struct {
 type PermissionStatus struct {
 	Required         bool   `json:"required"`
 	Granted          bool   `json:"granted"`
+	ToolName         string `json:"toolName,omitempty"`
 	ExpiresAt        string `json:"expiresAt,omitempty"`
 	RemainingSeconds int    `json:"remainingSeconds,omitempty"`
 }
@@ -98,6 +176,7 @@ type checkpointRecord struct {
 	meta       Checkpoint
 	absPath    string
 	beforeData []byte
+	beforeMode os.FileMode
 }
 
 type changeJournal struct {
@@ -175,6 +254,7 @@ func NewToolServiceWithOptions(projectRoot string, options ToolServiceOptions) (
 		sessionID:        fmt.Sprintf("sess-%d", time.Now().UTC().UnixMilli()),
 		approvalRequired: parseBooleanEnvDefaultTrue(os.Getenv(envMCPRequireApproval)),
 		approvalCode:     strings.TrimSpace(os.Getenv(envMCPApprovalCode)),
+		approvalGrants:   map[string]time.Time{},
 		sensitivePaths:   append([]string(nil), defaultSensitivePathPatterns...),
 	}, nil
 }
@@ -215,14 +295,17 @@ func (s *ToolService) ToolDefinitions() []ToolDefinition {
 		{
 			Name:        "ide_control.permission_status",
 			Description: "Get current IDE control permission status",
-			InputSchema: objectSchema(nil, map[string]any{}),
+			InputSchema: objectSchema(nil, map[string]any{
+				"tool_name": map[string]any{"type": "string"},
+			}),
 		},
 		{
 			Name:        "ide_control.request_permission",
-			Description: "Request time-limited IDE control permission. If approval code is configured, provide it; otherwise this opens a live IDE approval prompt.",
+			Description: "Request time-limited IDE control permission for one tool. If approval code is configured, provide it; otherwise this opens a live IDE approval prompt.",
 			InputSchema: objectSchema(nil, map[string]any{
 				"approval_code": map[string]any{"type": "string"},
 				"ttl_seconds":   map[string]any{"type": "number"},
+				"tool_name":     map[string]any{"type": "string"},
 			}),
 		},
 		{
@@ -273,7 +356,7 @@ func (s *ToolService) ToolDefinitions() []ToolDefinition {
 			InputSchema: objectSchema([]string{"content"}, map[string]any{
 				"content":    map[string]any{"type": "string"},
 				"type":       map[string]any{"type": "string"},
-				"tags":       map[string]any{"type": "array"},
+				"tags":       stringArraySchema(),
 				"importance": map[string]any{"type": "number"},
 			}),
 		},
@@ -282,7 +365,7 @@ func (s *ToolService) ToolDefinitions() []ToolDefinition {
 			Description: "Search project-local agent memory",
 			InputSchema: objectSchema(nil, map[string]any{
 				"query": map[string]any{"type": "string"},
-				"tags":  map[string]any{"type": "array"},
+				"tags":  stringArraySchema(),
 				"limit": map[string]any{"type": "number"},
 			}),
 		},
@@ -319,7 +402,7 @@ func (s *ToolService) ReadFile(path string) (FileReadResult, error) {
 		return FileReadResult{}, err
 	}
 
-	data, err := os.ReadFile(absPath)
+	data, err := readMCPTextFile(absPath)
 	if err != nil {
 		return FileReadResult{}, err
 	}
@@ -331,11 +414,23 @@ func (s *ToolService) ReadFile(path string) (FileReadResult, error) {
 }
 
 func (s *ToolService) WriteFile(path, content, checkpointLabel string) (FileWriteResult, error) {
+	if int64(len([]byte(content))) > maxMCPWriteFileBytes {
+		return FileWriteResult{}, fmt.Errorf("content exceeds MCP write limit (%d bytes)", maxMCPWriteFileBytes)
+	}
+
 	if err := s.requireUserApproval("ide_control.write_file"); err != nil {
 		return FileWriteResult{}, err
 	}
 
-	checkpoint, err := s.CreateCheckpoint(path, checkpointLabel)
+	requestedAbs, err := requestedProjectPathAbs(s.projectRoot, path)
+	if err != nil {
+		return FileWriteResult{}, err
+	}
+	if err := ensureNoSymlinkComponents(s.projectRoot, requestedAbs); err != nil {
+		return FileWriteResult{}, err
+	}
+
+	checkpoint, err := s.createCheckpoint(path, checkpointLabel, "ide_control.write_file")
 	if err != nil {
 		return FileWriteResult{}, err
 	}
@@ -345,7 +440,13 @@ func (s *ToolService) WriteFile(path, content, checkpointLabel string) (FileWrit
 		return FileWriteResult{}, err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+	if err := ensureNoSymlinkComponents(s.projectRoot, filepath.Dir(absPath)); err != nil {
+		return FileWriteResult{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o700); err != nil {
+		return FileWriteResult{}, err
+	}
+	if err := ensureNoSymlinkComponents(s.projectRoot, absPath); err != nil {
 		return FileWriteResult{}, err
 	}
 
@@ -353,7 +454,8 @@ func (s *ToolService) WriteFile(path, content, checkpointLabel string) (FileWrit
 		return FileWriteResult{}, fmt.Errorf("approval expired before write: %w", err)
 	}
 
-	if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil {
+	mode := fileWriteMode(absPath, 0o600)
+	if err := writeFileNoFollow(absPath, []byte(content), mode); err != nil {
 		return FileWriteResult{}, err
 	}
 
@@ -366,31 +468,35 @@ func (s *ToolService) WriteFile(path, content, checkpointLabel string) (FileWrit
 
 func (s *ToolService) SearchFiles(pattern string) []dispatcher.ResultItem {
 	items := s.search.SearchFiles(pattern)
-	return s.filterSensitiveDispatcherResultItems(items)
+	return s.filterSensitiveDispatcherResultItems("ide_control.search_files", items)
 }
 
 func (s *ToolService) SearchContent(query string, caseSensitive bool) []dispatcher.ResultItem {
 	items := s.search.SearchContent(query, caseSensitive)
-	return s.filterSensitiveDispatcherResultItems(items)
+	return s.filterSensitiveDispatcherResultItems("ide_control.search_content", items)
 }
 
 func (s *ToolService) CreateCheckpoint(path, label string) (Checkpoint, error) {
+	return s.createCheckpoint(path, label, "change_journal.create_checkpoint")
+}
+
+func (s *ToolService) createCheckpoint(path, label, sensitiveApprovalTool string) (Checkpoint, error) {
 	absPath, err := resolveProjectPath(s.projectRoot, path)
 	if err != nil {
 		return Checkpoint{}, err
 	}
 
 	relPath := toRelativePath(s.projectRoot, absPath)
-	if err := s.requireSensitiveFileApproval("change_journal.create_checkpoint", relPath); err != nil {
+	if err := s.requireSensitiveFileApproval(sensitiveApprovalTool, relPath); err != nil {
 		return Checkpoint{}, err
 	}
 
-	beforeData, existed, readErr := readFileIfExists(absPath)
+	beforeData, beforeMode, existed, readErr := readFileIfExists(absPath)
 	if readErr != nil {
 		return Checkpoint{}, readErr
 	}
 
-	checkpoint := s.journal.add(relPath, absPath, strings.TrimSpace(label), beforeData, existed)
+	checkpoint := s.journal.add(relPath, absPath, strings.TrimSpace(label), beforeData, beforeMode, existed)
 	if err := s.persistJournal(); err != nil {
 		return Checkpoint{}, err
 	}
@@ -424,15 +530,24 @@ func (s *ToolService) RollbackCheckpoint(id string) (Checkpoint, error) {
 		if err := s.requireUserApproval("change_journal.rollback_checkpoint"); err != nil {
 			return Checkpoint{}, fmt.Errorf("approval expired before rollback write: %w", err)
 		}
-		if err := os.MkdirAll(filepath.Dir(record.absPath), 0o755); err != nil {
+		if err := ensureNoSymlinkComponents(s.projectRoot, filepath.Dir(record.absPath)); err != nil {
 			return Checkpoint{}, err
 		}
-		if err := os.WriteFile(record.absPath, record.beforeData, 0o644); err != nil {
+		if err := os.MkdirAll(filepath.Dir(record.absPath), 0o700); err != nil {
+			return Checkpoint{}, err
+		}
+		if err := ensureNoSymlinkComponents(s.projectRoot, record.absPath); err != nil {
+			return Checkpoint{}, err
+		}
+		if err := writeFileNoFollow(record.absPath, record.beforeData, checkpointFileMode(record.beforeMode)); err != nil {
 			return Checkpoint{}, err
 		}
 	} else {
 		if err := s.requireUserApproval("change_journal.rollback_checkpoint"); err != nil {
 			return Checkpoint{}, fmt.Errorf("approval expired before rollback remove: %w", err)
+		}
+		if err := ensureNoSymlinkComponents(s.projectRoot, record.absPath); err != nil {
+			return Checkpoint{}, err
 		}
 		if err := os.Remove(record.absPath); err != nil && !os.IsNotExist(err) {
 			return Checkpoint{}, err
@@ -491,11 +606,22 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 		caseSensitive := optionalBoolArg(args, "case_sensitive")
 		return map[string]any{"items": s.SearchContent(query, caseSensitive)}, nil
 	case "ide_control.permission_status":
+		toolName := optionalStringArg(args, "tool_name")
+		if toolName == "" {
+			toolName = optionalStringArg(args, "tool")
+		}
+		if toolName != "" {
+			return s.PermissionStatusForTool(toolName), nil
+		}
 		return s.PermissionStatus(), nil
 	case "ide_control.request_permission":
 		approvalCode := optionalStringArg(args, "approval_code")
 		ttlSeconds := optionalIntArg(args, "ttl_seconds", defaultApprovalTTLSeconds)
-		return s.RequestPermission(approvalCode, ttlSeconds)
+		toolName := optionalStringArg(args, "tool_name")
+		if toolName == "" {
+			toolName = optionalStringArg(args, "tool")
+		}
+		return s.RequestPermission(approvalCode, ttlSeconds, toolName)
 	case "ide_control.audit_logs":
 		limit := optionalIntArg(args, "limit", 50)
 		return s.AuditLogs(limit), nil
@@ -704,7 +830,7 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 		if err != nil {
 			return nil, err
 		}
-		return s.bridgeEmitUIEvent(eventName, args["payload"])
+		return s.bridgeEmitUIEvent("ide_ui.emit_event", eventName, args["payload"])
 	case "ide_ui.surface_read":
 		return s.bridgeSurfaceRead(args)
 	case "ide_ui.open_intent":
@@ -780,27 +906,44 @@ func (s *ToolService) PermissionStatus() PermissionStatus {
 	s.approvalMu.RLock()
 	defer s.approvalMu.RUnlock()
 
-	return permissionStatusSnapshot(s.approvalRequired, s.approvalExpires)
+	return permissionStatusSnapshot(s.approvalRequired, s.latestApprovalExpiresLocked(), "")
 }
 
-func (s *ToolService) RequestPermission(approvalCode string, ttlSeconds int) (PermissionStatus, error) {
+func (s *ToolService) PermissionStatusForTool(toolName string) PermissionStatus {
+	normalizedTool := normalizeApprovalToolName(toolName)
+	if normalizedTool == "" {
+		return s.PermissionStatus()
+	}
+
+	s.approvalMu.RLock()
+	defer s.approvalMu.RUnlock()
+
+	return permissionStatusSnapshot(s.approvalRequired, s.approvalGrants[normalizedTool], normalizedTool)
+}
+
+func (s *ToolService) RequestPermission(approvalCode string, ttlSeconds int, toolName string) (PermissionStatus, error) {
+	normalizedTool := normalizeApprovalToolName(toolName)
+	if normalizedTool == "" {
+		return PermissionStatus{}, fmt.Errorf("tool_name is required for scoped permission")
+	}
+
 	if !s.approvalRequired && s.approvalCode == "" {
-		return permissionStatusSnapshot(false, time.Time{}), nil
+		return permissionStatusSnapshot(false, time.Time{}, normalizedTool), nil
 	}
 
 	if s.approvalCode != "" {
 		if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(approvalCode)), []byte(s.approvalCode)) != 1 {
 			return PermissionStatus{}, fmt.Errorf("invalid approval code")
 		}
-		return s.grantApproval(ttlSeconds), nil
+		return s.grantApproval(normalizedTool, ttlSeconds), nil
 	}
 
-	ttl, err := s.requestLiveApproval("ide_control.request_permission", ttlSeconds)
+	ttl, err := s.requestLiveApproval(normalizedTool, ttlSeconds)
 	if err != nil {
 		return PermissionStatus{}, err
 	}
 
-	return s.grantApproval(ttl), nil
+	return s.grantApproval(normalizedTool, ttl), nil
 }
 
 func (s *ToolService) requireUserApproval(toolName string) error {
@@ -816,24 +959,25 @@ func (s *ToolService) requireSensitiveFileApproval(toolName, relPath string) err
 }
 
 func (s *ToolService) requireToolApproval(toolName string, force bool) error {
-	if s.approvalGateSatisfied(force) {
+	normalizedTool := normalizeApprovalToolName(toolName)
+	if s.approvalGateSatisfied(normalizedTool, force) {
 		return nil
 	}
 
 	if strings.TrimSpace(s.approvalCode) != "" {
-		return fmt.Errorf("%s requires user approval; call ide_control.request_permission", toolName)
+		return fmt.Errorf("%s requires user approval; call ide_control.request_permission with tool_name=%q", toolName, normalizedTool)
 	}
 
-	ttl, err := s.requestLiveApproval(toolName, defaultApprovalTTLSeconds)
+	ttl, err := s.requestLiveApproval(normalizedTool, defaultApprovalTTLSeconds)
 	if err != nil {
 		return fmt.Errorf("%s requires user approval: %w", toolName, err)
 	}
 
-	s.grantApproval(ttl)
+	s.grantApproval(normalizedTool, ttl)
 	return nil
 }
 
-func (s *ToolService) approvalGateSatisfied(force bool) bool {
+func (s *ToolService) approvalGateSatisfied(toolName string, force bool) bool {
 	s.approvalMu.RLock()
 	defer s.approvalMu.RUnlock()
 
@@ -841,16 +985,22 @@ func (s *ToolService) approvalGateSatisfied(force bool) bool {
 		return true
 	}
 
-	return !s.approvalExpires.IsZero() && time.Now().UTC().Before(s.approvalExpires)
+	expiresAt, ok := s.approvalGrants[normalizeApprovalToolName(toolName)]
+	return ok && !expiresAt.IsZero() && time.Now().UTC().Before(expiresAt)
 }
 
-func (s *ToolService) grantApproval(ttlSeconds int) PermissionStatus {
+func (s *ToolService) grantApproval(toolName string, ttlSeconds int) PermissionStatus {
 	s.approvalMu.Lock()
 	defer s.approvalMu.Unlock()
 
+	normalizedTool := normalizeApprovalToolName(toolName)
 	ttl := normalizeApprovalTTL(ttlSeconds)
 	s.approvalExpires = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
-	return permissionStatusSnapshot(s.approvalRequired, s.approvalExpires)
+	if s.approvalGrants == nil {
+		s.approvalGrants = map[string]time.Time{}
+	}
+	s.approvalGrants[normalizedTool] = s.approvalExpires
+	return permissionStatusSnapshot(s.approvalRequired, s.approvalExpires, normalizedTool)
 }
 
 func (s *ToolService) requestLiveApproval(toolName string, ttlSeconds int) (int, error) {
@@ -965,14 +1115,15 @@ func matchesSensitivePattern(normalizedPath, baseName, pattern string) bool {
 	return err == nil && matched
 }
 
-func permissionStatusSnapshot(required bool, expiresAt time.Time) PermissionStatus {
+func permissionStatusSnapshot(required bool, expiresAt time.Time, toolName string) PermissionStatus {
+	normalizedTool := normalizeApprovalToolName(toolName)
 	if !required {
-		return PermissionStatus{Required: false, Granted: true}
+		return PermissionStatus{Required: false, Granted: true, ToolName: normalizedTool}
 	}
 
 	now := time.Now().UTC()
 	if expiresAt.IsZero() || !now.Before(expiresAt) {
-		return PermissionStatus{Required: true, Granted: false}
+		return PermissionStatus{Required: true, Granted: false, ToolName: normalizedTool}
 	}
 
 	remaining := int(expiresAt.Sub(now).Seconds())
@@ -983,9 +1134,28 @@ func permissionStatusSnapshot(required bool, expiresAt time.Time) PermissionStat
 	return PermissionStatus{
 		Required:         true,
 		Granted:          true,
+		ToolName:         normalizedTool,
 		ExpiresAt:        expiresAt.Format(time.RFC3339),
 		RemainingSeconds: remaining,
 	}
+}
+
+func normalizeApprovalToolName(raw string) string {
+	return strings.TrimSpace(raw)
+}
+
+func (s *ToolService) latestApprovalExpiresLocked() time.Time {
+	now := time.Now().UTC()
+	latest := time.Time{}
+	for _, expiresAt := range s.approvalGrants {
+		if expiresAt.IsZero() || !now.Before(expiresAt) {
+			continue
+		}
+		if latest.IsZero() || expiresAt.After(latest) {
+			latest = expiresAt
+		}
+	}
+	return latest
 }
 
 func normalizeApprovalTTL(ttlSeconds int) int {
@@ -1012,23 +1182,16 @@ func parseBooleanEnvDefaultTrue(raw string) bool {
 	}
 }
 
-func (s *ToolService) hasSensitiveAccessGrant() bool {
-	s.approvalMu.RLock()
-	defer s.approvalMu.RUnlock()
-
-	if s.approvalExpires.IsZero() {
-		return false
-	}
-
-	return time.Now().UTC().Before(s.approvalExpires)
+func (s *ToolService) hasSensitiveAccessGrant(toolName string) bool {
+	return s.approvalGateSatisfied(normalizeApprovalToolName(toolName), true)
 }
 
-func (s *ToolService) filterSensitiveDispatcherResultItems(items []dispatcher.ResultItem) []dispatcher.ResultItem {
+func (s *ToolService) filterSensitiveDispatcherResultItems(toolName string, items []dispatcher.ResultItem) []dispatcher.ResultItem {
 	if len(items) == 0 {
 		return items
 	}
 
-	if s.hasSensitiveAccessGrant() {
+	if s.hasSensitiveAccessGrant(toolName) {
 		return items
 	}
 
@@ -1156,6 +1319,22 @@ func isPathWithinRoot(rootAbs, targetAbs string) bool {
 	return strings.HasPrefix(targetAbs, prefix)
 }
 
+func requestedProjectPathAbs(projectRoot, requestedPath string) (string, error) {
+	trimmedPath := strings.TrimSpace(requestedPath)
+	if trimmedPath == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	rootResolved, err := filepath.EvalSymlinks(projectRoot)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve project root: %w", err)
+	}
+	targetPath := trimmedPath
+	if !filepath.IsAbs(targetPath) {
+		targetPath = filepath.Join(rootResolved, targetPath)
+	}
+	return filepath.Abs(targetPath)
+}
+
 func toRelativePath(rootAbs, targetAbs string) string {
 	resolvedRoot, err := filepath.EvalSymlinks(rootAbs)
 	if err != nil {
@@ -1174,15 +1353,140 @@ func toRelativePath(rootAbs, targetAbs string) string {
 	return filepath.ToSlash(rel)
 }
 
-func readFileIfExists(path string) ([]byte, bool, error) {
+func readFileIfExists(path string) ([]byte, os.FileMode, bool, error) {
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return nil, 0, false, nil
+		}
+		return nil, 0, false, statErr
+	}
+	if info.IsDir() {
+		return nil, 0, false, fmt.Errorf("cannot checkpoint directory: %s", path)
+	}
+	if info.Size() > maxMCPWriteFileBytes {
+		return nil, 0, false, fmt.Errorf("checkpoint source exceeds MCP checkpoint limit (%d bytes): %s", maxMCPWriteFileBytes, path)
+	}
+
 	data, err := os.ReadFile(path)
 	if err == nil {
-		return data, true, nil
+		return data, info.Mode().Perm(), true, nil
 	}
-	if os.IsNotExist(err) {
-		return nil, false, nil
+	return nil, 0, false, err
+}
+
+func fileWriteMode(path string, fallback os.FileMode) os.FileMode {
+	info, err := os.Stat(path)
+	if err == nil && !info.IsDir() {
+		return checkpointFileMode(info.Mode().Perm())
 	}
-	return nil, false, err
+	return checkpointFileMode(fallback)
+}
+
+func checkpointFileMode(mode os.FileMode) os.FileMode {
+	mode = mode.Perm()
+	if mode == 0 {
+		return 0o600
+	}
+	return mode
+}
+
+func writeFileNoFollow(path string, data []byte, mode os.FileMode) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|openNoFollowFlag, mode)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	if _, err := file.Write(data); err != nil {
+		return err
+	}
+	return file.Chmod(mode)
+}
+
+func ensureNoSymlinkComponents(projectRoot, targetPath string) error {
+	rootResolved, err := filepath.EvalSymlinks(projectRoot)
+	if err != nil {
+		return fmt.Errorf("cannot resolve project root: %w", err)
+	}
+
+	targetAbs, err := filepath.Abs(targetPath)
+	if err != nil {
+		return err
+	}
+	if !isPathWithinRoot(rootResolved, targetAbs) {
+		return fmt.Errorf("path escapes project root")
+	}
+
+	rel, err := filepath.Rel(rootResolved, targetAbs)
+	if err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+
+	current := rootResolved
+	for _, part := range strings.Split(rel, string(os.PathSeparator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, statErr := os.Lstat(current)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			return statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to mutate path through symlink component: %s", current)
+		}
+	}
+
+	return nil
+}
+
+func readMCPTextFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("cannot read directory as file: %s", path)
+	}
+	if info.Size() > maxMCPTextFileBytes {
+		return nil, fmt.Errorf("file is too large for MCP read_file (%d bytes, limit %d): %s", info.Size(), maxMCPTextFileBytes, path)
+	}
+	if _, denied := mcpNonTextFileExtensions[strings.ToLower(filepath.Ext(path))]; denied {
+		return nil, fmt.Errorf("file appears to be binary or non-text and cannot be read through MCP read_file: %s", path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	data = bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
+	if looksBinaryMCPContent(data) {
+		return nil, fmt.Errorf("file appears to be binary and cannot be read through MCP read_file: %s", path)
+	}
+	if !utf8.Valid(data) {
+		return nil, fmt.Errorf("file is not valid UTF-8 text and cannot be read through MCP read_file: %s", path)
+	}
+	return data, nil
+}
+
+func looksBinaryMCPContent(content []byte) bool {
+	sniff := content
+	if int64(len(sniff)) > mcpFileSniffBytes {
+		sniff = sniff[:mcpFileSniffBytes]
+	}
+	for _, prefix := range mcpBinaryMagicPrefixes {
+		if bytes.HasPrefix(sniff, prefix) {
+			return true
+		}
+	}
+	return bytes.IndexByte(sniff, 0) >= 0
 }
 
 func objectSchema(required []string, properties map[string]any) map[string]any {
@@ -1194,6 +1498,20 @@ func objectSchema(required []string, properties map[string]any) map[string]any {
 		schema["required"] = required
 	}
 	return schema
+}
+
+func stringArraySchema() map[string]any {
+	return map[string]any{
+		"type":  "array",
+		"items": map[string]any{"type": "string"},
+	}
+}
+
+func objectArraySchema() map[string]any {
+	return map[string]any{
+		"type":  "array",
+		"items": map[string]any{"type": "object"},
+	}
 }
 
 func requiredStringArg(args map[string]any, key string) (string, error) {
@@ -1315,7 +1633,7 @@ func newChangeJournal(capacity int) *changeJournal {
 	}
 }
 
-func (j *changeJournal) add(relPath, absPath, label string, beforeData []byte, existed bool) Checkpoint {
+func (j *changeJournal) add(relPath, absPath, label string, beforeData []byte, beforeMode os.FileMode, existed bool) Checkpoint {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
@@ -1333,6 +1651,7 @@ func (j *changeJournal) add(relPath, absPath, label string, beforeData []byte, e
 		meta:       meta,
 		absPath:    absPath,
 		beforeData: append([]byte(nil), beforeData...),
+		beforeMode: beforeMode.Perm(),
 	}
 	j.order = append(j.order, id)
 

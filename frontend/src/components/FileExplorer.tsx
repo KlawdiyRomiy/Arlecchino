@@ -108,7 +108,7 @@ export interface FileExplorerProps extends PanelSnapDragCallbacks {
     name: string,
     line?: number,
     request?: Partial<PanelOpenRequest>,
-  ) => void;
+  ) => unknown | Promise<unknown>;
   projectPath?: string;
   isHorizontal?: boolean;
   onPerspectiveOpen?: () => void;

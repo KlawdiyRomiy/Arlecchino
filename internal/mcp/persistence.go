@@ -17,6 +17,7 @@ const (
 type changeJournalDiskRecord struct {
 	Meta       Checkpoint `json:"meta"`
 	BeforeData []byte     `json:"beforeData"`
+	BeforeMode uint32     `json:"beforeMode,omitempty"`
 }
 
 type changeJournalDiskState struct {
@@ -139,6 +140,7 @@ func (j *changeJournal) diskState() changeJournalDiskState {
 				Existed:   record.meta.Existed,
 			},
 			BeforeData: append([]byte(nil), record.beforeData...),
+			BeforeMode: uint32(record.beforeMode.Perm()),
 		}
 	}
 
@@ -182,6 +184,7 @@ func (j *changeJournal) applyDiskState(projectRoot string, state changeJournalDi
 			meta:       meta,
 			absPath:    absPath,
 			beforeData: append([]byte(nil), diskRecord.BeforeData...),
+			beforeMode: os.FileMode(diskRecord.BeforeMode).Perm(),
 		}
 		j.order = append(j.order, meta.ID)
 	}

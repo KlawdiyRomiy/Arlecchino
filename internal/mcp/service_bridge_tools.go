@@ -302,7 +302,7 @@ func bridgeUIToolDefinitions() []ToolDefinition {
 			Description: "Register or update layout profile",
 			InputSchema: objectSchema([]string{"name", "actions"}, map[string]any{
 				"name":    map[string]any{"type": "string"},
-				"actions": map[string]any{"type": "array"},
+				"actions": objectArraySchema(),
 			}),
 		},
 		{
@@ -316,7 +316,7 @@ func bridgeUIToolDefinitions() []ToolDefinition {
 			Name:        "ide_ui.hot_switch",
 			Description: "Apply ad-hoc UI actions instantly",
 			InputSchema: objectSchema([]string{"actions"}, map[string]any{
-				"actions": map[string]any{"type": "array"},
+				"actions": objectArraySchema(),
 				"label":   map[string]any{"type": "string"},
 			}),
 		},
@@ -487,7 +487,7 @@ func (s *ToolService) sanitizeAuditArgs(args map[string]any) map[string]any {
 	for key, value := range args {
 		normalizedKey := strings.ToLower(strings.TrimSpace(key))
 		switch normalizedKey {
-		case "approval_code", "content", "data":
+		case "approval_code", "command", "content", "data", "input":
 			result[key] = redactedValue
 			continue
 		}
@@ -691,7 +691,7 @@ func (s *ToolService) bridgeDispatchSearchFiles(pattern string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.filterSensitiveBridgeResultItems(result), nil
+	return s.filterSensitiveBridgeResultItems("ide_backend.dispatch_search_files", result), nil
 }
 
 func (s *ToolService) bridgeDispatchSearchContent(query string) (any, error) {
@@ -699,7 +699,7 @@ func (s *ToolService) bridgeDispatchSearchContent(query string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.filterSensitiveBridgeResultItems(result), nil
+	return s.filterSensitiveBridgeResultItems("ide_backend.dispatch_search_content", result), nil
 }
 
 func (s *ToolService) bridgeDispatchSearchSymbols(query string) (any, error) {
@@ -707,7 +707,7 @@ func (s *ToolService) bridgeDispatchSearchSymbols(query string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.filterSensitiveBridgeResultItems(result), nil
+	return s.filterSensitiveBridgeResultItems("ide_backend.dispatch_search_symbols", result), nil
 }
 
 func (s *ToolService) bridgeDispatchCommand(input string) (any, error) {
@@ -741,8 +741,8 @@ func (s *ToolService) bridgeGitBranches() (any, error) {
 	return s.bridgeCall("ide_backend.git_branches", "git.branches", map[string]any{})
 }
 
-func (s *ToolService) bridgeEmitUIEvent(eventName string, payload any) (any, error) {
-	if err := s.requireUserApproval("ide_ui.emit_event"); err != nil {
+func (s *ToolService) bridgeEmitUIEvent(toolName, eventName string, payload any) (any, error) {
+	if err := s.requireUserApproval(toolName); err != nil {
 		return nil, err
 	}
 	if err := s.allowUIEventBurst(1); err != nil {
@@ -757,12 +757,12 @@ func (s *ToolService) bridgeEmitUIEvent(eventName string, payload any) (any, err
 	s.recordFlightEvent(FlightRecord{
 		Type:   "agent.ui.requested",
 		Source: "mcp",
-		Tool:   "ide_ui.emit_event",
-		Risk:   s.riskClassForTool("ide_ui.emit_event", params),
+		Tool:   toolName,
+		Risk:   s.riskClassForTool(toolName, params),
 		Status: "pending",
 		Args:   s.sanitizeAuditArgs(params),
 	})
-	result, err := s.bridgeCall("ide_ui.emit_event", "ui.emit_event", params)
+	result, err := s.bridgeCall(toolName, "ui.emit_event", params)
 	status := "acknowledged"
 	errText := ""
 	if err != nil {
@@ -772,8 +772,8 @@ func (s *ToolService) bridgeEmitUIEvent(eventName string, payload any) (any, err
 	s.recordFlightEvent(FlightRecord{
 		Type:       "agent.ui.acknowledged",
 		Source:     "frontend",
-		Tool:       "ide_ui.emit_event",
-		Risk:       s.riskClassForTool("ide_ui.emit_event", params),
+		Tool:       toolName,
+		Risk:       s.riskClassForTool(toolName, params),
 		Status:     status,
 		Error:      errText,
 		DurationMs: time.Since(startedAt).Milliseconds(),
@@ -828,8 +828,13 @@ func (s *ToolService) bridgeEmitConfirmedUIEvent(toolName, eventName string, pay
 	if resultMap, ok := result.(map[string]any); ok {
 		status := "acknowledged"
 		errText := ""
-		if confirmed, ok := resultMap["confirmed"].(bool); ok && !confirmed {
+		confirmed, hasConfirmed := resultMap["confirmed"].(bool)
+		if !hasConfirmed {
+			status = "error"
+			errText = "frontend acknowledgement missing confirmed flag"
+		} else if !confirmed {
 			status = "rejected"
+			errText = "frontend did not confirm event handling"
 		}
 		if errorText, ok := resultMap["error"].(string); ok && strings.TrimSpace(errorText) != "" {
 			status = "error"
@@ -847,6 +852,9 @@ func (s *ToolService) bridgeEmitConfirmedUIEvent(toolName, eventName string, pay
 			Args:          map[string]any{"event": eventName},
 		})
 		resultMap["mcpRequestId"] = requestID
+		if errText != "" {
+			return nil, fmt.Errorf("%s failed for %s: %s", toolName, eventName, errText)
+		}
 		return resultMap, nil
 	}
 
@@ -1146,7 +1154,7 @@ func (s *ToolService) bridgePreviewOpen(args map[string]any) (any, error) {
 	if len(nestedPayload) > 0 {
 		payload["payload"] = nestedPayload
 	}
-	return s.bridgeEmitUIEvent("ide:window:open", payload)
+	return s.bridgeEmitUIEvent("ide_ui.preview_open", "ide:window:open", payload)
 }
 
 func optionalNumericArg(args map[string]any, key string) (int, bool) {
@@ -1182,15 +1190,15 @@ func (s *ToolService) bridgePreviewNavigate(id, url string, title string, focus 
 	if focus {
 		payload["focus"] = true
 	}
-	return s.bridgeEmitUIEvent("ide:window:update", payload)
+	return s.bridgeEmitUIEvent("ide_ui.preview_navigate", "ide:window:update", payload)
 }
 
 func (s *ToolService) bridgePreviewFocus(id string) (any, error) {
-	return s.bridgeEmitUIEvent("ide:window:focus", map[string]any{"id": id})
+	return s.bridgeEmitUIEvent("ide_ui.preview_focus", "ide:window:focus", map[string]any{"id": id})
 }
 
 func (s *ToolService) bridgePreviewClose(id string) (any, error) {
-	return s.bridgeEmitUIEvent("ide:window:close", map[string]any{"id": id})
+	return s.bridgeEmitUIEvent("ide_ui.preview_close", "ide:window:close", map[string]any{"id": id})
 }
 
 func (s *ToolService) listLayoutProfiles() map[string]any {
@@ -1384,8 +1392,8 @@ func (s *ToolService) pathEscapesProjectRoot(path string) bool {
 	return !isPathWithinRoot(s.projectRoot, absCandidate)
 }
 
-func (s *ToolService) filterSensitiveBridgeResultItems(result any) any {
-	if s.hasSensitiveAccessGrant() {
+func (s *ToolService) filterSensitiveBridgeResultItems(toolName string, result any) any {
+	if s.hasSensitiveAccessGrant(toolName) {
 		return result
 	}
 
@@ -1408,7 +1416,7 @@ func (s *ToolService) filterSensitiveBridgeResultItems(result any) any {
 		return filtered
 	case map[string]any:
 		if items, ok := typed["items"]; ok {
-			typed["items"] = s.filterSensitiveBridgeResultItems(items)
+			typed["items"] = s.filterSensitiveBridgeResultItems(toolName, items)
 		}
 		return typed
 	default:

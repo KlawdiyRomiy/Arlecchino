@@ -70,6 +70,38 @@ const emitMCPEventAck = (
   EventsEmit(MCP_UI_EVENT_ACK, payload);
 };
 
+const resolveMCPAck = (
+  result: unknown,
+  fallbackHandled: boolean,
+): { handled: boolean; error?: unknown } => {
+  if (typeof result === "boolean") {
+    return { handled: result };
+  }
+
+  if (!isRecord(result)) {
+    return { handled: fallbackHandled };
+  }
+
+  const handled =
+    typeof result.handled === "boolean"
+      ? result.handled
+      : typeof result.confirmed === "boolean"
+        ? result.confirmed
+        : typeof result.ok === "boolean"
+          ? result.ok
+          : fallbackHandled;
+  const error =
+    typeof result.error === "string" && result.error.trim()
+      ? result.error
+      : typeof result.reason === "string" && result.reason.trim()
+        ? result.reason
+        : typeof result.message === "string" && result.message.trim()
+          ? result.message
+          : undefined;
+
+  return { handled, error };
+};
+
 interface UseIDEEventsProps {
   onOpenIntent?: IDEEventHandler<[unknown]>;
   onOpenPanel?: IDEEventHandler<[unknown]>;
@@ -188,11 +220,12 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
           ) {
             void (maybePromise as Promise<unknown>)
               .then((result) => {
+                const ack = resolveMCPAck(result, true);
                 emitMCPEventAck(
                   normalized.requestId,
                   eventName,
-                  true,
-                  undefined,
+                  ack.handled,
+                  ack.error,
                   result,
                 );
               })
@@ -202,11 +235,12 @@ export function useIDEEvents(handlers: UseIDEEventsProps) {
             return;
           }
 
+          const ack = resolveMCPAck(maybePromise, true);
           emitMCPEventAck(
             normalized.requestId,
             eventName,
-            true,
-            undefined,
+            ack.handled,
+            ack.error,
             maybePromise,
           );
         } catch (error) {

@@ -61,7 +61,7 @@ import {
   parsePanelSideMoveRequest,
 } from "./mainLayoutEventParsers";
 
-type UnknownEventHandler = (payload: unknown) => void;
+type UnknownEventHandler = (payload: unknown) => unknown | Promise<unknown>;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -128,7 +128,7 @@ interface UseMainLayoutPanelEventsOptions {
     name: string,
     line?: number,
     request?: Partial<PanelOpenRequest>,
-  ) => Promise<void> | void;
+  ) => Promise<unknown> | unknown;
   handlePreviewWindowCheckpointCreateEvent: UnknownEventHandler;
   handlePreviewWindowCheckpointRestoreEvent: UnknownEventHandler;
   handlePreviewWindowCloseEvent: UnknownEventHandler;
@@ -157,6 +157,7 @@ interface UseMainLayoutPanelEventsOptions {
   rememberedSnappedPositionsRef: MutableRefObject<RememberedSnappedPositions>;
   setPanelConfigs: Dispatch<SetStateAction<PanelConfigs>>;
   setActivePanelId: (panelId: PanelId | null) => void;
+  startSnappedSlotEnter: (position: PanelPosition) => void;
   setTUIAssistRatio: (value: unknown) => void;
   shouldSuppressApplicationMenuAction: (actionId: ShortcutActionId) => boolean;
   submitTerminalCommand: (
@@ -223,6 +224,7 @@ export const useMainLayoutPanelEvents = ({
   rememberedSnappedPositionsRef,
   setPanelConfigs,
   setActivePanelId,
+  startSnappedSlotEnter,
   setTUIAssistRatio,
   shouldSuppressApplicationMenuAction,
   submitTerminalCommand,
@@ -263,6 +265,7 @@ export const useMainLayoutPanelEvents = ({
 
   const applyPanelOpenState = useCallback(
     (panelId: PanelId, request: PanelOpenRequest) => {
+      const wasVisible = panelsRef.current[panelId];
       const { nextPanels, nextConfig, nextRememberedSnappedPositions } =
         computeNextPanelOpenState(
           panelId,
@@ -282,8 +285,11 @@ export const useMainLayoutPanelEvents = ({
           .beginPanelMotionWindow(FLOATING_PANEL_LAYOUT_TRANSITION_MS + 160);
       }
 
-      applyPanelsState(nextPanels);
       applyPanelConfigsState(nextPanelConfigs);
+      if (!wasVisible && nextPanels[panelId] && nextConfig.mode === "snapped") {
+        startSnappedSlotEnter(nextConfig.position);
+      }
+      applyPanelsState(nextPanels);
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
       if (nextPanels[panelId]) {
         setActivePanelId(panelId);
@@ -299,6 +305,7 @@ export const useMainLayoutPanelEvents = ({
       panelsRef,
       rememberedSnappedPositionsRef,
       setActivePanelId,
+      startSnappedSlotEnter,
     ],
   );
 
@@ -342,21 +349,21 @@ export const useMainLayoutPanelEvents = ({
     (payload: unknown) => {
       const request = parsePanelOpenRequest(payload);
       if (!request) {
-        return;
+        return { handled: false, reason: "Invalid panel close request." };
       }
 
       const appAction = resolveAppSurfaceAction(request.panel);
       if (appAction?.kind === "dispatcher") {
         dispatcher.close();
-        return;
+        return { handled: true };
       }
       if (appAction?.kind === "settings") {
         closeSettings();
-        return;
+        return { handled: true };
       }
       if (appAction?.kind === "run") {
         closeExecutionDialog();
-        return;
+        return { handled: true };
       }
       if (appAction?.kind === "panel") {
         if (
@@ -364,32 +371,33 @@ export const useMainLayoutPanelEvents = ({
           useTerminalStore.getState().tuiModeActive
         ) {
           closeTerminalPanel();
-          return;
+          return { handled: true };
         }
         closePanelWithMotion(appAction.panelId);
-        return;
+        return { handled: true };
       }
 
       const panelId = resolvePanelId(request.panel);
       if (!panelId) {
-        return;
+        return { handled: false, reason: "Unknown panel." };
       }
 
       const terminalState = useTerminalStore.getState();
       if (terminalState.tuiModeActive) {
         if (panelId === "terminal") {
           closeTerminalPanel();
-          return;
+          return { handled: true };
         }
 
         closePanelWithMotion(panelId);
         if (terminalState.tuiAssist.panel === panelId) {
           terminalState.setTUIAssist({ active: false, panel: null });
         }
-        return;
+        return { handled: true };
       }
 
       closePanelWithMotion(panelId);
+      return { handled: true };
     },
     [
       closeExecutionDialog,
@@ -405,12 +413,12 @@ export const useMainLayoutPanelEvents = ({
       const sideMoveRequest = parsePanelSideMoveRequest(payload);
       if (sideMoveRequest) {
         moveSnappedPanelBetweenSides(sideMoveRequest.from, sideMoveRequest.to);
-        return;
+        return { handled: true };
       }
 
       const request = parsePanelOpenRequest(payload);
       if (!request || (!request.position && !request.mode)) {
-        return;
+        return { handled: false, reason: "Invalid panel move request." };
       }
 
       if (
@@ -418,7 +426,7 @@ export const useMainLayoutPanelEvents = ({
         request.position
       ) {
         moveBrowserPreviewToPosition(request.position);
-        return;
+        return { handled: true };
       }
 
       const appAction = resolveAppSurfaceAction(request.panel);
@@ -427,12 +435,12 @@ export const useMainLayoutPanelEvents = ({
           ...request,
           panel: appAction.panelId,
         });
-        return;
+        return { handled: true };
       }
 
       const panelId = resolvePanelId(request.panel);
       if (!panelId) {
-        return;
+        return { handled: false, reason: "Unknown panel." };
       }
 
       const terminalState = useTerminalStore.getState();
@@ -448,7 +456,7 @@ export const useMainLayoutPanelEvents = ({
               ),
             });
           }
-          return;
+          return { handled: true };
         }
 
         applyPanelOpenState(panelId, request);
@@ -460,10 +468,11 @@ export const useMainLayoutPanelEvents = ({
             terminalState.tuiAssist.anchor,
           ),
         });
-        return;
+        return { handled: true };
       }
 
       applyPanelOpenState(panelId, request);
+      return { handled: true };
     },
     [
       applyPanelOpenState,
@@ -476,12 +485,12 @@ export const useMainLayoutPanelEvents = ({
     (payload: unknown) => {
       const request = parsePanelOpenRequest(payload);
       if (!request) {
-        return;
+        return { handled: false, reason: "Invalid panel open request." };
       }
 
       if (request.panel === "browser" || request.panel === "web") {
         openCanonicalBrowserPreviewRef.current();
-        return;
+        return { handled: true };
       }
 
       const appAction = resolveAppSurfaceAction(request.panel);
@@ -497,15 +506,15 @@ export const useMainLayoutPanelEvents = ({
               80,
             );
           }
-          return;
+          return { handled: true };
         }
         executeAppSurfaceAction(appAction);
-        return;
+        return { handled: true };
       }
 
       const panelId = resolvePanelId(request.panel);
       if (!panelId) {
-        return;
+        return { handled: false, reason: "Unknown panel." };
       }
 
       if (panelId === "code" && request.path) {
@@ -514,11 +523,10 @@ export const useMainLayoutPanelEvents = ({
           request.name ||
           getProjectPathBasename(request.path) ||
           request.path;
-        void handleFileOpenInPanel(request.path, fileName, request.line, {
+        return handleFileOpenInPanel(request.path, fileName, request.line, {
           ...request,
           panel: "code",
         });
-        return;
       }
 
       const terminalState = useTerminalStore.getState();
@@ -532,7 +540,7 @@ export const useMainLayoutPanelEvents = ({
           request.command,
           request.terminalName ?? "Terminal",
         );
-        return;
+        return { handled: true };
       }
 
       if (terminalState.tuiModeActive) {
@@ -553,12 +561,12 @@ export const useMainLayoutPanelEvents = ({
             },
           }));
           setTimeout(() => terminalState.focusActiveTerminal(), 80);
-          return;
+          return { handled: true };
         }
 
         applyPanelOpenState(panelId, request);
         terminalState.setTUIAssist({ active: false, panel: null });
-        return;
+        return { handled: true };
       }
 
       applyPanelOpenState(panelId, request);
@@ -566,6 +574,7 @@ export const useMainLayoutPanelEvents = ({
       if (panelId === "terminal") {
         setTimeout(() => useTerminalStore.getState().focusActiveTerminal(), 80);
       }
+      return { handled: true };
     },
     [
       applyPanelOpenState,
@@ -583,9 +592,9 @@ export const useMainLayoutPanelEvents = ({
     (payload: unknown) => {
       const request = parseEditorOpenRequest(payload);
       if (!request) {
-        return;
+        return { handled: false, reason: "Invalid editor open request." };
       }
-      void openFileFromPath(request.path, request.line);
+      return openFileFromPath(request.path, request.line);
     },
     [openFileFromPath],
   );
@@ -593,7 +602,7 @@ export const useMainLayoutPanelEvents = ({
   const handleEditorSplitEvent = useCallback((payload: unknown) => {
     const direction = parseEditorSplitDirection(payload);
     if (!direction) {
-      return;
+      return { handled: false, reason: "Invalid editor split request." };
     }
 
     window.dispatchEvent(
@@ -601,6 +610,7 @@ export const useMainLayoutPanelEvents = ({
         detail: { direction },
       }),
     );
+    return { handled: true };
   }, []);
 
   const handleOpenIntentFocusSurface = useCallback(

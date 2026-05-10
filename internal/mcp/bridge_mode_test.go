@@ -139,6 +139,7 @@ func TestToolService_OpenIntentEmitsConfirmedOpenIntentEvent(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "open-intent",
 		"ttl_seconds":   60,
+		"tool_name":     "ide_ui.open_intent",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -211,6 +212,7 @@ func TestToolService_OpenFilePanelEmitsConfirmedPanelOpen(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "open-file-panel",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_ui.open_file_panel",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -350,6 +352,7 @@ func TestToolService_ProjectOpenRequiresUserApproval(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "bridge-approval",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_backend.project_open",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -380,6 +383,7 @@ func TestToolService_RequestPermissionUsesLiveBridgeApproval(t *testing.T) {
 
 	result, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"ttl_seconds": 120,
+		"tool_name":   "ide_control.write_file",
 	})
 	if err != nil {
 		t.Fatalf("request_permission live approval error = %v", err)
@@ -397,8 +401,8 @@ func TestToolService_RequestPermissionUsesLiveBridgeApproval(t *testing.T) {
 	if len(approvalCalls) != 1 {
 		t.Fatalf("mcp.request_approval calls = %d, want 1", len(approvalCalls))
 	}
-	if approvalCalls[0].Params["tool_name"] != "ide_control.request_permission" {
-		t.Fatalf("approval tool_name = %v, want ide_control.request_permission", approvalCalls[0].Params["tool_name"])
+	if approvalCalls[0].Params["tool_name"] != "ide_control.write_file" {
+		t.Fatalf("approval tool_name = %v, want ide_control.write_file", approvalCalls[0].Params["tool_name"])
 	}
 
 	if _, err := service.WriteFile("src/main.go", "package main", "after-ui-approval"); err != nil {
@@ -512,6 +516,7 @@ func TestToolService_FlightRecorderRecordsUIAckAndRedactsArgs(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "flight-code",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_ui.open_file_panel",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -630,6 +635,7 @@ func TestToolService_ApplyLayoutProfileEmitsEventsImmediately(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "layout-code",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_ui.apply_layout_profile",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -662,13 +668,6 @@ func TestToolService_PreviewToolsEmitCanonicalWindowEvents(t *testing.T) {
 	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
 	if err != nil {
 		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
-	}
-
-	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
-		"approval_code": "preview-code",
-		"ttl_seconds":   300,
-	}); err != nil {
-		t.Fatalf("request_permission error = %v", err)
 	}
 
 	tests := []struct {
@@ -747,6 +746,14 @@ func TestToolService_PreviewToolsEmitCanonicalWindowEvents(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+				"approval_code": "preview-code",
+				"ttl_seconds":   300,
+				"tool_name":     tt.toolName,
+			}); err != nil {
+				t.Fatalf("request_permission error = %v", err)
+			}
+
 			before := len(bridge.methodCalls("ui.emit_event"))
 
 			if _, err := service.CallTool(tt.toolName, tt.args); err != nil {
@@ -811,6 +818,7 @@ func TestToolService_RegisterAndApplyCustomLayoutProfile(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "custom-layout",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_ui.register_layout_profile",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -830,6 +838,14 @@ func TestToolService_RegisterAndApplyCustomLayoutProfile(t *testing.T) {
 		"actions": actions,
 	}); err != nil {
 		t.Fatalf("register_layout_profile error = %v", err)
+	}
+
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "custom-layout",
+		"ttl_seconds":   300,
+		"tool_name":     "ide_ui.apply_layout_profile",
+	}); err != nil {
+		t.Fatalf("request_permission apply error = %v", err)
 	}
 
 	if _, err := service.CallTool("ide_ui.apply_layout_profile", map[string]any{"name": "custom-test"}); err != nil {
@@ -934,6 +950,7 @@ func TestToolService_HotSwitchCreatesSnapshotAndReapplyWorks(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "hotswitch-code",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_ui.hot_switch",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -980,6 +997,14 @@ func TestToolService_HotSwitchCreatesSnapshotAndReapplyWorks(t *testing.T) {
 		t.Fatalf("list_layout_snapshots should return at least one snapshot")
 	}
 
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "hotswitch-code",
+		"ttl_seconds":   300,
+		"tool_name":     "ide_ui.apply_layout_snapshot",
+	}); err != nil {
+		t.Fatalf("request_permission apply snapshot error = %v", err)
+	}
+
 	if _, err := service.CallTool("ide_ui.apply_layout_snapshot", map[string]any{"id": snapshotMap.ID}); err != nil {
 		t.Fatalf("apply_layout_snapshot error = %v", err)
 	}
@@ -1003,6 +1028,7 @@ func TestToolService_LayoutSnapshotsPersistAcrossServiceRecreation(t *testing.T)
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "layout-persist",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_ui.hot_switch",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -1035,6 +1061,7 @@ func TestToolService_LayoutSnapshotsPersistAcrossServiceRecreation(t *testing.T)
 	if _, err := reloaded.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "layout-persist",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_ui.apply_layout_snapshot",
 	}); err != nil {
 		t.Fatalf("request_permission(reloaded) error = %v", err)
 	}
@@ -1073,6 +1100,7 @@ func TestToolService_TerminalCreateAcceptsCommand(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "terminal-command",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_backend.terminal_create",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -1141,6 +1169,7 @@ func TestToolService_HotSwitchRejectsTooManyActions(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "too-many-actions",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_ui.hot_switch",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}
@@ -1178,6 +1207,7 @@ func TestToolService_UIRateLimitRejectsBurst(t *testing.T) {
 	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
 		"approval_code": "ui-rate-limit",
 		"ttl_seconds":   300,
+		"tool_name":     "ide_ui.hot_switch",
 	}); err != nil {
 		t.Fatalf("request_permission error = %v", err)
 	}

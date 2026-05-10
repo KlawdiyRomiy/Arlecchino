@@ -337,7 +337,7 @@ export const useMainLayoutPreviewEvents = ({
     (payload: unknown) => {
       const input = parseOpenPreviewInput(payload);
       if (!input) {
-        return;
+        return { handled: false, reason: "Invalid preview open request." };
       }
 
       const resolvedInput = resolveBrowserPreviewOpenInput(input);
@@ -354,7 +354,10 @@ export const useMainLayoutPreviewEvents = ({
         if (openResult.reason) {
           showNotification("error", openResult.reason);
         }
-        return;
+        return {
+          handled: false,
+          reason: openResult.reason ?? "Preview window was not opened.",
+        };
       }
 
       if (resolvedInput.surface === "appearance") {
@@ -386,6 +389,7 @@ export const useMainLayoutPreviewEvents = ({
           },
         );
       }
+      return { handled: true, id: openedWindowId };
     },
     [
       applyAppearanceSettings,
@@ -474,10 +478,11 @@ export const useMainLayoutPreviewEvents = ({
     (payload: unknown) => {
       const parsed = parseUpdatePreviewInput(payload);
       if (!parsed) {
-        return;
+        return { handled: false, reason: "Invalid preview update request." };
       }
 
       queuePreviewWindowUpdate(parsed.id, parsed.input, parsed.focusRequested);
+      return { handled: true, id: parsed.id };
     },
     [queuePreviewWindowUpdate],
   );
@@ -486,9 +491,16 @@ export const useMainLayoutPreviewEvents = ({
     (payload: unknown) => {
       const windowId = parseWindowIdFromPayload(payload);
       if (!windowId) {
-        return;
+        return { handled: false, reason: "Invalid preview close request." };
+      }
+      const exists = usePreviewWindowStore
+        .getState()
+        .windows.some((windowState) => windowState.id === windowId);
+      if (!exists) {
+        return { handled: false, reason: "Preview window was not found." };
       }
       closePreviewWindowWithMotion(windowId);
+      return { handled: true, id: windowId };
     },
     [closePreviewWindowWithMotion],
   );
@@ -497,10 +509,17 @@ export const useMainLayoutPreviewEvents = ({
     (payload: unknown) => {
       const windowId = parseWindowIdFromPayload(payload);
       if (!windowId) {
-        return;
+        return { handled: false, reason: "Invalid preview focus request." };
+      }
+      const exists = usePreviewWindowStore
+        .getState()
+        .windows.some((windowState) => windowState.id === windowId);
+      if (!exists) {
+        return { handled: false, reason: "Preview window was not found." };
       }
       onPreviewFocus?.();
       focusPreviewWindow(windowId);
+      return { handled: true, id: windowId };
     },
     [focusPreviewWindow, onPreviewFocus],
   );

@@ -65,7 +65,7 @@ interface ProjectScreenProps extends PanelSnapDragCallbacks {
     name: string,
     line?: number,
     request?: Partial<PanelOpenRequest>,
-  ) => void | Promise<void>;
+  ) => unknown | Promise<unknown>;
 }
 
 const AUTO_SAVE_DELAY = 1500;
