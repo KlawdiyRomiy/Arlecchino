@@ -135,12 +135,6 @@ EventsOn("indexer:started", (data: IndexerEventPayload) => {
 
   const total = data.total ?? 0;
 
-  if (total === 0) {
-    emit({ phase: "indexing", current: 0, total: 0, percentage: 100 });
-    minTimer = setTimeout(transitionToComplete, MIN_INDEXING_MS);
-    return;
-  }
-
   emit({ phase: "indexing", current: 0, total, percentage: 0 });
 });
 

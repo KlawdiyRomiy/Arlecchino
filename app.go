@@ -397,7 +397,7 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 			case <-projectCtx.Done():
 				return
 			default:
-				coreEngine.IndexProject()
+				_ = coreEngine.IndexProjectContext(projectCtx)
 			}
 		}()
 	}

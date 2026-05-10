@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -42,6 +43,8 @@ type Engine struct {
 	batchTotal        atomic.Int64
 	batchDone         atomic.Int64
 	batchProgressAt   atomic.Int64
+	batchScanDone     atomic.Bool
+	batchCompleted    atomic.Bool
 }
 
 type EngineConfig struct {
@@ -117,12 +120,31 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 				Total:   int(total),
 			})
 		}
-		if done == total {
-			e.notifyIndexing(IndexingEvent{Type: IndexingCompleted})
-		}
+		e.completeActiveBatchIfReady(bid)
 	})
 
 	return e, nil
+}
+
+func (e *Engine) completeActiveBatchIfReady(batchID int64) {
+	if batchID == 0 || batchID != e.activeBatchID.Load() {
+		return
+	}
+	if !e.batchScanDone.Load() {
+		return
+	}
+	total := e.batchTotal.Load()
+	done := e.batchDone.Load()
+	if done < total {
+		return
+	}
+	if e.batchCompleted.CompareAndSwap(false, true) {
+		e.notifyIndexing(IndexingEvent{
+			Type:    IndexingCompleted,
+			Current: int(done),
+			Total:   int(total),
+		})
+	}
 }
 
 func (e *Engine) shouldEmitIndexingProgress(done int64, total int64) bool {
@@ -217,8 +239,28 @@ func (e *Engine) IndexFile(path string, priority int) {
 }
 
 func (e *Engine) IndexProject() {
+	_ = e.IndexProjectContext(context.Background())
+}
+
+func (e *Engine) IndexProjectContext(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	start := time.Now()
 	count := 0
+	batchID := e.batchSeq.Add(1)
+	e.activeBatchID.Store(batchID)
+	e.batchTotal.Store(0)
+	e.batchDone.Store(0)
+	e.batchProgressAt.Store(0)
+	e.batchScanDone.Store(false)
+	e.batchCompleted.Store(false)
+
+	e.notifyIndexing(IndexingEvent{Type: IndexingStarted})
 
 	knownFiles, _ := e.store.GetAllFiles()
 	inventoryBatch := make([]File, 0, indexProjectInventoryBatchSize)
@@ -230,13 +272,10 @@ func (e *Engine) IndexProject() {
 		inventoryBatch = inventoryBatch[:0]
 	}
 
-	type pendingFile struct {
-		path string
-		lang string
-	}
-	changed := make([]pendingFile, 0, 512)
-
-	filepath.Walk(e.projectRoot, func(path string, info os.FileInfo, err error) error {
+	walkErr := filepath.Walk(e.projectRoot, func(path string, info os.FileInfo, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return nil
 		}
@@ -256,6 +295,10 @@ func (e *Engine) IndexProject() {
 			flushInventory()
 		}
 		count++
+		switch count {
+		case largeProjectFileCount, criticalProjectFileCount:
+			e.applyProjectSizePolicy(count)
+		}
 		if count%indexProjectScanYieldEvery == 0 {
 			runtime.Gosched()
 		}
@@ -272,18 +315,24 @@ func (e *Engine) IndexProject() {
 			}
 		}
 
-		changed = append(changed, pendingFile{path: path, lang: lang})
+		flushInventory()
+		e.batchTotal.Add(1)
+		e.scheduler.Enqueue(Job{
+			ProjectID:   e.projectID,
+			ProjectRoot: e.projectRoot,
+			Kind:        JobKindSingleFile,
+			FilePath:    path,
+			Language:    lang,
+			Priority:    5,
+			BatchID:     batchID,
+		})
 		return nil
 	})
 	flushInventory()
+	if walkErr != nil {
+		return walkErr
+	}
 	e.applyProjectSizePolicy(count)
-
-	total := len(changed)
-	batchID := e.batchSeq.Add(1)
-	e.activeBatchID.Store(batchID)
-	e.batchTotal.Store(int64(total))
-	e.batchDone.Store(0)
-	e.batchProgressAt.Store(0)
 
 	e.mu.Lock()
 	e.stats.TotalFiles = count
@@ -291,24 +340,10 @@ func (e *Engine) IndexProject() {
 	e.stats.LastIndexTime = time.Since(start)
 	e.mu.Unlock()
 
-	e.notifyIndexing(IndexingEvent{Type: IndexingStarted, Total: total})
+	e.batchScanDone.Store(true)
+	e.completeActiveBatchIfReady(batchID)
 
-	if total == 0 {
-		e.notifyIndexing(IndexingEvent{Type: IndexingCompleted})
-	} else {
-		for _, f := range changed {
-			e.scheduler.Enqueue(Job{
-				ProjectID:   e.projectID,
-				ProjectRoot: e.projectRoot,
-				Kind:        JobKindSingleFile,
-				FilePath:    f.path,
-				Language:    f.lang,
-				Priority:    5,
-				BatchID:     batchID,
-			})
-		}
-	}
-
+	return nil
 }
 
 func (e *Engine) applyProjectSizePolicy(fileCount int) {

@@ -40,8 +40,8 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
       x: dirRef.current === 0 ? 0 : dirRef.current > 0 ? -100 : 100,
     }),
     config: {
-      tension: 250,
-      friction: 35,
+      tension: 340,
+      friction: 38,
       clamp: true,
     },
     immediate: reduceMotion,

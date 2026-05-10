@@ -53,7 +53,7 @@ import {
   type EditorFileOpenPayload,
 } from "./utils/editorFileLoader";
 
-const PROJECT_SWITCH_VISUAL_SETTLE_MS = 260;
+const PROJECT_SWITCH_VISUAL_SETTLE_MS = 180;
 const OPEN_TARGET_EVENT = "arlecchino:open";
 
 const waitForProjectSwitchVisualSettle = () =>
