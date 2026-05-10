@@ -547,6 +547,7 @@ export const AppNotificationStack: React.FC = () => {
     <div
       aria-live="polite"
       aria-relevant="additions text"
+      data-app-notification-stack="true"
       data-testid="app-notification-stack"
       data-stack-expanded={expanded ? "true" : "false"}
       style={{

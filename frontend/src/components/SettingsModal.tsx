@@ -68,6 +68,7 @@ import {
   type ShortcutActionId,
   type ShortcutGroup,
 } from "../utils/keyboard";
+import { isAppNotificationInteractionEvent } from "../utils/appNotificationTargets";
 import { MAX_UI_SCALE, MIN_UI_SCALE, UI_SCALE_STEP } from "../utils/uiScale";
 import { MotionDropdownContent } from "./ui/MotionDropdownContent";
 import {
@@ -875,6 +876,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const customThemeInputRef = useRef<HTMLInputElement | null>(null);
   const customFontInputRef = useRef<HTMLInputElement | null>(null);
   const customFontTargetRef = useRef<"ui" | "editor">("ui");
+  const handleDialogInteractOutside = useCallback((event: Event) => {
+    if (isAppNotificationInteractionEvent(event)) {
+      event.preventDefault();
+    }
+  }, []);
 
   const { theme, setTheme, previewTheme, customThemes, addCustomTheme } =
     useTheme();
@@ -1961,6 +1967,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     event.preventDefault();
                   }
                 }}
+                onInteractOutside={handleDialogInteractOutside}
               >
                 <motion.div
                   key="settings-content"

@@ -19,6 +19,7 @@ import {
   type PolicyPlan,
 } from "../../bindings/arlecchino/internal/depsync/models";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
+import { isAppNotificationInteractionEvent } from "../utils/appNotificationTargets";
 import { shortcuts } from "../utils/keyboard";
 import {
   SHELL_DIALOG_OVERLAY_TRANSITION,
@@ -174,6 +175,11 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedActionId, setExpandedActionId] = useState<string | null>(null);
+  const handleDialogInteractOutside = useCallback((event: Event) => {
+    if (isAppNotificationInteractionEvent(event)) {
+      event.preventDefault();
+    }
+  }, []);
 
   const sectionLabelClass =
     "text-[12px] font-semibold uppercase tracking-[0.16em] text-[var(--text-secondary)]";
@@ -392,6 +398,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                     onClose();
                   }
                 }}
+                onInteractOutside={handleDialogInteractOutside}
               >
                 <motion.div
                   className="fixed left-1/2 top-1/2 z-[111] outline-none"
