@@ -506,6 +506,47 @@ body > [data-radix-portal] > * {
     0 0 0 3px var(--focus-ring-strong);
 }
 
+.topbar-panel-button-active.shell-control {
+  background: color-mix(
+    in srgb,
+    var(--text-primary) 84%,
+    var(--surface-canvas) 16%
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--text-primary) 50%,
+    var(--surface-canvas) 30%
+  );
+  color: color-mix(in srgb, var(--surface-canvas) 82%, var(--text-primary) 18%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--surface-canvas) 28%, transparent),
+    0 8px 20px -16px color-mix(in srgb, var(--text-primary) 64%, transparent);
+}
+
+.topbar-panel-button-active.shell-control:hover:not(:disabled),
+.topbar-panel-button-active.shell-control:active:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--text-primary) 84%,
+    var(--surface-canvas) 16%
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--text-primary) 50%,
+    var(--surface-canvas) 30%
+  );
+  color: color-mix(in srgb, var(--surface-canvas) 82%, var(--text-primary) 18%);
+}
+
+.topbar-panel-button-active.shell-control:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 1px var(--focus-ring),
+    0 0 0 3px var(--focus-ring-strong),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-canvas) 28%, transparent),
+    0 8px 20px -16px color-mix(in srgb, var(--text-primary) 64%, transparent);
+}
+
 .topbar-space-dot {
   transition:
     transform 150ms ease,

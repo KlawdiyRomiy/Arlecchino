@@ -30,6 +30,7 @@ import { ProjectIndicators } from "./ProjectIndicators";
 import { AddProjectMenu } from "./AddProjectMenu";
 
 type VisibleTopbarItemId = TopbarItemId | "more";
+type TopbarItemGroup = "left" | "right";
 
 const COMPACT_TOPBAR_ACTION_IDS: TopbarItemId[] = [
   "aiChat",
@@ -38,19 +39,24 @@ const COMPACT_TOPBAR_ACTION_IDS: TopbarItemId[] = [
   "syncDependencies",
   "checkUpdates",
 ];
-const LEFT_TOPBAR_ITEM_IDS: TopbarItemId[] = ["explorer", "search", "settings"];
-const RIGHT_TOPBAR_ITEM_IDS: TopbarItemId[] = [
-  "debug",
-  "run",
-  "preview",
-  ...COMPACT_TOPBAR_ACTION_IDS,
-];
 const COMPACT_TOPBAR_ACTION_ID_SET = new Set<TopbarItemId>(
   COMPACT_TOPBAR_ACTION_IDS,
 );
+const FIXED_TOPBAR_ITEM_ID_SET = new Set<TopbarItemId>([
+  "projects",
+  "addProject",
+  "context",
+]);
 
 const isCompactTopbarAction = (itemId: TopbarItemId) =>
   COMPACT_TOPBAR_ACTION_ID_SET.has(itemId);
+
+const isFixedTopbarItem = (itemId: TopbarItemId) =>
+  FIXED_TOPBAR_ITEM_ID_SET.has(itemId);
+
+const isVisibleFixedTopbarItem = (
+  itemId: VisibleTopbarItemId,
+): itemId is TopbarItemId => itemId !== "more" && isFixedTopbarItem(itemId);
 
 const topbarItemLabels: Record<VisibleTopbarItemId, string> = {
   explorer: "Explorer",
@@ -95,53 +101,113 @@ const resolveVisibleTopbarOrder = (
   return visibleOrder;
 };
 
-const resolveTopbarOrderFromVisibleOrder = (
+const resolveVisibleTopbarSideOrder = (
+  visibleOrder: VisibleTopbarItemId[],
+  group: TopbarItemGroup,
+): VisibleTopbarItemId[] => {
+  const anchorId = group === "left" ? "projects" : "context";
+  const anchorIndex = visibleOrder.indexOf(anchorId);
+  if (anchorIndex === -1) {
+    return [];
+  }
+
+  const sideOrder =
+    group === "left"
+      ? visibleOrder.slice(0, anchorIndex)
+      : visibleOrder.slice(anchorIndex + 1);
+
+  return sideOrder.filter((itemId) => !isVisibleFixedTopbarItem(itemId));
+};
+
+const resolveUnderlyingTopbarSideOrder = (
+  order: TopbarItemId[],
+  group: TopbarItemGroup,
+): TopbarItemId[] => {
+  const normalizedOrder = normalizeTopbarItemOrder(order);
+  const anchorId = group === "left" ? "projects" : "context";
+  const anchorIndex = normalizedOrder.indexOf(anchorId);
+  if (anchorIndex === -1) {
+    return [];
+  }
+
+  const sideOrder =
+    group === "left"
+      ? normalizedOrder.slice(0, anchorIndex)
+      : normalizedOrder.slice(anchorIndex + 1);
+
+  return sideOrder.filter((itemId) => !isFixedTopbarItem(itemId));
+};
+
+const resolveTopbarItemIdsFromVisibleItem = (
+  itemId: VisibleTopbarItemId,
+  currentOrder: TopbarItemId[],
+  compactMode: boolean,
+): TopbarItemId[] => {
+  if (itemId !== "more") {
+    return [itemId];
+  }
+
+  return compactMode ? [] : currentOrder.filter(isCompactTopbarAction);
+};
+
+const resolveUnderlyingTopbarOrderFromVisibleSideOrder = (
   visibleOrder: VisibleTopbarItemId[],
   currentOrder: TopbarItemId[],
   compactMode: boolean,
 ): TopbarItemId[] => {
-  if (compactMode) {
-    return normalizeTopbarItemOrder(
-      visibleOrder.filter(
-        (itemId): itemId is TopbarItemId => itemId !== "more",
-      ),
-    );
-  }
-
-  const compactActions = currentOrder.filter(isCompactTopbarAction);
   const nextOrder: TopbarItemId[] = [];
-  visibleOrder.forEach((itemId) => {
-    if (itemId === "more") {
-      nextOrder.push(...compactActions);
-      return;
-    }
+  const seen = new Set<TopbarItemId>();
 
-    nextOrder.push(itemId);
+  visibleOrder.forEach((itemId) => {
+    resolveTopbarItemIdsFromVisibleItem(
+      itemId,
+      currentOrder,
+      compactMode,
+    ).forEach((resolvedItemId) => {
+      if (isFixedTopbarItem(resolvedItemId) || seen.has(resolvedItemId)) {
+        return;
+      }
+      seen.add(resolvedItemId);
+      nextOrder.push(resolvedItemId);
+    });
   });
 
-  return normalizeTopbarItemOrder(nextOrder);
+  return nextOrder;
 };
 
-const mergeTopbarGroupOrder = (
+const replaceTopbarSideOrder = (
   currentOrder: TopbarItemId[],
-  groupIds: TopbarItemId[],
-  nextGroupOrder: TopbarItemId[],
+  group: TopbarItemGroup,
+  nextSideOrder: TopbarItemId[],
+  additionalRemovedIds: TopbarItemId[] = [],
 ): TopbarItemId[] => {
-  const groupIdSet = new Set(groupIds);
-  const normalizedGroupOrder = normalizeTopbarItemOrder(nextGroupOrder).filter(
-    (itemId) => groupIdSet.has(itemId),
+  const normalizedOrder = normalizeTopbarItemOrder(currentOrder);
+  const currentSideOrder = resolveUnderlyingTopbarSideOrder(
+    normalizedOrder,
+    group,
   );
-  let groupIndex = 0;
+  const removedItemIdSet = new Set([
+    ...currentSideOrder,
+    ...nextSideOrder,
+    ...additionalRemovedIds,
+  ]);
+  const baseOrder = normalizedOrder.filter(
+    (itemId) => !removedItemIdSet.has(itemId),
+  );
+  const anchorId = group === "left" ? "projects" : "context";
+  const anchorIndex = baseOrder.indexOf(anchorId);
+  const insertIndex =
+    group === "left"
+      ? anchorIndex === -1
+        ? 0
+        : anchorIndex
+      : anchorIndex === -1
+        ? baseOrder.length
+        : anchorIndex + 1;
+  const nextOrder = [...baseOrder];
 
-  return normalizeTopbarItemOrder(currentOrder).map((itemId) => {
-    if (!groupIdSet.has(itemId)) {
-      return itemId;
-    }
-
-    const nextItemId = normalizedGroupOrder[groupIndex] ?? itemId;
-    groupIndex += 1;
-    return nextItemId;
-  });
+  nextOrder.splice(insertIndex, 0, ...nextSideOrder);
+  return normalizeTopbarItemOrder(nextOrder);
 };
 
 interface PanelVisibility {
@@ -233,22 +299,18 @@ export const TopBar: React.FC<TopBarProps> = ({
       ),
     [topbarItemOrder],
   );
-  const leftTopbarOrder = React.useMemo(
+  const visibleTopbarOrder = React.useMemo(
     () =>
-      normalizedTopbarItemOrder.filter((itemId) =>
-        LEFT_TOPBAR_ITEM_IDS.includes(itemId),
-      ),
-    [normalizedTopbarItemOrder],
+      resolveVisibleTopbarOrder(normalizedTopbarItemOrder, compactTopbarMode),
+    [compactTopbarMode, normalizedTopbarItemOrder],
+  );
+  const leftTopbarOrder = React.useMemo(
+    () => resolveVisibleTopbarSideOrder(visibleTopbarOrder, "left"),
+    [visibleTopbarOrder],
   );
   const rightTopbarOrder = React.useMemo(
-    () =>
-      resolveVisibleTopbarOrder(
-        normalizedTopbarItemOrder.filter((itemId) =>
-          RIGHT_TOPBAR_ITEM_IDS.includes(itemId),
-        ),
-        compactTopbarMode,
-      ),
-    [compactTopbarMode, normalizedTopbarItemOrder],
+    () => resolveVisibleTopbarSideOrder(visibleTopbarOrder, "right"),
+    [visibleTopbarOrder],
   );
   const projectName = projectPath
     ? projectPath.split("/").filter(Boolean).at(-1)
@@ -258,6 +320,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     : "";
   const topBarButtonClass =
     "topbar-control-button shell-control h-12 w-12 px-0";
+  const activeTopBarPanelButtonClass = "topbar-panel-button-active";
   const topBarActionClass = `${topBarButtonClass} text-[var(--text-secondary)]`;
   const menuItemClass = "shell-menu-item text-[13px]";
   const centerChipClass = "shell-pill font-mono text-[10px] tracking-[0.14em]";
@@ -289,9 +352,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     "flex min-w-[188px] items-center justify-center gap-3 font-mono leading-none text-[12px] tracking-[0.1em] text-[var(--text-secondary)]";
   const getPanelActionClass = (active?: boolean) =>
     `${topBarButtonClass} ${
-      active
-        ? "border-[var(--shell-border-strong)] bg-[var(--surface-active)] text-[var(--text-primary)] shadow-[inset_0_1px_0_var(--shell-inner-highlight)]"
-        : "text-[var(--text-secondary)]"
+      active ? activeTopBarPanelButtonClass : "text-[var(--text-secondary)]"
     }`;
   const topBarDragStyle = {
     "--wails-draggable": windowDragEnabled ? "drag" : "no-drag",
@@ -310,11 +371,36 @@ export const TopBar: React.FC<TopBarProps> = ({
     return baseClassName;
   };
 
+  const getTopbarDropGroup = React.useCallback(
+    (clientX: number, clientY: number): TopbarItemGroup | null => {
+      const targets: Array<[TopbarItemGroup, HTMLDivElement | null]> = [
+        ["left", leftTopbarItemsRef.current],
+        ["right", rightTopbarItemsRef.current],
+      ];
+
+      for (const [targetGroup, container] of targets) {
+        const rect = container?.getBoundingClientRect();
+        if (
+          rect &&
+          clientX >= rect.left &&
+          clientX <= rect.right &&
+          clientY >= rect.top &&
+          clientY <= rect.bottom
+        ) {
+          return targetGroup;
+        }
+      }
+
+      return null;
+    },
+    [],
+  );
+
   const reorderVisibleTopbarOrder = React.useCallback(
     (
       draggedItemId: VisibleTopbarItemId,
       clientX: number,
-      group: "left" | "right",
+      group: TopbarItemGroup,
     ) => {
       const container =
         group === "left"
@@ -364,18 +450,22 @@ export const TopBar: React.FC<TopBarProps> = ({
         return;
       }
 
-      const groupIds =
-        group === "left" ? LEFT_TOPBAR_ITEM_IDS : RIGHT_TOPBAR_ITEM_IDS;
-      const nextGroupOrder = resolveTopbarOrderFromVisibleOrder(
+      const draggedItemIds = resolveTopbarItemIdsFromVisibleItem(
+        draggedItemId,
+        normalizedTopbarItemOrder,
+        compactTopbarMode,
+      );
+      const nextSideOrder = resolveUnderlyingTopbarOrderFromVisibleSideOrder(
         nextVisibleOrder,
-        normalizedTopbarItemOrder.filter((itemId) => groupIds.includes(itemId)),
+        normalizedTopbarItemOrder,
         compactTopbarMode,
       );
       setTopbarItemOrder(
-        mergeTopbarGroupOrder(
+        replaceTopbarSideOrder(
           normalizedTopbarItemOrder,
-          groupIds,
-          nextGroupOrder,
+          group,
+          nextSideOrder,
+          draggedItemIds,
         ),
       );
     },
@@ -391,7 +481,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const handleTopbarItemPointerDown = React.useCallback(
     (
       itemId: VisibleTopbarItemId,
-      group: "left" | "right",
+      group: TopbarItemGroup,
       event: React.PointerEvent<HTMLElement>,
     ) => {
       if (event.button !== 0) {
@@ -454,8 +544,11 @@ export const TopBar: React.FC<TopBarProps> = ({
           variant: "icon",
         });
 
+        const targetGroup =
+          getTopbarDropGroup(pointerEvent.clientX, pointerEvent.clientY) ??
+          group;
         const container =
-          group === "left"
+          targetGroup === "left"
             ? leftTopbarItemsRef.current
             : rightTopbarItemsRef.current;
         if (!container) {
@@ -485,30 +578,22 @@ export const TopBar: React.FC<TopBarProps> = ({
         }
         resetClickSuppression();
 
-        const container =
-          group === "left"
-            ? leftTopbarItemsRef.current
-            : rightTopbarItemsRef.current;
-        const rect = container?.getBoundingClientRect();
-        const insideContainer = Boolean(
-          rect &&
-          pointerEvent.clientX >= rect.left &&
-          pointerEvent.clientX <= rect.right &&
-          pointerEvent.clientY >= rect.top &&
-          pointerEvent.clientY <= rect.bottom,
+        const targetGroup = getTopbarDropGroup(
+          pointerEvent.clientX,
+          pointerEvent.clientY,
         );
-        if (!insideContainer) {
+        if (!targetGroup) {
           return;
         }
 
-        reorderVisibleTopbarOrder(itemId, pointerEvent.clientX, group);
+        reorderVisibleTopbarOrder(itemId, pointerEvent.clientX, targetGroup);
       };
 
       window.addEventListener("pointermove", handlePointerMove, true);
       window.addEventListener("pointerup", handlePointerUp, true);
       window.addEventListener("pointercancel", handlePointerCancel, true);
     },
-    [reorderVisibleTopbarOrder],
+    [getTopbarDropGroup, reorderVisibleTopbarOrder],
   );
 
   const handleTopbarItemClickCapture = React.useCallback(
@@ -572,7 +657,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       onClick={onToggleExplorer}
       className={`${topBarButtonClass} ${
         panels.explorer
-          ? "border-[var(--shell-border-strong)] bg-[var(--surface-active)] text-[var(--text-primary)] shadow-[inset_0_1px_0_var(--shell-inner-highlight)]"
+          ? activeTopBarPanelButtonClass
           : "text-[var(--text-secondary)]"
       }`}
       title="Explorer"
@@ -906,7 +991,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   const renderDraggableTopbarItem = (
     itemId: VisibleTopbarItemId,
-    group: "left" | "right",
+    group: TopbarItemGroup,
   ) => (
     <div
       key={itemId}
@@ -937,7 +1022,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       <div className={topBarGroupClass} style={topBarItemNoDragStyle}>
         <div
           ref={leftTopbarItemsRef}
-          className="shell-cluster px-1.5"
+          className="shell-cluster min-h-12 min-w-[3.5rem] px-1.5"
           data-testid="topbar-left-action-bubble"
         >
           {leftTopbarOrder.map((itemId) =>
@@ -950,7 +1035,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         className={`${topBarGroupClass} min-w-0`}
         style={topBarItemNoDragStyle}
       >
-        <div className="shell-cluster min-w-0 px-1.5 pr-2">
+        <div className="shell-cluster min-h-12 min-w-[3.5rem] max-w-[min(58vw,470px)] overflow-x-auto px-1.5 pr-2">
           <ProjectIndicators
             onSwitch={(id) => onSwitchProject?.(id)}
             onClose={(id) => onCloseProject?.(id)}
@@ -974,7 +1059,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       <div className={topBarGroupClass} style={topBarItemNoDragStyle}>
         <div
           ref={rightTopbarItemsRef}
-          className="shell-cluster max-w-[min(58vw,470px)] overflow-x-auto px-1.5"
+          className="shell-cluster min-h-12 min-w-[3.5rem] max-w-[min(58vw,470px)] overflow-x-auto px-1.5"
           data-testid="topbar-action-bubble"
         >
           {rightTopbarOrder.map((itemId) =>

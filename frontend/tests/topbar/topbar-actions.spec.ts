@@ -215,6 +215,64 @@ async function readWindowDragStyles(
   }, selector);
 }
 
+type TestedThemeId = "arlecchino-light" | "blackprint";
+
+async function applyThemeVariables(
+  page: Parameters<typeof test>[0]["page"],
+  themeId: TestedThemeId,
+) {
+  await page.evaluate(async (nextThemeId: TestedThemeId) => {
+    const { getThemeDefinition } = await import("/src/styles/themes.ts");
+    const nextTheme = getThemeDefinition(nextThemeId);
+    const htmlElement = document.documentElement;
+
+    Object.entries(nextTheme.cssVariables).forEach(([name, value]) => {
+      htmlElement.style.setProperty(name, value);
+    });
+    htmlElement.classList.remove("light", "dark");
+    htmlElement.classList.add(
+      nextTheme.appearance === "dark" ? "dark" : "light",
+    );
+    htmlElement.dataset.theme = nextTheme.id;
+    htmlElement.dataset.themeAppearance = nextTheme.appearance;
+  }, themeId);
+}
+
+async function readTopbarButtonThemeColors(
+  page: Parameters<typeof test>[0]["page"],
+  testId: string,
+) {
+  return page.getByTestId(testId).evaluate((button) => {
+    const probe = document.createElement("span");
+    document.body.appendChild(probe);
+
+    const resolveColor = (value: string) => {
+      probe.style.color = value.trim();
+      return getComputedStyle(probe).color;
+    };
+    const rootStyles = getComputedStyle(document.documentElement);
+    const buttonStyles = getComputedStyle(button);
+    const colors = {
+      backgroundColor: buttonStyles.backgroundColor,
+      borderRadius: buttonStyles.borderRadius,
+      color: buttonStyles.color,
+      textPrimary: resolveColor(rootStyles.getPropertyValue("--text-primary")),
+      surfaceCanvas: resolveColor(
+        rootStyles.getPropertyValue("--surface-canvas"),
+      ),
+      softenedBackground: resolveColor(
+        "color-mix(in srgb, var(--text-primary) 84%, var(--surface-canvas) 16%)",
+      ),
+      softenedForeground: resolveColor(
+        "color-mix(in srgb, var(--surface-canvas) 82%, var(--text-primary) 18%)",
+      ),
+    };
+
+    probe.remove();
+    return colors;
+  });
+}
+
 test("search button opens command dispatcher", async ({ page }) => {
   await mountProjectUI(page);
 
@@ -294,6 +352,44 @@ async function setCompactTopbarActions(
   });
 }
 
+async function setTopbarItemOrder(
+  page: Parameters<typeof test>[0]["page"],
+  order: string[],
+) {
+  await page.evaluate(async (nextOrder) => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    const settings = useEditorSettingsStore.getState();
+    settings.setShowTopbarProjectPath(false);
+    settings.setTopbarItemOrder(nextOrder);
+  }, order);
+}
+
+async function dragTopbarItemToBubble(
+  page: Parameters<typeof test>[0]["page"],
+  itemId: string,
+  bubbleTestId: string,
+) {
+  const item = page.getByTestId(`topbar-item-${itemId}`);
+  const bubble = page.getByTestId(bubbleTestId);
+  const itemBox = await item.boundingBox();
+  const bubbleBox = await bubble.boundingBox();
+  expect(itemBox).not.toBeNull();
+  expect(bubbleBox).not.toBeNull();
+
+  await page.mouse.move(
+    (itemBox?.x ?? 0) + (itemBox?.width ?? 0) / 2,
+    (itemBox?.y ?? 0) + (itemBox?.height ?? 0) / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    (bubbleBox?.x ?? 0) + (bubbleBox?.width ?? 0) / 2,
+    (bubbleBox?.y ?? 0) + (bubbleBox?.height ?? 0) / 2,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+}
+
 test("default topbar keeps panel and update actions in the More menu", async ({
   page,
 }) => {
@@ -336,6 +432,153 @@ test("compact topbar promotes dropdown actions and hides project label", async (
   await expect(page.getByTitle("More")).toHaveCount(0);
 });
 
+test("topbar actions can be dragged between the left and right groups", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await setCompactTopbarActions(page);
+
+  const searchItem = page.getByTestId("topbar-item-search");
+  const rightGroup = page.getByTestId("topbar-action-bubble");
+  const searchBox = await searchItem.boundingBox();
+  const rightGroupBox = await rightGroup.boundingBox();
+  expect(searchBox).not.toBeNull();
+  expect(rightGroupBox).not.toBeNull();
+
+  await page.mouse.move(
+    (searchBox?.x ?? 0) + (searchBox?.width ?? 0) / 2,
+    (searchBox?.y ?? 0) + (searchBox?.height ?? 0) / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    (rightGroupBox?.x ?? 0) + (rightGroupBox?.width ?? 0) - 8,
+    (rightGroupBox?.y ?? 0) + (rightGroupBox?.height ?? 0) / 2,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+
+  await expect(
+    page.getByTestId("topbar-action-bubble").getByTestId("topbar-item-search"),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByTestId("topbar-left-action-bubble")
+      .getByTestId("topbar-item-search"),
+  ).toHaveCount(0);
+});
+
+test("topbar action drag outside both groups keeps the original order", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await setCompactTopbarActions(page);
+
+  const beforeOrder = await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    return useEditorSettingsStore.getState().topbarItemOrder;
+  });
+
+  const settingsItem = page.getByTestId("topbar-item-settings");
+  const settingsBox = await settingsItem.boundingBox();
+  expect(settingsBox).not.toBeNull();
+
+  await page.mouse.move(
+    (settingsBox?.x ?? 0) + (settingsBox?.width ?? 0) / 2,
+    (settingsBox?.y ?? 0) + (settingsBox?.height ?? 0) / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(640, 220, { steps: 8 });
+  await page.mouse.up();
+
+  const afterOrder = await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    return useEditorSettingsStore.getState().topbarItemOrder;
+  });
+
+  expect(afterOrder).toEqual(beforeOrder);
+  await expect(
+    page
+      .getByTestId("topbar-left-action-bubble")
+      .getByTestId("topbar-item-settings"),
+  ).toBeVisible();
+});
+
+test("empty topbar action groups accept returned items", async ({ page }) => {
+  await mountProjectUI(page);
+
+  await setTopbarItemOrder(page, [
+    "projects",
+    "addProject",
+    "context",
+    "explorer",
+    "search",
+    "settings",
+    "debug",
+    "run",
+    "preview",
+    "aiChat",
+    "terminal",
+    "git",
+    "syncDependencies",
+    "checkUpdates",
+  ]);
+  await expect(page.getByTestId("topbar-left-action-bubble")).toBeVisible();
+  await expect(
+    page
+      .getByTestId("topbar-left-action-bubble")
+      .getByTestId("topbar-item-search"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId("topbar-action-bubble").getByTestId("topbar-item-search"),
+  ).toBeVisible();
+
+  await dragTopbarItemToBubble(page, "search", "topbar-left-action-bubble");
+
+  await expect(
+    page
+      .getByTestId("topbar-left-action-bubble")
+      .getByTestId("topbar-item-search"),
+  ).toBeVisible();
+
+  await setTopbarItemOrder(page, [
+    "explorer",
+    "search",
+    "settings",
+    "debug",
+    "run",
+    "preview",
+    "aiChat",
+    "terminal",
+    "git",
+    "syncDependencies",
+    "checkUpdates",
+    "projects",
+    "addProject",
+    "context",
+  ]);
+  await expect(page.getByTestId("topbar-action-bubble")).toBeVisible();
+  await expect(
+    page
+      .getByTestId("topbar-action-bubble")
+      .getByTestId("topbar-item-terminal"),
+  ).toHaveCount(0);
+  await expect(
+    page
+      .getByTestId("topbar-left-action-bubble")
+      .getByTestId("topbar-item-terminal"),
+  ).toBeVisible();
+
+  await dragTopbarItemToBubble(page, "terminal", "topbar-action-bubble");
+
+  await expect(
+    page
+      .getByTestId("topbar-action-bubble")
+      .getByTestId("topbar-item-terminal"),
+  ).toBeVisible();
+});
+
 test("promoted panel buttons toggle panels and active indicators", async ({
   page,
 }) => {
@@ -357,6 +600,32 @@ test("promoted panel buttons toggle panels and active indicators", async ({
   await gitButton.click();
   await expect(page.getByTestId("panel-git")).toBeVisible();
   await expect(gitButton).toHaveAttribute("aria-pressed", "true");
+});
+
+test("active topbar panel buttons invert against the current theme", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await setCompactTopbarActions(page);
+
+  const terminalButton = page.getByTestId("topbar-terminal-button");
+  await terminalButton.click();
+  await expect(terminalButton).toHaveAttribute("aria-pressed", "true");
+
+  for (const themeId of ["arlecchino-light", "blackprint"] as const) {
+    await applyThemeVariables(page, themeId);
+    await page.waitForTimeout(220);
+    const colors = await readTopbarButtonThemeColors(
+      page,
+      "topbar-terminal-button",
+    );
+
+    expect(colors.backgroundColor).toBe(colors.softenedBackground);
+    expect(colors.color).toBe(colors.softenedForeground);
+    expect(colors.backgroundColor).not.toBe(colors.textPrimary);
+    expect(colors.color).not.toBe(colors.surfaceCanvas);
+    expect(colors.borderRadius).toBe("9999px");
+  }
 });
 
 test("compact topbar setting hides the whole project label", async ({

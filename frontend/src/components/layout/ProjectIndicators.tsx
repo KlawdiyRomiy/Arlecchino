@@ -272,7 +272,7 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
         {shouldCollapse ? (
           <motion.div
             key="collapsed"
-            className="flex items-center gap-1.5 py-1"
+            className="flex min-w-[3.5rem] items-center justify-center gap-1.5 py-1"
             initial={fadeInitial}
             animate={fadeAnimate}
             exit={fadeInitial}
@@ -302,7 +302,7 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
           <motion.div
             key="expanded"
             ref={expandedRef}
-            className="project-indicators-expanded flex items-center gap-1"
+            className="project-indicators-expanded flex min-w-[3.5rem] items-center gap-1"
             data-testid="project-indicators-expanded"
             initial={fadeInitial}
             animate={fadeAnimate}
