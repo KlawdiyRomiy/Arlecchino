@@ -385,6 +385,15 @@ interface Tab {
   icon: LucideIcon;
 }
 
+interface SettingsSearchEntry {
+  id: string;
+  tab: TabId;
+  label: string;
+  description: string;
+  keywords: string[];
+  suggested?: boolean;
+}
+
 const tabs: Tab[] = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "editor", label: "Editor", icon: Code2 },
@@ -404,6 +413,226 @@ const tabs: Tab[] = [
     icon: Keyboard,
   },
 ];
+
+const tabLabelById = new Map(tabs.map((tab) => [tab.id, tab.label]));
+
+const settingsSearchEntries: SettingsSearchEntry[] = [
+  {
+    id: "project-opening",
+    tab: "appearance",
+    label: "Project opening",
+    description: "Open projects in this window or separate macOS windows.",
+    keywords: ["window", "workspace", "project window", "macos"],
+    suggested: true,
+  },
+  {
+    id: "app-icon",
+    tab: "appearance",
+    label: "App icon",
+    description: "Choose the running macOS app icon appearance.",
+    keywords: ["icon", "light", "dark", "system"],
+  },
+  {
+    id: "system-font-family",
+    tab: "appearance",
+    label: "System Font Family",
+    description: "Choose the UI font used outside the code editor.",
+    keywords: ["ui font", "interface font", "local font"],
+  },
+  {
+    id: "theme",
+    tab: "appearance",
+    label: "Theme",
+    description: "Select built-in or custom color themes.",
+    keywords: ["appearance", "catppuccin", "custom theme", "colors"],
+    suggested: true,
+  },
+  {
+    id: "zen-mode",
+    tab: "appearance",
+    label: "Zen Mode",
+    description: "Hide chrome and snapped panels until edge hover.",
+    keywords: ["focus", "fullscreen", "panels", "chrome"],
+    suggested: true,
+  },
+  {
+    id: "compact-topbar-actions",
+    tab: "appearance",
+    label: "Compact topbar actions",
+    description: "Hide the project label and show actions in the topbar.",
+    keywords: ["topbar", "project label", "actions", "compact"],
+  },
+  {
+    id: "close-confirmation",
+    tab: "appearance",
+    label: "Close confirmation",
+    description: "Ask before closing a project or quitting Arlecchino.",
+    keywords: ["quit", "project close", "confirm"],
+  },
+  {
+    id: "topbar-icon-order",
+    tab: "appearance",
+    label: "Topbar icon order",
+    description: "Restore the default order for draggable topbar controls.",
+    keywords: ["topbar", "drag", "controls", "reset order"],
+  },
+  {
+    id: "rainbow-brackets",
+    tab: "appearance",
+    label: "Rainbow brackets",
+    description: "Color nested brackets with fixed depth colors.",
+    keywords: ["brackets", "syntax", "colors", "editor"],
+  },
+  {
+    id: "editor-font-family",
+    tab: "editor",
+    label: "Editor Font Family",
+    description: "Choose the font used by the code editor.",
+    keywords: ["code font", "monospace", "local font"],
+    suggested: true,
+  },
+  {
+    id: "editor-font-size",
+    tab: "editor",
+    label: "Editor Font Size",
+    description: "Adjust the text size in the code editor.",
+    keywords: ["font size", "code size", "text size"],
+  },
+  {
+    id: "ui-scale",
+    tab: "editor",
+    label: "UI Scale",
+    description: "Adjust the overall zoom of the application interface.",
+    keywords: ["zoom", "scale", "interface size"],
+    suggested: true,
+  },
+  {
+    id: "operator-ligatures",
+    tab: "editor",
+    label: "Operator ligatures",
+    description: "Render operator sequences as visual arrows.",
+    keywords: ["ligatures", "arrows", "operators", "font"],
+  },
+  {
+    id: "show-minimap",
+    tab: "diagnostics",
+    label: "Show minimap",
+    description: "Display the code minimap in the editor gutter.",
+    keywords: ["minimap", "editor", "gutter"],
+  },
+  {
+    id: "inline-diagnostics",
+    tab: "diagnostics",
+    label: "Show inline diagnostics",
+    description: "Render squiggles and inline problem messages.",
+    keywords: ["errors", "warnings", "squiggles", "problems"],
+    suggested: true,
+  },
+  {
+    id: "compact-diagnostics",
+    tab: "diagnostics",
+    label: "Show compact diagnostics",
+    description: "Keep the project-wide problems badge visible.",
+    keywords: ["status bar", "problems", "badge"],
+  },
+  {
+    id: "autocomplete-support",
+    tab: "diagnostics",
+    label: "Autocomplete support",
+    description: "Language capability matrix for editor completions.",
+    keywords: ["completion", "lsp", "languages", "capabilities"],
+    suggested: true,
+  },
+  {
+    id: "build-identity",
+    tab: "diagnostics",
+    label: "Build identity",
+    description: "Inspect version, package, channel, and update status.",
+    keywords: ["version", "build", "commit", "updates", "diagnostics"],
+  },
+  {
+    id: "private-release-access",
+    tab: "diagnostics",
+    label: "Private GitHub release access",
+    description: "Save or clear private update access token.",
+    keywords: ["github", "token", "release", "updates"],
+  },
+  {
+    id: "markdown-links",
+    tab: "browser-preview",
+    label: "Markdown links",
+    description: "Choose how Markdown preview links open.",
+    keywords: ["browser", "preview", "links", "markdown"],
+  },
+  {
+    id: "auto-open-preview",
+    tab: "browser-preview",
+    label: "Auto-open Preview",
+    description: "Open browser preview when terminal reports a local URL.",
+    keywords: ["browser", "terminal", "localhost", "url"],
+    suggested: true,
+  },
+  {
+    id: "reuse-session-window",
+    tab: "browser-preview",
+    label: "Reuse Session Window",
+    description: "Keep one preview window per terminal session.",
+    keywords: ["browser", "terminal", "session", "window"],
+  },
+  {
+    id: "close-on-session-exit",
+    tab: "browser-preview",
+    label: "Close on Session Exit",
+    description: "Close auto-opened previews when terminal session ends.",
+    keywords: ["browser", "terminal", "close"],
+  },
+  {
+    id: "keybindings",
+    tab: "keybindings",
+    label: "Keybindings",
+    description: "Customize workspace panel shortcuts and app actions.",
+    keywords: ["shortcuts", "keyboard", "hotkeys", "commands"],
+    suggested: true,
+  },
+];
+
+const normalizeSettingsSearchText = (value: string) =>
+  value.trim().toLowerCase().replace(/\s+/g, " ");
+
+const rankSettingsSearchEntry = (entry: SettingsSearchEntry, query: string) => {
+  if (!query) {
+    return entry.suggested ? 0 : Number.POSITIVE_INFINITY;
+  }
+
+  const label = normalizeSettingsSearchText(entry.label);
+  const tab = normalizeSettingsSearchText(tabLabelById.get(entry.tab) ?? "");
+  const description = normalizeSettingsSearchText(entry.description);
+  const keywords = entry.keywords.map(normalizeSettingsSearchText);
+
+  if (label === query) {
+    return 0;
+  }
+  if (label.startsWith(query)) {
+    return 1;
+  }
+  if (keywords.some((keyword) => keyword === query)) {
+    return 2;
+  }
+  if (keywords.some((keyword) => keyword.includes(query))) {
+    return 3;
+  }
+  if (label.includes(query)) {
+    return 4;
+  }
+  if (description.includes(query)) {
+    return 5;
+  }
+  if (tab.includes(query)) {
+    return 6;
+  }
+
+  return Number.POSITIVE_INFINITY;
+};
 
 const shortcutGroups: Array<"All" | ShortcutGroup> = [
   "All",
@@ -435,6 +664,8 @@ const SwitchRow: React.FC<{
   onCheckedChange: (checked: boolean) => void;
   badge?: string;
   controlLabel?: string;
+  highlighted?: boolean;
+  settingId?: string;
 }> = ({
   title,
   description,
@@ -442,8 +673,17 @@ const SwitchRow: React.FC<{
   onCheckedChange,
   badge,
   controlLabel,
+  highlighted = false,
+  settingId,
 }) => (
-  <div className="flex flex-col gap-3 border-b border-[var(--border-subtle)] px-4 py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between">
+  <div
+    data-setting-id={settingId}
+    className={`flex flex-col gap-3 border-b border-[var(--border-subtle)] px-4 py-4 transition-shadow last:border-0 sm:flex-row sm:items-center sm:justify-between ${
+      highlighted
+        ? "bg-[color-mix(in_srgb,var(--focus-ring)_8%,transparent)] ring-1 ring-inset ring-[var(--focus-ring)]"
+        : ""
+    }`}
+  >
     <div className="pr-4">
       <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
         {title}
@@ -486,8 +726,17 @@ const ShortcutPill: React.FC<{ shortcut: string; active?: boolean }> = ({
 const ProjectOpeningModeControl: React.FC<{
   value: ProjectWindowMode;
   onChange: (value: ProjectWindowMode) => void;
-}> = ({ value, onChange }) => (
-  <div className={`${settingsPanelClass} p-4`}>
+  highlighted?: boolean;
+  settingId?: string;
+}> = ({ value, onChange, highlighted = false, settingId }) => (
+  <div
+    data-setting-id={settingId}
+    className={`${settingsPanelClass} p-4 transition-shadow ${
+      highlighted
+        ? "bg-[color-mix(in_srgb,var(--focus-ring)_8%,transparent)] ring-1 ring-inset ring-[var(--focus-ring)]"
+        : ""
+    }`}
+  >
     <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
       <div>
         <div className="text-sm font-semibold text-[var(--text-primary)]">
@@ -527,8 +776,17 @@ const ProjectOpeningModeControl: React.FC<{
 const AppIconAppearanceControl: React.FC<{
   value: AppIconAppearance;
   onChange: (value: AppIconAppearance) => void;
-}> = ({ value, onChange }) => (
-  <div className={`${settingsPanelClass} p-4`}>
+  highlighted?: boolean;
+  settingId?: string;
+}> = ({ value, onChange, highlighted = false, settingId }) => (
+  <div
+    data-setting-id={settingId}
+    className={`${settingsPanelClass} p-4 transition-shadow ${
+      highlighted
+        ? "bg-[color-mix(in_srgb,var(--focus-ring)_8%,transparent)] ring-1 ring-inset ring-[var(--focus-ring)]"
+        : ""
+    }`}
+  >
     <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
       <div>
         <div className="text-sm font-semibold text-[var(--text-primary)]">
@@ -570,6 +828,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const reduceSettingsMotion = useReducedMotion();
   const [activeTab, setActiveTab] = useState<TabId>("appearance");
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [settingsSearchFocused, setSettingsSearchFocused] = useState(false);
+  const [pendingSettingScrollId, setPendingSettingScrollId] = useState<
+    string | null
+  >(null);
+  const [highlightedSettingId, setHighlightedSettingId] = useState<
+    string | null
+  >(null);
   const [shortcutQuery, setShortcutQuery] = useState("");
   const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
   const [privateUpdateAuthStatus, setPrivateUpdateAuthStatus] =
@@ -605,6 +871,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [recordingActionId, setRecordingActionId] =
     useState<ShortcutActionId | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
+  const settingsHighlightTimeoutRef = useRef<number | null>(null);
   const customThemeInputRef = useRef<HTMLInputElement | null>(null);
   const customFontInputRef = useRef<HTMLInputElement | null>(null);
   const customFontTargetRef = useRef<"ui" | "editor">("ui");
@@ -733,6 +1000,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     activeEditorFontFamilyPreset;
   const activeEditorFontFamilyLabel =
     activeEditorFontFamilyOption?.label ?? "Custom";
+  const settingsSearchSuggestions = useMemo(() => {
+    const query = normalizeSettingsSearchText(settingsQuery);
+    return settingsSearchEntries
+      .map((entry) => ({
+        entry,
+        rank: rankSettingsSearchEntry(entry, query),
+      }))
+      .filter(({ rank }) => Number.isFinite(rank))
+      .sort((a, b) => {
+        if (a.rank !== b.rank) {
+          return a.rank - b.rank;
+        }
+        const tabDelta =
+          tabs.findIndex((tab) => tab.id === a.entry.tab) -
+          tabs.findIndex((tab) => tab.id === b.entry.tab);
+        if (tabDelta !== 0) {
+          return tabDelta;
+        }
+        return a.entry.label.localeCompare(b.entry.label);
+      })
+      .slice(0, 8)
+      .map(({ entry }) => entry);
+  }, [settingsQuery]);
+  const showSettingsSearchSuggestions = settingsSearchFocused;
+  const getSettingTargetClass = (settingId: string) =>
+    highlightedSettingId === settingId
+      ? "ring-1 ring-inset ring-[var(--focus-ring)] bg-[color-mix(in_srgb,var(--focus-ring)_8%,transparent)]"
+      : "";
+
+  const selectSettingsSearchEntry = useCallback(
+    (entry: SettingsSearchEntry) => {
+      setActiveTab(entry.tab);
+      setPendingSettingScrollId(entry.id);
+      setHighlightedSettingId(entry.id);
+      setSettingsQuery("");
+      setSettingsSearchFocused(false);
+    },
+    [],
+  );
 
   const refreshPrivateUpdateAuthStatus = useCallback(async () => {
     const status = await getPrivateUpdateAuthStatus();
@@ -884,6 +1190,50 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       offError();
     };
   }, [recordAutocompleteInstallEvent, refreshAutocompleteCapabilities]);
+
+  useEffect(() => {
+    if (!pendingSettingScrollId) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const element = document.querySelector<HTMLElement>(
+        `[data-setting-id="${pendingSettingScrollId}"]`,
+      );
+
+      setPendingSettingScrollId(null);
+      if (!element) {
+        return;
+      }
+
+      element.scrollIntoView({
+        block: "center",
+        behavior: reduceSettingsMotion ? "auto" : "smooth",
+      });
+      setHighlightedSettingId(pendingSettingScrollId);
+
+      if (settingsHighlightTimeoutRef.current !== null) {
+        window.clearTimeout(settingsHighlightTimeoutRef.current);
+      }
+      settingsHighlightTimeoutRef.current = window.setTimeout(() => {
+        setHighlightedSettingId((current) =>
+          current === pendingSettingScrollId ? null : current,
+        );
+        settingsHighlightTimeoutRef.current = null;
+      }, 1600);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, pendingSettingScrollId, reduceSettingsMotion]);
+
+  useEffect(
+    () => () => {
+      if (settingsHighlightTimeoutRef.current !== null) {
+        window.clearTimeout(settingsHighlightTimeoutRef.current);
+      }
+    },
+    [],
+  );
 
   const savePrivateUpdateAccessToken = useCallback(async () => {
     const token = privateUpdateToken.trim();
@@ -1211,7 +1561,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const renderAutocompleteSupport = () => (
     <div
-      className={`${settingsPanelClass} p-4`}
+      className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+        "autocomplete-support",
+      )}`}
+      data-setting-id="autocomplete-support"
       data-testid="autocomplete-support"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1431,7 +1784,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   );
 
   const renderKeybindings = () => (
-    <div className="mx-auto flex max-w-4xl flex-col gap-6">
+    <div
+      className={`mx-auto flex max-w-4xl flex-col gap-6 transition-shadow ${getSettingTargetClass(
+        "keybindings",
+      )}`}
+      data-setting-id="keybindings"
+    >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <SettingHeader
           title="Keybindings"
@@ -1652,6 +2010,98 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </div>
                       </div>
 
+                      <div
+                        className="mb-3"
+                        onBlur={(event) => {
+                          const nextTarget = event.relatedTarget;
+                          if (
+                            nextTarget instanceof Node &&
+                            event.currentTarget.contains(nextTarget)
+                          ) {
+                            return;
+                          }
+                          setSettingsSearchFocused(false);
+                        }}
+                      >
+                        <label className="shell-cluster-soft flex min-h-[42px] min-w-0 items-center gap-2 px-3">
+                          <Search
+                            size={15}
+                            className="shrink-0 text-[var(--text-muted)]"
+                          />
+                          <input
+                            value={settingsQuery}
+                            onChange={(event) =>
+                              setSettingsQuery(event.currentTarget.value)
+                            }
+                            onFocus={() => setSettingsSearchFocused(true)}
+                            aria-label="Search settings"
+                            placeholder="Search settings"
+                            data-testid="settings-search-input"
+                            className="h-9 min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+                          />
+                          {settingsQuery.trim().length > 0 ? (
+                            <button
+                              type="button"
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
+                              aria-label="Clear settings search"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => {
+                                setSettingsQuery("");
+                                setSettingsSearchFocused(true);
+                              }}
+                            >
+                              <X size={13} />
+                            </button>
+                          ) : null}
+                        </label>
+
+                        {showSettingsSearchSuggestions ? (
+                          <div
+                            className="mt-2 max-h-[270px] overflow-y-auto rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_94%,transparent)] p-1.5 shadow-[var(--shadow-overlay)]"
+                            data-testid="settings-search-suggestions"
+                          >
+                            <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                              {settingsQuery.trim()
+                                ? "Search results"
+                                : "Suggested settings"}
+                            </div>
+                            {settingsSearchSuggestions.map((entry) => (
+                              <button
+                                key={entry.id}
+                                type="button"
+                                data-testid={`settings-search-suggestion-${entry.id}`}
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => selectSettingsSearchEntry(entry)}
+                                className={`grid min-h-[54px] w-full grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-[14px] px-2.5 py-2 text-left transition-colors hover:bg-[var(--surface-hover)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
+                                  activeTab === entry.tab
+                                    ? "bg-[color-mix(in_srgb,var(--surface-active)_80%,transparent)]"
+                                    : ""
+                                }`}
+                              >
+                                <span className="min-w-0">
+                                  <span className="block truncate text-[12px] font-semibold text-[var(--text-primary)]">
+                                    {entry.label}
+                                  </span>
+                                  <span className="mt-0.5 block truncate text-[11px] text-[var(--text-muted)]">
+                                    {entry.description}
+                                  </span>
+                                </span>
+                                <span
+                                  className={`${settingsPillClass} h-6 min-h-0 px-2 text-[10px]`}
+                                >
+                                  {tabLabelById.get(entry.tab)}
+                                </span>
+                              </button>
+                            ))}
+                            {settingsSearchSuggestions.length === 0 ? (
+                              <div className="px-3 py-7 text-center text-[12px] text-[var(--text-muted)]">
+                                No settings match this search.
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+
                       <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
                         {tabs.map((tab) => {
                           const Icon = tab.icon;
@@ -1706,14 +2156,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             <ProjectOpeningModeControl
                               value={projectWindowMode}
                               onChange={setProjectWindowMode}
+                              settingId="project-opening"
+                              highlighted={
+                                highlightedSettingId === "project-opening"
+                              }
                             />
 
                             <AppIconAppearanceControl
                               value={appIconAppearance}
                               onChange={setAppIconAppearance}
+                              settingId="app-icon"
+                              highlighted={highlightedSettingId === "app-icon"}
                             />
 
-                            <div className={`${settingsPanelClass} p-4`}>
+                            <div
+                              data-setting-id="system-font-family"
+                              className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+                                "system-font-family",
+                              )}`}
+                            >
                               <div className="flex items-start justify-between gap-4">
                                 <div>
                                   <div className="text-sm font-semibold text-[var(--text-primary)]">
@@ -1838,7 +2299,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               </div>
                             </div>
 
-                            <div className={`${settingsPanelClass} p-4`}>
+                            <div
+                              data-setting-id="theme"
+                              className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+                                "theme",
+                              )}`}
+                            >
                               <div className="mb-3 flex items-center justify-between gap-3">
                                 <div className="text-sm font-semibold text-[var(--text-primary)]">
                                   Theme
@@ -2016,6 +2482,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 checked={zenModeEnabled}
                                 onCheckedChange={setZenModeEnabled}
                                 badge="Beta"
+                                settingId="zen-mode"
+                                highlighted={
+                                  highlightedSettingId === "zen-mode"
+                                }
                               />
                               <SwitchRow
                                 title="Compact topbar actions"
@@ -2024,14 +2494,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 onCheckedChange={(checked) =>
                                   setShowTopbarProjectPath(!checked)
                                 }
+                                settingId="compact-topbar-actions"
+                                highlighted={
+                                  highlightedSettingId ===
+                                  "compact-topbar-actions"
+                                }
                               />
                               <SwitchRow
                                 title="Close confirmation"
                                 description="Ask before closing a project or quitting Arlecchino."
                                 checked={confirmBeforeClose}
                                 onCheckedChange={setConfirmBeforeClose}
+                                settingId="close-confirmation"
+                                highlighted={
+                                  highlightedSettingId === "close-confirmation"
+                                }
                               />
-                              <div className="flex flex-col gap-3 border-b border-[var(--border-subtle)] px-4 py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between">
+                              <div
+                                data-setting-id="topbar-icon-order"
+                                className={`flex flex-col gap-3 border-b border-[var(--border-subtle)] px-4 py-4 transition-shadow last:border-0 sm:flex-row sm:items-center sm:justify-between ${getSettingTargetClass(
+                                  "topbar-icon-order",
+                                )}`}
+                              >
                                 <div className="pr-4">
                                   <div className="text-sm font-semibold text-[var(--text-primary)]">
                                     Topbar icon order
@@ -2055,6 +2539,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 description="Color nested brackets with fixed depth colors. Turn off to use the current theme's bracket styling."
                                 checked={showRainbowBrackets}
                                 onCheckedChange={setShowRainbowBrackets}
+                                settingId="rainbow-brackets"
+                                highlighted={
+                                  highlightedSettingId === "rainbow-brackets"
+                                }
                               />
                             </div>
                           </div>
@@ -2068,7 +2556,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             />
 
                             <div className="space-y-4">
-                              <div className={`${settingsPanelClass} p-4`}>
+                              <div
+                                data-setting-id="editor-font-family"
+                                className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+                                  "editor-font-family",
+                                )}`}
+                              >
                                 <div className="flex items-start justify-between gap-4">
                                   <div>
                                     <div className="text-sm font-semibold text-[var(--text-primary)]">
@@ -2196,7 +2689,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               </div>
 
                               <label
-                                className={`${settingsPanelClass} block p-4`}
+                                data-setting-id="editor-font-size"
+                                className={`${settingsPanelClass} block p-4 transition-shadow ${getSettingTargetClass(
+                                  "editor-font-size",
+                                )}`}
                               >
                                 <div className="flex items-center justify-between gap-4">
                                   <div>
@@ -2229,7 +2725,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 </div>
                               </label>
 
-                              <div className={`${settingsPanelClass} p-4`}>
+                              <div
+                                data-setting-id="ui-scale"
+                                className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+                                  "ui-scale",
+                                )}`}
+                              >
                                 <label className="block">
                                   <div className="flex items-center justify-between gap-4">
                                     <div>
@@ -2277,6 +2778,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   description="Render sequences like ->, <-, and => as visual arrows without changing file text."
                                   checked={showOperatorLigatures}
                                   onCheckedChange={setShowOperatorLigatures}
+                                  settingId="operator-ligatures"
+                                  highlighted={
+                                    highlightedSettingId ===
+                                    "operator-ligatures"
+                                  }
                                 />
                               </div>
                             </div>
@@ -2296,24 +2802,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 description="Display the code minimap in the editor gutter for supported file sizes."
                                 checked={showMinimap}
                                 onCheckedChange={setShowMinimap}
+                                settingId="show-minimap"
+                                highlighted={
+                                  highlightedSettingId === "show-minimap"
+                                }
                               />
                               <SwitchRow
                                 title="Show inline diagnostics"
                                 description="Render squiggles, line emphasis, and inline problem messages inside the editor."
                                 checked={showInlineDiagnostics}
                                 onCheckedChange={setShowInlineDiagnostics}
+                                settingId="inline-diagnostics"
+                                highlighted={
+                                  highlightedSettingId === "inline-diagnostics"
+                                }
                               />
                               <SwitchRow
                                 title="Show compact diagnostics"
                                 description="Keep the project-wide problems badge visible in the status bar."
                                 checked={showCompactDiagnostics}
                                 onCheckedChange={setShowCompactDiagnostics}
+                                settingId="compact-diagnostics"
+                                highlighted={
+                                  highlightedSettingId === "compact-diagnostics"
+                                }
                               />
                             </div>
 
                             {renderAutocompleteSupport()}
 
-                            <div className={`${settingsPanelClass} p-4`}>
+                            <div
+                              data-setting-id="build-identity"
+                              className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+                                "build-identity",
+                              )}`}
+                            >
                               <div className="text-sm font-semibold text-[var(--text-primary)]">
                                 Build identity
                               </div>
@@ -2366,7 +2889,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   </div>
                                 ))}
                               </div>
-                              <div className="mt-4 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] p-3">
+                              <div
+                                data-setting-id="private-release-access"
+                                className={`mt-4 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] p-3 transition-shadow ${getSettingTargetClass(
+                                  "private-release-access",
+                                )}`}
+                              >
                                 <div className="flex flex-wrap items-start justify-between gap-3">
                                   <div className="min-w-0">
                                     <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--text-primary)]">
@@ -2457,7 +2985,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             />
 
                             <div className={settingsPanelClass}>
-                              <div className="grid gap-4 border-b border-[var(--border-subtle)] px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                              <div
+                                data-setting-id="markdown-links"
+                                className={`grid gap-4 border-b border-[var(--border-subtle)] px-4 py-4 transition-shadow lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center ${getSettingTargetClass(
+                                  "markdown-links",
+                                )}`}
+                              >
                                 <div className="min-w-0 pr-4">
                                   <div className="text-sm font-semibold text-[var(--text-primary)]">
                                     Markdown links
@@ -2499,12 +3032,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 description="Open browser preview automatically when the terminal reports a local URL."
                                 checked={autoOpenFromTerminal}
                                 onCheckedChange={setAutoOpenFromTerminal}
+                                settingId="auto-open-preview"
+                                highlighted={
+                                  highlightedSettingId === "auto-open-preview"
+                                }
                               />
                               <SwitchRow
                                 title="Reuse Session Window"
                                 description="Keep one preview window per terminal session instead of spawning new ones."
                                 checked={reuseWindowPerSession}
                                 onCheckedChange={setReuseWindowPerSession}
+                                settingId="reuse-session-window"
+                                highlighted={
+                                  highlightedSettingId ===
+                                  "reuse-session-window"
+                                }
                               />
                               <SwitchRow
                                 title="Close on Session Exit"
@@ -2512,6 +3054,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 checked={closeAutoOpenedOnTerminalExit}
                                 onCheckedChange={
                                   setCloseAutoOpenedOnTerminalExit
+                                }
+                                settingId="close-on-session-exit"
+                                highlighted={
+                                  highlightedSettingId ===
+                                  "close-on-session-exit"
                                 }
                               />
                             </div>
