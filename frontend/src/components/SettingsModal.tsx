@@ -625,6 +625,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     showRainbowBrackets,
     showOperatorLigatures,
     showTopbarProjectPath,
+    confirmBeforeClose,
     zenModeEnabled,
     projectWindowMode,
     appIconAppearance,
@@ -642,6 +643,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowRainbowBrackets,
     setShowOperatorLigatures,
     setShowTopbarProjectPath,
+    setConfirmBeforeClose,
     resetTopbarItemOrder,
     setZenModeEnabled,
     setProjectWindowMode,
@@ -1593,7 +1595,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   }
                 />
               </Dialog.Overlay>
-              <Dialog.Content forceMount asChild>
+              <Dialog.Content
+                forceMount
+                asChild
+                onEscapeKeyDown={(event) => {
+                  if (document.body.dataset.closeConfirmationOpen === "true") {
+                    event.preventDefault();
+                  }
+                }}
+              >
                 <motion.div
                   key="settings-content"
                   className="fixed left-1/2 top-1/2 z-[111] outline-none"
@@ -2014,6 +2024,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 onCheckedChange={(checked) =>
                                   setShowTopbarProjectPath(!checked)
                                 }
+                              />
+                              <SwitchRow
+                                title="Close confirmation"
+                                description="Ask before closing a project or quitting Arlecchino."
+                                checked={confirmBeforeClose}
+                                onCheckedChange={setConfirmBeforeClose}
                               />
                               <div className="flex flex-col gap-3 border-b border-[var(--border-subtle)] px-4 py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="pr-4">

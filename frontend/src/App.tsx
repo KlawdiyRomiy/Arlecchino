@@ -1,5 +1,15 @@
-import React, { startTransition, useEffect, useState } from "react";
+import React, {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import WelcomeScreen from "./components/WelcomeScreen";
+import {
+  CloseConfirmationDialog,
+  type CloseConfirmationRequest,
+} from "./components/CloseConfirmationDialog";
 import { AppNotificationStack } from "./components/layout/AppNotificationStack";
 import { MCPApprovalDialog } from "./components/MCPApprovalDialog";
 import {
@@ -31,6 +41,7 @@ import {
   resetProjectBoundStores,
 } from "./utils/projectBoundState";
 import { useApplicationMenuBridge } from "./hooks/useApplicationMenuBridge";
+import { EventsOn } from "./wails/runtime";
 import { useBackgroundShellStatusBridge } from "./shell/backgroundShellStatus";
 import { useOpenIntentEventBridge } from "./shell/openIntentEventBridge";
 import { usePackagedOSIntegrationBridge } from "./shell/packagedOSIntegration";
@@ -47,6 +58,7 @@ import {
   forgetProjectWindowRestorePath,
   rememberProjectWindowRestorePath,
 } from "./shell/projectWindowRestore";
+import { getCurrentProjectSessionId } from "./shell/projectSessionRoute";
 import { syncSurfaceRuntimeWindowLeaseBackendStatus } from "./surfaces/surfaceRuntimeStore";
 import {
   createEditorFileLoadingLoad,
@@ -55,6 +67,21 @@ import {
 
 const PROJECT_SWITCH_VISUAL_SETTLE_MS = 180;
 const OPEN_TARGET_EVENT = "arlecchino:open";
+const APP_CLOSE_REQUESTED_EVENT = "app:close-requested";
+const APP_CLOSE_REQUEST_EVENT = "arlecchino:request-close";
+
+type CloseProjectOptions = {
+  preserveProjectWindowRestore?: boolean;
+  skipConfirmation?: boolean;
+};
+
+type PendingCloseConfirmation = CloseConfirmationRequest & {
+  onConfirm: () => Promise<void> | void;
+};
+
+interface ApplicationCloseRequestPayload {
+  sessionId?: string;
+}
 
 const waitForProjectSwitchVisualSettle = () =>
   new Promise<void>((resolve) => {
@@ -113,6 +140,9 @@ const App: React.FC = () => {
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const uiFontFamily = useEditorSettingsStore((state) => state.uiFontFamily);
   const customFonts = useEditorSettingsStore((state) => state.customFonts);
+  const confirmBeforeClose = useEditorSettingsStore(
+    (state) => state.confirmBeforeClose,
+  );
   const appIconAppearance = useEditorSettingsStore(
     (state) => state.appIconAppearance,
   );
@@ -125,10 +155,22 @@ const App: React.FC = () => {
   const [fileToOpen, setFileToOpen] = useState<EditorFileOpenPayload | null>(
     null,
   );
+  const [closeConfirmation, setCloseConfirmation] =
+    useState<PendingCloseConfirmation | null>(null);
+  const [closeConfirmationBusy, setCloseConfirmationBusy] = useState(false);
+  const confirmBeforeCloseRef = useRef(confirmBeforeClose);
+  const closeConfirmationRef = useRef<PendingCloseConfirmation | null>(null);
   const effectiveUiScale = clampUiScale(uiScale);
   const isDetachedHost = isDetachedAppletHostRoute();
 
   useEffect(() => startAdaptivePerformanceMonitor(), []);
+
+  useEffect(() => {
+    confirmBeforeCloseRef.current = confirmBeforeClose;
+    void AppFunctions.SetCloseConfirmationEnabled(confirmBeforeClose).catch(
+      () => undefined,
+    );
+  }, [confirmBeforeClose]);
 
   useEffect(() => {
     void AppFunctions.SetApplicationIconAppearance(appIconAppearance).catch(
@@ -189,6 +231,149 @@ const App: React.FC = () => {
     const framework = await AppFunctions.GetCurrentProjectFramework();
     useWorkspaceStore.getState().setActiveFramework(framework || null);
   };
+
+  const requestCloseConfirmation = useCallback(
+    (
+      request: CloseConfirmationRequest,
+      onConfirm: () => Promise<void> | void,
+    ) => {
+      if (!confirmBeforeCloseRef.current) {
+        void Promise.resolve(onConfirm());
+        return;
+      }
+
+      const pendingConfirmation = {
+        ...request,
+        onConfirm,
+      };
+      closeConfirmationRef.current = pendingConfirmation;
+      setCloseConfirmation(pendingConfirmation);
+      setCloseConfirmationBusy(false);
+    },
+    [],
+  );
+
+  const handleCloseConfirmationCancel = useCallback(() => {
+    const shouldCancelApplicationClose =
+      closeConfirmationRef.current?.kind === "application";
+    closeConfirmationRef.current = null;
+    setCloseConfirmation(null);
+    setCloseConfirmationBusy(false);
+    if (shouldCancelApplicationClose) {
+      void AppFunctions.CancelApplicationClose().catch(() => undefined);
+    }
+  }, []);
+
+  const requestApplicationClose = useCallback(() => {
+    const confirmApplicationClose = async () => {
+      await AppFunctions.ConfirmApplicationClose();
+    };
+
+    if (!confirmBeforeCloseRef.current) {
+      void confirmApplicationClose();
+      return;
+    }
+
+    if (closeConfirmationRef.current?.kind === "application") {
+      return;
+    }
+
+    const pendingConfirmation = {
+      kind: "application" as const,
+      onConfirm: confirmApplicationClose,
+    };
+    closeConfirmationRef.current = pendingConfirmation;
+    setCloseConfirmation(pendingConfirmation);
+    setCloseConfirmationBusy(false);
+  }, []);
+
+  const handleCloseConfirmationConfirm = useCallback(() => {
+    const pending = closeConfirmationRef.current;
+    if (!pending || closeConfirmationBusy) {
+      return;
+    }
+
+    setCloseConfirmationBusy(true);
+    void Promise.resolve(pending.onConfirm())
+      .then(() => {
+        closeConfirmationRef.current = null;
+        setCloseConfirmation(null);
+      })
+      .catch((error) => {
+        console.error("Error while closing:", error);
+        closeConfirmationRef.current = null;
+        setCloseConfirmation(null);
+        alert(`Error while closing: ${error}`);
+      })
+      .finally(() => {
+        setCloseConfirmationBusy(false);
+      });
+  }, [closeConfirmationBusy]);
+
+  useEffect(() => {
+    if (isDetachedHost) {
+      return;
+    }
+
+    const handleApplicationCloseRequested = (
+      payload?: ApplicationCloseRequestPayload,
+    ) => {
+      const targetSessionId =
+        typeof payload?.sessionId === "string" && payload.sessionId
+          ? payload.sessionId
+          : "main";
+      if (targetSessionId !== getCurrentProjectSessionId()) {
+        return;
+      }
+
+      requestApplicationClose();
+    };
+
+    return EventsOn<[ApplicationCloseRequestPayload | undefined]>(
+      APP_CLOSE_REQUESTED_EVENT,
+      handleApplicationCloseRequested,
+    );
+  }, [isDetachedHost, requestApplicationClose]);
+
+  useEffect(() => {
+    if (isDetachedHost) {
+      return;
+    }
+
+    const handleApplicationCloseShortcut = (event: KeyboardEvent) => {
+      if (
+        event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "q"
+      ) {
+        event.preventDefault();
+        requestApplicationClose();
+      }
+    };
+
+    const handleApplicationCloseEvent = () => {
+      requestApplicationClose();
+    };
+
+    window.addEventListener("keydown", handleApplicationCloseShortcut, true);
+    window.addEventListener(
+      APP_CLOSE_REQUEST_EVENT,
+      handleApplicationCloseEvent,
+    );
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleApplicationCloseShortcut,
+        true,
+      );
+      window.removeEventListener(
+        APP_CLOSE_REQUEST_EVENT,
+        handleApplicationCloseEvent,
+      );
+    };
+  }, [isDetachedHost, requestApplicationClose]);
 
   const handleProjectOpen = async (projectPath: string) => {
     const state = useWorkspaceStore.getState();
@@ -344,8 +529,7 @@ const App: React.FC = () => {
     };
   }, [isDetachedHost]);
 
-  const handleBackToWelcome = async () => {
-    const { activeId: currentId } = useWorkspaceStore.getState();
+  const performBackToWelcome = async (currentId: string) => {
     if (!currentId) {
       return;
     }
@@ -364,9 +548,25 @@ const App: React.FC = () => {
     }
   };
 
-  const handleCloseProject = async (
+  const handleBackToWelcome = async () => {
+    const state = useWorkspaceStore.getState();
+    const currentId = state.activeId;
+    if (!currentId) {
+      return;
+    }
+
+    const currentProject = state.projects.find(
+      (project) => project.id === currentId,
+    );
+    requestCloseConfirmation(
+      { kind: "project", projectName: currentProject?.name ?? currentId },
+      () => performBackToWelcome(currentId),
+    );
+  };
+
+  const performCloseProject = async (
     id: string,
-    options?: { preserveProjectWindowRestore?: boolean },
+    options?: CloseProjectOptions,
   ) => {
     const state = useWorkspaceStore.getState();
     if (state.pendingId) {
@@ -447,6 +647,26 @@ const App: React.FC = () => {
     }
   };
 
+  const handleCloseProject = async (
+    id: string,
+    options?: CloseProjectOptions,
+  ) => {
+    if (options?.skipConfirmation) {
+      await performCloseProject(id, options);
+      return;
+    }
+
+    const state = useWorkspaceStore.getState();
+    if (state.pendingId) {
+      return;
+    }
+    const project = state.projects.find((item) => item.id === id);
+    requestCloseConfirmation(
+      { kind: "project", projectName: project?.name ?? id },
+      () => performCloseProject(id, options),
+    );
+  };
+
   const handleDetachProject = async (id: string) => {
     const state = useWorkspaceStore.getState();
     if (state.pendingId) {
@@ -464,7 +684,10 @@ const App: React.FC = () => {
         throw new Error("Project window launcher is unavailable.");
       }
       rememberProjectWindowRestorePath(project.path);
-      await handleCloseProject(id, { preserveProjectWindowRestore: true });
+      await handleCloseProject(id, {
+        preserveProjectWindowRestore: true,
+        skipConfirmation: true,
+      });
     } catch (error) {
       console.error("Error detaching project:", error);
       alert(`Error while opening project window: ${error}`);
@@ -507,6 +730,15 @@ const App: React.FC = () => {
     return unregister;
   }, [activeId, handleProjectOpen, isDetachedHost, ready]);
 
+  const closeConfirmationDialog = isDetachedHost ? null : (
+    <CloseConfirmationDialog
+      request={closeConfirmation}
+      busy={closeConfirmationBusy}
+      onCancel={handleCloseConfirmationCancel}
+      onConfirm={handleCloseConfirmationConfirm}
+    />
+  );
+
   if (!ready) {
     if (isDetachedHost) {
       return (
@@ -530,6 +762,7 @@ const App: React.FC = () => {
         </div>
         <MCPApprovalDialog />
         <AppNotificationStack />
+        {closeConfirmationDialog}
       </div>
     );
   }
@@ -574,6 +807,9 @@ const App: React.FC = () => {
                     projectPath={activeProject.path}
                     fileToOpen={fileToOpen}
                     onFileOpened={() => setFileToOpen(null)}
+                    onRequestProjectClose={() => {
+                      void handleCloseProject(activeProject.id);
+                    }}
                   />
                 </MainLayout>
               </CommandRegistryProvider>
@@ -585,6 +821,7 @@ const App: React.FC = () => {
       </div>
       <MCPApprovalDialog />
       <AppNotificationStack />
+      {closeConfirmationDialog}
     </div>
   );
 };

@@ -59,6 +59,7 @@ interface ProjectScreenProps extends PanelSnapDragCallbacks {
   onPerspectiveClose?: () => void;
   onEditorFileOpenReady?: (handler: EditorFileOpenHandler | null) => void;
   onDirtyEditorFlushReady?: (handler: (() => Promise<void>) | null) => void;
+  onRequestProjectClose?: () => void;
   onFileOpenInPanel?: (
     path: string,
     name: string,
@@ -107,6 +108,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   onPerspectiveClose,
   onEditorFileOpenReady,
   onDirtyEditorFlushReady,
+  onRequestProjectClose,
   onFileOpenInPanel,
   onPanelSnapDragStart,
   onPanelSnapDragMove,
@@ -424,6 +426,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         e.preventDefault();
         if (activeTab) {
           handleTabClose(activeTab);
+        } else if (tabs.length === 0) {
+          onRequestProjectClose?.();
         }
         return;
       }
@@ -472,6 +476,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     commitTabSwitcher,
     cycleTabSwitcher,
     quickLook.isOpen,
+    onRequestProjectClose,
     splitDirection,
     tabs,
   ]);

@@ -2,7 +2,7 @@ import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { PositionNativeWindowControls } from "../../wails/app";
-import { Quit, WindowMinimise } from "../../wails/runtime";
+import { WindowMinimise } from "../../wails/runtime";
 import { toggleWindowFullscreen } from "../../utils/windowFullscreen";
 
 interface WailsWindow {
@@ -98,6 +98,7 @@ const nativeButtonTargetStyle: React.CSSProperties = {
 };
 
 const PROJECT_SWITCH_FRAME_SELECTOR = '[data-project-switch-frame="true"]';
+const APP_CLOSE_REQUEST_EVENT = "arlecchino:request-close";
 
 const hasMovingTransform = (element: Element | null): boolean => {
   if (!element) {
@@ -167,7 +168,9 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   const fullscreenRef = useRef<HTMLSpanElement>(null);
   const [nativeBackdropRect, setNativeBackdropRect] =
     useState<NativeBackdropRect | null>(null);
-  const handleClose = useCallback(() => Quit(), []);
+  const handleClose = useCallback(() => {
+    window.dispatchEvent(new Event(APP_CLOSE_REQUEST_EVENT));
+  }, []);
   const handleMinimize = useCallback(() => WindowMinimise(), []);
   const handleFullscreen = useCallback(() => {
     void toggleWindowFullscreen();

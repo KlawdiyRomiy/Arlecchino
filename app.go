@@ -69,6 +69,9 @@ type App struct {
 	autoUpdater              *AutoUpdateService
 	projectSessions          *ProjectSessionRegistry
 	projectWindowSeq         atomic.Uint64
+	closeConfirmationEnabled atomic.Bool
+	closeConfirmationAllowed atomic.Bool
+	closeConfirmationPending atomic.Bool
 
 	projectCtx    context.Context
 	projectCancel context.CancelFunc
@@ -90,6 +93,7 @@ func (a *App) attachMainWindow(window *application.WebviewWindow) {
 	if a != nil && window != nil {
 		a.ensureProjectSessions().attachWindow(defaultProjectSessionID, window)
 		registerNativeFullscreenEvents(window)
+		a.registerMainWindowCloseConfirmation(window)
 	}
 }
 
@@ -135,6 +139,7 @@ func NewApp() *App {
 		packagedOSNative: NewPackagedOSNativeDelivery(defaultPackagedOSIntegrationOptions()),
 		autoUpdater:      NewAutoUpdateService(),
 	}
+	app.closeConfirmationEnabled.Store(true)
 	app.projectSessions = NewProjectSessionRegistry()
 	app.projectSessions.register(defaultProjectSessionFromApp(app))
 	return app

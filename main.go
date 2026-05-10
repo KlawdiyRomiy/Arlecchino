@@ -66,6 +66,7 @@ func main() {
 	wailsApp := application.New(application.Options{
 		Name:        "Arlecchino",
 		Description: "High-performance polyglot IDE",
+		ShouldQuit:  app.shouldQuitApplication,
 		Services: []application.Service{
 			application.NewServiceWithOptions(app, application.ServiceOptions{Name: "App"}),
 		},

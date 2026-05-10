@@ -29,6 +29,7 @@ test.beforeEach(async ({ page }) => {
         projectPath: string;
         windowName: string;
       } | null;
+      __closeProjectDelayMs?: number;
       __selectedDirectory?: string | null;
     };
     testWindow.__appCalls = [];
@@ -70,6 +71,15 @@ test.beforeEach(async ({ page }) => {
                 return testWindow.__currentProjectWindowSession;
               case "SelectDirectory":
                 return testWindow.__selectedDirectory ?? "";
+              case "CloseProject": {
+                const delayMs = testWindow.__closeProjectDelayMs ?? 0;
+                if (delayMs > 0) {
+                  await new Promise<void>((resolve) =>
+                    window.setTimeout(resolve, delayMs),
+                  );
+                }
+                return true;
+              }
               case "GetRecentProjects":
               case "GetDevToolsStatus":
                 return [];
@@ -317,6 +327,29 @@ const getAppCalls = async (page: Page) =>
       ).__appCalls,
   );
 
+const isTopmostAtCenter = async (page: Page, testId: string) =>
+  page.evaluate((targetTestId) => {
+    const element = document.querySelector(
+      `[data-testid="${targetTestId}"]`,
+    ) as HTMLElement | null;
+    if (!element) {
+      return false;
+    }
+
+    const rect = element.getBoundingClientRect();
+    const topElement = document.elementFromPoint(
+      rect.left + rect.width / 2,
+      rect.top + rect.height / 2,
+    );
+    const layer = element.parentElement;
+    return (
+      topElement === element ||
+      element.contains(topElement) ||
+      topElement === layer ||
+      Boolean(topElement && layer?.contains(topElement))
+    );
+  }, testId);
+
 const getProjectWindowRestorePaths = async (page: Page) =>
   page.evaluate(() => {
     const raw = localStorage.getItem("project-window-restore.v1");
@@ -403,6 +436,46 @@ test("appearance tab persists Project opening mode", async ({ page }) => {
       }),
     )
     .toBe("projects");
+});
+
+test("appearance tab persists close confirmation setting", async ({ page }) => {
+  await mountProjectUI(page);
+  await clearAppCalls(page);
+  await openAppearance(page);
+
+  const closeConfirmationSwitch = page.getByRole("switch", {
+    name: "Close confirmation",
+  });
+
+  await expect(closeConfirmationSwitch).toBeChecked();
+  await closeConfirmationSwitch.click();
+  await expect(closeConfirmationSwitch).not.toBeChecked();
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const rawSettings = localStorage.getItem("editor-settings");
+        if (!rawSettings) return null;
+        return JSON.parse(rawSettings).state.confirmBeforeClose;
+      }),
+    )
+    .toBe(false);
+  await expect
+    .poll(async () => {
+      const calls = await getAppCalls(page);
+      return calls.some(
+        (call) =>
+          call.method === "SetCloseConfirmationEnabled" &&
+          call.args[0] === false,
+      );
+    })
+    .toBe(true);
+
+  await page.reload();
+  await mountProjectUI(page);
+  await openAppearance(page);
+  await expect(
+    page.getByRole("switch", { name: "Close confirmation" }),
+  ).not.toBeChecked();
 });
 
 test("appearance tab persists app icon appearance", async ({ page }) => {
@@ -607,6 +680,188 @@ test("project opening mode routes second project in current window or new macOS 
   await expect
     .poll(async () => getProjectWindowRestorePaths(page))
     .toEqual(["/gamma"]);
+});
+
+test("Cmd+W with no editor tabs confirms before closing the project", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await clearAppCalls(page);
+
+  const prevented = await dispatchShortcut(page, {
+    key: "w",
+    code: "KeyW",
+    metaKey: true,
+  });
+  expect(prevented).toBe(true);
+
+  const dialog = page.getByTestId("close-confirmation-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Close project?");
+  expect(
+    (await getAppCalls(page)).some((call) => call.method === "CloseProject"),
+  ).toBe(false);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  expect(
+    (await getAppCalls(page)).some((call) => call.method === "CloseProject"),
+  ).toBe(false);
+
+  await page.evaluate(() => {
+    (
+      window as typeof window & {
+        __closeProjectDelayMs?: number;
+      }
+    ).__closeProjectDelayMs = 500;
+  });
+  await dispatchShortcut(page, {
+    key: "w",
+    code: "KeyW",
+    metaKey: true,
+  });
+  await page.getByRole("button", { name: "Close Project" }).click();
+  await expect(page.getByRole("button", { name: "Closing..." })).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const calls = await getAppCalls(page);
+      return calls.some((call) => call.method === "CloseProject");
+    })
+    .toBe(true);
+});
+
+test("close confirmation dialog scales with app zoom shortcuts", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await dispatchShortcut(page, {
+    key: "w",
+    code: "KeyW",
+    metaKey: true,
+  });
+
+  const dialog = page.getByTestId("close-confirmation-dialog");
+  await expect(dialog).toBeVisible();
+  const before = await dialog.boundingBox();
+  expect(before).not.toBeNull();
+
+  await dispatchShortcut(page, { key: "=", code: "Equal", metaKey: true });
+
+  await expect
+    .poll(async () => {
+      const box = await dialog.boundingBox();
+      return box?.width ?? 0;
+    })
+    .toBeGreaterThan((before?.width ?? 0) + 30);
+});
+
+test("Cmd+Q confirms before exit", async ({ page }) => {
+  await mountProjectUI(page);
+  await clearAppCalls(page);
+
+  const prevented = await dispatchShortcut(page, {
+    key: "q",
+    code: "KeyQ",
+    metaKey: true,
+  });
+  expect(prevented).toBe(true);
+
+  const dialog = page.getByTestId("close-confirmation-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Exit?");
+  expect(
+    (await getAppCalls(page)).some(
+      (call) => call.method === "ConfirmApplicationClose",
+    ),
+  ).toBe(false);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  expect(
+    (await getAppCalls(page)).some(
+      (call) => call.method === "CancelApplicationClose",
+    ),
+  ).toBe(true);
+
+  await clearAppCalls(page);
+  await dispatchShortcut(page, {
+    key: "q",
+    code: "KeyQ",
+    metaKey: true,
+  });
+  await page.getByRole("button", { name: "Exit" }).dispatchEvent("click");
+  await expect(dialog).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const calls = await getAppCalls(page);
+      return calls.some((call) => call.method === "ConfirmApplicationClose");
+    })
+    .toBe(true);
+});
+
+test("close confirmation owns the top layer over stacked project dialogs", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await page.getByTitle("Settings").first().click();
+  await expect(page.getByTestId("settings-modal")).toBeVisible();
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("arlecchino:new-project"));
+  });
+  await expect(page.getByTestId("create-project-dialog")).toBeVisible();
+  await clearAppCalls(page);
+
+  const prevented = await dispatchShortcut(page, {
+    key: "q",
+    code: "KeyQ",
+    metaKey: true,
+  });
+  expect(prevented).toBe(true);
+
+  const dialog = page.getByTestId("close-confirmation-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Exit?");
+  await expect
+    .poll(async () => isTopmostAtCenter(page, "close-confirmation-dialog"))
+    .toBe(true);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId("settings-modal")).toBeVisible();
+  await expect(page.getByTestId("create-project-dialog")).toBeVisible();
+  expect(
+    (await getAppCalls(page)).some(
+      (call) => call.method === "CancelApplicationClose",
+    ),
+  ).toBe(true);
+});
+
+test("disabled close confirmation lets Cmd+W close an empty project directly", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setConfirmBeforeClose(false);
+  });
+  await clearAppCalls(page);
+
+  const prevented = await dispatchShortcut(page, {
+    key: "w",
+    code: "KeyW",
+    metaKey: true,
+  });
+  expect(prevented).toBe(true);
+  await expect(page.getByTestId("close-confirmation-dialog")).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const calls = await getAppCalls(page);
+      return calls.some((call) => call.method === "CloseProject");
+    })
+    .toBe(true);
 });
 
 test("dragging an inactive project chip detaches that exact project path", async ({

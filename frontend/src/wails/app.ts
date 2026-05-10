@@ -31,6 +31,14 @@ interface ApplicationIconBridge {
   ) => Promise<boolean> | boolean;
 }
 
+interface CloseConfirmationBridge {
+  SetCloseConfirmationEnabled?: (
+    enabled: boolean,
+  ) => Promise<boolean> | boolean;
+  ConfirmApplicationClose?: () => Promise<boolean> | boolean;
+  CancelApplicationClose?: () => Promise<boolean> | boolean;
+}
+
 interface ProjectWindowBridge {
   OpenProjectWindow?: (path: string) => Promise<unknown> | unknown;
   OpenProjectWindowSession?: (
@@ -86,6 +94,21 @@ const applicationIconMethodNames = [
   "arlecchino.App.SetApplicationIconAppearance",
 ] as const;
 
+const setCloseConfirmationEnabledMethodNames = [
+  "main.App.SetCloseConfirmationEnabled",
+  "arlecchino.App.SetCloseConfirmationEnabled",
+] as const;
+
+const confirmApplicationCloseMethodNames = [
+  "main.App.ConfirmApplicationClose",
+  "arlecchino.App.ConfirmApplicationClose",
+] as const;
+
+const cancelApplicationCloseMethodNames = [
+  "main.App.CancelApplicationClose",
+  "arlecchino.App.CancelApplicationClose",
+] as const;
+
 const projectWindowMethodNames = [
   "main.App.OpenProjectWindow",
   "arlecchino.App.OpenProjectWindow",
@@ -124,6 +147,15 @@ let nativeWindowControlsPositionMethodName:
   | undefined;
 let applicationIconMethodName:
   | (typeof applicationIconMethodNames)[number]
+  | undefined;
+let setCloseConfirmationEnabledMethodName:
+  | (typeof setCloseConfirmationEnabledMethodNames)[number]
+  | undefined;
+let confirmApplicationCloseMethodName:
+  | (typeof confirmApplicationCloseMethodNames)[number]
+  | undefined;
+let cancelApplicationCloseMethodName:
+  | (typeof cancelApplicationCloseMethodNames)[number]
   | undefined;
 let projectWindowMethodName:
   | (typeof projectWindowMethodNames)[number]
@@ -166,6 +198,18 @@ const getApplicationIconBridge = (): ApplicationIconBridge | undefined => {
   return (
     window as unknown as {
       go?: { main?: { App?: ApplicationIconBridge } };
+    }
+  ).go?.main?.App;
+};
+
+const getCloseConfirmationBridge = (): CloseConfirmationBridge | undefined => {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return (
+    window as unknown as {
+      go?: { main?: { App?: CloseConfirmationBridge } };
     }
   ).go?.main?.App;
 };
@@ -214,6 +258,39 @@ const loadRuntimeCallModule =
       return null;
     }
   };
+
+const callBooleanBridgeMethod = async <TMethodName extends string>(
+  cachedMethodName: TMethodName | undefined,
+  setCachedMethodName: (methodName: TMethodName | undefined) => void,
+  methodNames: readonly TMethodName[],
+  args: unknown[] = [],
+): Promise<boolean> => {
+  const runtimeModule = await loadRuntimeCallModule();
+  const callByName = runtimeModule?.Call?.ByName;
+  if (!callByName) {
+    return false;
+  }
+
+  if (cachedMethodName) {
+    try {
+      return Boolean(await callByName(cachedMethodName, ...args));
+    } catch {
+      setCachedMethodName(undefined);
+    }
+  }
+
+  for (const methodName of methodNames) {
+    try {
+      const result = await callByName(methodName, ...args);
+      setCachedMethodName(methodName);
+      return Boolean(result);
+    } catch {
+      // Try the next known Wails v3 service namespace.
+    }
+  }
+
+  return false;
+};
 
 export async function SetNativeWindowControlsVisible(
   visible: boolean,
@@ -363,6 +440,68 @@ export async function SetApplicationIconAppearance(
   }
 
   return false;
+}
+
+export async function SetCloseConfirmationEnabled(
+  enabled: boolean,
+): Promise<boolean> {
+  const bridge = getCloseConfirmationBridge();
+  if (bridge?.SetCloseConfirmationEnabled) {
+    try {
+      return Boolean(
+        await Promise.resolve(bridge.SetCloseConfirmationEnabled(enabled)),
+      );
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  return callBooleanBridgeMethod(
+    setCloseConfirmationEnabledMethodName,
+    (methodName) => {
+      setCloseConfirmationEnabledMethodName = methodName;
+    },
+    setCloseConfirmationEnabledMethodNames,
+    [enabled],
+  );
+}
+
+export async function ConfirmApplicationClose(): Promise<boolean> {
+  const bridge = getCloseConfirmationBridge();
+  if (bridge?.ConfirmApplicationClose) {
+    try {
+      return Boolean(await Promise.resolve(bridge.ConfirmApplicationClose()));
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  return callBooleanBridgeMethod(
+    confirmApplicationCloseMethodName,
+    (methodName) => {
+      confirmApplicationCloseMethodName = methodName;
+    },
+    confirmApplicationCloseMethodNames,
+  );
+}
+
+export async function CancelApplicationClose(): Promise<boolean> {
+  const bridge = getCloseConfirmationBridge();
+  if (bridge?.CancelApplicationClose) {
+    try {
+      return Boolean(await Promise.resolve(bridge.CancelApplicationClose()));
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  return callBooleanBridgeMethod(
+    cancelApplicationCloseMethodName,
+    (methodName) => {
+      cancelApplicationCloseMethodName = methodName;
+    },
+    cancelApplicationCloseMethodNames,
+  );
 }
 
 const normalizeSelectedOpenTargetIntent = (

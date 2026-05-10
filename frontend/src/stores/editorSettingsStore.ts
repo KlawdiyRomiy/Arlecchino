@@ -81,6 +81,7 @@ interface EditorSettingsState {
   showRainbowBrackets: boolean;
   showOperatorLigatures: boolean;
   showTopbarProjectPath: boolean;
+  confirmBeforeClose: boolean;
   topbarItemOrder: TopbarItemId[];
   zenModeEnabled: boolean;
   projectWindowMode: ProjectWindowMode;
@@ -101,6 +102,7 @@ interface EditorSettingsState {
   setShowRainbowBrackets: (value: boolean) => void;
   setShowOperatorLigatures: (value: boolean) => void;
   setShowTopbarProjectPath: (value: boolean) => void;
+  setConfirmBeforeClose: (value: boolean) => void;
   setTopbarItemOrder: (order: TopbarItemId[]) => void;
   resetTopbarItemOrder: () => void;
   setZenModeEnabled: (value: boolean) => void;
@@ -126,6 +128,7 @@ const DEFAULT_SHOW_MINIMAP = true;
 const DEFAULT_SHOW_RAINBOW_BRACKETS = true;
 const DEFAULT_SHOW_OPERATOR_LIGATURES = true;
 const DEFAULT_SHOW_TOPBAR_PROJECT_PATH = true;
+const DEFAULT_CONFIRM_BEFORE_CLOSE = true;
 const DEFAULT_ZEN_MODE_ENABLED = false;
 const DEFAULT_PROJECT_WINDOW_MODE: ProjectWindowMode = "projects";
 const DEFAULT_APP_ICON_APPEARANCE: AppIconAppearance = "system";
@@ -144,6 +147,7 @@ type PersistedEditorSettingsState = Partial<
     | "showRainbowBrackets"
     | "showOperatorLigatures"
     | "showTopbarProjectPath"
+    | "confirmBeforeClose"
     | "topbarItemOrder"
     | "zenModeEnabled"
     | "projectWindowMode"
@@ -288,6 +292,10 @@ const sanitizePersistedEditorSettings = (
     nextState.showTopbarProjectPath = persistedState.showTopbarProjectPath;
   }
 
+  if (typeof persistedState.confirmBeforeClose === "boolean") {
+    nextState.confirmBeforeClose = persistedState.confirmBeforeClose;
+  }
+
   if (Array.isArray(persistedState.topbarItemOrder)) {
     nextState.topbarItemOrder = normalizeTopbarItemOrder(
       persistedState.topbarItemOrder,
@@ -344,6 +352,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       showRainbowBrackets: DEFAULT_SHOW_RAINBOW_BRACKETS,
       showOperatorLigatures: DEFAULT_SHOW_OPERATOR_LIGATURES,
       showTopbarProjectPath: DEFAULT_SHOW_TOPBAR_PROJECT_PATH,
+      confirmBeforeClose: DEFAULT_CONFIRM_BEFORE_CLOSE,
       topbarItemOrder: [...DEFAULT_TOPBAR_ITEM_ORDER],
       zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
       projectWindowMode: DEFAULT_PROJECT_WINDOW_MODE,
@@ -428,6 +437,9 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setShowTopbarProjectPath: (value: boolean) =>
         set(() => ({ showTopbarProjectPath: value })),
+
+      setConfirmBeforeClose: (value: boolean) =>
+        set(() => ({ confirmBeforeClose: value })),
 
       setTopbarItemOrder: (order) =>
         set(() => ({ topbarItemOrder: normalizeTopbarItemOrder(order) })),

@@ -81,6 +81,10 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
     document.body.dataset.shellModalOpen = "true";
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (document.body.dataset.closeConfirmationOpen === "true") {
+        return;
+      }
+
       if (shortcuts.escape(event)) {
         event.preventDefault();
         event.stopPropagation();
