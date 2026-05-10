@@ -200,6 +200,7 @@ const NOOP_GHOST: GhostExtensionHandle = {
   cleanup: () => undefined,
   ghostField: EMPTY_EXTENSION,
 };
+const ACCESS_COMPLETION_BOOST_BASE = 0.45;
 const COMPLETION_KEYMAP_WITHOUT_ESCAPE_OR_ENTER = completionKeymap.filter(
   (binding) => binding.key !== "Escape" && binding.key !== "Enter",
 );
@@ -224,6 +225,39 @@ type CompletionWithInsertText = Completion & {
   __insertText: string;
   __hasAdditionalTextEdits: boolean;
 };
+
+function accessCompletionLabel(completion: Completion): string {
+  return (completion.displayLabel || completion.label || "").toString();
+}
+
+function sortAccessCompletionOptions(options: Completion[]): Completion[] {
+  return [...options]
+    .sort((left, right) => {
+      const byLabel = accessCompletionLabel(left).localeCompare(
+        accessCompletionLabel(right),
+        undefined,
+        {
+          numeric: true,
+          sensitivity: "base",
+        },
+      );
+      if (byLabel !== 0) {
+        return byLabel;
+      }
+
+      const byType = (left.type || "").localeCompare(right.type || "");
+      if (byType !== 0) {
+        return byType;
+      }
+
+      return (left.detail || "").localeCompare(right.detail || "");
+    })
+    .map((completion, index) => ({
+      ...completion,
+      boost: ACCESS_COMPLETION_BOOST_BASE - index / 1000,
+    }));
+}
+
 type CompletionPayload = {
   label?: string;
   text?: string;
@@ -1867,12 +1901,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     [editorFeatureBudget.completions, language, metrics],
   );
 
-  const instantCompletionSource = useCallback(
-    (context: CompletionContext): CompletionResult | null =>
-      buildInstantCompletionResult(context, { recordMetrics: true }),
-    [buildInstantCompletionResult],
-  );
-
   const backendCompletionSource = useCallback(
     (context: CompletionContext) => {
       if (!editorFeatureBudget.completions) return null;
@@ -2089,7 +2117,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           },
         );
 
-        const allOptions = [...pendingItems, ...completions];
+        const shouldStabilizeAccessList =
+          accessInfo !== null && currentPrefix.length === 0;
+        const allOptions = shouldStabilizeAccessList
+          ? sortAccessCompletionOptions([...pendingItems, ...completions])
+          : [...pendingItems, ...completions];
         if (context.aborted || orchestrator.isStale(requestId)) return null;
         if (versionAtRequest !== documentVersionRef.current) return null;
         if (isDismissedForVersion(versionAtRequest)) return null;
@@ -2150,6 +2182,84 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         console.warn("Completion error:", err);
         return null;
       });
+      if (instantResult && accessInfo !== null) {
+        void backendPromise;
+        metrics.recordInstantFallbackUsed();
+        metrics.recordCompletionList([...instantResult.options]);
+        return {
+          ...instantResult,
+          options: instantResult.options.map((completion) => {
+            const originalApply = completion.apply;
+            return {
+              ...completion,
+              apply: (
+                view: EditorView,
+                appliedCompletion: Completion,
+                applyFrom: number,
+                applyTo: number,
+              ) => {
+                const label = accessCompletionLabel(completion).toLowerCase();
+                const richerCompletion = completionCacheRef.current
+                  .get(filePath, cacheKey, currentPrefix)
+                  ?.find(
+                    (candidate) =>
+                      accessCompletionLabel(candidate).toLowerCase() === label,
+                  );
+
+                if (richerCompletion?.apply) {
+                  if (typeof richerCompletion.apply === "function") {
+                    richerCompletion.apply(
+                      view,
+                      richerCompletion,
+                      applyFrom,
+                      applyTo,
+                    );
+                    return;
+                  }
+
+                  const completionTransaction = insertCompletionText(
+                    view.state,
+                    richerCompletion.apply,
+                    applyFrom,
+                    applyTo,
+                  );
+                  view.dispatch({
+                    ...completionTransaction,
+                    annotations: [
+                      pickedCompletion.of(richerCompletion),
+                      Transaction.userEvent.of("input.complete"),
+                    ],
+                  });
+                  metrics.recordCompletionAccepted(richerCompletion);
+                  return;
+                }
+
+                if (typeof originalApply === "function") {
+                  originalApply(view, appliedCompletion, applyFrom, applyTo);
+                  return;
+                }
+
+                const completionTransaction = insertCompletionText(
+                  view.state,
+                  typeof originalApply === "string"
+                    ? originalApply
+                    : completion.label,
+                  applyFrom,
+                  applyTo,
+                );
+                view.dispatch({
+                  ...completionTransaction,
+                  annotations: [
+                    pickedCompletion.of(appliedCompletion),
+                    Transaction.userEvent.of("input.complete"),
+                  ],
+                });
+                metrics.recordCompletionAccepted(appliedCompletion);
+              },
+            } satisfies Completion;
+          }),
+        };
+      }
       if (instantResult) {
         return new Promise<CompletionResult | null>((resolve) => {
           let settled = false;
@@ -2969,7 +3079,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           });
         }),
         autocompletion({
-          override: [instantCompletionSource, backendCompletionSource],
+          override: [backendCompletionSource],
           activateOnTyping: false,
           activateOnTypingDelay: 0,
           updateSyncTime: COMPLETION_FAST_BACKEND_GRACE_MS,
@@ -3016,7 +3126,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     ghost,
     gitGutterExtension,
     hoverExtension,
-    instantCompletionSource,
     metrics,
     orchestrator,
     signatureHelpExtension,
@@ -3033,7 +3142,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     filePath,
     language,
     backendCompletionSource,
-    instantCompletionSource,
     definitionLinkExtension,
     diagnosticsExtension,
     ghost,

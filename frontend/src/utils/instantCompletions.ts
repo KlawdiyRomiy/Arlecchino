@@ -762,6 +762,27 @@ function accessKindPriority(kind: string): number {
   }
 }
 
+function sortAccessItems(
+  items: Array<{ item: InstantItem; index: number }>,
+): Array<{ item: InstantItem; index: number }> {
+  return [...items].sort((left, right) => {
+    const byLabel = left.item.label.localeCompare(right.item.label, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
+    if (byLabel !== 0) {
+      return byLabel;
+    }
+
+    const byKind = left.item.kind.localeCompare(right.item.kind);
+    if (byKind !== 0) {
+      return byKind;
+    }
+
+    return left.index - right.index;
+  });
+}
+
 export function getInstantAccessCompletions(
   language: string,
   accessChain: string,
@@ -782,22 +803,19 @@ export function getInstantAccessCompletions(
     return [];
   }
 
-  return stub.exports
-    .map((item, index) => ({ item, index }))
-    .filter(({ item }) => startsWithPrefix(item.label, prefix))
-    .sort(
-      (left, right) =>
-        accessKindPriority(right.item.kind) -
-          accessKindPriority(left.item.kind) || left.index - right.index,
-    )
+  return sortAccessItems(
+    stub.exports
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => startsWithPrefix(item.label, prefix)),
+  )
     .slice(0, MAX_INSTANT_OPTIONS)
     .map(({ item }, rank) =>
       completionFromItem(
         item,
         stub.packageName,
         0.2,
-        accessKindPriority(item.kind) / 100 +
-          (MAX_INSTANT_OPTIONS - rank) / 1000,
+        (MAX_INSTANT_OPTIONS - rank) / 1000 +
+          accessKindPriority(item.kind) / 10000,
       ),
     );
 }
