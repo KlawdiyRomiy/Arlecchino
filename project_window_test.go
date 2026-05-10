@@ -4,7 +4,11 @@ import (
 	"context"
 	"net/url"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
+
+	"arlecchino/internal/indexer/core"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -225,6 +229,83 @@ func TestOpenProjectWindowSessionOpensExplicitSession(t *testing.T) {
 	}
 	if got := app.projectSessionByID(defaultProjectSessionID).currentProjectPath(); got != "" {
 		t.Fatalf("default session project path = %q, want untouched", got)
+	}
+}
+
+func TestProjectWindowSessionCloseWaitsForOpenLifecycle(t *testing.T) {
+	projectPath := t.TempDir()
+	app := NewApp()
+
+	previousFactory := newProjectWebviewWindow
+	newProjectWebviewWindow = func(_ *App, options application.WebviewWindowOptions) (projectWindowHandle, error) {
+		return &fakeProjectWindow{name: "actual-" + options.Name}, nil
+	}
+	defer func() {
+		newProjectWebviewWindow = previousFactory
+	}()
+
+	result, err := app.OpenProjectWindow(projectPath)
+	if err != nil {
+		t.Fatalf("OpenProjectWindow returned error: %v", err)
+	}
+
+	previousNewCoreEngine := newCoreEngine
+	engineCreateStarted := make(chan struct{})
+	releaseEngineCreate := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseEngine := func() {
+		releaseOnce.Do(func() {
+			close(releaseEngineCreate)
+		})
+	}
+	newCoreEngine = func(cfg core.EngineConfig) (*core.Engine, error) {
+		close(engineCreateStarted)
+		<-releaseEngineCreate
+		return previousNewCoreEngine(cfg)
+	}
+	defer func() {
+		releaseEngine()
+		newCoreEngine = previousNewCoreEngine
+	}()
+
+	openDone := make(chan error, 1)
+	go func() {
+		openDone <- app.OpenProjectWindowSession(result.SessionID, projectPath)
+	}()
+
+	select {
+	case <-engineCreateStarted:
+	case <-time.After(time.Second):
+		t.Fatal("OpenProjectWindowSession did not reach engine creation")
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		app.closeProjectWindowSession(result.SessionID)
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		t.Fatal("project window session closed while project open lifecycle was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	releaseEngine()
+
+	select {
+	case err := <-openDone:
+		if err != nil {
+			t.Fatalf("OpenProjectWindowSession returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("OpenProjectWindowSession did not finish after engine creation was released")
+	}
+
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("project window session close did not finish after project open completed")
 	}
 }
 

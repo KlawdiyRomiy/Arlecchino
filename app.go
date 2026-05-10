@@ -302,8 +302,11 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 		return err
 	}
 
+	session.lifecycleMu.Lock()
+	defer session.lifecycleMu.Unlock()
+
 	if session.currentProjectPath() != "" {
-		_ = a.closeProjectInSession(session, false)
+		_ = a.closeProjectInSessionLocked(session, false)
 	}
 
 	projectGeneration := session.projectGeneration.Add(1)
@@ -522,6 +525,13 @@ func (a *App) closeProjectInSession(session *ProjectRuntimeSession, closeTermina
 	if session == nil {
 		session = defaultProjectSessionFromApp(a)
 	}
+	session.lifecycleMu.Lock()
+	defer session.lifecycleMu.Unlock()
+
+	return a.closeProjectInSessionLocked(session, closeTerminals)
+}
+
+func (a *App) closeProjectInSessionLocked(session *ProjectRuntimeSession, closeTerminals bool) error {
 	projectPath := session.currentProjectPath()
 	if session.projectCancel != nil {
 		session.projectCancel()
