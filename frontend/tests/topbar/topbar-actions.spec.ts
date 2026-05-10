@@ -6,6 +6,7 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.clear();
     const nativeWindowControlsVisibleCalls: boolean[] = [];
+    const nativeWindowControlsPositionCalls: unknown[][] = [];
     const runtimeEventHandlers = new Map<
       string,
       Set<(payload: unknown) => void>
@@ -44,6 +45,9 @@ test.beforeEach(async ({ page }) => {
                 return true;
               case "SetNativeWindowControlsVisible":
                 nativeWindowControlsVisibleCalls.push(Boolean(args[0]));
+                return true;
+              case "PositionNativeWindowControls":
+                nativeWindowControlsPositionCalls.push(args);
                 return true;
               case "ListFiles":
                 return [];
@@ -93,6 +97,7 @@ test.beforeEach(async ({ page }) => {
       go: { main: { App: appBridge } },
       runtime: runtimeBridge,
       __nativeWindowControlsVisibleCalls: nativeWindowControlsVisibleCalls,
+      __nativeWindowControlsPositionCalls: nativeWindowControlsPositionCalls,
     });
 
     localStorage.setItem(
@@ -568,6 +573,85 @@ test("native fullscreen hides macOS window controls backdrop", async ({
       ),
     )
     .toBe(true);
+});
+
+test("native window controls wait for project switch transition to settle", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __nativeWindowControlsPositionCalls: unknown[][];
+            }
+          ).__nativeWindowControlsPositionCalls.length,
+      ),
+    )
+    .toBeGreaterThan(0);
+
+  await page.evaluate(async () => {
+    (
+      window as unknown as {
+        __nativeWindowControlsPositionCalls: unknown[][];
+      }
+    ).__nativeWindowControlsPositionCalls.length = 0;
+
+    const { useWorkspaceStore } = await import("/src/stores/workspaceStore.ts");
+    useWorkspaceStore.setState({
+      projects: [
+        {
+          id: "/workspace",
+          path: "/workspace",
+          name: "workspace",
+          openedAt: 1,
+        },
+        { id: "/other", path: "/other", name: "other", openedAt: 2 },
+      ],
+      activeId: "/other",
+      pendingId: "/other",
+      switchSourceId: "/workspace",
+      switchDirection: 1,
+      ready: true,
+      uiBlockers: [],
+    });
+  });
+
+  await page.waitForTimeout(120);
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __nativeWindowControlsPositionCalls: unknown[][];
+          }
+        ).__nativeWindowControlsPositionCalls.length,
+    ),
+  ).toBe(0);
+
+  await page.evaluate(async () => {
+    const { useWorkspaceStore } = await import("/src/stores/workspaceStore.ts");
+    useWorkspaceStore.setState({
+      pendingId: null,
+      switchSourceId: null,
+    });
+  });
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __nativeWindowControlsPositionCalls: unknown[][];
+            }
+          ).__nativeWindowControlsPositionCalls.length,
+      ),
+    )
+    .toBeGreaterThan(0);
 });
 
 test("native fullscreen exit does not restore backdrop while Zen topbar is hidden", async ({

@@ -60,8 +60,7 @@ type App struct {
 	pendingOpenIntents       []map[string]any
 	managerMu                sync.Mutex
 	nativeControlsMu         sync.Mutex
-	nativeControlsSet        bool
-	nativeControls           [6]float64
+	nativeControlsByWindow   map[string]nativeWindowControlsState
 	diagnosticsPreloadMu     sync.Mutex
 	diagnosticsPreloadCancel context.CancelFunc
 	diagnosticsPreloadSeq    uint64

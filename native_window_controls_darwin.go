@@ -214,13 +214,15 @@ static bool arlecchinoPositionNativeWindowControls(
 import "C"
 
 import (
+	"context"
 	"unsafe"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-func (a *App) SetNativeWindowControlsVisible(visible bool) bool {
-	if a == nil || a.mainWindow == nil {
+func (a *App) SetNativeWindowControlsVisible(ctx context.Context, visible bool) bool {
+	window := a.nativeWindowControlsTarget(ctx)
+	if window == nil {
 		return false
 	}
 
@@ -229,51 +231,50 @@ func (a *App) SetNativeWindowControlsVisible(visible bool) bool {
 		state = application.ButtonEnabled
 	}
 
-	a.mainWindow.SetCloseButtonState(state)
-	a.mainWindow.SetMinimiseButtonState(state)
-	a.mainWindow.SetMaximiseButtonState(state)
-	a.RefreshNativeWindowControls()
+	a.updateNativeWindowControlsState(window, func(controlsState *nativeWindowControlsState) {
+		controlsState.visibleSet = true
+		controlsState.visible = visible
+	})
+
+	window.SetCloseButtonState(state)
+	window.SetMinimiseButtonState(state)
+	window.SetMaximiseButtonState(state)
+	a.refreshNativeWindowControlsForWindow(window)
 	return true
 }
 
-func (a *App) PositionNativeWindowControls(closeX, closeY, minimiseX, minimiseY, maximiseX, maximiseY float64) bool {
-	if a == nil {
+func (a *App) PositionNativeWindowControls(ctx context.Context, closeX, closeY, minimiseX, minimiseY, maximiseX, maximiseY float64) bool {
+	window := a.nativeWindowControlsTarget(ctx)
+	if window == nil {
 		return false
 	}
 
 	controls := [6]float64{closeX, closeY, minimiseX, minimiseY, maximiseX, maximiseY}
+	a.updateNativeWindowControlsState(window, func(controlsState *nativeWindowControlsState) {
+		controlsState.controlsSet = true
+		controlsState.controls = controls
+	})
 
-	a.nativeControlsMu.Lock()
-	a.nativeControlsSet = true
-	a.nativeControls = controls
-	a.nativeControlsMu.Unlock()
-
-	return a.positionNativeWindowControls(controls)
+	return a.positionNativeWindowControls(window, controls)
 }
 
-func (a *App) RefreshNativeWindowControls() bool {
-	if a == nil {
-		return false
-	}
-
-	a.nativeControlsMu.Lock()
-	controlsSet := a.nativeControlsSet
-	controls := a.nativeControls
-	a.nativeControlsMu.Unlock()
-
-	if !controlsSet {
-		return false
-	}
-
-	return a.positionNativeWindowControls(controls)
+func (a *App) RefreshNativeWindowControls(ctx context.Context) bool {
+	return a.refreshNativeWindowControlsForWindow(a.nativeWindowControlsTarget(ctx))
 }
 
-func (a *App) positionNativeWindowControls(controls [6]float64) bool {
+func (a *App) refreshNativeWindowControlsForWindow(window application.Window) bool {
+	state, ok := a.nativeWindowControlsState(window)
+	if !ok || !state.controlsSet {
+		return false
+	}
+	return a.positionNativeWindowControls(window, state.controls)
+}
+
+func (a *App) positionNativeWindowControls(window application.Window, controls [6]float64) bool {
 	var nativeWindow unsafe.Pointer
-	if a != nil && a.mainWindow != nil {
-		nativeWindow = a.mainWindow.NativeWindow()
+	if window != nil {
+		nativeWindow = window.NativeWindow()
 	}
-
 	return bool(C.arlecchinoPositionNativeWindowControls(
 		nativeWindow,
 		C.double(controls[0]),

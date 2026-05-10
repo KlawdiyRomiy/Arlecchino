@@ -1,5 +1,6 @@
 import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { PositionNativeWindowControls } from "../../wails/app";
 import { Quit, WindowMinimise } from "../../wails/runtime";
 import { toggleWindowFullscreen } from "../../utils/windowFullscreen";
@@ -96,6 +97,33 @@ const nativeButtonTargetStyle: React.CSSProperties = {
   opacity: 0,
 };
 
+const PROJECT_SWITCH_FRAME_SELECTOR = '[data-project-switch-frame="true"]';
+
+const hasMovingTransform = (element: Element | null): boolean => {
+  if (!element) {
+    return false;
+  }
+
+  const transform = window.getComputedStyle(element).transform;
+  if (!transform || transform === "none") {
+    return false;
+  }
+
+  try {
+    const matrix = new DOMMatrixReadOnly(transform);
+    return Math.abs(matrix.m41) > 0.5 || Math.abs(matrix.m42) > 0.5;
+  } catch {
+    return true;
+  }
+};
+
+const isInsideMovingProjectSwitchFrame = (
+  element: HTMLElement | null,
+): boolean => {
+  const frame = element?.closest(PROJECT_SWITCH_FRAME_SELECTOR) ?? null;
+  return hasMovingTransform(frame);
+};
+
 const areNativeBackdropRectsEqual = (
   a: NativeBackdropRect | null,
   b: NativeBackdropRect,
@@ -129,6 +157,9 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   backdropVisible = true,
 }) => {
   const reserveNativeMacControls = shouldReserveNativeMacControls();
+  const projectSwitchPending = useWorkspaceStore(
+    (state) => state.pendingId !== null,
+  );
   const placeholderRef = useRef<HTMLDivElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLSpanElement>(null);
@@ -143,7 +174,11 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   }, []);
 
   const positionNativeControls = useCallback(() => {
-    if (!visible) {
+    if (
+      !visible ||
+      projectSwitchPending ||
+      isInsideMovingProjectSwitchFrame(placeholderRef.current)
+    ) {
       return;
     }
 
@@ -178,20 +213,28 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
       fullscreenRect.left + fullscreenRect.width / 2,
       fullscreenRect.top + fullscreenRect.height / 2,
     ).catch(() => undefined);
-  }, [visible]);
+  }, [projectSwitchPending, visible]);
 
   useLayoutEffect(() => {
-    if (!reserveNativeMacControls || !visible) {
+    if (!reserveNativeMacControls || !visible || projectSwitchPending) {
       return;
     }
 
     let animationFrame = 0;
+    let settleAnimationFrame = 0;
     const schedulePosition = () => {
       cancelAnimationFrame(animationFrame);
       animationFrame = requestAnimationFrame(positionNativeControls);
     };
+    const scheduleSettledPosition = () => {
+      cancelAnimationFrame(settleAnimationFrame);
+      settleAnimationFrame = requestAnimationFrame(() => {
+        settleAnimationFrame = requestAnimationFrame(schedulePosition);
+      });
+    };
 
     schedulePosition();
+    scheduleSettledPosition();
     const retryTimers = [50, 250, 1000].map((delay) =>
       window.setTimeout(schedulePosition, delay),
     );
@@ -207,6 +250,7 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
 
     return () => {
       cancelAnimationFrame(animationFrame);
+      cancelAnimationFrame(settleAnimationFrame);
       retryTimers.forEach((timer) => window.clearTimeout(timer));
       window.removeEventListener("resize", schedulePosition);
       resizeObserver?.disconnect();
@@ -214,6 +258,7 @@ export const WindowControls: React.FC<WindowControlsProps> = ({
   }, [
     backdropVisible,
     positionNativeControls,
+    projectSwitchPending,
     reserveNativeMacControls,
     visible,
   ]);

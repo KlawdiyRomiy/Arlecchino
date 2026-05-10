@@ -4867,9 +4867,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     terminalPanelConfig.x + terminalPanelConfig.size.width > 0 &&
     terminalPanelConfig.y + terminalPanelConfig.size.height > 0;
   const nativeWindowControlsVisible =
-    zenTopChromeVisible && !tuiTerminalOccludesNativeWindowControls;
-  const nativeWindowControlsBackdropVisible =
-    nativeWindowControlsVisible && !nativeWindowFullscreen;
+    zenTopChromeVisible &&
+    !tuiTerminalOccludesNativeWindowControls &&
+    !nativeWindowFullscreen;
+  const nativeWindowControlsBackdropVisible = nativeWindowControlsVisible;
   const zenTopChromeAvoidanceTop =
     zenModeEnabled && zenTopChromeVisible && !zenTopChromeInteractionLocked
       ? topChromeHeight + SNAPPED_PANEL_OUTER_GAP

@@ -68,6 +68,7 @@ export const ProjectSwitchTransition: React.FC<Props> = ({
         return (
           <animated.div
             key={item}
+            data-project-switch-frame="true"
             style={{
               ...restStyle,
               transform: x.to((v) => `translate3d(${v}%, 0, 0)`),

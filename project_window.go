@@ -188,5 +188,6 @@ func (a *App) closeProjectWindowSession(sessionID string) {
 	if session == nil {
 		return
 	}
+	a.clearNativeWindowControlsStateForWindowName(session.WindowName)
 	_ = a.closeProjectInSession(session, true)
 }

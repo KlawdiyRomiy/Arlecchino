@@ -2,14 +2,16 @@
 
 package main
 
-func (a *App) SetNativeWindowControlsVisible(bool) bool {
+import "context"
+
+func (a *App) SetNativeWindowControlsVisible(context.Context, bool) bool {
 	return false
 }
 
-func (a *App) PositionNativeWindowControls(float64, float64, float64, float64, float64, float64) bool {
+func (a *App) PositionNativeWindowControls(context.Context, float64, float64, float64, float64, float64, float64) bool {
 	return false
 }
 
-func (a *App) RefreshNativeWindowControls() bool {
+func (a *App) RefreshNativeWindowControls(context.Context) bool {
 	return false
 }
