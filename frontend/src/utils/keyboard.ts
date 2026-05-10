@@ -111,6 +111,7 @@ export type ShortcutActionId =
   | "problems.fullscreen"
   | "panel.closeFullscreen"
   | "terminal.toggle"
+  | "terminal.fullscreen"
   | "ai.toggle"
   | "settings.toggle"
   | "zenMode.toggle"
@@ -220,6 +221,14 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     group: "Panels",
     scope: "global",
     defaultShortcuts: ["cmd+j"],
+  },
+  {
+    id: "terminal.fullscreen",
+    label: "Terminal fullscreen",
+    description: "Open Terminal in fullscreen mode or restore it.",
+    group: "Panels",
+    scope: "global",
+    defaultShortcuts: ["cmd+shift+j"],
   },
   {
     id: "browser.preview",
@@ -746,6 +755,8 @@ export const shortcuts = {
     matchesActionShortcut(e, "explorer.toggle"),
   toggleTerminal: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "terminal.toggle"),
+  toggleTerminalFullscreen: (e: KeyboardEvent) =>
+    matchesActionShortcut(e, "terminal.fullscreen"),
   switchProjectNext: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "project.switchNext"),
   switchProjectPrev: (e: KeyboardEvent) =>

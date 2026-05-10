@@ -14,6 +14,7 @@ var nativeMenuAcceleratorActions = map[string]bool{
 	"search.toggle":           true,
 	"explorer.toggle":         true,
 	"terminal.toggle":         true,
+	"terminal.fullscreen":     true,
 	"ai.toggle":               true,
 	"project.new":             true,
 	"project.open":            true,
@@ -33,6 +34,7 @@ var defaultApplicationMenuShortcuts = map[string][]string{
 	"search.toggle":           {"cmd+shift+f", "ctrl+shift+f"},
 	"explorer.toggle":         {"cmd+e"},
 	"terminal.toggle":         {"cmd+j"},
+	"terminal.fullscreen":     {"cmd+shift+j"},
 	"ai.toggle":               {"cmd+r", "ctrl+r"},
 	"project.new":             {"cmd+n", "ctrl+n"},
 	"project.open":            {"cmd+o", "ctrl+o"},
@@ -109,6 +111,7 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.M
 	a.addMenuAction(viewMenu, "Toggle Zen Mode", "zenMode.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle Explorer", "explorer.toggle", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle Terminal", "terminal.toggle", shortcuts)
+	a.addMenuAction(viewMenu, "Toggle Terminal Fullscreen", "terminal.fullscreen", shortcuts)
 	a.addMenuAction(viewMenu, "Toggle AI Panel", "ai.toggle", shortcuts)
 	viewMenu.AddSeparator()
 	a.addMenuAction(viewMenu, "Open Browser Preview", "browser.preview", shortcuts)

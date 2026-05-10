@@ -32,6 +32,7 @@ func (r *ActionRegistry) registerDefaults() {
 		{Name: "Toggle Explorer Panel", Description: "Open or close file explorer panel", Icon: "folder", Handler: "shortcut.explorer.toggle", Keybinding: "cmd+e"},
 		{Name: "Open Terminal Panel", Description: "Show terminal panel", Icon: "terminal", Handler: "panel.terminal"},
 		{Name: "Toggle Terminal Panel", Description: "Open or close terminal panel", Icon: "terminal", Handler: "shortcut.terminal.toggle", Keybinding: "cmd+j"},
+		{Name: "Toggle Terminal Fullscreen", Description: "Open Terminal in fullscreen mode or restore it", Icon: "maximize", Handler: "shortcut.terminal.fullscreen", Keybinding: "cmd+shift+j"},
 		{Name: "Open AI Panel", Description: "Show AI assistant panel", Icon: "sparkles", Handler: "panel.ai"},
 		{Name: "Toggle AI Panel", Description: "Open or close AI assistant panel", Icon: "sparkles", Handler: "shortcut.ai.toggle", Keybinding: "cmd+r"},
 		{Name: "Open Git Panel", Description: "Show Git panel", Icon: "git-branch", Handler: "panel.git"},

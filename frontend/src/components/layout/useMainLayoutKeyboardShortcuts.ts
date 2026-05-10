@@ -87,6 +87,7 @@ interface UseMainLayoutKeyboardShortcutsOptions {
   pressedShortcutCodesRef: MutableRefObject<Set<string>>;
   problemsPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   shortcutActionSuppressionRef: ShortcutSuppressionRef;
+  terminalPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   toggleCanonicalBrowserPreviewRef: MutableRefObject<() => void>;
   toggleCommandDispatcher: () => void;
   terminalThemeId: ThemeId;
@@ -95,7 +96,7 @@ interface UseMainLayoutKeyboardShortcutsOptions {
     snapshotRef?: MutableRefObject<PanelFullscreenSnapshot | null>,
   ) => void;
   togglePanelFullscreenFromShortcut: (
-    panelId: "git" | "problems",
+    panelId: "terminal" | "git" | "problems",
     snapshotRef: MutableRefObject<PanelFullscreenSnapshot | null>,
   ) => void;
 }
@@ -131,6 +132,7 @@ export const useMainLayoutKeyboardShortcuts = ({
   pressedShortcutCodesRef,
   problemsPreFullscreenRef,
   shortcutActionSuppressionRef,
+  terminalPreFullscreenRef,
   toggleCanonicalBrowserPreviewRef,
   toggleCommandDispatcher,
   terminalThemeId,
@@ -339,6 +341,17 @@ export const useMainLayoutKeyboardShortcuts = ({
             runTapActionImmediately: !isTerminalShortcutContext,
           },
         );
+        return;
+      }
+
+      if (shortcuts.toggleTerminalFullscreen(e)) {
+        if (isTUIActive) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        togglePanelFullscreenFromShortcut("terminal", terminalPreFullscreenRef);
         return;
       }
 
@@ -665,6 +678,7 @@ export const useMainLayoutKeyboardShortcuts = ({
     pressedShortcutCodesRef,
     problemsPreFullscreenRef,
     shortcutActionSuppressionRef,
+    terminalPreFullscreenRef,
     toggleCanonicalBrowserPreviewRef,
     toggleCommandDispatcher,
     terminalThemeId,

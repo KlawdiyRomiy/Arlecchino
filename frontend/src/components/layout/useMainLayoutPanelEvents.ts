@@ -169,10 +169,11 @@ interface UseMainLayoutPanelEventsOptions {
     snapshotRef?: MutableRefObject<PanelFullscreenSnapshot | null>,
   ) => void;
   togglePanelFullscreenFromShortcut: (
-    panelId: "git" | "problems",
+    panelId: "terminal" | "git" | "problems",
     snapshotRef: MutableRefObject<PanelFullscreenSnapshot | null>,
   ) => void;
   gitPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
+  terminalPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
 }
 
 export const useMainLayoutPanelEvents = ({
@@ -229,6 +230,7 @@ export const useMainLayoutPanelEvents = ({
   togglePanelCompactFromShortcut,
   togglePanelFullscreenFromShortcut,
   gitPreFullscreenRef,
+  terminalPreFullscreenRef,
 }: UseMainLayoutPanelEventsOptions) => {
   const closeTerminalPanel = useCallback(() => {
     const terminalState = useTerminalStore.getState();
@@ -708,6 +710,15 @@ export const useMainLayoutPanelEvents = ({
         case "terminal.toggle":
           togglePanelCompactFromShortcut("terminal");
           return;
+        case "terminal.fullscreen":
+          if (useTerminalStore.getState().tuiModeActive) {
+            return;
+          }
+          togglePanelFullscreenFromShortcut(
+            "terminal",
+            terminalPreFullscreenRef,
+          );
+          return;
         case "ai.toggle":
           togglePanelCompactFromShortcut("aiChat");
           return;
@@ -760,6 +771,7 @@ export const useMainLayoutPanelEvents = ({
       openSettings,
       problemsPreFullscreenRef,
       shouldSuppressApplicationMenuAction,
+      terminalPreFullscreenRef,
       toggleCanonicalBrowserPreviewRef,
       toggleNamedPanel,
       togglePanelCompactFromShortcut,
