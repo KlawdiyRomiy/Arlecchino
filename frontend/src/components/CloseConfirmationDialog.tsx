@@ -56,21 +56,26 @@ export const CloseConfirmationDialog: React.FC<
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") {
+      if (event.key !== "Escape" && event.key !== "Enter") {
         return;
       }
 
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-      onCancel();
+      if (event.key === "Escape") {
+        onCancel();
+        return;
+      }
+
+      onConfirm();
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [busy, onCancel, request]);
+  }, [busy, onCancel, onConfirm, request]);
 
   if (typeof document === "undefined") {
     return null;
