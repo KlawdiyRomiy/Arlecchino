@@ -18,7 +18,11 @@ func (a *App) GetDependencySyncPlan(mode string) (depsync.Plan, error) {
 
 func (a *App) SyncProjectDependencies(mode string) (map[string]string, error) {
 	exec := depsync.NewExecutor()
-	return exec.Execute(a.GetCurrentProjectPath(), depsync.Mode(mode))
+	results, err := exec.Execute(a.GetCurrentProjectPath(), depsync.Mode(mode))
+	if err == nil {
+		a.refreshDependencyCatalogAfterSync()
+	}
+	return results, err
 }
 
 func (a *App) GetDependencyPolicyPlan(consentMode string) (depsync.PolicyPlan, error) {
@@ -32,7 +36,11 @@ func (a *App) GetDependencyPolicyPlan(consentMode string) (depsync.PolicyPlan, e
 
 func (a *App) RunDependencyPolicySync(req depsync.ExecuteRequest) (depsync.ExecuteResult, error) {
 	exec := depsync.NewExecutor()
-	return exec.ExecuteWithPolicy(a.GetCurrentProjectPath(), req)
+	result, err := exec.ExecuteWithPolicy(a.GetCurrentProjectPath(), req)
+	if err == nil && !req.DryRun {
+		a.refreshDependencyCatalogAfterSync()
+	}
+	return result, err
 }
 
 func (a *App) ListApprovedDependencyActions() ([]string, error) {
@@ -43,4 +51,16 @@ func (a *App) ListApprovedDependencyActions() ([]string, error) {
 func (a *App) ClearApprovedDependencyActions() error {
 	exec := depsync.NewExecutor()
 	return exec.ClearApprovedActions(a.GetCurrentProjectPath())
+}
+
+func (a *App) refreshDependencyCatalogAfterSync() {
+	if a == nil {
+		return
+	}
+	type dependencyCatalogRefresher interface {
+		RefreshDependencyCatalog()
+	}
+	if brain, ok := a.activeCompletionBrain().(dependencyCatalogRefresher); ok {
+		brain.RefreshDependencyCatalog()
+	}
 }

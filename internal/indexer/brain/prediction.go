@@ -295,6 +295,24 @@ func (b *PredictionBrain) InvalidateCompletionCache(filePath string) {
 	b.completionCache.Invalidate(filePath)
 }
 
+func (b *PredictionBrain) RefreshDependencyCatalog() {
+	if b == nil {
+		return
+	}
+
+	b.mu.RLock()
+	importCompletions := b.importCompletions
+	completionCache := b.completionCache
+	b.mu.RUnlock()
+
+	if importCompletions != nil {
+		importCompletions.RefreshDependencyCatalog()
+	}
+	if completionCache != nil {
+		completionCache.Invalidate("")
+	}
+}
+
 func (c *CompletionCache) Stats() (size int) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

@@ -33,6 +33,14 @@ func (p *ImportCompletionProvider) Prewarm() {
 	p.catalog.Prewarm("go", "typescript", "javascript", "python", "php", "ruby")
 }
 
+func (p *ImportCompletionProvider) RefreshDependencyCatalog() {
+	if p == nil || p.catalog == nil {
+		return
+	}
+	p.catalog.Invalidate()
+	p.Prewarm()
+}
+
 func (p *ImportCompletionProvider) GetCompletions(ctx CompletionContext) []Suggestion {
 	if !ctx.InImport {
 		return nil

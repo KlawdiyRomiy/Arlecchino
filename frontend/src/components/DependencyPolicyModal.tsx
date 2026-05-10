@@ -89,6 +89,28 @@ const normalizeApprovedActionIds = (value: unknown): string[] => {
 const formatCapability = (value: string) =>
   value.replace(/_/g, " ").replace(/\b\w/g, (match) => match.toUpperCase());
 
+const dependencyResultState = (message: string) => {
+  const normalized = message.trim().toLowerCase();
+  if (normalized.startsWith("failed:")) {
+    return "failed";
+  }
+  if (normalized.startsWith("skipped:")) {
+    return "skipped";
+  }
+  return "completed";
+};
+
+const dependencyResultCardClass = (message: string) => {
+  switch (dependencyResultState(message)) {
+    case "failed":
+      return "rounded-[20px] border border-[color:var(--status-error)]/25 bg-[color:var(--status-error)]/10 px-4 py-3 text-[14px] leading-6 text-[var(--text-primary)]";
+    case "skipped":
+      return "rounded-[20px] border border-[color:var(--status-warning)]/25 bg-[color:var(--status-warning)]/10 px-4 py-3 text-[14px] leading-6 text-[var(--text-primary)]";
+    default:
+      return `${dependencyInsetClass} px-4 py-3 text-[14px] leading-6 text-[var(--text-primary)]`;
+  }
+};
+
 const SwitchRow: React.FC<{
   title: string;
   description: string;
@@ -263,12 +285,31 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
       setResult(response);
 
       const blockedCount = Object.keys(response.blocked ?? {}).length;
-      const resultCount = Object.keys(response.results ?? {}).length;
-      const summary =
-        blockedCount > 0
-          ? `Dependency sync finished: ${resultCount} actions ran, ${blockedCount} blocked.`
-          : `Dependency sync finished: ${resultCount} actions ran.`;
-      onNotify?.("success", summary);
+      const resultMessages = Object.values(response.results ?? {});
+      const resultCount = resultMessages.length;
+      const failedCount = resultMessages.filter(
+        (message) => dependencyResultState(message ?? "") === "failed",
+      ).length;
+      const skippedCount = resultMessages.filter(
+        (message) => dependencyResultState(message ?? "") === "skipped",
+      ).length;
+      const summaryParts = [`${resultCount} actions ran`];
+      if (failedCount > 0) {
+        summaryParts.push(`${failedCount} failed`);
+      }
+      if (skippedCount > 0) {
+        summaryParts.push(`${skippedCount} skipped`);
+      }
+      if (blockedCount > 0) {
+        summaryParts.push(`${blockedCount} blocked`);
+      }
+      const summary = `Dependency sync finished: ${summaryParts.join(", ")}.`;
+      if (failedCount > 0) {
+        setError(summary);
+        onNotify?.("error", `[Dependencies] ${summary}`);
+      } else {
+        onNotify?.("success", summary);
+      }
 
       if (
         consentMode === ConsentMode.ConsentModeConfirmOncePerProject &&
@@ -733,12 +774,14 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                                     ([id, message]) => (
                                       <div
                                         key={id}
-                                        className={`${dependencyInsetClass} px-4 py-3 text-[12px] text-[var(--text-secondary)]`}
+                                        className={dependencyResultCardClass(
+                                          message ?? "",
+                                        )}
                                       >
-                                        <div className="font-mono text-[11px] text-[var(--text-muted)]">
+                                        <div className="font-mono text-[13px] leading-5 text-[var(--text-muted)]">
                                           {id}
                                         </div>
-                                        <div className="mt-1 whitespace-pre-wrap break-words">
+                                        <div className="mt-1.5 whitespace-pre-wrap break-words">
                                           {message || "completed"}
                                         </div>
                                       </div>
@@ -759,12 +802,12 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                                       ([id, reason]) => (
                                         <div
                                           key={id}
-                                          className="rounded-[20px] border border-[color:var(--status-warning)]/25 bg-[color:var(--status-warning)]/10 px-4 py-3 text-[12px] text-[var(--text-primary)]"
+                                          className="rounded-[20px] border border-[color:var(--status-warning)]/25 bg-[color:var(--status-warning)]/10 px-4 py-3 text-[14px] leading-6 text-[var(--text-primary)]"
                                         >
-                                          <div className="font-mono text-[11px] text-[var(--status-warning)]">
+                                          <div className="font-mono text-[13px] leading-5 text-[var(--status-warning)]">
                                             {id}
                                           </div>
-                                          <div className="mt-1 whitespace-pre-wrap break-words">
+                                          <div className="mt-1.5 whitespace-pre-wrap break-words">
                                             {reason}
                                           </div>
                                         </div>

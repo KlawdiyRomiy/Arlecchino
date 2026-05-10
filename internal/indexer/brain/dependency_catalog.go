@@ -164,6 +164,9 @@ func (c *dependencyCatalog) entriesForLanguageWithCacheStatus(language string) (
 	normalizedLanguage := normalizeDependencyLanguage(language)
 	files := c.manifestFiles(normalizedLanguage)
 	fingerprint := c.manifestFingerprint(files)
+	if installedFingerprint := c.installedFingerprint(normalizedLanguage); installedFingerprint != "" {
+		fingerprint += "|installed:" + installedFingerprint
+	}
 
 	c.mu.RLock()
 	if cached, ok := c.cache[normalizedLanguage]; ok && cached.fingerprint == fingerprint {
@@ -186,6 +189,17 @@ func (c *dependencyCatalog) entriesForLanguageWithCacheStatus(language string) (
 	c.setCacheStatus(normalizedLanguage, "miss")
 
 	return entries, false
+}
+
+func (c *dependencyCatalog) Invalidate() {
+	if c == nil {
+		return
+	}
+
+	c.mu.Lock()
+	c.cache = make(map[string]dependencyCacheEntry)
+	c.cacheStatus = make(map[string]string)
+	c.mu.Unlock()
 }
 
 func (c *dependencyCatalog) setCacheStatus(language, status string) {
@@ -263,6 +277,91 @@ func (c *dependencyCatalog) manifestFingerprint(files []string) string {
 		parts = append(parts, file+":"+info.ModTime().UTC().Format(time.RFC3339Nano)+":"+strconv.FormatInt(info.Size(), 10))
 	}
 	return strings.Join(parts, "|")
+}
+
+func (c *dependencyCatalog) installedFingerprint(language string) string {
+	if c.root == "" {
+		return ""
+	}
+
+	switch normalizeDependencyLanguage(language) {
+	case "node":
+		return dependencyInstallRootFingerprint(
+			filepath.Join(c.root, "node_modules"),
+			false,
+			func(name string) bool { return strings.HasPrefix(name, "@") },
+		)
+	case "php":
+		return dependencyInstallRootFingerprint(
+			filepath.Join(c.root, "vendor"),
+			false,
+			func(string) bool { return true },
+		)
+	case "python":
+		parts := make([]string, 0, 4)
+		for _, venv := range []string{".venv", "venv"} {
+			sitePackagesRoots := c.findPythonSitePackages(filepath.Join(c.root, venv))
+			for _, sitePackages := range sitePackagesRoots {
+				if fingerprint := dependencyInstallRootFingerprint(sitePackages, true, nil); fingerprint != "" {
+					parts = append(parts, fingerprint)
+				}
+			}
+		}
+		return strings.Join(parts, "|")
+	default:
+		return ""
+	}
+}
+
+func dependencyInstallRootFingerprint(root string, includeFiles bool, includeNestedDirs func(name string) bool) string {
+	info, err := os.Stat(root)
+	if err != nil {
+		return root + ":missing"
+	}
+	if !info.IsDir() {
+		return root + ":file"
+	}
+
+	parts := []string{root + ":" + info.ModTime().UTC().Format(time.RFC3339Nano)}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return strings.Join(append(parts, ".:unreadable"), "|")
+	}
+
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") || (!entry.IsDir() && !includeFiles) {
+			continue
+		}
+		appendInstallFingerprintPart(&parts, ".", entry)
+		if includeNestedDirs == nil || !entry.IsDir() || !includeNestedDirs(entry.Name()) {
+			continue
+		}
+
+		nestedPath := filepath.Join(root, entry.Name())
+		nestedEntries, err := os.ReadDir(nestedPath)
+		if err != nil {
+			parts = append(parts, filepath.Join(".", entry.Name())+":unreadable")
+			continue
+		}
+		for _, nestedEntry := range nestedEntries {
+			if strings.HasPrefix(nestedEntry.Name(), ".") || !nestedEntry.IsDir() {
+				continue
+			}
+			appendInstallFingerprintPart(&parts, filepath.Join(".", entry.Name()), nestedEntry)
+		}
+	}
+
+	return strings.Join(parts, "|")
+}
+
+func appendInstallFingerprintPart(parts *[]string, parent string, entry os.DirEntry) {
+	info, err := entry.Info()
+	name := filepath.Join(parent, entry.Name())
+	if err != nil {
+		*parts = append(*parts, name+":stat-error")
+		return
+	}
+	*parts = append(*parts, name+":"+strconv.FormatInt(info.Size(), 10)+":"+info.ModTime().UTC().Format(time.RFC3339Nano))
 }
 
 func (c *dependencyCatalog) loadEntries(language string) []dependencyEntry {
