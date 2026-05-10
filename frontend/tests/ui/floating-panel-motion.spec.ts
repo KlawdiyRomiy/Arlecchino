@@ -422,6 +422,234 @@ test("initial snapped panel renders content on first project mount", async ({
   );
 });
 
+test("snapped panel open expands the editor slot with the panel slide", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+        markdownPreview: false,
+      },
+      panelConfigs: {
+        git: {
+          position: "left",
+          mode: "snapped",
+          size: { width: 320, height: 0 },
+          x: 0,
+          y: 0,
+        },
+      },
+    },
+  });
+
+  const editorArea = page.getByTestId("editor-area");
+  const startBox = await editorArea.boundingBox();
+  expect(startBox).not.toBeNull();
+
+  const frames = await page.evaluate(async (startEditorX) => {
+    const readTranslateX = (node: HTMLElement): number => {
+      const styles = window.getComputedStyle(node);
+      if (styles.translate && styles.translate !== "none") {
+        return Number.parseFloat(styles.translate.split(" ")[0] ?? "0") || 0;
+      }
+      if (styles.transform && styles.transform !== "none") {
+        return new DOMMatrixReadOnly(styles.transform).m41;
+      }
+      return 0;
+    };
+
+    const eventInit = {
+      key: "g",
+      code: "KeyG",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    };
+    window.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+    window.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+
+    const samples: Array<{
+      editorShift: number;
+      motion: string;
+      panelWidth: number;
+      translateX: number;
+    }> = [];
+
+    for (let index = 0; index < 8; index += 1) {
+      await new Promise<void>((resolve) =>
+        window.requestAnimationFrame(() => resolve()),
+      );
+      const panel = document.querySelector<HTMLElement>(
+        '[data-testid="panel-git"]',
+      );
+      const editor = document.querySelector<HTMLElement>(
+        '[data-testid="editor-area"]',
+      );
+      if (!panel || !editor) {
+        continue;
+      }
+
+      samples.push({
+        editorShift: editor.getBoundingClientRect().x - startEditorX,
+        motion: panel.dataset.panelMotion ?? "",
+        panelWidth: panel.getBoundingClientRect().width,
+        translateX: readTranslateX(panel),
+      });
+    }
+
+    return samples;
+  }, startBox?.x ?? 0);
+
+  await waitForPanelSettled(page, "panel-git");
+  const finalBox = await editorArea.boundingBox();
+  expect(finalBox).not.toBeNull();
+  const finalShift = (finalBox?.x ?? 0) - (startBox?.x ?? 0);
+  expect(finalShift).toBeGreaterThan(200);
+
+  const enteringFrame = frames.find(
+    (frame) =>
+      frame.motion === "enter" &&
+      Math.abs(frame.translateX) > frame.panelWidth * 0.2 &&
+      frame.editorShift > 8,
+  );
+  expect(enteringFrame).toBeTruthy();
+  expect((enteringFrame?.editorShift ?? 0) / finalShift).toBeLessThan(0.92);
+});
+
+test("floating code panel opens fullscreen with shared panel motion", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+        markdownPreview: false,
+      },
+    },
+  });
+
+  await page.evaluate(() => {
+    (
+      window as Window & {
+        runtime: { EventsEmit: (eventName: string, payload: unknown) => void };
+      }
+    ).runtime.EventsEmit("ide:panel:open", {
+      panel: "code",
+      path: "/workspace/code-panel-fullscreen.ts",
+      content: "export const codePanelFullscreen = true;",
+      line: 1,
+      mode: "floating",
+      x: 96,
+      y: 96,
+      width: 520,
+      height: 320,
+    });
+  });
+
+  const codePanel = page.getByTestId("panel-code").last();
+  await expect(codePanel).toBeVisible();
+  await expect(codePanel.locator(".cm-content")).toContainText(
+    "codePanelFullscreen",
+  );
+
+  const motionSamples = await page.evaluate(async () => {
+    type RectSample = {
+      height: number;
+      width: number;
+      x: number;
+      y: number;
+    };
+    type MotionSample = RectSample & {
+      fullscreenMotion: string;
+    };
+    const readRect = (element: Element): RectSample => {
+      const rect = element.getBoundingClientRect();
+      return {
+        height: rect.height,
+        width: rect.width,
+        x: rect.x,
+        y: rect.y,
+      };
+    };
+    const waitForFrame = () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const panel = document.querySelector<HTMLElement>(
+      '[data-testid="panel-code"]',
+    );
+    const workspace = document.querySelector<HTMLElement>(
+      '[data-testid="panel-workspace"]',
+    );
+    const fullscreenButton = panel?.querySelector<HTMLButtonElement>(
+      'button[title="Полный экран"]',
+    );
+    if (!panel || !workspace || !fullscreenButton) {
+      return null;
+    }
+
+    const start = readRect(panel);
+    const workspaceRect = readRect(workspace);
+    fullscreenButton.click();
+
+    const samples: MotionSample[] = [];
+    for (let index = 0; index < 14; index += 1) {
+      await waitForFrame();
+      samples.push({
+        ...readRect(panel),
+        fullscreenMotion: panel.dataset.panelFullscreenMotion ?? "",
+      });
+    }
+
+    return { start, workspace: workspaceRect, samples };
+  });
+
+  if (!motionSamples) {
+    throw new Error("Code panel fullscreen motion should be measurable");
+  }
+  expect(
+    motionSamples.samples.some((sample) => sample.fullscreenMotion === "true"),
+  ).toBe(true);
+  expect(
+    motionSamples.samples.some(
+      (sample) =>
+        sample.width > motionSamples.start.width + 80 &&
+        sample.width < motionSamples.workspace.width - 40,
+    ),
+  ).toBe(true);
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const panel = document.querySelector<HTMLElement>(
+          '[data-testid="panel-code"]',
+        );
+        const workspace = document.querySelector<HTMLElement>(
+          '[data-testid="panel-workspace"]',
+        );
+        if (!panel || !workspace) {
+          return false;
+        }
+        const panelRect = panel.getBoundingClientRect();
+        const workspaceRect = workspace.getBoundingClientRect();
+        return (
+          panelRect.width >= workspaceRect.width - 8 &&
+          panelRect.height >= workspaceRect.height - 8
+        );
+      }),
+    )
+    .toBe(true);
+});
+
 const readElementBox = async (
   page: Parameters<typeof test>[0]["page"],
   selector: string,
@@ -781,7 +1009,7 @@ const expectSnappedPanelCloseMotion = async (
         ? Math.abs(frame.translateX) / frame.width
         : Math.abs(frame.translateY) / frame.height;
     })
-    .toBeGreaterThan(1.18);
+    .toBeGreaterThan(0.82);
 
   const exitFrame = await readPanelFrame(page, selector);
   expect(exitFrame).not.toBeNull();
@@ -848,7 +1076,7 @@ test("snapped floating panel uses slide-only motion for open and close", async (
         }
         return Math.abs(frame.translateX) / frame.width;
       })
-      .toBeGreaterThan(1.18);
+      .toBeGreaterThan(0.82);
   } else {
     await expect
       .poll(async () => {
@@ -858,7 +1086,7 @@ test("snapped floating panel uses slide-only motion for open and close", async (
         }
         return Math.abs(frame.translateY) / frame.height;
       })
-      .toBeGreaterThan(1.18);
+      .toBeGreaterThan(0.82);
   }
 
   const exitFrame = await readPanelFrame(page, '[data-testid="panel-git"]');
@@ -899,19 +1127,80 @@ for (const position of ["left", "right", "top", "bottom"] as const) {
         },
       },
     });
-
     const panel = page.locator('[data-testid="panel-git"]');
     await openGitPanel(page);
     await expect(panel).toBeVisible();
     await waitForPanelSettled(page, "panel-git");
+    await expect
+      .poll(async () => {
+        const frame = await readPanelFrame(page, '[data-testid="panel-git"]');
+        if (!frame) {
+          return Number.POSITIVE_INFINITY;
+        }
+        return Math.max(Math.abs(frame.translateX), Math.abs(frame.translateY));
+      })
+      .toBeLessThanOrEqual(2);
+    const panelBeforeClose = await panel.boundingBox();
+    expect(panelBeforeClose).not.toBeNull();
     const editorBeforeClose = await readElementBox(
       page,
       '[data-testid="editor-area"]',
     );
     expect(editorBeforeClose).not.toBeNull();
 
-    await panel.locator('button[title="Закрыть панель"]').click();
-    await nextAnimationFrame(page);
+    const closeFrames = await page.evaluate(async () => {
+      const panelSelector = '[data-testid="panel-git"]';
+      const readFrame = () => {
+        const node = document.querySelector<HTMLElement>(panelSelector);
+        if (!node) {
+          return null;
+        }
+        const styles = window.getComputedStyle(node);
+        const transform = styles.transform;
+        const translate = styles.translate;
+        let translateX = 0;
+        let translateY = 0;
+
+        if (translate && translate !== "none") {
+          const [rawX = "0", rawY = "0"] = translate.split(" ");
+          translateX = Number.parseFloat(rawX) || 0;
+          translateY = Number.parseFloat(rawY) || 0;
+        } else if (transform && transform !== "none") {
+          const matrix = new DOMMatrixReadOnly(transform);
+          translateX = matrix.m41;
+          translateY = matrix.m42;
+        }
+
+        return {
+          motion: node.dataset.panelMotion ?? "",
+          translateX,
+          translateY,
+        };
+      };
+
+      document
+        .querySelector<HTMLButtonElement>(
+          `${panelSelector} button[title="Закрыть панель"]`,
+        )
+        ?.click();
+
+      const frames: ReturnType<typeof readFrame>[] = [];
+      for (let frameIndex = 0; frameIndex < 3; frameIndex += 1) {
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => resolve());
+        });
+        frames.push(readFrame());
+      }
+      return frames;
+    });
+    const firstExitFrame = closeFrames.find(
+      (frame): frame is NonNullable<(typeof closeFrames)[number]> =>
+        frame !== null,
+    );
+    expect(firstExitFrame).not.toBeNull();
+    expect(firstExitFrame?.motion).toBe("exit");
+    expect(Math.abs(firstExitFrame?.translateX ?? 0)).toBeLessThanOrEqual(8);
+    expect(Math.abs(firstExitFrame?.translateY ?? 0)).toBeLessThanOrEqual(8);
     await page.waitForTimeout(80);
 
     await expect
@@ -924,11 +1213,17 @@ for (const position of ["left", "right", "top", "bottom"] as const) {
           ? Math.abs(frame.translateX) / frame.width
           : Math.abs(frame.translateY) / frame.height;
       })
-      .toBeGreaterThan(1.18);
+      .toBeGreaterThan(0.82);
 
     const exitFrame = await readPanelFrame(page, '[data-testid="panel-git"]');
     expect(exitFrame?.motion).toBe("exit");
     expect(exitFrame?.parentOverflow).toBe("visible");
+    expect(
+      Math.abs((exitFrame?.width ?? 0) - (panelBeforeClose?.width ?? 0)),
+    ).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs((exitFrame?.height ?? 0) - (panelBeforeClose?.height ?? 0)),
+    ).toBeLessThanOrEqual(2);
     expectDirectionalSlide(exitFrame, position);
     const editorDuringClose = await readElementBox(
       page,
@@ -962,6 +1257,341 @@ for (const position of ["left", "right", "top", "bottom"] as const) {
     }
   });
 }
+
+test("snapped terminal shortcut close preserves panel size during exit", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: true,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+        markdownPreview: false,
+      },
+      panelConfigs: {
+        terminal: {
+          position: "bottom",
+          mode: "snapped",
+          size: { width: 0, height: 260 },
+          x: 0,
+          y: 0,
+        },
+      },
+    },
+  });
+
+  const terminalPanel = page.locator('[data-testid="panel-terminal"]').last();
+  await expect(terminalPanel).toBeVisible();
+  await waitForPanelSettled(page, "panel-terminal");
+  const panelBeforeClose = await terminalPanel.boundingBox();
+  expect(panelBeforeClose).not.toBeNull();
+
+  const closeFrames = await page.evaluate(async () => {
+    const readFrame = () => {
+      const node = document.querySelector<HTMLElement>(
+        '[data-testid="panel-terminal"]',
+      );
+      if (!node) {
+        return null;
+      }
+      const rect = node.getBoundingClientRect();
+      const styles = window.getComputedStyle(node);
+      return {
+        cssPosition: styles.position,
+        height: rect.height,
+        motion: node.dataset.panelMotion ?? "",
+        state: node.dataset.panelState ?? "",
+        width: rect.width,
+      };
+    };
+
+    window.dispatchEvent(
+      new CustomEvent("arlecchino:application-menu-action", {
+        detail: { actionId: "terminal.toggle" },
+      }),
+    );
+
+    const frames: ReturnType<typeof readFrame>[] = [];
+    for (let frameIndex = 0; frameIndex < 8; frameIndex += 1) {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+      frames.push(readFrame());
+    }
+    return frames;
+  });
+
+  expect(closeFrames.filter(Boolean).length).toBeGreaterThan(0);
+  expect(
+    closeFrames.some(
+      (frame) => frame?.motion === "exit" || frame?.state === "exiting",
+    ),
+  ).toBe(true);
+  for (const frame of closeFrames) {
+    if (!frame) {
+      continue;
+    }
+    if (frame.motion !== "exit" && frame.state !== "exiting") {
+      continue;
+    }
+    expect(frame.cssPosition).toBe("absolute");
+    expect(
+      Math.abs(frame.width - (panelBeforeClose?.width ?? 0)),
+    ).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs(frame.height - (panelBeforeClose?.height ?? 0)),
+    ).toBeLessThanOrEqual(2);
+  }
+
+  await page.waitForTimeout(80);
+
+  const exitFrame = await readPanelFrame(
+    page,
+    '[data-testid="panel-terminal"]',
+  );
+  expect(exitFrame).not.toBeNull();
+  expect(exitFrame?.motion).toBe("exit");
+  expect(
+    Math.abs((exitFrame?.width ?? 0) - (panelBeforeClose?.width ?? 0)),
+  ).toBeLessThanOrEqual(2);
+  expect(
+    Math.abs((exitFrame?.height ?? 0) - (panelBeforeClose?.height ?? 0)),
+  ).toBeLessThanOrEqual(2);
+  expectDirectionalSlide(exitFrame, "bottom");
+
+  await expect(terminalPanel).toHaveCount(0);
+});
+
+test("snapped right chat panel close keeps frozen bounds while the slot collapses", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: true,
+        git: false,
+        problems: false,
+        code: false,
+        markdownPreview: false,
+      },
+      panelConfigs: {
+        aiChat: {
+          position: "right",
+          mode: "snapped",
+          size: { width: 360, height: 0 },
+          x: 0,
+          y: 0,
+        },
+      },
+    },
+  });
+  await page.evaluate(async () => {
+    const { useEditorSettingsStore } =
+      await import("/src/stores/editorSettingsStore.ts");
+    useEditorSettingsStore.getState().setUiScale(1.2);
+  });
+  await nextAnimationFrame(page);
+
+  const chatPanel = page.locator('[data-testid="panel-aiChat"]').last();
+  await expect(chatPanel).toBeVisible();
+  await waitForPanelSettled(page, "panel-aiChat");
+  const panelBeforeClose = await chatPanel.boundingBox();
+  expect(panelBeforeClose).not.toBeNull();
+
+  const closeFrames = await page.evaluate(async () => {
+    const panelSelector = '[data-testid="panel-aiChat"]';
+    const readFrame = () => {
+      const node = document.querySelector<HTMLElement>(panelSelector);
+      if (!node) {
+        return null;
+      }
+
+      const rect = node.getBoundingClientRect();
+      const styles = window.getComputedStyle(node);
+      return {
+        cssLeft: Number.parseFloat(styles.left) || 0,
+        cssPosition: styles.position,
+        cssTop: Number.parseFloat(styles.top) || 0,
+        height: rect.height,
+        motion: node.dataset.panelMotion ?? "",
+        state: node.dataset.panelState ?? "",
+        width: rect.width,
+      };
+    };
+
+    document
+      .querySelector<HTMLButtonElement>(
+        `${panelSelector} button[title="Закрыть панель"]`,
+      )
+      ?.click();
+
+    const frames: ReturnType<typeof readFrame>[] = [];
+    for (let frameIndex = 0; frameIndex < 10; frameIndex += 1) {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+      frames.push(readFrame());
+    }
+    return frames;
+  });
+
+  const measuredFrames = closeFrames.filter(
+    (frame): frame is NonNullable<(typeof closeFrames)[number]> =>
+      frame !== null,
+  );
+  expect(measuredFrames.length).toBeGreaterThan(2);
+  expect(
+    measuredFrames.some(
+      (frame) => frame.motion === "exit" || frame.state === "exiting",
+    ),
+  ).toBe(true);
+
+  for (const frame of measuredFrames) {
+    expect(frame.cssPosition).toBe("absolute");
+    expect(
+      Math.abs(frame.width - (panelBeforeClose?.width ?? 0)),
+    ).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs(frame.height - (panelBeforeClose?.height ?? 0)),
+    ).toBeLessThanOrEqual(2);
+  }
+
+  await page.waitForTimeout(80);
+
+  const exitFrame = await readPanelFrame(page, '[data-testid="panel-aiChat"]');
+  expect(exitFrame).not.toBeNull();
+  expect(exitFrame?.motion).toBe("exit");
+  expectDirectionalSlide(exitFrame, "right");
+
+  await expect(chatPanel).toHaveCount(0);
+});
+
+test("snapped top panel close keeps its size with adjacent panels mounted", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: true,
+        aiChat: false,
+        git: true,
+        problems: true,
+        code: false,
+        markdownPreview: false,
+      },
+      panelConfigs: {
+        terminal: {
+          position: "right",
+          mode: "snapped",
+          size: { width: 320, height: 0 },
+          x: 0,
+          y: 0,
+        },
+        git: {
+          position: "bottom",
+          mode: "snapped",
+          size: { width: 0, height: 240 },
+          x: 0,
+          y: 0,
+        },
+        problems: {
+          position: "top",
+          mode: "snapped",
+          size: { width: 0, height: 240 },
+          x: 0,
+          y: 0,
+        },
+      },
+    },
+  });
+
+  const problemsPanel = page.locator('[data-testid="panel-problems"]').last();
+  const editorArea = page.getByTestId("editor-area");
+  await expect(problemsPanel).toBeVisible();
+  await expect(page.locator('[data-testid="panel-git"]').last()).toBeVisible();
+  await expect(
+    page.locator('[data-testid="panel-terminal"]').last(),
+  ).toBeVisible();
+  await waitForPanelSettled(page, "panel-problems");
+  const panelBeforeClose = await problemsPanel.boundingBox();
+  const editorBeforeClose = await editorArea.boundingBox();
+  expect(panelBeforeClose).not.toBeNull();
+  expect(editorBeforeClose).not.toBeNull();
+
+  const closeFrames = await page.evaluate(async () => {
+    const panelSelector = '[data-testid="panel-problems"]';
+    const readFrame = () => {
+      const node = document.querySelector<HTMLElement>(panelSelector);
+      const editor = document.querySelector<HTMLElement>(
+        '[data-testid="editor-area"]',
+      );
+      if (!node) {
+        return null;
+      }
+      const rect = node.getBoundingClientRect();
+      const editorRect = editor?.getBoundingClientRect() ?? null;
+      const styles = window.getComputedStyle(node);
+      return {
+        cssPosition: styles.position,
+        editorHeight: editorRect?.height ?? 0,
+        height: rect.height,
+        motion: node.dataset.panelMotion ?? "",
+        state: node.dataset.panelState ?? "",
+        width: rect.width,
+      };
+    };
+
+    document
+      .querySelector<HTMLButtonElement>(
+        `${panelSelector} button[title="Закрыть панель"]`,
+      )
+      ?.click();
+
+    const frames: ReturnType<typeof readFrame>[] = [];
+    for (let frameIndex = 0; frameIndex < 10; frameIndex += 1) {
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+      frames.push(readFrame());
+    }
+    return frames;
+  });
+
+  const measuredFrames = closeFrames.filter(
+    (frame): frame is NonNullable<(typeof closeFrames)[number]> =>
+      frame !== null,
+  );
+  expect(measuredFrames.length).toBeGreaterThan(2);
+  expect(
+    measuredFrames.some(
+      (frame) => frame.motion === "exit" || frame.state === "exiting",
+    ),
+  ).toBe(true);
+
+  for (const frame of measuredFrames) {
+    expect(frame.cssPosition).toBe("absolute");
+    expect(
+      Math.abs(frame.width - (panelBeforeClose?.width ?? 0)),
+    ).toBeLessThanOrEqual(2);
+    expect(
+      Math.abs(frame.height - (panelBeforeClose?.height ?? 0)),
+    ).toBeLessThanOrEqual(2);
+  }
+  expect(
+    measuredFrames.some(
+      (frame) => frame.editorHeight > (editorBeforeClose?.height ?? 0) + 20,
+    ),
+  ).toBe(true);
+
+  await expect(problemsPanel).toHaveCount(0);
+});
 
 test("snapped panel keeps slide motion while indexing and diagnostics preload are active", async ({
   page,
@@ -1198,7 +1828,7 @@ for (const position of ["top", "bottom"] as const) {
       expect(frame.editor).not.toBeNull();
       expect(frame.cmEditor).not.toBeNull();
       expect(frame.scroller).not.toBeNull();
-      expect(frame.slot?.height ?? 0).toBeGreaterThan(190);
+      expect(frame.slot?.height ?? 0).toBeGreaterThan(24);
       expect(frame.slot?.overflow).toBe("hidden");
       expect(boxesOverlap(frame.panel, frame.editor)).toBe(false);
 
@@ -3531,7 +4161,7 @@ test("browser preview resizes from the inner edge across iframe content", async 
     .toBeLessThan((startBox?.width ?? 0) - 60);
 });
 
-test("snapped panel close resizes the editor during exit motion", async ({
+test("snapped panel close resizes the editor without resizing the panel", async ({
   page,
 }) => {
   await mountProjectUI(page, { editorContent: largeEditorContent });
@@ -3543,6 +4173,8 @@ test("snapped panel close resizes the editor during exit motion", async ({
 
   const startBox = await editorArea.boundingBox();
   expect(startBox).not.toBeNull();
+  const startPanelBox = await explorerPanel.boundingBox();
+  expect(startPanelBox).not.toBeNull();
 
   await page.keyboard.press("Meta+E");
 
@@ -3555,6 +4187,19 @@ test("snapped panel close resizes the editor during exit motion", async ({
       );
     })
     .toBe(true);
+
+  const exitFrame = await readPanelFrame(
+    page,
+    '[data-testid="panel-explorer"]',
+  );
+  expect(exitFrame).not.toBeNull();
+  expect(exitFrame?.motion).toBe("exit");
+  expect(
+    Math.abs((exitFrame?.width ?? 0) - (startPanelBox?.width ?? 0)),
+  ).toBeLessThanOrEqual(2);
+  expect(
+    Math.abs((exitFrame?.height ?? 0) - (startPanelBox?.height ?? 0)),
+  ).toBeLessThanOrEqual(2);
 
   await expect(explorerPanel).toHaveCount(0);
 });

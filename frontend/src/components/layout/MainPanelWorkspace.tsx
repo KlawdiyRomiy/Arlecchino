@@ -26,6 +26,7 @@ interface MainPanelWorkspaceProps {
   draggingPanel: PanelId | null;
   draggingPreviewWindowId: string | null;
   draggingFilePanel: boolean;
+  panelExitPositions: PanelPosition[];
   panelPresenceBypassPositions: PanelPosition[];
   fullscreenSnappedExitSuppression: Record<PanelPosition, boolean>;
   slots: {
@@ -41,6 +42,7 @@ interface MainPanelWorkspaceProps {
   renderPanel: (
     panelId: PanelId,
     hostMode?: "overlay" | "flow",
+    isSlotExiting?: boolean,
   ) => React.ReactNode;
   renderPreviewWindowPanel: (
     windowState: PreviewWindow,
@@ -75,6 +77,7 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
   draggingPanel,
   draggingPreviewWindowId,
   draggingFilePanel,
+  panelExitPositions,
   panelPresenceBypassPositions,
   fullscreenSnappedExitSuppression,
   slots,
@@ -94,11 +97,12 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
     draggingFilePanel;
 
   const renderSnappedSlotContent = (
+    position: PanelPosition,
     panelId: PanelId | null,
     previewWindow: PreviewWindow | null,
   ) =>
     panelId
-      ? renderPanel(panelId, "flow")
+      ? renderPanel(panelId, "flow", panelExitPositions.includes(position))
       : previewWindow
         ? renderPreviewWindowPanel(previewWindow, "flow")
         : null;
@@ -108,7 +112,7 @@ export const MainPanelWorkspace: React.FC<MainPanelWorkspaceProps> = ({
     panelId: PanelId | null,
     previewWindow: PreviewWindow | null,
   ) => {
-    const content = renderSnappedSlotContent(panelId, previewWindow);
+    const content = renderSnappedSlotContent(position, panelId, previewWindow);
 
     if (panelPresenceBypassPositions.includes(position)) {
       return content;

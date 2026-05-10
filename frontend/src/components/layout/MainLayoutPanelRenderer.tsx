@@ -71,6 +71,7 @@ interface MainLayoutPanelRendererProps {
   draggingFilePanel: boolean;
   relocatingPanelIds: PanelId[];
   fullscreenTransitionPanelIds: PanelId[];
+  isSlotExiting?: boolean;
   uiScale: number;
   activeProjectPath: string;
   activeStatusFilePath: string | null;
@@ -106,7 +107,7 @@ interface MainLayoutPanelRendererProps {
     name: string,
     line?: number,
     request?: Partial<PanelOpenRequest>,
-  ) => void | Promise<void>;
+  ) => unknown | Promise<unknown>;
   filePanelSnapDrag: PanelSnapDragCallbacks;
   onOpenFileFromPath: (path: string, line?: number) => void;
   onOpenPreviewFromTerminal: (input: OpenTerminalPreviewInput) => void;
@@ -142,6 +143,7 @@ export const MainLayoutPanelRenderer: React.FC<
   draggingFilePanel,
   relocatingPanelIds,
   fullscreenTransitionPanelIds,
+  isSlotExiting = false,
   uiScale,
   activeProjectPath,
   activeStatusFilePath,
@@ -305,6 +307,8 @@ export const MainLayoutPanelRenderer: React.FC<
       ? `floating-panel-fullscreen-${panelId}`
       : undefined,
     fullscreenMotionActive,
+    preserveFullscreenLayoutIdentity: panelId === "code",
+    isSlotExiting,
     onFullscreen: isFullscreenCapable
       ? () => onPanelFullscreen(panelId)
       : undefined,

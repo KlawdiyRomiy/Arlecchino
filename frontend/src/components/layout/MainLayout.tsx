@@ -1129,12 +1129,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   >(createEmptySnappedSlotSizes);
   const [panelExitCollapsingPositions, setPanelExitCollapsingPositions] =
     useState<PanelPosition[]>([]);
+  const [panelEnterPositions, setPanelEnterPositions] = useState<
+    PanelPosition[]
+  >([]);
   const [panelPresenceBypassPositions, setPanelPresenceBypassPositions] =
     useState<PanelPosition[]>([]);
   const panelPresenceBypassPositionsRef = useRef<PanelPosition[]>([]);
   const [floatingPresenceVersion, setFloatingPresenceVersion] = useState(0);
   const panelExitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const panelExitCollapseFrameRef = useRef<number | null>(null);
+  const panelEnterTimerIdsRef = useRef<
+    Partial<Record<PanelPosition, ReturnType<typeof setTimeout>>>
+  >({});
   const pendingPanelCloseFrameIdsRef = useRef<number[]>([]);
   const fullscreenPanelTransitionTimerIdsRef = useRef<
     Partial<Record<PanelId, ReturnType<typeof setTimeout>>>
@@ -1148,6 +1154,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       if (panelExitTimerRef.current) {
         clearTimeout(panelExitTimerRef.current);
       }
+      Object.values(panelEnterTimerIdsRef.current).forEach((timerId) => {
+        if (timerId) {
+          clearTimeout(timerId);
+        }
+      });
+      panelEnterTimerIdsRef.current = {};
       if (
         typeof window !== "undefined" &&
         panelExitCollapseFrameRef.current !== null
@@ -1189,6 +1201,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setFullscreenPanelTransitions([]);
       setPanelExitPositions([]);
       setPanelExitSlotSizes(createEmptySnappedSlotSizes());
+      setPanelEnterPositions([]);
       panelPresenceBypassPositionsRef.current = [];
       setPanelPresenceBypassPositions([]);
       heldPanelShortcutRef.current = null;
@@ -2432,11 +2445,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
 
       const frameId = window.requestAnimationFrame(() => {
-        pendingPanelCloseFrameIdsRef.current =
-          pendingPanelCloseFrameIdsRef.current.filter(
+        const closeFrameId = window.requestAnimationFrame(() => {
+          pendingPanelCloseFrameIdsRef.current =
+            pendingPanelCloseFrameIdsRef.current.filter(
+              (currentFrameId) =>
+                currentFrameId !== frameId && currentFrameId !== closeFrameId,
+            );
+          closePanel();
+        });
+        pendingPanelCloseFrameIdsRef.current = [
+          ...pendingPanelCloseFrameIdsRef.current.filter(
             (currentFrameId) => currentFrameId !== frameId,
-          );
-        closePanel();
+          ),
+          closeFrameId,
+        ];
       });
       pendingPanelCloseFrameIdsRef.current = [
         ...pendingPanelCloseFrameIdsRef.current,
@@ -2480,6 +2502,34 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [beginPanelMotionWindow, updatePanelPresenceBypassPositionsState],
   );
 
+  const startSnappedSlotEnter = useCallback(
+    (position: PanelPosition) => {
+      if (reducePanelMotion) {
+        return;
+      }
+
+      beginPanelMotionWindow();
+      const existingTimerId = panelEnterTimerIdsRef.current[position];
+      if (existingTimerId) {
+        clearTimeout(existingTimerId);
+      }
+
+      setPanelEnterPositions((currentPositions) =>
+        uniquePanelPositions([...currentPositions, position]),
+      );
+
+      panelEnterTimerIdsRef.current[position] = setTimeout(() => {
+        delete panelEnterTimerIdsRef.current[position];
+        setPanelEnterPositions((currentPositions) =>
+          currentPositions.filter(
+            (currentPosition) => currentPosition !== position,
+          ),
+        );
+      }, FLOATING_PANEL_LAYOUT_TRANSITION_MS + 120);
+    },
+    [beginPanelMotionWindow, reducePanelMotion],
+  );
+
   const startSnappedSlotExit = useCallback(
     (position: PanelPosition, slotSize: number) => {
       if (reducePanelMotion) {
@@ -2496,6 +2546,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       ) {
         window.cancelAnimationFrame(panelExitCollapseFrameRef.current);
       }
+      const enterTimerId = panelEnterTimerIdsRef.current[position];
+      if (enterTimerId) {
+        clearTimeout(enterTimerId);
+        delete panelEnterTimerIdsRef.current[position];
+      }
 
       setPanelExitSlotSizes((currentSizes) => {
         if (currentSizes[position] === slotSize) {
@@ -2508,11 +2563,22 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         uniquePanelPositions([...currentPositions, position]),
       );
       panelExitCollapseFrameRef.current = window.requestAnimationFrame(() => {
-        panelExitCollapseFrameRef.current = null;
-        setPanelExitCollapsingPositions((currentPositions) =>
-          uniquePanelPositions([...currentPositions, position]),
-        );
+        panelExitCollapseFrameRef.current = window.requestAnimationFrame(() => {
+          panelExitCollapseFrameRef.current = window.requestAnimationFrame(
+            () => {
+              panelExitCollapseFrameRef.current = null;
+              setPanelExitCollapsingPositions((currentPositions) =>
+                uniquePanelPositions([...currentPositions, position]),
+              );
+            },
+          );
+        });
       });
+      setPanelEnterPositions((currentPositions) =>
+        currentPositions.filter(
+          (currentPosition) => currentPosition !== position,
+        ),
+      );
       panelExitTimerRef.current = setTimeout(() => {
         panelExitTimerRef.current = null;
         setPanelExitPositions([]);
@@ -2716,6 +2782,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           panelId === "terminal" && useTerminalStore.getState().tuiModeActive
         ) &&
         restoreSnappedSlotPresence(currentConfig.position);
+      const shouldDelaySnappedClose =
+        panelsRef.current[panelId] &&
+        currentConfig.mode === "snapped" &&
+        !(
+          panelId === "terminal" && useTerminalStore.getState().tuiModeActive
+        ) &&
+        !reducePanelMotion;
       const closePanel = () => {
         updatePanelsState((previous) =>
           previous[panelId] ? { ...previous, [panelId]: false } : previous,
@@ -2723,7 +2796,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       };
 
       startPanelExitMotion(panelId);
-      if (restoredSlotPresence && !reducePanelMotion) {
+      if (
+        (restoredSlotPresence && !reducePanelMotion) ||
+        shouldDelaySnappedClose
+      ) {
         schedulePanelCloseAfterPresenceRestore(closePanel);
         return;
       }
@@ -3457,6 +3533,19 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             height: panelWorkspaceSize.height,
           },
         };
+        if (panelId === "code") {
+          let result: SurfacePromotionResult | null = null;
+          startFullscreenPanelTransition("code", () => {
+            result = applyConfig(nextConfig, "fullscreen");
+          });
+          return (
+            result ??
+            buildSurfacePromotionResult(request, {
+              handled: false,
+              reason: "Code panel fullscreen transition was not applied.",
+            })
+          );
+        }
         return applyConfig(nextConfig, "fullscreen");
       }
 
@@ -3522,6 +3611,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       panelsRef,
       rememberedSnappedPositionsRef,
       resolvePromotionSnapPosition,
+      startFullscreenPanelTransition,
     ],
   );
 
@@ -3855,7 +3945,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       })();
 
       if (!ensureProjectEntryAccess(path, "read")) {
-        return;
+        return {
+          handled: false,
+          reason: "File access was denied for the code panel.",
+        };
       }
 
       let language = request?.language ?? fallbackLanguage;
@@ -3864,7 +3957,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           ? createEditableEditorFileLoad(path, request.content)
           : await loadEditorFile(path);
       if (codePanelOpenRequestRef.current !== requestId) {
-        return;
+        return {
+          handled: false,
+          reason: "Code panel open request was superseded.",
+        };
       }
       const content =
         fileLoadState.kind === "editable" ? fileLoadState.content : "";
@@ -3873,14 +3969,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         try {
           const languageInfo = await GetLanguageForFile(path);
           if (codePanelOpenRequestRef.current !== requestId) {
-            return;
+            return {
+              handled: false,
+              reason: "Code panel open request was superseded.",
+            };
           }
           if (languageInfo?.id) {
             language = languageInfo.id;
           }
         } catch {
           if (codePanelOpenRequestRef.current !== requestId) {
-            return;
+            return {
+              handled: false,
+              reason: "Code panel open request was superseded.",
+            };
           }
           language = fallbackLanguage;
         }
@@ -3910,6 +4012,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         openEditorTab(activePaneId, path, name, content, language);
       }
 
+      const wasCodePanelVisible = panelsRef.current.code;
       if (
         request?.reflowOnSnap &&
         request.mode === "snapped" &&
@@ -3921,7 +4024,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             height: request.height,
           })
         ) {
-          return;
+          return { handled: true, panel: "code", path };
         }
       }
 
@@ -3946,19 +4049,32 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         code: nextConfig,
       };
 
-      applyPanelsState(nextPanels);
       applyPanelConfigsState(nextPanelConfigs);
+      if (nextPanels.code) {
+        beginPanelMotionWindow();
+      }
+      if (
+        !wasCodePanelVisible &&
+        nextPanels.code &&
+        nextConfig.mode === "snapped"
+      ) {
+        startSnappedSlotEnter(nextConfig.position);
+      }
+      applyPanelsState(nextPanels);
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+      return { handled: Boolean(nextPanels.code), panel: "code", path };
     },
     [
       activePaneId,
       applyPanelConfigsState,
       applyPanelsState,
       applyRememberedSnappedPositionsState,
+      beginPanelMotionWindow,
       ensureProjectEntryAccess,
       movePanelToPositionWithReflow,
       openEditorTab,
       showNotification,
+      startSnappedSlotEnter,
     ],
   );
 
@@ -4387,6 +4503,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       rememberedSnappedPositionsRef,
       setPanelConfigs,
       setActivePanelId: markActivePanel,
+      startSnappedSlotEnter,
       setTUIAssistRatio,
       shouldSuppressApplicationMenuAction,
       submitTerminalCommand,
@@ -4704,7 +4821,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [fullscreenPanelTransitions],
   );
   const effectivePanelDropSettling =
-    panelDropSettling || fullscreenPanelTransitions.length > 0;
+    panelDropSettling ||
+    fullscreenPanelTransitions.length > 0 ||
+    panelEnterPositions.length > 0;
   const effectivePanelDropSettlingPositions = useMemo(
     () =>
       uniquePanelPositions([
@@ -4776,11 +4895,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const renderPanel = (
     panelId: PanelId,
     hostMode: "overlay" | "flow" = "overlay",
+    isSlotExiting = false,
   ) => (
     <MainLayoutPanelRenderer
       key={panelId}
       panelId={panelId}
       hostMode={hostMode}
+      isSlotExiting={isSlotExiting}
       panels={effectivePanels}
       zenPinnedPanels={zenPinnedPanels}
       zenModeEnabled={zenModeEnabled}
@@ -5446,6 +5567,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     isActive: boolean,
     isResizingSlot: boolean,
   ): React.CSSProperties => {
+    const isEnteringSlot = panelEnterPositions.includes(position);
     const isSettlingSlot =
       effectivePanelDropSettlingPositions.includes(position);
     const isExitingSlot = panelExitPositions.includes(position);
@@ -5465,7 +5587,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       draggingFilePanel ||
       isResizingSlot;
     const shouldAnimateSlotSize =
-      (isSettlingSlot || isExitingSlot) && !slotTransitionSuspended;
+      (isEnteringSlot || isSettlingSlot || isExitingSlot) &&
+      !slotTransitionSuspended;
     const transition =
       reducePanelMotion || !shouldAnimateSlotSize
         ? "none"
@@ -5490,11 +5613,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           : undefined,
       pointerEvents: isActive ? "auto" : "none",
       transition,
-      willChange: shouldExposeSlotOverflow
-        ? "width, transform, opacity"
-        : shouldExposeTopChromeAvoidance
-          ? "transform"
-          : "auto",
+      willChange:
+        shouldExposeSlotOverflow || isEnteringSlot
+          ? "width, transform, opacity"
+          : shouldExposeTopChromeAvoidance
+            ? "transform"
+            : "auto",
     };
   };
 
@@ -5504,6 +5628,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     isActive: boolean,
     isResizingSlot: boolean,
   ): React.CSSProperties => {
+    const isEnteringSlot = panelEnterPositions.includes(position);
     const isSettlingSlot =
       effectivePanelDropSettlingPositions.includes(position);
     const isExitingSlot = panelExitPositions.includes(position);
@@ -5523,7 +5648,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       draggingFilePanel ||
       isResizingSlot;
     const shouldAnimateSlotSize =
-      (isSettlingSlot || isExitingSlot) && !slotTransitionSuspended;
+      (isEnteringSlot || isSettlingSlot || isExitingSlot) &&
+      !slotTransitionSuspended;
     const transition =
       reducePanelMotion || !shouldAnimateSlotSize
         ? "none"
@@ -5548,11 +5674,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           : undefined,
       pointerEvents: isActive ? "auto" : "none",
       transition,
-      willChange: shouldExposeSlotOverflow
-        ? "height, transform, opacity"
-        : shouldExposeTopChromeAvoidance
-          ? "transform"
-          : "auto",
+      willChange:
+        shouldExposeSlotOverflow || isEnteringSlot
+          ? "height, transform, opacity"
+          : shouldExposeTopChromeAvoidance
+            ? "transform"
+            : "auto",
     };
   };
 
@@ -5568,7 +5695,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   };
 
   // Framer layout scales slot descendants here, which makes panels expand
-  // instead of sliding. Only drag/drop settling animates slot size.
+  // instead of sliding. Slot size is animated with CSS while the panel keeps
+  // its own slide transform.
   const workspaceLayoutMotionEnabled = false;
   const panelLayoutChanging =
     effectivePanelDropSettling || panelExitPositions.length > 0;
@@ -5714,6 +5842,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               draggingPanel={draggingPanel}
               draggingPreviewWindowId={draggingPreviewWindowId}
               draggingFilePanel={draggingFilePanel}
+              panelExitPositions={panelExitPositions}
               panelPresenceBypassPositions={panelPresenceBypassPositions}
               fullscreenSnappedExitSuppression={
                 workspaceModel.fullscreenSnappedExitSuppression

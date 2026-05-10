@@ -58,8 +58,6 @@ export const FLOATING_PANEL_LAYOUT_TRANSITION = {
 
 export const FLOATING_PANEL_LAYOUT_TRANSITION_MS = 300;
 const FLOATING_PANEL_FLOATING_SLIDE_OFFSET = 32;
-const FLOATING_PANEL_EXIT_OVERSHOOT_MIN = 96;
-const FLOATING_PANEL_EXIT_OVERSHOOT_RATIO = 0.28;
 const FLOATING_PANEL_NO_MOTION_TRANSITION = { duration: 0 } as const;
 const FLOATING_PANEL_DROP_PREVIEW_WIDTH = 150;
 const FLOATING_PANEL_DROP_PREVIEW_HEIGHT = 100;
@@ -99,20 +97,6 @@ const getSnappedSlideDistance = (
     FLOATING_PANEL_FLOATING_SLIDE_OFFSET,
     edge === "left" || edge === "right" ? size.width : size.height,
   );
-
-const getSnappedExitSlideDistance = (
-  edge: PanelPosition,
-  size: PanelSize,
-): number => {
-  const distance = getSnappedSlideDistance(edge, size);
-  return (
-    distance +
-    Math.max(
-      FLOATING_PANEL_EXIT_OVERSHOOT_MIN,
-      distance * FLOATING_PANEL_EXIT_OVERSHOOT_RATIO,
-    )
-  );
-};
 
 export interface FloatingPanelProps {
   id: string;
@@ -169,6 +153,8 @@ export interface FloatingPanelProps {
   isFullscreen?: boolean;
   fullscreenLayoutId?: string;
   fullscreenMotionActive?: boolean;
+  preserveFullscreenLayoutIdentity?: boolean;
+  isSlotExiting?: boolean;
   activeDropTargetPosition?: PanelPosition | null;
   isRelocating?: boolean;
   zenModeEnabled?: boolean;
@@ -219,6 +205,8 @@ export const FloatingPanel = React.forwardRef<
       isFullscreen = false,
       fullscreenLayoutId,
       fullscreenMotionActive = false,
+      preserveFullscreenLayoutIdentity = false,
+      isSlotExiting = false,
       activeDropTargetPosition = null,
       isRelocating = false,
       zenModeEnabled = false,
@@ -242,6 +230,7 @@ export const FloatingPanel = React.forwardRef<
     );
     const panelRef = useRef<HTMLDivElement>(null);
     const latestBoundsRef = useRef<PanelBounds | null>(null);
+    const frozenExitBoundsRef = useRef<PanelBounds | null>(null);
     const latestDragOffsetRef = useRef({ x: 0, y: 0 });
     const latestDragTargetRef = useRef<PanelPosition | null>(null);
     const pendingDragTargetRef = useRef<{ x: number; y: number } | null>(null);
@@ -273,7 +262,10 @@ export const FloatingPanel = React.forwardRef<
       if (reduceMotion || mode === "floating") {
         setHasEntered(true);
       }
-    }, [mode, reduceMotion]);
+      if (isPresent && !isSlotExiting) {
+        frozenExitBoundsRef.current = null;
+      }
+    }, [isPresent, isSlotExiting, mode, reduceMotion]);
 
     useEffect(() => {
       if (
@@ -343,8 +335,29 @@ export const FloatingPanel = React.forwardRef<
       };
     }, []);
 
+    const readLogicalPanelBounds = useCallback(
+      (node: HTMLDivElement | null): PanelBounds | null => {
+        if (!node) {
+          return null;
+        }
+
+        const rect = node.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+          return null;
+        }
+
+        return {
+          left: screenToLogicalPixels(rect.left, effectiveUiScale),
+          top: screenToLogicalPixels(rect.top, effectiveUiScale),
+          width: screenToLogicalPixels(rect.width, effectiveUiScale),
+          height: screenToLogicalPixels(rect.height, effectiveUiScale),
+        };
+      },
+      [effectiveUiScale],
+    );
+
     useLayoutEffect(() => {
-      if (isDragging || isResizing) {
+      if (isDragging || isResizing || isSlotExiting) {
         return;
       }
 
@@ -353,14 +366,12 @@ export const FloatingPanel = React.forwardRef<
         return;
       }
 
-      const rect = node.getBoundingClientRect();
-      latestBoundsRef.current = {
-        left: rect.left,
-        top: rect.top,
-        width: rect.width,
-        height: rect.height,
-      };
+      const nextBounds = readLogicalPanelBounds(node);
+      if (nextBounds) {
+        latestBoundsRef.current = nextBounds;
+      }
     }, [
+      readLogicalPanelBounds,
       hostMode,
       isDragging,
       isResizing,
@@ -374,6 +385,7 @@ export const FloatingPanel = React.forwardRef<
       adjacentPanels.left,
       adjacentPanels.right,
       adjacentPanels.top,
+      isSlotExiting,
       zenTopChromeAvoidanceTop,
     ]);
 
@@ -392,19 +404,22 @@ export const FloatingPanel = React.forwardRef<
     );
 
     const captureLatestBounds = useCallback(() => {
-      const node = panelRef.current;
-      if (!node) {
-        return;
+      const nextBounds = readLogicalPanelBounds(panelRef.current);
+      if (nextBounds) {
+        latestBoundsRef.current = nextBounds;
+      }
+    }, [readLogicalPanelBounds]);
+
+    const freezeExitBounds = useCallback(() => {
+      if (frozenExitBoundsRef.current) {
+        return frozenExitBoundsRef.current;
       }
 
-      const rect = node.getBoundingClientRect();
-      latestBoundsRef.current = {
-        left: rect.left,
-        top: rect.top,
-        width: rect.width,
-        height: rect.height,
-      };
-    }, []);
+      const measuredBounds = readLogicalPanelBounds(panelRef.current);
+      const nextBounds = measuredBounds ?? latestBoundsRef.current;
+      frozenExitBoundsRef.current = nextBounds;
+      return nextBounds;
+    }, [readLogicalPanelBounds]);
 
     const isLogicalFullscreen = useCallback(() => {
       if (isFullscreen) {
@@ -450,7 +465,7 @@ export const FloatingPanel = React.forwardRef<
 
       return getSlideVectorForEdge(
         position,
-        getSnappedExitSlideDistance(position, size),
+        getSnappedSlideDistance(position, size),
       );
     }, [isLogicalFullscreen, position, reduceMotion, size]);
 
@@ -929,6 +944,12 @@ export const FloatingPanel = React.forwardRef<
       y + size.height >= viewportHeight - 1;
     const immersiveFrameActive =
       immersiveOverlayCoversViewport && !isDragging && !isResizing;
+    const flowSlotExitActive =
+      mode === "snapped" &&
+      hostMode === "flow" &&
+      isSlotExiting &&
+      !isDragging &&
+      !isResizing;
 
     const getContainerStyle = (): React.CSSProperties => {
       const isSnapped = mode === "snapped";
@@ -941,7 +962,9 @@ export const FloatingPanel = React.forwardRef<
         mode === "floating" ||
         isPinned;
       const shouldPromoteForMotion =
-        mode === "snapped" && !reduceMotion && (!hasEntered || !isPresent);
+        mode === "snapped" &&
+        !reduceMotion &&
+        (!hasEntered || !isPresent || flowSlotExitActive);
       const panelFrameRadius = immersiveFrameActive ? 0 : "var(--radius-lg)";
       const base: React.CSSProperties = {
         ...WAILS_NO_DRAG_STYLE,
@@ -977,7 +1000,8 @@ export const FloatingPanel = React.forwardRef<
             : (customZIndex ?? (mode === "floating" ? 90 : 50)),
         overflow: "hidden",
         isolation: "isolate",
-        pointerEvents: isPresent && isVisible ? "auto" : "none",
+        pointerEvents:
+          isPresent && isVisible && !flowSlotExitActive ? "auto" : "none",
         willChange: isDragging
           ? "transform"
           : isResizing
@@ -1031,8 +1055,8 @@ export const FloatingPanel = React.forwardRef<
       }
 
       if (isFlowHosted) {
-        const exitingBounds = latestBoundsRef.current;
-        if (!isPresent) {
+        if (!isPresent || flowSlotExitActive) {
+          const exitingBounds = freezeExitBounds();
           const flowExitAnchor: React.CSSProperties =
             position === "right"
               ? { right: 0, top: 0 }
@@ -1269,33 +1293,40 @@ export const FloatingPanel = React.forwardRef<
     const slideMotionEnabled = !reduceMotion && !interactionMotionDisabled;
     const snappedSlideMotionEnabled = slideMotionEnabled && mode === "snapped";
     const shouldResolveSlideVector =
-      snappedSlideMotionEnabled && !isRelocating && (!isPresent || !hasEntered);
+      snappedSlideMotionEnabled &&
+      !isRelocating &&
+      (!isPresent || !hasEntered || flowSlotExitActive);
     const slideVector = shouldResolveSlideVector
       ? getSlideVector()
       : { x: 0, y: 0 };
-    const slideMotionTarget = { x: 0, y: zenTopChromeAvoidanceOffset };
+    const slideMotionSettledTarget = {
+      x: 0,
+      y: zenTopChromeAvoidanceOffset,
+    };
     const exitSlideVector =
       snappedSlideMotionEnabled && !isRelocating
         ? getExitSlideVector()
-        : slideMotionTarget;
+        : slideMotionSettledTarget;
+    const slideMotionTarget = slideMotionSettledTarget;
     const panelMotionState = isRelocating
       ? "relocating"
-      : !isPresent
+      : !isPresent || flowSlotExitActive
         ? "exit"
         : snappedSlideMotionEnabled && !hasEntered
           ? "enter"
           : "settled";
-    const panelState = !isPresent
-      ? "exiting"
-      : isDragging
-        ? "dragging"
-        : isResizing
-          ? "resizing"
-          : isDropTarget
-            ? "drop-target"
-            : mode === "floating"
-              ? "floating"
-              : "docked";
+    const panelState =
+      !isPresent || flowSlotExitActive
+        ? "exiting"
+        : isDragging
+          ? "dragging"
+          : isResizing
+            ? "resizing"
+            : isDropTarget
+              ? "drop-target"
+              : mode === "floating"
+                ? "floating"
+                : "docked";
     const slideMotionExit = isRelocating
       ? {
           opacity: 0,
@@ -1305,17 +1336,25 @@ export const FloatingPanel = React.forwardRef<
         }
       : snappedSlideMotionEnabled
         ? { x: exitSlideVector.x, y: exitSlideVector.y }
-        : slideMotionTarget;
+        : slideMotionSettledTarget;
     const fullscreenLayoutIdentityEnabled =
       Boolean(fullscreenLayoutId) &&
       !reduceMotion &&
       !isDragging &&
       !isResizing &&
-      (fullscreenMotionActive || (mode === "snapped" && hostMode === "flow"));
+      isPresent &&
+      !flowSlotExitActive &&
+      (fullscreenMotionActive ||
+        (mode === "snapped" && hostMode === "flow") ||
+        (preserveFullscreenLayoutIdentity && mode === "floating"));
     const fullscreenLayoutMotionEnabled =
       fullscreenLayoutIdentityEnabled && fullscreenMotionActive;
     const flowLayoutMotionEnabled =
-      mode === "snapped" && hostMode === "flow" && !isDragging && !isResizing;
+      mode === "snapped" &&
+      hostMode === "flow" &&
+      !isDragging &&
+      !isResizing &&
+      !flowSlotExitActive;
     const motionTransition = fullscreenLayoutMotionEnabled
       ? PANEL_FULLSCREEN_MOTION_TRANSITION
       : snappedSlideMotionEnabled
