@@ -12,6 +12,7 @@ import {
   SplitSquareVertical,
 } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
+import "../styles/terminal.css";
 import { getThemeColors } from "../styles/colors";
 import { useTheme } from "../hooks/useTheme";
 import { useTerminalStore } from "../stores/terminalStore";
@@ -26,6 +27,7 @@ import {
 } from "../utils/terminalSearch";
 import { TERMINAL_FIND_EVENT } from "../utils/searchEvents";
 import { recordTerminalPerf } from "../utils/terminalPerf";
+import { ensureAcceleratedTerminalRenderer } from "../utils/terminalRenderer";
 import {
   readClipboardTextWithFallback,
   writeClipboardTextWithFallback,
@@ -937,9 +939,14 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
         element.style.height = "100%";
       };
 
+      const prepareTerminalSurface = () => {
+        stretchTerminalElement();
+        ensureAcceleratedTerminalRenderer(session.terminal, session.id);
+      };
+
       const existingXterm = container.querySelector(".xterm");
       if (existingXterm) {
-        stretchTerminalElement();
+        prepareTerminalSurface();
         requestAnimationFrame(() => {
           session.fitAddon.fit();
         });
@@ -951,7 +958,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
         if (termElement.parentElement !== container) {
           container.appendChild(termElement);
         }
-        stretchTerminalElement();
+        prepareTerminalSurface();
         requestAnimationFrame(() => {
           session.fitAddon.fit();
           session.terminal.focus();
@@ -960,7 +967,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       }
 
       session.terminal.open(container);
-      stretchTerminalElement();
+      prepareTerminalSurface();
 
       requestAnimationFrame(() => {
         session.fitAddon.fit();

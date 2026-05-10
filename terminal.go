@@ -13,6 +13,11 @@ import (
 
 // Terminal Management - PTY session lifecycle and I/O
 
+const (
+	terminalDataFlushDelay = 4 * time.Millisecond
+	terminalDataMaxBytes   = 64 << 10
+)
+
 func (a *App) CreateTerminal(id, name string) error {
 	return a.CreateTerminalForProject(id, name, a.GetCurrentProjectPath())
 }
@@ -123,8 +128,8 @@ type terminalDataEmitter struct {
 func newTerminalDataEmitter(emit func([]byte)) *terminalDataEmitter {
 	return &terminalDataEmitter{
 		emit:       emit,
-		flushDelay: 16 * time.Millisecond,
-		maxBytes:   32 << 10,
+		flushDelay: terminalDataFlushDelay,
+		maxBytes:   terminalDataMaxBytes,
 	}
 }
 

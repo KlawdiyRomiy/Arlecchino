@@ -4,6 +4,10 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { recordTerminalPerf } from "../utils/terminalPerf";
+import {
+  buildTerminalOptions,
+  TERMINAL_INTERACTIVE_WRITE_MAX_CHARS,
+} from "../utils/terminalOptions";
 import { usePerformanceStore } from "./performanceStore";
 import { normalizeTUIAssistAnchor } from "../utils/terminalLayout";
 import {
@@ -50,6 +54,40 @@ const terminalOutputQueues = new Map<
   }
 >();
 
+const encodeTerminalInput = (data: string): string => {
+  const bytes = new TextEncoder().encode(data);
+  let binary = "";
+  const chunkSize = 0x8000;
+
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const end = Math.min(offset + chunkSize, bytes.length);
+    let chunk = "";
+    for (let index = offset; index < end; index += 1) {
+      chunk += String.fromCharCode(bytes[index]);
+    }
+    binary += chunk;
+  }
+
+  return btoa(binary);
+};
+
+const decodeTerminalOutput = (data: string): Uint8Array | null => {
+  let binary = "";
+  try {
+    binary = atob(data);
+  } catch (error) {
+    console.error("[TerminalStore] Invalid terminal:data payload", error);
+    return null;
+  }
+
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
+};
+
 const flushTerminalOutputQueue = (session: TerminalSession) => {
   const queue = terminalOutputQueues.get(session.id);
   if (!queue || queue.chunks.length === 0) {
@@ -57,12 +95,19 @@ const flushTerminalOutputQueue = (session: TerminalSession) => {
   }
 
   const payload = queue.chunks.join("");
-  queue.chunks = [];
-  queue.frameId = null;
+  terminalOutputQueues.delete(session.id);
   session.terminal.write(payload);
 };
 
 const scheduleTerminalOutput = (session: TerminalSession, chunk: string) => {
+  if (
+    chunk.length <= TERMINAL_INTERACTIVE_WRITE_MAX_CHARS &&
+    !terminalOutputQueues.has(session.id)
+  ) {
+    session.terminal.write(chunk);
+    return;
+  }
+
   let queue = terminalOutputQueues.get(session.id);
   if (!queue) {
     queue = { chunks: [], frameId: null };
@@ -284,14 +329,9 @@ const createLocalTerminalSession = (
   terminalFontSize: number,
   projectPath: string,
 ): TerminalSession => {
-  const terminal = new Terminal({
-    cursorBlink: true,
-    fontSize: terminalFontSize,
-    fontFamily:
-      "'MesloLGS NF', 'Hack Nerd Font', 'FiraCode Nerd Font', 'JetBrains Mono', 'SF Mono', Monaco, Consolas, monospace",
-    theme: getTerminalTheme(themeId),
-    allowProposedApi: true,
-  });
+  const terminal = new Terminal(
+    buildTerminalOptions(themeId, terminalFontSize),
+  );
 
   const fitAddon = new FitAddon();
   const searchAddon = new SearchAddon();
@@ -300,9 +340,7 @@ const createLocalTerminalSession = (
   terminal.loadAddon(new WebLinksAddon());
 
   terminal.onData((data) => {
-    const bytes = new TextEncoder().encode(data);
-    const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join("");
-    WriteTerminal(id, btoa(binary));
+    WriteTerminal(id, encodeTerminalInput(data));
   });
 
   terminal.onResize(({ rows, cols }) => {
@@ -888,18 +926,11 @@ export const useTerminalStore = create<TerminalState & TerminalActions>(
             return;
           }
 
-          let binary = "";
-          try {
-            binary = atob(event.data);
-          } catch (error) {
-            console.error(
-              "[TerminalStore] Invalid terminal:data payload",
-              error,
-            );
+          const bytes = decodeTerminalOutput(event.data);
+          if (!bytes) {
             return;
           }
 
-          const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
           const decoded = session.streamDecoder.decode(bytes, { stream: true });
           if (decoded.length > 0) {
             usePerformanceStore
