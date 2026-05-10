@@ -48,6 +48,15 @@ type OpenTerminalPreviewInput = {
   forceOpen?: boolean;
 };
 
+const fullscreenCapablePanelIds = new Set<PanelId>([
+  "terminal",
+  "aiChat",
+  "git",
+  "problems",
+  "code",
+  "markdownPreview",
+]);
+
 interface MainLayoutPanelRendererProps {
   panelId: PanelId;
   hostMode?: PanelHostMode;
@@ -61,6 +70,7 @@ interface MainLayoutPanelRendererProps {
   draggingPreviewWindowId: string | null;
   draggingFilePanel: boolean;
   relocatingPanelIds: PanelId[];
+  fullscreenTransitionPanelIds: PanelId[];
   uiScale: number;
   activeProjectPath: string;
   activeStatusFilePath: string | null;
@@ -83,11 +93,7 @@ interface MainLayoutPanelRendererProps {
   onClosePanel: (panelId: PanelId) => void;
   onMovePanelToPosition: (panelId: PanelId, position: PanelPosition) => boolean;
   onCloseTerminalPanel: () => void;
-  onTerminalFullscreen: () => void;
-  onAIChatFullscreen: () => void;
-  onGitFullscreen: () => void;
-  onProblemsFullscreen: () => void;
-  onMarkdownPreviewFullscreen: () => void;
+  onPanelFullscreen: (panelId: PanelId) => void;
   onMarkdownLinkPreviewOpen: (url: string) => void;
   onFileOpen: (
     path: string,
@@ -135,6 +141,7 @@ export const MainLayoutPanelRenderer: React.FC<
   draggingPreviewWindowId,
   draggingFilePanel,
   relocatingPanelIds,
+  fullscreenTransitionPanelIds,
   uiScale,
   activeProjectPath,
   activeStatusFilePath,
@@ -157,11 +164,7 @@ export const MainLayoutPanelRenderer: React.FC<
   onClosePanel,
   onMovePanelToPosition,
   onCloseTerminalPanel,
-  onTerminalFullscreen,
-  onAIChatFullscreen,
-  onGitFullscreen,
-  onProblemsFullscreen,
-  onMarkdownPreviewFullscreen,
+  onPanelFullscreen,
   onMarkdownLinkPreviewOpen,
   onFileOpen,
   onFileOpenInPanel,
@@ -189,6 +192,8 @@ export const MainLayoutPanelRenderer: React.FC<
       draggingFilePanel);
   const isFullscreen = isLogicalFullscreenPanel(config);
   const isTUITerminalPanel = panelId === "terminal" && tuiModeActive;
+  const fullscreenMotionActive = fullscreenTransitionPanelIds.includes(panelId);
+  const isFullscreenCapable = fullscreenCapablePanelIds.has(panelId);
 
   const getAdjacentPanels = () => {
     const adjacent: {
@@ -296,6 +301,13 @@ export const MainLayoutPanelRenderer: React.FC<
     adjacentPanels: getAdjacentPanels(),
     uiScale,
     isFullscreen,
+    fullscreenLayoutId: isFullscreenCapable
+      ? `floating-panel-fullscreen-${panelId}`
+      : undefined,
+    fullscreenMotionActive,
+    onFullscreen: isFullscreenCapable
+      ? () => onPanelFullscreen(panelId)
+      : undefined,
     isRelocating: relocatingPanelIds.includes(panelId),
     snappedOverlayInsets,
     zenTopChromeAvoidanceTop,
@@ -343,7 +355,6 @@ export const MainLayoutPanelRenderer: React.FC<
           useViewportPositioning={tuiModeActive}
           immersiveOverlay={tuiModeActive}
           zIndex={terminalZIndex}
-          onFullscreen={onTerminalFullscreen}
         >
           {tuiModeActive ? (
             <div style={tuiTerminalPaneStyle}>
@@ -382,7 +393,6 @@ export const MainLayoutPanelRenderer: React.FC<
           minSize={280}
           maxSize={600}
           {...panelProps}
-          onFullscreen={onAIChatFullscreen}
         >
           <AIChatPanelContent />
         </FloatingPanel>
@@ -397,7 +407,6 @@ export const MainLayoutPanelRenderer: React.FC<
           minSize={200}
           maxSize={1400}
           {...panelProps}
-          onFullscreen={onGitFullscreen}
         >
           <GitPanel
             projectPath={activeProjectPath}
@@ -420,7 +429,6 @@ export const MainLayoutPanelRenderer: React.FC<
           minSize={320}
           maxSize={1400}
           {...panelProps}
-          onFullscreen={onProblemsFullscreen}
         >
           <ProblemsPanel
             activeFilePath={activeStatusFilePath ?? activeEditorTabPath}
@@ -488,7 +496,6 @@ export const MainLayoutPanelRenderer: React.FC<
           minSize={320}
           maxSize={1100}
           {...panelProps}
-          onFullscreen={onMarkdownPreviewFullscreen}
         >
           <MarkdownPreviewPanelContent
             source={markdownPreviewSource}

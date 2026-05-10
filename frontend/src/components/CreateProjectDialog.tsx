@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
 import * as App from "../wails/app";
 import { selectDirectoryWithCapability } from "../shell/shellDialogs";
 import { shortcuts } from "../utils/keyboard";
+import { MotionShellDialogFrame } from "./ui/MotionShellDialogFrame";
 
 interface CreateProjectDialogProps {
   open: boolean;
@@ -109,81 +110,78 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
   return createPortal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5 backdrop-blur-sm">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.97 }}
-            transition={{ duration: 0.14, ease: "easeOut" }}
-            className="w-[min(620px,100%)] rounded-[28px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-8 shadow-2xl outline-none"
-          >
+        <MotionShellDialogFrame
+          key="create-project-dialog"
+          overlayClassName="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5 backdrop-blur-sm"
+          panelClassName="w-[min(620px,100%)] rounded-[28px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-8 shadow-2xl outline-none"
+          panelTestId="create-project-dialog"
+        >
+          <div>
+            <h2 className="text-[28px] font-semibold text-[var(--text-primary)]">
+              Create New Project
+            </h2>
+            <div className="mt-2 text-[16px] text-[var(--text-secondary)]">
+              Choose a name and parent directory.
+            </div>
+          </div>
+
+          <div className="mt-8 space-y-5">
             <div>
-              <h2 className="text-[28px] font-semibold text-[var(--text-primary)]">
-                Create New Project
-              </h2>
-              <div className="mt-2 text-[16px] text-[var(--text-secondary)]">
-                Choose a name and parent directory.
-              </div>
+              <label className={labelClass}>Project Name</label>
+              <input
+                type="text"
+                value={projectName}
+                onChange={(event) => setProjectName(event.target.value)}
+                placeholder="my-awesome-project"
+                className={inputClass}
+              />
             </div>
 
-            <div className="mt-8 space-y-5">
-              <div>
-                <label className={labelClass}>Project Name</label>
+            <div>
+              <label className={labelClass}>Parent Directory</label>
+              <div className="flex flex-col gap-3 sm:flex-row">
                 <input
                   type="text"
-                  value={projectName}
-                  onChange={(event) => setProjectName(event.target.value)}
-                  placeholder="my-awesome-project"
-                  className={inputClass}
+                  value={selectedDir}
+                  readOnly
+                  placeholder="Select directory..."
+                  className={`${inputClass} min-w-0 flex-1`}
                 />
-              </div>
-
-              <div>
-                <label className={labelClass}>Parent Directory</label>
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <input
-                    type="text"
-                    value={selectedDir}
-                    readOnly
-                    placeholder="Select directory..."
-                    className={`${inputClass} min-w-0 flex-1`}
-                  />
-                  <button
-                    onClick={handleSelectDirectory}
-                    disabled={creating}
-                    className={`${secondaryButtonClass} shrink-0`}
-                  >
-                    Browse
-                  </button>
-                </div>
-              </div>
-
-              <div className="break-all text-[13px] text-[var(--text-muted)]">
-                Project will be created at:{" "}
-                {selectedDir && projectName.trim()
-                  ? `${selectedDir}/${projectName.trim()}`
-                  : "..."}
+                <button
+                  onClick={handleSelectDirectory}
+                  disabled={creating}
+                  className={`${secondaryButtonClass} shrink-0`}
+                >
+                  Browse
+                </button>
               </div>
             </div>
 
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
-              <button
-                onClick={handleCreateProject}
-                disabled={!projectName.trim() || !selectedDir || creating}
-                className="min-h-12 rounded-[18px] bg-white px-8 text-[16px] font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-2"
-              >
-                {creating ? "Creating..." : "Create Project"}
-              </button>
-              <button
-                onClick={close}
-                disabled={creating}
-                className={`${secondaryButtonClass} shrink-0 sm:order-1`}
-              >
-                Cancel
-              </button>
+            <div className="break-all text-[13px] text-[var(--text-muted)]">
+              Project will be created at:{" "}
+              {selectedDir && projectName.trim()
+                ? `${selectedDir}/${projectName.trim()}`
+                : "..."}
             </div>
-          </motion.div>
-        </div>
+          </div>
+
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
+            <button
+              onClick={handleCreateProject}
+              disabled={!projectName.trim() || !selectedDir || creating}
+              className="min-h-12 rounded-[18px] bg-white px-8 text-[16px] font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-2"
+            >
+              {creating ? "Creating..." : "Create Project"}
+            </button>
+            <button
+              onClick={close}
+              disabled={creating}
+              className={`${secondaryButtonClass} shrink-0 sm:order-1`}
+            >
+              Cancel
+            </button>
+          </div>
+        </MotionShellDialogFrame>
       )}
     </AnimatePresence>,
     document.body,

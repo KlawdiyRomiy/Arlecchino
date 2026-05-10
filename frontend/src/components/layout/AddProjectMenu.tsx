@@ -3,6 +3,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Plus, FolderOpen, Sparkles, GitBranch } from "lucide-react";
 import { CloneRepositoryDialog } from "../CloneRepositoryDialog";
 import { CreateProjectDialog } from "../CreateProjectDialog";
+import { MotionDropdownContent } from "../ui/MotionDropdownContent";
 
 const OPEN_TARGET_EVENT = "arlecchino:open";
 const NEW_PROJECT_EVENT = "arlecchino:new-project";
@@ -50,10 +51,10 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
         </DropdownMenu.Trigger>
 
         <DropdownMenu.Portal>
-          <DropdownMenu.Content
+          <MotionDropdownContent
             align="start"
             sideOffset={8}
-            className="shell-menu-content min-w-[240px] animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
+            className="shell-menu-content min-w-[240px]"
             data-shell-menu-content
           >
             <DropdownMenu.Item
@@ -83,7 +84,7 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
               <GitBranch size={16} />
               <span className="flex-1">Clone Repository</span>
             </DropdownMenu.Item>
-          </DropdownMenu.Content>
+          </MotionDropdownContent>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
 

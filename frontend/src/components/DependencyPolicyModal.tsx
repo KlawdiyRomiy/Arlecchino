@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Check,
   ChevronDown,
@@ -19,6 +20,10 @@ import {
 } from "../../bindings/arlecchino/internal/depsync/models";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { shortcuts } from "../utils/keyboard";
+import {
+  SHELL_DIALOG_OVERLAY_TRANSITION,
+  SHELL_DIALOG_PANEL_TRANSITION,
+} from "./ui/motionContracts";
 
 interface DependencyPolicyModalProps {
   isOpen: boolean;
@@ -132,6 +137,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
   onNotify,
 }) => {
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
+  const reduceDialogMotion = useReducedMotion();
   const [consentMode, setConsentMode] = useState<ConsentMode>(
     ConsentMode.ConsentModeConfirmOncePerProject,
   );
@@ -319,401 +325,491 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[110] bg-black/55 backdrop-blur-[10px]" />
-        <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-[111] flex flex-col overflow-hidden rounded-[24px] border border-[var(--border-default)] bg-[var(--surface-canvas)] shadow-[var(--shadow-overlay)] outline-none"
-          data-testid="dependency-policy-modal"
-          style={{
-            transform: `translate(-50%, -50%) scale(${uiScale})`,
-            transformOrigin: "center",
-            width: `min(${94 / uiScale}vw, 1180px)`,
-            height: `min(${88 / uiScale}vh, 840px)`,
-          }}
-          onEscapeKeyDown={(event) => {
-            event.preventDefault();
-            if (!running) {
-              onClose();
-            }
-          }}
-        >
-          <div className="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-6 py-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-primary)]">
-                <ShieldCheck size={18} />
-              </div>
-              <div className="min-w-0">
-                <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">
-                  Workspace policy
-                </div>
-                <Dialog.Title className="text-[26px] font-semibold leading-none text-[var(--text-primary)]">
-                  Sync dependencies
-                </Dialog.Title>
-                <Dialog.Description className="mt-2 text-[13px] text-[var(--text-secondary)]">
-                  Review dependency actions before they touch this workspace.
-                </Dialog.Description>
-              </div>
-            </div>
-
-            <Dialog.Close asChild>
-              <button
-                type="button"
-                className={dependencyIconButtonClass}
-                aria-label="Close dependency policy dialog"
+      <Dialog.Portal forceMount>
+        <AnimatePresence>
+          {isOpen ? (
+            <React.Fragment key="dependency-policy-modal-motion">
+              <Dialog.Overlay forceMount asChild>
+                <motion.div
+                  className="fixed inset-0 z-[110] bg-black/55 backdrop-blur-[10px]"
+                  initial={reduceDialogMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={reduceDialogMotion ? { opacity: 1 } : { opacity: 0 }}
+                  transition={
+                    reduceDialogMotion
+                      ? { duration: 0 }
+                      : SHELL_DIALOG_OVERLAY_TRANSITION
+                  }
+                />
+              </Dialog.Overlay>
+              <Dialog.Content
+                forceMount
+                asChild
+                onEscapeKeyDown={(event) => {
+                  event.preventDefault();
+                  if (!running) {
+                    onClose();
+                  }
+                }}
               >
-                <X size={16} />
-              </button>
-            </Dialog.Close>
-          </div>
-
-          <div className="grid min-h-0 flex-1 gap-5 bg-[var(--surface-overlay)] p-5 md:grid-cols-[360px_minmax(0,1fr)]">
-            <div className="min-h-0 overflow-y-auto">
-              <div className="space-y-4">
-                <section className={`${dependencySurfaceClass} p-4`}>
-                  <div className={sectionLabelClass}>Consent</div>
-                  <div className="mt-4 space-y-2.5">
-                    {CONSENT_OPTIONS.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setConsentMode(option.value)}
-                        className={`grid w-full grid-cols-[34px_minmax(0,1fr)] items-start gap-3 rounded-[20px] border px-3.5 py-3.5 text-left transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
-                          consentMode === option.value
-                            ? "border-[var(--border-default)] bg-[var(--surface-active)]"
-                            : "border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_92%,transparent)] hover:border-[var(--border-default)] hover:bg-[var(--surface-3)]"
-                        }`}
-                        aria-pressed={consentMode === option.value}
-                      >
-                        <span className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--surface-1)] text-[var(--text-primary)]">
-                          {consentMode === option.value ? (
-                            <span className="h-2.5 w-2.5 rounded-full bg-[var(--text-primary)]" />
-                          ) : null}
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block text-[15px] font-semibold leading-5 text-[var(--text-primary)]">
-                            {option.label}
-                          </span>
-                          <span
-                            className={`mt-1.5 block text-[13px] leading-5 ${dependencyReadableTextClass}`}
-                          >
-                            {option.description}
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-
-                <section className={`${dependencySurfaceClass} p-4`}>
-                  <div className={sectionLabelClass}>Safety</div>
-                  <div className="mt-4 space-y-2.5">
-                    <SwitchRow
-                      title="Auto-approve low risk"
-                      description="Resolve-only actions can run without review."
-                      checked={autoApproveLowRisk}
-                      onCheckedChange={setAutoApproveLowRisk}
-                    />
-                    <SwitchRow
-                      title="Remember approvals"
-                      description="Store approved action ids for this project."
-                      checked={persistApprovals}
-                      onCheckedChange={setPersistApprovals}
-                      disabled={
-                        consentMode !==
-                        ConsentMode.ConsentModeConfirmOncePerProject
-                      }
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    className={`${dependencyActionClass} mt-4`}
-                    onClick={() => void handleClearRemembered()}
-                    disabled={clearing || rememberedActionIds.length === 0}
+                <motion.div
+                  className="fixed left-1/2 top-1/2 z-[111] outline-none"
+                  data-testid="dependency-policy-modal"
+                  initial={reduceDialogMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={reduceDialogMotion ? { opacity: 1 } : { opacity: 0 }}
+                  transition={
+                    reduceDialogMotion
+                      ? { duration: 0 }
+                      : SHELL_DIALOG_OVERLAY_TRANSITION
+                  }
+                  style={{
+                    transform: `translate(-50%, -50%) scale(${uiScale})`,
+                    transformOrigin: "center",
+                    width: `min(${94 / uiScale}vw, 1180px)`,
+                    height: `min(${88 / uiScale}vh, 840px)`,
+                  }}
+                >
+                  <motion.div
+                    className="flex h-full w-full flex-col overflow-hidden rounded-[24px] border border-[var(--border-default)] bg-[var(--surface-canvas)] shadow-[var(--shadow-overlay)]"
+                    initial={
+                      reduceDialogMotion ? false : { y: 12, scale: 0.985 }
+                    }
+                    animate={{ y: 0, scale: 1 }}
+                    exit={
+                      reduceDialogMotion
+                        ? { y: 0, scale: 1 }
+                        : { y: 8, scale: 0.99 }
+                    }
+                    transition={
+                      reduceDialogMotion
+                        ? { duration: 0 }
+                        : SHELL_DIALOG_PANEL_TRANSITION
+                    }
                   >
-                    {clearing ? "Clearing..." : "Clear remembered approvals"}
-                  </button>
-                </section>
-              </div>
-            </div>
+                    <div className="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-6 py-5">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-primary)]">
+                          <ShieldCheck size={18} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                            Workspace policy
+                          </div>
+                          <Dialog.Title className="text-[26px] font-semibold leading-none text-[var(--text-primary)]">
+                            Sync dependencies
+                          </Dialog.Title>
+                          <Dialog.Description className="mt-2 text-[13px] text-[var(--text-secondary)]">
+                            Review dependency actions before they touch this
+                            workspace.
+                          </Dialog.Description>
+                        </div>
+                      </div>
 
-            <div className="flex min-h-0 flex-col gap-4">
-              <section className={`${dependencySurfaceClass} p-4`}>
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <div className={sectionLabelClass}>Execution plan</div>
-                    <div className="mt-2 text-[18px] font-semibold text-[var(--text-primary)]">
-                      Planned actions
-                    </div>
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <span className={`${dependencyPillClass} max-w-full`}>
-                        <span className="truncate">
-                          {plan?.projectPath || "Loading project context..."}
-                        </span>
-                      </span>
-                      <span className={dependencyPillClass}>
-                        {planStatusLabel}
-                      </span>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className={dependencyActionClass}
-                    onClick={() => void loadPlan()}
-                    disabled={loading || running}
-                  >
-                    <RefreshCw
-                      size={14}
-                      className={loading ? "animate-spin" : ""}
-                    />
-                    Refresh
-                  </button>
-                </div>
-              </section>
-
-              {error && (
-                <div className="rounded-[20px] border border-[color:var(--status-error)]/25 bg-[color:var(--status-error)]/10 px-4 py-3 text-[13px] text-[var(--status-error)]">
-                  {error}
-                </div>
-              )}
-
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                {loading && !plan ? (
-                  <div
-                    className={`${dependencySurfaceClass} flex min-h-[260px] items-center justify-center px-6 py-10 text-center`}
-                  >
-                    <div>
-                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-secondary)]">
-                        <RefreshCw size={18} className="animate-spin" />
-                      </div>
-                      <div className="mt-4 text-[15px] font-semibold text-[var(--text-primary)]">
-                        Loading plan
-                      </div>
-                      <div
-                        className={`mt-1 text-[13px] ${dependencyReadableTextClass}`}
-                      >
-                        Reading workspace dependency policy.
-                      </div>
-                    </div>
-                  </div>
-                ) : actionEntries.length === 0 ? (
-                  <div
-                    className={`${dependencySurfaceClass} flex min-h-[360px] items-center px-7 py-8`}
-                  >
-                    <div className="max-w-xl">
-                      <div className="flex h-14 w-14 items-center justify-center rounded-[20px] border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-primary)]">
-                        <PackageCheck size={22} />
-                      </div>
-                      <div className="mt-5 text-[22px] font-semibold text-[var(--text-primary)]">
-                        Plan is clear
-                      </div>
-                      <div className="mt-2 text-[14px] leading-6 text-[var(--text-secondary)]">
-                        No dependency actions are available for this project.
-                      </div>
-                      <div className="mt-5 flex flex-wrap items-center gap-2">
-                        <span className={dependencyPillClass}>0 actions</span>
-                        <span className={dependencyPillClass}>
-                          No consent required
-                        </span>
-                        <span className={dependencyPillClass}>
-                          <Check size={12} />
-                          Ready
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-3">
-                    {actionEntries.map((action) => {
-                      const isApproved = approvedActionIds.includes(action.id);
-                      const isRemembered = rememberedActionIds.includes(
-                        action.id,
-                      );
-                      const isExpanded = expandedActionId === action.id;
-                      return (
-                        <section
-                          key={action.id}
-                          className={dependencySurfaceClass}
+                      <Dialog.Close asChild>
+                        <button
+                          type="button"
+                          className={dependencyIconButtonClass}
+                          aria-label="Close dependency policy dialog"
                         >
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            onClick={() =>
-                              setExpandedActionId((previous) =>
-                                previous === action.id ? null : action.id,
-                              )
-                            }
-                            onKeyDown={(event) => {
-                              if (event.key !== "Enter" && event.key !== " ") {
-                                return;
-                              }
-                              event.preventDefault();
-                              setExpandedActionId((previous) =>
-                                previous === action.id ? null : action.id,
-                              );
-                            }}
-                            className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-4 px-4 py-4 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,transparent)] focus-visible:outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--focus-ring)]"
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-[14px] font-semibold text-[var(--text-primary)]">
-                                  {action.label}
-                                </span>
-                                <span
-                                  className={`inline-flex min-h-[26px] items-center rounded-full border px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${riskBadgeClass(action.mutationRisk || "low")}`}
+                          <X size={16} />
+                        </button>
+                      </Dialog.Close>
+                    </div>
+
+                    <div className="grid min-h-0 flex-1 gap-5 bg-[var(--surface-overlay)] p-5 md:grid-cols-[360px_minmax(0,1fr)]">
+                      <div className="min-h-0 overflow-y-auto">
+                        <div className="space-y-4">
+                          <section className={`${dependencySurfaceClass} p-4`}>
+                            <div className={sectionLabelClass}>Consent</div>
+                            <div className="mt-4 space-y-2.5">
+                              {CONSENT_OPTIONS.map((option) => (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  onClick={() => setConsentMode(option.value)}
+                                  className={`grid w-full grid-cols-[34px_minmax(0,1fr)] items-start gap-3 rounded-[20px] border px-3.5 py-3.5 text-left transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
+                                    consentMode === option.value
+                                      ? "border-[var(--border-default)] bg-[var(--surface-active)]"
+                                      : "border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_92%,transparent)] hover:border-[var(--border-default)] hover:bg-[var(--surface-3)]"
+                                  }`}
+                                  aria-pressed={consentMode === option.value}
                                 >
-                                  {action.mutationRisk || "low"}
+                                  <span className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-[var(--border-default)] bg-[var(--surface-1)] text-[var(--text-primary)]">
+                                    {consentMode === option.value ? (
+                                      <span className="h-2.5 w-2.5 rounded-full bg-[var(--text-primary)]" />
+                                    ) : null}
+                                  </span>
+                                  <span className="min-w-0">
+                                    <span className="block text-[15px] font-semibold leading-5 text-[var(--text-primary)]">
+                                      {option.label}
+                                    </span>
+                                    <span
+                                      className={`mt-1.5 block text-[13px] leading-5 ${dependencyReadableTextClass}`}
+                                    >
+                                      {option.description}
+                                    </span>
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </section>
+
+                          <section className={`${dependencySurfaceClass} p-4`}>
+                            <div className={sectionLabelClass}>Safety</div>
+                            <div className="mt-4 space-y-2.5">
+                              <SwitchRow
+                                title="Auto-approve low risk"
+                                description="Resolve-only actions can run without review."
+                                checked={autoApproveLowRisk}
+                                onCheckedChange={setAutoApproveLowRisk}
+                              />
+                              <SwitchRow
+                                title="Remember approvals"
+                                description="Store approved action ids for this project."
+                                checked={persistApprovals}
+                                onCheckedChange={setPersistApprovals}
+                                disabled={
+                                  consentMode !==
+                                  ConsentMode.ConsentModeConfirmOncePerProject
+                                }
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              className={`${dependencyActionClass} mt-4`}
+                              onClick={() => void handleClearRemembered()}
+                              disabled={
+                                clearing || rememberedActionIds.length === 0
+                              }
+                            >
+                              {clearing
+                                ? "Clearing..."
+                                : "Clear remembered approvals"}
+                            </button>
+                          </section>
+                        </div>
+                      </div>
+
+                      <div className="flex min-h-0 flex-col gap-4">
+                        <section className={`${dependencySurfaceClass} p-4`}>
+                          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="min-w-0">
+                              <div className={sectionLabelClass}>
+                                Execution plan
+                              </div>
+                              <div className="mt-2 text-[18px] font-semibold text-[var(--text-primary)]">
+                                Planned actions
+                              </div>
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <span
+                                  className={`${dependencyPillClass} max-w-full`}
+                                >
+                                  <span className="truncate">
+                                    {plan?.projectPath ||
+                                      "Loading project context..."}
+                                  </span>
                                 </span>
                                 <span className={dependencyPillClass}>
-                                  {formatCapability(
-                                    action.capability || "unknown",
-                                  )}
-                                </span>
-                                {action.requiresConsent ? (
-                                  <span className={dependencyPillClass}>
-                                    Consent required
-                                  </span>
-                                ) : null}
-                                {isRemembered ? (
-                                  <span className={dependencyPillClass}>
-                                    Remembered
-                                  </span>
-                                ) : null}
-                              </div>
-                              <div
-                                className={`mt-2 flex flex-wrap items-center gap-2 text-[12px] ${dependencyReadableTextClass}`}
-                              >
-                                <span>{action.ecosystem}</span>
-                                <span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" />
-                                <span>{action.tool}</span>
-                                <span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" />
-                                <span className="truncate">
-                                  {action.manifest}
+                                  {planStatusLabel}
                                 </span>
                               </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              {action.requiresConsent ? (
-                                <span
-                                  className="inline-flex items-center gap-2"
-                                  onClick={(event) => event.stopPropagation()}
-                                >
-                                  <button
-                                    type="button"
-                                    role="checkbox"
-                                    aria-checked={isApproved}
-                                    onClick={() =>
-                                      toggleActionApproval(action.id)
-                                    }
-                                    className={`inline-flex h-9 items-center gap-2 rounded-[18px] border px-3 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
-                                      isApproved
-                                        ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
-                                        : "border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-secondary)] hover:border-[var(--border-default)] hover:text-[var(--text-primary)]"
-                                    }`}
-                                  >
-                                    <Check size={13} />
-                                    Approve
-                                  </button>
-                                </span>
-                              ) : null}
-                              <span className={dependencyIconButtonClass}>
-                                {isExpanded ? (
-                                  <ChevronDown size={15} />
-                                ) : (
-                                  <ChevronRight size={15} />
-                                )}
-                              </span>
-                            </div>
+                            <button
+                              type="button"
+                              className={dependencyActionClass}
+                              onClick={() => void loadPlan()}
+                              disabled={loading || running}
+                            >
+                              <RefreshCw
+                                size={14}
+                                className={loading ? "animate-spin" : ""}
+                              />
+                              Refresh
+                            </button>
                           </div>
-                          {isExpanded && (
-                            <div className="border-t border-[var(--border-subtle)] px-4 pb-4">
-                              <div
-                                className={`${dependencyInsetClass} mt-4 px-4 py-3 font-mono text-[11px] leading-5 text-[var(--text-secondary)]`}
-                              >
-                                {action.executable} {action.args}
+                        </section>
+
+                        {error && (
+                          <div className="rounded-[20px] border border-[color:var(--status-error)]/25 bg-[color:var(--status-error)]/10 px-4 py-3 text-[13px] text-[var(--status-error)]">
+                            {error}
+                          </div>
+                        )}
+
+                        <div className="min-h-0 flex-1 overflow-y-auto">
+                          {loading && !plan ? (
+                            <div
+                              className={`${dependencySurfaceClass} flex min-h-[260px] items-center justify-center px-6 py-10 text-center`}
+                            >
+                              <div>
+                                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-secondary)]">
+                                  <RefreshCw
+                                    size={18}
+                                    className="animate-spin"
+                                  />
+                                </div>
+                                <div className="mt-4 text-[15px] font-semibold text-[var(--text-primary)]">
+                                  Loading plan
+                                </div>
+                                <div
+                                  className={`mt-1 text-[13px] ${dependencyReadableTextClass}`}
+                                >
+                                  Reading workspace dependency policy.
+                                </div>
                               </div>
+                            </div>
+                          ) : actionEntries.length === 0 ? (
+                            <div
+                              className={`${dependencySurfaceClass} flex min-h-[360px] items-center px-7 py-8`}
+                            >
+                              <div className="max-w-xl">
+                                <div className="flex h-14 w-14 items-center justify-center rounded-[20px] border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-primary)]">
+                                  <PackageCheck size={22} />
+                                </div>
+                                <div className="mt-5 text-[22px] font-semibold text-[var(--text-primary)]">
+                                  Plan is clear
+                                </div>
+                                <div className="mt-2 text-[14px] leading-6 text-[var(--text-secondary)]">
+                                  No dependency actions are available for this
+                                  project.
+                                </div>
+                                <div className="mt-5 flex flex-wrap items-center gap-2">
+                                  <span className={dependencyPillClass}>
+                                    0 actions
+                                  </span>
+                                  <span className={dependencyPillClass}>
+                                    No consent required
+                                  </span>
+                                  <span className={dependencyPillClass}>
+                                    <Check size={12} />
+                                    Ready
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-3">
+                              {actionEntries.map((action) => {
+                                const isApproved = approvedActionIds.includes(
+                                  action.id,
+                                );
+                                const isRemembered =
+                                  rememberedActionIds.includes(action.id);
+                                const isExpanded =
+                                  expandedActionId === action.id;
+                                return (
+                                  <section
+                                    key={action.id}
+                                    className={dependencySurfaceClass}
+                                  >
+                                    <div
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={() =>
+                                        setExpandedActionId((previous) =>
+                                          previous === action.id
+                                            ? null
+                                            : action.id,
+                                        )
+                                      }
+                                      onKeyDown={(event) => {
+                                        if (
+                                          event.key !== "Enter" &&
+                                          event.key !== " "
+                                        ) {
+                                          return;
+                                        }
+                                        event.preventDefault();
+                                        setExpandedActionId((previous) =>
+                                          previous === action.id
+                                            ? null
+                                            : action.id,
+                                        );
+                                      }}
+                                      className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-4 px-4 py-4 text-left transition-colors hover:bg-[color-mix(in_srgb,var(--surface-2)_70%,transparent)] focus-visible:outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--focus-ring)]"
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="text-[14px] font-semibold text-[var(--text-primary)]">
+                                            {action.label}
+                                          </span>
+                                          <span
+                                            className={`inline-flex min-h-[26px] items-center rounded-full border px-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${riskBadgeClass(action.mutationRisk || "low")}`}
+                                          >
+                                            {action.mutationRisk || "low"}
+                                          </span>
+                                          <span className={dependencyPillClass}>
+                                            {formatCapability(
+                                              action.capability || "unknown",
+                                            )}
+                                          </span>
+                                          {action.requiresConsent ? (
+                                            <span
+                                              className={dependencyPillClass}
+                                            >
+                                              Consent required
+                                            </span>
+                                          ) : null}
+                                          {isRemembered ? (
+                                            <span
+                                              className={dependencyPillClass}
+                                            >
+                                              Remembered
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                        <div
+                                          className={`mt-2 flex flex-wrap items-center gap-2 text-[12px] ${dependencyReadableTextClass}`}
+                                        >
+                                          <span>{action.ecosystem}</span>
+                                          <span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" />
+                                          <span>{action.tool}</span>
+                                          <span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" />
+                                          <span className="truncate">
+                                            {action.manifest}
+                                          </span>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        {action.requiresConsent ? (
+                                          <span
+                                            className="inline-flex items-center gap-2"
+                                            onClick={(event) =>
+                                              event.stopPropagation()
+                                            }
+                                          >
+                                            <button
+                                              type="button"
+                                              role="checkbox"
+                                              aria-checked={isApproved}
+                                              onClick={() =>
+                                                toggleActionApproval(action.id)
+                                              }
+                                              className={`inline-flex h-9 items-center gap-2 rounded-[18px] border px-3 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
+                                                isApproved
+                                                  ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                                                  : "border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-secondary)] hover:border-[var(--border-default)] hover:text-[var(--text-primary)]"
+                                              }`}
+                                            >
+                                              <Check size={13} />
+                                              Approve
+                                            </button>
+                                          </span>
+                                        ) : null}
+                                        <span
+                                          className={dependencyIconButtonClass}
+                                        >
+                                          {isExpanded ? (
+                                            <ChevronDown size={15} />
+                                          ) : (
+                                            <ChevronRight size={15} />
+                                          )}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    {isExpanded && (
+                                      <div className="border-t border-[var(--border-subtle)] px-4 pb-4">
+                                        <div
+                                          className={`${dependencyInsetClass} mt-4 px-4 py-3 font-mono text-[11px] leading-5 text-[var(--text-secondary)]`}
+                                        >
+                                          {action.executable} {action.args}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </section>
+                                );
+                              })}
                             </div>
                           )}
-                        </section>
-                      );
-                    })}
-                  </div>
-                )}
 
-                {result && (
-                  <div className="mt-4 space-y-4">
-                    <section className={`${dependencySurfaceClass} p-4`}>
-                      <div className={sectionLabelClass}>Results</div>
-                      <div className="mt-3 space-y-2">
-                        {Object.entries(result.results ?? {}).map(
-                          ([id, message]) => (
-                            <div
-                              key={id}
-                              className={`${dependencyInsetClass} px-4 py-3 text-[12px] text-[var(--text-secondary)]`}
-                            >
-                              <div className="font-mono text-[11px] text-[var(--text-muted)]">
-                                {id}
-                              </div>
-                              <div className="mt-1 whitespace-pre-wrap break-words">
-                                {message || "completed"}
-                              </div>
-                            </div>
-                          ),
-                        )}
-                      </div>
-                    </section>
-
-                    {Object.keys(result.blocked ?? {}).length > 0 && (
-                      <section className={`${dependencySurfaceClass} p-4`}>
-                        <div className={sectionLabelClass}>Blocked</div>
-                        <div className="mt-3 space-y-2">
-                          {Object.entries(result.blocked ?? {}).map(
-                            ([id, reason]) => (
-                              <div
-                                key={id}
-                                className="rounded-[20px] border border-[color:var(--status-warning)]/25 bg-[color:var(--status-warning)]/10 px-4 py-3 text-[12px] text-[var(--text-primary)]"
+                          {result && (
+                            <div className="mt-4 space-y-4">
+                              <section
+                                className={`${dependencySurfaceClass} p-4`}
                               >
-                                <div className="font-mono text-[11px] text-[var(--status-warning)]">
-                                  {id}
+                                <div className={sectionLabelClass}>Results</div>
+                                <div className="mt-3 space-y-2">
+                                  {Object.entries(result.results ?? {}).map(
+                                    ([id, message]) => (
+                                      <div
+                                        key={id}
+                                        className={`${dependencyInsetClass} px-4 py-3 text-[12px] text-[var(--text-secondary)]`}
+                                      >
+                                        <div className="font-mono text-[11px] text-[var(--text-muted)]">
+                                          {id}
+                                        </div>
+                                        <div className="mt-1 whitespace-pre-wrap break-words">
+                                          {message || "completed"}
+                                        </div>
+                                      </div>
+                                    ),
+                                  )}
                                 </div>
-                                <div className="mt-1 whitespace-pre-wrap break-words">
-                                  {reason}
-                                </div>
-                              </div>
-                            ),
+                              </section>
+
+                              {Object.keys(result.blocked ?? {}).length > 0 && (
+                                <section
+                                  className={`${dependencySurfaceClass} p-4`}
+                                >
+                                  <div className={sectionLabelClass}>
+                                    Blocked
+                                  </div>
+                                  <div className="mt-3 space-y-2">
+                                    {Object.entries(result.blocked ?? {}).map(
+                                      ([id, reason]) => (
+                                        <div
+                                          key={id}
+                                          className="rounded-[20px] border border-[color:var(--status-warning)]/25 bg-[color:var(--status-warning)]/10 px-4 py-3 text-[12px] text-[var(--text-primary)]"
+                                        >
+                                          <div className="font-mono text-[11px] text-[var(--status-warning)]">
+                                            {id}
+                                          </div>
+                                          <div className="mt-1 whitespace-pre-wrap break-words">
+                                            {reason}
+                                          </div>
+                                        </div>
+                                      ),
+                                    )}
+                                  </div>
+                                </section>
+                              )}
+                            </div>
                           )}
                         </div>
-                      </section>
-                    )}
-                  </div>
-                )}
-              </div>
 
-              <div className="shell-cluster-soft flex min-h-[54px] w-full justify-between gap-3 px-3 py-2">
-                <span className={dependencyPillClass}>
-                  {actionEntries.length} actions in plan
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className={dependencyActionClass}
-                    onClick={onClose}
-                    disabled={running}
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="button"
-                    className={dependencyPrimaryClass}
-                    onClick={() => void handleRun()}
-                    disabled={running || loading || actionEntries.length === 0}
-                  >
-                    {running ? "Running..." : "Run"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Dialog.Content>
+                        <div className="shell-cluster-soft flex min-h-[54px] w-full justify-between gap-3 px-3 py-2">
+                          <span className={dependencyPillClass}>
+                            {actionEntries.length} actions in plan
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              className={dependencyActionClass}
+                              onClick={onClose}
+                              disabled={running}
+                            >
+                              Close
+                            </button>
+                            <button
+                              type="button"
+                              className={dependencyPrimaryClass}
+                              onClick={() => void handleRun()}
+                              disabled={
+                                running || loading || actionEntries.length === 0
+                              }
+                            >
+                              {running ? "Running..." : "Run"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                </motion.div>
+              </Dialog.Content>
+            </React.Fragment>
+          ) : null}
+        </AnimatePresence>
       </Dialog.Portal>
     </Dialog.Root>
   );

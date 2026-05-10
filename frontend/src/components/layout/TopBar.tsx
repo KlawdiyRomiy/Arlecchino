@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { WindowControls } from "../ui";
 import { DragGhost, type DragGhostState } from "../ui/DragGhost";
+import { MotionDropdownContent } from "../ui/MotionDropdownContent";
 import { useIndexingProgress } from "../../hooks/useIndexingProgress";
 import {
   DEFAULT_TOPBAR_ITEM_ORDER,
@@ -685,7 +686,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       </DropdownMenu.Trigger>
 
       <DropdownMenu.Portal>
-        <DropdownMenu.Content
+        <MotionDropdownContent
           align="end"
           sideOffset={8}
           className="shell-menu-content min-w-[240px]"
@@ -749,7 +750,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             <DownloadCloud size={menuIconSize} />
             Check for Updates
           </DropdownMenu.Item>
-        </DropdownMenu.Content>
+        </MotionDropdownContent>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
   );

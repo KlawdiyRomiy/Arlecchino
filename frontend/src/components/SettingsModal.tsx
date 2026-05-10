@@ -8,6 +8,7 @@ import React, {
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Switch from "@radix-ui/react-switch";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   AlertCircle,
   Check,
@@ -68,6 +69,11 @@ import {
   type ShortcutGroup,
 } from "../utils/keyboard";
 import { MAX_UI_SCALE, MIN_UI_SCALE, UI_SCALE_STEP } from "../utils/uiScale";
+import { MotionDropdownContent } from "./ui/MotionDropdownContent";
+import {
+  SHELL_DIALOG_OVERLAY_TRANSITION,
+  SHELL_DIALOG_PANEL_TRANSITION,
+} from "./ui/motionContracts";
 
 const settingsPanelClass =
   "overflow-hidden rounded-[24px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_98%,transparent)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_10px_24px_-22px_rgba(0,0,0,0.85)]";
@@ -562,6 +568,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
 }) => {
+  const reduceSettingsMotion = useReducedMotion();
   const [activeTab, setActiveTab] = useState<TabId>("appearance");
   const [shortcutQuery, setShortcutQuery] = useState("");
   const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
@@ -1568,841 +1575,942 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[110] bg-black/55 backdrop-blur-[10px]" />
-        <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-[111] flex h-[min(86vh,800px)] w-[min(94vw,1080px)] overflow-hidden rounded-[24px] border border-[var(--border-default)] bg-[var(--surface-canvas)] shadow-[var(--shadow-overlay)] outline-none"
-          data-testid="settings-modal"
-          style={{
-            transform: `translate(-50%, -50%) scale(${uiScale})`,
-            transformOrigin: "center",
-            width: `min(${94 / uiScale}vw, 1080px)`,
-            height: `min(${86 / uiScale}vh, 800px)`,
-          }}
-        >
-          <div className="flex w-[276px] shrink-0 flex-col border-r border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] p-3">
-            <div className="shell-cluster-soft mb-3 flex min-h-[58px] w-full items-center gap-3 px-3 py-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-primary)]">
-                <Settings size={17} />
-              </div>
-              <div className="min-w-0">
-                <div className="truncate text-[16px] font-semibold text-[var(--text-primary)]">
-                  Settings
-                </div>
-              </div>
-            </div>
-
-            <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
-              {tabs.map((tab) => {
-                const Icon = tab.icon;
-                const active = activeTab === tab.id;
-
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`group grid min-h-[46px] w-full grid-cols-[34px_minmax(0,1fr)] items-center gap-3 rounded-[18px] border px-2.5 text-left transition-colors ${
-                      active
-                        ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
-                        : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
-                    }`}
-                  >
-                    <span className="flex h-8 w-8 items-center justify-center rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)]">
-                      <Icon size={15} />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-[14px] font-semibold">
-                        {tab.label}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="relative flex min-w-0 flex-1 flex-col bg-[var(--surface-overlay)]">
-            <div className="absolute right-4 top-4 z-10">
-              <Dialog.Close asChild>
-                <button
-                  type="button"
-                  className={settingsIconButtonClass}
-                  aria-label="Close settings"
+      <Dialog.Portal forceMount>
+        <AnimatePresence>
+          {isOpen ? (
+            <React.Fragment key="settings-modal-motion">
+              <Dialog.Overlay forceMount asChild>
+                <motion.div
+                  key="settings-overlay"
+                  className="fixed inset-0 z-[110] bg-black/55 backdrop-blur-[10px]"
+                  initial={reduceSettingsMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={reduceSettingsMotion ? { opacity: 1 } : { opacity: 0 }}
+                  transition={
+                    reduceSettingsMotion
+                      ? { duration: 0 }
+                      : SHELL_DIALOG_OVERLAY_TRANSITION
+                  }
+                />
+              </Dialog.Overlay>
+              <Dialog.Content forceMount asChild>
+                <motion.div
+                  key="settings-content"
+                  className="fixed left-1/2 top-1/2 z-[111] outline-none"
+                  data-testid="settings-modal"
+                  initial={reduceSettingsMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={reduceSettingsMotion ? { opacity: 1 } : { opacity: 0 }}
+                  transition={
+                    reduceSettingsMotion
+                      ? { duration: 0 }
+                      : SHELL_DIALOG_OVERLAY_TRANSITION
+                  }
+                  style={{
+                    transform: `translate(-50%, -50%) scale(${uiScale})`,
+                    transformOrigin: "center",
+                    width: `min(${94 / uiScale}vw, 1080px)`,
+                    height: `min(${86 / uiScale}vh, 800px)`,
+                  }}
                 >
-                  <X size={16} />
-                </button>
-              </Dialog.Close>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-7 sm:px-9">
-              {activeTab === "appearance" && (
-                <div className="mx-auto max-w-3xl space-y-7">
-                  <SettingHeader
-                    title="Appearance"
-                    description="Customize the look and feel of the editor."
-                  />
-
-                  <ProjectOpeningModeControl
-                    value={projectWindowMode}
-                    onChange={setProjectWindowMode}
-                  />
-
-                  <AppIconAppearanceControl
-                    value={appIconAppearance}
-                    onChange={setAppIconAppearance}
-                  />
-
-                  <div className={`${settingsPanelClass} p-4`}>
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="text-sm font-semibold text-[var(--text-primary)]">
-                          System Font Family
+                  <motion.div
+                    className="flex h-full w-full overflow-hidden rounded-[24px] border border-[var(--border-default)] bg-[var(--surface-canvas)] shadow-[var(--shadow-overlay)]"
+                    initial={
+                      reduceSettingsMotion ? false : { y: 10, scale: 0.985 }
+                    }
+                    animate={{ y: 0, scale: 1 }}
+                    exit={
+                      reduceSettingsMotion
+                        ? { y: 0, scale: 1 }
+                        : { y: 6, scale: 0.99 }
+                    }
+                    transition={
+                      reduceSettingsMotion
+                        ? { duration: 0 }
+                        : SHELL_DIALOG_PANEL_TRANSITION
+                    }
+                  >
+                    <div className="flex w-[276px] shrink-0 flex-col border-r border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] p-3">
+                      <div className="shell-cluster-soft mb-3 flex min-h-[58px] w-full items-center gap-3 px-3 py-2">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[var(--surface-2)] text-[var(--text-primary)]">
+                          <Settings size={17} />
                         </div>
-                        <div className="mt-1 text-xs text-[var(--text-muted)]">
-                          Choose the font used by Arlecchino outside the code
-                          editor.
+                        <div className="min-w-0">
+                          <div className="truncate text-[16px] font-semibold text-[var(--text-primary)]">
+                            Settings
+                          </div>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={resetUiFontFamily}
-                        className={settingsIconButtonClass}
-                        aria-label="Reset system font family"
-                        title="Reset system font family"
-                      >
-                        <RotateCcw size={14} />
-                      </button>
+
+                      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+                        {tabs.map((tab) => {
+                          const Icon = tab.icon;
+                          const active = activeTab === tab.id;
+
+                          return (
+                            <button
+                              key={tab.id}
+                              type="button"
+                              onClick={() => setActiveTab(tab.id)}
+                              className={`group grid min-h-[46px] w-full grid-cols-[34px_minmax(0,1fr)] items-center gap-3 rounded-[18px] border px-2.5 text-left transition-colors ${
+                                active
+                                  ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                                  : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:bg-[var(--surface-2)] hover:text-[var(--text-primary)]"
+                              }`}
+                            >
+                              <span className="flex h-8 w-8 items-center justify-center rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)]">
+                                <Icon size={15} />
+                              </span>
+                              <span className="min-w-0">
+                                <span className="block truncate text-[14px] font-semibold">
+                                  {tab.label}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
 
-                    <div className={`${settingsInsetClass} mt-4 p-3`}>
-                      <DropdownMenu.Root>
-                        <DropdownMenu.Trigger asChild>
+                    <div className="relative flex min-w-0 flex-1 flex-col bg-[var(--surface-overlay)]">
+                      <div className="absolute right-4 top-4 z-10">
+                        <Dialog.Close asChild>
                           <button
                             type="button"
-                            className={settingsDropdownTriggerClass}
-                            data-testid="ui-font-family-trigger"
-                            aria-label="System font family"
+                            className={settingsIconButtonClass}
+                            aria-label="Close settings"
                           >
-                            <span
-                              className="min-w-0 truncate"
-                              style={{
-                                fontFamily:
-                                  activeUiFontFamilyOption?.sampleFamily ??
-                                  uiFontFamily,
-                              }}
-                            >
-                              {activeUiFontFamilyLabel}
-                            </span>
-                            <ChevronDown size={16} />
+                            <X size={16} />
                           </button>
-                        </DropdownMenu.Trigger>
-                        <DropdownMenu.Portal>
-                          <DropdownMenu.Content
-                            align="start"
-                            sideOffset={8}
-                            className={`${settingsDropdownContentClass} w-[var(--radix-dropdown-menu-trigger-width)]`}
-                            data-testid="ui-font-family-content"
-                            data-shell-menu-content
-                            style={{
-                              maxHeight:
-                                "min(420px, var(--radix-dropdown-menu-content-available-height))",
-                            }}
-                          >
-                            {uiFontOptions.map((option) => {
-                              const isActive = uiFontFamily === option.value;
-                              return (
-                                <DropdownMenu.Item
-                                  key={`${option.label}-${option.value}`}
-                                  className={settingsDropdownItemClass}
-                                  onSelect={() => setUiFontFamily(option.value)}
+                        </Dialog.Close>
+                      </div>
+
+                      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-7 sm:px-9">
+                        {activeTab === "appearance" && (
+                          <div className="mx-auto max-w-3xl space-y-7">
+                            <SettingHeader
+                              title="Appearance"
+                              description="Customize the look and feel of the editor."
+                            />
+
+                            <ProjectOpeningModeControl
+                              value={projectWindowMode}
+                              onChange={setProjectWindowMode}
+                            />
+
+                            <AppIconAppearanceControl
+                              value={appIconAppearance}
+                              onChange={setAppIconAppearance}
+                            />
+
+                            <div className={`${settingsPanelClass} p-4`}>
+                              <div className="flex items-start justify-between gap-4">
+                                <div>
+                                  <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                    System Font Family
+                                  </div>
+                                  <div className="mt-1 text-xs text-[var(--text-muted)]">
+                                    Choose the font used by Arlecchino outside
+                                    the code editor.
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={resetUiFontFamily}
+                                  className={settingsIconButtonClass}
+                                  aria-label="Reset system font family"
+                                  title="Reset system font family"
                                 >
-                                  <span
-                                    className="min-w-0 flex-1 truncate"
-                                    style={{
-                                      fontFamily: option.sampleFamily,
-                                    }}
-                                  >
-                                    {option.label}
-                                  </span>
-                                  {isActive ? <Check size={15} /> : null}
-                                </DropdownMenu.Item>
-                              );
-                            })}
-                          </DropdownMenu.Content>
-                        </DropdownMenu.Portal>
-                      </DropdownMenu.Root>
+                                  <RotateCcw size={14} />
+                                </button>
+                              </div>
 
-                      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="text-[12px] text-[var(--text-muted)]">
-                          Local fonts appear when the system grants font access.
-                        </div>
-                        <button
-                          type="button"
-                          className={settingsActionButtonClass}
-                          onClick={() => {
-                            customFontTargetRef.current = "ui";
-                            customFontInputRef.current?.click();
-                          }}
-                        >
-                          <Plus size={14} />
-                          Add font
-                        </button>
-                      </div>
-                      <input
-                        ref={customFontInputRef}
-                        type="file"
-                        accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
-                        className="hidden"
-                        onChange={handleCustomFontFile}
-                      />
-                      {customFontStatus && (
-                        <div
-                          className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
-                            customFontStatus.tone === "success"
-                              ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
-                              : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
-                          }`}
-                        >
-                          {customFontStatus.message}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className={`${settingsPanelClass} p-4`}>
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <div className="text-sm font-semibold text-[var(--text-primary)]">
-                        Theme
-                      </div>
-                      <span className={settingsPillClass}>
-                        {selectedThemeLabel}
-                      </span>
-                    </div>
-
-                    <DropdownMenu.Root
-                      open={themeDropdownOpen}
-                      onOpenChange={(open) => {
-                        setThemeDropdownOpen(open);
-                        if (!open) {
-                          clearThemePreview();
-                        }
-                      }}
-                    >
-                      <DropdownMenu.Trigger asChild>
-                        <button
-                          type="button"
-                          className={settingsDropdownTriggerClass}
-                          aria-label="Select theme"
-                          data-testid="theme-dropdown-trigger"
-                        >
-                          <span className="min-w-0 truncate">
-                            {selectedThemeLabel}
-                          </span>
-                          <ChevronDown
-                            size={15}
-                            className="shrink-0 text-[var(--text-muted)]"
-                          />
-                        </button>
-                      </DropdownMenu.Trigger>
-
-                      <DropdownMenu.Portal>
-                        <DropdownMenu.Content
-                          align="start"
-                          sideOffset={8}
-                          className={settingsDropdownContentClass}
-                          data-testid="theme-dropdown-content"
-                          data-shell-menu-content
-                          onPointerLeave={clearThemePreview}
-                          style={{
-                            width: "var(--radix-dropdown-menu-trigger-width)",
-                            maxHeight:
-                              "min(480px, var(--radix-dropdown-menu-content-available-height))",
-                          }}
-                        >
-                          <DropdownMenu.Label className="px-4 py-2 text-[12px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                            Built-in themes
-                          </DropdownMenu.Label>
-                          {settingsThemeOptions.map((option) => (
-                            <DropdownMenu.Item
-                              key={option.value}
-                              onPointerEnter={() => previewTheme(option.value)}
-                              onFocus={() => previewTheme(option.value)}
-                              onSelect={() => handleThemeSelect(option.value)}
-                              className={settingsDropdownItemClass}
-                            >
-                              <Check
-                                size={14}
-                                className={
-                                  theme === option.value
-                                    ? "text-[var(--text-primary)]"
-                                    : "text-transparent"
-                                }
-                              />
-                              <span className="min-w-0 flex-1 truncate">
-                                {option.label}
-                              </span>
-                              <span className="text-[13px] capitalize text-[var(--text-muted)]">
-                                {option.appearance}
-                              </span>
-                            </DropdownMenu.Item>
-                          ))}
-
-                          <DropdownMenu.Separator className="my-2 h-px bg-[var(--shell-inline-divider)]" />
-                          <DropdownMenu.Label className="px-4 py-2 text-[12px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                            Custom themes
-                          </DropdownMenu.Label>
-                          {customThemeOptions.length > 0 ? (
-                            customThemeOptions.map((option) => (
-                              <DropdownMenu.Item
-                                key={option.value}
-                                onPointerEnter={() =>
-                                  previewTheme(option.value)
-                                }
-                                onFocus={() => previewTheme(option.value)}
-                                onSelect={() => handleThemeSelect(option.value)}
-                                className={settingsDropdownItemClass}
-                              >
-                                <Check
-                                  size={14}
-                                  className={
-                                    theme === option.value
-                                      ? "text-[var(--text-primary)]"
-                                      : "text-transparent"
-                                  }
-                                />
-                                <span className="min-w-0 flex-1 truncate">
-                                  {option.label}
-                                </span>
-                                <span className="text-[13px] capitalize text-[var(--text-muted)]">
-                                  {option.appearance}
-                                </span>
-                              </DropdownMenu.Item>
-                            ))
-                          ) : (
-                            <div className="px-4 py-2 text-[13px] text-[var(--text-muted)]">
-                              No custom themes added
-                            </div>
-                          )}
-                        </DropdownMenu.Content>
-                      </DropdownMenu.Portal>
-                    </DropdownMenu.Root>
-                  </div>
-
-                  <div className={`${settingsPanelClass} p-4`}>
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <div className="text-sm font-semibold text-[var(--text-primary)]">
-                          Add custom theme
-                        </div>
-                        <div className="mt-1 text-[12px] text-[var(--text-muted)]">
-                          JSON theme file
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className={settingsActionButtonClass}
-                        onClick={() => customThemeInputRef.current?.click()}
-                      >
-                        <Plus size={14} />
-                        ADD
-                      </button>
-                    </div>
-                    <input
-                      ref={customThemeInputRef}
-                      type="file"
-                      accept=".json,application/json"
-                      className="hidden"
-                      onChange={handleCustomThemeFile}
-                    />
-                    {customThemeStatus && (
-                      <div
-                        className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
-                          customThemeStatus.tone === "success"
-                            ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
-                            : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
-                        }`}
-                      >
-                        {customThemeStatus.message}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className={settingsPanelClass}>
-                    <SwitchRow
-                      title="Zen Mode"
-                      description="Hide the top bar, status bar, and snapped panels until their edge is hovered."
-                      checked={zenModeEnabled}
-                      onCheckedChange={setZenModeEnabled}
-                      badge="Beta"
-                    />
-                    <SwitchRow
-                      title="Compact topbar actions"
-                      description="Hide the project label and show panel and update actions directly in the topbar."
-                      checked={!showTopbarProjectPath}
-                      onCheckedChange={(checked) =>
-                        setShowTopbarProjectPath(!checked)
-                      }
-                    />
-                    <div className="flex flex-col gap-3 border-b border-[var(--border-subtle)] px-4 py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="pr-4">
-                        <div className="text-sm font-semibold text-[var(--text-primary)]">
-                          Topbar icon order
-                        </div>
-                        <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                          Restore the default order for draggable topbar
-                          controls.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={resetTopbarItemOrder}
-                        className={settingsActionButtonClass}
-                      >
-                        <RotateCcw size={14} />
-                        Reset order
-                      </button>
-                    </div>
-                    <SwitchRow
-                      title="Rainbow brackets"
-                      description="Color nested brackets with fixed depth colors. Turn off to use the current theme's bracket styling."
-                      checked={showRainbowBrackets}
-                      onCheckedChange={setShowRainbowBrackets}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {activeTab === "editor" && (
-                <div className="mx-auto max-w-3xl space-y-7">
-                  <SettingHeader
-                    title="Editor"
-                    description="Core editor settings and UI zoom."
-                  />
-
-                  <div className="space-y-4">
-                    <div className={`${settingsPanelClass} p-4`}>
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <div className="text-sm font-semibold text-[var(--text-primary)]">
-                            Editor Font Family
-                          </div>
-                          <div className="mt-1 text-xs text-[var(--text-muted)]">
-                            Choose the font used by the code editor.
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={resetEditorFontFamily}
-                          className={settingsIconButtonClass}
-                          aria-label="Reset editor font family"
-                          title="Reset editor font family"
-                        >
-                          <RotateCcw size={14} />
-                        </button>
-                      </div>
-                      <div className={`${settingsInsetClass} mt-4 p-3`}>
-                        <DropdownMenu.Root>
-                          <DropdownMenu.Trigger asChild>
-                            <button
-                              type="button"
-                              className={settingsDropdownTriggerClass}
-                              data-testid="editor-font-family-trigger"
-                              aria-label="Editor font family"
-                            >
-                              <span
-                                className="min-w-0 truncate font-mono"
-                                style={{
-                                  fontFamily:
-                                    activeEditorFontFamilyOption?.value ??
-                                    editorFontFamily,
-                                }}
-                              >
-                                {activeEditorFontFamilyLabel}
-                              </span>
-                              <ChevronDown size={16} />
-                            </button>
-                          </DropdownMenu.Trigger>
-                          <DropdownMenu.Portal>
-                            <DropdownMenu.Content
-                              align="start"
-                              sideOffset={8}
-                              className={`${settingsDropdownContentClass} w-[var(--radix-dropdown-menu-trigger-width)]`}
-                              data-testid="editor-font-family-content"
-                              data-shell-menu-content
-                              style={{
-                                maxHeight:
-                                  "min(420px, var(--radix-dropdown-menu-content-available-height))",
-                              }}
-                            >
-                              {editorFontOptions.map((preset) => {
-                                const isActive =
-                                  editorFontFamily === preset.value;
-                                return (
-                                  <DropdownMenu.Item
-                                    key={`${preset.label}-${preset.value}`}
-                                    className={settingsDropdownItemClass}
-                                    onSelect={() =>
-                                      setEditorFontFamily(preset.value)
-                                    }
-                                  >
-                                    <span
-                                      className="min-w-0 flex-1 truncate font-mono"
+                              <div className={`${settingsInsetClass} mt-4 p-3`}>
+                                <DropdownMenu.Root>
+                                  <DropdownMenu.Trigger asChild>
+                                    <button
+                                      type="button"
+                                      className={settingsDropdownTriggerClass}
+                                      data-testid="ui-font-family-trigger"
+                                      aria-label="System font family"
+                                    >
+                                      <span
+                                        className="min-w-0 truncate"
+                                        style={{
+                                          fontFamily:
+                                            activeUiFontFamilyOption?.sampleFamily ??
+                                            uiFontFamily,
+                                        }}
+                                      >
+                                        {activeUiFontFamilyLabel}
+                                      </span>
+                                      <ChevronDown size={16} />
+                                    </button>
+                                  </DropdownMenu.Trigger>
+                                  <DropdownMenu.Portal>
+                                    <MotionDropdownContent
+                                      align="start"
+                                      sideOffset={8}
+                                      className={`${settingsDropdownContentClass} w-[var(--radix-dropdown-menu-trigger-width)]`}
+                                      data-testid="ui-font-family-content"
+                                      data-shell-menu-content
                                       style={{
-                                        fontFamily: preset.sampleFamily,
+                                        maxHeight:
+                                          "min(420px, var(--radix-dropdown-menu-content-available-height))",
                                       }}
                                     >
-                                      {preset.label}
+                                      {uiFontOptions.map((option) => {
+                                        const isActive =
+                                          uiFontFamily === option.value;
+                                        return (
+                                          <DropdownMenu.Item
+                                            key={`${option.label}-${option.value}`}
+                                            className={
+                                              settingsDropdownItemClass
+                                            }
+                                            onSelect={() =>
+                                              setUiFontFamily(option.value)
+                                            }
+                                          >
+                                            <span
+                                              className="min-w-0 flex-1 truncate"
+                                              style={{
+                                                fontFamily: option.sampleFamily,
+                                              }}
+                                            >
+                                              {option.label}
+                                            </span>
+                                            {isActive ? (
+                                              <Check size={15} />
+                                            ) : null}
+                                          </DropdownMenu.Item>
+                                        );
+                                      })}
+                                    </MotionDropdownContent>
+                                  </DropdownMenu.Portal>
+                                </DropdownMenu.Root>
+
+                                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                  <div className="text-[12px] text-[var(--text-muted)]">
+                                    Local fonts appear when the system grants
+                                    font access.
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className={settingsActionButtonClass}
+                                    onClick={() => {
+                                      customFontTargetRef.current = "ui";
+                                      customFontInputRef.current?.click();
+                                    }}
+                                  >
+                                    <Plus size={14} />
+                                    Add font
+                                  </button>
+                                </div>
+                                <input
+                                  ref={customFontInputRef}
+                                  type="file"
+                                  accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                                  className="hidden"
+                                  onChange={handleCustomFontFile}
+                                />
+                                {customFontStatus && (
+                                  <div
+                                    className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
+                                      customFontStatus.tone === "success"
+                                        ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
+                                        : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
+                                    }`}
+                                  >
+                                    {customFontStatus.message}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className={`${settingsPanelClass} p-4`}>
+                              <div className="mb-3 flex items-center justify-between gap-3">
+                                <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                  Theme
+                                </div>
+                                <span className={settingsPillClass}>
+                                  {selectedThemeLabel}
+                                </span>
+                              </div>
+
+                              <DropdownMenu.Root
+                                open={themeDropdownOpen}
+                                onOpenChange={(open) => {
+                                  setThemeDropdownOpen(open);
+                                  if (!open) {
+                                    clearThemePreview();
+                                  }
+                                }}
+                              >
+                                <DropdownMenu.Trigger asChild>
+                                  <button
+                                    type="button"
+                                    className={settingsDropdownTriggerClass}
+                                    aria-label="Select theme"
+                                    data-testid="theme-dropdown-trigger"
+                                  >
+                                    <span className="min-w-0 truncate">
+                                      {selectedThemeLabel}
                                     </span>
-                                    {isActive ? <Check size={15} /> : null}
-                                  </DropdownMenu.Item>
-                                );
-                              })}
-                            </DropdownMenu.Content>
-                          </DropdownMenu.Portal>
-                        </DropdownMenu.Root>
-                        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="text-[12px] text-[var(--text-muted)]">
-                            Local fonts appear when the system grants font
-                            access.
-                          </div>
-                          <button
-                            type="button"
-                            className={settingsActionButtonClass}
-                            onClick={() => {
-                              customFontTargetRef.current = "editor";
-                              customFontInputRef.current?.click();
-                            }}
-                          >
-                            <Plus size={14} />
-                            Add font
-                          </button>
-                        </div>
-                        <input
-                          ref={customFontInputRef}
-                          type="file"
-                          accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
-                          className="hidden"
-                          onChange={handleCustomFontFile}
-                        />
-                        {customFontStatus && (
-                          <div
-                            className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
-                              customFontStatus.tone === "success"
-                                ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
-                                : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
-                            }`}
-                          >
-                            {customFontStatus.message}
+                                    <ChevronDown
+                                      size={15}
+                                      className="shrink-0 text-[var(--text-muted)]"
+                                    />
+                                  </button>
+                                </DropdownMenu.Trigger>
+
+                                <DropdownMenu.Portal>
+                                  <MotionDropdownContent
+                                    align="start"
+                                    sideOffset={8}
+                                    className={settingsDropdownContentClass}
+                                    data-testid="theme-dropdown-content"
+                                    data-shell-menu-content
+                                    onPointerLeave={clearThemePreview}
+                                    style={{
+                                      width:
+                                        "var(--radix-dropdown-menu-trigger-width)",
+                                      maxHeight:
+                                        "min(480px, var(--radix-dropdown-menu-content-available-height))",
+                                    }}
+                                  >
+                                    <DropdownMenu.Label className="px-4 py-2 text-[12px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                                      Built-in themes
+                                    </DropdownMenu.Label>
+                                    {settingsThemeOptions.map((option) => (
+                                      <DropdownMenu.Item
+                                        key={option.value}
+                                        onPointerEnter={() =>
+                                          previewTheme(option.value)
+                                        }
+                                        onFocus={() =>
+                                          previewTheme(option.value)
+                                        }
+                                        onSelect={() =>
+                                          handleThemeSelect(option.value)
+                                        }
+                                        className={settingsDropdownItemClass}
+                                      >
+                                        <Check
+                                          size={14}
+                                          className={
+                                            theme === option.value
+                                              ? "text-[var(--text-primary)]"
+                                              : "text-transparent"
+                                          }
+                                        />
+                                        <span className="min-w-0 flex-1 truncate">
+                                          {option.label}
+                                        </span>
+                                        <span className="text-[13px] capitalize text-[var(--text-muted)]">
+                                          {option.appearance}
+                                        </span>
+                                      </DropdownMenu.Item>
+                                    ))}
+
+                                    <DropdownMenu.Separator className="my-2 h-px bg-[var(--shell-inline-divider)]" />
+                                    <DropdownMenu.Label className="px-4 py-2 text-[12px] font-medium uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                                      Custom themes
+                                    </DropdownMenu.Label>
+                                    {customThemeOptions.length > 0 ? (
+                                      customThemeOptions.map((option) => (
+                                        <DropdownMenu.Item
+                                          key={option.value}
+                                          onPointerEnter={() =>
+                                            previewTheme(option.value)
+                                          }
+                                          onFocus={() =>
+                                            previewTheme(option.value)
+                                          }
+                                          onSelect={() =>
+                                            handleThemeSelect(option.value)
+                                          }
+                                          className={settingsDropdownItemClass}
+                                        >
+                                          <Check
+                                            size={14}
+                                            className={
+                                              theme === option.value
+                                                ? "text-[var(--text-primary)]"
+                                                : "text-transparent"
+                                            }
+                                          />
+                                          <span className="min-w-0 flex-1 truncate">
+                                            {option.label}
+                                          </span>
+                                          <span className="text-[13px] capitalize text-[var(--text-muted)]">
+                                            {option.appearance}
+                                          </span>
+                                        </DropdownMenu.Item>
+                                      ))
+                                    ) : (
+                                      <div className="px-4 py-2 text-[13px] text-[var(--text-muted)]">
+                                        No custom themes added
+                                      </div>
+                                    )}
+                                  </MotionDropdownContent>
+                                </DropdownMenu.Portal>
+                              </DropdownMenu.Root>
+                            </div>
+
+                            <div className={`${settingsPanelClass} p-4`}>
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                  <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                    Add custom theme
+                                  </div>
+                                  <div className="mt-1 text-[12px] text-[var(--text-muted)]">
+                                    JSON theme file
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  className={settingsActionButtonClass}
+                                  onClick={() =>
+                                    customThemeInputRef.current?.click()
+                                  }
+                                >
+                                  <Plus size={14} />
+                                  ADD
+                                </button>
+                              </div>
+                              <input
+                                ref={customThemeInputRef}
+                                type="file"
+                                accept=".json,application/json"
+                                className="hidden"
+                                onChange={handleCustomThemeFile}
+                              />
+                              {customThemeStatus && (
+                                <div
+                                  className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
+                                    customThemeStatus.tone === "success"
+                                      ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
+                                      : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
+                                  }`}
+                                >
+                                  {customThemeStatus.message}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className={settingsPanelClass}>
+                              <SwitchRow
+                                title="Zen Mode"
+                                description="Hide the top bar, status bar, and snapped panels until their edge is hovered."
+                                checked={zenModeEnabled}
+                                onCheckedChange={setZenModeEnabled}
+                                badge="Beta"
+                              />
+                              <SwitchRow
+                                title="Compact topbar actions"
+                                description="Hide the project label and show panel and update actions directly in the topbar."
+                                checked={!showTopbarProjectPath}
+                                onCheckedChange={(checked) =>
+                                  setShowTopbarProjectPath(!checked)
+                                }
+                              />
+                              <div className="flex flex-col gap-3 border-b border-[var(--border-subtle)] px-4 py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="pr-4">
+                                  <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                    Topbar icon order
+                                  </div>
+                                  <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                                    Restore the default order for draggable
+                                    topbar controls.
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={resetTopbarItemOrder}
+                                  className={settingsActionButtonClass}
+                                >
+                                  <RotateCcw size={14} />
+                                  Reset order
+                                </button>
+                              </div>
+                              <SwitchRow
+                                title="Rainbow brackets"
+                                description="Color nested brackets with fixed depth colors. Turn off to use the current theme's bracket styling."
+                                checked={showRainbowBrackets}
+                                onCheckedChange={setShowRainbowBrackets}
+                              />
+                            </div>
                           </div>
                         )}
-                      </div>
-                    </div>
 
-                    <label className={`${settingsPanelClass} block p-4`}>
-                      <div className="flex items-center justify-between gap-4">
-                        <div>
-                          <div className="text-sm font-semibold text-[var(--text-primary)]">
-                            Editor Font Size
-                          </div>
-                          <div className="mt-1 text-xs text-[var(--text-muted)]">
-                            Adjust the text size in the code editor.
-                          </div>
-                        </div>
-                        <span className="font-mono text-sm text-[var(--text-primary)]">
-                          {editorFontSize}px
-                        </span>
-                      </div>
-                      <div className={`${settingsInsetClass} mt-4 px-4 py-3`}>
-                        <input
-                          type="range"
-                          min={minFontSize}
-                          max={maxFontSize}
-                          value={editorFontSize}
-                          onChange={(event) =>
-                            setEditorFontSize(Number(event.target.value))
-                          }
-                          className="w-full"
-                        />
-                      </div>
-                    </label>
+                        {activeTab === "editor" && (
+                          <div className="mx-auto max-w-3xl space-y-7">
+                            <SettingHeader
+                              title="Editor"
+                              description="Core editor settings and UI zoom."
+                            />
 
-                    <div className={`${settingsPanelClass} p-4`}>
-                      <label className="block">
-                        <div className="flex items-center justify-between gap-4">
-                          <div>
-                            <div className="text-sm font-semibold text-[var(--text-primary)]">
-                              UI Scale
+                            <div className="space-y-4">
+                              <div className={`${settingsPanelClass} p-4`}>
+                                <div className="flex items-start justify-between gap-4">
+                                  <div>
+                                    <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                      Editor Font Family
+                                    </div>
+                                    <div className="mt-1 text-xs text-[var(--text-muted)]">
+                                      Choose the font used by the code editor.
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={resetEditorFontFamily}
+                                    className={settingsIconButtonClass}
+                                    aria-label="Reset editor font family"
+                                    title="Reset editor font family"
+                                  >
+                                    <RotateCcw size={14} />
+                                  </button>
+                                </div>
+                                <div
+                                  className={`${settingsInsetClass} mt-4 p-3`}
+                                >
+                                  <DropdownMenu.Root>
+                                    <DropdownMenu.Trigger asChild>
+                                      <button
+                                        type="button"
+                                        className={settingsDropdownTriggerClass}
+                                        data-testid="editor-font-family-trigger"
+                                        aria-label="Editor font family"
+                                      >
+                                        <span
+                                          className="min-w-0 truncate font-mono"
+                                          style={{
+                                            fontFamily:
+                                              activeEditorFontFamilyOption?.value ??
+                                              editorFontFamily,
+                                          }}
+                                        >
+                                          {activeEditorFontFamilyLabel}
+                                        </span>
+                                        <ChevronDown size={16} />
+                                      </button>
+                                    </DropdownMenu.Trigger>
+                                    <DropdownMenu.Portal>
+                                      <MotionDropdownContent
+                                        align="start"
+                                        sideOffset={8}
+                                        className={`${settingsDropdownContentClass} w-[var(--radix-dropdown-menu-trigger-width)]`}
+                                        data-testid="editor-font-family-content"
+                                        data-shell-menu-content
+                                        style={{
+                                          maxHeight:
+                                            "min(420px, var(--radix-dropdown-menu-content-available-height))",
+                                        }}
+                                      >
+                                        {editorFontOptions.map((preset) => {
+                                          const isActive =
+                                            editorFontFamily === preset.value;
+                                          return (
+                                            <DropdownMenu.Item
+                                              key={`${preset.label}-${preset.value}`}
+                                              className={
+                                                settingsDropdownItemClass
+                                              }
+                                              onSelect={() =>
+                                                setEditorFontFamily(
+                                                  preset.value,
+                                                )
+                                              }
+                                            >
+                                              <span
+                                                className="min-w-0 flex-1 truncate font-mono"
+                                                style={{
+                                                  fontFamily:
+                                                    preset.sampleFamily,
+                                                }}
+                                              >
+                                                {preset.label}
+                                              </span>
+                                              {isActive ? (
+                                                <Check size={15} />
+                                              ) : null}
+                                            </DropdownMenu.Item>
+                                          );
+                                        })}
+                                      </MotionDropdownContent>
+                                    </DropdownMenu.Portal>
+                                  </DropdownMenu.Root>
+                                  <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <div className="text-[12px] text-[var(--text-muted)]">
+                                      Local fonts appear when the system grants
+                                      font access.
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className={settingsActionButtonClass}
+                                      onClick={() => {
+                                        customFontTargetRef.current = "editor";
+                                        customFontInputRef.current?.click();
+                                      }}
+                                    >
+                                      <Plus size={14} />
+                                      Add font
+                                    </button>
+                                  </div>
+                                  <input
+                                    ref={customFontInputRef}
+                                    type="file"
+                                    accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                                    className="hidden"
+                                    onChange={handleCustomFontFile}
+                                  />
+                                  {customFontStatus && (
+                                    <div
+                                      className={`mt-3 rounded-[14px] border px-3 py-2 text-[12px] ${
+                                        customFontStatus.tone === "success"
+                                          ? "border-[color-mix(in_srgb,var(--status-success)_35%,transparent)] text-[var(--status-success)]"
+                                          : "border-[color-mix(in_srgb,var(--status-error)_35%,transparent)] text-[var(--status-error)]"
+                                      }`}
+                                    >
+                                      {customFontStatus.message}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <label
+                                className={`${settingsPanelClass} block p-4`}
+                              >
+                                <div className="flex items-center justify-between gap-4">
+                                  <div>
+                                    <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                      Editor Font Size
+                                    </div>
+                                    <div className="mt-1 text-xs text-[var(--text-muted)]">
+                                      Adjust the text size in the code editor.
+                                    </div>
+                                  </div>
+                                  <span className="font-mono text-sm text-[var(--text-primary)]">
+                                    {editorFontSize}px
+                                  </span>
+                                </div>
+                                <div
+                                  className={`${settingsInsetClass} mt-4 px-4 py-3`}
+                                >
+                                  <input
+                                    type="range"
+                                    min={minFontSize}
+                                    max={maxFontSize}
+                                    value={editorFontSize}
+                                    onChange={(event) =>
+                                      setEditorFontSize(
+                                        Number(event.target.value),
+                                      )
+                                    }
+                                    className="w-full"
+                                  />
+                                </div>
+                              </label>
+
+                              <div className={`${settingsPanelClass} p-4`}>
+                                <label className="block">
+                                  <div className="flex items-center justify-between gap-4">
+                                    <div>
+                                      <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                        UI Scale
+                                      </div>
+                                      <div className="mt-1 text-xs text-[var(--text-muted)]">
+                                        Adjust the overall zoom of the
+                                        application interface.
+                                      </div>
+                                    </div>
+                                    <span className="font-mono text-sm text-[var(--text-primary)]">
+                                      {Math.round(uiScale * 100)}%
+                                    </span>
+                                  </div>
+                                  <div
+                                    className={`${settingsInsetClass} mt-4 px-4 py-3`}
+                                  >
+                                    <input
+                                      type="range"
+                                      min={MIN_UI_SCALE}
+                                      max={MAX_UI_SCALE}
+                                      step={UI_SCALE_STEP}
+                                      value={uiScale}
+                                      onChange={(event) =>
+                                        setUiScale(Number(event.target.value))
+                                      }
+                                      className="w-full"
+                                    />
+                                  </div>
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={resetZoom}
+                                  className={`${settingsActionButtonClass} mt-4`}
+                                >
+                                  <RotateCcw size={14} />
+                                  Reset UI Zoom
+                                </button>
+                              </div>
+
+                              <div className={settingsPanelClass}>
+                                <SwitchRow
+                                  title="Operator ligatures"
+                                  description="Render sequences like ->, <-, and => as visual arrows without changing file text."
+                                  checked={showOperatorLigatures}
+                                  onCheckedChange={setShowOperatorLigatures}
+                                />
+                              </div>
                             </div>
-                            <div className="mt-1 text-xs text-[var(--text-muted)]">
-                              Adjust the overall zoom of the application
-                              interface.
+                          </div>
+                        )}
+
+                        {activeTab === "diagnostics" && (
+                          <div className="mx-auto max-w-3xl space-y-7">
+                            <SettingHeader
+                              title="Diagnostics"
+                              description="Configure how errors and warnings are displayed."
+                            />
+
+                            <div className={settingsPanelClass}>
+                              <SwitchRow
+                                title="Show minimap"
+                                description="Display the code minimap in the editor gutter for supported file sizes."
+                                checked={showMinimap}
+                                onCheckedChange={setShowMinimap}
+                              />
+                              <SwitchRow
+                                title="Show inline diagnostics"
+                                description="Render squiggles, line emphasis, and inline problem messages inside the editor."
+                                checked={showInlineDiagnostics}
+                                onCheckedChange={setShowInlineDiagnostics}
+                              />
+                              <SwitchRow
+                                title="Show compact diagnostics"
+                                description="Keep the project-wide problems badge visible in the status bar."
+                                checked={showCompactDiagnostics}
+                                onCheckedChange={setShowCompactDiagnostics}
+                              />
+                            </div>
+
+                            {renderAutocompleteSupport()}
+
+                            <div className={`${settingsPanelClass} p-4`}>
+                              <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                Build identity
+                              </div>
+                              <div className="mt-3 grid gap-2 text-[12px] text-[var(--text-secondary)]">
+                                {[
+                                  ["Mode", buildInfo.mode ?? "dev"],
+                                  ["Version", buildInfo.version ?? "unknown"],
+                                  ["Build", buildInfo.build ?? "unknown"],
+                                  ["Commit", buildInfo.gitSha ?? "unknown"],
+                                  ["Channel", buildInfo.channel ?? "alpha"],
+                                  [
+                                    "Package",
+                                    buildInfo.packaged
+                                      ? "packaged"
+                                      : "development",
+                                  ],
+                                  [
+                                    "Bundle",
+                                    buildInfo.bundlePath ??
+                                      "not running from .app",
+                                  ],
+                                  [
+                                    "Update manifest",
+                                    buildInfo.updateManifestUrl ??
+                                      "not configured",
+                                  ],
+                                  [
+                                    "Private update access",
+                                    privateUpdateAccessLabel,
+                                  ],
+                                  [
+                                    "Update status",
+                                    `${autoUpdateStatus.state}${
+                                      autoUpdateStatus.reason
+                                        ? `: ${autoUpdateStatus.reason}`
+                                        : ""
+                                    }`,
+                                  ],
+                                ].map(([label, value]) => (
+                                  <div
+                                    key={label}
+                                    className="grid gap-2 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2 sm:grid-cols-[128px_minmax(0,1fr)]"
+                                  >
+                                    <span className="text-[var(--text-muted)]">
+                                      {label}
+                                    </span>
+                                    <span className="min-w-0 break-words font-mono text-[11px] text-[var(--text-primary)]">
+                                      {value}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="mt-4 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] p-3">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--text-primary)]">
+                                      <KeyRound size={14} />
+                                      Private GitHub release access
+                                    </div>
+                                    <div className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">
+                                      Token is stored in macOS Keychain and is
+                                      never shown after saving.
+                                    </div>
+                                  </div>
+                                  <span
+                                    className={`${settingsPillClass} ${
+                                      privateUpdateAuthStatus?.configured
+                                        ? "text-[var(--status-success)]"
+                                        : "text-[var(--status-warning)]"
+                                    }`}
+                                  >
+                                    {privateUpdateAuthStatus?.configured
+                                      ? "Configured"
+                                      : "Missing token"}
+                                  </span>
+                                </div>
+                                <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+                                  <input
+                                    type="password"
+                                    autoComplete="off"
+                                    value={privateUpdateToken}
+                                    onChange={(event) =>
+                                      setPrivateUpdateToken(
+                                        event.currentTarget.value,
+                                      )
+                                    }
+                                    placeholder="Fine-grained GitHub token"
+                                    className="h-9 min-w-0 rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-3 font-mono text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
+                                  />
+                                  <button
+                                    type="button"
+                                    className={settingsActionButtonClass}
+                                    disabled={
+                                      privateUpdateAuthBusy ||
+                                      !privateUpdateToken.trim()
+                                    }
+                                    onClick={() => {
+                                      void savePrivateUpdateAccessToken();
+                                    }}
+                                  >
+                                    <Check size={14} />
+                                    Save Token
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={settingsActionButtonClass}
+                                    disabled={privateUpdateAuthBusy}
+                                    onClick={() => {
+                                      void clearPrivateUpdateAccessToken();
+                                    }}
+                                  >
+                                    <Trash2 size={14} />
+                                    Clear
+                                  </button>
+                                </div>
+                                <div className="mt-2 break-words text-[11px] leading-5 text-[var(--text-muted)]">
+                                  {privateUpdateAuthStatus?.reason ??
+                                    "Open this tab to load private update access status."}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className={`${settingsActionButtonClass} mt-4`}
+                                disabled={autoUpdateBusy}
+                                onClick={() => {
+                                  void runAutoUpdateCheckWithNotification();
+                                }}
+                              >
+                                <RefreshCw size={14} />
+                                Check for Updates
+                              </button>
                             </div>
                           </div>
-                          <span className="font-mono text-sm text-[var(--text-primary)]">
-                            {Math.round(uiScale * 100)}%
-                          </span>
-                        </div>
-                        <div className={`${settingsInsetClass} mt-4 px-4 py-3`}>
-                          <input
-                            type="range"
-                            min={MIN_UI_SCALE}
-                            max={MAX_UI_SCALE}
-                            step={UI_SCALE_STEP}
-                            value={uiScale}
-                            onChange={(event) =>
-                              setUiScale(Number(event.target.value))
-                            }
-                            className="w-full"
-                          />
-                        </div>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={resetZoom}
-                        className={`${settingsActionButtonClass} mt-4`}
-                      >
-                        <RotateCcw size={14} />
-                        Reset UI Zoom
-                      </button>
-                    </div>
+                        )}
 
-                    <div className={settingsPanelClass}>
-                      <SwitchRow
-                        title="Operator ligatures"
-                        description="Render sequences like ->, <-, and => as visual arrows without changing file text."
-                        checked={showOperatorLigatures}
-                        onCheckedChange={setShowOperatorLigatures}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
+                        {activeTab === "browser-preview" && (
+                          <div className="mx-auto max-w-3xl space-y-7">
+                            <SettingHeader
+                              title="Browser Preview"
+                              description="Manage integrated browser preview behavior."
+                            />
 
-              {activeTab === "diagnostics" && (
-                <div className="mx-auto max-w-3xl space-y-7">
-                  <SettingHeader
-                    title="Diagnostics"
-                    description="Configure how errors and warnings are displayed."
-                  />
-
-                  <div className={settingsPanelClass}>
-                    <SwitchRow
-                      title="Show minimap"
-                      description="Display the code minimap in the editor gutter for supported file sizes."
-                      checked={showMinimap}
-                      onCheckedChange={setShowMinimap}
-                    />
-                    <SwitchRow
-                      title="Show inline diagnostics"
-                      description="Render squiggles, line emphasis, and inline problem messages inside the editor."
-                      checked={showInlineDiagnostics}
-                      onCheckedChange={setShowInlineDiagnostics}
-                    />
-                    <SwitchRow
-                      title="Show compact diagnostics"
-                      description="Keep the project-wide problems badge visible in the status bar."
-                      checked={showCompactDiagnostics}
-                      onCheckedChange={setShowCompactDiagnostics}
-                    />
-                  </div>
-
-                  {renderAutocompleteSupport()}
-
-                  <div className={`${settingsPanelClass} p-4`}>
-                    <div className="text-sm font-semibold text-[var(--text-primary)]">
-                      Build identity
-                    </div>
-                    <div className="mt-3 grid gap-2 text-[12px] text-[var(--text-secondary)]">
-                      {[
-                        ["Mode", buildInfo.mode ?? "dev"],
-                        ["Version", buildInfo.version ?? "unknown"],
-                        ["Build", buildInfo.build ?? "unknown"],
-                        ["Commit", buildInfo.gitSha ?? "unknown"],
-                        ["Channel", buildInfo.channel ?? "alpha"],
-                        [
-                          "Package",
-                          buildInfo.packaged ? "packaged" : "development",
-                        ],
-                        [
-                          "Bundle",
-                          buildInfo.bundlePath ?? "not running from .app",
-                        ],
-                        [
-                          "Update manifest",
-                          buildInfo.updateManifestUrl ?? "not configured",
-                        ],
-                        ["Private update access", privateUpdateAccessLabel],
-                        [
-                          "Update status",
-                          `${autoUpdateStatus.state}${
-                            autoUpdateStatus.reason
-                              ? `: ${autoUpdateStatus.reason}`
-                              : ""
-                          }`,
-                        ],
-                      ].map(([label, value]) => (
-                        <div
-                          key={label}
-                          className="grid gap-2 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2 sm:grid-cols-[128px_minmax(0,1fr)]"
-                        >
-                          <span className="text-[var(--text-muted)]">
-                            {label}
-                          </span>
-                          <span className="min-w-0 break-words font-mono text-[11px] text-[var(--text-primary)]">
-                            {value}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="mt-4 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] p-3">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--text-primary)]">
-                            <KeyRound size={14} />
-                            Private GitHub release access
+                            <div className={settingsPanelClass}>
+                              <div className="grid gap-4 border-b border-[var(--border-subtle)] px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                                <div className="min-w-0 pr-4">
+                                  <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                    Markdown links
+                                  </div>
+                                  <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                                    Choose whether Markdown preview links open
+                                    directly in the system browser or first
+                                    inside Browser Preview.
+                                  </div>
+                                </div>
+                                <div
+                                  role="group"
+                                  aria-label="Markdown links"
+                                  className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+                                >
+                                  {markdownLinkOpenModeOptions.map((option) => (
+                                    <button
+                                      key={option.value}
+                                      type="button"
+                                      aria-pressed={
+                                        markdownLinkOpenMode === option.value
+                                      }
+                                      onClick={() =>
+                                        setMarkdownLinkOpenMode(option.value)
+                                      }
+                                      className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
+                                        markdownLinkOpenMode === option.value
+                                          ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                                          : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+                                      }`}
+                                    >
+                                      {option.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                              <SwitchRow
+                                title="Auto-open Preview"
+                                description="Open browser preview automatically when the terminal reports a local URL."
+                                checked={autoOpenFromTerminal}
+                                onCheckedChange={setAutoOpenFromTerminal}
+                              />
+                              <SwitchRow
+                                title="Reuse Session Window"
+                                description="Keep one preview window per terminal session instead of spawning new ones."
+                                checked={reuseWindowPerSession}
+                                onCheckedChange={setReuseWindowPerSession}
+                              />
+                              <SwitchRow
+                                title="Close on Session Exit"
+                                description="Close auto-opened preview windows when the terminal session ends."
+                                checked={closeAutoOpenedOnTerminalExit}
+                                onCheckedChange={
+                                  setCloseAutoOpenedOnTerminalExit
+                                }
+                              />
+                            </div>
                           </div>
-                          <div className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">
-                            Token is stored in macOS Keychain and is never shown
-                            after saving.
-                          </div>
-                        </div>
-                        <span
-                          className={`${settingsPillClass} ${
-                            privateUpdateAuthStatus?.configured
-                              ? "text-[var(--status-success)]"
-                              : "text-[var(--status-warning)]"
-                          }`}
-                        >
-                          {privateUpdateAuthStatus?.configured
-                            ? "Configured"
-                            : "Missing token"}
-                        </span>
-                      </div>
-                      <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-                        <input
-                          type="password"
-                          autoComplete="off"
-                          value={privateUpdateToken}
-                          onChange={(event) =>
-                            setPrivateUpdateToken(event.currentTarget.value)
-                          }
-                          placeholder="Fine-grained GitHub token"
-                          className="h-9 min-w-0 rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-3 font-mono text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
-                        />
-                        <button
-                          type="button"
-                          className={settingsActionButtonClass}
-                          disabled={
-                            privateUpdateAuthBusy || !privateUpdateToken.trim()
-                          }
-                          onClick={() => {
-                            void savePrivateUpdateAccessToken();
-                          }}
-                        >
-                          <Check size={14} />
-                          Save Token
-                        </button>
-                        <button
-                          type="button"
-                          className={settingsActionButtonClass}
-                          disabled={privateUpdateAuthBusy}
-                          onClick={() => {
-                            void clearPrivateUpdateAccessToken();
-                          }}
-                        >
-                          <Trash2 size={14} />
-                          Clear
-                        </button>
-                      </div>
-                      <div className="mt-2 break-words text-[11px] leading-5 text-[var(--text-muted)]">
-                        {privateUpdateAuthStatus?.reason ??
-                          "Open this tab to load private update access status."}
+                        )}
+
+                        {activeTab === "keybindings" && renderKeybindings()}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className={`${settingsActionButtonClass} mt-4`}
-                      disabled={autoUpdateBusy}
-                      onClick={() => {
-                        void runAutoUpdateCheckWithNotification();
-                      }}
-                    >
-                      <RefreshCw size={14} />
-                      Check for Updates
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {activeTab === "browser-preview" && (
-                <div className="mx-auto max-w-3xl space-y-7">
-                  <SettingHeader
-                    title="Browser Preview"
-                    description="Manage integrated browser preview behavior."
-                  />
-
-                  <div className={settingsPanelClass}>
-                    <div className="grid gap-4 border-b border-[var(--border-subtle)] px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-                      <div className="min-w-0 pr-4">
-                        <div className="text-sm font-semibold text-[var(--text-primary)]">
-                          Markdown links
-                        </div>
-                        <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                          Choose whether Markdown preview links open directly in
-                          the system browser or first inside Browser Preview.
-                        </div>
-                      </div>
-                      <div
-                        role="group"
-                        aria-label="Markdown links"
-                        className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
-                      >
-                        {markdownLinkOpenModeOptions.map((option) => (
-                          <button
-                            key={option.value}
-                            type="button"
-                            aria-pressed={markdownLinkOpenMode === option.value}
-                            onClick={() =>
-                              setMarkdownLinkOpenMode(option.value)
-                            }
-                            className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
-                              markdownLinkOpenMode === option.value
-                                ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
-                                : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
-                            }`}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <SwitchRow
-                      title="Auto-open Preview"
-                      description="Open browser preview automatically when the terminal reports a local URL."
-                      checked={autoOpenFromTerminal}
-                      onCheckedChange={setAutoOpenFromTerminal}
-                    />
-                    <SwitchRow
-                      title="Reuse Session Window"
-                      description="Keep one preview window per terminal session instead of spawning new ones."
-                      checked={reuseWindowPerSession}
-                      onCheckedChange={setReuseWindowPerSession}
-                    />
-                    <SwitchRow
-                      title="Close on Session Exit"
-                      description="Close auto-opened preview windows when the terminal session ends."
-                      checked={closeAutoOpenedOnTerminalExit}
-                      onCheckedChange={setCloseAutoOpenedOnTerminalExit}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {activeTab === "keybindings" && renderKeybindings()}
-            </div>
-          </div>
-        </Dialog.Content>
+                  </motion.div>
+                </motion.div>
+              </Dialog.Content>
+            </React.Fragment>
+          ) : null}
+        </AnimatePresence>
       </Dialog.Portal>
     </Dialog.Root>
   );

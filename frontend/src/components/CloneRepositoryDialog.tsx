@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
 import {
   AlertCircle,
@@ -15,6 +15,7 @@ import * as App from "../wails/app";
 import { selectDirectoryWithCapability } from "../shell/shellDialogs";
 import { deriveCloneProjectName } from "../utils/gitClone";
 import { shortcuts } from "../utils/keyboard";
+import { MotionShellDialogFrame } from "./ui/MotionShellDialogFrame";
 
 interface CloneRepositoryDialogProps {
   open: boolean;
@@ -161,143 +162,140 @@ export const CloneRepositoryDialog: React.FC<CloneRepositoryDialogProps> = ({
   return createPortal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5 backdrop-blur-sm">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.97 }}
-            transition={{ duration: 0.14, ease: "easeOut" }}
-            className="shell-overlay-card w-[min(620px,100%)] p-8 outline-none"
+        <MotionShellDialogFrame
+          key="clone-repository-dialog"
+          overlayClassName="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5 backdrop-blur-sm"
+          panelClassName="shell-overlay-card w-[min(620px,100%)] p-8 outline-none"
+          panelTestId="clone-repository-dialog"
+        >
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleCloneRepository();
+            }}
           >
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void handleCloneRepository();
-              }}
-            >
-              <div className="flex items-start justify-between gap-6">
-                <div className="min-w-0">
-                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-transparent text-[var(--text-primary)]">
-                    <GitBranch size={20} />
-                  </div>
-                  <h2 className="text-[28px] font-semibold text-[var(--text-primary)]">
-                    Clone Repository
-                  </h2>
-                  <div className="mt-2 text-[16px] text-[var(--text-secondary)]">
-                    Clone a Git remote and open it as the current project.
-                  </div>
+            <div className="flex items-start justify-between gap-6">
+              <div className="min-w-0">
+                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-transparent text-[var(--text-primary)]">
+                  <GitBranch size={20} />
                 </div>
-
-                <button
-                  type="button"
-                  onClick={close}
-                  disabled={cloning}
-                  className={iconButtonClass}
-                  aria-label="Close clone repository dialog"
-                >
-                  <X size={20} />
-                </button>
+                <h2 className="text-[28px] font-semibold text-[var(--text-primary)]">
+                  Clone Repository
+                </h2>
+                <div className="mt-2 text-[16px] text-[var(--text-secondary)]">
+                  Clone a Git remote and open it as the current project.
+                </div>
               </div>
 
-              <div className="mt-8 space-y-5">
-                <div>
-                  <label className={labelClass}>
-                    <Link size={15} />
-                    Repository URL
-                  </label>
-                  <input
-                    autoFocus
-                    type="text"
-                    value={repositoryUrl}
-                    onChange={handleRepositoryUrlChange}
-                    disabled={cloning}
-                    placeholder="https://github.com/org/repo.git"
-                    className={inputClass}
-                  />
-                </div>
+              <button
+                type="button"
+                onClick={close}
+                disabled={cloning}
+                className={iconButtonClass}
+                aria-label="Close clone repository dialog"
+              >
+                <X size={20} />
+              </button>
+            </div>
 
-                <div>
-                  <label className={labelClass}>
-                    <FolderOpen size={15} />
-                    Destination
-                  </label>
-                  <div className="flex flex-col gap-3 sm:flex-row">
-                    <input
-                      type="text"
-                      value={selectedDir}
-                      readOnly
-                      placeholder="Select destination..."
-                      className={`${inputClass} min-w-0 flex-1`}
-                    />
-                    <button
-                      type="button"
-                      onClick={handleSelectDirectory}
-                      disabled={cloning}
-                      className={`${secondaryButtonClass} shrink-0`}
-                    >
-                      <FolderOpen size={17} />
-                      Browse
-                    </button>
-                  </div>
-                </div>
+            <div className="mt-8 space-y-5">
+              <div>
+                <label className={labelClass}>
+                  <Link size={15} />
+                  Repository URL
+                </label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={repositoryUrl}
+                  onChange={handleRepositoryUrlChange}
+                  disabled={cloning}
+                  placeholder="https://github.com/org/repo.git"
+                  className={inputClass}
+                />
+              </div>
 
-                <div>
-                  <label className={labelClass}>
-                    <Sparkles size={15} />
-                    Project Name
-                  </label>
+              <div>
+                <label className={labelClass}>
+                  <FolderOpen size={15} />
+                  Destination
+                </label>
+                <div className="flex flex-col gap-3 sm:flex-row">
                   <input
                     type="text"
-                    value={projectName}
-                    onChange={handleProjectNameChange}
-                    disabled={cloning}
-                    placeholder="repo"
-                    className={inputClass}
+                    value={selectedDir}
+                    readOnly
+                    placeholder="Select destination..."
+                    className={`${inputClass} min-w-0 flex-1`}
                   />
-                </div>
-
-                <div className="min-h-5 break-words text-[13px] text-[var(--text-muted)]">
-                  {error ? (
-                    <span className="inline-flex items-start gap-2 text-[var(--status-error)]">
-                      <AlertCircle size={15} className="mt-0.5 shrink-0" />
-                      <span>{error}</span>
-                    </span>
-                  ) : selectedDir && projectName.trim() ? (
-                    <>
-                      Project will be cloned to: {selectedDir}/
-                      {projectName.trim()}
-                    </>
-                  ) : (
-                    "Ready to clone once a repository and destination are selected."
-                  )}
+                  <button
+                    type="button"
+                    onClick={handleSelectDirectory}
+                    disabled={cloning}
+                    className={`${secondaryButtonClass} shrink-0`}
+                  >
+                    <FolderOpen size={17} />
+                    Browse
+                  </button>
                 </div>
               </div>
 
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
-                <button
-                  type="submit"
-                  disabled={cloneDisabled}
-                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-[18px] bg-white px-8 text-[16px] font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-2"
-                >
-                  {cloning ? (
-                    <Loader2 size={18} className="animate-spin" />
-                  ) : (
-                    <GitBranch size={18} />
-                  )}
-                  {cloning ? "Cloning..." : "Clone"}
-                </button>
-                <button
-                  type="button"
-                  onClick={close}
+              <div>
+                <label className={labelClass}>
+                  <Sparkles size={15} />
+                  Project Name
+                </label>
+                <input
+                  type="text"
+                  value={projectName}
+                  onChange={handleProjectNameChange}
                   disabled={cloning}
-                  className={`${secondaryButtonClass} shrink-0 sm:order-1`}
-                >
-                  Cancel
-                </button>
+                  placeholder="repo"
+                  className={inputClass}
+                />
               </div>
-            </form>
-          </motion.div>
-        </div>
+
+              <div className="min-h-5 break-words text-[13px] text-[var(--text-muted)]">
+                {error ? (
+                  <span className="inline-flex items-start gap-2 text-[var(--status-error)]">
+                    <AlertCircle size={15} className="mt-0.5 shrink-0" />
+                    <span>{error}</span>
+                  </span>
+                ) : selectedDir && projectName.trim() ? (
+                  <>
+                    Project will be cloned to: {selectedDir}/
+                    {projectName.trim()}
+                  </>
+                ) : (
+                  "Ready to clone once a repository and destination are selected."
+                )}
+              </div>
+            </div>
+
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="submit"
+                disabled={cloneDisabled}
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-[18px] bg-white px-8 text-[16px] font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-2"
+              >
+                {cloning ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <GitBranch size={18} />
+                )}
+                {cloning ? "Cloning..." : "Clone"}
+              </button>
+              <button
+                type="button"
+                onClick={close}
+                disabled={cloning}
+                className={`${secondaryButtonClass} shrink-0 sm:order-1`}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </MotionShellDialogFrame>
       )}
     </AnimatePresence>,
     document.body,

@@ -38,6 +38,7 @@ import {
   type ContextActionMenuItem,
 } from "./ui/ContextActionMenu";
 import { DragGhost, type DragGhostState } from "./ui/DragGhost";
+import { MotionDropdownContent } from "./ui/MotionDropdownContent";
 import { buildFileNodes } from "../utils/fileTreeHelpers";
 import { shortcuts } from "../utils/keyboard";
 import {
@@ -1873,11 +1874,11 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         <DropdownMenu.Trigger asChild>{trigger}</DropdownMenu.Trigger>
 
         <DropdownMenu.Portal>
-          <DropdownMenu.Content
+          <MotionDropdownContent
             align={options?.align ?? "end"}
             side={options?.side ?? "bottom"}
             sideOffset={options?.sideOffset ?? 8}
-            className="z-[100] min-w-[220px] overflow-hidden rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] shadow-2xl animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2"
+            className="z-[100] min-w-[220px] overflow-hidden rounded-[10px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] shadow-2xl"
             data-shell-menu-content
           >
             <DropdownMenu.Item
@@ -1894,7 +1895,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
               <FolderPlus size={16} />
               New Folder
             </DropdownMenu.Item>
-          </DropdownMenu.Content>
+          </MotionDropdownContent>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
     );
@@ -2215,6 +2216,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
               <button
                 type="button"
                 title="Create"
+                data-testid="file-explorer-create-button"
                 style={{
                   width: `${headerCreateButtonSize}px`,
                   height: `${headerCreateButtonSize}px`,

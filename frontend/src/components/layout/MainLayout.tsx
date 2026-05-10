@@ -212,7 +212,13 @@ type FullscreenPanelId =
   | "aiChat"
   | "git"
   | "problems"
+  | "code"
   | "markdownPreview";
+
+interface FullscreenPanelTransitionTarget {
+  panelId: PanelId;
+  position: PanelPosition;
+}
 
 let nativeWindowControlsOwner: symbol | null = null;
 let nativeWindowControlsRestoreTimer: ReturnType<typeof setTimeout> | null =
@@ -1046,6 +1052,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const problemsPreFullscreenRef = React.useRef<PanelFullscreenSnapshot | null>(
     null,
   );
+  const codePreFullscreenRef = React.useRef<PanelFullscreenSnapshot | null>(
+    null,
+  );
   const markdownPreviewPreFullscreenRef =
     React.useRef<PanelFullscreenSnapshot | null>(null);
   const topChromeRef = React.useRef<HTMLDivElement | null>(null);
@@ -1109,6 +1118,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [panelDropSettlingPositions, setPanelDropSettlingPositions] = useState<
     PanelPosition[]
   >([]);
+  const [fullscreenPanelTransitions, setFullscreenPanelTransitions] = useState<
+    FullscreenPanelTransitionTarget[]
+  >([]);
   const [panelExitPositions, setPanelExitPositions] = useState<PanelPosition[]>(
     [],
   );
@@ -1124,6 +1136,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const panelExitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const panelExitCollapseFrameRef = useRef<number | null>(null);
   const pendingPanelCloseFrameIdsRef = useRef<number[]>([]);
+  const fullscreenPanelTransitionTimerIdsRef = useRef<
+    Partial<Record<PanelId, ReturnType<typeof setTimeout>>>
+  >({});
 
   useEffect(() => {
     return () => {
@@ -1154,7 +1169,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           window.cancelAnimationFrame(zenViewportMouseMoveFrameRef.current);
         }
       }
+      Object.values(fullscreenPanelTransitionTimerIdsRef.current).forEach(
+        (timerId) => {
+          if (timerId) {
+            clearTimeout(timerId);
+          }
+        },
+      );
       pendingPanelCloseFrameIdsRef.current = [];
+      fullscreenPanelTransitionTimerIdsRef.current = {};
       zenViewportMouseMoveFrameRef.current = null;
       zenViewportPointerRef.current = null;
       zenViewportChromeStateRef.current = createEmptyZenViewportChromeState();
@@ -1163,6 +1186,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setRelocatingPanelIds([]);
       setRelocatingPreviewWindowIds([]);
       setPanelDropSettlingPositions([]);
+      setFullscreenPanelTransitions([]);
       setPanelExitPositions([]);
       setPanelExitSlotSizes(createEmptySnappedSlotSizes());
       panelPresenceBypassPositionsRef.current = [];
@@ -1225,7 +1249,43 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     fullscreenSurfaceIds,
   });
 
-  const restoreOrEnterPanelFullscreen = useCallback(
+  const startFullscreenPanelTransition = useCallback(
+    (panelId: FullscreenPanelId, applyTransition: () => void) => {
+      if (reducePanelMotion || typeof window === "undefined") {
+        applyTransition();
+        return;
+      }
+
+      beginPanelMotionWindow();
+
+      const transitionTarget: FullscreenPanelTransitionTarget = {
+        panelId,
+        position: panelConfigsRef.current[panelId].position,
+      };
+      setFullscreenPanelTransitions((currentTransitions) => [
+        ...currentTransitions.filter((target) => target.panelId !== panelId),
+        transitionTarget,
+      ]);
+      applyTransition();
+
+      const existingTimerId =
+        fullscreenPanelTransitionTimerIdsRef.current[panelId];
+      if (existingTimerId) {
+        clearTimeout(existingTimerId);
+      }
+
+      const timerId = window.setTimeout(() => {
+        delete fullscreenPanelTransitionTimerIdsRef.current[panelId];
+        setFullscreenPanelTransitions((currentTransitions) =>
+          currentTransitions.filter((target) => target.panelId !== panelId),
+        );
+      }, FLOATING_PANEL_LAYOUT_TRANSITION_MS + 180);
+      fullscreenPanelTransitionTimerIdsRef.current[panelId] = timerId;
+    },
+    [beginPanelMotionWindow, reducePanelMotion],
+  );
+
+  const applyRestoreOrEnterPanelFullscreen = useCallback(
     (
       panelId: FullscreenPanelId,
       snapshotRef: React.MutableRefObject<PanelFullscreenSnapshot | null>,
@@ -1307,6 +1367,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       panelWorkspaceSize.height,
       panelWorkspaceSize.width,
     ],
+  );
+
+  const restoreOrEnterPanelFullscreen = useCallback(
+    (
+      panelId: FullscreenPanelId,
+      snapshotRef: React.MutableRefObject<PanelFullscreenSnapshot | null>,
+    ) => {
+      startFullscreenPanelTransition(panelId, () => {
+        applyRestoreOrEnterPanelFullscreen(panelId, snapshotRef);
+      });
+    },
+    [applyRestoreOrEnterPanelFullscreen, startFullscreenPanelTransition],
   );
 
   const pinZenPanelIfShortcutOpened = useCallback(
@@ -1420,41 +1492,45 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }
 
     const saved = snapshotRef.current;
-    snapshotRef.current = null;
-    setFloatingPresenceVersion((version) => version + 1);
 
-    const fallbackPosition =
-      resolveSmartSnappedPosition(
-        panelId,
-        rememberedSnappedPositionsRef.current[panelId],
-        panelsRef.current,
-        panelConfigsRef.current,
-      ) ?? rememberedSnappedPositionsRef.current[panelId];
-    const fallbackSize = normalizePanelSizeForPosition(
-      fallbackPosition,
-      DEFAULT_PANEL_CONFIGS[panelId].size,
-    );
-    const restoredMode = saved?.mode ?? "snapped";
-    const restoredPosition = saved ? currentConfig.position : fallbackPosition;
+    startFullscreenPanelTransition(panelId, () => {
+      const latestConfig = panelConfigsRef.current[panelId];
+      snapshotRef.current = null;
+      setFloatingPresenceVersion((version) => version + 1);
 
-    applyPanelConfigsState({
-      ...panelConfigsRef.current,
-      [panelId]: {
-        ...currentConfig,
-        mode: restoredMode,
-        position: restoredPosition,
-        x: saved?.x ?? 0,
-        y: saved?.y ?? 0,
-        size: saved?.size ?? fallbackSize,
-      },
-    });
-    if (restoredMode === "snapped") {
-      applyRememberedSnappedPositionsState({
-        ...rememberedSnappedPositionsRef.current,
-        [panelId]: restoredPosition,
+      const fallbackPosition =
+        resolveSmartSnappedPosition(
+          panelId,
+          rememberedSnappedPositionsRef.current[panelId],
+          panelsRef.current,
+          panelConfigsRef.current,
+        ) ?? rememberedSnappedPositionsRef.current[panelId];
+      const fallbackSize = normalizePanelSizeForPosition(
+        fallbackPosition,
+        DEFAULT_PANEL_CONFIGS[panelId].size,
+      );
+      const restoredMode = saved?.mode ?? "snapped";
+      const restoredPosition = saved ? latestConfig.position : fallbackPosition;
+
+      applyPanelConfigsState({
+        ...panelConfigsRef.current,
+        [panelId]: {
+          ...latestConfig,
+          mode: restoredMode,
+          position: restoredPosition,
+          x: saved?.x ?? 0,
+          y: saved?.y ?? 0,
+          size: saved?.size ?? fallbackSize,
+        },
       });
-    }
-    applyPanelsState({ ...panelsRef.current, [panelId]: false });
+      if (restoredMode === "snapped") {
+        applyRememberedSnappedPositionsState({
+          ...rememberedSnappedPositionsRef.current,
+          [panelId]: restoredPosition,
+        });
+      }
+      applyPanelsState({ ...panelsRef.current, [panelId]: false });
+    });
     return true;
   }
 
@@ -1470,6 +1546,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     if (
       closePanelFullscreenFromShortcut("problems", problemsPreFullscreenRef)
     ) {
+      return true;
+    }
+
+    if (closePanelFullscreenFromShortcut("code", codePreFullscreenRef)) {
       return true;
     }
 
@@ -1493,39 +1573,44 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }
 
   function togglePanelFullscreenFromShortcut(
-    panelId: "git" | "problems",
+    panelId: FullscreenPanelId,
     snapshotRef: React.MutableRefObject<PanelFullscreenSnapshot | null>,
   ) {
     if (closePanelFullscreenFromShortcut(panelId, snapshotRef)) {
       return;
     }
 
-    const currentConfig = panelConfigsRef.current[panelId];
-    if (panelsRef.current[panelId] && isLogicalFullscreenPanel(currentConfig)) {
+    if (
+      panelsRef.current[panelId] &&
+      isLogicalFullscreenPanel(panelConfigsRef.current[panelId])
+    ) {
       restoreOrEnterPanelFullscreen(panelId, snapshotRef);
       return;
     }
 
-    snapshotRef.current = {
-      mode: currentConfig.mode,
-      x: currentConfig.x,
-      y: currentConfig.y,
-      size: { ...currentConfig.size },
-    };
+    startFullscreenPanelTransition(panelId, () => {
+      const currentConfig = panelConfigsRef.current[panelId];
+      snapshotRef.current = {
+        mode: currentConfig.mode,
+        x: currentConfig.x,
+        y: currentConfig.y,
+        size: { ...currentConfig.size },
+      };
 
-    applyPanelsState({ ...panelsRef.current, [panelId]: true });
-    applyPanelConfigsState({
-      ...panelConfigsRef.current,
-      [panelId]: {
-        ...currentConfig,
-        mode: "floating",
-        x: 0,
-        y: 0,
-        size: {
-          width: panelWorkspaceSize.width,
-          height: panelWorkspaceSize.height,
+      applyPanelsState({ ...panelsRef.current, [panelId]: true });
+      applyPanelConfigsState({
+        ...panelConfigsRef.current,
+        [panelId]: {
+          ...currentConfig,
+          mode: "floating",
+          x: 0,
+          y: 0,
+          size: {
+            width: panelWorkspaceSize.width,
+            height: panelWorkspaceSize.height,
+          },
         },
-      },
+      });
     });
   }
 
@@ -4305,6 +4390,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       setTUIAssistRatio,
       shouldSuppressApplicationMenuAction,
       submitTerminalCommand,
+      terminalPreFullscreenRef,
       toggleCanonicalBrowserPreviewRef,
       togglePanelCompactFromShortcut,
       togglePanelFullscreenFromShortcut,
@@ -4408,6 +4494,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     pressedShortcutCodesRef,
     problemsPreFullscreenRef,
     shortcutActionSuppressionRef,
+    terminalPreFullscreenRef,
     toggleCanonicalBrowserPreviewRef,
     toggleCommandDispatcher,
     togglePanelCompactFromShortcut,
@@ -4605,31 +4692,86 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     );
   };
 
-  const handleTerminalPanelFullscreen = () => {
-    if (tuiModeActive) {
-      terminalPreFullscreenRef.current = null;
-      const terminalState = useTerminalStore.getState();
-      setTUIAssist({
-        active: false,
-        panel: null,
-        anchor: terminalState.tuiAssist.anchor,
-      });
-      setPanelConfigs((previous) => ({
-        ...previous,
-        terminal: {
-          ...previous.terminal,
-          ...getTUIFloatingTerminalConfig({
-            viewportWidth: logicalViewport.width,
-            viewportHeight: logicalViewport.height,
-          }),
-        },
-      }));
-      setTimeout(() => terminalState.focusActiveTerminal(), 80);
-      return;
-    }
+  const fullscreenTransitionPanelIds = useMemo(
+    () => fullscreenPanelTransitions.map((target) => target.panelId),
+    [fullscreenPanelTransitions],
+  );
+  const fullscreenTransitionPositions = useMemo(
+    () =>
+      uniquePanelPositions(
+        fullscreenPanelTransitions.map((target) => target.position),
+      ),
+    [fullscreenPanelTransitions],
+  );
+  const effectivePanelDropSettling =
+    panelDropSettling || fullscreenPanelTransitions.length > 0;
+  const effectivePanelDropSettlingPositions = useMemo(
+    () =>
+      uniquePanelPositions([
+        ...panelDropSettlingPositions,
+        ...fullscreenTransitionPositions,
+      ]),
+    [fullscreenTransitionPositions, panelDropSettlingPositions],
+  );
 
-    restoreOrEnterPanelFullscreen("terminal", terminalPreFullscreenRef);
-  };
+  const handlePanelFullscreen = useCallback(
+    (panelId: PanelId) => {
+      switch (panelId) {
+        case "terminal": {
+          if (tuiModeActive) {
+            terminalPreFullscreenRef.current = null;
+            const terminalState = useTerminalStore.getState();
+            setTUIAssist({
+              active: false,
+              panel: null,
+              anchor: terminalState.tuiAssist.anchor,
+            });
+            setPanelConfigs((previous) => ({
+              ...previous,
+              terminal: {
+                ...previous.terminal,
+                ...getTUIFloatingTerminalConfig({
+                  viewportWidth: logicalViewport.width,
+                  viewportHeight: logicalViewport.height,
+                }),
+              },
+            }));
+            setTimeout(() => terminalState.focusActiveTerminal(), 80);
+            return;
+          }
+
+          restoreOrEnterPanelFullscreen("terminal", terminalPreFullscreenRef);
+          return;
+        }
+        case "aiChat":
+          restoreOrEnterPanelFullscreen("aiChat", aiChatPreFullscreenRef);
+          return;
+        case "git":
+          restoreOrEnterPanelFullscreen("git", gitPreFullscreenRef);
+          return;
+        case "problems":
+          restoreOrEnterPanelFullscreen("problems", problemsPreFullscreenRef);
+          return;
+        case "code":
+          restoreOrEnterPanelFullscreen("code", codePreFullscreenRef);
+          return;
+        case "markdownPreview":
+          restoreOrEnterPanelFullscreen(
+            "markdownPreview",
+            markdownPreviewPreFullscreenRef,
+          );
+          return;
+        default:
+          return;
+      }
+    },
+    [
+      logicalViewport.height,
+      logicalViewport.width,
+      restoreOrEnterPanelFullscreen,
+      tuiModeActive,
+    ],
+  );
 
   const renderPanel = (
     panelId: PanelId,
@@ -4682,22 +4824,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onClosePanel={closePanelWithMotion}
       onMovePanelToPosition={movePanelToPosition}
       onCloseTerminalPanel={closeTerminalPanel}
-      onTerminalFullscreen={handleTerminalPanelFullscreen}
-      onAIChatFullscreen={() =>
-        restoreOrEnterPanelFullscreen("aiChat", aiChatPreFullscreenRef)
-      }
-      onGitFullscreen={() =>
-        restoreOrEnterPanelFullscreen("git", gitPreFullscreenRef)
-      }
-      onProblemsFullscreen={() =>
-        restoreOrEnterPanelFullscreen("problems", problemsPreFullscreenRef)
-      }
-      onMarkdownPreviewFullscreen={() =>
-        restoreOrEnterPanelFullscreen(
-          "markdownPreview",
-          markdownPreviewPreFullscreenRef,
-        )
-      }
+      onPanelFullscreen={handlePanelFullscreen}
       onMarkdownLinkPreviewOpen={handleMarkdownLinkPreviewOpen}
       onFileOpen={handleFileOpen}
       onFileOpenInPanel={handleFileOpenInPanel}
@@ -4714,6 +4841,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onCodePanelRevealInExplorer={handleCodePanelTabRevealInExplorer}
       onCodePanelMoveToEditorTabs={handleCodePanelTabMoveToEditorTabs}
       onZenPinToggle={toggleZenPinnedPanel}
+      fullscreenTransitionPanelIds={fullscreenTransitionPanelIds}
     />
   );
 
@@ -5297,7 +5425,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     opacity: 1,
     pointerEvents: "auto",
     isolation:
-      panelDropSettling || panelExitPositions.length > 0
+      effectivePanelDropSettling || panelExitPositions.length > 0
         ? "isolate"
         : undefined,
   };
@@ -5309,7 +5437,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     minHeight: 0,
     minWidth: 0,
     position: "relative",
-    zIndex: panelDropSettling ? 0 : undefined,
+    zIndex: effectivePanelDropSettling ? 0 : undefined,
   };
 
   const getVerticalSlotStyle = (
@@ -5318,7 +5446,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     isActive: boolean,
     isResizingSlot: boolean,
   ): React.CSSProperties => {
-    const isSettlingSlot = panelDropSettlingPositions.includes(position);
+    const isSettlingSlot =
+      effectivePanelDropSettlingPositions.includes(position);
     const isExitingSlot = panelExitPositions.includes(position);
     const isCollapsingExitSlot =
       panelExitCollapsingPositions.includes(position);
@@ -5375,7 +5504,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     isActive: boolean,
     isResizingSlot: boolean,
   ): React.CSSProperties => {
-    const isSettlingSlot = panelDropSettlingPositions.includes(position);
+    const isSettlingSlot =
+      effectivePanelDropSettlingPositions.includes(position);
     const isExitingSlot = panelExitPositions.includes(position);
     const isCollapsingExitSlot =
       panelExitCollapsingPositions.includes(position);
@@ -5441,7 +5571,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   // instead of sliding. Only drag/drop settling animates slot size.
   const workspaceLayoutMotionEnabled = false;
   const panelLayoutChanging =
-    panelDropSettling || panelExitPositions.length > 0;
+    effectivePanelDropSettling || panelExitPositions.length > 0;
   const workspaceEditorContent = React.cloneElement(
     children as React.ReactElement<{
       markdownPreviewOpen?: boolean;
@@ -5580,7 +5710,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               editorAreaTestId="editor-area"
               editorContent={workspaceEditorContent}
               panelLayoutChanging={panelLayoutChanging}
-              panelDropSettling={panelDropSettling}
+              panelDropSettling={effectivePanelDropSettling}
               draggingPanel={draggingPanel}
               draggingPreviewWindowId={draggingPreviewWindowId}
               draggingFilePanel={draggingFilePanel}

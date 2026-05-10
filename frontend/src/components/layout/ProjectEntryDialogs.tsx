@@ -1,7 +1,8 @@
 import React from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 import type { ProjectEntryTrashRequest } from "../../contexts/ProjectEntryActionsContext";
 import { getProjectPathBasename } from "../../utils/projectPaths";
+import { MotionShellDialogFrame } from "../ui/MotionShellDialogFrame";
 import type {
   ProjectEntryCreateDialogState,
   ProjectEntryRenameDialogState,
@@ -54,90 +55,86 @@ export const ProjectEntryDialogs: React.FC<ProjectEntryDialogsProps> = ({
   <>
     <AnimatePresence>
       {createEntryDialog ? (
-        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5 backdrop-blur-sm">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.97 }}
-            transition={{ duration: 0.14, ease: "easeOut" }}
-            className="w-[min(620px,100%)] rounded-[28px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-8 shadow-2xl outline-none"
+        <MotionShellDialogFrame
+          key={`create-entry-${createEntryDialog.type}`}
+          overlayClassName="fixed inset-0 z-[140] flex items-center justify-center bg-black/45 p-5 backdrop-blur-sm"
+          panelClassName="w-[min(620px,100%)] rounded-[28px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-8 shadow-2xl outline-none"
+          panelTestId={`project-entry-${createEntryDialog.type}-dialog`}
+        >
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onCreateEntrySubmit();
+            }}
           >
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void onCreateEntrySubmit();
-              }}
-            >
-              <div>
-                <div className="text-[28px] font-semibold text-[var(--text-primary)]">
-                  {createEntryDialog.type === "file"
-                    ? "New File"
-                    : "New Folder"}
-                </div>
-                <div className="mt-2 text-[16px] text-[var(--text-secondary)]">
-                  Create inside{" "}
-                  {getCreateEntryDirectoryLabel(
-                    createEntryDialog.directoryPath,
-                  )}
-                </div>
+            <div>
+              <div className="text-[28px] font-semibold text-[var(--text-primary)]">
+                {createEntryDialog.type === "file" ? "New File" : "New Folder"}
               </div>
+              <div className="mt-2 text-[16px] text-[var(--text-secondary)]">
+                Create inside{" "}
+                {getCreateEntryDirectoryLabel(createEntryDialog.directoryPath)}
+              </div>
+            </div>
 
-              <div className="mt-8">
-                <label className="mb-2 block text-[15px] font-semibold text-[var(--text-secondary)]">
-                  Name
-                </label>
-                <input
-                  autoFocus
-                  type="text"
-                  value={createEntryName}
-                  onChange={(event) =>
-                    onCreateEntryNameChange(event.target.value)
-                  }
-                  placeholder={
-                    createEntryDialog.type === "file"
-                      ? "notes.txt"
-                      : "new-folder"
-                  }
-                  className="min-h-12 w-full rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 text-[16px] text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-muted)] hover:border-[var(--border-default)] focus:border-[var(--border-strong)]"
-                />
-                <div className="mt-4 break-all text-[13px] text-[var(--text-muted)]">
-                  {joinProjectEntryPath(
-                    createEntryDialog.directoryPath,
-                    createEntryName.trim() || "...",
-                  )}
-                </div>
+            <div className="mt-8">
+              <label className="mb-2 block text-[15px] font-semibold text-[var(--text-secondary)]">
+                Name
+              </label>
+              <input
+                autoFocus
+                type="text"
+                value={createEntryName}
+                onChange={(event) =>
+                  onCreateEntryNameChange(event.target.value)
+                }
+                placeholder={
+                  createEntryDialog.type === "file" ? "notes.txt" : "new-folder"
+                }
+                className="min-h-12 w-full rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 text-[16px] text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-muted)] hover:border-[var(--border-default)] focus:border-[var(--border-strong)]"
+              />
+              <div className="mt-4 break-all text-[13px] text-[var(--text-muted)]">
+                {joinProjectEntryPath(
+                  createEntryDialog.directoryPath,
+                  createEntryName.trim() || "...",
+                )}
               </div>
+            </div>
 
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={onCreateEntryClose}
-                  disabled={createEntryBusy}
-                  className="inline-flex min-h-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-transparent px-6 text-[16px] font-medium text-[var(--text-primary)] transition-colors hover:border-[var(--border-default)] hover:bg-[var(--bg-hover)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-1"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!createEntryName.trim() || createEntryBusy}
-                  className="min-h-12 rounded-[18px] bg-white px-8 text-[16px] font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-2"
-                >
-                  {createEntryBusy
-                    ? "Creating..."
-                    : createEntryDialog.type === "file"
-                      ? "Create File"
-                      : "Create Folder"}
-                </button>
-              </div>
-            </form>
-          </motion.div>
-        </div>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={onCreateEntryClose}
+                disabled={createEntryBusy}
+                className="inline-flex min-h-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-transparent px-6 text-[16px] font-medium text-[var(--text-primary)] transition-colors hover:border-[var(--border-default)] hover:bg-[var(--bg-hover)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-1"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!createEntryName.trim() || createEntryBusy}
+                className="min-h-12 rounded-[18px] bg-white px-8 text-[16px] font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-2"
+              >
+                {createEntryBusy
+                  ? "Creating..."
+                  : createEntryDialog.type === "file"
+                    ? "Create File"
+                    : "Create Folder"}
+              </button>
+            </div>
+          </form>
+        </MotionShellDialogFrame>
       ) : null}
     </AnimatePresence>
 
-    {renameEntryDialog ? (
-      <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm">
-        <div className="w-full max-w-md rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-5 shadow-2xl">
+    <AnimatePresence>
+      {renameEntryDialog ? (
+        <MotionShellDialogFrame
+          key="rename-entry"
+          overlayClassName="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm"
+          panelClassName="w-full max-w-md rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-5 shadow-2xl"
+          panelTestId="project-entry-rename-dialog"
+        >
           <div className="text-lg font-semibold text-[var(--text-primary)]">
             Rename {renameEntryDialog.isDirectory ? "Folder" : "File"}
           </div>
@@ -176,13 +173,18 @@ export const ProjectEntryDialogs: React.FC<ProjectEntryDialogsProps> = ({
               {renameEntryBusy ? "Renaming..." : "Rename"}
             </button>
           </div>
-        </div>
-      </div>
-    ) : null}
+        </MotionShellDialogFrame>
+      ) : null}
+    </AnimatePresence>
 
-    {trashEntryDialog ? (
-      <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm">
-        <div className="w-full max-w-md rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-5 shadow-2xl">
+    <AnimatePresence>
+      {trashEntryDialog ? (
+        <MotionShellDialogFrame
+          key="trash-entry"
+          overlayClassName="fixed inset-0 z-[130] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm"
+          panelClassName="w-full max-w-md rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-5 shadow-2xl"
+          panelTestId="project-entry-trash-dialog"
+        >
           <div className="text-lg font-semibold text-[var(--text-primary)]">
             Move to Trash
           </div>
@@ -219,8 +221,8 @@ export const ProjectEntryDialogs: React.FC<ProjectEntryDialogsProps> = ({
               {trashEntryBusy ? "Moving..." : "Move to Trash"}
             </button>
           </div>
-        </div>
-      </div>
-    ) : null}
+        </MotionShellDialogFrame>
+      ) : null}
+    </AnimatePresence>
   </>
 );

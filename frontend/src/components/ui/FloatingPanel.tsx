@@ -31,6 +31,7 @@ import {
   ContextActionMenu,
   type ContextActionMenuItem,
 } from "./ContextActionMenu";
+import { PANEL_FULLSCREEN_MOTION_TRANSITION } from "./motionContracts";
 
 export type PanelPosition = "left" | "right" | "bottom" | "top";
 
@@ -166,6 +167,8 @@ export interface FloatingPanelProps {
   zenTopChromeAvoidanceTop?: number;
   uiScale?: number;
   isFullscreen?: boolean;
+  fullscreenLayoutId?: string;
+  fullscreenMotionActive?: boolean;
   activeDropTargetPosition?: PanelPosition | null;
   isRelocating?: boolean;
   zenModeEnabled?: boolean;
@@ -214,6 +217,8 @@ export const FloatingPanel = React.forwardRef<
       zenTopChromeAvoidanceTop = 0,
       uiScale,
       isFullscreen = false,
+      fullscreenLayoutId,
+      fullscreenMotionActive = false,
       activeDropTargetPosition = null,
       isRelocating = false,
       zenModeEnabled = false,
@@ -285,21 +290,13 @@ export const FloatingPanel = React.forwardRef<
         return;
       }
 
-      if (!hasEntered) {
-        return;
-      }
+      const frameId = window.requestAnimationFrame(() => {
+        warmedPanelContentIds.add(id);
+        setContentReady(true);
+      });
 
-      warmedPanelContentIds.add(id);
-      setContentReady(true);
-    }, [
-      contentReady,
-      hasEntered,
-      id,
-      isPresent,
-      isRelocating,
-      mode,
-      reduceMotion,
-    ]);
+      return () => window.cancelAnimationFrame(frameId);
+    }, [contentReady, id, isPresent, isRelocating, mode, reduceMotion]);
 
     useEffect(() => {
       if (hasEntered || reduceMotion || mode === "floating" || !isPresent) {
@@ -1299,9 +1296,6 @@ export const FloatingPanel = React.forwardRef<
             : mode === "floating"
               ? "floating"
               : "docked";
-    const motionTransition = snappedSlideMotionEnabled
-      ? FLOATING_PANEL_LAYOUT_TRANSITION
-      : FLOATING_PANEL_NO_MOTION_TRANSITION;
     const slideMotionExit = isRelocating
       ? {
           opacity: 0,
@@ -1312,8 +1306,33 @@ export const FloatingPanel = React.forwardRef<
       : snappedSlideMotionEnabled
         ? { x: exitSlideVector.x, y: exitSlideVector.y }
         : slideMotionTarget;
+    const fullscreenLayoutIdentityEnabled =
+      Boolean(fullscreenLayoutId) &&
+      !reduceMotion &&
+      !isDragging &&
+      !isResizing &&
+      (fullscreenMotionActive || (mode === "snapped" && hostMode === "flow"));
+    const fullscreenLayoutMotionEnabled =
+      fullscreenLayoutIdentityEnabled && fullscreenMotionActive;
     const flowLayoutMotionEnabled =
       mode === "snapped" && hostMode === "flow" && !isDragging && !isResizing;
+    const motionTransition = fullscreenLayoutMotionEnabled
+      ? PANEL_FULLSCREEN_MOTION_TRANSITION
+      : snappedSlideMotionEnabled
+        ? FLOATING_PANEL_LAYOUT_TRANSITION
+        : FLOATING_PANEL_NO_MOTION_TRANSITION;
+    const panelLayoutMotion = fullscreenLayoutMotionEnabled
+      ? true
+      : flowLayoutMotionEnabled
+        ? "position"
+        : false;
+    const panelLayoutId = fullscreenLayoutMotionEnabled
+      ? fullscreenLayoutId
+      : fullscreenLayoutIdentityEnabled
+        ? fullscreenLayoutId
+        : flowLayoutMotionEnabled
+          ? `floating-panel-${id}`
+          : undefined;
     const containerMotionStyle: MotionStyle = isDragging
       ? {
           ...(getContainerStyle() as MotionStyle),
@@ -1563,8 +1582,8 @@ export const FloatingPanel = React.forwardRef<
     return (
       <motion.div
         ref={setPanelNode}
-        layout={flowLayoutMotionEnabled ? "position" : false}
-        layoutId={flowLayoutMotionEnabled ? `floating-panel-${id}` : undefined}
+        layout={panelLayoutMotion}
+        layoutId={panelLayoutId}
         initial={
           snappedSlideMotionEnabled && !isRelocating
             ? {
@@ -1589,6 +1608,9 @@ export const FloatingPanel = React.forwardRef<
         data-panel-position={position}
         data-panel-state={panelState}
         data-panel-motion={panelMotionState}
+        data-panel-fullscreen-motion={
+          fullscreenLayoutMotionEnabled ? "true" : "false"
+        }
         data-panel-immersive={immersiveFrameActive ? "true" : "false"}
         data-panel-relocating={isRelocating ? "true" : "false"}
         data-panel-zen-pinned={isZenPinned ? "true" : "false"}
