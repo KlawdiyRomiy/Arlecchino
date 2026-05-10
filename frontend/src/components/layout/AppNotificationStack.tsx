@@ -13,6 +13,7 @@ import {
   ExternalLink,
   Info,
   Loader2,
+  Minimize2,
   X,
 } from "lucide-react";
 import {
@@ -187,6 +188,13 @@ const closeButtonStyle: React.CSSProperties = {
   cursor: "pointer",
 };
 
+const controlColumnStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: "8px",
+};
+
 const actionButtonStyle: React.CSSProperties = {
   minHeight: "34px",
   display: "inline-flex",
@@ -343,6 +351,7 @@ interface NotificationCardProps {
   visibleCount: number;
   detailsExpanded: boolean;
   onDismiss: (id: string) => void;
+  onMinimize: (id: string) => void;
   onToggleDetails: (id: string) => void;
 }
 
@@ -354,6 +363,7 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
   visibleCount,
   detailsExpanded,
   onDismiss,
+  onMinimize,
   onToggleDetails,
 }) => {
   useEffect(() => {
@@ -363,7 +373,7 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
 
     const elapsed = Date.now() - notification.updatedAt;
     const timeout = window.setTimeout(
-      () => onDismiss(notification.id),
+      () => onMinimize(notification.id),
       Math.max(400, notification.timeoutMs - elapsed),
     );
 
@@ -373,7 +383,7 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
     notification.sticky,
     notification.timeoutMs,
     notification.updatedAt,
-    onDismiss,
+    onMinimize,
   ]);
 
   const isReadable = expanded || index === 0;
@@ -483,14 +493,26 @@ const NotificationCard: React.FC<NotificationCardProps> = ({
           ) : null}
         </div>
         {isReadable ? (
-          <button
-            type="button"
-            aria-label={`Dismiss ${notification.title}`}
-            style={closeButtonStyle}
-            onClick={() => onDismiss(notification.id)}
-          >
-            <X size={16} strokeWidth={2.25} />
-          </button>
+          <div style={controlColumnStyle}>
+            <button
+              type="button"
+              aria-label={`Dismiss ${notification.title}`}
+              title="Dismiss"
+              style={closeButtonStyle}
+              onClick={() => onDismiss(notification.id)}
+            >
+              <X size={16} strokeWidth={2.25} />
+            </button>
+            <button
+              type="button"
+              aria-label={`Minimize ${notification.title}`}
+              title="Minimize"
+              style={closeButtonStyle}
+              onClick={() => onMinimize(notification.id)}
+            >
+              <Minimize2 size={15} strokeWidth={2.25} />
+            </button>
+          </div>
         ) : (
           <span />
         )}
@@ -529,7 +551,16 @@ export const AppNotificationStack: React.FC = () => {
   const dismissNotification = useAppNotificationStore(
     (state) => state.dismissNotification,
   );
-  const visibleNotifications = notifications.slice(0, visibleNotificationLimit);
+  const minimizeNotification = useAppNotificationStore(
+    (state) => state.minimizeNotification,
+  );
+  const stackNotifications = notifications.filter(
+    (notification) => !notification.minimized,
+  );
+  const visibleNotifications = stackNotifications.slice(
+    0,
+    visibleNotificationLimit,
+  );
   const stackHeight =
     primaryRailHeight +
     Math.max(0, visibleNotifications.length - 1) *
@@ -578,6 +609,7 @@ export const AppNotificationStack: React.FC = () => {
             visibleCount={visibleNotifications.length}
             detailsExpanded={Boolean(expandedDetails[notification.id])}
             onDismiss={dismissNotification}
+            onMinimize={minimizeNotification}
             onToggleDetails={(id) =>
               setExpandedDetails((current) => ({
                 ...current,
@@ -587,7 +619,7 @@ export const AppNotificationStack: React.FC = () => {
           />
         ))}
       </AnimatePresence>
-      {notifications.length > visibleNotificationLimit ? (
+      {stackNotifications.length > visibleNotificationLimit ? (
         <motion.div
           initial={reducedMotion ? false : { opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
@@ -606,7 +638,7 @@ export const AppNotificationStack: React.FC = () => {
             pointerEvents: "auto",
           }}
         >
-          +{notifications.length - visibleNotificationLimit} more
+          +{stackNotifications.length - visibleNotificationLimit} more
         </motion.div>
       ) : null}
     </div>,

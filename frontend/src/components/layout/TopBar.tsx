@@ -14,6 +14,7 @@ import {
   Terminal,
   RefreshCw,
   DownloadCloud,
+  Bell,
 } from "lucide-react";
 import { WindowControls } from "../ui";
 import { DragGhost, type DragGhostState } from "../ui/DragGhost";
@@ -28,6 +29,7 @@ import {
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 import { ProjectIndicators } from "./ProjectIndicators";
 import { AddProjectMenu } from "./AddProjectMenu";
+import { NotificationCenterButton } from "./NotificationCenterButton";
 
 type VisibleTopbarItemId = TopbarItemId | "more";
 type TopbarItemGroup = "left" | "right";
@@ -73,6 +75,7 @@ const topbarItemLabels: Record<VisibleTopbarItemId, string> = {
   git: "Git",
   syncDependencies: "Sync dependencies",
   checkUpdates: "Check for Updates",
+  notifications: "Notifications",
   more: "More",
 };
 
@@ -275,6 +278,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 }) => {
   const [addProjectMenuOpen, setAddProjectMenuOpen] = React.useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = React.useState(false);
+  const [notificationMenuOpen, setNotificationMenuOpen] = React.useState(false);
   const indexing = useIndexingProgress();
   const showTopbarProjectPath = useEditorSettingsStore(
     (state) => state.showTopbarProjectPath,
@@ -631,6 +635,8 @@ export const TopBar: React.FC<TopBarProps> = ({
         return <RefreshCw size={topBarIconSize} />;
       case "checkUpdates":
         return <DownloadCloud size={topBarIconSize} />;
+      case "notifications":
+        return <Bell size={topBarIconSize} />;
       case "more":
         return <MoreVertical size={topBarIconSize} />;
       case "projects":
@@ -642,8 +648,15 @@ export const TopBar: React.FC<TopBarProps> = ({
   };
 
   React.useEffect(() => {
-    onChromePopupOpenChange?.(addProjectMenuOpen || moreMenuOpen);
-  }, [addProjectMenuOpen, moreMenuOpen, onChromePopupOpenChange]);
+    onChromePopupOpenChange?.(
+      addProjectMenuOpen || moreMenuOpen || notificationMenuOpen,
+    );
+  }, [
+    addProjectMenuOpen,
+    moreMenuOpen,
+    notificationMenuOpen,
+    onChromePopupOpenChange,
+  ]);
 
   React.useEffect(
     () => () => {
@@ -983,6 +996,15 @@ export const TopBar: React.FC<TopBarProps> = ({
           >
             <DownloadCloud size={topBarIconSize} />
           </button>
+        );
+      case "notifications":
+        return (
+          <NotificationCenterButton
+            buttonClassName={topBarActionClass}
+            activeButtonClassName={activeTopBarPanelButtonClass}
+            iconSize={topBarIconSize}
+            onOpenChange={setNotificationMenuOpen}
+          />
         );
       case "more":
         return renderMoreItem();

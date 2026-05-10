@@ -25,6 +25,7 @@ export const TOPBAR_ITEM_IDS = [
   "git",
   "syncDependencies",
   "checkUpdates",
+  "notifications",
 ] as const;
 
 export type TopbarItemId = (typeof TOPBAR_ITEM_IDS)[number];

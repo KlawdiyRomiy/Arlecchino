@@ -785,6 +785,8 @@ preloadLoop:
 
 		opened, openErr := ensureDocOpen(mgr, candidate.Language, candidate.Path, string(content))
 		if openErr != nil {
+			message := "LSP diagnostics preload failed for " + candidate.Path + ": " + openErr.Error()
+			a.emitLSPDiagnosticsStatusForSession(session.ID, root, generation, candidate.Language, candidate.Path, "error", message)
 			a.logWarning("[DiagnosticsPreload] " + candidate.Path + ": " + openErr.Error())
 			continue
 		}

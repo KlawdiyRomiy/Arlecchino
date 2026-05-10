@@ -48,6 +48,7 @@ import { usePackagedOSIntegrationBridge } from "./shell/packagedOSIntegration";
 import { useAutoUpdateBridge } from "./shell/autoUpdate";
 import { useManualUpdateNotifications } from "./shell/manualUpdateNotifications";
 import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
+import { useSystemNotifications } from "./shell/systemNotifications";
 import { useWindowLeaseBridge } from "./shell/windowLeaseBridge";
 import {
   registerOpenIntentDispatcher,
@@ -134,6 +135,7 @@ const App: React.FC = () => {
   usePackagedOSIntegrationBridge();
   useAutoUpdateBridge();
   useManualUpdateNotifications();
+  useSystemNotifications();
   useWindowLeaseBridge(syncSurfaceRuntimeWindowLeaseBackendStatus);
 
   const activeId = useWorkspaceStore((state) => state.activeId);

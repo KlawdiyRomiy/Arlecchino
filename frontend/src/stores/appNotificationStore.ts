@@ -23,6 +23,7 @@ export interface AppNotification {
   tag?: string;
   action?: AppNotificationAction;
   progress?: number;
+  minimized: boolean;
   sticky: boolean;
   timeoutMs: number;
   createdAt: number;
@@ -41,6 +42,7 @@ export interface AppNotificationInput {
   tag?: string;
   action?: AppNotificationAction;
   progress?: number;
+  minimized?: boolean;
   sticky?: boolean;
   timeoutMs?: number;
 }
@@ -53,11 +55,13 @@ interface AppNotificationState {
   notifications: AppNotification[];
   addNotification: (input: AppNotificationInput) => string;
   updateNotification: (id: string, patch: AppNotificationPatch) => void;
+  minimizeNotification: (id: string) => void;
+  restoreNotification: (id: string) => void;
   dismissNotification: (id: string) => void;
   clearNotifications: () => void;
 }
 
-const MAX_NOTIFICATIONS = 8;
+const MAX_NOTIFICATIONS = 24;
 
 const defaultTimeoutMs = (kind: AppNotificationKind): number => {
   switch (kind) {
@@ -104,6 +108,7 @@ const normalizeNotification = (
       typeof input.progress === "number"
         ? Math.max(0, Math.min(1, input.progress))
         : undefined,
+    minimized: input.minimized ?? false,
     sticky,
     timeoutMs,
     createdAt: timestamp,
@@ -163,12 +168,43 @@ export const useAppNotificationStore = create<AppNotificationState>(
             ...patch,
             kind,
             progress: nextProgress,
+            minimized: patch.minimized ?? item.minimized,
             sticky: patch.sticky ?? item.sticky,
             timeoutMs: patch.timeoutMs ?? item.timeoutMs,
             updatedAt: Date.now(),
             revision: item.revision + 1,
           };
         }),
+      }));
+    },
+
+    minimizeNotification: (id) => {
+      set((state) => ({
+        notifications: state.notifications.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                minimized: true,
+                updatedAt: Date.now(),
+                revision: item.revision + 1,
+              }
+            : item,
+        ),
+      }));
+    },
+
+    restoreNotification: (id) => {
+      set((state) => ({
+        notifications: state.notifications.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                minimized: false,
+                updatedAt: Date.now(),
+                revision: item.revision + 1,
+              }
+            : item,
+        ),
       }));
     },
 
