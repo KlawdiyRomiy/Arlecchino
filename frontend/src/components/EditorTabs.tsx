@@ -383,7 +383,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
             data-testid="editor-tabs-split-controls"
             className="flex h-full max-h-full items-center gap-1 border-l border-[var(--shell-inline-divider)] bg-[var(--editor-surface-elevated)] px-1.5 py-0"
             style={{
-              borderTopRightRadius: "calc(var(--radius-panel) - 1px)",
+              borderTopRightRadius: "calc(var(--radius-lg) - 1px)",
             }}
           >
             {markdownPreviewAvailable && (

@@ -4656,7 +4656,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     zIndex: 0,
     margin: "0 8px 8px",
     boxSizing: "border-box",
-    borderRadius: "var(--radius-panel)",
+    borderRadius: "var(--radius-lg)",
     border: "1px solid var(--editor-border)",
     backgroundColor: "var(--editor-bg)",
     boxShadow:
