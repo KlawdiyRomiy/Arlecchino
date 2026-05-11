@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { redo, undo } from "@codemirror/commands";
+import type { EditorView } from "@codemirror/view";
 import { Copy, ExternalLink, X } from "lucide-react";
-import { CodeMirrorEditor } from "./CodeMirrorEditor";
+import {
+  CodeMirrorEditor,
+  type EditorHistoryAvailability,
+} from "./CodeMirrorEditor";
 import { EditorFileLoadingView } from "./EditorFileLoadingView";
 import { EditorTabs, Tab } from "./EditorTabs";
 import { TabSwitcherOverlay } from "./TabSwitcherOverlay";
@@ -69,6 +74,10 @@ interface ProjectScreenProps extends PanelSnapDragCallbacks {
 }
 
 const AUTO_SAVE_DELAY = 1500;
+const EMPTY_EDITOR_HISTORY_AVAILABILITY: EditorHistoryAvailability = {
+  canUndo: false,
+  canRedo: false,
+};
 
 const isMarkdownPath = (path: string): boolean =>
   /\.(md|mdx|markdown|mdown|mkdn)$/i.test(path);
@@ -200,6 +209,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const fileContentsRef = useRef<Record<string, string>>({});
   const fileLoadStatesRef = useRef<Record<string, EditorFileLoadState>>({});
   const activeTabRef = useRef<string | null>(activeTab);
+  const activeEditorViewRef = useRef<EditorView | null>(null);
   const secondaryActiveTabRef = useRef<string | null>(secondaryActiveTab);
   const openFileRequestRef = useRef(0);
   const fileOpenLoadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -212,10 +222,50 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const [tabSwitcherSelection, setTabSwitcherSelectionState] = useState<
     string | null
   >(null);
+  const [editorHistoryAvailability, setEditorHistoryAvailability] =
+    useState<EditorHistoryAvailability>(EMPTY_EDITOR_HISTORY_AVAILABILITY);
 
   const setTabSwitcherSelection = useCallback((tabId: string | null) => {
     tabSwitcherSelectionRef.current = tabId;
     setTabSwitcherSelectionState(tabId);
+  }, []);
+
+  const handleEditorViewReady = useCallback((view: EditorView | null) => {
+    activeEditorViewRef.current = view;
+    if (!view) {
+      setEditorHistoryAvailability(EMPTY_EDITOR_HISTORY_AVAILABILITY);
+    }
+  }, []);
+
+  const handleHistoryAvailabilityChange = useCallback(
+    (next: EditorHistoryAvailability) => {
+      setEditorHistoryAvailability((previous) =>
+        previous.canUndo === next.canUndo && previous.canRedo === next.canRedo
+          ? previous
+          : next,
+      );
+    },
+    [],
+  );
+
+  const handleEditorUndo = useCallback(() => {
+    const view = activeEditorViewRef.current;
+    if (!view) {
+      return;
+    }
+    if (undo(view)) {
+      view.focus();
+    }
+  }, []);
+
+  const handleEditorRedo = useCallback(() => {
+    const view = activeEditorViewRef.current;
+    if (!view) {
+      return;
+    }
+    if (redo(view)) {
+      view.focus();
+    }
   }, []);
 
   const storeFileLoadState = useCallback(
@@ -1812,6 +1862,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       onGhostRejected={() => {
         AppFunctions.RecordGhostRejected().catch(() => {});
       }}
+      onEditorViewReady={isSecondary ? undefined : handleEditorViewReady}
+      onHistoryAvailabilityChange={
+        isSecondary ? undefined : handleHistoryAvailabilityChange
+      }
       highlightLine={isSecondary ? undefined : highlightLine}
       projectPath={projectPath}
     />
@@ -1860,6 +1914,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           onPanelSnapDragStart={onPanelSnapDragStart}
           onPanelSnapDragMove={onPanelSnapDragMove}
           onPanelSnapDragEnd={onPanelSnapDragEnd}
+          onUndo={handleEditorUndo}
+          onRedo={handleEditorRedo}
+          canUndo={editorHistoryAvailability.canUndo}
+          canRedo={editorHistoryAvailability.canRedo}
           onSplitHorizontal={() => handleSplit("vertical")}
           onSplitVertical={() => handleSplit("horizontal")}
           markdownPreviewAvailable={activeMarkdownPreviewSource !== null}

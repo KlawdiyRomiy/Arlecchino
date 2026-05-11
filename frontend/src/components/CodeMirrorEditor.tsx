@@ -25,7 +25,12 @@ import {
   StateField,
   Transaction,
 } from "@codemirror/state";
-import { defaultKeymap, indentWithTab } from "@codemirror/commands";
+import {
+  defaultKeymap,
+  indentWithTab,
+  redoDepth,
+  undoDepth,
+} from "@codemirror/commands";
 import {
   autocompletion,
   CompletionContext,
@@ -1191,6 +1196,15 @@ interface CodeMirrorEditorProps {
   onGhostRejected?: () => void;
   projectPath?: string;
   highlightLine?: number;
+  onEditorViewReady?: (view: EditorView | null) => void;
+  onHistoryAvailabilityChange?: (
+    availability: EditorHistoryAvailability,
+  ) => void;
+}
+
+export interface EditorHistoryAvailability {
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
@@ -1209,6 +1223,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   onGhostRejected,
   projectPath,
   highlightLine,
+  onEditorViewReady,
+  onHistoryAvailabilityChange,
 }) => {
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const onChangeRef = useRef(onChange);
@@ -1216,6 +1232,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const onTypingRef = useRef(onTyping);
   const onGhostShownRef = useRef(onGhostShown);
   const onGhostRejectedRef = useRef(onGhostRejected);
+  const onEditorViewReadyRef = useRef(onEditorViewReady);
+  const onHistoryAvailabilityChangeRef = useRef(onHistoryAvailabilityChange);
+  const lastHistoryAvailabilityRef = useRef<EditorHistoryAvailability | null>(
+    null,
+  );
   const documentVersionRef = useRef<number>(0);
   const cursorSyncFrameRef = useRef<number | null>(null);
   const pendingCursorPositionRef = useRef<{ line: number; col: number } | null>(
@@ -1234,6 +1255,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   onTypingRef.current = onTyping;
   onGhostShownRef.current = onGhostShown;
   onGhostRejectedRef.current = onGhostRejected;
+  onEditorViewReadyRef.current = onEditorViewReady;
+  onHistoryAvailabilityChangeRef.current = onHistoryAvailabilityChange;
 
   const editorFontSize = useEditorSettingsStore(
     (state) => state.editorFontSize,
@@ -2489,6 +2512,35 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     [],
   );
 
+  const publishHistoryAvailability = useCallback((state: EditorState) => {
+    const next: EditorHistoryAvailability = {
+      canUndo: undoDepth(state) > 0,
+      canRedo: redoDepth(state) > 0,
+    };
+    const previous = lastHistoryAvailabilityRef.current;
+    if (
+      previous?.canUndo === next.canUndo &&
+      previous?.canRedo === next.canRedo
+    ) {
+      return;
+    }
+
+    lastHistoryAvailabilityRef.current = next;
+    onHistoryAvailabilityChangeRef.current?.(next);
+  }, []);
+
+  useEffect(
+    () => () => {
+      lastHistoryAvailabilityRef.current = null;
+      onEditorViewReadyRef.current?.(null);
+      onHistoryAvailabilityChangeRef.current?.({
+        canUndo: false,
+        canRedo: false,
+      });
+    },
+    [],
+  );
+
   const getSelectedText = useCallback((view: EditorView): string => {
     const selections = view.state.selection.ranges
       .filter((range) => !range.empty)
@@ -3176,6 +3228,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       scrollGuardExtension,
       adaptiveCompartmentExtension,
       EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          publishHistoryAvailability(update.state);
+        }
         if (!update.selectionSet && !update.docChanged) return;
         syncCursorPosition(update.state);
       }),
@@ -3207,6 +3262,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     formatKeymap,
     languageExtension,
     operatorLigaturesExtension,
+    publishHistoryAvailability,
     rainbowBracketsExtension,
     saveKeymap,
     scrollGuardExtension,
@@ -3268,6 +3324,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           onCreateEditor={(view) => {
             bindEditorView(view);
             syncCursorPosition(view.state);
+            onEditorViewReadyRef.current?.(view);
+            publishHistoryAvailability(view.state);
           }}
         />
 

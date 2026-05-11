@@ -1,6 +1,6 @@
 import React from "react";
 import { Reorder } from "framer-motion";
-import { X, Eye, Columns, Rows } from "lucide-react";
+import { X, Eye, Columns, Rows, Undo2, Redo2 } from "lucide-react";
 import {
   ContextActionMenu,
   type ContextActionMenuItem,
@@ -34,6 +34,10 @@ interface EditorTabsProps extends PanelSnapDragCallbacks {
     point: { x: number; y: number },
     options?: EditorTabDetachOptions,
   ) => void | Promise<void>;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
   markdownPreviewAvailable?: boolean;
@@ -53,6 +57,10 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
   onPanelSnapDragStart,
   onPanelSnapDragMove,
   onPanelSnapDragEnd,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
   onSplitHorizontal,
   onSplitVertical,
   markdownPreviewAvailable = false,
@@ -357,6 +365,44 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         maxHeight: 40,
       }}
     >
+      {tabs.length > 0 && (
+        <div
+          data-testid="editor-tabs-history-controls"
+          className="relative z-10 flex h-full max-h-full items-center gap-1 border-r border-[var(--shell-inline-divider)] bg-[var(--editor-surface-elevated)] px-1.5 py-0"
+        >
+          <button
+            type="button"
+            onClick={onUndo}
+            onMouseDown={(event) => event.preventDefault()}
+            disabled={!onUndo || !canUndo}
+            className="shell-control h-10 w-10 min-w-10 px-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:pointer-events-none disabled:opacity-35"
+            aria-label="Undo"
+            title="Undo"
+          >
+            <Undo2
+              className="h-[17px] w-[17px] min-w-[17px] shrink-0"
+              size={17}
+              strokeWidth={2.8}
+            />
+          </button>
+          <button
+            type="button"
+            onClick={onRedo}
+            onMouseDown={(event) => event.preventDefault()}
+            disabled={!onRedo || !canRedo}
+            className="shell-control h-10 w-10 min-w-10 px-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:pointer-events-none disabled:opacity-35"
+            aria-label="Redo"
+            title="Redo"
+          >
+            <Redo2
+              className="h-[17px] w-[17px] min-w-[17px] shrink-0"
+              size={17}
+              strokeWidth={2.8}
+            />
+          </button>
+        </div>
+      )}
+
       {onTabsReorder ? (
         <Reorder.Group
           as="div"

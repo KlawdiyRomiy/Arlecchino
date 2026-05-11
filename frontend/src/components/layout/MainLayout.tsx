@@ -175,6 +175,7 @@ const ZEN_CHROME_STATIONARY_REVEAL_DELAY_MS = 700;
 const ZEN_TOP_CHROME_OCCLUDED_REVEAL_DELAY_MS = 1400;
 const ZEN_CHROME_STATIONARY_MOVE_TOLERANCE = 6;
 const ZEN_TOP_CHROME_PRE_OPEN_VETO_TARGET_SELECTOR = [
+  '[data-testid="editor-tabs-history-controls"]',
   '[data-testid="editor-tabs-split-controls"]',
   '[data-testid="editor-tabs-markdown-preview-toggle"]',
 ].join(",");
