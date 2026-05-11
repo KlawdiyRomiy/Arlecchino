@@ -368,7 +368,6 @@ const buildInlineDiagnosticMarkers = (
   }
 
   const base = getLayerBase(view);
-  const activeLine = view.state.doc.lineAt(view.state.selection.main.head);
   const grouped = new Map<
     number,
     { lineNumber: number; snapshot: InlineDiagnosticsLine }
@@ -455,7 +454,7 @@ const buildInlineDiagnosticMarkers = (
         left,
         top,
         maxWidth,
-        line.number === activeLine.number,
+        false,
         lineNumber,
       ),
     );
