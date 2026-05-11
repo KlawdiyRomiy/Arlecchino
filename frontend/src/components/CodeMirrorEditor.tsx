@@ -1356,7 +1356,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         : createDiagnosticsExtension({
             filePath,
             language,
-            enabled: showInlineDiagnostics,
+            showInlineMessages: showInlineDiagnostics,
           }),
     [
       editorFeatureBudget.runtimeDiagnostics,

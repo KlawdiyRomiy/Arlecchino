@@ -46,7 +46,7 @@ export interface InlineDiagnosticsLine {
 interface DiagnosticsExtensionOptions {
   filePath: string;
   language: string;
-  enabled: boolean;
+  showInlineMessages: boolean;
 }
 
 const EMPTY_PROBLEMS: readonly DiagnosticsProblem[] = Object.freeze([]);
@@ -179,6 +179,7 @@ export const buildInlineDiagnosticsSnapshot = (
 
 const setInlineDiagnosticsEffect =
   StateEffect.define<readonly InlineDiagnosticsLine[]>();
+const setInlineDiagnosticsMessagesVisibleEffect = StateEffect.define<boolean>();
 
 const mapInlineDiagnostics = (
   diagnostics: readonly InlineDiagnosticsLine[],
@@ -239,6 +240,21 @@ const inlineDiagnosticsField = StateField.define<
   },
   provide: (field) =>
     EditorView.decorations.from(field, buildInlineDiagnosticMarks),
+});
+
+const inlineDiagnosticsMessagesVisibleField = StateField.define<boolean>({
+  create() {
+    return true;
+  },
+  update(value, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(setInlineDiagnosticsMessagesVisibleEffect)) {
+        return effect.value;
+      }
+    }
+
+    return value;
+  },
 });
 
 class DiagnosticsOverlayMarker implements LayerMarker {
@@ -342,6 +358,10 @@ const isSnapshotVisible = (
 const buildInlineDiagnosticMarkers = (
   view: EditorView,
 ): readonly LayerMarker[] => {
+  if (!view.state.field(inlineDiagnosticsMessagesVisibleField)) {
+    return [];
+  }
+
   const diagnostics = view.state.field(inlineDiagnosticsField);
   if (diagnostics.length === 0) {
     return [];
@@ -453,6 +473,8 @@ const inlineDiagnosticsLayer = layer({
       update.viewportChanged ||
       update.selectionSet ||
       update.geometryChanged ||
+      update.startState.field(inlineDiagnosticsMessagesVisibleField) !==
+        update.state.field(inlineDiagnosticsMessagesVisibleField) ||
       update.startState.field(inlineDiagnosticsField) !==
         update.state.field(inlineDiagnosticsField)
     );
@@ -566,6 +588,7 @@ export const diagnosticsTheme = EditorView.theme({
 const mergeEffects = (
   effects: StateEffect<unknown> | readonly StateEffect<unknown>[] | undefined,
   inlineSnapshot: readonly InlineDiagnosticsLine[],
+  showInlineMessages: boolean,
 ) => {
   const normalized = Array.isArray(effects)
     ? [...effects]
@@ -573,6 +596,9 @@ const mergeEffects = (
       ? [effects]
       : [];
   normalized.push(setInlineDiagnosticsEffect.of(inlineSnapshot));
+  normalized.push(
+    setInlineDiagnosticsMessagesVisibleEffect.of(showInlineMessages),
+  );
   return normalized;
 };
 
@@ -585,7 +611,7 @@ class DiagnosticsBridge {
   private readonly unsubscribe: () => void;
   private readonly filePath: string;
   private readonly language: string;
-  private readonly enabled: boolean;
+  private readonly showInlineMessages: boolean;
   private pendingProblems: readonly DiagnosticsProblem[] = EMPTY_PROBLEMS;
   private pendingSignature = "";
   private appliedSignature = "";
@@ -599,11 +625,11 @@ class DiagnosticsBridge {
   ) {
     this.filePath = options.filePath;
     this.language = options.language;
-    this.enabled = options.enabled;
+    this.showInlineMessages = options.showInlineMessages;
     const hasCachedDiagnostics = useDiagnosticsStore
       .getState()
       .byFile.has(this.filePath);
-    this.awaitingInitialPull = this.enabled && !hasCachedDiagnostics;
+    this.awaitingInitialPull = !hasCachedDiagnostics;
 
     if (this.awaitingInitialPull) {
       const preservedProblems = lastVisibleProblemsByView.get(this.view);
@@ -652,15 +678,15 @@ class DiagnosticsBridge {
         return;
       }
 
-      const problems = this.enabled ? this.pendingProblems : EMPTY_PROBLEMS;
+      const problems = this.pendingProblems;
 
-      const diagnostics = buildCodeMirrorDiagnostics(
+      const diagnostics = this.showInlineMessages
+        ? buildCodeMirrorDiagnostics(this.view.state.doc, problems)
+        : [];
+      const inlineSnapshot = buildInlineDiagnosticsSnapshot(
         this.view.state.doc,
         problems,
       );
-      const inlineSnapshot = this.enabled
-        ? buildInlineDiagnosticsSnapshot(this.view.state.doc, problems)
-        : EMPTY_INLINE_SNAPSHOT;
       const transaction = setDiagnostics(this.view.state, diagnostics);
       this.appliedSignature = this.pendingSignature;
       if (problems.length > 0) {
@@ -670,7 +696,11 @@ class DiagnosticsBridge {
       }
       this.view.dispatch({
         ...transaction,
-        effects: mergeEffects(transaction.effects, inlineSnapshot),
+        effects: mergeEffects(
+          transaction.effects,
+          inlineSnapshot,
+          this.showInlineMessages,
+        ),
       });
     });
   }
@@ -706,7 +736,7 @@ class DiagnosticsBridge {
   }
 
   private getCurrentSignature(problems: readonly DiagnosticsProblem[]): string {
-    return this.enabled ? getProblemsSignature(problems) : "disabled";
+    return `${this.showInlineMessages ? "messages:on" : "messages:off"}:${getProblemsSignature(problems)}`;
   }
 }
 
@@ -715,6 +745,7 @@ export const createDiagnosticsExtension = (
 ): Extension[] => [
   diagnosticsTheme,
   inlineDiagnosticsField,
+  inlineDiagnosticsMessagesVisibleField,
   inlineDiagnosticsLayer,
   ViewPlugin.fromClass(
     class extends DiagnosticsBridge {

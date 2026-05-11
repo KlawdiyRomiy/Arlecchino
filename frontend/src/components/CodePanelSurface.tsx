@@ -183,7 +183,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
         : createDiagnosticsExtension({
             filePath: path,
             language,
-            enabled: showInlineDiagnostics,
+            showInlineMessages: showInlineDiagnostics,
           }),
     [
       editorFeatureBudget.runtimeDiagnostics,

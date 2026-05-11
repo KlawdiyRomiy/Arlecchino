@@ -524,9 +524,10 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
   {
     id: "inline-diagnostics",
     tab: "diagnostics",
-    label: "Show inline diagnostics",
-    description: "Render squiggles and inline problem messages.",
-    keywords: ["errors", "warnings", "squiggles", "problems"],
+    label: "Show inline diagnostic popups",
+    description:
+      "Render inline problem messages. Wavy underlines stay visible.",
+    keywords: ["errors", "warnings", "popups", "problems"],
     suggested: true,
   },
   {
@@ -2815,8 +2816,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 }
                               />
                               <SwitchRow
-                                title="Show inline diagnostics"
-                                description="Render squiggles, line emphasis, and inline problem messages inside the editor."
+                                title="Show inline diagnostic popups"
+                                description="Render inline problem messages inside the editor. Wavy underlines stay visible."
                                 checked={showInlineDiagnostics}
                                 onCheckedChange={setShowInlineDiagnostics}
                                 settingId="inline-diagnostics"
