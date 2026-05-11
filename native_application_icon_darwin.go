@@ -66,6 +66,79 @@ static NSImage* arlecchinoRenderApplicationIconForAppearance(NSString *appearanc
     return [rendered autorelease];
 }
 
+static NSImage* arlecchinoTintApplicationIconMask(NSImage *mask, NSSize size, NSColor *color) {
+    NSImage *tinted = [[NSImage alloc] initWithSize:size];
+    NSRect canvas = NSMakeRect(0, 0, size.width, size.height);
+
+    [tinted lockFocus];
+    [[NSGraphicsContext currentContext] setImageInterpolation:NSImageInterpolationHigh];
+    [color setFill];
+    NSRectFill(canvas);
+    [mask drawInRect:canvas
+            fromRect:NSZeroRect
+           operation:NSCompositingOperationDestinationIn
+            fraction:1.0
+      respectFlipped:NO
+               hints:nil];
+    [tinted unlockFocus];
+    return tinted;
+}
+
+static NSBezierPath* arlecchinoApplicationIconShape(NSSize size) {
+    CGFloat insetX = size.width * 0.06640625;
+    CGFloat insetY = size.height * 0.07421875;
+    NSRect iconRect = NSInsetRect(NSMakeRect(0, 0, size.width, size.height), insetX, insetY);
+    CGFloat cornerRadius = iconRect.size.width * 0.23873874;
+    return [NSBezierPath bezierPathWithRoundedRect:iconRect xRadius:cornerRadius yRadius:cornerRadius];
+}
+
+static void arlecchinoDrawApplicationIconBackground(NSBezierPath *shape, NSString *appearanceValue) {
+    if ([appearanceValue isEqualToString:@"dark"]) {
+        NSColor *topColor = [NSColor colorWithCalibratedWhite:0.192 alpha:1.0];
+        NSColor *bottomColor = [NSColor colorWithCalibratedWhite:0.078 alpha:1.0];
+        NSGradient *gradient = [[NSGradient alloc] initWithStartingColor:topColor endingColor:bottomColor];
+        [gradient drawInBezierPath:shape angle:-90.0];
+        [gradient release];
+        return;
+    }
+
+    [[NSColor colorWithCalibratedWhite:1.0 alpha:1.0] setFill];
+    [shape fill];
+}
+
+static NSImage* arlecchinoRenderApplicationIconFromMask(NSString *appearanceValue) {
+    NSImage *mask = [NSImage imageNamed:@"appicon_Assets/arle_logo_mask"];
+    if (mask == nil) {
+        return nil;
+    }
+
+    NSSize size = [mask size];
+    if (size.width <= 0 || size.height <= 0) {
+        size = NSMakeSize(1024, 1024);
+    }
+
+    NSColor *logoColor = [appearanceValue isEqualToString:@"dark"]
+        ? [NSColor colorWithCalibratedWhite:1.0 alpha:1.0]
+        : [NSColor colorWithCalibratedWhite:0.0 alpha:1.0];
+    NSImage *logo = arlecchinoTintApplicationIconMask(mask, size, logoColor);
+    NSImage *rendered = [[NSImage alloc] initWithSize:size];
+    NSRect canvas = NSMakeRect(0, 0, size.width, size.height);
+
+    [rendered lockFocus];
+    [[NSGraphicsContext currentContext] setImageInterpolation:NSImageInterpolationHigh];
+    arlecchinoDrawApplicationIconBackground(arlecchinoApplicationIconShape(size), appearanceValue);
+    [logo drawInRect:canvas
+            fromRect:NSZeroRect
+           operation:NSCompositingOperationSourceOver
+            fraction:1.0
+      respectFlipped:NO
+               hints:nil];
+    [rendered unlockFocus];
+    [rendered setTemplate:NO];
+    [logo release];
+    return [rendered autorelease];
+}
+
 static bool arlecchinoSetApplicationIconAppearance(const char *appearanceCString) {
     NSString *appearanceValue = [[NSString alloc] initWithUTF8String:appearanceCString];
     if (appearanceValue == nil) {
@@ -89,7 +162,10 @@ static bool arlecchinoSetApplicationIconAppearance(const char *appearanceCString
             return;
         }
 
-        NSImage *icon = arlecchinoRenderApplicationIconForAppearance(appearanceName);
+        NSImage *icon = arlecchinoRenderApplicationIconFromMask(appearanceValue);
+        if (icon == nil) {
+            icon = arlecchinoRenderApplicationIconForAppearance(appearanceName);
+        }
         if (icon == nil) {
             return;
         }
