@@ -1952,19 +1952,18 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
                 }}
               >
                 <button
+                  type="button"
                   onClick={handleCloseSplit}
-                  className="absolute top-2 right-2 z-10 p-1 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600"
+                  onMouseDown={(event) => event.preventDefault()}
+                  aria-label="Close split"
                   title="Close split"
+                  className="absolute right-3 top-3 z-10 inline-flex h-10 w-10 min-w-10 items-center justify-center rounded-[18px] border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-strong)_94%,transparent)] p-0 text-[var(--text-secondary)] shadow-[var(--shell-shadow)] backdrop-blur-xl transition-[background-color,border-color,color,box-shadow,transform] hover:border-[var(--shell-border-strong)] hover:bg-[color-mix(in_srgb,var(--surface-active)_78%,transparent)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
                 >
-                  <svg
-                    className="w-4 h-4"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <path d="M18 6L6 18M6 6l12 12" />
-                  </svg>
+                  <X
+                    className="h-4 w-4 min-w-4 shrink-0"
+                    size={16}
+                    strokeWidth={2.35}
+                  />
                 </button>
                 {renderEditorSurface(secondaryTabData, true)}
               </div>
