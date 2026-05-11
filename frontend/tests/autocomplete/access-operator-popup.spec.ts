@@ -59,6 +59,14 @@ declare global {
 }
 
 const completionsByPrefix: Record<string, CompletionFixtureItem[]> = {
+  Pri: [
+    {
+      label: "PrintlnHello",
+      source: "predictive",
+      kind: "function",
+      insertText: 'Println("hello world")',
+    },
+  ],
   app: [
     {
       label: "appendReallyLongMethodNameWithoutEllipsis",
@@ -987,6 +995,85 @@ test("accepting function snippet does not duplicate braces", async ({
   expect(snapshot.text).toContain("func main() {\n\n}");
   expect(snapshot.text).not.toContain("func main(){}");
   expect(snapshot.text).not.toContain("func main(){");
+});
+
+test("tab accepts the full ghost text instead of only the first token", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    Pri\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "Pri");
+  await startCompletionExplicitly(page);
+  await waitForCompletionLabel(page, "PrintlnHello");
+  await page.waitForTimeout(80);
+
+  await page.keyboard.press("Tab");
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain('Println("hello world")');
+  expect(snapshot.text).not.toContain('Println("hello \n');
+});
+
+test("tab accepts an instant ghost candidate while backend warms", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "package main\n\nfunc main() {\n    fmt\n}\n",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await focusRenderedTextEnd(page, "fmt");
+  await page.evaluate(() => {
+    window.__autocompleteDelayMs = 1200;
+    window.__autocompleteRequests = [];
+  });
+
+  await page.keyboard.type(".");
+  await page.keyboard.type("Pr", { delay: 5 });
+  await waitForCompletionLabel(page, "Printf", { timeout: 500 });
+
+  const selected = await selectedCompletionLabel(page);
+  expect(selected.length).toBeGreaterThan(0);
+
+  await page.keyboard.press("Tab");
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toContain(`fmt.${selected}`);
+  expect(snapshot.text).not.toContain("fmt.Pr");
+});
+
+test("close brackets remains active under constrained performance", async ({
+  page,
+}) => {
+  const fixture = {
+    filePath: `${projectPath}/main.go`,
+    language: "go",
+    content: "",
+  } satisfies EditorFixture;
+
+  await mountEditor(page, fixture);
+  await page.evaluate(async () => {
+    const { usePerformanceStore } =
+      await import("/src/stores/performanceStore.ts");
+    usePerformanceStore.getState().updateBudget({
+      eventPressure: 40,
+      frameGapMs: 40,
+    });
+  });
+  await page.waitForTimeout(50);
+
+  await page.locator(".cm-content").first().click();
+  await page.keyboard.type("func main(");
+
+  const snapshot = await editorSnapshot(page);
+  expect(snapshot.text).toBe("func main()");
 });
 
 test("escape closes active autocomplete popup", async ({ page }) => {

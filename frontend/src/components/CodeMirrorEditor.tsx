@@ -511,13 +511,6 @@ const SOURCE_LABELS: Record<string, string> = {
   arle: "ARLE",
 };
 
-const firstWordOrToken = (text: string): string => {
-  if (!text) return "";
-  const match = text.match(/^(\s*\S+\s*)/);
-  if (!match) return text;
-  return match[0];
-};
-
 const trimToTokenLimit = (text: string, limit: number): string => {
   if (!text || limit <= 0) return "";
   const parts = text.trim().split(/\s+/);
@@ -1725,7 +1718,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       },
       onEscape: handleEditorEscape,
       helpers: {
-        firstWordOrToken,
         trimToTokenLimit,
         snippetToPlainText,
         getWordAtLinePosition,
@@ -3036,7 +3028,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         metrics.extension,
         indentOnInput(),
         bracketMatching(),
-        closeBrackets(),
         highlightSelectionMatches(),
       );
     }
@@ -3220,6 +3211,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       codeEditorStyles,
       rainbowBracketsExtension,
       operatorLigaturesExtension,
+      closeBrackets(),
       highlightLineField,
       codeMirrorFileSearchExtension,
       keymap.of([...defaultKeymap, ...searchKeymap, indentWithTab]),

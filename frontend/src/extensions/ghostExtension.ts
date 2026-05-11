@@ -11,7 +11,6 @@ import {
   acceptCompletion,
   closeCompletion,
   completionStatus,
-  startCompletion,
   Completion,
   currentCompletions,
   selectedCompletion,
@@ -53,7 +52,6 @@ type BuildCompletionContext = (
 ) => { currentClass: string; currentMethod: string; imports: string[] };
 
 type GhostHelpers = {
-  firstWordOrToken: (text: string) => string;
   trimToTokenLimit: (text: string, limit: number) => string;
   snippetToPlainText: (text: string) => string;
   getWordAtLinePosition: (
@@ -145,6 +143,31 @@ const longestCommonPrefix = (a: string, b: string): string => {
   return b.slice(0, i);
 };
 
+type GhostCompletionMetadata = Completion & {
+  __insertText?: unknown;
+  __hasAdditionalTextEdits?: unknown;
+};
+
+const getCompletionLabel = (completion: Completion): string =>
+  typeof completion.label === "string" ? completion.label : "";
+
+const getCompletionInsertText = (completion: Completion): string => {
+  const enriched = completion as GhostCompletionMetadata;
+  if (typeof enriched.__insertText === "string" && enriched.__insertText) {
+    return enriched.__insertText;
+  }
+  if (typeof completion.apply === "string" && completion.apply) {
+    return completion.apply;
+  }
+  if (completion.apply === undefined && typeof completion.label === "string") {
+    return completion.label;
+  }
+  return "";
+};
+
+const completionHasAdditionalTextEdits = (completion: Completion): boolean =>
+  (completion as GhostCompletionMetadata).__hasAdditionalTextEdits === true;
+
 export type GhostExtensionHandle = {
   extension: Extension;
   keymap: Extension;
@@ -174,6 +197,67 @@ export function ghostExtension(
   let popupGhostStableCount = 0;
 
   const { helpers } = options;
+
+  const resolveGhostContext = (view: EditorView) => {
+    const cursorPos = view.state.selection.main.head;
+    const pos = cursorPos;
+    const line = view.state.doc.lineAt(pos);
+    const lineNumber = line.number;
+    const column = pos - line.from + 1;
+    const fullText = view.state.doc.toString();
+    const lineText = line.text;
+    const textBeforeDoc = fullText.slice(0, pos);
+    const textAfterDoc = fullText.slice(pos);
+    const textBeforeLine = lineText.slice(0, column - 1);
+
+    const wordAtCursor = helpers.getWordAtLinePosition(
+      lineText,
+      column,
+      options.language,
+    );
+    const stringPrefix = helpers.extractStringPrefix(textBeforeLine);
+    const accessInfo = helpers.extractAccessPrefix(textBeforeLine);
+    const effectivePrefix =
+      stringPrefix ?? accessInfo?.prefix ?? wordAtCursor?.word ?? "";
+
+    if (!effectivePrefix && !accessInfo) {
+      return null;
+    }
+
+    let startColumn = column;
+    let endColumn = column;
+    if (stringPrefix !== null) {
+      startColumn = column - stringPrefix.length;
+      endColumn = column;
+    } else if (accessInfo) {
+      startColumn = column - accessInfo.prefix.length;
+      endColumn = column;
+    } else if (wordAtCursor) {
+      startColumn = wordAtCursor.startColumn;
+      endColumn = wordAtCursor.endColumn;
+    } else {
+      const keywordPrefix = helpers.extractKeywordPrefix(textBeforeLine);
+      if (keywordPrefix) {
+        startColumn = column - keywordPrefix.length;
+        endColumn = column;
+      }
+    }
+
+    return {
+      cursorPos,
+      lineNumber,
+      column,
+      fullText,
+      lineText,
+      textBeforeDoc,
+      textAfterDoc,
+      textBeforeLine,
+      effectivePrefix,
+      accessInfo,
+      from: line.from + startColumn - 1,
+      to: line.from + endColumn - 1,
+    };
+  };
 
   const clearGhostText = (view: EditorView, recordReject: boolean) => {
     if (ghostState.isVisible && recordReject) {
@@ -210,7 +294,7 @@ export function ghostExtension(
     view.dispatch({ effects: setGhostTextEffect.of({ pos, text }) });
   };
 
-  const applyGhostText = (view: EditorView, mode: "word" | "all") => {
+  const applyGhostText = (view: EditorView) => {
     if (!ghostState.isVisible || !ghostState.insertText) return false;
 
     // Snapshot before clearing (clearGhostText resets from/to/label/insertText).
@@ -239,23 +323,19 @@ export function ghostExtension(
       return false;
     }
 
-    const safeInsertText =
-      mode === "word"
-        ? helpers.firstWordOrToken(safeFullInsertText)
-        : safeFullInsertText;
-    if (!safeInsertText) {
+    if (!safeFullInsertText) {
       clearGhostText(view, false);
       return false;
     }
 
     clearGhostText(view, false);
 
-    const newPos = snapshot.from + safeInsertText.length;
+    const newPos = snapshot.from + safeFullInsertText.length;
     view.dispatch({
       changes: {
         from: snapshot.from,
         to: snapshot.to,
-        insert: safeInsertText,
+        insert: safeFullInsertText,
       },
       selection: { anchor: newPos },
     });
@@ -264,33 +344,63 @@ export function ghostExtension(
     return true;
   };
 
+  const applySelectedCompletionAsGhostText = (view: EditorView): boolean => {
+    if (completionStatus(view.state) !== "active") {
+      return false;
+    }
+
+    const context = resolveGhostContext(view);
+    if (!context?.effectivePrefix) {
+      return false;
+    }
+
+    const selected =
+      selectedCompletion(view.state) || currentCompletions(view.state)[0];
+    if (!selected || completionHasAdditionalTextEdits(selected)) {
+      return false;
+    }
+
+    const label = getCompletionLabel(selected);
+    const rawInsertText = getCompletionInsertText(selected);
+    if (!label || !rawInsertText) {
+      return false;
+    }
+
+    const fullInsertText = helpers.snippetToPlainText(rawInsertText);
+    if (!fullInsertText) {
+      return false;
+    }
+
+    const lcp = longestCommonPrefix(context.effectivePrefix, fullInsertText);
+    if (lcp.length < context.effectivePrefix.length) {
+      return false;
+    }
+
+    const displayText = fullInsertText.slice(lcp.length);
+    if (!displayText) {
+      return false;
+    }
+
+    setGhostText(
+      view,
+      context.to,
+      displayText,
+      fullInsertText,
+      false,
+      label,
+      context.from,
+      context.to,
+    );
+    return applyGhostText(view);
+  };
+
   const fetchGhostCompletions = async (
     view: EditorView,
     forceIdle?: boolean,
   ) => {
     const currentVersion = ++ghostRequestVersion;
-    const cursorPos = view.state.selection.main.head;
-    const pos = cursorPos;
-    const line = view.state.doc.lineAt(pos);
-    const lineNumber = line.number;
-    const column = pos - line.from + 1;
-    const fullText = view.state.doc.toString();
-    const lineText = line.text;
-    const textBeforeDoc = fullText.slice(0, pos);
-    const textAfterDoc = fullText.slice(pos);
-    const textBeforeLine = lineText.slice(0, column - 1);
-
-    const wordAtCursor = helpers.getWordAtLinePosition(
-      lineText,
-      column,
-      options.language,
-    );
-    const stringPrefix = helpers.extractStringPrefix(textBeforeLine);
-    const accessInfo = helpers.extractAccessPrefix(textBeforeLine);
-    const effectivePrefix =
-      stringPrefix ?? accessInfo?.prefix ?? wordAtCursor?.word ?? "";
-
-    if (!effectivePrefix && !accessInfo) {
+    const context = resolveGhostContext(view);
+    if (!context) {
       clearGhostText(view, false);
       return;
     }
@@ -300,28 +410,6 @@ export function ghostExtension(
       return;
     }
 
-    let startColumn = column;
-    let endColumn = column;
-    if (stringPrefix !== null) {
-      startColumn = column - stringPrefix.length;
-      endColumn = column;
-    } else if (accessInfo) {
-      startColumn = column - accessInfo.prefix.length;
-      endColumn = column;
-    } else if (wordAtCursor) {
-      startColumn = wordAtCursor.startColumn;
-      endColumn = wordAtCursor.endColumn;
-    } else {
-      const keywordPrefix = helpers.extractKeywordPrefix(textBeforeLine);
-      if (keywordPrefix) {
-        startColumn = column - keywordPrefix.length;
-        endColumn = column;
-      }
-    }
-
-    const from = line.from + startColumn - 1;
-    const to = line.from + endColumn - 1;
-
     const status = completionStatus(view.state);
     if (status === "pending") {
       clearGhostText(view, false);
@@ -330,8 +418,8 @@ export function ghostExtension(
 
     // Prefer popup-derived ghost when completion popup is active.
     // This ensures popup and ghost are always consistent.
-    if (effectivePrefix && status === "active") {
-      if (!forceIdle && effectivePrefix.length < 2) {
+    if (context.effectivePrefix && status === "active") {
+      if (!forceIdle && context.effectivePrefix.length < 2) {
         clearGhostText(view, false);
         return;
       }
@@ -347,16 +435,9 @@ export function ghostExtension(
         return;
       }
 
-      const c = selected as unknown as {
-        __insertText?: unknown;
-        __hasAdditionalTextEdits?: unknown;
-        label?: unknown;
-      };
-      const label = typeof c.label === "string" ? c.label : "";
-      const rawInsertText =
-        typeof c.__insertText === "string" ? c.__insertText : "";
-      const hasAdditionalTextEdits = c.__hasAdditionalTextEdits === true;
-      if (hasAdditionalTextEdits) {
+      const label = getCompletionLabel(selected);
+      const rawInsertText = getCompletionInsertText(selected);
+      if (completionHasAdditionalTextEdits(selected)) {
         clearGhostText(view, false);
         return;
       }
@@ -375,8 +456,8 @@ export function ghostExtension(
         fullInsertText,
         forceIdle ? 24 : 5,
       );
-      const lcp = longestCommonPrefix(effectivePrefix, ghostText);
-      if (lcp.length < effectivePrefix.length) {
+      const lcp = longestCommonPrefix(context.effectivePrefix, ghostText);
+      if (lcp.length < context.effectivePrefix.length) {
         clearGhostText(view, false);
         return;
       }
@@ -389,13 +470,13 @@ export function ghostExtension(
 
       setGhostText(
         view,
-        to,
+        context.to,
         displayText,
         fullInsertText,
         false,
         label,
-        from,
-        to,
+        context.from,
+        context.to,
       );
       options.onGhostShown?.();
       return;
@@ -403,27 +484,27 @@ export function ghostExtension(
 
     if (
       !forceIdle &&
-      effectivePrefix.length < 2 &&
-      !accessInfo &&
-      !stringPrefix
+      context.effectivePrefix.length < 2 &&
+      !context.accessInfo &&
+      helpers.extractStringPrefix(context.textBeforeLine) === null
     ) {
       clearGhostText(view, false);
       return;
     }
 
     const { currentClass, currentMethod, imports } =
-      options.buildCompletionContext(fullText, lineNumber);
+      options.buildCompletionContext(context.fullText, context.lineNumber);
 
     try {
       const result = await options.fetchCompletions({
         filePath: options.filePath,
         language: options.language,
-        line: lineNumber,
-        column,
-        lineText,
-        textBefore: textBeforeDoc,
-        textAfter: textAfterDoc,
-        fullText,
+        line: context.lineNumber,
+        column: context.column,
+        lineText: context.lineText,
+        textBefore: context.textBeforeDoc,
+        textAfter: context.textAfterDoc,
+        fullText: context.fullText,
         currentClass,
         currentMethod,
         imports,
@@ -431,7 +512,7 @@ export function ghostExtension(
       });
 
       if (currentVersion !== ghostRequestVersion) return;
-      if (view.state.selection.main.head !== cursorPos) return;
+      if (view.state.selection.main.head !== context.cursorPos) return;
 
       if (
         !result ||
@@ -468,7 +549,7 @@ export function ghostExtension(
       }
 
       let displayText = ghostText;
-      const prefix = effectivePrefix || "";
+      const prefix = context.effectivePrefix || "";
       if (prefix) {
         const lcp = longestCommonPrefix(prefix, ghostText);
         displayText = ghostText.slice(lcp.length);
@@ -489,13 +570,13 @@ export function ghostExtension(
 
       setGhostText(
         view,
-        to,
+        context.to,
         displayText,
         insertText,
         false,
         primary.label || "",
-        from,
-        to,
+        context.from,
+        context.to,
       );
       options.onGhostShown?.();
     } catch (error) {
@@ -559,15 +640,11 @@ export function ghostExtension(
     } else {
       const selected =
         selectedCompletion(update.state) || currentCompletions(update.state)[0];
-      const c = selected as unknown as {
-        __insertText?: unknown;
-        __hasAdditionalTextEdits?: unknown;
-        label?: unknown;
-      };
-      const label = typeof c.label === "string" ? c.label : "";
-      const insertText =
-        typeof c.__insertText === "string" ? c.__insertText : "";
-      const hasAdditionalTextEdits = c.__hasAdditionalTextEdits === true;
+      const label = selected ? getCompletionLabel(selected) : "";
+      const insertText = selected ? getCompletionInsertText(selected) : "";
+      const hasAdditionalTextEdits = selected
+        ? completionHasAdditionalTextEdits(selected)
+        : false;
       if (label && insertText) {
         const key = `${label}\n${insertText}\nae:${hasAdditionalTextEdits ? "1" : "0"}`;
         if (key === lastPopupGhostKey) {
@@ -592,9 +669,9 @@ export function ghostExtension(
       run: (view) => {
         if (ghostState.isVisible) {
           const popupWasActive = completionStatus(view.state) === "active";
-          const applied = applyGhostText(view, "word");
+          const applied = applyGhostText(view);
           if (applied && popupWasActive) {
-            setTimeout(() => startCompletion(view), 0);
+            closeCompletion(view);
           }
 
           if (applied) {
@@ -602,8 +679,17 @@ export function ghostExtension(
           }
         }
 
+        const popupWasActive = completionStatus(view.state) === "active";
+        const appliedPopupGhost = applySelectedCompletionAsGhostText(view);
+        if (appliedPopupGhost) {
+          if (popupWasActive) {
+            closeCompletion(view);
+          }
+          return true;
+        }
+
         // Policy/UX: Tab никогда не принимает popup completion.
-        // Если ghost не видим — Tab должен вести себя как indent.
+        // Если безопасный ghost-кандидат не найден — Tab должен вести себя как indent.
         if (!(indentWithTab.run?.(view) ?? false)) {
           indentMore(view);
         }
@@ -620,7 +706,7 @@ export function ghostExtension(
           }
         }
         if (ghostState.isVisible) {
-          return applyGhostText(view, "all");
+          return applyGhostText(view);
         }
         return false;
       },
@@ -629,7 +715,7 @@ export function ghostExtension(
       key: "Alt-Tab",
       run: (view) => {
         if (ghostState.isVisible) {
-          return applyGhostText(view, "all");
+          return applyGhostText(view);
         }
         return false;
       },

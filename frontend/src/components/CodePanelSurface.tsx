@@ -264,7 +264,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   const adaptiveExtensions = useMemo(() => {
     const result: Extension[] = [];
     if (editorFeatureBudget.runtimeRichEditorFeatures) {
-      result.push(closeBrackets(), highlightSelectionMatches());
+      result.push(highlightSelectionMatches());
     }
     if (editorFeatureBudget.layoutStableGitGutter) {
       result.push(gitGutterExtension);
@@ -297,6 +297,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     const result: Extension[] = [
       codeEditorTheme,
       codeEditorStyles,
+      closeBrackets(),
       codeMirrorFileSearchExtension,
       keymap.of(searchKeymap),
       scrollGuardExtension,
