@@ -16,6 +16,10 @@ import {
   runBackgroundShellAction,
   subscribeBackgroundShellStatus,
 } from "./backgroundShellStatus";
+import {
+  buildLSPRestartFailurePresentation,
+  buildNotificationErrorPresentation,
+} from "./systemNotificationMessages";
 
 const backgroundSeverityToNotificationKind: Record<
   BackgroundShellSeverity,
@@ -86,13 +90,12 @@ const restartLSPServerFromNotification = (
       });
     })
     .catch((error) => {
+      const failure = buildLSPRestartFailurePresentation(error);
       updateNotification(notificationId, {
         kind: "error",
         title: `${language} LSP restart failed`,
-        message:
-          error instanceof Error
-            ? error.message
-            : "Language server restart failed.",
+        message: failure.message,
+        details: failure.details,
         progress: undefined,
         sticky: true,
         timeoutMs: 0,
@@ -170,11 +173,15 @@ const runBackgroundActionFromNotification = (
       });
     })
     .catch((error) => {
+      const failure = buildNotificationErrorPresentation(
+        error,
+        `${action.label} failed.`,
+      );
       updateNotification(notificationId, {
         kind: "error",
         title: candidate.title,
-        message:
-          error instanceof Error ? error.message : `${action.label} failed.`,
+        message: failure.message,
+        details: failure.details,
         progress: undefined,
         sticky: true,
         timeoutMs: 0,

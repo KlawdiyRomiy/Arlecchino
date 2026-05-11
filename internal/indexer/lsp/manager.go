@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -944,10 +945,24 @@ func (m *Manager) DidClose(language, filePath string) error {
 
 	if !ok {
 		m.clearDiagnostics(language, filePath)
+		m.markDocClosed(language, filePath)
+		return nil
+	}
+
+	if !server.running || !server.isProcessAlive() {
+		m.cleanupServer(language, server)
+		m.clearDiagnostics(language, filePath)
+		m.markDocClosed(language, filePath)
 		return nil
 	}
 
 	if err := server.DidClose(filePath); err != nil {
+		if isClosedPipeError(err) {
+			m.cleanupServer(language, server)
+			m.clearDiagnostics(language, filePath)
+			m.markDocClosed(language, filePath)
+			return nil
+		}
 		return err
 	}
 	m.clearDiagnostics(language, filePath)
@@ -1498,11 +1513,16 @@ func (m *Manager) SignatureHelpWithContext(ctx context.Context, language, filePa
 
 func (m *Manager) startServer(cfg ServerConfig) (*Server, error) {
 	cmd := exec.Command(cfg.Command, cfg.Args...)
+	cmd.Env = lspProcessEnv(cfg.Command)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
 	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return nil, err
 	}
@@ -1522,8 +1542,53 @@ func (m *Manager) startServer(cfg ServerConfig) (*Server, error) {
 	}
 
 	go server.readLoop()
+	go server.readStderr(stderr)
 
 	return server, nil
+}
+
+func lspProcessEnv(command string) []string {
+	env := os.Environ()
+	pathValue := os.Getenv("PATH")
+	paths := filepath.SplitList(pathValue)
+	paths = append(paths, lspToolchainPathCandidates(command)...)
+	pathValue = strings.Join(uniqueStringList(paths), string(os.PathListSeparator))
+
+	hasPath := false
+	for i, entry := range env {
+		if strings.HasPrefix(entry, "PATH=") {
+			env[i] = "PATH=" + pathValue
+			hasPath = true
+			break
+		}
+	}
+	if !hasPath {
+		env = append(env, "PATH="+pathValue)
+	}
+	return env
+}
+
+func lspToolchainPathCandidates(command string) []string {
+	var candidates []string
+	if commandDir := filepath.Dir(command); commandDir != "." && commandDir != "" {
+		candidates = append(candidates, commandDir)
+	}
+	candidates = append(candidates, lspregistry.RuntimeToolchainDirs()...)
+	return candidates
+}
+
+func uniqueStringList(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
 }
 
 func (s *Server) initialize() error {
@@ -1605,10 +1670,15 @@ func (s *Server) shutdown() error {
 	if !s.running && !s.isProcessAlive() {
 		return nil
 	}
-	s.running = false
 
-	_, _ = s.request("shutdown", nil)
-	_ = s.notify("exit", nil)
+	if s.running && s.isProcessAlive() {
+		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+		_, _ = s.requestWithContext(ctx, "shutdown", nil)
+		cancel()
+		_ = s.notify("exit", nil)
+	}
+
+	s.running = false
 
 	if s.stdin != nil {
 		_ = s.stdin.Close()
@@ -1850,6 +1920,10 @@ func (s *Server) send(req Request) error {
 	return s.sendPayload(req)
 }
 
+func isClosedPipeError(err error) bool {
+	return errors.Is(err, io.ErrClosedPipe) || errors.Is(err, syscall.EPIPE)
+}
+
 func (s *Server) sendPayload(payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -1893,6 +1967,63 @@ func (s *Server) handleServerRequest(id json.RawMessage, method string, params j
 	}
 }
 
+func (s *Server) readStderr(reader io.Reader) {
+	if reader == nil {
+		return
+	}
+	scanner := bufio.NewScanner(reader)
+	var stderr strings.Builder
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if stderr.Len() > 0 {
+			stderr.WriteByte('\n')
+		}
+		stderr.WriteString(line)
+		if stderr.Len() > 4096 {
+			break
+		}
+	}
+	message := strings.TrimSpace(stderr.String())
+	if message == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.lastError == "" {
+		s.lastError = message
+	}
+	s.mu.Unlock()
+}
+
+func (s *Server) failPendingRequests(message string) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "language server connection closed"
+	}
+
+	s.mu.Lock()
+	pending := make([]chan *Response, 0, len(s.pending))
+	for _, ch := range s.pending {
+		pending = append(pending, ch)
+	}
+	s.mu.Unlock()
+
+	response := &Response{
+		Error: &ResponseError{
+			Code:    -32000,
+			Message: message,
+		},
+	}
+	for _, ch := range pending {
+		select {
+		case ch <- response:
+		default:
+		}
+	}
+}
+
 func serverRequestResult(method string, params json.RawMessage) any {
 	switch method {
 	case "workspace/configuration":
@@ -1926,10 +2057,15 @@ func (s *Server) readLoop() {
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
+				message := fmt.Sprintf("read header error: %v", err)
 				s.mu.Lock()
+				if s.lastError != "" {
+					message = s.lastError
+				}
 				s.running = false
-				s.lastError = fmt.Sprintf("read header error: %v", err)
+				s.lastError = message
 				s.mu.Unlock()
+				s.failPendingRequests(message)
 				return
 			}
 			line = strings.TrimSpace(line)
@@ -1949,10 +2085,15 @@ func (s *Server) readLoop() {
 		body := make([]byte, contentLength)
 		_, err := io.ReadFull(reader, body)
 		if err != nil {
+			message := fmt.Sprintf("read body error: %v", err)
 			s.mu.Lock()
+			if s.lastError != "" {
+				message = s.lastError
+			}
 			s.running = false
-			s.lastError = fmt.Sprintf("read body error: %v", err)
+			s.lastError = message
 			s.mu.Unlock()
+			s.failPendingRequests(message)
 			return
 		}
 

@@ -2,12 +2,22 @@ package lsp
 
 import (
 	"log"
+	"os"
+	"path/filepath"
 
 	lspregistry "arlecchino/internal/lsp"
 )
 
 func findExecutable(rootPath, name string) string {
 	return lspregistry.FindBinaryPath(rootPath, "", "", name)
+}
+
+func findServerExecutable(rootPath, language, binaryName string) string {
+	serverID := ""
+	if info := lspregistry.GetLanguageByID(language); info != nil {
+		serverID = info.LSPServerID
+	}
+	return lspregistry.FindServerBinaryPath(rootPath, "", serverID, binaryName)
 }
 
 var serverArgsByID = map[string][]string{
@@ -39,7 +49,7 @@ var serverArgsByID = map[string][]string{
 	"erlang_ls":                   {"--transport", "stdio"},
 	"groovy-language-server":      {"--stdio"},
 	"perlnavigator":               {"--stdio"},
-	"bufls":                       {"--stdio"},
+	"bufls":                       {"serve"},
 	"cmake-language-server":       {"--stdio"},
 	"texlab":                      {"--stdio"},
 	"solidity-ls":                 {"--stdio"},
@@ -53,6 +63,70 @@ func argsForServer(serverID string) []string {
 		return args
 	}
 	return nil
+}
+
+func initParamsForServer(rootPath, serverID string) map[string]any {
+	switch serverID {
+	case "astro-ls":
+		if tsdk := findTypeScriptSDK(rootPath); tsdk != "" {
+			return map[string]any{
+				"typescript": map[string]any{
+					"tsdk": tsdk,
+				},
+			}
+		}
+	}
+	return nil
+}
+
+func findTypeScriptSDK(rootPath string) string {
+	var candidates []string
+	add := func(parts ...string) {
+		candidates = append(candidates, filepath.Join(parts...))
+	}
+
+	if rootPath != "" {
+		add(rootPath, "node_modules", "typescript", "lib")
+		add(rootPath, "frontend", "node_modules", "typescript", "lib")
+	}
+	if cwd, err := os.Getwd(); err == nil && cwd != "" {
+		add(cwd, "node_modules", "typescript", "lib")
+		add(cwd, "frontend", "node_modules", "typescript", "lib")
+	}
+	if npmPrefix := os.Getenv("NPM_CONFIG_PREFIX"); npmPrefix != "" {
+		add(npmPrefix, "lib", "node_modules", "typescript", "lib")
+		add(npmPrefix, "lib", "node_modules", "@astrojs", "language-server", "node_modules", "typescript", "lib")
+	}
+	add("/opt/homebrew", "lib", "node_modules", "typescript", "lib")
+	add("/opt/homebrew", "lib", "node_modules", "@astrojs", "language-server", "node_modules", "typescript", "lib")
+	add("/usr/local", "lib", "node_modules", "typescript", "lib")
+	add("/usr/local", "lib", "node_modules", "@astrojs", "language-server", "node_modules", "typescript", "lib")
+
+	for _, candidate := range uniqueConfigStrings(candidates) {
+		if fileExists(filepath.Join(candidate, "typescript.js")) ||
+			fileExists(filepath.Join(candidate, "tsserverlibrary.js")) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func uniqueConfigStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func DefaultConfigs(rootPath string) []ServerConfig {
@@ -101,7 +175,7 @@ func DefaultConfigs(rootPath string) []ServerConfig {
 		{"javascript", "typescript-language-server", []string{"--stdio"}, nil, nil, "tsserver"},
 		{"typescriptreact", "typescript-language-server", []string{"--stdio"}, nil, nil, "tsserver"},
 		{"javascriptreact", "typescript-language-server", []string{"--stdio"}, nil, nil, "tsserver"},
-		{"astro", "astro-ls", []string{"--stdio"}, nil, nil, ""},
+		{"astro", "astro-ls", []string{"--stdio"}, nil, initParamsForServer(rootPath, "astro-ls"), ""},
 		{"python", "pyright-langserver", []string{"--stdio"}, nil, pyrightInit, ""},
 		{"php", "phpactor", []string{"language-server"}, nil, phpactorInit, ""},
 		{"blade", "vscode-html-language-server", []string{"--stdio"}, nil, nil, "vscode-html"},
@@ -144,7 +218,7 @@ func DefaultConfigs(rootPath string) []ServerConfig {
 		{"erlang", "erlang_ls", []string{"--transport", "stdio"}, nil, nil, ""},
 		{"groovy", "groovy-language-server", []string{"--stdio"}, nil, nil, ""},
 		{"perl", "perlnavigator", []string{"--stdio"}, nil, nil, ""},
-		{"protobuf", "bufls", []string{"--stdio"}, nil, nil, ""},
+		{"protobuf", "bufls", []string{"serve"}, nil, nil, ""},
 		{"cmake", "cmake-language-server", []string{"--stdio"}, nil, nil, ""},
 		{"latex", "texlab", []string{"--stdio"}, nil, nil, ""},
 		{"solidity", "nomicfoundation-solidity-language-server", []string{"--stdio"}, nil, nil, ""},
@@ -161,7 +235,7 @@ func DefaultConfigs(rootPath string) []ServerConfig {
 		if c.finder != nil {
 			cmd = c.finder()
 		} else {
-			cmd = findExecutable(rootPath, c.cmd)
+			cmd = findServerExecutable(rootPath, c.lang, c.cmd)
 		}
 
 		if cmd == "" {
@@ -210,6 +284,10 @@ func ConfigsFromInstaller(rootPath string, installer *lspregistry.Installer) []S
 			Command:  cmd,
 			Args:     argsForServer(lang.LSPServerID),
 			RootURI:  rootURI,
+			InitParams: initParamsForServer(
+				rootPath,
+				lang.LSPServerID,
+			),
 		})
 	}
 

@@ -34,6 +34,15 @@ type LSPInfo struct {
 	Dependencies []string `json:"-"`
 }
 
+var serverBinaryAliases = map[string][]string{
+	"erlang-ls":                  {"erlang-ls"},
+	"haskell-language-server":    {"haskell-language-server"},
+	"powershell-editor-services": {"powershell"},
+	"r-languageserver":           {"r"},
+	"solidity-ls":                {"solidity-language-server"},
+	"svelte-language-server":     {"svelte-language-server"},
+}
+
 type InstallProgress struct {
 	LSPID      string  `json:"lspId"`
 	Stage      string  `json:"stage"`
@@ -195,12 +204,20 @@ func DefaultLSPDir() string {
 }
 
 func FindBinaryPath(rootPath, lspDir, serverID, binaryName string) string {
-	binaryName = strings.TrimSpace(binaryName)
-	if binaryName == "" {
+	return FindBinaryPathVariants(rootPath, lspDir, serverID, []string{binaryName})
+}
+
+func FindServerBinaryPath(rootPath, lspDir, serverID, binaryName string) string {
+	return FindBinaryPathVariants(rootPath, lspDir, serverID, binaryNamesForServer(serverID, binaryName))
+}
+
+func FindBinaryPathVariants(rootPath, lspDir, serverID string, binaryNames []string) string {
+	binaryNames = normalizedBinaryNames(binaryNames)
+	if len(binaryNames) == 0 {
 		return ""
 	}
 
-	for _, candidate := range binaryPathCandidates(rootPath, lspDir, serverID, binaryName) {
+	for _, candidate := range binaryPathCandidates(rootPath, lspDir, serverID, binaryNames) {
 		if executableFileExists(candidate) {
 			return candidate
 		}
@@ -208,7 +225,95 @@ func FindBinaryPath(rootPath, lspDir, serverID, binaryName string) string {
 	return ""
 }
 
-func binaryPathCandidates(rootPath, lspDir, serverID, binaryName string) []string {
+func binaryNamesForServer(serverID, binaryName string) []string {
+	names := []string{binaryName}
+	if aliases, ok := serverBinaryAliases[serverID]; ok {
+		names = append(names, aliases...)
+	}
+	return normalizedBinaryNames(names)
+}
+
+func normalizedBinaryNames(binaryNames []string) []string {
+	names := make([]string, 0, len(binaryNames))
+	for _, name := range binaryNames {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return uniqueStrings(names)
+}
+
+func binaryPathCandidates(rootPath, lspDir, serverID string, binaryNames []string) []string {
+	var candidates []string
+	add := func(parts ...string) {
+		path := filepath.Join(parts...)
+		if strings.TrimSpace(path) != "" {
+			candidates = append(candidates, path)
+		}
+	}
+	addRaw := func(path string) {
+		if strings.TrimSpace(path) != "" {
+			candidates = append(candidates, path)
+		}
+	}
+	addGlob := func(pattern string) {
+		matches, _ := filepath.Glob(pattern)
+		for i := len(matches) - 1; i >= 0; i-- {
+			addRaw(matches[i])
+		}
+	}
+	addNames := func(parts ...string) {
+		for _, binaryName := range binaryNames {
+			add(append(parts, binaryName)...)
+		}
+	}
+	addGlobNames := func(parts ...string) {
+		for _, binaryName := range binaryNames {
+			addGlob(filepath.Join(append(parts, binaryName)...))
+		}
+	}
+
+	if rootPath != "" {
+		addNames(rootPath, "vendor", "bin")
+		addNames(rootPath, "node_modules", ".bin")
+		addNames(rootPath, ".venv", "bin")
+		addNames(rootPath, "venv", "bin")
+	}
+	if lspDir == "" {
+		lspDir = DefaultLSPDir()
+	}
+	if lspDir != "" && serverID != "" {
+		addNames(lspDir, serverID)
+	}
+	for _, binaryName := range binaryNames {
+		if path, err := exec.LookPath(binaryName); err == nil {
+			addRaw(path)
+		}
+	}
+
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		if composerHome := os.Getenv("COMPOSER_HOME"); composerHome != "" {
+			addNames(composerHome, "vendor", "bin")
+		}
+		addNames(home, ".composer", "vendor", "bin")
+		addNames(home, ".config", "composer", "vendor", "bin")
+		addNames(home, "Library", "Application Support", "Composer", "vendor", "bin")
+		addGlobNames(home, ".gem", "ruby", "*", "bin")
+		addGlobNames(home, "Library", "Python", "*", "bin")
+	}
+	for _, dir := range RuntimeToolchainDirs() {
+		for _, binaryName := range binaryNames {
+			add(dir, binaryName)
+		}
+	}
+	addGlobNames("/Library", "Ruby", "Gems", "*", "bin")
+
+	return uniqueStrings(candidates)
+}
+
+func RuntimeToolchainDirs() []string {
 	var candidates []string
 	add := func(parts ...string) {
 		path := filepath.Join(parts...)
@@ -228,44 +333,40 @@ func binaryPathCandidates(rootPath, lspDir, serverID, binaryName string) []strin
 		}
 	}
 
-	if rootPath != "" {
-		add(rootPath, "vendor", "bin", binaryName)
-		add(rootPath, "node_modules", ".bin", binaryName)
-		add(rootPath, ".venv", "bin", binaryName)
-		add(rootPath, "venv", "bin", binaryName)
+	if npmPrefix := strings.TrimSpace(os.Getenv("NPM_CONFIG_PREFIX")); npmPrefix != "" {
+		add(npmPrefix, "bin")
 	}
-	if lspDir == "" {
-		lspDir = DefaultLSPDir()
+	if home, _ := os.UserHomeDir(); home != "" {
+		add(home, ".local", "bin")
+		add(home, "go", "bin")
+		add(home, ".cargo", "bin")
+		add(home, ".npm-global", "bin")
+		add(home, ".volta", "bin")
+		add(home, ".asdf", "shims")
+		add(home, ".pyenv", "shims")
+		add(home, ".rbenv", "shims")
+		add(home, ".bun", "bin")
+		add(home, ".dotnet", "tools")
+		add(home, ".opam", "default", "bin")
+		add(home, ".cabal", "bin")
+		add(home, ".ghcup", "bin")
+		add(home, ".local", "share", "mise", "shims")
+		add(home, ".config", "mise", "shims")
+		add(home, "Library", "pnpm")
+		add(home, ".local", "share", "pnpm")
+		add(home, "Library", "Application Support", "Coursier", "bin")
+		add(home, ".local", "share", "coursier", "bin")
+		addGlob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin"))
+		addGlob(filepath.Join(home, ".sdkman", "candidates", "*", "current", "bin"))
 	}
-	if lspDir != "" && serverID != "" {
-		add(lspDir, serverID, binaryName)
-	}
-	if path, err := exec.LookPath(binaryName); err == nil {
-		addRaw(path)
-	}
-
-	home, _ := os.UserHomeDir()
-	if home != "" {
-		if composerHome := os.Getenv("COMPOSER_HOME"); composerHome != "" {
-			add(composerHome, "vendor", "bin", binaryName)
-		}
-		add(home, ".composer", "vendor", "bin", binaryName)
-		add(home, ".config", "composer", "vendor", "bin", binaryName)
-		add(home, "Library", "Application Support", "Composer", "vendor", "bin", binaryName)
-		add(home, ".local", "bin", binaryName)
-		add(home, "go", "bin", binaryName)
-		add(home, ".cargo", "bin", binaryName)
-		add(home, ".npm-global", "bin", binaryName)
-		addGlob(filepath.Join(home, ".gem", "ruby", "*", "bin", binaryName))
-		addGlob(filepath.Join(home, "Library", "Python", "*", "bin", binaryName))
-	}
-	if npmPrefix := os.Getenv("NPM_CONFIG_PREFIX"); npmPrefix != "" {
-		add(npmPrefix, "bin", binaryName)
-	}
-	add("/opt/homebrew", "bin", binaryName)
-	add("/usr/local", "bin", binaryName)
-	addGlob(filepath.Join("/Library", "Ruby", "Gems", "*", "bin", binaryName))
-
+	addRaw("/opt/homebrew/bin")
+	addRaw("/opt/homebrew/sbin")
+	addRaw("/usr/local/bin")
+	addRaw("/usr/local/sbin")
+	addRaw("/usr/bin")
+	addRaw("/bin")
+	addRaw("/usr/sbin")
+	addRaw("/sbin")
 	return uniqueStrings(candidates)
 }
 
@@ -991,7 +1092,7 @@ func (i *Installer) findBinaryPath(server *LSPInfo, rootPath string) string {
 	if server == nil {
 		return ""
 	}
-	return FindBinaryPath(rootPath, i.lspDir, server.ID, server.BinaryName)
+	return FindServerBinaryPath(rootPath, i.lspDir, server.ID, server.BinaryName)
 }
 
 func (i *Installer) emitProgress(id, stage string, percent float64, message, errMsg string) {
