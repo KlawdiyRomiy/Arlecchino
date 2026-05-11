@@ -106,7 +106,7 @@ test("app notification store keeps a bounded newest-first queue", async () => {
   const store = useAppNotificationStore.getState();
   store.clearNotifications();
 
-  for (let index = 0; index < 10; index += 1) {
+  for (let index = 0; index < 30; index += 1) {
     store.addNotification({
       id: `notice-${index}`,
       kind: "info",
@@ -115,7 +115,7 @@ test("app notification store keeps a bounded newest-first queue", async () => {
   }
 
   const notifications = useAppNotificationStore.getState().notifications;
-  assert.equal(notifications.length, 8);
-  assert.equal(notifications[0].id, "notice-9");
-  assert.equal(notifications[7].id, "notice-2");
+  assert.equal(notifications.length, 24);
+  assert.equal(notifications[0].id, "notice-29");
+  assert.equal(notifications[23].id, "notice-6");
 });
