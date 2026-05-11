@@ -882,6 +882,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       event.preventDefault();
     }
   }, []);
+  const handleDialogOpenAutoFocus = useCallback((event: Event) => {
+    event.preventDefault();
+    setSettingsSearchFocused(false);
+  }, []);
 
   const { theme, setTheme, previewTheme, customThemes, addCustomTheme } =
     useTheme();
@@ -1968,6 +1972,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     event.preventDefault();
                   }
                 }}
+                onOpenAutoFocus={handleDialogOpenAutoFocus}
                 onInteractOutside={handleDialogInteractOutside}
               >
                 <motion.div
@@ -2019,7 +2024,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </div>
 
                       <div
-                        className="mb-3"
+                        className="relative z-20 mb-3"
                         onBlur={(event) => {
                           const nextTarget = event.relatedTarget;
                           if (
@@ -2063,51 +2068,94 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           ) : null}
                         </label>
 
-                        {showSettingsSearchSuggestions ? (
-                          <div
-                            className="mt-2 max-h-[270px] overflow-y-auto rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_94%,transparent)] p-1.5 shadow-[var(--shadow-overlay)]"
-                            data-testid="settings-search-suggestions"
-                          >
-                            <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                              {settingsQuery.trim()
-                                ? "Search results"
-                                : "Suggested settings"}
-                            </div>
-                            {settingsSearchSuggestions.map((entry) => (
-                              <button
-                                key={entry.id}
-                                type="button"
-                                data-testid={`settings-search-suggestion-${entry.id}`}
-                                onMouseDown={(event) => event.preventDefault()}
-                                onClick={() => selectSettingsSearchEntry(entry)}
-                                className={`grid min-h-[54px] w-full grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-[14px] px-2.5 py-2 text-left transition-colors hover:bg-[var(--surface-hover)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
-                                  activeTab === entry.tab
-                                    ? "bg-[color-mix(in_srgb,var(--surface-active)_80%,transparent)]"
-                                    : ""
-                                }`}
-                              >
-                                <span className="min-w-0">
-                                  <span className="block truncate text-[12px] font-semibold text-[var(--text-primary)]">
-                                    {entry.label}
-                                  </span>
-                                  <span className="mt-0.5 block truncate text-[11px] text-[var(--text-muted)]">
-                                    {entry.description}
-                                  </span>
-                                </span>
-                                <span
-                                  className={`${settingsPillClass} h-6 min-h-0 px-2 text-[10px]`}
-                                >
-                                  {tabLabelById.get(entry.tab)}
-                                </span>
-                              </button>
-                            ))}
-                            {settingsSearchSuggestions.length === 0 ? (
-                              <div className="px-3 py-7 text-center text-[12px] text-[var(--text-muted)]">
-                                No settings match this search.
+                        <AnimatePresence initial={false}>
+                          {showSettingsSearchSuggestions ? (
+                            <motion.div
+                              key="settings-search-suggestions"
+                              initial={
+                                reduceSettingsMotion
+                                  ? false
+                                  : {
+                                      opacity: 0,
+                                      y: -6,
+                                    }
+                              }
+                              animate={{
+                                opacity: 1,
+                                y: 0,
+                              }}
+                              exit={
+                                reduceSettingsMotion
+                                  ? {
+                                      opacity: 0,
+                                      y: 0,
+                                    }
+                                  : {
+                                      opacity: 0,
+                                      y: -5,
+                                    }
+                              }
+                              transition={
+                                reduceSettingsMotion
+                                  ? { duration: 0 }
+                                  : {
+                                      opacity: { duration: 0.16 },
+                                      y: {
+                                        duration: 0.18,
+                                        ease: [0.22, 1, 0.36, 1],
+                                      },
+                                    }
+                              }
+                              className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_94%,transparent)] shadow-[var(--shadow-overlay)]"
+                              data-testid="settings-search-suggestions"
+                            >
+                              <div className="max-h-[270px] overflow-y-auto p-1.5">
+                                <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                                  {settingsQuery.trim()
+                                    ? "Search results"
+                                    : "Suggested settings"}
+                                </div>
+                                {settingsSearchSuggestions.map((entry) => (
+                                  <button
+                                    key={entry.id}
+                                    type="button"
+                                    data-testid={`settings-search-suggestion-${entry.id}`}
+                                    onMouseDown={(event) =>
+                                      event.preventDefault()
+                                    }
+                                    onClick={() =>
+                                      selectSettingsSearchEntry(entry)
+                                    }
+                                    className={`grid min-h-[54px] w-full grid-cols-[minmax(0,1fr)_auto] gap-2 rounded-[14px] px-2.5 py-2 text-left transition-colors hover:bg-[var(--surface-hover)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] ${
+                                      activeTab === entry.tab
+                                        ? "bg-[color-mix(in_srgb,var(--surface-active)_80%,transparent)]"
+                                        : ""
+                                    }`}
+                                  >
+                                    <span className="min-w-0">
+                                      <span className="block truncate text-[12px] font-semibold text-[var(--text-primary)]">
+                                        {entry.label}
+                                      </span>
+                                      <span className="mt-0.5 block truncate text-[11px] text-[var(--text-muted)]">
+                                        {entry.description}
+                                      </span>
+                                    </span>
+                                    <span
+                                      className={`${settingsPillClass} h-6 min-h-0 px-2 text-[10px]`}
+                                    >
+                                      {tabLabelById.get(entry.tab)}
+                                    </span>
+                                  </button>
+                                ))}
+                                {settingsSearchSuggestions.length === 0 ? (
+                                  <div className="px-3 py-7 text-center text-[12px] text-[var(--text-muted)]">
+                                    No settings match this search.
+                                  </div>
+                                ) : null}
                               </div>
-                            ) : null}
-                          </div>
-                        ) : null}
+                            </motion.div>
+                          ) : null}
+                        </AnimatePresence>
                       </div>
 
                       <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
