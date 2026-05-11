@@ -60,6 +60,8 @@ export interface SurfaceSession {
 export interface BuildSurfaceSessionsInput {
   panels: PanelVisibility;
   panelConfigs: PanelConfigs;
+  panelPayloads?: Partial<Record<PanelId, PreviewWindowPayload>>;
+  mainSessions?: SurfaceSession[];
   previewWindows: PreviewWindow[];
   activePreviewWindowId: string | null;
   activePanelId?: PanelId | null;
@@ -90,6 +92,7 @@ export const panelToSurfaceSession = (
   config: PanelConfig,
   visible: boolean,
   activePanelId: PanelId | null = null,
+  payload?: PreviewWindowPayload,
 ): SurfaceSession => ({
   id: panelSurfaceId(panelId),
   source: "panel",
@@ -106,6 +109,7 @@ export const panelToSurfaceSession = (
     x: config.x,
     y: config.y,
   },
+  payload: payload ? { ...payload } : undefined,
 });
 
 export const previewWindowToSurfaceSession = (
@@ -136,6 +140,8 @@ export const previewWindowToSurfaceSession = (
 export const buildSurfaceSessions = ({
   panels,
   panelConfigs,
+  panelPayloads = {},
+  mainSessions = [],
   previewWindows,
   activePreviewWindowId,
   activePanelId = null,
@@ -151,6 +157,7 @@ export const buildSurfaceSessions = ({
       : session;
 
   return [
+    ...mainSessions.map(withHostModeOverride),
     ...Object.entries(panels)
       .filter(([, visible]) => visible)
       .map(([panelId]) => {
@@ -161,6 +168,7 @@ export const buildSurfaceSessions = ({
             panelConfigs[typedPanelId],
             true,
             activePanelId,
+            panelPayloads[typedPanelId],
           ),
         );
       }),

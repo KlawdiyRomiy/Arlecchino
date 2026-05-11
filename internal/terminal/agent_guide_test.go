@@ -64,8 +64,17 @@ func TestEnsureAgentGuideFile_CreatesGuideWithoutVisibleVersionOrAckInstruction(
 	if strings.Contains(text, "Work only inside the current project root.") {
 		t.Fatalf("guide file should avoid rigid current-root wording")
 	}
-	if !strings.Contains(text, "IDE control tools:") {
-		t.Fatalf("guide file should include IDE tool sections")
+	if !strings.Contains(text, ".arlecchino/skills/*/SKILL.md") {
+		t.Fatalf("guide file should point agents to project skill files")
+	}
+
+	uiSkillPath := filepath.Join(projectRoot, ".arlecchino", "skills", "ui-layout", "SKILL.md")
+	uiSkill, err := os.ReadFile(uiSkillPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", uiSkillPath, err)
+	}
+	if !strings.Contains(string(uiSkill), "ide_ui.open_panel") {
+		t.Fatalf("ui layout skill should include generic panel tools")
 	}
 }
 
@@ -151,11 +160,11 @@ IDE_GUIDE_LOADED
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "IDE control tools:") {
-		t.Fatalf("refreshed guide should contain MCP tool sections")
+	if !strings.Contains(text, ".arlecchino/skills/*/SKILL.md") {
+		t.Fatalf("refreshed guide should point to MCP skill files")
 	}
-	if !strings.Contains(text, ".arlecchino/AGENT_CONTEXT.md when present.") {
-		t.Fatalf("refreshed guide should mention AGENT_CONTEXT.md")
+	if !strings.Contains(text, ".arlecchino/memory/CONTEXT.md when present.") {
+		t.Fatalf("refreshed guide should mention memory context")
 	}
 	if strings.Contains(text, "Operating rules:") {
 		t.Fatalf("refreshed guide should not preserve legacy operating rules section")
@@ -164,7 +173,7 @@ IDE_GUIDE_LOADED
 
 func TestBuildAgentGuideBootstrapMessage_IncludesPathAndMarker(t *testing.T) {
 	guidePath := "/tmp/project/.arlecchino/AGENT_GUIDE.md"
-	contextPath := "/tmp/project/.arlecchino/AGENT_CONTEXT.md"
+	contextPath := "/tmp/project/.arlecchino/memory/CONTEXT.md"
 
 	message := BuildAgentGuideBootstrapMessage(guidePath, contextPath)
 	if message == "" {

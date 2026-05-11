@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	agentMemoryFileName       = "session-memory.jsonl"
-	agentContextFileName      = "AGENT_CONTEXT.md"
+	agentMemoryDirectoryName  = "memory"
+	agentMemoryFileName       = "memory/session-memory.jsonl"
+	agentContextFileName      = "memory/CONTEXT.md"
+	legacyAgentMemoryFileName = "session-memory.jsonl"
 	defaultAgentMemoryLimit   = 2000
 	defaultAgentContextChars  = 4000
 	maxAgentMemoryEntryLength = 4096
@@ -61,6 +63,10 @@ func loadAgentMemoryStore(projectRoot string, capacity int) (*agentMemoryStore, 
 	if err := ensureArlecchinoStateDir(projectRoot); err != nil {
 		return nil, err
 	}
+	memoryDir := projectStateFilePath(projectRoot, agentMemoryDirectoryName)
+	if err := os.MkdirAll(memoryDir, 0o700); err != nil {
+		return nil, err
+	}
 
 	store := &agentMemoryStore{
 		entries:     make([]AgentMemoryEntry, 0, capacity),
@@ -73,12 +79,22 @@ func loadAgentMemoryStore(projectRoot string, capacity int) (*agentMemoryStore, 
 	file, err := os.Open(store.diskPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			if err := store.syncContextFileLocked(); err != nil {
-				return nil, err
+			legacyPath := projectStateFilePath(projectRoot, legacyAgentMemoryFileName)
+			legacyFile, legacyErr := os.Open(legacyPath)
+			if legacyErr == nil {
+				file = legacyFile
+			} else {
+				if !os.IsNotExist(legacyErr) {
+					return nil, legacyErr
+				}
+				if err := store.syncContextFileLocked(); err != nil {
+					return nil, err
+				}
+				return store, nil
 			}
-			return store, nil
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
 	defer file.Close()
 
@@ -102,6 +118,10 @@ func loadAgentMemoryStore(projectRoot string, capacity int) (*agentMemoryStore, 
 
 	if len(store.entries) > store.capacity {
 		store.entries = append([]AgentMemoryEntry(nil), store.entries[len(store.entries)-store.capacity:]...)
+		if err := store.rewriteLocked(); err != nil {
+			return nil, err
+		}
+	} else if file.Name() != store.diskPath && len(store.entries) > 0 {
 		if err := store.rewriteLocked(); err != nil {
 			return nil, err
 		}
@@ -288,6 +308,9 @@ func (s *agentMemoryStore) rewriteLocked() error {
 }
 
 func (s *agentMemoryStore) syncContextFileLocked() error {
+	if err := os.MkdirAll(filepath.Dir(s.contextPath), 0o700); err != nil {
+		return err
+	}
 	return os.WriteFile(s.contextPath, []byte(buildAgentContextDocument(s.contextLocked(defaultAgentContextChars))), 0o600)
 }
 
@@ -331,7 +354,7 @@ func buildAgentContextDocument(summary string) string {
 		trimmedSummary = "No saved project memory yet."
 	}
 
-	return fmt.Sprintf("# Arlecchino Agent Context\n\nGenerated from project-local session memory.\n\n%s\n", trimmedSummary)
+	return fmt.Sprintf("# Arlecchino Mnemonic Memory\n\nThis file is generated from project-local memory entries in `.arlecchino/memory/session-memory.jsonl`.\n\nUse it as a compact recall surface: durable decisions, workflow facts, bug fixes, and handoff notes. Save new durable facts with `agent_memory.save`; search or list memory before relying on older context.\n\n%s\n", trimmedSummary)
 }
 
 func normalizeAgentMemoryEntry(entry AgentMemoryEntry) AgentMemoryEntry {
@@ -468,7 +491,8 @@ func (s *ToolService) AgentMemoryContext(maxChars int) string {
 func (s *ToolService) InitializeInstructions() string {
 	parts := []string{
 		"Use ide_control.* and change_journal.* for safe file operations, checkpoints, audit, and approval flow. When live bridge is available, use ide_backend.* for backend control and ide_ui.* for runtime UI state changes.",
-		"Use agent_memory.list/search/context early for project-local continuity and agent_memory.save after durable decisions, workflows, fixes, or context handoffs.",
+		"Use ide_ui.surface_read to inspect visible panels and ide_ui.open_panel/move_panel/close_panel/open_file_panel for confirmed panel control.",
+		"Use agent_memory.list/search/context early for project-local mnemonic memory and agent_memory.save after durable decisions, workflows, fixes, or context handoffs. Memory is stored under .arlecchino/memory/.",
 	}
 
 	contextSummary := strings.TrimSpace(s.AgentMemoryContext(2400))

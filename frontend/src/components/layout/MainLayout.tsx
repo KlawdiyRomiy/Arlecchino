@@ -19,6 +19,7 @@ import { useBrowserPreviewBridge } from "../../hooks/useBrowserPreviewBridge";
 import { usePreviewableContext } from "../../hooks/usePreviewableContext";
 import { PreviewWindowLayer } from "./PreviewWindowLayer";
 import { ExecutionDialog } from "../ExecutionDialog";
+import { TerminalPanelContent } from "../TerminalPanel";
 import { DependencyPolicyModal } from "../DependencyPolicyModal";
 import { LaravelPlugin } from "../../plugins/LaravelPlugin";
 import { SettingsModal } from "../SettingsModal";
@@ -107,11 +108,11 @@ import {
 import {
   createEditorFileLoadingLoad,
   createEditableEditorFileLoad,
+  getEditorFileName,
   loadEditorFile,
   type EditorFileLoadState,
 } from "../../utils/editorFileLoader";
 import type {
-  AssistPanelId,
   CodePanelTab,
   HeldPanelShortcut,
   HydratedPanelLayoutState,
@@ -1254,15 +1255,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     previewWindows,
   ]);
 
-  useSurfaceRuntimeHostSync({
-    panels,
-    panelConfigs,
-    previewWindows,
-    activePreviewWindowId: activePanelId ? null : activePreviewWindowId,
-    activePanelId,
-    fullscreenSurfaceIds,
-  });
-
   const startFullscreenPanelTransition = useCallback(
     (panelId: FullscreenPanelId, applyTransition: () => void) => {
       if (reducePanelMotion || typeof window === "undefined") {
@@ -1922,6 +1914,71 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       null,
     [activeCodePanelPath, codePanelTabs],
   );
+  const panelRuntimePayloads = useMemo(
+    () => ({
+      code: activeCodePanelTab
+        ? {
+            activePath: activeCodePanelTab.path,
+            activeName: activeCodePanelTab.name,
+            language: activeCodePanelTab.language,
+            line: activeCodePanelTab.line,
+            tabCount: codePanelTabs.length,
+            tabPaths: codePanelTabs.map((tab) => tab.path).join("\n"),
+          }
+        : {
+            tabCount: 0,
+          },
+      terminal: {
+        tuiModeActive,
+        tuiActiveSessionId: tuiActiveSessionId ?? "",
+      },
+    }),
+    [activeCodePanelTab, codePanelTabs, tuiActiveSessionId, tuiModeActive],
+  );
+  const mainSurfaceSessions = useMemo<SurfaceSession[]>(
+    () =>
+      tuiModeActive
+        ? [
+            {
+              id: "main:tui-terminal",
+              source: "main",
+              appletKind: "terminal",
+              hostMode: "main-center",
+              title: "Terminal TUI",
+              active: true,
+              pinned: false,
+              payload: {
+                tuiModeActive: true,
+                tuiActiveSessionId: tuiActiveSessionId ?? "",
+              },
+              geometry: {
+                width: panelWorkspaceSize.width,
+                height: panelWorkspaceSize.height,
+                x: 0,
+                y: 0,
+              },
+            },
+          ]
+        : [],
+    [
+      panelWorkspaceSize.height,
+      panelWorkspaceSize.width,
+      tuiActiveSessionId,
+      tuiModeActive,
+    ],
+  );
+
+  useSurfaceRuntimeHostSync({
+    panels,
+    panelConfigs,
+    panelPayloads: panelRuntimePayloads,
+    mainSessions: mainSurfaceSessions,
+    previewWindows,
+    activePreviewWindowId: activePanelId ? null : activePreviewWindowId,
+    activePanelId,
+    fullscreenSurfaceIds,
+  });
+
   const activateAdjacentCodePanelTab = useCallback(
     (direction: 1 | -1): boolean => {
       if (codePanelTabs.length < 2) {
@@ -2249,27 +2306,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [getActiveTerminalSessionId, resolvedThemeId, showNotification],
   );
 
-  const resolveAssistPanelId = useCallback(
-    (panel: string): AssistPanelId | null => {
-      switch (panel) {
-        case "explorer":
-        case "sidebar":
-          return "explorer";
-        case "ai":
-        case "aichat":
-        case "chat":
-        case "aiChat":
-          return "aiChat";
-        case "git":
-          return "git";
-        default:
-          return null;
+  const resolveTUIControllablePanelId = useCallback(
+    (panel: string): PanelId | null => {
+      if (panel === "browser" || panel === "web") {
+        return null;
       }
+      const panelId = resolvePanelId(panel);
+      return panelId === "terminal" ? null : panelId;
     },
     [],
   );
 
-  const resolveDefaultTUIAssistPanel = useCallback((): AssistPanelId => {
+  const resolveDefaultTUIAssistPanel = useCallback((): PanelId => {
     const snapshotPanels = tuiLayoutSnapshot?.panels;
 
     if (snapshotPanels?.git || panelsRef.current.git) {
@@ -2286,7 +2334,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, [tuiLayoutSnapshot]);
 
   const openTUIFloatingPanel = useCallback(
-    (panelId: AssistPanelId, request?: Partial<PanelOpenRequest> | null) => {
+    (panelId: PanelId, request?: Partial<PanelOpenRequest> | null) => {
       const state = useTerminalStore.getState();
       const position = normalizeTUIAssistAnchor(
         request?.anchor ?? request?.position,
@@ -2314,7 +2362,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       });
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
       state.setTUIAssist({ active: false, panel: null, anchor: position });
-      setTimeout(() => state.focusActiveTerminal(), 80);
+      if (state.tuiModeActive) {
+        setTimeout(() => state.focusActiveTerminal(), 80);
+      }
     },
     [
       applyPanelConfigsState,
@@ -2326,25 +2376,25 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const openTUIAssistPanel = useCallback(
     (payload: unknown) => {
       const request = parsePanelOpenRequest(payload);
-      const state = useTerminalStore.getState();
-      if (!state.tuiModeActive) {
-        return;
-      }
-
       const assistPanel = request?.panel
-        ? resolveAssistPanelId(request.panel)
+        ? resolveTUIControllablePanelId(request.panel)
         : resolveDefaultTUIAssistPanel();
       if (!assistPanel) {
-        return;
+        return { handled: false, reason: "Unknown TUI panel." };
       }
 
       openTUIFloatingPanel(assistPanel, request);
+      return { handled: true, panel: assistPanel };
     },
-    [openTUIFloatingPanel, resolveAssistPanelId, resolveDefaultTUIAssistPanel],
+    [
+      openTUIFloatingPanel,
+      resolveDefaultTUIAssistPanel,
+      resolveTUIControllablePanelId,
+    ],
   );
 
   const toggleTUIAssistPanel = useCallback(
-    (panel: AssistPanelId) => {
+    (panel: PanelId) => {
       const state = useTerminalStore.getState();
       if (!state.tuiModeActive) {
         return;
@@ -2653,6 +2703,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const effectivePanels = useMemo<PanelVisibility>(() => {
+    if (tuiModeActive) {
+      return {
+        ...panels,
+        terminal: false,
+      };
+    }
+
     if (!zenModeEnabled) {
       return panels;
     }
@@ -2680,6 +2737,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, [panelConfigs, panels, tuiModeActive, zenModeEnabled, zenPinnedPanels]);
 
   const layoutPanels = useMemo<PanelVisibility>(() => {
+    if (tuiModeActive) {
+      return {
+        ...panels,
+        terminal: false,
+      };
+    }
+
     if (!zenModeEnabled) {
       return panels;
     }
@@ -4063,6 +4127,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
       applyPanelsState(nextPanels);
       applyRememberedSnappedPositionsState(nextRememberedSnappedPositions);
+      if (nextPanels.code) {
+        markActivePanel("code");
+      }
       return { handled: Boolean(nextPanels.code), panel: "code", path };
     },
     [
@@ -4073,11 +4140,95 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       beginPanelMotionWindow,
       ensureProjectEntryAccess,
       movePanelToPositionWithReflow,
+      markActivePanel,
       openEditorTab,
       showNotification,
       startSnappedSlotEnter,
     ],
   );
+
+  const handleCodePanelExternalFileChange = useCallback(
+    (payload: unknown) => {
+      const changedPath =
+        typeof payload === "string"
+          ? payload
+          : payload &&
+              typeof payload === "object" &&
+              "path" in payload &&
+              typeof (payload as { path?: unknown }).path === "string"
+            ? (payload as { path: string }).path
+            : "";
+      const normalizedChangedPath = normalizeProjectPath(changedPath);
+      if (
+        !normalizedChangedPath ||
+        !codePanelTabs.some(
+          (tab) => normalizeProjectPath(tab.path) === normalizedChangedPath,
+        )
+      ) {
+        return;
+      }
+
+      const editorStore = useEditorStore.getState();
+      const editorTabId = makeEditorTabId(normalizedChangedPath);
+      if (editorStore.tabs.get(editorTabId)?.isDirty) {
+        return;
+      }
+
+      const requestId = codePanelOpenRequestRef.current + 1;
+      codePanelOpenRequestRef.current = requestId;
+
+      void (async () => {
+        const fileLoadState = await loadEditorFile(normalizedChangedPath);
+        if (codePanelOpenRequestRef.current !== requestId) {
+          return;
+        }
+
+        let language =
+          codePanelTabs.find(
+            (tab) => normalizeProjectPath(tab.path) === normalizedChangedPath,
+          )?.language ?? "text";
+        try {
+          const languageInfo = await GetLanguageForFile(normalizedChangedPath);
+          if (languageInfo?.id) {
+            language = languageInfo.id;
+          }
+        } catch {
+          /* keep current language */
+        }
+        if (codePanelOpenRequestRef.current !== requestId) {
+          return;
+        }
+
+        const content =
+          fileLoadState.kind === "editable" ? fileLoadState.content : "";
+        useEditorStore
+          .getState()
+          .replaceTabContent(editorTabId, content, language);
+        setCodePanelTabs((currentTabs) =>
+          currentTabs.map((tab) =>
+            normalizeProjectPath(tab.path) === normalizedChangedPath
+              ? {
+                  ...tab,
+                  name: fileLoadState.name || getEditorFileName(tab.path),
+                  content,
+                  language,
+                  loadState: fileLoadState,
+                }
+              : tab,
+          ),
+        );
+      })();
+    },
+    [codePanelTabs],
+  );
+
+  useEffect(() => {
+    const unsubscribe = EventsOn(
+      "file:changed",
+      handleCodePanelExternalFileChange,
+    );
+    return unsubscribe;
+  }, [handleCodePanelExternalFileChange]);
 
   const handleFileOpen = useCallback(
     (path: string, content: string, name: string, line?: number) => {
@@ -5694,6 +5845,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     flexDirection: "column",
     backgroundColor: "var(--bg-blackprint)",
   };
+  const tuiCenterTerminalContent = (
+    <div data-testid="tui-center-terminal" style={tuiTerminalPaneStyle}>
+      <TerminalPanelContent
+        onOpenFileRef={(path, line) => {
+          void openFileFromPath(path, line);
+        }}
+        onOpenPreviewUrl={(url, sessionId) => {
+          openPreviewFromTerminal({ url, sessionId, forceOpen: true });
+        }}
+      />
+    </div>
+  );
 
   // Framer layout scales slot descendants here, which makes panels expand
   // instead of sliding. Slot size is animated with CSS while the panel keeps
@@ -5731,6 +5894,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       ...filePanelSnapDrag,
     },
   );
+  const centerWorkspaceContent = tuiModeActive
+    ? tuiCenterTerminalContent
+    : workspaceEditorContent;
 
   return (
     <ProjectEntryActionsProvider value={projectEntryActions}>
@@ -5837,7 +6003,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               centerWorkspaceStyle={centerWorkspaceStyle}
               editorAreaStyle={editorAreaStyle}
               editorAreaTestId="editor-area"
-              editorContent={workspaceEditorContent}
+              editorContent={centerWorkspaceContent}
               panelLayoutChanging={panelLayoutChanging}
               panelDropSettling={effectivePanelDropSettling}
               draggingPanel={draggingPanel}

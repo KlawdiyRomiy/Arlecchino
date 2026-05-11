@@ -14,19 +14,48 @@ const agentGuideManagedMarker = "<!-- ARLECCHINO_MANAGED_GUIDE_V2 -->"
 const (
 	agentGuideDirectoryName = ".arlecchino"
 	agentGuideFileName      = "AGENT_GUIDE.md"
+	agentSkillsDirectory    = "skills"
 )
 
 var defaultAgentGuideContent = strings.TrimSpace(`
-# Arlecchino Terminal Agent Guide
+# Arlecchino Terminal Agent Skill Index
 
 You are operating inside Arlecchino IDE terminal mode.
 
 Required reads:
 1. AGENTS.md in repository root.
 2. This file.
-3. .arlecchino/AGENT_CONTEXT.md when present.
+3. .arlecchino/skills/*/SKILL.md files that match the task.
+4. .arlecchino/memory/CONTEXT.md when present.
 
-IDE control tools:
+Skill map:
+- .arlecchino/skills/ide-control/SKILL.md: safe file operations, checkpoints, approvals, audit.
+- .arlecchino/skills/ui-layout/SKILL.md: visible IDE panels, TUI layout, surface state, code panels.
+- .arlecchino/skills/backend-runtime/SKILL.md: live backend, LSP, terminal, git, dispatcher control.
+- .arlecchino/skills/project-memory/SKILL.md: mnemonic memory list/search/context/save workflow.
+
+Use the matching skill instead of treating this file as one large instruction blob.
+`) + "\n"
+
+type agentSkillFile struct {
+	RelativePath string
+	Content      string
+}
+
+var defaultAgentSkillFiles = []agentSkillFile{
+	{
+		RelativePath: filepath.Join(agentSkillsDirectory, "ide-control", "SKILL.md"),
+		Content: strings.TrimSpace(`
+---
+name: arlecchino-ide-control
+description: Safe project-local file operations, checkpoints, approvals, and audit for Arlecchino terminal agents.
+---
+
+# Arlecchino IDE Control
+
+Use this skill before reading, writing, checkpointing, rolling back, or auditing project files.
+
+Tools:
 - ide_control.read_file
 - ide_control.write_file
 - ide_control.search_files
@@ -34,20 +63,72 @@ IDE control tools:
 - ide_control.permission_status
 - ide_control.request_permission
 - ide_control.audit_logs
+- ide_control.flight_recorder
 - ide_control.capabilities
-
-Checkpoint tools:
 - change_journal.create_checkpoint
 - change_journal.list_checkpoints
 - change_journal.rollback_checkpoint
 
-Local memory tools:
-- agent_memory.save
-- agent_memory.search
-- agent_memory.list
-- agent_memory.context
+Rules:
+- Stay scoped to the user's requested workspace unless they explicitly direct you elsewhere.
+- Use checkpoints before risky edits.
+- Approvals are tool-scoped. Request ide_control.request_permission with tool_name set to the exact next tool.
+- Do not read, checkpoint, write, or search secret-like files without explicit approval.
+- MCP read_file is for bounded UTF-8 text; use app/editor preview flows for binary, image, database, archive, and oversized files.
+`) + "\n",
+	},
+	{
+		RelativePath: filepath.Join(agentSkillsDirectory, "ui-layout", "SKILL.md"),
+		Content: strings.TrimSpace(`
+---
+name: arlecchino-ui-layout
+description: Visible IDE panel control, TUI-mode layout, surface runtime state, and side code panels.
+---
 
-IDE backend tools:
+# Arlecchino UI Layout
+
+Use this skill when the task depends on what is visibly open in the IDE.
+
+Tools:
+- ide_ui.surface_read
+- ide_ui.open_panel
+- ide_ui.move_panel
+- ide_ui.close_panel
+- ide_ui.open_file_panel
+- ide_ui.open_intent
+- ide_ui.preview_open
+- ide_ui.preview_navigate
+- ide_ui.preview_focus
+- ide_ui.preview_close
+- ide_ui.list_layout_profiles
+- ide_ui.register_layout_profile
+- ide_ui.apply_layout_profile
+- ide_ui.hot_switch
+- ide_ui.list_layout_snapshots
+- ide_ui.apply_layout_snapshot
+- ide_ui.emit_event
+
+Rules:
+- TUI mode is the same IDE with the terminal in the center instead of the main code editor. Side panels still use the normal panel layout.
+- Use ide_ui.open_file_panel for visible side-panel file opens. Do not substitute preview windows.
+- Use ide_ui.open_panel, move_panel, and close_panel for Explorer, Git, Problems, AI Chat, terminal, markdown preview, and other panel control.
+- Use ide_ui.surface_read after UI-control actions when visible state matters.
+- Treat raw event emission as lower confidence than confirmed tools that return confirmed:true.
+`) + "\n",
+	},
+	{
+		RelativePath: filepath.Join(agentSkillsDirectory, "backend-runtime", "SKILL.md"),
+		Content: strings.TrimSpace(`
+---
+name: arlecchino-backend-runtime
+description: Live Arlecchino backend, LSP, terminal, git, dispatcher, and project runtime control.
+---
+
+# Arlecchino Backend Runtime
+
+Use this skill for live IDE backend operations.
+
+Tools:
 - ide_backend.project_open
 - ide_backend.project_close
 - ide_backend.project_status
@@ -74,40 +155,41 @@ IDE backend tools:
 - ide_backend.git_branch
 - ide_backend.git_branches
 
-IDE UI tools:
-- ide_ui.emit_event
-- ide_ui.surface_read
-- ide_ui.open_intent
-- ide_ui.open_file_panel
-- ide_ui.preview_open
-- ide_ui.preview_navigate
-- ide_ui.preview_focus
-- ide_ui.preview_close
-- ide_ui.list_layout_profiles
-- ide_ui.register_layout_profile
-- ide_ui.apply_layout_profile
-- ide_ui.hot_switch
-- ide_ui.list_layout_snapshots
-- ide_ui.apply_layout_snapshot
+Rules:
+- Terminal, dispatcher, git, project-open, and LSP mutating tools can have external effects; request approval unless the user has already authorized the exact action.
+- Prefer backend search and LSP tools when the live IDE context is useful; prefer safe file tools for direct file reads.
+`) + "\n",
+	},
+	{
+		RelativePath: filepath.Join(agentSkillsDirectory, "project-memory", "SKILL.md"),
+		Content: strings.TrimSpace(`
+---
+name: arlecchino-project-memory
+description: Project-local mnemonic memory for durable decisions, workflows, fixes, and handoffs.
+---
 
-Interaction rules:
-- Stay scoped to the user's requested workspace unless they explicitly direct you elsewhere.
-- Keep changes focused and reversible.
-- Prefer narrow checks before broad suites.
-- Avoid destructive git operations unless the user explicitly asks.
-- Use checkpoints before risky file edits.
-- Save durable decisions, bug fixes, and workflow context into local memory.
-- Approvals are tool-scoped. Request ide_control.request_permission with tool_name set to the exact next tool you need; one approval does not authorize other tools.
-- For agent_memory.save/search, pass tags as an array of strings.
-- Use ide_ui.open_file_panel for visible side-panel file opens. Do not use dispatch_command, raw ide:file:open, or preview windows for this.
-- Treat raw event emission as lower confidence than confirmed tools. Prefer tools that return confirmed:true and inspect mcpRequestId when validating UI work.
-- Use ide_ui.surface_read after UI-control actions when visible state matters.
-- Do not read, checkpoint, write, or search for secret-like files without explicit approval. Sensitive paths include .env files, SSH keys, certificates, credentials, and secret-named files.
-- MCP read_file is for bounded UTF-8 text. Use app/editor preview flows for binary, image, database, archive, and oversized files.
-- Terminal, dispatcher, git, project-open, layout, and generic UI-event tools can cause external or destructive effects; request/confirm approval before using them unless the user has already authorized the action.
-- Prefer existing project conventions over generic scaffolding.
-- Explain actions directly and keep the user informed about meaningful progress.
-`) + "\n"
+# Arlecchino Project Memory
+
+Use this skill for mnemonic memory.
+
+Files:
+- .arlecchino/memory/session-memory.jsonl: append-only project-local memory entries.
+- .arlecchino/memory/CONTEXT.md: generated compact recall document.
+
+Tools:
+- agent_memory.context
+- agent_memory.list
+- agent_memory.search
+- agent_memory.save
+
+Rules:
+- Read agent_memory.context or search/list memory early when prior project context can change the answer.
+- Save durable decisions, bug fixes, workflow discoveries, and handoff summaries.
+- Use tags as an array of strings, not a comma-separated string.
+- Keep memory entries factual and project-local; do not store secrets or private credentials.
+`) + "\n",
+	},
+}
 
 func shouldRefreshManagedAgentGuide(content string) bool {
 	trimmed := strings.TrimSpace(content)
@@ -115,7 +197,9 @@ func shouldRefreshManagedAgentGuide(content string) bool {
 		return true
 	}
 
-	if !strings.Contains(trimmed, "# Arlecchino Terminal Agent Guide") {
+	managedGuide := strings.Contains(trimmed, "# Arlecchino Terminal Agent Guide") ||
+		strings.Contains(trimmed, "# Arlecchino Terminal Agent Skill Index")
+	if !managedGuide {
 		return false
 	}
 
@@ -127,23 +211,15 @@ func shouldRefreshManagedAgentGuide(content string) bool {
 		return true
 	}
 
-	if !strings.Contains(trimmed, ".arlecchino/AGENT_CONTEXT.md when present.") {
+	if strings.Contains(trimmed, ".arlecchino/AGENT_CONTEXT.md when present.") {
 		return true
 	}
 
-	if !strings.Contains(trimmed, "IDE control tools:") {
+	if !strings.Contains(trimmed, ".arlecchino/skills/*/SKILL.md") {
 		return true
 	}
 
-	if !strings.Contains(trimmed, "ide_ui.surface_read") || !strings.Contains(trimmed, "ide_ui.open_intent") {
-		return true
-	}
-
-	if !strings.Contains(trimmed, "confirmed:true") {
-		return true
-	}
-
-	if !strings.Contains(trimmed, "tool-scoped") {
+	if !strings.Contains(trimmed, ".arlecchino/memory/CONTEXT.md when present.") {
 		return true
 	}
 
@@ -166,6 +242,31 @@ func AgentGuidePath(projectRoot string) string {
 	return filepath.Join(projectRoot, agentGuideDirectoryName, agentGuideFileName)
 }
 
+func agentSkillPath(projectRoot, relativePath string) string {
+	return filepath.Join(projectRoot, agentGuideDirectoryName, relativePath)
+}
+
+func ensureAgentSkillFiles(projectRoot string) error {
+	for _, skill := range defaultAgentSkillFiles {
+		path := agentSkillPath(projectRoot, skill.RelativePath)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+
+		_, err := os.Stat(path)
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := os.WriteFile(path, []byte(skill.Content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func EnsureAgentGuideFile(projectRoot string) (string, bool, error) {
 	trimmedRoot := strings.TrimSpace(projectRoot)
 	if trimmedRoot == "" {
@@ -176,6 +277,9 @@ func EnsureAgentGuideFile(projectRoot string) (string, bool, error) {
 	guideDir := filepath.Dir(guidePath)
 
 	if err := os.MkdirAll(guideDir, 0o755); err != nil {
+		return "", false, err
+	}
+	if err := ensureAgentSkillFiles(trimmedRoot); err != nil {
 		return "", false, err
 	}
 

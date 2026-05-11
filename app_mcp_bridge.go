@@ -718,6 +718,10 @@ func bridgeEventAllowed(eventName string) bool {
 	if normalized == "" {
 		return false
 	}
+	switch normalized {
+	case "file:changed", "file:created":
+		return true
+	}
 	if !strings.HasPrefix(normalized, "ide:") {
 		return false
 	}

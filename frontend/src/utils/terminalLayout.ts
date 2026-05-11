@@ -93,6 +93,6 @@ export const getTUIPanelVisibility = (
 ): TUIPanelVisibility => {
   return {
     ...currentPanels,
-    terminal: true,
+    terminal: false,
   };
 };

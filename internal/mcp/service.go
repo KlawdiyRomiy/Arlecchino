@@ -455,8 +455,20 @@ func (s *ToolService) WriteFile(path, content, checkpointLabel string) (FileWrit
 	}
 
 	mode := fileWriteMode(absPath, 0o600)
+	_, statErr := os.Stat(absPath)
+	created := os.IsNotExist(statErr)
 	if err := writeFileNoFollow(absPath, []byte(content), mode); err != nil {
 		return FileWriteResult{}, err
+	}
+	if s.bridgeAvailable() {
+		eventName := "file:changed"
+		if created {
+			eventName = "file:created"
+		}
+		_, _ = s.bridgeCall("ide_control.write_file", "ui.emit_event", map[string]any{
+			"event":   eventName,
+			"payload": absPath,
+		})
 	}
 
 	return FileWriteResult{
@@ -837,6 +849,12 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 		return s.bridgeOpenIntent(args)
 	case "ide_ui.open_file_panel":
 		return s.bridgeOpenFilePanel(args)
+	case "ide_ui.open_panel":
+		return s.bridgeOpenPanel(args)
+	case "ide_ui.move_panel":
+		return s.bridgeMovePanel(args)
+	case "ide_ui.close_panel":
+		return s.bridgeClosePanel(args)
 	case "ide_ui.preview_open":
 		return s.bridgePreviewOpen(args)
 	case "ide_ui.preview_navigate":

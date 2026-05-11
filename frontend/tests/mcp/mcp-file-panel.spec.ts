@@ -18,6 +18,11 @@ const installMCPFilePanelBridges = async (
       Array<{ callback: (...data: unknown[]) => void; remaining: number }>
     >();
     const acks: unknown[] = [];
+    const fileContents: Record<string, string> = {
+      "/workspace/Makefile": "dev-start:\n\tvite --host 127.0.0.1\n",
+      "/workspace/package.json": '{\n  "name": "workspace"\n}\n',
+      "/workspace/src/main.ts": "export const ready = true;\n",
+    };
     const writeFileCalls: Array<{ path: unknown; content: unknown }> = [];
     const createDirectoryCalls: unknown[] = [];
     const scrollFixtureFiles = Array.from({ length: 48 }, (_, index) => {
@@ -64,6 +69,12 @@ const installMCPFilePanelBridges = async (
                 return true;
               case "WriteFile":
                 writeFileCalls.push({ path: args[0], content: args[1] });
+                if (
+                  typeof args[0] === "string" &&
+                  typeof args[1] === "string"
+                ) {
+                  fileContents[args[0]] = args[1];
+                }
                 return true;
               case "CreateDirectory":
                 createDirectoryCalls.push(args[0]);
@@ -119,14 +130,7 @@ const installMCPFilePanelBridges = async (
                 ];
               case "InspectEditorFile": {
                 const path = String(args[0] ?? "");
-                const content =
-                  path === "/workspace/Makefile"
-                    ? "dev-start:\n\tvite --host 127.0.0.1\n"
-                    : path === "/workspace/package.json"
-                      ? '{\n  "name": "workspace"\n}\n'
-                      : path === "/workspace/src/main.ts"
-                        ? "export const ready = true;\n"
-                        : "";
+                const content = fileContents[path] ?? "";
                 const lines = content.split("\n");
                 return {
                   path,
@@ -145,16 +149,7 @@ const installMCPFilePanelBridges = async (
                 };
               }
               case "ReadFile":
-                if (args[0] === "/workspace/Makefile") {
-                  return "dev-start:\n\tvite --host 127.0.0.1\n";
-                }
-                if (args[0] === "/workspace/package.json") {
-                  return '{\n  "name": "workspace"\n}\n';
-                }
-                if (args[0] === "/workspace/src/main.ts") {
-                  return "export const ready = true;\n";
-                }
-                return "";
+                return fileContents[String(args[0] ?? "")] ?? "";
               case "GetLanguageForFile":
                 if (args[0] === "/workspace/package.json") {
                   return { id: "json" };
@@ -219,6 +214,7 @@ const installMCPFilePanelBridges = async (
 
     Object.assign(window, {
       __mcpAcks: acks,
+      __mcpFileContents: fileContents,
       __writeFileCalls: writeFileCalls,
       __createDirectoryCalls: createDirectoryCalls,
       go: { main: { App: appBridge } },
@@ -298,40 +294,33 @@ const expectPanelFillsWorkspace = async (
   page: Parameters<typeof test>[0]["page"],
   panelTestId: string,
 ): Promise<void> => {
-  const metrics = await page.evaluate((panelTestId) => {
-    const workspace = document
-      .querySelector('[data-testid="panel-workspace"]')
-      ?.getBoundingClientRect();
-    const panel = document
-      .querySelector(`[data-testid="${panelTestId}"]`)
-      ?.getBoundingClientRect();
-    if (!workspace || !panel) {
-      return null;
-    }
+  await expect
+    .poll(
+      () =>
+        page.evaluate((panelTestId) => {
+          const workspace = document
+            .querySelector('[data-testid="panel-workspace"]')
+            ?.getBoundingClientRect();
+          const panels = Array.from(
+            document.querySelectorAll(`[data-testid="${panelTestId}"]`),
+          );
+          const panel = panels[panels.length - 1]?.getBoundingClientRect();
+          if (!workspace || !panel) {
+            return false;
+          }
 
-    return {
-      left: Math.abs(panel.left - workspace.left),
-      top: Math.abs(panel.top - workspace.top),
-      right: Math.abs(panel.right - workspace.right),
-      bottom: Math.abs(panel.bottom - workspace.bottom),
-      width: panel.width,
-      height: panel.height,
-      workspaceWidth: workspace.width,
-      workspaceHeight: workspace.height,
-    };
-  }, panelTestId);
-
-  expect(metrics).not.toBeNull();
-  expect(metrics?.left ?? Infinity).toBeLessThanOrEqual(6);
-  expect(metrics?.top ?? Infinity).toBeLessThanOrEqual(6);
-  expect(metrics?.right ?? Infinity).toBeLessThanOrEqual(6);
-  expect(metrics?.bottom ?? Infinity).toBeLessThanOrEqual(6);
-  expect(metrics?.width ?? 0).toBeGreaterThanOrEqual(
-    (metrics?.workspaceWidth ?? 0) - 8,
-  );
-  expect(metrics?.height ?? 0).toBeGreaterThanOrEqual(
-    (metrics?.workspaceHeight ?? 0) - 8,
-  );
+          return (
+            Math.abs(panel.left - workspace.left) <= 6 &&
+            Math.abs(panel.top - workspace.top) <= 6 &&
+            Math.abs(panel.right - workspace.right) <= 6 &&
+            Math.abs(panel.bottom - workspace.bottom) <= 6 &&
+            panel.width >= workspace.width - 8 &&
+            panel.height >= workspace.height - 8
+          );
+        }, panelTestId),
+      { timeout: 2400 },
+    )
+    .toBe(true);
 };
 
 test("MCP panel open event loads a file into the side code panel and acks", async ({
@@ -376,7 +365,7 @@ test("TUI mode lays out side file panels beside the terminal center", async ({
     terminalStore.initialize();
     const terminalId = await terminalStore.createTerminal(
       "pane-1",
-      true,
+      "blackprint",
       "Codex",
     );
     terminalStore.enterTUIMode(terminalId, "playwright");
@@ -413,6 +402,79 @@ test("TUI mode lays out side file panels beside the terminal center", async ({
   });
 });
 
+test("TUI assist panel open survives enter/open event bursts", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(() => {
+    window.runtime.EventsEmit("ide:tui:enter");
+    window.runtime.EventsEmit("ide:tui:assist:open", {
+      panel: "explorer",
+      position: "left",
+      mode: "snapped",
+      mcpRequestId: "mcp-tui-assist-open-race-test",
+    });
+  });
+
+  await expect(page.getByTestId("tui-center-terminal")).toBeVisible();
+  const explorerPanel = page.getByTestId("panel-explorer").last();
+  await expect(explorerPanel).toBeVisible();
+  await expect(
+    explorerPanel.locator('[data-file-path="/workspace/Makefile"]'),
+  ).toBeVisible();
+
+  const ack = await page.evaluate(() => window.__mcpAcks.at(-1));
+  expect(ack).toMatchObject({
+    requestId: "mcp-tui-assist-open-race-test",
+    event: "ide:tui:assist:open",
+    handled: true,
+  });
+});
+
+test("TUI code panel refreshes when an open file changes externally", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(async () => {
+    const { useTerminalStore } = await import("/src/stores/terminalStore.ts");
+    const terminalStore = useTerminalStore.getState();
+    terminalStore.initialize();
+    const terminalId = await terminalStore.createTerminal(
+      "pane-1",
+      "blackprint",
+      "Codex",
+    );
+    terminalStore.enterTUIMode(terminalId, "playwright");
+  });
+
+  await page.evaluate(
+    ({ path, content }) => {
+      window.runtime.EventsEmit("ide:panel:open", {
+        panel: "code",
+        path,
+        content,
+        line: 1,
+        position: "right",
+        mode: "snapped",
+      });
+    },
+    { path: makefilePath, content: makefileContent },
+  );
+
+  const codePanel = page.getByTestId("panel-code").last();
+  await expect(codePanel).toBeVisible();
+  await expect(codePanel.locator(".cm-content")).toContainText("dev-start:");
+
+  await page.evaluate((path) => {
+    window.__mcpFileContents[path] = "dev-start:\n\tgo test ./...\n";
+    window.runtime.EventsEmit("file:changed", path);
+  }, makefilePath);
+
+  await expect(codePanel.locator(".cm-content")).toContainText("go test ./...");
+});
+
 test("TUI explorer file clicks open code panel tabs and keeps New File working", async ({
   page,
 }) => {
@@ -424,7 +486,7 @@ test("TUI explorer file clicks open code panel tabs and keeps New File working",
     terminalStore.initialize();
     const terminalId = await terminalStore.createTerminal(
       "pane-1",
-      true,
+      "blackprint",
       "Codex",
     );
     terminalStore.enterTUIMode(terminalId, "playwright");
@@ -639,7 +701,7 @@ test("code panel tab drops back into Explorer without creating another panel", a
     terminalStore.initialize();
     const terminalId = await terminalStore.createTerminal(
       "pane-1",
-      true,
+      "blackprint",
       "Codex",
     );
     terminalStore.enterTUIMode(terminalId, "playwright");
@@ -758,7 +820,7 @@ test("Explorer create menu closes on Escape and stays visible while scrolled", a
     .poll(async () => explorerPanel.getAttribute("data-panel-motion"))
     .toBe("settled");
 
-  const createButton = explorerPanel.getByTitle("Create");
+  const createButton = explorerPanel.getByTestId("file-explorer-create-button");
   await createButton.click({ force: true });
   await expect(page.getByRole("menuitem", { name: "New File" })).toBeVisible();
 
@@ -823,7 +885,7 @@ test("TUI Git and Problems fullscreen panels fill the panel workspace", async ({
     terminalStore.initialize();
     const terminalId = await terminalStore.createTerminal(
       "pane-1",
-      true,
+      "blackprint",
       "Codex",
     );
     terminalStore.enterTUIMode(terminalId, "playwright");

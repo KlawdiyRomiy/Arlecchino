@@ -91,6 +91,9 @@ func TestToolService_ToolDefinitionsAlwaysIncludeBridgeTools(t *testing.T) {
 		"ide_ui.surface_read",
 		"ide_ui.open_intent",
 		"ide_ui.open_file_panel",
+		"ide_ui.open_panel",
+		"ide_ui.move_panel",
+		"ide_ui.close_panel",
 		"ide_ui.preview_open",
 		"ide_ui.preview_navigate",
 		"ide_ui.preview_focus",
@@ -262,6 +265,72 @@ func TestToolService_OpenFilePanelEmitsConfirmedPanelOpen(t *testing.T) {
 	}
 }
 
+func TestToolService_GenericPanelToolsEmitConfirmedPanelEvents(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "panel-tools")
+
+	bridge := newFakeBridge()
+	bridge.response["ui.emit_event"] = map[string]any{
+		"emitted":   true,
+		"confirmed": true,
+	}
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	for _, toolName := range []string{"ide_ui.open_panel", "ide_ui.move_panel", "ide_ui.close_panel"} {
+		if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+			"approval_code": "panel-tools",
+			"ttl_seconds":   300,
+			"tool_name":     toolName,
+		}); err != nil {
+			t.Fatalf("request_permission(%s) error = %v", toolName, err)
+		}
+	}
+
+	if _, err := service.CallTool("ide_ui.open_panel", map[string]any{
+		"panel":    "explorer",
+		"position": "left",
+		"mode":     "snapped",
+	}); err != nil {
+		t.Fatalf("open_panel error = %v", err)
+	}
+	if _, err := service.CallTool("ide_ui.move_panel", map[string]any{
+		"panel":    "explorer",
+		"position": "right",
+		"width":    320,
+	}); err != nil {
+		t.Fatalf("move_panel error = %v", err)
+	}
+	if _, err := service.CallTool("ide_ui.close_panel", map[string]any{
+		"panel": "explorer",
+	}); err != nil {
+		t.Fatalf("close_panel error = %v", err)
+	}
+
+	calls := bridge.methodCalls("ui.emit_event")
+	if len(calls) != 3 {
+		t.Fatalf("ui.emit_event calls = %d, want 3", len(calls))
+	}
+	wantEvents := []string{"ide:panel:open", "ide:panel:move", "ide:panel:close"}
+	for index, wantEvent := range wantEvents {
+		if got := calls[index].Params["event"]; got != wantEvent {
+			t.Fatalf("call[%d] event = %v, want %s", index, got, wantEvent)
+		}
+		if requestID, ok := calls[index].Params["mcpRequestId"].(string); !ok || requestID == "" {
+			t.Fatalf("call[%d] missing mcpRequestId: %#v", index, calls[index].Params)
+		}
+		payload, ok := calls[index].Params["payload"].(map[string]any)
+		if !ok {
+			t.Fatalf("call[%d] payload type = %T, want map[string]any", index, calls[index].Params["payload"])
+		}
+		if payload["panel"] != "explorer" {
+			t.Fatalf("call[%d] panel = %v, want explorer", index, payload["panel"])
+		}
+	}
+}
+
 func TestToolService_SurfaceReadReturnsFrontendReadModel(t *testing.T) {
 	root := t.TempDir()
 	bridge := newFakeBridge()
@@ -327,6 +396,47 @@ func TestToolService_SurfaceReadReturnsFrontendReadModel(t *testing.T) {
 	}
 	if payload["includeEvents"] != false {
 		t.Fatalf("includeEvents = %v, want false", payload["includeEvents"])
+	}
+}
+
+func TestToolService_WriteFileNotifiesLiveFrontend(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "write-notify")
+	filePath := filepath.Join(root, "main.go")
+	if err := os.WriteFile(filePath, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(main.go) error = %v", err)
+	}
+	resolvedPath, err := filepath.EvalSymlinks(filePath)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(main.go) error = %v", err)
+	}
+
+	bridge := newFakeBridge()
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "write-notify",
+		"ttl_seconds":   300,
+		"tool_name":     "ide_control.write_file",
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	if _, err := service.WriteFile("main.go", "package main\nfunc updated() {}\n", "update-main"); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	calls := bridge.methodCalls("ui.emit_event")
+	if len(calls) != 1 {
+		t.Fatalf("ui.emit_event calls = %d, want 1", len(calls))
+	}
+	if calls[0].Params["event"] != "file:changed" {
+		t.Fatalf("event = %v, want file:changed", calls[0].Params["event"])
+	}
+	if calls[0].Params["payload"] != resolvedPath {
+		t.Fatalf("payload = %v, want %v", calls[0].Params["payload"], resolvedPath)
 	}
 }
 
@@ -1122,7 +1232,7 @@ func TestToolService_TerminalCreateAcceptsCommand(t *testing.T) {
 	}
 }
 
-func TestDefaultLayoutProfiles_TerminalFocusOpensTerminalBeforeTUIAssist(t *testing.T) {
+func TestDefaultLayoutProfiles_TerminalFocusUsesNormalPanelOpenInTUI(t *testing.T) {
 	profiles := defaultLayoutProfiles()
 	var terminalFocus *LayoutProfile
 	for index := range profiles {
@@ -1147,12 +1257,15 @@ func TestDefaultLayoutProfiles_TerminalFocusOpensTerminalBeforeTUIAssist(t *test
 	if payload["panel"] != "terminal" || payload["position"] != "bottom" || payload["mode"] != "snapped" {
 		t.Fatalf("terminal_focus panel payload = %#v, want terminal bottom snapped", payload)
 	}
+	if terminalFocus.Actions[2].Event != "ide:panel:open" {
+		t.Fatalf("third action = %q, want ide:panel:open", terminalFocus.Actions[2].Event)
+	}
 	assistPayload, ok := terminalFocus.Actions[2].Payload.(map[string]any)
 	if !ok {
-		t.Fatalf("assist payload type = %T, want map[string]any", terminalFocus.Actions[2].Payload)
+		t.Fatalf("third action payload type = %T, want map[string]any", terminalFocus.Actions[2].Payload)
 	}
-	if assistPayload["panel"] != "explorer" {
-		t.Fatalf("assist payload = %#v, want explorer panel", assistPayload)
+	if assistPayload["panel"] != "explorer" || assistPayload["position"] != "right" || assistPayload["mode"] != "snapped" {
+		t.Fatalf("third action payload = %#v, want explorer right snapped", assistPayload)
 	}
 }
 

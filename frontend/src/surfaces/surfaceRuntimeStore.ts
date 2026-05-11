@@ -5,7 +5,10 @@ import type {
   PanelId,
   PanelVisibility,
 } from "../components/layout/MainLayout.types";
-import type { PreviewWindow } from "../stores/previewWindowStore";
+import type {
+  PreviewWindow,
+  PreviewWindowPayload,
+} from "../stores/previewWindowStore";
 import {
   buildSurfaceSessions,
   type SurfaceAppletKind,
@@ -81,6 +84,8 @@ export interface SurfaceRuntimeReadModel {
 export interface SurfaceRuntimeHostState {
   panels: PanelVisibility;
   panelConfigs: PanelConfigs;
+  panelPayloads?: Partial<Record<PanelId, PreviewWindowPayload>>;
+  mainSessions?: SurfaceSession[];
   previewWindows: PreviewWindow[];
   activePreviewWindowId: string | null;
   activePanelId?: PanelId | null;
@@ -682,6 +687,8 @@ export function useSurfaceRuntimeSnapshot(): SurfaceRuntimeSnapshot {
 export function useSurfaceRuntimeHostSync({
   panels,
   panelConfigs,
+  panelPayloads,
+  mainSessions,
   previewWindows,
   activePreviewWindowId,
   activePanelId = null,
@@ -692,6 +699,8 @@ export function useSurfaceRuntimeHostSync({
       buildSurfaceSessions({
         panels,
         panelConfigs,
+        panelPayloads,
+        mainSessions,
         previewWindows,
         activePreviewWindowId,
         activePanelId,
@@ -701,7 +710,9 @@ export function useSurfaceRuntimeHostSync({
       activePanelId,
       activePreviewWindowId,
       fullscreenSurfaceIds,
+      mainSessions,
       panelConfigs,
+      panelPayloads,
       panels,
       previewWindows,
     ],

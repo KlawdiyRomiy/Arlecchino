@@ -62,6 +62,11 @@ interface EditorActions {
   setActiveTab: (paneId: string, tabId: string) => void;
   setActivePane: (paneId: string) => void;
   updateTabContent: (tabId: string, content: string) => void;
+  replaceTabContent: (
+    tabId: string,
+    content: string,
+    language?: string,
+  ) => void;
   markTabDirty: (tabId: string, dirty: boolean) => void;
   splitPane: (direction: SplitDirection) => void;
   closeSplit: () => void;
@@ -333,6 +338,24 @@ export const useEditorStore = create<EditorState & EditorActions>(
         if (!tab) return s;
         const newTabs = new Map(s.tabs);
         newTabs.set(tabId, { ...tab, content, isDirty: true });
+        return { tabs: newTabs };
+      });
+    },
+
+    replaceTabContent: (tabId, content, language) => {
+      set((s) => {
+        const tab = s.tabs.get(tabId);
+        if (!tab || tab.isDirty) return s;
+        const nextLanguage = language ?? tab.language;
+        if (tab.content === content && tab.language === nextLanguage) return s;
+
+        const newTabs = new Map(s.tabs);
+        newTabs.set(tabId, {
+          ...tab,
+          content,
+          language: nextLanguage,
+          isDirty: false,
+        });
         return { tabs: newTabs };
       });
     },

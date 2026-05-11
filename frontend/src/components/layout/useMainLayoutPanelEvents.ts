@@ -882,7 +882,7 @@ export const useMainLayoutPanelEvents = ({
     }, [exitTUIMode, getActiveTerminalSessionId]),
     onTUIAssistOpenPanel: useCallback(
       (payload: unknown) => {
-        openTUIAssistPanel(payload);
+        return openTUIAssistPanel(payload);
       },
       [openTUIAssistPanel],
     ),

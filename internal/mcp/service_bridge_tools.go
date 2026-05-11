@@ -250,6 +250,47 @@ func bridgeUIToolDefinitions() []ToolDefinition {
 			}),
 		},
 		{
+			Name:        "ide_ui.open_panel",
+			Description: "Open a visible IDE panel such as explorer, git, problems, aiChat, terminal, code, or markdownPreview",
+			InputSchema: objectSchema([]string{"panel"}, map[string]any{
+				"panel":    map[string]any{"type": "string"},
+				"path":     map[string]any{"type": "string"},
+				"line":     map[string]any{"type": "number"},
+				"title":    map[string]any{"type": "string"},
+				"language": map[string]any{"type": "string"},
+				"content":  map[string]any{"type": "string"},
+				"position": map[string]any{"type": "string"},
+				"side":     map[string]any{"type": "string"},
+				"mode":     map[string]any{"type": "string"},
+				"width":    map[string]any{"type": "number"},
+				"height":   map[string]any{"type": "number"},
+				"x":        map[string]any{"type": "number"},
+				"y":        map[string]any{"type": "number"},
+				"focus":    map[string]any{"type": "boolean"},
+			}),
+		},
+		{
+			Name:        "ide_ui.move_panel",
+			Description: "Move or resize a visible IDE panel",
+			InputSchema: objectSchema([]string{"panel"}, map[string]any{
+				"panel":    map[string]any{"type": "string"},
+				"position": map[string]any{"type": "string"},
+				"side":     map[string]any{"type": "string"},
+				"mode":     map[string]any{"type": "string"},
+				"width":    map[string]any{"type": "number"},
+				"height":   map[string]any{"type": "number"},
+				"x":        map[string]any{"type": "number"},
+				"y":        map[string]any{"type": "number"},
+			}),
+		},
+		{
+			Name:        "ide_ui.close_panel",
+			Description: "Close a visible IDE panel",
+			InputSchema: objectSchema([]string{"panel"}, map[string]any{
+				"panel": map[string]any{"type": "string"},
+			}),
+		},
+		{
 			Name:        "ide_ui.preview_open",
 			Description: "Open IDE preview window via canonical preview flow",
 			InputSchema: objectSchema(nil, map[string]any{
@@ -1092,6 +1133,91 @@ func (s *ToolService) bridgeOpenFilePanel(args map[string]any) (any, error) {
 	}
 
 	return s.bridgeEmitConfirmedUIEvent("ide_ui.open_file_panel", "ide:panel:open", payload)
+}
+
+func requiredPanelArg(args map[string]any) (string, error) {
+	for _, key := range []string{"panel", "id", "target", "name"} {
+		if value := optionalStringArg(args, key); value != "" {
+			return value, nil
+		}
+	}
+	return "", fmt.Errorf("panel is required")
+}
+
+func copyBridgePanelPayloadArgs(payload map[string]any, args map[string]any) {
+	for _, key := range []string{"title", "language", "content"} {
+		if value := optionalStringArg(args, key); value != "" {
+			payload[key] = value
+		}
+	}
+	if position := optionalStringArg(args, "position"); position == "left" || position == "right" || position == "top" || position == "bottom" {
+		payload["position"] = position
+	} else if side := optionalStringArg(args, "side"); side == "left" || side == "right" || side == "top" || side == "bottom" {
+		payload["position"] = side
+	}
+	if mode := optionalStringArg(args, "mode"); mode == "floating" || mode == "snapped" {
+		payload["mode"] = mode
+	}
+	if line, ok := optionalNumericArg(args, "line"); ok {
+		payload["line"] = line
+	}
+	if width, ok := optionalNumericArg(args, "width"); ok {
+		payload["width"] = width
+	}
+	if height, ok := optionalNumericArg(args, "height"); ok {
+		payload["height"] = height
+	}
+	if x, ok := optionalNumericArg(args, "x"); ok {
+		payload["x"] = x
+	}
+	if y, ok := optionalNumericArg(args, "y"); ok {
+		payload["y"] = y
+	}
+	if focus, ok := args["focus"].(bool); ok {
+		payload["focus"] = focus
+	}
+}
+
+func (s *ToolService) buildBridgePanelPayload(toolName string, args map[string]any) (map[string]any, error) {
+	panel, err := requiredPanelArg(args)
+	if err != nil {
+		return nil, err
+	}
+
+	payload := map[string]any{"panel": panel}
+	if path := optionalStringArg(args, "path"); path != "" {
+		resolvedPath, err := s.prepareBridgeFilePath(toolName, path)
+		if err != nil {
+			return nil, err
+		}
+		payload["path"] = resolvedPath
+	}
+	copyBridgePanelPayloadArgs(payload, args)
+	return payload, nil
+}
+
+func (s *ToolService) bridgeOpenPanel(args map[string]any) (any, error) {
+	payload, err := s.buildBridgePanelPayload("ide_ui.open_panel", args)
+	if err != nil {
+		return nil, err
+	}
+	return s.bridgeEmitConfirmedUIEvent("ide_ui.open_panel", "ide:panel:open", payload)
+}
+
+func (s *ToolService) bridgeMovePanel(args map[string]any) (any, error) {
+	payload, err := s.buildBridgePanelPayload("ide_ui.move_panel", args)
+	if err != nil {
+		return nil, err
+	}
+	return s.bridgeEmitConfirmedUIEvent("ide_ui.move_panel", "ide:panel:move", payload)
+}
+
+func (s *ToolService) bridgeClosePanel(args map[string]any) (any, error) {
+	panel, err := requiredPanelArg(args)
+	if err != nil {
+		return nil, err
+	}
+	return s.bridgeEmitConfirmedUIEvent("ide_ui.close_panel", "ide:panel:close", map[string]any{"panel": panel})
 }
 
 func (s *ToolService) bridgePreviewOpen(args map[string]any) (any, error) {
