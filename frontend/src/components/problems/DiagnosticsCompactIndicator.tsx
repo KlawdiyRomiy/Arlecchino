@@ -56,7 +56,7 @@ export const DiagnosticsCompactIndicator: React.FC<
           </span>
         </>
       ) : state === "scanning" ? (
-        <span className="flex items-center gap-1 text-[#F8FAFC]">
+        <span className="flex items-center gap-1 text-[var(--text-primary)]">
           <LoaderCircle size={12} className="animate-spin" />
           <span className="font-semibold">Scanning</span>
         </span>
