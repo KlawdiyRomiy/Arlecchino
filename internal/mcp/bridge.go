@@ -37,6 +37,7 @@ type ToolServiceOptions struct {
 	Bridge                 IDEBridge
 	EnableBridgeAutoDetect bool
 	BridgeMetadataPath     string
+	SettingsPath           string
 	AuditLogPath           string
 	AuditMemoryLimit       int
 	FlightRecorderPath     string

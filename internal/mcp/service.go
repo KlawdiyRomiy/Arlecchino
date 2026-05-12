@@ -119,24 +119,27 @@ var mcpBinaryMagicPrefixes = [][]byte{
 }
 
 type ToolService struct {
-	projectRoot      string
-	search           *dispatcher.SearchEngine
-	journal          *changeJournal
-	bridge           IDEBridge
-	audit            *auditLogger
-	flightRecorder   *flightRecorder
-	layouts          *layoutRegistry
-	memory           *agentMemoryStore
-	sessionID        string
-	approvalRequired bool
-	approvalCode     string
-	approvalExpires  time.Time
-	approvalGrants   map[string]time.Time
-	approvalMu       sync.RWMutex
-	sensitivePaths   []string
-	uiRateMu         sync.Mutex
-	uiRateWindow     time.Time
-	uiRateCount      int
+	projectRoot               string
+	search                    *dispatcher.SearchEngine
+	journal                   *changeJournal
+	bridge                    IDEBridge
+	audit                     *auditLogger
+	flightRecorder            *flightRecorder
+	layouts                   *layoutRegistry
+	memory                    *agentMemoryStore
+	sessionID                 string
+	settings                  Settings
+	settingsPath              string
+	approvalRequired          bool
+	approvalCode              string
+	defaultApprovalTTLSeconds int
+	approvalExpires           time.Time
+	approvalGrants            map[string]time.Time
+	approvalMu                sync.RWMutex
+	sensitivePaths            []string
+	uiRateMu                  sync.Mutex
+	uiRateWindow              time.Time
+	uiRateCount               int
 }
 
 type FileReadResult struct {
@@ -242,24 +245,37 @@ func NewToolServiceWithOptions(projectRoot string, options ToolServiceOptions) (
 		return nil, err
 	}
 
+	settings, settingsPath, err := LoadSettings(options.SettingsPath)
+	if err != nil {
+		return nil, err
+	}
+
+	approvalRequired := settings.ApprovalRequired
+	if envApprovalRequired, ok := parseOptionalBooleanEnv(os.Getenv(envMCPRequireApproval)); ok {
+		approvalRequired = envApprovalRequired
+	}
+
 	return &ToolService{
-		projectRoot:      absRoot,
-		search:           dispatcher.NewSearchEngine(absRoot),
-		journal:          journal,
-		bridge:           bridge,
-		audit:            audit,
-		flightRecorder:   flightRecorder,
-		layouts:          layouts,
-		memory:           memory,
-		sessionID:        fmt.Sprintf("sess-%d", time.Now().UTC().UnixMilli()),
-		approvalRequired: parseBooleanEnvDefaultTrue(os.Getenv(envMCPRequireApproval)),
-		approvalCode:     strings.TrimSpace(os.Getenv(envMCPApprovalCode)),
-		approvalGrants:   map[string]time.Time{},
-		sensitivePaths:   append([]string(nil), defaultSensitivePathPatterns...),
+		projectRoot:               absRoot,
+		search:                    dispatcher.NewSearchEngine(absRoot),
+		journal:                   journal,
+		bridge:                    bridge,
+		audit:                     audit,
+		flightRecorder:            flightRecorder,
+		layouts:                   layouts,
+		memory:                    memory,
+		sessionID:                 fmt.Sprintf("sess-%d", time.Now().UTC().UnixMilli()),
+		settings:                  settings,
+		settingsPath:              settingsPath,
+		approvalRequired:          approvalRequired,
+		approvalCode:              strings.TrimSpace(os.Getenv(envMCPApprovalCode)),
+		defaultApprovalTTLSeconds: settings.DefaultApprovalTTLSeconds,
+		approvalGrants:            map[string]time.Time{},
+		sensitivePaths:            append([]string(nil), defaultSensitivePathPatterns...),
 	}, nil
 }
 
-func (s *ToolService) ToolDefinitions() []ToolDefinition {
+func AllToolDefinitions() []ToolDefinition {
 	definitions := []ToolDefinition{
 		{
 			Name:        "ide_control.read_file",
@@ -389,6 +405,23 @@ func (s *ToolService) ToolDefinitions() []ToolDefinition {
 	definitions = append(definitions, bridgeUIToolDefinitions()...)
 
 	return definitions
+}
+
+func (s *ToolService) ToolDefinitions() []ToolDefinition {
+	if s == nil || !s.settings.Enabled {
+		return []ToolDefinition{}
+	}
+
+	disabled := s.settings.disabledToolSet()
+	definitions := AllToolDefinitions()
+	filtered := make([]ToolDefinition, 0, len(definitions))
+	for _, definition := range definitions {
+		if _, ok := disabled[strings.TrimSpace(definition.Name)]; ok {
+			continue
+		}
+		filtered = append(filtered, definition)
+	}
+	return filtered
 }
 
 func (s *ToolService) ReadFile(path string) (FileReadResult, error) {
@@ -575,10 +608,30 @@ func (s *ToolService) CallTool(name string, args map[string]any) (any, error) {
 	}
 
 	startedAt := time.Now()
+	if err := s.requireToolEnabled(name); err != nil {
+		s.recordAudit(name, args, err, startedAt)
+		s.recordToolFlightEvent(name, args, err, startedAt)
+		return nil, err
+	}
+
 	result, err := s.callToolDispatch(name, args)
 	s.recordAudit(name, args, err, startedAt)
 	s.recordToolFlightEvent(name, args, err, startedAt)
 	return result, err
+}
+
+func (s *ToolService) requireToolEnabled(name string) error {
+	normalizedName := strings.TrimSpace(name)
+	if normalizedName == "" {
+		return nil
+	}
+	if !s.settings.Enabled {
+		return fmt.Errorf("Arlecchino MCP is disabled by settings")
+	}
+	if !s.settings.ToolEnabled(normalizedName) {
+		return fmt.Errorf("%s is disabled by Arlecchino MCP settings", normalizedName)
+	}
+	return nil
 }
 
 func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, error) {
@@ -628,7 +681,7 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 		return s.PermissionStatus(), nil
 	case "ide_control.request_permission":
 		approvalCode := optionalStringArg(args, "approval_code")
-		ttlSeconds := optionalIntArg(args, "ttl_seconds", defaultApprovalTTLSeconds)
+		ttlSeconds := optionalIntArg(args, "ttl_seconds", s.defaultApprovalTTL())
 		toolName := optionalStringArg(args, "tool_name")
 		if toolName == "" {
 			toolName = optionalStringArg(args, "tool")
@@ -986,7 +1039,7 @@ func (s *ToolService) requireToolApproval(toolName string, force bool) error {
 		return fmt.Errorf("%s requires user approval; call ide_control.request_permission with tool_name=%q", toolName, normalizedTool)
 	}
 
-	ttl, err := s.requestLiveApproval(normalizedTool, defaultApprovalTTLSeconds)
+	ttl, err := s.requestLiveApproval(normalizedTool, s.defaultApprovalTTL())
 	if err != nil {
 		return fmt.Errorf("%s requires user approval: %w", toolName, err)
 	}
@@ -1012,7 +1065,7 @@ func (s *ToolService) grantApproval(toolName string, ttlSeconds int) PermissionS
 	defer s.approvalMu.Unlock()
 
 	normalizedTool := normalizeApprovalToolName(toolName)
-	ttl := normalizeApprovalTTL(ttlSeconds)
+	ttl := s.normalizeApprovalTTL(ttlSeconds)
 	s.approvalExpires = time.Now().UTC().Add(time.Duration(ttl) * time.Second)
 	if s.approvalGrants == nil {
 		s.approvalGrants = map[string]time.Time{}
@@ -1026,7 +1079,7 @@ func (s *ToolService) requestLiveApproval(toolName string, ttlSeconds int) (int,
 		return 0, fmt.Errorf("live IDE approval is unavailable; set %s or approve from the Arlecchino UI", envMCPApprovalCode)
 	}
 
-	ttl := normalizeApprovalTTL(ttlSeconds)
+	ttl := s.normalizeApprovalTTL(ttlSeconds)
 	requestedAt := time.Now()
 	risk := s.riskClassForTool(toolName, map[string]any{})
 	s.recordFlightEvent(FlightRecord{
@@ -1087,7 +1140,7 @@ func (s *ToolService) requestLiveApproval(toolName string, ttlSeconds int) (int,
 		return 0, err
 	}
 
-	resolvedTTL := normalizeApprovalTTL(optionalIntArg(resultMap, "ttl_seconds", ttl))
+	resolvedTTL := s.normalizeApprovalTTL(optionalIntArg(resultMap, "ttl_seconds", ttl))
 	s.recordFlightEvent(FlightRecord{
 		Type:       "approval.resolved",
 		Source:     "mcp",
@@ -1176,9 +1229,26 @@ func (s *ToolService) latestApprovalExpiresLocked() time.Time {
 	return latest
 }
 
-func normalizeApprovalTTL(ttlSeconds int) int {
-	if ttlSeconds <= 0 {
+func (s *ToolService) defaultApprovalTTL() int {
+	if s == nil {
 		return defaultApprovalTTLSeconds
+	}
+	return normalizeApprovalTTLWithDefault(s.defaultApprovalTTLSeconds, defaultApprovalTTLSeconds)
+}
+
+func (s *ToolService) normalizeApprovalTTL(ttlSeconds int) int {
+	return normalizeApprovalTTLWithDefault(ttlSeconds, s.defaultApprovalTTL())
+}
+
+func normalizeApprovalTTLWithDefault(ttlSeconds int, defaultTTL int) int {
+	if defaultTTL <= 0 {
+		defaultTTL = defaultApprovalTTLSeconds
+	}
+	if defaultTTL > maxApprovalTTLSeconds {
+		defaultTTL = maxApprovalTTLSeconds
+	}
+	if ttlSeconds <= 0 {
+		return defaultTTL
 	}
 	if ttlSeconds > maxApprovalTTLSeconds {
 		return maxApprovalTTLSeconds
@@ -1186,17 +1256,17 @@ func normalizeApprovalTTL(ttlSeconds int) int {
 	return ttlSeconds
 }
 
-func parseBooleanEnvDefaultTrue(raw string) bool {
+func parseOptionalBooleanEnv(raw string) (bool, bool) {
 	normalized := strings.TrimSpace(strings.ToLower(raw))
 	switch normalized {
 	case "1", "true", "yes", "on":
-		return true
+		return true, true
 	case "0", "false", "no", "off":
-		return false
+		return false, true
 	case "":
-		return true
+		return false, false
 	default:
-		return true
+		return false, false
 	}
 }
 

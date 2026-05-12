@@ -489,6 +489,10 @@ func (s *ToolService) AgentMemoryContext(maxChars int) string {
 }
 
 func (s *ToolService) InitializeInstructions() string {
+	if s != nil && !s.settings.Enabled {
+		return "Arlecchino MCP is disabled by Settings > MCP. The server will not expose tools until it is re-enabled."
+	}
+
 	parts := []string{
 		"Use ide_control.* and change_journal.* for safe file operations, checkpoints, audit, and approval flow. When live bridge is available, use ide_backend.* for backend control and ide_ui.* for runtime UI state changes.",
 		"Use ide_ui.surface_read to inspect visible panels and ide_ui.open_panel/move_panel/close_panel/open_file_panel for confirmed panel control.",

@@ -710,6 +710,90 @@ func TestToolService_CallToolUnknown(t *testing.T) {
 	}
 }
 
+func TestToolService_DisabledSettingsExposeNoToolsAndRejectCalls(t *testing.T) {
+	root := t.TempDir()
+	settingsPath := filepath.Join(t.TempDir(), "mcp-settings.json")
+	if _, _, err := SaveSettings(settingsPath, Settings{
+		Version:                   settingsVersion,
+		Enabled:                   false,
+		ApprovalRequired:          true,
+		DefaultApprovalTTLSeconds: defaultApprovalTTLSeconds,
+	}); err != nil {
+		t.Fatalf("SaveSettings() error = %v", err)
+	}
+
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{SettingsPath: settingsPath})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	if tools := service.ToolDefinitions(); len(tools) != 0 {
+		t.Fatalf("ToolDefinitions() len = %d, want 0 when MCP is disabled", len(tools))
+	}
+
+	_, err = service.CallTool("ide_control.search_files", map[string]any{"pattern": "main"})
+	if err == nil {
+		t.Fatalf("CallTool(search_files) should fail when MCP is disabled")
+	}
+	if !strings.Contains(err.Error(), "disabled by settings") {
+		t.Fatalf("CallTool(search_files) error = %v, want disabled settings error", err)
+	}
+	if instructions := service.InitializeInstructions(); !strings.Contains(instructions, "disabled") {
+		t.Fatalf("InitializeInstructions() = %q, want disabled message", instructions)
+	}
+}
+
+func TestToolService_DisabledToolIsFilteredAndRejected(t *testing.T) {
+	root := t.TempDir()
+	settingsPath := filepath.Join(t.TempDir(), "mcp-settings.json")
+	if _, _, err := SaveSettings(settingsPath, Settings{
+		Version:                   settingsVersion,
+		Enabled:                   true,
+		ApprovalRequired:          true,
+		DefaultApprovalTTLSeconds: defaultApprovalTTLSeconds,
+		DisabledTools:             []string{"ide_control.search_files"},
+	}); err != nil {
+		t.Fatalf("SaveSettings() error = %v", err)
+	}
+
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{SettingsPath: settingsPath})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+
+	for _, definition := range service.ToolDefinitions() {
+		if definition.Name == "ide_control.search_files" {
+			t.Fatalf("ToolDefinitions() should not expose disabled tool %q", definition.Name)
+		}
+	}
+
+	_, err = service.CallTool("ide_control.search_files", map[string]any{"pattern": "main"})
+	if err == nil {
+		t.Fatalf("CallTool(search_files) should fail for disabled tool")
+	}
+	if !strings.Contains(err.Error(), "disabled by Arlecchino MCP settings") {
+		t.Fatalf("CallTool(search_files) error = %v, want disabled tool error", err)
+	}
+
+	capabilities := service.Capabilities()
+	entries, ok := capabilities["toolSettings"].([]ToolSettingsEntry)
+	if !ok {
+		t.Fatalf("Capabilities().toolSettings type = %T, want []ToolSettingsEntry", capabilities["toolSettings"])
+	}
+	foundDisabled := false
+	for _, entry := range entries {
+		if entry.Name == "ide_control.search_files" {
+			foundDisabled = true
+			if entry.Enabled || entry.EffectiveEnabled {
+				t.Fatalf("toolSettings entry = %#v, want disabled", entry)
+			}
+		}
+	}
+	if !foundDisabled {
+		t.Fatalf("toolSettings should include disabled tool state")
+	}
+}
+
 func TestResolveProjectPath_RejectsSymlinkOutsideProjectRoot(t *testing.T) {
 	projectRoot := t.TempDir()
 	outsideRoot := t.TempDir()

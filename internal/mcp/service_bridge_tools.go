@@ -435,6 +435,9 @@ func (s *ToolService) Capabilities() map[string]any {
 	return map[string]any{
 		"mode":                     s.modeName(),
 		"tools":                    toolNames,
+		"settings":                 s.settings,
+		"settingsDiskPath":         s.settingsPath,
+		"toolSettings":             BuildToolSettingsEntries(s.settings),
 		"permission":               s.PermissionStatus(),
 		"layoutProfiles":           layoutNames,
 		"bridgeMode":               bridgeMode,
