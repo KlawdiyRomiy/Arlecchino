@@ -37,6 +37,17 @@ func (a *App) startMCPBridge() {
 		return
 	}
 
+	settings, _, err := mcp.LoadSettings("")
+	if err != nil {
+		a.recordBackgroundMCPBridgeStatus(BackgroundShellJobFailed, err.Error())
+		fmt.Printf("[MCP Bridge] settings failed: %v\n", err)
+		return
+	}
+	if !settings.Enabled {
+		a.recordBackgroundMCPBridgeStatus(BackgroundShellJobCanceled, "MCP disabled in settings.")
+		return
+	}
+
 	if a.mcpBridgeServer != nil {
 		return
 	}

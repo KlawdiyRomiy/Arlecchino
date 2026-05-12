@@ -260,6 +260,60 @@ func TestEnsureUserMCPBootstrap_MergesExistingGlobalConfig(t *testing.T) {
 	}
 }
 
+func TestSetOpenCodeMCPEnabled_TogglesExistingGlobalAndProjectEntries(t *testing.T) {
+	homeDir := t.TempDir()
+	projectRoot := t.TempDir()
+	homeAbs, err := filepath.Abs(homeDir)
+	if err != nil {
+		t.Fatalf("Abs(homeDir) error = %v", err)
+	}
+	projectAbs, err := filepath.Abs(projectRoot)
+	if err != nil {
+		t.Fatalf("Abs(projectRoot) error = %v", err)
+	}
+
+	executablePath := "/usr/local/bin/arlecchino"
+	userConfigPath, err := EnsureUserMCPBootstrap(homeAbs, executablePath)
+	if err != nil {
+		t.Fatalf("EnsureUserMCPBootstrap() error = %v", err)
+	}
+	if _, err := EnsureProjectMCPBootstrap(projectAbs, executablePath); err != nil {
+		t.Fatalf("EnsureProjectMCPBootstrap() error = %v", err)
+	}
+
+	changedPaths, err := SetOpenCodeMCPEnabled(homeAbs, projectAbs, false)
+	if err != nil {
+		t.Fatalf("SetOpenCodeMCPEnabled(false) error = %v", err)
+	}
+	if len(changedPaths) != 2 {
+		t.Fatalf("SetOpenCodeMCPEnabled(false) paths len = %d, want 2", len(changedPaths))
+	}
+
+	globalConfig := readJSONMap(t, userConfigPath)
+	globalMCP := requireJSONMap(t, globalConfig, "mcp")
+	globalArlecchino := requireJSONMap(t, globalMCP, "arlecchino")
+	if gotEnabled := requireJSONBool(t, globalArlecchino, "enabled"); gotEnabled {
+		t.Fatalf("global opencode mcp.arlecchino.enabled = true, want false")
+	}
+
+	projectConfig := readJSONMap(t, filepath.Join(projectAbs, "opencode.json"))
+	projectMCP := requireJSONMap(t, projectConfig, "mcp")
+	projectArlecchino := requireJSONMap(t, projectMCP, "arlecchino")
+	if gotEnabled := requireJSONBool(t, projectArlecchino, "enabled"); gotEnabled {
+		t.Fatalf("project opencode mcp.arlecchino.enabled = true, want false")
+	}
+
+	if _, err := SetOpenCodeMCPEnabled(homeAbs, projectAbs, true); err != nil {
+		t.Fatalf("SetOpenCodeMCPEnabled(true) error = %v", err)
+	}
+	reenabledConfig := readJSONMap(t, userConfigPath)
+	reenabledMCP := requireJSONMap(t, reenabledConfig, "mcp")
+	reenabledArlecchino := requireJSONMap(t, reenabledMCP, "arlecchino")
+	if gotEnabled := requireJSONBool(t, reenabledArlecchino, "enabled"); !gotEnabled {
+		t.Fatalf("global opencode mcp.arlecchino.enabled = false, want true")
+	}
+}
+
 func TestEnsureUserMCPBootstrap_AcceptsTrailingCommasJSON(t *testing.T) {
 	homeDir := t.TempDir()
 	homeAbs, err := filepath.Abs(homeDir)
@@ -469,6 +523,90 @@ func TestEnsureUniversalUserMCPBootstrapWithCommand_UsesPrefixArgsInCLIRegistrat
 		"claude mcp add -s user arlecchino -- go -C " + devRepoRoot + " run . mcp-server",
 	}
 
+	if !reflect.DeepEqual(runner.calls, wantCalls) {
+		t.Fatalf("runner.calls = %#v, want %#v", runner.calls, wantCalls)
+	}
+}
+
+func TestDisableUniversalUserMCPBootstrap_RemovesUserAndProjectEntries(t *testing.T) {
+	homeDir := t.TempDir()
+	homeAbs, err := filepath.Abs(homeDir)
+	if err != nil {
+		t.Fatalf("Abs(homeDir) error = %v", err)
+	}
+
+	projectDir := t.TempDir()
+	projectAbs, err := filepath.Abs(projectDir)
+	if err != nil {
+		t.Fatalf("Abs(projectDir) error = %v", err)
+	}
+
+	if _, err := EnsureUserMCPBootstrap(homeAbs, "/usr/local/bin/arlecchino"); err != nil {
+		t.Fatalf("EnsureUserMCPBootstrap() error = %v", err)
+	}
+	if _, err := EnsureProjectMCPBootstrap(projectAbs, "/usr/local/bin/arlecchino"); err != nil {
+		t.Fatalf("EnsureProjectMCPBootstrap() error = %v", err)
+	}
+	if _, err := ensureCopilotUserMCPBootstrap(homeAbs, BootstrapServerCommand{Executable: "/usr/local/bin/arlecchino"}); err != nil {
+		t.Fatalf("ensureCopilotUserMCPBootstrap() error = %v", err)
+	}
+
+	runner := &fakeCommandRunner{
+		lookups: map[string]string{
+			"qwen":   "/usr/local/bin/qwen",
+			"codex":  "/usr/local/bin/codex",
+			"claude": "/usr/local/bin/claude",
+		},
+	}
+
+	result, err := disableUniversalUserMCPBootstrapWithRunner(homeAbs, projectAbs, runner)
+	if err != nil {
+		t.Fatalf("disableUniversalUserMCPBootstrapWithRunner() error = %v", err)
+	}
+
+	wantPaths := []string{
+		filepath.Join(homeAbs, ".config", "opencode", "opencode.json"),
+		filepath.Join(projectAbs, "opencode.json"),
+		filepath.Join(homeAbs, ".copilot", "mcp-config.json"),
+		filepath.Join(projectAbs, ".mcp.json"),
+	}
+	for _, path := range wantPaths {
+		if !containsString(result.Paths, path) {
+			t.Fatalf("result.Paths should contain %q, got %#v", path, result.Paths)
+		}
+	}
+
+	globalOpenCode := readJSONMap(t, filepath.Join(homeAbs, ".config", "opencode", "opencode.json"))
+	globalMCP := requireJSONMap(t, globalOpenCode, "mcp")
+	globalServer := requireJSONMap(t, globalMCP, "arlecchino")
+	if got := requireJSONBool(t, globalServer, "enabled"); got {
+		t.Fatalf("global opencode arlecchino enabled = true, want false")
+	}
+
+	projectOpenCode := readJSONMap(t, filepath.Join(projectAbs, "opencode.json"))
+	projectMCP := requireJSONMap(t, projectOpenCode, "mcp")
+	projectServer := requireJSONMap(t, projectMCP, "arlecchino")
+	if got := requireJSONBool(t, projectServer, "enabled"); got {
+		t.Fatalf("project opencode arlecchino enabled = true, want false")
+	}
+
+	copilotConfig := readJSONMap(t, filepath.Join(homeAbs, ".copilot", "mcp-config.json"))
+	copilotServers := requireJSONMap(t, copilotConfig, "mcpServers")
+	if _, ok := copilotServers["arlecchino"]; ok {
+		t.Fatalf("copilot arlecchino server should be removed")
+	}
+
+	projectMCPJSON := readJSONMap(t, filepath.Join(projectAbs, ".mcp.json"))
+	projectMCPServers := requireJSONMap(t, projectMCPJSON, "mcpServers")
+	if _, ok := projectMCPServers["arlecchino"]; ok {
+		t.Fatalf(".mcp.json arlecchino server should be removed")
+	}
+
+	wantCalls := []string{
+		"qwen mcp remove -s user arlecchino",
+		"codex mcp remove arlecchino",
+		"claude mcp remove -s user arlecchino",
+	}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("runner.calls = %#v, want %#v", runner.calls, wantCalls)
 	}

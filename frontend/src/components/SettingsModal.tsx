@@ -24,6 +24,7 @@ import {
   RotateCcw,
   Search,
   Settings,
+  Shield,
   Trash2,
   X,
   type LucideIcon,
@@ -48,6 +49,13 @@ import {
   type PrivateUpdateAuthStatus,
   useAutoUpdateStatus,
 } from "../shell/autoUpdate";
+import {
+  getMCPSettings,
+  saveMCPSettings,
+  type MCPSettings,
+  type MCPSettingsStatus,
+  type MCPToolSettingsEntry,
+} from "../shell/mcpSettings";
 import { runAutoUpdateCheckWithNotification } from "../shell/manualUpdateNotifications";
 import {
   DEFAULT_EDITOR_FONT_FAMILY,
@@ -359,6 +367,15 @@ const markdownLinkOpenModeOptions: Array<{
   { value: "preview", label: "Preview" },
 ];
 
+const mcpApprovalTtlOptions: Array<{
+  value: number;
+  label: string;
+}> = [
+  { value: 300, label: "5 min" },
+  { value: 900, label: "15 min" },
+  { value: 3600, label: "60 min" },
+];
+
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -377,6 +394,7 @@ type TabId =
   | "appearance"
   | "editor"
   | "diagnostics"
+  | "mcp"
   | "browser-preview"
   | "keybindings";
 
@@ -402,6 +420,11 @@ const tabs: Tab[] = [
     id: "diagnostics",
     label: "Diagnostics",
     icon: AlertCircle,
+  },
+  {
+    id: "mcp",
+    label: "MCP",
+    icon: Shield,
   },
   {
     id: "browser-preview",
@@ -558,6 +581,28 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
     label: "Private GitHub release access",
     description: "Save or clear private update access token.",
     keywords: ["github", "token", "release", "updates"],
+  },
+  {
+    id: "mcp-enabled",
+    tab: "mcp",
+    label: "MCP server",
+    description: "Enable or fully disable Arlecchino MCP tools.",
+    keywords: ["mcp", "server", "tools", "disable"],
+    suggested: true,
+  },
+  {
+    id: "mcp-approval-policy",
+    tab: "mcp",
+    label: "MCP approval policy",
+    description: "Configure approval prompts and default approval lifetime.",
+    keywords: ["mcp", "approval", "approve", "permission", "ttl"],
+  },
+  {
+    id: "mcp-tool-access",
+    tab: "mcp",
+    label: "MCP tool access",
+    description: "Choose which Arlecchino MCP tools remain available.",
+    keywords: ["mcp", "tools", "selective", "bridge", "agent"],
   },
   {
     id: "markdown-links",
@@ -858,6 +903,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [autocompleteInstallEvents, setAutocompleteInstallEvents] = useState<
     Record<string, LocalLSPInstallState>
   >({});
+  const [mcpStatus, setMCPStatus] = useState<MCPSettingsStatus | null>(null);
+  const [mcpLoading, setMCPLoading] = useState(false);
+  const [mcpSaving, setMCPSaving] = useState(false);
+  const [mcpError, setMCPError] = useState<string | null>(null);
+  const [mcpToolQuery, setMCPToolQuery] = useState("");
   const [customThemeStatus, setCustomThemeStatus] = useState<{
     tone: "success" | "error";
     message: string;
@@ -1056,6 +1106,72 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setPrivateUpdateAuthStatus(status);
     return status;
   }, []);
+
+  const refreshMCPSettings = useCallback(async () => {
+    setMCPLoading(true);
+    setMCPError(null);
+    try {
+      const status = await getMCPSettings();
+      setMCPStatus(status);
+      return status;
+    } catch (error) {
+      setMCPError(
+        error instanceof Error ? error.message : "Unable to load MCP settings.",
+      );
+      return null;
+    } finally {
+      setMCPLoading(false);
+    }
+  }, []);
+
+  const saveMCPSettingsUpdate = useCallback(async (settings: MCPSettings) => {
+    setMCPSaving(true);
+    setMCPError(null);
+    try {
+      const status = await saveMCPSettings(settings);
+      setMCPStatus(status);
+      return status;
+    } catch (error) {
+      setMCPError(
+        error instanceof Error ? error.message : "Unable to save MCP settings.",
+      );
+      return null;
+    } finally {
+      setMCPSaving(false);
+    }
+  }, []);
+
+  const updateMCPSettings = useCallback(
+    (patch: Partial<MCPSettings>) => {
+      if (!mcpStatus) {
+        return;
+      }
+      void saveMCPSettingsUpdate({
+        ...mcpStatus.settings,
+        ...patch,
+      });
+    },
+    [mcpStatus, saveMCPSettingsUpdate],
+  );
+
+  const setMCPToolEnabled = useCallback(
+    (tool: MCPToolSettingsEntry, enabled: boolean) => {
+      if (!mcpStatus) {
+        return;
+      }
+      const disabledTools = new Set(mcpStatus.settings.disabledTools);
+      if (enabled) {
+        disabledTools.delete(tool.name);
+      } else {
+        disabledTools.add(tool.name);
+      }
+      void saveMCPSettingsUpdate({
+        ...mcpStatus.settings,
+        disabledTools: Array.from(disabledTools).sort(),
+      });
+    },
+    [mcpStatus, saveMCPSettingsUpdate],
+  );
 
   const refreshAutocompleteCapabilities = useCallback(async () => {
     setAutocompleteLoading(true);
@@ -1423,6 +1539,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       });
   }, [autocompleteCapabilities, autocompleteQuery]);
 
+  const filteredMCPTools = useMemo(() => {
+    const tools = mcpStatus?.tools ?? [];
+    const query = mcpToolQuery.trim().toLowerCase();
+    if (!query) {
+      return tools;
+    }
+    return tools.filter((tool) =>
+      [tool.name, tool.description, tool.group]
+        .join(" ")
+        .toLowerCase()
+        .includes(query),
+    );
+  }, [mcpStatus, mcpToolQuery]);
+
   useEffect(() => {
     if (!isOpen || activeTab !== "diagnostics") {
       return;
@@ -1436,6 +1566,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     refreshAutocompleteCapabilities,
     refreshPrivateUpdateAuthStatus,
   ]);
+
+  useEffect(() => {
+    if (!isOpen || activeTab !== "mcp") {
+      return;
+    }
+
+    void refreshMCPSettings();
+  }, [activeTab, isOpen, refreshMCPSettings]);
 
   const clearThemePreview = () => {
     previewTheme(null);
@@ -1793,6 +1931,236 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       </div>
     </div>
   );
+
+  const renderMCPSettings = () => {
+    const settings = mcpStatus?.settings ?? null;
+    const enabledToolCount =
+      mcpStatus?.tools.filter((tool) => tool.enabled).length ?? 0;
+    const totalToolCount = mcpStatus?.tools.length ?? 0;
+
+    return (
+      <div className="mx-auto max-w-3xl space-y-7">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <SettingHeader
+            title="MCP"
+            description="Control the Arlecchino MCP server, approval prompts, and exposed tool surface."
+          />
+          <button
+            type="button"
+            className={settingsActionButtonClass}
+            disabled={mcpLoading}
+            onClick={() => {
+              void refreshMCPSettings();
+            }}
+          >
+            <RefreshCw size={14} className={mcpLoading ? "animate-spin" : ""} />
+            Refresh
+          </button>
+        </div>
+
+        {mcpError ? (
+          <div className="flex items-center gap-2 rounded-[16px] border border-[color-mix(in_srgb,var(--status-error)_55%,var(--border-subtle))] bg-[color-mix(in_srgb,var(--status-error)_10%,transparent)] px-3 py-2 text-[12px] text-[var(--status-error)]">
+            <AlertCircle size={14} />
+            {mcpError}
+          </div>
+        ) : null}
+
+        <div className={settingsPanelClass}>
+          <SwitchRow
+            title="Arlecchino MCP server"
+            description="Disable to expose no MCP tools and reject MCP tool calls from external agents."
+            checked={settings?.enabled ?? false}
+            onCheckedChange={(checked) =>
+              updateMCPSettings({ enabled: checked })
+            }
+            badge={
+              settings
+                ? settings.enabled
+                  ? "Enabled"
+                  : "Disabled"
+                : "Not loaded"
+            }
+            settingId="mcp-enabled"
+            highlighted={highlightedSettingId === "mcp-enabled"}
+          />
+          <div className="grid gap-2 px-4 py-4 text-[12px] text-[var(--text-secondary)] sm:grid-cols-2">
+            {[
+              [
+                "Bridge",
+                mcpStatus?.bridgeRunning
+                  ? "running"
+                  : settings?.enabled
+                    ? "not running"
+                    : "disabled",
+              ],
+              [
+                "Approval code",
+                mcpStatus?.approvalCodeConfigured
+                  ? "configured by environment"
+                  : "live prompt",
+              ],
+              ["Settings file", mcpStatus?.diskPath || "not available"],
+              [
+                "Tool surface",
+                `${enabledToolCount}/${totalToolCount || 0} tools enabled`,
+              ],
+            ].map(([label, value]) => (
+              <div
+                key={label}
+                className="rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_88%,transparent)] px-3 py-2"
+              >
+                <div className="text-[var(--text-muted)]">{label}</div>
+                <div className="mt-1 break-words font-mono text-[11px] text-[var(--text-primary)]">
+                  {value}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div
+          data-setting-id="mcp-approval-policy"
+          className={`${settingsPanelClass} transition-shadow ${getSettingTargetClass(
+            "mcp-approval-policy",
+          )}`}
+        >
+          <SwitchRow
+            title="Require approval"
+            description="Ask before protected MCP actions such as writes, terminal control, runtime UI changes, and sensitive file access."
+            checked={settings?.approvalRequired ?? false}
+            onCheckedChange={(checked) =>
+              updateMCPSettings({ approvalRequired: checked })
+            }
+            badge={
+              mcpStatus?.approvalRequiredEnvOverride
+                ? "Env override"
+                : undefined
+            }
+          />
+          <div className="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <div>
+              <div className="text-sm font-semibold text-[var(--text-primary)]">
+                Default approval lifetime
+              </div>
+              <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                Used when an MCP client does not request a shorter approval
+                window.
+              </div>
+            </div>
+            <div
+              role="group"
+              aria-label="Default MCP approval lifetime"
+              className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+            >
+              {mcpApprovalTtlOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={
+                    settings?.defaultApprovalTtlSeconds === option.value
+                  }
+                  disabled={!settings || mcpSaving}
+                  onClick={() =>
+                    updateMCPSettings({
+                      defaultApprovalTtlSeconds: option.value,
+                    })
+                  }
+                  className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                    settings?.defaultApprovalTtlSeconds === option.value
+                      ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                      : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div
+          data-setting-id="mcp-tool-access"
+          className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+            "mcp-tool-access",
+          )}`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-[var(--text-primary)]">
+                MCP tool access
+              </div>
+              <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                Disable individual tools without removing the Arlecchino MCP
+                server from external clients.
+              </div>
+            </div>
+            <span className={settingsPillClass}>
+              {enabledToolCount}/{totalToolCount || 0}
+            </span>
+          </div>
+
+          <label className="shell-cluster-soft mt-4 flex min-h-[42px] min-w-0 items-center gap-2 px-3">
+            <Search size={15} className="shrink-0 text-[var(--text-muted)]" />
+            <input
+              value={mcpToolQuery}
+              onChange={(event) => setMCPToolQuery(event.currentTarget.value)}
+              placeholder="Search MCP tools"
+              className="h-9 min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+            />
+          </label>
+
+          <div className="mt-4 max-h-[430px] overflow-y-auto rounded-[18px] border border-[var(--border-subtle)]">
+            {filteredMCPTools.map((tool) => (
+              <div
+                key={tool.name}
+                className="grid gap-3 border-b border-[var(--border-subtle)] px-4 py-3 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="break-all font-mono text-[12px] font-semibold text-[var(--text-primary)]">
+                      {tool.name}
+                    </span>
+                    <span className={`${settingsPillClass} min-h-[24px] px-2`}>
+                      {tool.group}
+                    </span>
+                    <span
+                      className={`${settingsPillClass} min-h-[24px] px-2 ${
+                        tool.effectiveEnabled
+                          ? "text-[var(--status-success)]"
+                          : "text-[var(--status-warning)]"
+                      }`}
+                    >
+                      {tool.effectiveEnabled ? "Available" : "Blocked"}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                    {tool.description}
+                  </div>
+                </div>
+                <Switch.Root
+                  checked={tool.enabled}
+                  disabled={!settings || mcpSaving}
+                  onCheckedChange={(checked) =>
+                    setMCPToolEnabled(tool, checked)
+                  }
+                  aria-label={`Enable ${tool.name}`}
+                  className="relative h-7 w-12 shrink-0 rounded-full border border-[var(--switch-border)] bg-[var(--switch-track)] transition-colors focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45 data-[state=checked]:border-[var(--switch-border-checked)] data-[state=checked]:bg-[var(--switch-track-checked)]"
+                >
+                  <Switch.Thumb className="block h-6 w-6 translate-x-0.5 rounded-full bg-[var(--switch-thumb)] shadow-sm transition-transform data-[state=checked]:translate-x-[22px]" />
+                </Switch.Root>
+              </div>
+            ))}
+
+            {filteredMCPTools.length === 0 ? (
+              <div className="px-4 py-10 text-center text-[12px] text-[var(--text-muted)]">
+                No MCP tools match this filter.
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderKeybindings = () => (
     <div
@@ -3032,6 +3400,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             </div>
                           </div>
                         )}
+
+                        {activeTab === "mcp" && renderMCPSettings()}
 
                         {activeTab === "browser-preview" && (
                           <div className="mx-auto max-w-3xl space-y-7">

@@ -187,6 +187,10 @@ func (a *App) ensureMCPConfigs() {
 	if envFlagEnabled(envDisableMCPBootstrap) {
 		return
 	}
+	settings, _, err := mcp.LoadSettings("")
+	if err != nil || !settings.Enabled {
+		return
+	}
 
 	go func() {
 		exe, err := os.Executable()
