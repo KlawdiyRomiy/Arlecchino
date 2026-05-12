@@ -1,6 +1,10 @@
 package main
 
-import "github.com/wailsapp/wails/v3/pkg/application"
+import (
+	"runtime"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+)
 
 func macWindowCycleCollectionBehavior() application.MacWindowCollectionBehavior {
 	return application.MacWindowCollectionBehaviorFullScreenPrimary |
@@ -14,6 +18,13 @@ func mainWindowMacOptions() application.MacWindow {
 		Backdrop:                application.MacBackdropTransparent,
 		CollectionBehavior:      macWindowCycleCollectionBehavior(),
 	}
+}
+
+func webviewOwnedWindowButtonState() application.ButtonState {
+	if runtime.GOOS == "darwin" {
+		return application.ButtonHidden
+	}
+	return application.ButtonEnabled
 }
 
 func detachedWindowMacOptions() application.MacWindow {

@@ -1,3 +1,9 @@
+import {
+  PositionNativeWindowControls as generatedPositionNativeWindowControls,
+  RefreshNativeWindowControls as generatedRefreshNativeWindowControls,
+  SetNativeWindowControlsVisible as generatedSetNativeWindowControlsVisible,
+} from "../../bindings/arlecchino/app";
+
 export * from "../../bindings/arlecchino/app";
 
 interface WailsRuntimeCallModule {
@@ -21,6 +27,7 @@ interface NativeWindowControlsBridge {
     maximiseX: number,
     maximiseY: number,
   ) => Promise<boolean> | boolean;
+  RefreshNativeWindowControls?: () => Promise<boolean> | boolean;
 }
 
 export type ApplicationIconAppearance = "system" | "light" | "dark";
@@ -89,6 +96,11 @@ const nativeWindowControlsPositionMethodNames = [
   "arlecchino.App.PositionNativeWindowControls",
 ] as const;
 
+const nativeWindowControlsRefreshMethodNames = [
+  "main.App.RefreshNativeWindowControls",
+  "arlecchino.App.RefreshNativeWindowControls",
+] as const;
+
 const applicationIconMethodNames = [
   "main.App.SetApplicationIconAppearance",
   "arlecchino.App.SetApplicationIconAppearance",
@@ -144,6 +156,9 @@ let nativeWindowControlsMethodName:
   | undefined;
 let nativeWindowControlsPositionMethodName:
   | (typeof nativeWindowControlsPositionMethodNames)[number]
+  | undefined;
+let nativeWindowControlsRefreshMethodName:
+  | (typeof nativeWindowControlsRefreshMethodNames)[number]
   | undefined;
 let applicationIconMethodName:
   | (typeof applicationIconMethodNames)[number]
@@ -292,9 +307,26 @@ const callBooleanBridgeMethod = async <TMethodName extends string>(
   return false;
 };
 
+const callGeneratedBooleanBridgeMethod = async (
+  call: () => Promise<boolean> | boolean,
+): Promise<boolean | null> => {
+  try {
+    return Boolean(await Promise.resolve(call()));
+  } catch {
+    return null;
+  }
+};
+
 export async function SetNativeWindowControlsVisible(
   visible: boolean,
 ): Promise<boolean> {
+  const generatedResult = await callGeneratedBooleanBridgeMethod(() =>
+    generatedSetNativeWindowControlsVisible(visible),
+  );
+  if (generatedResult !== null) {
+    return generatedResult;
+  }
+
   const bridge = getNativeWindowControlsBridge();
   if (bridge?.SetNativeWindowControlsVisible) {
     try {
@@ -345,7 +377,6 @@ export async function PositionNativeWindowControls(
   maximiseX: number,
   maximiseY: number,
 ): Promise<boolean> {
-  const bridge = getNativeWindowControlsBridge();
   const args: [number, number, number, number, number, number] = [
     closeX,
     closeY,
@@ -354,6 +385,14 @@ export async function PositionNativeWindowControls(
     maximiseX,
     maximiseY,
   ];
+  const generatedResult = await callGeneratedBooleanBridgeMethod(() =>
+    generatedPositionNativeWindowControls(...args),
+  );
+  if (generatedResult !== null) {
+    return generatedResult;
+  }
+
+  const bridge = getNativeWindowControlsBridge();
   if (bridge?.PositionNativeWindowControls) {
     try {
       return Boolean(
@@ -395,6 +434,34 @@ export async function PositionNativeWindowControls(
   }
 
   return false;
+}
+
+export async function RefreshNativeWindowControls(): Promise<boolean> {
+  const generatedResult = await callGeneratedBooleanBridgeMethod(() =>
+    generatedRefreshNativeWindowControls(),
+  );
+  if (generatedResult !== null) {
+    return generatedResult;
+  }
+
+  const bridge = getNativeWindowControlsBridge();
+  if (bridge?.RefreshNativeWindowControls) {
+    try {
+      return Boolean(
+        await Promise.resolve(bridge.RefreshNativeWindowControls()),
+      );
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  return callBooleanBridgeMethod(
+    nativeWindowControlsRefreshMethodName,
+    (methodName) => {
+      nativeWindowControlsRefreshMethodName = methodName;
+    },
+    nativeWindowControlsRefreshMethodNames,
+  );
 }
 
 export async function SetApplicationIconAppearance(

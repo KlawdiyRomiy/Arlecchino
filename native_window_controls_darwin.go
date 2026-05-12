@@ -10,15 +10,16 @@ package main
 #import <objc/runtime.h>
 
 static char arlecchinoOriginalButtonsSuperviewFrameKey;
+static char arlecchinoOriginalButtonsSuperviewKey;
 
 static NSWindow* arlecchinoControlsWindow(void *preferredWindow) {
     if (preferredWindow != nil) {
         return (NSWindow*)preferredWindow;
     }
 
-    NSWindow *window = [NSApp mainWindow];
+    NSWindow *window = [NSApp keyWindow];
     if (window == nil) {
-        window = [NSApp keyWindow];
+        window = [NSApp mainWindow];
     }
     if (window == nil) {
         for (NSWindow *candidate in [NSApp windows]) {
@@ -67,38 +68,121 @@ static NSView* arlecchinoWindowButtonsSuperview(
     return [closeButton superview];
 }
 
-static void arlecchinoRefreshWindowButtonsSuperview(NSView *buttonSuperview) {
+static void arlecchinoRefreshNativeControlView(NSView *view, NSWindow *window) {
+    if (view == nil) {
+        return;
+    }
+
+    [view setNeedsDisplay:YES];
+    [view updateTrackingAreas];
+    if (window != nil) {
+        [window invalidateCursorRectsForView:view];
+    }
+}
+
+static void arlecchinoRefreshWindowButtons(
+    NSButton *closeButton,
+    NSButton *minimiseButton,
+    NSButton *maximiseButton
+) {
+    NSView *buttonSuperview = arlecchinoWindowButtonsSuperview(closeButton, minimiseButton, maximiseButton);
     if (buttonSuperview == nil) {
         return;
     }
 
-    NSView *parentView = [buttonSuperview superview];
-    [buttonSuperview setNeedsDisplay:YES];
-    [buttonSuperview updateTrackingAreas];
-    if (parentView != nil) {
-        [parentView updateTrackingAreas];
-    }
-
     NSWindow *window = [buttonSuperview window];
-    if (window != nil) {
-        [window invalidateCursorRectsForView:buttonSuperview];
-        if (parentView != nil) {
-            [window invalidateCursorRectsForView:parentView];
-        }
+    arlecchinoRefreshNativeControlView(closeButton, window);
+    arlecchinoRefreshNativeControlView(minimiseButton, window);
+    arlecchinoRefreshNativeControlView(maximiseButton, window);
+
+    for (NSView *view = buttonSuperview; view != nil; view = [view superview]) {
+        arlecchinoRefreshNativeControlView(view, window);
     }
 }
 
 static void arlecchinoRememberWindowButtonsSuperviewFrame(NSView *buttonSuperview) {
-    if (buttonSuperview == nil || objc_getAssociatedObject(buttonSuperview, &arlecchinoOriginalButtonsSuperviewFrameKey) != nil) {
+    if (buttonSuperview == nil) {
         return;
     }
 
-    objc_setAssociatedObject(
-        buttonSuperview,
-        &arlecchinoOriginalButtonsSuperviewFrameKey,
-        [NSValue valueWithRect:[buttonSuperview frame]],
-        OBJC_ASSOCIATION_RETAIN_NONATOMIC
-    );
+    if (objc_getAssociatedObject(buttonSuperview, &arlecchinoOriginalButtonsSuperviewFrameKey) == nil) {
+        objc_setAssociatedObject(
+            buttonSuperview,
+            &arlecchinoOriginalButtonsSuperviewFrameKey,
+            [NSValue valueWithRect:[buttonSuperview frame]],
+            OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        );
+    }
+
+    if (objc_getAssociatedObject(buttonSuperview, &arlecchinoOriginalButtonsSuperviewKey) == nil && [buttonSuperview superview] != nil) {
+        objc_setAssociatedObject(
+            buttonSuperview,
+            &arlecchinoOriginalButtonsSuperviewKey,
+            [NSValue valueWithNonretainedObject:[buttonSuperview superview]],
+            OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        );
+    }
+}
+
+static NSView* arlecchinoOriginalButtonsSuperview(NSView *buttonSuperview) {
+    NSValue *value = objc_getAssociatedObject(buttonSuperview, &arlecchinoOriginalButtonsSuperviewKey);
+    if (value == nil) {
+        return nil;
+    }
+
+    id originalSuperview = [value nonretainedObjectValue];
+    if (![originalSuperview isKindOfClass:[NSView class]]) {
+        return nil;
+    }
+    return (NSView*)originalSuperview;
+}
+
+static bool arlecchinoAttachButtonsSuperviewToParent(NSView *buttonSuperview, NSView *parentView) {
+    if (buttonSuperview == nil) {
+        return false;
+    }
+
+    if (parentView == nil) {
+        return false;
+    }
+
+    if ([buttonSuperview superview] != parentView) {
+        [buttonSuperview retain];
+        [buttonSuperview removeFromSuperviewWithoutNeedingDisplay];
+        [parentView addSubview:buttonSuperview positioned:NSWindowAbove relativeTo:nil];
+        [buttonSuperview release];
+    } else {
+        [buttonSuperview retain];
+        [buttonSuperview removeFromSuperviewWithoutNeedingDisplay];
+        [parentView addSubview:buttonSuperview positioned:NSWindowAbove relativeTo:nil];
+        [buttonSuperview release];
+    }
+
+    [buttonSuperview setHidden:NO];
+    [buttonSuperview setNeedsDisplay:YES];
+    [parentView setNeedsDisplay:YES];
+    return true;
+}
+
+static bool arlecchinoRaiseWindowButtonsSuperview(NSView *buttonSuperview) {
+    if (buttonSuperview == nil) {
+        return false;
+    }
+
+    return arlecchinoAttachButtonsSuperviewToParent(buttonSuperview, [buttonSuperview superview]);
+}
+
+static bool arlecchinoMoveWindowButtonsSuperviewToContentView(NSView *buttonSuperview, NSWindow *window) {
+    if (buttonSuperview == nil || window == nil) {
+        return false;
+    }
+
+    NSView *contentView = [window contentView];
+    if (contentView == nil) {
+        return false;
+    }
+
+    return arlecchinoAttachButtonsSuperviewToParent(buttonSuperview, contentView);
 }
 
 static bool arlecchinoRestoreWindowButtonsSuperview(
@@ -112,10 +196,15 @@ static bool arlecchinoRestoreWindowButtonsSuperview(
     }
 
     NSValue *originalFrame = objc_getAssociatedObject(buttonSuperview, &arlecchinoOriginalButtonsSuperviewFrameKey);
+    NSView *originalSuperview = arlecchinoOriginalButtonsSuperview(buttonSuperview);
+    if (originalSuperview != nil && [buttonSuperview superview] != originalSuperview) {
+        arlecchinoAttachButtonsSuperviewToParent(buttonSuperview, originalSuperview);
+    }
     if (originalFrame != nil) {
         [buttonSuperview setFrame:[originalFrame rectValue]];
     }
-    arlecchinoRefreshWindowButtonsSuperview(buttonSuperview);
+    arlecchinoRaiseWindowButtonsSuperview(buttonSuperview);
+    arlecchinoRefreshWindowButtons(closeButton, minimiseButton, maximiseButton);
     return true;
 }
 
@@ -133,12 +222,16 @@ static bool arlecchinoMoveWindowButtonsSuperview(
         return false;
     }
 
+    arlecchinoRememberWindowButtonsSuperviewFrame(buttonSuperview);
+    NSWindow *window = [buttonSuperview window];
+    if (!arlecchinoMoveWindowButtonsSuperviewToContentView(buttonSuperview, window)) {
+        arlecchinoRaiseWindowButtonsSuperview(buttonSuperview);
+    }
+
     NSView *parentView = [buttonSuperview superview];
     if (parentView == nil) {
         return false;
     }
-
-    arlecchinoRememberWindowButtonsSuperviewFrame(buttonSuperview);
 
     NSRect parentBounds = [parentView bounds];
     NSRect superviewFrame = [buttonSuperview frame];
@@ -153,7 +246,7 @@ static bool arlecchinoMoveWindowButtonsSuperview(
     superviewFrame.origin.x = nextSuperviewX;
     superviewFrame.origin.y = nextSuperviewY;
     [buttonSuperview setFrame:superviewFrame];
-    arlecchinoRefreshWindowButtonsSuperview(buttonSuperview);
+    arlecchinoRefreshWindowButtons(closeButton, minimiseButton, maximiseButton);
     return true;
 }
 
@@ -210,6 +303,7 @@ static bool arlecchinoPositionNativeWindowControls(
     }
     return didPosition;
 }
+
 */
 import "C"
 
@@ -239,6 +333,7 @@ func (a *App) SetNativeWindowControlsVisible(ctx context.Context, visible bool) 
 	window.SetCloseButtonState(state)
 	window.SetMinimiseButtonState(state)
 	window.SetMaximiseButtonState(state)
+	window.SetFullscreenButtonState(state)
 	a.refreshNativeWindowControlsForWindow(window)
 	return true
 }

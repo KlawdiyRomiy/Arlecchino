@@ -9,9 +9,9 @@ package main
 #import <dispatch/dispatch.h>
 
 static NSWindow* arlecchinoMainWindow(void) {
-    NSWindow *window = [NSApp mainWindow];
+    NSWindow *window = [NSApp keyWindow];
     if (window == nil) {
-        window = [NSApp keyWindow];
+        window = [NSApp mainWindow];
     }
     if (window == nil) {
         for (NSWindow *candidate in [NSApp windows]) {

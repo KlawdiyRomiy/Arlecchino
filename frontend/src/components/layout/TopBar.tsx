@@ -245,6 +245,7 @@ interface TopBarProps {
   previewTitle?: string;
   windowControlsVisible?: boolean;
   windowControlsBackdropVisible?: boolean;
+  windowControlsNativeEnabled?: boolean;
   windowDragEnabled?: boolean;
   onChromePopupOpenChange?: (open: boolean) => void;
 }
@@ -273,6 +274,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   previewTitle = "Preview unavailable for the current context.",
   windowControlsVisible = true,
   windowControlsBackdropVisible = true,
+  windowControlsNativeEnabled,
   windowDragEnabled = true,
   onChromePopupOpenChange,
 }) => {
@@ -1039,6 +1041,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       <WindowControls
         visible={windowControlsVisible}
         backdropVisible={windowControlsBackdropVisible}
+        nativeEnabled={windowControlsNativeEnabled}
       />
 
       <div className={topBarGroupClass} style={topBarItemNoDragStyle}>

@@ -96,7 +96,6 @@ import {
 import {
   GetLanguageForFile,
   IsNativeFullscreen,
-  SetNativeWindowControlsVisible,
   WriteTerminal,
 } from "../../wails/app";
 import { EventsOn } from "../../wails/runtime";
@@ -221,11 +220,6 @@ interface FullscreenPanelTransitionTarget {
   panelId: PanelId;
   position: PanelPosition;
 }
-
-let nativeWindowControlsOwner: symbol | null = null;
-let nativeWindowControlsRestoreTimer: ReturnType<typeof setTimeout> | null =
-  null;
-let nativeWindowControlsLastVisible = true;
 
 interface NativeFullscreenChangedEvent {
   fullscreen?: boolean;
@@ -1093,11 +1087,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     createEmptyZenViewportChromeState(),
   );
   const zenPanelInteractionActiveRef = useRef(false);
-  const nativeWindowControlsOwnerRef = useRef<symbol>(
-    Symbol("main-layout-native-window-controls"),
-  );
-  const nativeWindowControlsVisibleRef = useRef<boolean | null>(null);
-
   const [draggingPanel, setDraggingPanel] = useState<PanelId | null>(null);
   const [draggingPreviewWindowId, setDraggingPreviewWindowId] = useState<
     string | null
@@ -5267,9 +5256,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     terminalPanelConfig.y < NATIVE_WINDOW_CONTROLS_OCCLUSION_HEIGHT &&
     terminalPanelConfig.x + terminalPanelConfig.size.width > 0 &&
     terminalPanelConfig.y + terminalPanelConfig.size.height > 0;
-  const nativeWindowControlsVisible =
-    zenTopChromeVisible &&
+  const nativeWindowControlsEnabled =
     !tuiTerminalOccludesNativeWindowControls &&
+    (nativeWindowFullscreen || zenTopChromeVisible);
+  const nativeWindowControlsVisible =
+    nativeWindowControlsEnabled &&
+    zenTopChromeVisible &&
     !nativeWindowFullscreen;
   const nativeWindowControlsBackdropVisible = nativeWindowControlsVisible;
   const zenTopChromeAvoidanceTop =
@@ -5298,53 +5290,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     return () => {
       cancelled = true;
       unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    const owner = nativeWindowControlsOwnerRef.current;
-    nativeWindowControlsOwner = owner;
-    if (nativeWindowControlsRestoreTimer !== null) {
-      clearTimeout(nativeWindowControlsRestoreTimer);
-      nativeWindowControlsRestoreTimer = null;
-    }
-
-    if (
-      nativeWindowControlsVisibleRef.current === nativeWindowControlsVisible
-    ) {
-      return;
-    }
-
-    nativeWindowControlsVisibleRef.current = nativeWindowControlsVisible;
-    nativeWindowControlsLastVisible = nativeWindowControlsVisible;
-    void SetNativeWindowControlsVisible(nativeWindowControlsVisible).catch(
-      () => undefined,
-    );
-  }, [nativeWindowControlsVisible]);
-
-  useEffect(() => {
-    const owner = nativeWindowControlsOwnerRef.current;
-
-    return () => {
-      if (nativeWindowControlsOwner !== owner) {
-        return;
-      }
-
-      nativeWindowControlsOwner = null;
-      if (nativeWindowControlsRestoreTimer !== null) {
-        clearTimeout(nativeWindowControlsRestoreTimer);
-      }
-      nativeWindowControlsRestoreTimer = setTimeout(() => {
-        nativeWindowControlsRestoreTimer = null;
-        if (nativeWindowControlsOwner !== null) {
-          return;
-        }
-        if (!nativeWindowControlsLastVisible) {
-          return;
-        }
-
-        void SetNativeWindowControlsVisible(true).catch(() => undefined);
-      }, 0);
     };
   }, []);
 
@@ -5550,7 +5495,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       };
 
       if (zenViewportMouseMoveFrameRef.current !== null) {
-        return;
+        window.cancelAnimationFrame(zenViewportMouseMoveFrameRef.current);
       }
 
       zenViewportMouseMoveFrameRef.current = window.requestAnimationFrame(
@@ -5603,6 +5548,89 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     handleZenViewportMouseDown,
     handleZenViewportMouseMove,
     setZenTopChromeInteractionLock,
+    zenModeEnabled,
+  ]);
+
+  useEffect(() => {
+    if (!zenModeEnabled || !zenTopChromeVisible) {
+      return;
+    }
+
+    const handleVisibleTopChromeMouseMove = (event: MouseEvent) => {
+      const releaseBoundary = Math.max(
+        ZEN_EDGE_HOVER_SIZE,
+        topChromeHeight + SNAPPED_PANEL_OUTER_GAP,
+      );
+      if (
+        event.clientY <= releaseBoundary ||
+        isZenTopChromeOwnedAtPoint(event.clientX, event.clientY)
+      ) {
+        return;
+      }
+
+      clearZenChromeRevealIntent();
+      clearZenTopChromeOccludedHeaderIntent();
+      zenViewportChromeStateRef.current = {
+        ...zenViewportChromeStateRef.current,
+        top: false,
+      };
+      setZenTopChromeEdgeSource(false);
+      setZenTopChromePointerSource(false);
+    };
+
+    window.addEventListener("mousemove", handleVisibleTopChromeMouseMove, true);
+    return () => {
+      window.removeEventListener(
+        "mousemove",
+        handleVisibleTopChromeMouseMove,
+        true,
+      );
+    };
+  }, [
+    clearZenChromeRevealIntent,
+    clearZenTopChromeOccludedHeaderIntent,
+    setZenTopChromeEdgeSource,
+    setZenTopChromePointerSource,
+    topChromeHeight,
+    zenModeEnabled,
+    zenTopChromeVisible,
+  ]);
+
+  useEffect(() => {
+    if (!zenModeEnabled || !zenBottomChromeVisible) {
+      return;
+    }
+
+    const handleVisibleBottomChromeMouseMove = (event: MouseEvent) => {
+      const releaseBoundary =
+        window.innerHeight - bottomChromeHeight - ZEN_EDGE_HOVER_SIZE;
+      if (event.clientY >= releaseBoundary) {
+        return;
+      }
+
+      zenViewportChromeStateRef.current = {
+        ...zenViewportChromeStateRef.current,
+        bottom: false,
+      };
+      hideZenBottomChrome();
+    };
+
+    window.addEventListener(
+      "mousemove",
+      handleVisibleBottomChromeMouseMove,
+      true,
+    );
+    return () => {
+      window.removeEventListener(
+        "mousemove",
+        handleVisibleBottomChromeMouseMove,
+        true,
+      );
+    };
+  }, [
+    bottomChromeHeight,
+    hideZenBottomChrome,
+    zenBottomChromeVisible,
     zenModeEnabled,
   ]);
 
@@ -5926,6 +5954,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               if (!zenModeEnabled) {
                 return;
               }
+              clearZenChromeRevealIntent();
+              clearZenTopChromeOccludedHeaderIntent();
+              setZenTopChromeEdgeSource(false);
               setZenTopChromePointerSource(false);
             }}
           >
@@ -5991,6 +6022,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               windowControlsBackdropVisible={
                 nativeWindowControlsBackdropVisible
               }
+              windowControlsNativeEnabled={nativeWindowControlsEnabled}
             />
           </div>
 

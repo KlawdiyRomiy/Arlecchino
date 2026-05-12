@@ -118,6 +118,20 @@ func TestOpenProjectWindowCreatesInProcessWailsWindow(t *testing.T) {
 	if gotOptions.Mac.TitleBar != mainWindowMacOptions().TitleBar {
 		t.Fatalf("project window titlebar = %v, want main titlebar", gotOptions.Mac.TitleBar)
 	}
+	expectedButtonState := webviewOwnedWindowButtonState()
+	if gotOptions.CloseButtonState != expectedButtonState ||
+		gotOptions.MinimiseButtonState != expectedButtonState ||
+		gotOptions.MaximiseButtonState != expectedButtonState ||
+		gotOptions.FullscreenButtonState != expectedButtonState {
+		t.Fatalf(
+			"project window button states = close:%v minimise:%v maximise:%v fullscreen:%v, want %v",
+			gotOptions.CloseButtonState,
+			gotOptions.MinimiseButtonState,
+			gotOptions.MaximiseButtonState,
+			gotOptions.FullscreenButtonState,
+			expectedButtonState,
+		)
+	}
 	if !hasMacWindowCollectionBehavior(gotOptions.Mac.CollectionBehavior, application.MacWindowCollectionBehaviorParticipatesInCycle) {
 		t.Fatal("project window does not participate in macOS window cycle")
 	}
