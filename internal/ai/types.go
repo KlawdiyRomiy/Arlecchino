@@ -1,0 +1,600 @@
+package ai
+
+import (
+	"time"
+
+	"arlecchino/internal/ai/providers"
+)
+
+type AIProviderDescriptor = providers.AIProviderDescriptor
+type AIProviderSettings = providers.AIProviderSettings
+type AIModelDescriptor = providers.AIModelDescriptor
+type AIProviderCapability = providers.AIProviderCapability
+type AIProviderStatus = providers.AIProviderStatusValue
+type AIProviderStatusValue = providers.AIProviderStatusValue
+
+const (
+	AICapabilityCodeCompletion     = providers.CapabilityCodeCompletion
+	AICapabilityLinePrediction     = providers.CapabilityLinePrediction
+	AICapabilityTerminalPrediction = providers.CapabilityTerminalPrediction
+	AICapabilityChat               = providers.CapabilityChat
+)
+
+type AIStatus struct {
+	Enabled            bool                   `json:"enabled"`
+	MnemonicEnabled    bool                   `json:"mnemonicEnabled"`
+	Providers          []AIProviderDescriptor `json:"providers"`
+	ActiveProviderID   string                 `json:"activeProviderId,omitempty"`
+	ActiveModel        string                 `json:"activeModel,omitempty"`
+	SettingsConfigured bool                   `json:"settingsConfigured"`
+	ProjectPathHash    string                 `json:"projectPathHash,omitempty"`
+	ProjectSessionID   string                 `json:"projectSessionId,omitempty"`
+}
+
+type AIDiscoveryResult struct {
+	Providers []AIProviderDescriptor `json:"providers"`
+	CheckedAt string                 `json:"checkedAt"`
+}
+
+type AIApprovalMode string
+
+const (
+	AIApprovalModeAskEachTime     AIApprovalMode = "ask_each_time"
+	AIApprovalModeReadOnlyAllowed AIApprovalMode = "read_only_allowed"
+	AIApprovalModeFullAccess      AIApprovalMode = "full_access"
+)
+
+type AIToolKind string
+
+const (
+	AIToolKindContextRead  AIToolKind = "context_read"
+	AIToolKindFileWrite    AIToolKind = "file_write"
+	AIToolKindTerminal     AIToolKind = "terminal"
+	AIToolKindMCP          AIToolKind = "mcp"
+	AIToolKindSubagent     AIToolKind = "subagent"
+	AIToolKindNetworkLocal AIToolKind = "network_local"
+)
+
+type AIApprovalHardDeny string
+
+const (
+	AIApprovalHardDenySecrets             AIApprovalHardDeny = "secrets"
+	AIApprovalHardDenySensitivePaths      AIApprovalHardDeny = "sensitive_paths"
+	AIApprovalHardDenyNonLoopbackNetwork  AIApprovalHardDeny = "non_loopback_network"
+	AIApprovalHardDenyFrontierCloudEgress AIApprovalHardDeny = "frontier_cloud_egress"
+	AIApprovalHardDenyDestructiveShell    AIApprovalHardDeny = "destructive_shell_commands"
+	AIApprovalHardDenyOutsideProjectWrite AIApprovalHardDeny = "outside_project_writes"
+)
+
+type AIApprovalScope struct {
+	ProjectSessionID string `json:"projectSessionId,omitempty"`
+	ProjectPathHash  string `json:"projectPathHash,omitempty"`
+}
+
+type AIApprovalPolicy struct {
+	Mode               AIApprovalMode       `json:"mode"`
+	Scope              AIApprovalScope      `json:"scope"`
+	ProjectSessionID   string               `json:"projectSessionId,omitempty"`
+	ProjectPathHash    string               `json:"projectPathHash,omitempty"`
+	ExpiresAt          string               `json:"expiresAt,omitempty"`
+	GrantedAt          string               `json:"grantedAt,omitempty"`
+	GrantedBy          string               `json:"grantedBy,omitempty"`
+	RevokedAt          string               `json:"revokedAt,omitempty"`
+	AllowedToolKinds   []AIToolKind         `json:"allowedToolKinds"`
+	HardDenyCategories []AIApprovalHardDeny `json:"hardDenyCategories"`
+	UpdatedAt          string               `json:"updatedAt,omitempty"`
+}
+
+type AIApprovalSummary struct {
+	Mode               AIApprovalMode       `json:"mode"`
+	FullAccessActive   bool                 `json:"fullAccessActive"`
+	ProjectSessionID   string               `json:"projectSessionId,omitempty"`
+	ProjectPathHash    string               `json:"projectPathHash,omitempty"`
+	ExpiresAt          string               `json:"expiresAt,omitempty"`
+	RevokedAt          string               `json:"revokedAt,omitempty"`
+	AllowedToolKinds   []AIToolKind         `json:"allowedToolKinds"`
+	HardDenyCategories []AIApprovalHardDeny `json:"hardDenyCategories"`
+}
+
+type AIProviderDataPolicy struct {
+	ProviderID       string   `json:"providerId,omitempty"`
+	ProviderKind     string   `json:"providerKind,omitempty"`
+	Endpoint         string   `json:"endpoint,omitempty"`
+	Model            string   `json:"model,omitempty"`
+	Local            bool     `json:"local"`
+	Frontier         bool     `json:"frontier"`
+	Allowed          bool     `json:"allowed"`
+	DataCategories   []string `json:"dataCategories,omitempty"`
+	RetentionSummary string   `json:"retentionSummary,omitempty"`
+	UpdatedAt        string   `json:"updatedAt,omitempty"`
+}
+
+type AIConsentPolicy struct {
+	LocalProvidersAccepted    bool                   `json:"localProvidersAccepted"`
+	RemoteProvidersAccepted   bool                   `json:"remoteProvidersAccepted"`
+	FrontierProvidersAccepted bool                   `json:"frontierProvidersAccepted"`
+	ProviderPolicies          []AIProviderDataPolicy `json:"providerPolicies,omitempty"`
+	AcceptedAt                string                 `json:"acceptedAt,omitempty"`
+	UpdatedAt                 string                 `json:"updatedAt,omitempty"`
+}
+
+type AIConsentSummary struct {
+	LocalProvidersAccepted    bool   `json:"localProvidersAccepted"`
+	RemoteProvidersAccepted   bool   `json:"remoteProvidersAccepted"`
+	FrontierProvidersAccepted bool   `json:"frontierProvidersAccepted"`
+	PolicySource              string `json:"policySource"`
+}
+
+type AIContextDisclosure struct {
+	ProviderID     string               `json:"providerId,omitempty"`
+	ProviderKind   string               `json:"providerKind,omitempty"`
+	Endpoint       string               `json:"endpoint,omitempty"`
+	Model          string               `json:"model,omitempty"`
+	Capability     AIProviderCapability `json:"capability,omitempty"`
+	OptInSource    string               `json:"optInSource,omitempty"`
+	DataCategories []string             `json:"dataCategories,omitempty"`
+	Redaction      AIRedactionSummary   `json:"redaction"`
+}
+
+type AIContextDisclosureSummary struct {
+	ProviderID            string   `json:"providerId,omitempty"`
+	ProviderKind          string   `json:"providerKind,omitempty"`
+	EndpointClass         string   `json:"endpointClass,omitempty"`
+	Model                 string   `json:"model,omitempty"`
+	Local                 bool     `json:"local"`
+	Frontier              bool     `json:"frontier"`
+	ProviderPolicyAllowed bool     `json:"providerPolicyAllowed"`
+	OptInSource           string   `json:"optInSource,omitempty"`
+	RetentionSummary      string   `json:"retentionSummary,omitempty"`
+	DataCategories        []string `json:"dataCategories,omitempty"`
+}
+
+type AIProviderEnvelope struct {
+	ProviderID string                `json:"providerId,omitempty"`
+	Kind       string                `json:"kind,omitempty"`
+	Endpoint   string                `json:"endpoint,omitempty"`
+	Model      string                `json:"model,omitempty"`
+	Status     AIProviderStatusValue `json:"status,omitempty"`
+	Local      bool                  `json:"local"`
+	Frontier   bool                  `json:"frontier"`
+}
+
+type AIContextSnippetBreakdown struct {
+	Type  string `json:"type"`
+	Count int    `json:"count"`
+	Bytes int    `json:"bytes"`
+}
+
+type AIMCPToolGroupSummary struct {
+	Name     string `json:"name"`
+	Total    int    `json:"total"`
+	Enabled  int    `json:"enabled"`
+	Disabled int    `json:"disabled"`
+}
+
+type AIMCPContextPlane struct {
+	Enabled               bool                    `json:"enabled"`
+	Available             bool                    `json:"available"`
+	BridgeRunning         bool                    `json:"bridgeRunning"`
+	BridgeAvailable       bool                    `json:"bridgeAvailable"`
+	ToolCount             int                     `json:"toolCount"`
+	EnabledToolCount      int                     `json:"enabledToolCount"`
+	DisabledToolCount     int                     `json:"disabledToolCount"`
+	ToolGroups            []AIMCPToolGroupSummary `json:"toolGroups,omitempty"`
+	MemoryBackend         string                  `json:"memoryBackend,omitempty"`
+	MemoryContextPath     string                  `json:"memoryContextPath,omitempty"`
+	MnemonicSharedContext bool                    `json:"mnemonicSharedContext"`
+	ExecutionState        string                  `json:"executionState"`
+	ApprovalSummary       string                  `json:"approvalSummary,omitempty"`
+	DataCategories        []string                `json:"dataCategories,omitempty"`
+	RedactionSummary      string                  `json:"redactionSummary,omitempty"`
+	UpdatedAt             string                  `json:"updatedAt"`
+}
+
+type AIContextRequest struct {
+	RequestID       string               `json:"requestId,omitempty"`
+	DocumentVersion string               `json:"documentVersion,omitempty"`
+	Capability      AIProviderCapability `json:"capability"`
+	Prompt          string               `json:"prompt,omitempty"`
+	FilePath        string               `json:"filePath,omitempty"`
+	Language        string               `json:"language,omitempty"`
+	Line            int                  `json:"line,omitempty"`
+	Column          int                  `json:"column,omitempty"`
+	LineText        string               `json:"lineText,omitempty"`
+	TextBefore      string               `json:"textBefore,omitempty"`
+	TextAfter       string               `json:"textAfter,omitempty"`
+	FullText        string               `json:"fullText,omitempty"`
+	Selection       string               `json:"selection,omitempty"`
+	TerminalInput   string               `json:"terminalInput,omitempty"`
+	TerminalWorkDir string               `json:"terminalWorkDir,omitempty"`
+	IncludeMnemonic bool                 `json:"includeMnemonic"`
+	IncludeMCP      bool                 `json:"includeMCP"`
+	MaxBytes        int                  `json:"maxBytes,omitempty"`
+	MaxSnippets     int                  `json:"maxSnippets,omitempty"`
+}
+
+type AIContextSnippet struct {
+	Type     string `json:"type"`
+	Path     string `json:"path,omitempty"`
+	Language string `json:"language,omitempty"`
+	Content  string `json:"content"`
+}
+
+type AIContextSnapshot struct {
+	ID                string                      `json:"id"`
+	RequestID         string                      `json:"requestId,omitempty"`
+	DocumentVersion   string                      `json:"documentVersion,omitempty"`
+	Capability        AIProviderCapability        `json:"capability"`
+	ProjectPathHash   string                      `json:"projectPathHash,omitempty"`
+	ProjectSessionID  string                      `json:"projectSessionId,omitempty"`
+	FilePath          string                      `json:"filePath,omitempty"`
+	Language          string                      `json:"language,omitempty"`
+	Line              int                         `json:"line,omitempty"`
+	Column            int                         `json:"column,omitempty"`
+	Prompt            string                      `json:"prompt,omitempty"`
+	TerminalInput     string                      `json:"terminalInput,omitempty"`
+	TerminalWorkDir   string                      `json:"terminalWorkDir,omitempty"`
+	Snippets          []AIContextSnippet          `json:"snippets"`
+	SnippetBreakdown  []AIContextSnippetBreakdown `json:"snippetBreakdown,omitempty"`
+	MCPContext        *AIMCPContextPlane          `json:"mcpContext,omitempty"`
+	Mnemonic          []AIMnemonicEntry           `json:"mnemonic,omitempty"`
+	DataCategories    []string                    `json:"dataCategories"`
+	Redaction         AIRedactionSummary          `json:"redaction"`
+	ProviderEnvelope  *AIProviderEnvelope         `json:"providerEnvelope,omitempty"`
+	Disclosure        AIContextDisclosure         `json:"disclosure"`
+	DisclosureSummary AIContextDisclosureSummary  `json:"disclosureSummary"`
+	ApprovalSummary   AIApprovalSummary           `json:"approvalSummary"`
+	ByteSize          int                         `json:"byteSize"`
+	CreatedAt         string                      `json:"createdAt"`
+}
+
+type AIContextSummary struct {
+	ID                string                      `json:"id"`
+	RequestID         string                      `json:"requestId,omitempty"`
+	DocumentVersion   string                      `json:"documentVersion,omitempty"`
+	Capability        AIProviderCapability        `json:"capability"`
+	ProjectSessionID  string                      `json:"projectSessionId,omitempty"`
+	FilePath          string                      `json:"filePath,omitempty"`
+	Language          string                      `json:"language,omitempty"`
+	SnippetCount      int                         `json:"snippetCount"`
+	MnemonicCount     int                         `json:"mnemonicCount"`
+	MCPIncluded       bool                        `json:"mcpIncluded"`
+	MCPContext        *AIMCPContextPlane          `json:"mcpContext,omitempty"`
+	SnippetBreakdown  []AIContextSnippetBreakdown `json:"snippetBreakdown,omitempty"`
+	DataCategories    []string                    `json:"dataCategories"`
+	Redaction         AIRedactionSummary          `json:"redaction"`
+	DisclosureSummary AIContextDisclosureSummary  `json:"disclosureSummary"`
+	ByteSize          int                         `json:"byteSize"`
+	CreatedAt         string                      `json:"createdAt"`
+}
+
+type AIRedactionSummary struct {
+	SecretsRedacted   int      `json:"secretsRedacted"`
+	PathsRedacted     int      `json:"pathsRedacted"`
+	Truncated         bool     `json:"truncated"`
+	OriginalBytes     int      `json:"originalBytes"`
+	SanitizedBytes    int      `json:"sanitizedBytes"`
+	BlockedCategories []string `json:"blockedCategories,omitempty"`
+	AppliedRules      []string `json:"appliedRules,omitempty"`
+}
+
+type AIMnemonicEntry struct {
+	ID             string                   `json:"id"`
+	Type           string                   `json:"type"`
+	Source         string                   `json:"source,omitempty"`
+	Tags           []string                 `json:"tags,omitempty"`
+	Content        string                   `json:"content"`
+	Importance     int                      `json:"importance"`
+	Confidence     float64                  `json:"confidence"`
+	Trust          string                   `json:"trust,omitempty"`
+	OriginKind     string                   `json:"originKind,omitempty"`
+	Generated      bool                     `json:"generated"`
+	Superseded     bool                     `json:"superseded"`
+	Pinned         bool                     `json:"pinned"`
+	IsLatest       bool                     `json:"isLatest"`
+	Decay          float64                  `json:"decay"`
+	LastAccessedAt string                   `json:"lastAccessedAt,omitempty"`
+	AccessCount    int                      `json:"accessCount"`
+	Provenance     map[string]string        `json:"provenance,omitempty"`
+	Relationships  []AIMnemonicRelationship `json:"relationships,omitempty"`
+	CreatedAt      string                   `json:"createdAt"`
+	UpdatedAt      string                   `json:"updatedAt,omitempty"`
+}
+
+type AIMnemonicRelationship struct {
+	ID        string `json:"id,omitempty"`
+	FromID    string `json:"fromId"`
+	ToID      string `json:"toId"`
+	Type      string `json:"type"`
+	CreatedAt string `json:"createdAt,omitempty"`
+}
+
+type AIMnemonicSearchRequest struct {
+	Query             string   `json:"query,omitempty"`
+	Tags              []string `json:"tags,omitempty"`
+	Limit             int      `json:"limit,omitempty"`
+	IncludeUntrusted  bool     `json:"includeUntrusted"`
+	IncludeGenerated  bool     `json:"includeGenerated"`
+	IncludeSuperseded bool     `json:"includeSuperseded"`
+}
+
+type AIMnemonicEntryInput struct {
+	ID            string                   `json:"id,omitempty"`
+	Type          string                   `json:"type,omitempty"`
+	Source        string                   `json:"source,omitempty"`
+	Tags          []string                 `json:"tags,omitempty"`
+	Content       string                   `json:"content"`
+	Importance    int                      `json:"importance,omitempty"`
+	Confidence    float64                  `json:"confidence,omitempty"`
+	Trust         string                   `json:"trust,omitempty"`
+	Pinned        bool                     `json:"pinned"`
+	IsLatest      bool                     `json:"isLatest"`
+	Decay         float64                  `json:"decay,omitempty"`
+	Provenance    map[string]string        `json:"provenance,omitempty"`
+	Relationships []AIMnemonicRelationship `json:"relationships,omitempty"`
+}
+
+type AIMnemonicEntryPatch struct {
+	Type          string                   `json:"type,omitempty"`
+	Source        string                   `json:"source,omitempty"`
+	Tags          []string                 `json:"tags,omitempty"`
+	Content       string                   `json:"content,omitempty"`
+	Importance    *int                     `json:"importance,omitempty"`
+	Confidence    *float64                 `json:"confidence,omitempty"`
+	Trust         string                   `json:"trust,omitempty"`
+	Pinned        *bool                    `json:"pinned,omitempty"`
+	IsLatest      *bool                    `json:"isLatest,omitempty"`
+	Decay         *float64                 `json:"decay,omitempty"`
+	Provenance    map[string]string        `json:"provenance,omitempty"`
+	Relationships []AIMnemonicRelationship `json:"relationships,omitempty"`
+}
+
+type AIEgressRecord struct {
+	ID               string               `json:"id"`
+	RequestID        string               `json:"requestId"`
+	ProviderID       string               `json:"providerId"`
+	ProviderKind     string               `json:"providerKind"`
+	Endpoint         string               `json:"endpoint,omitempty"`
+	Model            string               `json:"model,omitempty"`
+	Capability       AIProviderCapability `json:"capability"`
+	ProjectPathHash  string               `json:"projectPathHash,omitempty"`
+	ProjectSessionID string               `json:"projectSessionId,omitempty"`
+	DataCategories   []string             `json:"dataCategories"`
+	Redaction        AIRedactionSummary   `json:"redaction"`
+	Status           string               `json:"status"`
+	LatencyMs        int64                `json:"latencyMs,omitempty"`
+	ErrorClass       string               `json:"errorClass,omitempty"`
+	OptInSource      string               `json:"optInSource,omitempty"`
+	Canceled         bool                 `json:"canceled"`
+	CreatedAt        string               `json:"createdAt"`
+	RunID            string               `json:"runId,omitempty"`
+	Source           string               `json:"source,omitempty"`
+	ChatAction       AIChatAction         `json:"chatAction,omitempty"`
+}
+
+type AIChatAction string
+
+const (
+	AIChatActionDebug AIChatAction = "debug"
+	AIChatActionPlan  AIChatAction = "plan"
+	AIChatActionBuild AIChatAction = "build"
+)
+
+type AIToolPolicy string
+
+const (
+	AIToolPolicyReadOnly         AIToolPolicy = "read_only_context"
+	AIToolPolicyProposalOnly     AIToolPolicy = "tool_proposal_only"
+	AIToolPolicyApprovalRequired AIToolPolicy = "approval_required"
+)
+
+type AIToolRiskLevel string
+
+const (
+	AIToolRiskLow      AIToolRiskLevel = "low"
+	AIToolRiskMedium   AIToolRiskLevel = "medium"
+	AIToolRiskHigh     AIToolRiskLevel = "high"
+	AIToolRiskHardDeny AIToolRiskLevel = "hard_deny"
+)
+
+type AIToolProposalStatus string
+
+const (
+	AIToolProposalStatusProposed AIToolProposalStatus = "proposed"
+	AIToolProposalStatusBlocked  AIToolProposalStatus = "blocked"
+)
+
+type AIToolHardDenyReason string
+
+const (
+	AIToolHardDenyReasonSecrets             AIToolHardDenyReason = "secrets"
+	AIToolHardDenyReasonSensitivePaths      AIToolHardDenyReason = "sensitive_paths"
+	AIToolHardDenyReasonNonLoopbackNetwork  AIToolHardDenyReason = "non_loopback_network"
+	AIToolHardDenyReasonFrontierCloudEgress AIToolHardDenyReason = "frontier_cloud_egress"
+	AIToolHardDenyReasonDestructiveShell    AIToolHardDenyReason = "destructive_shell_commands"
+	AIToolHardDenyReasonOutsideProjectWrite AIToolHardDenyReason = "outside_project_writes"
+)
+
+type AIToolExecutionState string
+
+const (
+	AIToolExecutionStateNotExecutable AIToolExecutionState = "not_executable_in_this_slice"
+)
+
+type AIToolProposal struct {
+	ID                     string               `json:"id"`
+	Name                   string               `json:"name"`
+	Description            string               `json:"description"`
+	Policy                 AIToolPolicy         `json:"policy"`
+	Arguments              map[string]string    `json:"arguments,omitempty"`
+	Kind                   AIToolKind           `json:"kind"`
+	ScopeSummary           string               `json:"scopeSummary,omitempty"`
+	RiskLevel              AIToolRiskLevel      `json:"riskLevel"`
+	TargetPaths            []string             `json:"targetPaths,omitempty"`
+	CommandPreview         string               `json:"commandPreview,omitempty"`
+	MCPToolName            string               `json:"mcpToolName,omitempty"`
+	ApprovalModeRequired   AIApprovalMode       `json:"approvalModeRequired"`
+	AllowedByCurrentPolicy bool                 `json:"allowedByCurrentPolicy"`
+	HardDenyReason         AIToolHardDenyReason `json:"hardDenyReason,omitempty"`
+	ApprovalToken          string               `json:"approvalToken,omitempty"`
+	Status                 AIToolProposalStatus `json:"status"`
+	ExecutionState         AIToolExecutionState `json:"executionState"`
+}
+
+type AIEgressSummary struct {
+	RecordID       string               `json:"recordId,omitempty"`
+	Status         string               `json:"status,omitempty"`
+	ProviderID     string               `json:"providerId,omitempty"`
+	ProviderKind   string               `json:"providerKind,omitempty"`
+	Endpoint       string               `json:"endpoint,omitempty"`
+	Model          string               `json:"model,omitempty"`
+	Capability     AIProviderCapability `json:"capability,omitempty"`
+	DataCategories []string             `json:"dataCategories,omitempty"`
+	Redaction      AIRedactionSummary   `json:"redaction"`
+	LatencyMs      int64                `json:"latencyMs,omitempty"`
+	Canceled       bool                 `json:"canceled"`
+	ErrorClass     string               `json:"errorClass,omitempty"`
+	CreatedAt      string               `json:"createdAt,omitempty"`
+	RunID          string               `json:"runId,omitempty"`
+	Source         string               `json:"source,omitempty"`
+	ChatAction     AIChatAction         `json:"chatAction,omitempty"`
+}
+
+type AIToolProposalSummary struct {
+	Total                int `json:"total"`
+	AllowedByPolicy      int `json:"allowedByPolicy"`
+	HardDenied           int `json:"hardDenied"`
+	NotExecutableInSlice int `json:"notExecutableInSlice"`
+}
+
+type AIMnemonicInclusionSummary struct {
+	Requested bool     `json:"requested"`
+	Enabled   bool     `json:"enabled"`
+	Included  bool     `json:"included"`
+	Count     int      `json:"count"`
+	Trusts    []string `json:"trusts,omitempty"`
+}
+
+type AIChatRunEnvelope struct {
+	ID                  string                     `json:"id"`
+	SessionID           string                     `json:"sessionId"`
+	ProjectSessionID    string                     `json:"projectSessionId,omitempty"`
+	Action              AIChatAction               `json:"action"`
+	Status              string                     `json:"status"`
+	ProviderID          string                     `json:"providerId,omitempty"`
+	Model               string                     `json:"model,omitempty"`
+	Error               string                     `json:"error,omitempty"`
+	CanCancel           bool                       `json:"canCancel"`
+	ContextSummary      *AIContextSummary          `json:"contextSummary,omitempty"`
+	ProviderEnvelope    *AIProviderEnvelope        `json:"providerEnvelope,omitempty"`
+	EgressSummary       *AIEgressSummary           `json:"egressSummary,omitempty"`
+	DisclosureSummary   AIContextDisclosureSummary `json:"disclosureSummary"`
+	ApprovalSummary     AIApprovalSummary          `json:"approvalSummary"`
+	ConsentSummary      AIConsentSummary           `json:"consentSummary"`
+	ToolProposals       []AIToolProposal           `json:"toolProposals,omitempty"`
+	ToolProposalSummary AIToolProposalSummary      `json:"toolProposalSummary"`
+	MnemonicInclusion   AIMnemonicInclusionSummary `json:"mnemonicInclusion"`
+	CreatedAt           string                     `json:"createdAt"`
+	UpdatedAt           string                     `json:"updatedAt"`
+}
+
+type AIChatRun struct {
+	ID                string            `json:"id"`
+	SessionID         string            `json:"sessionId"`
+	ProjectSessionID  string            `json:"projectSessionId,omitempty"`
+	Action            AIChatAction      `json:"action"`
+	Status            string            `json:"status"`
+	ProviderID        string            `json:"providerId,omitempty"`
+	Model             string            `json:"model,omitempty"`
+	UserPrompt        string            `json:"userPrompt,omitempty"`
+	Response          string            `json:"response,omitempty"`
+	Error             string            `json:"error,omitempty"`
+	ContextSummary    *AIContextSummary `json:"contextSummary,omitempty"`
+	ToolProposals     []AIToolProposal  `json:"toolProposals,omitempty"`
+	EgressRecordID    string            `json:"egressRecordId,omitempty"`
+	MnemonicRequested bool              `json:"mnemonicRequested"`
+	CanCancel         bool              `json:"canCancel"`
+	CreatedAt         string            `json:"createdAt"`
+	UpdatedAt         string            `json:"updatedAt"`
+}
+
+type AIChatActionDescriptor struct {
+	ID                   AIChatAction `json:"id"`
+	Name                 string       `json:"name"`
+	Description          string       `json:"description"`
+	BuiltIn              bool         `json:"builtIn"`
+	MayProposeTools      bool         `json:"mayProposeTools"`
+	ExpectsToolProposals bool         `json:"expectsToolProposals"`
+	ReadOnlyIntent       bool         `json:"readOnlyIntent"`
+	ShowPlanStructure    bool         `json:"showPlanStructure"`
+	ExecutionUnavailable bool         `json:"executionUnavailable"`
+}
+
+type AIAgentProfileDescriptor struct {
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	BuiltIn     bool         `json:"builtIn"`
+	Enabled     bool         `json:"enabled"`
+	ToolKinds   []AIToolKind `json:"toolKinds,omitempty"`
+}
+
+type AIPromptWorkflowDescriptor struct {
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Slash       string       `json:"slash,omitempty"`
+	Action      AIChatAction `json:"action"`
+	Description string       `json:"description"`
+	BuiltIn     bool         `json:"builtIn"`
+}
+
+type AIContextProviderDescriptor struct {
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Capability  AIProviderCapability `json:"capability,omitempty"`
+	Enabled     bool                 `json:"enabled"`
+	Available   bool                 `json:"available"`
+	LocalOnly   bool                 `json:"localOnly"`
+}
+
+type AIEmbeddingProviderDescriptor struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Local     bool   `json:"local"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type AIEmbeddingStatus struct {
+	Status    string                          `json:"status"`
+	Reason    string                          `json:"reason"`
+	Providers []AIEmbeddingProviderDescriptor `json:"providers"`
+	UpdatedAt string                          `json:"updatedAt"`
+}
+
+type AIChatRunRequest struct {
+	SessionID       string           `json:"sessionId,omitempty"`
+	Action          AIChatAction     `json:"action"`
+	Prompt          string           `json:"prompt"`
+	ProviderID      string           `json:"providerId,omitempty"`
+	Model           string           `json:"model,omitempty"`
+	IncludeMnemonic bool             `json:"includeMnemonic"`
+	IncludeMCP      bool             `json:"includeMCP"`
+	MaxTokens       int              `json:"maxTokens,omitempty"`
+	Context         AIContextRequest `json:"context,omitempty"`
+}
+
+type AIContinuationResponse struct {
+	RequestID       string            `json:"requestId,omitempty"`
+	DocumentVersion string            `json:"documentVersion,omitempty"`
+	Text            string            `json:"text"`
+	ProviderID      string            `json:"providerId,omitempty"`
+	Model           string            `json:"model,omitempty"`
+	Context         AIContextSnapshot `json:"context"`
+	Egress          *AIEgressRecord   `json:"egress,omitempty"`
+}
+
+func utcNow() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
