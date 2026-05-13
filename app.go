@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"arlecchino/internal/ai"
 	"arlecchino/internal/composer"
 	"arlecchino/internal/execution"
 	"arlecchino/internal/indexer/adapters"
@@ -67,6 +68,7 @@ type App struct {
 	windowLeases             *WindowLeaseRegistry
 	packagedOSNative         *PackagedOSNativeDelivery
 	autoUpdater              *AutoUpdateService
+	aiService                *ai.Service
 	projectSessions          *ProjectSessionRegistry
 	projectWindowSeq         atomic.Uint64
 	closeConfirmationEnabled atomic.Bool
@@ -139,6 +141,12 @@ func NewApp() *App {
 		packagedOSNative: NewPackagedOSNativeDelivery(defaultPackagedOSIntegrationOptions()),
 		autoUpdater:      NewAutoUpdateService(),
 	}
+	app.aiService = ai.NewService(ai.ServiceOptions{
+		Emit: func(name string, payload any) {
+			app.emitEvent(name, payload)
+		},
+		MCPContextProvider: app.aiMCPContextProvider,
+	})
 	app.closeConfirmationEnabled.Store(true)
 	app.projectSessions = NewProjectSessionRegistry()
 	app.projectSessions.register(defaultProjectSessionFromApp(app))
@@ -160,6 +168,17 @@ func (a *App) ServiceShutdown() error {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.startOpenIntentBridge()
+	if a.aiService == nil {
+		a.aiService = ai.NewService(ai.ServiceOptions{
+			Emit: func(name string, payload any) {
+				a.emitEvent(name, payload)
+			},
+			MCPContextProvider: a.aiMCPContextProvider,
+		})
+	}
+	if err := a.aiService.Start(ctx); err != nil {
+		a.logWarning(fmt.Sprintf("AI service startup failed: %v", err))
+	}
 	a.startMCPBridge()
 	a.ensureMCPConfigs()
 
@@ -181,6 +200,9 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) shutdown(_ context.Context) {
 	a.stopMCPBridge()
 	_ = a.CloseProject(context.Background())
+	if a.aiService != nil {
+		_ = a.aiService.Close()
+	}
 }
 
 func (a *App) ensureMCPConfigs() {
@@ -322,6 +344,15 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 		err := session.projectManager.OpenProject(path)
 		if err != nil {
 			return err
+		}
+	}
+	if a.aiService != nil {
+		aiSession, err := a.aiService.OpenProject(session.ID, path)
+		if err != nil {
+			a.logWarning(fmt.Sprintf("[AI] failed to open project context: %v", err))
+		} else {
+			session.aiSession = aiSession
+			a.syncDefaultProjectSession(session)
 		}
 	}
 
@@ -546,6 +577,15 @@ func (a *App) closeProjectInSessionLocked(session *ProjectRuntimeSession, closeT
 
 	if snapshot, changed := a.backgroundShell.CancelJobsForProject(projectPath, "Project closed."); changed {
 		a.emitBackgroundShellStatusSnapshot(snapshot)
+	}
+
+	if session.aiSession != nil {
+		if a.aiService != nil {
+			_ = a.aiService.CloseProject(session.ID)
+		} else {
+			_ = session.aiSession.Close()
+		}
+		session.aiSession = nil
 	}
 
 	if closeTerminals && session.termManager != nil {

@@ -24,6 +24,7 @@ func RunStdioServer(ctx context.Context, projectRoot string, in io.Reader, out i
 	if err != nil {
 		return err
 	}
+	defer service.Close()
 
 	server := NewServer(service, in, out, errOut)
 	return server.Serve(ctx)

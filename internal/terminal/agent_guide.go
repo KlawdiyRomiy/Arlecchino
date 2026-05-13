@@ -173,8 +173,8 @@ description: Project-local mnemonic memory for durable decisions, workflows, fix
 Use this skill for mnemonic memory.
 
 Files:
-- .arlecchino/memory/session-memory.jsonl: append-only project-local memory entries.
-- .arlecchino/memory/CONTEXT.md: generated compact recall document.
+- .arlecchino/ai/mnemonic.db: project-local Mnemonic graph shared with the AI backend.
+- .arlecchino/memory/CONTEXT.md: generated compact TUI recall document.
 
 Tools:
 - agent_memory.context

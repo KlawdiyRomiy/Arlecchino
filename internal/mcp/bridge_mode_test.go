@@ -773,6 +773,10 @@ func TestToolService_ApplyLayoutProfileEmitsEventsImmediately(t *testing.T) {
 func TestToolService_PreviewToolsEmitCanonicalWindowEvents(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "preview-code")
+	readmePath, err := resolveProjectPath(root, "README.md")
+	if err != nil {
+		t.Fatalf("resolve README path: %v", err)
+	}
 
 	bridge := newFakeBridge()
 	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
@@ -818,7 +822,7 @@ func TestToolService_PreviewToolsEmitCanonicalWindowEvents(t *testing.T) {
 				"id":      "preview-file",
 				"surface": "file",
 				"title":   "README preview",
-				"payload": map[string]any{"path": "README.md", "line": 12},
+				"payload": map[string]any{"path": readmePath, "line": 12},
 			},
 		},
 		{
@@ -888,6 +892,31 @@ func TestToolService_PreviewToolsEmitCanonicalWindowEvents(t *testing.T) {
 				t.Fatalf("payload = %#v, want %#v", payload, tt.wantPayload)
 			}
 		})
+	}
+}
+
+func TestToolService_PreviewOpenRejectsUnsafePathAndRawContentWithoutApproval(t *testing.T) {
+	root := t.TempDir()
+	service, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+	defer service.Close()
+
+	_, err = service.CallTool("ide_ui.preview_open", map[string]any{"path": "../outside.md"})
+	if err == nil {
+		t.Fatal("preview_open should reject outside-project path")
+	}
+	if !strings.Contains(err.Error(), "escapes project root") {
+		t.Fatalf("preview_open path error = %v", err)
+	}
+
+	_, err = service.CallTool("ide_ui.preview_open", map[string]any{"content": "raw terminal dump"})
+	if err == nil {
+		t.Fatal("preview_open content should require user approval")
+	}
+	if !strings.Contains(err.Error(), "requires user approval") {
+		t.Fatalf("preview_open content error = %v", err)
 	}
 }
 
@@ -1031,11 +1060,17 @@ func TestToolService_CapabilitiesExposeBridgeModeAndProfiles(t *testing.T) {
 		t.Fatalf("capabilities mode = %v, want %q", resultMap["mode"], "bridge")
 	}
 
-	if resultMap["supportsUIControlV1"] != true {
-		t.Fatalf("supportsUIControlV1 = %v, want true", resultMap["supportsUIControlV1"])
+	if resultMap["supportsUIControl"] != true {
+		t.Fatalf("supportsUIControl = %v, want true", resultMap["supportsUIControl"])
 	}
-	if resultMap["supportsSurfaceRuntimeV1"] != true {
-		t.Fatalf("supportsSurfaceRuntimeV1 = %v, want true", resultMap["supportsSurfaceRuntimeV1"])
+	if resultMap["supportsSurfaceRuntime"] != true {
+		t.Fatalf("supportsSurfaceRuntime = %v, want true", resultMap["supportsSurfaceRuntime"])
+	}
+	if resultMap["memoryBackend"] != "mnemonic" {
+		t.Fatalf("memoryBackend = %v, want mnemonic", resultMap["memoryBackend"])
+	}
+	if resultMap["mnemonicSharedContext"] != true {
+		t.Fatalf("mnemonicSharedContext = %v, want true", resultMap["mnemonicSharedContext"])
 	}
 
 	layoutProfiles, ok := resultMap["layoutProfiles"].([]string)

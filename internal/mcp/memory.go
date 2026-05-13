@@ -31,6 +31,17 @@ type AgentMemoryEntry struct {
 	SessionID  string   `json:"sessionId,omitempty"`
 }
 
+type AgentMemoryBackend interface {
+	Save(entryType string, tags []string, content string, importance int, sessionID string) (AgentMemoryEntry, error)
+	List(limit int) []AgentMemoryEntry
+	Search(query string, tags []string, limit int) []AgentMemoryEntry
+	Context(maxChars int) string
+	SyncContextFile() error
+	DiskFilePath() string
+	ContextFilePath() string
+	BackendName() string
+}
+
 type agentMemoryStore struct {
 	mu          sync.RWMutex
 	entries     []AgentMemoryEntry
@@ -46,10 +57,11 @@ func AgentContextFilePath(projectRoot string) string {
 }
 
 func EnsureAgentContextFile(projectRoot string) (string, error) {
-	store, err := loadAgentMemoryStore(projectRoot, defaultAgentMemoryLimit)
+	store, err := loadMnemonicAgentMemoryStore(projectRoot, defaultAgentMemoryLimit)
 	if err != nil {
 		return "", err
 	}
+	defer store.Close()
 	if err := store.SyncContextFile(); err != nil {
 		return "", err
 	}
@@ -246,6 +258,10 @@ func (s *agentMemoryStore) ContextFilePath() string {
 	return s.contextPath
 }
 
+func (s *agentMemoryStore) BackendName() string {
+	return "jsonl"
+}
+
 func (s *agentMemoryStore) appendLocked(entry AgentMemoryEntry) error {
 	line, err := json.Marshal(entry)
 	if err != nil {
@@ -354,7 +370,7 @@ func buildAgentContextDocument(summary string) string {
 		trimmedSummary = "No saved project memory yet."
 	}
 
-	return fmt.Sprintf("# Arlecchino Mnemonic Memory\n\nThis file is generated from project-local memory entries in `.arlecchino/memory/session-memory.jsonl`.\n\nUse it as a compact recall surface: durable decisions, workflow facts, bug fixes, and handoff notes. Save new durable facts with `agent_memory.save`; search or list memory before relying on older context.\n\n%s\n", trimmedSummary)
+	return fmt.Sprintf("# Arlecchino Mnemonic Memory\n\nThis file is generated from project-local Mnemonic entries in `.arlecchino/ai/mnemonic.db`.\n\nUse it as a compact TUI recall surface: durable decisions, workflow facts, bug fixes, and handoff notes. Save new durable facts with `agent_memory.save`; search or list memory before relying on older context.\n\n%s\n", trimmedSummary)
 }
 
 func normalizeAgentMemoryEntry(entry AgentMemoryEntry) AgentMemoryEntry {
@@ -496,7 +512,7 @@ func (s *ToolService) InitializeInstructions() string {
 	parts := []string{
 		"Use ide_control.* and change_journal.* for safe file operations, checkpoints, audit, and approval flow. When live bridge is available, use ide_backend.* for backend control and ide_ui.* for runtime UI state changes.",
 		"Use ide_ui.surface_read to inspect visible panels and ide_ui.open_panel/move_panel/close_panel/open_file_panel for confirmed panel control.",
-		"Use agent_memory.list/search/context early for project-local mnemonic memory and agent_memory.save after durable decisions, workflows, fixes, or context handoffs. Memory is stored under .arlecchino/memory/.",
+		"Use agent_memory.list/search/context early for project-local Mnemonic context and agent_memory.save after durable decisions, workflows, fixes, or context handoffs. Memory is shared with the AI backend through .arlecchino/ai/mnemonic.db; .arlecchino/memory/CONTEXT.md is the generated TUI recall file.",
 	}
 
 	contextSummary := strings.TrimSpace(s.AgentMemoryContext(2400))

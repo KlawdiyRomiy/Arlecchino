@@ -42,6 +42,7 @@ type ToolServiceOptions struct {
 	AuditMemoryLimit       int
 	FlightRecorderPath     string
 	FlightRecorderLimit    int
+	MemoryBackend          AgentMemoryBackend
 }
 
 type BridgeCallHandler func(method string, params map[string]any) (any, error)

@@ -433,30 +433,32 @@ func (s *ToolService) Capabilities() map[string]any {
 	}
 
 	return map[string]any{
-		"mode":                     s.modeName(),
-		"tools":                    toolNames,
-		"settings":                 s.settings,
-		"settingsDiskPath":         s.settingsPath,
-		"toolSettings":             BuildToolSettingsEntries(s.settings),
-		"permission":               s.PermissionStatus(),
-		"layoutProfiles":           layoutNames,
-		"bridgeMode":               bridgeMode,
-		"bridgeAvailable":          bridgeAvailable,
-		"sensitivePatterns":        append([]string(nil), s.sensitivePaths...),
-		"auditDiskPath":            s.audit.diskFilePath(),
-		"flightRecorderDiskPath":   s.flightRecorder.diskFilePath(),
-		"checkpointDiskPath":       projectStateFilePath(s.projectRoot, changeJournalStateFileName),
-		"layoutDiskPath":           projectStateFilePath(s.projectRoot, layoutStateFileName),
-		"memoryDiskPath":           s.memory.DiskFilePath(),
-		"memoryContextPath":        s.memory.ContextFilePath(),
-		"sessionID":                s.sessionID,
-		"runtimeHotSwitch":         true,
-		"supportsLayoutV1":         true,
-		"supportsBackendV1":        true,
-		"supportsUIControlV1":      true,
-		"supportsSurfaceRuntimeV1": true,
-		"supportsFlightRecorderV1": true,
-		"supportsMemoryV1":         true,
+		"mode":                   s.modeName(),
+		"tools":                  toolNames,
+		"settings":               s.settings,
+		"settingsDiskPath":       s.settingsPath,
+		"toolSettings":           BuildToolSettingsEntries(s.settings),
+		"permission":             s.PermissionStatus(),
+		"layoutProfiles":         layoutNames,
+		"bridgeMode":             bridgeMode,
+		"bridgeAvailable":        bridgeAvailable,
+		"sensitivePatterns":      append([]string(nil), s.sensitivePaths...),
+		"auditDiskPath":          s.audit.diskFilePath(),
+		"flightRecorderDiskPath": s.flightRecorder.diskFilePath(),
+		"checkpointDiskPath":     projectStateFilePath(s.projectRoot, changeJournalStateFileName),
+		"layoutDiskPath":         projectStateFilePath(s.projectRoot, layoutStateFileName),
+		"memoryDiskPath":         s.memory.DiskFilePath(),
+		"memoryContextPath":      s.memory.ContextFilePath(),
+		"memoryBackend":          s.memory.BackendName(),
+		"mnemonicSharedContext":  s.memory.BackendName() == "mnemonic",
+		"sessionID":              s.sessionID,
+		"runtimeHotSwitch":       true,
+		"supportsLayout":         true,
+		"supportsBackend":        true,
+		"supportsUIControl":      true,
+		"supportsSurfaceRuntime": true,
+		"supportsFlightRecorder": true,
+		"supportsMemory":         true,
 	}
 }
 
@@ -1266,15 +1268,25 @@ func (s *ToolService) bridgePreviewOpen(args map[string]any) (any, error) {
 		nestedPayload["url"] = url
 	}
 	if path := optionalStringArg(args, "path"); path != "" {
-		nestedPayload["path"] = path
+		resolvedPath, err := s.prepareBridgeFilePath("ide_ui.preview_open", path)
+		if err != nil {
+			return nil, err
+		}
+		nestedPayload["path"] = resolvedPath
 	}
 	if content := optionalStringArg(args, "content"); content != "" {
+		if err := s.requireUserApproval("ide_ui.preview_open"); err != nil {
+			return nil, err
+		}
 		nestedPayload["content"] = content
 	}
 	if language := optionalStringArg(args, "language"); language != "" {
 		nestedPayload["language"] = language
 	}
 	if html := optionalStringArg(args, "html"); html != "" {
+		if err := s.requireUserApproval("ide_ui.preview_open"); err != nil {
+			return nil, err
+		}
 		nestedPayload["htmlContent"] = html
 	}
 	if line, ok := optionalNumericArg(args, "line"); ok {

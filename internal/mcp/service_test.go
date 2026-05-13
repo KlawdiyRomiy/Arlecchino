@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"arlecchino/internal/ai/mnemonic"
 	"arlecchino/internal/dispatcher"
 	"os"
 	"path/filepath"
@@ -482,6 +483,53 @@ func TestToolService_AgentMemoryPersistsAcrossServiceRecreation(t *testing.T) {
 	}
 	if !strings.Contains(string(contextBody), entry.Content) {
 		t.Fatalf("context file should contain saved memory content")
+	}
+}
+
+func TestToolService_AgentMemoryReadsSharedMnemonicEntries(t *testing.T) {
+	root := t.TempDir()
+	store, err := mnemonic.Open(root, true)
+	if err != nil {
+		t.Fatalf("mnemonic.Open() error = %v", err)
+	}
+	if _, err := store.Save(mnemonic.Entry{
+		Type:       "workflow",
+		Source:     "user",
+		Tags:       []string{"handoff"},
+		Content:    "Shared Mnemonic context is visible to MCP terminal agents.",
+		Importance: 7,
+		Trust:      mnemonic.TrustTrusted,
+		IsLatest:   true,
+	}); err != nil {
+		t.Fatalf("mnemonic.Save() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("mnemonic.Close() error = %v", err)
+	}
+
+	service, err := NewToolService(root)
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+	defer service.Close()
+
+	items := service.SearchAgentMemory("terminal agents", []string{"handoff"}, 10)
+	if len(items) != 1 {
+		t.Fatalf("SearchAgentMemory() len = %d, want 1", len(items))
+	}
+	if items[0].Content != "Shared Mnemonic context is visible to MCP terminal agents." {
+		t.Fatalf("SearchAgentMemory() content = %q", items[0].Content)
+	}
+
+	capabilities := service.Capabilities()
+	if capabilities["memoryBackend"] != "mnemonic" {
+		t.Fatalf("memoryBackend = %v, want mnemonic", capabilities["memoryBackend"])
+	}
+	if capabilities["mnemonicSharedContext"] != true {
+		t.Fatalf("mnemonicSharedContext = %v, want true", capabilities["mnemonicSharedContext"])
+	}
+	if diskPath, ok := capabilities["memoryDiskPath"].(string); !ok || !strings.HasSuffix(diskPath, filepath.Join(".arlecchino", "ai", "mnemonic.db")) {
+		t.Fatalf("memoryDiskPath = %v", capabilities["memoryDiskPath"])
 	}
 }
 

@@ -126,7 +126,7 @@ type ToolService struct {
 	audit                     *auditLogger
 	flightRecorder            *flightRecorder
 	layouts                   *layoutRegistry
-	memory                    *agentMemoryStore
+	memory                    AgentMemoryBackend
 	sessionID                 string
 	settings                  Settings
 	settingsPath              string
@@ -240,9 +240,12 @@ func NewToolServiceWithOptions(projectRoot string, options ToolServiceOptions) (
 		return nil, err
 	}
 
-	memory, err := loadAgentMemoryStore(absRoot, defaultAgentMemoryLimit)
-	if err != nil {
-		return nil, err
+	memory := options.MemoryBackend
+	if memory == nil {
+		memory, err = loadMnemonicAgentMemoryStore(absRoot, defaultAgentMemoryLimit)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	settings, settingsPath, err := LoadSettings(options.SettingsPath)
@@ -273,6 +276,16 @@ func NewToolServiceWithOptions(projectRoot string, options ToolServiceOptions) (
 		approvalGrants:            map[string]time.Time{},
 		sensitivePaths:            append([]string(nil), defaultSensitivePathPatterns...),
 	}, nil
+}
+
+func (s *ToolService) Close() error {
+	if s == nil || s.memory == nil {
+		return nil
+	}
+	if closer, ok := s.memory.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 func AllToolDefinitions() []ToolDefinition {

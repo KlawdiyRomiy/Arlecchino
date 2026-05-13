@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"arlecchino/internal/ai"
 	"arlecchino/internal/composer"
 	"arlecchino/internal/execution"
 	"arlecchino/internal/indexer/core"
@@ -41,6 +42,7 @@ type ProjectRuntimeSession struct {
 	coreEngine *core.Engine
 	brain      completionBrain
 	lspManager *indexerlsp.Manager
+	aiSession  *ai.ProjectSession
 
 	projectPath       string
 	launchProjectPath string
@@ -101,6 +103,7 @@ func defaultProjectSessionFromApp(a *App) *ProjectRuntimeSession {
 		coreEngine:       a.coreEngine,
 		brain:            a.brain,
 		lspManager:       a.lspManager,
+		aiSession:        nil,
 		projectPath:      a.projectPath,
 		projectCtx:       a.projectCtx,
 		projectCancel:    a.projectCancel,
