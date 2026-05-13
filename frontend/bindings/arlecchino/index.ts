@@ -51,6 +51,7 @@ export {
     LSPWorkspaceEdit,
     LanguageInfoResult,
     LanguagePrediction,
+    MCPSettingsStatus,
     NativeContextMenuItem,
     NativeContextMenuRequest,
     NativeContextMenuResponse,
