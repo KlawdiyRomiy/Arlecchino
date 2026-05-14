@@ -870,6 +870,9 @@ file/code panels, browser preview.
   sandbox и shared operator context.
 - `frontend/src/components/AIChatPanel.tsx` сейчас фактически placeholder: есть локальные
   message states и mock response, но rendered UI показывает Coming Soon.
+- Backend AI context already has typed Mnemonic + Skill Residency contracts:
+  `AIContextRequest.includeMnemonic`, `includeMCP`, `includeSkills`,
+  `AIContextSnapshot.skills`, and `AIContextSummary.skillCount`.
 - `frontend/src/components/layout/MainLayoutPanelRenderer.tsx` уже рендерит `aiChat`
   panel через `FloatingPanel`.
 - `frontend/src/stores/previewWindowStore.ts` уже имеет surface type `chat`.
@@ -904,6 +907,19 @@ sync, native menus/context menus - для команды hub mode.
   `ide_ui.preview_open`;
 - hub timeline reads from Agent Flight Recorder;
 - provider chat uses typed backend service, not mock frontend state.
+- AI chat panel must not read `.arlecchino/skills/**/SKILL.md`, references, or
+  scripts directly. Skill context must come only from backend-provided compact
+  trusted resident digests in `AIContextSnapshot.skills`.
+- Treat Skill Residency as context disclosure, not permission. UI controls can
+  request `includeSkills`, show included skill count/disclosure, and surface
+  trusted/stale/active status later, but tool approval remains MCP/user-owned.
+- Keep `pin`, `activate`, `dismiss`, and `import` out of the placeholder chat
+  surface until there is a dedicated review/inspector flow. The chat panel may
+  show read-only diagnostics after the generated Wails binding contract is
+  locked.
+- Generated bindings under `frontend/bindings/**` are the source for these
+  frontend types; do not hand-maintain parallel TypeScript interfaces for AI
+  context snapshots.
 
 ### Risks And Checks
 
@@ -912,6 +928,17 @@ states: `tuiModeActive` в `terminalStore` остается terminal-first state
 должен жить в shell/surface store. Проверки: запуск Codex в terminal включает TUI mode;
 включение Arlehub открывает GUI hub; explorer/git/file helper panels открываются вокруг
 hub; выход из hub возвращает editor plane.
+
+AI chat-specific checks before making it visible:
+
+- `cd frontend && npm run typecheck` after any backend AI context shape change.
+- Backend prompt tests must prove full skill bodies and generated/imported
+  candidates do not reach provider prompts.
+- UI should distinguish requested context from included context: Mnemonic can be
+  disabled, skills can be inactive/stale, and MCP metadata can be unavailable.
+- No persisted placeholder confidence: visible chat history should be tied to a
+  real backend run/envelope, cancellation state, provider id, and disclosure
+  summary.
 
 ## 7. Surface Snapshots
 
