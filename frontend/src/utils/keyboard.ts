@@ -388,7 +388,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Open terminal search.",
     group: "Terminal",
     scope: "terminal",
-    defaultShortcuts: ["cmd+f", "ctrl+f", "ctrl+shift+f"],
+    defaultShortcuts: ["cmd+f"],
   },
   {
     id: "terminal.findNext",
@@ -396,7 +396,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Jump to the next terminal search result.",
     group: "Terminal",
     scope: "terminal",
-    defaultShortcuts: ["cmd+g", "ctrl+g", "f3"],
+    defaultShortcuts: [],
   },
   {
     id: "terminal.findPrevious",
@@ -404,7 +404,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     description: "Jump to the previous terminal search result.",
     group: "Terminal",
     scope: "terminal",
-    defaultShortcuts: ["cmd+shift+g", "ctrl+shift+g", "shift+f3"],
+    defaultShortcuts: [],
   },
   {
     id: "terminal.newTab",

@@ -23,11 +23,7 @@ export const shouldBypassGlobalFindShortcuts = (
     return false;
   }
 
-  return (
-    shortcuts.terminalFind(event) ||
-    shortcuts.terminalFindNext(event) ||
-    shortcuts.terminalFindPrev(event)
-  );
+  return shortcuts.terminalFind(event);
 };
 
 interface TerminalShortcutContextInput {

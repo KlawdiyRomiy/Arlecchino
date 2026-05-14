@@ -66,6 +66,15 @@ const createSearchViewState = (
 const PANEL_DROP_SETTLING_CONTAINER_SELECTOR = "[data-panel-drop-settling]";
 const PANEL_DROP_SETTLING_SELECTOR = '[data-panel-drop-settling="true"]';
 
+const getTerminalSearchDecorations = (isDark: boolean) => ({
+  matchBackground: isDark ? "#FDE047" : "#FDE68A",
+  matchBorder: isDark ? "#FACC15" : "#92400E",
+  matchOverviewRuler: isDark ? "#FACC15" : "#D97706",
+  activeMatchBackground: isDark ? "#FB923C" : "#F59E0B",
+  activeMatchBorder: isDark ? "#FFFFFF" : "#111827",
+  activeMatchColorOverviewRuler: isDark ? "#FB923C" : "#F97316",
+});
+
 export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   onAddTab,
   onOpenFileRef,
@@ -193,6 +202,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           const normalizedQuery = query.trim();
           if (!normalizedQuery) {
             const emptyStats = createEmptyTerminalSearchStats("");
+            active.searchAddon.clearDecorations();
             searchStatsBySessionRef.current.set(active.id, emptyStats);
             searchQueryRef.current = "";
             setSearchState((prev) => ({
@@ -217,6 +227,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
           const searchOptions = {
             incremental: true,
             caseSensitive: false,
+            decorations: getTerminalSearchDecorations(isDark),
           };
 
           const found =
@@ -261,10 +272,11 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
         },
       );
     },
-    [activeSession],
+    [activeSession, isDark],
   );
 
   const closeSearchPanel = useCallback(() => {
+    activeSession?.searchAddon.clearDecorations();
     setSearchState((prev) => ({ ...prev, visible: false }));
     activeSession?.terminal.focus();
   }, [activeSession]);
@@ -1788,7 +1800,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
   const ghost = getGhostTextStyle();
   const searchStatusText =
     searchState.query.trim() === ""
-      ? "type to search"
+      ? ""
       : searchState.noMatches
         ? "no matches"
         : `${searchState.currentMatch}/${searchState.totalMatches}`;
@@ -1907,18 +1919,20 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
               fontFamily: "'JetBrains Mono', monospace",
             }}
           />
-          <span
-            data-testid="terminal-search-status"
-            style={{
-              minWidth: "84px",
-              textAlign: "center",
-              fontSize: "11px",
-              color: searchStatusColor,
-              fontFamily: "'JetBrains Mono', monospace",
-            }}
-          >
-            {searchStatusText}
-          </span>
+          {searchStatusText && (
+            <span
+              data-testid="terminal-search-status"
+              style={{
+                minWidth: "48px",
+                textAlign: "center",
+                fontSize: "11px",
+                color: searchStatusColor,
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              {searchStatusText}
+            </span>
+          )}
           <button
             type="button"
             onClick={() =>

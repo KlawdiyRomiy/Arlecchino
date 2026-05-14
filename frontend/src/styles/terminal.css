@@ -19,3 +19,20 @@
   font-variant-ligatures: none;
   text-rendering: optimizeSpeed;
 }
+
+.xterm .xterm-find-result-decoration {
+  border-radius: 2px;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 72%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--surface-canvas) 72%, transparent);
+  opacity: 0.88;
+  pointer-events: none;
+}
+
+.xterm .xterm-find-active-result-decoration {
+  box-shadow:
+    inset 0 0 0 1px var(--surface-canvas),
+    0 0 0 2px var(--text-primary),
+    0 0 14px color-mix(in srgb, var(--accent-primary) 48%, transparent);
+  opacity: 0.96;
+}
