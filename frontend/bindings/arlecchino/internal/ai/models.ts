@@ -439,6 +439,7 @@ export class AIChatRunRequest {
     "model"?: string;
     "includeMnemonic": boolean;
     "includeMCP": boolean;
+    "includeSkills": boolean;
     "maxTokens"?: number;
     "context"?: AIContextRequest;
 
@@ -456,6 +457,9 @@ export class AIChatRunRequest {
         if (!("includeMCP" in $$source)) {
             this["includeMCP"] = false;
         }
+        if (!("includeSkills" in $$source)) {
+            this["includeSkills"] = false;
+        }
 
         Object.assign(this, $$source);
     }
@@ -464,10 +468,10 @@ export class AIChatRunRequest {
      * Creates a new AIChatRunRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): AIChatRunRequest {
-        const $$createField8_0 = $$createType16;
+        const $$createField9_0 = $$createType16;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("context" in $$parsedSource) {
-            $$parsedSource["context"] = $$createField8_0($$parsedSource["context"]);
+            $$parsedSource["context"] = $$createField9_0($$parsedSource["context"]);
         }
         return new AIChatRunRequest($$parsedSource as Partial<AIChatRunRequest>);
     }
@@ -678,6 +682,7 @@ export class AIContextRequest {
     "terminalWorkDir"?: string;
     "includeMnemonic": boolean;
     "includeMCP": boolean;
+    "includeSkills": boolean;
     "maxBytes"?: number;
     "maxSnippets"?: number;
 
@@ -691,6 +696,9 @@ export class AIContextRequest {
         }
         if (!("includeMCP" in $$source)) {
             this["includeMCP"] = false;
+        }
+        if (!("includeSkills" in $$source)) {
+            this["includeSkills"] = false;
         }
 
         Object.assign(this, $$source);
@@ -723,6 +731,7 @@ export class AIContextSnapshot {
     "snippetBreakdown"?: AIContextSnippetBreakdown[];
     "mcpContext"?: AIMCPContextPlane | null;
     "mnemonic"?: AIMnemonicEntry[];
+    "skills"?: AISkillContext[];
     "dataCategories": string[];
     "redaction": AIRedactionSummary;
     "providerEnvelope"?: AIProviderEnvelope | null;
@@ -776,12 +785,13 @@ export class AIContextSnapshot {
         const $$createField14_0 = $$createType24;
         const $$createField15_0 = $$createType26;
         const $$createField16_0 = $$createType28;
-        const $$createField17_0 = $$createType19;
-        const $$createField18_0 = $$createType20;
-        const $$createField19_0 = $$createType8;
-        const $$createField20_0 = $$createType29;
-        const $$createField21_0 = $$createType11;
-        const $$createField22_0 = $$createType12;
+        const $$createField17_0 = $$createType30;
+        const $$createField18_0 = $$createType19;
+        const $$createField19_0 = $$createType20;
+        const $$createField20_0 = $$createType8;
+        const $$createField21_0 = $$createType31;
+        const $$createField22_0 = $$createType11;
+        const $$createField23_0 = $$createType12;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("snippets" in $$parsedSource) {
             $$parsedSource["snippets"] = $$createField13_0($$parsedSource["snippets"]);
@@ -795,23 +805,26 @@ export class AIContextSnapshot {
         if ("mnemonic" in $$parsedSource) {
             $$parsedSource["mnemonic"] = $$createField16_0($$parsedSource["mnemonic"]);
         }
+        if ("skills" in $$parsedSource) {
+            $$parsedSource["skills"] = $$createField17_0($$parsedSource["skills"]);
+        }
         if ("dataCategories" in $$parsedSource) {
-            $$parsedSource["dataCategories"] = $$createField17_0($$parsedSource["dataCategories"]);
+            $$parsedSource["dataCategories"] = $$createField18_0($$parsedSource["dataCategories"]);
         }
         if ("redaction" in $$parsedSource) {
-            $$parsedSource["redaction"] = $$createField18_0($$parsedSource["redaction"]);
+            $$parsedSource["redaction"] = $$createField19_0($$parsedSource["redaction"]);
         }
         if ("providerEnvelope" in $$parsedSource) {
-            $$parsedSource["providerEnvelope"] = $$createField19_0($$parsedSource["providerEnvelope"]);
+            $$parsedSource["providerEnvelope"] = $$createField20_0($$parsedSource["providerEnvelope"]);
         }
         if ("disclosure" in $$parsedSource) {
-            $$parsedSource["disclosure"] = $$createField20_0($$parsedSource["disclosure"]);
+            $$parsedSource["disclosure"] = $$createField21_0($$parsedSource["disclosure"]);
         }
         if ("disclosureSummary" in $$parsedSource) {
-            $$parsedSource["disclosureSummary"] = $$createField21_0($$parsedSource["disclosureSummary"]);
+            $$parsedSource["disclosureSummary"] = $$createField22_0($$parsedSource["disclosureSummary"]);
         }
         if ("approvalSummary" in $$parsedSource) {
-            $$parsedSource["approvalSummary"] = $$createField22_0($$parsedSource["approvalSummary"]);
+            $$parsedSource["approvalSummary"] = $$createField23_0($$parsedSource["approvalSummary"]);
         }
         return new AIContextSnapshot($$parsedSource as Partial<AIContextSnapshot>);
     }
@@ -883,6 +896,7 @@ export class AIContextSummary {
     "language"?: string;
     "snippetCount": number;
     "mnemonicCount": number;
+    "skillCount": number;
     "mcpIncluded": boolean;
     "mcpContext"?: AIMCPContextPlane | null;
     "snippetBreakdown"?: AIContextSnippetBreakdown[];
@@ -905,6 +919,9 @@ export class AIContextSummary {
         }
         if (!("mnemonicCount" in $$source)) {
             this["mnemonicCount"] = 0;
+        }
+        if (!("skillCount" in $$source)) {
+            this["skillCount"] = 0;
         }
         if (!("mcpIncluded" in $$source)) {
             this["mcpIncluded"] = false;
@@ -932,26 +949,26 @@ export class AIContextSummary {
      * Creates a new AIContextSummary instance from a string or object.
      */
     static createFrom($$source: any = {}): AIContextSummary {
-        const $$createField10_0 = $$createType26;
-        const $$createField11_0 = $$createType24;
-        const $$createField12_0 = $$createType19;
-        const $$createField13_0 = $$createType20;
-        const $$createField14_0 = $$createType11;
+        const $$createField11_0 = $$createType26;
+        const $$createField12_0 = $$createType24;
+        const $$createField13_0 = $$createType19;
+        const $$createField14_0 = $$createType20;
+        const $$createField15_0 = $$createType11;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("mcpContext" in $$parsedSource) {
-            $$parsedSource["mcpContext"] = $$createField10_0($$parsedSource["mcpContext"]);
+            $$parsedSource["mcpContext"] = $$createField11_0($$parsedSource["mcpContext"]);
         }
         if ("snippetBreakdown" in $$parsedSource) {
-            $$parsedSource["snippetBreakdown"] = $$createField11_0($$parsedSource["snippetBreakdown"]);
+            $$parsedSource["snippetBreakdown"] = $$createField12_0($$parsedSource["snippetBreakdown"]);
         }
         if ("dataCategories" in $$parsedSource) {
-            $$parsedSource["dataCategories"] = $$createField12_0($$parsedSource["dataCategories"]);
+            $$parsedSource["dataCategories"] = $$createField13_0($$parsedSource["dataCategories"]);
         }
         if ("redaction" in $$parsedSource) {
-            $$parsedSource["redaction"] = $$createField13_0($$parsedSource["redaction"]);
+            $$parsedSource["redaction"] = $$createField14_0($$parsedSource["redaction"]);
         }
         if ("disclosureSummary" in $$parsedSource) {
-            $$parsedSource["disclosureSummary"] = $$createField14_0($$parsedSource["disclosureSummary"]);
+            $$parsedSource["disclosureSummary"] = $$createField15_0($$parsedSource["disclosureSummary"]);
         }
         return new AIContextSummary($$parsedSource as Partial<AIContextSummary>);
     }
@@ -982,8 +999,8 @@ export class AIContinuationResponse {
      * Creates a new AIContinuationResponse instance from a string or object.
      */
     static createFrom($$source: any = {}): AIContinuationResponse {
-        const $$createField5_0 = $$createType30;
-        const $$createField6_0 = $$createType32;
+        const $$createField5_0 = $$createType32;
+        const $$createField6_0 = $$createType34;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("context" in $$parsedSource) {
             $$parsedSource["context"] = $$createField5_0($$parsedSource["context"]);
@@ -1015,7 +1032,7 @@ export class AIDiscoveryResult {
      * Creates a new AIDiscoveryResult instance from a string or object.
      */
     static createFrom($$source: any = {}): AIDiscoveryResult {
-        const $$createField0_0 = $$createType34;
+        const $$createField0_0 = $$createType36;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("providers" in $$parsedSource) {
             $$parsedSource["providers"] = $$createField0_0($$parsedSource["providers"]);
@@ -1208,7 +1225,7 @@ export class AIEmbeddingStatus {
      * Creates a new AIEmbeddingStatus instance from a string or object.
      */
     static createFrom($$source: any = {}): AIEmbeddingStatus {
-        const $$createField2_0 = $$createType36;
+        const $$createField2_0 = $$createType38;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("providers" in $$parsedSource) {
             $$parsedSource["providers"] = $$createField2_0($$parsedSource["providers"]);
@@ -1275,7 +1292,7 @@ export class AIMCPContextPlane {
      * Creates a new AIMCPContextPlane instance from a string or object.
      */
     static createFrom($$source: any = {}): AIMCPContextPlane {
-        const $$createField7_0 = $$createType38;
+        const $$createField7_0 = $$createType40;
         const $$createField13_0 = $$createType19;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("toolGroups" in $$parsedSource) {
@@ -1390,8 +1407,8 @@ export class AIMnemonicEntry {
      */
     static createFrom($$source: any = {}): AIMnemonicEntry {
         const $$createField3_0 = $$createType19;
-        const $$createField16_0 = $$createType39;
-        const $$createField17_0 = $$createType41;
+        const $$createField16_0 = $$createType41;
+        const $$createField17_0 = $$createType43;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("tags" in $$parsedSource) {
             $$parsedSource["tags"] = $$createField3_0($$parsedSource["tags"]);
@@ -1441,8 +1458,8 @@ export class AIMnemonicEntryInput {
      */
     static createFrom($$source: any = {}): AIMnemonicEntryInput {
         const $$createField3_0 = $$createType19;
-        const $$createField11_0 = $$createType39;
-        const $$createField12_0 = $$createType41;
+        const $$createField11_0 = $$createType41;
+        const $$createField12_0 = $$createType43;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("tags" in $$parsedSource) {
             $$parsedSource["tags"] = $$createField3_0($$parsedSource["tags"]);
@@ -1482,8 +1499,8 @@ export class AIMnemonicEntryPatch {
      */
     static createFrom($$source: any = {}): AIMnemonicEntryPatch {
         const $$createField2_0 = $$createType19;
-        const $$createField10_0 = $$createType39;
-        const $$createField11_0 = $$createType41;
+        const $$createField10_0 = $$createType41;
+        const $$createField11_0 = $$createType43;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("tags" in $$parsedSource) {
             $$parsedSource["tags"] = $$createField2_0($$parsedSource["tags"]);
@@ -1768,6 +1785,85 @@ export class AIRedactionSummary {
     }
 }
 
+export class AISkillContext {
+    "skillId": string;
+    "name": string;
+    "description"?: string;
+    "sourceKind": string;
+    "trustState": string;
+    "state"?: string;
+    "contentHash"?: string;
+    "digestVersion": number;
+    "summary": string;
+    "activationRules"?: string[];
+    "operatingReminders"?: string[];
+    "avoidRules"?: string[];
+    "toolHints"?: string[];
+    "verificationHints"?: string[];
+    "resourcesIndex"?: string[];
+    "topicMatch"?: string;
+    "confidence"?: number;
+    "activatedAt"?: string;
+    "lastUsedAt"?: string;
+    "decayDeadline"?: string;
+
+    /** Creates a new AISkillContext instance. */
+    constructor($$source: Partial<AISkillContext> = {}) {
+        if (!("skillId" in $$source)) {
+            this["skillId"] = "";
+        }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("sourceKind" in $$source)) {
+            this["sourceKind"] = "";
+        }
+        if (!("trustState" in $$source)) {
+            this["trustState"] = "";
+        }
+        if (!("digestVersion" in $$source)) {
+            this["digestVersion"] = 0;
+        }
+        if (!("summary" in $$source)) {
+            this["summary"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new AISkillContext instance from a string or object.
+     */
+    static createFrom($$source: any = {}): AISkillContext {
+        const $$createField9_0 = $$createType19;
+        const $$createField10_0 = $$createType19;
+        const $$createField11_0 = $$createType19;
+        const $$createField12_0 = $$createType19;
+        const $$createField13_0 = $$createType19;
+        const $$createField14_0 = $$createType19;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("activationRules" in $$parsedSource) {
+            $$parsedSource["activationRules"] = $$createField9_0($$parsedSource["activationRules"]);
+        }
+        if ("operatingReminders" in $$parsedSource) {
+            $$parsedSource["operatingReminders"] = $$createField10_0($$parsedSource["operatingReminders"]);
+        }
+        if ("avoidRules" in $$parsedSource) {
+            $$parsedSource["avoidRules"] = $$createField11_0($$parsedSource["avoidRules"]);
+        }
+        if ("toolHints" in $$parsedSource) {
+            $$parsedSource["toolHints"] = $$createField12_0($$parsedSource["toolHints"]);
+        }
+        if ("verificationHints" in $$parsedSource) {
+            $$parsedSource["verificationHints"] = $$createField13_0($$parsedSource["verificationHints"]);
+        }
+        if ("resourcesIndex" in $$parsedSource) {
+            $$parsedSource["resourcesIndex"] = $$createField14_0($$parsedSource["resourcesIndex"]);
+        }
+        return new AISkillContext($$parsedSource as Partial<AISkillContext>);
+    }
+}
+
 export class AIStatus {
     "enabled": boolean;
     "mnemonicEnabled": boolean;
@@ -1800,7 +1896,7 @@ export class AIStatus {
      * Creates a new AIStatus instance from a string or object.
      */
     static createFrom($$source: any = {}): AIStatus {
-        const $$createField2_0 = $$createType34;
+        const $$createField2_0 = $$createType36;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("providers" in $$parsedSource) {
             $$parsedSource["providers"] = $$createField2_0($$parsedSource["providers"]);
@@ -1916,7 +2012,7 @@ export class AIToolProposal {
      * Creates a new AIToolProposal instance from a string or object.
      */
     static createFrom($$source: any = {}): AIToolProposal {
-        const $$createField4_0 = $$createType39;
+        const $$createField4_0 = $$createType41;
         const $$createField8_0 = $$createType19;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("arguments" in $$parsedSource) {
@@ -2014,16 +2110,18 @@ const $$createType25 = AIMCPContextPlane.createFrom;
 const $$createType26 = $Create.Nullable($$createType25);
 const $$createType27 = AIMnemonicEntry.createFrom;
 const $$createType28 = $Create.Array($$createType27);
-const $$createType29 = AIContextDisclosure.createFrom;
-const $$createType30 = AIContextSnapshot.createFrom;
-const $$createType31 = AIEgressRecord.createFrom;
-const $$createType32 = $Create.Nullable($$createType31);
-const $$createType33 = providers$0.AIProviderDescriptor.createFrom;
-const $$createType34 = $Create.Array($$createType33);
-const $$createType35 = AIEmbeddingProviderDescriptor.createFrom;
+const $$createType29 = AISkillContext.createFrom;
+const $$createType30 = $Create.Array($$createType29);
+const $$createType31 = AIContextDisclosure.createFrom;
+const $$createType32 = AIContextSnapshot.createFrom;
+const $$createType33 = AIEgressRecord.createFrom;
+const $$createType34 = $Create.Nullable($$createType33);
+const $$createType35 = providers$0.AIProviderDescriptor.createFrom;
 const $$createType36 = $Create.Array($$createType35);
-const $$createType37 = AIMCPToolGroupSummary.createFrom;
+const $$createType37 = AIEmbeddingProviderDescriptor.createFrom;
 const $$createType38 = $Create.Array($$createType37);
-const $$createType39 = $Create.Map($Create.Any, $Create.Any);
-const $$createType40 = AIMnemonicRelationship.createFrom;
-const $$createType41 = $Create.Array($$createType40);
+const $$createType39 = AIMCPToolGroupSummary.createFrom;
+const $$createType40 = $Create.Array($$createType39);
+const $$createType41 = $Create.Map($Create.Any, $Create.Any);
+const $$createType42 = AIMnemonicRelationship.createFrom;
+const $$createType43 = $Create.Array($$createType42);

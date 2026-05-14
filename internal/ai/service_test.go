@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -215,7 +216,7 @@ func TestMnemonicIsProjectLocalAndClearable(t *testing.T) {
 	}
 }
 
-func TestMCPAgentMemoryFeedsMnemonicContext(t *testing.T) {
+func TestMCPAgentMemoryDoesNotAutoPromoteIntoAIContext(t *testing.T) {
 	projectRoot := t.TempDir()
 	t.Setenv("ARLECCHINO_MCP_SETTINGS_PATH", filepath.Join(t.TempDir(), "mcp-settings.json"))
 	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "shared-memory-code")
@@ -239,6 +240,13 @@ func TestMCPAgentMemoryFeedsMnemonicContext(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save MCP memory: %v", err)
 	}
+	memoryContext, err := toolService.CallTool("agent_memory.context", map[string]any{"max_chars": 800})
+	if err != nil {
+		t.Fatalf("agent_memory.context: %v", err)
+	}
+	if !strings.Contains(fmt.Sprint(memoryContext), "TUI agents should reuse Mnemonic context") {
+		t.Fatalf("MCP memory context did not include saved memory: %#v", memoryContext)
+	}
 
 	service := newTestService(t, nil)
 	if _, err := service.OpenProject("main", projectRoot); err != nil {
@@ -248,17 +256,10 @@ func TestMCPAgentMemoryFeedsMnemonicContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ContextPreview: %v", err)
 	}
-	found := false
 	for _, entry := range snapshot.Mnemonic {
 		if strings.Contains(entry.Content, "TUI agents should reuse Mnemonic context") {
-			found = true
-			if entry.Source != "mcp-agent-memory" {
-				t.Fatalf("MCP memory source = %q", entry.Source)
-			}
+			t.Fatalf("generated MCP memory leaked into trusted AI context: %#v", snapshot.Mnemonic)
 		}
-	}
-	if !found {
-		t.Fatalf("AI Mnemonic context did not include MCP memory: %#v", snapshot.Mnemonic)
 	}
 }
 
@@ -469,6 +470,16 @@ func TestBuildChatRunEmitsToolProposalWithoutExecution(t *testing.T) {
 	}
 	if !hasMCPToolProposal(final.ToolProposals, "ide_ui.open_file_panel") {
 		t.Fatalf("expected metadata-only MCP proposal: %#v", final.ToolProposals)
+	}
+	for _, toolName := range []string{
+		"ide_ui.surface_read",
+		"ide_ui.open_panel",
+		"ide_ui.move_panel",
+		"ide_ui.close_panel",
+	} {
+		if !hasMCPToolProposal(final.ToolProposals, toolName) {
+			t.Fatalf("expected metadata-only MCP proposal for %s: %#v", toolName, final.ToolProposals)
+		}
 	}
 	eventNames := events.snapshot()
 	if !containsEvent(eventNames, "ai:chat:tool-proposed") {

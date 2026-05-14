@@ -121,6 +121,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	req.Context.Prompt = req.Prompt
 	req.Context.IncludeMnemonic = req.IncludeMnemonic
 	req.Context.IncludeMCP = req.IncludeMCP || req.Context.IncludeMCP
+	req.Context.IncludeSkills = req.IncludeSkills || req.Context.IncludeSkills
 	snapshot := s.buildContextSnapshot(project, req.Context)
 	contextSummary := summarizeContextSnapshot(snapshot)
 	s.updateRun(runID, func(run *AIChatRun) {
@@ -396,24 +397,32 @@ func toolProposalsForAction(action AIChatAction, approval AIApprovalSummary, pro
 			Status:               AIToolProposalStatusProposed,
 			ExecutionState:       AIToolExecutionStateNotExecutable,
 		},
-		{
-			ID:                   "tool-proposal-mcp-ui-context",
-			Name:                 "mcp_ui_context_action",
-			Description:          "Propose an MCP UI/context action. Actual MCP execution requires separate MCP approval.",
-			Policy:               AIToolPolicyApprovalRequired,
-			Kind:                 AIToolKindMCP,
-			MCPToolName:          "ide_ui.open_file_panel",
-			ScopeSummary:         "Project-scoped MCP proposal; AI backend records metadata only.",
-			RiskLevel:            AIToolRiskMedium,
-			ApprovalModeRequired: AIApprovalModeFullAccess,
-			Status:               AIToolProposalStatusProposed,
-			ExecutionState:       AIToolExecutionStateNotExecutable,
-		},
+		mcpToolProposal("tool-proposal-mcp-surface-read", "mcp_surface_read", "Inspect visible IDE panels and surface state through MCP.", "ide_ui.surface_read"),
+		mcpToolProposal("tool-proposal-mcp-open-file-panel", "mcp_open_file_panel", "Open a project file in the visible side code panel through MCP.", "ide_ui.open_file_panel"),
+		mcpToolProposal("tool-proposal-mcp-open-panel", "mcp_open_panel", "Open Explorer, Git, Problems, AI Chat, terminal, code, or preview panels through MCP.", "ide_ui.open_panel"),
+		mcpToolProposal("tool-proposal-mcp-move-panel", "mcp_move_panel", "Move or resize visible IDE panels through MCP.", "ide_ui.move_panel"),
+		mcpToolProposal("tool-proposal-mcp-close-panel", "mcp_close_panel", "Close visible IDE panels through MCP.", "ide_ui.close_panel"),
 	}
 	for i := range proposals {
 		proposals[i] = evaluateToolProposal(proposals[i], approval, projectRoot)
 	}
 	return proposals
+}
+
+func mcpToolProposal(id, name, description, toolName string) AIToolProposal {
+	return AIToolProposal{
+		ID:                   id,
+		Name:                 name,
+		Description:          description,
+		Policy:               AIToolPolicyApprovalRequired,
+		Kind:                 AIToolKindMCP,
+		MCPToolName:          toolName,
+		ScopeSummary:         "Project-scoped MCP proposal; AI backend records metadata only.",
+		RiskLevel:            AIToolRiskMedium,
+		ApprovalModeRequired: AIApprovalModeFullAccess,
+		Status:               AIToolProposalStatusProposed,
+		ExecutionState:       AIToolExecutionStateNotExecutable,
+	}
 }
 
 func evaluateToolProposal(proposal AIToolProposal, approval AIApprovalSummary, projectRoot string) AIToolProposal {

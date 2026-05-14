@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 	"arlecchino/internal/ai/mnemonic"
 	"arlecchino/internal/ai/providers"
+	"arlecchino/internal/ai/skills"
 
 	"github.com/google/uuid"
 )
@@ -48,6 +50,7 @@ type ProjectSession struct {
 	ID          string
 	ProjectRoot string
 	Mnemonic    *mnemonic.Store
+	Skills      *skills.Store
 	Egress      *EgressLedger
 }
 
@@ -125,9 +128,9 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 	if projectID == "" {
 		projectID = "main"
 	}
-	projectRoot = strings.TrimSpace(projectRoot)
-	if projectRoot == "" {
-		return nil, fmt.Errorf("project root is empty")
+	projectRoot, err := canonicalProjectRoot(projectRoot)
+	if err != nil {
+		return nil, err
 	}
 	s.waitForRuns(s.cancelRuns(projectID))
 	defaultEnabled := s.currentSettings().MnemonicDefaultEnabled
@@ -135,8 +138,19 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 	if err != nil {
 		return nil, err
 	}
+	skillStore, err := skills.Open(projectRoot)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	if _, err := skillStore.SyncProjectSkills(); err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
 	ledger, err := openEgressLedger(projectRoot)
 	if err != nil {
+		_ = skillStore.Close()
 		_ = store.Close()
 		return nil, err
 	}
@@ -144,6 +158,7 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 		ID:          projectID,
 		ProjectRoot: projectRoot,
 		Mnemonic:    store,
+		Skills:      skillStore,
 		Egress:      ledger,
 	}
 	s.mu.Lock()
@@ -172,10 +187,21 @@ func (s *Service) CloseProject(projectID string) error {
 }
 
 func (p *ProjectSession) Close() error {
-	if p == nil || p.Mnemonic == nil {
+	if p == nil {
 		return nil
 	}
-	return p.Mnemonic.Close()
+	var firstErr error
+	if p.Skills != nil {
+		if err := p.Skills.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if p.Mnemonic != nil {
+		if err := p.Mnemonic.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (s *Service) Status(projectID string) AIStatus {
@@ -401,8 +427,21 @@ func (s *Service) SetMnemonicEnabled(projectID string, enabled bool) (AIStatus, 
 	if project == nil || project.Mnemonic == nil {
 		return AIStatus{}, fmt.Errorf("AI project session is not open")
 	}
+	if !enabled {
+		s.waitForRuns(s.cancelRuns(projectID))
+	}
 	if err := project.Mnemonic.SetEnabled(enabled); err != nil {
 		return AIStatus{}, err
+	}
+	if !enabled {
+		if project.Skills != nil {
+			if err := project.Skills.ClearRuntime(); err != nil {
+				return AIStatus{}, err
+			}
+		}
+		if err := resetMnemonicContextFile(project.ProjectRoot); err != nil {
+			return AIStatus{}, err
+		}
 	}
 	return s.Status(projectID), nil
 }
@@ -412,7 +451,19 @@ func (s *Service) ClearMnemonic(projectID string) error {
 	if project == nil || project.Mnemonic == nil {
 		return nil
 	}
-	return project.Mnemonic.Clear()
+	s.waitForRuns(s.cancelRuns(projectID))
+	if err := project.Mnemonic.Clear(); err != nil {
+		return err
+	}
+	if project.Skills != nil {
+		if err := project.Skills.ClearRuntime(); err != nil {
+			return err
+		}
+	}
+	if err := resetMnemonicContextFile(project.ProjectRoot); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) ClearState(projectID string) error {
@@ -432,6 +483,14 @@ func (s *Service) ClearState(projectID string) error {
 			if err := project.Mnemonic.Clear(); err != nil {
 				return err
 			}
+		}
+		if project.Skills != nil {
+			if err := project.Skills.ClearRuntime(); err != nil {
+				return err
+			}
+		}
+		if err := resetMnemonicContextFile(project.ProjectRoot); err != nil {
+			return err
 		}
 	}
 	s.mu.Lock()
@@ -554,6 +613,19 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 			snapshot.DataCategories = append(snapshot.DataCategories, "mnemonic")
 		}
 	}
+	if req.IncludeSkills && project.Skills != nil && project.Mnemonic != nil && project.Mnemonic.Enabled() {
+		items, _ := project.Skills.Context(skills.ContextRequest{
+			WorkspaceRootHash: snapshot.ProjectPathHash,
+			AgentSurface:      string(snapshot.Capability),
+			Limit:             6,
+		})
+		for _, item := range items {
+			snapshot.Skills = append(snapshot.Skills, fromSkillContext(item))
+		}
+		if len(snapshot.Skills) > 0 {
+			snapshot.DataCategories = append(snapshot.DataCategories, "skill_residency")
+		}
+	}
 	snapshot = newPrivacyGate().SanitizeSnapshot(snapshot, req.MaxBytes, req.MaxSnippets)
 	snapshot.SnippetBreakdown = snippetBreakdown(snapshot.Snippets)
 	snapshot.Disclosure = AIContextDisclosure{
@@ -579,6 +651,7 @@ func summarizeContextSnapshot(snapshot AIContextSnapshot) AIContextSummary {
 		Language:          snapshot.Language,
 		SnippetCount:      len(snapshot.Snippets),
 		MnemonicCount:     len(snapshot.Mnemonic),
+		SkillCount:        len(snapshot.Skills),
 		MCPIncluded:       snapshot.MCPContext != nil && snapshot.MCPContext.Available,
 		MCPContext:        snapshot.MCPContext,
 		SnippetBreakdown:  snapshot.SnippetBreakdown,
@@ -875,7 +948,49 @@ func buildPromptFromSnapshot(snapshot AIContextSnapshot) string {
 		}
 		parts = append(parts, "Mnemonic context:\n"+strings.Join(lines, "\n"))
 	}
+	if len(snapshot.Skills) > 0 {
+		lines := []string{}
+		for _, skill := range snapshot.Skills {
+			line := "- " + skill.Name + ": " + skill.Summary
+			if len(skill.OperatingReminders) > 0 {
+				line += " | reminders: " + strings.Join(skill.OperatingReminders, "; ")
+			}
+			if len(skill.AvoidRules) > 0 {
+				line += " | avoid: " + strings.Join(skill.AvoidRules, "; ")
+			}
+			if len(skill.ToolHints) > 0 {
+				line += " | tool hints: " + strings.Join(skill.ToolHints, ", ")
+			}
+			lines = append(lines, line)
+		}
+		parts = append(parts, "Resident skill context:\n"+strings.Join(lines, "\n"))
+	}
 	return strings.Join(parts, "\n\n")
+}
+
+func fromSkillContext(item skills.ContextSkill) AISkillContext {
+	return AISkillContext{
+		SkillID:            item.Record.SkillID,
+		Name:               item.Record.Name,
+		Description:        item.Record.Description,
+		SourceKind:         item.Record.SourceKind,
+		TrustState:         item.Record.TrustState,
+		State:              item.State,
+		ContentHash:        item.Record.ContentHash,
+		DigestVersion:      item.Record.DigestVersion,
+		Summary:            item.Digest.Summary,
+		ActivationRules:    item.Digest.ActivationRules,
+		OperatingReminders: item.Digest.OperatingReminders,
+		AvoidRules:         item.Digest.AvoidRules,
+		ToolHints:          item.Digest.ToolHints,
+		VerificationHints:  item.Digest.VerificationHints,
+		ResourcesIndex:     item.Digest.ResourcesIndex,
+		TopicMatch:         item.TopicMatch,
+		Confidence:         item.Confidence,
+		ActivatedAt:        item.ActivatedAt,
+		LastUsedAt:         item.LastUsedAt,
+		DecayDeadline:      item.DecayDeadline,
+	}
 }
 
 func fromMnemonicEntry(entry mnemonic.Entry) AIMnemonicEntry {
@@ -933,6 +1048,42 @@ func hashProjectPath(path string) string {
 	}
 	sum := sha1.Sum([]byte(path))
 	return hex.EncodeToString(sum[:])
+}
+
+func canonicalProjectRoot(projectRoot string) (string, error) {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		return "", fmt.Errorf("project root is empty")
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	evaluated, err := filepath.EvalSymlinks(abs)
+	if err == nil {
+		return filepath.Clean(evaluated), nil
+	}
+	if os.IsNotExist(err) {
+		return abs, nil
+	}
+	return "", err
+}
+
+func resetMnemonicContextFile(projectRoot string) error {
+	root := strings.TrimSpace(projectRoot)
+	if root == "" {
+		return nil
+	}
+	path := filepath.Join(root, ".arlecchino", "memory", "CONTEXT.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(emptyMnemonicContextDocument()), 0o600)
+}
+
+func emptyMnemonicContextDocument() string {
+	return "# Arlecchino Mnemonic Memory\n\nThis file is generated from project-local Mnemonic entries in `.arlecchino/ai/mnemonic.db`.\n\nUse it as a compact TUI recall surface: durable decisions, workflow facts, bug fixes, and handoff notes. Save new durable facts with `agent_memory.save`; search or list memory before relying on older context.\n\nNo saved project memory yet.\n"
 }
 
 func errorClass(err error) string {

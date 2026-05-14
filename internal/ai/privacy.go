@@ -53,6 +53,10 @@ func (privacyGate) SanitizeSnapshot(snapshot AIContextSnapshot, maxBytes int, ma
 		snapshot.Mnemonic[i].Content, summary = sanitizeText(snapshot.Mnemonic[i].Content, summary)
 		totalBytes += len(snapshot.Mnemonic[i].Content)
 	}
+	for i := range snapshot.Skills {
+		snapshot.Skills[i] = sanitizeSkillContext(snapshot.Skills[i], &summary)
+		totalBytes += skillContextBytes(snapshot.Skills[i])
+	}
 	summary.OriginalBytes = totalBytes
 	if totalBytes > maxBytes {
 		remaining := maxBytes
@@ -64,11 +68,53 @@ func (privacyGate) SanitizeSnapshot(snapshot AIContextSnapshot, maxBytes int, ma
 		for i := range snapshot.Mnemonic {
 			snapshot.Mnemonic[i].Content = consumeTextBudget(snapshot.Mnemonic[i].Content, &remaining, &summary)
 		}
+		for i := range snapshot.Skills {
+			consumeSkillContextBudget(&snapshot.Skills[i], &remaining, &summary)
+		}
 	}
 	snapshot.ByteSize = estimateSnapshotBytes(snapshot)
 	summary.SanitizedBytes = snapshot.ByteSize
 	snapshot.Redaction = summary
 	return snapshot
+}
+
+func sanitizeSkillContext(skill AISkillContext, summary *AIRedactionSummary) AISkillContext {
+	skill.SkillID, *summary = sanitizeText(skill.SkillID, *summary)
+	skill.Name, *summary = sanitizeText(skill.Name, *summary)
+	skill.Description, *summary = sanitizeText(skill.Description, *summary)
+	skill.Summary, *summary = sanitizeText(skill.Summary, *summary)
+	skill.TopicMatch, *summary = sanitizeText(skill.TopicMatch, *summary)
+	skill.ActivationRules = sanitizeStringList(skill.ActivationRules, summary)
+	skill.OperatingReminders = sanitizeStringList(skill.OperatingReminders, summary)
+	skill.AvoidRules = sanitizeStringList(skill.AvoidRules, summary)
+	skill.ToolHints = sanitizeStringList(skill.ToolHints, summary)
+	skill.VerificationHints = sanitizeStringList(skill.VerificationHints, summary)
+	skill.ResourcesIndex = sanitizeStringList(skill.ResourcesIndex, summary)
+	return skill
+}
+
+func sanitizeStringList(values []string, summary *AIRedactionSummary) []string {
+	for i := range values {
+		values[i], *summary = sanitizeText(values[i], *summary)
+	}
+	return values
+}
+
+func consumeSkillContextBudget(skill *AISkillContext, remaining *int, summary *AIRedactionSummary) {
+	skill.Description = consumeTextBudget(skill.Description, remaining, summary)
+	skill.Summary = consumeTextBudget(skill.Summary, remaining, summary)
+	consumeStringListBudget(skill.ActivationRules, remaining, summary)
+	consumeStringListBudget(skill.OperatingReminders, remaining, summary)
+	consumeStringListBudget(skill.AvoidRules, remaining, summary)
+	consumeStringListBudget(skill.ToolHints, remaining, summary)
+	consumeStringListBudget(skill.VerificationHints, remaining, summary)
+	consumeStringListBudget(skill.ResourcesIndex, remaining, summary)
+}
+
+func consumeStringListBudget(values []string, remaining *int, summary *AIRedactionSummary) {
+	for i := range values {
+		values[i] = consumeTextBudget(values[i], remaining, summary)
+	}
 }
 
 func consumeTextBudget(value string, remaining *int, summary *AIRedactionSummary) string {
@@ -131,6 +177,32 @@ func estimateSnapshotBytes(snapshot AIContextSnapshot) int {
 	}
 	for _, entry := range snapshot.Mnemonic {
 		total += len(entry.Content)
+	}
+	for _, skill := range snapshot.Skills {
+		total += skillContextBytes(skill)
+	}
+	return total
+}
+
+func skillContextBytes(skill AISkillContext) int {
+	total := len(skill.SkillID) + len(skill.Name) + len(skill.Description) + len(skill.Summary) + len(skill.TopicMatch)
+	for _, value := range skill.ActivationRules {
+		total += len(value)
+	}
+	for _, value := range skill.OperatingReminders {
+		total += len(value)
+	}
+	for _, value := range skill.AvoidRules {
+		total += len(value)
+	}
+	for _, value := range skill.ToolHints {
+		total += len(value)
+	}
+	for _, value := range skill.VerificationHints {
+		total += len(value)
+	}
+	for _, value := range skill.ResourcesIndex {
+		total += len(value)
 	}
 	return total
 }

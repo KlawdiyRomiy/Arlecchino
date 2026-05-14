@@ -209,6 +209,7 @@ type AIContextRequest struct {
 	TerminalWorkDir string               `json:"terminalWorkDir,omitempty"`
 	IncludeMnemonic bool                 `json:"includeMnemonic"`
 	IncludeMCP      bool                 `json:"includeMCP"`
+	IncludeSkills   bool                 `json:"includeSkills"`
 	MaxBytes        int                  `json:"maxBytes,omitempty"`
 	MaxSnippets     int                  `json:"maxSnippets,omitempty"`
 }
@@ -238,6 +239,7 @@ type AIContextSnapshot struct {
 	SnippetBreakdown  []AIContextSnippetBreakdown `json:"snippetBreakdown,omitempty"`
 	MCPContext        *AIMCPContextPlane          `json:"mcpContext,omitempty"`
 	Mnemonic          []AIMnemonicEntry           `json:"mnemonic,omitempty"`
+	Skills            []AISkillContext            `json:"skills,omitempty"`
 	DataCategories    []string                    `json:"dataCategories"`
 	Redaction         AIRedactionSummary          `json:"redaction"`
 	ProviderEnvelope  *AIProviderEnvelope         `json:"providerEnvelope,omitempty"`
@@ -258,6 +260,7 @@ type AIContextSummary struct {
 	Language          string                      `json:"language,omitempty"`
 	SnippetCount      int                         `json:"snippetCount"`
 	MnemonicCount     int                         `json:"mnemonicCount"`
+	SkillCount        int                         `json:"skillCount"`
 	MCPIncluded       bool                        `json:"mcpIncluded"`
 	MCPContext        *AIMCPContextPlane          `json:"mcpContext,omitempty"`
 	SnippetBreakdown  []AIContextSnippetBreakdown `json:"snippetBreakdown,omitempty"`
@@ -276,6 +279,29 @@ type AIRedactionSummary struct {
 	SanitizedBytes    int      `json:"sanitizedBytes"`
 	BlockedCategories []string `json:"blockedCategories,omitempty"`
 	AppliedRules      []string `json:"appliedRules,omitempty"`
+}
+
+type AISkillContext struct {
+	SkillID            string   `json:"skillId"`
+	Name               string   `json:"name"`
+	Description        string   `json:"description,omitempty"`
+	SourceKind         string   `json:"sourceKind"`
+	TrustState         string   `json:"trustState"`
+	State              string   `json:"state,omitempty"`
+	ContentHash        string   `json:"contentHash,omitempty"`
+	DigestVersion      int      `json:"digestVersion"`
+	Summary            string   `json:"summary"`
+	ActivationRules    []string `json:"activationRules,omitempty"`
+	OperatingReminders []string `json:"operatingReminders,omitempty"`
+	AvoidRules         []string `json:"avoidRules,omitempty"`
+	ToolHints          []string `json:"toolHints,omitempty"`
+	VerificationHints  []string `json:"verificationHints,omitempty"`
+	ResourcesIndex     []string `json:"resourcesIndex,omitempty"`
+	TopicMatch         string   `json:"topicMatch,omitempty"`
+	Confidence         float64  `json:"confidence,omitempty"`
+	ActivatedAt        string   `json:"activatedAt,omitempty"`
+	LastUsedAt         string   `json:"lastUsedAt,omitempty"`
+	DecayDeadline      string   `json:"decayDeadline,omitempty"`
 }
 
 type AIMnemonicEntry struct {
@@ -581,6 +607,7 @@ type AIChatRunRequest struct {
 	Model           string           `json:"model,omitempty"`
 	IncludeMnemonic bool             `json:"includeMnemonic"`
 	IncludeMCP      bool             `json:"includeMCP"`
+	IncludeSkills   bool             `json:"includeSkills"`
 	MaxTokens       int              `json:"maxTokens,omitempty"`
 	Context         AIContextRequest `json:"context,omitempty"`
 }

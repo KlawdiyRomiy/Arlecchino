@@ -43,6 +43,7 @@ export {
     AIProviderEnvelope,
     AIProviderSettings,
     AIRedactionSummary,
+    AISkillContext,
     AIStatus,
     AIToolExecutionState,
     AIToolHardDenyReason,
