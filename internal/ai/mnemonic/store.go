@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	"arlecchino/internal/ai/storage"
 )
 
 const (
@@ -25,7 +25,10 @@ const (
 	TrustUntrusted = "untrusted"
 )
 
-var secretLikePattern = regexp.MustCompile(`(?i)(api[_-]?key|token|secret|password|private[_-]?key|authorization|cookie)\s*[:=]\s*["']?[^"'\s]+`)
+var (
+	ErrDisabled       = errors.New("mnemonic store is disabled")
+	secretLikePattern = regexp.MustCompile(`(?i)(api[_-]?key|token|secret|password|private[_-]?key|authorization|cookie)\s*[:=]\s*["']?[^"'\s]+`)
+)
 
 type Entry struct {
 	ID             string            `json:"id"`
@@ -65,12 +68,12 @@ type SearchRequest struct {
 }
 
 type Store struct {
-	mu           sync.Mutex
+	mu           *sync.Mutex
+	owner        *storage.ProjectDB
 	db           *sql.DB
 	dbPath       string
 	settingsPath string
 	enabled      bool
-	ftsEnabled   bool
 }
 
 type settings struct {
@@ -78,29 +81,36 @@ type settings struct {
 }
 
 func Open(projectRoot string, defaultEnabled bool) (*Store, error) {
-	root := strings.TrimSpace(projectRoot)
+	owner, err := storage.Open(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+	store, err := OpenWithDB(owner, defaultEnabled)
+	if err != nil {
+		_ = owner.Close()
+		return nil, err
+	}
+	return store, nil
+}
+
+func OpenWithDB(owner *storage.ProjectDB, defaultEnabled bool) (*Store, error) {
+	if owner == nil || owner.DB() == nil || owner.Mutex() == nil {
+		return nil, fmt.Errorf("mnemonic database is not open")
+	}
+	root := strings.TrimSpace(owner.ProjectRoot())
 	if root == "" {
 		return nil, fmt.Errorf("project root is empty")
 	}
 	dir := filepath.Join(root, ".arlecchino", "ai")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
 	store := &Store{
-		dbPath:       filepath.Join(dir, dbFileName),
+		mu:           owner.Mutex(),
+		owner:        owner,
+		db:           owner.DB(),
+		dbPath:       owner.DBPath(),
 		settingsPath: filepath.Join(dir, settingsFileName),
 		enabled:      defaultEnabled,
 	}
 	store.enabled = store.loadEnabled(defaultEnabled)
-	db, err := sql.Open("sqlite3", store.dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
-	if err != nil {
-		return nil, err
-	}
-	store.db = db
-	if err := store.migrate(); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
 	return store, nil
 }
 
@@ -110,9 +120,11 @@ func (s *Store) Close() error {
 	if s.db == nil {
 		return nil
 	}
-	err := s.db.Close()
 	s.db = nil
-	return err
+	if s.owner == nil {
+		return nil
+	}
+	return s.owner.Close()
 }
 
 func (s *Store) Enabled() bool {
@@ -131,7 +143,7 @@ func (s *Store) SetEnabled(enabled bool) error {
 func (s *Store) FTSEnabled() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.ftsEnabled
+	return s.owner != nil && s.owner.FTSEnabled()
 }
 
 func (s *Store) Save(entry Entry) (Entry, error) {
@@ -143,6 +155,9 @@ func (s *Store) Save(entry Entry) (Entry, error) {
 	defer s.mu.Unlock()
 	if s.db == nil {
 		return Entry{}, fmt.Errorf("mnemonic store is closed")
+	}
+	if !s.enabled {
+		return Entry{}, ErrDisabled
 	}
 	if err := s.saveEntryLocked(entry); err != nil {
 		return Entry{}, err
@@ -163,6 +178,9 @@ func (s *Store) Get(id string) (Entry, error) {
 	defer s.mu.Unlock()
 	if s.db == nil {
 		return Entry{}, fmt.Errorf("mnemonic store is closed")
+	}
+	if !s.enabled {
+		return Entry{}, ErrDisabled
 	}
 	entry, err := s.getEntryLocked(id)
 	if err != nil {
@@ -203,11 +221,11 @@ func (s *Store) SearchEntries(req SearchRequest) ([]Entry, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("mnemonic store is closed")
 	}
+	if !s.enabled {
+		return nil, ErrDisabled
+	}
 	entries, err := s.searchEntriesLocked(req)
 	if err != nil {
-		return nil, err
-	}
-	if err := s.recordAccessLocked(entries); err != nil {
 		return nil, err
 	}
 	for i := range entries {
@@ -226,10 +244,13 @@ func (s *Store) Delete(id string) error {
 	if s.db == nil {
 		return fmt.Errorf("mnemonic store is closed")
 	}
+	if !s.enabled {
+		return ErrDisabled
+	}
 	if _, err := s.db.Exec(`DELETE FROM mnemonic_relationships WHERE from_id = ? OR to_id = ?`, id, id); err != nil {
 		return err
 	}
-	if s.ftsEnabled {
+	if s.owner != nil && s.owner.FTSEnabled() {
 		_, _ = s.db.Exec(`DELETE FROM mnemonic_entries_fts WHERE id = ?`, id)
 	}
 	_, err := s.db.Exec(`DELETE FROM mnemonic_entries WHERE id = ?`, id)
@@ -243,18 +264,12 @@ func (s *Store) Clear() error {
 		if _, err := s.db.Exec(`DELETE FROM mnemonic_relationships`); err != nil {
 			return err
 		}
-		if s.ftsEnabled {
+		if s.owner != nil && s.owner.FTSEnabled() {
 			if _, err := s.db.Exec(`DELETE FROM mnemonic_entries_fts`); err != nil {
 				return err
 			}
 		}
 		if _, err := s.db.Exec(`DELETE FROM mnemonic_entries`); err != nil {
-			return err
-		}
-		if _, err := s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-			return err
-		}
-		if _, err := s.db.Exec(`VACUUM`); err != nil {
 			return err
 		}
 	}
@@ -266,79 +281,6 @@ func (s *Store) DBPath() string {
 		return ""
 	}
 	return s.dbPath
-}
-
-func (s *Store) migrate() error {
-	if s.db == nil {
-		return fmt.Errorf("mnemonic database is not open")
-	}
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS mnemonic_entries (
-		id TEXT PRIMARY KEY,
-		type TEXT NOT NULL,
-		source TEXT,
-		tags_json TEXT,
-		content TEXT NOT NULL,
-		importance INTEGER DEFAULT 0,
-		confidence REAL DEFAULT 0.5,
-		trust TEXT DEFAULT 'trusted',
-		pinned INTEGER DEFAULT 0,
-		is_latest INTEGER DEFAULT 1,
-		decay REAL DEFAULT 0,
-		last_accessed_at TEXT,
-		access_count INTEGER DEFAULT 0,
-		provenance_json TEXT,
-		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL
-	)`); err != nil {
-		return err
-	}
-	for _, column := range []struct {
-		name string
-		sql  string
-	}{
-		{"confidence", `ALTER TABLE mnemonic_entries ADD COLUMN confidence REAL DEFAULT 0.5`},
-		{"trust", `ALTER TABLE mnemonic_entries ADD COLUMN trust TEXT DEFAULT 'trusted'`},
-		{"pinned", `ALTER TABLE mnemonic_entries ADD COLUMN pinned INTEGER DEFAULT 0`},
-		{"is_latest", `ALTER TABLE mnemonic_entries ADD COLUMN is_latest INTEGER DEFAULT 1`},
-		{"decay", `ALTER TABLE mnemonic_entries ADD COLUMN decay REAL DEFAULT 0`},
-		{"last_accessed_at", `ALTER TABLE mnemonic_entries ADD COLUMN last_accessed_at TEXT`},
-		{"access_count", `ALTER TABLE mnemonic_entries ADD COLUMN access_count INTEGER DEFAULT 0`},
-		{"provenance_json", `ALTER TABLE mnemonic_entries ADD COLUMN provenance_json TEXT`},
-	} {
-		ok, err := s.columnExists("mnemonic_entries", column.name)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			if _, err := s.db.Exec(column.sql); err != nil {
-				return err
-			}
-		}
-	}
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS mnemonic_relationships (
-		id TEXT PRIMARY KEY,
-		from_id TEXT NOT NULL,
-		to_id TEXT NOT NULL,
-		type TEXT NOT NULL,
-		created_at TEXT NOT NULL
-	)`); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mnemonic_latest_trust ON mnemonic_entries(is_latest, trust, updated_at)`); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mnemonic_relationships_from ON mnemonic_relationships(from_id)`); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mnemonic_relationships_to ON mnemonic_relationships(to_id)`); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS mnemonic_entries_fts USING fts5(id UNINDEXED, source, tags, content)`); err == nil {
-		s.ftsEnabled = true
-		return s.rebuildFTSLocked()
-	}
-	s.ftsEnabled = false
-	return nil
 }
 
 func (s *Store) loadEnabled(defaultEnabled bool) bool {
@@ -400,7 +342,7 @@ func (s *Store) getEntryLocked(id string) (Entry, error) {
 }
 
 func (s *Store) searchEntriesLocked(req SearchRequest) ([]Entry, error) {
-	if req.Query != "" && s.ftsEnabled {
+	if req.Query != "" && s.owner != nil && s.owner.FTSEnabled() {
 		match := ftsQuery(req.Query)
 		if match != "" {
 			rows, err := s.db.Query(`SELECT e.id, e.type, e.source, e.tags_json, e.content, e.importance, e.confidence,
@@ -483,21 +425,8 @@ func (s *Store) relationshipsForEntryLocked(id string) ([]Relationship, error) {
 	return relationships, rows.Err()
 }
 
-func (s *Store) recordAccessLocked(entries []Entry) error {
-	if len(entries) == 0 {
-		return nil
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	for _, entry := range entries {
-		if _, err := s.db.Exec(`UPDATE mnemonic_entries SET last_accessed_at = ?, access_count = access_count + 1 WHERE id = ?`, now, entry.ID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (s *Store) upsertFTSLocked(entry Entry) error {
-	if !s.ftsEnabled {
+	if s.owner == nil || !s.owner.FTSEnabled() {
 		return nil
 	}
 	if _, err := s.db.Exec(`DELETE FROM mnemonic_entries_fts WHERE id = ?`, entry.ID); err != nil {
@@ -506,52 +435,6 @@ func (s *Store) upsertFTSLocked(entry Entry) error {
 	tagsJSON, _ := json.Marshal(entry.Tags)
 	_, err := s.db.Exec(`INSERT INTO mnemonic_entries_fts(id, source, tags, content) VALUES(?, ?, ?, ?)`, entry.ID, entry.Source, string(tagsJSON), entry.Content)
 	return err
-}
-
-func (s *Store) rebuildFTSLocked() error {
-	if !s.ftsEnabled {
-		return nil
-	}
-	if _, err := s.db.Exec(`DELETE FROM mnemonic_entries_fts`); err != nil {
-		return err
-	}
-	rows, err := s.db.Query(`SELECT id, source, tags_json, content FROM mnemonic_entries`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id, source, tagsJSON, content string
-		if err := rows.Scan(&id, &source, &tagsJSON, &content); err != nil {
-			return err
-		}
-		if _, err := s.db.Exec(`INSERT INTO mnemonic_entries_fts(id, source, tags, content) VALUES(?, ?, ?, ?)`, id, source, tagsJSON, content); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func (s *Store) columnExists(table string, column string) (bool, error) {
-	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, typ string
-		var notNull int
-		var defaultValue any
-		var pk int
-		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
 }
 
 type rowScanner struct {

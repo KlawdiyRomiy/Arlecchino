@@ -119,3 +119,50 @@ func TestSecretLikeContentIsRedactedBeforeStorage(t *testing.T) {
 		t.Fatalf("stored secret-like content: %#v", entry)
 	}
 }
+
+func TestSearchEntriesDoesNotRecordAccess(t *testing.T) {
+	store, err := Open(t.TempDir(), true)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer store.Close()
+	if _, err := store.Save(Entry{ID: "stable", Content: "stable read path", Trust: TrustTrusted, IsLatest: true}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := store.Search("stable", 10); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	entry, err := store.Get("stable")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if entry.AccessCount != 0 || entry.LastAccessedAt != "" {
+		t.Fatalf("read path updated access metadata: access=%d last=%q", entry.AccessCount, entry.LastAccessedAt)
+	}
+}
+
+func TestDisabledStoreBlocksReadsAndWritesButAllowsClear(t *testing.T) {
+	root := t.TempDir()
+	store, err := Open(root, true)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := store.Save(Entry{ID: "disabled", Content: "disabled memory", Trust: TrustTrusted, IsLatest: true}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := store.SetEnabled(false); err != nil {
+		t.Fatalf("SetEnabled: %v", err)
+	}
+	if _, err := store.Search("disabled", 10); err != ErrDisabled {
+		t.Fatalf("Search disabled error = %v, want ErrDisabled", err)
+	}
+	if _, err := store.Save(Entry{Content: "new memory"}); err != ErrDisabled {
+		t.Fatalf("Save disabled error = %v, want ErrDisabled", err)
+	}
+	if err := store.Clear(); err != nil {
+		t.Fatalf("Clear while disabled: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
