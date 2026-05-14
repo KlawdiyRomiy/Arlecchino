@@ -451,6 +451,7 @@ func (s *ToolService) Capabilities() map[string]any {
 		"memoryContextPath":      s.memory.ContextFilePath(),
 		"memoryBackend":          s.memory.BackendName(),
 		"mnemonicSharedContext":  s.memory.BackendName() == "mnemonic",
+		"skillResidency":         s.AgentSkillsStatus(),
 		"sessionID":              s.sessionID,
 		"runtimeHotSwitch":       true,
 		"supportsLayout":         true,
@@ -459,6 +460,7 @@ func (s *ToolService) Capabilities() map[string]any {
 		"supportsSurfaceRuntime": true,
 		"supportsFlightRecorder": true,
 		"supportsMemory":         true,
+		"supportsSkillResidency": true,
 	}
 }
 
@@ -988,6 +990,8 @@ func normalizeBridgeOpenIntentKind(kind string) string {
 		return "openFile"
 	case "openpreview", "previewopen", "preview", "openbrowser", "browseropen":
 		return "openPreview"
+	case "openpanel", "panelopen", "panel", "sidepanel":
+		return "openPanel"
 	case "focussurface", "surfacefocus", "focus", "previewfocus", "panelfocus":
 		return "focusSurface"
 	default:
@@ -1079,6 +1083,12 @@ func (s *ToolService) bridgeOpenIntent(args map[string]any) (any, error) {
 		if pinned, ok := args["pinned"].(bool); ok {
 			payload["pinned"] = pinned
 		}
+	case "openPanel":
+		panelPayload, err := s.buildBridgePanelPayload("ide_ui.open_intent", args)
+		if err != nil {
+			return nil, err
+		}
+		return s.bridgeEmitConfirmedUIEvent("ide_ui.open_intent", "ide:panel:open", panelPayload)
 	case "focusSurface":
 		copyOpenIntentStringArg(payload, args, "surfaceId", "surfaceId", "surface_id")
 		copyOpenIntentStringArg(payload, args, "previewWindowId", "previewWindowId", "preview_window_id", "windowId", "window_id")

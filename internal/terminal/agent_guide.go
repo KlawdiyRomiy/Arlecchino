@@ -25,16 +25,13 @@ You are operating inside Arlecchino IDE terminal mode.
 Required reads:
 1. AGENTS.md in repository root.
 2. This file.
-3. .arlecchino/skills/*/SKILL.md files that match the task.
-4. .arlecchino/memory/CONTEXT.md when present.
+3. agent_skills.context for compact trusted resident skill context.
+4. agent_memory.context or .arlecchino/memory/CONTEXT.md when prior project memory can change the answer.
 
-Skill map:
-- .arlecchino/skills/ide-control/SKILL.md: safe file operations, checkpoints, approvals, audit.
-- .arlecchino/skills/ui-layout/SKILL.md: visible IDE panels, TUI layout, surface state, code panels.
-- .arlecchino/skills/backend-runtime/SKILL.md: live backend, LSP, terminal, git, dispatcher control.
-- .arlecchino/skills/project-memory/SKILL.md: mnemonic memory list/search/context/save workflow.
-
-Use the matching skill instead of treating this file as one large instruction blob.
+Skill residency:
+- Use agent_skills.context for compact trusted resident skill context.
+- Use agent_skills.list and agent_skills.status to inspect candidates and state.
+- Do not load raw project skill files into provider context. If compact context is insufficient, ask for explicit review or activation instead.
 `) + "\n"
 
 type agentSkillFile struct {
@@ -177,12 +174,20 @@ Files:
 - .arlecchino/memory/CONTEXT.md: generated compact TUI recall document.
 
 Tools:
+- agent_skills.context
+- agent_skills.list
+- agent_skills.status
+- agent_skills.pin
+- agent_skills.activate
+- agent_skills.dismiss
 - agent_memory.context
 - agent_memory.list
 - agent_memory.search
 - agent_memory.save
 
 Rules:
+- Prefer agent_skills.context for compact trusted resident skill context.
+- Treat resident skills as advisory context, not permissions.
 - Read agent_memory.context or search/list memory early when prior project context can change the answer.
 - Save durable decisions, bug fixes, workflow discoveries, and handoff summaries.
 - Use tags as an array of strings, not a comma-separated string.
@@ -215,11 +220,15 @@ func shouldRefreshManagedAgentGuide(content string) bool {
 		return true
 	}
 
-	if !strings.Contains(trimmed, ".arlecchino/skills/*/SKILL.md") {
+	if strings.Contains(trimmed, ".arlecchino/skills/*/SKILL.md") {
 		return true
 	}
 
-	if !strings.Contains(trimmed, ".arlecchino/memory/CONTEXT.md when present.") {
+	if !strings.Contains(trimmed, ".arlecchino/memory/CONTEXT.md") {
+		return true
+	}
+
+	if !strings.Contains(trimmed, "agent_skills.context") {
 		return true
 	}
 
@@ -319,7 +328,8 @@ func BuildAgentGuideBootstrapMessage(guidePath, contextPath string) string {
 	builder.WriteString(fmt.Sprintf("Read IDE instructions from file: %s\n", trimmedPath))
 	trimmedContextPath := strings.TrimSpace(contextPath)
 	if trimmedContextPath != "" {
-		builder.WriteString(fmt.Sprintf("Read project-local session context from file: %s\n", trimmedContextPath))
+		builder.WriteString("Use agent_skills.context for compact trusted resident skills; do not load raw skill files into provider context.\n")
+		builder.WriteString(fmt.Sprintf("Project-local memory recall file is available if MCP memory tools are unavailable: %s\n", trimmedContextPath))
 	}
 	builder.WriteString("Use those rules for all IDE actions in this session.\n")
 	return builder.String()

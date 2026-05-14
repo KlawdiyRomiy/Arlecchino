@@ -87,7 +87,7 @@ func TestHandleRequestInitialize_DefaultProtocolVersionWhenMissing(t *testing.T)
 	}
 }
 
-func TestHandleRequestInitialize_IncludesProjectMemoryInstructions(t *testing.T) {
+func TestHandleRequestInitialize_UsesStaticMemoryAndSkillInstructions(t *testing.T) {
 	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "project-memory-code")
 
 	service, err := NewToolService(t.TempDir())
@@ -125,8 +125,49 @@ func TestHandleRequestInitialize_IncludesProjectMemoryInstructions(t *testing.T)
 	if !ok {
 		t.Fatalf("initialize instructions type = %T, want string", resultObject["instructions"])
 	}
-	if !strings.Contains(instructions, "Remember project-local MCP continuity.") {
-		t.Fatalf("initialize instructions should include saved project memory, got %q", instructions)
+	if !strings.Contains(instructions, "agent_skills.context") {
+		t.Fatalf("initialize instructions should point to skill residency tools, got %q", instructions)
+	}
+	if strings.Contains(instructions, ".arlecchino/skills/*/SKILL.md") {
+		t.Fatalf("initialize instructions should not route agents to raw skill files, got %q", instructions)
+	}
+	if !strings.Contains(instructions, "agent_memory.list/search/context") {
+		t.Fatalf("initialize instructions should point to memory tools, got %q", instructions)
+	}
+	if strings.Contains(instructions, "Remember project-local MCP continuity.") {
+		t.Fatalf("initialize instructions should not embed dynamic project memory, got %q", instructions)
+	}
+}
+
+func TestHandleRequestToolsList_AdvertisesPanelControlTools(t *testing.T) {
+	service, err := NewToolService(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewToolService() error = %v", err)
+	}
+
+	server := NewServer(service, strings.NewReader(""), io.Discard, io.Discard)
+	result, rpcErr := server.handleRequest("tools/list", nil)
+	if rpcErr != nil {
+		t.Fatalf("handleRequest(tools/list) unexpected error = %+v", rpcErr)
+	}
+
+	resultObject, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("handleRequest(tools/list) result type = %T, want map[string]any", result)
+	}
+	tools, ok := resultObject["tools"].([]ToolDefinition)
+	if !ok {
+		t.Fatalf("tools/list tools type = %T, want []ToolDefinition", resultObject["tools"])
+	}
+
+	seen := map[string]bool{}
+	for _, tool := range tools {
+		seen[tool.Name] = true
+	}
+	for _, name := range []string{"ide_ui.open_panel", "ide_ui.move_panel", "ide_ui.close_panel"} {
+		if !seen[name] {
+			t.Fatalf("tools/list missing %s", name)
+		}
 	}
 }
 

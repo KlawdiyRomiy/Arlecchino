@@ -189,6 +189,67 @@ func TestToolService_OpenIntentEmitsConfirmedOpenIntentEvent(t *testing.T) {
 	}
 }
 
+func TestToolService_OpenIntentPanelKindEmitsConfirmedPanelOpen(t *testing.T) {
+	root := t.TempDir()
+
+	t.Setenv("ARLECCHINO_MCP_APPROVAL_CODE", "open-intent-panel")
+	bridge := newFakeBridge()
+	bridge.response["ui.emit_event"] = map[string]any{
+		"emitted":   true,
+		"event":     "ide:panel:open",
+		"confirmed": true,
+	}
+	service, err := NewToolServiceWithOptions(root, ToolServiceOptions{Bridge: bridge})
+	if err != nil {
+		t.Fatalf("NewToolServiceWithOptions() error = %v", err)
+	}
+	if _, err := service.CallTool("ide_control.request_permission", map[string]any{
+		"approval_code": "open-intent-panel",
+		"ttl_seconds":   60,
+		"tool_name":     "ide_ui.open_intent",
+	}); err != nil {
+		t.Fatalf("request_permission error = %v", err)
+	}
+
+	result, err := service.CallTool("ide_ui.open_intent", map[string]any{
+		"kind":     "panel",
+		"panel":    "git",
+		"position": "left",
+		"mode":     "snapped",
+	})
+	if err != nil {
+		t.Fatalf("open_intent panel error = %v", err)
+	}
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("open_intent panel result type = %T, want map[string]any", result)
+	}
+	if resultMap["mcpRequestId"] == "" {
+		t.Fatalf("open_intent panel result missing mcpRequestId: %#v", resultMap)
+	}
+
+	calls := bridge.methodCalls("ui.emit_event")
+	if len(calls) != 1 {
+		t.Fatalf("ui.emit_event call count = %d, want 1", len(calls))
+	}
+	if calls[0].Params["event"] != "ide:panel:open" {
+		t.Fatalf("event = %v, want ide:panel:open", calls[0].Params["event"])
+	}
+	payload, ok := calls[0].Params["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", calls[0].Params["payload"])
+	}
+	if payload["panel"] != "git" {
+		t.Fatalf("payload panel = %v, want git", payload["panel"])
+	}
+	if payload["position"] != "left" {
+		t.Fatalf("payload position = %v, want left", payload["position"])
+	}
+	if payload["mode"] != "snapped" {
+		t.Fatalf("payload mode = %v, want snapped", payload["mode"])
+	}
+}
+
 func TestToolService_OpenFilePanelEmitsConfirmedPanelOpen(t *testing.T) {
 	root := t.TempDir()
 	makefilePath := filepath.Join(root, "Makefile")

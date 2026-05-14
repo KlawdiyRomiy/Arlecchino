@@ -512,12 +512,8 @@ func (s *ToolService) InitializeInstructions() string {
 	parts := []string{
 		"Use ide_control.* and change_journal.* for safe file operations, checkpoints, audit, and approval flow. When live bridge is available, use ide_backend.* for backend control and ide_ui.* for runtime UI state changes.",
 		"Use ide_ui.surface_read to inspect visible panels and ide_ui.open_panel/move_panel/close_panel/open_file_panel for confirmed panel control.",
-		"Use agent_memory.list/search/context early for project-local Mnemonic context and agent_memory.save after durable decisions, workflows, fixes, or context handoffs. Memory is shared with the AI backend through .arlecchino/ai/mnemonic.db; .arlecchino/memory/CONTEXT.md is the generated TUI recall file.",
-	}
-
-	contextSummary := strings.TrimSpace(s.AgentMemoryContext(2400))
-	if contextSummary != "" {
-		parts = append(parts, "Project-local memory:\n"+contextSummary)
+		"Use agent_skills.context for compact trusted resident skill context. Use agent_skills.list/status to inspect candidates. Do not load raw project skill files into provider context.",
+		"Use agent_memory.list/search/context early for project-local Mnemonic context and agent_memory.save after durable decisions, workflows, fixes, or context handoffs. Memory is shared with the AI backend through .arlecchino/ai/mnemonic.db; .arlecchino/memory/CONTEXT.md is a generated TUI recall file, not skill authority.",
 	}
 
 	return strings.Join(parts, "\n\n")

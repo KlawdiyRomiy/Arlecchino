@@ -64,8 +64,11 @@ func TestEnsureAgentGuideFile_CreatesGuideWithoutVisibleVersionOrAckInstruction(
 	if strings.Contains(text, "Work only inside the current project root.") {
 		t.Fatalf("guide file should avoid rigid current-root wording")
 	}
-	if !strings.Contains(text, ".arlecchino/skills/*/SKILL.md") {
-		t.Fatalf("guide file should point agents to project skill files")
+	if !strings.Contains(text, "agent_skills.context") {
+		t.Fatalf("guide file should point agents to compact skill context")
+	}
+	if strings.Contains(text, ".arlecchino/skills/*/SKILL.md") {
+		t.Fatalf("guide file should not route agents to raw project skill files")
 	}
 
 	uiSkillPath := filepath.Join(projectRoot, ".arlecchino", "skills", "ui-layout", "SKILL.md")
@@ -160,10 +163,13 @@ IDE_GUIDE_LOADED
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 	text := string(data)
-	if !strings.Contains(text, ".arlecchino/skills/*/SKILL.md") {
-		t.Fatalf("refreshed guide should point to MCP skill files")
+	if strings.Contains(text, ".arlecchino/skills/*/SKILL.md") {
+		t.Fatalf("refreshed guide should not route agents to raw project skill files")
 	}
-	if !strings.Contains(text, ".arlecchino/memory/CONTEXT.md when present.") {
+	if !strings.Contains(text, "agent_skills.context") {
+		t.Fatalf("refreshed guide should prefer skill residency context")
+	}
+	if !strings.Contains(text, ".arlecchino/memory/CONTEXT.md") {
 		t.Fatalf("refreshed guide should mention memory context")
 	}
 	if strings.Contains(text, "Operating rules:") {

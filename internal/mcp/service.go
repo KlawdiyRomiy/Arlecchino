@@ -127,6 +127,7 @@ type ToolService struct {
 	flightRecorder            *flightRecorder
 	layouts                   *layoutRegistry
 	memory                    AgentMemoryBackend
+	skills                    AgentSkillsBackend
 	sessionID                 string
 	settings                  Settings
 	settingsPath              string
@@ -247,6 +248,16 @@ func NewToolServiceWithOptions(projectRoot string, options ToolServiceOptions) (
 			return nil, err
 		}
 	}
+	skillBackend := options.SkillBackend
+	if skillBackend == nil {
+		skillBackend, err = loadMnemonicAgentSkillsStore(absRoot)
+		if err != nil {
+			if closer, ok := memory.(interface{ Close() error }); ok {
+				_ = closer.Close()
+			}
+			return nil, err
+		}
+	}
 
 	settings, settingsPath, err := LoadSettings(options.SettingsPath)
 	if err != nil {
@@ -267,6 +278,7 @@ func NewToolServiceWithOptions(projectRoot string, options ToolServiceOptions) (
 		flightRecorder:            flightRecorder,
 		layouts:                   layouts,
 		memory:                    memory,
+		skills:                    skillBackend,
 		sessionID:                 fmt.Sprintf("sess-%d", time.Now().UTC().UnixMilli()),
 		settings:                  settings,
 		settingsPath:              settingsPath,
@@ -279,13 +291,23 @@ func NewToolServiceWithOptions(projectRoot string, options ToolServiceOptions) (
 }
 
 func (s *ToolService) Close() error {
-	if s == nil || s.memory == nil {
+	if s == nil {
 		return nil
 	}
-	if closer, ok := s.memory.(interface{ Close() error }); ok {
-		return closer.Close()
+	var firstErr error
+	if s.skills != nil {
+		if err := s.skills.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
-	return nil
+	if s.memory != nil {
+		if closer, ok := s.memory.(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
 }
 
 func AllToolDefinitions() []ToolDefinition {
@@ -410,6 +432,65 @@ func AllToolDefinitions() []ToolDefinition {
 			Description: "Get compact project-local memory context summary",
 			InputSchema: objectSchema(nil, map[string]any{
 				"max_chars": map[string]any{"type": "number"},
+			}),
+		},
+		{
+			Name:        "agent_skills.list",
+			Description: "List project-local skill residency candidates and trusted skills without reading full skill bodies",
+			InputSchema: objectSchema(nil, map[string]any{
+				"limit": map[string]any{"type": "number"},
+			}),
+		},
+		{
+			Name:        "agent_skills.status",
+			Description: "Get project-local skill residency counts and backend status",
+			InputSchema: objectSchema(nil, map[string]any{}),
+		},
+		{
+			Name:        "agent_skills.context",
+			Description: "Get compact trusted resident skill context; does not include full SKILL.md bodies",
+			InputSchema: objectSchema(nil, map[string]any{
+				"max_chars":  map[string]any{"type": "number"},
+				"surface":    map[string]any{"type": "string"},
+				"session_id": map[string]any{"type": "string"},
+			}),
+		},
+		{
+			Name:        "agent_skills.pin",
+			Description: "Review and pin a project-local skill so it can produce trusted compact resident context",
+			InputSchema: objectSchema([]string{"skill_id"}, map[string]any{
+				"skill_id": map[string]any{"type": "string"},
+				"reviewer": map[string]any{"type": "string"},
+			}),
+		},
+		{
+			Name:        "agent_skills.activate",
+			Description: "Activate a trusted pinned skill for the current agent session",
+			InputSchema: objectSchema([]string{"skill_id"}, map[string]any{
+				"skill_id":   map[string]any{"type": "string"},
+				"surface":    map[string]any{"type": "string"},
+				"session_id": map[string]any{"type": "string"},
+				"reason":     map[string]any{"type": "string"},
+			}),
+		},
+		{
+			Name:        "agent_skills.dismiss",
+			Description: "Dismiss an active resident skill for the current agent session",
+			InputSchema: objectSchema([]string{"skill_id"}, map[string]any{
+				"skill_id":   map[string]any{"type": "string"},
+				"surface":    map[string]any{"type": "string"},
+				"session_id": map[string]any{"type": "string"},
+			}),
+		},
+		{
+			Name:        "agent_skills.import",
+			Description: "Register imported skill metadata in quarantine; imported skills are not trusted or active by default",
+			InputSchema: objectSchema([]string{"name"}, map[string]any{
+				"name":        map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"source_repo": map[string]any{"type": "string"},
+				"source_ref":  map[string]any{"type": "string"},
+				"tool_hints":  stringArraySchema(),
 			}),
 		},
 	}
@@ -760,6 +841,56 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 	case "agent_memory.context":
 		maxChars := optionalIntArg(args, "max_chars", defaultAgentContextChars)
 		return map[string]any{"summary": s.AgentMemoryContext(maxChars)}, nil
+	case "agent_skills.list":
+		limit := optionalIntArg(args, "limit", 50)
+		return map[string]any{"items": s.ListAgentSkills(limit)}, nil
+	case "agent_skills.status":
+		return s.AgentSkillsStatus(), nil
+	case "agent_skills.context":
+		maxChars := optionalIntArg(args, "max_chars", 2400)
+		surface := optionalStringArg(args, "surface")
+		sessionID := optionalStringArg(args, "session_id")
+		return map[string]any{"summary": s.AgentSkillsContext(maxChars, surface, sessionID)}, nil
+	case "agent_skills.pin":
+		if err := s.requireExplicitUserApproval("agent_skills.pin"); err != nil {
+			return nil, err
+		}
+		skillID, err := requiredStringArg(args, "skill_id")
+		if err != nil {
+			return nil, err
+		}
+		reviewer := optionalStringArg(args, "reviewer")
+		if reviewer == "" {
+			reviewer = "mcp-user-approved"
+		}
+		return s.PinAgentSkill(skillID, reviewer)
+	case "agent_skills.activate":
+		if err := s.requireExplicitUserApproval("agent_skills.activate"); err != nil {
+			return nil, err
+		}
+		skillID, err := requiredStringArg(args, "skill_id")
+		if err != nil {
+			return nil, err
+		}
+		return s.ActivateAgentSkill(skillID, optionalStringArg(args, "surface"), optionalStringArg(args, "session_id"), optionalStringArg(args, "reason"))
+	case "agent_skills.dismiss":
+		if err := s.requireExplicitUserApproval("agent_skills.dismiss"); err != nil {
+			return nil, err
+		}
+		skillID, err := requiredStringArg(args, "skill_id")
+		if err != nil {
+			return nil, err
+		}
+		return nil, s.DismissAgentSkill(skillID, optionalStringArg(args, "surface"), optionalStringArg(args, "session_id"))
+	case "agent_skills.import":
+		if err := s.requireExplicitUserApproval("agent_skills.import"); err != nil {
+			return nil, err
+		}
+		name, err := requiredStringArg(args, "name")
+		if err != nil {
+			return nil, err
+		}
+		return s.ImportAgentSkillCandidate(name, optionalStringArg(args, "description"), optionalStringArg(args, "source_repo"), optionalStringArg(args, "source_ref"), optionalStringSliceArg(args, "tool_hints"))
 	case "ide_backend.project_open":
 		path, err := requiredStringArg(args, "path")
 		if err != nil {
@@ -1010,6 +1141,9 @@ func (s *ToolService) RequestPermission(approvalCode string, ttlSeconds int, too
 	if normalizedTool == "" {
 		return PermissionStatus{}, fmt.Errorf("tool_name is required for scoped permission")
 	}
+	if !s.toolAvailableForApproval(normalizedTool) {
+		return PermissionStatus{}, fmt.Errorf("tool_name %q is not available in current MCP settings", normalizedTool)
+	}
 
 	if !s.approvalRequired && s.approvalCode == "" {
 		return permissionStatusSnapshot(false, time.Time{}, normalizedTool), nil
@@ -1030,8 +1164,25 @@ func (s *ToolService) RequestPermission(approvalCode string, ttlSeconds int, too
 	return s.grantApproval(normalizedTool, ttl), nil
 }
 
+func (s *ToolService) toolAvailableForApproval(toolName string) bool {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		return false
+	}
+	for _, definition := range s.ToolDefinitions() {
+		if strings.TrimSpace(definition.Name) == toolName {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *ToolService) requireUserApproval(toolName string) error {
 	return s.requireToolApproval(toolName, false)
+}
+
+func (s *ToolService) requireExplicitUserApproval(toolName string) error {
+	return s.requireToolApproval(toolName, true)
 }
 
 func (s *ToolService) requireSensitiveFileApproval(toolName, relPath string) error {

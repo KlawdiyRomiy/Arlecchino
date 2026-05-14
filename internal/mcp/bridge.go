@@ -43,6 +43,7 @@ type ToolServiceOptions struct {
 	FlightRecorderPath     string
 	FlightRecorderLimit    int
 	MemoryBackend          AgentMemoryBackend
+	SkillBackend           AgentSkillsBackend
 }
 
 type BridgeCallHandler func(method string, params map[string]any) (any, error)

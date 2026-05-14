@@ -56,10 +56,6 @@ func (a *App) aiMCPContextProvider(projectRoot string) (ai.AIMCPContextPlane, er
 		a.mcpBridgeMu.Unlock()
 	}
 
-	if strings.TrimSpace(projectRoot) != "" {
-		_, _ = mcp.EnsureAgentContextFile(projectRoot)
-	}
-
 	return ai.AIMCPContextPlane{
 		Enabled:               settings.Enabled,
 		Available:             settings.Enabled,

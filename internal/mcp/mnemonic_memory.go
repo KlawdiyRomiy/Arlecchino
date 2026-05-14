@@ -64,8 +64,8 @@ func (s *mnemonicAgentMemoryStore) Save(entryType string, tags []string, content
 		Content:    entry.Content,
 		Importance: entry.Importance,
 		Confidence: 0.8,
-		Trust:      mnemonic.TrustTrusted,
-		Pinned:     entry.Importance >= 8,
+		Trust:      mnemonic.TrustGenerated,
+		Pinned:     false,
 		IsLatest:   true,
 		Provenance: agentMemoryProvenance(entry.SessionID, ""),
 	})
@@ -82,7 +82,11 @@ func (s *mnemonicAgentMemoryStore) List(limit int) []AgentMemoryEntry {
 	if limit <= 0 {
 		limit = 50
 	}
-	entries, err := s.store.SearchEntries(mnemonic.SearchRequest{Limit: limit})
+	entries, err := s.store.SearchEntries(mnemonic.SearchRequest{
+		Limit:            limit,
+		IncludeGenerated: true,
+		IncludeUntrusted: true,
+	})
 	if err != nil {
 		return []AgentMemoryEntry{}
 	}
@@ -94,9 +98,11 @@ func (s *mnemonicAgentMemoryStore) Search(query string, tags []string, limit int
 		limit = 25
 	}
 	entries, err := s.store.SearchEntries(mnemonic.SearchRequest{
-		Query: strings.TrimSpace(query),
-		Tags:  normalizeAgentMemoryTags(tags),
-		Limit: limit,
+		Query:            strings.TrimSpace(query),
+		Tags:             normalizeAgentMemoryTags(tags),
+		Limit:            limit,
+		IncludeGenerated: true,
+		IncludeUntrusted: true,
 	})
 	if err != nil {
 		return []AgentMemoryEntry{}
@@ -161,8 +167,8 @@ func (s *mnemonicAgentMemoryStore) migrateLegacyEntries(entries []AgentMemoryEnt
 			Content:    legacy.Content,
 			Importance: legacy.Importance,
 			Confidence: 0.8,
-			Trust:      mnemonic.TrustTrusted,
-			Pinned:     legacy.Importance >= 8,
+			Trust:      mnemonic.TrustGenerated,
+			Pinned:     false,
 			IsLatest:   true,
 			CreatedAt:  legacy.CreatedAt,
 			Provenance: agentMemoryProvenance(legacy.SessionID, legacy.ID),

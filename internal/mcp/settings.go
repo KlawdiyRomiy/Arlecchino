@@ -200,6 +200,8 @@ func ToolGroupForName(name string) string {
 		return "Change Journal"
 	case strings.HasPrefix(name, "agent_memory."):
 		return "Agent Memory"
+	case strings.HasPrefix(name, "agent_skills."):
+		return "Agent Skills"
 	default:
 		return "Other"
 	}
