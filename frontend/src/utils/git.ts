@@ -104,9 +104,6 @@ const statusFromCode = (code: string): GitFileStatus => {
   }
 };
 
-const isConflictCode = (code: string): boolean =>
-  code === "U" || code === "A" || code === "D";
-
 const makeEmptyBranchInfo = (): GitBranchInfo => ({
   current: "",
   upstream: "",
@@ -215,11 +212,7 @@ export const parseGitStatusPorcelainV2 = (output: string): ParsedGitStatus => {
       continue;
     }
 
-    const conflict =
-      kind === "u" ||
-      isConflictCode(indexStatus) ||
-      isConflictCode(workTreeStatus);
-    if (conflict) {
+    if (kind === "u") {
       conflicted.push({
         path,
         status: "conflicted",

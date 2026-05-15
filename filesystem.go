@@ -1386,11 +1386,17 @@ func (a *App) GetGitLog(limit int, filePath string) ([]GitCommitInfo, error) {
 
 	output, err := a.RunGitCommand(args)
 	if err != nil {
+		errText := strings.ToLower(err.Error())
+		if strings.Contains(errText, "does not have any commits yet") ||
+			strings.Contains(errText, "bad default revision") {
+			return []GitCommitInfo{}, nil
+		}
 		return nil, err
 	}
 
 	var commits []GitCommitInfo
 	for _, record := range strings.Split(output, gitRecordSeparator) {
+		record = strings.Trim(record, "\r\n")
 		if record == "" {
 			continue
 		}
@@ -1399,12 +1405,15 @@ func (a *App) GetGitLog(limit int, filePath string) ([]GitCommitInfo, error) {
 			continue
 		}
 		commit := GitCommitInfo{
-			Hash:        parts[0],
-			ShortHash:   parts[1],
-			Author:      parts[2],
-			AuthorEmail: parts[3],
-			Date:        parts[4],
-			Subject:     parts[5],
+			Hash:        strings.TrimSpace(parts[0]),
+			ShortHash:   strings.TrimSpace(parts[1]),
+			Author:      strings.TrimSpace(parts[2]),
+			AuthorEmail: strings.TrimSpace(parts[3]),
+			Date:        strings.TrimSpace(parts[4]),
+			Subject:     strings.TrimSpace(parts[5]),
+		}
+		if commit.Hash == "" {
+			continue
 		}
 		commit.Body = strings.TrimSpace(parts[6])
 		commit.Parents = strings.TrimSpace(parts[7])

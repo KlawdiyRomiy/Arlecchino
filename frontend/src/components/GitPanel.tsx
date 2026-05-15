@@ -161,6 +161,9 @@ const statusBadgeStyle = (status: GitFileStatus): React.CSSProperties => ({
   background: `color-mix(in srgb, ${statusColors[status]} 12%, var(--git-bg-tertiary))`,
 });
 
+const canDiscardFile = (file: GitFileEntry): boolean =>
+  file.status !== "conflicted" && file.status !== "untracked";
+
 const toHumanError = (error: string | null): string | null => {
   if (!error) {
     return null;
@@ -329,7 +332,7 @@ const FileRow = React.memo<FileRowProps>(
               >
                 <Plus size={13} />
               </button>
-              {file.status !== "conflicted" && (
+              {canDiscardFile(file) && (
                 <button
                   type="button"
                   onClick={(event) => {
@@ -733,7 +736,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   );
 
   const handleCommit = useCallback(async () => {
-    if (!commitMessage.trim()) {
+    if (!commitMessage.trim() || git.stagedFiles.length === 0 || git.busy) {
       return;
     }
     await withErrorGuard(async () => {
@@ -856,7 +859,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
                 void runPanelAction(() => git.stageFile(file.path));
               },
             },
-        !file.staged && file.status !== "conflicted"
+        !file.staged && canDiscardFile(file)
           ? {
               label: "Discard Changes",
               icon: <RotateCcw size={14} />,
