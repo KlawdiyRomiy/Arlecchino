@@ -153,6 +153,7 @@ interface UseMainLayoutPanelEventsOptions {
   openTUIAssistPanel: UnknownEventHandler;
   panelConfigsRef: MutableRefObject<PanelConfigs>;
   panelsRef: MutableRefObject<PanelVisibility>;
+  aiChatPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   problemsPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   rememberedSnappedPositionsRef: MutableRefObject<RememberedSnappedPositions>;
   setPanelConfigs: Dispatch<SetStateAction<PanelConfigs>>;
@@ -170,7 +171,7 @@ interface UseMainLayoutPanelEventsOptions {
     snapshotRef?: MutableRefObject<PanelFullscreenSnapshot | null>,
   ) => void;
   togglePanelFullscreenFromShortcut: (
-    panelId: "terminal" | "git" | "problems",
+    panelId: "terminal" | "git" | "problems" | "aiChat",
     snapshotRef: MutableRefObject<PanelFullscreenSnapshot | null>,
   ) => void;
   gitPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
@@ -220,6 +221,7 @@ export const useMainLayoutPanelEvents = ({
   openTUIAssistPanel,
   panelConfigsRef,
   panelsRef,
+  aiChatPreFullscreenRef,
   problemsPreFullscreenRef,
   rememberedSnappedPositionsRef,
   setPanelConfigs,
@@ -732,6 +734,9 @@ export const useMainLayoutPanelEvents = ({
         case "ai.toggle":
           togglePanelCompactFromShortcut("aiChat");
           return;
+        case "ai.fullscreen":
+          togglePanelFullscreenFromShortcut("aiChat", aiChatPreFullscreenRef);
+          return;
         case "settings.toggle":
           if (isSettingsOpen) {
             closeSettings();
@@ -775,6 +780,7 @@ export const useMainLayoutPanelEvents = ({
       closeActiveFullscreenPanelFromShortcut,
       closeSettings,
       copyProjectPathFromShortcut,
+      aiChatPreFullscreenRef,
       gitPreFullscreenRef,
       isSettingsOpen,
       openCommandDispatcher,

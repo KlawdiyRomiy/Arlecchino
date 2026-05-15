@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useReducer } from "react";
 
 import { ReadFile } from "../wails/app";
 import { useTheme } from "../hooks/useTheme";
@@ -33,6 +33,36 @@ interface PreviewWindowSurfaceProps {
     line?: number,
   ) => void;
 }
+
+type PreviewFileState = {
+  content: string | null;
+  isLoading: boolean;
+  error: string | null;
+};
+
+type PreviewFileAction =
+  | { type: "replace"; state: PreviewFileState }
+  | { type: "loading" };
+
+const initialPreviewFileState: PreviewFileState = {
+  content: null,
+  isLoading: false,
+  error: null,
+};
+
+const previewFileReducer = (
+  state: PreviewFileState,
+  action: PreviewFileAction,
+): PreviewFileState => {
+  switch (action.type) {
+    case "replace":
+      return action.state;
+    case "loading":
+      return { content: state.content, isLoading: true, error: null };
+    default:
+      return state;
+  }
+};
 
 const codePreviewContainerStyle: React.CSSProperties = {
   width: "100%",
@@ -113,11 +143,12 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
   const activePaneId = useEditorStore((state) => state.activePaneId);
   const activeTab = useEditorStore((state) => state.getActiveTab(activePaneId));
   const tabs = useEditorStore((state) => state.tabs);
-  const [loadedFileContent, setLoadedFileContent] = useState<string | null>(
-    null,
+  const [fileState, dispatchFileState] = useReducer(
+    previewFileReducer,
+    initialPreviewFileState,
   );
-  const [isLoadingFile, setIsLoadingFile] = useState(false);
-  const [fileError, setFileError] = useState<string | null>(null);
+  const appearanceThemeSelectId = useId();
+  const appearanceScaleInputId = useId();
 
   const filePath =
     typeof previewWindow.payload.path === "string"
@@ -128,9 +159,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
     let cancelled = false;
 
     if (previewWindow.surface !== "file" && previewWindow.surface !== "code") {
-      setLoadedFileContent(null);
-      setIsLoadingFile(false);
-      setFileError(null);
+      dispatchFileState({ type: "replace", state: initialPreviewFileState });
       return;
     }
 
@@ -140,40 +169,46 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
         : "";
 
     if (inlineContent.length > 0) {
-      setLoadedFileContent(inlineContent);
-      setIsLoadingFile(false);
-      setFileError(null);
+      dispatchFileState({
+        type: "replace",
+        state: { content: inlineContent, isLoading: false, error: null },
+      });
       return;
     }
 
     if (!filePath) {
-      setLoadedFileContent(activeTab?.content ?? "");
-      setIsLoadingFile(false);
-      setFileError(null);
+      dispatchFileState({
+        type: "replace",
+        state: {
+          content: activeTab?.content ?? "",
+          isLoading: false,
+          error: null,
+        },
+      });
       return;
     }
 
-    setIsLoadingFile(true);
-    setFileError(null);
+    dispatchFileState({ type: "loading" });
 
     ReadFile(filePath)
       .then((content) => {
         if (cancelled) {
           return;
         }
-        setLoadedFileContent(content);
+        dispatchFileState({
+          type: "replace",
+          state: { content, isLoading: false, error: null },
+        });
       })
       .catch((error) => {
         if (cancelled) {
           return;
         }
         const message = error instanceof Error ? error.message : String(error);
-        setFileError(message);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoadingFile(false);
-        }
+        dispatchFileState({
+          type: "replace",
+          state: { content: null, isLoading: false, error: message },
+        });
       });
 
     return () => {
@@ -200,8 +235,8 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
     if (matchedTab?.content) {
       return matchedTab.content;
     }
-    if (typeof loadedFileContent === "string") {
-      return loadedFileContent;
+    if (typeof fileState.content === "string") {
+      return fileState.content;
     }
     if (activeTab?.content) {
       return activeTab.content;
@@ -210,7 +245,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
   }, [
     activeTab?.content,
     filePath,
-    loadedFileContent,
+    fileState.content,
     tabs,
     previewWindow.payload.content,
   ]);
@@ -274,7 +309,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
   }
 
   if (previewWindow.surface === "chat") {
-    return <AIChatPanelContent />;
+    return <AIChatPanelContent presentation="preview" />;
   }
 
   if (previewWindow.surface === "terminal") {
@@ -312,10 +347,14 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
         </div>
 
         <div style={appearanceControlStyle}>
-          <label style={{ fontSize: 12, color: palette.textSecondary }}>
+          <label
+            htmlFor={appearanceThemeSelectId}
+            style={{ fontSize: 12, color: palette.textSecondary }}
+          >
             Theme
           </label>
           <select
+            id={appearanceThemeSelectId}
             value={appearanceTheme}
             onChange={(event) => {
               onAppearancePatch({ theme: event.currentTarget.value as Theme });
@@ -338,10 +377,14 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
         </div>
 
         <div style={appearanceControlStyle}>
-          <label style={{ fontSize: 12, color: palette.textSecondary }}>
+          <label
+            htmlFor={appearanceScaleInputId}
+            style={{ fontSize: 12, color: palette.textSecondary }}
+          >
             UI scale ({appearanceScale.toFixed(2)}x)
           </label>
           <input
+            id={appearanceScaleInputId}
             type="range"
             min={MIN_UI_SCALE}
             max={MAX_UI_SCALE}
@@ -400,7 +443,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
       );
     }
 
-    if (isLoadingFile) {
+    if (fileState.isLoading) {
       return (
         <pre
           style={{
@@ -414,7 +457,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
       );
     }
 
-    if (fileError) {
+    if (fileState.error) {
       return (
         <pre
           style={{
@@ -423,7 +466,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
             background: "transparent",
           }}
         >
-          {`Failed to load file: ${fileError}`}
+          {`Failed to load file: ${fileState.error}`}
         </pre>
       );
     }
@@ -447,10 +490,10 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
           background: "transparent",
         }}
       >
-        {isLoadingFile
+        {fileState.isLoading
           ? "Loading file preview..."
-          : fileError
-            ? `Failed to load file: ${fileError}`
+          : fileState.error
+            ? `Failed to load file: ${fileState.error}`
             : previewCode || "No file content available"}
       </pre>
     </div>

@@ -1,6 +1,7 @@
 import React, {
   useState,
   useEffect,
+  useEffectEvent,
   useCallback,
   useMemo,
   useRef,
@@ -513,7 +514,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       .getState()
       .beginPanelMotionWindow(FLOATING_PANEL_LAYOUT_TRANSITION_MS + 160);
   }, [reducePanelMotion]);
-  const [isPerspectiveOpen, setIsPerspectiveOpen] = useState(false);
+  const isPerspectiveOpenRef = useRef(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDependencyPolicyOpen, setIsDependencyPolicyOpen] = useState(false);
   const [markdownPreviewSource, setMarkdownPreviewSource] =
@@ -4423,14 +4424,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   ]);
 
   const handlePerspectiveOpen = useCallback(() => {
-    setIsPerspectiveOpen(true);
+    isPerspectiveOpenRef.current = true;
     if (externalPerspectiveOpen) {
       externalPerspectiveOpen();
     }
   }, [externalPerspectiveOpen]);
 
   const handlePerspectiveClose = useCallback(() => {
-    setIsPerspectiveOpen(false);
+    isPerspectiveOpenRef.current = false;
     if (externalPerspectiveClose) {
       externalPerspectiveClose();
     }
@@ -4613,6 +4614,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       ensureActiveTerminalSessionId,
       forceHideTerminalAfterTUIExitRef,
       getActiveTerminalSessionId,
+      aiChatPreFullscreenRef,
       gitPreFullscreenRef,
       handleAppearancePreviewApplyEvent,
       handleAppearancePreviewCancelEvent,
@@ -4740,10 +4742,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     executionDialogMode,
     finishHeldPanelShortcutOnKeyUp,
     getShortcutEventCode,
+    aiChatPreFullscreenRef,
     gitPreFullscreenRef,
     handleHeldPanelShortcutMove,
     terminalThemeId: resolvedThemeId,
-    isPerspectiveOpen,
+    isPerspectiveOpenRef,
     isSettingsOpen,
     markShortcutActionHandled,
     onSwitchProject,
@@ -5517,46 +5520,20 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     [clearZenChromeRevealIntent, clearZenTopChromeOccludedHeaderIntent],
   );
 
-  useEffect(() => {
-    if (!zenModeEnabled) {
-      zenPanelInteractionActiveRef.current = false;
-      setZenTopChromeInteractionLock(false);
-      clearZenChromeRevealIntent();
-      clearZenTopChromeOccludedHeaderIntent();
-      return;
-    }
+  const handleZenViewportMouseMoveEvent = useEffectEvent(
+    (event: MouseEvent) => {
+      handleZenViewportMouseMove(event);
+    },
+  );
 
-    window.addEventListener("mousemove", handleZenViewportMouseMove, true);
-    window.addEventListener("mousedown", handleZenViewportMouseDown, true);
-    return () => {
-      window.removeEventListener("mousemove", handleZenViewportMouseMove, true);
-      window.removeEventListener("mousedown", handleZenViewportMouseDown, true);
-      zenViewportPointerRef.current = null;
-      zenViewportChromeStateRef.current = createEmptyZenViewportChromeState();
-      zenPanelInteractionActiveRef.current = false;
-      setZenTopChromeInteractionLock(false);
-      clearZenChromeRevealIntent();
-      clearZenTopChromeOccludedHeaderIntent();
-      if (zenViewportMouseMoveFrameRef.current !== null) {
-        window.cancelAnimationFrame(zenViewportMouseMoveFrameRef.current);
-        zenViewportMouseMoveFrameRef.current = null;
-      }
-    };
-  }, [
-    clearZenTopChromeOccludedHeaderIntent,
-    clearZenChromeRevealIntent,
-    handleZenViewportMouseDown,
-    handleZenViewportMouseMove,
-    setZenTopChromeInteractionLock,
-    zenModeEnabled,
-  ]);
+  const handleZenViewportMouseDownEvent = useEffectEvent(
+    (event: MouseEvent) => {
+      handleZenViewportMouseDown(event);
+    },
+  );
 
-  useEffect(() => {
-    if (!zenModeEnabled || !zenTopChromeVisible) {
-      return;
-    }
-
-    const handleVisibleTopChromeMouseMove = (event: MouseEvent) => {
+  const handleVisibleTopChromeMouseMove = useEffectEvent(
+    (event: MouseEvent) => {
       const releaseBoundary = Math.max(
         ZEN_EDGE_HOVER_SIZE,
         topChromeHeight + SNAPPED_PANEL_OUTER_GAP,
@@ -5576,32 +5553,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       };
       setZenTopChromeEdgeSource(false);
       setZenTopChromePointerSource(false);
-    };
+    },
+  );
 
-    window.addEventListener("mousemove", handleVisibleTopChromeMouseMove, true);
-    return () => {
-      window.removeEventListener(
-        "mousemove",
-        handleVisibleTopChromeMouseMove,
-        true,
-      );
-    };
-  }, [
-    clearZenChromeRevealIntent,
-    clearZenTopChromeOccludedHeaderIntent,
-    setZenTopChromeEdgeSource,
-    setZenTopChromePointerSource,
-    topChromeHeight,
-    zenModeEnabled,
-    zenTopChromeVisible,
-  ]);
-
-  useEffect(() => {
-    if (!zenModeEnabled || !zenBottomChromeVisible) {
-      return;
-    }
-
-    const handleVisibleBottomChromeMouseMove = (event: MouseEvent) => {
+  const handleVisibleBottomChromeMouseMove = useEffectEvent(
+    (event: MouseEvent) => {
       const releaseBoundary =
         window.innerHeight - bottomChromeHeight - ZEN_EDGE_HOVER_SIZE;
       if (event.clientY >= releaseBoundary) {
@@ -5613,7 +5569,86 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         bottom: false,
       };
       hideZenBottomChrome();
+    },
+  );
+
+  const handlePanelDragStartEvent = useEffectEvent(() => {
+    clearZenChromeRevealIntent();
+    clearZenTopChromeOccludedHeaderIntent();
+    zenPanelInteractionActiveRef.current = true;
+    zenViewportChromeStateRef.current = {
+      ...zenViewportChromeStateRef.current,
+      top: false,
     };
+    setZenTopChromeInteractionLock(true);
+    setZenTopChromeEdgeSource(false);
+    setZenTopChromePointerSource(false);
+  });
+
+  const handlePanelDragEndEvent = useEffectEvent(() => {
+    zenPanelInteractionActiveRef.current = false;
+    setZenTopChromeInteractionLock(false);
+  });
+
+  useEffect(() => {
+    if (!zenModeEnabled) {
+      zenPanelInteractionActiveRef.current = false;
+      setZenTopChromeInteractionLock(false);
+      clearZenChromeRevealIntent();
+      clearZenTopChromeOccludedHeaderIntent();
+      return;
+    }
+
+    window.addEventListener("mousemove", handleZenViewportMouseMoveEvent, true);
+    window.addEventListener("mousedown", handleZenViewportMouseDownEvent, true);
+    return () => {
+      window.removeEventListener(
+        "mousemove",
+        handleZenViewportMouseMoveEvent,
+        true,
+      );
+      window.removeEventListener(
+        "mousedown",
+        handleZenViewportMouseDownEvent,
+        true,
+      );
+      zenViewportPointerRef.current = null;
+      zenViewportChromeStateRef.current = createEmptyZenViewportChromeState();
+      zenPanelInteractionActiveRef.current = false;
+      setZenTopChromeInteractionLock(false);
+      clearZenChromeRevealIntent();
+      clearZenTopChromeOccludedHeaderIntent();
+      if (zenViewportMouseMoveFrameRef.current !== null) {
+        window.cancelAnimationFrame(zenViewportMouseMoveFrameRef.current);
+        zenViewportMouseMoveFrameRef.current = null;
+      }
+    };
+  }, [
+    clearZenTopChromeOccludedHeaderIntent,
+    clearZenChromeRevealIntent,
+    setZenTopChromeInteractionLock,
+    zenModeEnabled,
+  ]);
+
+  useEffect(() => {
+    if (!zenModeEnabled || !zenTopChromeVisible) {
+      return;
+    }
+
+    window.addEventListener("mousemove", handleVisibleTopChromeMouseMove, true);
+    return () => {
+      window.removeEventListener(
+        "mousemove",
+        handleVisibleTopChromeMouseMove,
+        true,
+      );
+    };
+  }, [zenModeEnabled, zenTopChromeVisible]);
+
+  useEffect(() => {
+    if (!zenModeEnabled || !zenBottomChromeVisible) {
+      return;
+    }
 
     window.addEventListener(
       "mousemove",
@@ -5627,12 +5662,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         true,
       );
     };
-  }, [
-    bottomChromeHeight,
-    hideZenBottomChrome,
-    zenBottomChromeVisible,
-    zenModeEnabled,
-  ]);
+  }, [zenBottomChromeVisible, zenModeEnabled]);
 
   useEffect(() => {
     if (!zenModeEnabled) {
@@ -5680,39 +5710,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       return;
     }
 
-    const handlePanelDragStart = () => {
-      clearZenChromeRevealIntent();
-      clearZenTopChromeOccludedHeaderIntent();
-      zenPanelInteractionActiveRef.current = true;
-      zenViewportChromeStateRef.current = {
-        ...zenViewportChromeStateRef.current,
-        top: false,
-      };
-      setZenTopChromeInteractionLock(true);
-      setZenTopChromeEdgeSource(false);
-      setZenTopChromePointerSource(false);
-    };
-    const handlePanelDragEnd = () => {
-      zenPanelInteractionActiveRef.current = false;
-      setZenTopChromeInteractionLock(false);
-    };
-
-    window.addEventListener("panel-drag-start", handlePanelDragStart);
-    window.addEventListener("panel-drag-end", handlePanelDragEnd);
+    window.addEventListener("panel-drag-start", handlePanelDragStartEvent);
+    window.addEventListener("panel-drag-end", handlePanelDragEndEvent);
     return () => {
-      window.removeEventListener("panel-drag-start", handlePanelDragStart);
-      window.removeEventListener("panel-drag-end", handlePanelDragEnd);
+      window.removeEventListener("panel-drag-start", handlePanelDragStartEvent);
+      window.removeEventListener("panel-drag-end", handlePanelDragEndEvent);
       zenPanelInteractionActiveRef.current = false;
       setZenTopChromeInteractionLock(false);
     };
-  }, [
-    clearZenChromeRevealIntent,
-    clearZenTopChromeOccludedHeaderIntent,
-    setZenTopChromeEdgeSource,
-    setZenTopChromeInteractionLock,
-    setZenTopChromePointerSource,
-    zenModeEnabled,
-  ]);
+  }, [setZenTopChromeInteractionLock, zenModeEnabled]);
 
   const normalWorkspaceStyle: React.CSSProperties = {
     position: "relative",

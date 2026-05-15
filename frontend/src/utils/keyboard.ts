@@ -113,6 +113,7 @@ export type ShortcutActionId =
   | "terminal.toggle"
   | "terminal.fullscreen"
   | "ai.toggle"
+  | "ai.fullscreen"
   | "settings.toggle"
   | "zenMode.toggle"
   | "window.toggleFullscreen"
@@ -200,8 +201,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   {
     id: "panel.closeFullscreen",
     label: "Close fullscreen panel",
-    description:
-      "Close the active fullscreen Git, Problems, or Terminal panel.",
+    description: "Close the active fullscreen panel.",
     group: "Panels",
     scope: "global",
     defaultShortcuts: ["option+w"],
@@ -209,10 +209,18 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   {
     id: "ai.toggle",
     label: "AI panel",
-    description: "Open or close the AI assistant panel.",
+    description: "Open or close the AI Chat panel.",
     group: "Panels",
     scope: "global",
     defaultShortcuts: ["cmd+r", "ctrl+r"],
+  },
+  {
+    id: "ai.fullscreen",
+    label: "AI fullscreen",
+    description: "Open AI Chat in fullscreen mode or restore it.",
+    group: "Panels",
+    scope: "global",
+    defaultShortcuts: ["cmd+shift+r", "ctrl+shift+r"],
   },
   {
     id: "terminal.toggle",
@@ -762,6 +770,8 @@ export const shortcuts = {
   switchProjectPrev: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "project.switchPrevious"),
   toggleAI: (e: KeyboardEvent) => matchesActionShortcut(e, "ai.toggle"),
+  toggleAIFullscreen: (e: KeyboardEvent) =>
+    matchesActionShortcut(e, "ai.fullscreen"),
   toggleSettings: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "settings.toggle"),
   toggleZenMode: (e: KeyboardEvent) =>

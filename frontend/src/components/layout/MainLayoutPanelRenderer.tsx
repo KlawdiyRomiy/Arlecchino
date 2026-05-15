@@ -392,13 +392,15 @@ export const MainLayoutPanelRenderer: React.FC<
         <FloatingPanel
           key={panelId}
           id="aiChat"
-          title="AI Assistant"
+          title="AI Chat"
           icon={<Sparkles size={16} />}
           minSize={280}
           maxSize={600}
           {...panelProps}
         >
-          <AIChatPanelContent />
+          <AIChatPanelContent
+            presentation={isFullscreen ? "fullscreen" : "panel"}
+          />
         </FloatingPanel>
       );
     case "git":

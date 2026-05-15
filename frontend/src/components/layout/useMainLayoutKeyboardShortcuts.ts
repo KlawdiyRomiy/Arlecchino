@@ -76,9 +76,10 @@ interface UseMainLayoutKeyboardShortcutsOptions {
   executionDialogMode: unknown | null;
   finishHeldPanelShortcutOnKeyUp: (event: KeyboardEvent) => void;
   getShortcutEventCode: (event: KeyboardEvent) => string;
+  aiChatPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   gitPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   handleHeldPanelShortcutMove: (event: KeyboardEvent) => boolean;
-  isPerspectiveOpen: boolean;
+  isPerspectiveOpenRef: MutableRefObject<boolean>;
   isSettingsOpen: boolean;
   markShortcutActionHandled: (actionId: ShortcutActionId) => void;
   onSwitchProject?: (projectId: string, direction?: number) => void;
@@ -96,7 +97,7 @@ interface UseMainLayoutKeyboardShortcutsOptions {
     snapshotRef?: MutableRefObject<PanelFullscreenSnapshot | null>,
   ) => void;
   togglePanelFullscreenFromShortcut: (
-    panelId: "terminal" | "git" | "problems",
+    panelId: "terminal" | "git" | "problems" | "aiChat",
     snapshotRef: MutableRefObject<PanelFullscreenSnapshot | null>,
   ) => void;
 }
@@ -121,9 +122,10 @@ export const useMainLayoutKeyboardShortcuts = ({
   executionDialogMode,
   finishHeldPanelShortcutOnKeyUp,
   getShortcutEventCode,
+  aiChatPreFullscreenRef,
   gitPreFullscreenRef,
   handleHeldPanelShortcutMove,
-  isPerspectiveOpen,
+  isPerspectiveOpenRef,
   isSettingsOpen,
   markShortcutActionHandled,
   onSwitchProject,
@@ -300,7 +302,9 @@ export const useMainLayoutKeyboardShortcuts = ({
         }
 
         const localProjectSwitchBlocked =
-          dispatcher.isOpen || activeModal !== null || isPerspectiveOpen;
+          dispatcher.isOpen ||
+          activeModal !== null ||
+          isPerspectiveOpenRef.current;
 
         if (
           isTerminalShortcutContext ||
@@ -370,6 +374,17 @@ export const useMainLayoutKeyboardShortcuts = ({
           () => togglePanelCompactFromShortcut("aiChat"),
           { actionId: "ai.toggle", runTapActionImmediately: true },
         );
+        return;
+      }
+
+      if (shortcuts.toggleAIFullscreen(e)) {
+        if (isTerminalShortcutContext) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        togglePanelFullscreenFromShortcut("aiChat", aiChatPreFullscreenRef);
         return;
       }
 
@@ -667,9 +682,10 @@ export const useMainLayoutKeyboardShortcuts = ({
     executionDialogMode,
     finishHeldPanelShortcutOnKeyUp,
     getShortcutEventCode,
+    aiChatPreFullscreenRef,
     gitPreFullscreenRef,
     handleHeldPanelShortcutMove,
-    isPerspectiveOpen,
+    isPerspectiveOpenRef,
     isSettingsOpen,
     markShortcutActionHandled,
     onSwitchProject,

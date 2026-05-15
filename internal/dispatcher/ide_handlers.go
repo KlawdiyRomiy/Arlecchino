@@ -46,6 +46,7 @@ func (e *IDEEventEmitter) RegisterHandlers(d *Dispatcher) {
 	d.RegisterHandler("shortcut.terminal.toggle", e.handleMenuAction("terminal.toggle"))
 	d.RegisterHandler("shortcut.terminal.fullscreen", e.handleMenuAction("terminal.fullscreen"))
 	d.RegisterHandler("shortcut.ai.toggle", e.handleMenuAction("ai.toggle"))
+	d.RegisterHandler("shortcut.ai.fullscreen", e.handleMenuAction("ai.fullscreen"))
 	d.RegisterHandler("shortcut.git.toggle", e.handleMenuAction("git.toggle"))
 	d.RegisterHandler("shortcut.git.fullscreen", e.handleMenuAction("git.fullscreen"))
 	d.RegisterHandler("shortcut.problems.toggle", e.handleMenuAction("problems.toggle"))

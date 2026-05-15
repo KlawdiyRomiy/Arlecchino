@@ -108,12 +108,14 @@ func TestBuildApplicationMenuUsesUpdatedPanelAccelerators(t *testing.T) {
 		"terminal.toggle":     {"cmd+j"},
 		"problems.toggle":     {"cmd+i"},
 		"problems.fullscreen": {"cmd+shift+i"},
+		"ai.fullscreen":       {"cmd+shift+r"},
 	})
 
 	viewMenu := findSubmenu(t, menuModel, "View")
 	assertMenuAccelerator(t, findMenuItem(t, viewMenu, "Toggle Terminal"), "Cmd+J")
 	assertMenuAccelerator(t, findMenuItem(t, viewMenu, "Toggle Problems Panel"), "Cmd+I")
 	assertMenuAccelerator(t, findMenuItem(t, viewMenu, "Toggle Problems Fullscreen"), "Cmd+Shift+I")
+	assertMenuAccelerator(t, findMenuItem(t, viewMenu, "Toggle AI Fullscreen"), "Cmd+Shift+R")
 }
 
 func findSubmenu(t *testing.T, menuModel *application.Menu, label string) *application.Menu {
