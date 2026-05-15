@@ -1,0 +1,119 @@
+import React from "react";
+import {
+  Database,
+  FileText,
+  Monitor,
+  Shield,
+  SlidersHorizontal,
+} from "lucide-react";
+import type { AIContextProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/models";
+import type { AIChatDisplayPrefs, ContextToggles } from "./types";
+
+interface SettingsPopoverProps {
+  context: ContextToggles;
+  displayPrefs: AIChatDisplayPrefs;
+  contextProviders: AIContextProviderDescriptor[];
+  onContextToggle: (key: keyof ContextToggles, value: boolean) => void;
+  onDisplayPrefChange: (key: keyof AIChatDisplayPrefs, value: boolean) => void;
+}
+
+const contextRows: Array<{
+  key: keyof ContextToggles;
+  label: string;
+  icon: React.ReactNode;
+}> = [
+  { key: "workspace", label: "Workspace", icon: <Database size={15} /> },
+  { key: "currentFile", label: "Current file", icon: <FileText size={15} /> },
+  { key: "terminalLogs", label: "Terminal logs", icon: <Monitor size={15} /> },
+  { key: "mnemonic", label: "Mnemonic", icon: <Shield size={15} /> },
+  { key: "mcp", label: "MCP", icon: <SlidersHorizontal size={15} /> },
+  { key: "skills", label: "Skills", icon: <SlidersHorizontal size={15} /> },
+];
+
+export function SettingsPopover({
+  context,
+  displayPrefs,
+  contextProviders,
+  onContextToggle,
+  onDisplayPrefChange,
+}: SettingsPopoverProps) {
+  return (
+    <div
+      className="ai-chat-popover ai-chat-settings-popover"
+      data-testid="ai-chat-settings-popover"
+    >
+      <div className="ai-chat-popover__section">
+        <div className="ai-chat-popover__title">Display</div>
+        <label className="ai-chat-toggle-row">
+          <span>Auto-scroll</span>
+          <input
+            checked={displayPrefs.autoScroll}
+            type="checkbox"
+            onChange={(event) =>
+              onDisplayPrefChange("autoScroll", event.target.checked)
+            }
+          />
+        </label>
+        <label className="ai-chat-toggle-row">
+          <span>Compact cards</span>
+          <input
+            checked={displayPrefs.compactCards}
+            type="checkbox"
+            onChange={(event) =>
+              onDisplayPrefChange("compactCards", event.target.checked)
+            }
+          />
+        </label>
+        <label className="ai-chat-toggle-row">
+          <span>Runtime activity</span>
+          <input
+            checked={displayPrefs.showActivity}
+            type="checkbox"
+            onChange={(event) =>
+              onDisplayPrefChange("showActivity", event.target.checked)
+            }
+          />
+        </label>
+      </div>
+
+      <div className="ai-chat-popover__section">
+        <div className="ai-chat-popover__title">Context</div>
+        {contextRows.map((row) => (
+          <label className="ai-chat-toggle-row" key={row.key}>
+            <span>
+              {row.icon}
+              {row.label}
+            </span>
+            <input
+              checked={context[row.key]}
+              type="checkbox"
+              onChange={(event) =>
+                onContextToggle(row.key, event.target.checked)
+              }
+            />
+          </label>
+        ))}
+      </div>
+
+      {contextProviders.length > 0 ? (
+        <div className="ai-chat-popover__section">
+          <div className="ai-chat-popover__title">Runtime Providers</div>
+          <div className="ai-chat-context-provider-list">
+            {contextProviders.map((provider) => (
+              <span key={provider.id} className="ai-chat-context-provider">
+                <span
+                  className={`ai-chat-context-provider__dot is-${
+                    provider.enabled && provider.available
+                      ? "ready"
+                      : "disabled"
+                  }`}
+                />
+                {provider.name || provider.id}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}

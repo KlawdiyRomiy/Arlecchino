@@ -22,6 +22,20 @@ type RuntimeWindow = typeof window & {
 };
 
 const callIDToMethod = new Map<number, string>([
+  [2942042952, "AICancelChatRun"],
+  [357299996, "AIClearChatRuns"],
+  [1617810636, "AIGetContextPreview"],
+  [2936535171, "AIGetStatus"],
+  [2485175480, "AIGetChatRun"],
+  [2391356768, "AIListChatActions"],
+  [2726976455, "AIListChatRuns"],
+  [586247632, "AIListContextProviders"],
+  [4258240650, "AIListEgressRecords"],
+  [1364497287, "AIListProviders"],
+  [2658808305, "AIRefreshLocalProviders"],
+  [2894980274, "AISaveProviderSettings"],
+  [1756960180, "AIStartChatRun"],
+  [1815374578, "AITestProvider"],
   [371497096, "CloseProject"],
   [3924508043, "GetCurrentProjectFramework"],
   [3018154166, "GetCurrentProjectPath"],
