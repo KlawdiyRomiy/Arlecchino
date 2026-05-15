@@ -506,6 +506,17 @@ body > [data-radix-portal] > * {
     0 0 0 3px var(--focus-ring-strong);
 }
 
+.topbar-reorder-item {
+  transition:
+    opacity 120ms ease,
+    filter 120ms ease;
+}
+
+.topbar-reorder-item[data-topbar-dragging-item="true"] {
+  opacity: 0.42;
+  filter: saturate(0.82);
+}
+
 .topbar-panel-button-active.shell-control {
   background: color-mix(
     in srgb,

@@ -295,15 +295,21 @@ export const TopBar: React.FC<TopBarProps> = ({
   const rightTopbarItemsRef = React.useRef<HTMLDivElement | null>(null);
   const suppressTopbarItemClickRef = React.useRef(false);
   const [dragGhost, setDragGhost] = React.useState<DragGhostState | null>(null);
+  const [topbarDragPreviewOrder, setTopbarDragPreviewOrder] = React.useState<
+    TopbarItemId[] | null
+  >(null);
+  const [draggedTopbarItemId, setDraggedTopbarItemId] =
+    React.useState<VisibleTopbarItemId | null>(null);
   const compactTopbarMode = !showTopbarProjectPath;
   const normalizedTopbarItemOrder = React.useMemo(
     () =>
       normalizeTopbarItemOrder(
-        topbarItemOrder.length > 0
-          ? topbarItemOrder
-          : DEFAULT_TOPBAR_ITEM_ORDER,
+        topbarDragPreviewOrder ??
+          (topbarItemOrder.length > 0
+            ? topbarItemOrder
+            : DEFAULT_TOPBAR_ITEM_ORDER),
       ),
-    [topbarItemOrder],
+    [topbarDragPreviewOrder, topbarItemOrder],
   );
   const visibleTopbarOrder = React.useMemo(
     () =>
@@ -348,6 +354,12 @@ export const TopBar: React.FC<TopBarProps> = ({
   const fadeTransition = { duration: 0.16, ease: "easeOut" } as const;
   const fadeInitial = { opacity: 0, y: -2 };
   const fadeAnimate = { opacity: 1, y: 0 };
+  const topbarReorderLayoutTransition = {
+    type: "spring",
+    stiffness: 520,
+    damping: 42,
+    mass: 0.42,
+  } as const;
   const contextPathRootClass =
     "flex min-w-0 max-w-[520px] items-center gap-0 overflow-hidden font-mono leading-none";
   const contextPathParentClass =
@@ -402,29 +414,33 @@ export const TopBar: React.FC<TopBarProps> = ({
     [],
   );
 
-  const reorderVisibleTopbarOrder = React.useCallback(
+  const resolveReorderedTopbarOrder = React.useCallback(
     (
       draggedItemId: VisibleTopbarItemId,
       clientX: number,
       group: TopbarItemGroup,
-    ) => {
+      currentOrder: TopbarItemId[],
+    ): TopbarItemId[] | null => {
       const container =
         group === "left"
           ? leftTopbarItemsRef.current
           : rightTopbarItemsRef.current;
-      const currentVisibleOrder =
-        group === "left" ? leftTopbarOrder : rightTopbarOrder;
       if (!container) {
-        return;
+        return null;
       }
 
       const containerRect = container.getBoundingClientRect();
       const insideContainer =
         clientX >= containerRect.left && clientX <= containerRect.right;
       if (!insideContainer) {
-        return;
+        return null;
       }
 
+      const normalizedCurrentOrder = normalizeTopbarItemOrder(currentOrder);
+      const currentVisibleOrder = resolveVisibleTopbarSideOrder(
+        resolveVisibleTopbarOrder(normalizedCurrentOrder, compactTopbarMode),
+        group,
+      );
       const withoutDragged = currentVisibleOrder.filter(
         (itemId) => itemId !== draggedItemId,
       );
@@ -453,35 +469,27 @@ export const TopBar: React.FC<TopBarProps> = ({
           (itemId, index) => itemId === currentVisibleOrder[index],
         )
       ) {
-        return;
+        return normalizedCurrentOrder;
       }
 
       const draggedItemIds = resolveTopbarItemIdsFromVisibleItem(
         draggedItemId,
-        normalizedTopbarItemOrder,
+        normalizedCurrentOrder,
         compactTopbarMode,
       );
       const nextSideOrder = resolveUnderlyingTopbarOrderFromVisibleSideOrder(
         nextVisibleOrder,
-        normalizedTopbarItemOrder,
+        normalizedCurrentOrder,
         compactTopbarMode,
       );
-      setTopbarItemOrder(
-        replaceTopbarSideOrder(
-          normalizedTopbarItemOrder,
-          group,
-          nextSideOrder,
-          draggedItemIds,
-        ),
+      return replaceTopbarSideOrder(
+        normalizedCurrentOrder,
+        group,
+        nextSideOrder,
+        draggedItemIds,
       );
     },
-    [
-      compactTopbarMode,
-      leftTopbarOrder,
-      normalizedTopbarItemOrder,
-      rightTopbarOrder,
-      setTopbarItemOrder,
-    ],
+    [compactTopbarMode],
   );
 
   const handleTopbarItemPointerDown = React.useCallback(
@@ -498,6 +506,8 @@ export const TopBar: React.FC<TopBarProps> = ({
       const pointerId = event.pointerId;
       const startX = event.clientX;
       const startY = event.clientY;
+      const initialTopbarItemOrder = normalizedTopbarItemOrder;
+      let previewTopbarItemOrder = initialTopbarItemOrder;
       let activeDrag = false;
 
       const resetClickSuppression = () => {
@@ -512,6 +522,28 @@ export const TopBar: React.FC<TopBarProps> = ({
         window.removeEventListener("pointercancel", handlePointerCancel, true);
         releaseSelectionLock();
         setDragGhost(null);
+        setTopbarDragPreviewOrder(null);
+        setDraggedTopbarItemId(null);
+      };
+
+      const previewTopbarItemDrop = (
+        pointerEvent: PointerEvent,
+        targetGroup: TopbarItemGroup,
+      ) => {
+        const nextOrder = resolveReorderedTopbarOrder(
+          itemId,
+          pointerEvent.clientX,
+          targetGroup,
+          previewTopbarItemOrder,
+        );
+
+        if (!nextOrder) {
+          return previewTopbarItemOrder;
+        }
+
+        previewTopbarItemOrder = nextOrder;
+        setTopbarDragPreviewOrder(nextOrder);
+        return nextOrder;
       };
 
       const handlePointerCancel = (pointerEvent: PointerEvent) => {
@@ -537,6 +569,8 @@ export const TopBar: React.FC<TopBarProps> = ({
         if (!activeDrag && Math.hypot(dx, dy) > 7) {
           activeDrag = true;
           suppressTopbarItemClickRef.current = true;
+          setDraggedTopbarItemId(itemId);
+          setTopbarDragPreviewOrder(previewTopbarItemOrder);
         }
         if (!activeDrag) {
           return;
@@ -567,6 +601,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         ) {
           return;
         }
+        previewTopbarItemDrop(pointerEvent, targetGroup);
         if (pointerEvent.clientX < rect.left + 42) {
           container.scrollLeft -= 18;
         } else if (pointerEvent.clientX > rect.right - 42) {
@@ -578,8 +613,8 @@ export const TopBar: React.FC<TopBarProps> = ({
         if (pointerEvent.pointerId !== pointerId) {
           return;
         }
-        cleanup();
         if (!activeDrag) {
+          cleanup();
           return;
         }
         resetClickSuppression();
@@ -588,18 +623,23 @@ export const TopBar: React.FC<TopBarProps> = ({
           pointerEvent.clientX,
           pointerEvent.clientY,
         );
-        if (!targetGroup) {
-          return;
+        if (targetGroup) {
+          setTopbarItemOrder(previewTopbarItemDrop(pointerEvent, targetGroup));
         }
 
-        reorderVisibleTopbarOrder(itemId, pointerEvent.clientX, targetGroup);
+        cleanup();
       };
 
       window.addEventListener("pointermove", handlePointerMove, true);
       window.addEventListener("pointerup", handlePointerUp, true);
       window.addEventListener("pointercancel", handlePointerCancel, true);
     },
-    [getTopbarDropGroup, reorderVisibleTopbarOrder],
+    [
+      getTopbarDropGroup,
+      normalizedTopbarItemOrder,
+      resolveReorderedTopbarOrder,
+      setTopbarItemOrder,
+    ],
   );
 
   const handleTopbarItemClickCapture = React.useCallback(
@@ -1017,11 +1057,16 @@ export const TopBar: React.FC<TopBarProps> = ({
     itemId: VisibleTopbarItemId,
     group: TopbarItemGroup,
   ) => (
-    <div
+    <motion.div
       key={itemId}
+      layout="position"
       className={getTopbarItemClassName(itemId)}
+      transition={topbarReorderLayoutTransition}
       style={topBarItemNoDragStyle}
       data-topbar-item-id={itemId}
+      data-topbar-dragging-item={
+        draggedTopbarItemId === itemId ? "true" : undefined
+      }
       data-testid={`topbar-item-${itemId}`}
       onPointerDown={(event) =>
         handleTopbarItemPointerDown(itemId, group, event)
@@ -1029,7 +1074,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       onClickCapture={handleTopbarItemClickCapture}
     >
       {renderTopbarItem(itemId)}
-    </div>
+    </motion.div>
   );
 
   return (
