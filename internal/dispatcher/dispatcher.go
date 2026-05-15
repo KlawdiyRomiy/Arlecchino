@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"arlecchino/internal/indexer/core"
 	"arlecchino/internal/terminal"
+	"context"
 	"sync"
 )
 
@@ -33,6 +34,26 @@ func (d *Dispatcher) SetProjectPath(path string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.searchEngine = NewSearchEngine(path)
+}
+
+func (d *Dispatcher) SearchStatus() SearchBackendStatus {
+	d.mu.RLock()
+	engine := d.searchEngine
+	d.mu.RUnlock()
+	if engine == nil {
+		return SearchBackendStatus{Name: "linear", Ready: false, Fallback: true, Message: "search engine is not initialized"}
+	}
+	return engine.Status()
+}
+
+func (d *Dispatcher) RebuildSearch(ctx context.Context) error {
+	d.mu.RLock()
+	engine := d.searchEngine
+	d.mu.RUnlock()
+	if engine == nil {
+		return nil
+	}
+	return engine.Rebuild(ctx)
 }
 
 func (d *Dispatcher) SetIndexEngine(engine *core.Engine) {

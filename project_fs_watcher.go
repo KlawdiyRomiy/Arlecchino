@@ -1,12 +1,11 @@
 package main
 
 import (
-	"errors"
-	"io/fs"
-	"path/filepath"
-	"sort"
+	"context"
 	"strings"
 	"time"
+
+	"arlecchino/internal/watcher"
 )
 
 type projectEntryCreatedEvent struct {
@@ -32,8 +31,6 @@ const (
 	projectWatchMaxEvents       = 256
 )
 
-var errProjectWatchBudgetExceeded = errors.New("project watch scan budget exceeded")
-
 func (a *App) startProjectFilesystemWatcher(projectPath string, generation uint64) {
 	a.startProjectFilesystemWatcherForSession(a.activeProjectSession(), projectPath, generation)
 }
@@ -43,72 +40,39 @@ func (a *App) startProjectFilesystemWatcherForSession(session *ProjectRuntimeSes
 		return
 	}
 
-	initialScan, err := scanProjectEntriesWithBudget(projectPath, projectWatchMaxEntries)
-	if err != nil {
-		a.logWarning("project fs watcher init failed: " + err.Error())
-		return
-	}
-	knownEntries := initialScan.Entries
-
-	ctx := session.projectCtx
 	session.wg.Add(1)
 	go func() {
 		defer session.wg.Done()
-
-		interval := projectWatchInitialInterval
-		if initialScan.Bounded {
-			interval = projectWatchMaxInterval
-		}
-		timer := time.NewTimer(interval)
-		defer timer.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-timer.C:
-			}
-
+		ctx, cancel := context.WithCancel(session.projectCtx)
+		defer cancel()
+		service := watcher.NewProjectWatcher(watcher.Options{
+			MaxEntries:          projectWatchMaxEntries,
+			MaxEvents:           projectWatchMaxEvents,
+			InitialPollInterval: projectWatchInitialInterval,
+			MaxPollInterval:     projectWatchMaxInterval,
+		})
+		err := service.Start(ctx, projectPath, func(events []watcher.Event) {
 			if session.projectGeneration.Load() != generation {
+				cancel()
 				return
 			}
-
-			currentScan, err := scanProjectEntriesWithBudget(projectPath, projectWatchMaxEntries)
-			if err != nil {
-				timer.Reset(projectWatchMaxInterval)
-				continue
-			}
-			currentEntries := currentScan.Entries
-
-			createdEntries := diffCreatedProjectEntries(knownEntries, currentEntries)
-			changedFiles := diffChangedProjectFiles(knownEntries, currentEntries)
-			knownEntries = currentEntries
-			hadChanges := len(createdEntries) > 0 || len(changedFiles) > 0
-
-			for _, entry := range limitProjectWatchCreatedEvents(createdEntries, projectWatchMaxEvents) {
-				a.emitEvent("project:entry:created", projectEntryCreatedEvent{
-					Path:        entry.Path,
-					IsDirectory: entry.IsDirectory,
-				})
-			}
-
-			for _, path := range limitProjectWatchChangedEvents(changedFiles, projectWatchMaxEvents) {
-				a.emitEvent("file:changed", path)
-			}
-
-			switch {
-			case currentScan.Bounded:
-				interval = projectWatchMaxInterval
-			case hadChanges:
-				interval = projectWatchInitialInterval
-			case interval < projectWatchMaxInterval:
-				interval *= 2
-				if interval > projectWatchMaxInterval {
-					interval = projectWatchMaxInterval
+			for _, event := range events {
+				switch event.Kind {
+				case watcher.EventCreated:
+					a.emitEvent("project:entry:created", projectEntryCreatedEvent{
+						Path:        event.Path,
+						IsDirectory: event.IsDirectory,
+					})
+				case watcher.EventChanged:
+					a.emitEvent("file:changed", event.Path)
 				}
 			}
-			timer.Reset(interval)
+		})
+		if err != nil {
+			a.logWarning("project fs watcher init failed: " + err.Error())
+			return
 		}
+		<-ctx.Done()
 	}()
 }
 
@@ -118,56 +82,25 @@ func scanProjectEntries(projectPath string) (map[string]projectEntrySnapshot, er
 }
 
 func scanProjectEntriesWithBudget(projectPath string, maxEntries int) (projectEntryScanResult, error) {
-	entries := make(map[string]projectEntrySnapshot, 256)
-	bounded := false
-
-	err := filepath.WalkDir(projectPath, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			if d != nil && d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		if path == projectPath {
-			return nil
-		}
-
-		if d.IsDir() && shouldSkipProjectWatchDir(d.Name()) {
-			return filepath.SkipDir
-		}
-
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-
-		entries[path] = projectEntrySnapshot{
-			IsDirectory: d.IsDir(),
-			Size:        info.Size(),
-			ModifiedAt:  info.ModTime(),
-		}
-		if maxEntries > 0 && len(entries) >= maxEntries {
-			bounded = true
-			return errProjectWatchBudgetExceeded
-		}
-		return nil
-	})
-
-	if err != nil && !errors.Is(err, errProjectWatchBudgetExceeded) {
+	result, err := watcher.Scan(context.Background(), projectPath, maxEntries)
+	if err != nil {
 		return projectEntryScanResult{}, err
 	}
-
-	return projectEntryScanResult{Entries: entries, Bounded: bounded}, nil
+	return projectEntryScanResult{Entries: toProjectEntrySnapshots(result.Entries), Bounded: result.Bounded}, nil
 }
 
 func shouldSkipProjectWatchDir(name string) bool {
-	switch name {
-	case ".arlecchino", ".cache", ".git", ".next", ".turbo", "build", "coverage", "dist", "node_modules", "tmp", "vendor":
-		return true
-	default:
-		return false
-	}
+	return name == ".arlecchino" ||
+		name == ".cache" ||
+		name == ".git" ||
+		name == ".next" ||
+		name == ".turbo" ||
+		name == "build" ||
+		name == "coverage" ||
+		name == "dist" ||
+		name == "node_modules" ||
+		name == "tmp" ||
+		name == "vendor"
 }
 
 func limitProjectWatchCreatedEvents(events []projectEntryCreatedEvent, limit int) []projectEntryCreatedEvent {
@@ -185,54 +118,46 @@ func limitProjectWatchChangedEvents(events []string, limit int) []string {
 }
 
 func diffCreatedProjectEntries(previous, current map[string]projectEntrySnapshot) []projectEntryCreatedEvent {
-	if len(current) == 0 {
-		return nil
-	}
-
-	created := make([]projectEntryCreatedEvent, 0)
-	for path, snapshot := range current {
-		if _, exists := previous[path]; exists {
-			continue
-		}
+	events := watcher.DiffCreated(toWatcherSnapshots(previous), toWatcherSnapshots(current))
+	created := make([]projectEntryCreatedEvent, 0, len(events))
+	for _, event := range events {
 		created = append(created, projectEntryCreatedEvent{
-			Path:        path,
-			IsDirectory: snapshot.IsDirectory,
+			Path:        event.Path,
+			IsDirectory: event.IsDirectory,
 		})
 	}
-
-	sort.Slice(created, func(i, j int) bool {
-		if created[i].Path == created[j].Path {
-			return !created[i].IsDirectory && created[j].IsDirectory
-		}
-		return created[i].Path < created[j].Path
-	})
-
 	return created
 }
 
 func diffChangedProjectFiles(previous, current map[string]projectEntrySnapshot) []string {
-	if len(previous) == 0 || len(current) == 0 {
-		return nil
+	events := watcher.DiffChangedFiles(toWatcherSnapshots(previous), toWatcherSnapshots(current))
+	changed := make([]string, 0, len(events))
+	for _, event := range events {
+		changed = append(changed, event.Path)
 	}
-
-	changed := make([]string, 0)
-	for path, snapshot := range current {
-		if snapshot.IsDirectory {
-			continue
-		}
-
-		previousSnapshot, exists := previous[path]
-		if !exists || previousSnapshot.IsDirectory {
-			continue
-		}
-
-		if previousSnapshot.Size == snapshot.Size && previousSnapshot.ModifiedAt.Equal(snapshot.ModifiedAt) {
-			continue
-		}
-
-		changed = append(changed, path)
-	}
-
-	sort.Strings(changed)
 	return changed
+}
+
+func toWatcherSnapshots(entries map[string]projectEntrySnapshot) map[string]watcher.Snapshot {
+	result := make(map[string]watcher.Snapshot, len(entries))
+	for path, snapshot := range entries {
+		result[path] = watcher.Snapshot{
+			IsDirectory: snapshot.IsDirectory,
+			Size:        snapshot.Size,
+			ModifiedAt:  snapshot.ModifiedAt,
+		}
+	}
+	return result
+}
+
+func toProjectEntrySnapshots(entries map[string]watcher.Snapshot) map[string]projectEntrySnapshot {
+	result := make(map[string]projectEntrySnapshot, len(entries))
+	for path, snapshot := range entries {
+		result[path] = projectEntrySnapshot{
+			IsDirectory: snapshot.IsDirectory,
+			Size:        snapshot.Size,
+			ModifiedAt:  snapshot.ModifiedAt,
+		}
+	}
+	return result
 }

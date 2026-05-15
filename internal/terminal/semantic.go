@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 type ShellEvent struct {
@@ -38,18 +40,28 @@ type semanticParser struct {
 	oscSawESC   bool
 	lineTail    string
 	maxTailSize int
+	sequences   TerminalSequenceParser
 }
 
 var (
-	ansiCSIRegex      = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 	fileRefRegex      = regexp.MustCompile(`([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+):(\d+)(?::(\d+))?`)
 	errorRegex        = regexp.MustCompile(`(?i)\b(error|fatal|panic|exception)\b`)
 	warnRegex         = regexp.MustCompile(`(?i)\b(warn|warning)\b`)
 	localhostURLRegex = regexp.MustCompile(`https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):\d{1,5}(?:[/?#]\S*)?`)
 )
 
+type TerminalSequenceParser interface {
+	Strip(text string) string
+}
+
+type ansiSequenceParser struct{}
+
+func (ansiSequenceParser) Strip(text string) string {
+	return ansi.Strip(text)
+}
+
 func newSemanticParser() *semanticParser {
-	return &semanticParser{maxTailSize: 2048}
+	return &semanticParser{maxTailSize: 2048, sequences: ansiSequenceParser{}}
 }
 
 func (p *semanticParser) Consume(chunk []byte) ([]ShellEvent, []SemanticEvent) {
@@ -209,7 +221,7 @@ func (p *semanticParser) parseSemanticsFromText(text []byte) []SemanticEvent {
 		return nil
 	}
 
-	cleaned := ansiCSIRegex.ReplaceAllString(string(text), "")
+	cleaned := p.sequences.Strip(string(text))
 	combined := p.lineTail + cleaned
 	parts := strings.Split(combined, "\n")
 

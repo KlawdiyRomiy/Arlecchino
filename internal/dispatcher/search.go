@@ -1,32 +1,108 @@
 package dispatcher
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"arlecchino/internal/workspace"
 )
+
+type SearchBackend interface {
+	SearchFiles(pattern string, limit int) []ResultItem
+	SearchContent(query string, caseSensitive bool, limit int) []ResultItem
+	Status() SearchBackendStatus
+	Rebuild(context.Context) error
+}
+
+type SearchBackendStatus struct {
+	Name      string `json:"name"`
+	Ready     bool   `json:"ready"`
+	Indexed   bool   `json:"indexed"`
+	Fallback  bool   `json:"fallback"`
+	Message   string `json:"message,omitempty"`
+	CachePath string `json:"cachePath,omitempty"`
+}
 
 type SearchEngine struct {
 	projectPath string
 	maxResults  int
+	backend     SearchBackend
 }
 
 func NewSearchEngine(projectPath string) *SearchEngine {
-	return &SearchEngine{
+	engine := &SearchEngine{
 		projectPath: projectPath,
 		maxResults:  50,
 	}
+	engine.backend = NewLinearSearchBackend(projectPath)
+	return engine
 }
 
 func (s *SearchEngine) SetProjectPath(path string) {
 	s.projectPath = path
+	s.backend = NewLinearSearchBackend(path)
+}
+
+func (s *SearchEngine) SetBackend(backend SearchBackend) {
+	if backend == nil {
+		backend = NewLinearSearchBackend(s.projectPath)
+	}
+	s.backend = backend
+}
+
+func (s *SearchEngine) Status() SearchBackendStatus {
+	if s.backend == nil {
+		return SearchBackendStatus{Name: "linear", Ready: false, Fallback: true, Message: "search backend is not initialized"}
+	}
+	return s.backend.Status()
+}
+
+func (s *SearchEngine) Rebuild(ctx context.Context) error {
+	if s.backend == nil {
+		return nil
+	}
+	return s.backend.Rebuild(ctx)
 }
 
 func (s *SearchEngine) SearchFiles(pattern string) []ResultItem {
-	if s.projectPath == "" {
+	if s.backend != nil {
+		return s.backend.SearchFiles(pattern, s.maxResults)
+	}
+	return nil
+}
+
+func (s *SearchEngine) SearchContent(query string, caseSensitive bool) []ResultItem {
+	if s.backend != nil {
+		return s.backend.SearchContent(query, caseSensitive, s.maxResults)
+	}
+	return []ResultItem{}
+}
+
+type LinearSearchBackend struct {
+	projectPath string
+}
+
+func NewLinearSearchBackend(projectPath string) *LinearSearchBackend {
+	return &LinearSearchBackend{projectPath: projectPath}
+}
+
+func (b *LinearSearchBackend) Status() SearchBackendStatus {
+	return SearchBackendStatus{Name: "linear", Ready: b.projectPath != "", Fallback: true, Message: "linear search backend"}
+}
+
+func (b *LinearSearchBackend) Rebuild(context.Context) error {
+	return nil
+}
+
+func (b *LinearSearchBackend) SearchFiles(pattern string, limit int) []ResultItem {
+	if b.projectPath == "" {
 		return nil
 	}
+	limit = normalizeSearchLimit(limit)
 
 	var results []ResultItem
 	pattern = strings.TrimSpace(pattern)
@@ -47,20 +123,23 @@ func (s *SearchEngine) SearchFiles(pattern string) []ResultItem {
 		".vscode":      true,
 	}
 
-	filepath.Walk(s.projectPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || len(results) >= s.maxResults {
-			return nil
+	scanner, err := workspace.NewScanner(b.projectPath, workspace.ScannerOptions{
+		UseGitIgnore: true,
+		SkipDirs:     excludeDirsToSet(excludeDirs),
+	})
+	if err != nil {
+		return results
+	}
+	entries, _, err := scanner.Scan(context.Background())
+	if err != nil && !errors.Is(err, workspace.ErrScanBudgetExceeded) {
+		return results
+	}
+	for _, entry := range entries {
+		if entry.IsDirectory || len(results) >= limit {
+			continue
 		}
-
-		if info.IsDir() {
-			if excludeDirs[info.Name()] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		relPath, _ := filepath.Rel(s.projectPath, path)
-		fileName := info.Name()
+		relPath := entry.RelPath
+		fileName := entry.Name
 		fileNameLower := strings.ToLower(fileName)
 		relPathLower := strings.ToLower(relPath)
 
@@ -83,20 +162,19 @@ func (s *SearchEngine) SearchFiles(pattern string) []ResultItem {
 				Title:    fileName,
 				Subtitle: relPath,
 				Action:   "open",
-				FilePath: path,
+				FilePath: entry.Path,
 			})
 		}
-
-		return nil
-	})
+	}
 
 	return results
 }
 
-func (s *SearchEngine) SearchContent(query string, caseSensitive bool) []ResultItem {
-	if s.projectPath == "" || query == "" {
+func (b *LinearSearchBackend) SearchContent(query string, caseSensitive bool, limit int) []ResultItem {
+	if b.projectPath == "" || query == "" {
 		return []ResultItem{}
 	}
+	limit = normalizeSearchLimit(limit)
 
 	results := make([]ResultItem, 0)
 
@@ -129,34 +207,38 @@ func (s *SearchEngine) SearchContent(query string, caseSensitive bool) []ResultI
 		query = strings.ToLower(query)
 	}
 
-	filepath.Walk(s.projectPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil || len(results) >= s.maxResults {
-			return nil
+	scanner, err := workspace.NewScanner(b.projectPath, workspace.ScannerOptions{
+		UseGitIgnore: true,
+		SkipDirs:     excludeDirsToSet(excludeDirs),
+	})
+	if err != nil {
+		return results
+	}
+	entries, _, err := scanner.Scan(context.Background())
+	if err != nil && !errors.Is(err, workspace.ErrScanBudgetExceeded) {
+		return results
+	}
+	for _, entry := range entries {
+		if entry.IsDirectory || len(results) >= limit {
+			continue
 		}
-
-		if info.IsDir() {
-			if excludeDirs[info.Name()] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
+		path := entry.Path
 		ext := strings.ToLower(filepath.Ext(path))
-		if !searchableExts[ext] && !searchableNames[strings.ToLower(info.Name())] {
-			return nil
+		if !searchableExts[ext] && !searchableNames[strings.ToLower(entry.Name)] {
+			continue
 		}
 
-		if info.Size() > 1024*1024 {
-			return nil
+		if entry.Size > 1024*1024 {
+			continue
 		}
 
 		content, err := os.ReadFile(path)
 		if err != nil {
-			return nil
+			continue
 		}
 
 		lines := strings.Split(string(content), "\n")
-		relPath, _ := filepath.Rel(s.projectPath, path)
+		relPath := entry.RelPath
 
 		for lineNum, line := range lines {
 			searchLine := line
@@ -181,16 +263,31 @@ func (s *SearchEngine) SearchContent(query string, caseSensitive bool) []ResultI
 					Line:     lineNum + 1,
 				})
 
-				if len(results) >= s.maxResults {
-					return filepath.SkipAll
+				if len(results) >= limit {
+					break
 				}
 			}
 		}
-
-		return nil
-	})
+	}
 
 	return results
+}
+
+func excludeDirsToSet(excludeDirs map[string]bool) map[string]struct{} {
+	result := make(map[string]struct{}, len(excludeDirs))
+	for name, excluded := range excludeDirs {
+		if excluded {
+			result[name] = struct{}{}
+		}
+	}
+	return result
+}
+
+func normalizeSearchLimit(limit int) int {
+	if limit <= 0 {
+		return 50
+	}
+	return limit
 }
 
 func getFileIcon(filename string) string {

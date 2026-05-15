@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"arlecchino/internal/workspace"
 )
 
 type IndexingEventType int
@@ -272,25 +274,20 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 		inventoryBatch = inventoryBatch[:0]
 	}
 
-	walkErr := filepath.Walk(e.projectRoot, func(path string, info os.FileInfo, err error) error {
+	scanner, err := workspace.NewScanner(e.projectRoot, workspace.ScannerOptions{UseGitIgnore: true})
+	if err != nil {
+		return err
+	}
+	walkSummary, walkErr := scanner.Walk(ctx, func(entry workspace.Entry) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			if e.shouldSkip(path) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if e.shouldSkip(path) {
+		if entry.IsDirectory {
 			return nil
 		}
 
-		lang := e.detectLanguage(path)
-		inventoryBatch = append(inventoryBatch, e.inventoryFileFromInfo(path, info, lang, false))
+		lang := e.detectLanguage(entry.Path)
+		inventoryBatch = append(inventoryBatch, e.inventoryFileFromWorkspaceEntry(entry, lang, false))
 		if len(inventoryBatch) >= indexProjectInventoryBatchSize {
 			flushInventory()
 		}
@@ -306,11 +303,11 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 			return nil
 		}
 
-		if meta, ok := knownFiles[path]; ok &&
+		if meta, ok := knownFiles[entry.Path]; ok &&
 			meta.Language == lang &&
-			meta.Size == info.Size() &&
+			meta.Size == entry.Size &&
 			meta.Hash != "" {
-			if meta.Hash == fileFingerprint(info) {
+			if meta.Hash == entry.Fingerprint {
 				return nil
 			}
 		}
@@ -321,7 +318,7 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 			ProjectID:   e.projectID,
 			ProjectRoot: e.projectRoot,
 			Kind:        JobKindSingleFile,
-			FilePath:    path,
+			FilePath:    entry.Path,
 			Language:    lang,
 			Priority:    5,
 			BatchID:     batchID,
@@ -331,6 +328,9 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 	flushInventory()
 	if walkErr != nil {
 		return walkErr
+	}
+	if walkSummary.Files > count {
+		count = walkSummary.Files
 	}
 	e.applyProjectSizePolicy(count)
 
@@ -501,6 +501,17 @@ func (e *Engine) inventoryFileFromInfo(path string, info os.FileInfo, language s
 		Kind:       classifyFileKind(path, language),
 		Hash:       fileFingerprint(info),
 		Size:       info.Size(),
+		HasSymbols: hasSymbols,
+	}
+}
+
+func (e *Engine) inventoryFileFromWorkspaceEntry(entry workspace.Entry, language string, hasSymbols bool) File {
+	return File{
+		Path:       entry.Path,
+		Language:   language,
+		Kind:       classifyFileKind(entry.Path, language),
+		Hash:       entry.Fingerprint,
+		Size:       entry.Size,
 		HasSymbols: hasSymbols,
 	}
 }

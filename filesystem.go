@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"arlecchino/internal/workspace"
 )
 
 const (
@@ -1115,20 +1117,23 @@ func (a *App) SearchInProject(query string, caseSensitive bool, useRegex bool, w
 		"storage": true, "bootstrap/cache": true, "public/build": true,
 	}
 
-	err := filepath.Walk(projectPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // Skip errors
-		}
+	scanner, scannerErr := workspace.NewScanner(projectPath, workspace.ScannerOptions{
+		UseGitIgnore: true,
+		SkipDirs:     boolMapToSet(excludeDirs),
+	})
+	if scannerErr != nil {
+		return nil, scannerErr
+	}
+	entries, _, err := scanner.Scan(context.Background())
+	if err != nil {
+		return nil, err
+	}
 
-		// Skip directories in exclude list
-		if info.IsDir() {
-			relPath, _ := filepath.Rel(projectPath, path)
-			if excludeDirs[info.Name()] || excludeDirs[relPath] {
-				return filepath.SkipDir
-			}
-			return nil
+	for _, entry := range entries {
+		if entry.IsDirectory {
+			continue
 		}
-
+		path := entry.Path
 		// Check if file extension is searchable
 		ext := filepath.Ext(path)
 		if ext == "" {
@@ -1136,26 +1141,26 @@ func (a *App) SearchInProject(query string, caseSensitive bool, useRegex bool, w
 			if strings.HasSuffix(path, ".blade.php") {
 				ext = ".blade.php"
 			} else {
-				return nil
+				continue
 			}
 		}
 
 		if !searchableExts[ext] {
-			return nil
+			continue
 		}
 
 		// Read file
 		content, err := os.ReadFile(path)
 		if err != nil {
-			return nil // Skip unreadable files
+			continue // Skip unreadable files
 		}
 
 		lines := strings.Split(string(content), "\n")
-		relPath, _ := filepath.Rel(projectPath, path)
+		relPath := entry.RelPath
 
 		for lineNum, line := range lines {
 			if len(results) >= maxResults {
-				return fmt.Errorf("max results reached")
+				break
 			}
 
 			// Find all matches in the line
@@ -1227,12 +1232,9 @@ func (a *App) SearchInProject(query string, caseSensitive bool, useRegex bool, w
 				}
 			}
 		}
-
-		return nil
-	})
-
-	if err != nil && err.Error() != "max results reached" {
-		return nil, err
+		if len(results) >= maxResults {
+			break
+		}
 	}
 
 	// Sort results by priority (higher first)
@@ -1241,6 +1243,16 @@ func (a *App) SearchInProject(query string, caseSensitive bool, useRegex bool, w
 	})
 
 	return results, nil
+}
+
+func boolMapToSet(values map[string]bool) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for value, enabled := range values {
+		if enabled {
+			result[value] = struct{}{}
+		}
+	}
+	return result
 }
 
 // RunGitCommand executes a git command in the project directory

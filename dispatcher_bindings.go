@@ -3,6 +3,7 @@ package main
 import (
 	"arlecchino/internal/dispatcher"
 	"arlecchino/internal/terminal"
+	"context"
 	"time"
 )
 
@@ -62,6 +63,29 @@ func (a *App) SearchSymbols(query string) []ResultItemJS {
 	}
 	result := globalDispatcher.Dispatch("#" + query)
 	return toItemsJS(result.Items)
+}
+
+func (a *App) GetSearchIndexStatus() dispatcher.SearchBackendStatus {
+	initDispatcher()
+	a.InitDispatcherForProject()
+	if globalDispatcher == nil {
+		return dispatcher.SearchBackendStatus{Name: "linear", Ready: false, Fallback: true, Message: "dispatcher is not initialized"}
+	}
+	return globalDispatcher.SearchStatus()
+}
+
+func (a *App) RebuildSearchIndex() dispatcher.SearchBackendStatus {
+	initDispatcher()
+	a.InitDispatcherForProject()
+	if globalDispatcher == nil {
+		return dispatcher.SearchBackendStatus{Name: "linear", Ready: false, Fallback: true, Message: "dispatcher is not initialized"}
+	}
+	if err := globalDispatcher.RebuildSearch(context.Background()); err != nil {
+		status := globalDispatcher.SearchStatus()
+		status.Message = err.Error()
+		return status
+	}
+	return globalDispatcher.SearchStatus()
 }
 
 type DispatcherResultJS struct {
