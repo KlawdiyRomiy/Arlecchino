@@ -186,6 +186,13 @@ func (s *Service) CloseProject(projectID string) error {
 	return project.Close()
 }
 
+func (s *Service) HasProject(projectID string) bool {
+	if s == nil {
+		return false
+	}
+	return s.project(projectID) != nil
+}
+
 func (p *ProjectSession) Close() error {
 	if p == nil {
 		return nil

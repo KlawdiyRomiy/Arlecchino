@@ -5,6 +5,13 @@ import "arlecchino/internal/ai/providers"
 func (s *Service) ListChatActions() []AIChatActionDescriptor {
 	return []AIChatActionDescriptor{
 		{
+			ID:             AIChatActionAsk,
+			Name:           "Ask",
+			Description:    "Answer a project-grounded question without proposing execution.",
+			BuiltIn:        true,
+			ReadOnlyIntent: true,
+		},
+		{
 			ID:             AIChatActionDebug,
 			Name:           "Debug",
 			Description:    "Investigate failures with project context and diagnostics.",
@@ -62,6 +69,14 @@ func (s *Service) ListAgentProfiles() []AIAgentProfileDescriptor {
 
 func (s *Service) ListPromptWorkflows() []AIPromptWorkflowDescriptor {
 	return []AIPromptWorkflowDescriptor{
+		{
+			ID:          "slash-ask",
+			Name:        "Ask",
+			Slash:       "/ask",
+			Action:      AIChatActionAsk,
+			Description: "Ask a project-grounded question without tool execution.",
+			BuiltIn:     true,
+		},
 		{
 			ID:          "slash-debug",
 			Name:        "Debug",

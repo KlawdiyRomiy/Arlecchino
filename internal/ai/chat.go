@@ -350,7 +350,7 @@ func (s *Service) finishRunCanceled(runID string, record AIEgressRecord) {
 
 func validChatAction(action AIChatAction) bool {
 	switch action {
-	case AIChatActionDebug, AIChatActionPlan, AIChatActionBuild:
+	case AIChatActionAsk, AIChatActionDebug, AIChatActionPlan, AIChatActionBuild:
 		return true
 	default:
 		return false
@@ -359,6 +359,8 @@ func validChatAction(action AIChatAction) bool {
 
 func systemPromptForAction(action AIChatAction) string {
 	switch action {
+	case AIChatActionAsk:
+		return "You are Arlecchino's local-first codebase assistant. Answer the user's question using the provided project context. Do not claim that any file, terminal, MCP, or subagent action has run."
 	case AIChatActionDebug:
 		return "You are Arlecchino's local-first debug assistant. Identify likely causes, ask for missing evidence only if required, and do not propose mutations as already executed."
 	case AIChatActionBuild:

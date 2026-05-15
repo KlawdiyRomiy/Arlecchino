@@ -78,6 +78,39 @@ func TestOpenProject_InitializesLSPWhenCoreEngineFails(t *testing.T) {
 	}
 }
 
+func TestAIGetStatusSyncsLazyServiceWithOpenProject(t *testing.T) {
+	app := &App{}
+	projectPath := t.TempDir()
+	t.Cleanup(func() {
+		_ = app.CloseProject(context.Background())
+	})
+
+	if err := app.OpenProject(context.Background(), projectPath); err != nil {
+		t.Fatalf("OpenProject returned error: %v", err)
+	}
+	if app.aiService != nil {
+		t.Fatal("test setup expected AI service to remain lazy")
+	}
+
+	status, err := app.AIGetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("AIGetStatus returned error: %v", err)
+	}
+	if status.ProjectSessionID != defaultProjectSessionID {
+		t.Fatalf("ProjectSessionID = %q, want %q", status.ProjectSessionID, defaultProjectSessionID)
+	}
+	if status.ProjectPathHash == "" {
+		t.Fatalf("expected project-scoped AI status: %#v", status)
+	}
+	session := app.activeProjectSession()
+	if session == nil || session.aiSession == nil {
+		t.Fatalf("AI project session was not synced: %#v", session)
+	}
+	if app.aiService == nil || !app.aiService.HasProject(defaultProjectSessionID) {
+		t.Fatal("AI service did not open the active project session")
+	}
+}
+
 func TestOpenProject_RejectsUnreadableProjectBeforeChangingState(t *testing.T) {
 	parent := t.TempDir()
 	projectPath := filepath.Join(parent, "blocked")

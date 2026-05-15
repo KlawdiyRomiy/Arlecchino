@@ -487,6 +487,39 @@ func TestBuildChatRunEmitsToolProposalWithoutExecution(t *testing.T) {
 	}
 }
 
+func TestAskChatActionIsReadOnlyAndRunnable(t *testing.T) {
+	service := newTestService(t, nil)
+	if _, err := service.OpenProject("main", t.TempDir()); err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	run, err := service.StartChatRun(context.Background(), "main", AIChatRunRequest{
+		Action: AIChatActionAsk,
+		Prompt: "what does this project do?",
+	})
+	if err != nil {
+		t.Fatalf("StartChatRun: %v", err)
+	}
+	final := waitForRunStatus(t, service, run.ID)
+	if final.Status != "completed" {
+		t.Fatalf("final run = %#v", final)
+	}
+	if final.Action != AIChatActionAsk {
+		t.Fatalf("action = %q, want ask", final.Action)
+	}
+	if final.Response == "" {
+		t.Fatalf("expected generated response: %#v", final)
+	}
+	if len(final.ToolProposals) != 0 {
+		t.Fatalf("ask must not propose tools: %#v", final.ToolProposals)
+	}
+	if !containsChatAction(service.ListChatActions(), AIChatActionAsk) {
+		t.Fatalf("ask action missing from registry")
+	}
+	if !containsPromptWorkflow(service.ListPromptWorkflows(), "/ask", AIChatActionAsk) {
+		t.Fatalf("ask workflow missing from registry")
+	}
+}
+
 func TestFullAccessMarksBuildProposalsAllowedButNeverExecutable(t *testing.T) {
 	service := newTestService(t, nil)
 	if _, err := service.OpenProject("main", t.TempDir()); err != nil {
@@ -528,6 +561,24 @@ func TestFullAccessMarksBuildProposalsAllowedButNeverExecutable(t *testing.T) {
 func hasMCPToolProposal(proposals []AIToolProposal, toolName string) bool {
 	for _, proposal := range proposals {
 		if proposal.Kind == AIToolKindMCP && proposal.MCPToolName == toolName {
+			return true
+		}
+	}
+	return false
+}
+
+func containsChatAction(actions []AIChatActionDescriptor, action AIChatAction) bool {
+	for _, candidate := range actions {
+		if candidate.ID == action {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPromptWorkflow(workflows []AIPromptWorkflowDescriptor, slash string, action AIChatAction) bool {
+	for _, candidate := range workflows {
+		if candidate.Slash == slash && candidate.Action == action {
 			return true
 		}
 	}

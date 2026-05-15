@@ -198,6 +198,7 @@ export enum AIChatAction {
      */
     $zero = "",
 
+    AIChatActionAsk = "ask",
     AIChatActionDebug = "debug",
     AIChatActionPlan = "plan",
     AIChatActionBuild = "build",

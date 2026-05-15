@@ -401,6 +401,7 @@ type AIEgressRecord struct {
 type AIChatAction string
 
 const (
+	AIChatActionAsk   AIChatAction = "ask"
 	AIChatActionDebug AIChatAction = "debug"
 	AIChatActionPlan  AIChatAction = "plan"
 	AIChatActionBuild AIChatAction = "build"

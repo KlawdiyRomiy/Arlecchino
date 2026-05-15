@@ -24,6 +24,58 @@ func (a *App) ensureAIService() *ai.Service {
 	return a.aiService
 }
 
+func (a *App) aiStrictProjectSession(ctx context.Context) (*ProjectRuntimeSession, error) {
+	if a == nil {
+		return nil, fmt.Errorf("AI project session is unavailable")
+	}
+	window := bindingContextWindow(ctx)
+	if window == nil {
+		return nil, fmt.Errorf("AI project methods require a Wails window context")
+	}
+	session := a.ensureProjectSessions().getByWindow(window)
+	if session == nil {
+		return nil, fmt.Errorf("AI project session is not bound to the current window")
+	}
+	if session.currentProjectPath() == "" {
+		return nil, fmt.Errorf("AI project session has no open project")
+	}
+	return session, nil
+}
+
+func (a *App) ensureAIProjectSessionOpen(session *ProjectRuntimeSession) error {
+	if a == nil || session == nil {
+		return fmt.Errorf("AI project session is unavailable")
+	}
+	projectPath := session.currentProjectPath()
+	if projectPath == "" {
+		return fmt.Errorf("AI project session has no open project")
+	}
+	service := a.ensureAIService()
+	if service.HasProject(session.ID) {
+		return nil
+	}
+	aiSession, err := service.OpenProject(session.ID, projectPath)
+	if err != nil {
+		return err
+	}
+	session.aiSession = aiSession
+	if session.IsDefault {
+		a.syncDefaultProjectSession(session)
+	}
+	return nil
+}
+
+func (a *App) ensureAIProjectSessionID(ctx context.Context) (string, error) {
+	session, err := a.aiStrictProjectSession(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := a.ensureAIProjectSessionOpen(session); err != nil {
+		return "", err
+	}
+	return session.ID, nil
+}
+
 func (a *App) aiProjectSessionID(ctx context.Context) string {
 	if session := a.projectSessionForContext(ctx); session != nil {
 		return session.ID
@@ -32,24 +84,19 @@ func (a *App) aiProjectSessionID(ctx context.Context) string {
 }
 
 func (a *App) aiStrictProjectSessionID(ctx context.Context) (string, error) {
-	if a == nil {
-		return "", fmt.Errorf("AI project session is unavailable")
-	}
-	window := bindingContextWindow(ctx)
-	if window == nil {
-		return "", fmt.Errorf("AI project methods require a Wails window context")
-	}
-	session := a.ensureProjectSessions().getByWindow(window)
-	if session == nil {
-		return "", fmt.Errorf("AI project session is not bound to the current window")
-	}
-	if session.currentProjectPath() == "" {
-		return "", fmt.Errorf("AI project session has no open project")
+	session, err := a.aiStrictProjectSession(ctx)
+	if err != nil {
+		return "", err
 	}
 	return session.ID, nil
 }
 
 func (a *App) AIGetStatus(ctx context.Context) (ai.AIStatus, error) {
+	if session := a.projectSessionForContext(ctx); session != nil && session.currentProjectPath() != "" {
+		if err := a.ensureAIProjectSessionOpen(session); err != nil {
+			a.logWarning(fmt.Sprintf("[AI] failed to sync project context: %v", err))
+		}
+	}
 	return a.ensureAIService().Status(a.aiProjectSessionID(ctx)), nil
 }
 
@@ -58,7 +105,7 @@ func (a *App) AIListProviders() ([]ai.AIProviderDescriptor, error) {
 }
 
 func (a *App) AIGetApprovalPolicy(ctx context.Context) (ai.AIApprovalPolicy, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIApprovalPolicy{}, err
 	}
@@ -66,7 +113,7 @@ func (a *App) AIGetApprovalPolicy(ctx context.Context) (ai.AIApprovalPolicy, err
 }
 
 func (a *App) AISaveApprovalPolicy(ctx context.Context, policy ai.AIApprovalPolicy) (ai.AIApprovalPolicy, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIApprovalPolicy{}, err
 	}
@@ -74,7 +121,7 @@ func (a *App) AISaveApprovalPolicy(ctx context.Context, policy ai.AIApprovalPoli
 }
 
 func (a *App) AIRevokeApprovalPolicy(ctx context.Context) (ai.AIApprovalPolicy, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIApprovalPolicy{}, err
 	}
@@ -106,7 +153,7 @@ func (a *App) AITestProvider(ctx context.Context, providerID string) (ai.AIProvi
 }
 
 func (a *App) AIGetContextPreview(ctx context.Context, req ai.AIContextRequest) (ai.AIContextSnapshot, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIContextSnapshot{}, err
 	}
@@ -114,7 +161,7 @@ func (a *App) AIGetContextPreview(ctx context.Context, req ai.AIContextRequest) 
 }
 
 func (a *App) AIGetEditorContinuation(ctx context.Context, req ai.AIContextRequest, providerID string, model string) (ai.AIContinuationResponse, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIContinuationResponse{}, err
 	}
@@ -122,7 +169,7 @@ func (a *App) AIGetEditorContinuation(ctx context.Context, req ai.AIContextReque
 }
 
 func (a *App) AIGetTerminalContinuation(ctx context.Context, req ai.AIContextRequest, providerID string, model string) (ai.AIContinuationResponse, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIContinuationResponse{}, err
 	}
@@ -130,7 +177,7 @@ func (a *App) AIGetTerminalContinuation(ctx context.Context, req ai.AIContextReq
 }
 
 func (a *App) AIStartChatRun(ctx context.Context, req ai.AIChatRunRequest) (ai.AIChatRun, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIChatRun{}, err
 	}
@@ -138,7 +185,7 @@ func (a *App) AIStartChatRun(ctx context.Context, req ai.AIChatRunRequest) (ai.A
 }
 
 func (a *App) AICancelChatRun(ctx context.Context, runID string) (ai.AIChatRun, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIChatRun{}, err
 	}
@@ -146,7 +193,7 @@ func (a *App) AICancelChatRun(ctx context.Context, runID string) (ai.AIChatRun, 
 }
 
 func (a *App) AIGetChatRun(ctx context.Context, runID string) (ai.AIChatRun, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIChatRun{}, err
 	}
@@ -154,7 +201,7 @@ func (a *App) AIGetChatRun(ctx context.Context, runID string) (ai.AIChatRun, err
 }
 
 func (a *App) AIGetChatRunEnvelope(ctx context.Context, runID string) (ai.AIChatRunEnvelope, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIChatRunEnvelope{}, err
 	}
@@ -162,7 +209,7 @@ func (a *App) AIGetChatRunEnvelope(ctx context.Context, runID string) (ai.AIChat
 }
 
 func (a *App) AIListChatRuns(ctx context.Context, limit int) ([]ai.AIChatRunEnvelope, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +217,7 @@ func (a *App) AIListChatRuns(ctx context.Context, limit int) ([]ai.AIChatRunEnve
 }
 
 func (a *App) AIClearChatRuns(ctx context.Context) error {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return err
 	}
@@ -178,7 +225,7 @@ func (a *App) AIClearChatRuns(ctx context.Context) error {
 }
 
 func (a *App) AIListEgressRecords(ctx context.Context, limit int) ([]ai.AIEgressRecord, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +253,7 @@ func (a *App) AIGetEmbeddingStatus() (ai.AIEmbeddingStatus, error) {
 }
 
 func (a *App) AIClearState(ctx context.Context) error {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return err
 	}
@@ -214,7 +261,7 @@ func (a *App) AIClearState(ctx context.Context) error {
 }
 
 func (a *App) AISetMnemonicEnabled(ctx context.Context, enabled bool) (ai.AIStatus, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIStatus{}, err
 	}
@@ -222,7 +269,7 @@ func (a *App) AISetMnemonicEnabled(ctx context.Context, enabled bool) (ai.AIStat
 }
 
 func (a *App) AIClearMnemonic(ctx context.Context) error {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return err
 	}
@@ -230,7 +277,7 @@ func (a *App) AIClearMnemonic(ctx context.Context) error {
 }
 
 func (a *App) AISearchMnemonic(ctx context.Context, req ai.AIMnemonicSearchRequest) ([]ai.AIMnemonicEntry, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +285,7 @@ func (a *App) AISearchMnemonic(ctx context.Context, req ai.AIMnemonicSearchReque
 }
 
 func (a *App) AIListMnemonicEntries(ctx context.Context, limit int) ([]ai.AIMnemonicEntry, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +293,7 @@ func (a *App) AIListMnemonicEntries(ctx context.Context, limit int) ([]ai.AIMnem
 }
 
 func (a *App) AISaveMnemonicEntry(ctx context.Context, input ai.AIMnemonicEntryInput) (ai.AIMnemonicEntry, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIMnemonicEntry{}, err
 	}
@@ -254,7 +301,7 @@ func (a *App) AISaveMnemonicEntry(ctx context.Context, input ai.AIMnemonicEntryI
 }
 
 func (a *App) AIUpdateMnemonicEntry(ctx context.Context, id string, patch ai.AIMnemonicEntryPatch) (ai.AIMnemonicEntry, error) {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIMnemonicEntry{}, err
 	}
@@ -262,7 +309,7 @@ func (a *App) AIUpdateMnemonicEntry(ctx context.Context, id string, patch ai.AIM
 }
 
 func (a *App) AIDeleteMnemonicEntry(ctx context.Context, id string) error {
-	sessionID, err := a.aiStrictProjectSessionID(ctx)
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return err
 	}
