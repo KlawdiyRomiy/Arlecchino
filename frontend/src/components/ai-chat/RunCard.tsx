@@ -54,19 +54,29 @@ export function RunCard({
   const model = run?.model || envelope.model || "";
   const proposals = run?.toolProposals ?? envelope.toolProposals ?? [];
   const context = run?.contextSummary ?? envelope.contextSummary ?? null;
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onSelect(envelope.id);
+    }
+  };
 
   return (
     <article
       className={`ai-chat-run-card ai-chat-tone-${meta.tone}${active ? " is-active" : ""}`}
+      aria-pressed={active}
       data-status={envelope.status}
       data-compact={compact ? "true" : "false"}
+      role="button"
       style={{ maxWidth }}
+      tabIndex={0}
       onClick={() => onSelect(envelope.id)}
+      onKeyDown={handleKeyDown}
     >
       <header className="ai-chat-run-card__header">
         <span className="ai-chat-run-card__mode">
           {meta.icon}
-          {meta.shortLabel}
+          {meta.label}
         </span>
         <span className="ai-chat-run-card__status">
           <StatusIcon status={envelope.status} />
@@ -86,7 +96,7 @@ export function RunCard({
         <div className="ai-chat-run-card__response">{response}</div>
       ) : envelope.status === "running" ? (
         <div className="ai-chat-run-card__response ai-chat-run-card__response--muted">
-          Waiting for runtime tokens...
+          Waiting for runtime tokens&hellip;
         </div>
       ) : null}
 
@@ -102,9 +112,9 @@ export function RunCard({
 
       {proposals.length > 0 ? (
         <div className="ai-chat-run-card__tools">
-          {proposals.map((proposal, index) => (
+          {proposals.map((proposal) => (
             <ToolProposalCard
-              key={`${proposal.kind}-${proposal.id}-${index}`}
+              key={`${proposal.kind}-${proposal.id || proposal.name}`}
               proposal={proposal}
             />
           ))}

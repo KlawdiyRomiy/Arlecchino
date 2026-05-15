@@ -1,5 +1,11 @@
 import React from "react";
-import { Bug, Hammer, HelpCircle, MessageCircle, Sparkles } from "lucide-react";
+import {
+  Bug,
+  ClipboardList,
+  Hammer,
+  HelpCircle,
+  MessageCircle,
+} from "lucide-react";
 import { AIChatAction } from "../../../bindings/arlecchino/internal/ai/models";
 
 export const modeOrder: AIChatAction[] = [
@@ -20,28 +26,28 @@ export interface AIChatActionMeta {
 export const modeMeta: Partial<Record<AIChatAction, AIChatActionMeta>> = {
   [AIChatAction.AIChatActionAsk]: {
     label: "Ask",
-    shortLabel: "ASK",
+    shortLabel: "Ask",
     tone: "ask",
     icon: <MessageCircle size={15} />,
     description: "Ask about the current codebase.",
   },
   [AIChatAction.AIChatActionPlan]: {
     label: "Plan",
-    shortLabel: "PLAN",
+    shortLabel: "Plan",
     tone: "plan",
-    icon: <Sparkles size={15} />,
+    icon: <ClipboardList size={15} />,
     description: "Create an implementation plan.",
   },
   [AIChatAction.AIChatActionBuild]: {
     label: "Build",
-    shortLabel: "BUILD",
+    shortLabel: "Build",
     tone: "build",
     icon: <Hammer size={15} />,
     description: "Prepare a non-executable build proposal.",
   },
   [AIChatAction.AIChatActionDebug]: {
     label: "Debug",
-    shortLabel: "DEBUG",
+    shortLabel: "Debug",
     tone: "debug",
     icon: <Bug size={15} />,
     description: "Analyze a failure or regression.",
@@ -52,7 +58,7 @@ export function getActionMeta(action: AIChatAction): AIChatActionMeta {
   return (
     modeMeta[action] ?? {
       label: action || "Ask",
-      shortLabel: (action || "ASK").toUpperCase(),
+      shortLabel: action || "Ask",
       tone: "ask",
       icon: <HelpCircle size={15} />,
       description: "Ask about the current codebase.",

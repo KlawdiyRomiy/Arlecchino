@@ -4,6 +4,13 @@ import type {
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 
+const supportedLocalProviderKinds = new Set([
+  "ollama",
+  "lm-studio",
+  "llama.cpp",
+  "huggingface-tgi",
+]);
+
 const rawReasonPatterns = [
   /dial tcp/i,
   /connection refused/i,
@@ -42,13 +49,24 @@ export function providerSupportsChat(
   );
 }
 
+export function isSupportedLocalChatProvider(
+  provider: AIProviderDescriptor | null,
+): boolean {
+  return Boolean(
+    provider &&
+    provider.local &&
+    !provider.frontier &&
+    supportedLocalProviderKinds.has(provider.kind) &&
+    providerSupportsChat(provider),
+  );
+}
+
 export function isReadyChatProvider(
   provider: AIProviderDescriptor | null,
 ): boolean {
   return Boolean(
     provider &&
-    !provider.frontier &&
-    providerSupportsChat(provider) &&
+    isSupportedLocalChatProvider(provider) &&
     provider.status === ("ready" as AIProviderStatusValue),
   );
 }
@@ -60,9 +78,7 @@ export function sanitizeProviderReason(
   const rawReason = provider.reason?.trim() ?? "";
 
   if (provider.frontier) {
-    return provider.requiresAuth
-      ? "Cloud key can be saved, calls disabled"
-      : "Cloud stub";
+    return "Cloud provider unavailable";
   }
   if (provider.status === ("ready" as AIProviderStatusValue)) {
     const modelCount = provider.models?.length ?? 0;
@@ -110,7 +126,7 @@ export function getProviderPresentation(
     subtitle: sanitizeProviderReason(provider),
     rawReason: provider?.reason?.trim() ?? "",
     tone,
-    selectable: Boolean(provider && !provider.frontier),
+    selectable: isSupportedLocalChatProvider(provider),
     ready,
     local,
     modelLabel:
@@ -123,16 +139,12 @@ export function sortProviders(
 ): AIProviderDescriptor[] {
   const score = (provider: AIProviderDescriptor): number => {
     if (isReadyChatProvider(provider)) return 0;
-    if (
-      !provider.frontier &&
-      provider.status === ("needs_auth" as AIProviderStatusValue)
-    )
-      return 1;
-    if (!provider.frontier) return 2;
-    return 3;
+    if (!isSupportedLocalChatProvider(provider)) return 4;
+    if (provider.status === ("needs_auth" as AIProviderStatusValue)) return 1;
+    return 2;
   };
 
-  return [...providers].sort((a, b) => {
+  return [...providers].filter(isSupportedLocalChatProvider).sort((a, b) => {
     const byScore = score(a) - score(b);
     if (byScore !== 0) return byScore;
     return (a.name || a.id).localeCompare(b.name || b.id);
@@ -145,19 +157,22 @@ export function selectDefaultProvider(
 ): AIProviderDescriptor | null {
   const sorted = sortProviders(providers);
   const preferred = sorted.find(
-    (provider) => provider.id === preferredProviderId && !provider.frontier,
+    (provider) =>
+      provider.id === preferredProviderId &&
+      isSupportedLocalChatProvider(provider),
   );
   if (preferred && isReadyChatProvider(preferred)) return preferred;
   const ready = sorted.find(isReadyChatProvider);
   if (ready) return ready;
-  return sorted.find((provider) => !provider.frontier) ?? null;
+  return sorted[0] ?? null;
 }
 
 export function getProviderDisabledReason(
   provider: AIProviderDescriptor | null,
 ): string {
   if (!provider) return "Ready local provider required";
-  if (provider.frontier) return "Cloud providers are disabled in this slice";
+  if (!isSupportedLocalChatProvider(provider))
+    return "Supported local provider required";
   if (!providerSupportsChat(provider)) return "Provider does not expose chat";
   if (!isReadyChatProvider(provider)) return sanitizeProviderReason(provider);
   return "";

@@ -9,7 +9,6 @@ import React, {
 } from "react";
 import {
   AICancelChatRun,
-  AIClearChatRuns,
   AIGetChatRun,
   AIGetContextPreview,
   AIGetStatus,
@@ -17,7 +16,6 @@ import {
   AIListContextProviders,
   AIListEgressRecords,
   AIRefreshLocalProviders,
-  AISaveProviderSettings,
   AIStartChatRun,
   AITestProvider,
 } from "../../wails/app";
@@ -30,14 +28,22 @@ import {
   type AIContextSnapshot,
   type AIEgressRecord,
   type AIProviderCapability,
-  type AIProviderSettings,
-  type AIStatus,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
+import {
+  AnimatePresence,
+  LazyMotion,
+  LayoutGroup,
+  domAnimation,
+  m,
+} from "framer-motion";
+import { GitBranch, History } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
 import { useAIChatStore } from "../../stores/aiChatStore";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { AIChatHeader } from "./AIChatHeader";
+import { ChatGitReview } from "./ChatGitReview";
+import { ChatHistoryRail } from "./ChatHistoryRail";
 import { ChatComposer } from "./ChatComposer";
 import { EmptyState } from "./EmptyState";
 import { RunCard } from "./RunCard";
@@ -55,6 +61,8 @@ import type {
 } from "./types";
 import "./ai-chat.css";
 
+const defaultChatSessionId = "default";
+
 const initialContext: ContextToggles = {
   workspace: true,
   currentFile: true,
@@ -67,6 +75,7 @@ const initialContext: ContextToggles = {
 const initialState: AIChatUIState = {
   selectedAction: AIChatAction.AIChatActionAsk,
   input: "",
+  activeSessionId: defaultChatSessionId,
   selectedProviderId: "",
   selectedModel: "",
   context: initialContext,
@@ -79,7 +88,44 @@ const initialState: AIChatUIState = {
   settingsPopoverOpen: false,
   activeRunId: "",
   hydratedRuns: {},
-  secretDraft: "",
+};
+
+interface AIChatPanelChromeState {
+  historyOpen: boolean;
+  reviewOpen: boolean;
+  reviewExpanded: boolean;
+  historyWidth: number;
+  reviewWidth: number;
+  historyInset: number;
+  reviewInset: number;
+  contextPickerOpen: boolean;
+  historySearch: string;
+  reviewSearch: string;
+  diffSearch: string;
+  commitMessage: string;
+}
+
+type AIChatPanelChromeAction =
+  | { type: "patch"; value: Partial<AIChatPanelChromeState> }
+  | { type: "moveHistory"; delta: number }
+  | { type: "moveReview"; delta: number }
+  | { type: "resizeHistory"; edge: "start" | "end"; delta: number }
+  | { type: "resizeReview"; edge: "start" | "end"; delta: number }
+  | { type: "toggleContextPicker" };
+
+const initialChromeState: AIChatPanelChromeState = {
+  historyOpen: false,
+  reviewOpen: false,
+  reviewExpanded: false,
+  historyWidth: 270,
+  reviewWidth: 380,
+  historyInset: 12,
+  reviewInset: 12,
+  contextPickerOpen: false,
+  historySearch: "",
+  reviewSearch: "",
+  diffSearch: "",
+  commitMessage: "",
 };
 
 function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
@@ -88,6 +134,12 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
       return { ...state, selectedAction: action.action };
     case "setInput":
       return { ...state, input: action.input };
+    case "setActiveSession":
+      return {
+        ...state,
+        activeSessionId: action.sessionId || defaultChatSessionId,
+        activeRunId: action.runId ?? "",
+      };
     case "setProvider":
       return {
         ...state,
@@ -128,8 +180,6 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         ...state,
         hydratedRuns: { ...state.hydratedRuns, [action.run.id]: action.run },
       };
-    case "setSecretDraft":
-      return { ...state, secretDraft: action.value };
     case "resetComposer":
       return { ...state, input: "" };
     case "ensureProvider":
@@ -142,6 +192,82 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
     default:
       return state;
   }
+}
+
+function chromeReducer(
+  state: AIChatPanelChromeState,
+  action: AIChatPanelChromeAction,
+): AIChatPanelChromeState {
+  switch (action.type) {
+    case "patch":
+      return { ...state, ...action.value };
+    case "moveHistory":
+      return {
+        ...state,
+        historyInset: clamp(state.historyInset + action.delta, 12, 520),
+      };
+    case "moveReview":
+      return {
+        ...state,
+        reviewInset: clamp(state.reviewInset - action.delta, 12, 520),
+      };
+    case "resizeHistory":
+      if (action.edge === "start") {
+        const nextWidth = clamp(state.historyWidth - action.delta, 220, 440);
+        return {
+          ...state,
+          historyInset: clamp(
+            state.historyInset + state.historyWidth - nextWidth,
+            12,
+            520,
+          ),
+          historyWidth: nextWidth,
+        };
+      }
+      return {
+        ...state,
+        historyWidth: clamp(state.historyWidth + action.delta, 220, 440),
+      };
+    case "resizeReview":
+      if (action.edge === "end") {
+        const nextWidth = clamp(state.reviewWidth + action.delta, 320, 620);
+        return {
+          ...state,
+          reviewInset: clamp(
+            state.reviewInset - (nextWidth - state.reviewWidth),
+            12,
+            520,
+          ),
+          reviewWidth: nextWidth,
+        };
+      }
+      return {
+        ...state,
+        reviewWidth: clamp(state.reviewWidth - action.delta, 320, 620),
+      };
+    case "toggleContextPicker":
+      return {
+        ...state,
+        contextPickerOpen: !state.contextPickerOpen,
+      };
+    default:
+      return state;
+  }
+}
+
+function createChatSessionId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `chat-${crypto.randomUUID()}`;
+  }
+  return `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function sessionIdOf(run: Pick<AIChatRunEnvelope, "sessionId">): string {
+  return run.sessionId?.trim() || defaultChatSessionId;
 }
 
 function buildContextRequest(
@@ -178,6 +304,7 @@ function envelopeFromRun(run: AIChatRun): AIChatRunEnvelope {
 
 export function AIChatPanelContent({
   presentation = "panel",
+  projectPath = "",
 }: AIChatPanelProps) {
   const activeFile = useEditorStore(
     (store) =>
@@ -194,7 +321,6 @@ export function AIChatPanelContent({
     activeRunId,
     contextPreview,
     contextProviders,
-    egressRecords,
     setStatus,
     setProviders,
     upsertProvider,
@@ -210,15 +336,35 @@ export function AIChatPanelContent({
   } = useAIChatStore();
 
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [chrome, dispatchChrome] = useReducer(
+    chromeReducer,
+    initialChromeState,
+  );
   const [loading, setLoading] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  const initialSelectionHydratedRef = useRef(false);
+  const {
+    historyOpen,
+    reviewOpen,
+    reviewExpanded,
+    historyWidth,
+    reviewWidth,
+    historyInset,
+    reviewInset,
+    contextPickerOpen,
+    historySearch,
+    reviewSearch,
+    diffSearch,
+    commitMessage,
+  } = chrome;
 
+  const fullscreen = presentation === "fullscreen";
   const sortedProviders = useMemo(() => sortProviders(providers), [providers]);
   const selectedProvider = useMemo(() => {
     const explicit = sortedProviders.find(
-      (provider) =>
-        provider.id === state.selectedProviderId && !provider.frontier,
+      (provider) => provider.id === state.selectedProviderId,
     );
     return (
       explicit ??
@@ -226,16 +372,25 @@ export function AIChatPanelContent({
     );
   }, [sortedProviders, state.selectedProviderId, status?.activeProviderId]);
   const selectedProviderReady = isReadyChatProvider(selectedProvider);
-  const readyLocalProviders = useMemo(
-    () => sortedProviders.filter(isReadyChatProvider),
-    [sortedProviders],
-  );
   const selectedModel =
     state.selectedModel ||
     selectedProvider?.models?.[0]?.id ||
     status?.activeModel ||
     "";
-  const activeRunKey = state.activeRunId || activeRunId || "";
+  const activeSessionId = state.activeSessionId || defaultChatSessionId;
+  const activeSessionEnvelopes = useMemo(
+    () => runs.filter((run) => sessionIdOf(run) === activeSessionId),
+    [activeSessionId, runs],
+  );
+  const activeSessionRunIds = useMemo(
+    () => new Set(activeSessionEnvelopes.map((run) => run.id)),
+    [activeSessionEnvelopes],
+  );
+  const activeRunKeyCandidate = state.activeRunId || activeRunId || "";
+  const activeRunKey =
+    activeRunKeyCandidate && activeSessionRunIds.has(activeRunKeyCandidate)
+      ? activeRunKeyCandidate
+      : (activeSessionEnvelopes[0]?.id ?? "");
   const activeRun = activeRunKey ? (hydratedRuns[activeRunKey] ?? null) : null;
   const activeEnvelope = runs.find((run) => run.id === activeRunKey) ?? null;
   const activeRunRunning = runs.some(
@@ -251,8 +406,43 @@ export function AIChatPanelContent({
         : providerDisabledReason
       : providerDisabledReason;
   const canSend = inputReady && selectedProviderReady && !activeRunRunning;
-  const transcriptRuns = useMemo(() => [...runs].reverse(), [runs]);
+  const transcriptRuns = useMemo(
+    () => [...activeSessionEnvelopes].reverse(),
+    [activeSessionEnvelopes],
+  );
   const messageMaxWidth = presentation === "fullscreen" ? 760 : 560;
+
+  const handleMoveHistory = useCallback(
+    (delta: number) => {
+      if (!fullscreen) return;
+      dispatchChrome({ type: "moveHistory", delta });
+    },
+    [fullscreen],
+  );
+
+  const handleMoveReview = useCallback(
+    (delta: number) => {
+      if (!fullscreen) return;
+      dispatchChrome({ type: "moveReview", delta });
+    },
+    [fullscreen],
+  );
+
+  const handleResizeHistory = useCallback(
+    (edge: "start" | "end", delta: number) => {
+      if (!fullscreen) return;
+      dispatchChrome({ type: "resizeHistory", edge, delta });
+    },
+    [fullscreen],
+  );
+
+  const handleResizeReview = useCallback(
+    (edge: "start" | "end", delta: number) => {
+      if (!fullscreen) return;
+      dispatchChrome({ type: "resizeReview", edge, delta });
+    },
+    [fullscreen],
+  );
 
   const refreshRuntime = useCallback(async () => {
     setLoading(true);
@@ -269,28 +459,34 @@ export function AIChatPanelContent({
         AIListContextProviders(),
         AIListEgressRecords(50),
       ]);
+      const nextProviders = nextStatus?.providers ?? [];
       setStatus(nextStatus);
-      setProviders(nextStatus.providers ?? []);
+      setProviders(nextProviders);
       setContextProviders(nextContextProviders ?? []);
       setEgressRecords(nextEgressRecords ?? []);
       setRuns(envelopes ?? []);
       setContextPreview(preview);
 
       const defaultProvider = selectDefaultProvider(
-        nextStatus.providers ?? [],
-        nextStatus.activeProviderId,
+        nextProviders,
+        nextStatus?.activeProviderId,
       );
       if (defaultProvider) {
         dispatch({
           type: "ensureProvider",
           providerId: defaultProvider.id,
           model:
-            nextStatus.activeModel || defaultProvider.models?.[0]?.id || "",
+            nextStatus?.activeModel || defaultProvider.models?.[0]?.id || "",
         });
       }
-      if (envelopes?.[0]?.id) {
+      if (!initialSelectionHydratedRef.current && envelopes?.[0]?.id) {
+        initialSelectionHydratedRef.current = true;
         setActiveRunId(envelopes[0].id);
-        dispatch({ type: "setActiveRun", runId: envelopes[0].id });
+        dispatch({
+          type: "setActiveSession",
+          sessionId: sessionIdOf(envelopes[0]),
+          runId: envelopes[0].id,
+        });
       }
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : String(error));
@@ -316,10 +512,10 @@ export function AIChatPanelContent({
   }, []);
 
   useEffect(() => {
-    if (!state.activeRunId) return;
-    if (hydratedRuns[state.activeRunId]) return;
+    if (!activeRunKey) return;
+    if (hydratedRuns[activeRunKey]) return;
     let cancelled = false;
-    AIGetChatRun(state.activeRunId)
+    AIGetChatRun(activeRunKey)
       .then((run) => {
         if (!cancelled && run) {
           setHydratedRun(run);
@@ -331,7 +527,7 @@ export function AIChatPanelContent({
     return () => {
       cancelled = true;
     };
-  }, [hydratedRuns, setHydratedRun, state.activeRunId]);
+  }, [activeRunKey, hydratedRuns, setHydratedRun]);
 
   useEffect(() => {
     if (!state.displayPrefs.autoScroll) return;
@@ -348,6 +544,11 @@ export function AIChatPanelContent({
     setHydratedRun(run);
     upsertRunEnvelope(envelopeFromRun(run));
     setActiveRunId(run.id);
+    dispatch({
+      type: "setActiveSession",
+      sessionId: run.sessionId || defaultChatSessionId,
+      runId: run.id,
+    });
     dispatch({ type: "setActiveRun", runId: run.id });
   });
 
@@ -356,6 +557,11 @@ export function AIChatPanelContent({
       if (!envelope?.id) return;
       upsertRunEnvelope(envelope);
       setActiveRunId(envelope.id);
+      dispatch({
+        type: "setActiveSession",
+        sessionId: sessionIdOf(envelope),
+        runId: envelope.id,
+      });
       dispatch({ type: "setActiveRun", runId: envelope.id });
     },
   );
@@ -377,7 +583,7 @@ export function AIChatPanelContent({
   const handleEgressRecord = useEffectEvent((record: AIEgressRecord) => {
     const source = record?.source ?? "";
     if (!["chat_run", "ai_chat", "ai-chat"].includes(source)) return;
-    if (record.runId && activeRunId && record.runId !== activeRunId) return;
+    if (record.runId && activeRunKey && record.runId !== activeRunKey) return;
     if (
       record.chatAction &&
       activeEnvelope?.action &&
@@ -423,37 +629,30 @@ export function AIChatPanelContent({
       offStatus?.();
       offEgress?.();
     };
-  }, [
-    handleEgressRecord,
-    handleProviderDescriptor,
-    handleRunEnvelopeUpdate,
-    handleRunToken,
-    handleRunUpdate,
-  ]);
+  }, []);
 
   const handleRefreshProviders = useCallback(async () => {
     setLoading(true);
     try {
       const discovery = await AIRefreshLocalProviders();
       const nextStatus = await AIGetStatus();
+      const statusProviders = nextStatus?.providers ?? [];
+      const nextProviders =
+        statusProviders.length > 0
+          ? statusProviders
+          : (discovery?.providers ?? []);
       setStatus(nextStatus);
-      setProviders(
-        nextStatus.providers?.length
-          ? nextStatus.providers
-          : (discovery.providers ?? []),
-      );
+      setProviders(nextProviders);
       const defaultProvider = selectDefaultProvider(
-        nextStatus.providers?.length
-          ? nextStatus.providers
-          : (discovery.providers ?? []),
-        nextStatus.activeProviderId,
+        nextProviders,
+        nextStatus?.activeProviderId,
       );
       if (defaultProvider) {
         dispatch({
           type: "setProvider",
           providerId: defaultProvider.id,
           model:
-            nextStatus.activeModel || defaultProvider.models?.[0]?.id || "",
+            nextStatus?.activeModel || defaultProvider.models?.[0]?.id || "",
         });
       }
     } finally {
@@ -477,6 +676,7 @@ export function AIChatPanelContent({
     );
     const run = await AIStartChatRun({
       action: state.selectedAction,
+      sessionId: activeSessionId,
       prompt: state.input.trim(),
       providerId: selectedProvider.id,
       model: selectedModel,
@@ -497,6 +697,7 @@ export function AIChatPanelContent({
     selectedProvider,
     setActiveRunId,
     setHydratedRun,
+    activeSessionId,
     state.context,
     state.input,
     state.selectedAction,
@@ -511,15 +712,27 @@ export function AIChatPanelContent({
     await AICancelChatRun(running.id);
   }, [runs]);
 
-  const handleNewChat = useCallback(async () => {
-    await AIClearChatRuns();
-    setRuns([]);
+  const handleNewChat = useCallback(() => {
+    const sessionId = createChatSessionId();
     setActiveRunId(null);
-    dispatch({ type: "setActiveRun", runId: "" });
-  }, [setActiveRunId, setRuns]);
+    dispatch({ type: "setActiveSession", sessionId });
+  }, [setActiveRunId]);
+
+  const handleSelectSession = useCallback(
+    (sessionId: string) => {
+      const nextRun = runs.find((run) => sessionIdOf(run) === sessionId);
+      setActiveRunId(nextRun?.id ?? null);
+      dispatch({
+        type: "setActiveSession",
+        sessionId,
+        runId: nextRun?.id ?? "",
+      });
+    },
+    [runs, setActiveRunId],
+  );
 
   const handleProviderSelect = useCallback((provider: AIProviderDescriptor) => {
-    if (provider.frontier) return;
+    if (getProviderDisabledReason(provider)) return;
     dispatch({
       type: "setProvider",
       providerId: provider.id,
@@ -533,25 +746,45 @@ export function AIChatPanelContent({
     upsertProvider(provider);
   }, [selectedProvider, upsertProvider]);
 
-  const handleSaveSecret = useCallback(async () => {
-    if (!selectedProvider || !state.secretDraft.trim()) return;
-    const settings: AIProviderSettings = {
-      id: selectedProvider.id,
-      name: selectedProvider.name,
-      kind: selectedProvider.kind,
-      endpoint: selectedProvider.endpoint,
-      model: selectedProvider.defaultModel,
-      enabled: true,
-      manual: selectedProvider.manual,
-      capabilities: selectedProvider.capabilities,
-      secretValue: state.secretDraft.trim(),
-      authMode: selectedProvider.authMode,
-      oauthSupported: selectedProvider.oauthSupported,
+  const closeTransientPopovers = useCallback(() => {
+    dispatch({ type: "toggleProviderPopover", open: false });
+    dispatch({ type: "toggleSettingsPopover", open: false });
+    dispatchChrome({ type: "patch", value: { contextPickerOpen: false } });
+  }, []);
+
+  useEffect(() => {
+    const popoverOpen =
+      state.providerPopoverOpen ||
+      state.settingsPopoverOpen ||
+      contextPickerOpen;
+    if (!popoverOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("[data-ai-chat-popover-scope]")) return;
+      closeTransientPopovers();
     };
-    const provider = await AISaveProviderSettings(settings);
-    dispatch({ type: "setSecretDraft", value: "" });
-    upsertProvider(provider);
-  }, [selectedProvider, state.secretDraft, upsertProvider]);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" && event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeTransientPopovers();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [
+    closeTransientPopovers,
+    contextPickerOpen,
+    state.providerPopoverOpen,
+    state.settingsPopoverOpen,
+  ]);
 
   const panelClass = [
     "ai-chat-panel",
@@ -562,7 +795,7 @@ export function AIChatPanelContent({
     .join(" ");
 
   return (
-    <section className={panelClass} data-testid="ai-chat-panel">
+    <section ref={panelRef} className={panelClass} data-testid="ai-chat-panel">
       <AIChatHeader
         context={state.context}
         contextProviders={contextProviders}
@@ -570,11 +803,9 @@ export function AIChatPanelContent({
         loading={loading}
         providerPopoverOpen={state.providerPopoverOpen}
         providers={sortedProviders}
-        secretDraft={state.secretDraft}
         selectedProvider={selectedProvider}
         selectedProviderId={selectedProvider?.id ?? ""}
         settingsPopoverOpen={state.settingsPopoverOpen}
-        status={status}
         onContextToggle={(key, value) =>
           dispatch({ type: "setContext", key, value })
         }
@@ -584,88 +815,349 @@ export function AIChatPanelContent({
         onNewChat={handleNewChat}
         onRefreshProviders={handleRefreshProviders}
         onRefreshRuntime={refreshRuntime}
-        onSaveSecret={handleSaveSecret}
-        onSecretChange={(value) => dispatch({ type: "setSecretDraft", value })}
         onSelectProvider={handleProviderSelect}
         onTestProvider={handleTestProvider}
-        onToggleProviderPopover={() =>
-          dispatch({ type: "toggleProviderPopover" })
-        }
-        onToggleSettingsPopover={() =>
-          dispatch({ type: "toggleSettingsPopover" })
-        }
+        onToggleProviderPopover={() => {
+          dispatch({ type: "toggleProviderPopover" });
+          dispatchChrome({
+            type: "patch",
+            value: { contextPickerOpen: false },
+          });
+        }}
+        onToggleSettingsPopover={() => {
+          dispatch({ type: "toggleSettingsPopover" });
+          dispatchChrome({
+            type: "patch",
+            value: { contextPickerOpen: false },
+          });
+        }}
       />
 
-      <main className="ai-chat-body">
-        {runtimeError ? (
-          <div className="ai-chat-runtime-error">{runtimeError}</div>
-        ) : null}
-        {transcriptRuns.length === 0 ? (
-          <EmptyState
-            providerReady={selectedProviderReady}
-            onRefresh={handleRefreshProviders}
-          />
-        ) : (
-          <div className="ai-chat-transcript">
-            {transcriptRuns.map((envelope: AIChatRunEnvelope) => (
-              <RunCard
-                active={envelope.id === (state.activeRunId || activeRunId)}
-                compact={state.displayPrefs.compactCards}
-                envelope={envelope}
-                key={envelope.id}
-                maxWidth={messageMaxWidth}
-                run={hydratedRuns[envelope.id] ?? null}
-                onSelect={(runId) => {
-                  setActiveRunId(runId);
-                  dispatch({ type: "setActiveRun", runId });
+      <div
+        className="ai-chat-workbench"
+        data-presentation={presentation === "fullscreen" ? "expanded" : "panel"}
+      >
+        <LazyMotion features={domAnimation}>
+          <LayoutGroup>
+            {!historyOpen ? (
+              <button
+                className="ai-chat-edge-toggle ai-chat-edge-toggle--left"
+                data-testid="ai-chat-history-toggle"
+                type="button"
+                title="Open chat history"
+                onClick={() =>
+                  dispatchChrome({
+                    type: "patch",
+                    value: { historyOpen: true },
+                  })
+                }
+              >
+                <History size={15} />
+              </button>
+            ) : null}
+            {!reviewOpen && !reviewExpanded ? (
+              <button
+                className="ai-chat-edge-toggle ai-chat-edge-toggle--right"
+                data-testid="ai-chat-review-toggle"
+                type="button"
+                title="Open Git Review"
+                onClick={() =>
+                  dispatchChrome({ type: "patch", value: { reviewOpen: true } })
+                }
+              >
+                <GitBranch size={15} />
+              </button>
+            ) : null}
+
+            <div
+              className="ai-chat-conversation"
+              data-dimmed={reviewExpanded ? "true" : "false"}
+            >
+              <main className="ai-chat-body">
+                {runtimeError ? (
+                  <div className="ai-chat-runtime-error">{runtimeError}</div>
+                ) : null}
+                {transcriptRuns.length === 0 ? (
+                  <EmptyState
+                    providerReady={selectedProviderReady}
+                    onRefresh={handleRefreshProviders}
+                  />
+                ) : (
+                  <div className="ai-chat-transcript">
+                    {transcriptRuns.map((envelope: AIChatRunEnvelope) => (
+                      <RunCard
+                        active={envelope.id === activeRunKey}
+                        compact={state.displayPrefs.compactCards}
+                        envelope={envelope}
+                        key={envelope.id}
+                        maxWidth={messageMaxWidth}
+                        run={hydratedRuns[envelope.id] ?? null}
+                        onSelect={(runId) => {
+                          setActiveRunId(runId);
+                          dispatch({ type: "setActiveRun", runId });
+                        }}
+                      />
+                    ))}
+                    <div ref={transcriptEndRef} />
+                  </div>
+                )}
+              </main>
+
+              <ActivityTimeline
+                activeEnvelope={activeEnvelope}
+                activeRun={activeRun}
+                activeRunText={
+                  activeRun?.response ??
+                  streamingTextByRunId[activeRunKey] ??
+                  ""
+                }
+                contextPreview={contextPreview}
+                selectedProvider={selectedProvider}
+                selectedProviderReady={selectedProviderReady}
+                visible={
+                  state.displayPrefs.showActivity &&
+                  (presentation === "fullscreen" || transcriptRuns.length > 0)
+                }
+              />
+
+              <ChatComposer
+                canSend={canSend}
+                context={state.context}
+                contextPickerOpen={contextPickerOpen}
+                contextProviders={contextProviders}
+                disabledReason={disabledReason}
+                input={state.input}
+                running={activeRunRunning}
+                selectedAction={state.selectedAction}
+                onActionChange={(action) =>
+                  dispatch({ type: "setAction", action })
+                }
+                onCancel={handleCancel}
+                onContextToggle={(key, value) =>
+                  dispatch({ type: "setContext", key, value })
+                }
+                onInputChange={(input) => dispatch({ type: "setInput", input })}
+                onRefreshContext={handleRefreshContext}
+                onSend={handleSend}
+                onToggleContextPicker={() => {
+                  dispatch({ type: "toggleProviderPopover", open: false });
+                  dispatch({ type: "toggleSettingsPopover", open: false });
+                  dispatchChrome({ type: "toggleContextPicker" });
                 }}
               />
-            ))}
-            <div ref={transcriptEndRef} />
-          </div>
-        )}
-      </main>
+            </div>
 
-      <ActivityTimeline
-        activeEnvelope={activeEnvelope}
-        activeRun={activeRun}
-        activeRunText={
-          activeRun?.response ?? streamingTextByRunId[activeRunKey] ?? ""
-        }
-        contextPreview={contextPreview}
-        egressRecords={egressRecords}
-        selectedProvider={selectedProvider}
-        selectedProviderReady={selectedProviderReady}
-        visible={
-          state.displayPrefs.showActivity &&
-          (presentation === "fullscreen" || transcriptRuns.length > 0)
-        }
-      />
+            <AnimatePresence>
+              {historyOpen ? (
+                <m.div
+                  className="ai-chat-drawer ai-chat-drawer--left"
+                  data-testid="ai-chat-history-drawer"
+                  initial={{ x: "-104%", opacity: 0.72 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: "-104%", opacity: 0 }}
+                  layout
+                  style={{
+                    width: historyWidth,
+                    ...(fullscreen ? { left: historyInset } : {}),
+                  }}
+                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  {fullscreen ? (
+                    <>
+                      <m.span
+                        className="ai-chat-drawer-resize ai-chat-drawer-resize--left"
+                        drag="x"
+                        dragConstraints={{ left: 0, right: 0 }}
+                        dragElastic={0}
+                        dragMomentum={false}
+                        title="Resize history left edge"
+                        onDrag={(_event, info) =>
+                          handleResizeHistory("start", info.delta.x)
+                        }
+                      />
+                      <m.span
+                        className="ai-chat-drawer-resize ai-chat-drawer-resize--right"
+                        drag="x"
+                        dragConstraints={{ left: 0, right: 0 }}
+                        dragElastic={0}
+                        dragMomentum={false}
+                        title="Resize history right edge"
+                        onDrag={(_event, info) =>
+                          handleResizeHistory("end", info.delta.x)
+                        }
+                      />
+                    </>
+                  ) : null}
+                  <ChatHistoryRail
+                    activeSessionId={activeSessionId}
+                    canMove={fullscreen}
+                    hydratedRuns={hydratedRuns}
+                    runs={runs}
+                    searchQuery={historySearch}
+                    onClose={() =>
+                      dispatchChrome({
+                        type: "patch",
+                        value: { historyOpen: false },
+                      })
+                    }
+                    onMove={handleMoveHistory}
+                    onNewChat={handleNewChat}
+                    onSearchChange={(historySearch) =>
+                      dispatchChrome({
+                        type: "patch",
+                        value: { historySearch },
+                      })
+                    }
+                    onSelectSession={handleSelectSession}
+                  />
+                </m.div>
+              ) : null}
+            </AnimatePresence>
 
-      <ChatComposer
-        canSend={canSend}
-        disabledReason={disabledReason}
-        input={state.input}
-        running={activeRunRunning}
-        selectedAction={state.selectedAction}
-        onActionChange={(action) => dispatch({ type: "setAction", action })}
-        onCancel={handleCancel}
-        onInputChange={(input) => dispatch({ type: "setInput", input })}
-        onRefreshContext={handleRefreshContext}
-        onSend={handleSend}
-      />
+            <AnimatePresence>
+              {reviewOpen && !reviewExpanded ? (
+                <m.div
+                  className="ai-chat-drawer ai-chat-drawer--right"
+                  data-testid="ai-chat-review-drawer"
+                  initial={{ x: "104%", opacity: 0.72 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: "104%", opacity: 0 }}
+                  layout
+                  style={{
+                    width: reviewWidth,
+                    ...(fullscreen ? { right: reviewInset } : {}),
+                  }}
+                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  {fullscreen ? (
+                    <>
+                      <m.span
+                        className="ai-chat-drawer-resize ai-chat-drawer-resize--left"
+                        drag="x"
+                        dragConstraints={{ left: 0, right: 0 }}
+                        dragElastic={0}
+                        dragMomentum={false}
+                        title="Resize review left edge"
+                        onDrag={(_event, info) =>
+                          handleResizeReview("start", info.delta.x)
+                        }
+                      />
+                      <m.span
+                        className="ai-chat-drawer-resize ai-chat-drawer-resize--right"
+                        drag="x"
+                        dragConstraints={{ left: 0, right: 0 }}
+                        dragElastic={0}
+                        dragMomentum={false}
+                        title="Resize review right edge"
+                        onDrag={(_event, info) =>
+                          handleResizeReview("end", info.delta.x)
+                        }
+                      />
+                    </>
+                  ) : null}
+                  <ChatGitReview
+                    canMove={fullscreen}
+                    commitMessage={commitMessage}
+                    diffSearch={diffSearch}
+                    mode="drawer"
+                    projectPath={projectPath}
+                    searchQuery={reviewSearch}
+                    onClose={() =>
+                      dispatchChrome({
+                        type: "patch",
+                        value: { reviewOpen: false },
+                      })
+                    }
+                    onCollapse={() =>
+                      dispatchChrome({
+                        type: "patch",
+                        value: { reviewExpanded: false },
+                      })
+                    }
+                    onCommitMessageChange={(commitMessage) =>
+                      dispatchChrome({
+                        type: "patch",
+                        value: { commitMessage },
+                      })
+                    }
+                    onDiffSearchChange={(diffSearch) =>
+                      dispatchChrome({ type: "patch", value: { diffSearch } })
+                    }
+                    onExpand={() => {
+                      dispatchChrome({
+                        type: "patch",
+                        value: { reviewOpen: false, reviewExpanded: true },
+                      });
+                    }}
+                    onMove={handleMoveReview}
+                    onSearchChange={(reviewSearch) =>
+                      dispatchChrome({
+                        type: "patch",
+                        value: { reviewSearch },
+                      })
+                    }
+                  />
+                </m.div>
+              ) : null}
+            </AnimatePresence>
 
-      <div className="ai-chat-footer-status">
-        <span
-          className={`ai-chat-status-dot is-${selectedProviderReady ? "ready" : "warning"}`}
-        />
-        <span>
-          {selectedProviderReady
-            ? `${selectedProvider?.name ?? "Local provider"} connected`
-            : readyLocalProviders.length === 0
-              ? "Ready local provider required"
-              : providerDisabledReason}
-        </span>
+            <AnimatePresence>
+              {reviewExpanded ? (
+                <m.div
+                  className="ai-chat-review-overlay"
+                  data-testid="ai-chat-review-expanded"
+                  initial={{ opacity: 0, scale: 0.985 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.985 }}
+                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <ChatGitReview
+                    canMove={false}
+                    commitMessage={commitMessage}
+                    diffSearch={diffSearch}
+                    mode="overlay"
+                    projectPath={projectPath}
+                    searchQuery={reviewSearch}
+                    onClose={() => {
+                      dispatchChrome({
+                        type: "patch",
+                        value: { reviewExpanded: false, reviewOpen: false },
+                      });
+                    }}
+                    onCollapse={() => {
+                      dispatchChrome({
+                        type: "patch",
+                        value: { reviewExpanded: false, reviewOpen: true },
+                      });
+                    }}
+                    onCommitMessageChange={(commitMessage) =>
+                      dispatchChrome({
+                        type: "patch",
+                        value: { commitMessage },
+                      })
+                    }
+                    onDiffSearchChange={(diffSearch) =>
+                      dispatchChrome({ type: "patch", value: { diffSearch } })
+                    }
+                    onExpand={() =>
+                      dispatchChrome({
+                        type: "patch",
+                        value: { reviewExpanded: true },
+                      })
+                    }
+                    onMove={handleMoveReview}
+                    onSearchChange={(reviewSearch) =>
+                      dispatchChrome({
+                        type: "patch",
+                        value: { reviewSearch },
+                      })
+                    }
+                  />
+                </m.div>
+              ) : null}
+            </AnimatePresence>
+          </LayoutGroup>
+        </LazyMotion>
       </div>
     </section>
   );

@@ -8,6 +8,7 @@ export type AIChatPresentation = "panel" | "fullscreen" | "preview";
 
 export interface AIChatPanelProps {
   presentation?: AIChatPresentation;
+  projectPath?: string;
 }
 
 export interface ContextToggles {
@@ -28,6 +29,7 @@ export interface AIChatDisplayPrefs {
 export interface AIChatUIState {
   selectedAction: AIChatAction;
   input: string;
+  activeSessionId: string;
   selectedProviderId: string;
   selectedModel: string;
   context: ContextToggles;
@@ -36,12 +38,12 @@ export interface AIChatUIState {
   settingsPopoverOpen: boolean;
   activeRunId: string;
   hydratedRuns: Record<string, AIChatRun>;
-  secretDraft: string;
 }
 
 export type AIChatUIAction =
   | { type: "setAction"; action: AIChatAction }
   | { type: "setInput"; input: string }
+  | { type: "setActiveSession"; sessionId: string; runId?: string }
   | { type: "setProvider"; providerId: string; model?: string }
   | { type: "setModel"; model: string }
   | { type: "setContext"; key: keyof ContextToggles; value: boolean }
@@ -50,7 +52,6 @@ export type AIChatUIAction =
   | { type: "toggleSettingsPopover"; open?: boolean }
   | { type: "setActiveRun"; runId: string }
   | { type: "hydrateRun"; run: AIChatRun }
-  | { type: "setSecretDraft"; value: string }
   | { type: "resetComposer" }
   | { type: "ensureProvider"; providerId: string; model?: string };
 

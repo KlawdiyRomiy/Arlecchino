@@ -1,7 +1,11 @@
-import React from "react";
-import { Paperclip, Send, Square } from "lucide-react";
-import type { AIChatAction } from "../../../bindings/arlecchino/internal/ai/models";
+import React, { useRef } from "react";
+import { CheckCircle2, Paperclip, Plus, Send, Square } from "lucide-react";
+import type {
+  AIChatAction,
+  AIContextProviderDescriptor,
+} from "../../../bindings/arlecchino/internal/ai/models";
 import { getActionMeta, modeOrder } from "./aiChatPresentation";
+import type { ContextToggles } from "./types";
 
 interface ChatComposerProps {
   selectedAction: AIChatAction;
@@ -9,12 +13,26 @@ interface ChatComposerProps {
   canSend: boolean;
   running: boolean;
   disabledReason: string;
+  context: ContextToggles;
+  contextProviders: AIContextProviderDescriptor[];
+  contextPickerOpen: boolean;
   onActionChange: (action: AIChatAction) => void;
+  onContextToggle: (key: keyof ContextToggles, value: boolean) => void;
   onInputChange: (value: string) => void;
   onRefreshContext: () => void;
+  onToggleContextPicker: () => void;
   onSend: () => void;
   onCancel: () => void;
 }
+
+const contextRows: Array<{ key: keyof ContextToggles; label: string }> = [
+  { key: "workspace", label: "Workspace" },
+  { key: "currentFile", label: "Current file" },
+  { key: "terminalLogs", label: "Terminal logs" },
+  { key: "mnemonic", label: "Mnemonic" },
+  { key: "mcp", label: "MCP" },
+  { key: "skills", label: "Skills" },
+];
 
 export function ChatComposer({
   selectedAction,
@@ -22,12 +40,33 @@ export function ChatComposer({
   canSend,
   running,
   disabledReason,
+  context,
+  contextProviders,
+  contextPickerOpen,
   onActionChange,
+  onContextToggle,
   onInputChange,
   onRefreshContext,
+  onToggleContextPicker,
   onSend,
   onCancel,
 }: ChatComposerProps) {
+  const modeButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const handleModeKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
+    if (event.key !== "Tab") return;
+
+    event.preventDefault();
+    const direction = event.shiftKey ? -1 : 1;
+    const nextIndex = (index + direction + modeOrder.length) % modeOrder.length;
+    const nextAction = modeOrder[nextIndex];
+    onActionChange(nextAction);
+    modeButtonRefs.current[nextIndex]?.focus();
+  };
+
   return (
     <footer className="ai-chat-composer">
       <div
@@ -35,7 +74,7 @@ export function ChatComposer({
         role="tablist"
         aria-label="AI chat mode"
       >
-        {modeOrder.map((action) => {
+        {modeOrder.map((action, index) => {
           const meta = getActionMeta(action);
           const selected = selectedAction === action;
           return (
@@ -45,15 +84,83 @@ export function ChatComposer({
               data-testid={`ai-chat-mode-${meta.label.toLowerCase()}`}
               type="button"
               aria-selected={selected}
+              ref={(element) => {
+                modeButtonRefs.current[index] = element;
+              }}
               role="tab"
               title={meta.description}
               onClick={() => onActionChange(action)}
+              onKeyDown={(event) => handleModeKeyDown(event, index)}
             >
               {meta.icon}
-              {meta.shortLabel}
+              {meta.label}
             </button>
           );
         })}
+        <div className="ai-chat-context-menu" data-ai-chat-popover-scope>
+          <button
+            className={`ai-chat-mode-button ai-chat-add-button${contextPickerOpen ? " is-selected" : ""}`}
+            data-testid="ai-chat-context-picker-button"
+            type="button"
+            aria-expanded={contextPickerOpen}
+            title="Add agent or skill context"
+            onClick={onToggleContextPicker}
+          >
+            <Plus size={15} />
+            Add
+          </button>
+          {contextPickerOpen ? (
+            <div
+              className="ai-chat-popover ai-chat-context-picker"
+              data-testid="ai-chat-context-picker"
+            >
+              <div className="ai-chat-popover__title">Add context</div>
+              <div className="ai-chat-context-picker__toggles">
+                {contextRows.map((row) => (
+                  <label className="ai-chat-toggle-row" key={row.key}>
+                    <span>{row.label}</span>
+                    <input
+                      checked={context[row.key]}
+                      type="checkbox"
+                      onChange={(event) =>
+                        onContextToggle(row.key, event.target.checked)
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+              {contextProviders.length > 0 ? (
+                <div className="ai-chat-popover__section">
+                  <div className="ai-chat-popover__title">
+                    Runtime providers
+                  </div>
+                  <div className="ai-chat-context-provider-list">
+                    {contextProviders.map((provider) => (
+                      <span
+                        className="ai-chat-context-provider"
+                        key={provider.id}
+                        title={provider.description}
+                      >
+                        <span
+                          className={`ai-chat-context-provider__dot is-${
+                            provider.enabled && provider.available
+                              ? "ready"
+                              : "disabled"
+                          }`}
+                        />
+                        {provider.name || provider.id}
+                        {provider.id === "skills" ||
+                        provider.name === "Skills" ? (
+                          <CheckCircle2 size={12} />
+                        ) : null}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className="ai-chat-composer__box">

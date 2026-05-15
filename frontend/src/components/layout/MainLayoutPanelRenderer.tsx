@@ -400,6 +400,7 @@ export const MainLayoutPanelRenderer: React.FC<
         >
           <AIChatPanelContent
             presentation={isFullscreen ? "fullscreen" : "panel"}
+            projectPath={activeProjectPath}
           />
         </FloatingPanel>
       );

@@ -1,34 +1,22 @@
 import React from "react";
-import {
-  CheckCircle2,
-  KeyRound,
-  RefreshCw,
-  Server,
-  TestTube2,
-} from "lucide-react";
+import { CheckCircle2, RefreshCw, TestTube2 } from "lucide-react";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 import { getProviderPresentation } from "./providerPresentation";
 
 interface ProviderPopoverProps {
   providers: AIProviderDescriptor[];
   selectedProviderId: string;
-  secretDraft: string;
   onSelectProvider: (provider: AIProviderDescriptor) => void;
   onRefresh: () => void;
   onTest: () => void;
-  onSecretChange: (value: string) => void;
-  onSaveSecret: () => void;
 }
 
 export function ProviderPopover({
   providers,
   selectedProviderId,
-  secretDraft,
   onSelectProvider,
   onRefresh,
   onTest,
-  onSecretChange,
-  onSaveSecret,
 }: ProviderPopoverProps) {
   return (
     <div
@@ -58,11 +46,7 @@ export function ProviderPopover({
                   {presentation.subtitle}
                 </span>
               </span>
-              {selected ? (
-                <CheckCircle2 size={15} />
-              ) : provider.frontier ? (
-                <Server size={15} />
-              ) : null}
+              {selected ? <CheckCircle2 size={15} /> : null}
             </button>
           );
         })}
@@ -85,29 +69,6 @@ export function ProviderPopover({
           <TestTube2 size={15} />
           Test
         </button>
-      </div>
-
-      <div className="ai-chat-provider-secret">
-        <span>Cloud keys can be stored, but cloud calls are disabled.</span>
-        <div className="ai-chat-provider-secret__row">
-          <input
-            aria-label="API key"
-            autoComplete="off"
-            className="ai-chat-input"
-            placeholder="API key"
-            type="password"
-            value={secretDraft}
-            onChange={(event) => onSecretChange(event.target.value)}
-          />
-          <button
-            className="ai-chat-icon-button"
-            type="button"
-            onClick={onSaveSecret}
-            title="Save key"
-          >
-            <KeyRound size={17} />
-          </button>
-        </div>
       </div>
     </div>
   );

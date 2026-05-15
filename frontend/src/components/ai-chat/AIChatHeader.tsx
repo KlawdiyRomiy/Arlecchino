@@ -1,17 +1,13 @@
 import React from "react";
 import {
-  Bot,
   ChevronDown,
   Loader2,
+  MessageSquarePlus,
   RefreshCw,
   Settings,
-  Trash2,
 } from "lucide-react";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
-import type {
-  AIContextProviderDescriptor,
-  AIStatus,
-} from "../../../bindings/arlecchino/internal/ai/models";
+import type { AIContextProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIChatDisplayPrefs, ContextToggles } from "./types";
 import { getProviderPresentation } from "./providerPresentation";
 import { ProviderPopover } from "./ProviderPopover";
@@ -19,11 +15,9 @@ import { SettingsPopover } from "./SettingsPopover";
 
 interface AIChatHeaderProps {
   loading: boolean;
-  status: AIStatus | null;
   selectedProvider: AIProviderDescriptor | null;
   selectedProviderId: string;
   providers: AIProviderDescriptor[];
-  secretDraft: string;
   providerPopoverOpen: boolean;
   settingsPopoverOpen: boolean;
   context: ContextToggles;
@@ -36,19 +30,15 @@ interface AIChatHeaderProps {
   onSelectProvider: (provider: AIProviderDescriptor) => void;
   onRefreshProviders: () => void;
   onTestProvider: () => void;
-  onSecretChange: (value: string) => void;
-  onSaveSecret: () => void;
   onContextToggle: (key: keyof ContextToggles, value: boolean) => void;
   onDisplayPrefChange: (key: keyof AIChatDisplayPrefs, value: boolean) => void;
 }
 
 export function AIChatHeader({
   loading,
-  status,
   selectedProvider,
   selectedProviderId,
   providers,
-  secretDraft,
   providerPopoverOpen,
   settingsPopoverOpen,
   context,
@@ -61,8 +51,6 @@ export function AIChatHeader({
   onSelectProvider,
   onRefreshProviders,
   onTestProvider,
-  onSecretChange,
-  onSaveSecret,
   onContextToggle,
   onDisplayPrefChange,
 }: AIChatHeaderProps) {
@@ -70,14 +58,6 @@ export function AIChatHeader({
 
   return (
     <header className="ai-chat-header">
-      <div className="ai-chat-header__title">
-        <Bot size={17} />
-        <span>AI Chat</span>
-        {status?.enabled ? (
-          <span className="ai-chat-header__status is-ready">Ready</span>
-        ) : null}
-      </div>
-
       <div className="ai-chat-header__actions">
         <button
           className="ai-chat-icon-button"
@@ -85,7 +65,7 @@ export function AIChatHeader({
           title="New chat"
           onClick={onNewChat}
         >
-          <Trash2 size={16} />
+          <MessageSquarePlus size={16} />
         </button>
         <button
           className="ai-chat-icon-button"
@@ -100,7 +80,7 @@ export function AIChatHeader({
           )}
         </button>
 
-        <div className="ai-chat-header__menu">
+        <div className="ai-chat-header__menu" data-ai-chat-popover-scope>
           <button
             className="ai-chat-provider-button"
             data-testid="ai-chat-provider-button"
@@ -118,18 +98,15 @@ export function AIChatHeader({
           {providerPopoverOpen ? (
             <ProviderPopover
               providers={providers}
-              secretDraft={secretDraft}
               selectedProviderId={selectedProviderId}
               onRefresh={onRefreshProviders}
-              onSaveSecret={onSaveSecret}
-              onSecretChange={onSecretChange}
               onSelectProvider={onSelectProvider}
               onTest={onTestProvider}
             />
           ) : null}
         </div>
 
-        <div className="ai-chat-header__menu">
+        <div className="ai-chat-header__menu" data-ai-chat-popover-scope>
           <button
             className="ai-chat-icon-button"
             data-testid="ai-chat-settings-button"
