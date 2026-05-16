@@ -603,6 +603,15 @@ func hasContextItem(items []AIContextItemDisclosure, kind AIContextItemKind, inc
 	return false
 }
 
+func hasContextItemWithSource(items []AIContextItemDisclosure, kind AIContextItemKind, source string, included bool) bool {
+	for _, item := range items {
+		if item.Kind == kind && item.Source == source && item.Included == included {
+			return true
+		}
+	}
+	return false
+}
+
 func hasSnippetType(snippets []AIContextSnippet, typ string) bool {
 	for _, snippet := range snippets {
 		if snippet.Type == typ {
@@ -981,6 +990,242 @@ func TestContextPreviewReportsDisclosureItems(t *testing.T) {
 	}
 	if snapshot.Redaction.SecretsRedacted == 0 || snapshot.Redaction.PathsRedacted == 0 {
 		t.Fatalf("redaction summary = %#v", snapshot.Redaction)
+	}
+}
+
+func TestSuggestChatMentionsReturnsGroupedCandidates(t *testing.T) {
+	projectRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectRoot, "src"), 0o700); err != nil {
+		t.Fatalf("MkdirAll src: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "src", "chat.ts"), []byte("export const chat = true\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile chat.ts: %v", err)
+	}
+	skillDir := filepath.Join(projectRoot, ".arlecchino", "skills", "ai-demo")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(strings.TrimSpace(`
+---
+name: ai-demo
+description: Candidate AI chat skill.
+---
+
+# AI Demo
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile skill: %v", err)
+	}
+
+	service := newTestService(t, nil)
+	defer service.Close()
+	if _, err := service.OpenProject("main", projectRoot); err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	atCandidates, err := service.SuggestChatMentions("main", AIChatMentionQuery{
+		Trigger:         AIChatMentionTriggerAt,
+		IncludeDisabled: true,
+		Limit:           80,
+	})
+	if err != nil {
+		t.Fatalf("SuggestChatMentions @: %v", err)
+	}
+	groups := map[string]bool{}
+	var candidateSkillDisabled string
+	for _, candidate := range atCandidates {
+		groups[candidate.Group] = true
+		if candidate.Kind == AIChatMentionKindSkill && candidate.ContextItem != nil && candidate.ContextItem.ID == "project:ai-demo" {
+			candidateSkillDisabled = candidate.DisabledReason
+		}
+		if candidate.Group == "Context" {
+			switch candidate.Detail {
+			case "selection", "terminal_input", "egress", "diagnostics", "git_diff":
+				t.Fatalf("@ context picker exposed unsupported context provider: %#v", candidate)
+			}
+		}
+	}
+	for _, group := range []string{"Agents", "Skills", "Files", "Context"} {
+		if !groups[group] {
+			t.Fatalf("@ candidates missing group %q: %#v", group, atCandidates)
+		}
+	}
+	if candidateSkillDisabled != "needs review" {
+		t.Fatalf("candidate skill disabled reason = %q", candidateSkillDisabled)
+	}
+
+	slashCandidates, err := service.SuggestChatMentions("main", AIChatMentionQuery{
+		Trigger:         AIChatMentionTriggerSlash,
+		IncludeDisabled: true,
+		Limit:           80,
+	})
+	if err != nil {
+		t.Fatalf("SuggestChatMentions /: %v", err)
+	}
+	groups = map[string]bool{}
+	for _, candidate := range slashCandidates {
+		groups[candidate.Group] = true
+		if candidate.Kind == AIChatMentionKindCommand || strings.Contains(strings.ToLower(candidate.Label), "terminal") {
+			t.Fatalf("slash picker exposed terminal command candidate: %#v", candidate)
+		}
+	}
+	for _, group := range []string{"Workflows", "Actions", "Attach File", "Attach Skill", "Use Agent"} {
+		if !groups[group] {
+			t.Fatalf("/ candidates missing group %q: %#v", group, slashCandidates)
+		}
+	}
+}
+
+func TestSuggestChatMentionSkillsDisabledWhenMnemonicDisabled(t *testing.T) {
+	projectRoot := t.TempDir()
+	skillDir := filepath.Join(projectRoot, ".arlecchino", "skills", "ai-demo")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(strings.TrimSpace(`
+---
+name: ai-demo
+description: Trusted compact AI chat skill.
+---
+
+# AI Demo
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile skill: %v", err)
+	}
+	service := newTestService(t, nil)
+	defer service.Close()
+	project, err := service.OpenProject("main", projectRoot)
+	if err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	if _, err := project.Skills.ReviewSkill("project:ai-demo", "unit-test", true); err != nil {
+		t.Fatalf("ReviewSkill: %v", err)
+	}
+	if _, err := service.SetMnemonicEnabled("main", false); err != nil {
+		t.Fatalf("SetMnemonicEnabled: %v", err)
+	}
+	candidates, err := service.SuggestChatMentions("main", AIChatMentionQuery{
+		Trigger:         AIChatMentionTriggerAt,
+		Query:           "ai-demo",
+		IncludeDisabled: true,
+		Limit:           20,
+	})
+	if err != nil {
+		t.Fatalf("SuggestChatMentions: %v", err)
+	}
+	for _, candidate := range candidates {
+		if candidate.Kind == AIChatMentionKindSkill && candidate.ContextItem != nil && candidate.ContextItem.ID == "project:ai-demo" {
+			if candidate.DisabledReason != "disabled" {
+				t.Fatalf("skill disabled reason = %q", candidate.DisabledReason)
+			}
+			return
+		}
+	}
+	t.Fatalf("trusted skill candidate missing: %#v", candidates)
+}
+
+func TestMentionedFileMaterializesInContextSnapshot(t *testing.T) {
+	projectRoot := t.TempDir()
+	filePath := filepath.Join(projectRoot, "src", "chat.ts")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("export const answer = 42\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	service := newTestService(t, nil)
+	defer service.Close()
+	if _, err := service.OpenProject("main", projectRoot); err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	snapshot, err := service.ContextPreview("main", AIContextRequest{
+		Prompt: "explain",
+		ContextItems: []AIContextItemRequest{
+			{Kind: AIContextItemKindFile, Label: "chat.ts", Path: "src/chat.ts", Source: mentionSource},
+			{Kind: AIContextItemKindFile, Label: "outside.ts", Path: "../outside.ts", Source: mentionSource},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ContextPreview: %v", err)
+	}
+	if !hasSnippetType(snapshot.Snippets, "mentioned_file") {
+		t.Fatalf("mentioned file snippet missing: %#v", snapshot.Snippets)
+	}
+	if !hasContextItemWithSource(snapshot.ContextItems, AIContextItemKindFile, mentionSource, true) {
+		t.Fatalf("included mention file disclosure missing: %#v", snapshot.ContextItems)
+	}
+	if !hasContextItemWithSource(snapshot.ContextItems, AIContextItemKindFile, mentionSource, false) {
+		t.Fatalf("rejected mention file disclosure missing: %#v", snapshot.ContextItems)
+	}
+	prompt := buildPromptFromSnapshot(snapshot)
+	if !strings.Contains(prompt, "export const answer = 42") {
+		t.Fatalf("mentioned file did not reach prompt context: %q", prompt)
+	}
+}
+
+func TestMentionedSkillIncludesTrustedDigestOnly(t *testing.T) {
+	projectRoot := t.TempDir()
+	skillDir := filepath.Join(projectRoot, ".arlecchino", "skills", "ai-demo")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(strings.TrimSpace(`
+---
+name: ai-demo
+description: Trusted compact AI chat skill.
+---
+
+# AI Demo
+
+Rules:
+- Keep chat responses compact.
+
+FULL SKILL BODY SENTINEL SHOULD NOT APPEAR IN PROVIDER PROMPT.
+`)+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile skill: %v", err)
+	}
+
+	service := newTestService(t, nil)
+	defer service.Close()
+	project, err := service.OpenProject("main", projectRoot)
+	if err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	untrusted, err := service.ContextPreview("main", AIContextRequest{
+		Prompt: "use skill",
+		ContextItems: []AIContextItemRequest{
+			{ID: "project:ai-demo", Kind: AIContextItemKindSkill, Label: "ai-demo", Source: mentionSource},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ContextPreview untrusted: %v", err)
+	}
+	if len(untrusted.Skills) != 0 || !hasContextItemWithSource(untrusted.ContextItems, AIContextItemKindSkill, mentionSource, false) {
+		t.Fatalf("untrusted skill mention leaked or lacked disclosure: skills=%#v items=%#v", untrusted.Skills, untrusted.ContextItems)
+	}
+
+	if _, err := project.Skills.ReviewSkill("project:ai-demo", "unit-test", true); err != nil {
+		t.Fatalf("ReviewSkill: %v", err)
+	}
+	trusted, err := service.ContextPreview("main", AIContextRequest{
+		Prompt: "use skill",
+		ContextItems: []AIContextItemRequest{
+			{ID: "project:ai-demo", Kind: AIContextItemKindSkill, Label: "ai-demo", Source: mentionSource},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ContextPreview trusted: %v", err)
+	}
+	if len(trusted.Skills) != 1 {
+		t.Fatalf("trusted skill digest missing: %#v", trusted.Skills)
+	}
+	if !hasContextItemWithSource(trusted.ContextItems, AIContextItemKindSkill, mentionSource, true) {
+		t.Fatalf("trusted skill disclosure missing: %#v", trusted.ContextItems)
+	}
+	prompt := buildPromptFromSnapshot(trusted)
+	if strings.Contains(prompt, "FULL SKILL BODY SENTINEL") {
+		t.Fatalf("raw skill body leaked into prompt: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Resident skill context") {
+		t.Fatalf("skill digest missing from prompt: %q", prompt)
 	}
 }
 

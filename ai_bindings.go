@@ -172,6 +172,14 @@ func (a *App) AIGetContextPreview(ctx context.Context, req ai.AIContextRequest) 
 	return a.ensureAIService().ContextPreview(sessionID, req)
 }
 
+func (a *App) AISuggestChatMentions(ctx context.Context, req ai.AIChatMentionQuery) ([]ai.AIChatMentionCandidate, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().SuggestChatMentions(sessionID, req)
+}
+
 func (a *App) AIGetEditorContinuation(ctx context.Context, req ai.AIContextRequest, providerID string, model string) (ai.AIContinuationResponse, error) {
 	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {

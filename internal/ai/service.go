@@ -608,6 +608,9 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 		CreatedAt:        utcNow(),
 	}
 	for _, item := range req.ContextItems {
+		if s.materializeMentionContextItem(project, &snapshot, req, item) {
+			continue
+		}
 		addContextItemDisclosure(&snapshot, item.Kind, item.Label, item.Path, firstNonEmpty(item.Source, "request"), true, false, 0, "requested")
 	}
 	if req.FilePath != "" || req.FullText != "" || req.TextBefore != "" || req.TextAfter != "" {

@@ -387,6 +387,127 @@ export class AIChatActionDescriptor {
     }
 }
 
+export class AIChatMentionCandidate {
+    "id": string;
+    "kind": AIChatMentionKind;
+    "group": string;
+    "label": string;
+    "description"?: string;
+    "detail"?: string;
+    "insertText"?: string;
+    "disabledReason"?: string;
+    "score": number;
+    "operation": AIChatMentionOperation;
+    "action"?: AIChatAction;
+    "profileId"?: string;
+    "workflowId"?: string;
+    "contextItem"?: AIContextItemRequest | null;
+
+    /** Creates a new AIChatMentionCandidate instance. */
+    constructor($$source: Partial<AIChatMentionCandidate> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("kind" in $$source)) {
+            this["kind"] = AIChatMentionKind.$zero;
+        }
+        if (!("group" in $$source)) {
+            this["group"] = "";
+        }
+        if (!("label" in $$source)) {
+            this["label"] = "";
+        }
+        if (!("score" in $$source)) {
+            this["score"] = 0;
+        }
+        if (!("operation" in $$source)) {
+            this["operation"] = AIChatMentionOperation.$zero;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new AIChatMentionCandidate instance from a string or object.
+     */
+    static createFrom($$source: any = {}): AIChatMentionCandidate {
+        const $$createField13_0 = $$createType8;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("contextItem" in $$parsedSource) {
+            $$parsedSource["contextItem"] = $$createField13_0($$parsedSource["contextItem"]);
+        }
+        return new AIChatMentionCandidate($$parsedSource as Partial<AIChatMentionCandidate>);
+    }
+}
+
+export enum AIChatMentionKind {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    AIChatMentionKindAgent = "agent",
+    AIChatMentionKindSkill = "skill",
+    AIChatMentionKindFile = "file",
+    AIChatMentionKindContext = "context",
+    AIChatMentionKindWorkflow = "workflow",
+    AIChatMentionKindAction = "action",
+    AIChatMentionKindCommand = "command",
+};
+
+export enum AIChatMentionOperation {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    AIChatMentionOperationSetAction = "set_action",
+    AIChatMentionOperationSetProfile = "set_profile",
+    AIChatMentionOperationSetWorkflow = "set_workflow",
+    AIChatMentionOperationAttachFile = "attach_file",
+    AIChatMentionOperationAttachSkill = "attach_skill",
+    AIChatMentionOperationAttachContext = "attach_context",
+    AIChatMentionOperationInsertText = "insert_text",
+};
+
+export class AIChatMentionQuery {
+    "trigger": AIChatMentionTrigger;
+    "query"?: string;
+    "sessionId"?: string;
+    "limit"?: number;
+    "includeDisabled": boolean;
+
+    /** Creates a new AIChatMentionQuery instance. */
+    constructor($$source: Partial<AIChatMentionQuery> = {}) {
+        if (!("trigger" in $$source)) {
+            this["trigger"] = AIChatMentionTrigger.$zero;
+        }
+        if (!("includeDisabled" in $$source)) {
+            this["includeDisabled"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new AIChatMentionQuery instance from a string or object.
+     */
+    static createFrom($$source: any = {}): AIChatMentionQuery {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new AIChatMentionQuery($$parsedSource as Partial<AIChatMentionQuery>);
+    }
+}
+
+export enum AIChatMentionTrigger {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    AIChatMentionTriggerAt = "@",
+    AIChatMentionTriggerSlash = "/",
+};
+
 export class AIChatRun {
     "id": string;
     "sessionId": string;
@@ -446,8 +567,8 @@ export class AIChatRun {
      * Creates a new AIChatRun instance from a string or object.
      */
     static createFrom($$source: any = {}): AIChatRun {
-        const $$createField12_0 = $$createType7;
-        const $$createField13_0 = $$createType9;
+        const $$createField12_0 = $$createType9;
+        const $$createField13_0 = $$createType11;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("contextSummary" in $$parsedSource) {
             $$parsedSource["contextSummary"] = $$createField12_0($$parsedSource["contextSummary"]);
@@ -600,15 +721,15 @@ export class AIChatRunEnvelope {
      * Creates a new AIChatRunEnvelope instance from a string or object.
      */
     static createFrom($$source: any = {}): AIChatRunEnvelope {
-        const $$createField11_0 = $$createType7;
-        const $$createField12_0 = $$createType11;
-        const $$createField13_0 = $$createType13;
-        const $$createField14_0 = $$createType14;
-        const $$createField15_0 = $$createType15;
-        const $$createField16_0 = $$createType16;
-        const $$createField17_0 = $$createType9;
-        const $$createField18_0 = $$createType17;
-        const $$createField19_0 = $$createType18;
+        const $$createField11_0 = $$createType9;
+        const $$createField12_0 = $$createType13;
+        const $$createField13_0 = $$createType15;
+        const $$createField14_0 = $$createType16;
+        const $$createField15_0 = $$createType17;
+        const $$createField16_0 = $$createType18;
+        const $$createField17_0 = $$createType11;
+        const $$createField18_0 = $$createType19;
+        const $$createField19_0 = $$createType20;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("contextSummary" in $$parsedSource) {
             $$parsedSource["contextSummary"] = $$createField11_0($$parsedSource["contextSummary"]);
@@ -680,7 +801,7 @@ export class AIChatRunRequest {
      * Creates a new AIChatRunRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): AIChatRunRequest {
-        const $$createField11_0 = $$createType19;
+        const $$createField11_0 = $$createType21;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("context" in $$parsedSource) {
             $$parsedSource["context"] = $$createField11_0($$parsedSource["context"]);
@@ -716,7 +837,7 @@ export class AIConsentPolicy {
      * Creates a new AIConsentPolicy instance from a string or object.
      */
     static createFrom($$source: any = {}): AIConsentPolicy {
-        const $$createField3_0 = $$createType21;
+        const $$createField3_0 = $$createType23;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("providerPolicies" in $$parsedSource) {
             $$parsedSource["providerPolicies"] = $$createField3_0($$parsedSource["providerPolicies"]);
@@ -782,7 +903,7 @@ export class AIContextDisclosure {
      */
     static createFrom($$source: any = {}): AIContextDisclosure {
         const $$createField6_0 = $$createType4;
-        const $$createField7_0 = $$createType22;
+        const $$createField7_0 = $$createType24;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("dataCategories" in $$parsedSource) {
             $$parsedSource["dataCategories"] = $$createField6_0($$parsedSource["dataCategories"]);
@@ -1012,7 +1133,7 @@ export class AIContextRequest {
      * Creates a new AIContextRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): AIContextRequest {
-        const $$createField18_0 = $$createType24;
+        const $$createField18_0 = $$createType25;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("contextItems" in $$parsedSource) {
             $$parsedSource["contextItems"] = $$createField18_0($$parsedSource["contextItems"]);
@@ -1090,18 +1211,18 @@ export class AIContextSnapshot {
      * Creates a new AIContextSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): AIContextSnapshot {
-        const $$createField13_0 = $$createType26;
-        const $$createField14_0 = $$createType28;
-        const $$createField15_0 = $$createType30;
-        const $$createField16_0 = $$createType32;
-        const $$createField17_0 = $$createType34;
-        const $$createField18_0 = $$createType36;
+        const $$createField13_0 = $$createType27;
+        const $$createField14_0 = $$createType29;
+        const $$createField15_0 = $$createType31;
+        const $$createField16_0 = $$createType33;
+        const $$createField17_0 = $$createType35;
+        const $$createField18_0 = $$createType37;
         const $$createField19_0 = $$createType4;
-        const $$createField20_0 = $$createType22;
-        const $$createField21_0 = $$createType11;
-        const $$createField22_0 = $$createType37;
-        const $$createField23_0 = $$createType14;
-        const $$createField24_0 = $$createType15;
+        const $$createField20_0 = $$createType24;
+        const $$createField21_0 = $$createType13;
+        const $$createField22_0 = $$createType38;
+        const $$createField23_0 = $$createType16;
+        const $$createField24_0 = $$createType17;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("snippets" in $$parsedSource) {
             $$parsedSource["snippets"] = $$createField13_0($$parsedSource["snippets"]);
@@ -1263,12 +1384,12 @@ export class AIContextSummary {
      * Creates a new AIContextSummary instance from a string or object.
      */
     static createFrom($$source: any = {}): AIContextSummary {
-        const $$createField11_0 = $$createType32;
-        const $$createField12_0 = $$createType28;
-        const $$createField13_0 = $$createType30;
+        const $$createField11_0 = $$createType33;
+        const $$createField12_0 = $$createType29;
+        const $$createField13_0 = $$createType31;
         const $$createField14_0 = $$createType4;
-        const $$createField15_0 = $$createType22;
-        const $$createField16_0 = $$createType14;
+        const $$createField15_0 = $$createType24;
+        const $$createField16_0 = $$createType16;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("mcpContext" in $$parsedSource) {
             $$parsedSource["mcpContext"] = $$createField11_0($$parsedSource["mcpContext"]);
@@ -1317,8 +1438,8 @@ export class AIContinuationResponse {
      * Creates a new AIContinuationResponse instance from a string or object.
      */
     static createFrom($$source: any = {}): AIContinuationResponse {
-        const $$createField5_0 = $$createType38;
-        const $$createField6_0 = $$createType40;
+        const $$createField5_0 = $$createType39;
+        const $$createField6_0 = $$createType41;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("context" in $$parsedSource) {
             $$parsedSource["context"] = $$createField5_0($$parsedSource["context"]);
@@ -1350,7 +1471,7 @@ export class AIDiscoveryResult {
      * Creates a new AIDiscoveryResult instance from a string or object.
      */
     static createFrom($$source: any = {}): AIDiscoveryResult {
-        const $$createField0_0 = $$createType42;
+        const $$createField0_0 = $$createType43;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("providers" in $$parsedSource) {
             $$parsedSource["providers"] = $$createField0_0($$parsedSource["providers"]);
@@ -1422,7 +1543,7 @@ export class AIEgressRecord {
      */
     static createFrom($$source: any = {}): AIEgressRecord {
         const $$createField9_0 = $$createType4;
-        const $$createField10_0 = $$createType22;
+        const $$createField10_0 = $$createType24;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("dataCategories" in $$parsedSource) {
             $$parsedSource["dataCategories"] = $$createField9_0($$parsedSource["dataCategories"]);
@@ -1469,7 +1590,7 @@ export class AIEgressSummary {
      */
     static createFrom($$source: any = {}): AIEgressSummary {
         const $$createField7_0 = $$createType4;
-        const $$createField8_0 = $$createType22;
+        const $$createField8_0 = $$createType24;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("dataCategories" in $$parsedSource) {
             $$parsedSource["dataCategories"] = $$createField7_0($$parsedSource["dataCategories"]);
@@ -1543,7 +1664,7 @@ export class AIEmbeddingStatus {
      * Creates a new AIEmbeddingStatus instance from a string or object.
      */
     static createFrom($$source: any = {}): AIEmbeddingStatus {
-        const $$createField2_0 = $$createType44;
+        const $$createField2_0 = $$createType45;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("providers" in $$parsedSource) {
             $$parsedSource["providers"] = $$createField2_0($$parsedSource["providers"]);
@@ -1610,7 +1731,7 @@ export class AIMCPContextPlane {
      * Creates a new AIMCPContextPlane instance from a string or object.
      */
     static createFrom($$source: any = {}): AIMCPContextPlane {
-        const $$createField7_0 = $$createType46;
+        const $$createField7_0 = $$createType47;
         const $$createField13_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("toolGroups" in $$parsedSource) {
@@ -1752,8 +1873,8 @@ export class AIMnemonicEntry {
      */
     static createFrom($$source: any = {}): AIMnemonicEntry {
         const $$createField3_0 = $$createType4;
-        const $$createField16_0 = $$createType47;
-        const $$createField17_0 = $$createType49;
+        const $$createField16_0 = $$createType48;
+        const $$createField17_0 = $$createType50;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("tags" in $$parsedSource) {
             $$parsedSource["tags"] = $$createField3_0($$parsedSource["tags"]);
@@ -1803,8 +1924,8 @@ export class AIMnemonicEntryInput {
      */
     static createFrom($$source: any = {}): AIMnemonicEntryInput {
         const $$createField3_0 = $$createType4;
-        const $$createField11_0 = $$createType47;
-        const $$createField12_0 = $$createType49;
+        const $$createField11_0 = $$createType48;
+        const $$createField12_0 = $$createType50;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("tags" in $$parsedSource) {
             $$parsedSource["tags"] = $$createField3_0($$parsedSource["tags"]);
@@ -1844,8 +1965,8 @@ export class AIMnemonicEntryPatch {
      */
     static createFrom($$source: any = {}): AIMnemonicEntryPatch {
         const $$createField2_0 = $$createType4;
-        const $$createField10_0 = $$createType47;
-        const $$createField11_0 = $$createType49;
+        const $$createField10_0 = $$createType48;
+        const $$createField11_0 = $$createType50;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("tags" in $$parsedSource) {
             $$parsedSource["tags"] = $$createField2_0($$parsedSource["tags"]);
@@ -1935,11 +2056,11 @@ export class AIMnemonicInspection {
      * Creates a new AIMnemonicInspection instance from a string or object.
      */
     static createFrom($$source: any = {}): AIMnemonicInspection {
-        const $$createField1_0 = $$createType51;
-        const $$createField2_0 = $$createType51;
-        const $$createField3_0 = $$createType51;
-        const $$createField4_0 = $$createType51;
-        const $$createField5_0 = $$createType51;
+        const $$createField1_0 = $$createType52;
+        const $$createField2_0 = $$createType52;
+        const $$createField3_0 = $$createType52;
+        const $$createField4_0 = $$createType52;
+        const $$createField5_0 = $$createType52;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("used" in $$parsedSource) {
             $$parsedSource["used"] = $$createField1_0($$parsedSource["used"]);
@@ -1985,7 +2106,7 @@ export class AIMnemonicInspectionEntry {
      * Creates a new AIMnemonicInspectionEntry instance from a string or object.
      */
     static createFrom($$source: any = {}): AIMnemonicInspectionEntry {
-        const $$createField0_0 = $$createType33;
+        const $$createField0_0 = $$createType34;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("entry" in $$parsedSource) {
             $$parsedSource["entry"] = $$createField0_0($$parsedSource["entry"]);
@@ -2082,7 +2203,7 @@ export class AIMnemonicWriteProposalPayload {
      * Creates a new AIMnemonicWriteProposalPayload instance from a string or object.
      */
     static createFrom($$source: any = {}): AIMnemonicWriteProposalPayload {
-        const $$createField0_0 = $$createType52;
+        const $$createField0_0 = $$createType53;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("entry" in $$parsedSource) {
             $$parsedSource["entry"] = $$createField0_0($$parsedSource["entry"]);
@@ -2112,7 +2233,7 @@ export class AIMnemonicWriteProposalRequest {
      * Creates a new AIMnemonicWriteProposalRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): AIMnemonicWriteProposalRequest {
-        const $$createField1_0 = $$createType52;
+        const $$createField1_0 = $$createType53;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("entry" in $$parsedSource) {
             $$parsedSource["entry"] = $$createField1_0($$parsedSource["entry"]);
@@ -2150,7 +2271,7 @@ export class AIMnemonicWriteProposalResult {
      */
     static createFrom($$source: any = {}): AIMnemonicWriteProposalResult {
         const $$createField0_0 = $$createType5;
-        const $$createField1_0 = $$createType53;
+        const $$createField1_0 = $$createType54;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("artifact" in $$parsedSource) {
             $$parsedSource["artifact"] = $$createField0_0($$parsedSource["artifact"]);
@@ -2213,8 +2334,8 @@ export class AIModelCapabilityDescriptor {
      * Creates a new AIModelCapabilityDescriptor instance from a string or object.
      */
     static createFrom($$source: any = {}): AIModelCapabilityDescriptor {
-        const $$createField7_0 = $$createType54;
-        const $$createField11_0 = $$createType55;
+        const $$createField7_0 = $$createType55;
+        const $$createField11_0 = $$createType56;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("capabilities" in $$parsedSource) {
             $$parsedSource["capabilities"] = $$createField7_0($$parsedSource["capabilities"]);
@@ -2307,7 +2428,7 @@ export class AIPatchArtifactPayload {
      * Creates a new AIPatchArtifactPayload instance from a string or object.
      */
     static createFrom($$source: any = {}): AIPatchArtifactPayload {
-        const $$createField1_0 = $$createType57;
+        const $$createField1_0 = $$createType58;
         const $$createField4_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("files" in $$parsedSource) {
@@ -2400,7 +2521,7 @@ export class AIPatchPreviewResult {
      */
     static createFrom($$source: any = {}): AIPatchPreviewResult {
         const $$createField0_0 = $$createType5;
-        const $$createField1_0 = $$createType58;
+        const $$createField1_0 = $$createType59;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("artifact" in $$parsedSource) {
             $$parsedSource["artifact"] = $$createField0_0($$parsedSource["artifact"]);
@@ -2631,7 +2752,7 @@ export class AIProviderRuntimeDescriptor {
      * Creates a new AIProviderRuntimeDescriptor instance from a string or object.
      */
     static createFrom($$source: any = {}): AIProviderRuntimeDescriptor {
-        const $$createField11_0 = $$createType60;
+        const $$createField11_0 = $$createType61;
         const $$createField12_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("models" in $$parsedSource) {
@@ -2872,7 +2993,7 @@ export class AIStatus {
      * Creates a new AIStatus instance from a string or object.
      */
     static createFrom($$source: any = {}): AIStatus {
-        const $$createField2_0 = $$createType42;
+        const $$createField2_0 = $$createType43;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("providers" in $$parsedSource) {
             $$parsedSource["providers"] = $$createField2_0($$parsedSource["providers"]);
@@ -2975,7 +3096,7 @@ export class AIToolCallRequest {
      * Creates a new AIToolCallRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): AIToolCallRequest {
-        const $$createField3_0 = $$createType47;
+        const $$createField3_0 = $$createType48;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("arguments" in $$parsedSource) {
             $$parsedSource["arguments"] = $$createField3_0($$parsedSource["arguments"]);
@@ -3028,8 +3149,8 @@ export class AIToolCallResult {
      * Creates a new AIToolCallResult instance from a string or object.
      */
     static createFrom($$source: any = {}): AIToolCallResult {
-        const $$createField7_0 = $$createType47;
-        const $$createField9_0 = $$createType61;
+        const $$createField7_0 = $$createType48;
+        const $$createField9_0 = $$createType62;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("arguments" in $$parsedSource) {
             $$parsedSource["arguments"] = $$createField7_0($$parsedSource["arguments"]);
@@ -3082,7 +3203,7 @@ export class AIToolDescriptor {
      * Creates a new AIToolDescriptor instance from a string or object.
      */
     static createFrom($$source: any = {}): AIToolDescriptor {
-        const $$createField6_0 = $$createType62;
+        const $$createField6_0 = $$createType63;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("hardDenyCategories" in $$parsedSource) {
             $$parsedSource["hardDenyCategories"] = $$createField6_0($$parsedSource["hardDenyCategories"]);
@@ -3198,7 +3319,7 @@ export class AIToolProposal {
      * Creates a new AIToolProposal instance from a string or object.
      */
     static createFrom($$source: any = {}): AIToolProposal {
-        const $$createField4_0 = $$createType47;
+        const $$createField4_0 = $$createType48;
         const $$createField8_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("arguments" in $$parsedSource) {
@@ -3274,59 +3395,60 @@ const $$createType3 = AIContextSummary.createFrom;
 const $$createType4 = $Create.Array($Create.Any);
 const $$createType5 = AIChatRunArtifact.createFrom;
 const $$createType6 = AIBackgroundAgentPreviewPayload.createFrom;
-const $$createType7 = $Create.Nullable($$createType3);
-const $$createType8 = AIToolProposal.createFrom;
-const $$createType9 = $Create.Array($$createType8);
-const $$createType10 = AIProviderEnvelope.createFrom;
-const $$createType11 = $Create.Nullable($$createType10);
-const $$createType12 = AIEgressSummary.createFrom;
+const $$createType7 = AIContextItemRequest.createFrom;
+const $$createType8 = $Create.Nullable($$createType7);
+const $$createType9 = $Create.Nullable($$createType3);
+const $$createType10 = AIToolProposal.createFrom;
+const $$createType11 = $Create.Array($$createType10);
+const $$createType12 = AIProviderEnvelope.createFrom;
 const $$createType13 = $Create.Nullable($$createType12);
-const $$createType14 = AIContextDisclosureSummary.createFrom;
-const $$createType15 = AIApprovalSummary.createFrom;
-const $$createType16 = AIConsentSummary.createFrom;
-const $$createType17 = AIToolProposalSummary.createFrom;
-const $$createType18 = AIMnemonicInclusionSummary.createFrom;
-const $$createType19 = AIContextRequest.createFrom;
-const $$createType20 = AIProviderDataPolicy.createFrom;
-const $$createType21 = $Create.Array($$createType20);
-const $$createType22 = AIRedactionSummary.createFrom;
-const $$createType23 = AIContextItemRequest.createFrom;
-const $$createType24 = $Create.Array($$createType23);
-const $$createType25 = AIContextSnippet.createFrom;
-const $$createType26 = $Create.Array($$createType25);
-const $$createType27 = AIContextSnippetBreakdown.createFrom;
-const $$createType28 = $Create.Array($$createType27);
-const $$createType29 = AIContextItemDisclosure.createFrom;
-const $$createType30 = $Create.Array($$createType29);
-const $$createType31 = AIMCPContextPlane.createFrom;
-const $$createType32 = $Create.Nullable($$createType31);
-const $$createType33 = AIMnemonicEntry.createFrom;
-const $$createType34 = $Create.Array($$createType33);
-const $$createType35 = AISkillContext.createFrom;
-const $$createType36 = $Create.Array($$createType35);
-const $$createType37 = AIContextDisclosure.createFrom;
-const $$createType38 = AIContextSnapshot.createFrom;
-const $$createType39 = AIEgressRecord.createFrom;
-const $$createType40 = $Create.Nullable($$createType39);
-const $$createType41 = providers$0.AIProviderDescriptor.createFrom;
-const $$createType42 = $Create.Array($$createType41);
-const $$createType43 = AIEmbeddingProviderDescriptor.createFrom;
-const $$createType44 = $Create.Array($$createType43);
-const $$createType45 = AIMCPToolGroupSummary.createFrom;
-const $$createType46 = $Create.Array($$createType45);
-const $$createType47 = $Create.Map($Create.Any, $Create.Any);
-const $$createType48 = AIMnemonicRelationship.createFrom;
-const $$createType49 = $Create.Array($$createType48);
-const $$createType50 = AIMnemonicInspectionEntry.createFrom;
-const $$createType51 = $Create.Array($$createType50);
-const $$createType52 = AIMnemonicEntryInput.createFrom;
-const $$createType53 = AIMnemonicWriteProposalPayload.createFrom;
-const $$createType54 = $Create.Array($Create.Any);
+const $$createType14 = AIEgressSummary.createFrom;
+const $$createType15 = $Create.Nullable($$createType14);
+const $$createType16 = AIContextDisclosureSummary.createFrom;
+const $$createType17 = AIApprovalSummary.createFrom;
+const $$createType18 = AIConsentSummary.createFrom;
+const $$createType19 = AIToolProposalSummary.createFrom;
+const $$createType20 = AIMnemonicInclusionSummary.createFrom;
+const $$createType21 = AIContextRequest.createFrom;
+const $$createType22 = AIProviderDataPolicy.createFrom;
+const $$createType23 = $Create.Array($$createType22);
+const $$createType24 = AIRedactionSummary.createFrom;
+const $$createType25 = $Create.Array($$createType7);
+const $$createType26 = AIContextSnippet.createFrom;
+const $$createType27 = $Create.Array($$createType26);
+const $$createType28 = AIContextSnippetBreakdown.createFrom;
+const $$createType29 = $Create.Array($$createType28);
+const $$createType30 = AIContextItemDisclosure.createFrom;
+const $$createType31 = $Create.Array($$createType30);
+const $$createType32 = AIMCPContextPlane.createFrom;
+const $$createType33 = $Create.Nullable($$createType32);
+const $$createType34 = AIMnemonicEntry.createFrom;
+const $$createType35 = $Create.Array($$createType34);
+const $$createType36 = AISkillContext.createFrom;
+const $$createType37 = $Create.Array($$createType36);
+const $$createType38 = AIContextDisclosure.createFrom;
+const $$createType39 = AIContextSnapshot.createFrom;
+const $$createType40 = AIEgressRecord.createFrom;
+const $$createType41 = $Create.Nullable($$createType40);
+const $$createType42 = providers$0.AIProviderDescriptor.createFrom;
+const $$createType43 = $Create.Array($$createType42);
+const $$createType44 = AIEmbeddingProviderDescriptor.createFrom;
+const $$createType45 = $Create.Array($$createType44);
+const $$createType46 = AIMCPToolGroupSummary.createFrom;
+const $$createType47 = $Create.Array($$createType46);
+const $$createType48 = $Create.Map($Create.Any, $Create.Any);
+const $$createType49 = AIMnemonicRelationship.createFrom;
+const $$createType50 = $Create.Array($$createType49);
+const $$createType51 = AIMnemonicInspectionEntry.createFrom;
+const $$createType52 = $Create.Array($$createType51);
+const $$createType53 = AIMnemonicEntryInput.createFrom;
+const $$createType54 = AIMnemonicWriteProposalPayload.createFrom;
 const $$createType55 = $Create.Array($Create.Any);
-const $$createType56 = AIPatchFile.createFrom;
-const $$createType57 = $Create.Array($$createType56);
-const $$createType58 = AIPatchArtifactPayload.createFrom;
-const $$createType59 = AIProviderRuntimeModel.createFrom;
-const $$createType60 = $Create.Array($$createType59);
-const $$createType61 = AIToolAuditRecord.createFrom;
-const $$createType62 = $Create.Array($Create.Any);
+const $$createType56 = $Create.Array($Create.Any);
+const $$createType57 = AIPatchFile.createFrom;
+const $$createType58 = $Create.Array($$createType57);
+const $$createType59 = AIPatchArtifactPayload.createFrom;
+const $$createType60 = AIProviderRuntimeModel.createFrom;
+const $$createType61 = $Create.Array($$createType60);
+const $$createType62 = AIToolAuditRecord.createFrom;
+const $$createType63 = $Create.Array($Create.Any);

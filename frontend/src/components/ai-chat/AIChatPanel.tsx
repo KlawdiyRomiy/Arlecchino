@@ -35,6 +35,7 @@ import {
   AIStartChatRun,
   AIStartProviderRuntime,
   AIStopProviderRuntime,
+  AISuggestChatMentions,
   type AIProviderRuntimeDescriptor,
   type AIProviderRuntimeModel,
 } from "../../wails/app";
@@ -43,6 +44,8 @@ import {
   AIChatAction,
   AIChatRunEnvelope,
   AIContextItemKind,
+  type AIChatMentionCandidate,
+  type AIChatMentionQuery,
   type AIChatRun,
   type AIChatRunArtifact,
   type AIContextRequest,
@@ -105,6 +108,9 @@ const initialState: AIChatUIState = {
   selectedAction: AIChatAction.AIChatActionAsk,
   input: "",
   activeSessionId: defaultChatSessionId,
+  selectedProfileId: "",
+  selectedWorkflowId: "",
+  selectedMentions: [],
   selectedProviderId: "",
   selectedModel: "",
   context: initialContext,
@@ -166,7 +172,43 @@ const initialChromeState: AIChatPanelChromeState = {
 function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
   switch (action.type) {
     case "setAction":
-      return { ...state, selectedAction: action.action };
+      return {
+        ...state,
+        selectedAction: action.action,
+        selectedWorkflowId: "",
+        selectedMentions: state.selectedMentions.filter(
+          (mention) => !mention.workflowId,
+        ),
+      };
+    case "setProfile":
+      return { ...state, selectedProfileId: action.profileId };
+    case "setWorkflow":
+      return { ...state, selectedWorkflowId: action.workflowId };
+    case "addMention": {
+      const mentions = state.selectedMentions.filter(
+        (mention) => mention.id !== action.mention.id,
+      );
+      return { ...state, selectedMentions: [...mentions, action.mention] };
+    }
+    case "removeMention": {
+      const removed = state.selectedMentions.find(
+        (mention) => mention.id === action.id,
+      );
+      return {
+        ...state,
+        selectedMentions: state.selectedMentions.filter(
+          (mention) => mention.id !== action.id,
+        ),
+        selectedProfileId:
+          removed?.profileId && removed.profileId === state.selectedProfileId
+            ? ""
+            : state.selectedProfileId,
+        selectedWorkflowId:
+          removed?.workflowId && removed.workflowId === state.selectedWorkflowId
+            ? ""
+            : state.selectedWorkflowId,
+      };
+    }
     case "setInput":
       return { ...state, input: action.input };
     case "setActiveSession":
@@ -242,7 +284,13 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         hydratedRuns: { ...state.hydratedRuns, [action.run.id]: action.run },
       };
     case "resetComposer":
-      return { ...state, input: "" };
+      return {
+        ...state,
+        input: "",
+        selectedProfileId: "",
+        selectedWorkflowId: "",
+        selectedMentions: [],
+      };
     case "ensureProvider":
       if (state.selectedProviderId) return state;
       return {
@@ -378,21 +426,73 @@ function sessionIdOf(run: Pick<AIChatRunEnvelope, "sessionId">): string {
   return run.sessionId?.trim() || defaultChatSessionId;
 }
 
+function pushUniqueContextItem(
+  items: NonNullable<AIContextRequest["contextItems"]>,
+  item: NonNullable<AIContextRequest["contextItems"]>[number],
+) {
+  const key = [
+    item.kind,
+    item.id ?? "",
+    item.path ?? "",
+    item.source ?? "",
+    item.label ?? "",
+  ].join("|");
+  const exists = items.some(
+    (candidate) =>
+      [
+        candidate.kind,
+        candidate.id ?? "",
+        candidate.path ?? "",
+        candidate.source ?? "",
+        candidate.label ?? "",
+      ].join("|") === key,
+  );
+  if (!exists) items.push(item);
+}
+
+function hasMentionContextKind(
+  mentions: AIChatMentionCandidate[],
+  kind: AIContextItemKind,
+): boolean {
+  return mentions.some((mention) => mention.contextItem?.kind === kind);
+}
+
+function contextItemForMention(
+  mention: AIChatMentionCandidate,
+  activeFile: string,
+): NonNullable<AIContextRequest["contextItems"]>[number] | null {
+  const item = mention.contextItem;
+  if (!item) return null;
+  if (
+    item.id === "current_file" &&
+    item.kind === AIContextItemKind.AIContextItemKindFile &&
+    activeFile
+  ) {
+    return {
+      ...item,
+      label: activeFile.split("/").pop() || item.label || "Current file",
+      path: activeFile,
+    };
+  }
+  return item;
+}
+
 function buildContextRequest(
   context: ContextToggles,
   activeFile: string,
   prompt = "",
+  mentions: AIChatMentionCandidate[] = [],
 ): AIContextRequest {
-  const contextItems: AIContextRequest["contextItems"] = [];
+  const contextItems: NonNullable<AIContextRequest["contextItems"]> = [];
   if (context.workspace) {
-    contextItems.push({
+    pushUniqueContextItem(contextItems, {
       kind: AIContextItemKind.AIContextItemKindWorkspace,
       label: "Workspace",
       source: "composer",
     });
   }
   if (context.currentFile && activeFile) {
-    contextItems.push({
+    pushUniqueContextItem(contextItems, {
       kind: AIContextItemKind.AIContextItemKindFile,
       label: activeFile.split("/").pop() || "Current file",
       path: activeFile,
@@ -400,42 +500,66 @@ function buildContextRequest(
     });
   }
   if (context.terminalLogs) {
-    contextItems.push({
+    pushUniqueContextItem(contextItems, {
       kind: AIContextItemKind.AIContextItemKindTerminal,
       label: "Terminal",
       source: "composer",
     });
   }
   if (context.mnemonic) {
-    contextItems.push({
+    pushUniqueContextItem(contextItems, {
       kind: AIContextItemKind.AIContextItemKindMnemonic,
       label: "Mnemonic",
       source: "composer",
     });
   }
   if (context.mcp) {
-    contextItems.push({
+    pushUniqueContextItem(contextItems, {
       kind: AIContextItemKind.AIContextItemKindMCP,
       label: "MCP",
       source: "composer",
     });
   }
   if (context.skills) {
-    contextItems.push({
+    pushUniqueContextItem(contextItems, {
       kind: AIContextItemKind.AIContextItemKindSkill,
       label: "Skills",
       source: "composer",
     });
   }
+  mentions.forEach((mention) => {
+    const item = contextItemForMention(mention, activeFile);
+    if (item) {
+      pushUniqueContextItem(contextItems, item);
+    }
+  });
+  const includeMnemonic =
+    context.mnemonic ||
+    hasMentionContextKind(
+      mentions,
+      AIContextItemKind.AIContextItemKindMnemonic,
+    );
+  const includeMCP =
+    context.mcp ||
+    hasMentionContextKind(mentions, AIContextItemKind.AIContextItemKindMCP);
+  const includeSkills =
+    context.skills ||
+    hasMentionContextKind(mentions, AIContextItemKind.AIContextItemKindSkill);
+  const includeWorkspace =
+    context.workspace ||
+    hasMentionContextKind(
+      mentions,
+      AIContextItemKind.AIContextItemKindWorkspace,
+    );
   return {
     capability: "chat" as AIProviderCapability,
     prompt,
     filePath: context.currentFile ? activeFile : "",
-    includeMnemonic: context.mnemonic,
-    includeMCP: context.mcp,
-    includeSkills: context.skills,
+    includeMnemonic,
+    includeMCP,
+    includeSkills,
     contextItems,
-    maxSnippets: context.workspace ? 8 : 3,
+    maxSnippets: includeWorkspace ? 8 : 3,
   };
 }
 
@@ -1070,10 +1194,42 @@ export function AIChatPanelContent({
 
   const handleRefreshContext = useCallback(async () => {
     const preview = await AIGetContextPreview(
-      buildContextRequest(state.context, activeFile || "", state.input),
+      buildContextRequest(
+        state.context,
+        activeFile || "",
+        state.input,
+        state.selectedMentions,
+      ),
     );
     setContextPreview(preview);
-  }, [activeFile, setContextPreview, state.context, state.input]);
+  }, [
+    activeFile,
+    setContextPreview,
+    state.context,
+    state.input,
+    state.selectedMentions,
+  ]);
+
+  const handleMentionQuery = useCallback(
+    async (request: AIChatMentionQuery): Promise<AIChatMentionCandidate[]> =>
+      AISuggestChatMentions(request),
+    [],
+  );
+
+  const handleMentionSelect = useCallback((mention: AIChatMentionCandidate) => {
+    if (mention.action) {
+      dispatch({ type: "setAction", action: mention.action });
+    }
+    if (mention.profileId) {
+      dispatch({ type: "setProfile", profileId: mention.profileId });
+    }
+    if (mention.workflowId) {
+      dispatch({ type: "setWorkflow", workflowId: mention.workflowId });
+    }
+    if (mention.contextItem || mention.profileId || mention.workflowId) {
+      dispatch({ type: "addMention", mention });
+    }
+  }, []);
 
   const handleSend = useCallback(async () => {
     if (!canSend || !selectedProvider) return;
@@ -1082,17 +1238,20 @@ export function AIChatPanelContent({
       state.context,
       activeFile || "",
       state.input.trim(),
+      state.selectedMentions,
     );
     try {
       const run = await AIStartChatRun({
         action: state.selectedAction,
         sessionId: activeSessionId,
+        profileId: state.selectedProfileId,
+        workflowId: state.selectedWorkflowId,
         prompt: state.input.trim(),
         providerId: selectedProvider.id,
         model: selectedModel,
-        includeMnemonic: state.context.mnemonic,
-        includeMCP: state.context.mcp,
-        includeSkills: state.context.skills,
+        includeMnemonic: request.includeMnemonic,
+        includeMCP: request.includeMCP,
+        includeSkills: request.includeSkills,
         context: request,
       });
       setHydratedRun(run);
@@ -1114,6 +1273,9 @@ export function AIChatPanelContent({
     state.context,
     state.input,
     state.selectedAction,
+    state.selectedMentions,
+    state.selectedProfileId,
+    state.selectedWorkflowId,
     upsertRunEnvelope,
   ]);
 
@@ -1506,6 +1668,7 @@ export function AIChatPanelContent({
                 providers={sortedProviders}
                 running={activeRunRunning}
                 selectedAction={state.selectedAction}
+                selectedMentions={state.selectedMentions}
                 selectedModel={selectedModel}
                 selectedProvider={selectedProvider}
                 sendShortcut={aiChatSendShortcut}
@@ -1517,6 +1680,11 @@ export function AIChatPanelContent({
                   dispatch({ type: "setContext", key, value })
                 }
                 onInputChange={(input) => dispatch({ type: "setInput", input })}
+                onMentionQuery={handleMentionQuery}
+                onMentionRemove={(id) =>
+                  dispatch({ type: "removeMention", id })
+                }
+                onMentionSelect={handleMentionSelect}
                 onRefreshContext={handleRefreshContext}
                 onRefreshProviders={handleRefreshProviders}
                 onSend={handleSend}

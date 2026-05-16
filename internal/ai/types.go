@@ -187,6 +187,62 @@ type AIContextItemRequest struct {
 	Source string            `json:"source,omitempty"`
 }
 
+type AIChatMentionTrigger string
+
+const (
+	AIChatMentionTriggerAt    AIChatMentionTrigger = "@"
+	AIChatMentionTriggerSlash AIChatMentionTrigger = "/"
+)
+
+type AIChatMentionKind string
+
+const (
+	AIChatMentionKindAgent    AIChatMentionKind = "agent"
+	AIChatMentionKindSkill    AIChatMentionKind = "skill"
+	AIChatMentionKindFile     AIChatMentionKind = "file"
+	AIChatMentionKindContext  AIChatMentionKind = "context"
+	AIChatMentionKindWorkflow AIChatMentionKind = "workflow"
+	AIChatMentionKindAction   AIChatMentionKind = "action"
+	AIChatMentionKindCommand  AIChatMentionKind = "command"
+)
+
+type AIChatMentionOperation string
+
+const (
+	AIChatMentionOperationSetAction     AIChatMentionOperation = "set_action"
+	AIChatMentionOperationSetProfile    AIChatMentionOperation = "set_profile"
+	AIChatMentionOperationSetWorkflow   AIChatMentionOperation = "set_workflow"
+	AIChatMentionOperationAttachFile    AIChatMentionOperation = "attach_file"
+	AIChatMentionOperationAttachSkill   AIChatMentionOperation = "attach_skill"
+	AIChatMentionOperationAttachContext AIChatMentionOperation = "attach_context"
+	AIChatMentionOperationInsertText    AIChatMentionOperation = "insert_text"
+)
+
+type AIChatMentionQuery struct {
+	Trigger         AIChatMentionTrigger `json:"trigger"`
+	Query           string               `json:"query,omitempty"`
+	SessionID       string               `json:"sessionId,omitempty"`
+	Limit           int                  `json:"limit,omitempty"`
+	IncludeDisabled bool                 `json:"includeDisabled"`
+}
+
+type AIChatMentionCandidate struct {
+	ID             string                 `json:"id"`
+	Kind           AIChatMentionKind      `json:"kind"`
+	Group          string                 `json:"group"`
+	Label          string                 `json:"label"`
+	Description    string                 `json:"description,omitempty"`
+	Detail         string                 `json:"detail,omitempty"`
+	InsertText     string                 `json:"insertText,omitempty"`
+	DisabledReason string                 `json:"disabledReason,omitempty"`
+	Score          float64                `json:"score"`
+	Operation      AIChatMentionOperation `json:"operation"`
+	Action         AIChatAction           `json:"action,omitempty"`
+	ProfileID      string                 `json:"profileId,omitempty"`
+	WorkflowID     string                 `json:"workflowId,omitempty"`
+	ContextItem    *AIContextItemRequest  `json:"contextItem,omitempty"`
+}
+
 type AIContextItemDisclosure struct {
 	ID        string            `json:"id"`
 	Kind      AIContextItemKind `json:"kind"`

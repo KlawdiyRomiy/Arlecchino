@@ -1,5 +1,6 @@
 import type {
   AIChatAction,
+  AIChatMentionCandidate,
   AIChatRun,
   AIChatRunEnvelope,
 } from "../../../bindings/arlecchino/internal/ai/models";
@@ -30,6 +31,9 @@ export interface AIChatUIState {
   selectedAction: AIChatAction;
   input: string;
   activeSessionId: string;
+  selectedProfileId: string;
+  selectedWorkflowId: string;
+  selectedMentions: AIChatMentionCandidate[];
   selectedProviderId: string;
   selectedModel: string;
   context: ContextToggles;
@@ -43,6 +47,10 @@ export interface AIChatUIState {
 
 export type AIChatUIAction =
   | { type: "setAction"; action: AIChatAction }
+  | { type: "setProfile"; profileId: string }
+  | { type: "setWorkflow"; workflowId: string }
+  | { type: "addMention"; mention: AIChatMentionCandidate }
+  | { type: "removeMention"; id: string }
   | { type: "setInput"; input: string }
   | { type: "setActiveSession"; sessionId: string; runId?: string }
   | { type: "setProvider"; providerId: string; model?: string }
