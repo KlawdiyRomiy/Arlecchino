@@ -61,6 +61,9 @@ import { runAutoUpdateCheckWithNotification } from "../shell/manualUpdateNotific
 import {
   DEFAULT_EDITOR_FONT_FAMILY,
   DEFAULT_UI_FONT_FAMILY,
+  DEFAULT_UI_FONT_SIZE,
+  MAX_UI_FONT_SIZE,
+  MIN_UI_FONT_SIZE,
   useEditorSettingsStore,
   type AppIconAppearance,
   type CustomFontFaceDefinition,
@@ -487,6 +490,13 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
     label: "System Font Family",
     description: "Choose the UI font used outside the code editor.",
     keywords: ["ui font", "interface font", "local font"],
+  },
+  {
+    id: "system-font-size",
+    tab: "appearance",
+    label: "System Font Size",
+    description: "Adjust UI text size everywhere outside the code editor.",
+    keywords: ["ui font size", "interface text size", "system text size"],
   },
   {
     id: "theme",
@@ -982,6 +992,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const {
     uiScale,
     uiFontFamily,
+    uiFontSize,
     customFonts,
     editorFontFamily,
     editorFontSize,
@@ -1001,6 +1012,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setUiScale,
     setUiFontFamily,
     resetUiFontFamily,
+    setUiFontSize,
+    resetUiFontSize,
     addCustomFont,
     setEditorFontFamily,
     resetEditorFontFamily,
@@ -2829,6 +2842,55 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   </div>
                                 )}
                               </div>
+                            </div>
+
+                            <div
+                              data-setting-id="system-font-size"
+                              className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+                                "system-font-size",
+                              )}`}
+                            >
+                              <label className="block">
+                                <div className="flex items-center justify-between gap-4">
+                                  <div>
+                                    <div className="text-sm font-semibold text-[var(--text-primary)]">
+                                      System Font Size
+                                    </div>
+                                    <div className="mt-1 text-xs text-[var(--text-muted)]">
+                                      Adjust UI text size everywhere outside the
+                                      code editor.
+                                    </div>
+                                  </div>
+                                  <span className="font-mono text-sm text-[var(--text-primary)]">
+                                    {uiFontSize}px
+                                  </span>
+                                </div>
+                                <div
+                                  className={`${settingsInsetClass} mt-4 px-4 py-3`}
+                                >
+                                  <input
+                                    type="range"
+                                    min={MIN_UI_FONT_SIZE}
+                                    max={MAX_UI_FONT_SIZE}
+                                    value={uiFontSize}
+                                    onChange={(event) =>
+                                      setUiFontSize(Number(event.target.value))
+                                    }
+                                    className="w-full"
+                                    aria-label="System font size"
+                                    data-testid="ui-font-size-input"
+                                  />
+                                </div>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={resetUiFontSize}
+                                className={`${settingsActionButtonClass} mt-4`}
+                                disabled={uiFontSize === DEFAULT_UI_FONT_SIZE}
+                              >
+                                <RotateCcw size={14} />
+                                Reset System Text Size
+                              </button>
                             </div>
 
                             <div

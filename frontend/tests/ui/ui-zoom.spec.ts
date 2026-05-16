@@ -279,8 +279,7 @@ test("custom editor font family survives settings hydration", async ({
 });
 
 test("settings editor tab persists dropdown font family", async ({ page }) => {
-  await installBaseBridges(page);
-  await page.goto("/");
+  await mountProjectUI(page);
 
   await page.getByTitle("Settings").click();
   await page.getByRole("button", { name: /^Editor$/ }).click();
@@ -307,8 +306,7 @@ test("settings editor tab persists dropdown font family", async ({ page }) => {
 test("settings appearance tab persists system font family", async ({
   page,
 }) => {
-  await installBaseBridges(page);
-  await page.goto("/");
+  await mountProjectUI(page);
 
   await page.getByTitle("Settings").click();
 
@@ -320,6 +318,7 @@ test("settings appearance tab persists system font family", async ({
   await expect(fontFamilyContent).toBeVisible();
   await fontFamilyContent
     .getByRole("menuitem", { name: "Avenir Next" })
+    .first()
     .click();
 
   await expect
@@ -339,6 +338,164 @@ test("settings appearance tab persists system font family", async ({
       stored: '"Avenir Next", Avenir, sans-serif',
       applied: '"Avenir Next", Avenir, sans-serif',
     });
+});
+
+test("settings appearance tab persists system font size without changing editor typography", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.getByTitle("Settings").click();
+
+  const topbarSearchIcon = page.getByTitle("Search").locator("svg").first();
+  const beforeTopbarIconWidth = await topbarSearchIcon.evaluate(
+    (element) => element.getBoundingClientRect().width,
+  );
+  await page.evaluate(() => {
+    const style = document.createElement("style");
+    style.id = "ui-font-scale-fixture-style";
+    style.textContent = "#ui-font-scale-css { font-size: 12px; }";
+    document.head.appendChild(style);
+
+    const fixture = document.createElement("div");
+    fixture.id = "ui-font-scale-fixture";
+    fixture.innerHTML = `
+      <div id="ui-font-scale-css">Fixed CSS text</div>
+      <div id="ui-font-scale-inline" style="font-size: 13px">Fixed inline text</div>
+      <button id="ui-font-scale-icon-only" type="button" aria-label="Icon only">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="8" cy="8" r="6"></circle>
+        </svg>
+      </button>
+    `;
+    document.getElementById("root")?.appendChild(fixture);
+  });
+
+  const fontSizeInput = page.getByTestId("ui-font-size-input");
+  await expect(fontSizeInput).toBeVisible();
+
+  const systemSizeTitle = page
+    .locator('[data-setting-id="system-font-size"] .text-sm')
+    .first();
+  const beforeTitleFontSize = await systemSizeTitle.evaluate(
+    (element) => getComputedStyle(element).fontSize,
+  );
+
+  await fontSizeInput.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    valueSetter?.call(input, "18");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const rawSettings = localStorage.getItem("editor-settings");
+        if (!rawSettings) return null;
+        const state = JSON.parse(rawSettings).state;
+        return {
+          stored: state.uiFontSize,
+          applied: getComputedStyle(document.documentElement)
+            .getPropertyValue("--ui-font-size")
+            .trim(),
+          scale: getComputedStyle(document.documentElement)
+            .getPropertyValue("--ui-font-scale")
+            .trim(),
+          rootFontSize: getComputedStyle(document.documentElement).fontSize,
+          editorFontSize: state.editorFontSize,
+        };
+      }),
+    )
+    .toEqual({
+      stored: 18,
+      applied: "18px",
+      scale: "1.286",
+      rootFontSize: "14px",
+      editorFontSize: 14,
+    });
+
+  await expect
+    .poll(async () =>
+      systemSizeTitle.evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).fontSize),
+      ),
+    )
+    .toBeGreaterThan(parseFloat(beforeTitleFontSize));
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const cssText = document.getElementById("ui-font-scale-css");
+        return cssText
+          ? Number.parseFloat(getComputedStyle(cssText).fontSize)
+          : 0;
+      }),
+    )
+    .toBeCloseTo(15.43, 1);
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const inlineText = document.getElementById("ui-font-scale-inline");
+        return inlineText
+          ? Number.parseFloat(getComputedStyle(inlineText).fontSize)
+          : 0;
+      }),
+    )
+    .toBeCloseTo(16.71, 1);
+  await expect
+    .poll(async () =>
+      topbarSearchIcon.evaluate(
+        (element) => element.getBoundingClientRect().width,
+      ),
+    )
+    .toBe(beforeTopbarIconWidth);
+
+  await page.evaluate(() => {
+    const lateText = document.createElement("div");
+    lateText.id = "ui-font-scale-late";
+    lateText.style.fontSize = "10px";
+    lateText.textContent = "Late fixed inline text";
+    document.getElementById("root")?.appendChild(lateText);
+  });
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const lateText = document.getElementById("ui-font-scale-late");
+        return lateText
+          ? Number.parseFloat(getComputedStyle(lateText).fontSize)
+          : 0;
+      }),
+    )
+    .toBeCloseTo(12.86, 1);
+
+  const editorFontSize = await page.evaluate(async () => {
+    const { EditorState } =
+      await import("/node_modules/.vite/deps/@codemirror_state.js");
+    const { EditorView } =
+      await import("/node_modules/.vite/deps/@codemirror_view.js");
+    const { codeEditorStyles } = await import("/src/utils/codeMirrorTheme.ts");
+
+    const parent = document.createElement("div");
+    parent.style.setProperty("--editor-font-size", "14px");
+    document.body.appendChild(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: "const value = 1;",
+        extensions: [codeEditorStyles],
+      }),
+    });
+    const fontSize = window.getComputedStyle(view.dom).fontSize;
+    view.destroy();
+    parent.remove();
+    return fontSize;
+  });
+
+  expect(editorFontSize).toBe("14px");
 });
 
 test("editor typography variables update CodeMirror without changing UI zoom", async ({

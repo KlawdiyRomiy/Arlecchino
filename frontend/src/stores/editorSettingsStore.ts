@@ -72,6 +72,7 @@ export interface CustomFontFaceDefinition {
 interface EditorSettingsState {
   uiScale: number;
   uiFontFamily: string;
+  uiFontSize: number;
   customFonts: CustomFontFaceDefinition[];
   editorFontFamily: string;
   editorFontSize: number;
@@ -94,6 +95,8 @@ interface EditorSettingsState {
   resetZoom: () => void;
   setUiFontFamily: (fontFamily: string) => void;
   resetUiFontFamily: () => void;
+  setUiFontSize: (size: number) => void;
+  resetUiFontSize: () => void;
   addCustomFont: (font: CustomFontFaceDefinition) => void;
   setEditorFontFamily: (fontFamily: string) => void;
   resetEditorFontFamily: () => void;
@@ -120,6 +123,9 @@ export const DEFAULT_UI_FONT_FAMILY =
   '"Inter", "SF Pro", -apple-system, BlinkMacSystemFont, sans-serif';
 export const DEFAULT_EDITOR_FONT_FAMILY =
   '"Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace';
+export const DEFAULT_UI_FONT_SIZE = 14;
+export const MIN_UI_FONT_SIZE = 11;
+export const MAX_UI_FONT_SIZE = 22;
 const DEFAULT_EDITOR_FONT_SIZE = 14;
 const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 48;
@@ -143,6 +149,7 @@ type PersistedEditorSettingsState = Partial<
     EditorSettingsState,
     | "uiScale"
     | "uiFontFamily"
+    | "uiFontSize"
     | "customFonts"
     | "editorFontFamily"
     | "editorFontSize"
@@ -166,6 +173,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const clampEditorFontSize = (size: number): number =>
   Math.min(Math.max(size, MIN_FONT_SIZE), MAX_FONT_SIZE);
+
+const clampUiFontSize = (size: number): number =>
+  Math.min(Math.max(size, MIN_UI_FONT_SIZE), MAX_UI_FONT_SIZE);
 
 export const normalizeEditorFontFamily = (fontFamily: string): string => {
   const normalized = fontFamily.replace(/\s+/g, " ").trim();
@@ -263,6 +273,10 @@ const sanitizePersistedEditorSettings = (
     nextState.uiFontFamily = normalizeUiFontFamily(persistedState.uiFontFamily);
   }
 
+  if (typeof persistedState.uiFontSize === "number") {
+    nextState.uiFontSize = clampUiFontSize(persistedState.uiFontSize);
+  }
+
   nextState.customFonts = normalizeCustomFonts(persistedState.customFonts);
 
   if (typeof persistedState.editorFontFamily === "string") {
@@ -354,6 +368,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
     (set) => ({
       uiScale: DEFAULT_UI_SCALE,
       uiFontFamily: DEFAULT_UI_FONT_FAMILY,
+      uiFontSize: DEFAULT_UI_FONT_SIZE,
       customFonts: [],
       editorFontFamily: DEFAULT_EDITOR_FONT_FAMILY,
       editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
@@ -395,6 +410,16 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       resetUiFontFamily: () =>
         set(() => ({
           uiFontFamily: DEFAULT_UI_FONT_FAMILY,
+        })),
+
+      setUiFontSize: (size: number) =>
+        set(() => ({
+          uiFontSize: clampUiFontSize(size),
+        })),
+
+      resetUiFontSize: () =>
+        set(() => ({
+          uiFontSize: DEFAULT_UI_FONT_SIZE,
         })),
 
       addCustomFont: (font: CustomFontFaceDefinition) =>

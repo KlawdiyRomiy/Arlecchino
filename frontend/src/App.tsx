@@ -22,7 +22,10 @@ import ProjectScreen from "./components/ProjectScreen";
 import { CommandRegistryProvider } from "./contexts/CommandRegistryContext";
 import { PluginModalProvider } from "./contexts/PluginModalContext";
 import * as AppFunctions from "./wails/app";
-import { useEditorSettingsStore } from "./stores/editorSettingsStore";
+import {
+  DEFAULT_UI_FONT_SIZE,
+  useEditorSettingsStore,
+} from "./stores/editorSettingsStore";
 import {
   getAdjacentProject,
   resolveProjectSwitchDirection,
@@ -65,6 +68,7 @@ import {
   createEditorFileLoadingLoad,
   type EditorFileOpenPayload,
 } from "./utils/editorFileLoader";
+import { createSystemFontSizeScaler } from "./utils/systemFontSizeScaling";
 
 const PROJECT_SWITCH_VISUAL_SETTLE_MS = 180;
 const OPEN_TARGET_EVENT = "arlecchino:open";
@@ -141,6 +145,7 @@ const App: React.FC = () => {
   const activeId = useWorkspaceStore((state) => state.activeId);
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const uiFontFamily = useEditorSettingsStore((state) => state.uiFontFamily);
+  const uiFontSize = useEditorSettingsStore((state) => state.uiFontSize);
   const customFonts = useEditorSettingsStore((state) => state.customFonts);
   const confirmBeforeClose = useEditorSettingsStore(
     (state) => state.confirmBeforeClose,
@@ -189,6 +194,11 @@ const App: React.FC = () => {
       document.documentElement.style.removeProperty("--ui-font-family");
     };
   }, [uiFontFamily]);
+
+  useEffect(
+    () => createSystemFontSizeScaler(uiFontSize, DEFAULT_UI_FONT_SIZE),
+    [uiFontSize],
+  );
 
   useEffect(() => {
     if (typeof FontFace === "undefined" || !document.fonts) {
