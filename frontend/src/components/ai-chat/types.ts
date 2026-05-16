@@ -33,7 +33,7 @@ export interface AIChatUIState {
   activeSessionId: string;
   selectedProfileId: string;
   selectedWorkflowId: string;
-  selectedMentions: AIChatMentionCandidate[];
+  selectedMentionsBySession: Record<string, AIChatMentionCandidate[]>;
   selectedProviderId: string;
   selectedModel: string;
   context: ContextToggles;

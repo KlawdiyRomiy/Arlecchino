@@ -6,6 +6,7 @@ export type AIChatHeaderItemId =
   | "history"
   | "activity"
   | "review"
+  | "search"
   | "newChat"
   | "refresh"
   | "settings";
@@ -21,13 +22,14 @@ const AI_CHAT_HEADER_STORAGE_KEY = "arlecchino.ai-chat.header-layout.v1";
 
 const DEFAULT_AI_CHAT_HEADER_LAYOUT: AIChatHeaderLayout = {
   left: ["history", "activity"],
-  right: ["review", "newChat", "refresh", "settings"],
+  right: ["review", "search", "newChat", "refresh", "settings"],
 };
 
 const AI_CHAT_HEADER_ITEM_IDS: AIChatHeaderItemId[] = [
   "history",
   "activity",
   "review",
+  "search",
   "newChat",
   "refresh",
   "settings",
@@ -37,6 +39,7 @@ export const AI_CHAT_HEADER_ITEM_LABELS: Record<AIChatHeaderItemId, string> = {
   history: "History",
   activity: "Runtime status",
   review: "Git Review",
+  search: "Search session",
   newChat: "New chat",
   refresh: "Refresh runtime",
   settings: "Settings",

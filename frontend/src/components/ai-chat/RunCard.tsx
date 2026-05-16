@@ -1,24 +1,20 @@
-import React from "react";
-import {
-  AlertCircle,
-  CheckCircle2,
-  Clock,
-  Loader2,
-  XCircle,
-} from "lucide-react";
-import { m } from "framer-motion";
+import React, { useState } from "react";
+import { CheckCircle2, Copy, FileText, Layers, Sparkles } from "lucide-react";
 import type {
   AIChatAction,
   AIChatRun,
   AIChatRunArtifact,
   AIChatRunEnvelope,
+  AIContextItemDisclosure,
 } from "../../../bindings/arlecchino/internal/ai/models";
-import { AIChatRunArtifactKind } from "../../../bindings/arlecchino/internal/ai/models";
+import {
+  AIChatRunArtifactKind,
+  AIContextItemKind,
+} from "../../../bindings/arlecchino/internal/ai/models";
 import {
   compactText,
   formatRunTime,
   getActionMeta,
-  runStatusLabel,
 } from "./aiChatPresentation";
 import { PatchArtifactCard } from "./PatchArtifactCard";
 import { ToolProposalCard } from "./ToolProposalCard";
@@ -29,22 +25,13 @@ interface RunCardProps {
   active: boolean;
   compact: boolean;
   streamingText: string;
-  reduceMotion?: boolean;
   artifacts?: AIChatRunArtifact[];
   artifactBusyId?: string | null;
   onSelect: (runId: string) => void;
   onApplyPatchArtifact?: (artifactId: string) => void;
   onRollbackPatchCheckpoint?: (checkpointId: string) => void;
   onOpenReview?: () => void;
-}
-
-function StatusIcon({ status }: { status: string }) {
-  if (status === "running" || status === "queued")
-    return <Loader2 size={15} className="spin" />;
-  if (status === "completed") return <CheckCircle2 size={15} />;
-  if (status === "error") return <AlertCircle size={15} />;
-  if (status === "canceled") return <XCircle size={15} />;
-  return <Clock size={15} />;
+  searchQuery?: string;
 }
 
 function normalizeGeneratedSpacing(value: string): string {
@@ -105,29 +92,137 @@ function friendlyRunError(value?: string): string {
   return message;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function searchTerms(query: string): string[] {
+  const seen = new Set<string>();
+  return query
+    .trim()
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter((term) => {
+      const key = term.toLocaleLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function renderHighlightedText(value: string, query: string): React.ReactNode {
+  const terms = searchTerms(query);
+  if (terms.length === 0) return value;
+  const pattern = new RegExp(
+    `(${terms
+      .sort((left, right) => right.length - left.length)
+      .map(escapeRegExp)
+      .join("|")})`,
+    "gi",
+  );
+  return value.split(pattern).map((part, index) =>
+    terms.some(
+      (term) => term.toLocaleLowerCase() === part.toLocaleLowerCase(),
+    ) ? (
+      <mark className="ai-chat-search-hit" key={`${part}-${index}`}>
+        {part}
+      </mark>
+    ) : (
+      <React.Fragment key={`${part}-${index}`}>{part}</React.Fragment>
+    ),
+  );
+}
+
+function mentionItemsForRun(
+  envelope: AIChatRunEnvelope,
+  run: AIChatRun | null,
+): AIContextItemDisclosure[] {
+  const items =
+    run?.contextSummary?.contextItems ?? envelope.contextSummary?.contextItems;
+  return (items ?? []).filter((item) => item.source === "mention");
+}
+
+function iconForMentionItem(kind: AIContextItemKind) {
+  switch (kind) {
+    case AIContextItemKind.AIContextItemKindFile:
+      return FileText;
+    case AIContextItemKind.AIContextItemKindWorkspace:
+    case AIContextItemKind.AIContextItemKindMCP:
+    case AIContextItemKind.AIContextItemKindMnemonic:
+    case AIContextItemKind.AIContextItemKindTerminal:
+      return Layers;
+    default:
+      return Sparkles;
+  }
+}
+
+async function copyText(value: string): Promise<void> {
+  await navigator.clipboard.writeText(value);
+}
+
+function elapsedMs(envelope: AIChatRunEnvelope, run: AIChatRun | null): number {
+  const created = Date.parse(run?.createdAt || envelope.createdAt || "");
+  if (!Number.isFinite(created)) return 0;
+  const updated = Date.parse(run?.updatedAt || envelope.updatedAt || "");
+  const end =
+    envelope.status === "running" || envelope.status === "queued"
+      ? Date.now()
+      : updated;
+  if (!Number.isFinite(end) || end < created) return 0;
+  return end - created;
+}
+
+function formatElapsed(ms: number): string {
+  if (ms < 1000) return "<1s";
+  const totalSeconds = Math.round(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
+function workedForLabel(envelope: AIChatRunEnvelope, run: AIChatRun | null) {
+  const verb =
+    envelope.status === "running" || envelope.status === "queued"
+      ? "Working for"
+      : "Worked for";
+  return `${verb} ${formatElapsed(elapsedMs(envelope, run))}`;
+}
+
 export function RunCard({
   envelope,
   run,
   active,
   compact,
   streamingText,
-  reduceMotion = false,
   artifacts = [],
   artifactBusyId = null,
   onSelect,
   onApplyPatchArtifact,
   onRollbackPatchCheckpoint,
   onOpenReview,
+  searchQuery = "",
 }: RunCardProps) {
+  const [copiedMessage, setCopiedMessage] = useState<
+    "prompt" | "response" | null
+  >(null);
   const action = envelope.action as AIChatAction;
   const meta = getActionMeta(action);
   const prompt = run?.userPrompt || "";
+  const displayPrompt = compactText(prompt, compact ? 180 : 360);
+  const createdTime = formatRunTime(envelope.createdAt);
   const response = cleanAssistantText(
     run?.response || streamingText || "",
     prompt,
   );
-  const createdTime = formatRunTime(envelope.createdAt);
   const proposals = run?.toolProposals ?? envelope.toolProposals ?? [];
+  const mentionItems = mentionItemsForRun(envelope, run);
   const patchArtifacts = artifacts.filter(
     (artifact) =>
       artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactPatchPreview,
@@ -138,90 +233,170 @@ export function RunCard({
       onSelect(envelope.id);
     }
   };
+  const handleCopy = async (
+    event: React.MouseEvent<HTMLButtonElement>,
+    kind: "prompt" | "response",
+    value: string,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!value.trim()) return;
+    await copyText(value);
+    setCopiedMessage(kind);
+    window.setTimeout(() => {
+      setCopiedMessage((current) => (current === kind ? null : current));
+    }, 1200);
+  };
 
   return (
-    <m.article
+    <article
       className={`ai-chat-run-card ai-chat-tone-${meta.tone}${active ? " is-active" : ""}`}
       aria-pressed={active}
+      data-ai-chat-run-id={envelope.id}
       data-status={envelope.status}
       data-compact={compact ? "true" : "false"}
       role="button"
       tabIndex={0}
-      initial={
-        reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.992 }
-      }
-      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
-      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.996 }}
-      transition={{
-        duration: reduceMotion ? 0.12 : 0.18,
-        ease: [0.22, 1, 0.36, 1],
-      }}
-      layout="position"
       onClick={() => onSelect(envelope.id)}
       onKeyDown={handleKeyDown}
     >
       {prompt ? (
-        <div className="ai-chat-message-bubble ai-chat-message-bubble--user">
-          {createdTime ? (
-            <time className="ai-chat-run-card__time">{createdTime}</time>
-          ) : null}
-          <p className="ai-chat-run-card__prompt">
-            {compactText(prompt, compact ? 180 : 360)}
-          </p>
+        <div className="ai-chat-message-group ai-chat-message-group--user">
+          <div className="ai-chat-message-bubble ai-chat-message-bubble--user">
+            <span className="ai-chat-run-card__user-mode">
+              {createdTime ? (
+                <time
+                  className="ai-chat-run-card__time"
+                  dateTime={envelope.createdAt}
+                >
+                  {createdTime}
+                </time>
+              ) : null}
+              <span
+                className="ai-chat-run-card__mode-icon"
+                role="img"
+                aria-label={`${meta.label} mode`}
+                title={`${meta.label} mode`}
+              >
+                {meta.icon}
+              </span>
+            </span>
+            <p className="ai-chat-run-card__prompt">
+              {renderHighlightedText(displayPrompt, searchQuery)}
+            </p>
+            {mentionItems.length > 0 ? (
+              <div
+                className="ai-chat-run-card__mentions"
+                aria-label="Mentioned context"
+              >
+                {mentionItems.map((item) => {
+                  const Icon = iconForMentionItem(item.kind);
+                  const label = item.label || item.path || "Mention";
+                  const detail = item.path || item.reason || "";
+                  return (
+                    <span
+                      className="ai-chat-run-card__mention"
+                      key={`${item.kind}-${item.id}-${item.path}-${label}`}
+                      title={item.path || item.reason || label}
+                    >
+                      <span className="ai-chat-run-card__mention-icon">
+                        <Icon size={16} />
+                      </span>
+                      <span className="ai-chat-run-card__mention-body">
+                        <strong>{label}</strong>
+                        {detail && detail !== label ? (
+                          <small>{detail}</small>
+                        ) : null}
+                      </span>
+                    </span>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+          <div className="ai-chat-message-actions ai-chat-message-actions--user">
+            <button
+              className="ai-chat-message-action"
+              type="button"
+              title="Copy user message"
+              onClick={(event) => handleCopy(event, "prompt", prompt)}
+            >
+              {copiedMessage === "prompt" ? (
+                <CheckCircle2 size={14} />
+              ) : (
+                <Copy size={14} />
+              )}
+            </button>
+          </div>
         </div>
       ) : null}
-      <div className="ai-chat-message-bubble ai-chat-message-bubble--assistant">
-        <header className="ai-chat-run-card__header">
-          <span className="ai-chat-run-card__mode">
-            {meta.icon}
-            {meta.label}
-          </span>
-          <span className="ai-chat-run-card__status">
-            <StatusIcon status={envelope.status} />
-            {runStatusLabel(envelope.status)}
-          </span>
-        </header>
+      <div className="ai-chat-message-group ai-chat-message-group--assistant">
+        <div className="ai-chat-message-bubble ai-chat-message-bubble--assistant">
+          <header className="ai-chat-run-card__header">
+            <span className="ai-chat-run-card__worked">
+              {workedForLabel(envelope, run)}
+            </span>
+          </header>
 
+          {response ? (
+            <div className="ai-chat-run-card__response">
+              {renderHighlightedText(response, searchQuery)}
+            </div>
+          ) : envelope.status === "running" ? (
+            <div className="ai-chat-run-card__response ai-chat-run-card__response--muted">
+              Waiting for runtime tokens&hellip;
+            </div>
+          ) : null}
+
+          {proposals.length > 0 ? (
+            <div className="ai-chat-run-card__tools">
+              {proposals.map((proposal) => (
+                <ToolProposalCard
+                  key={`${proposal.kind}-${proposal.id || proposal.name}`}
+                  proposal={proposal}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {patchArtifacts.length > 0 ? (
+            <div className="ai-chat-run-card__artifacts">
+              {patchArtifacts.map((artifact) => (
+                <PatchArtifactCard
+                  artifact={artifact}
+                  busy={artifactBusyId === artifact.id}
+                  key={artifact.id}
+                  onApply={onApplyPatchArtifact ?? (() => undefined)}
+                  onOpenReview={onOpenReview ?? (() => undefined)}
+                  onRollback={onRollbackPatchCheckpoint ?? (() => undefined)}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {envelope.error ? (
+            <div className="ai-chat-run-card__error" title={envelope.error}>
+              {friendlyRunError(envelope.error)}
+            </div>
+          ) : null}
+        </div>
         {response ? (
-          <div className="ai-chat-run-card__response">{response}</div>
-        ) : envelope.status === "running" ? (
-          <div className="ai-chat-run-card__response ai-chat-run-card__response--muted">
-            Waiting for runtime tokens&hellip;
-          </div>
-        ) : null}
-
-        {proposals.length > 0 ? (
-          <div className="ai-chat-run-card__tools">
-            {proposals.map((proposal) => (
-              <ToolProposalCard
-                key={`${proposal.kind}-${proposal.id || proposal.name}`}
-                proposal={proposal}
-              />
-            ))}
-          </div>
-        ) : null}
-
-        {patchArtifacts.length > 0 ? (
-          <div className="ai-chat-run-card__artifacts">
-            {patchArtifacts.map((artifact) => (
-              <PatchArtifactCard
-                artifact={artifact}
-                busy={artifactBusyId === artifact.id}
-                key={artifact.id}
-                onApply={onApplyPatchArtifact ?? (() => undefined)}
-                onOpenReview={onOpenReview ?? (() => undefined)}
-                onRollback={onRollbackPatchCheckpoint ?? (() => undefined)}
-              />
-            ))}
-          </div>
-        ) : null}
-
-        {envelope.error ? (
-          <div className="ai-chat-run-card__error" title={envelope.error}>
-            {friendlyRunError(envelope.error)}
+          <div className="ai-chat-message-actions ai-chat-message-actions--assistant">
+            <button
+              className="ai-chat-message-action"
+              type="button"
+              title="Copy assistant message"
+              onClick={(event) => handleCopy(event, "response", response)}
+            >
+              {copiedMessage === "response" ? (
+                <CheckCircle2 size={14} />
+              ) : (
+                <Copy size={14} />
+              )}
+            </button>
           </div>
         ) : null}
       </div>
-    </m.article>
+    </article>
   );
 }

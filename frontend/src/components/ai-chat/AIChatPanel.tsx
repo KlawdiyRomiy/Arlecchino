@@ -2,6 +2,7 @@ import React, {
   useCallback,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -110,7 +111,7 @@ const initialState: AIChatUIState = {
   activeSessionId: defaultChatSessionId,
   selectedProfileId: "",
   selectedWorkflowId: "",
-  selectedMentions: [],
+  selectedMentionsBySession: {},
   selectedProviderId: "",
   selectedModel: "",
   context: initialContext,
@@ -137,8 +138,10 @@ interface AIChatPanelChromeState {
   historyInset: number;
   reviewInset: number;
   contextPickerOpen: boolean;
+  sessionSearchOpen: boolean;
   historySearch: string;
   reviewSearch: string;
+  sessionSearch: string;
   diffSearch: string;
   commitMessage: string;
 }
@@ -163,42 +166,89 @@ const initialChromeState: AIChatPanelChromeState = {
   historyInset: 12,
   reviewInset: 12,
   contextPickerOpen: false,
+  sessionSearchOpen: false,
   historySearch: "",
   reviewSearch: "",
+  sessionSearch: "",
   diffSearch: "",
   commitMessage: "",
 };
 
+function chatSessionKey(sessionId: string): string {
+  return sessionId.trim() || defaultChatSessionId;
+}
+
+function mentionsForSession(
+  state: AIChatUIState,
+  sessionId = state.activeSessionId,
+): AIChatMentionCandidate[] {
+  return state.selectedMentionsBySession[chatSessionKey(sessionId)] ?? [];
+}
+
+function selectionFromMentions(mentions: AIChatMentionCandidate[]) {
+  return {
+    selectedProfileId:
+      mentions.find((mention) => mention.profileId)?.profileId ?? "",
+    selectedWorkflowId:
+      mentions.find((mention) => mention.workflowId)?.workflowId ?? "",
+  };
+}
+
+function setMentionsForSession(
+  state: AIChatUIState,
+  mentions: AIChatMentionCandidate[],
+  sessionId = state.activeSessionId,
+): Record<string, AIChatMentionCandidate[]> {
+  const key = chatSessionKey(sessionId);
+  if (mentions.length === 0) {
+    const next = { ...state.selectedMentionsBySession };
+    delete next[key];
+    return next;
+  }
+  return { ...state.selectedMentionsBySession, [key]: mentions };
+}
+
 function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
   switch (action.type) {
-    case "setAction":
+    case "setAction": {
+      const actionMentions = mentionsForSession(state).filter(
+        (mention) => !mention.workflowId,
+      );
       return {
         ...state,
         selectedAction: action.action,
         selectedWorkflowId: "",
-        selectedMentions: state.selectedMentions.filter(
-          (mention) => !mention.workflowId,
-        ),
+        selectedMentionsBySession: setMentionsForSession(state, actionMentions),
       };
+    }
     case "setProfile":
       return { ...state, selectedProfileId: action.profileId };
     case "setWorkflow":
       return { ...state, selectedWorkflowId: action.workflowId };
     case "addMention": {
-      const mentions = state.selectedMentions.filter(
+      const mentions = mentionsForSession(state).filter(
         (mention) => mention.id !== action.mention.id,
       );
-      return { ...state, selectedMentions: [...mentions, action.mention] };
+      const nextMentions = [...mentions, action.mention];
+      return {
+        ...state,
+        selectedMentionsBySession: setMentionsForSession(state, nextMentions),
+        selectedProfileId: action.mention.profileId ?? state.selectedProfileId,
+        selectedWorkflowId:
+          action.mention.workflowId ?? state.selectedWorkflowId,
+      };
     }
     case "removeMention": {
-      const removed = state.selectedMentions.find(
+      const currentMentions = mentionsForSession(state);
+      const removed = currentMentions.find(
         (mention) => mention.id === action.id,
+      );
+      const nextMentions = currentMentions.filter(
+        (mention) => mention.id !== action.id,
       );
       return {
         ...state,
-        selectedMentions: state.selectedMentions.filter(
-          (mention) => mention.id !== action.id,
-        ),
+        selectedMentionsBySession: setMentionsForSession(state, nextMentions),
         selectedProfileId:
           removed?.profileId && removed.profileId === state.selectedProfileId
             ? ""
@@ -211,12 +261,15 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
     }
     case "setInput":
       return { ...state, input: action.input };
-    case "setActiveSession":
+    case "setActiveSession": {
+      const sessionId = chatSessionKey(action.sessionId);
       return {
         ...state,
-        activeSessionId: action.sessionId || defaultChatSessionId,
+        activeSessionId: sessionId,
         activeRunId: action.runId ?? "",
+        ...selectionFromMentions(mentionsForSession(state, sessionId)),
       };
+    }
     case "setProvider":
       return {
         ...state,
@@ -289,7 +342,7 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         input: "",
         selectedProfileId: "",
         selectedWorkflowId: "",
-        selectedMentions: [],
+        selectedMentionsBySession: setMentionsForSession(state, []),
       };
     case "ensureProvider":
       if (state.selectedProviderId) return state;
@@ -390,6 +443,7 @@ function chromeReducer(
       return {
         ...state,
         contextPickerOpen: !state.contextPickerOpen,
+        sessionSearchOpen: false,
       };
     default:
       return state;
@@ -424,6 +478,60 @@ async function fallbackOnRuntimeError<T>(
 
 function sessionIdOf(run: Pick<AIChatRunEnvelope, "sessionId">): string {
   return run.sessionId?.trim() || defaultChatSessionId;
+}
+
+function normalizeSessionSearchTerms(query: string): string[] {
+  const seen = new Set<string>();
+  return query
+    .trim()
+    .toLocaleLowerCase()
+    .split(/\s+/)
+    .filter((term) => {
+      if (!term || seen.has(term)) return false;
+      seen.add(term);
+      return true;
+    });
+}
+
+function sessionRunSearchText(
+  envelope: AIChatRunEnvelope,
+  run: AIChatRun | null,
+): string {
+  const contextItems =
+    run?.contextSummary?.contextItems ?? envelope.contextSummary?.contextItems;
+  return [
+    envelope.action,
+    envelope.status,
+    run?.userPrompt ?? "",
+    run?.response ?? "",
+    ...(contextItems ?? []).flatMap((item) => [
+      item.label,
+      item.path ?? "",
+      item.reason ?? "",
+    ]),
+  ]
+    .join(" ")
+    .toLocaleLowerCase();
+}
+
+function runMatchesSessionSearch(
+  envelope: AIChatRunEnvelope,
+  run: AIChatRun | null,
+  terms: string[],
+): boolean {
+  if (terms.length === 0) return true;
+  const value = sessionRunSearchText(envelope, run);
+  return terms.every((term) => value.includes(term));
+}
+
+function scrollRunIntoView(panel: HTMLElement | null, runId: string) {
+  if (!panel || !runId) return;
+  window.requestAnimationFrame(() => {
+    const target = Array.from(
+      panel.querySelectorAll<HTMLElement>("[data-ai-chat-run-id]"),
+    ).find((element) => element.dataset.aiChatRunId === runId);
+    target?.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
 }
 
 function pushUniqueContextItem(
@@ -686,8 +794,10 @@ export function AIChatPanelContent({
     historyInset,
     reviewInset,
     contextPickerOpen,
+    sessionSearchOpen,
     historySearch,
     reviewSearch,
+    sessionSearch,
     diffSearch,
     commitMessage,
   } = chrome;
@@ -711,6 +821,10 @@ export function AIChatPanelContent({
     status?.activeModel ||
     "";
   const activeSessionId = state.activeSessionId || defaultChatSessionId;
+  const selectedMentionsForActiveSession = useMemo(
+    () => mentionsForSession(state, activeSessionId),
+    [activeSessionId, state.selectedMentionsBySession],
+  );
   const activeSessionEnvelopes = useMemo(
     () => runs.filter((run) => sessionIdOf(run) === activeSessionId),
     [activeSessionId, runs],
@@ -742,6 +856,82 @@ export function AIChatPanelContent({
   const transcriptRuns = useMemo(
     () => [...activeSessionEnvelopes].reverse(),
     [activeSessionEnvelopes],
+  );
+  const sessionSearchTerms = useMemo(
+    () => (sessionSearchOpen ? normalizeSessionSearchTerms(sessionSearch) : []),
+    [sessionSearch, sessionSearchOpen],
+  );
+  const sessionSearchMatches = useMemo(
+    () =>
+      sessionSearchTerms.length === 0
+        ? []
+        : transcriptRuns.filter((envelope) =>
+            runMatchesSessionSearch(
+              envelope,
+              hydratedRuns[envelope.id] ?? null,
+              sessionSearchTerms,
+            ),
+          ),
+    [hydratedRuns, sessionSearchTerms, transcriptRuns],
+  );
+  const activeSessionSearchIndex = useMemo(() => {
+    if (sessionSearchTerms.length === 0 || sessionSearchMatches.length === 0) {
+      return -1;
+    }
+    return sessionSearchMatches.findIndex(
+      (envelope) => envelope.id === activeRunKey,
+    );
+  }, [activeRunKey, sessionSearchMatches, sessionSearchTerms.length]);
+
+  useEffect(() => {
+    dispatchChrome({
+      type: "patch",
+      value: { sessionSearch: "", sessionSearchOpen: false },
+    });
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    if (sessionSearchTerms.length === 0 || sessionSearchMatches.length === 0) {
+      return;
+    }
+    if (activeSessionSearchIndex >= 0) return;
+    const nextRunId = sessionSearchMatches[0]?.id;
+    if (!nextRunId) return;
+    setActiveRunId(nextRunId);
+    dispatch({ type: "setActiveRun", runId: nextRunId });
+    scrollRunIntoView(panelRef.current, nextRunId);
+  }, [
+    activeSessionSearchIndex,
+    sessionSearchMatches,
+    sessionSearchTerms.length,
+    setActiveRunId,
+  ]);
+
+  const handleNavigateSessionSearch = useCallback(
+    (direction: -1 | 1) => {
+      if (
+        sessionSearchTerms.length === 0 ||
+        sessionSearchMatches.length === 0
+      ) {
+        return;
+      }
+      const currentIndex =
+        activeSessionSearchIndex >= 0 ? activeSessionSearchIndex : 0;
+      const nextIndex =
+        (currentIndex + direction + sessionSearchMatches.length) %
+        sessionSearchMatches.length;
+      const nextRunId = sessionSearchMatches[nextIndex]?.id;
+      if (!nextRunId) return;
+      setActiveRunId(nextRunId);
+      dispatch({ type: "setActiveRun", runId: nextRunId });
+      scrollRunIntoView(panelRef.current, nextRunId);
+    },
+    [
+      activeSessionSearchIndex,
+      sessionSearchMatches,
+      sessionSearchTerms.length,
+      setActiveRunId,
+    ],
   );
 
   const detectDrawerSnapEdge = useCallback((clientX: number) => {
@@ -862,6 +1052,7 @@ export function AIChatPanelContent({
         state.context,
         activeFile || "",
         state.input,
+        selectedMentionsForActiveSession,
       );
       const [
         nextStatus,
@@ -963,6 +1154,7 @@ export function AIChatPanelContent({
     setToolAudit,
     state.context,
     state.input,
+    selectedMentionsForActiveSession,
   ]);
 
   const refreshRuntimeEvent = useEffectEvent(refreshRuntime);
@@ -1020,10 +1212,11 @@ export function AIChatPanelContent({
     setActiveArtifacts(artifacts ?? []);
   }, [activeRunKey]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!state.displayPrefs.autoScroll) return;
     transcriptEndRef.current?.scrollIntoView({ block: "end" });
   }, [
+    activeSessionId,
     runs,
     activeRun?.response,
     streamingTextByRunId,
@@ -1198,7 +1391,7 @@ export function AIChatPanelContent({
         state.context,
         activeFile || "",
         state.input,
-        state.selectedMentions,
+        selectedMentionsForActiveSession,
       ),
     );
     setContextPreview(preview);
@@ -1207,7 +1400,7 @@ export function AIChatPanelContent({
     setContextPreview,
     state.context,
     state.input,
-    state.selectedMentions,
+    selectedMentionsForActiveSession,
   ]);
 
   const handleMentionQuery = useCallback(
@@ -1238,7 +1431,7 @@ export function AIChatPanelContent({
       state.context,
       activeFile || "",
       state.input.trim(),
-      state.selectedMentions,
+      selectedMentionsForActiveSession,
     );
     try {
       const run = await AIStartChatRun({
@@ -1273,7 +1466,7 @@ export function AIChatPanelContent({
     state.context,
     state.input,
     state.selectedAction,
-    state.selectedMentions,
+    selectedMentionsForActiveSession,
     state.selectedProfileId,
     state.selectedWorkflowId,
     upsertRunEnvelope,
@@ -1452,7 +1645,10 @@ export function AIChatPanelContent({
     dispatch({ type: "toggleProviderPopover", open: false });
     dispatch({ type: "toggleSettingsPopover", open: false });
     dispatch({ type: "toggleActivityPopover", open: false });
-    dispatchChrome({ type: "patch", value: { contextPickerOpen: false } });
+    dispatchChrome({
+      type: "patch",
+      value: { contextPickerOpen: false, sessionSearchOpen: false },
+    });
   }, []);
 
   useEffect(() => {
@@ -1460,7 +1656,8 @@ export function AIChatPanelContent({
       state.providerPopoverOpen ||
       state.settingsPopoverOpen ||
       state.activityPopoverOpen ||
-      contextPickerOpen;
+      contextPickerOpen ||
+      sessionSearchOpen;
     if (!popoverOpen) return;
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -1486,6 +1683,7 @@ export function AIChatPanelContent({
   }, [
     closeTransientPopovers,
     contextPickerOpen,
+    sessionSearchOpen,
     state.activityPopoverOpen,
     state.providerPopoverOpen,
     state.settingsPopoverOpen,
@@ -1525,6 +1723,16 @@ export function AIChatPanelContent({
           historyOpen={historyOpen}
           reviewExpanded={reviewExpanded}
           reviewOpen={reviewOpen}
+          sessionSearch={sessionSearch}
+          sessionSearchOpen={sessionSearchOpen}
+          sessionSearchMatchCount={
+            sessionSearchTerms.length > 0 && sessionSearchMatches.length > 0
+              ? Math.max(activeSessionSearchIndex, 0) + 1
+              : 0
+          }
+          sessionSearchTotalCount={
+            sessionSearchTerms.length > 0 ? sessionSearchMatches.length : 0
+          }
           selectedProvider={selectedProvider}
           selectedProviderReady={selectedProviderReady}
           settingsPopoverOpen={state.settingsPopoverOpen}
@@ -1542,7 +1750,7 @@ export function AIChatPanelContent({
             dispatch({ type: "toggleActivityPopover" });
             dispatchChrome({
               type: "patch",
-              value: { contextPickerOpen: false },
+              value: { contextPickerOpen: false, sessionSearchOpen: false },
             });
           }}
           onToggleHistory={() => {
@@ -1566,13 +1774,34 @@ export function AIChatPanelContent({
               drawer: "review",
             });
           }}
+          onToggleSessionSearch={() => {
+            const nextOpen = !sessionSearchOpen;
+            dispatch({ type: "toggleProviderPopover", open: false });
+            dispatch({ type: "toggleSettingsPopover", open: false });
+            dispatch({ type: "toggleActivityPopover", open: false });
+            dispatchChrome({
+              type: "patch",
+              value: {
+                contextPickerOpen: false,
+                sessionSearchOpen: nextOpen,
+              },
+            });
+          }}
+          onSessionSearchChange={(value) =>
+            dispatchChrome({ type: "patch", value: { sessionSearch: value } })
+          }
+          onSessionSearchPrevious={() => handleNavigateSessionSearch(-1)}
+          onSessionSearchNext={() => handleNavigateSessionSearch(1)}
+          onClearSessionSearch={() =>
+            dispatchChrome({ type: "patch", value: { sessionSearch: "" } })
+          }
           onNewChat={handleNewChat}
           onRefreshRuntime={refreshRuntime}
           onToggleSettingsPopover={() => {
             dispatch({ type: "toggleSettingsPopover" });
             dispatchChrome({
               type: "patch",
-              value: { contextPickerOpen: false },
+              value: { contextPickerOpen: false, sessionSearchOpen: false },
             });
           }}
         />
@@ -1616,39 +1845,37 @@ export function AIChatPanelContent({
                   />
                 ) : (
                   <div className="ai-chat-transcript">
-                    <AnimatePresence initial={false}>
-                      {transcriptRuns.map((envelope: AIChatRunEnvelope) => (
-                        <RunCard
-                          active={envelope.id === activeRunKey}
-                          compact={state.displayPrefs.compactCards}
-                          envelope={envelope}
-                          artifactBusyId={artifactBusyId}
-                          artifacts={
-                            envelope.id === activeRunKey ? activeArtifacts : []
-                          }
-                          key={envelope.id}
-                          reduceMotion={Boolean(reduceMotion)}
-                          run={hydratedRuns[envelope.id] ?? null}
-                          streamingText={
-                            streamingTextByRunId[envelope.id] ?? ""
-                          }
-                          onApplyPatchArtifact={handleApplyPatchArtifact}
-                          onOpenReview={() =>
-                            dispatchChrome({
-                              type: "openDrawer",
-                              drawer: "review",
-                            })
-                          }
-                          onRollbackPatchCheckpoint={
-                            handleRollbackPatchCheckpoint
-                          }
-                          onSelect={(runId) => {
-                            setActiveRunId(runId);
-                            dispatch({ type: "setActiveRun", runId });
-                          }}
-                        />
-                      ))}
-                    </AnimatePresence>
+                    {transcriptRuns.map((envelope: AIChatRunEnvelope) => (
+                      <RunCard
+                        active={envelope.id === activeRunKey}
+                        compact={state.displayPrefs.compactCards}
+                        envelope={envelope}
+                        artifactBusyId={artifactBusyId}
+                        artifacts={
+                          envelope.id === activeRunKey ? activeArtifacts : []
+                        }
+                        key={envelope.id}
+                        run={hydratedRuns[envelope.id] ?? null}
+                        streamingText={streamingTextByRunId[envelope.id] ?? ""}
+                        searchQuery={
+                          sessionSearchTerms.length > 0 ? sessionSearch : ""
+                        }
+                        onApplyPatchArtifact={handleApplyPatchArtifact}
+                        onOpenReview={() =>
+                          dispatchChrome({
+                            type: "openDrawer",
+                            drawer: "review",
+                          })
+                        }
+                        onRollbackPatchCheckpoint={
+                          handleRollbackPatchCheckpoint
+                        }
+                        onSelect={(runId) => {
+                          setActiveRunId(runId);
+                          dispatch({ type: "setActiveRun", runId });
+                        }}
+                      />
+                    ))}
                     <div ref={transcriptEndRef} />
                   </div>
                 )}
@@ -1668,7 +1895,7 @@ export function AIChatPanelContent({
                 providers={sortedProviders}
                 running={activeRunRunning}
                 selectedAction={state.selectedAction}
-                selectedMentions={state.selectedMentions}
+                selectedMentions={selectedMentionsForActiveSession}
                 selectedModel={selectedModel}
                 selectedProvider={selectedProvider}
                 sendShortcut={aiChatSendShortcut}

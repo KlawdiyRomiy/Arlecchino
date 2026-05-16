@@ -1,5 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Paperclip, Send, Square, X } from "lucide-react";
+import {
+  Bot,
+  Boxes,
+  FileText,
+  Layers,
+  ListChecks,
+  Paperclip,
+  Send,
+  Slash,
+  Sparkles,
+  Square,
+  X,
+} from "lucide-react";
 import type {
   AIChatAction,
   AIChatActionDescriptor,
@@ -7,6 +19,7 @@ import type {
   AIContextProviderDescriptor,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import {
+  AIChatMentionKind,
   AIChatMentionOperation,
   AIChatMentionQuery,
   AIChatMentionTrigger,
@@ -115,6 +128,15 @@ const parseComposerMentionTrigger = (
   };
 };
 
+const sameComposerMentionTrigger = (
+  left: ComposerMentionTrigger | null,
+  right: ComposerMentionTrigger | null,
+): boolean =>
+  left?.trigger === right?.trigger &&
+  left?.query === right?.query &&
+  left?.start === right?.start &&
+  left?.end === right?.end;
+
 const firstSelectableMentionIndex = (
   candidates: AIChatMentionCandidate[],
 ): number => candidates.findIndex((candidate) => !candidate.disabledReason);
@@ -132,6 +154,32 @@ const nextSelectableMentionIndex = (
   }
   return -1;
 };
+
+const iconForMentionKind = (kind: AIChatMentionKind) => {
+  switch (kind) {
+    case AIChatMentionKind.AIChatMentionKindAgent:
+      return Bot;
+    case AIChatMentionKind.AIChatMentionKindSkill:
+      return Boxes;
+    case AIChatMentionKind.AIChatMentionKindFile:
+      return FileText;
+    case AIChatMentionKind.AIChatMentionKindContext:
+      return Layers;
+    case AIChatMentionKind.AIChatMentionKindWorkflow:
+      return ListChecks;
+    case AIChatMentionKind.AIChatMentionKindAction:
+      return Sparkles;
+    default:
+      return Slash;
+  }
+};
+
+const mentionDetail = (mention: AIChatMentionCandidate): string =>
+  mention.detail ||
+  mention.contextItem?.path ||
+  mention.contextItem?.label ||
+  mention.description ||
+  "";
 
 export function ChatComposer({
   selectedAction,
@@ -211,7 +259,9 @@ export function ChatComposer({
         textarea.selectionStart,
         textarea.selectionEnd,
       );
-      setActiveMention(next);
+      setActiveMention((current) =>
+        sameComposerMentionTrigger(current, next) ? current : next,
+      );
       if (!next) {
         setMentionCandidates([]);
         setMentionLoading(false);
@@ -236,7 +286,7 @@ export function ChatComposer({
           new AIChatMentionQuery({
             trigger: activeMention.trigger,
             query: activeMention.query,
-            limit: 60,
+            limit: 36,
             includeDisabled: true,
           }),
         );
@@ -446,18 +496,31 @@ export function ChatComposer({
       <div className="ai-chat-composer__box" data-ai-chat-mention-scope>
         {selectedMentions.length > 0 ? (
           <div className="ai-chat-composer__mentions">
-            {selectedMentions.map((mention) => (
-              <button
-                key={mention.id}
-                className="ai-chat-composer__mention-chip"
-                type="button"
-                title={mention.detail || mention.description || mention.label}
-                onClick={() => onMentionRemove(mention.id)}
-              >
-                <span>{mention.label}</span>
-                <X size={12} />
-              </button>
-            ))}
+            {selectedMentions.map((mention) => {
+              const MentionIcon = iconForMentionKind(mention.kind);
+              const detail = mentionDetail(mention);
+              return (
+                <button
+                  key={mention.id}
+                  className="ai-chat-composer__mention-chip"
+                  data-kind={mention.kind}
+                  type="button"
+                  title={detail}
+                  onClick={() => onMentionRemove(mention.id)}
+                >
+                  <span className="ai-chat-composer__mention-icon">
+                    <MentionIcon size={16} />
+                  </span>
+                  <span className="ai-chat-composer__mention-body">
+                    <span>{mention.label}</span>
+                    {detail && detail !== mention.label ? (
+                      <small>{detail}</small>
+                    ) : null}
+                  </span>
+                  <X size={14} />
+                </button>
+              );
+            })}
           </div>
         ) : null}
         <textarea
@@ -469,6 +532,11 @@ export function ChatComposer({
           value={input}
           aria-expanded={Boolean(activeMention)}
           aria-controls={activeMention ? "ai-chat-mention-picker" : undefined}
+          aria-activedescendant={
+            activeMention && mentionIndex >= 0
+              ? `ai-chat-mention-option-${mentionIndex}`
+              : undefined
+          }
           onChange={(event) => {
             const nextInput = event.target.value;
             onInputChange(nextInput);

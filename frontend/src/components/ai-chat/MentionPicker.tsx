@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import {
   Bot,
   Boxes,
@@ -71,8 +71,17 @@ export function MentionPicker({
   onHover,
 }: MentionPickerProps) {
   const reduceMotion = useReducedMotion();
-  const groups = groupedCandidates(candidates);
+  const groups = useMemo(() => groupedCandidates(candidates), [candidates]);
+  const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
   let flatIndex = -1;
+
+  useEffect(() => {
+    if (!open || selectedIndex < 0) return;
+    rowRefs.current[selectedIndex]?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [open, selectedIndex]);
 
   return (
     <AnimatePresence initial={false}>
@@ -82,6 +91,10 @@ export function MentionPicker({
           className="ai-chat-popover ai-chat-mention-picker"
           data-ai-chat-popover-scope
           data-testid="ai-chat-mention-picker"
+          role="listbox"
+          aria-label={
+            trigger === "/" ? "Command suggestions" : "Mention suggestions"
+          }
           onMouseDown={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -126,7 +139,13 @@ export function MentionPicker({
                       data-testid="ai-chat-mention-option"
                       type="button"
                       disabled={disabled}
+                      id={`ai-chat-mention-option-${rowIndex}`}
+                      role="option"
+                      aria-selected={selectedIndex === rowIndex}
                       aria-disabled={disabled}
+                      ref={(element) => {
+                        rowRefs.current[rowIndex] = element;
+                      }}
                       onMouseEnter={() => onHover(rowIndex)}
                       onClick={() => {
                         if (!disabled) onSelect(candidate);

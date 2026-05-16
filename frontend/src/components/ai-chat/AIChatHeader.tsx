@@ -1,12 +1,15 @@
 import React from "react";
 import {
   ChevronDown,
+  ChevronUp,
   GitBranch,
   History,
   Loader2,
   MessageSquarePlus,
   RefreshCw,
+  Search,
   Settings,
+  X,
 } from "lucide-react";
 import { AnimatePresence } from "framer-motion";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
@@ -52,6 +55,10 @@ interface AIChatHeaderProps {
   historyOpen: boolean;
   reviewOpen: boolean;
   reviewExpanded: boolean;
+  sessionSearch: string;
+  sessionSearchOpen: boolean;
+  sessionSearchMatchCount: number;
+  sessionSearchTotalCount: number;
   context: ContextToggles;
   displayPrefs: AIChatDisplayPrefs;
   contextProviders: AIContextProviderDescriptor[];
@@ -76,6 +83,11 @@ interface AIChatHeaderProps {
   onToggleActivityPopover: () => void;
   onToggleHistory: () => void;
   onToggleReview: () => void;
+  onToggleSessionSearch: () => void;
+  onSessionSearchChange: (value: string) => void;
+  onSessionSearchNext: () => void;
+  onSessionSearchPrevious: () => void;
+  onClearSessionSearch: () => void;
   onToggleSettingsPopover: () => void;
   onContextToggle: (key: keyof ContextToggles, value: boolean) => void;
   onDisplayPrefChange: (key: keyof AIChatDisplayPrefs, value: boolean) => void;
@@ -90,6 +102,10 @@ export function AIChatHeader({
   historyOpen,
   reviewOpen,
   reviewExpanded,
+  sessionSearch,
+  sessionSearchOpen,
+  sessionSearchMatchCount,
+  sessionSearchTotalCount,
   context,
   displayPrefs,
   contextProviders,
@@ -114,6 +130,11 @@ export function AIChatHeader({
   onToggleActivityPopover,
   onToggleHistory,
   onToggleReview,
+  onToggleSessionSearch,
+  onSessionSearchChange,
+  onSessionSearchNext,
+  onSessionSearchPrevious,
+  onClearSessionSearch,
   onToggleSettingsPopover,
   onContextToggle,
   onDisplayPrefChange,
@@ -209,6 +230,87 @@ export function AIChatHeader({
             >
               <GitBranch size={16} />
             </button>
+          );
+        case "search":
+          return (
+            <div
+              className="ai-chat-header__menu ai-chat-header__menu--search"
+              data-ai-chat-popover-scope
+            >
+              <button
+                className={`ai-chat-icon-button${sessionSearchOpen ? " is-active" : ""}`}
+                type="button"
+                title={
+                  sessionSearch
+                    ? `Search session: ${sessionSearchMatchCount}/${sessionSearchTotalCount}`
+                    : "Search current session"
+                }
+                aria-expanded={sessionSearchOpen}
+                onClick={onToggleSessionSearch}
+              >
+                <Search size={16} />
+              </button>
+              <AnimatePresence initial={false}>
+                {sessionSearchOpen ? (
+                  <div
+                    className="ai-chat-popover ai-chat-header-search"
+                    role="search"
+                    aria-label="Search current chat session"
+                  >
+                    <div className="ai-chat-search-field ai-chat-search-field--header">
+                      {sessionSearch ? null : <Search size={14} />}
+                      <input
+                        autoFocus
+                        aria-label="Search current chat session"
+                        placeholder="Search this session..."
+                        value={sessionSearch}
+                        onChange={(event) =>
+                          onSessionSearchChange(event.target.value)
+                        }
+                      />
+                      {sessionSearch ? (
+                        <>
+                          <span className="ai-chat-header-search__count">
+                            {sessionSearchMatchCount}/{sessionSearchTotalCount}
+                          </span>
+                          <div
+                            className="ai-chat-header-search__nav"
+                            aria-label="Search result navigation"
+                          >
+                            <button
+                              className="ai-chat-icon-button ai-chat-icon-button--compact"
+                              type="button"
+                              title="Previous search result"
+                              disabled={sessionSearchTotalCount === 0}
+                              onClick={onSessionSearchPrevious}
+                            >
+                              <ChevronUp size={16} />
+                            </button>
+                            <button
+                              className="ai-chat-icon-button ai-chat-icon-button--compact"
+                              type="button"
+                              title="Next search result"
+                              disabled={sessionSearchTotalCount === 0}
+                              onClick={onSessionSearchNext}
+                            >
+                              <ChevronDown size={16} />
+                            </button>
+                          </div>
+                          <button
+                            className="ai-chat-icon-button ai-chat-icon-button--compact ai-chat-header-search__clear"
+                            type="button"
+                            title="Clear session search"
+                            onClick={onClearSessionSearch}
+                          >
+                            <X size={16} />
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+              </AnimatePresence>
+            </div>
           );
         case "newChat":
           return (
