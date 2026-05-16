@@ -10,6 +10,7 @@ import {
   type NativeContextMenuActionPayload,
 } from "../../shell/nativeContextMenu";
 import { canUseShellCapability } from "../../shell/shellCapabilities";
+import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { EventsOn } from "../../wails/runtime";
 
 export interface ContextActionMenuItem {
@@ -46,6 +47,16 @@ const getItemClassName = (item: ContextActionMenuItem) =>
     .filter(Boolean)
     .join(" ");
 
+const formatShortcutLabel = (shortcut: string): string =>
+  shortcut
+    .replace(/\b(?:cmd|command)\b/gi, "⌘")
+    .replace(/\b(?:ctrl|control)\b/gi, "⌃")
+    .replace(/\b(?:alt|option|opt)\b/gi, "⌥")
+    .replace(/\bshift\b/gi, "⇧")
+    .replace(/\s*\+\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
 export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   children,
   items,
@@ -58,6 +69,7 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   onContextMenuCapture,
 }) => {
   const [open, setOpen] = React.useState(false);
+  const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const menuInstanceIdRef = React.useRef(
     `context-menu-${Math.random().toString(36).slice(2, 10)}`,
   );
@@ -104,6 +116,40 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [open]);
+
+  React.useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    let portalElement: HTMLElement | null = null;
+    const frameId = window.requestAnimationFrame(() => {
+      const content = document.querySelector(
+        `[data-shell-context-menu-id="${menuInstanceIdRef.current}"]`,
+      );
+      portalElement = content?.closest("[data-radix-portal]") ?? null;
+      if (!portalElement) {
+        return;
+      }
+
+      portalElement.dataset.shellContextMenuPortal = "true";
+      portalElement.style.width = "100%";
+      portalElement.style.height = "100%";
+      portalElement.style.transform = "none";
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      if (!portalElement) {
+        return;
+      }
+
+      delete portalElement.dataset.shellContextMenuPortal;
+      portalElement.style.removeProperty("width");
+      portalElement.style.removeProperty("height");
+      portalElement.style.removeProperty("transform");
+    };
   }, [open]);
 
   const visibleItems = React.useMemo(
@@ -221,7 +267,13 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
                 exit={{ opacity: 0, scale: 0.95, y: -5 }}
                 transition={{ duration: 0.12, ease: "easeOut" }}
                 className="shell-context-menu-content"
+                data-shell-context-menu-id={menuInstanceIdRef.current}
                 data-shell-menu-content
+                style={
+                  {
+                    "--shell-context-menu-scale": String(uiScale),
+                  } as React.CSSProperties
+                }
               >
                 {visibleItems.map((item, index) => {
                   if (item.separator) {
@@ -259,7 +311,7 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
                         </span>
                         {item.shortcut ? (
                           <span className="shell-context-menu-shortcut">
-                            {item.shortcut}
+                            {formatShortcutLabel(item.shortcut)}
                           </span>
                         ) : null}
                       </div>

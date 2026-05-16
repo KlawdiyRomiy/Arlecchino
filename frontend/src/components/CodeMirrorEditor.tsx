@@ -1027,6 +1027,22 @@ function hasOpenStringLiteral(textBeforeLine: string) {
   return quote !== null;
 }
 
+function canFormatDocument(filePath: string, language: string): boolean {
+  const lowerPath = filePath.toLowerCase();
+  return (
+    language === "php" ||
+    language === "html" ||
+    lowerPath.endsWith(".blade.php") ||
+    language === "javascript" ||
+    language === "javascriptreact" ||
+    language === "typescript" ||
+    language === "typescriptreact" ||
+    language === "css" ||
+    language === "scss" ||
+    language === "json"
+  );
+}
+
 function buildDefinitionContext(
   fullText: string,
   lineNumber: number,
@@ -1365,6 +1381,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     y: 0,
     items: [],
     mode: "goto",
+  });
+  const [contextMenuAvailability, setContextMenuAvailability] = useState({
+    definition: false,
+    selection: false,
   });
 
   const signatureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2465,10 +2485,14 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   const formatDocument = useCallback(
     (view: EditorView) => {
+      if (largeDocumentMode || !canFormatDocument(filePath, language)) {
+        return false;
+      }
+
       void formatDocumentAsync(view);
       return true;
     },
-    [formatDocumentAsync],
+    [filePath, formatDocumentAsync, language, largeDocumentMode],
   );
 
   const saveKeymap = useMemo(
@@ -2709,26 +2733,52 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     [getEditorView, resolveDefinitionAtPosition],
   );
 
+  const hasDefinitionCandidateAtPosition = useCallback(
+    (view: EditorView, pos: number): boolean => {
+      const line = view.state.doc.lineAt(pos);
+      const column = pos - line.from + 1;
+      const wordInfo = getWordAtLinePosition(line.text, column, language);
+      if (!wordInfo) {
+        return false;
+      }
+
+      const beforeWord = line.text.substring(0, wordInfo.startColumn - 1);
+      const afterWord = line.text.substring(wordInfo.endColumn - 1);
+      return checkIfHasDefinition(wordInfo.word, beforeWord, afterWord);
+    },
+    [language],
+  );
+
   const handleEditorContextMenuCapture = useCallback(
     (event: React.MouseEvent<HTMLElement>) => {
       const view = getEditorView();
       if (!view) {
+        setContextMenuAvailability({ definition: false, selection: false });
         return;
       }
 
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (pos === null) {
+        setContextMenuAvailability({ definition: false, selection: false });
         return;
       }
 
       const selection = view.state.selection.main;
       if (!selection.empty && pos >= selection.from && pos <= selection.to) {
+        setContextMenuAvailability({
+          definition: false,
+          selection: true,
+        });
         return;
       }
 
+      setContextMenuAvailability({
+        definition: hasDefinitionCandidateAtPosition(view, pos),
+        selection: false,
+      });
       view.dispatch({ selection: { anchor: pos } });
     },
-    [getEditorView],
+    [getEditorView, hasDefinitionCandidateAtPosition],
   );
 
   const editorContextMenuItems = useMemo<ContextActionMenuItem[]>(
@@ -2743,6 +2793,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         label: "Cut",
         shortcut: "Cmd X",
         icon: <Scissors size={14} />,
+        hidden: !contextMenuAvailability.selection,
         onSelect: () => void cutEditorSelection(),
       },
       {
@@ -2762,21 +2813,23 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         label: "Go to Definition",
         shortcut: "Cmd Click",
         icon: <SearchIcon size={14} />,
-        disabled: !projectPath || !onOpenFile,
+        hidden:
+          !projectPath || !onOpenFile || !contextMenuAvailability.definition,
         onSelect: () => runDefinitionAction("goto"),
       },
       {
         label: "Quick Look Definition",
         shortcut: "Alt Click",
         icon: <SearchIcon size={14} />,
-        disabled: !projectPath || !onQuickLook,
+        hidden:
+          !projectPath || !onQuickLook || !contextMenuAvailability.definition,
         onSelect: () => runDefinitionAction("quickLook"),
       },
       {
         label: "Format Document",
         shortcut: "Shift Alt F",
         icon: <FileText size={14} />,
-        disabled: largeDocumentMode,
+        hidden: largeDocumentMode || !canFormatDocument(filePath, language),
         onSelect: () => {
           const view = getEditorView();
           if (view) {
@@ -2788,22 +2841,25 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       {
         label: "Copy Relative Path",
         icon: <Copy size={14} />,
+        hidden: !filePath,
         onSelect: () => void copyEditorRelativePath(),
       },
       {
         label: "Copy Absolute Path",
         icon: <Copy size={14} />,
+        hidden: !filePath,
         onSelect: () => void copyEditorAbsolutePath(),
       },
       {
         label: "Copy Path:Line",
         icon: <Copy size={14} />,
+        hidden: !filePath,
         onSelect: () => void copyCurrentLineReference(),
       },
       {
         label: "Reveal in File Manager",
         icon: <ExternalLink size={14} />,
-        disabled: !filePath,
+        hidden: !filePath,
         onSelect: revealEditorFile,
       },
     ],
@@ -2813,9 +2869,12 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       copyEditorRelativePath,
       copyEditorText,
       cutEditorSelection,
+      contextMenuAvailability.definition,
+      contextMenuAvailability.selection,
       filePath,
       formatDocument,
       getEditorView,
+      language,
       largeDocumentMode,
       onOpenFile,
       onQuickLook,

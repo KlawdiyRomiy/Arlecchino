@@ -38,6 +38,7 @@ import {
   type PanelPosition,
   type PanelSize,
 } from "../ui/FloatingPanel";
+import { ShellContextMenuFallback } from "../ui/ShellContextMenuFallback";
 
 import { zIndex } from "../../styles/colors";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
@@ -6177,6 +6178,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           visible={projectPathCopiedVisible}
           projectPath={activeProjectPath}
         />
+        <ShellContextMenuFallback />
       </div>
     </ProjectEntryActionsProvider>
   );
