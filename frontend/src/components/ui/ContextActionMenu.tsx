@@ -32,12 +32,19 @@ interface ContextActionMenuProps {
   nativeContext?: Record<string, unknown>;
   nativeSurfaceId?: string;
   nativeTargetId?: string;
+  preferNative?: boolean;
   ignoredTargetSelector?: string;
   onContextMenuCapture?: (event: React.MouseEvent<HTMLElement>) => void;
 }
 
-const baseItemClassName =
-  "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-[13px] outline-none transition-colors";
+const getItemClassName = (item: ContextActionMenuItem) =>
+  [
+    "shell-context-menu-item",
+    item.danger ? "shell-context-menu-item--danger" : null,
+    item.disabled ? "shell-context-menu-item--disabled" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
 export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   children,
@@ -46,6 +53,7 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   nativeContext,
   nativeSurfaceId,
   nativeTargetId,
+  preferNative = false,
   ignoredTargetSelector,
   onContextMenuCapture,
 }) => {
@@ -155,7 +163,7 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
       return;
     }
 
-    if (!canUseShellCapability("contextMenu")) {
+    if (!preferNative || !canUseShellCapability("contextMenu")) {
       return;
     }
 
@@ -212,14 +220,15 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: -5 }}
                 transition={{ duration: 0.12, ease: "easeOut" }}
-                className="z-[120] min-w-[196px] overflow-hidden rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-secondary)] py-1 shadow-xl"
+                className="shell-context-menu-content"
+                data-shell-menu-content
               >
                 {visibleItems.map((item, index) => {
                   if (item.separator) {
                     return (
                       <ContextMenu.Separator
                         key={item.key ?? `separator-${index}`}
-                        className="my-1 h-px bg-[var(--border-subtle)]"
+                        className="shell-context-menu-separator"
                       />
                     );
                   }
@@ -235,23 +244,21 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
 
                         closeAndRun(item.onSelect);
                       }}
-                      className="outline-none"
+                      className="shell-context-menu-radix-item"
                     >
-                      <div
-                        className={`${baseItemClassName} ${
-                          item.danger
-                            ? "text-red-400 hover:bg-red-500/10 hover:text-red-300 disabled:hover:bg-transparent"
-                            : "text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:hover:bg-transparent"
-                        } ${item.disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
-                      >
-                        <span className="flex min-w-0 items-center gap-2">
+                      <div className={getItemClassName(item)}>
+                        <span className="shell-context-menu-label">
                           {item.icon ? (
-                            <span className="shrink-0">{item.icon}</span>
+                            <span className="shell-context-menu-icon">
+                              {item.icon}
+                            </span>
                           ) : null}
-                          <span className="truncate">{item.label}</span>
+                          <span className="shell-context-menu-text">
+                            {item.label}
+                          </span>
                         </span>
                         {item.shortcut ? (
-                          <span className="ml-6 shrink-0 font-mono text-[11px] text-[var(--text-muted)]">
+                          <span className="shell-context-menu-shortcut">
                             {item.shortcut}
                           </span>
                         ) : null}
