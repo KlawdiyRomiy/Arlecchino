@@ -62,11 +62,12 @@ type Entry struct {
 }
 
 type Summary struct {
-	Entries int
-	Files   int
-	Dirs    int
-	Bounded bool
-	Backend string
+	Entries       int
+	Files         int
+	Dirs          int
+	Bounded       bool
+	Backend       string
+	SkippedErrors int
 }
 
 type ScannerOptions struct {
@@ -134,6 +135,7 @@ func (s *Scanner) Walk(ctx context.Context, visit func(Entry) error) (Summary, e
 
 	entries := make(chan Entry, defaultEntryBuffer)
 	errs := make(chan error, 1)
+	skippedErrors := make(chan int, 1)
 	conf := fastwalk.DefaultConfig.Copy()
 	conf.Follow = false
 	conf.Sort = fastwalk.SortLexical
@@ -143,11 +145,13 @@ func (s *Scanner) Walk(ctx context.Context, visit func(Entry) error) (Summary, e
 
 	go func() {
 		defer close(entries)
+		degraded := 0
 		err := fastwalk.Walk(conf, s.root, func(path string, d fs.DirEntry, walkErr error) error {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
 			if walkErr != nil {
+				degraded++
 				if d != nil && d.IsDir() {
 					return fastwalk.SkipDir
 				}
@@ -159,6 +163,7 @@ func (s *Scanner) Walk(ctx context.Context, visit func(Entry) error) (Summary, e
 
 			entry, skip, err := s.entryFromDirEntry(path, d)
 			if err != nil {
+				degraded++
 				return nil
 			}
 			if skip {
@@ -178,6 +183,7 @@ func (s *Scanner) Walk(ctx context.Context, visit func(Entry) error) (Summary, e
 				return nil
 			}
 		})
+		skippedErrors <- degraded
 		errs <- err
 	}()
 
@@ -201,6 +207,7 @@ func (s *Scanner) Walk(ctx context.Context, visit func(Entry) error) (Summary, e
 	}
 
 	err := <-errs
+	summary.SkippedErrors = <-skippedErrors
 	if errors.Is(err, ErrScanBudgetExceeded) {
 		summary.Bounded = true
 		return summary, nil
@@ -230,7 +237,7 @@ func (s *Scanner) entryFromDirEntry(path string, d fs.DirEntry) (Entry, bool, er
 
 	info, err := d.Info()
 	if err != nil {
-		return Entry{}, true, nil
+		return Entry{}, true, err
 	}
 	entry := Entry{
 		Path:        path,

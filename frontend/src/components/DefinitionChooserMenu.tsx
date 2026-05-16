@@ -20,6 +20,9 @@ interface DefinitionChooserMenuProps {
   onClose: () => void;
 }
 
+const definitionItemKey = (item: DefinitionItem): string =>
+  `${item.path}:${item.line ?? ""}:${item.displayPath ?? ""}:${item.context ?? ""}`;
+
 export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
   isOpen,
   x,
@@ -105,9 +108,9 @@ export const DefinitionChooserMenu: React.FC<DefinitionChooserMenuProps> = ({
       </div>
 
       <div style={{ overflowY: "auto", padding: "4px 0" }}>
-        {items.map((item, index) => (
+        {items.map((item) => (
           <div
-            key={index}
+            key={definitionItemKey(item)}
             onClick={() => {
               onSelect(item.path, item.line);
               onClose();

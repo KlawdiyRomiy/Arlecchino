@@ -13,7 +13,9 @@ import (
 
 type SearchBackend interface {
 	SearchFiles(pattern string, limit int) []ResultItem
+	SearchFilesContext(ctx context.Context, pattern string, limit int) []ResultItem
 	SearchContent(query string, caseSensitive bool, limit int) []ResultItem
+	SearchContentContext(ctx context.Context, query string, caseSensitive bool, limit int) []ResultItem
 	Status() SearchBackendStatus
 	Rebuild(context.Context) error
 }
@@ -69,15 +71,29 @@ func (s *SearchEngine) Rebuild(ctx context.Context) error {
 }
 
 func (s *SearchEngine) SearchFiles(pattern string) []ResultItem {
+	return s.SearchFilesContext(context.Background(), pattern)
+}
+
+func (s *SearchEngine) SearchFilesContext(ctx context.Context, pattern string) []ResultItem {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if s.backend != nil {
-		return s.backend.SearchFiles(pattern, s.maxResults)
+		return s.backend.SearchFilesContext(ctx, pattern, s.maxResults)
 	}
 	return nil
 }
 
 func (s *SearchEngine) SearchContent(query string, caseSensitive bool) []ResultItem {
+	return s.SearchContentContext(context.Background(), query, caseSensitive)
+}
+
+func (s *SearchEngine) SearchContentContext(ctx context.Context, query string, caseSensitive bool) []ResultItem {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if s.backend != nil {
-		return s.backend.SearchContent(query, caseSensitive, s.maxResults)
+		return s.backend.SearchContentContext(ctx, query, caseSensitive, s.maxResults)
 	}
 	return []ResultItem{}
 }
@@ -99,6 +115,13 @@ func (b *LinearSearchBackend) Rebuild(context.Context) error {
 }
 
 func (b *LinearSearchBackend) SearchFiles(pattern string, limit int) []ResultItem {
+	return b.SearchFilesContext(context.Background(), pattern, limit)
+}
+
+func (b *LinearSearchBackend) SearchFilesContext(ctx context.Context, pattern string, limit int) []ResultItem {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if b.projectPath == "" {
 		return nil
 	}
@@ -130,7 +153,7 @@ func (b *LinearSearchBackend) SearchFiles(pattern string, limit int) []ResultIte
 	if err != nil {
 		return results
 	}
-	entries, _, err := scanner.Scan(context.Background())
+	entries, _, err := scanner.Scan(ctx)
 	if err != nil && !errors.Is(err, workspace.ErrScanBudgetExceeded) {
 		return results
 	}
@@ -171,6 +194,13 @@ func (b *LinearSearchBackend) SearchFiles(pattern string, limit int) []ResultIte
 }
 
 func (b *LinearSearchBackend) SearchContent(query string, caseSensitive bool, limit int) []ResultItem {
+	return b.SearchContentContext(context.Background(), query, caseSensitive, limit)
+}
+
+func (b *LinearSearchBackend) SearchContentContext(ctx context.Context, query string, caseSensitive bool, limit int) []ResultItem {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if b.projectPath == "" || query == "" {
 		return []ResultItem{}
 	}
@@ -214,11 +244,14 @@ func (b *LinearSearchBackend) SearchContent(query string, caseSensitive bool, li
 	if err != nil {
 		return results
 	}
-	entries, _, err := scanner.Scan(context.Background())
+	entries, _, err := scanner.Scan(ctx)
 	if err != nil && !errors.Is(err, workspace.ErrScanBudgetExceeded) {
 		return results
 	}
 	for _, entry := range entries {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return results
+		}
 		if entry.IsDirectory || len(results) >= limit {
 			continue
 		}

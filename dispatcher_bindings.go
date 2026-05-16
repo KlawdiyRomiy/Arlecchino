@@ -41,7 +41,7 @@ func (a *App) SearchFiles(pattern string) []ResultItemJS {
 	if globalDispatcher == nil {
 		return nil
 	}
-	result := globalDispatcher.Dispatch(">>" + pattern)
+	result := globalDispatcher.DispatchContext(a.dispatcherContext(), ">>"+pattern)
 	return toItemsJS(result.Items)
 }
 
@@ -51,7 +51,7 @@ func (a *App) SearchContent(query string) []ResultItemJS {
 	if globalDispatcher == nil {
 		return nil
 	}
-	result := globalDispatcher.Dispatch("\"" + query + "\"")
+	result := globalDispatcher.DispatchContext(a.dispatcherContext(), "\""+query+"\"")
 	return toItemsJS(result.Items)
 }
 
@@ -80,12 +80,19 @@ func (a *App) RebuildSearchIndex() dispatcher.SearchBackendStatus {
 	if globalDispatcher == nil {
 		return dispatcher.SearchBackendStatus{Name: "linear", Ready: false, Fallback: true, Message: "dispatcher is not initialized"}
 	}
-	if err := globalDispatcher.RebuildSearch(context.Background()); err != nil {
+	if err := globalDispatcher.RebuildSearch(a.dispatcherContext()); err != nil {
 		status := globalDispatcher.SearchStatus()
 		status.Message = err.Error()
 		return status
 	}
 	return globalDispatcher.SearchStatus()
+}
+
+func (a *App) dispatcherContext() context.Context {
+	if a.ctx != nil {
+		return a.ctx
+	}
+	return context.Background()
 }
 
 type DispatcherResultJS struct {

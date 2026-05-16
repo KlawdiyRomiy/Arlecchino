@@ -73,6 +73,13 @@ func (d *Dispatcher) Parse(input string) ParsedInput {
 }
 
 func (d *Dispatcher) Dispatch(input string) DispatchResult {
+	return d.DispatchContext(context.Background(), input)
+}
+
+func (d *Dispatcher) DispatchContext(ctx context.Context, input string) DispatchResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	parsed := d.Parse(input)
 
 	switch parsed.Type {
@@ -81,9 +88,9 @@ func (d *Dispatcher) Dispatch(input string) DispatchResult {
 	case InputTypeTagCommand:
 		return d.dispatchTagCommand(parsed)
 	case InputTypeFileSearch:
-		return d.dispatchFileSearch(parsed)
+		return d.dispatchFileSearch(ctx, parsed)
 	case InputTypeGrepSearch:
-		return d.dispatchGrepSearch(parsed)
+		return d.dispatchGrepSearch(ctx, parsed)
 	case InputTypeSymbolSearch:
 		return d.dispatchSymbolSearch(parsed)
 	case InputTypeAIQuery:
@@ -157,14 +164,14 @@ func (d *Dispatcher) dispatchTagCommand(parsed ParsedInput) DispatchResult {
 	}
 }
 
-func (d *Dispatcher) dispatchFileSearch(parsed ParsedInput) DispatchResult {
+func (d *Dispatcher) dispatchFileSearch(ctx context.Context, parsed ParsedInput) DispatchResult {
 	d.mu.RLock()
 	engine := d.searchEngine
 	d.mu.RUnlock()
 
 	var items []ResultItem
 	if engine != nil && parsed.Query != "" {
-		items = engine.SearchFiles(parsed.Query)
+		items = engine.SearchFilesContext(ctx, parsed.Query)
 	}
 
 	return DispatchResult{
@@ -174,14 +181,14 @@ func (d *Dispatcher) dispatchFileSearch(parsed ParsedInput) DispatchResult {
 	}
 }
 
-func (d *Dispatcher) dispatchGrepSearch(parsed ParsedInput) DispatchResult {
+func (d *Dispatcher) dispatchGrepSearch(ctx context.Context, parsed ParsedInput) DispatchResult {
 	d.mu.RLock()
 	engine := d.searchEngine
 	d.mu.RUnlock()
 
 	var items []ResultItem
 	if engine != nil && parsed.Query != "" {
-		items = engine.SearchContent(parsed.Query, false)
+		items = engine.SearchContentContext(ctx, parsed.Query, false)
 	}
 
 	return DispatchResult{

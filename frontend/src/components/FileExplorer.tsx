@@ -159,7 +159,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const setStoreHighlightedPath = useExplorerSelectionStore(
     (state) => state.setHighlightedPath,
   );
-  const [projectPath, setProjectPath] = useState<string>(initialProjectPath);
+  const [projectPath, setProjectPath] = useState<string>("");
   const [files, setFiles] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([]);
@@ -185,6 +185,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const onFileOpenInPanelRef = useRef(onFileOpenInPanel);
   const highlightedPathRef = useRef<string | null>(null);
   const latestFileOpenRequestRef = useRef(0);
+  const latestProjectLoadRef = useRef(0);
   const suppressNodeClickRef = useRef(false);
   const relations = useFileRelations(perspectiveTarget || "");
   filesRef.current = files;
@@ -328,11 +329,8 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   );
 
   useEffect(() => {
-    loadProject();
-  }, []);
-
-  useEffect(() => {
     return () => {
+      latestProjectLoadRef.current += 1;
       if (scrollTimerRef.current) {
         clearTimeout(scrollTimerRef.current);
       }
@@ -512,27 +510,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     return result;
   };
 
-  const loadProject = async () => {
-    try {
-      const resolvedProjectPath =
-        initialProjectPath || (await App.GetCurrentProjectPath());
-      if (!resolvedProjectPath) {
-        setProjectPath("");
-        setStoreProjectPath("");
-        return;
-      }
-
-      setProjectPath(resolvedProjectPath);
-      setStoreProjectPath(resolvedProjectPath);
-      await loadDirectory(resolvedProjectPath);
-    } catch (error) {
-      console.error("Error loading project:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadDirectory = async (dirPath: string) => {
+  const loadDirectory = async (
+    dirPath: string,
+    isCurrentRequest: () => boolean = () => true,
+  ) => {
     try {
       const entries: FileEntry[] = await App.ReadDirectory(dirPath);
       let nodes: FileNode[] = buildFileNodes(entries);
@@ -542,12 +523,55 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         nodes = await restoreExpandedFolders(nodes);
       }
 
+      if (!isCurrentRequest()) {
+        return;
+      }
       filesRef.current = nodes;
       setFiles(nodes);
     } catch (error) {
-      console.error("Error reading directory:", error);
+      if (isCurrentRequest()) {
+        console.error("Error reading directory:", error);
+      }
     }
   };
+
+  const loadProject = async () => {
+    const requestId = latestProjectLoadRef.current + 1;
+    latestProjectLoadRef.current = requestId;
+    const isCurrentRequest = () => latestProjectLoadRef.current === requestId;
+    setLoading(true);
+
+    try {
+      const resolvedProjectPath =
+        initialProjectPath || (await App.GetCurrentProjectPath());
+      if (!isCurrentRequest()) {
+        return;
+      }
+      if (!resolvedProjectPath) {
+        setProjectPath("");
+        setStoreProjectPath("");
+        filesRef.current = [];
+        setFiles([]);
+        return;
+      }
+
+      setProjectPath(resolvedProjectPath);
+      setStoreProjectPath(resolvedProjectPath);
+      await loadDirectory(resolvedProjectPath, isCurrentRequest);
+    } catch (error) {
+      if (isCurrentRequest()) {
+        console.error("Error loading project:", error);
+      }
+    } finally {
+      if (isCurrentRequest()) {
+        setLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    void loadProject();
+  }, [initialProjectPath]);
 
   const refreshDirectoryPath = async (dirPath: string) => {
     if (!dirPath) return;

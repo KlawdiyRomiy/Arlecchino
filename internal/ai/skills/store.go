@@ -85,8 +85,8 @@ type Digest struct {
 }
 
 type ContextSkill struct {
-	Record
-	Digest
+	Record            Record  `json:"record"`
+	Digest            Digest  `json:"digest"`
 	State             string  `json:"state"`
 	TopicMatch        string  `json:"topicMatch,omitempty"`
 	Confidence        float64 `json:"confidence"`
