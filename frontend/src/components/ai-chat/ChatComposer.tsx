@@ -24,6 +24,7 @@ interface ChatComposerProps {
   running: boolean;
   disabledReason: string;
   sendShortcut: AIChatSendShortcut;
+  providers: AIProviderDescriptor[];
   selectedProvider: AIProviderDescriptor | null;
   selectedModel: string;
   providerRuntimes: AIProviderRuntimeDescriptor[];
@@ -33,6 +34,7 @@ interface ChatComposerProps {
   contextProviders: AIContextProviderDescriptor[];
   contextPickerOpen: boolean;
   onActionChange: (action: AIChatAction) => void;
+  onSelectProvider: (provider: AIProviderDescriptor) => void;
   onSelectModel: (modelId: string) => void;
   onRefreshProviders: () => void;
   onStartProviderRuntime: (
@@ -69,6 +71,7 @@ export function ChatComposer({
   running,
   disabledReason,
   sendShortcut,
+  providers,
   selectedProvider,
   selectedModel,
   providerRuntimes,
@@ -78,6 +81,7 @@ export function ChatComposer({
   contextProviders,
   contextPickerOpen,
   onActionChange,
+  onSelectProvider,
   onSelectModel,
   onRefreshProviders,
   onStartProviderRuntime,
@@ -218,19 +222,25 @@ export function ChatComposer({
           onChange={(event) => onInputChange(event.target.value)}
           onKeyDown={handleComposerKeyDown}
         />
-        <ModelPicker
-          providerRuntimeBusy={providerRuntimeBusy}
-          providerRuntimeError={providerRuntimeError}
-          providerRuntimes={providerRuntimes}
-          selectedModel={selectedModel}
-          selectedProvider={selectedProvider}
-          onRefreshProviders={onRefreshProviders}
-          onSelectModel={onSelectModel}
-          onStartProviderRuntime={onStartProviderRuntime}
-          onStopProviderRuntime={onStopProviderRuntime}
-        />
         <div className="ai-chat-composer__controls">
-          <span className="ai-chat-composer__reason">{disabledReason}</span>
+          <div className="ai-chat-composer__meta">
+            <ModelPicker
+              providerRuntimeBusy={providerRuntimeBusy}
+              providerRuntimeError={providerRuntimeError}
+              providerRuntimes={providerRuntimes}
+              providers={providers}
+              selectedModel={selectedModel}
+              selectedProvider={selectedProvider}
+              onRefreshProviders={onRefreshProviders}
+              onSelectModel={onSelectModel}
+              onSelectProvider={onSelectProvider}
+              onStartProviderRuntime={onStartProviderRuntime}
+              onStopProviderRuntime={onStopProviderRuntime}
+            />
+            {disabledReason ? (
+              <span className="ai-chat-composer__reason">{disabledReason}</span>
+            ) : null}
+          </div>
           <div className="ai-chat-composer__buttons">
             <button
               className="ai-chat-icon-button"

@@ -1,14 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  ArrowDown,
-  ArrowUp,
+  ArrowDownToLine,
+  CheckCheck,
+  ChevronLeft,
+  ChevronRight,
   Check,
   Copy,
+  Filter,
+  FileText,
   GitBranch,
+  GitCommit,
+  GitPullRequest,
   GripHorizontal,
+  Info,
   Maximize2,
   Minimize2,
+  Minus,
+  Plus,
   RefreshCw,
   Search,
   Send,
@@ -16,7 +25,9 @@ import {
 } from "lucide-react";
 import { GetGitDiff } from "../../wails/app";
 import { useGitStore } from "../../stores/gitStore";
-import type { GitFileEntry, GitFileStatus } from "../../utils/git";
+import { writeClipboardTextWithFallback } from "../../utils/clipboard";
+import { toErrorMessage } from "../../utils/errorMessages";
+import type { GitFileEntry } from "../../utils/git";
 
 type ChatGitReviewMode = "drawer" | "overlay";
 
@@ -38,6 +49,7 @@ interface ChatGitReviewProps {
 
 interface DiffRow {
   kind: "meta" | "hunk" | "add" | "delete" | "context";
+  key: string;
   oldLine?: number;
   newLine?: number;
   content: string;
@@ -49,15 +61,93 @@ interface DiffStats {
   deletions: number;
 }
 
-const statusLabels: Record<GitFileStatus, string> = {
-  modified: "M",
-  added: "A",
-  deleted: "D",
-  renamed: "R",
-  untracked: "?",
-  copied: "C",
-  conflicted: "!",
+const syntaxTokenPattern =
+  /(\/\/.*|\/\*.*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:package|import|func|return|if|else|for|range|switch|case|default|const|var|type|struct|interface|go|defer|select|nil|true|false)\b|\b\d+(?:\.\d+)?\b)/g;
+
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const tokenClassName = (token: string): string => {
+  if (token.startsWith('"') || token.startsWith("'") || token.startsWith("`")) {
+    return "ai-chat-diff-token is-string";
+  }
+  if (token.startsWith("//") || token.startsWith("/*")) {
+    return "ai-chat-diff-token is-comment";
+  }
+  if (/^\d/.test(token)) {
+    return "ai-chat-diff-token is-number";
+  }
+  return "ai-chat-diff-token is-keyword";
 };
+
+const renderSyntax = (value: string, keyPrefix: string): React.ReactNode[] => {
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+
+  value.replace(syntaxTokenPattern, (token, _match, offset: number) => {
+    if (offset > lastIndex) {
+      nodes.push(value.slice(lastIndex, offset));
+    }
+    nodes.push(
+      <span className={tokenClassName(token)} key={`${keyPrefix}:${offset}`}>
+        {token}
+      </span>,
+    );
+    lastIndex = offset + token.length;
+    return token;
+  });
+
+  if (lastIndex < value.length) {
+    nodes.push(value.slice(lastIndex));
+  }
+
+  return nodes.length > 0 ? nodes : [value];
+};
+
+const buildHighlightedCodeNodes = (
+  value: string,
+  query: string,
+): React.ReactNode[] => {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) {
+    return renderSyntax(value, "syntax");
+  }
+
+  const nodes: React.ReactNode[] = [];
+  const pattern = new RegExp(escapeRegExp(normalizedQuery), "gi");
+  let lastOffset = 0;
+
+  for (const match of value.matchAll(pattern)) {
+    const startOffset = match.index ?? 0;
+    const matchText = match[0];
+    if (startOffset > lastOffset) {
+      nodes.push(
+        ...renderSyntax(
+          value.slice(lastOffset, startOffset),
+          `syntax:${lastOffset}`,
+        ),
+      );
+    }
+    nodes.push(
+      <mark className="ai-chat-diff-search-hit" key={`hit:${startOffset}`}>
+        {matchText}
+      </mark>,
+    );
+    lastOffset = startOffset + matchText.length;
+  }
+
+  if (lastOffset < value.length) {
+    nodes.push(
+      ...renderSyntax(value.slice(lastOffset), `syntax:${lastOffset}`),
+    );
+  }
+
+  return nodes.length > 0 ? nodes : renderSyntax(value, "syntax");
+};
+
+function HighlightedCode({ value, query }: { value: string; query: string }) {
+  return <>{buildHighlightedCodeNodes(value, query)}</>;
+}
 
 const fileKey = (file: GitFileEntry): string =>
   `${file.staged ? "staged" : "working"}:${file.path}`;
@@ -87,6 +177,10 @@ const parseDiffRows = (diff: string, query: string): DiffRow[] => {
   const normalizedQuery = query.trim().toLowerCase();
   let oldLine = 0;
   let newLine = 0;
+  let sequence = 0;
+
+  const nextKey = (kind: DiffRow["kind"], line: string): string =>
+    `${kind}:${oldLine}:${newLine}:${sequence++}:${line}`;
 
   return diff.split("\n").map((line) => {
     const match = normalizedQuery
@@ -96,24 +190,37 @@ const parseDiffRows = (diff: string, query: string): DiffRow[] => {
     if (hunk) {
       oldLine = Number.parseInt(hunk[1], 10);
       newLine = Number.parseInt(hunk[2], 10);
-      return { kind: "hunk", content: line, match };
+      return { kind: "hunk", key: nextKey("hunk", line), content: line, match };
     }
     if (
       line.startsWith("diff --git") ||
       line.startsWith("---") ||
       line.startsWith("+++")
     ) {
-      return { kind: "meta", content: line, match };
+      return { kind: "meta", key: nextKey("meta", line), content: line, match };
     }
     if (line.startsWith("+")) {
-      return { kind: "add", newLine: newLine++, content: line, match };
+      return {
+        kind: "add",
+        key: nextKey("add", line),
+        newLine: newLine++,
+        content: line,
+        match,
+      };
     }
     if (line.startsWith("-")) {
-      return { kind: "delete", oldLine: oldLine++, content: line, match };
+      return {
+        kind: "delete",
+        key: nextKey("delete", line),
+        oldLine: oldLine++,
+        content: line,
+        match,
+      };
     }
 
     const row: DiffRow = {
       kind: "context",
+      key: nextKey("context", line),
       oldLine: oldLine || undefined,
       newLine: newLine || undefined,
       content: line,
@@ -135,53 +242,20 @@ const diffStats = (rows: DiffRow[]): DiffStats =>
     { additions: 0, deletions: 0 },
   );
 
-function GitFileRow({
-  file,
-  selected,
-  onSelect,
-}: {
-  file: GitFileEntry;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const path = displayPathParts(file.path);
-  const label = file.staged
-    ? "Staged"
-    : file.status === "conflicted"
-      ? "Conflict"
-      : "Working tree";
-
-  return (
-    <button
-      className={`ai-chat-git-file${selected ? " is-selected" : ""}`}
-      type="button"
-      title={file.path}
-      onClick={onSelect}
-    >
-      <span className={`ai-chat-git-file__badge is-${file.status}`}>
-        {statusLabels[file.status]}
-      </span>
-      <span className="ai-chat-git-file__body">
-        <span>{path.name}</span>
-        <small>
-          {path.directory || "Project root"} · {label}
-        </small>
-      </span>
-    </button>
-  );
-}
-
 function DiffView({
   diff,
   file,
   search,
+  large,
 }: {
   diff: string;
   file: GitFileEntry | null;
   search: string;
+  large: boolean;
 }) {
   const rows = useMemo(() => parseDiffRows(diff, search), [diff, search]);
   const stats = useMemo(() => diffStats(rows), [rows]);
+  const path = file ? displayPathParts(file.path) : null;
 
   if (!diff.trim()) {
     return <div className="ai-chat-git-empty">No changes in this diff.</div>;
@@ -189,22 +263,34 @@ function DiffView({
 
   return (
     <div className="ai-chat-diff-shell" data-testid="ai-chat-review-diff">
-      <div className="ai-chat-diff-shell__header">
-        <span className="ai-chat-diff-shell__file" title={file?.path}>
-          {file?.path || "Selected diff"}
+      <div className="ai-chat-diff-notice">
+        <Info size={13} />
+        <span>
+          {large
+            ? "Large diff: one file at a time"
+            : "Showing selected file diff"}
+        </span>
+      </div>
+      <div className="ai-chat-diff-filebar">
+        <span className="ai-chat-diff-filebar__name" title={file?.path}>
+          <FileText size={15} />
+          <span>{path?.name || "Selected diff"}</span>
+          {path?.directory ? <small>{path.directory}</small> : null}
         </span>
         <span className="ai-chat-diff-stat is-add">+{stats.additions}</span>
         <span className="ai-chat-diff-stat is-delete">-{stats.deletions}</span>
       </div>
       <div className="ai-chat-diff-view">
-        {rows.map((row, index) => (
+        {rows.map((row) => (
           <div
             className={`ai-chat-diff-row is-${row.kind}${row.match ? " is-match" : ""}`}
-            key={`${index}:${row.content}`}
+            key={row.key}
           >
             <span className="ai-chat-diff-row__line">{row.oldLine ?? ""}</span>
             <span className="ai-chat-diff-row__line">{row.newLine ?? ""}</span>
-            <code>{row.content}</code>
+            <code>
+              <HighlightedCode query={search} value={row.content} />
+            </code>
           </div>
         ))}
       </div>
@@ -242,13 +328,19 @@ export function ChatGitReview({
   const stagedFiles = useGitStore((state) => state.stagedFiles);
   const unstagedFiles = useGitStore((state) => state.unstagedFiles);
   const conflictedFiles = useGitStore((state) => state.conflictedFiles);
+  const stageFile = useGitStore((state) => state.stageFile);
+  const unstageFile = useGitStore((state) => state.unstageFile);
+  const stageAll = useGitStore((state) => state.stageAll);
   const commit = useGitStore((state) => state.commit);
+  const pullRemote = useGitStore((state) => state.pullRemote);
   const pushRemote = useGitStore((state) => state.pushRemote);
+  const openPullRequest = useGitStore((state) => state.openPullRequest);
   const switchBranch = useGitStore((state) => state.switchBranch);
   const [selectedKey, setSelectedKey] = useState("");
   const [diff, setDiff] = useState("");
   const [diffError, setDiffError] = useState<string | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     const nextProjectPath = projectPath.trim();
@@ -273,9 +365,22 @@ export function ChatGitReview({
     [filteredFiles, selectedKey],
   );
   const changedCount = allFiles.length;
+  const selectedFileIndex = selectedFile
+    ? filteredFiles.findIndex((file) => fileKey(file) === fileKey(selectedFile))
+    : -1;
+  const selectedFileStats = useMemo(
+    () => diffStats(parseDiffRows(diff, "")),
+    [diff],
+  );
+  const largeDiff = filteredFiles.length > 1 || diff.split("\n").length > 260;
   const canCommit =
     commitMessage.trim().length > 0 && stagedFiles.length > 0 && !busy;
   const canPush = Boolean(selectedRemote && branch.current && !busy);
+  const canPull = Boolean(selectedRemote && branch.current && !busy);
+  const canOpenPR = Boolean(selectedRemote && branch.current && !busy);
+  const canStageSelected = Boolean(
+    selectedFile && !busy && !isRepositoryMissing,
+  );
   const diffMatchCount = useMemo(() => {
     const query = diffSearch.trim().toLowerCase();
     if (!query) return 0;
@@ -298,7 +403,7 @@ export function ChatGitReview({
   }, [filteredFiles, selectedKey]);
 
   useEffect(() => {
-    if (mode !== "overlay" || !selectedFile) {
+    if (!selectedFile) {
       setDiff("");
       setDiffError(null);
       setDiffLoading(false);
@@ -331,26 +436,62 @@ export function ChatGitReview({
     return () => {
       cancelled = true;
     };
-  }, [mode, selectedFile]);
+  }, [selectedFile]);
 
   const runGitAction = useCallback(async (action: () => Promise<void>) => {
+    setActionError(null);
     try {
       await action();
-    } catch {
+      return true;
+    } catch (nextError) {
+      setActionError(toErrorMessage(nextError));
       // useGitStore owns the user-visible error string.
+      return false;
     }
   }, []);
 
   const handleCommit = useCallback(async () => {
     if (!canCommit) return;
-    await runGitAction(() => commit(commitMessage));
-    onCommitMessageChange("");
+    const committed = await runGitAction(() => commit(commitMessage));
+    if (committed) {
+      onCommitMessageChange("");
+    }
   }, [canCommit, commit, commitMessage, onCommitMessageChange, runGitAction]);
 
   const handlePush = useCallback(async () => {
     if (!canPush) return;
     await runGitAction(() => pushRemote(false));
   }, [canPush, pushRemote, runGitAction]);
+
+  const handlePull = useCallback(async () => {
+    if (!canPull) return;
+    await runGitAction(() => pullRemote());
+  }, [canPull, pullRemote, runGitAction]);
+
+  const handleOpenPullRequest = useCallback(async () => {
+    if (!canOpenPR) return;
+    setActionError(null);
+    const url = await openPullRequest();
+    if (!url) {
+      setActionError(
+        "Unable to open PR URL. Make sure a GitHub remote is configured.",
+      );
+    }
+  }, [canOpenPR, openPullRequest]);
+
+  const handleStageSelected = useCallback(async () => {
+    if (!selectedFile || !canStageSelected) return;
+    await runGitAction(() =>
+      selectedFile.staged
+        ? unstageFile(selectedFile.path)
+        : stageFile(selectedFile.path),
+    );
+  }, [canStageSelected, runGitAction, selectedFile, stageFile, unstageFile]);
+
+  const handleStageAll = useCallback(async () => {
+    if (busy || allFiles.length === 0) return;
+    await runGitAction(() => stageAll());
+  }, [allFiles.length, busy, runGitAction, stageAll]);
 
   const handleBranchChange = useCallback(
     (value: string) => {
@@ -362,10 +503,21 @@ export function ChatGitReview({
 
   const handleCopyDiff = useCallback(() => {
     if (!diff) return;
-    void navigator.clipboard?.writeText(diff);
+    void writeClipboardTextWithFallback(diff);
   }, [diff]);
 
-  const renderFiles = () => {
+  const selectRelativeFile = useCallback(
+    (direction: -1 | 1) => {
+      if (selectedFileIndex < 0) return;
+      const nextFile = filteredFiles[selectedFileIndex + direction];
+      if (nextFile) {
+        setSelectedKey(fileKey(nextFile));
+      }
+    },
+    [filteredFiles, selectedFileIndex],
+  );
+
+  const renderUnavailable = () => {
     if (!projectPath) {
       return <div className="ai-chat-git-empty">No project open.</div>;
     }
@@ -386,132 +538,170 @@ export function ChatGitReview({
     if (filteredFiles.length === 0) {
       return <div className="ai-chat-git-empty">No changes match.</div>;
     }
-
-    const renderGroup = (title: string, files: GitFileEntry[]) => {
-      const nextFiles = filterFiles(files, searchQuery);
-      if (nextFiles.length === 0) return null;
-      return (
-        <section className="ai-chat-git-section" key={title}>
-          <div className="ai-chat-git-section__title">
-            <span>{title}</span>
-            <small>{nextFiles.length}</small>
-          </div>
-          {nextFiles.map((file) => (
-            <GitFileRow
-              file={file}
-              key={fileKey(file)}
-              selected={
-                selectedFile ? fileKey(file) === fileKey(selectedFile) : false
-              }
-              onSelect={() => setSelectedKey(fileKey(file))}
-            />
-          ))}
-        </section>
-      );
-    };
-
-    return (
-      <div className="ai-chat-git-list">
-        {renderGroup("Conflicts", conflictedFiles)}
-        {renderGroup("Staged", stagedFiles)}
-        {renderGroup("Unstaged", unstagedFiles)}
-      </div>
-    );
+    return null;
   };
+
+  const unavailable = renderUnavailable();
+  const branchTarget =
+    branch.upstream ||
+    (selectedRemote && branch.current
+      ? `${selectedRemote}/${branch.current}`
+      : "");
 
   return (
     <aside className="ai-chat-git-review" data-mode={mode}>
       <div
-        className="ai-chat-side-section__header"
+        className="ai-chat-git-diff-header"
         data-ai-chat-drawer-header={canMove ? "true" : undefined}
         role="group"
         aria-label="Git review drawer header"
         onMouseDown={canMove ? onDragStart : undefined}
       >
-        <span>
-          <GitBranch size={14} />
-          Git Review
-          {canMove ? (
-            <span className="ai-chat-drawer-grip" title="Move review">
-              <GripHorizontal size={13} />
+        <div className="ai-chat-git-header-main">
+          <div className="ai-chat-git-branch-cluster">
+            <label className="ai-chat-branch-select">
+              <GitBranch size={14} />
+              <select
+                value={branches.includes(branch.current) ? branch.current : ""}
+                disabled={busy || branches.length === 0}
+                onChange={(event) => handleBranchChange(event.target.value)}
+                title="Switch branch"
+              >
+                {branch.current && !branches.includes(branch.current) ? (
+                  <option value="">{branch.current}</option>
+                ) : null}
+                {branches.map((candidate) => (
+                  <option key={candidate} value={candidate}>
+                    {candidate}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {branchTarget ? (
+              <span
+                className="ai-chat-shell-pill is-muted"
+                title={branchTarget}
+              >
+                {branchTarget}
+              </span>
+            ) : null}
+            <span className="ai-chat-shell-pill ai-chat-git-count-pill is-add">
+              +{selectedFileStats.additions}
             </span>
-          ) : null}
-        </span>
-        <div className="ai-chat-drawer-actions">
+            <span className="ai-chat-shell-pill ai-chat-git-count-pill is-delete">
+              -{selectedFileStats.deletions}
+            </span>
+            <span className="ai-chat-shell-pill">{changedCount} changed</span>
+            {canMove ? (
+              <span className="ai-chat-drawer-grip" title="Move review">
+                <GripHorizontal size={13} />
+              </span>
+            ) : null}
+          </div>
+          <div className="ai-chat-git-window-actions">
+            <button
+              className="ai-chat-icon-button"
+              type="button"
+              title="Refresh Git"
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={() => void refresh()}
+            >
+              <RefreshCw size={14} className={loading ? "spin" : ""} />
+            </button>
+            <button
+              className="ai-chat-icon-button"
+              type="button"
+              title={mode === "overlay" ? "Collapse review" : "Expand review"}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={mode === "overlay" ? onCollapse : onExpand}
+            >
+              {mode === "overlay" ? (
+                <Minimize2 size={15} />
+              ) : (
+                <Maximize2 size={15} />
+              )}
+            </button>
+            <button
+              className="ai-chat-icon-button"
+              type="button"
+              title="Close review"
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={onClose}
+            >
+              <X size={15} />
+            </button>
+          </div>
+        </div>
+        <div className="ai-chat-git-action-strip" aria-label="Git file actions">
           <button
-            className="ai-chat-icon-button"
+            className="ai-chat-git-tool-button"
             type="button"
-            title={mode === "overlay" ? "Collapse review" : "Expand review"}
+            title={selectedFile?.staged ? "Unstage selected" : "Stage selected"}
+            disabled={!canStageSelected}
             onMouseDown={(event) => event.stopPropagation()}
-            onClick={mode === "overlay" ? onCollapse : onExpand}
+            onClick={() => void handleStageSelected()}
           >
-            {mode === "overlay" ? (
-              <Minimize2 size={15} />
-            ) : (
-              <Maximize2 size={15} />
-            )}
+            {selectedFile?.staged ? <Minus size={14} /> : <Plus size={14} />}
+            <span>{selectedFile?.staged ? "Unstage" : "Stage selected"}</span>
           </button>
           <button
-            className="ai-chat-icon-button"
+            className="ai-chat-git-tool-button"
             type="button"
-            title="Close review"
+            title="Stage all"
+            disabled={busy || allFiles.length === 0}
             onMouseDown={(event) => event.stopPropagation()}
-            onClick={onClose}
+            onClick={() => void handleStageAll()}
           >
-            <X size={15} />
+            <CheckCheck size={14} />
+            <span>Stage all</span>
+          </button>
+          <button
+            className="ai-chat-git-tool-button"
+            type="button"
+            title="Copy diff"
+            disabled={!diff}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={handleCopyDiff}
+          >
+            <Copy size={14} />
+            <span>Copy diff</span>
+          </button>
+          <button
+            className="ai-chat-git-tool-button"
+            type="button"
+            title="Pull"
+            disabled={!canPull}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={() => void handlePull()}
+          >
+            <ArrowDownToLine size={14} />
+            <span>Pull</span>
           </button>
         </div>
       </div>
 
-      <div className="ai-chat-git-toolbar">
-        <select
-          className="ai-chat-select"
-          value={branches.includes(branch.current) ? branch.current : ""}
-          disabled={busy || branches.length === 0}
-          onChange={(event) => handleBranchChange(event.target.value)}
-          title="Switch branch"
-        >
-          {branch.current && !branches.includes(branch.current) ? (
-            <option value="">{branch.current}</option>
-          ) : null}
-          {branches.map((candidate) => (
-            <option key={candidate} value={candidate}>
-              {candidate}
-            </option>
-          ))}
-        </select>
-        <span className="ai-chat-shell-pill is-success">
-          <ArrowUp size={11} />
-          {branch.ahead}
-        </span>
-        <span className="ai-chat-shell-pill is-warning">
-          <ArrowDown size={11} />
-          {branch.behind}
-        </span>
-        <span className="ai-chat-shell-pill">{changedCount} changed</span>
-        <button
-          className="ai-chat-icon-button"
-          type="button"
-          title="Refresh Git"
-          onClick={() => void refresh()}
-        >
-          <RefreshCw size={14} className={loading ? "spin" : ""} />
-        </button>
-      </div>
-
-      <label className="ai-chat-search-field">
-        <Search size={14} />
-        <input
-          data-testid="ai-chat-review-search"
-          placeholder="Search changes"
-          value={searchQuery}
-          onChange={(event) => onSearchChange(event.target.value)}
-        />
-      </label>
-
-      {mode === "overlay" ? (
-        <div className="ai-chat-review-overlay-body">
-          <div className="ai-chat-review-overlay-toolbar">
+      <div className="ai-chat-review-overlay-body">
+        <div className="ai-chat-review-overlay-toolbar">
+          <label className="ai-chat-file-filter-field">
+            <Filter size={14} />
+            <input
+              aria-label="Filter files"
+              data-testid="ai-chat-review-search"
+              placeholder="Filter files"
+              value={searchQuery}
+              onChange={(event) => onSearchChange(event.target.value)}
+            />
+          </label>
+          <div className="ai-chat-file-select-group">
+            <button
+              className="ai-chat-icon-button"
+              type="button"
+              title="Previous file"
+              disabled={selectedFileIndex <= 0}
+              onClick={() => selectRelativeFile(-1)}
+            >
+              <ChevronLeft size={14} />
+            </button>
             <select
               className="ai-chat-select"
               value={selectedFile ? fileKey(selectedFile) : ""}
@@ -524,63 +714,59 @@ export function ChatGitReview({
                 </option>
               ))}
             </select>
-            <label className="ai-chat-search-field ai-chat-search-field--inline">
-              <Search size={14} />
-              <input
-                data-testid="ai-chat-diff-search"
-                placeholder="Search in diff"
-                value={diffSearch}
-                onChange={(event) => onDiffSearchChange(event.target.value)}
-              />
-            </label>
             <button
-              className="ai-chat-secondary-button ai-chat-git-action-button"
+              className="ai-chat-icon-button"
               type="button"
-              disabled={!diff}
-              onClick={handleCopyDiff}
+              title="Next file"
+              disabled={
+                selectedFileIndex < 0 ||
+                selectedFileIndex >= filteredFiles.length - 1
+              }
+              onClick={() => selectRelativeFile(1)}
             >
-              <Copy size={14} />
-              Copy
+              <ChevronRight size={14} />
             </button>
-            <button
-              className="ai-chat-secondary-button ai-chat-git-action-button"
-              type="button"
-              disabled={!canCommit}
-              onClick={() => void handleCommit()}
-            >
-              <Check size={14} />
-              Commit
-            </button>
-            <button
-              className="ai-chat-secondary-button ai-chat-git-action-button is-primary"
-              type="button"
-              disabled={!canPush}
-              onClick={() => void handlePush()}
-            >
-              <Send size={14} />
-              Push
-            </button>
-            {diffSearch.trim() ? (
-              <span className="ai-chat-shell-pill">{diffMatchCount} hits</span>
-            ) : null}
           </div>
-          {diffLoading ? (
-            <div className="ai-chat-git-empty">
-              <RefreshCw size={14} className="spin" />
-              Loading diff
-            </div>
-          ) : diffError ? (
-            <div className="ai-chat-git-empty is-error">
-              <AlertTriangle size={14} />
-              {diffError}
-            </div>
-          ) : (
-            <DiffView diff={diff} file={selectedFile} search={diffSearch} />
-          )}
+          <label className="ai-chat-search-field ai-chat-search-field--inline ai-chat-diff-search-field">
+            <Search size={14} />
+            <input
+              data-testid="ai-chat-diff-search"
+              placeholder="Search in diff"
+              value={diffSearch}
+              onChange={(event) => onDiffSearchChange(event.target.value)}
+            />
+          </label>
+          {diffSearch.trim() ? (
+            <span className="ai-chat-shell-pill">{diffMatchCount} hits</span>
+          ) : null}
         </div>
-      ) : (
-        renderFiles()
-      )}
+        {actionError ? (
+          <div className="ai-chat-git-action-error">
+            <AlertTriangle size={14} />
+            {actionError}
+          </div>
+        ) : null}
+        {unavailable ? (
+          unavailable
+        ) : diffLoading ? (
+          <div className="ai-chat-git-empty">
+            <RefreshCw size={14} className="spin" />
+            Loading diff
+          </div>
+        ) : diffError ? (
+          <div className="ai-chat-git-empty is-error">
+            <AlertTriangle size={14} />
+            {diffError}
+          </div>
+        ) : (
+          <DiffView
+            diff={diff}
+            file={selectedFile}
+            large={largeDiff}
+            search={diffSearch}
+          />
+        )}
+      </div>
 
       <div className="ai-chat-git-commit">
         {remotes.length > 1 ? (
@@ -609,6 +795,16 @@ export function ChatGitReview({
           }}
         />
         <div className="ai-chat-git-commit__actions">
+          <button
+            className="ai-chat-secondary-button ai-chat-git-action-button"
+            type="button"
+            disabled={!canOpenPR}
+            onClick={() => void handleOpenPullRequest()}
+            title="Open pull request"
+          >
+            <GitPullRequest size={14} />
+            PR
+          </button>
           <button
             className="ai-chat-secondary-button ai-chat-git-action-button"
             type="button"

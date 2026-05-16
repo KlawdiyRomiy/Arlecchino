@@ -35,7 +35,6 @@ import {
   AIStartChatRun,
   AIStartProviderRuntime,
   AIStopProviderRuntime,
-  AITestProvider,
   type AIProviderRuntimeDescriptor,
   type AIProviderRuntimeModel,
 } from "../../wails/app";
@@ -75,6 +74,7 @@ import { RunCard } from "./RunCard";
 import {
   getProviderDisabledReason,
   isReadyChatProvider,
+  isSupportedLocalChatProvider,
   selectDefaultProvider,
   sortProviders,
 } from "./providerPresentation";
@@ -1216,7 +1216,7 @@ export function AIChatPanelContent({
   );
 
   const handleProviderSelect = useCallback((provider: AIProviderDescriptor) => {
-    if (getProviderDisabledReason(provider)) return;
+    if (!isSupportedLocalChatProvider(provider)) return;
     dispatch({
       type: "setProvider",
       providerId: provider.id,
@@ -1284,12 +1284,6 @@ export function AIChatPanelContent({
     },
     [handleRefreshProviders],
   );
-
-  const handleTestProvider = useCallback(async () => {
-    if (!selectedProvider) return;
-    const provider = await AITestProvider(selectedProvider.id);
-    upsertProvider(provider);
-  }, [selectedProvider, upsertProvider]);
 
   const closeTransientPopovers = useCallback(() => {
     dispatch({ type: "toggleProviderPopover", open: false });
@@ -1365,13 +1359,10 @@ export function AIChatPanelContent({
         mnemonicEntries={mnemonicEntries}
         promptWorkflows={promptWorkflows}
         historyOpen={historyOpen}
-        providerPopoverOpen={state.providerPopoverOpen}
-        providers={sortedProviders}
         reviewExpanded={reviewExpanded}
         reviewOpen={reviewOpen}
         selectedProvider={selectedProvider}
         selectedProviderReady={selectedProviderReady}
-        selectedProviderId={selectedProvider?.id ?? ""}
         settingsPopoverOpen={state.settingsPopoverOpen}
         status={status}
         tools={tools}
@@ -1412,17 +1403,7 @@ export function AIChatPanelContent({
           });
         }}
         onNewChat={handleNewChat}
-        onRefreshProviders={handleRefreshProviders}
         onRefreshRuntime={refreshRuntime}
-        onSelectProvider={handleProviderSelect}
-        onTestProvider={handleTestProvider}
-        onToggleProviderPopover={() => {
-          dispatch({ type: "toggleProviderPopover" });
-          dispatchChrome({
-            type: "patch",
-            value: { contextPickerOpen: false },
-          });
-        }}
         onToggleSettingsPopover={() => {
           dispatch({ type: "toggleSettingsPopover" });
           dispatchChrome({
@@ -1515,6 +1496,7 @@ export function AIChatPanelContent({
                 providerRuntimeBusy={providerRuntimeBusy}
                 providerRuntimeError={providerRuntimeError}
                 providerRuntimes={providerRuntimes}
+                providers={sortedProviders}
                 running={activeRunRunning}
                 selectedAction={state.selectedAction}
                 selectedModel={selectedModel}
@@ -1532,6 +1514,7 @@ export function AIChatPanelContent({
                 onRefreshProviders={handleRefreshProviders}
                 onSend={handleSend}
                 onSelectModel={handleModelSelect}
+                onSelectProvider={handleProviderSelect}
                 onStartProviderRuntime={handleStartProviderRuntime}
                 onStopProviderRuntime={handleStopProviderRuntime}
                 onToggleContextPicker={() => {

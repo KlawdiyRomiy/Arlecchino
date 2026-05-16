@@ -8,7 +8,6 @@ export type AIChatHeaderItemId =
   | "review"
   | "newChat"
   | "refresh"
-  | "provider"
   | "settings";
 
 export type AIChatHeaderDropGroup = "left" | "right";
@@ -22,7 +21,7 @@ const AI_CHAT_HEADER_STORAGE_KEY = "arlecchino.ai-chat.header-layout.v1";
 
 const DEFAULT_AI_CHAT_HEADER_LAYOUT: AIChatHeaderLayout = {
   left: ["history", "activity"],
-  right: ["review", "newChat", "refresh", "provider", "settings"],
+  right: ["review", "newChat", "refresh", "settings"],
 };
 
 const AI_CHAT_HEADER_ITEM_IDS: AIChatHeaderItemId[] = [
@@ -31,7 +30,6 @@ const AI_CHAT_HEADER_ITEM_IDS: AIChatHeaderItemId[] = [
   "review",
   "newChat",
   "refresh",
-  "provider",
   "settings",
 ];
 
@@ -41,7 +39,6 @@ export const AI_CHAT_HEADER_ITEM_LABELS: Record<AIChatHeaderItemId, string> = {
   review: "Git Review",
   newChat: "New chat",
   refresh: "Refresh runtime",
-  provider: "Provider",
   settings: "Settings",
 };
 

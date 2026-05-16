@@ -28,8 +28,6 @@ import type {
   AIToolDescriptor,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIChatDisplayPrefs, ContextToggles } from "./types";
-import { getProviderPresentation } from "./providerPresentation";
-import { ProviderPopover } from "./ProviderPopover";
 import { SettingsPopover } from "./SettingsPopover";
 import {
   ActivityIcon,
@@ -48,9 +46,6 @@ interface AIChatHeaderProps {
   loading: boolean;
   selectedProvider: AIProviderDescriptor | null;
   selectedProviderReady: boolean;
-  selectedProviderId: string;
-  providers: AIProviderDescriptor[];
-  providerPopoverOpen: boolean;
   settingsPopoverOpen: boolean;
   activityPopoverOpen: boolean;
   historyOpen: boolean;
@@ -80,11 +75,7 @@ interface AIChatHeaderProps {
   onToggleActivityPopover: () => void;
   onToggleHistory: () => void;
   onToggleReview: () => void;
-  onToggleProviderPopover: () => void;
   onToggleSettingsPopover: () => void;
-  onSelectProvider: (provider: AIProviderDescriptor) => void;
-  onRefreshProviders: () => void;
-  onTestProvider: () => void;
   onContextToggle: (key: keyof ContextToggles, value: boolean) => void;
   onDisplayPrefChange: (key: keyof AIChatDisplayPrefs, value: boolean) => void;
 }
@@ -93,9 +84,6 @@ export function AIChatHeader({
   loading,
   selectedProvider,
   selectedProviderReady,
-  selectedProviderId,
-  providers,
-  providerPopoverOpen,
   settingsPopoverOpen,
   activityPopoverOpen,
   historyOpen,
@@ -125,11 +113,7 @@ export function AIChatHeader({
   onToggleActivityPopover,
   onToggleHistory,
   onToggleReview,
-  onToggleProviderPopover,
   onToggleSettingsPopover,
-  onSelectProvider,
-  onRefreshProviders,
-  onTestProvider,
   onContextToggle,
   onDisplayPrefChange,
 }: AIChatHeaderProps) {
@@ -141,7 +125,6 @@ export function AIChatHeader({
     leftGroupRef,
     rightGroupRef,
   } = useAIChatHeaderReorder();
-  const provider = getProviderPresentation(selectedProvider);
   const activityItems = buildActivityStatusItems({
     activeEnvelope,
     activeRun,
@@ -245,37 +228,6 @@ export function AIChatHeader({
                 <RefreshCw size={16} />
               )}
             </button>
-          );
-        case "provider":
-          return (
-            <div
-              className="ai-chat-header__menu ai-chat-header__menu--provider"
-              data-ai-chat-popover-scope
-            >
-              <button
-                className="ai-chat-provider-button"
-                data-testid="ai-chat-provider-button"
-                type="button"
-                title={provider.rawReason || provider.subtitle}
-                onClick={onToggleProviderPopover}
-              >
-                <span className={`ai-chat-status-dot is-${provider.tone}`} />
-                <span className="ai-chat-provider-button__body">
-                  <span>{provider.title}</span>
-                  <small>{provider.subtitle}</small>
-                </span>
-                <ChevronDown size={15} />
-              </button>
-              {providerPopoverOpen ? (
-                <ProviderPopover
-                  providers={providers}
-                  selectedProviderId={selectedProviderId}
-                  onRefresh={onRefreshProviders}
-                  onSelectProvider={onSelectProvider}
-                  onTest={onTestProvider}
-                />
-              ) : null}
-            </div>
           );
         case "settings":
           return (
