@@ -85,6 +85,19 @@ const isTerminalRunStatus = (status?: string): boolean =>
 const sessionIdOf = (run: Pick<AIChatRunEnvelope, "sessionId">): string =>
   run.sessionId?.trim() || "default";
 
+const mergeToolProposals = (
+  existing: AIChatRunEnvelope,
+  incoming: AIChatRunEnvelope,
+): AIChatRunEnvelope["toolProposals"] => {
+  if (Array.isArray(incoming.toolProposals)) {
+    return incoming.toolProposals;
+  }
+  if (incoming.toolProposalSummary?.total === 0) {
+    return [];
+  }
+  return existing.toolProposals;
+};
+
 const mergeRunEnvelope = (
   runs: AIChatRunEnvelope[],
   run: AIChatRunEnvelope,
@@ -124,17 +137,9 @@ const mergeRunEnvelope = (
           run.consentSummary?.frontierProvidersAccepted
             ? run.consentSummary
             : existing.consentSummary,
-        toolProposals:
-          run.toolProposals && run.toolProposals.length > 0
-            ? run.toolProposals
-            : existing.toolProposals,
+        toolProposals: mergeToolProposals(existing, run),
         toolProposalSummary:
-          run.toolProposalSummary?.total ||
-          run.toolProposalSummary?.hardDenied ||
-          run.toolProposalSummary?.allowedByPolicy ||
-          run.toolProposalSummary?.notExecutableInSlice
-            ? run.toolProposalSummary
-            : existing.toolProposalSummary,
+          run.toolProposalSummary ?? existing.toolProposalSummary,
         mnemonicInclusion:
           run.mnemonicInclusion?.count || run.mnemonicInclusion?.included
             ? run.mnemonicInclusion

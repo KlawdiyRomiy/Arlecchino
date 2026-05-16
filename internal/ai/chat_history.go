@@ -190,5 +190,5 @@ func normalizeLoadedChatRun(projectID string, run AIChatRun) AIChatRun {
 		run.Revision++
 		run.UpdatedAt = firstNonEmpty(run.UpdatedAt, run.CreatedAt, utcNow())
 	}
-	return normalizeChatRunToolProposals(run)
+	return normalizeChatRunForDisplay(run)
 }

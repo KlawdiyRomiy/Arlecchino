@@ -36,8 +36,6 @@ var defaultChatStopSequences = []string{
 	"\nUser:",
 	"\nAssistant:",
 	"\nSystem:",
-	"\nuser intent:",
-	"\nUser intent:",
 }
 
 func (s *Service) StartChatRun(_ context.Context, projectID string, req AIChatRunRequest) (AIChatRun, error) {
@@ -140,7 +138,7 @@ func (s *Service) GetChatRun(projectID string, runID string) (AIChatRun, error) 
 	if run != nil && run.ProjectSessionID == projectID {
 		runCopy := *run
 		s.mu.RUnlock()
-		return normalizeChatRunToolProposals(runCopy), nil
+		return normalizeChatRunForDisplay(runCopy), nil
 	}
 	s.mu.RUnlock()
 	if project == nil {
@@ -166,6 +164,10 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		s.finishRunError(runID, "AI project session is not open")
 		return
 	}
+	if response, ok := s.preflightChatResponseForRequest(req); ok {
+		s.finishRunCompleted(runID, response)
+		return
+	}
 	req.Context.Capability = providers.CapabilityChat
 	req.Context.Prompt = req.Prompt
 	req.Context.IncludeMnemonic = req.IncludeMnemonic
@@ -179,11 +181,6 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	s.emitEvent("ai:chat:context-ready", map[string]any{"runId": runID, "contextSummary": contextSummary})
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactContext, "Context disclosure", contextArtifactSummary(contextSummary), snapshot)
 	s.emitRunEnvelope(project.ID, runID)
-
-	if response, ok := s.runtimeStateResponseForChatRequest(req); ok {
-		s.finishRunCompleted(runID, response)
-		return
-	}
 
 	provider, descriptor, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
@@ -202,7 +199,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	system := systemPromptForAction(req.Action) + "\n" + chatModeBoundaryPrompt(req)
 	generationReq := providers.GenerationRequest{
 		Capability: providers.CapabilityChat,
-		Prompt:     buildPromptFromSnapshot(snapshot),
+		Prompt:     buildChatPromptFromSnapshot(snapshot),
 		System:     system,
 		Model:      firstNonEmpty(req.Model, descriptor.DefaultModel),
 		MaxTokens:  req.MaxTokens,
@@ -233,7 +230,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		Source:           "chat_run",
 		ChatAction:       req.Action,
 	}
-	streamGuard := &chatStreamGuard{}
+	streamGuard := newChatStreamGuard(req, system, generationReq.Prompt)
 	response, err := provider.Generate(ctx, generationReq, func(token string) error {
 		if ctx.Err() != nil || s.runIsCanceled(runID) {
 			return context.Canceled
@@ -242,14 +239,21 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 			return nil
 		}
 		displayToken := sanitizedDisplayChunk(token)
-		if displayToken != "" {
-			s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": displayToken})
+		releaseToken, observeErr := streamGuard.Observe(token, displayToken)
+		if releaseToken != "" {
+			s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": releaseToken})
 			s.updateRun(runID, func(run *AIChatRun) {
-				run.Response += displayToken
+				run.Response += releaseToken
 			})
 		}
-		return streamGuard.Observe(token, displayToken)
+		return observeErr
 	})
+	if releaseToken := streamGuard.Flush(); releaseToken != "" {
+		s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": releaseToken})
+		s.updateRun(runID, func(run *AIChatRun) {
+			run.Response += releaseToken
+		})
+	}
 	record.LatencyMs = time.Since(started).Milliseconds()
 	if ctx.Err() != nil || s.runIsCanceled(runID) {
 		record.Status = "canceled"
@@ -312,7 +316,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		s.recordChatRunArtifact(project, runID, AIChatRunArtifactToolProposal, "Tool proposals", toolProposalArtifactSummary(proposals), proposals)
 	}
 	s.updateRun(runID, func(run *AIChatRun) {
-		run.Response = cleanGeneratedResponse(firstNonEmpty(run.Response, response.Text))
+		run.Response = cleanChatGeneratedResponse(firstNonEmpty(run.Response, response.Text), req, system, generationReq.Prompt)
 		run.ProviderID = descriptor.ID
 		run.Model = firstNonEmpty(response.Model, generationReq.Model)
 		run.ToolProposals = proposals
@@ -339,7 +343,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 				Type:       "chat_summary",
 				Source:     "ai-chat",
 				Tags:       []string{string(req.Action)},
-				Content:    summarizeForMnemonic(req.Prompt, response.Text),
+				Content:    summarizeForMnemonic(req.Prompt, cleanChatGeneratedResponse(response.Text, req, system, generationReq.Prompt)),
 				Importance: 5,
 				Trust:      mnemonic.TrustGenerated,
 				Provenance: map[string]string{"source": "ai-chat-summary", "runId": runID},
@@ -355,7 +359,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	s.updateRun(runID, func(run *AIChatRun) {
 		run.Status = "completed"
 		run.CanCancel = false
-		run.Response = cleanGeneratedResponse(firstNonEmpty(run.Response, response.Text))
+		run.Response = cleanChatGeneratedResponse(firstNonEmpty(run.Response, response.Text), req, system, generationReq.Prompt)
 		run.ProviderID = descriptor.ID
 		run.Model = firstNonEmpty(response.Model, generationReq.Model)
 		run.ToolProposals = proposals
@@ -738,6 +742,22 @@ func hardDenyReasonForProposal(proposal AIToolProposal, projectRoot string) AITo
 	return ""
 }
 
+func (s *Service) preflightChatResponseForRequest(req AIChatRunRequest) (string, bool) {
+	if response, ok := s.runtimeStateResponseForChatRequest(req); ok {
+		return response, true
+	}
+	if isModeLabelChatPrompt(req.Prompt) {
+		return modeLabelChatResponse(req), true
+	}
+	if isAmbiguousShortChatPrompt(req.Prompt) {
+		return ambiguousChatPromptResponse(req.Prompt), true
+	}
+	if isSmallTalkOnlyChatPrompt(req.Prompt) {
+		return smallTalkChatResponse(req.Prompt), true
+	}
+	return "", false
+}
+
 func isSmallTalkOnlyChatPrompt(prompt string) bool {
 	words := normalizedChatPromptWords(prompt)
 	if len(words) == 0 {
@@ -761,8 +781,83 @@ func normalizeChatRunToolProposals(run AIChatRun) AIChatRun {
 	return run
 }
 
+func normalizeChatRunForDisplay(run AIChatRun) AIChatRun {
+	run = normalizeChatRunToolProposals(run)
+	if strings.TrimSpace(run.Response) == "" {
+		return run
+	}
+	req := AIChatRunRequest{Action: run.Action, Prompt: run.UserPrompt}
+	system := systemPromptForAction(req.Action) + "\n" + chatModeBoundaryPrompt(req)
+	run.Response = cleanChatGeneratedResponse(run.Response, req, system, "")
+	return run
+}
+
 func shouldSuppressToolProposalsForPrompt(prompt string) bool {
-	return isSmallTalkOnlyChatPrompt(prompt) || isRuntimeStateQuestion(prompt)
+	return isSmallTalkOnlyChatPrompt(prompt) || isRuntimeStateQuestion(prompt) || isModeLabelChatPrompt(prompt) || isAmbiguousShortChatPrompt(prompt)
+}
+
+func isModeLabelChatPrompt(prompt string) bool {
+	words := normalizedChatPromptWords(prompt)
+	if len(words) != 1 {
+		return false
+	}
+	switch words[0] {
+	case "ask", "аск", "спросить", "plan", "план", "build", "билд", "debug", "дебаг":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAmbiguousShortChatPrompt(prompt string) bool {
+	words := normalizedChatPromptWords(prompt)
+	if len(words) == 0 {
+		return true
+	}
+	if len(words) > 2 {
+		return false
+	}
+	for _, word := range words {
+		switch word {
+		case "what", "huh", "why", "что", "чего", "че", "чё", "зачем", "почему":
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func modeLabelChatResponse(req AIChatRunRequest) string {
+	mode := chatActionDisplayName(req.Action)
+	if containsCyrillic(req.Prompt) {
+		return "Сейчас выбран режим " + mode + ". Опиши задачу, и я продолжу в этом режиме."
+	}
+	return "Mode " + mode + " is selected. Describe the task and I will continue in that mode."
+}
+
+func ambiguousChatPromptResponse(prompt string) string {
+	if containsCyrillic(prompt) {
+		return "Уточни, что нужно сделать или проверить."
+	}
+	return "Clarify what you want me to do or inspect."
+}
+
+func smallTalkChatResponse(prompt string) string {
+	words := normalizedChatPromptWords(prompt)
+	for _, word := range words {
+		switch word {
+		case "thanks", "thank", "спасибо":
+			if containsCyrillic(prompt) {
+				return "Пожалуйста."
+			}
+			return "You're welcome."
+		}
+	}
+	if containsCyrillic(prompt) {
+		return "Привет. Чем помочь?"
+	}
+	return "Hi. How can I help?"
 }
 
 func (s *Service) runtimeStateResponseForChatRequest(req AIChatRunRequest) (string, bool) {
@@ -949,6 +1044,57 @@ func summarizeForMnemonic(prompt string, response string) string {
 	}
 }
 
+func buildChatPromptFromSnapshot(snapshot AIContextSnapshot) string {
+	contextParts := []string{}
+	for _, snippet := range snapshot.Snippets {
+		if strings.TrimSpace(snippet.Content) == "" {
+			continue
+		}
+		label := snippet.Type
+		if snippet.Path != "" {
+			label += " " + filepath.Base(snippet.Path)
+		}
+		contextParts = append(contextParts, label+":\n"+snippet.Content)
+	}
+	if snapshot.TerminalInput != "" {
+		contextParts = append(contextParts, "Terminal input:\n"+snapshot.TerminalInput)
+	}
+	if len(snapshot.Mnemonic) > 0 {
+		lines := []string{}
+		for _, entry := range snapshot.Mnemonic {
+			lines = append(lines, "- "+entry.Content)
+		}
+		contextParts = append(contextParts, "Mnemonic context:\n"+strings.Join(lines, "\n"))
+	}
+	if len(snapshot.Skills) > 0 {
+		lines := []string{}
+		for _, skill := range snapshot.Skills {
+			line := "- " + skill.Name + ": " + skill.Summary
+			if len(skill.OperatingReminders) > 0 {
+				line += " | reminders: " + strings.Join(skill.OperatingReminders, "; ")
+			}
+			if len(skill.AvoidRules) > 0 {
+				line += " | avoid: " + strings.Join(skill.AvoidRules, "; ")
+			}
+			if len(skill.ToolHints) > 0 {
+				line += " | tool hints: " + strings.Join(skill.ToolHints, ", ")
+			}
+			lines = append(lines, line)
+		}
+		contextParts = append(contextParts, "Resident skill context:\n"+strings.Join(lines, "\n"))
+	}
+	prompt := strings.TrimSpace(snapshot.Prompt)
+	if len(contextParts) == 0 {
+		return prompt
+	}
+	parts := []string{}
+	if prompt != "" {
+		parts = append(parts, "Request:\n"+prompt)
+	}
+	parts = append(parts, contextParts...)
+	return strings.Join(parts, "\n\n")
+}
+
 func sanitizedDisplayText(value string) string {
 	return sanitizeChatDisplayText(value, true)
 }
@@ -1004,21 +1150,96 @@ func defaultChatMaxTokens(action AIChatAction) int {
 }
 
 type chatStreamGuard struct {
-	raw  strings.Builder
-	text strings.Builder
+	raw            strings.Builder
+	text           strings.Builder
+	held           strings.Builder
+	released       bool
+	req            AIChatRunRequest
+	system         string
+	providerPrompt string
 }
 
-func (g *chatStreamGuard) Observe(rawToken string, displayToken string) error {
+func newChatStreamGuard(req AIChatRunRequest, system string, providerPrompt string) *chatStreamGuard {
+	return &chatStreamGuard{req: req, system: system, providerPrompt: providerPrompt}
+}
+
+func (g *chatStreamGuard) Observe(rawToken string, displayToken string) (string, error) {
 	if rawToken != "" {
 		g.raw.WriteString(rawToken)
 	}
 	if displayToken != "" {
 		g.text.WriteString(displayToken)
+		if !g.released {
+			g.held.WriteString(displayToken)
+		}
 	}
 	if containsChatStopMarker(g.raw.String()) || shouldStopRepeatedGeneratedText(g.text.String()) {
-		return errChatStreamStopped
+		return "", errChatStreamStopped
 	}
-	return nil
+	if displayToken == "" {
+		return "", nil
+	}
+	if g.released {
+		return displayToken, nil
+	}
+	held := g.held.String()
+	if isInternalPromptEcho(held, g.req, g.system, g.providerPrompt) {
+		return "", errChatStreamStopped
+	}
+	if isPossibleInternalPromptEchoPrefix(held, g.req, g.system, g.providerPrompt) {
+		return "", nil
+	}
+	release := held
+	if stripped, ok := stripExactUserPromptEchoPrefix(release, g.req.Prompt); ok {
+		release = stripped
+	}
+	g.released = true
+	g.held.Reset()
+	return release, nil
+}
+
+func (g *chatStreamGuard) Flush() string {
+	if g.released {
+		return ""
+	}
+	held := g.held.String()
+	if strings.TrimSpace(held) == "" || isInternalPromptEcho(held, g.req, g.system, g.providerPrompt) || isPossibleInternalPromptEchoPrefix(held, g.req, g.system, g.providerPrompt) {
+		return ""
+	}
+	g.released = true
+	g.held.Reset()
+	return held
+}
+
+func isPossibleInternalPromptEchoPrefix(value string, req AIChatRunRequest, system string, providerPrompt string) bool {
+	normalized := normalizeEchoText(value)
+	if normalized == "" {
+		return true
+	}
+	if len(normalized) >= 96 {
+		return false
+	}
+	candidates := []string{
+		system,
+		chatModeBoundaryPrompt(req),
+		req.Prompt,
+		"User intent:\n" + req.Prompt,
+		"Request:\n" + req.Prompt,
+	}
+	providerPromptNormalized := normalizeEchoText(providerPrompt)
+	if providerPromptNormalized != "" && providerPromptNormalized != normalizeEchoText(req.Prompt) {
+		candidates = append(candidates, providerPrompt)
+	}
+	for _, internal := range candidates {
+		internalNormalized := normalizeEchoText(internal)
+		if internalNormalized == "" {
+			continue
+		}
+		if strings.HasPrefix(internalNormalized, normalized) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsChatStopMarker(value string) bool {
@@ -1068,6 +1289,146 @@ func cleanGeneratedResponse(value string) string {
 	return collapseRepeatedGeneratedSegments(sanitizedDisplayText(value))
 }
 
+func cleanChatGeneratedResponse(value string, req AIChatRunRequest, system string, providerPrompt string) string {
+	cleaned := collapseRepeatedGeneratedSegments(sanitizedDisplayText(value))
+	cleaned = stripInternalPromptLabelLines(cleaned)
+	if stripped, ok := stripExactUserPromptEchoPrefix(cleaned, req.Prompt); ok {
+		cleaned = stripped
+	}
+	if isInternalPromptEcho(cleaned, req, system, providerPrompt) {
+		return fallbackChatResponse(req)
+	}
+	if strings.TrimSpace(cleaned) == "" {
+		return fallbackChatResponse(req)
+	}
+	return cleaned
+}
+
+func stripInternalPromptLabelLines(value string) string {
+	lines := strings.Split(value, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		switch lower {
+		case "request:", "request", "user request:", "user request", "task:", "task", "system prompt:", "system prompt", "developer prompt:", "developer prompt":
+			continue
+		default:
+			out = append(out, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+func stripExactUserPromptEchoPrefix(value string, prompt string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	prompt = strings.TrimSpace(prompt)
+	if trimmed == "" || prompt == "" {
+		return value, false
+	}
+	if !strings.HasPrefix(trimmed, prompt) {
+		return value, false
+	}
+	if len(trimmed) == len(prompt) {
+		return "", true
+	}
+	suffix := strings.TrimLeft(trimmed[len(prompt):], " \t")
+	if strings.HasPrefix(suffix, "\n") || strings.HasPrefix(suffix, "\r") {
+		return strings.TrimSpace(suffix), true
+	}
+	return value, false
+}
+
+func isInternalPromptEcho(value string, req AIChatRunRequest, system string, providerPrompt string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return true
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "mode boundary:") || strings.Contains(lower, "you are arlecchino") {
+		return true
+	}
+	normalized := normalizeEchoText(trimmed)
+	type internalEchoCandidate struct {
+		text          string
+		allowPrefix   bool
+		minPrefixSize int
+	}
+	candidates := []internalEchoCandidate{
+		{text: system, allowPrefix: true, minPrefixSize: 48},
+		{text: chatModeBoundaryPrompt(req), allowPrefix: true, minPrefixSize: 24},
+		{text: req.Prompt},
+		{text: "User intent:\n" + req.Prompt, allowPrefix: true, minPrefixSize: 24},
+		{text: "Request:\n" + req.Prompt, allowPrefix: true, minPrefixSize: 24},
+	}
+	providerPromptNormalized := normalizeEchoText(providerPrompt)
+	if providerPromptNormalized != "" && providerPromptNormalized != normalizeEchoText(req.Prompt) {
+		candidates = append(candidates, internalEchoCandidate{text: providerPrompt, allowPrefix: true, minPrefixSize: 48})
+	}
+	for _, candidate := range candidates {
+		internal := strings.TrimSpace(candidate.text)
+		if internal == "" {
+			continue
+		}
+		internalNormalized := normalizeEchoText(internal)
+		if internalNormalized == "" {
+			continue
+		}
+		if normalized == internalNormalized {
+			return true
+		}
+		if !candidate.allowPrefix {
+			continue
+		}
+		minPrefixSize := candidate.minPrefixSize
+		if minPrefixSize <= 0 {
+			minPrefixSize = 48
+		}
+		if len(internalNormalized) >= minPrefixSize && strings.HasPrefix(internalNormalized, normalized) && len(normalized) >= minPrefixSize {
+			return true
+		}
+		if len(internalNormalized) >= minPrefixSize && strings.HasPrefix(normalized, internalNormalized[:min(minPrefixSize, len(internalNormalized))]) {
+			return true
+		}
+	}
+	return false
+}
+
+func fallbackChatResponse(req AIChatRunRequest) string {
+	if containsCyrillic(req.Prompt) {
+		switch req.Action {
+		case AIChatActionPlan:
+			return "Уточни, какой план нужно составить."
+		case AIChatActionBuild:
+			return "Уточни, какое изменение нужно подготовить."
+		case AIChatActionDebug:
+			return "Уточни, какую проблему нужно разобрать."
+		default:
+			return "Уточни вопрос."
+		}
+	}
+	switch req.Action {
+	case AIChatActionPlan:
+		return "Clarify what plan you want me to produce."
+	case AIChatActionBuild:
+		return "Clarify what change you want me to prepare."
+	case AIChatActionDebug:
+		return "Clarify what problem you want me to investigate."
+	default:
+		return "Clarify the question."
+	}
+}
+
+func normalizeEchoText(value string) string {
+	var builder strings.Builder
+	for _, r := range strings.ToLower(value) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
+}
+
 func collapseRepeatedGeneratedSegments(value string) string {
 	segments := generatedTextSegments(value)
 	if len(segments) <= 1 {
@@ -1075,15 +1436,20 @@ func collapseRepeatedGeneratedSegments(value string) string {
 	}
 	out := make([]string, 0, len(segments))
 	last := ""
+	changed := false
 	for _, segment := range segments {
 		normalized := normalizeGeneratedSegment(segment)
 		if utf8.RuneCountInString(normalized) >= 18 && normalized == last {
+			changed = true
 			continue
 		}
 		out = append(out, segment)
 		if normalized != "" {
 			last = normalized
 		}
+	}
+	if !changed {
+		return strings.TrimSpace(value)
 	}
 	return strings.TrimSpace(strings.Join(out, ""))
 }
