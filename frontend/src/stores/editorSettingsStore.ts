@@ -10,6 +10,7 @@ import {
 
 export type ProjectWindowMode = "projects" | "windows";
 export type AppIconAppearance = "system" | "light" | "dark";
+export type AIChatSendShortcut = "enter" | "mod-enter";
 export const TOPBAR_ITEM_IDS = [
   "explorer",
   "search",
@@ -87,6 +88,7 @@ interface EditorSettingsState {
   zenModeEnabled: boolean;
   projectWindowMode: ProjectWindowMode;
   appIconAppearance: AppIconAppearance;
+  aiChatSendShortcut: AIChatSendShortcut;
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
@@ -109,6 +111,7 @@ interface EditorSettingsState {
   setZenModeEnabled: (value: boolean) => void;
   setProjectWindowMode: (value: ProjectWindowMode) => void;
   setAppIconAppearance: (value: AppIconAppearance) => void;
+  setAIChatSendShortcut: (value: AIChatSendShortcut) => void;
   toggleZenMode: () => void;
 }
 
@@ -133,6 +136,7 @@ const DEFAULT_CONFIRM_BEFORE_CLOSE = true;
 const DEFAULT_ZEN_MODE_ENABLED = false;
 const DEFAULT_PROJECT_WINDOW_MODE: ProjectWindowMode = "projects";
 const DEFAULT_APP_ICON_APPEARANCE: AppIconAppearance = "system";
+const DEFAULT_AI_CHAT_SEND_SHORTCUT: AIChatSendShortcut = "enter";
 
 type PersistedEditorSettingsState = Partial<
   Pick<
@@ -153,6 +157,7 @@ type PersistedEditorSettingsState = Partial<
     | "zenModeEnabled"
     | "projectWindowMode"
     | "appIconAppearance"
+    | "aiChatSendShortcut"
   >
 >;
 
@@ -222,6 +227,9 @@ const isProjectWindowMode = (value: unknown): value is ProjectWindowMode =>
 
 const isAppIconAppearance = (value: unknown): value is AppIconAppearance =>
   value === "system" || value === "light" || value === "dark";
+
+const isAIChatSendShortcut = (value: unknown): value is AIChatSendShortcut =>
+  value === "enter" || value === "mod-enter";
 
 const migratedProjectWindowMode = (
   value: unknown,
@@ -319,6 +327,10 @@ const sanitizePersistedEditorSettings = (
     nextState.appIconAppearance = persistedState.appIconAppearance;
   }
 
+  if (isAIChatSendShortcut(persistedState.aiChatSendShortcut)) {
+    nextState.aiChatSendShortcut = persistedState.aiChatSendShortcut;
+  }
+
   return nextState;
 };
 
@@ -358,6 +370,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       zenModeEnabled: DEFAULT_ZEN_MODE_ENABLED,
       projectWindowMode: DEFAULT_PROJECT_WINDOW_MODE,
       appIconAppearance: DEFAULT_APP_ICON_APPEARANCE,
+      aiChatSendShortcut: DEFAULT_AI_CHAT_SEND_SHORTCUT,
 
       zoomIn: () =>
         set((state) => ({
@@ -456,6 +469,9 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setAppIconAppearance: (value) =>
         set(() => ({ appIconAppearance: value })),
+
+      setAIChatSendShortcut: (value) =>
+        set(() => ({ aiChatSendShortcut: value })),
 
       toggleZenMode: () =>
         set((state) => ({ zenModeEnabled: !state.zenModeEnabled })),

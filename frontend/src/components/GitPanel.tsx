@@ -223,8 +223,9 @@ const buttonStyle = (
         ? "var(--status-error)"
         : theme.textSecondary,
   borderRadius: 18,
-  padding: "9px 14px",
-  fontSize: 12,
+  minHeight: 30,
+  padding: "6px 10px",
+  fontSize: 11,
   fontWeight: 500,
   display: "inline-flex",
   alignItems: "center",
@@ -253,9 +254,17 @@ const FileRow = React.memo<FileRowProps>(
       : file.status === "conflicted"
         ? "Conflict"
         : "Working tree";
+    const handleRowKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.currentTarget !== event.target) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      onViewDiff(file);
+    };
 
     const row = (
       <div
+        role="button"
+        tabIndex={0}
         className={`group grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[18px] border px-3 transition-colors ${
           presentationMode === "expanded" ? "py-3.5" : "py-2.5"
         }`}
@@ -269,6 +278,7 @@ const FileRow = React.memo<FileRowProps>(
         }}
         onClick={() => onViewDiff(file)}
         onDoubleClick={() => onOpen?.(file.path)}
+        onKeyDown={handleRowKeyDown}
         title={file.path}
       >
         <span
@@ -703,6 +713,20 @@ export const GitPanel: React.FC<GitPanelProps> = ({
     lastStoreErrorRef.current = git.error;
     notifyGitError(git.error);
   }, [git.error, git.isRepositoryMissing, notifyGitError]);
+
+  useEffect(() => {
+    if (!showBranchDropdown) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setShowBranchDropdown(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [showBranchDropdown]);
 
   const withErrorGuard = useCallback(
     async (action: () => Promise<void>) => {

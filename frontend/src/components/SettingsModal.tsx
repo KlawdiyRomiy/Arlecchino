@@ -25,6 +25,7 @@ import {
   Search,
   Settings,
   Shield,
+  Sparkles,
   Trash2,
   X,
   type LucideIcon,
@@ -63,6 +64,7 @@ import {
   useEditorSettingsStore,
   type AppIconAppearance,
   type CustomFontFaceDefinition,
+  type AIChatSendShortcut,
   type ProjectWindowMode,
 } from "../stores/editorSettingsStore";
 import { useKeybindingsStore } from "../stores/keybindingsStore";
@@ -376,6 +378,23 @@ const mcpApprovalTtlOptions: Array<{
   { value: 3600, label: "60 min" },
 ];
 
+const aiChatSendShortcutOptions: Array<{
+  value: AIChatSendShortcut;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "enter",
+    label: "Enter",
+    description: "Enter sends; Shift+Enter inserts a new line.",
+  },
+  {
+    value: "mod-enter",
+    label: "Cmd+Enter",
+    description: "Enter inserts a new line; Cmd+Enter sends.",
+  },
+];
+
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -393,6 +412,7 @@ const settingsThemeOptions: Array<{
 type TabId =
   | "appearance"
   | "editor"
+  | "ai"
   | "diagnostics"
   | "mcp"
   | "browser-preview"
@@ -416,6 +436,11 @@ interface SettingsSearchEntry {
 const tabs: Tab[] = [
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "editor", label: "Editor", icon: Code2 },
+  {
+    id: "ai",
+    label: "AI",
+    icon: Sparkles,
+  },
   {
     id: "diagnostics",
     label: "Diagnostics",
@@ -581,6 +606,21 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
     label: "Private GitHub release access",
     description: "Save or clear private update access token.",
     keywords: ["github", "token", "release", "updates"],
+  },
+  {
+    id: "ai-chat-send",
+    tab: "ai",
+    label: "AI chat send shortcut",
+    description: "Choose whether Enter or Cmd+Enter sends chat messages.",
+    keywords: ["ai", "chat", "enter", "send", "cmd enter"],
+    suggested: true,
+  },
+  {
+    id: "ai-provider-launch",
+    tab: "ai",
+    label: "Provider launch",
+    description: "Start local AI runtimes from the AI Chat provider popup.",
+    keywords: ["ai", "provider", "model", "llama", "ollama", "byok"],
   },
   {
     id: "mcp-enabled",
@@ -957,6 +997,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     zenModeEnabled,
     projectWindowMode,
     appIconAppearance,
+    aiChatSendShortcut,
     setUiScale,
     setUiFontFamily,
     resetUiFontFamily,
@@ -976,6 +1017,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setZenModeEnabled,
     setProjectWindowMode,
     setAppIconAppearance,
+    setAIChatSendShortcut,
   } = useEditorSettingsStore();
   const {
     autoOpenFromTerminal,
@@ -1928,6 +1970,72 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             No autocomplete capabilities match this filter.
           </div>
         ) : null}
+      </div>
+    </div>
+  );
+
+  const renderAISettings = () => (
+    <div className="mx-auto max-w-3xl space-y-7">
+      <SettingHeader
+        title="AI"
+        description="Configure AI Chat input behavior and local provider launch defaults."
+      />
+
+      <div
+        data-setting-id="ai-chat-send"
+        className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+          "ai-chat-send",
+        )}`}
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-[var(--text-primary)]">
+              Send messages
+            </div>
+            <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+              Choose how the AI Chat composer sends messages. Tab and Shift+Tab
+              cycle Ask, Plan, Build, and Debug.
+            </div>
+          </div>
+          <div
+            role="group"
+            aria-label="AI Chat send shortcut"
+            className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+          >
+            {aiChatSendShortcutOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={aiChatSendShortcut === option.value}
+                title={option.description}
+                onClick={() => setAIChatSendShortcut(option.value)}
+                className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
+                  aiChatSendShortcut === option.value
+                    ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                    : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div
+        data-setting-id="ai-provider-launch"
+        className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+          "ai-provider-launch",
+        )}`}
+      >
+        <div className="text-sm font-semibold text-[var(--text-primary)]">
+          Provider launch
+        </div>
+        <div className="mt-2 text-[12px] leading-5 text-[var(--text-muted)]">
+          Local provider servers are launched from the AI Chat provider popup
+          using loopback endpoints only. Cloud providers stay BYOK and require a
+          configured key before model discovery.
+        </div>
       </div>
     </div>
   );
@@ -3212,6 +3320,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             </div>
                           </div>
                         )}
+
+                        {activeTab === "ai" && renderAISettings()}
 
                         {activeTab === "diagnostics" && (
                           <div className="mx-auto max-w-3xl space-y-7">

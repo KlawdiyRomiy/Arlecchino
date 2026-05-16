@@ -43,6 +43,7 @@ type Service struct {
 	runs         map[string]*AIChatRun
 	runCancels   map[string]context.CancelFunc
 	runDone      map[string]chan struct{}
+	runtimes     *providerRuntimeManager
 	started      bool
 }
 
@@ -52,6 +53,7 @@ type ProjectSession struct {
 	Mnemonic    *mnemonic.Store
 	Skills      *skills.Store
 	Egress      *EgressLedger
+	ChatHistory *ChatHistoryLedger
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -70,6 +72,7 @@ func NewService(options ServiceOptions) *Service {
 		runs:         map[string]*AIChatRun{},
 		runCancels:   map[string]context.CancelFunc{},
 		runDone:      map[string]chan struct{}{},
+		runtimes:     newProviderRuntimeManager(),
 	}
 }
 
@@ -96,6 +99,9 @@ func (s *Service) Start(ctx context.Context) error {
 
 func (s *Service) Close() error {
 	s.waitForRuns(s.cancelRuns(""))
+	if s.runtimes != nil {
+		s.runtimes.stopAll()
+	}
 	s.mu.Lock()
 	s.runCancels = map[string]context.CancelFunc{}
 	s.runDone = map[string]chan struct{}{}
@@ -154,12 +160,19 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 		_ = store.Close()
 		return nil, err
 	}
+	chatHistory, err := openChatHistoryLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
 	project := &ProjectSession{
 		ID:          projectID,
 		ProjectRoot: projectRoot,
 		Mnemonic:    store,
 		Skills:      skillStore,
 		Egress:      ledger,
+		ChatHistory: chatHistory,
 	}
 	s.mu.Lock()
 	if previous := s.projects[projectID]; previous != nil {
@@ -738,7 +751,7 @@ func (s *Service) callProvider(ctx context.Context, project *ProjectSession, des
 		CreatedAt:        utcNow(),
 		Source:           optInSource,
 	}
-	providerCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	providerCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	response, err := provider.Generate(providerCtx, req, nil)
 	record.LatencyMs = time.Since(started).Milliseconds()

@@ -141,6 +141,9 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerationRequest, si
 			"temperature": temperature,
 		},
 	}
+	if len(req.Stop) > 0 {
+		request.Options["stop"] = req.Stop
+	}
 	if request.Stream {
 		return p.generateStreaming(ctx, request, sink)
 	}

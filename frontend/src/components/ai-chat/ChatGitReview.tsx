@@ -14,7 +14,6 @@ import {
   Send,
   X,
 } from "lucide-react";
-import { m, type PanInfo } from "framer-motion";
 import { GetGitDiff } from "../../wails/app";
 import { useGitStore } from "../../stores/gitStore";
 import type { GitFileEntry, GitFileStatus } from "../../utils/git";
@@ -33,7 +32,7 @@ interface ChatGitReviewProps {
   onCommitMessageChange: (value: string) => void;
   onDiffSearchChange: (value: string) => void;
   onExpand: () => void;
-  onMove: (delta: number) => void;
+  onDragStart: (event: React.MouseEvent<HTMLElement>) => void;
   onSearchChange: (value: string) => void;
 }
 
@@ -43,6 +42,11 @@ interface DiffRow {
   newLine?: number;
   content: string;
   match: boolean;
+}
+
+interface DiffStats {
+  additions: number;
+  deletions: number;
 }
 
 const statusLabels: Record<GitFileStatus, string> = {
@@ -121,6 +125,16 @@ const parseDiffRows = (diff: string, query: string): DiffRow[] => {
   });
 };
 
+const diffStats = (rows: DiffRow[]): DiffStats =>
+  rows.reduce(
+    (stats, row) => {
+      if (row.kind === "add") stats.additions += 1;
+      if (row.kind === "delete") stats.deletions += 1;
+      return stats;
+    },
+    { additions: 0, deletions: 0 },
+  );
+
 function GitFileRow({
   file,
   selected,
@@ -157,25 +171,43 @@ function GitFileRow({
   );
 }
 
-function DiffView({ diff, search }: { diff: string; search: string }) {
+function DiffView({
+  diff,
+  file,
+  search,
+}: {
+  diff: string;
+  file: GitFileEntry | null;
+  search: string;
+}) {
   const rows = useMemo(() => parseDiffRows(diff, search), [diff, search]);
+  const stats = useMemo(() => diffStats(rows), [rows]);
 
   if (!diff.trim()) {
     return <div className="ai-chat-git-empty">No changes in this diff.</div>;
   }
 
   return (
-    <div className="ai-chat-diff-view" data-testid="ai-chat-review-diff">
-      {rows.map((row, index) => (
-        <div
-          className={`ai-chat-diff-row is-${row.kind}${row.match ? " is-match" : ""}`}
-          key={`${index}:${row.content}`}
-        >
-          <span className="ai-chat-diff-row__line">{row.oldLine ?? ""}</span>
-          <span className="ai-chat-diff-row__line">{row.newLine ?? ""}</span>
-          <code>{row.content}</code>
-        </div>
-      ))}
+    <div className="ai-chat-diff-shell" data-testid="ai-chat-review-diff">
+      <div className="ai-chat-diff-shell__header">
+        <span className="ai-chat-diff-shell__file" title={file?.path}>
+          {file?.path || "Selected diff"}
+        </span>
+        <span className="ai-chat-diff-stat is-add">+{stats.additions}</span>
+        <span className="ai-chat-diff-stat is-delete">-{stats.deletions}</span>
+      </div>
+      <div className="ai-chat-diff-view">
+        {rows.map((row, index) => (
+          <div
+            className={`ai-chat-diff-row is-${row.kind}${row.match ? " is-match" : ""}`}
+            key={`${index}:${row.content}`}
+          >
+            <span className="ai-chat-diff-row__line">{row.oldLine ?? ""}</span>
+            <span className="ai-chat-diff-row__line">{row.newLine ?? ""}</span>
+            <code>{row.content}</code>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -192,7 +224,7 @@ export function ChatGitReview({
   onCommitMessageChange,
   onDiffSearchChange,
   onExpand,
-  onMove,
+  onDragStart,
   onSearchChange,
 }: ChatGitReviewProps) {
   const storeProjectPath = useGitStore((state) => state.projectPath);
@@ -333,13 +365,6 @@ export function ChatGitReview({
     void navigator.clipboard?.writeText(diff);
   }, [diff]);
 
-  const handleDrag = (
-    _event: MouseEvent | TouchEvent | PointerEvent,
-    info: PanInfo,
-  ) => {
-    onMove(info.delta.x);
-  };
-
   const renderFiles = () => {
     if (!projectPath) {
       return <div className="ai-chat-git-empty">No project open.</div>;
@@ -396,22 +421,20 @@ export function ChatGitReview({
 
   return (
     <aside className="ai-chat-git-review" data-mode={mode}>
-      <div className="ai-chat-side-section__header">
+      <div
+        className="ai-chat-side-section__header"
+        data-ai-chat-drawer-header={canMove ? "true" : undefined}
+        role="group"
+        aria-label="Git review drawer header"
+        onMouseDown={canMove ? onDragStart : undefined}
+      >
         <span>
           <GitBranch size={14} />
           Git Review
           {canMove ? (
-            <m.span
-              className="ai-chat-drawer-grip"
-              drag="x"
-              dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={0}
-              dragMomentum={false}
-              onDrag={handleDrag}
-              title="Move review"
-            >
+            <span className="ai-chat-drawer-grip" title="Move review">
               <GripHorizontal size={13} />
-            </m.span>
+            </span>
           ) : null}
         </span>
         <div className="ai-chat-drawer-actions">
@@ -419,6 +442,7 @@ export function ChatGitReview({
             className="ai-chat-icon-button"
             type="button"
             title={mode === "overlay" ? "Collapse review" : "Expand review"}
+            onMouseDown={(event) => event.stopPropagation()}
             onClick={mode === "overlay" ? onCollapse : onExpand}
           >
             {mode === "overlay" ? (
@@ -431,6 +455,7 @@ export function ChatGitReview({
             className="ai-chat-icon-button"
             type="button"
             title="Close review"
+            onMouseDown={(event) => event.stopPropagation()}
             onClick={onClose}
           >
             <X size={15} />
@@ -508,10 +533,8 @@ export function ChatGitReview({
                 onChange={(event) => onDiffSearchChange(event.target.value)}
               />
             </label>
-            <span className="ai-chat-shell-pill">Unified</span>
-            <span className="ai-chat-shell-pill is-muted">Split</span>
             <button
-              className="ai-chat-secondary-button"
+              className="ai-chat-secondary-button ai-chat-git-action-button"
               type="button"
               disabled={!diff}
               onClick={handleCopyDiff}
@@ -520,7 +543,7 @@ export function ChatGitReview({
               Copy
             </button>
             <button
-              className="ai-chat-secondary-button"
+              className="ai-chat-secondary-button ai-chat-git-action-button"
               type="button"
               disabled={!canCommit}
               onClick={() => void handleCommit()}
@@ -529,7 +552,7 @@ export function ChatGitReview({
               Commit
             </button>
             <button
-              className="ai-chat-secondary-button is-primary"
+              className="ai-chat-secondary-button ai-chat-git-action-button is-primary"
               type="button"
               disabled={!canPush}
               onClick={() => void handlePush()}
@@ -552,7 +575,7 @@ export function ChatGitReview({
               {diffError}
             </div>
           ) : (
-            <DiffView diff={diff} search={diffSearch} />
+            <DiffView diff={diff} file={selectedFile} search={diffSearch} />
           )}
         </div>
       ) : (
@@ -587,7 +610,7 @@ export function ChatGitReview({
         />
         <div className="ai-chat-git-commit__actions">
           <button
-            className="ai-chat-secondary-button"
+            className="ai-chat-secondary-button ai-chat-git-action-button"
             type="button"
             disabled={!canCommit}
             onClick={() => void handleCommit()}
@@ -601,7 +624,7 @@ export function ChatGitReview({
             Commit
           </button>
           <button
-            className="ai-chat-secondary-button is-primary"
+            className="ai-chat-secondary-button ai-chat-git-action-button is-primary"
             type="button"
             disabled={!canPush}
             onClick={() => void handlePush()}

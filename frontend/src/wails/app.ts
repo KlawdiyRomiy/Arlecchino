@@ -67,6 +67,41 @@ interface FileDialogBridge {
   SelectOpenTarget?: (title: string) => Promise<unknown> | unknown;
 }
 
+export interface AIProviderRuntimeModel {
+  id: string;
+  displayName: string;
+  path?: string;
+  source: "active" | "installed" | "cloud" | string;
+  active: boolean;
+  runnable: boolean;
+  reason?: string;
+}
+
+export interface AIProviderRuntimeDescriptor {
+  providerId: string;
+  kind: string;
+  name: string;
+  endpoint?: string;
+  executablePath?: string;
+  running: boolean;
+  managed: boolean;
+  pid?: number;
+  status: "unavailable" | "stopped" | "starting" | "running" | string;
+  reason?: string;
+  activeModel?: string;
+  models: AIProviderRuntimeModel[];
+  logs?: string[];
+}
+
+export interface AIProviderRuntimeStartRequest {
+  providerId: string;
+  kind?: string;
+  endpoint?: string;
+  modelId?: string;
+  modelPath?: string;
+  contextSize?: number;
+}
+
 export type SelectedOpenTargetIntent =
   | { kind: "openProject"; projectPath: string; source?: string }
   | { kind: "openFile"; path: string; line?: number; source?: string };
@@ -151,6 +186,26 @@ const selectOpenTargetMethodNames = [
   "arlecchino.App.SelectOpenTarget",
 ] as const;
 
+const aiListProviderRuntimesMethodNames = [
+  "main.App.AIListProviderRuntimes",
+  "arlecchino.App.AIListProviderRuntimes",
+] as const;
+
+const aiStartProviderRuntimeMethodNames = [
+  "main.App.AIStartProviderRuntime",
+  "arlecchino.App.AIStartProviderRuntime",
+] as const;
+
+const aiStopProviderRuntimeMethodNames = [
+  "main.App.AIStopProviderRuntime",
+  "arlecchino.App.AIStopProviderRuntime",
+] as const;
+
+const aiDeleteChatSessionMethodNames = [
+  "main.App.AIDeleteChatSession",
+  "arlecchino.App.AIDeleteChatSession",
+] as const;
+
 let nativeWindowControlsMethodName:
   | (typeof nativeWindowControlsMethodNames)[number]
   | undefined;
@@ -189,6 +244,18 @@ let projectEntryMoveMethodName:
   | undefined;
 let selectOpenTargetMethodName:
   | (typeof selectOpenTargetMethodNames)[number]
+  | undefined;
+let aiListProviderRuntimesMethodName:
+  | (typeof aiListProviderRuntimesMethodNames)[number]
+  | undefined;
+let aiStartProviderRuntimeMethodName:
+  | (typeof aiStartProviderRuntimeMethodNames)[number]
+  | undefined;
+let aiStopProviderRuntimeMethodName:
+  | (typeof aiStopProviderRuntimeMethodNames)[number]
+  | undefined;
+let aiDeleteChatSessionMethodName:
+  | (typeof aiDeleteChatSessionMethodNames)[number]
   | undefined;
 
 const getNativeWindowControlsBridge = ():
@@ -315,6 +382,39 @@ const callGeneratedBooleanBridgeMethod = async (
   } catch {
     return null;
   }
+};
+
+const callRuntimeBridgeMethod = async <T>(
+  cachedMethodName: string | undefined,
+  setCachedMethodName: (methodName: string | undefined) => void,
+  methodNames: readonly string[],
+  args: unknown[] = [],
+): Promise<T> => {
+  const runtimeModule = await loadRuntimeCallModule();
+  const callByName = runtimeModule?.Call?.ByName;
+  if (!callByName) {
+    throw new Error("Wails runtime bridge is unavailable.");
+  }
+
+  if (cachedMethodName) {
+    try {
+      return (await callByName(cachedMethodName, ...args)) as T;
+    } catch {
+      setCachedMethodName(undefined);
+    }
+  }
+
+  for (const methodName of methodNames) {
+    try {
+      const result = await callByName(methodName, ...args);
+      setCachedMethodName(methodName);
+      return result as T;
+    } catch {
+      // Try the next known Wails v3 service namespace.
+    }
+  }
+
+  throw new Error("Wails runtime method is unavailable.");
 };
 
 export async function SetNativeWindowControlsVisible(
@@ -871,4 +971,57 @@ export async function MoveProjectEntry(
   }
 
   throw new Error("Project entry move bridge is unavailable.");
+}
+
+export async function AIListProviderRuntimes(): Promise<
+  AIProviderRuntimeDescriptor[]
+> {
+  return callRuntimeBridgeMethod<AIProviderRuntimeDescriptor[]>(
+    aiListProviderRuntimesMethodName,
+    (methodName) => {
+      aiListProviderRuntimesMethodName =
+        methodName as (typeof aiListProviderRuntimesMethodNames)[number];
+    },
+    aiListProviderRuntimesMethodNames,
+  );
+}
+
+export async function AIStartProviderRuntime(
+  request: AIProviderRuntimeStartRequest,
+): Promise<AIProviderRuntimeDescriptor> {
+  return callRuntimeBridgeMethod<AIProviderRuntimeDescriptor>(
+    aiStartProviderRuntimeMethodName,
+    (methodName) => {
+      aiStartProviderRuntimeMethodName =
+        methodName as (typeof aiStartProviderRuntimeMethodNames)[number];
+    },
+    aiStartProviderRuntimeMethodNames,
+    [request],
+  );
+}
+
+export async function AIStopProviderRuntime(
+  providerId: string,
+): Promise<AIProviderRuntimeDescriptor> {
+  return callRuntimeBridgeMethod<AIProviderRuntimeDescriptor>(
+    aiStopProviderRuntimeMethodName,
+    (methodName) => {
+      aiStopProviderRuntimeMethodName =
+        methodName as (typeof aiStopProviderRuntimeMethodNames)[number];
+    },
+    aiStopProviderRuntimeMethodNames,
+    [providerId],
+  );
+}
+
+export async function AIDeleteChatSession(sessionId: string): Promise<void> {
+  await callRuntimeBridgeMethod<void>(
+    aiDeleteChatSessionMethodName,
+    (methodName) => {
+      aiDeleteChatSessionMethodName =
+        methodName as (typeof aiDeleteChatSessionMethodNames)[number];
+    },
+    aiDeleteChatSessionMethodNames,
+    [sessionId],
+  );
 }

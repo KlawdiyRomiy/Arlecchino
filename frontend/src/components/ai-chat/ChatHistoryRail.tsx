@@ -1,14 +1,15 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
+  Check,
   Circle,
   GripHorizontal,
   History,
   Loader2,
   MessageSquarePlus,
   Search,
+  Trash2,
   X,
 } from "lucide-react";
-import { m, type PanInfo } from "framer-motion";
 import type {
   AIChatRun,
   AIChatRunEnvelope,
@@ -28,8 +29,9 @@ interface ChatHistoryRailProps {
   runs: AIChatRunEnvelope[];
   searchQuery: string;
   onClose: () => void;
-  onMove: (delta: number) => void;
+  onDragStart: (event: React.MouseEvent<HTMLElement>) => void;
   onNewChat: () => void;
+  onDeleteSession: (sessionId: string) => void;
   onSearchChange: (value: string) => void;
   onSelectSession: (sessionId: string) => void;
 }
@@ -114,11 +116,13 @@ export function ChatHistoryRail({
   runs,
   searchQuery,
   onClose,
-  onMove,
+  onDragStart,
   onNewChat,
+  onDeleteSession,
   onSearchChange,
   onSelectSession,
 }: ChatHistoryRailProps) {
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const groups = useMemo(
     () => buildSessionGroups(runs, hydratedRuns, activeSessionId),
     [activeSessionId, hydratedRuns, runs],
@@ -132,31 +136,22 @@ export function ChatHistoryRail({
         group.subtitle.toLowerCase().includes(query),
     );
   }, [groups, searchQuery]);
-  const handleDrag = (
-    _event: MouseEvent | TouchEvent | PointerEvent,
-    info: PanInfo,
-  ) => {
-    onMove(info.delta.x);
-  };
-
   return (
     <aside className="ai-chat-history-rail">
-      <div className="ai-chat-side-section__header">
+      <div
+        className="ai-chat-side-section__header"
+        data-ai-chat-drawer-header={canMove ? "true" : undefined}
+        role="group"
+        aria-label="History drawer header"
+        onMouseDown={canMove ? onDragStart : undefined}
+      >
         <span>
           <History size={14} />
           History
           {canMove ? (
-            <m.span
-              className="ai-chat-drawer-grip"
-              drag="x"
-              dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={0}
-              dragMomentum={false}
-              onDrag={handleDrag}
-              title="Move history"
-            >
+            <span className="ai-chat-drawer-grip" title="Move history">
               <GripHorizontal size={13} />
-            </m.span>
+            </span>
           ) : null}
         </span>
         <div className="ai-chat-drawer-actions">
@@ -164,6 +159,7 @@ export function ChatHistoryRail({
             className="ai-chat-icon-button"
             type="button"
             title="New chat"
+            onMouseDown={(event) => event.stopPropagation()}
             onClick={onNewChat}
           >
             <MessageSquarePlus size={15} />
@@ -172,6 +168,7 @@ export function ChatHistoryRail({
             className="ai-chat-icon-button"
             type="button"
             title="Close history"
+            onMouseDown={(event) => event.stopPropagation()}
             onClick={onClose}
           >
             <X size={15} />
@@ -192,25 +189,67 @@ export function ChatHistoryRail({
       <div className="ai-chat-history-rail__list">
         {filteredGroups.map((group) => {
           const active = group.id === activeSessionId;
+          const confirming = confirmDeleteId === group.id;
           return (
-            <button
-              className={`ai-chat-history-item${active ? " is-active" : ""}`}
+            <div
+              className={`ai-chat-history-item${active ? " is-active" : ""}${confirming ? " is-confirming" : ""}`}
               key={group.id}
-              type="button"
               title={group.title}
-              onClick={() => onSelectSession(group.id)}
             >
-              <span className="ai-chat-history-item__icon">
-                {statusIcon(group.status)}
-              </span>
-              <span className="ai-chat-history-item__body">
-                <span>{group.title}</span>
-                <small>
-                  {group.subtitle}
-                  {group.count > 1 ? ` · ${group.count} runs` : ""}
-                </small>
-              </span>
-            </button>
+              <button
+                className="ai-chat-history-item__select"
+                type="button"
+                onClick={() => onSelectSession(group.id)}
+              >
+                <span className="ai-chat-history-item__icon">
+                  {statusIcon(group.status)}
+                </span>
+                <span className="ai-chat-history-item__body">
+                  <span>{group.title}</span>
+                  <small>
+                    {group.subtitle}
+                    {group.count > 1 ? ` · ${group.count} runs` : ""}
+                  </small>
+                </span>
+              </button>
+              {confirming ? (
+                <span className="ai-chat-history-item__confirm">
+                  <span>Delete?</span>
+                  <button
+                    type="button"
+                    title="Confirm delete"
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={() => {
+                      setConfirmDeleteId(null);
+                      onDeleteSession(group.id);
+                    }}
+                  >
+                    <Check size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    title="Cancel delete"
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={() => setConfirmDeleteId(null)}
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              ) : (
+                <button
+                  className="ai-chat-history-item__delete"
+                  type="button"
+                  title="Delete chat"
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setConfirmDeleteId(group.id);
+                  }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              )}
+            </div>
           );
         })}
         {filteredGroups.length === 0 ? (

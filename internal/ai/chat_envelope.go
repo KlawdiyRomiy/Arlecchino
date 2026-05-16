@@ -10,16 +10,11 @@ func (s *Service) GetChatRunEnvelope(projectID string, runID string) (AIChatRunE
 	if project == nil {
 		return AIChatRunEnvelope{}, fmt.Errorf("AI project session is not open")
 	}
-	runID = strings.TrimSpace(runID)
-	s.mu.RLock()
-	run := s.runs[runID]
-	if run == nil || run.ProjectSessionID != project.ID {
-		s.mu.RUnlock()
-		return AIChatRunEnvelope{}, fmt.Errorf("chat run %q was not found", runID)
+	run, err := s.GetChatRun(project.ID, runID)
+	if err != nil {
+		return AIChatRunEnvelope{}, err
 	}
-	runCopy := *run
-	s.mu.RUnlock()
-	return s.buildChatRunEnvelope(project, runCopy), nil
+	return s.buildChatRunEnvelope(project, run), nil
 }
 
 func (s *Service) ListChatRuns(projectID string, limit int) ([]AIChatRunEnvelope, error) {
@@ -33,14 +28,28 @@ func (s *Service) ListChatRuns(projectID string, limit int) ([]AIChatRunEnvelope
 	if limit > 200 {
 		limit = 200
 	}
+	runsByID := map[string]AIChatRun{}
+	if project.ChatHistory != nil {
+		persistedRuns, err := project.ChatHistory.List(limit)
+		if err != nil {
+			return nil, err
+		}
+		for _, run := range persistedRuns {
+			run = normalizeLoadedChatRun(project.ID, run)
+			runsByID[run.ID] = run
+		}
+	}
 	s.mu.RLock()
-	runs := []AIChatRun{}
 	for _, run := range s.runs {
 		if run.ProjectSessionID == project.ID {
-			runs = append(runs, *run)
+			runsByID[run.ID] = *run
 		}
 	}
 	s.mu.RUnlock()
+	runs := make([]AIChatRun, 0, len(runsByID))
+	for _, run := range runsByID {
+		runs = append(runs, run)
+	}
 	sortRunsNewestFirst(runs)
 	if len(runs) > limit {
 		runs = runs[:limit]
@@ -54,6 +63,7 @@ func (s *Service) ListChatRuns(projectID string, limit int) ([]AIChatRunEnvelope
 
 func (s *Service) ClearChatRuns(projectID string) error {
 	projectID = normalizeProjectID(projectID)
+	project := s.project(projectID)
 	s.waitForRuns(s.cancelRuns(projectID))
 	s.mu.Lock()
 	for runID, run := range s.runs {
@@ -64,6 +74,53 @@ func (s *Service) ClearChatRuns(projectID string) error {
 		}
 	}
 	s.mu.Unlock()
+	if project != nil && project.ChatHistory != nil {
+		return project.ChatHistory.Clear()
+	}
+	return nil
+}
+
+func (s *Service) DeleteChatSession(projectID string, sessionID string) error {
+	projectID = normalizeProjectID(projectID)
+	sessionID = normalizeChatSessionID(sessionID)
+	project := s.project(projectID)
+	waiters := []runWaiter{}
+
+	s.mu.Lock()
+	for runID, run := range s.runs {
+		if run.ProjectSessionID != projectID || normalizeChatSessionID(run.SessionID) != sessionID {
+			continue
+		}
+		if done := s.runDone[runID]; done != nil {
+			waiters = append(waiters, runWaiter{runID: runID, done: done})
+		}
+		if run.Status == "running" || run.Status == "queued" {
+			run.Status = "canceled"
+			run.CanCancel = false
+			run.UpdatedAt = utcNow()
+		}
+		if cancel := s.runCancels[runID]; cancel != nil {
+			cancel()
+		}
+		delete(s.runCancels, runID)
+	}
+	s.mu.Unlock()
+
+	s.waitForRuns(waiters)
+
+	s.mu.Lock()
+	for runID, run := range s.runs {
+		if run.ProjectSessionID == projectID && normalizeChatSessionID(run.SessionID) == sessionID {
+			delete(s.runs, runID)
+			delete(s.runCancels, runID)
+			delete(s.runDone, runID)
+		}
+	}
+	s.mu.Unlock()
+
+	if project != nil && project.ChatHistory != nil {
+		return project.ChatHistory.DeleteSession(sessionID)
+	}
 	return nil
 }
 

@@ -9,15 +9,29 @@ import React, {
 } from "react";
 import {
   AICancelChatRun,
+  AIDeleteChatSession,
+  AIGetApprovalPolicy,
   AIGetChatRun,
+  AIGetChatRunEnvelope,
+  AIGetConsentPolicy,
   AIGetContextPreview,
+  AIGetEmbeddingStatus,
   AIGetStatus,
+  AIListProviderRuntimes,
+  AIListAgentProfiles,
+  AIListChatActions,
   AIListChatRuns,
   AIListContextProviders,
   AIListEgressRecords,
+  AIListMnemonicEntries,
+  AIListPromptWorkflows,
   AIRefreshLocalProviders,
   AIStartChatRun,
+  AIStartProviderRuntime,
+  AIStopProviderRuntime,
   AITestProvider,
+  type AIProviderRuntimeDescriptor,
+  type AIProviderRuntimeModel,
 } from "../../wails/app";
 import { EventsOn } from "../../wails/runtime";
 import {
@@ -29,6 +43,7 @@ import {
   type AIEgressRecord,
   type AIProviderCapability,
 } from "../../../bindings/arlecchino/internal/ai/models";
+import type { PanelPosition } from "../ui/FloatingPanel";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 import {
   AnimatePresence,
@@ -39,7 +54,9 @@ import {
 } from "framer-motion";
 import { GitBranch, History } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
+import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { useAIChatStore } from "../../stores/aiChatStore";
+import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { AIChatHeader } from "./AIChatHeader";
 import { ChatGitReview } from "./ChatGitReview";
@@ -72,6 +89,9 @@ const initialContext: ContextToggles = {
   skills: true,
 };
 
+type DrawerId = "history" | "review";
+type DrawerSnapEdge = Extract<PanelPosition, "left" | "right">;
+
 const initialState: AIChatUIState = {
   selectedAction: AIChatAction.AIChatActionAsk,
   input: "",
@@ -94,6 +114,8 @@ interface AIChatPanelChromeState {
   historyOpen: boolean;
   reviewOpen: boolean;
   reviewExpanded: boolean;
+  historyEdge: DrawerSnapEdge;
+  reviewEdge: DrawerSnapEdge;
   historyWidth: number;
   reviewWidth: number;
   historyInset: number;
@@ -107,8 +129,9 @@ interface AIChatPanelChromeState {
 
 type AIChatPanelChromeAction =
   | { type: "patch"; value: Partial<AIChatPanelChromeState> }
-  | { type: "moveHistory"; delta: number }
-  | { type: "moveReview"; delta: number }
+  | { type: "openDrawer"; drawer: DrawerId }
+  | { type: "closeDrawer"; drawer: DrawerId }
+  | { type: "snapDrawer"; drawer: DrawerId; edge: DrawerSnapEdge }
   | { type: "resizeHistory"; edge: "start" | "end"; delta: number }
   | { type: "resizeReview"; edge: "start" | "end"; delta: number }
   | { type: "toggleContextPicker" };
@@ -117,6 +140,8 @@ const initialChromeState: AIChatPanelChromeState = {
   historyOpen: false,
   reviewOpen: false,
   reviewExpanded: false,
+  historyEdge: "left",
+  reviewEdge: "right",
   historyWidth: 270,
   reviewWidth: 380,
   historyInset: 12,
@@ -201,16 +226,48 @@ function chromeReducer(
   switch (action.type) {
     case "patch":
       return { ...state, ...action.value };
-    case "moveHistory":
-      return {
+    case "openDrawer": {
+      if (action.drawer === "history") {
+        const nextState = { ...state, historyOpen: true };
+        if (state.reviewOpen && state.reviewEdge === state.historyEdge) {
+          nextState.reviewEdge = oppositeEdge(state.historyEdge);
+        }
+        return nextState;
+      }
+      const nextState = { ...state, reviewOpen: true };
+      if (state.historyOpen && state.historyEdge === state.reviewEdge) {
+        nextState.historyEdge = oppositeEdge(state.reviewEdge);
+      }
+      return nextState;
+    }
+    case "closeDrawer":
+      return action.drawer === "history"
+        ? { ...state, historyOpen: false }
+        : { ...state, reviewOpen: false };
+    case "snapDrawer": {
+      if (action.drawer === "history") {
+        const nextState = {
+          ...state,
+          historyEdge: action.edge,
+          historyInset: 12,
+        };
+        if (state.reviewOpen && state.reviewEdge === action.edge) {
+          nextState.reviewEdge = oppositeEdge(action.edge);
+          nextState.reviewInset = 12;
+        }
+        return nextState;
+      }
+      const nextState = {
         ...state,
-        historyInset: clamp(state.historyInset + action.delta, 12, 520),
+        reviewEdge: action.edge,
+        reviewInset: 12,
       };
-    case "moveReview":
-      return {
-        ...state,
-        reviewInset: clamp(state.reviewInset - action.delta, 12, 520),
-      };
+      if (state.historyOpen && state.historyEdge === action.edge) {
+        nextState.historyEdge = oppositeEdge(action.edge);
+        nextState.historyInset = 12;
+      }
+      return nextState;
+    }
     case "resizeHistory":
       if (action.edge === "start") {
         const nextWidth = clamp(state.historyWidth - action.delta, 220, 440);
@@ -255,6 +312,10 @@ function chromeReducer(
   }
 }
 
+function oppositeEdge(edge: DrawerSnapEdge): DrawerSnapEdge {
+  return edge === "left" ? "right" : "left";
+}
+
 function createChatSessionId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return `chat-${crypto.randomUUID()}`;
@@ -266,6 +327,17 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+async function fallbackOnRuntimeError<T>(
+  request: Promise<T>,
+  fallback: T,
+): Promise<T> {
+  try {
+    return await request;
+  } catch {
+    return fallback;
+  }
+}
+
 function sessionIdOf(run: Pick<AIChatRunEnvelope, "sessionId">): string {
   return run.sessionId?.trim() || defaultChatSessionId;
 }
@@ -273,9 +345,11 @@ function sessionIdOf(run: Pick<AIChatRunEnvelope, "sessionId">): string {
 function buildContextRequest(
   context: ContextToggles,
   activeFile: string,
+  prompt = "",
 ): AIContextRequest {
   return {
     capability: "chat" as AIProviderCapability,
+    prompt,
     filePath: context.currentFile ? activeFile : "",
     includeMnemonic: context.mnemonic,
     includeMCP: context.mcp,
@@ -312,20 +386,35 @@ export function AIChatPanelContent({
       store.getActiveTab(store.activePaneId)?.path ??
       "",
   );
+  const aiChatSendShortcut = useEditorSettingsStore(
+    (store) => store.aiChatSendShortcut,
+  );
   const {
     status,
     providers,
+    actions,
+    agentProfiles,
+    promptWorkflows,
     runs,
     hydratedRuns,
     streamingTextByRunId,
+    egressRecords,
+    mnemonicEntries,
+    approvalPolicy,
+    consentPolicy,
+    embeddingStatus,
     activeRunId,
     contextPreview,
     contextProviders,
     setStatus,
     setProviders,
+    setActions,
+    setAgentProfiles,
+    setPromptWorkflows,
     upsertProvider,
     setRuns,
     upsertRunEnvelope,
+    deleteSessionRuns,
     setHydratedRun,
     appendRunToken,
     setActiveRunId,
@@ -333,6 +422,10 @@ export function AIChatPanelContent({
     setContextProviders,
     setEgressRecords,
     upsertEgressRecord,
+    setMnemonicEntries,
+    setApprovalPolicy,
+    setConsentPolicy,
+    setEmbeddingStatus,
   } = useAIChatStore();
 
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -342,13 +435,32 @@ export function AIChatPanelContent({
   );
   const [loading, setLoading] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [providerRuntimes, setProviderRuntimes] = useState<
+    AIProviderRuntimeDescriptor[]
+  >([]);
+  const [providerRuntimeBusy, setProviderRuntimeBusy] = useState(false);
+  const [providerRuntimeError, setProviderRuntimeError] = useState("");
+  const [drawerDrag, setDrawerDrag] = useState<{
+    drawer: DrawerId;
+    offsetX: number;
+    targetEdge: DrawerSnapEdge | null;
+  } | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
+  const workbenchRef = useRef<HTMLDivElement | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const initialSelectionHydratedRef = useRef(false);
+  const drawerDragRef = useRef<{
+    drawer: DrawerId;
+    startX: number;
+    edge: DrawerSnapEdge;
+    releaseSelectionLock: (() => void) | null;
+  } | null>(null);
   const {
     historyOpen,
     reviewOpen,
     reviewExpanded,
+    historyEdge,
+    reviewEdge,
     historyWidth,
     reviewWidth,
     historyInset,
@@ -412,21 +524,97 @@ export function AIChatPanelContent({
   );
   const messageMaxWidth = presentation === "fullscreen" ? 760 : 560;
 
-  const handleMoveHistory = useCallback(
-    (delta: number) => {
-      if (!fullscreen) return;
-      dispatchChrome({ type: "moveHistory", delta });
+  const detectDrawerSnapEdge = useCallback((clientX: number) => {
+    const rect = workbenchRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const localX = clientX - rect.left;
+    const threshold = Math.min(220, Math.max(96, rect.width * 0.24));
+    if (localX <= threshold) return "left";
+    if (localX >= rect.width - threshold) return "right";
+    return null;
+  }, []);
+
+  const releaseDrawerDrag = useCallback(() => {
+    const activeDrag = drawerDragRef.current;
+    activeDrag?.releaseSelectionLock?.();
+    drawerDragRef.current = null;
+    setDrawerDrag(null);
+    if (activeDrag) {
+      window.dispatchEvent(new CustomEvent("panel-drag-end"));
+    }
+  }, []);
+
+  const handleDrawerDragStart = useCallback(
+    (drawer: DrawerId, event: React.MouseEvent<HTMLElement>) => {
+      if (!fullscreen || event.button !== 0) return;
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("button,input,textarea,select,[data-ai-chat-no-drag]")
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      drawerDragRef.current?.releaseSelectionLock?.();
+      const edge = drawer === "history" ? historyEdge : reviewEdge;
+      drawerDragRef.current = {
+        drawer,
+        startX: event.clientX,
+        edge,
+        releaseSelectionLock: beginDragSelectionLock(),
+      };
+      setDrawerDrag({ drawer, offsetX: 0, targetEdge: edge });
+      window.dispatchEvent(new CustomEvent("panel-drag-start"));
     },
-    [fullscreen],
+    [fullscreen, historyEdge, reviewEdge],
   );
 
-  const handleMoveReview = useCallback(
-    (delta: number) => {
-      if (!fullscreen) return;
-      dispatchChrome({ type: "moveReview", delta });
-    },
-    [fullscreen],
-  );
+  useEffect(() => {
+    if (!drawerDrag) return;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const drag = drawerDragRef.current;
+      if (!drag) return;
+      const targetEdge = detectDrawerSnapEdge(event.clientX);
+      setDrawerDrag({
+        drawer: drag.drawer,
+        offsetX: event.clientX - drag.startX,
+        targetEdge,
+      });
+    };
+
+    const handleMouseUp = (event: MouseEvent) => {
+      const drag = drawerDragRef.current;
+      if (!drag) {
+        releaseDrawerDrag();
+        return;
+      }
+      const targetEdge =
+        detectDrawerSnapEdge(event.clientX) ??
+        (Math.abs(event.clientX - drag.startX) > 80
+          ? event.clientX < drag.startX
+            ? "left"
+            : "right"
+          : drag.edge);
+      dispatchChrome({
+        type: "snapDrawer",
+        drawer: drag.drawer,
+        edge: targetEdge,
+      });
+      releaseDrawerDrag();
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [detectDrawerSnapEdge, drawerDrag, releaseDrawerDrag]);
+
+  useEffect(() => releaseDrawerDrag, [releaseDrawerDrag]);
 
   const handleResizeHistory = useCallback(
     (edge: "start" | "end", delta: number) => {
@@ -448,22 +636,53 @@ export function AIChatPanelContent({
     setLoading(true);
     setRuntimeError(null);
     try {
-      const [nextStatus, envelopes, preview] = await Promise.all([
+      const contextRequest = buildContextRequest(
+        state.context,
+        activeFile || "",
+        state.input,
+      );
+      const [
+        nextStatus,
+        envelopes,
+        preview,
+        nextActions,
+        nextContextProviders,
+        nextEgressRecords,
+        nextAgentProfiles,
+        nextPromptWorkflows,
+        nextConsentPolicy,
+        nextEmbeddingStatus,
+        nextApprovalPolicy,
+        nextMnemonicEntries,
+        nextProviderRuntimes,
+      ] = await Promise.all([
         AIGetStatus(),
-        AIListChatRuns(50),
-        AIGetContextPreview(
-          buildContextRequest(state.context, activeFile || ""),
-        ),
-      ]);
-      const [nextContextProviders, nextEgressRecords] = await Promise.all([
-        AIListContextProviders(),
-        AIListEgressRecords(50),
+        fallbackOnRuntimeError(AIListChatRuns(50), []),
+        fallbackOnRuntimeError(AIGetContextPreview(contextRequest), null),
+        fallbackOnRuntimeError(AIListChatActions(), []),
+        fallbackOnRuntimeError(AIListContextProviders(), []),
+        fallbackOnRuntimeError(AIListEgressRecords(50), []),
+        fallbackOnRuntimeError(AIListAgentProfiles(), []),
+        fallbackOnRuntimeError(AIListPromptWorkflows(), []),
+        fallbackOnRuntimeError(AIGetConsentPolicy(), null),
+        fallbackOnRuntimeError(AIGetEmbeddingStatus(), null),
+        fallbackOnRuntimeError(AIGetApprovalPolicy(), null),
+        fallbackOnRuntimeError(AIListMnemonicEntries(24), []),
+        fallbackOnRuntimeError(AIListProviderRuntimes(), []),
       ]);
       const nextProviders = nextStatus?.providers ?? [];
       setStatus(nextStatus);
       setProviders(nextProviders);
+      setActions(nextActions ?? []);
       setContextProviders(nextContextProviders ?? []);
       setEgressRecords(nextEgressRecords ?? []);
+      setAgentProfiles(nextAgentProfiles ?? []);
+      setPromptWorkflows(nextPromptWorkflows ?? []);
+      setConsentPolicy(nextConsentPolicy ?? null);
+      setEmbeddingStatus(nextEmbeddingStatus ?? null);
+      setApprovalPolicy(nextApprovalPolicy ?? null);
+      setMnemonicEntries(nextMnemonicEntries ?? []);
+      setProviderRuntimes(nextProviderRuntimes ?? []);
       setRuns(envelopes ?? []);
       setContextPreview(preview);
 
@@ -498,11 +717,19 @@ export function AIChatPanelContent({
     setContextPreview,
     setContextProviders,
     setEgressRecords,
+    setActions,
+    setAgentProfiles,
+    setApprovalPolicy,
+    setConsentPolicy,
+    setEmbeddingStatus,
+    setMnemonicEntries,
     setProviders,
+    setPromptWorkflows,
     setRuns,
     setStatus,
     setActiveRunId,
     state.context,
+    state.input,
   ]);
 
   const refreshRuntimeEvent = useEffectEvent(refreshRuntime);
@@ -543,6 +770,15 @@ export function AIChatPanelContent({
     if (!run?.id) return;
     setHydratedRun(run);
     upsertRunEnvelope(envelopeFromRun(run));
+    void AIGetChatRunEnvelope(run.id)
+      .then((envelope) => {
+        if (envelope?.id) {
+          upsertRunEnvelope(envelope);
+        }
+      })
+      .catch(() => {
+        // The run payload is enough to keep the transcript live.
+      });
     setActiveRunId(run.id);
     dispatch({
       type: "setActiveSession",
@@ -616,6 +852,17 @@ export function AIChatPanelContent({
     const offStatus = EventsOn("ai:provider:status", (provider) =>
       handleProviderDescriptor(provider as AIProviderDescriptor),
     );
+    const offRuntime = EventsOn("ai:provider:runtime", (runtime) => {
+      const descriptor = runtime as AIProviderRuntimeDescriptor;
+      if (!descriptor?.providerId) return;
+      setProviderRuntimes((current) => {
+        const next = current.filter(
+          (candidate) => candidate.providerId !== descriptor.providerId,
+        );
+        next.push(descriptor);
+        return next;
+      });
+    });
     const offEgress = EventsOn("ai:chat:egress-recorded", (record) =>
       handleEgressRecord(record as AIEgressRecord),
     );
@@ -627,6 +874,7 @@ export function AIChatPanelContent({
       offToken?.();
       offEnvelope?.();
       offStatus?.();
+      offRuntime?.();
       offEgress?.();
     };
   }, []);
@@ -635,7 +883,10 @@ export function AIChatPanelContent({
     setLoading(true);
     try {
       const discovery = await AIRefreshLocalProviders();
-      const nextStatus = await AIGetStatus();
+      const [nextStatus, nextProviderRuntimes] = await Promise.all([
+        AIGetStatus(),
+        fallbackOnRuntimeError(AIListProviderRuntimes(), []),
+      ]);
       const statusProviders = nextStatus?.providers ?? [];
       const nextProviders =
         statusProviders.length > 0
@@ -643,6 +894,7 @@ export function AIChatPanelContent({
           : (discovery?.providers ?? []);
       setStatus(nextStatus);
       setProviders(nextProviders);
+      setProviderRuntimes(nextProviderRuntimes ?? []);
       const defaultProvider = selectDefaultProvider(
         nextProviders,
         nextStatus?.activeProviderId,
@@ -662,10 +914,10 @@ export function AIChatPanelContent({
 
   const handleRefreshContext = useCallback(async () => {
     const preview = await AIGetContextPreview(
-      buildContextRequest(state.context, activeFile || ""),
+      buildContextRequest(state.context, activeFile || "", state.input),
     );
     setContextPreview(preview);
-  }, [activeFile, setContextPreview, state.context]);
+  }, [activeFile, setContextPreview, state.context, state.input]);
 
   const handleSend = useCallback(async () => {
     if (!canSend || !selectedProvider) return;
@@ -673,23 +925,28 @@ export function AIChatPanelContent({
     const request: AIContextRequest = buildContextRequest(
       state.context,
       activeFile || "",
+      state.input.trim(),
     );
-    const run = await AIStartChatRun({
-      action: state.selectedAction,
-      sessionId: activeSessionId,
-      prompt: state.input.trim(),
-      providerId: selectedProvider.id,
-      model: selectedModel,
-      includeMnemonic: state.context.mnemonic,
-      includeMCP: state.context.mcp,
-      includeSkills: state.context.skills,
-      context: request,
-    });
-    setHydratedRun(run);
-    upsertRunEnvelope(envelopeFromRun(run));
-    setActiveRunId(run.id);
-    dispatch({ type: "setActiveRun", runId: run.id });
-    dispatch({ type: "resetComposer" });
+    try {
+      const run = await AIStartChatRun({
+        action: state.selectedAction,
+        sessionId: activeSessionId,
+        prompt: state.input.trim(),
+        providerId: selectedProvider.id,
+        model: selectedModel,
+        includeMnemonic: state.context.mnemonic,
+        includeMCP: state.context.mcp,
+        includeSkills: state.context.skills,
+        context: request,
+      });
+      setHydratedRun(run);
+      upsertRunEnvelope(envelopeFromRun(run));
+      setActiveRunId(run.id);
+      dispatch({ type: "setActiveRun", runId: run.id });
+      dispatch({ type: "resetComposer" });
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    }
   }, [
     activeFile,
     canSend,
@@ -731,6 +988,39 @@ export function AIChatPanelContent({
     [runs, setActiveRunId],
   );
 
+  const handleDeleteSession = useCallback(
+    async (sessionId: string) => {
+      const normalizedSessionId = sessionId.trim() || defaultChatSessionId;
+      setRuntimeError(null);
+      try {
+        await AIDeleteChatSession(normalizedSessionId);
+        const remainingRuns = runs.filter(
+          (run) => sessionIdOf(run) !== normalizedSessionId,
+        );
+        deleteSessionRuns(normalizedSessionId);
+        if (normalizedSessionId === activeSessionId) {
+          const nextRun = remainingRuns[0];
+          if (nextRun) {
+            setActiveRunId(nextRun.id);
+            dispatch({
+              type: "setActiveSession",
+              sessionId: sessionIdOf(nextRun),
+              runId: nextRun.id,
+            });
+          } else {
+            const nextSessionId = createChatSessionId();
+            setActiveRunId(null);
+            dispatch({ type: "setActiveSession", sessionId: nextSessionId });
+          }
+        }
+        await refreshRuntime();
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [activeSessionId, deleteSessionRuns, refreshRuntime, runs, setActiveRunId],
+  );
+
   const handleProviderSelect = useCallback((provider: AIProviderDescriptor) => {
     if (getProviderDisabledReason(provider)) return;
     dispatch({
@@ -739,6 +1029,67 @@ export function AIChatPanelContent({
       model: provider.models?.[0]?.id ?? "",
     });
   }, []);
+
+  const handleModelSelect = useCallback((modelId: string) => {
+    dispatch({ type: "setModel", model: modelId });
+  }, []);
+
+  const handleStartProviderRuntime = useCallback(
+    async (provider: AIProviderDescriptor, model: AIProviderRuntimeModel) => {
+      setProviderRuntimeBusy(true);
+      setProviderRuntimeError("");
+      try {
+        const runtime = await AIStartProviderRuntime({
+          providerId: provider.id,
+          kind: provider.kind,
+          endpoint: provider.endpoint,
+          modelId: model.id,
+          modelPath: model.path,
+        });
+        setProviderRuntimes((current) => {
+          const next = current.filter(
+            (candidate) => candidate.providerId !== runtime.providerId,
+          );
+          next.push(runtime);
+          return next;
+        });
+        dispatch({ type: "setModel", model: model.id });
+        await handleRefreshProviders();
+      } catch (error) {
+        setProviderRuntimeError(
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        setProviderRuntimeBusy(false);
+      }
+    },
+    [handleRefreshProviders],
+  );
+
+  const handleStopProviderRuntime = useCallback(
+    async (providerId: string) => {
+      setProviderRuntimeBusy(true);
+      setProviderRuntimeError("");
+      try {
+        const runtime = await AIStopProviderRuntime(providerId);
+        setProviderRuntimes((current) => {
+          const next = current.filter(
+            (candidate) => candidate.providerId !== runtime.providerId,
+          );
+          next.push(runtime);
+          return next;
+        });
+        await handleRefreshProviders();
+      } catch (error) {
+        setProviderRuntimeError(
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        setProviderRuntimeBusy(false);
+      }
+    },
+    [handleRefreshProviders],
+  );
 
   const handleTestProvider = useCallback(async () => {
     if (!selectedProvider) return;
@@ -767,17 +1118,17 @@ export function AIChatPanelContent({
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Enter" && event.key !== "Escape") return;
+      if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
       closeTransientPopovers();
     };
 
     document.addEventListener("pointerdown", handlePointerDown, true);
-    document.addEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("keydown", handleKeyDown, true);
     return () => {
       document.removeEventListener("pointerdown", handlePointerDown, true);
-      document.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("keydown", handleKeyDown, true);
     };
   }, [
     closeTransientPopovers,
@@ -797,15 +1148,23 @@ export function AIChatPanelContent({
   return (
     <section ref={panelRef} className={panelClass} data-testid="ai-chat-panel">
       <AIChatHeader
+        agentProfiles={agentProfiles}
+        approvalPolicy={approvalPolicy}
         context={state.context}
         contextProviders={contextProviders}
+        consentPolicy={consentPolicy}
         displayPrefs={state.displayPrefs}
+        egressRecords={egressRecords}
+        embeddingStatus={embeddingStatus}
         loading={loading}
+        mnemonicEntries={mnemonicEntries}
+        promptWorkflows={promptWorkflows}
         providerPopoverOpen={state.providerPopoverOpen}
         providers={sortedProviders}
         selectedProvider={selectedProvider}
         selectedProviderId={selectedProvider?.id ?? ""}
         settingsPopoverOpen={state.settingsPopoverOpen}
+        status={status}
         onContextToggle={(key, value) =>
           dispatch({ type: "setContext", key, value })
         }
@@ -834,22 +1193,36 @@ export function AIChatPanelContent({
       />
 
       <div
+        ref={workbenchRef}
         className="ai-chat-workbench"
         data-presentation={presentation === "fullscreen" ? "expanded" : "panel"}
       >
         <LazyMotion features={domAnimation}>
           <LayoutGroup>
+            {drawerDrag ? (
+              <div className="ai-chat-drawer-snap-zones" aria-hidden="true">
+                <div
+                  className="ai-chat-drawer-snap-zone ai-chat-drawer-snap-zone--left"
+                  data-active={
+                    drawerDrag.targetEdge === "left" ? "true" : "false"
+                  }
+                />
+                <div
+                  className="ai-chat-drawer-snap-zone ai-chat-drawer-snap-zone--right"
+                  data-active={
+                    drawerDrag.targetEdge === "right" ? "true" : "false"
+                  }
+                />
+              </div>
+            ) : null}
             {!historyOpen ? (
               <button
-                className="ai-chat-edge-toggle ai-chat-edge-toggle--left"
+                className={`ai-chat-edge-toggle ai-chat-edge-toggle--${historyEdge}`}
                 data-testid="ai-chat-history-toggle"
                 type="button"
                 title="Open chat history"
                 onClick={() =>
-                  dispatchChrome({
-                    type: "patch",
-                    value: { historyOpen: true },
-                  })
+                  dispatchChrome({ type: "openDrawer", drawer: "history" })
                 }
               >
                 <History size={15} />
@@ -857,12 +1230,12 @@ export function AIChatPanelContent({
             ) : null}
             {!reviewOpen && !reviewExpanded ? (
               <button
-                className="ai-chat-edge-toggle ai-chat-edge-toggle--right"
+                className={`ai-chat-edge-toggle ai-chat-edge-toggle--${reviewEdge}`}
                 data-testid="ai-chat-review-toggle"
                 type="button"
                 title="Open Git Review"
                 onClick={() =>
-                  dispatchChrome({ type: "patch", value: { reviewOpen: true } })
+                  dispatchChrome({ type: "openDrawer", drawer: "review" })
                 }
               >
                 <GitBranch size={15} />
@@ -892,6 +1265,7 @@ export function AIChatPanelContent({
                         key={envelope.id}
                         maxWidth={messageMaxWidth}
                         run={hydratedRuns[envelope.id] ?? null}
+                        streamingText={streamingTextByRunId[envelope.id] ?? ""}
                         onSelect={(runId) => {
                           setActiveRunId(runId);
                           dispatch({ type: "setActiveRun", runId });
@@ -911,9 +1285,13 @@ export function AIChatPanelContent({
                   streamingTextByRunId[activeRunKey] ??
                   ""
                 }
+                approvalPolicy={approvalPolicy}
+                consentPolicy={consentPolicy}
                 contextPreview={contextPreview}
+                embeddingStatus={embeddingStatus}
                 selectedProvider={selectedProvider}
                 selectedProviderReady={selectedProviderReady}
+                workflowCount={promptWorkflows.length}
                 visible={
                   state.displayPrefs.showActivity &&
                   (presentation === "fullscreen" || transcriptRuns.length > 0)
@@ -922,13 +1300,20 @@ export function AIChatPanelContent({
 
               <ChatComposer
                 canSend={canSend}
+                actions={actions}
                 context={state.context}
                 contextPickerOpen={contextPickerOpen}
                 contextProviders={contextProviders}
                 disabledReason={disabledReason}
                 input={state.input}
+                providerRuntimeBusy={providerRuntimeBusy}
+                providerRuntimeError={providerRuntimeError}
+                providerRuntimes={providerRuntimes}
                 running={activeRunRunning}
                 selectedAction={state.selectedAction}
+                selectedModel={selectedModel}
+                selectedProvider={selectedProvider}
+                sendShortcut={aiChatSendShortcut}
                 onActionChange={(action) =>
                   dispatch({ type: "setAction", action })
                 }
@@ -938,7 +1323,11 @@ export function AIChatPanelContent({
                 }
                 onInputChange={(input) => dispatch({ type: "setInput", input })}
                 onRefreshContext={handleRefreshContext}
+                onRefreshProviders={handleRefreshProviders}
                 onSend={handleSend}
+                onSelectModel={handleModelSelect}
+                onStartProviderRuntime={handleStartProviderRuntime}
+                onStopProviderRuntime={handleStopProviderRuntime}
                 onToggleContextPicker={() => {
                   dispatch({ type: "toggleProviderPopover", open: false });
                   dispatch({ type: "toggleSettingsPopover", open: false });
@@ -950,15 +1339,31 @@ export function AIChatPanelContent({
             <AnimatePresence>
               {historyOpen ? (
                 <m.div
-                  className="ai-chat-drawer ai-chat-drawer--left"
+                  className={`ai-chat-drawer ai-chat-drawer--${historyEdge}`}
+                  data-drawer-edge={historyEdge}
+                  data-drawer-dragging={
+                    drawerDrag?.drawer === "history" ? "true" : "false"
+                  }
                   data-testid="ai-chat-history-drawer"
-                  initial={{ x: "-104%", opacity: 0.72 }}
+                  initial={{
+                    x: historyEdge === "left" ? "-104%" : "104%",
+                    opacity: 0.72,
+                  }}
                   animate={{ x: 0, opacity: 1 }}
-                  exit={{ x: "-104%", opacity: 0 }}
+                  exit={{
+                    x: historyEdge === "left" ? "-104%" : "104%",
+                    opacity: 0,
+                  }}
                   layout
                   style={{
                     width: historyWidth,
-                    ...(fullscreen ? { left: historyInset } : {}),
+                    x:
+                      drawerDrag?.drawer === "history" ? drawerDrag.offsetX : 0,
+                    ...(fullscreen
+                      ? historyEdge === "left"
+                        ? { left: historyInset }
+                        : { right: historyInset }
+                      : {}),
                   }}
                   transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                 >
@@ -995,13 +1400,13 @@ export function AIChatPanelContent({
                     runs={runs}
                     searchQuery={historySearch}
                     onClose={() =>
-                      dispatchChrome({
-                        type: "patch",
-                        value: { historyOpen: false },
-                      })
+                      dispatchChrome({ type: "closeDrawer", drawer: "history" })
                     }
-                    onMove={handleMoveHistory}
+                    onDragStart={(event) =>
+                      handleDrawerDragStart("history", event)
+                    }
                     onNewChat={handleNewChat}
+                    onDeleteSession={handleDeleteSession}
                     onSearchChange={(historySearch) =>
                       dispatchChrome({
                         type: "patch",
@@ -1017,15 +1422,30 @@ export function AIChatPanelContent({
             <AnimatePresence>
               {reviewOpen && !reviewExpanded ? (
                 <m.div
-                  className="ai-chat-drawer ai-chat-drawer--right"
+                  className={`ai-chat-drawer ai-chat-drawer--${reviewEdge}`}
+                  data-drawer-edge={reviewEdge}
+                  data-drawer-dragging={
+                    drawerDrag?.drawer === "review" ? "true" : "false"
+                  }
                   data-testid="ai-chat-review-drawer"
-                  initial={{ x: "104%", opacity: 0.72 }}
+                  initial={{
+                    x: reviewEdge === "left" ? "-104%" : "104%",
+                    opacity: 0.72,
+                  }}
                   animate={{ x: 0, opacity: 1 }}
-                  exit={{ x: "104%", opacity: 0 }}
+                  exit={{
+                    x: reviewEdge === "left" ? "-104%" : "104%",
+                    opacity: 0,
+                  }}
                   layout
                   style={{
                     width: reviewWidth,
-                    ...(fullscreen ? { right: reviewInset } : {}),
+                    x: drawerDrag?.drawer === "review" ? drawerDrag.offsetX : 0,
+                    ...(fullscreen
+                      ? reviewEdge === "left"
+                        ? { left: reviewInset }
+                        : { right: reviewInset }
+                      : {}),
                   }}
                   transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
                 >
@@ -1063,10 +1483,7 @@ export function AIChatPanelContent({
                     projectPath={projectPath}
                     searchQuery={reviewSearch}
                     onClose={() =>
-                      dispatchChrome({
-                        type: "patch",
-                        value: { reviewOpen: false },
-                      })
+                      dispatchChrome({ type: "closeDrawer", drawer: "review" })
                     }
                     onCollapse={() =>
                       dispatchChrome({
@@ -1089,7 +1506,9 @@ export function AIChatPanelContent({
                         value: { reviewOpen: false, reviewExpanded: true },
                       });
                     }}
-                    onMove={handleMoveReview}
+                    onDragStart={(event) =>
+                      handleDrawerDragStart("review", event)
+                    }
                     onSearchChange={(reviewSearch) =>
                       dispatchChrome({
                         type: "patch",
@@ -1145,7 +1564,9 @@ export function AIChatPanelContent({
                         value: { reviewExpanded: true },
                       })
                     }
-                    onMove={handleMoveReview}
+                    onDragStart={(event) =>
+                      handleDrawerDragStart("review", event)
+                    }
                     onSearchChange={(reviewSearch) =>
                       dispatchChrome({
                         type: "patch",

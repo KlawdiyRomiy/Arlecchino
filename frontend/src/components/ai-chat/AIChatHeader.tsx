@@ -7,7 +7,17 @@ import {
   Settings,
 } from "lucide-react";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
-import type { AIContextProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/models";
+import type {
+  AIAgentProfileDescriptor,
+  AIApprovalPolicy,
+  AIConsentPolicy,
+  AIContextProviderDescriptor,
+  AIEmbeddingStatus,
+  AIEgressRecord,
+  AIMnemonicEntry,
+  AIPromptWorkflowDescriptor,
+  AIStatus,
+} from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIChatDisplayPrefs, ContextToggles } from "./types";
 import { getProviderPresentation } from "./providerPresentation";
 import { ProviderPopover } from "./ProviderPopover";
@@ -23,6 +33,14 @@ interface AIChatHeaderProps {
   context: ContextToggles;
   displayPrefs: AIChatDisplayPrefs;
   contextProviders: AIContextProviderDescriptor[];
+  status: AIStatus | null;
+  approvalPolicy: AIApprovalPolicy | null;
+  consentPolicy: AIConsentPolicy | null;
+  embeddingStatus: AIEmbeddingStatus | null;
+  egressRecords: AIEgressRecord[];
+  mnemonicEntries: AIMnemonicEntry[];
+  agentProfiles: AIAgentProfileDescriptor[];
+  promptWorkflows: AIPromptWorkflowDescriptor[];
   onNewChat: () => void;
   onRefreshRuntime: () => void;
   onToggleProviderPopover: () => void;
@@ -44,6 +62,14 @@ export function AIChatHeader({
   context,
   displayPrefs,
   contextProviders,
+  status,
+  approvalPolicy,
+  consentPolicy,
+  embeddingStatus,
+  egressRecords,
+  mnemonicEntries,
+  agentProfiles,
+  promptWorkflows,
   onNewChat,
   onRefreshRuntime,
   onToggleProviderPopover,
@@ -121,6 +147,14 @@ export function AIChatHeader({
               context={context}
               contextProviders={contextProviders}
               displayPrefs={displayPrefs}
+              status={status}
+              approvalPolicy={approvalPolicy}
+              consentPolicy={consentPolicy}
+              embeddingStatus={embeddingStatus}
+              egressRecords={egressRecords}
+              mnemonicEntries={mnemonicEntries}
+              agentProfiles={agentProfiles}
+              promptWorkflows={promptWorkflows}
               onContextToggle={onContextToggle}
               onDisplayPrefChange={onDisplayPrefChange}
             />

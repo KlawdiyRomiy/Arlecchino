@@ -156,6 +156,7 @@ type openAIChatRequest struct {
 	Messages    []openAIMessage `json:"messages"`
 	MaxTokens   int             `json:"max_tokens,omitempty"`
 	Temperature float64         `json:"temperature,omitempty"`
+	Stop        []string        `json:"stop,omitempty"`
 	Stream      bool            `json:"stream"`
 }
 
@@ -204,6 +205,7 @@ func (p *OpenAICompatibleProvider) Generate(ctx context.Context, req GenerationR
 		Messages:    messages,
 		MaxTokens:   maxTokens,
 		Temperature: temperature,
+		Stop:        req.Stop,
 		Stream:      req.Stream && sink != nil,
 	}
 	if request.Stream {

@@ -2,10 +2,12 @@ package ai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"arlecchino/internal/ai/mnemonic"
 	"arlecchino/internal/ai/providers"
@@ -14,6 +16,28 @@ import (
 )
 
 const defaultChatSessionID = "default"
+
+var errChatStreamStopped = errors.New("AI chat stream stopped")
+
+var defaultChatStopSequences = []string{
+	"<|im_end|>",
+	"<|im_start|>",
+	"<im_end|>",
+	"<im_start|>",
+	"<|lim_end|>",
+	"<|lim_start|>",
+	"<lim_end|>",
+	"<lim_start|>",
+	"</s>",
+	"\nuser:",
+	"\nassistant:",
+	"\nsystem:",
+	"\nUser:",
+	"\nAssistant:",
+	"\nSystem:",
+	"\nuser intent:",
+	"\nUser intent:",
+}
 
 func (s *Service) StartChatRun(_ context.Context, projectID string, req AIChatRunRequest) (AIChatRun, error) {
 	project := s.project(projectID)
@@ -57,6 +81,7 @@ func (s *Service) StartChatRun(_ context.Context, projectID string, req AIChatRu
 	s.runDone[runID] = done
 	runCopy := *run
 	s.mu.Unlock()
+	s.persistChatRun(runCopy)
 	s.emitEvent("ai:chat:run-started", runCopy)
 	s.emitRunEnvelope(project.ID, runID)
 
@@ -94,6 +119,7 @@ func (s *Service) CancelChatRun(projectID string, runID string) (AIChatRun, erro
 	if run == nil {
 		return AIChatRun{}, fmt.Errorf("chat run %q was not found", runID)
 	}
+	s.persistChatRun(runCopy)
 	s.emitEvent("ai:chat:run-canceled", runCopy)
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
 	return runCopy, nil
@@ -101,14 +127,31 @@ func (s *Service) CancelChatRun(projectID string, runID string) (AIChatRun, erro
 
 func (s *Service) GetChatRun(projectID string, runID string) (AIChatRun, error) {
 	projectID = normalizeProjectID(projectID)
+	project := s.project(projectID)
 	runID = strings.TrimSpace(runID)
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	run := s.runs[runID]
-	if run == nil || run.ProjectSessionID != projectID {
-		return AIChatRun{}, fmt.Errorf("chat run %q was not found", runID)
+	if run != nil && run.ProjectSessionID == projectID {
+		runCopy := *run
+		s.mu.RUnlock()
+		return runCopy, nil
 	}
-	return *run, nil
+	s.mu.RUnlock()
+	if project == nil {
+		return AIChatRun{}, fmt.Errorf("AI project session is not open")
+	}
+	if project.ChatHistory != nil {
+		runs, err := project.ChatHistory.List(0)
+		if err != nil {
+			return AIChatRun{}, err
+		}
+		for _, candidate := range runs {
+			if candidate.ID == runID {
+				return normalizeLoadedChatRun(project.ID, candidate), nil
+			}
+		}
+	}
+	return AIChatRun{}, fmt.Errorf("chat run %q was not found", runID)
 }
 
 func (s *Service) runChat(ctx context.Context, projectID string, runID string, req AIChatRunRequest) {
@@ -151,10 +194,11 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		System:     system,
 		Model:      firstNonEmpty(req.Model, descriptor.DefaultModel),
 		MaxTokens:  req.MaxTokens,
+		Stop:       defaultChatStopSequences,
 		Stream:     true,
 	}
 	if generationReq.MaxTokens <= 0 {
-		generationReq.MaxTokens = 768
+		generationReq.MaxTokens = defaultChatMaxTokens(req.Action)
 	}
 	started := time.Now()
 	requestID := uuid.NewString()
@@ -177,6 +221,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		Source:           "chat_run",
 		ChatAction:       req.Action,
 	}
+	streamGuard := &chatStreamGuard{}
 	response, err := provider.Generate(ctx, generationReq, func(token string) error {
 		if ctx.Err() != nil || s.runIsCanceled(runID) {
 			return context.Canceled
@@ -184,12 +229,14 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		if token == "" {
 			return nil
 		}
-		token = sanitizedDisplayText(token)
-		s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": token})
-		s.updateRun(runID, func(run *AIChatRun) {
-			run.Response += token
-		})
-		return nil
+		displayToken := sanitizedDisplayChunk(token)
+		if displayToken != "" {
+			s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": displayToken})
+			s.updateRun(runID, func(run *AIChatRun) {
+				run.Response += displayToken
+			})
+		}
+		return streamGuard.Observe(token, displayToken)
 	})
 	record.LatencyMs = time.Since(started).Milliseconds()
 	if ctx.Err() != nil || s.runIsCanceled(runID) {
@@ -208,7 +255,8 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		s.finishRunCanceled(runID, record)
 		return
 	}
-	if err != nil {
+	stoppedByGuard := errors.Is(err, errChatStreamStopped)
+	if err != nil && !stoppedByGuard {
 		record.Status = "error"
 		record.ErrorClass = errorClass(err)
 		record.Canceled = ctx.Err() != nil
@@ -246,9 +294,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		s.emitEvent("ai:chat:tool-proposed", map[string]any{"runId": runID, "proposal": proposal})
 	}
 	s.updateRun(runID, func(run *AIChatRun) {
-		if strings.TrimSpace(run.Response) == "" {
-			run.Response = sanitizedDisplayText(response.Text)
-		}
+		run.Response = cleanGeneratedResponse(firstNonEmpty(run.Response, response.Text))
 		run.Status = "completed"
 		run.CanCancel = false
 		run.ProviderID = descriptor.ID
@@ -271,6 +317,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		}
 	}
 	if run, err := s.GetChatRun(projectID, runID); err == nil {
+		s.persistChatRun(run)
 		s.emitEvent("ai:chat:run-completed", run)
 	}
 	s.mu.Lock()
@@ -291,13 +338,14 @@ func (s *Service) markRunDone(runID string) {
 
 func (s *Service) updateRun(runID string, update func(*AIChatRun)) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	run := s.runs[runID]
 	if run == nil {
+		s.mu.Unlock()
 		return
 	}
 	update(run)
 	run.UpdatedAt = utcNow()
+	s.mu.Unlock()
 }
 
 func (s *Service) runIsCanceled(runID string) bool {
@@ -317,11 +365,13 @@ func (s *Service) finishRunError(runID string, message string) {
 	}
 	run.Status = "error"
 	run.Error = message
+	run.Response = cleanGeneratedResponse(run.Response)
 	run.CanCancel = false
 	run.UpdatedAt = utcNow()
 	runCopy := *run
 	delete(s.runCancels, runID)
 	s.mu.Unlock()
+	s.persistChatRun(runCopy)
 	s.emitEvent("ai:chat:run-error", runCopy)
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
 }
@@ -336,16 +386,27 @@ func (s *Service) finishRunCanceled(runID string, record AIEgressRecord) {
 	}
 	shouldEmit := run.Status != "canceled"
 	run.Status = "canceled"
+	run.Response = cleanGeneratedResponse(run.Response)
 	run.CanCancel = false
 	run.EgressRecordID = record.ID
 	run.UpdatedAt = utcNow()
 	runCopy := *run
 	delete(s.runCancels, runID)
 	s.mu.Unlock()
+	s.persistChatRun(runCopy)
 	if shouldEmit {
 		s.emitEvent("ai:chat:run-canceled", runCopy)
 	}
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
+}
+
+func (s *Service) persistChatRun(run AIChatRun) {
+	project := s.project(run.ProjectSessionID)
+	if project == nil || project.ChatHistory == nil {
+		return
+	}
+	run.SessionID = normalizeChatSessionID(run.SessionID)
+	_ = project.ChatHistory.Upsert(run)
 }
 
 func validChatAction(action AIChatAction) bool {
@@ -474,7 +535,7 @@ func hardDenyReasonForProposal(proposal AIToolProposal, projectRoot string) AITo
 
 func summarizeForMnemonic(prompt string, response string) string {
 	prompt = strings.TrimSpace(sanitizedDisplayText(prompt))
-	response = strings.TrimSpace(sanitizedDisplayText(response))
+	response = strings.TrimSpace(cleanGeneratedResponse(response))
 	if len(response) > 700 {
 		response = truncateUTF8(response, 700)
 	}
@@ -492,6 +553,167 @@ func summarizeForMnemonic(prompt string, response string) string {
 }
 
 func sanitizedDisplayText(value string) string {
+	return sanitizeChatDisplayText(value, true)
+}
+
+func sanitizedDisplayChunk(value string) string {
+	return sanitizeChatDisplayText(value, false)
+}
+
+func sanitizeChatDisplayText(value string, trim bool) string {
+	hadStopMarker := containsChatStopMarker(value)
 	value, _ = sanitizeText(value, AIRedactionSummary{})
-	return value
+	value = strings.NewReplacer(
+		"<|im_start|>", "\n",
+		"<|im_end|>", "\n",
+		"<im_start|>", "\n",
+		"<im_end|>", "\n",
+		"<|lim_start|>", "\n",
+		"<|lim_end|>", "\n",
+		"<lim_start|>", "\n",
+		"<lim_end|>", "\n",
+	).Replace(value)
+	lines := strings.Split(value, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.EqualFold(trimmed, "user") || strings.EqualFold(trimmed, "assistant") || strings.EqualFold(trimmed, "system") || strings.EqualFold(trimmed, "intent") {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(trimmed), "intent:") || strings.HasPrefix(strings.ToLower(trimmed), "user intent:") {
+			continue
+		}
+		out = append(out, line)
+	}
+	result := strings.Join(out, "\n")
+	if hadStopMarker && strings.TrimSpace(result) == "" {
+		return ""
+	}
+	if trim {
+		return strings.TrimSpace(result)
+	}
+	return result
+}
+
+func defaultChatMaxTokens(action AIChatAction) int {
+	switch action {
+	case AIChatActionAsk:
+		return 256
+	case AIChatActionPlan:
+		return 512
+	default:
+		return 768
+	}
+}
+
+type chatStreamGuard struct {
+	raw  strings.Builder
+	text strings.Builder
+}
+
+func (g *chatStreamGuard) Observe(rawToken string, displayToken string) error {
+	if rawToken != "" {
+		g.raw.WriteString(rawToken)
+	}
+	if displayToken != "" {
+		g.text.WriteString(displayToken)
+	}
+	if containsChatStopMarker(g.raw.String()) || shouldStopRepeatedGeneratedText(g.text.String()) {
+		return errChatStreamStopped
+	}
+	return nil
+}
+
+func containsChatStopMarker(value string) bool {
+	if value == "" {
+		return false
+	}
+	lower := strings.ToLower(value)
+	for _, marker := range []string{
+		"<|im_end|>",
+		"<|im_start|>",
+		"<im_end|>",
+		"<im_start|>",
+		"<|lim_end|>",
+		"<|lim_start|>",
+		"<lim_end|>",
+		"<lim_start|>",
+		"</s>",
+		"\nuser:",
+		"\nassistant:",
+		"\nsystem:",
+		"\nuser intent:",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldStopRepeatedGeneratedText(value string) bool {
+	segments := generatedTextSegments(value)
+	last := ""
+	for _, segment := range segments {
+		normalized := normalizeGeneratedSegment(segment)
+		if utf8.RuneCountInString(normalized) < 18 {
+			continue
+		}
+		if normalized == last {
+			return true
+		}
+		last = normalized
+	}
+	return false
+}
+
+func cleanGeneratedResponse(value string) string {
+	return collapseRepeatedGeneratedSegments(sanitizedDisplayText(value))
+}
+
+func collapseRepeatedGeneratedSegments(value string) string {
+	segments := generatedTextSegments(value)
+	if len(segments) <= 1 {
+		return strings.TrimSpace(value)
+	}
+	out := make([]string, 0, len(segments))
+	last := ""
+	for _, segment := range segments {
+		normalized := normalizeGeneratedSegment(segment)
+		if utf8.RuneCountInString(normalized) >= 18 && normalized == last {
+			continue
+		}
+		out = append(out, segment)
+		if normalized != "" {
+			last = normalized
+		}
+	}
+	return strings.TrimSpace(strings.Join(out, ""))
+}
+
+func generatedTextSegments(value string) []string {
+	segments := []string{}
+	var current strings.Builder
+	for _, r := range value {
+		current.WriteRune(r)
+		if r == '.' || r == '!' || r == '?' || r == '\n' || r == '。' || r == '！' || r == '？' {
+			segment := strings.TrimSpace(current.String())
+			if segment != "" {
+				segments = append(segments, segment)
+			}
+			current.Reset()
+		}
+	}
+	if tail := strings.TrimSpace(current.String()); tail != "" {
+		segments = append(segments, tail)
+	}
+	return segments
+}
+
+func normalizeGeneratedSegment(value string) string {
+	fields := strings.Fields(strings.ToLower(strings.TrimSpace(value)))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Join(fields, "")
 }

@@ -6,13 +6,31 @@ import {
   Shield,
   SlidersHorizontal,
 } from "lucide-react";
-import type { AIContextProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/models";
+import type {
+  AIAgentProfileDescriptor,
+  AIApprovalPolicy,
+  AIConsentPolicy,
+  AIContextProviderDescriptor,
+  AIEmbeddingStatus,
+  AIEgressRecord,
+  AIMnemonicEntry,
+  AIPromptWorkflowDescriptor,
+  AIStatus,
+} from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIChatDisplayPrefs, ContextToggles } from "./types";
 
 interface SettingsPopoverProps {
   context: ContextToggles;
   displayPrefs: AIChatDisplayPrefs;
   contextProviders: AIContextProviderDescriptor[];
+  status: AIStatus | null;
+  approvalPolicy: AIApprovalPolicy | null;
+  consentPolicy: AIConsentPolicy | null;
+  embeddingStatus: AIEmbeddingStatus | null;
+  egressRecords: AIEgressRecord[];
+  mnemonicEntries: AIMnemonicEntry[];
+  agentProfiles: AIAgentProfileDescriptor[];
+  promptWorkflows: AIPromptWorkflowDescriptor[];
   onContextToggle: (key: keyof ContextToggles, value: boolean) => void;
   onDisplayPrefChange: (key: keyof AIChatDisplayPrefs, value: boolean) => void;
 }
@@ -34,9 +52,19 @@ export function SettingsPopover({
   context,
   displayPrefs,
   contextProviders,
+  status,
+  approvalPolicy,
+  consentPolicy,
+  embeddingStatus,
+  egressRecords,
+  mnemonicEntries,
+  agentProfiles,
+  promptWorkflows,
   onContextToggle,
   onDisplayPrefChange,
 }: SettingsPopoverProps) {
+  const enabledProfiles = agentProfiles.filter((profile) => profile.enabled);
+
   return (
     <div
       className="ai-chat-popover ai-chat-settings-popover"
@@ -114,6 +142,35 @@ export function SettingsPopover({
           </div>
         </div>
       ) : null}
+
+      <div className="ai-chat-popover__section">
+        <div className="ai-chat-popover__title">Backend Runtime</div>
+        <div className="ai-chat-runtime-grid">
+          <span>Approval</span>
+          <strong>{approvalPolicy?.mode || "ask_each_time"}</strong>
+          <span>Consent</span>
+          <strong>
+            {consentPolicy?.localProvidersAccepted
+              ? "local accepted"
+              : "local pending"}
+          </strong>
+          <span>Mnemonic</span>
+          <strong>
+            {status?.mnemonicEnabled ? "enabled" : "disabled"} ·{" "}
+            {mnemonicEntries.length}
+          </strong>
+          <span>Egress ledger</span>
+          <strong>{egressRecords.length}</strong>
+          <span>Workflows</span>
+          <strong>{promptWorkflows.length}</strong>
+          <span>Agent profiles</span>
+          <strong>
+            {enabledProfiles.length}/{agentProfiles.length}
+          </strong>
+          <span>Embeddings</span>
+          <strong>{embeddingStatus?.status || "unknown"}</strong>
+        </div>
+      </div>
     </div>
   );
 }

@@ -31,6 +31,8 @@ type providerDiscoveryEndpoint struct {
 	Endpoint string
 }
 
+const localProviderRequestTimeout = 5 * time.Minute
+
 var providerSpecs = map[string]providerSpec{
 	"ollama": {
 		Kind:            "ollama",
@@ -44,7 +46,7 @@ var providerSpecs = map[string]providerSpec{
 			{ID: "ollama-local", Name: "Ollama", Endpoint: providers.DefaultOllamaEndpoint},
 		},
 		Factory: func(setting providers.AIProviderSettings, _ providerSpec, _ string) providers.Provider {
-			return providers.NewOllamaProvider(setting.ID, setting.Endpoint, setting.Model, setting.Manual, 3*time.Second)
+			return providers.NewOllamaProvider(setting.ID, setting.Endpoint, setting.Model, setting.Manual, localProviderRequestTimeout)
 		},
 	},
 	"lm-studio": {
@@ -127,7 +129,7 @@ func newOpenAICompatibleLocalProvider(setting providers.AIProviderSettings, spec
 		Model:    setting.Model,
 		Manual:   setting.Manual,
 		Local:    true,
-		Timeout:  3 * time.Second,
+		Timeout:  localProviderRequestTimeout,
 	})
 }
 

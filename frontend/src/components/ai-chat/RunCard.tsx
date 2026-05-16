@@ -26,6 +26,7 @@ interface RunCardProps {
   active: boolean;
   compact: boolean;
   maxWidth: number;
+  streamingText: string;
   onSelect: (runId: string) => void;
 }
 
@@ -38,22 +39,87 @@ function StatusIcon({ status }: { status: string }) {
   return <Clock size={15} />;
 }
 
+function normalizeGeneratedSpacing(value: string): string {
+  return value
+    .replace(/(\d+)\.(?=\p{L})/gu, "$1. ")
+    .replace(/([.!?,;:])(?=\p{L})/gu, "$1 ");
+}
+
+function cleanAssistantText(value: string, prompt: string): string {
+  const raw = value.trim();
+  if (!raw) return "";
+  const assistantMarker = /<\|?im_start\|?>\s*assistant/i.exec(raw);
+  const afterAssistant = assistantMarker
+    ? raw.slice(assistantMarker.index + assistantMarker[0].length)
+    : raw;
+  const cleanedLines: string[] = [];
+  for (const line of afterAssistant
+    .replace(/<\|?(?:im|lim)_(?:start|end)\|?>/gi, "\n")
+    .split(/\r?\n/)) {
+    const trimmedLine = line.trimEnd();
+    const semanticLine = trimmedLine.trim();
+    if (/^(user|assistant|system)\s*:?\s*$/i.test(semanticLine)) {
+      continue;
+    }
+    if (/^(?:user\s+)?intent\s*:/i.test(semanticLine)) {
+      continue;
+    }
+    cleanedLines.push(trimmedLine);
+  }
+  const cleaned = cleanedLines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  const normalizedPrompt = prompt.replace(/\s+/g, " ").trim();
+  const normalizedCleaned = cleaned.replace(/\s+/g, " ").trim();
+  if (
+    normalizedPrompt &&
+    (normalizedCleaned === normalizedPrompt ||
+      normalizedCleaned === `User intent: ${normalizedPrompt}`)
+  ) {
+    return "";
+  }
+  return normalizeGeneratedSpacing(
+    cleaned.replace(/^(?:User\s+)?intent:\s*\n?/i, "").trim(),
+  );
+}
+
+function friendlyRunError(value?: string): string {
+  const message = value?.trim() ?? "";
+  if (!message) return "";
+  if (
+    /context deadline exceeded|Client\.Timeout|context cancellation/i.test(
+      message,
+    )
+  ) {
+    return "Local provider timed out before finishing. Restart the server or try a smaller model/context.";
+  }
+  return message;
+}
+
 export function RunCard({
   envelope,
   run,
   active,
   compact,
   maxWidth,
+  streamingText,
   onSelect,
 }: RunCardProps) {
   const action = envelope.action as AIChatAction;
   const meta = getActionMeta(action);
   const prompt = run?.userPrompt || "";
-  const response = run?.response || "";
+  const response = cleanAssistantText(
+    run?.response || streamingText || "",
+    prompt,
+  );
   const provider = run?.providerId || envelope.providerId || "runtime";
   const model = run?.model || envelope.model || "";
   const proposals = run?.toolProposals ?? envelope.toolProposals ?? [];
   const context = run?.contextSummary ?? envelope.contextSummary ?? null;
+  const cardStyle = {
+    "--run-card-width": `${maxWidth}px`,
+  } as React.CSSProperties;
   const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -68,62 +134,68 @@ export function RunCard({
       data-status={envelope.status}
       data-compact={compact ? "true" : "false"}
       role="button"
-      style={{ maxWidth }}
+      style={cardStyle}
       tabIndex={0}
       onClick={() => onSelect(envelope.id)}
       onKeyDown={handleKeyDown}
     >
-      <header className="ai-chat-run-card__header">
-        <span className="ai-chat-run-card__mode">
-          {meta.icon}
-          {meta.label}
-        </span>
-        <span className="ai-chat-run-card__status">
-          <StatusIcon status={envelope.status} />
-          {runStatusLabel(envelope.status)}
-        </span>
-        <time className="ai-chat-run-card__time">
-          {formatRunTime(envelope.createdAt)}
-        </time>
-      </header>
-
       {prompt ? (
-        <p className="ai-chat-run-card__prompt">
-          {compactText(prompt, compact ? 180 : 360)}
-        </p>
-      ) : null}
-      {response ? (
-        <div className="ai-chat-run-card__response">{response}</div>
-      ) : envelope.status === "running" ? (
-        <div className="ai-chat-run-card__response ai-chat-run-card__response--muted">
-          Waiting for runtime tokens&hellip;
+        <div className="ai-chat-message-bubble ai-chat-message-bubble--user">
+          <p className="ai-chat-run-card__prompt">
+            {compactText(prompt, compact ? 180 : 360)}
+          </p>
+          <time className="ai-chat-run-card__time">
+            {formatRunTime(envelope.createdAt)}
+          </time>
         </div>
       ) : null}
+      <div className="ai-chat-message-bubble ai-chat-message-bubble--assistant">
+        <header className="ai-chat-run-card__header">
+          <span className="ai-chat-run-card__mode">
+            {meta.icon}
+            {meta.label}
+          </span>
+          <span className="ai-chat-run-card__status">
+            <StatusIcon status={envelope.status} />
+            {runStatusLabel(envelope.status)}
+          </span>
+        </header>
 
-      <ContextSummary context={context} compact={compact} />
+        {response ? (
+          <div className="ai-chat-run-card__response">{response}</div>
+        ) : envelope.status === "running" ? (
+          <div className="ai-chat-run-card__response ai-chat-run-card__response--muted">
+            Waiting for runtime tokens&hellip;
+          </div>
+        ) : null}
 
-      <div className="ai-chat-run-card__meta">
-        <span>{provider}</span>
-        {model ? <span>{model}</span> : null}
-        {envelope.egressSummary ? (
-          <span>{envelope.egressSummary.status}</span>
+        <ContextSummary context={context} compact={compact} />
+
+        <div className="ai-chat-run-card__meta">
+          <span>{provider}</span>
+          {model ? <span>{model}</span> : null}
+          {envelope.egressSummary ? (
+            <span>{envelope.egressSummary.status}</span>
+          ) : null}
+        </div>
+
+        {proposals.length > 0 ? (
+          <div className="ai-chat-run-card__tools">
+            {proposals.map((proposal) => (
+              <ToolProposalCard
+                key={`${proposal.kind}-${proposal.id || proposal.name}`}
+                proposal={proposal}
+              />
+            ))}
+          </div>
+        ) : null}
+
+        {envelope.error ? (
+          <div className="ai-chat-run-card__error" title={envelope.error}>
+            {friendlyRunError(envelope.error)}
+          </div>
         ) : null}
       </div>
-
-      {proposals.length > 0 ? (
-        <div className="ai-chat-run-card__tools">
-          {proposals.map((proposal) => (
-            <ToolProposalCard
-              key={`${proposal.kind}-${proposal.id || proposal.name}`}
-              proposal={proposal}
-            />
-          ))}
-        </div>
-      ) : null}
-
-      {envelope.error ? (
-        <div className="ai-chat-run-card__error">{envelope.error}</div>
-      ) : null}
     </article>
   );
 }

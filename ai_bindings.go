@@ -152,6 +152,18 @@ func (a *App) AITestProvider(ctx context.Context, providerID string) (ai.AIProvi
 	return a.ensureAIService().TestProvider(ctx, providerID)
 }
 
+func (a *App) AIListProviderRuntimes() ([]ai.AIProviderRuntimeDescriptor, error) {
+	return a.ensureAIService().ListProviderRuntimes(), nil
+}
+
+func (a *App) AIStartProviderRuntime(ctx context.Context, req ai.AIProviderRuntimeStartRequest) (ai.AIProviderRuntimeDescriptor, error) {
+	return a.ensureAIService().StartProviderRuntime(ctx, req)
+}
+
+func (a *App) AIStopProviderRuntime(ctx context.Context, providerID string) (ai.AIProviderRuntimeDescriptor, error) {
+	return a.ensureAIService().StopProviderRuntime(ctx, providerID)
+}
+
 func (a *App) AIGetContextPreview(ctx context.Context, req ai.AIContextRequest) (ai.AIContextSnapshot, error) {
 	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
@@ -222,6 +234,14 @@ func (a *App) AIClearChatRuns(ctx context.Context) error {
 		return err
 	}
 	return a.ensureAIService().ClearChatRuns(sessionID)
+}
+
+func (a *App) AIDeleteChatSession(ctx context.Context, chatSessionID string) error {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return err
+	}
+	return a.ensureAIService().DeleteChatSession(sessionID, chatSessionID)
 }
 
 func (a *App) AIListEgressRecords(ctx context.Context, limit int) ([]ai.AIEgressRecord, error) {

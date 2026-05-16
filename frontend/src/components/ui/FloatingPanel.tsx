@@ -27,6 +27,7 @@ import {
   logicalToScreenPixels,
   screenToLogicalPixels,
 } from "../../utils/logicalViewport";
+import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 import {
   ContextActionMenu,
   type ContextActionMenuItem,
@@ -235,6 +236,7 @@ export const FloatingPanel = React.forwardRef<
     const latestDragTargetRef = useRef<PanelPosition | null>(null);
     const pendingDragTargetRef = useRef<{ x: number; y: number } | null>(null);
     const dragMoveFrameRef = useRef<number | null>(null);
+    const dragSelectionReleaseRef = useRef<(() => void) | null>(null);
     const zenHeaderPointerPinHandledRef = useRef(false);
     const metaKeyPressedRef = useRef(false);
     const resizeFrameRef = useRef<number | null>(null);
@@ -709,6 +711,8 @@ export const FloatingPanel = React.forwardRef<
         latestDragOffsetRef.current = { x: 0, y: 0 };
         latestDragTargetRef.current = null;
         pendingDragTargetRef.current = null;
+        dragSelectionReleaseRef.current?.();
+        dragSelectionReleaseRef.current = beginDragSelectionLock();
         if (dragMoveFrameRef.current !== null) {
           window.cancelAnimationFrame(dragMoveFrameRef.current);
           dragMoveFrameRef.current = null;
@@ -853,6 +857,8 @@ export const FloatingPanel = React.forwardRef<
           dragX.set(0);
           dragY.set(0);
           setIsDragging(false);
+          dragSelectionReleaseRef.current?.();
+          dragSelectionReleaseRef.current = null;
           // Notify snap zones that dragging finished after the final drop state
           // has been calculated, avoiding a one-frame snap-back.
           window.dispatchEvent(new CustomEvent("panel-drag-end"));
@@ -884,6 +890,8 @@ export const FloatingPanel = React.forwardRef<
           document.body.style.cursor = "";
         }
         document.body.style.userSelect = "";
+        dragSelectionReleaseRef.current?.();
+        dragSelectionReleaseRef.current = null;
       };
     }, [
       isDragging,
@@ -1476,6 +1484,13 @@ export const FloatingPanel = React.forwardRef<
     const renderResizeHandle = (edge: string) => (
       <div
         key={edge}
+        role="separator"
+        aria-label={`Resize panel from ${edge}`}
+        aria-orientation={
+          edge.includes("left") || edge.includes("right")
+            ? "vertical"
+            : "horizontal"
+        }
         data-testid={`panel-${id}-resize-${edge}`}
         data-panel-resize-handle="true"
         style={edgeStyle(edge)}
@@ -1546,6 +1561,8 @@ export const FloatingPanel = React.forwardRef<
 
     const panelHeader = (
       <div
+        role="toolbar"
+        aria-label={`${title} panel header`}
         style={headerStyle}
         onPointerDown={handleHeaderPointerDown}
         onMouseDown={handleDragStartInternal}

@@ -206,9 +206,13 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
               const stats = parseCommitStats(commitStats[commit.hash] ?? "");
               return (
                 <div key={commit.hash} className="pb-2 last:pb-0">
-                  <button
-                    type="button"
-                    onClick={() => {
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => void toggleExpand(commit.hash)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
                       void toggleExpand(commit.hash);
                     }}
                     className="group grid w-full grid-cols-[18px_28px_1fr_auto] items-start gap-3 rounded-lg border border-transparent px-2 py-2 text-left transition-colors hover:border-[var(--git-border)] hover:bg-[var(--git-bg-hover)]"
@@ -272,11 +276,12 @@ export const GitHistory: React.FC<GitHistoryProps> = ({
                           onViewDiff?.(commit.hash);
                         }}
                         className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--git-border)] bg-[var(--git-bg-secondary)] px-2.5 text-[11px] text-[var(--git-text-secondary)] transition-colors hover:border-[#ef4444] hover:text-[#ef4444]"
+                        title="View commit diff"
                       >
-                        View
+                        <FileSearch size={12} />
                       </button>
                     </div>
-                  </button>
+                  </div>
 
                   {isExpanded && (
                     <div

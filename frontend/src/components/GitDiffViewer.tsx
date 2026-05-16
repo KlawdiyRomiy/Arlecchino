@@ -44,6 +44,18 @@ const parseDiff = (diffText: string): DiffHunk[] => {
   let oldLine = 0;
   let newLine = 0;
 
+  const ensureMetadataHunk = (): DiffHunk => {
+    if (currentHunk) {
+      return currentHunk;
+    }
+    currentHunk = {
+      header: "File metadata",
+      lines: [],
+    };
+    hunks.push(currentHunk);
+    return currentHunk;
+  };
+
   for (const line of diffText.split("\n")) {
     if (line.startsWith("@@")) {
       const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
@@ -103,7 +115,7 @@ const parseDiff = (diffText: string): DiffHunk[] => {
       line.startsWith("---") ||
       line.startsWith("+++")
     ) {
-      currentHunk.lines.push({ type: "header", content: line });
+      ensureMetadataHunk().lines.push({ type: "header", content: line });
     }
   }
 
@@ -180,7 +192,7 @@ const renderLineCell = (
   if (!line) {
     return (
       <div
-        className="grid min-h-[22px] grid-cols-[46px_minmax(0,1fr)]"
+        className="grid min-h-[20px] grid-cols-[42px_minmax(0,1fr)]"
         style={{ background: "transparent" }}
       >
         <div
@@ -204,7 +216,7 @@ const renderLineCell = (
 
   return (
     <div
-      className="grid min-h-[22px] grid-cols-[46px_minmax(0,1fr)]"
+      className="grid min-h-[20px] grid-cols-[42px_minmax(0,1fr)]"
       style={{
         background: lineAccent(isDark, line.type),
         borderLeft: `2px solid ${lineBorder(line.type)}`,
@@ -320,6 +332,8 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
         onClose();
         return;
       }
@@ -332,9 +346,9 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, true);
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keydown", handleKeyDown, true);
       if (copyTimerRef.current !== null) {
         window.clearTimeout(copyTimerRef.current);
       }
@@ -348,7 +362,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
       className="flex h-full min-h-0 flex-col bg-[var(--git-diff-bg)] text-[var(--git-diff-text)]"
     >
       <div
-        className="flex items-center gap-3 border-b px-4 py-3"
+        className="flex items-center gap-2 border-b px-3 py-2"
         style={{
           borderColor: theme.border,
           background: theme.bgSecondary,
@@ -360,7 +374,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
               type="button"
               onClick={onPrevFile}
               disabled={!hasPrev}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-[14px] border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)] disabled:cursor-not-allowed disabled:opacity-35"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-[10px] border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)] disabled:cursor-not-allowed disabled:opacity-35"
               style={{
                 borderColor: theme.border,
                 background: theme.bgTertiary,
@@ -373,7 +387,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
               type="button"
               onClick={onNextFile}
               disabled={!hasNext}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-[14px] border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)] disabled:cursor-not-allowed disabled:opacity-35"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-[10px] border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)] disabled:cursor-not-allowed disabled:opacity-35"
               style={{
                 borderColor: theme.border,
                 background: theme.bgTertiary,
@@ -395,7 +409,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
         </div>
 
         <div
-          className="inline-flex rounded-[16px] border p-1"
+          className="inline-flex rounded-[12px] border p-0.5"
           style={{ borderColor: theme.border, background: theme.bgTertiary }}
         >
           {(["unified", "split"] as const).map((mode) => (
@@ -403,7 +417,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
               key={mode}
               type="button"
               onClick={() => setViewMode(mode)}
-              className="rounded-[12px] px-3 py-1.5 text-[11px] capitalize transition-colors"
+              className="rounded-[9px] px-2.5 py-1 text-[10px] capitalize transition-colors"
               style={{
                 background:
                   viewMode === mode ? theme.bgSecondary : "transparent",
@@ -418,7 +432,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
         <button
           type="button"
           onClick={copyDiff}
-          className="inline-flex h-8 items-center gap-1 rounded-[14px] border px-3 text-[11px] text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)]"
+          className="inline-flex h-7 items-center gap-1 rounded-[10px] border px-2 text-[10px] text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)]"
           style={{ borderColor: theme.border, background: theme.bgTertiary }}
           title="Copy diff"
         >
@@ -433,7 +447,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
         <button
           type="button"
           onClick={onClose}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-[14px] border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)]"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-[10px] border text-[var(--git-diff-muted)] transition-colors hover:text-[var(--git-diff-text)]"
           style={{ borderColor: theme.border, background: theme.bgTertiary }}
           title="Close diff"
         >
@@ -451,7 +465,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
             {hunks.map((hunk) => (
               <div
                 key={hunk.header}
-                className="overflow-hidden rounded-[20px] border"
+                className="overflow-hidden rounded-[12px] border"
                 style={{
                   borderColor: theme.border,
                   background: theme.bgSecondary,
@@ -461,7 +475,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
                 {hunk.lines.map((line, index) => (
                   <div
                     key={`${hunk.header}:${index}:${line.type}:${line.oldLineNum ?? 0}:${line.newLineNum ?? 0}`}
-                    className="grid min-h-[22px] grid-cols-[46px_46px_minmax(0,1fr)]"
+                    className="grid min-h-[20px] grid-cols-[42px_42px_minmax(0,1fr)]"
                     style={{
                       background: lineAccent(isDark, line.type),
                       borderLeft: `2px solid ${lineBorder(line.type)}`,
@@ -487,7 +501,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
                         ? line.newLineNum
                         : ""}
                     </div>
-                    <div className="overflow-x-auto px-3 py-0.5 font-mono text-[11px] leading-5 text-[var(--git-diff-text)]">
+                    <div className="overflow-x-auto px-2.5 py-0.5 font-mono text-[11px] leading-5 text-[var(--git-diff-text)]">
                       {line.type === "add" && (
                         <span className="mr-2 inline-block w-3 text-center text-[#22c55e]">
                           +
@@ -513,7 +527,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
         ) : (
           <div className="min-w-max px-3 py-3">
             <div
-              className="overflow-hidden rounded-[20px] border"
+              className="overflow-hidden rounded-[12px] border"
               style={{
                 borderColor: theme.border,
                 background: theme.bgSecondary,

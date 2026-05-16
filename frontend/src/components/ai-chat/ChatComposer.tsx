@@ -1,22 +1,45 @@
 import React, { useRef } from "react";
-import { CheckCircle2, Paperclip, Plus, Send, Square } from "lucide-react";
+import { Paperclip, Send, Square } from "lucide-react";
 import type {
   AIChatAction,
+  AIChatActionDescriptor,
   AIContextProviderDescriptor,
 } from "../../../bindings/arlecchino/internal/ai/models";
+import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
+import type { AIChatSendShortcut } from "../../stores/editorSettingsStore";
+import type {
+  AIProviderRuntimeDescriptor,
+  AIProviderRuntimeModel,
+} from "../../wails/app";
+import { ContextPickerMenu } from "./ContextPickerMenu";
 import { getActionMeta, modeOrder } from "./aiChatPresentation";
+import { ModelPicker } from "./ModelPicker";
 import type { ContextToggles } from "./types";
 
 interface ChatComposerProps {
   selectedAction: AIChatAction;
+  actions: AIChatActionDescriptor[];
   input: string;
   canSend: boolean;
   running: boolean;
   disabledReason: string;
+  sendShortcut: AIChatSendShortcut;
+  selectedProvider: AIProviderDescriptor | null;
+  selectedModel: string;
+  providerRuntimes: AIProviderRuntimeDescriptor[];
+  providerRuntimeBusy: boolean;
+  providerRuntimeError: string;
   context: ContextToggles;
   contextProviders: AIContextProviderDescriptor[];
   contextPickerOpen: boolean;
   onActionChange: (action: AIChatAction) => void;
+  onSelectModel: (modelId: string) => void;
+  onRefreshProviders: () => void;
+  onStartProviderRuntime: (
+    provider: AIProviderDescriptor,
+    model: AIProviderRuntimeModel,
+  ) => void;
+  onStopProviderRuntime: (providerId: string) => void;
   onContextToggle: (key: keyof ContextToggles, value: boolean) => void;
   onInputChange: (value: string) => void;
   onRefreshContext: () => void;
@@ -25,25 +48,40 @@ interface ChatComposerProps {
   onCancel: () => void;
 }
 
-const contextRows: Array<{ key: keyof ContextToggles; label: string }> = [
-  { key: "workspace", label: "Workspace" },
-  { key: "currentFile", label: "Current file" },
-  { key: "terminalLogs", label: "Terminal logs" },
-  { key: "mnemonic", label: "Mnemonic" },
-  { key: "mcp", label: "MCP" },
-  { key: "skills", label: "Skills" },
-];
+const actionIndex = (action: AIChatAction): number => {
+  const index = modeOrder.indexOf(action);
+  return index === -1 ? modeOrder.length : index;
+};
+
+const sortActionDescriptors = (
+  descriptors: AIChatActionDescriptor[],
+): AIChatActionDescriptor[] => {
+  const sorted = Array.from(descriptors);
+  sorted.sort((left, right) => actionIndex(left.id) - actionIndex(right.id));
+  return sorted;
+};
 
 export function ChatComposer({
   selectedAction,
+  actions,
   input,
   canSend,
   running,
   disabledReason,
+  sendShortcut,
+  selectedProvider,
+  selectedModel,
+  providerRuntimes,
+  providerRuntimeBusy,
+  providerRuntimeError,
   context,
   contextProviders,
   contextPickerOpen,
   onActionChange,
+  onSelectModel,
+  onRefreshProviders,
+  onStartProviderRuntime,
+  onStopProviderRuntime,
   onContextToggle,
   onInputChange,
   onRefreshContext,
@@ -52,6 +90,23 @@ export function ChatComposer({
   onCancel,
 }: ChatComposerProps) {
   const modeButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const actionDescriptors =
+    actions.length > 0
+      ? sortActionDescriptors(actions)
+      : modeOrder.map(
+          (action) =>
+            ({
+              id: action,
+              name: getActionMeta(action).label,
+              description: getActionMeta(action).description,
+              builtIn: true,
+              mayProposeTools: action === "build",
+              expectsToolProposals: action === "build",
+              readOnlyIntent: action !== "build",
+              showPlanStructure: action === "plan",
+              executionUnavailable: action === "build",
+            }) as AIChatActionDescriptor,
+        );
 
   const handleModeKeyDown = (
     event: React.KeyboardEvent<HTMLButtonElement>,
@@ -61,10 +116,57 @@ export function ChatComposer({
 
     event.preventDefault();
     const direction = event.shiftKey ? -1 : 1;
-    const nextIndex = (index + direction + modeOrder.length) % modeOrder.length;
-    const nextAction = modeOrder[nextIndex];
+    const nextIndex =
+      (index + direction + actionDescriptors.length) % actionDescriptors.length;
+    const nextAction = actionDescriptors[nextIndex]?.id;
+    if (!nextAction) return;
     onActionChange(nextAction);
     modeButtonRefs.current[nextIndex]?.focus();
+  };
+
+  const cycleMode = (direction: 1 | -1) => {
+    const currentIndex = actionDescriptors.findIndex(
+      (descriptor) => descriptor.id === selectedAction,
+    );
+    const baseIndex = currentIndex === -1 ? 0 : currentIndex;
+    const nextIndex =
+      (baseIndex + direction + actionDescriptors.length) %
+      actionDescriptors.length;
+    const nextAction = actionDescriptors[nextIndex]?.id;
+    if (nextAction) {
+      onActionChange(nextAction);
+    }
+  };
+
+  const handleComposerKeyDown = (
+    event: React.KeyboardEvent<HTMLTextAreaElement>,
+  ) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (running) {
+        onCancel();
+        return;
+      }
+      if (input) {
+        onInputChange("");
+      }
+      return;
+    }
+    if (event.key === "Tab") {
+      event.preventDefault();
+      cycleMode(event.shiftKey ? -1 : 1);
+      return;
+    }
+    if (event.key !== "Enter") return;
+    if (event.shiftKey) return;
+    const modPressed = event.metaKey || event.ctrlKey;
+    const shouldSend =
+      sendShortcut === "enter"
+        ? !event.altKey && !modPressed
+        : modPressed && !event.altKey;
+    if (!shouldSend) return;
+    event.preventDefault();
+    if (canSend) onSend();
   };
 
   return (
@@ -74,93 +176,36 @@ export function ChatComposer({
         role="tablist"
         aria-label="AI chat mode"
       >
-        {modeOrder.map((action, index) => {
-          const meta = getActionMeta(action);
-          const selected = selectedAction === action;
+        {actionDescriptors.map((descriptor, index) => {
+          const meta = getActionMeta(descriptor.id);
+          const selected = selectedAction === descriptor.id;
           return (
             <button
-              key={action}
+              key={descriptor.id}
               className={`ai-chat-mode-button ai-chat-tone-${meta.tone}${selected ? " is-selected" : ""}`}
-              data-testid={`ai-chat-mode-${meta.label.toLowerCase()}`}
+              data-testid={`ai-chat-mode-${(descriptor.name || meta.label).toLowerCase()}`}
               type="button"
               aria-selected={selected}
               ref={(element) => {
                 modeButtonRefs.current[index] = element;
               }}
               role="tab"
-              title={meta.description}
-              onClick={() => onActionChange(action)}
+              title={descriptor.description || meta.description}
+              onClick={() => onActionChange(descriptor.id)}
               onKeyDown={(event) => handleModeKeyDown(event, index)}
             >
               {meta.icon}
-              {meta.label}
+              {descriptor.name || meta.label}
             </button>
           );
         })}
-        <div className="ai-chat-context-menu" data-ai-chat-popover-scope>
-          <button
-            className={`ai-chat-mode-button ai-chat-add-button${contextPickerOpen ? " is-selected" : ""}`}
-            data-testid="ai-chat-context-picker-button"
-            type="button"
-            aria-expanded={contextPickerOpen}
-            title="Add agent or skill context"
-            onClick={onToggleContextPicker}
-          >
-            <Plus size={15} />
-            Add
-          </button>
-          {contextPickerOpen ? (
-            <div
-              className="ai-chat-popover ai-chat-context-picker"
-              data-testid="ai-chat-context-picker"
-            >
-              <div className="ai-chat-popover__title">Add context</div>
-              <div className="ai-chat-context-picker__toggles">
-                {contextRows.map((row) => (
-                  <label className="ai-chat-toggle-row" key={row.key}>
-                    <span>{row.label}</span>
-                    <input
-                      checked={context[row.key]}
-                      type="checkbox"
-                      onChange={(event) =>
-                        onContextToggle(row.key, event.target.checked)
-                      }
-                    />
-                  </label>
-                ))}
-              </div>
-              {contextProviders.length > 0 ? (
-                <div className="ai-chat-popover__section">
-                  <div className="ai-chat-popover__title">
-                    Runtime providers
-                  </div>
-                  <div className="ai-chat-context-provider-list">
-                    {contextProviders.map((provider) => (
-                      <span
-                        className="ai-chat-context-provider"
-                        key={provider.id}
-                        title={provider.description}
-                      >
-                        <span
-                          className={`ai-chat-context-provider__dot is-${
-                            provider.enabled && provider.available
-                              ? "ready"
-                              : "disabled"
-                          }`}
-                        />
-                        {provider.name || provider.id}
-                        {provider.id === "skills" ||
-                        provider.name === "Skills" ? (
-                          <CheckCircle2 size={12} />
-                        ) : null}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
+        <ContextPickerMenu
+          context={context}
+          contextProviders={contextProviders}
+          open={contextPickerOpen}
+          onContextToggle={onContextToggle}
+          onToggle={onToggleContextPicker}
+        />
       </div>
 
       <div className="ai-chat-composer__box">
@@ -171,12 +216,18 @@ export function ChatComposer({
           rows={3}
           value={input}
           onChange={(event) => onInputChange(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              if (canSend) onSend();
-            }
-          }}
+          onKeyDown={handleComposerKeyDown}
+        />
+        <ModelPicker
+          providerRuntimeBusy={providerRuntimeBusy}
+          providerRuntimeError={providerRuntimeError}
+          providerRuntimes={providerRuntimes}
+          selectedModel={selectedModel}
+          selectedProvider={selectedProvider}
+          onRefreshProviders={onRefreshProviders}
+          onSelectModel={onSelectModel}
+          onStartProviderRuntime={onStartProviderRuntime}
+          onStopProviderRuntime={onStopProviderRuntime}
         />
         <div className="ai-chat-composer__controls">
           <span className="ai-chat-composer__reason">{disabledReason}</span>

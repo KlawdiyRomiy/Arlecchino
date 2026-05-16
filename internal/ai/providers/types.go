@@ -84,6 +84,7 @@ type GenerationRequest struct {
 	Model       string               `json:"model,omitempty"`
 	MaxTokens   int                  `json:"maxTokens,omitempty"`
 	Temperature float64              `json:"temperature,omitempty"`
+	Stop        []string             `json:"stop,omitempty"`
 	Stream      bool                 `json:"stream,omitempty"`
 }
 
