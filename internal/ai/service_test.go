@@ -585,6 +585,33 @@ func containsPromptWorkflow(workflows []AIPromptWorkflowDescriptor, slash string
 	return false
 }
 
+func hasArtifactKind(artifacts []AIChatRunArtifact, kind AIChatRunArtifactKind) bool {
+	for _, artifact := range artifacts {
+		if artifact.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func hasContextItem(items []AIContextItemDisclosure, kind AIContextItemKind, included bool) bool {
+	for _, item := range items {
+		if item.Kind == kind && item.Included == included {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSnippetType(snippets []AIContextSnippet, typ string) bool {
+	for _, snippet := range snippets {
+		if snippet.Type == typ {
+			return true
+		}
+	}
+	return false
+}
+
 func TestApprovalPolicyDefaultRevokeAndNoProviderEgressGrant(t *testing.T) {
 	service := newTestService(t, nil)
 	project, err := service.OpenProject("main", t.TempDir())
@@ -661,6 +688,7 @@ func TestConsentPolicyKeepsRemoteAndFrontierBlocked(t *testing.T) {
 
 func TestChatRunEnvelopeIsMetadataOnly(t *testing.T) {
 	service := newTestService(t, nil)
+	defer service.Close()
 	if _, err := service.OpenProject("main", t.TempDir()); err != nil {
 		t.Fatalf("OpenProject: %v", err)
 	}
@@ -692,6 +720,267 @@ func TestChatRunEnvelopeIsMetadataOnly(t *testing.T) {
 	}
 	if envelope.ContextSummary == nil || envelope.ProviderEnvelope == nil || envelope.EgressSummary == nil {
 		t.Fatalf("envelope missing metadata summaries: %#v", envelope)
+	}
+	if envelope.Revision <= run.Revision {
+		t.Fatalf("envelope revision did not advance: start=%d final=%d", run.Revision, envelope.Revision)
+	}
+}
+
+func TestChatRunArtifactsAreLazyAndMetadataScoped(t *testing.T) {
+	service := newTestService(t, nil)
+	defer service.Close()
+	if _, err := service.OpenProject("main", t.TempDir()); err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	run, err := service.StartChatRun(context.Background(), "main", AIChatRunRequest{
+		Action: AIChatActionBuild,
+		Prompt: "build with api_key=abc123456789",
+		Context: AIContextRequest{
+			FilePath: "/Users/tester/project/main.go",
+			FullText: "const secret = \"do-not-bridge-this\"",
+		},
+	})
+	if err != nil {
+		t.Fatalf("StartChatRun: %v", err)
+	}
+	final := waitForRunStatus(t, service, run.ID)
+	if final.Status != "completed" {
+		t.Fatalf("final run = %#v", final)
+	}
+	artifacts, err := service.ListChatRunArtifacts("main", run.ID)
+	if err != nil {
+		t.Fatalf("ListChatRunArtifacts: %v", err)
+	}
+	if !hasArtifactKind(artifacts, AIChatRunArtifactContext) {
+		t.Fatalf("context artifact missing: %#v", artifacts)
+	}
+	if !hasArtifactKind(artifacts, AIChatRunArtifactEgress) {
+		t.Fatalf("egress artifact missing: %#v", artifacts)
+	}
+	if !hasArtifactKind(artifacts, AIChatRunArtifactToolProposal) {
+		t.Fatalf("tool proposal artifact missing: %#v", artifacts)
+	}
+	encoded, _ := json.Marshal(artifacts)
+	value := string(encoded)
+	for _, forbidden := range []string{"abc123456789", "do-not-bridge-this", "/Users/tester/project"} {
+		if strings.Contains(value, forbidden) {
+			t.Fatalf("artifact leaked %q: %s", forbidden, value)
+		}
+	}
+}
+
+func TestPatchArtifactApplyAndRollback(t *testing.T) {
+	service := newTestService(t, nil)
+	defer service.Close()
+	projectRoot := t.TempDir()
+	filePath := filepath.Join(projectRoot, "src", "example.txt")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("before\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := service.OpenProject("main", projectRoot); err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	run, err := service.StartChatRun(context.Background(), "main", AIChatRunRequest{
+		Action: AIChatActionBuild,
+		Prompt: "patch example",
+	})
+	if err != nil {
+		t.Fatalf("StartChatRun: %v", err)
+	}
+	if final := waitForRunStatus(t, service, run.ID); final.Status != "completed" {
+		t.Fatalf("final run = %#v", final)
+	}
+	diff := strings.TrimSpace(`
+diff --git a/src/example.txt b/src/example.txt
+--- a/src/example.txt
++++ b/src/example.txt
+@@ -1 +1 @@
+-before
++after
+`)
+	preview, err := service.PreviewPatch("main", AIPatchPreviewRequest{
+		RunID:       run.ID,
+		Title:       "Update example",
+		UnifiedDiff: diff,
+	})
+	if err != nil {
+		t.Fatalf("PreviewPatch: %v", err)
+	}
+	if preview.Artifact.Kind != AIChatRunArtifactPatchPreview || preview.Artifact.Status != "ready" {
+		t.Fatalf("preview artifact = %#v", preview.Artifact)
+	}
+	if len(preview.Payload.Files) != 1 || preview.Payload.Files[0].OriginalHash == "" {
+		t.Fatalf("preview payload files = %#v", preview.Payload.Files)
+	}
+	applyResult, err := service.ApplyPatchArtifact("main", AIPatchApplyRequest{ArtifactID: preview.Artifact.ID})
+	if err != nil {
+		t.Fatalf("ApplyPatchArtifact: %v", err)
+	}
+	if applyResult.Status != "applied" || len(applyResult.CheckpointIDs) != 1 {
+		t.Fatalf("apply result = %#v", applyResult)
+	}
+	updated, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile after apply: %v", err)
+	}
+	if string(updated) != "after\n" {
+		t.Fatalf("file after apply = %q", string(updated))
+	}
+	rollback, err := service.RollbackPatchCheckpoint("main", AIPatchRollbackRequest{CheckpointID: applyResult.CheckpointIDs[0]})
+	if err != nil {
+		t.Fatalf("RollbackPatchCheckpoint: %v", err)
+	}
+	if rollback.Status != "rolled_back" || rollback.Path != "src/example.txt" {
+		t.Fatalf("rollback = %#v", rollback)
+	}
+	restored, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile after rollback: %v", err)
+	}
+	if string(restored) != "before\n" {
+		t.Fatalf("file after rollback = %q", string(restored))
+	}
+	rolledBackArtifact, err := service.GetChatRunArtifact("main", preview.Artifact.ID)
+	if err != nil {
+		t.Fatalf("GetChatRunArtifact: %v", err)
+	}
+	if rolledBackArtifact.Status != "rolled_back" {
+		t.Fatalf("artifact after rollback = %#v", rolledBackArtifact)
+	}
+}
+
+func TestBuildRunExtractsPatchArtifact(t *testing.T) {
+	service := newTestService(t, nil)
+	defer service.Close()
+	descriptor := service.descriptors["local-test"]
+	service.providers[descriptor.ID] = fakeProvider{
+		descriptor: descriptor,
+		text: strings.TrimSpace("Here is the change:\n\n```diff\n" +
+			"diff --git a/src/example.txt b/src/example.txt\n" +
+			"--- a/src/example.txt\n" +
+			"+++ b/src/example.txt\n" +
+			"@@ -1 +1 @@\n" +
+			"-before\n" +
+			"+after\n" +
+			"```\n"),
+	}
+	projectRoot := t.TempDir()
+	filePath := filepath.Join(projectRoot, "src", "example.txt")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("before\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := service.OpenProject("main", projectRoot); err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	run, err := service.StartChatRun(context.Background(), "main", AIChatRunRequest{
+		Action: AIChatActionBuild,
+		Prompt: "change example",
+	})
+	if err != nil {
+		t.Fatalf("StartChatRun: %v", err)
+	}
+	if final := waitForRunStatus(t, service, run.ID); final.Status != "completed" {
+		t.Fatalf("final run = %#v", final)
+	}
+	artifacts, err := service.ListChatRunArtifacts("main", run.ID)
+	if err != nil {
+		t.Fatalf("ListChatRunArtifacts: %v", err)
+	}
+	if !hasArtifactKind(artifacts, AIChatRunArtifactPatchPreview) {
+		t.Fatalf("patch preview artifact missing: %#v", artifacts)
+	}
+}
+
+func TestPatchArtifactBlocksStaleAndUnsafeTargets(t *testing.T) {
+	service := newTestService(t, nil)
+	defer service.Close()
+	projectRoot := t.TempDir()
+	filePath := filepath.Join(projectRoot, "src", "example.txt")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("before\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := service.OpenProject("main", projectRoot); err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	run, err := service.StartChatRun(context.Background(), "main", AIChatRunRequest{
+		Action: AIChatActionBuild,
+		Prompt: "patch example",
+	})
+	if err != nil {
+		t.Fatalf("StartChatRun: %v", err)
+	}
+	if final := waitForRunStatus(t, service, run.ID); final.Status != "completed" {
+		t.Fatalf("final run = %#v", final)
+	}
+	diff := strings.TrimSpace(`
+diff --git a/src/example.txt b/src/example.txt
+--- a/src/example.txt
++++ b/src/example.txt
+@@ -1 +1 @@
+-before
++after
+`)
+	preview, err := service.PreviewPatch("main", AIPatchPreviewRequest{RunID: run.ID, UnifiedDiff: diff})
+	if err != nil {
+		t.Fatalf("PreviewPatch: %v", err)
+	}
+	if err := os.WriteFile(filePath, []byte("changed\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile stale target: %v", err)
+	}
+	if _, err := service.ApplyPatchArtifact("main", AIPatchApplyRequest{ArtifactID: preview.Artifact.ID}); err == nil {
+		t.Fatal("stale patch target was applied")
+	}
+	unsafeDiff := strings.TrimSpace(`
+diff --git a/../outside.txt b/../outside.txt
+--- a/../outside.txt
++++ b/../outside.txt
+@@ -1 +1 @@
+-before
++after
+`)
+	if _, err := service.PreviewPatch("main", AIPatchPreviewRequest{RunID: run.ID, UnifiedDiff: unsafeDiff}); err == nil {
+		t.Fatal("unsafe patch path was accepted")
+	}
+}
+
+func TestContextPreviewReportsDisclosureItems(t *testing.T) {
+	service := newTestService(t, nil)
+	defer service.Close()
+	if _, err := service.OpenProject("main", t.TempDir()); err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	snapshot, err := service.ContextPreview("main", AIContextRequest{
+		Prompt:        "explain",
+		FilePath:      "/Users/tester/project/main.go",
+		FullText:      "package main",
+		TerminalInput: "TOKEN=abc123456789",
+		ContextItems: []AIContextItemRequest{
+			{Kind: AIContextItemKindGitDiff, Label: "Git diff", Source: "test"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ContextPreview: %v", err)
+	}
+	if !hasContextItem(snapshot.ContextItems, AIContextItemKindFile, true) {
+		t.Fatalf("file context item missing: %#v", snapshot.ContextItems)
+	}
+	if !hasContextItem(snapshot.ContextItems, AIContextItemKindTerminal, true) {
+		t.Fatalf("terminal context item missing: %#v", snapshot.ContextItems)
+	}
+	if !hasContextItem(snapshot.ContextItems, AIContextItemKindGitDiff, false) {
+		t.Fatalf("requested git diff item missing: %#v", snapshot.ContextItems)
+	}
+	if snapshot.Redaction.SecretsRedacted == 0 || snapshot.Redaction.PathsRedacted == 0 {
+		t.Fatalf("redaction summary = %#v", snapshot.Redaction)
 	}
 }
 
@@ -739,6 +1028,7 @@ func TestChatContextReadyEventUsesSummaryOnly(t *testing.T) {
 func TestChatCancelIsTerminalAndSingleEvent(t *testing.T) {
 	events := &eventLog{}
 	service := newTestService(t, events.emit)
+	defer service.Close()
 	descriptor := service.descriptors["local-test"]
 	provider := &blockingProvider{descriptor: descriptor, started: make(chan struct{})}
 	service.providers[descriptor.ID] = provider
@@ -779,6 +1069,7 @@ func TestChatCancelIsTerminalAndSingleEvent(t *testing.T) {
 
 func TestChatRunAccessIsProjectScoped(t *testing.T) {
 	service := newTestService(t, nil)
+	defer service.Close()
 	if _, err := service.OpenProject("a", t.TempDir()); err != nil {
 		t.Fatalf("OpenProject a: %v", err)
 	}
@@ -839,6 +1130,100 @@ func TestToolProposalEvaluatorAppliesHardDeny(t *testing.T) {
 	}
 }
 
+func TestToolGatewayAuditsPreviewAndExecution(t *testing.T) {
+	service := newTestService(t, nil)
+	defer service.Close()
+	projectRoot := t.TempDir()
+	if _, err := service.OpenProject("main", projectRoot); err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	preview, err := service.ExecuteToolCall(context.Background(), "main", AIToolCallRequest{
+		ToolID: "terminal.preview",
+		Action: AIToolCallActionPreview,
+		Arguments: map[string]string{
+			"command": "printf ok",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteToolCall preview: %v", err)
+	}
+	if preview.Status != "previewed" || preview.OutputPreview != "printf ok" {
+		t.Fatalf("preview = %#v", preview)
+	}
+	blocked, err := service.ExecuteToolCall(context.Background(), "main", AIToolCallRequest{
+		ToolID: "terminal.preview",
+		Action: AIToolCallActionExecute,
+		Arguments: map[string]string{
+			"command": "rm -rf .",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteToolCall blocked: %v", err)
+	}
+	if blocked.Status != "blocked" || blocked.Audit.HardDenyReason != AIToolHardDenyReasonDestructiveShell {
+		t.Fatalf("blocked = %#v", blocked)
+	}
+	_, err = service.SaveApprovalPolicy("main", AIApprovalPolicy{
+		Mode:             AIApprovalModeFullAccess,
+		AllowedToolKinds: []AIToolKind{AIToolKindTerminal},
+	})
+	if err != nil {
+		t.Fatalf("SaveApprovalPolicy: %v", err)
+	}
+	executed, err := service.ExecuteToolCall(context.Background(), "main", AIToolCallRequest{
+		ToolID: "terminal.preview",
+		Action: AIToolCallActionExecute,
+		Arguments: map[string]string{
+			"command": "printf ok",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteToolCall execute: %v", err)
+	}
+	if executed.Status != "executed" || executed.OutputPreview != "ok" {
+		t.Fatalf("executed = %#v", executed)
+	}
+	audit, err := service.ListToolAudit("main", 10)
+	if err != nil {
+		t.Fatalf("ListToolAudit: %v", err)
+	}
+	if len(audit) < 3 {
+		t.Fatalf("audit records = %#v", audit)
+	}
+}
+
+func TestChatRunUsesWorkflowAndProfileRuntimeInputs(t *testing.T) {
+	service := newTestService(t, nil)
+	defer service.Close()
+	if _, err := service.OpenProject("main", t.TempDir()); err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	run, err := service.StartChatRun(context.Background(), "main", AIChatRunRequest{
+		Action: AIChatActionAsk,
+		Prompt: "/debug failing test",
+	})
+	if err != nil {
+		t.Fatalf("StartChatRun: %v", err)
+	}
+	if run.Action != AIChatActionDebug || run.WorkflowID != "slash-debug" || run.ProfileID != "debug-operator" {
+		t.Fatalf("resolved run = %#v", run)
+	}
+	final := waitForRunStatus(t, service, run.ID)
+	if final.Status != "completed" {
+		t.Fatalf("final run = %#v", final)
+	}
+	envelope, err := service.GetChatRunEnvelope("main", run.ID)
+	if err != nil {
+		t.Fatalf("GetChatRunEnvelope: %v", err)
+	}
+	if envelope.Action != AIChatActionDebug || envelope.ProfileID != "debug-operator" || envelope.WorkflowID != "slash-debug" {
+		t.Fatalf("envelope = %#v", envelope)
+	}
+	if len(envelope.ToolProposals) == 0 {
+		t.Fatalf("debug mode did not expose approval-gated tool proposals: %#v", envelope)
+	}
+}
+
 func TestMnemonicTrustPromotionRequiresReviewedPinnedState(t *testing.T) {
 	service := newTestService(t, nil)
 	if _, err := service.OpenProject("main", t.TempDir()); err != nil {
@@ -868,6 +1253,106 @@ func TestMnemonicTrustPromotionRequiresReviewedPinnedState(t *testing.T) {
 	}
 	if promoted.Trust != mnemonic.TrustTrusted || promoted.Generated {
 		t.Fatalf("promoted entry = %#v", promoted)
+	}
+}
+
+func TestMnemonicInspectionAndWriteProposalApproval(t *testing.T) {
+	service := newTestService(t, nil)
+	defer service.Close()
+	project, err := service.OpenProject("main", t.TempDir())
+	if err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	if _, err := project.Mnemonic.Save(fromAIEntry(AIMnemonicEntry{
+		Type:       "decision",
+		Content:    "Use patch artifacts for AI file edits.",
+		Importance: 8,
+		Trust:      mnemonic.TrustTrusted,
+		Pinned:     true,
+		IsLatest:   true,
+	})); err != nil {
+		t.Fatalf("save mnemonic: %v", err)
+	}
+	run, err := service.StartChatRun(context.Background(), "main", AIChatRunRequest{
+		Action:          AIChatActionPlan,
+		Prompt:          "use memory",
+		IncludeMnemonic: true,
+	})
+	if err != nil {
+		t.Fatalf("StartChatRun: %v", err)
+	}
+	final := waitForRunStatus(t, service, run.ID)
+	if final.Status != "completed" {
+		t.Fatalf("final run = %#v", final)
+	}
+	inspection, err := service.InspectMnemonic("main", run.ID)
+	if err != nil {
+		t.Fatalf("InspectMnemonic: %v", err)
+	}
+	if len(inspection.Used) == 0 || len(inspection.Pinned) == 0 {
+		t.Fatalf("inspection = %#v", inspection)
+	}
+	proposal, err := service.ProposeMnemonicEntry("main", AIMnemonicWriteProposalRequest{
+		RunID: run.ID,
+		Entry: AIMnemonicEntryInput{
+			Type:    "fact",
+			Content: "Patch apply must checkpoint first.",
+		},
+		Reason: "durable implementation rule",
+	})
+	if err != nil {
+		t.Fatalf("ProposeMnemonicEntry: %v", err)
+	}
+	if proposal.Artifact.Status != "proposed" || !proposal.RequiresApproval {
+		t.Fatalf("proposal = %#v", proposal)
+	}
+	approved, err := service.ApproveMnemonicEntryProposal("main", AIMnemonicApproveProposalRequest{
+		ArtifactID: proposal.Artifact.ID,
+		ReviewedBy: "test",
+		Pinned:     true,
+	})
+	if err != nil {
+		t.Fatalf("ApproveMnemonicEntryProposal: %v", err)
+	}
+	if approved.Trust != mnemonic.TrustTrusted || !approved.Pinned {
+		t.Fatalf("approved entry = %#v", approved)
+	}
+}
+
+func TestFastContextModelCapabilitiesAndBackgroundPreview(t *testing.T) {
+	service := newTestService(t, nil)
+	defer service.Close()
+	projectRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectRoot, "notes.md"), []byte("patch artifacts require checkpoints\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if _, err := service.OpenProject("main", projectRoot); err != nil {
+		t.Fatalf("OpenProject: %v", err)
+	}
+	snapshot, err := service.ContextPreview("main", AIContextRequest{
+		Prompt:      "patch artifacts",
+		MaxSnippets: 8,
+		MaxBytes:    64 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("ContextPreview: %v", err)
+	}
+	if !hasSnippetType(snapshot.Snippets, "fast_context") {
+		t.Fatalf("fast context snippet missing: %#v", snapshot.Snippets)
+	}
+	capabilities := service.ListModelCapabilities()
+	if len(capabilities) == 0 || !capabilities[0].ToolSupport {
+		t.Fatalf("model capabilities = %#v", capabilities)
+	}
+	preview, err := service.PreviewBackgroundAgent("main", AIBackgroundAgentPreviewRequest{
+		Prompt: "investigate patch workflow",
+		Action: AIChatActionPlan,
+	})
+	if err != nil {
+		t.Fatalf("PreviewBackgroundAgent: %v", err)
+	}
+	if preview.Status != "preview_only" || !preview.Payload.IsolatedSnapshot || preview.Payload.ExecutionAvailable {
+		t.Fatalf("background preview = %#v", preview)
 	}
 }
 

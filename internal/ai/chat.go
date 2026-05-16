@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"arlecchino/internal/ai/mnemonic"
@@ -139,7 +140,7 @@ func (s *Service) GetChatRun(projectID string, runID string) (AIChatRun, error) 
 	if run != nil && run.ProjectSessionID == projectID {
 		runCopy := *run
 		s.mu.RUnlock()
-		return runCopy, nil
+		return normalizeChatRunToolProposals(runCopy), nil
 	}
 	s.mu.RUnlock()
 	if project == nil {
@@ -178,6 +179,11 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	s.emitEvent("ai:chat:context-ready", map[string]any{"runId": runID, "contextSummary": contextSummary})
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactContext, "Context disclosure", contextArtifactSummary(contextSummary), snapshot)
 	s.emitRunEnvelope(project.ID, runID)
+
+	if response, ok := s.runtimeStateResponseForChatRequest(req); ok {
+		s.finishRunCompleted(runID, response)
+		return
+	}
 
 	provider, descriptor, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
@@ -298,7 +304,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	})
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "Provider egress", egressArtifactSummary(record), record)
 	s.emitRunEnvelope(project.ID, runID)
-	proposals := toolProposalsForAction(req.Action, s.approvalSummaryForProject(project), project.ProjectRoot)
+	proposals := toolProposalsForAction(req.Action, s.approvalSummaryForProject(project), project.ProjectRoot, req.Prompt)
 	for _, proposal := range proposals {
 		s.emitEvent("ai:chat:tool-proposed", map[string]any{"runId": runID, "proposal": proposal})
 	}
@@ -443,6 +449,27 @@ func (s *Service) finishRunCanceled(runID string, record AIEgressRecord) {
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
 }
 
+func (s *Service) finishRunCompleted(runID string, response string) {
+	s.mu.Lock()
+	run := s.runs[runID]
+	if run == nil || run.Status == "canceled" {
+		delete(s.runCancels, runID)
+		s.mu.Unlock()
+		return
+	}
+	run.Status = "completed"
+	run.Response = cleanGeneratedResponse(response)
+	run.CanCancel = false
+	run.Revision++
+	run.UpdatedAt = utcNow()
+	runCopy := *run
+	delete(s.runCancels, runID)
+	s.mu.Unlock()
+	s.persistChatRun(runCopy)
+	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
+	s.emitEvent("ai:chat:run-completed", runCopy)
+}
+
 func (s *Service) persistChatRun(run AIChatRun) {
 	project := s.project(run.ProjectSessionID)
 	if project == nil || project.ChatHistory == nil {
@@ -573,20 +600,24 @@ func chatModeBoundaryPrompt(req AIChatRunRequest) string {
 }
 
 func systemPromptForAction(action AIChatAction) string {
+	common := "You are Arlecchino, the local-first codebase assistant inside the IDE. Keep the same identity across Ask, Plan, Build, and Debug modes. Match the user's language. If the user's message is only a greeting, thanks, or small talk, answer briefly and do not invent a plan, patch, diagnostic, or tool action."
 	switch action {
 	case AIChatActionAsk:
-		return "You are Arlecchino's local-first codebase assistant. Answer the user's question using the provided project context. Do not claim that any file, terminal, MCP, or subagent action has run."
+		return common + " In Ask mode, answer the user's question using the provided project context. Do not claim that any file, terminal, MCP, or subagent action has run."
 	case AIChatActionDebug:
-		return "You are Arlecchino's local-first debug assistant. Identify likely causes, ask for missing evidence only if required, and do not propose mutations as already executed."
+		return common + " In Debug mode, identify likely causes for concrete failures, ask for missing evidence only if required, and do not propose mutations as already executed."
 	case AIChatActionBuild:
-		return "You are Arlecchino's build assistant. Return an implementation-oriented answer. When changing files, output a git-style unified diff starting with diff --git; Arlecchino will turn it into a reviewable patch artifact. Do not claim any file, terminal, MCP, or subagent action has run."
+		return common + " In Build mode, return an implementation-oriented answer only for concrete change requests. When changing files, output a git-style unified diff starting with diff --git; Arlecchino will turn it into a reviewable patch artifact. Do not claim any file, terminal, MCP, or subagent action has run."
 	default:
-		return "You are Arlecchino's planning assistant. Produce a concrete plan grounded in the provided context."
+		return common + " In Plan mode, produce a concrete plan grounded in the provided context only when the user asks for planning or implementation direction."
 	}
 }
 
-func toolProposalsForAction(action AIChatAction, approval AIApprovalSummary, projectRoot string) []AIToolProposal {
+func toolProposalsForAction(action AIChatAction, approval AIApprovalSummary, projectRoot string, prompt string) []AIToolProposal {
 	if action != AIChatActionBuild && action != AIChatActionDebug {
+		return []AIToolProposal{}
+	}
+	if shouldSuppressToolProposalsForPrompt(prompt) {
 		return []AIToolProposal{}
 	}
 	proposals := []AIToolProposal{
@@ -705,6 +736,198 @@ func hardDenyReasonForProposal(proposal AIToolProposal, projectRoot string) AITo
 		return AIToolHardDenyReasonNonLoopbackNetwork
 	}
 	return ""
+}
+
+func isSmallTalkOnlyChatPrompt(prompt string) bool {
+	words := normalizedChatPromptWords(prompt)
+	if len(words) == 0 {
+		return true
+	}
+	if len(words) > 8 {
+		return false
+	}
+	for _, word := range words {
+		if !chatSmallTalkWord(word) {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeChatRunToolProposals(run AIChatRun) AIChatRun {
+	if shouldSuppressToolProposalsForPrompt(run.UserPrompt) {
+		run.ToolProposals = nil
+	}
+	return run
+}
+
+func shouldSuppressToolProposalsForPrompt(prompt string) bool {
+	return isSmallTalkOnlyChatPrompt(prompt) || isRuntimeStateQuestion(prompt)
+}
+
+func (s *Service) runtimeStateResponseForChatRequest(req AIChatRunRequest) (string, bool) {
+	topics := runtimeStateTopics(req.Prompt)
+	if len(topics) == 0 {
+		return "", false
+	}
+	settings := s.currentSettings()
+	russian := containsCyrillic(req.Prompt)
+	parts := make([]string, 0, len(topics))
+	for _, topic := range topics {
+		switch topic {
+		case "mode":
+			mode := chatActionDisplayName(req.Action)
+			if russian && len(topics) == 1 {
+				return "Сейчас я работаю в режиме " + mode + ".", true
+			}
+			if russian {
+				parts = append(parts, "режим: "+mode)
+			} else {
+				parts = append(parts, "mode: "+mode)
+			}
+		case "provider":
+			provider := firstNonEmpty(req.ProviderID, settings.ActiveProviderID, "not selected")
+			if russian && provider == "not selected" {
+				provider = "не выбран"
+			}
+			if russian {
+				parts = append(parts, "провайдер: "+provider)
+			} else {
+				parts = append(parts, "provider: "+provider)
+			}
+		case "model":
+			model := firstNonEmpty(req.Model, settings.ActiveModel, "not selected")
+			if russian && model == "not selected" {
+				model = "не выбрана"
+			}
+			if russian {
+				parts = append(parts, "модель: "+model)
+			} else {
+				parts = append(parts, "model: "+model)
+			}
+		case "profile":
+			profile := firstNonEmpty(req.ProfileID, "default")
+			if russian && profile == "default" {
+				profile = "по умолчанию"
+			}
+			if russian {
+				parts = append(parts, "профиль: "+profile)
+			} else {
+				parts = append(parts, "profile: "+profile)
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	if russian {
+		return "Текущее состояние AI Chat: " + strings.Join(parts, "; ") + ".", true
+	}
+	return "Current AI Chat state: " + strings.Join(parts, "; ") + ".", true
+}
+
+func isRuntimeStateQuestion(prompt string) bool {
+	return len(runtimeStateTopics(prompt)) > 0
+}
+
+func runtimeStateTopics(prompt string) []string {
+	words := normalizedChatPromptWords(prompt)
+	if len(words) == 0 || len(words) > 10 {
+		return nil
+	}
+	hasStateCue := false
+	topics := []string{}
+	seen := map[string]bool{}
+	for _, word := range words {
+		if word == "mode" || strings.HasPrefix(word, "режим") {
+			if !seen["mode"] {
+				topics = append(topics, "mode")
+				seen["mode"] = true
+			}
+		}
+		if word == "provider" || strings.HasPrefix(word, "провайдер") {
+			if !seen["provider"] {
+				topics = append(topics, "provider")
+				seen["provider"] = true
+			}
+		}
+		if word == "model" || strings.HasPrefix(word, "модел") {
+			if !seen["model"] {
+				topics = append(topics, "model")
+				seen["model"] = true
+			}
+		}
+		if word == "profile" || strings.HasPrefix(word, "профил") {
+			if !seen["profile"] {
+				topics = append(topics, "profile")
+				seen["profile"] = true
+			}
+		}
+		switch word {
+		case "what", "which", "current", "active", "you", "your",
+			"using", "selected", "now", "каком", "какой", "какая", "какую",
+			"текущий", "текущая", "активный", "активная", "сейчас", "щас",
+			"сча", "ты", "тебя", "используешь", "выбран", "выбрана":
+			hasStateCue = true
+		}
+	}
+	if !hasStateCue || len(topics) == 0 {
+		return nil
+	}
+	return topics
+}
+
+func chatActionDisplayName(action AIChatAction) string {
+	switch action {
+	case AIChatActionAsk:
+		return "Ask"
+	case AIChatActionPlan:
+		return "Plan"
+	case AIChatActionBuild:
+		return "Build"
+	case AIChatActionDebug:
+		return "Debug"
+	default:
+		return string(action)
+	}
+}
+
+func containsCyrillic(value string) bool {
+	for _, r := range value {
+		if unicode.In(r, unicode.Cyrillic) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizedChatPromptWords(prompt string) []string {
+	prompt = strings.TrimSpace(strings.ToLower(prompt))
+	if prompt == "" {
+		return nil
+	}
+	fields := strings.FieldsFunc(prompt, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	words := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field != "" {
+			words = append(words, field)
+		}
+	}
+	return words
+}
+
+func chatSmallTalkWord(word string) bool {
+	switch word {
+	case "hi", "hello", "hey", "there", "yo", "thanks", "thank", "you", "ok", "okay",
+		"привет", "здравствуй", "здравствуйте", "добрый", "доброе", "день", "вечер", "утро",
+		"спасибо", "как", "дела", "ок", "окей", "ладно":
+		return true
+	default:
+		return false
+	}
 }
 
 func summarizeForMnemonic(prompt string, response string) string {

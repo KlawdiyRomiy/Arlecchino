@@ -10,6 +10,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { AnimatePresence, m, useReducedMotion } from "framer-motion";
 import type {
   AIChatRun,
   AIChatRunEnvelope,
@@ -122,6 +123,7 @@ export function ChatHistoryRail({
   onSearchChange,
   onSelectSession,
 }: ChatHistoryRailProps) {
+  const reduceMotion = useReducedMotion();
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const groups = useMemo(
     () => buildSessionGroups(runs, hydratedRuns, activeSessionId),
@@ -137,7 +139,16 @@ export function ChatHistoryRail({
     );
   }, [groups, searchQuery]);
   return (
-    <aside className="ai-chat-history-rail">
+    <m.aside
+      className="ai-chat-history-rail"
+      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }}
+      transition={{
+        duration: reduceMotion ? 0.1 : 0.16,
+        ease: [0.22, 1, 0.36, 1],
+      }}
+    >
       <div
         className="ai-chat-side-section__header"
         data-ai-chat-drawer-header={canMove ? "true" : undefined}
@@ -187,75 +198,85 @@ export function ChatHistoryRail({
       </label>
 
       <div className="ai-chat-history-rail__list">
-        {filteredGroups.map((group) => {
-          const active = group.id === activeSessionId;
-          const confirming = confirmDeleteId === group.id;
-          return (
-            <div
-              className={`ai-chat-history-item${active ? " is-active" : ""}${confirming ? " is-confirming" : ""}`}
-              key={group.id}
-              title={group.title}
-            >
-              <button
-                className="ai-chat-history-item__select"
-                type="button"
-                onClick={() => onSelectSession(group.id)}
+        <AnimatePresence initial={false}>
+          {filteredGroups.map((group) => {
+            const active = group.id === activeSessionId;
+            const confirming = confirmDeleteId === group.id;
+            return (
+              <m.div
+                className={`ai-chat-history-item${active ? " is-active" : ""}${confirming ? " is-confirming" : ""}`}
+                key={group.id}
+                title={group.title}
+                initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+                animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+                exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+                layout="position"
+                transition={{
+                  duration: reduceMotion ? 0.1 : 0.15,
+                  ease: [0.22, 1, 0.36, 1],
+                }}
               >
-                <span className="ai-chat-history-item__icon">
-                  {statusIcon(group.status)}
-                </span>
-                <span className="ai-chat-history-item__body">
-                  <span>{group.title}</span>
-                  <small>
-                    {group.subtitle}
-                    {group.count > 1 ? ` · ${group.count} runs` : ""}
-                  </small>
-                </span>
-              </button>
-              {confirming ? (
-                <span className="ai-chat-history-item__confirm">
-                  <span>Delete?</span>
+                <button
+                  className="ai-chat-history-item__select"
+                  type="button"
+                  onClick={() => onSelectSession(group.id)}
+                >
+                  <span className="ai-chat-history-item__icon">
+                    {statusIcon(group.status)}
+                  </span>
+                  <span className="ai-chat-history-item__body">
+                    <span>{group.title}</span>
+                    <small>
+                      {group.subtitle}
+                      {group.count > 1 ? ` · ${group.count} runs` : ""}
+                    </small>
+                  </span>
+                </button>
+                {confirming ? (
+                  <span className="ai-chat-history-item__confirm">
+                    <span>Delete?</span>
+                    <button
+                      type="button"
+                      title="Confirm delete"
+                      onMouseDown={(event) => event.stopPropagation()}
+                      onClick={() => {
+                        setConfirmDeleteId(null);
+                        onDeleteSession(group.id);
+                      }}
+                    >
+                      <Check size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      title="Cancel delete"
+                      onMouseDown={(event) => event.stopPropagation()}
+                      onClick={() => setConfirmDeleteId(null)}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ) : (
                   <button
+                    className="ai-chat-history-item__delete"
                     type="button"
-                    title="Confirm delete"
+                    title="Delete chat"
                     onMouseDown={(event) => event.stopPropagation()}
-                    onClick={() => {
-                      setConfirmDeleteId(null);
-                      onDeleteSession(group.id);
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setConfirmDeleteId(group.id);
                     }}
                   >
-                    <Check size={12} />
+                    <Trash2 size={13} />
                   </button>
-                  <button
-                    type="button"
-                    title="Cancel delete"
-                    onMouseDown={(event) => event.stopPropagation()}
-                    onClick={() => setConfirmDeleteId(null)}
-                  >
-                    <X size={12} />
-                  </button>
-                </span>
-              ) : (
-                <button
-                  className="ai-chat-history-item__delete"
-                  type="button"
-                  title="Delete chat"
-                  onMouseDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setConfirmDeleteId(group.id);
-                  }}
-                >
-                  <Trash2 size={13} />
-                </button>
-              )}
-            </div>
-          );
-        })}
+                )}
+              </m.div>
+            );
+          })}
+        </AnimatePresence>
         {filteredGroups.length === 0 ? (
           <div className="ai-chat-side-empty">No chats match.</div>
         ) : null}
       </div>
-    </aside>
+    </m.aside>
   );
 }

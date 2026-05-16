@@ -135,6 +135,7 @@ func (s *Service) DeleteChatSession(projectID string, sessionID string) error {
 }
 
 func (s *Service) buildChatRunEnvelope(project *ProjectSession, run AIChatRun) AIChatRunEnvelope {
+	run = normalizeChatRunToolProposals(run)
 	approval := s.approvalSummaryForProject(project)
 	consent := s.consentSummary()
 	providerEnvelope := s.providerEnvelopeForRun(run)

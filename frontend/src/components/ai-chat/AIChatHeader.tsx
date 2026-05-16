@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Settings,
 } from "lucide-react";
+import { AnimatePresence } from "framer-motion";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 import type {
   AIAgentProfileDescriptor,
@@ -179,12 +180,18 @@ export function AIChatHeader({
                 <span>{activitySummary.label}</span>
                 <ChevronDown size={14} />
               </button>
-              {activityPopoverOpen ? (
-                <ActivityStatusPopover
-                  items={activityItems}
-                  summary={activitySummary}
-                />
-              ) : null}
+              <AnimatePresence initial={false}>
+                {activityPopoverOpen ? (
+                  <ActivityStatusPopover
+                    activeEnvelope={activeEnvelope}
+                    activeRun={activeRun}
+                    contextPreview={contextPreview}
+                    items={activityItems}
+                    selectedProvider={selectedProvider}
+                    summary={activitySummary}
+                  />
+                ) : null}
+              </AnimatePresence>
             </div>
           );
         case "review":
@@ -244,26 +251,28 @@ export function AIChatHeader({
               >
                 <Settings size={17} />
               </button>
-              {settingsPopoverOpen ? (
-                <SettingsPopover
-                  context={context}
-                  contextProviders={contextProviders}
-                  displayPrefs={displayPrefs}
-                  status={status}
-                  approvalPolicy={approvalPolicy}
-                  consentPolicy={consentPolicy}
-                  embeddingStatus={embeddingStatus}
-                  egressRecords={egressRecords}
-                  mnemonicEntries={mnemonicEntries}
-                  agentProfiles={agentProfiles}
-                  promptWorkflows={promptWorkflows}
-                  tools={tools}
-                  toolAudit={toolAudit}
-                  modelCapabilities={modelCapabilities}
-                  onContextToggle={onContextToggle}
-                  onDisplayPrefChange={onDisplayPrefChange}
-                />
-              ) : null}
+              <AnimatePresence initial={false}>
+                {settingsPopoverOpen ? (
+                  <SettingsPopover
+                    context={context}
+                    contextProviders={contextProviders}
+                    displayPrefs={displayPrefs}
+                    status={status}
+                    approvalPolicy={approvalPolicy}
+                    consentPolicy={consentPolicy}
+                    embeddingStatus={embeddingStatus}
+                    egressRecords={egressRecords}
+                    mnemonicEntries={mnemonicEntries}
+                    agentProfiles={agentProfiles}
+                    promptWorkflows={promptWorkflows}
+                    tools={tools}
+                    toolAudit={toolAudit}
+                    modelCapabilities={modelCapabilities}
+                    onContextToggle={onContextToggle}
+                    onDisplayPrefChange={onDisplayPrefChange}
+                  />
+                ) : null}
+              </AnimatePresence>
             </div>
           );
       }

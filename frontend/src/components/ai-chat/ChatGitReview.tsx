@@ -23,6 +23,7 @@ import {
   Send,
   X,
 } from "lucide-react";
+import { m, useReducedMotion } from "framer-motion";
 import { GetGitDiff } from "../../wails/app";
 import { useGitStore } from "../../stores/gitStore";
 import { writeClipboardTextWithFallback } from "../../utils/clipboard";
@@ -313,6 +314,7 @@ export function ChatGitReview({
   onDragStart,
   onSearchChange,
 }: ChatGitReviewProps) {
+  const reduceMotion = useReducedMotion();
   const storeProjectPath = useGitStore((state) => state.projectPath);
   const setProjectPath = useGitStore((state) => state.setProjectPath);
   const refresh = useGitStore((state) => state.refresh);
@@ -549,7 +551,17 @@ export function ChatGitReview({
       : "");
 
   return (
-    <aside className="ai-chat-git-review" data-mode={mode}>
+    <m.aside
+      className="ai-chat-git-review"
+      data-mode={mode}
+      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }}
+      transition={{
+        duration: reduceMotion ? 0.1 : 0.16,
+        ease: [0.22, 1, 0.36, 1],
+      }}
+    >
       <div
         className="ai-chat-git-diff-header"
         data-ai-chat-drawer-header={canMove ? "true" : undefined}
@@ -831,6 +843,6 @@ export function ChatGitReview({
           </button>
         </div>
       </div>
-    </aside>
+    </m.aside>
   );
 }

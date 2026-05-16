@@ -1,17 +1,33 @@
 import React from "react";
-import { Circle, CheckCircle2, Loader2 } from "lucide-react";
+import {
+  Bot,
+  Boxes,
+  CheckCircle2,
+  Circle,
+  FileText,
+  Gauge,
+  Loader2,
+  ShieldCheck,
+} from "lucide-react";
+import { m, useReducedMotion } from "framer-motion";
 import type {
   AIApprovalPolicy,
+  AIChatAction,
   AIChatRun,
   AIChatRunArtifact,
   AIChatRunEnvelope,
   AIConsentPolicy,
+  AIContextSummary,
   AIContextSnapshot,
   AIEmbeddingStatus,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 import { getProviderPresentation } from "./providerPresentation";
-import { runStatusLabel } from "./aiChatPresentation";
+import {
+  compactText,
+  getActionMeta,
+  runStatusLabel,
+} from "./aiChatPresentation";
 
 export type ActivityStatusState = "done" | "active" | "idle";
 
@@ -162,22 +178,153 @@ export function summarizeActivityStatus(
 }
 
 export function ActivityStatusPopover({
+  activeEnvelope,
+  activeRun,
+  contextPreview,
   items,
+  selectedProvider,
   summary,
 }: {
+  activeEnvelope: AIChatRunEnvelope | null;
+  activeRun: AIChatRun | null;
+  contextPreview: AIContextSnapshot | null;
   items: ActivityStatusItem[];
+  selectedProvider: AIProviderDescriptor | null;
   summary: ActivityStatusItem;
 }) {
+  const reduceMotion = useReducedMotion();
   const visibleItems = items.length > 0 ? items : [summary];
+  const activeContext: AIContextSummary | AIContextSnapshot | null =
+    activeRun?.contextSummary ??
+    activeEnvelope?.contextSummary ??
+    contextPreview ??
+    null;
+  const contextItems = activeContext?.contextItems ?? [];
+  const includedContextItems = contextItems.filter((item) => item.included);
+  const redacted =
+    contextItems.some((item) => item.redacted) ||
+    Boolean(activeContext?.redaction?.secretsRedacted) ||
+    Boolean(activeContext?.redaction?.pathsRedacted);
+  const truncated =
+    contextItems.some((item) => item.truncated) ||
+    Boolean(activeContext?.redaction?.truncated);
+  const snippetCount =
+    activeContext && "snippetCount" in activeContext
+      ? activeContext.snippetCount
+      : (contextPreview?.snippets.length ?? 0);
+  const contextLabel =
+    contextItems.length > 0
+      ? `${includedContextItems.length}/${contextItems.length} context item${contextItems.length === 1 ? "" : "s"}`
+      : "No context items";
+  const contextFlags = [
+    snippetCount > 0
+      ? `${snippetCount} snippet${snippetCount === 1 ? "" : "s"}`
+      : "",
+    redacted ? "redacted" : "",
+    truncated ? "truncated" : "",
+  ].filter(Boolean);
+  const action = activeEnvelope?.action ?? activeRun?.action ?? null;
+  const actionMeta = action ? getActionMeta(action as AIChatAction) : null;
+  const providerLabel =
+    activeRun?.providerId ||
+    activeEnvelope?.egressSummary?.providerId ||
+    activeEnvelope?.providerId ||
+    selectedProvider?.name ||
+    selectedProvider?.id ||
+    "runtime";
+  const modelLabel =
+    activeRun?.model ||
+    activeEnvelope?.egressSummary?.model ||
+    activeEnvelope?.model ||
+    selectedProvider?.defaultModel ||
+    selectedProvider?.models?.[0]?.id ||
+    "No model";
+  const sourcePath =
+    activeContext?.filePath ||
+    contextPreview?.filePath ||
+    activeEnvelope?.egressSummary?.source ||
+    "chat";
+  const egress = activeEnvelope?.egressSummary;
+  const egressLabel = egress?.canceled
+    ? "canceled"
+    : egress?.status || egress?.source || "not recorded";
+  const approvalLabel =
+    activeEnvelope?.approvalSummary?.mode || "ask_each_time";
+  const consentLabel = activeEnvelope?.consentSummary
+    ? activeEnvelope.consentSummary.localProvidersAccepted
+      ? "local accepted"
+      : "local pending"
+    : selectedProvider?.local
+      ? "local"
+      : "provider policy";
+  const providerTone = getProviderPresentation(selectedProvider).tone;
+  const latencyLabel =
+    typeof egress?.latencyMs === "number" ? `${egress.latencyMs} ms` : "n/a";
 
   return (
-    <div
-      className="ai-chat-popover ai-chat-activity-popover"
+    <m.div
+      className="ai-chat-popover ai-chat-activity-popover ai-chat-runtime-popover"
       role="menu"
       aria-label="AI runtime status"
+      initial={
+        reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }
+      }
+      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4, scale: 0.985 }}
+      transition={{
+        duration: reduceMotion ? 0.1 : 0.16,
+        ease: [0.22, 1, 0.36, 1],
+      }}
     >
       <div className="ai-chat-popover__title">Runtime status</div>
-      <div className="ai-chat-activity-popover__items">
+
+      <div className="ai-chat-runtime-popover__hero" data-state={summary.state}>
+        <ActivityIcon state={summary.state} />
+        <span>{summary.label}</span>
+      </div>
+
+      <div className="ai-chat-runtime-popover__stack">
+        {actionMeta ? (
+          <div className="ai-chat-runtime-popover__row">
+            <Gauge size={15} />
+            <span>{actionMeta.label} mode</span>
+          </div>
+        ) : null}
+        <div className="ai-chat-runtime-popover__row">
+          <FileText size={15} />
+          <span>{contextLabel}</span>
+          {contextFlags.length > 0 ? (
+            <small>{contextFlags.join(", ")}</small>
+          ) : null}
+        </div>
+        <div className="ai-chat-runtime-popover__row">
+          <Boxes size={15} />
+          <span>{compactText(sourcePath, 34)}</span>
+        </div>
+      </div>
+
+      <div className="ai-chat-runtime-popover__grid">
+        <span>Provider</span>
+        <strong data-tone={providerTone}>
+          <Bot size={13} />
+          {providerLabel}
+        </strong>
+        <span>Model</span>
+        <strong>{compactText(modelLabel, 34)}</strong>
+        <span>Egress</span>
+        <strong>{egressLabel}</strong>
+        <span>Latency</span>
+        <strong>{latencyLabel}</strong>
+        <span>Approval</span>
+        <strong>
+          <ShieldCheck size={13} />
+          {approvalLabel}
+        </strong>
+        <span>Consent</span>
+        <strong>{consentLabel}</strong>
+      </div>
+
+      <div className="ai-chat-runtime-popover__ledger">
         {visibleItems.map((item) => (
           <div
             key={item.key}
@@ -189,7 +336,7 @@ export function ActivityStatusPopover({
           </div>
         ))}
       </div>
-    </div>
+    </m.div>
   );
 }
 

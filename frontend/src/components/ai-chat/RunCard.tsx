@@ -6,6 +6,7 @@ import {
   Loader2,
   XCircle,
 } from "lucide-react";
+import { m } from "framer-motion";
 import type {
   AIChatAction,
   AIChatRun,
@@ -19,7 +20,6 @@ import {
   getActionMeta,
   runStatusLabel,
 } from "./aiChatPresentation";
-import { ContextSummary } from "./ContextSummary";
 import { PatchArtifactCard } from "./PatchArtifactCard";
 import { ToolProposalCard } from "./ToolProposalCard";
 
@@ -28,8 +28,8 @@ interface RunCardProps {
   run: AIChatRun | null;
   active: boolean;
   compact: boolean;
-  maxWidth: number;
   streamingText: string;
+  reduceMotion?: boolean;
   artifacts?: AIChatRunArtifact[];
   artifactBusyId?: string | null;
   onSelect: (runId: string) => void;
@@ -110,8 +110,8 @@ export function RunCard({
   run,
   active,
   compact,
-  maxWidth,
   streamingText,
+  reduceMotion = false,
   artifacts = [],
   artifactBusyId = null,
   onSelect,
@@ -126,17 +126,12 @@ export function RunCard({
     run?.response || streamingText || "",
     prompt,
   );
-  const provider = run?.providerId || envelope.providerId || "runtime";
-  const model = run?.model || envelope.model || "";
+  const createdTime = formatRunTime(envelope.createdAt);
   const proposals = run?.toolProposals ?? envelope.toolProposals ?? [];
   const patchArtifacts = artifacts.filter(
     (artifact) =>
       artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactPatchPreview,
   );
-  const context = run?.contextSummary ?? envelope.contextSummary ?? null;
-  const cardStyle = {
-    "--run-card-width": `${maxWidth}px`,
-  } as React.CSSProperties;
   const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -145,25 +140,34 @@ export function RunCard({
   };
 
   return (
-    <article
+    <m.article
       className={`ai-chat-run-card ai-chat-tone-${meta.tone}${active ? " is-active" : ""}`}
       aria-pressed={active}
       data-status={envelope.status}
       data-compact={compact ? "true" : "false"}
       role="button"
-      style={cardStyle}
       tabIndex={0}
+      initial={
+        reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.992 }
+      }
+      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.996 }}
+      transition={{
+        duration: reduceMotion ? 0.12 : 0.18,
+        ease: [0.22, 1, 0.36, 1],
+      }}
+      layout="position"
       onClick={() => onSelect(envelope.id)}
       onKeyDown={handleKeyDown}
     >
       {prompt ? (
         <div className="ai-chat-message-bubble ai-chat-message-bubble--user">
+          {createdTime ? (
+            <time className="ai-chat-run-card__time">{createdTime}</time>
+          ) : null}
           <p className="ai-chat-run-card__prompt">
             {compactText(prompt, compact ? 180 : 360)}
           </p>
-          <time className="ai-chat-run-card__time">
-            {formatRunTime(envelope.createdAt)}
-          </time>
         </div>
       ) : null}
       <div className="ai-chat-message-bubble ai-chat-message-bubble--assistant">
@@ -185,16 +189,6 @@ export function RunCard({
             Waiting for runtime tokens&hellip;
           </div>
         ) : null}
-
-        <ContextSummary context={context} compact={compact} />
-
-        <div className="ai-chat-run-card__meta">
-          <span>{provider}</span>
-          {model ? <span>{model}</span> : null}
-          {envelope.egressSummary ? (
-            <span>{envelope.egressSummary.status}</span>
-          ) : null}
-        </div>
 
         {proposals.length > 0 ? (
           <div className="ai-chat-run-card__tools">
@@ -228,6 +222,6 @@ export function RunCard({
           </div>
         ) : null}
       </div>
-    </article>
+    </m.article>
   );
 }

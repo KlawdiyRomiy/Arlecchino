@@ -6,6 +6,7 @@ import {
   Shield,
   SlidersHorizontal,
 } from "lucide-react";
+import { m, useReducedMotion } from "framer-motion";
 import type {
   AIAgentProfileDescriptor,
   AIApprovalPolicy,
@@ -72,6 +73,7 @@ export function SettingsPopover({
   onContextToggle,
   onDisplayPrefChange,
 }: SettingsPopoverProps) {
+  const reduceMotion = useReducedMotion();
   const enabledProfiles = agentProfiles.filter((profile) => profile.enabled);
   const executableTools = tools.filter((tool) => tool.executionAvailable);
   const pinnedMnemonic = mnemonicEntries.filter((entry) => entry.pinned);
@@ -83,9 +85,18 @@ export function SettingsPopover({
   const toolModels = modelCapabilities.filter((model) => model.toolSupport);
 
   return (
-    <div
+    <m.div
       className="ai-chat-popover ai-chat-settings-popover"
       data-testid="ai-chat-settings-popover"
+      initial={
+        reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }
+      }
+      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4, scale: 0.985 }}
+      transition={{
+        duration: reduceMotion ? 0.1 : 0.16,
+        ease: [0.22, 1, 0.36, 1],
+      }}
     >
       <div className="ai-chat-popover__section">
         <div className="ai-chat-popover__title">Display</div>
@@ -204,6 +215,6 @@ export function SettingsPopover({
           <strong>{embeddingStatus?.status || "unknown"}</strong>
         </div>
       </div>
-    </div>
+    </m.div>
   );
 }

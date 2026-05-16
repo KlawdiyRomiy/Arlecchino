@@ -6,6 +6,7 @@ import {
   RefreshCw,
   Square,
 } from "lucide-react";
+import { AnimatePresence, m, useReducedMotion } from "framer-motion";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 import type {
   AIProviderRuntimeDescriptor,
@@ -45,6 +46,7 @@ export function ModelPicker({
   onStopProviderRuntime,
 }: ModelPickerProps) {
   const [open, setOpen] = useState(false);
+  const reduceMotion = useReducedMotion();
   const runtime = selectedProvider
     ? providerRuntimes.find(
         (candidate) => candidate.providerId === selectedProvider.id,
@@ -112,165 +114,182 @@ export function ModelPicker({
         <ChevronDown size={14} />
       </button>
 
-      {open ? (
-        <div
-          className="ai-chat-popover ai-chat-model-picker"
-          data-testid="ai-chat-model-picker"
-        >
-          <div className="ai-chat-model-picker__header">
-            <div className="ai-chat-popover__title">Provider and model</div>
-            <button
-              className="ai-chat-icon-button"
-              type="button"
-              title="Refresh providers"
-              onClick={onRefreshProviders}
-            >
-              <RefreshCw size={14} />
-            </button>
-          </div>
+      <AnimatePresence initial={false}>
+        {open ? (
+          <m.div
+            className="ai-chat-popover ai-chat-model-picker"
+            data-testid="ai-chat-model-picker"
+            initial={
+              reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }
+            }
+            animate={
+              reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }
+            }
+            exit={
+              reduceMotion
+                ? { opacity: 0 }
+                : { opacity: 0, y: -4, scale: 0.985 }
+            }
+            transition={{
+              duration: reduceMotion ? 0.1 : 0.16,
+              ease: [0.22, 1, 0.36, 1],
+            }}
+          >
+            <div className="ai-chat-model-picker__header">
+              <div className="ai-chat-popover__title">Provider and model</div>
+              <button
+                className="ai-chat-icon-button"
+                type="button"
+                title="Refresh providers"
+                onClick={onRefreshProviders}
+              >
+                <RefreshCw size={14} />
+              </button>
+            </div>
 
-          <section className="ai-chat-popover__section">
-            <div className="ai-chat-popover__label">Providers</div>
-            {providers.length > 0 ? (
-              <div className="ai-chat-provider-list">
-                {providers.map((provider) => {
-                  const presentation = getProviderPresentation(provider);
-                  const selected = provider.id === selectedProvider?.id;
-                  return (
-                    <button
-                      key={provider.id}
-                      className={`ai-chat-provider-row is-${presentation.tone}${selected ? " is-selected" : ""}`}
-                      type="button"
-                      disabled={!presentation.selectable}
-                      title={presentation.rawReason || presentation.subtitle}
-                      onClick={() => onSelectProvider(provider)}
-                    >
-                      <span className="ai-chat-provider-row__dot" />
-                      <span className="ai-chat-provider-row__body">
-                        <span className="ai-chat-provider-row__name">
-                          {presentation.title}
+            <section className="ai-chat-popover__section">
+              <div className="ai-chat-popover__label">Providers</div>
+              {providers.length > 0 ? (
+                <div className="ai-chat-provider-list">
+                  {providers.map((provider) => {
+                    const presentation = getProviderPresentation(provider);
+                    const selected = provider.id === selectedProvider?.id;
+                    return (
+                      <button
+                        key={provider.id}
+                        className={`ai-chat-provider-row is-${presentation.tone}${selected ? " is-selected" : ""}`}
+                        type="button"
+                        disabled={!presentation.selectable}
+                        title={presentation.rawReason || presentation.subtitle}
+                        onClick={() => onSelectProvider(provider)}
+                      >
+                        <span className="ai-chat-provider-row__dot" />
+                        <span className="ai-chat-provider-row__body">
+                          <span className="ai-chat-provider-row__name">
+                            {presentation.title}
+                          </span>
+                          <span className="ai-chat-provider-row__detail">
+                            {presentation.subtitle}
+                          </span>
                         </span>
-                        <span className="ai-chat-provider-row__detail">
-                          {presentation.subtitle}
-                        </span>
-                      </span>
-                      {selected ? <CheckCircle2 size={15} /> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="ai-chat-provider-empty">
-                No local chat providers detected.
-              </div>
-            )}
-          </section>
+                        {selected ? <CheckCircle2 size={15} /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="ai-chat-provider-empty">
+                  No local chat providers detected.
+                </div>
+              )}
+            </section>
 
-          <section className="ai-chat-popover__section">
-            <div className="ai-chat-popover__label">
-              Models
-              {selectedProviderLabel ? (
-                <span>{selectedProviderLabel}</span>
+            <section className="ai-chat-popover__section">
+              <div className="ai-chat-popover__label">
+                Models
+                {selectedProviderLabel ? (
+                  <span>{selectedProviderLabel}</span>
+                ) : null}
+              </div>
+              {modelOptions.length > 0 ? (
+                <div className="ai-chat-model-list">
+                  {modelOptions.map((model) => {
+                    const active =
+                      selectedModel === model.id ||
+                      (!selectedModel && model.active);
+                    const canStart =
+                      Boolean(selectedProvider?.local) &&
+                      model.runnable &&
+                      (!runtime?.running || !model.active);
+                    return (
+                      <div
+                        className={`ai-chat-model-row${active ? " is-selected" : ""}`}
+                        key={`${model.id}-${model.path || model.source}`}
+                      >
+                        <button
+                          type="button"
+                          title={model.path || model.reason || model.id}
+                          onClick={() => {
+                            onSelectModel(model.id);
+                            setOpen(false);
+                          }}
+                        >
+                          <span>
+                            <span className="ai-chat-model-row__name">
+                              {model.displayName || model.id}
+                            </span>
+                            <span className="ai-chat-model-row__detail">
+                              {model.source}
+                              {model.active ? " · active" : ""}
+                            </span>
+                          </span>
+                          {active ? <CheckCircle2 size={14} /> : null}
+                        </button>
+                        {canStart && selectedProvider ? (
+                          <button
+                            className="ai-chat-model-row__action"
+                            type="button"
+                            disabled={providerRuntimeBusy}
+                            title="Start provider server with this model"
+                            onClick={() =>
+                              onStartProviderRuntime(selectedProvider, model)
+                            }
+                          >
+                            <Play size={13} />
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="ai-chat-provider-empty">
+                  {selectedProvider?.frontier
+                    ? "Configure BYOK credentials to query provider models."
+                    : "No active or installed models detected."}
+                </div>
+              )}
+            </section>
+
+            <div className="ai-chat-model-picker__actions">
+              <button
+                className="ai-chat-secondary-button"
+                type="button"
+                onClick={onRefreshProviders}
+              >
+                <RefreshCw size={14} />
+                Refresh
+              </button>
+              {runtime?.running && runtime.managed && selectedProvider ? (
+                <button
+                  className="ai-chat-secondary-button ai-chat-provider-stop"
+                  type="button"
+                  disabled={providerRuntimeBusy}
+                  onClick={() => onStopProviderRuntime(selectedProvider.id)}
+                >
+                  <Square size={14} />
+                  Stop server
+                </button>
               ) : null}
             </div>
-            {modelOptions.length > 0 ? (
-              <div className="ai-chat-model-list">
-                {modelOptions.map((model) => {
-                  const active =
-                    selectedModel === model.id ||
-                    (!selectedModel && model.active);
-                  const canStart =
-                    Boolean(selectedProvider?.local) &&
-                    model.runnable &&
-                    (!runtime?.running || !model.active);
-                  return (
-                    <div
-                      className={`ai-chat-model-row${active ? " is-selected" : ""}`}
-                      key={`${model.id}-${model.path || model.source}`}
-                    >
-                      <button
-                        type="button"
-                        title={model.path || model.reason || model.id}
-                        onClick={() => {
-                          onSelectModel(model.id);
-                          setOpen(false);
-                        }}
-                      >
-                        <span>
-                          <span className="ai-chat-model-row__name">
-                            {model.displayName || model.id}
-                          </span>
-                          <span className="ai-chat-model-row__detail">
-                            {model.source}
-                            {model.active ? " · active" : ""}
-                          </span>
-                        </span>
-                        {active ? <CheckCircle2 size={14} /> : null}
-                      </button>
-                      {canStart && selectedProvider ? (
-                        <button
-                          className="ai-chat-model-row__action"
-                          type="button"
-                          disabled={providerRuntimeBusy}
-                          title="Start provider server with this model"
-                          onClick={() =>
-                            onStartProviderRuntime(selectedProvider, model)
-                          }
-                        >
-                          <Play size={13} />
-                        </button>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="ai-chat-provider-empty">
-                {selectedProvider?.frontier
-                  ? "Configure BYOK credentials to query provider models."
-                  : "No active or installed models detected."}
-              </div>
-            )}
-          </section>
-
-          <div className="ai-chat-model-picker__actions">
-            <button
-              className="ai-chat-secondary-button"
-              type="button"
-              onClick={onRefreshProviders}
-            >
-              <RefreshCw size={14} />
-              Refresh
-            </button>
-            {runtime?.running && runtime.managed && selectedProvider ? (
-              <button
-                className="ai-chat-secondary-button ai-chat-provider-stop"
-                type="button"
-                disabled={providerRuntimeBusy}
-                onClick={() => onStopProviderRuntime(selectedProvider.id)}
-              >
-                <Square size={14} />
-                Stop server
-              </button>
-            ) : null}
-          </div>
-          <div className="ai-chat-provider-runtime-note">
-            {selectedProvider?.local
-              ? "Runs locally."
-              : "Select a local provider to continue."}
-          </div>
-          {runtime?.reason ? (
             <div className="ai-chat-provider-runtime-note">
-              {runtime.reason}
+              {selectedProvider?.local
+                ? "Runs locally."
+                : "Select a local provider to continue."}
             </div>
-          ) : null}
-          {providerRuntimeError ? (
-            <div className="ai-chat-provider-runtime-error">
-              {providerRuntimeError}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+            {runtime?.reason ? (
+              <div className="ai-chat-provider-runtime-note">
+                {runtime.reason}
+              </div>
+            ) : null}
+            {providerRuntimeError ? (
+              <div className="ai-chat-provider-runtime-error">
+                {providerRuntimeError}
+              </div>
+            ) : null}
+          </m.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

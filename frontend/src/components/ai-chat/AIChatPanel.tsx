@@ -60,6 +60,7 @@ import {
   LayoutGroup,
   domAnimation,
   m,
+  useReducedMotion,
 } from "framer-motion";
 import { useEditorStore } from "../../stores/editorStore";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
@@ -568,6 +569,7 @@ export function AIChatPanelContent({
   } = chrome;
 
   const fullscreen = presentation === "fullscreen";
+  const reduceMotion = useReducedMotion();
   const sortedProviders = useMemo(() => sortProviders(providers), [providers]);
   const selectedProvider = useMemo(() => {
     const explicit = sortedProviders.find(
@@ -617,7 +619,6 @@ export function AIChatPanelContent({
     () => [...activeSessionEnvelopes].reverse(),
     [activeSessionEnvelopes],
   );
-  const messageMaxWidth = presentation === "fullscreen" ? 760 : 560;
 
   const detectDrawerSnapEdge = useCallback((clientX: number) => {
     const rect = workbenchRef.current?.getBoundingClientRect();
@@ -1338,87 +1339,89 @@ export function AIChatPanelContent({
 
   return (
     <section ref={panelRef} className={panelClass} data-testid="ai-chat-panel">
-      <AIChatHeader
-        activeEnvelope={activeEnvelope}
-        activeRun={activeRun}
-        activeRunText={
-          activeRun?.response ?? streamingTextByRunId[activeRunKey] ?? ""
-        }
-        activityPopoverOpen={state.activityPopoverOpen}
-        agentProfiles={agentProfiles}
-        approvalPolicy={approvalPolicy}
-        artifacts={activeArtifacts}
-        context={state.context}
-        contextPreview={contextPreview}
-        contextProviders={contextProviders}
-        consentPolicy={consentPolicy}
-        displayPrefs={state.displayPrefs}
-        egressRecords={egressRecords}
-        embeddingStatus={embeddingStatus}
-        loading={loading}
-        mnemonicEntries={mnemonicEntries}
-        promptWorkflows={promptWorkflows}
-        historyOpen={historyOpen}
-        reviewExpanded={reviewExpanded}
-        reviewOpen={reviewOpen}
-        selectedProvider={selectedProvider}
-        selectedProviderReady={selectedProviderReady}
-        settingsPopoverOpen={state.settingsPopoverOpen}
-        status={status}
-        tools={tools}
-        toolAudit={toolAudit}
-        modelCapabilities={modelCapabilities}
-        onContextToggle={(key, value) =>
-          dispatch({ type: "setContext", key, value })
-        }
-        onDisplayPrefChange={(key, value) =>
-          dispatch({ type: "setDisplayPref", key, value })
-        }
-        onToggleActivityPopover={() => {
-          dispatch({ type: "toggleActivityPopover" });
-          dispatchChrome({
-            type: "patch",
-            value: { contextPickerOpen: false },
-          });
-        }}
-        onToggleHistory={() => {
-          closeTransientPopovers();
-          dispatchChrome({
-            type: historyOpen ? "closeDrawer" : "openDrawer",
-            drawer: "history",
-          });
-        }}
-        onToggleReview={() => {
-          closeTransientPopovers();
-          if (reviewExpanded) {
+      <LazyMotion features={domAnimation}>
+        <AIChatHeader
+          activeEnvelope={activeEnvelope}
+          activeRun={activeRun}
+          activeRunText={
+            activeRun?.response ?? streamingTextByRunId[activeRunKey] ?? ""
+          }
+          activityPopoverOpen={state.activityPopoverOpen}
+          agentProfiles={agentProfiles}
+          approvalPolicy={approvalPolicy}
+          artifacts={activeArtifacts}
+          context={state.context}
+          contextPreview={contextPreview}
+          contextProviders={contextProviders}
+          consentPolicy={consentPolicy}
+          displayPrefs={state.displayPrefs}
+          egressRecords={egressRecords}
+          embeddingStatus={embeddingStatus}
+          loading={loading}
+          mnemonicEntries={mnemonicEntries}
+          promptWorkflows={promptWorkflows}
+          historyOpen={historyOpen}
+          reviewExpanded={reviewExpanded}
+          reviewOpen={reviewOpen}
+          selectedProvider={selectedProvider}
+          selectedProviderReady={selectedProviderReady}
+          settingsPopoverOpen={state.settingsPopoverOpen}
+          status={status}
+          tools={tools}
+          toolAudit={toolAudit}
+          modelCapabilities={modelCapabilities}
+          onContextToggle={(key, value) =>
+            dispatch({ type: "setContext", key, value })
+          }
+          onDisplayPrefChange={(key, value) =>
+            dispatch({ type: "setDisplayPref", key, value })
+          }
+          onToggleActivityPopover={() => {
+            dispatch({ type: "toggleActivityPopover" });
             dispatchChrome({
               type: "patch",
-              value: { reviewExpanded: false, reviewOpen: false },
+              value: { contextPickerOpen: false },
             });
-            return;
-          }
-          dispatchChrome({
-            type: reviewOpen ? "closeDrawer" : "openDrawer",
-            drawer: "review",
-          });
-        }}
-        onNewChat={handleNewChat}
-        onRefreshRuntime={refreshRuntime}
-        onToggleSettingsPopover={() => {
-          dispatch({ type: "toggleSettingsPopover" });
-          dispatchChrome({
-            type: "patch",
-            value: { contextPickerOpen: false },
-          });
-        }}
-      />
+          }}
+          onToggleHistory={() => {
+            closeTransientPopovers();
+            dispatchChrome({
+              type: historyOpen ? "closeDrawer" : "openDrawer",
+              drawer: "history",
+            });
+          }}
+          onToggleReview={() => {
+            closeTransientPopovers();
+            if (reviewExpanded) {
+              dispatchChrome({
+                type: "patch",
+                value: { reviewExpanded: false, reviewOpen: false },
+              });
+              return;
+            }
+            dispatchChrome({
+              type: reviewOpen ? "closeDrawer" : "openDrawer",
+              drawer: "review",
+            });
+          }}
+          onNewChat={handleNewChat}
+          onRefreshRuntime={refreshRuntime}
+          onToggleSettingsPopover={() => {
+            dispatch({ type: "toggleSettingsPopover" });
+            dispatchChrome({
+              type: "patch",
+              value: { contextPickerOpen: false },
+            });
+          }}
+        />
 
-      <div
-        ref={workbenchRef}
-        className="ai-chat-workbench"
-        data-presentation={presentation === "fullscreen" ? "expanded" : "panel"}
-      >
-        <LazyMotion features={domAnimation}>
+        <div
+          ref={workbenchRef}
+          className="ai-chat-workbench"
+          data-presentation={
+            presentation === "fullscreen" ? "expanded" : "panel"
+          }
+        >
           <LayoutGroup>
             {drawerDrag ? (
               <div className="ai-chat-drawer-snap-zones" aria-hidden="true">
@@ -1451,35 +1454,39 @@ export function AIChatPanelContent({
                   />
                 ) : (
                   <div className="ai-chat-transcript">
-                    {transcriptRuns.map((envelope: AIChatRunEnvelope) => (
-                      <RunCard
-                        active={envelope.id === activeRunKey}
-                        compact={state.displayPrefs.compactCards}
-                        envelope={envelope}
-                        artifactBusyId={artifactBusyId}
-                        artifacts={
-                          envelope.id === activeRunKey ? activeArtifacts : []
-                        }
-                        key={envelope.id}
-                        maxWidth={messageMaxWidth}
-                        run={hydratedRuns[envelope.id] ?? null}
-                        streamingText={streamingTextByRunId[envelope.id] ?? ""}
-                        onApplyPatchArtifact={handleApplyPatchArtifact}
-                        onOpenReview={() =>
-                          dispatchChrome({
-                            type: "openDrawer",
-                            drawer: "review",
-                          })
-                        }
-                        onRollbackPatchCheckpoint={
-                          handleRollbackPatchCheckpoint
-                        }
-                        onSelect={(runId) => {
-                          setActiveRunId(runId);
-                          dispatch({ type: "setActiveRun", runId });
-                        }}
-                      />
-                    ))}
+                    <AnimatePresence initial={false}>
+                      {transcriptRuns.map((envelope: AIChatRunEnvelope) => (
+                        <RunCard
+                          active={envelope.id === activeRunKey}
+                          compact={state.displayPrefs.compactCards}
+                          envelope={envelope}
+                          artifactBusyId={artifactBusyId}
+                          artifacts={
+                            envelope.id === activeRunKey ? activeArtifacts : []
+                          }
+                          key={envelope.id}
+                          reduceMotion={Boolean(reduceMotion)}
+                          run={hydratedRuns[envelope.id] ?? null}
+                          streamingText={
+                            streamingTextByRunId[envelope.id] ?? ""
+                          }
+                          onApplyPatchArtifact={handleApplyPatchArtifact}
+                          onOpenReview={() =>
+                            dispatchChrome({
+                              type: "openDrawer",
+                              drawer: "review",
+                            })
+                          }
+                          onRollbackPatchCheckpoint={
+                            handleRollbackPatchCheckpoint
+                          }
+                          onSelect={(runId) => {
+                            setActiveRunId(runId);
+                            dispatch({ type: "setActiveRun", runId });
+                          }}
+                        />
+                      ))}
+                    </AnimatePresence>
                     <div ref={transcriptEndRef} />
                   </div>
                 )}
@@ -1536,8 +1543,12 @@ export function AIChatPanelContent({
                   }
                   data-testid="ai-chat-history-drawer"
                   initial={{
-                    x: historyEdge === "left" ? "-104%" : "104%",
-                    opacity: 0.72,
+                    x: reduceMotion
+                      ? 0
+                      : historyEdge === "left"
+                        ? "-104%"
+                        : "104%",
+                    opacity: reduceMotion ? 0 : 0.72,
                   }}
                   animate={{
                     x:
@@ -1545,7 +1556,11 @@ export function AIChatPanelContent({
                     opacity: 1,
                   }}
                   exit={{
-                    x: historyEdge === "left" ? "-104%" : "104%",
+                    x: reduceMotion
+                      ? 0
+                      : historyEdge === "left"
+                        ? "-104%"
+                        : "104%",
                     opacity: 0,
                   }}
                   layout
@@ -1560,7 +1575,10 @@ export function AIChatPanelContent({
                   transition={
                     drawerDrag?.drawer === "history"
                       ? { duration: 0 }
-                      : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }
+                      : {
+                          duration: reduceMotion ? 0.1 : 0.18,
+                          ease: [0.22, 1, 0.36, 1],
+                        }
                   }
                 >
                   {fullscreen ? (
@@ -1625,15 +1643,23 @@ export function AIChatPanelContent({
                   }
                   data-testid="ai-chat-review-drawer"
                   initial={{
-                    x: reviewEdge === "left" ? "-104%" : "104%",
-                    opacity: 0.72,
+                    x: reduceMotion
+                      ? 0
+                      : reviewEdge === "left"
+                        ? "-104%"
+                        : "104%",
+                    opacity: reduceMotion ? 0 : 0.72,
                   }}
                   animate={{
                     x: drawerDrag?.drawer === "review" ? drawerDrag.offsetX : 0,
                     opacity: 1,
                   }}
                   exit={{
-                    x: reviewEdge === "left" ? "-104%" : "104%",
+                    x: reduceMotion
+                      ? 0
+                      : reviewEdge === "left"
+                        ? "-104%"
+                        : "104%",
                     opacity: 0,
                   }}
                   layout
@@ -1648,7 +1674,10 @@ export function AIChatPanelContent({
                   transition={
                     drawerDrag?.drawer === "review"
                       ? { duration: 0 }
-                      : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }
+                      : {
+                          duration: reduceMotion ? 0.1 : 0.18,
+                          ease: [0.22, 1, 0.36, 1],
+                        }
                   }
                 >
                   {fullscreen ? (
@@ -1727,10 +1756,19 @@ export function AIChatPanelContent({
                 <m.div
                   className="ai-chat-review-overlay"
                   data-testid="ai-chat-review-expanded"
-                  initial={{ opacity: 0, scale: 0.985 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.985 }}
-                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                  initial={
+                    reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.985 }
+                  }
+                  animate={
+                    reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }
+                  }
+                  exit={
+                    reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.985 }
+                  }
+                  transition={{
+                    duration: reduceMotion ? 0.1 : 0.18,
+                    ease: [0.22, 1, 0.36, 1],
+                  }}
                 >
                   <ChatGitReview
                     canMove={false}
@@ -1780,8 +1818,8 @@ export function AIChatPanelContent({
               ) : null}
             </AnimatePresence>
           </LayoutGroup>
-        </LazyMotion>
-      </div>
+        </div>
+      </LazyMotion>
     </section>
   );
 }
