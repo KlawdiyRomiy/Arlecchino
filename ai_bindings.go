@@ -220,6 +220,46 @@ func (a *App) AIGetChatRunEnvelope(ctx context.Context, runID string) (ai.AIChat
 	return a.ensureAIService().GetChatRunEnvelope(sessionID, runID)
 }
 
+func (a *App) AIListChatRunArtifacts(ctx context.Context, runID string) ([]ai.AIChatRunArtifact, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().ListChatRunArtifacts(sessionID, runID)
+}
+
+func (a *App) AIGetChatRunArtifact(ctx context.Context, artifactID string) (ai.AIChatRunArtifact, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIChatRunArtifact{}, err
+	}
+	return a.ensureAIService().GetChatRunArtifact(sessionID, artifactID)
+}
+
+func (a *App) AIPreviewPatch(ctx context.Context, req ai.AIPatchPreviewRequest) (ai.AIPatchPreviewResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIPatchPreviewResult{}, err
+	}
+	return a.ensureAIService().PreviewPatch(sessionID, req)
+}
+
+func (a *App) AIApplyPatchArtifact(ctx context.Context, req ai.AIPatchApplyRequest) (ai.AIPatchApplyResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIPatchApplyResult{}, err
+	}
+	return a.ensureAIService().ApplyPatchArtifact(sessionID, req)
+}
+
+func (a *App) AIRollbackPatchCheckpoint(ctx context.Context, req ai.AIPatchRollbackRequest) (ai.AIPatchRollbackResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIPatchRollbackResult{}, err
+	}
+	return a.ensureAIService().RollbackPatchCheckpoint(sessionID, req)
+}
+
 func (a *App) AIListChatRuns(ctx context.Context, limit int) ([]ai.AIChatRunEnvelope, error) {
 	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
@@ -268,8 +308,40 @@ func (a *App) AIListContextProviders() ([]ai.AIContextProviderDescriptor, error)
 	return a.ensureAIService().ListContextProviders(), nil
 }
 
+func (a *App) AIListTools() ([]ai.AIToolDescriptor, error) {
+	return a.ensureAIService().ListTools(), nil
+}
+
+func (a *App) AIExecuteToolCall(ctx context.Context, req ai.AIToolCallRequest) (ai.AIToolCallResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIToolCallResult{}, err
+	}
+	return a.ensureAIService().ExecuteToolCall(ctx, sessionID, req)
+}
+
+func (a *App) AIListToolAudit(ctx context.Context, limit int) ([]ai.AIToolAuditRecord, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().ListToolAudit(sessionID, limit)
+}
+
 func (a *App) AIGetEmbeddingStatus() (ai.AIEmbeddingStatus, error) {
 	return a.ensureAIService().GetEmbeddingStatus(), nil
+}
+
+func (a *App) AIListModelCapabilities() ([]ai.AIModelCapabilityDescriptor, error) {
+	return a.ensureAIService().ListModelCapabilities(), nil
+}
+
+func (a *App) AIPreviewBackgroundAgent(ctx context.Context, req ai.AIBackgroundAgentPreviewRequest) (ai.AIBackgroundAgentPreviewResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIBackgroundAgentPreviewResult{}, err
+	}
+	return a.ensureAIService().PreviewBackgroundAgent(sessionID, req)
 }
 
 func (a *App) AIClearState(ctx context.Context) error {
@@ -310,6 +382,30 @@ func (a *App) AIListMnemonicEntries(ctx context.Context, limit int) ([]ai.AIMnem
 		return nil, err
 	}
 	return a.ensureAIService().ListMnemonicEntries(sessionID, limit)
+}
+
+func (a *App) AIInspectMnemonic(ctx context.Context, runID string) (ai.AIMnemonicInspection, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIMnemonicInspection{}, err
+	}
+	return a.ensureAIService().InspectMnemonic(sessionID, runID)
+}
+
+func (a *App) AIProposeMnemonicEntry(ctx context.Context, req ai.AIMnemonicWriteProposalRequest) (ai.AIMnemonicWriteProposalResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIMnemonicWriteProposalResult{}, err
+	}
+	return a.ensureAIService().ProposeMnemonicEntry(sessionID, req)
+}
+
+func (a *App) AIApproveMnemonicEntryProposal(ctx context.Context, req ai.AIMnemonicApproveProposalRequest) (ai.AIMnemonicEntry, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIMnemonicEntry{}, err
+	}
+	return a.ensureAIService().ApproveMnemonicEntryProposal(sessionID, req)
 }
 
 func (a *App) AISaveMnemonicEntry(ctx context.Context, input ai.AIMnemonicEntryInput) (ai.AIMnemonicEntry, error) {

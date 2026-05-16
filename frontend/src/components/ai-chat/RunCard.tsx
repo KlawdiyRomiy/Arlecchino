@@ -9,8 +9,10 @@ import {
 import type {
   AIChatAction,
   AIChatRun,
+  AIChatRunArtifact,
   AIChatRunEnvelope,
 } from "../../../bindings/arlecchino/internal/ai/models";
+import { AIChatRunArtifactKind } from "../../../bindings/arlecchino/internal/ai/models";
 import {
   compactText,
   formatRunTime,
@@ -18,6 +20,7 @@ import {
   runStatusLabel,
 } from "./aiChatPresentation";
 import { ContextSummary } from "./ContextSummary";
+import { PatchArtifactCard } from "./PatchArtifactCard";
 import { ToolProposalCard } from "./ToolProposalCard";
 
 interface RunCardProps {
@@ -27,7 +30,12 @@ interface RunCardProps {
   compact: boolean;
   maxWidth: number;
   streamingText: string;
+  artifacts?: AIChatRunArtifact[];
+  artifactBusyId?: string | null;
   onSelect: (runId: string) => void;
+  onApplyPatchArtifact?: (artifactId: string) => void;
+  onRollbackPatchCheckpoint?: (checkpointId: string) => void;
+  onOpenReview?: () => void;
 }
 
 function StatusIcon({ status }: { status: string }) {
@@ -104,7 +112,12 @@ export function RunCard({
   compact,
   maxWidth,
   streamingText,
+  artifacts = [],
+  artifactBusyId = null,
   onSelect,
+  onApplyPatchArtifact,
+  onRollbackPatchCheckpoint,
+  onOpenReview,
 }: RunCardProps) {
   const action = envelope.action as AIChatAction;
   const meta = getActionMeta(action);
@@ -116,6 +129,10 @@ export function RunCard({
   const provider = run?.providerId || envelope.providerId || "runtime";
   const model = run?.model || envelope.model || "";
   const proposals = run?.toolProposals ?? envelope.toolProposals ?? [];
+  const patchArtifacts = artifacts.filter(
+    (artifact) =>
+      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactPatchPreview,
+  );
   const context = run?.contextSummary ?? envelope.contextSummary ?? null;
   const cardStyle = {
     "--run-card-width": `${maxWidth}px`,
@@ -185,6 +202,21 @@ export function RunCard({
               <ToolProposalCard
                 key={`${proposal.kind}-${proposal.id || proposal.name}`}
                 proposal={proposal}
+              />
+            ))}
+          </div>
+        ) : null}
+
+        {patchArtifacts.length > 0 ? (
+          <div className="ai-chat-run-card__artifacts">
+            {patchArtifacts.map((artifact) => (
+              <PatchArtifactCard
+                artifact={artifact}
+                busy={artifactBusyId === artifact.id}
+                key={artifact.id}
+                onApply={onApplyPatchArtifact ?? (() => undefined)}
+                onOpenReview={onOpenReview ?? (() => undefined)}
+                onRollback={onRollbackPatchCheckpoint ?? (() => undefined)}
               />
             ))}
           </div>

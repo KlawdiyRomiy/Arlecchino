@@ -181,9 +181,13 @@ func normalizeChatSessionID(sessionID string) string {
 func normalizeLoadedChatRun(projectID string, run AIChatRun) AIChatRun {
 	run.ProjectSessionID = normalizeProjectID(projectID)
 	run.SessionID = normalizeChatSessionID(run.SessionID)
+	if run.Revision <= 0 {
+		run.Revision = 1
+	}
 	if run.Status == "running" || run.Status == "queued" {
 		run.Status = "canceled"
 		run.CanCancel = false
+		run.Revision++
 		run.UpdatedAt = firstNonEmpty(run.UpdatedAt, run.CreatedAt, utcNow())
 	}
 	return run

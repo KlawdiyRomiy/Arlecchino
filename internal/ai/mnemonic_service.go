@@ -1,10 +1,13 @@
 package ai
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"arlecchino/internal/ai/mnemonic"
+
+	"github.com/google/uuid"
 )
 
 func (s *Service) SearchMnemonic(projectID string, req AIMnemonicSearchRequest) ([]AIMnemonicEntry, error) {
@@ -140,6 +143,174 @@ func (s *Service) DeleteMnemonicEntry(projectID string, id string) error {
 	}
 	s.emitEvent("ai:mnemonic:entry-deleted", map[string]string{"id": strings.TrimSpace(id), "projectSessionId": project.ID})
 	return nil
+}
+
+func (s *Service) InspectMnemonic(projectID string, runID string) (AIMnemonicInspection, error) {
+	project := s.project(projectID)
+	if project == nil || project.Mnemonic == nil {
+		return AIMnemonicInspection{UpdatedAt: utcNow()}, nil
+	}
+	entries, err := project.Mnemonic.ListAll(200)
+	if err != nil {
+		return AIMnemonicInspection{}, err
+	}
+	usedIDs := map[string]struct{}{}
+	runID = strings.TrimSpace(runID)
+	if runID != "" && project.ChatArtifacts != nil {
+		artifacts, _ := project.ChatArtifacts.ListByRun(runID)
+		for _, artifact := range artifacts {
+			if artifact.Kind != AIChatRunArtifactContext {
+				continue
+			}
+			var snapshot AIContextSnapshot
+			if err := json.Unmarshal([]byte(artifact.PayloadJSON), &snapshot); err != nil {
+				continue
+			}
+			for _, entry := range snapshot.Mnemonic {
+				usedIDs[entry.ID] = struct{}{}
+			}
+		}
+	}
+	inspection := AIMnemonicInspection{RunID: runID, UpdatedAt: utcNow()}
+	for _, raw := range entries {
+		entry := fromMnemonicEntry(raw)
+		_, used := usedIDs[entry.ID]
+		item := AIMnemonicInspectionEntry{
+			Entry:     entry,
+			State:     mnemonicInspectionState(entry, used),
+			Reason:    mnemonicInspectionReason(entry, used),
+			UsedInRun: used,
+		}
+		if used {
+			inspection.Used = append(inspection.Used, item)
+		}
+		if entry.Pinned {
+			inspection.Pinned = append(inspection.Pinned, item)
+		}
+		if entry.Superseded {
+			inspection.Superseded = append(inspection.Superseded, item)
+		}
+		if !entry.IsLatest || entry.Decay >= 0.8 {
+			inspection.Stale = append(inspection.Stale, item)
+		}
+		if !used && !entry.Superseded {
+			inspection.Candidates = append(inspection.Candidates, item)
+		}
+	}
+	return inspection, nil
+}
+
+func (s *Service) ProposeMnemonicEntry(projectID string, req AIMnemonicWriteProposalRequest) (AIMnemonicWriteProposalResult, error) {
+	project := s.project(projectID)
+	if project == nil || project.ChatArtifacts == nil {
+		return AIMnemonicWriteProposalResult{}, fmt.Errorf("AI project session is not open")
+	}
+	run, err := s.GetChatRun(project.ID, req.RunID)
+	if err != nil {
+		return AIMnemonicWriteProposalResult{}, err
+	}
+	if strings.TrimSpace(req.Entry.Content) == "" {
+		return AIMnemonicWriteProposalResult{}, fmt.Errorf("mnemonic proposal content is empty")
+	}
+	req.Entry.Source = firstNonEmpty(req.Entry.Source, "ai-chat")
+	req.Entry.Trust = mnemonic.TrustGenerated
+	payload := AIMnemonicWriteProposalPayload{
+		Entry:            req.Entry,
+		Reason:           strings.TrimSpace(req.Reason),
+		RequiresApproval: true,
+	}
+	now := utcNow()
+	artifact := AIChatRunArtifact{
+		ID:               "memory-proposal-" + uuid.NewString(),
+		RunID:            run.ID,
+		SessionID:        normalizeChatSessionID(run.SessionID),
+		ProjectSessionID: project.ID,
+		Kind:             AIChatRunArtifactMemory,
+		Status:           "proposed",
+		Title:            "Mnemonic write proposal",
+		Summary:          firstNonEmpty(payload.Reason, "Approval required before writing durable memory"),
+		PayloadJSON:      marshalChatArtifactPayload(payload),
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := project.ChatArtifacts.Upsert(artifact); err != nil {
+		return AIMnemonicWriteProposalResult{}, err
+	}
+	return AIMnemonicWriteProposalResult{Artifact: artifact, Payload: payload, Status: artifact.Status, RequiresApproval: true}, nil
+}
+
+func (s *Service) ApproveMnemonicEntryProposal(projectID string, req AIMnemonicApproveProposalRequest) (AIMnemonicEntry, error) {
+	project := s.project(projectID)
+	if project == nil || project.ChatArtifacts == nil || project.Mnemonic == nil {
+		return AIMnemonicEntry{}, fmt.Errorf("AI project session is not open")
+	}
+	artifact, err := s.GetChatRunArtifact(project.ID, req.ArtifactID)
+	if err != nil {
+		return AIMnemonicEntry{}, err
+	}
+	if artifact.Kind != AIChatRunArtifactMemory || artifact.Status != "proposed" {
+		return AIMnemonicEntry{}, fmt.Errorf("chat artifact %q is not a mnemonic write proposal", artifact.ID)
+	}
+	var payload AIMnemonicWriteProposalPayload
+	if err := json.Unmarshal([]byte(artifact.PayloadJSON), &payload); err != nil {
+		return AIMnemonicEntry{}, err
+	}
+	input := payload.Entry
+	input.Source = firstNonEmpty(input.Source, "user-approved")
+	input.Trust = firstNonEmpty(req.Trust, mnemonic.TrustTrusted)
+	input.Pinned = req.Pinned || input.Trust == mnemonic.TrustTrusted
+	input.Provenance = map[string]string{
+		"reviewedBy": firstNonEmpty(strings.TrimSpace(req.ReviewedBy), "user"),
+		"proposalId": artifact.ID,
+		"runId":      artifact.RunID,
+	}
+	saved, err := s.SaveMnemonicEntry(project.ID, input)
+	if err != nil {
+		return AIMnemonicEntry{}, err
+	}
+	artifact.Status = "approved"
+	artifact.Summary = "Saved to Mnemonic after approval"
+	artifact.UpdatedAt = utcNow()
+	artifact.PayloadJSON = marshalChatArtifactPayload(map[string]any{
+		"proposal": payload,
+		"entryId":  saved.ID,
+		"approved": true,
+	})
+	_ = project.ChatArtifacts.Upsert(artifact)
+	return saved, nil
+}
+
+func mnemonicInspectionState(entry AIMnemonicEntry, used bool) string {
+	switch {
+	case used:
+		return "used"
+	case entry.Pinned:
+		return "pinned"
+	case entry.Superseded:
+		return "superseded"
+	case !entry.IsLatest || entry.Decay >= 0.8:
+		return "stale"
+	case entry.Generated || entry.Trust == mnemonic.TrustGenerated:
+		return "candidate"
+	default:
+		return "available"
+	}
+}
+
+func mnemonicInspectionReason(entry AIMnemonicEntry, used bool) string {
+	if used {
+		return "included in this run context"
+	}
+	if entry.Pinned {
+		return "pinned durable memory"
+	}
+	if entry.Superseded {
+		return "not latest"
+	}
+	if entry.Generated {
+		return "generated memory requires user review before promotion"
+	}
+	return "available trusted memory"
 }
 
 func isMnemonicTrustPromotion(current string, next string) bool {

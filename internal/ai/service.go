@@ -48,12 +48,14 @@ type Service struct {
 }
 
 type ProjectSession struct {
-	ID          string
-	ProjectRoot string
-	Mnemonic    *mnemonic.Store
-	Skills      *skills.Store
-	Egress      *EgressLedger
-	ChatHistory *ChatHistoryLedger
+	ID            string
+	ProjectRoot   string
+	Mnemonic      *mnemonic.Store
+	Skills        *skills.Store
+	Egress        *EgressLedger
+	ChatHistory   *ChatHistoryLedger
+	ChatArtifacts *ChatArtifactLedger
+	ToolAudit     *ToolAuditLedger
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -166,13 +168,27 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 		_ = store.Close()
 		return nil, err
 	}
+	chatArtifacts, err := openChatArtifactLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
+	toolAudit, err := openToolAuditLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
 	project := &ProjectSession{
-		ID:          projectID,
-		ProjectRoot: projectRoot,
-		Mnemonic:    store,
-		Skills:      skillStore,
-		Egress:      ledger,
-		ChatHistory: chatHistory,
+		ID:            projectID,
+		ProjectRoot:   projectRoot,
+		Mnemonic:      store,
+		Skills:        skillStore,
+		Egress:        ledger,
+		ChatHistory:   chatHistory,
+		ChatArtifacts: chatArtifacts,
+		ToolAudit:     toolAudit,
 	}
 	s.mu.Lock()
 	if previous := s.projects[projectID]; previous != nil {
@@ -499,6 +515,11 @@ func (s *Service) ClearState(projectID string) error {
 				return err
 			}
 		}
+		if project.ToolAudit != nil {
+			if err := project.ToolAudit.Clear(); err != nil {
+				return err
+			}
+		}
 		if project.Mnemonic != nil {
 			if err := project.Mnemonic.Clear(); err != nil {
 				return err
@@ -586,6 +607,9 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 		ApprovalSummary:  s.approvalSummaryForProject(project),
 		CreatedAt:        utcNow(),
 	}
+	for _, item := range req.ContextItems {
+		addContextItemDisclosure(&snapshot, item.Kind, item.Label, item.Path, firstNonEmpty(item.Source, "request"), true, false, 0, "requested")
+	}
 	if req.FilePath != "" || req.FullText != "" || req.TextBefore != "" || req.TextAfter != "" {
 		snapshot.DataCategories = append(snapshot.DataCategories, "current_file_context")
 		content := currentFileWindow(req)
@@ -596,6 +620,9 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 				Language: req.Language,
 				Content:  content,
 			})
+			addContextItemDisclosure(&snapshot, AIContextItemKindFile, filepath.Base(req.FilePath), req.FilePath, "current_file", true, true, len(content), "")
+		} else {
+			addContextItemDisclosure(&snapshot, AIContextItemKindFile, filepath.Base(req.FilePath), req.FilePath, "current_file", true, false, 0, "empty")
 		}
 	}
 	if req.Selection != "" {
@@ -606,21 +633,41 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 			Language: req.Language,
 			Content:  req.Selection,
 		})
+		addContextItemDisclosure(&snapshot, AIContextItemKindSelection, "Selection", req.FilePath, "selection", true, true, len(req.Selection), "")
+	}
+	if req.MaxSnippets > 3 && strings.TrimSpace(req.Prompt) != "" {
+		fastSnippets := fastContextSnippets(project.ProjectRoot, req.Prompt, req.FilePath, 3)
+		if len(fastSnippets) > 0 {
+			snapshot.DataCategories = append(snapshot.DataCategories, "fast_context")
+			bytes := 0
+			for _, snippet := range fastSnippets {
+				bytes += len(snippet.Content)
+				snapshot.Snippets = append(snapshot.Snippets, snippet)
+			}
+			addContextItemDisclosure(&snapshot, AIContextItemKindWorkspace, "Fast context", "", "fast_context", true, true, bytes, fmt.Sprintf("%d local matches", len(fastSnippets)))
+		} else {
+			addContextItemDisclosure(&snapshot, AIContextItemKindWorkspace, "Fast context", "", "fast_context", true, false, 0, "no local matches")
+		}
 	}
 	if req.TerminalInput != "" {
 		snapshot.DataCategories = append(snapshot.DataCategories, "terminal_input")
+		addContextItemDisclosure(&snapshot, AIContextItemKindTerminal, "Terminal input", req.TerminalWorkDir, "terminal", true, true, len(req.TerminalInput), "")
 	}
 	if req.IncludeMCP && s.mcpContext != nil {
 		if plane, err := s.mcpContext(project.ProjectRoot); err == nil {
 			snapshot.MCPContext = &plane
 			if plane.Available {
 				snapshot.DataCategories = append(snapshot.DataCategories, "mcp_tool_metadata")
-				if content := formatMCPContextForPrompt(plane); content != "" {
+				content := formatMCPContextForPrompt(plane)
+				if content != "" {
 					snapshot.Snippets = append(snapshot.Snippets, AIContextSnippet{
 						Type:    "mcp_context",
 						Content: content,
 					})
 				}
+				addContextItemDisclosure(&snapshot, AIContextItemKindMCP, "MCP metadata", "", "mcp", true, true, len(content), "")
+			} else {
+				addContextItemDisclosure(&snapshot, AIContextItemKindMCP, "MCP metadata", "", "mcp", true, false, 0, plane.ExecutionState)
 			}
 		}
 	}
@@ -632,6 +679,9 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 		if len(snapshot.Mnemonic) > 0 {
 			snapshot.DataCategories = append(snapshot.DataCategories, "mnemonic")
 		}
+		addContextItemDisclosure(&snapshot, AIContextItemKindMnemonic, "Mnemonic", "", "mnemonic", true, len(snapshot.Mnemonic) > 0, len(snapshot.Mnemonic), mnemonicContextReason(snapshot.Mnemonic))
+	} else if req.IncludeMnemonic {
+		addContextItemDisclosure(&snapshot, AIContextItemKindMnemonic, "Mnemonic", "", "mnemonic", true, false, 0, "disabled")
 	}
 	if req.IncludeSkills && project.Skills != nil && project.Mnemonic != nil && project.Mnemonic.Enabled() {
 		items, _ := project.Skills.Context(skills.ContextRequest{
@@ -645,8 +695,16 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 		if len(snapshot.Skills) > 0 {
 			snapshot.DataCategories = append(snapshot.DataCategories, "skill_residency")
 		}
+		addContextItemDisclosure(&snapshot, AIContextItemKindSkill, "Skills", "", "skills", true, len(snapshot.Skills) > 0, len(snapshot.Skills), skillContextReason(snapshot.Skills))
+	} else if req.IncludeSkills {
+		addContextItemDisclosure(&snapshot, AIContextItemKindSkill, "Skills", "", "skills", true, false, 0, "disabled")
 	}
 	snapshot = newPrivacyGate().SanitizeSnapshot(snapshot, req.MaxBytes, req.MaxSnippets)
+	for i := range snapshot.ContextItems {
+		if snapshot.Redaction.Truncated && snapshot.ContextItems[i].Included {
+			snapshot.ContextItems[i].Truncated = true
+		}
+	}
 	snapshot.SnippetBreakdown = snippetBreakdown(snapshot.Snippets)
 	snapshot.Disclosure = AIContextDisclosure{
 		Capability:     snapshot.Capability,
@@ -675,12 +733,178 @@ func summarizeContextSnapshot(snapshot AIContextSnapshot) AIContextSummary {
 		MCPIncluded:       snapshot.MCPContext != nil && snapshot.MCPContext.Available,
 		MCPContext:        snapshot.MCPContext,
 		SnippetBreakdown:  snapshot.SnippetBreakdown,
+		ContextItems:      snapshot.ContextItems,
 		DataCategories:    snapshot.DataCategories,
 		Redaction:         snapshot.Redaction,
 		DisclosureSummary: snapshot.DisclosureSummary,
 		ByteSize:          snapshot.ByteSize,
 		CreatedAt:         snapshot.CreatedAt,
 	}
+}
+
+func addContextItemDisclosure(snapshot *AIContextSnapshot, kind AIContextItemKind, label string, path string, source string, requested bool, included bool, bytes int, reason string) {
+	if snapshot == nil || kind == "" {
+		return
+	}
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = string(kind)
+	}
+	id := string(kind) + ":" + strings.TrimSpace(source) + ":" + strings.TrimSpace(path) + ":" + label
+	for i := range snapshot.ContextItems {
+		item := &snapshot.ContextItems[i]
+		if item.Kind == kind && item.Path == path && item.Source == source {
+			item.Requested = item.Requested || requested
+			item.Included = item.Included || included
+			item.Bytes += bytes
+			if reason != "" {
+				item.Reason = reason
+			}
+			if label != string(kind) {
+				item.Label = label
+			}
+			return
+		}
+	}
+	snapshot.ContextItems = append(snapshot.ContextItems, AIContextItemDisclosure{
+		ID:        shortHash(id),
+		Kind:      kind,
+		Label:     label,
+		Path:      strings.TrimSpace(path),
+		Source:    strings.TrimSpace(source),
+		Requested: requested,
+		Included:  included,
+		Bytes:     bytes,
+		Reason:    strings.TrimSpace(reason),
+	})
+}
+
+func mnemonicContextReason(entries []AIMnemonicEntry) string {
+	if len(entries) == 0 {
+		return "no_entries"
+	}
+	pinned := 0
+	generated := 0
+	stale := 0
+	for _, entry := range entries {
+		if entry.Pinned {
+			pinned++
+		}
+		if entry.Generated || entry.Trust == mnemonic.TrustGenerated {
+			generated++
+		}
+		if entry.Superseded || !entry.IsLatest {
+			stale++
+		}
+	}
+	parts := []string{fmt.Sprintf("%d included", len(entries))}
+	if pinned > 0 {
+		parts = append(parts, fmt.Sprintf("%d pinned", pinned))
+	}
+	if generated > 0 {
+		parts = append(parts, fmt.Sprintf("%d generated", generated))
+	}
+	if stale > 0 {
+		parts = append(parts, fmt.Sprintf("%d stale", stale))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func fastContextSnippets(projectRoot string, prompt string, currentPath string, limit int) []AIContextSnippet {
+	terms := fastContextTerms(prompt)
+	if len(terms) == 0 || limit <= 0 {
+		return nil
+	}
+	currentPath = filepath.Clean(currentPath)
+	snippets := []AIContextSnippet{}
+	_ = filepath.WalkDir(projectRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || len(snippets) >= limit {
+			return nil
+		}
+		name := entry.Name()
+		if entry.IsDir() {
+			switch name {
+			case ".git", "node_modules", "dist", "build", ".wails", ".arlecchino", "vendor":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if currentPath != "." && filepath.Clean(path) == currentPath {
+			return nil
+		}
+		if !fastContextFileAllowed(name) {
+			return nil
+		}
+		info, statErr := entry.Info()
+		if statErr != nil || info.Size() <= 0 || info.Size() > 64*1024 {
+			return nil
+		}
+		content, readErr := os.ReadFile(path)
+		if readErr != nil || strings.Contains(string(content), "\x00") {
+			return nil
+		}
+		lower := strings.ToLower(string(content))
+		score := 0
+		for _, term := range terms {
+			if strings.Contains(lower, term) {
+				score++
+			}
+		}
+		if score == 0 {
+			return nil
+		}
+		rel, _ := filepath.Rel(projectRoot, path)
+		snippets = append(snippets, AIContextSnippet{
+			Type:    "fast_context",
+			Path:    filepath.ToSlash(rel),
+			Content: truncateUTF8(string(content), 2400),
+		})
+		return nil
+	})
+	return snippets
+}
+
+func fastContextTerms(prompt string) []string {
+	fields := strings.FieldsFunc(strings.ToLower(prompt), func(r rune) bool {
+		return !(r == '_' || r == '-' || r == '.' || r == '/' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	})
+	seen := map[string]struct{}{}
+	terms := []string{}
+	for _, field := range fields {
+		field = strings.Trim(field, " ./_-")
+		if len(field) < 4 {
+			continue
+		}
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		terms = append(terms, field)
+		if len(terms) >= 8 {
+			break
+		}
+	}
+	return terms
+}
+
+func fastContextFileAllowed(name string) bool {
+	lower := strings.ToLower(name)
+	if strings.HasPrefix(lower, ".env") || strings.Contains(lower, "secret") || strings.Contains(lower, "token") {
+		return false
+	}
+	switch filepath.Ext(lower) {
+	case ".go", ".ts", ".tsx", ".js", ".jsx", ".css", ".md", ".json", ".yaml", ".yml", ".toml":
+		return true
+	default:
+		return false
+	}
+}
+
+func skillContextReason(items []AISkillContext) string {
+	if len(items) == 0 {
+		return "no_matching_skills"
+	}
+	return "included"
 }
 
 func snippetBreakdown(snippets []AIContextSnippet) []AIContextSnippetBreakdown {

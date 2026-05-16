@@ -1,6 +1,8 @@
 import React from "react";
 import {
   ChevronDown,
+  GitBranch,
+  History,
   Loader2,
   MessageSquarePlus,
   RefreshCw,
@@ -10,26 +12,44 @@ import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal
 import type {
   AIAgentProfileDescriptor,
   AIApprovalPolicy,
+  AIChatRun,
+  AIChatRunArtifact,
+  AIChatRunEnvelope,
   AIConsentPolicy,
+  AIContextSnapshot,
   AIContextProviderDescriptor,
   AIEmbeddingStatus,
   AIEgressRecord,
   AIMnemonicEntry,
+  AIModelCapabilityDescriptor,
   AIPromptWorkflowDescriptor,
   AIStatus,
+  AIToolAuditRecord,
+  AIToolDescriptor,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIChatDisplayPrefs, ContextToggles } from "./types";
 import { getProviderPresentation } from "./providerPresentation";
 import { ProviderPopover } from "./ProviderPopover";
 import { SettingsPopover } from "./SettingsPopover";
+import {
+  ActivityIcon,
+  ActivityStatusPopover,
+  buildActivityStatusItems,
+  summarizeActivityStatus,
+} from "./ActivityTimeline";
 
 interface AIChatHeaderProps {
   loading: boolean;
   selectedProvider: AIProviderDescriptor | null;
+  selectedProviderReady: boolean;
   selectedProviderId: string;
   providers: AIProviderDescriptor[];
   providerPopoverOpen: boolean;
   settingsPopoverOpen: boolean;
+  activityPopoverOpen: boolean;
+  historyOpen: boolean;
+  reviewOpen: boolean;
+  reviewExpanded: boolean;
   context: ContextToggles;
   displayPrefs: AIChatDisplayPrefs;
   contextProviders: AIContextProviderDescriptor[];
@@ -41,8 +61,19 @@ interface AIChatHeaderProps {
   mnemonicEntries: AIMnemonicEntry[];
   agentProfiles: AIAgentProfileDescriptor[];
   promptWorkflows: AIPromptWorkflowDescriptor[];
+  tools: AIToolDescriptor[];
+  toolAudit: AIToolAuditRecord[];
+  modelCapabilities: AIModelCapabilityDescriptor[];
+  activeEnvelope: AIChatRunEnvelope | null;
+  activeRun: AIChatRun | null;
+  activeRunText: string;
+  artifacts: AIChatRunArtifact[];
+  contextPreview: AIContextSnapshot | null;
   onNewChat: () => void;
   onRefreshRuntime: () => void;
+  onToggleActivityPopover: () => void;
+  onToggleHistory: () => void;
+  onToggleReview: () => void;
   onToggleProviderPopover: () => void;
   onToggleSettingsPopover: () => void;
   onSelectProvider: (provider: AIProviderDescriptor) => void;
@@ -55,10 +86,15 @@ interface AIChatHeaderProps {
 export function AIChatHeader({
   loading,
   selectedProvider,
+  selectedProviderReady,
   selectedProviderId,
   providers,
   providerPopoverOpen,
   settingsPopoverOpen,
+  activityPopoverOpen,
+  historyOpen,
+  reviewOpen,
+  reviewExpanded,
   context,
   displayPrefs,
   contextProviders,
@@ -70,8 +106,19 @@ export function AIChatHeader({
   mnemonicEntries,
   agentProfiles,
   promptWorkflows,
+  tools,
+  toolAudit,
+  modelCapabilities,
+  activeEnvelope,
+  activeRun,
+  activeRunText,
+  artifacts,
+  contextPreview,
   onNewChat,
   onRefreshRuntime,
+  onToggleActivityPopover,
+  onToggleHistory,
+  onToggleReview,
   onToggleProviderPopover,
   onToggleSettingsPopover,
   onSelectProvider,
@@ -81,10 +128,50 @@ export function AIChatHeader({
   onDisplayPrefChange,
 }: AIChatHeaderProps) {
   const provider = getProviderPresentation(selectedProvider);
+  const activityItems = buildActivityStatusItems({
+    activeEnvelope,
+    activeRun,
+    activeRunText,
+    approvalPolicy,
+    artifacts,
+    consentPolicy,
+    contextPreview,
+    embeddingStatus,
+    selectedProvider,
+    selectedProviderReady,
+    workflowCount: promptWorkflows.length,
+  });
+  const activitySummary = summarizeActivityStatus(
+    activityItems,
+    selectedProviderReady,
+  );
 
   return (
     <header className="ai-chat-header">
+      <div className="ai-chat-header__left">
+        <button
+          className={`ai-chat-icon-button${historyOpen ? " is-active" : ""}`}
+          data-testid="ai-chat-history-toggle"
+          type="button"
+          title={historyOpen ? "Close chat history" : "Open chat history"}
+          onClick={onToggleHistory}
+        >
+          <History size={16} />
+        </button>
+      </div>
+
       <div className="ai-chat-header__actions">
+        <button
+          className={`ai-chat-icon-button${reviewOpen || reviewExpanded ? " is-active" : ""}`}
+          data-testid="ai-chat-review-toggle"
+          type="button"
+          title={
+            reviewOpen || reviewExpanded ? "Close Git Review" : "Open Git Review"
+          }
+          onClick={onToggleReview}
+        >
+          <GitBranch size={16} />
+        </button>
         <button
           className="ai-chat-icon-button"
           type="button"
@@ -106,7 +193,10 @@ export function AIChatHeader({
           )}
         </button>
 
-        <div className="ai-chat-header__menu" data-ai-chat-popover-scope>
+        <div
+          className="ai-chat-header__menu ai-chat-header__menu--provider"
+          data-ai-chat-popover-scope
+        >
           <button
             className="ai-chat-provider-button"
             data-testid="ai-chat-provider-button"
@@ -132,7 +222,34 @@ export function AIChatHeader({
           ) : null}
         </div>
 
-        <div className="ai-chat-header__menu" data-ai-chat-popover-scope>
+        <div
+          className="ai-chat-header__menu ai-chat-header__menu--activity"
+          data-ai-chat-popover-scope
+        >
+          <button
+            className="ai-chat-activity-button"
+            data-state={activitySummary.state}
+            type="button"
+            title="AI runtime status"
+            aria-expanded={activityPopoverOpen}
+            onClick={onToggleActivityPopover}
+          >
+            <ActivityIcon state={activitySummary.state} />
+            <span>{activitySummary.label}</span>
+            <ChevronDown size={14} />
+          </button>
+          {activityPopoverOpen ? (
+            <ActivityStatusPopover
+              items={activityItems}
+              summary={activitySummary}
+            />
+          ) : null}
+        </div>
+
+        <div
+          className="ai-chat-header__menu ai-chat-header__menu--settings"
+          data-ai-chat-popover-scope
+        >
           <button
             className="ai-chat-icon-button"
             data-testid="ai-chat-settings-button"
@@ -155,6 +272,9 @@ export function AIChatHeader({
               mnemonicEntries={mnemonicEntries}
               agentProfiles={agentProfiles}
               promptWorkflows={promptWorkflows}
+              tools={tools}
+              toolAudit={toolAudit}
+              modelCapabilities={modelCapabilities}
               onContextToggle={onContextToggle}
               onDisplayPrefChange={onDisplayPrefChange}
             />

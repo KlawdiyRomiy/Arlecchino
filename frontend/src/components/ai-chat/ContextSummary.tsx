@@ -1,5 +1,5 @@
 import React from "react";
-import { FileText, FolderTree, ShieldCheck } from "lucide-react";
+import { FileText, FolderTree, ShieldCheck, TriangleAlert } from "lucide-react";
 import type {
   AIContextSnapshot,
   AIContextSummary,
@@ -39,6 +39,14 @@ export function ContextSummary({
   const snippetCount = getSnippetCount(context);
   const source = context.capability || "runtime";
   const filePath = context.filePath || "";
+  const contextItems = context.contextItems ?? [];
+  const includedContextItems = contextItems.filter((item) => item.included);
+  const redacted =
+    context.redaction?.secretsRedacted > 0 ||
+    context.redaction?.pathsRedacted > 0 ||
+    contextItems.some((item) => item.redacted);
+  const truncated =
+    context.redaction?.truncated || contextItems.some((item) => item.truncated);
 
   return (
     <div
@@ -59,6 +67,29 @@ export function ContextSummary({
         <ShieldCheck size={14} />
         {snippetCount} snippet{snippetCount === 1 ? "" : "s"}
       </span>
+      {contextItems.length > 0 ? (
+        <span
+          className="ai-chat-context-pill"
+          title={contextItems
+            .map(
+              (item) =>
+                `${item.label}: ${item.included ? "included" : item.reason || "not included"}`,
+            )
+            .join("\n")}
+        >
+          <FolderTree size={14} />
+          {includedContextItems.length}/{contextItems.length} items
+        </span>
+      ) : null}
+      {redacted || truncated ? (
+        <span
+          className="ai-chat-context-pill"
+          title="Context was redacted or truncated before model egress"
+        >
+          <TriangleAlert size={14} />
+          {redacted ? "redacted" : "truncated"}
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -36,6 +36,7 @@ export interface AIChatUIState {
   displayPrefs: AIChatDisplayPrefs;
   providerPopoverOpen: boolean;
   settingsPopoverOpen: boolean;
+  activityPopoverOpen: boolean;
   activeRunId: string;
   hydratedRuns: Record<string, AIChatRun>;
 }
@@ -50,6 +51,7 @@ export type AIChatUIAction =
   | { type: "setDisplayPref"; key: keyof AIChatDisplayPrefs; value: boolean }
   | { type: "toggleProviderPopover"; open?: boolean }
   | { type: "toggleSettingsPopover"; open?: boolean }
+  | { type: "toggleActivityPopover"; open?: boolean }
   | { type: "setActiveRun"; runId: string }
   | { type: "hydrateRun"; run: AIChatRun }
   | { type: "resetComposer" }

@@ -16,6 +16,8 @@ import type {
   AIPromptWorkflowDescriptor,
   AIProviderDescriptor,
   AIStatus,
+  AIToolAuditRecord,
+  AIToolDescriptor,
 } from "../../bindings/arlecchino/internal/ai/models";
 
 interface AIChatRuntimeState {
@@ -24,6 +26,8 @@ interface AIChatRuntimeState {
   actions: AIChatActionDescriptor[];
   agentProfiles: AIAgentProfileDescriptor[];
   promptWorkflows: AIPromptWorkflowDescriptor[];
+  tools: AIToolDescriptor[];
+  toolAudit: AIToolAuditRecord[];
   contextProviders: AIContextProviderDescriptor[];
   runs: AIChatRunEnvelope[];
   hydratedRuns: Record<string, AIChatRun>;
@@ -44,6 +48,9 @@ interface AIChatRuntimeState {
   setActions: (actions: AIChatActionDescriptor[]) => void;
   setAgentProfiles: (profiles: AIAgentProfileDescriptor[]) => void;
   setPromptWorkflows: (workflows: AIPromptWorkflowDescriptor[]) => void;
+  setTools: (tools: AIToolDescriptor[]) => void;
+  setToolAudit: (records: AIToolAuditRecord[]) => void;
+  upsertToolAudit: (record: AIToolAuditRecord) => void;
   setContextProviders: (providers: AIContextProviderDescriptor[]) => void;
   setRuns: (runs: AIChatRunEnvelope[]) => void;
   upsertRunEnvelope: (run: AIChatRunEnvelope) => void;
@@ -83,6 +90,19 @@ const mergeRunEnvelope = (
   run: AIChatRunEnvelope,
 ): AIChatRunEnvelope[] => {
   const existing = runs.find((candidate) => candidate.id === run.id);
+  if (existing) {
+    const existingRevision = existing.revision ?? 0;
+    const incomingRevision = run.revision ?? 0;
+    if (existingRevision > 0 && incomingRevision > 0) {
+      if (incomingRevision < existingRevision) return runs;
+      if (
+        incomingRevision === existingRevision &&
+        Date.parse(run.updatedAt || "") < Date.parse(existing.updatedAt || "")
+      ) {
+        return runs;
+      }
+    }
+  }
   const merged = existing
     ? {
         ...existing,
@@ -141,6 +161,8 @@ const initialRuntimeState = {
   actions: [],
   agentProfiles: [],
   promptWorkflows: [],
+  tools: [],
+  toolAudit: [],
   contextProviders: [],
   runs: [],
   hydratedRuns: {},
@@ -177,6 +199,15 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
   setActions: (actions) => set({ actions }),
   setAgentProfiles: (agentProfiles) => set({ agentProfiles }),
   setPromptWorkflows: (promptWorkflows) => set({ promptWorkflows }),
+  setTools: (tools) => set({ tools }),
+  setToolAudit: (toolAudit) => set({ toolAudit }),
+  upsertToolAudit: (record) =>
+    set((state) => ({
+      toolAudit: [
+        record,
+        ...state.toolAudit.filter((candidate) => candidate.id !== record.id),
+      ].slice(0, 50),
+    })),
   setContextProviders: (contextProviders) => set({ contextProviders }),
   setRuns: (runs) => set({ runs: sortRuns(runs) }),
   upsertRunEnvelope: (run) =>

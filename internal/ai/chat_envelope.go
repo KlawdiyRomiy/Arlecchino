@@ -75,7 +75,12 @@ func (s *Service) ClearChatRuns(projectID string) error {
 	}
 	s.mu.Unlock()
 	if project != nil && project.ChatHistory != nil {
-		return project.ChatHistory.Clear()
+		if err := project.ChatHistory.Clear(); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.ChatArtifacts != nil {
+		return project.ChatArtifacts.Clear()
 	}
 	return nil
 }
@@ -119,7 +124,12 @@ func (s *Service) DeleteChatSession(projectID string, sessionID string) error {
 	s.mu.Unlock()
 
 	if project != nil && project.ChatHistory != nil {
-		return project.ChatHistory.DeleteSession(sessionID)
+		if err := project.ChatHistory.DeleteSession(sessionID); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.ChatArtifacts != nil {
+		return project.ChatArtifacts.DeleteSession(sessionID)
 	}
 	return nil
 }
@@ -143,6 +153,8 @@ func (s *Service) buildChatRunEnvelope(project *ProjectSession, run AIChatRun) A
 		SessionID:           run.SessionID,
 		ProjectSessionID:    run.ProjectSessionID,
 		Action:              run.Action,
+		ProfileID:           run.ProfileID,
+		WorkflowID:          run.WorkflowID,
 		Status:              run.Status,
 		ProviderID:          firstNonEmpty(run.ProviderID, providerIDFromEnvelope(providerEnvelope)),
 		Model:               firstNonEmpty(run.Model, modelFromEnvelope(providerEnvelope)),
@@ -157,6 +169,7 @@ func (s *Service) buildChatRunEnvelope(project *ProjectSession, run AIChatRun) A
 		ToolProposals:       run.ToolProposals,
 		ToolProposalSummary: summarizeToolProposals(run.ToolProposals),
 		MnemonicInclusion:   mnemonic,
+		Revision:            run.Revision,
 		CreatedAt:           run.CreatedAt,
 		UpdatedAt:           run.UpdatedAt,
 	}

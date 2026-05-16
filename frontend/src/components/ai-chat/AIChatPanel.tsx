@@ -8,6 +8,7 @@ import React, {
   useState,
 } from "react";
 import {
+  AIApplyPatchArtifact,
   AICancelChatRun,
   AIDeleteChatSession,
   AIGetApprovalPolicy,
@@ -20,12 +21,17 @@ import {
   AIListProviderRuntimes,
   AIListAgentProfiles,
   AIListChatActions,
+  AIListChatRunArtifacts,
   AIListChatRuns,
   AIListContextProviders,
   AIListEgressRecords,
   AIListMnemonicEntries,
+  AIListModelCapabilities,
   AIListPromptWorkflows,
+  AIListTools,
+  AIListToolAudit,
   AIRefreshLocalProviders,
+  AIRollbackPatchCheckpoint,
   AIStartChatRun,
   AIStartProviderRuntime,
   AIStopProviderRuntime,
@@ -37,11 +43,15 @@ import { EventsOn } from "../../wails/runtime";
 import {
   AIChatAction,
   AIChatRunEnvelope,
+  AIContextItemKind,
   type AIChatRun,
+  type AIChatRunArtifact,
   type AIContextRequest,
   type AIContextSnapshot,
   type AIEgressRecord,
+  type AIModelCapabilityDescriptor,
   type AIProviderCapability,
+  type AIToolAuditRecord,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { PanelPosition } from "../ui/FloatingPanel";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
@@ -52,12 +62,10 @@ import {
   domAnimation,
   m,
 } from "framer-motion";
-import { GitBranch, History } from "lucide-react";
 import { useEditorStore } from "../../stores/editorStore";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { useAIChatStore } from "../../stores/aiChatStore";
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
-import { ActivityTimeline } from "./ActivityTimeline";
 import { AIChatHeader } from "./AIChatHeader";
 import { ChatGitReview } from "./ChatGitReview";
 import { ChatHistoryRail } from "./ChatHistoryRail";
@@ -106,6 +114,7 @@ const initialState: AIChatUIState = {
   },
   providerPopoverOpen: false,
   settingsPopoverOpen: false,
+  activityPopoverOpen: false,
   activeRunId: "",
   hydratedRuns: {},
 };
@@ -171,6 +180,7 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         selectedProviderId: action.providerId,
         selectedModel: action.model ?? state.selectedModel,
         providerPopoverOpen: false,
+        activityPopoverOpen: false,
       };
     case "setModel":
       return { ...state, selectedModel: action.model };
@@ -190,6 +200,8 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         providerPopoverOpen: action.open ?? !state.providerPopoverOpen,
         settingsPopoverOpen:
           action.open === true ? false : state.settingsPopoverOpen,
+        activityPopoverOpen:
+          action.open === true ? false : state.activityPopoverOpen,
       };
     case "toggleSettingsPopover":
       return {
@@ -197,6 +209,17 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         settingsPopoverOpen: action.open ?? !state.settingsPopoverOpen,
         providerPopoverOpen:
           action.open === true ? false : state.providerPopoverOpen,
+        activityPopoverOpen:
+          action.open === true ? false : state.activityPopoverOpen,
+      };
+    case "toggleActivityPopover":
+      return {
+        ...state,
+        activityPopoverOpen: action.open ?? !state.activityPopoverOpen,
+        providerPopoverOpen:
+          action.open === true ? false : state.providerPopoverOpen,
+        settingsPopoverOpen:
+          action.open === true ? false : state.settingsPopoverOpen,
       };
     case "setActiveRun":
       return { ...state, activeRunId: action.runId };
@@ -347,6 +370,50 @@ function buildContextRequest(
   activeFile: string,
   prompt = "",
 ): AIContextRequest {
+  const contextItems: AIContextRequest["contextItems"] = [];
+  if (context.workspace) {
+    contextItems.push({
+      kind: AIContextItemKind.AIContextItemKindWorkspace,
+      label: "Workspace",
+      source: "composer",
+    });
+  }
+  if (context.currentFile && activeFile) {
+    contextItems.push({
+      kind: AIContextItemKind.AIContextItemKindFile,
+      label: activeFile.split("/").pop() || "Current file",
+      path: activeFile,
+      source: "composer",
+    });
+  }
+  if (context.terminalLogs) {
+    contextItems.push({
+      kind: AIContextItemKind.AIContextItemKindTerminal,
+      label: "Terminal",
+      source: "composer",
+    });
+  }
+  if (context.mnemonic) {
+    contextItems.push({
+      kind: AIContextItemKind.AIContextItemKindMnemonic,
+      label: "Mnemonic",
+      source: "composer",
+    });
+  }
+  if (context.mcp) {
+    contextItems.push({
+      kind: AIContextItemKind.AIContextItemKindMCP,
+      label: "MCP",
+      source: "composer",
+    });
+  }
+  if (context.skills) {
+    contextItems.push({
+      kind: AIContextItemKind.AIContextItemKindSkill,
+      label: "Skills",
+      source: "composer",
+    });
+  }
   return {
     capability: "chat" as AIProviderCapability,
     prompt,
@@ -354,6 +421,7 @@ function buildContextRequest(
     includeMnemonic: context.mnemonic,
     includeMCP: context.mcp,
     includeSkills: context.skills,
+    contextItems,
     maxSnippets: context.workspace ? 8 : 3,
   };
 }
@@ -364,6 +432,8 @@ function envelopeFromRun(run: AIChatRun): AIChatRunEnvelope {
     sessionId: run.sessionId,
     projectSessionId: run.projectSessionId,
     action: run.action,
+    profileId: run.profileId,
+    workflowId: run.workflowId,
     status: run.status,
     providerId: run.providerId,
     model: run.model,
@@ -371,6 +441,7 @@ function envelopeFromRun(run: AIChatRun): AIChatRunEnvelope {
     canCancel: run.canCancel,
     contextSummary: run.contextSummary,
     toolProposals: run.toolProposals,
+    revision: run.revision,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   });
@@ -395,6 +466,8 @@ export function AIChatPanelContent({
     actions,
     agentProfiles,
     promptWorkflows,
+    tools,
+    toolAudit,
     runs,
     hydratedRuns,
     streamingTextByRunId,
@@ -411,6 +484,9 @@ export function AIChatPanelContent({
     setActions,
     setAgentProfiles,
     setPromptWorkflows,
+    setTools,
+    setToolAudit,
+    upsertToolAudit,
     upsertProvider,
     setRuns,
     upsertRunEnvelope,
@@ -438,6 +514,13 @@ export function AIChatPanelContent({
   const [providerRuntimes, setProviderRuntimes] = useState<
     AIProviderRuntimeDescriptor[]
   >([]);
+  const [modelCapabilities, setModelCapabilities] = useState<
+    AIModelCapabilityDescriptor[]
+  >([]);
+  const [activeArtifacts, setActiveArtifacts] = useState<AIChatRunArtifact[]>(
+    [],
+  );
+  const [artifactBusyId, setArtifactBusyId] = useState<string | null>(null);
   const [providerRuntimeBusy, setProviderRuntimeBusy] = useState(false);
   const [providerRuntimeError, setProviderRuntimeError] = useState("");
   const [drawerDrag, setDrawerDrag] = useState<{
@@ -505,7 +588,7 @@ export function AIChatPanelContent({
       : (activeSessionEnvelopes[0]?.id ?? "");
   const activeRun = activeRunKey ? (hydratedRuns[activeRunKey] ?? null) : null;
   const activeEnvelope = runs.find((run) => run.id === activeRunKey) ?? null;
-  const activeRunRunning = runs.some(
+  const activeRunRunning = activeSessionEnvelopes.some(
     (run) => run.status === "running" || run.status === "queued",
   );
   const inputReady = state.input.trim().length > 0;
@@ -650,6 +733,9 @@ export function AIChatPanelContent({
         nextEgressRecords,
         nextAgentProfiles,
         nextPromptWorkflows,
+        nextTools,
+        nextToolAudit,
+        nextModelCapabilities,
         nextConsentPolicy,
         nextEmbeddingStatus,
         nextApprovalPolicy,
@@ -664,6 +750,9 @@ export function AIChatPanelContent({
         fallbackOnRuntimeError(AIListEgressRecords(50), []),
         fallbackOnRuntimeError(AIListAgentProfiles(), []),
         fallbackOnRuntimeError(AIListPromptWorkflows(), []),
+        fallbackOnRuntimeError(AIListTools(), []),
+        fallbackOnRuntimeError(AIListToolAudit(50), []),
+        fallbackOnRuntimeError(AIListModelCapabilities(), []),
         fallbackOnRuntimeError(AIGetConsentPolicy(), null),
         fallbackOnRuntimeError(AIGetEmbeddingStatus(), null),
         fallbackOnRuntimeError(AIGetApprovalPolicy(), null),
@@ -678,6 +767,9 @@ export function AIChatPanelContent({
       setEgressRecords(nextEgressRecords ?? []);
       setAgentProfiles(nextAgentProfiles ?? []);
       setPromptWorkflows(nextPromptWorkflows ?? []);
+      setTools(nextTools ?? []);
+      setToolAudit(nextToolAudit ?? []);
+      setModelCapabilities(nextModelCapabilities ?? []);
       setConsentPolicy(nextConsentPolicy ?? null);
       setEmbeddingStatus(nextEmbeddingStatus ?? null);
       setApprovalPolicy(nextApprovalPolicy ?? null);
@@ -728,6 +820,8 @@ export function AIChatPanelContent({
     setRuns,
     setStatus,
     setActiveRunId,
+    setTools,
+    setToolAudit,
     state.context,
     state.input,
   ]);
@@ -757,6 +851,37 @@ export function AIChatPanelContent({
   }, [activeRunKey, hydratedRuns, setHydratedRun]);
 
   useEffect(() => {
+    if (!activeRunKey) {
+      setActiveArtifacts([]);
+      return;
+    }
+    let cancelled = false;
+    AIListChatRunArtifacts(activeRunKey)
+      .then((artifacts) => {
+        if (!cancelled) {
+          setActiveArtifacts(artifacts ?? []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setActiveArtifacts([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRunKey, activeEnvelope?.updatedAt]);
+
+  const refreshActiveArtifacts = useCallback(async () => {
+    if (!activeRunKey) {
+      setActiveArtifacts([]);
+      return;
+    }
+    const artifacts = await AIListChatRunArtifacts(activeRunKey);
+    setActiveArtifacts(artifacts ?? []);
+  }, [activeRunKey]);
+
+  useEffect(() => {
     if (!state.displayPrefs.autoScroll) return;
     transcriptEndRef.current?.scrollIntoView({ block: "end" });
   }, [
@@ -779,26 +904,32 @@ export function AIChatPanelContent({
       .catch(() => {
         // The run payload is enough to keep the transcript live.
       });
-    setActiveRunId(run.id);
-    dispatch({
-      type: "setActiveSession",
-      sessionId: run.sessionId || defaultChatSessionId,
-      runId: run.id,
-    });
-    dispatch({ type: "setActiveRun", runId: run.id });
+    const runSessionId = run.sessionId || defaultChatSessionId;
+    if (runSessionId === state.activeSessionId || !state.activeRunId) {
+      setActiveRunId(run.id);
+      dispatch({
+        type: "setActiveSession",
+        sessionId: runSessionId,
+        runId: run.id,
+      });
+      dispatch({ type: "setActiveRun", runId: run.id });
+    }
   });
 
   const handleRunEnvelopeUpdate = useEffectEvent(
     (envelope: AIChatRunEnvelope) => {
       if (!envelope?.id) return;
       upsertRunEnvelope(envelope);
-      setActiveRunId(envelope.id);
-      dispatch({
-        type: "setActiveSession",
-        sessionId: sessionIdOf(envelope),
-        runId: envelope.id,
-      });
-      dispatch({ type: "setActiveRun", runId: envelope.id });
+      const runSessionId = sessionIdOf(envelope);
+      if (runSessionId === state.activeSessionId || !state.activeRunId) {
+        setActiveRunId(envelope.id);
+        dispatch({
+          type: "setActiveSession",
+          sessionId: runSessionId,
+          runId: envelope.id,
+        });
+        dispatch({ type: "setActiveRun", runId: envelope.id });
+      }
     },
   );
 
@@ -828,6 +959,12 @@ export function AIChatPanelContent({
       return;
     }
     upsertEgressRecord(record);
+  });
+
+  const handleToolAuditRecord = useEffectEvent((result: unknown) => {
+    const audit = (result as { audit?: AIToolAuditRecord })?.audit;
+    if (!audit?.id) return;
+    upsertToolAudit(audit);
   });
 
   useEffect(() => {
@@ -866,6 +1003,9 @@ export function AIChatPanelContent({
     const offEgress = EventsOn("ai:chat:egress-recorded", (record) =>
       handleEgressRecord(record as AIEgressRecord),
     );
+    const offToolAudit = EventsOn("ai:tool:call-recorded", (result) =>
+      handleToolAuditRecord(result),
+    );
     return () => {
       offStarted?.();
       offCompleted?.();
@@ -876,6 +1016,7 @@ export function AIChatPanelContent({
       offStatus?.();
       offRuntime?.();
       offEgress?.();
+      offToolAudit?.();
     };
   }, []);
 
@@ -962,12 +1103,51 @@ export function AIChatPanelContent({
   ]);
 
   const handleCancel = useCallback(async () => {
-    const running = runs.find(
-      (run) => run.status === "running" || run.status === "queued",
-    );
+    const running =
+      activeEnvelope &&
+      (activeEnvelope.status === "running" ||
+        activeEnvelope.status === "queued")
+        ? activeEnvelope
+        : activeSessionEnvelopes.find(
+            (run) => run.status === "running" || run.status === "queued",
+          );
     if (!running) return;
     await AICancelChatRun(running.id);
-  }, [runs]);
+  }, [activeEnvelope, activeSessionEnvelopes]);
+
+  const handleApplyPatchArtifact = useCallback(
+    async (artifactId: string) => {
+      setRuntimeError(null);
+      setArtifactBusyId(artifactId);
+      try {
+        await AIApplyPatchArtifact({ artifactId });
+        await refreshActiveArtifacts();
+        dispatchChrome({ type: "openDrawer", drawer: "review" });
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setArtifactBusyId(null);
+      }
+    },
+    [refreshActiveArtifacts],
+  );
+
+  const handleRollbackPatchCheckpoint = useCallback(
+    async (checkpointId: string) => {
+      setRuntimeError(null);
+      setArtifactBusyId(checkpointId);
+      try {
+        await AIRollbackPatchCheckpoint({ checkpointId });
+        await refreshActiveArtifacts();
+        dispatchChrome({ type: "openDrawer", drawer: "review" });
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setArtifactBusyId(null);
+      }
+    },
+    [refreshActiveArtifacts],
+  );
 
   const handleNewChat = useCallback(() => {
     const sessionId = createChatSessionId();
@@ -1100,6 +1280,7 @@ export function AIChatPanelContent({
   const closeTransientPopovers = useCallback(() => {
     dispatch({ type: "toggleProviderPopover", open: false });
     dispatch({ type: "toggleSettingsPopover", open: false });
+    dispatch({ type: "toggleActivityPopover", open: false });
     dispatchChrome({ type: "patch", value: { contextPickerOpen: false } });
   }, []);
 
@@ -1107,6 +1288,7 @@ export function AIChatPanelContent({
     const popoverOpen =
       state.providerPopoverOpen ||
       state.settingsPopoverOpen ||
+      state.activityPopoverOpen ||
       contextPickerOpen;
     if (!popoverOpen) return;
 
@@ -1133,6 +1315,7 @@ export function AIChatPanelContent({
   }, [
     closeTransientPopovers,
     contextPickerOpen,
+    state.activityPopoverOpen,
     state.providerPopoverOpen,
     state.settingsPopoverOpen,
   ]);
@@ -1165,6 +1348,9 @@ export function AIChatPanelContent({
         selectedProviderId={selectedProvider?.id ?? ""}
         settingsPopoverOpen={state.settingsPopoverOpen}
         status={status}
+        tools={tools}
+        toolAudit={toolAudit}
+        modelCapabilities={modelCapabilities}
         onContextToggle={(key, value) =>
           dispatch({ type: "setContext", key, value })
         }
@@ -1262,10 +1448,24 @@ export function AIChatPanelContent({
                         active={envelope.id === activeRunKey}
                         compact={state.displayPrefs.compactCards}
                         envelope={envelope}
+                        artifactBusyId={artifactBusyId}
+                        artifacts={
+                          envelope.id === activeRunKey ? activeArtifacts : []
+                        }
                         key={envelope.id}
                         maxWidth={messageMaxWidth}
                         run={hydratedRuns[envelope.id] ?? null}
                         streamingText={streamingTextByRunId[envelope.id] ?? ""}
+                        onApplyPatchArtifact={handleApplyPatchArtifact}
+                        onOpenReview={() =>
+                          dispatchChrome({
+                            type: "openDrawer",
+                            drawer: "review",
+                          })
+                        }
+                        onRollbackPatchCheckpoint={
+                          handleRollbackPatchCheckpoint
+                        }
                         onSelect={(runId) => {
                           setActiveRunId(runId);
                           dispatch({ type: "setActiveRun", runId });
@@ -1279,6 +1479,7 @@ export function AIChatPanelContent({
 
               <ActivityTimeline
                 activeEnvelope={activeEnvelope}
+                artifacts={activeArtifacts}
                 activeRun={activeRun}
                 activeRunText={
                   activeRun?.response ??

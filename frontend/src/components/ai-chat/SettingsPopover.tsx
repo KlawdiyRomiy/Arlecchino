@@ -14,8 +14,11 @@ import type {
   AIEmbeddingStatus,
   AIEgressRecord,
   AIMnemonicEntry,
+  AIModelCapabilityDescriptor,
   AIPromptWorkflowDescriptor,
   AIStatus,
+  AIToolAuditRecord,
+  AIToolDescriptor,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIChatDisplayPrefs, ContextToggles } from "./types";
 
@@ -31,6 +34,9 @@ interface SettingsPopoverProps {
   mnemonicEntries: AIMnemonicEntry[];
   agentProfiles: AIAgentProfileDescriptor[];
   promptWorkflows: AIPromptWorkflowDescriptor[];
+  tools: AIToolDescriptor[];
+  toolAudit: AIToolAuditRecord[];
+  modelCapabilities: AIModelCapabilityDescriptor[];
   onContextToggle: (key: keyof ContextToggles, value: boolean) => void;
   onDisplayPrefChange: (key: keyof AIChatDisplayPrefs, value: boolean) => void;
 }
@@ -60,10 +66,21 @@ export function SettingsPopover({
   mnemonicEntries,
   agentProfiles,
   promptWorkflows,
+  tools,
+  toolAudit,
+  modelCapabilities,
   onContextToggle,
   onDisplayPrefChange,
 }: SettingsPopoverProps) {
   const enabledProfiles = agentProfiles.filter((profile) => profile.enabled);
+  const executableTools = tools.filter((tool) => tool.executionAvailable);
+  const pinnedMnemonic = mnemonicEntries.filter((entry) => entry.pinned);
+  const generatedMnemonic = mnemonicEntries.filter((entry) => entry.generated);
+  const staleMnemonic = mnemonicEntries.filter(
+    (entry) => entry.superseded || !entry.isLatest,
+  );
+  const localModels = modelCapabilities.filter((model) => model.local);
+  const toolModels = modelCapabilities.filter((model) => model.toolSupport);
 
   return (
     <div
@@ -159,6 +176,11 @@ export function SettingsPopover({
             {status?.mnemonicEnabled ? "enabled" : "disabled"} ·{" "}
             {mnemonicEntries.length}
           </strong>
+          <span>Memory trust</span>
+          <strong>
+            {pinnedMnemonic.length} pinned · {generatedMnemonic.length} review ·{" "}
+            {staleMnemonic.length} stale
+          </strong>
           <span>Egress ledger</span>
           <strong>{egressRecords.length}</strong>
           <span>Workflows</span>
@@ -166,6 +188,17 @@ export function SettingsPopover({
           <span>Agent profiles</span>
           <strong>
             {enabledProfiles.length}/{agentProfiles.length}
+          </strong>
+          <span>Tools</span>
+          <strong>
+            {executableTools.length}/{tools.length} executable
+          </strong>
+          <span>Tool audit</span>
+          <strong>{toolAudit.length}</strong>
+          <span>Model capabilities</span>
+          <strong>
+            {modelCapabilities.length} models · {localModels.length} local ·{" "}
+            {toolModels.length} tool-ready
           </strong>
           <span>Embeddings</span>
           <strong>{embeddingStatus?.status || "unknown"}</strong>

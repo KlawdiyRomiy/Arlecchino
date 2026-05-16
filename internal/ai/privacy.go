@@ -49,6 +49,16 @@ func (privacyGate) SanitizeSnapshot(snapshot AIContextSnapshot, maxBytes int, ma
 		snapshot.Snippets[i].Content, summary = sanitizeText(snapshot.Snippets[i].Content, summary)
 		totalBytes += len(snapshot.Snippets[i].Content)
 	}
+	for i := range snapshot.ContextItems {
+		beforeSecrets := summary.SecretsRedacted
+		beforePaths := summary.PathsRedacted
+		snapshot.ContextItems[i].Label, summary = sanitizeText(snapshot.ContextItems[i].Label, summary)
+		snapshot.ContextItems[i].Path, summary = sanitizePath(snapshot.ContextItems[i].Path, summary)
+		snapshot.ContextItems[i].Source, summary = sanitizeText(snapshot.ContextItems[i].Source, summary)
+		if summary.SecretsRedacted > beforeSecrets || summary.PathsRedacted > beforePaths {
+			snapshot.ContextItems[i].Redacted = true
+		}
+	}
 	for i := range snapshot.Mnemonic {
 		snapshot.Mnemonic[i].Content, summary = sanitizeText(snapshot.Mnemonic[i].Content, summary)
 		totalBytes += len(snapshot.Mnemonic[i].Content)
