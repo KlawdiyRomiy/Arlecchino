@@ -26,7 +26,7 @@ import { getProviderPresentation } from "./providerPresentation";
 import {
   compactText,
   getActionMeta,
-  runStatusLabel,
+  runActivityLabel,
 } from "./aiChatPresentation";
 
 export type ActivityStatusState = "done" | "active" | "idle";
@@ -76,8 +76,6 @@ export function buildActivityStatusItems({
 }: ActivityStatusData): ActivityStatusItem[] {
   const provider = getProviderPresentation(selectedProvider);
   const runState = activeEnvelope?.status ?? "";
-  const streaming =
-    runState === "running" && Boolean(activeRunText || activeRun?.response);
   const completed =
     runState === "completed" || runState === "error" || runState === "canceled";
   const items: ActivityStatusItem[] = [];
@@ -87,8 +85,15 @@ export function buildActivityStatusItems({
   if (activeEnvelope) {
     items.push({
       key: "run",
-      state: streaming ? "active" : completed ? "done" : "idle",
-      label: streaming ? "Running" : runStatusLabel(activeEnvelope.status),
+      state: runState === "running" ? "active" : completed ? "done" : "idle",
+      label: runActivityLabel({
+        status: activeEnvelope.status,
+        activeText: activeRunText || activeRun?.response || "",
+        contextItems:
+          activeEnvelope.contextSummary?.contextItems ??
+          contextPreview?.contextItems ??
+          [],
+      }),
     });
   }
   const contextSummary = activeEnvelope?.contextSummary ?? null;

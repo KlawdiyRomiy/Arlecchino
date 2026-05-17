@@ -32,6 +32,7 @@ import { useAppNotificationStore } from "../../stores/appNotificationStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { useExplorerStore } from "../../stores/explorerStore";
 import { useDiagnosticsStore } from "../../stores/diagnosticsStore";
+import { bindIDEContextLedger } from "../../stores/ideContextLedgerStore";
 import {
   FLOATING_PANEL_LAYOUT_TRANSITION,
   FLOATING_PANEL_LAYOUT_TRANSITION_MS,
@@ -515,6 +516,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       .getState()
       .beginPanelMotionWindow(FLOATING_PANEL_LAYOUT_TRANSITION_MS + 160);
   }, [reducePanelMotion]);
+  useEffect(() => bindIDEContextLedger(), []);
   const isPerspectiveOpenRef = useRef(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDependencyPolicyOpen, setIsDependencyPolicyOpen] = useState(false);

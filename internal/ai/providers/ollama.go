@@ -131,10 +131,15 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerationRequest, si
 	if temperature <= 0 {
 		temperature = 0.2
 	}
+	prompt := req.Prompt
+	system := req.System
+	if len(req.Messages) > 0 {
+		system, prompt = flattenGenerationMessagesForPrompt(req)
+	}
 	request := ollamaGenerateRequest{
 		Model:  model,
-		Prompt: req.Prompt,
-		System: req.System,
+		Prompt: prompt,
+		System: system,
 		Stream: req.Stream && sink != nil,
 		Options: map[string]any{
 			"num_predict": maxTokens,
@@ -203,4 +208,32 @@ func (p *OllamaProvider) generateStreaming(ctx context.Context, request ollamaGe
 		return GenerationResponse{Text: builder.String(), Model: model, RawStatus: status, FinishedAt: NowString()}, err
 	}
 	return GenerationResponse{Text: builder.String(), Model: model, RawStatus: status, FinishedAt: NowString()}, nil
+}
+
+func flattenGenerationMessagesForPrompt(req GenerationRequest) (string, string) {
+	systemParts := []string{}
+	if strings.TrimSpace(req.System) != "" {
+		systemParts = append(systemParts, strings.TrimSpace(req.System))
+	}
+	promptParts := []string{}
+	for _, message := range req.Messages {
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(message.Role)) {
+		case "system":
+			systemParts = append(systemParts, content)
+		case "assistant":
+			promptParts = append(promptParts, "Assistant:\n"+content)
+		case "tool":
+			promptParts = append(promptParts, "Tool result:\n"+content)
+		default:
+			promptParts = append(promptParts, "User:\n"+content)
+		}
+	}
+	if len(promptParts) == 0 && strings.TrimSpace(req.Prompt) != "" {
+		promptParts = append(promptParts, strings.TrimSpace(req.Prompt))
+	}
+	return strings.Join(systemParts, "\n\n"), strings.Join(promptParts, "\n\n")
 }

@@ -25,6 +25,7 @@ import {
 import { toErrorMessage } from "../utils/errorMessages";
 import { isSameOrChildPath } from "../utils/projectPaths";
 import { usePerformanceStore } from "./performanceStore";
+import { recordIDEContextEvent } from "./ideContextLedgerStore";
 
 const fileRefreshDebounceMs = 320;
 const fallbackPollIntervalMs = 15000;
@@ -518,6 +519,13 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
         normalizePathForGit(get().projectPath, path),
       ]).then(() => undefined),
     );
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.file_staged",
+      title: "Git file staged",
+      path,
+      projectPath: get().projectPath,
+    });
   },
 
   unstageFile: async (path) => {
@@ -529,18 +537,37 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
         normalizePathForGit(get().projectPath, path),
       ]).then(() => undefined),
     );
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.file_unstaged",
+      title: "Git file unstaged",
+      path,
+      projectPath: get().projectPath,
+    });
   },
 
   stageAll: async () => {
     await executeGitAction(get, set, () =>
       RunGitCommand(["add", "-A"]).then(() => undefined),
     );
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.stage_all",
+      title: "Git stage all completed",
+      projectPath: get().projectPath,
+    });
   },
 
   unstageAll: async () => {
     await executeGitAction(get, set, () =>
       RunGitCommand(["reset", "HEAD"]).then(() => undefined),
     );
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.unstage_all",
+      title: "Git unstage all completed",
+      projectPath: get().projectPath,
+    });
   },
 
   discardFile: async (path) => {
@@ -551,12 +578,25 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
         normalizePathForGit(get().projectPath, path),
       ]).then(() => undefined),
     );
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.file_discarded",
+      title: "Git file discarded",
+      path,
+      projectPath: get().projectPath,
+    });
   },
 
   initializeRepository: async () => {
     await executeGitAction(get, set, () =>
       RunGitCommand(["init"]).then(() => undefined),
     );
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.repository_initialized",
+      title: "Git repository initialized",
+      projectPath: get().projectPath,
+    });
   },
 
   commit: async (message) => {
@@ -573,6 +613,13 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     } else {
       await get().loadHistory();
     }
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.commit_created",
+      title: "Git commit created",
+      projectPath: get().projectPath,
+      metadata: { message: normalizedMessage },
+    });
   },
 
   switchBranch: async (branch) => {
@@ -583,6 +630,13 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
       RunGitCommand(["checkout", branch]).then(() => undefined),
     );
     await get().loadHistory(get().historyFilePath);
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.branch_switched",
+      title: "Git branch switched",
+      projectPath: get().projectPath,
+      metadata: { branch },
+    });
   },
 
   createBranch: async (name, fromBranch) => {
@@ -600,6 +654,13 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
       RunGitCommand(args).then(() => undefined),
     );
     await get().loadHistory(get().historyFilePath);
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.branch_created",
+      title: "Git branch created",
+      projectPath: get().projectPath,
+      metadata: { branch: branchName, fromBranch: fromBranch ?? "" },
+    });
   },
 
   fetchRemote: async () => {
@@ -608,6 +669,13 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     await executeGitAction(get, set, () =>
       RunGitCommand(args).then(() => undefined),
     );
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.fetch_completed",
+      title: "Git fetch completed",
+      projectPath: get().projectPath,
+      metadata: { remote },
+    });
   },
 
   pullRemote: async () => {
@@ -619,6 +687,13 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
       RunGitCommand(args).then(() => undefined),
     );
     await get().loadHistory(get().historyFilePath);
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.pull_completed",
+      title: "Git pull completed",
+      projectPath: get().projectPath,
+      metadata: { remote, branch },
+    });
   },
 
   pushRemote: async (setUpstream = false) => {
@@ -634,6 +709,13 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     await executeGitAction(get, set, () =>
       RunGitCommand(args).then(() => undefined),
     );
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.push_completed",
+      title: "Git push completed",
+      projectPath: get().projectPath,
+      metadata: { remote, branch, setUpstream },
+    });
   },
 
   createStash: async (message) => {
@@ -644,6 +726,13 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     await executeGitAction(get, set, () =>
       RunGitCommand(args).then(() => undefined),
     );
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.stash_created",
+      title: "Git stash created",
+      projectPath: get().projectPath,
+      metadata: { message: message?.trim() ?? "" },
+    });
   },
 
   popStash: async (stashRef) => {
@@ -651,6 +740,13 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     await executeGitAction(get, set, () =>
       RunGitCommand(args).then(() => undefined),
     );
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.stash_popped",
+      title: "Git stash popped",
+      projectPath: get().projectPath,
+      metadata: { stashRef: stashRef ?? "" },
+    });
   },
 
   dropStash: async (stashRef) => {
@@ -660,6 +756,13 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     await executeGitAction(get, set, () =>
       RunGitCommand(["stash", "drop", stashRef]).then(() => undefined),
     );
+    recordIDEContextEvent({
+      scope: "git",
+      type: "git.stash_dropped",
+      title: "Git stash dropped",
+      projectPath: get().projectPath,
+      metadata: { stashRef },
+    });
   },
 
   getPullRequestUrl: async (baseBranch) => {

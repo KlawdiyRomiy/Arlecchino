@@ -10,8 +10,10 @@ import React, {
 } from "react";
 import {
   AIApplyPatchArtifact,
+  AIApproveMnemonicEntryProposal,
   AICancelChatRun,
   AIDeleteChatSession,
+  AIExecuteToolCall,
   AIGetApprovalPolicy,
   AIGetChatRun,
   AIGetChatRunEnvelope,
@@ -33,10 +35,14 @@ import {
   AIListToolAudit,
   AIRefreshLocalProviders,
   AIRollbackPatchCheckpoint,
+  AISaveConsentPolicy,
+  AISaveMnemonicEntry,
+  AISearchMnemonic,
   AIStartChatRun,
   AIStartProviderRuntime,
   AIStopProviderRuntime,
   AISuggestChatMentions,
+  AIUpdateMnemonicEntry,
   type AIProviderRuntimeDescriptor,
   type AIProviderRuntimeModel,
 } from "../../wails/app";
@@ -45,6 +51,7 @@ import {
   AIChatAction,
   AIChatRunEnvelope,
   AIContextItemKind,
+  AIToolCallAction,
   type AIChatMentionCandidate,
   type AIChatMentionQuery,
   type AIChatRun,
@@ -54,6 +61,7 @@ import {
   type AIEgressRecord,
   type AIModelCapabilityDescriptor,
   type AIProviderCapability,
+  type AIToolProposal,
   type AIToolAuditRecord,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { PanelPosition } from "../ui/FloatingPanel";
@@ -66,9 +74,12 @@ import {
   m,
   useReducedMotion,
 } from "framer-motion";
+import { useShallow } from "zustand/react/shallow";
 import { useEditorStore } from "../../stores/editorStore";
+import { buildIDEContextDocument } from "../../stores/ideContextDocument";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { useAIChatStore } from "../../stores/aiChatStore";
+import { useTerminalStore } from "../../stores/terminalStore";
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 import { AIChatHeader } from "./AIChatHeader";
 import { ChatGitReview } from "./ChatGitReview";
@@ -78,11 +89,33 @@ import { EmptyState } from "./EmptyState";
 import { RunCard } from "./RunCard";
 import {
   getProviderDisabledReason,
-  isReadyChatProvider,
   isSupportedLocalChatProvider,
   selectDefaultProvider,
   sortProviders,
 } from "./providerPresentation";
+import {
+  defaultAIApprovalPolicy,
+  defaultAIConsentPolicy,
+  defaultAIEmbeddingStatus,
+  defaultAIStatus,
+  normalizeAIAgentProfiles,
+  normalizeAIApprovalPolicy,
+  normalizeAIChatActions,
+  normalizeAIChatArtifacts,
+  normalizeAIChatRuns,
+  normalizeAIConsentPolicy,
+  normalizeAIContextProviders,
+  normalizeAIContextSnapshot,
+  normalizeAIEgressRecords,
+  normalizeAIEmbeddingStatus,
+  normalizeAIMnemonicEntries,
+  normalizeAIModelCapabilities,
+  normalizeAIPromptWorkflows,
+  normalizeAIProviderRuntimes,
+  normalizeAIStatus,
+  normalizeAIToolAudit,
+  normalizeAITools,
+} from "./aiRuntimeGuards";
 import type {
   AIChatPanelProps,
   AIChatUIAction,
@@ -92,15 +125,61 @@ import type {
 import "./ai-chat.css";
 
 const defaultChatSessionId = "default";
+const minimalGeneralProfileId = "minimal-general";
 
-const initialContext: ContextToggles = {
-  workspace: true,
-  currentFile: true,
+const noContext: ContextToggles = {
+  workspace: false,
+  currentFile: false,
   terminalLogs: false,
-  mnemonic: true,
-  mcp: true,
-  skills: true,
+  mnemonic: false,
+  mcp: false,
+  skills: false,
 };
+
+export const defaultChatContext: ContextToggles = {
+  ...noContext,
+  currentFile: true,
+  mnemonic: true,
+};
+
+const previewableToolIds = new Set([
+  "context.read",
+  "file.patch.preview",
+  "git.preview",
+  "mcp.preview",
+  "terminal.preview",
+]);
+
+interface ActiveEditorContext {
+  path: string;
+  content: string;
+  language: string;
+  line: number;
+  column: number;
+  documentVersion: string;
+}
+
+interface ActiveTerminalContext {
+  raw: string;
+  cwd: string;
+}
+
+export function activeEditorContextFromStore(
+  store: ReturnType<typeof useEditorStore.getState>,
+): ActiveEditorContext {
+  const activeTab = store.getActiveTab(store.activePaneId);
+  const context = {
+    path: activeTab?.path ?? store.statusFile.path ?? "",
+    content: activeTab?.content ?? "",
+    language: activeTab?.language ?? store.statusFile.language ?? "",
+    line: store.cursorPosition.line,
+    column: store.cursorPosition.col,
+  };
+  return {
+    ...context,
+    documentVersion: buildIDEContextDocument(context),
+  };
+}
 
 type DrawerId = "history" | "review";
 type DrawerSnapEdge = Extract<PanelPosition, "left" | "right">;
@@ -114,7 +193,7 @@ const initialState: AIChatUIState = {
   selectedMentionsBySession: {},
   selectedProviderId: "",
   selectedModel: "",
-  context: initialContext,
+  context: defaultChatContext,
   displayPrefs: {
     autoScroll: true,
     compactCards: false,
@@ -567,39 +646,44 @@ function hasMentionContextKind(
 
 function contextItemForMention(
   mention: AIChatMentionCandidate,
-  activeFile: string,
+  activeEditor: ActiveEditorContext,
 ): NonNullable<AIContextRequest["contextItems"]>[number] | null {
   const item = mention.contextItem;
   if (!item) return null;
   if (
     item.id === "current_file" &&
     item.kind === AIContextItemKind.AIContextItemKindFile &&
-    activeFile
+    activeEditor.path
   ) {
     return {
       ...item,
-      label: activeFile.split("/").pop() || item.label || "Current file",
-      path: activeFile,
+      label: activeEditor.path.split("/").pop() || item.label || "Current file",
+      path: activeEditor.path,
     };
   }
   return item;
 }
 
-function buildContextRequest(
+export function buildContextRequest(
   context: ContextToggles,
-  activeFile: string,
+  activeEditor: ActiveEditorContext,
   prompt = "",
   mentions: AIChatMentionCandidate[] = [],
+  profileId = "",
+  activeTerminal: ActiveTerminalContext | null = null,
 ): AIContextRequest {
+  const effectiveContext =
+    profileId === minimalGeneralProfileId ? noContext : context;
+  const activeFile = activeEditor.path;
   const contextItems: NonNullable<AIContextRequest["contextItems"]> = [];
-  if (context.workspace) {
+  if (effectiveContext.workspace) {
     pushUniqueContextItem(contextItems, {
       kind: AIContextItemKind.AIContextItemKindWorkspace,
       label: "Workspace",
       source: "composer",
     });
   }
-  if (context.currentFile && activeFile) {
+  if (effectiveContext.currentFile && activeFile) {
     pushUniqueContextItem(contextItems, {
       kind: AIContextItemKind.AIContextItemKindFile,
       label: activeFile.split("/").pop() || "Current file",
@@ -607,28 +691,28 @@ function buildContextRequest(
       source: "composer",
     });
   }
-  if (context.terminalLogs) {
+  if (effectiveContext.terminalLogs) {
     pushUniqueContextItem(contextItems, {
       kind: AIContextItemKind.AIContextItemKindTerminal,
       label: "Terminal",
       source: "composer",
     });
   }
-  if (context.mnemonic) {
+  if (effectiveContext.mnemonic) {
     pushUniqueContextItem(contextItems, {
       kind: AIContextItemKind.AIContextItemKindMnemonic,
       label: "Mnemonic",
       source: "composer",
     });
   }
-  if (context.mcp) {
+  if (effectiveContext.mcp) {
     pushUniqueContextItem(contextItems, {
       kind: AIContextItemKind.AIContextItemKindMCP,
       label: "MCP",
       source: "composer",
     });
   }
-  if (context.skills) {
+  if (effectiveContext.skills) {
     pushUniqueContextItem(contextItems, {
       kind: AIContextItemKind.AIContextItemKindSkill,
       label: "Skills",
@@ -636,33 +720,55 @@ function buildContextRequest(
     });
   }
   mentions.forEach((mention) => {
-    const item = contextItemForMention(mention, activeFile);
+    const item = contextItemForMention(mention, activeEditor);
     if (item) {
       pushUniqueContextItem(contextItems, item);
     }
   });
   const includeMnemonic =
-    context.mnemonic ||
+    effectiveContext.mnemonic ||
     hasMentionContextKind(
       mentions,
       AIContextItemKind.AIContextItemKindMnemonic,
     );
   const includeMCP =
-    context.mcp ||
+    effectiveContext.mcp ||
     hasMentionContextKind(mentions, AIContextItemKind.AIContextItemKindMCP);
   const includeSkills =
-    context.skills ||
+    effectiveContext.skills ||
     hasMentionContextKind(mentions, AIContextItemKind.AIContextItemKindSkill);
   const includeWorkspace =
-    context.workspace ||
+    effectiveContext.workspace ||
     hasMentionContextKind(
       mentions,
       AIContextItemKind.AIContextItemKindWorkspace,
     );
+  const includeCurrentFile =
+    effectiveContext.currentFile ||
+    mentions.some(
+      (mention) =>
+        mention.contextItem?.kind === AIContextItemKind.AIContextItemKindFile &&
+        (mention.contextItem.id === "current_file" ||
+          mention.contextItem.path === activeFile),
+    );
+  const terminalInput =
+    effectiveContext.terminalLogs && activeTerminal?.raw
+      ? activeTerminal.raw.slice(-6000)
+      : "";
   return {
+    documentVersion:
+      includeCurrentFile || includeWorkspace || terminalInput
+        ? activeEditor.documentVersion
+        : "",
     capability: "chat" as AIProviderCapability,
     prompt,
-    filePath: context.currentFile ? activeFile : "",
+    filePath: includeCurrentFile ? activeFile : "",
+    language: includeCurrentFile ? activeEditor.language : "",
+    line: includeCurrentFile ? activeEditor.line : undefined,
+    column: includeCurrentFile ? activeEditor.column : undefined,
+    fullText: includeCurrentFile ? activeEditor.content : "",
+    terminalInput,
+    terminalWorkDir: terminalInput ? activeTerminal?.cwd : "",
     includeMnemonic,
     includeMCP,
     includeSkills,
@@ -692,15 +798,35 @@ function envelopeFromRun(run: AIChatRun): AIChatRunEnvelope {
   });
 }
 
+function previewableToolIdForProposal(proposal: AIToolProposal): string | null {
+  const candidates = [proposal.name, proposal.id].map((value) => value?.trim());
+  return (
+    candidates.find(
+      (candidate): candidate is string =>
+        Boolean(candidate) && previewableToolIds.has(candidate),
+    ) ?? null
+  );
+}
+
 export function AIChatPanelContent({
   presentation = "panel",
   projectPath = "",
 }: AIChatPanelProps) {
-  const activeFile = useEditorStore(
-    (store) =>
-      store.statusFile.path ??
-      store.getActiveTab(store.activePaneId)?.path ??
-      "",
+  const activeTerminal = useTerminalStore(
+    useShallow((store): ActiveTerminalContext | null => {
+      const activePane = store.panes.find(
+        (pane) => pane.id === store.activePaneId,
+      );
+      const activeTerminalId = activePane?.activeTabId ?? "";
+      const shellState = activeTerminalId
+        ? store.sessionShellState.get(activeTerminalId)
+        : null;
+      if (!shellState) return null;
+      return {
+        raw: shellState.raw,
+        cwd: shellState.cwd,
+      };
+    }),
   );
   const aiChatSendShortcut = useEditorSettingsStore(
     (store) => store.aiChatSendShortcut,
@@ -768,6 +894,8 @@ export function AIChatPanelContent({
   const [artifactBusyId, setArtifactBusyId] = useState<string | null>(null);
   const [providerRuntimeBusy, setProviderRuntimeBusy] = useState(false);
   const [providerRuntimeError, setProviderRuntimeError] = useState("");
+  const [mnemonicBusy, setMnemonicBusy] = useState(false);
+  const [mnemonicError, setMnemonicError] = useState("");
   const [drawerDrag, setDrawerDrag] = useState<{
     drawer: DrawerId;
     offsetX: number;
@@ -814,7 +942,6 @@ export function AIChatPanelContent({
       selectDefaultProvider(sortedProviders, status?.activeProviderId)
     );
   }, [sortedProviders, state.selectedProviderId, status?.activeProviderId]);
-  const selectedProviderReady = isReadyChatProvider(selectedProvider);
   const selectedModel =
     state.selectedModel ||
     selectedProvider?.models?.[0]?.id ||
@@ -844,13 +971,16 @@ export function AIChatPanelContent({
     (run) => run.status === "running" || run.status === "queued",
   );
   const inputReady = state.input.trim().length > 0;
-  const providerDisabledReason = getProviderDisabledReason(selectedProvider);
+  const providerDisabledReason = getProviderDisabledReason(selectedProvider, {
+    selectedModel,
+    consentPolicy,
+    status,
+  });
+  const selectedProviderReady = providerDisabledReason === "";
   const disabledReason = activeRunRunning
     ? "Generation is running"
     : !inputReady
-      ? selectedProviderReady
-        ? ""
-        : providerDisabledReason
+      ? providerDisabledReason
       : providerDisabledReason;
   const canSend = inputReady && selectedProviderReady && !activeRunRunning;
   const transcriptRuns = useMemo(
@@ -1050,9 +1180,11 @@ export function AIChatPanelContent({
     try {
       const contextRequest = buildContextRequest(
         state.context,
-        activeFile || "",
+        activeEditorContextFromStore(useEditorStore.getState()),
         state.input,
         selectedMentionsForActiveSession,
+        state.selectedProfileId,
+        activeTerminal,
       );
       const [
         nextStatus,
@@ -1072,7 +1204,7 @@ export function AIChatPanelContent({
         nextMnemonicEntries,
         nextProviderRuntimes,
       ] = await Promise.all([
-        AIGetStatus(),
+        fallbackOnRuntimeError(AIGetStatus(), defaultAIStatus()),
         fallbackOnRuntimeError(AIListChatRuns(50), []),
         fallbackOnRuntimeError(AIGetContextPreview(contextRequest), null),
         fallbackOnRuntimeError(AIListChatActions(), []),
@@ -1089,44 +1221,54 @@ export function AIChatPanelContent({
         fallbackOnRuntimeError(AIListMnemonicEntries(24), []),
         fallbackOnRuntimeError(AIListProviderRuntimes(), []),
       ]);
-      const nextProviders = nextStatus?.providers ?? [];
-      setStatus(nextStatus);
+      const safeStatus = normalizeAIStatus(nextStatus);
+      const nextProviders = safeStatus.providers;
+      const safeConsentPolicy =
+        normalizeAIConsentPolicy(nextConsentPolicy) ?? defaultAIConsentPolicy();
+      const safeApprovalPolicy =
+        normalizeAIApprovalPolicy(nextApprovalPolicy) ??
+        defaultAIApprovalPolicy();
+      const safeEmbeddingStatus =
+        normalizeAIEmbeddingStatus(nextEmbeddingStatus) ??
+        defaultAIEmbeddingStatus();
+      const safeEnvelopes = normalizeAIChatRuns(envelopes);
+      setStatus(safeStatus);
       setProviders(nextProviders);
-      setActions(nextActions ?? []);
-      setContextProviders(nextContextProviders ?? []);
-      setEgressRecords(nextEgressRecords ?? []);
-      setAgentProfiles(nextAgentProfiles ?? []);
-      setPromptWorkflows(nextPromptWorkflows ?? []);
-      setTools(nextTools ?? []);
-      setToolAudit(nextToolAudit ?? []);
-      setModelCapabilities(nextModelCapabilities ?? []);
-      setConsentPolicy(nextConsentPolicy ?? null);
-      setEmbeddingStatus(nextEmbeddingStatus ?? null);
-      setApprovalPolicy(nextApprovalPolicy ?? null);
-      setMnemonicEntries(nextMnemonicEntries ?? []);
-      setProviderRuntimes(nextProviderRuntimes ?? []);
-      setRuns(envelopes ?? []);
-      setContextPreview(preview);
+      setActions(normalizeAIChatActions(nextActions));
+      setContextProviders(normalizeAIContextProviders(nextContextProviders));
+      setEgressRecords(normalizeAIEgressRecords(nextEgressRecords));
+      setAgentProfiles(normalizeAIAgentProfiles(nextAgentProfiles));
+      setPromptWorkflows(normalizeAIPromptWorkflows(nextPromptWorkflows));
+      setTools(normalizeAITools(nextTools));
+      setToolAudit(normalizeAIToolAudit(nextToolAudit));
+      setModelCapabilities(normalizeAIModelCapabilities(nextModelCapabilities));
+      setConsentPolicy(safeConsentPolicy);
+      setEmbeddingStatus(safeEmbeddingStatus);
+      setApprovalPolicy(safeApprovalPolicy);
+      setMnemonicEntries(normalizeAIMnemonicEntries(nextMnemonicEntries));
+      setProviderRuntimes(normalizeAIProviderRuntimes(nextProviderRuntimes));
+      setRuns(safeEnvelopes);
+      setContextPreview(normalizeAIContextSnapshot(preview));
 
       const defaultProvider = selectDefaultProvider(
         nextProviders,
-        nextStatus?.activeProviderId,
+        safeStatus.activeProviderId,
       );
       if (defaultProvider) {
         dispatch({
           type: "ensureProvider",
           providerId: defaultProvider.id,
           model:
-            nextStatus?.activeModel || defaultProvider.models?.[0]?.id || "",
+            safeStatus.activeModel || defaultProvider.models?.[0]?.id || "",
         });
       }
-      if (!initialSelectionHydratedRef.current && envelopes?.[0]?.id) {
+      if (!initialSelectionHydratedRef.current && safeEnvelopes[0]?.id) {
         initialSelectionHydratedRef.current = true;
-        setActiveRunId(envelopes[0].id);
+        setActiveRunId(safeEnvelopes[0].id);
         dispatch({
           type: "setActiveSession",
-          sessionId: sessionIdOf(envelopes[0]),
-          runId: envelopes[0].id,
+          sessionId: sessionIdOf(safeEnvelopes[0]),
+          runId: safeEnvelopes[0].id,
         });
       }
     } catch (error) {
@@ -1135,7 +1277,7 @@ export function AIChatPanelContent({
       setLoading(false);
     }
   }, [
-    activeFile,
+    activeTerminal,
     setContextPreview,
     setContextProviders,
     setEgressRecords,
@@ -1154,6 +1296,7 @@ export function AIChatPanelContent({
     setToolAudit,
     state.context,
     state.input,
+    state.selectedProfileId,
     selectedMentionsForActiveSession,
   ]);
 
@@ -1190,7 +1333,7 @@ export function AIChatPanelContent({
     AIListChatRunArtifacts(activeRunKey)
       .then((artifacts) => {
         if (!cancelled) {
-          setActiveArtifacts(artifacts ?? []);
+          setActiveArtifacts(normalizeAIChatArtifacts(artifacts));
         }
       })
       .catch(() => {
@@ -1209,7 +1352,7 @@ export function AIChatPanelContent({
       return;
     }
     const artifacts = await AIListChatRunArtifacts(activeRunKey);
-    setActiveArtifacts(artifacts ?? []);
+    setActiveArtifacts(normalizeAIChatArtifacts(artifacts));
   }, [activeRunKey]);
 
   useLayoutEffect(() => {
@@ -1357,27 +1500,28 @@ export function AIChatPanelContent({
     try {
       const discovery = await AIRefreshLocalProviders();
       const [nextStatus, nextProviderRuntimes] = await Promise.all([
-        AIGetStatus(),
+        fallbackOnRuntimeError(AIGetStatus(), defaultAIStatus()),
         fallbackOnRuntimeError(AIListProviderRuntimes(), []),
       ]);
-      const statusProviders = nextStatus?.providers ?? [];
+      const safeStatus = normalizeAIStatus(nextStatus);
+      const statusProviders = safeStatus.providers;
       const nextProviders =
         statusProviders.length > 0
           ? statusProviders
           : (discovery?.providers ?? []);
-      setStatus(nextStatus);
+      setStatus(safeStatus);
       setProviders(nextProviders);
-      setProviderRuntimes(nextProviderRuntimes ?? []);
+      setProviderRuntimes(normalizeAIProviderRuntimes(nextProviderRuntimes));
       const defaultProvider = selectDefaultProvider(
         nextProviders,
-        nextStatus?.activeProviderId,
+        safeStatus.activeProviderId,
       );
       if (defaultProvider) {
         dispatch({
           type: "setProvider",
           providerId: defaultProvider.id,
           model:
-            nextStatus?.activeModel || defaultProvider.models?.[0]?.id || "",
+            safeStatus.activeModel || defaultProvider.models?.[0]?.id || "",
         });
       }
     } finally {
@@ -1386,20 +1530,28 @@ export function AIChatPanelContent({
   }, [setProviders, setStatus]);
 
   const handleRefreshContext = useCallback(async () => {
-    const preview = await AIGetContextPreview(
-      buildContextRequest(
-        state.context,
-        activeFile || "",
-        state.input,
-        selectedMentionsForActiveSession,
-      ),
-    );
-    setContextPreview(preview);
+    setRuntimeError(null);
+    try {
+      const preview = await AIGetContextPreview(
+        buildContextRequest(
+          state.context,
+          activeEditorContextFromStore(useEditorStore.getState()),
+          state.input,
+          selectedMentionsForActiveSession,
+          state.selectedProfileId,
+          activeTerminal,
+        ),
+      );
+      setContextPreview(normalizeAIContextSnapshot(preview));
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    }
   }, [
-    activeFile,
+    activeTerminal,
     setContextPreview,
     state.context,
     state.input,
+    state.selectedProfileId,
     selectedMentionsForActiveSession,
   ]);
 
@@ -1427,13 +1579,27 @@ export function AIChatPanelContent({
   const handleSend = useCallback(async () => {
     if (!canSend || !selectedProvider) return;
     setRuntimeError(null);
+    const latestActiveEditor = activeEditorContextFromStore(
+      useEditorStore.getState(),
+    );
     const request: AIContextRequest = buildContextRequest(
       state.context,
-      activeFile || "",
+      latestActiveEditor,
       state.input.trim(),
       selectedMentionsForActiveSession,
+      state.selectedProfileId,
+      activeTerminal,
     );
     try {
+      const preview = normalizeAIContextSnapshot(
+        await AIGetContextPreview(request),
+      );
+      if (!preview) {
+        throw new Error(
+          "Context preview is unavailable; request was not sent.",
+        );
+      }
+      setContextPreview(preview);
       const run = await AIStartChatRun({
         action: state.selectedAction,
         sessionId: activeSessionId,
@@ -1456,11 +1622,12 @@ export function AIChatPanelContent({
       setRuntimeError(error instanceof Error ? error.message : String(error));
     }
   }, [
-    activeFile,
+    activeTerminal,
     canSend,
     selectedModel,
     selectedProvider,
     setActiveRunId,
+    setContextPreview,
     setHydratedRun,
     activeSessionId,
     state.context,
@@ -1518,6 +1685,162 @@ export function AIChatPanelContent({
     },
     [refreshActiveArtifacts],
   );
+
+  const refreshMnemonicEntries = useCallback(async () => {
+    const entries = await AIListMnemonicEntries(24);
+    setMnemonicEntries(normalizeAIMnemonicEntries(entries));
+  }, [setMnemonicEntries]);
+
+  const handleMnemonicSearch = useCallback(
+    async (query: string) => {
+      setMnemonicBusy(true);
+      setMnemonicError("");
+      try {
+        const trimmed = query.trim();
+        const entries = trimmed
+          ? await AISearchMnemonic({
+              query: trimmed,
+              limit: 24,
+              includeGenerated: true,
+              includeSuperseded: true,
+              includeUntrusted: true,
+            })
+          : await AIListMnemonicEntries(24);
+        setMnemonicEntries(normalizeAIMnemonicEntries(entries));
+      } catch (error) {
+        setMnemonicError(
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        setMnemonicBusy(false);
+      }
+    },
+    [setMnemonicEntries],
+  );
+
+  const handleMnemonicSave = useCallback(
+    async (content: string) => {
+      const trimmed = content.trim();
+      if (!trimmed) return;
+      setMnemonicBusy(true);
+      setMnemonicError("");
+      try {
+        await AISaveMnemonicEntry({
+          content: trimmed,
+          type: "note",
+          source: "user",
+          trust: "trusted",
+          pinned: true,
+          isLatest: true,
+          confidence: 1,
+          importance: 5,
+          provenance: {
+            reviewedBy: "user",
+            source: "ai-chat-settings",
+          },
+        });
+        await refreshMnemonicEntries();
+      } catch (error) {
+        setMnemonicError(
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        setMnemonicBusy(false);
+      }
+    },
+    [refreshMnemonicEntries],
+  );
+
+  const handleMnemonicPromote = useCallback(
+    async (entryId: string) => {
+      if (!entryId) return;
+      setMnemonicBusy(true);
+      setMnemonicError("");
+      try {
+        await AIUpdateMnemonicEntry(entryId, {
+          trust: "trusted",
+          pinned: true,
+          isLatest: true,
+          provenance: {
+            reviewedBy: "user",
+            promotion: "user_confirmed",
+          },
+        });
+        await refreshMnemonicEntries();
+      } catch (error) {
+        setMnemonicError(
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        setMnemonicBusy(false);
+      }
+    },
+    [refreshMnemonicEntries],
+  );
+
+  const handleApproveMnemonicArtifact = useCallback(
+    async (artifactId: string) => {
+      if (!artifactId) return;
+      setArtifactBusyId(artifactId);
+      setRuntimeError(null);
+      try {
+        await AIApproveMnemonicEntryProposal({
+          artifactId,
+          reviewedBy: "user",
+          trust: "trusted",
+          pinned: true,
+        });
+        await Promise.all([refreshActiveArtifacts(), refreshMnemonicEntries()]);
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setArtifactBusyId(null);
+      }
+    },
+    [refreshActiveArtifacts, refreshMnemonicEntries],
+  );
+
+  const handlePreviewToolProposal = useCallback(
+    async (proposal: AIToolProposal, runId: string) => {
+      const toolId = previewableToolIdForProposal(proposal);
+      if (!toolId || !runId) return;
+      const busyId = proposal.id || toolId;
+      setArtifactBusyId(busyId);
+      setRuntimeError(null);
+      try {
+        const result = await AIExecuteToolCall({
+          runId,
+          toolId,
+          action: AIToolCallAction.AIToolCallActionPreview,
+          arguments: proposal.arguments ?? {},
+        });
+        if (result?.audit?.id) {
+          upsertToolAudit(result.audit);
+        }
+        await refreshActiveArtifacts();
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setArtifactBusyId(null);
+      }
+    },
+    [refreshActiveArtifacts, upsertToolAudit],
+  );
+
+  const handleAcceptLocalProviderConsent = useCallback(async () => {
+    setRuntimeError(null);
+    try {
+      const nextPolicy = await AISaveConsentPolicy({
+        ...(consentPolicy ?? defaultAIConsentPolicy()),
+        localProvidersAccepted: true,
+      });
+      setConsentPolicy(
+        normalizeAIConsentPolicy(nextPolicy) ?? defaultAIConsentPolicy(),
+      );
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+  }, [consentPolicy, setConsentPolicy]);
 
   const handleNewChat = useCallback(() => {
     const sessionId = createChatSessionId();
@@ -1740,6 +2063,8 @@ export function AIChatPanelContent({
           tools={tools}
           toolAudit={toolAudit}
           modelCapabilities={modelCapabilities}
+          mnemonicBusy={mnemonicBusy}
+          mnemonicError={mnemonicError}
           onContextToggle={(key, value) =>
             dispatch({ type: "setContext", key, value })
           }
@@ -1797,6 +2122,10 @@ export function AIChatPanelContent({
           }
           onNewChat={handleNewChat}
           onRefreshRuntime={refreshRuntime}
+          onMnemonicSearch={handleMnemonicSearch}
+          onMnemonicSave={handleMnemonicSave}
+          onMnemonicPromote={handleMnemonicPromote}
+          onAcceptLocalProviderConsent={handleAcceptLocalProviderConsent}
           onToggleSettingsPopover={() => {
             dispatch({ type: "toggleSettingsPopover" });
             dispatchChrome({
@@ -1861,12 +2190,16 @@ export function AIChatPanelContent({
                           sessionSearchTerms.length > 0 ? sessionSearch : ""
                         }
                         onApplyPatchArtifact={handleApplyPatchArtifact}
+                        onApproveMnemonicArtifact={
+                          handleApproveMnemonicArtifact
+                        }
                         onOpenReview={() =>
                           dispatchChrome({
                             type: "openDrawer",
                             drawer: "review",
                           })
                         }
+                        onPreviewToolProposal={handlePreviewToolProposal}
                         onRollbackPatchCheckpoint={
                           handleRollbackPatchCheckpoint
                         }

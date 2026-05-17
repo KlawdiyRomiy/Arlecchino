@@ -40,9 +40,30 @@ OUTPUT="${ARLE_WAILS3_OUTPUT:-$BUILD_DIR/bin/$APP_NAME-v3}"
 export GOCACHE="${ARLE_WAILS3_GOCACHE:-$BUILD_DIR/go-build-cache}"
 BUILD_ONLY="0"
 SKIP_FRONTEND="0"
+FRONTEND_DEV_SERVER="0"
+FRONTEND_DEV_HOST="${ARLE_WAILS3_FRONTEND_DEV_HOST:-127.0.0.1}"
+FRONTEND_DEV_PORT="${ARLE_WAILS3_FRONTEND_DEV_PORT:-5173}"
+WEB_ONLY="0"
 KEEP_STALE_MCP="${ARLE_WAILS3_KEEP_STALE_MCP:-0}"
 APP_ARGS=()
 app_pid=""
+frontend_pid=""
+
+usage() {
+  cat <<EOF
+Usage: scripts/wails3-dev-macos.sh [options] [-- app args...]
+
+Options:
+  --build-only                 Build the Wails v3 binary and exit
+  --skip-frontend              Skip the production frontend build
+  --output <path>              Binary output path
+  --frontend-dev-server        Run Vite on 5173 and point the Wails WebView at it
+  --frontend-dev-host <host>   Frontend dev server host (default: $FRONTEND_DEV_HOST)
+  --frontend-dev-port <port>   Frontend dev server port (default: $FRONTEND_DEV_PORT)
+  --web-only                   Run browser-friendly Vite only with the Wails runtime stub
+  -h, --help                   Show this help
+EOF
+}
 
 find_mcp_server_pids_for_output() {
   local target="$1"
@@ -118,8 +139,57 @@ cleanup() {
     app_pid=""
   fi
 
+  if [[ -n "${frontend_pid:-}" ]]; then
+    terminate_pid "$frontend_pid"
+    frontend_pid=""
+  fi
+
   cleanup_stale_mcp_servers
   exit "$exit_code"
+}
+
+frontend_dev_url() {
+  printf "http://%s:%s\n" "$FRONTEND_DEV_HOST" "$FRONTEND_DEV_PORT"
+}
+
+start_frontend_dev_server() {
+  local use_runtime_stub="$1"
+  local url
+  url="$(frontend_dev_url)"
+
+  echo "Starting frontend dev server: $url" >&2
+  (
+    cd "$ROOT_DIR/frontend"
+    if [[ "$use_runtime_stub" == "1" ]]; then
+      ARLECCHINO_TEST_WAILS_RUNTIME=1 npm run dev -- --host "$FRONTEND_DEV_HOST" --port "$FRONTEND_DEV_PORT" --strictPort
+    else
+      npm run dev -- --host "$FRONTEND_DEV_HOST" --port "$FRONTEND_DEV_PORT" --strictPort
+    fi
+  ) &
+  frontend_pid="$!"
+}
+
+wait_for_frontend_dev_server() {
+  local url
+  url="$(frontend_dev_url)"
+
+  local attempt=1
+  while [[ "$attempt" -le 80 ]]; do
+    if ! kill -0 "$frontend_pid" >/dev/null 2>&1; then
+      echo "ERROR: frontend dev server exited before becoming ready." >&2
+      return 1
+    fi
+
+    if curl -fsS --max-time 1 "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    sleep 0.25
+    attempt=$((attempt + 1))
+  done
+
+  echo "ERROR: frontend dev server did not become ready: $url" >&2
+  return 1
 }
 
 while [[ $# -gt 0 ]]; do
@@ -141,6 +211,37 @@ while [[ $# -gt 0 ]]; do
       OUTPUT="$1"
       shift
       ;;
+    --frontend-dev-server)
+      FRONTEND_DEV_SERVER="1"
+      shift
+      ;;
+    --frontend-dev-host)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "ERROR: --frontend-dev-host requires a host." >&2
+        exit 1
+      fi
+      FRONTEND_DEV_HOST="$1"
+      shift
+      ;;
+    --frontend-dev-port)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "ERROR: --frontend-dev-port requires a port." >&2
+        exit 1
+      fi
+      FRONTEND_DEV_PORT="$1"
+      shift
+      ;;
+    --web-only)
+      WEB_ONLY="1"
+      FRONTEND_DEV_SERVER="1"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
     --)
       shift
       APP_ARGS=("$@")
@@ -153,13 +254,32 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$BUILD_ONLY" == "1" && "$FRONTEND_DEV_SERVER" == "1" ]]; then
+  echo "ERROR: --build-only cannot be combined with --frontend-dev-server or --web-only." >&2
+  exit 1
+fi
+
 trap 'cleanup 130' INT
 trap 'cleanup 143' TERM
 trap 'cleanup $?' EXIT
 
 cleanup_stale_mcp_servers
 
-if [[ "$SKIP_FRONTEND" != "1" ]]; then
+if [[ "$FRONTEND_DEV_SERVER" == "1" ]]; then
+  export WAILS_VITE_PORT="$FRONTEND_DEV_PORT"
+  export FRONTEND_DEVSERVER_URL
+  FRONTEND_DEVSERVER_URL="$(frontend_dev_url)"
+  start_frontend_dev_server "$WEB_ONLY"
+  wait_for_frontend_dev_server
+fi
+
+if [[ "$WEB_ONLY" == "1" ]]; then
+  echo "Browser preview ready: $(frontend_dev_url)"
+  wait "$frontend_pid"
+  exit "$?"
+fi
+
+if [[ "$SKIP_FRONTEND" != "1" && "$FRONTEND_DEV_SERVER" != "1" ]]; then
   cd "$ROOT_DIR/frontend"
   npm run build
 fi

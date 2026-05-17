@@ -3,6 +3,10 @@ import { AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
 import * as App from "../wails/app";
 import { selectDirectoryWithCapability } from "../shell/shellDialogs";
+import {
+  isShellCapabilityUsable,
+  useShellCapabilities,
+} from "../shell/shellCapabilities";
 import { shortcuts } from "../utils/keyboard";
 import { MotionShellDialogFrame } from "./ui/MotionShellDialogFrame";
 
@@ -20,11 +24,19 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
   const [projectName, setProjectName] = useState("");
   const [selectedDir, setSelectedDir] = useState("");
   const [creating, setCreating] = useState(false);
+  const [error, setError] = useState("");
+  const shellCapabilities = useShellCapabilities();
+  const dialogsCapability = shellCapabilities.capabilities.dialogs;
+  const dialogsAvailable = isShellCapabilityUsable(dialogsCapability);
+  const dialogsUnavailableReason =
+    dialogsCapability.reason ||
+    "Native dialogs are available only in the packaged Wails shell.";
 
   const reset = () => {
     setProjectName("");
     setSelectedDir("");
     setCreating(false);
+    setError("");
   };
 
   const close = () => {
@@ -43,16 +55,18 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
       );
       if (path) {
         setSelectedDir(path);
+        setError("");
       }
     } catch (error) {
       console.error("Error selecting directory:", error);
+      setError(error instanceof Error ? error.message : String(error));
     }
   };
 
   const handleCreateProject = async () => {
     const trimmedName = projectName.trim();
     if (!trimmedName || !selectedDir) {
-      alert("Please enter project name and select directory");
+      setError("Please enter project name and select directory");
       return;
     }
 
@@ -68,7 +82,7 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
       onProjectOpen(projectPath);
     } catch (error) {
       console.error("Error creating project:", error);
-      alert(`Failed to create project: ${error}`);
+      setError(`Failed to create project: ${error}`);
       setCreating(false);
     }
   };
@@ -153,12 +167,20 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
                 />
                 <button
                   onClick={handleSelectDirectory}
-                  disabled={creating}
+                  disabled={creating || !dialogsAvailable}
                   className={`${secondaryButtonClass} shrink-0`}
+                  title={
+                    dialogsAvailable ? "Browse" : dialogsUnavailableReason
+                  }
                 >
                   Browse
                 </button>
               </div>
+              {!dialogsAvailable ? (
+                <div className="mt-2 text-[13px] text-[var(--text-muted)]">
+                  {dialogsUnavailableReason}
+                </div>
+              ) : null}
             </div>
 
             <div className="break-all text-[13px] text-[var(--text-muted)]">
@@ -167,6 +189,11 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
                 ? `${selectedDir}/${projectName.trim()}`
                 : "..."}
             </div>
+            {error ? (
+              <div className="rounded-[16px] border border-[var(--status-error)] bg-[var(--bg-tertiary)] px-4 py-3 text-[13px] text-[var(--status-error)]">
+                {error}
+              </div>
+            ) : null}
           </div>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">

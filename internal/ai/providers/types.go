@@ -81,6 +81,7 @@ type GenerationRequest struct {
 	Capability  AIProviderCapability `json:"capability"`
 	Prompt      string               `json:"prompt"`
 	System      string               `json:"system,omitempty"`
+	Messages    []GenerationMessage  `json:"messages,omitempty"`
 	Model       string               `json:"model,omitempty"`
 	MaxTokens   int                  `json:"maxTokens,omitempty"`
 	Temperature float64              `json:"temperature,omitempty"`
@@ -88,11 +89,17 @@ type GenerationRequest struct {
 	Stream      bool                 `json:"stream,omitempty"`
 }
 
+type GenerationMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 type GenerationResponse struct {
-	Text       string `json:"text"`
-	Model      string `json:"model,omitempty"`
-	RawStatus  int    `json:"rawStatus,omitempty"`
-	FinishedAt string `json:"finishedAt,omitempty"`
+	Text          string `json:"text"`
+	ReasoningText string `json:"reasoningText,omitempty"`
+	Model         string `json:"model,omitempty"`
+	RawStatus     int    `json:"rawStatus,omitempty"`
+	FinishedAt    string `json:"finishedAt,omitempty"`
 }
 
 type TokenSink func(token string) error

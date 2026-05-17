@@ -531,6 +531,7 @@ const App: React.FC = () => {
           });
         } catch (error) {
           console.error("Error opening target:", error);
+          alert(error instanceof Error ? error.message : String(error));
         }
       })();
     };

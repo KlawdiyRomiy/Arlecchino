@@ -615,17 +615,20 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 	}
 	if req.FilePath != "" || req.FullText != "" || req.TextBefore != "" || req.TextAfter != "" {
 		snapshot.DataCategories = append(snapshot.DataCategories, "current_file_context")
-		content := currentFileWindow(req)
+		content, displayPath, reason := currentFileContextContent(project.ProjectRoot, req)
+		if displayPath == "" {
+			displayPath = req.FilePath
+		}
 		if content != "" {
 			snapshot.Snippets = append(snapshot.Snippets, AIContextSnippet{
 				Type:     "current_file",
-				Path:     req.FilePath,
+				Path:     displayPath,
 				Language: req.Language,
 				Content:  content,
 			})
-			addContextItemDisclosure(&snapshot, AIContextItemKindFile, filepath.Base(req.FilePath), req.FilePath, "current_file", true, true, len(content), "")
+			addContextItemDisclosure(&snapshot, AIContextItemKindFile, filepath.Base(displayPath), displayPath, "current_file", true, true, len(content), "")
 		} else {
-			addContextItemDisclosure(&snapshot, AIContextItemKindFile, filepath.Base(req.FilePath), req.FilePath, "current_file", true, false, 0, "empty")
+			addContextItemDisclosure(&snapshot, AIContextItemKindFile, filepath.Base(displayPath), displayPath, "current_file", true, false, 0, firstNonEmpty(reason, "empty"))
 		}
 	}
 	if req.Selection != "" {
@@ -719,6 +722,31 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 		OptInSource:    "context_preview",
 	}
 	return snapshot
+}
+
+func currentFileContextContent(projectRoot string, req AIContextRequest) (string, string, string) {
+	content := currentFileWindow(req)
+	if strings.TrimSpace(content) != "" {
+		return content, req.FilePath, ""
+	}
+	if req.Capability != providers.CapabilityChat || strings.TrimSpace(req.FilePath) == "" {
+		return "", req.FilePath, ""
+	}
+	absPath, relPath, reason := resolveMentionFilePath(projectRoot, req.FilePath)
+	if reason != "" {
+		return "", firstNonEmpty(relPath, req.FilePath), reason
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", relPath, "read_error"
+	}
+	if len(data) == 0 {
+		return "", relPath, "empty"
+	}
+	if strings.Contains(string(data), "\x00") {
+		return "", relPath, "binary"
+	}
+	return truncateUTF8(string(data), mentionFileSnippet), relPath, ""
 }
 
 func summarizeContextSnapshot(snapshot AIContextSnapshot) AIContextSummary {

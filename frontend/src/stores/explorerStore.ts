@@ -4,6 +4,7 @@ import {
   isSameOrChildPath,
   remapProjectPathPrefix,
 } from "../utils/projectPaths";
+import { recordIDEContextEvent } from "./ideContextLedgerStore";
 
 interface ExplorerState {
   expandedPaths: Set<string>;
@@ -37,6 +38,16 @@ export const useExplorerSelectionStore = create<ExplorerSelectionState>(
 
     setHighlightedPath: (path: string | null) => {
       set({ highlightedPath: path });
+      recordIDEContextEvent({
+        scope: "filesystem",
+        type: path
+          ? "explorer.selection_changed"
+          : "explorer.selection_cleared",
+        title: path
+          ? "Explorer selection changed"
+          : "Explorer selection cleared",
+        path: path ?? undefined,
+      });
     },
 
     remapPathPrefix: (oldPrefix: string, newPrefix: string) => {
@@ -69,6 +80,7 @@ export const useExplorerStore = create<ExplorerState>()(
       revealRequestPath: null,
 
       toggleExpanded: (path: string) => {
+        const wasExpanded = get().expandedPaths.has(path);
         set((state) => {
           const newSet = new Set(state.expandedPaths);
           if (newSet.has(path)) {
@@ -77,6 +89,16 @@ export const useExplorerStore = create<ExplorerState>()(
             newSet.add(path);
           }
           return { expandedPaths: newSet };
+        });
+        recordIDEContextEvent({
+          scope: "filesystem",
+          type: wasExpanded
+            ? "explorer.folder_collapsed"
+            : "explorer.folder_expanded",
+          title: wasExpanded
+            ? "Explorer folder collapsed"
+            : "Explorer folder expanded",
+          path,
         });
       },
 
@@ -90,6 +112,16 @@ export const useExplorerStore = create<ExplorerState>()(
           }
           return { expandedPaths: newSet };
         });
+        recordIDEContextEvent({
+          scope: "filesystem",
+          type: expanded
+            ? "explorer.folder_expanded"
+            : "explorer.folder_collapsed",
+          title: expanded
+            ? "Explorer folder expanded"
+            : "Explorer folder collapsed",
+          path,
+        });
       },
 
       isExpanded: (path: string) => {
@@ -98,6 +130,12 @@ export const useExplorerStore = create<ExplorerState>()(
 
       requestRevealFile: (path: string) => {
         set({ revealRequestPath: path });
+        recordIDEContextEvent({
+          scope: "filesystem",
+          type: "explorer.reveal_requested",
+          title: "Explorer reveal requested",
+          path,
+        });
       },
 
       clearRevealRequest: () => {
@@ -106,6 +144,12 @@ export const useExplorerStore = create<ExplorerState>()(
 
       setProjectPath: (path: string) => {
         set({ projectPath: path });
+        recordIDEContextEvent({
+          scope: "filesystem",
+          type: "explorer.project_changed",
+          title: "Explorer project changed",
+          projectPath: path,
+        });
       },
 
       remapPathPrefix: (oldPrefix: string, newPrefix: string) => {

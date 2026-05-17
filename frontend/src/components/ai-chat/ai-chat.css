@@ -911,8 +911,10 @@
   top: calc(100% + 8px);
   right: 0;
   width: min(340px, calc(100vw - 64px));
+  max-width: calc(100vw - 24px);
   max-height: min(640px, calc(100vh - 160px));
   overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--ai-chat-border-strong);
   border-radius: var(--ai-chat-radius);
   background: linear-gradient(
@@ -923,6 +925,10 @@
   box-shadow: var(--shadow-overlay);
   padding: 10px;
   transform-origin: top right;
+}
+
+.ai-chat-popover-frame {
+  scrollbar-gutter: stable;
 }
 
 .ai-chat-popover__title {
@@ -1317,6 +1323,68 @@
   color: var(--text-secondary);
   font-size: 11px;
   padding: 5px 9px;
+}
+
+.ai-chat-mnemonic-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-chat-mnemonic-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.ai-chat-mnemonic-controls input,
+.ai-chat-mnemonic-controls textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--ai-chat-border);
+  border-radius: var(--ai-chat-control-radius);
+  outline: none;
+  background: var(--ai-chat-surface-raised);
+  color: var(--ai-chat-text);
+  font: inherit;
+  font-size: 12px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.ai-chat-mnemonic-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.ai-chat-mnemonic-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 8px;
+  border: 1px solid var(--ai-chat-border);
+  border-radius: var(--ai-chat-control-radius);
+  background: var(--ai-chat-surface-raised);
+  padding: 8px 9px;
+}
+
+.ai-chat-mnemonic-row__content {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-chat-mnemonic-row__meta {
+  color: var(--ai-chat-muted);
+  font-size: 11px;
+}
+
+.ai-chat-mnemonic-row .ai-chat-secondary-button {
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 
 .ai-chat-runtime-grid {
@@ -2293,6 +2361,93 @@
   margin: 8px 0 0;
 }
 
+.ai-chat-tool-proposal .ai-chat-secondary-button {
+  margin-top: 8px;
+}
+
+.ai-chat-memory-citations {
+  color: var(--ai-chat-muted);
+  margin-top: 8px;
+  max-width: 100%;
+}
+
+.ai-chat-memory-citations__toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--ai-chat-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 13px;
+  gap: 5px;
+  line-height: 1.25;
+  max-width: 100%;
+  padding: 1px 0;
+}
+
+.ai-chat-memory-citations__toggle:hover {
+  color: var(--ai-chat-text);
+}
+
+.ai-chat-memory-citations__chevron {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  justify-content: center;
+  transform-origin: center;
+}
+
+.ai-chat-memory-citations__list {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.ai-chat-memory-citations__item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ai-chat-memory-citations__item-head {
+  align-items: baseline;
+  display: flex;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ai-chat-memory-citations__source {
+  color: var(--ai-chat-text);
+  flex: 0 1 auto;
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-chat-memory-citations__meta {
+  color: var(--ai-chat-muted);
+  flex: 0 0 auto;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ai-chat-memory-citations__summary {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.ai-chat-memory-citations__item .ai-chat-secondary-button {
+  justify-self: start;
+  margin-top: 4px;
+}
+
 .ai-chat-patch-artifact {
   border: 1px solid
     color-mix(in srgb, var(--status-success) 30%, var(--ai-chat-border));
@@ -2518,8 +2673,8 @@
   right: 0;
   bottom: calc(100% + 8px);
   left: auto;
-  transform: translateX(-34px);
-  width: min(320px, calc(100cqi - 22px));
+  transform: none;
+  width: min(320px, calc(100cqi - 16px), calc(100vw - 24px));
 }
 
 .ai-chat-context-picker__toggles {
@@ -2977,7 +3132,7 @@
   .ai-chat-context-picker {
     right: 0;
     left: auto;
-    transform: translateX(-18px);
+    transform: none;
   }
 
   .ai-chat-mention-picker {

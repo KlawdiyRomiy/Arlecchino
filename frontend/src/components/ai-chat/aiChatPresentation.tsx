@@ -95,3 +95,24 @@ export function runStatusLabel(status: string): string {
       return status || "Unknown";
   }
 }
+
+export interface AIChatActivityLabelInput {
+  status?: string;
+  activeText?: string;
+  contextItems?: Array<{ kind?: string; included?: boolean }>;
+  elapsedMs?: number;
+}
+
+export function runActivityLabel({
+  status = "",
+  activeText = "",
+  contextItems = [],
+  elapsedMs = 0,
+}: AIChatActivityLabelInput): string {
+  if (status === "queued") return "Queued";
+  if (status !== "running") return runStatusLabel(status);
+  if (activeText.trim()) return "Writing response";
+  if (elapsedMs >= 4000) return "Thinking";
+  void contextItems;
+  return "Thinking";
+}

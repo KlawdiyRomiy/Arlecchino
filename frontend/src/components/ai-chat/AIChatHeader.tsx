@@ -73,6 +73,8 @@ interface AIChatHeaderProps {
   tools: AIToolDescriptor[];
   toolAudit: AIToolAuditRecord[];
   modelCapabilities: AIModelCapabilityDescriptor[];
+  mnemonicBusy: boolean;
+  mnemonicError: string;
   activeEnvelope: AIChatRunEnvelope | null;
   activeRun: AIChatRun | null;
   activeRunText: string;
@@ -91,6 +93,10 @@ interface AIChatHeaderProps {
   onToggleSettingsPopover: () => void;
   onContextToggle: (key: keyof ContextToggles, value: boolean) => void;
   onDisplayPrefChange: (key: keyof AIChatDisplayPrefs, value: boolean) => void;
+  onMnemonicSearch: (query: string) => void;
+  onMnemonicSave: (content: string) => void;
+  onMnemonicPromote: (entryId: string) => void;
+  onAcceptLocalProviderConsent: () => void;
 }
 
 export function AIChatHeader({
@@ -120,6 +126,8 @@ export function AIChatHeader({
   tools,
   toolAudit,
   modelCapabilities,
+  mnemonicBusy,
+  mnemonicError,
   activeEnvelope,
   activeRun,
   activeRunText,
@@ -138,6 +146,10 @@ export function AIChatHeader({
   onToggleSettingsPopover,
   onContextToggle,
   onDisplayPrefChange,
+  onMnemonicSearch,
+  onMnemonicSave,
+  onMnemonicPromote,
+  onAcceptLocalProviderConsent,
 }: AIChatHeaderProps) {
   const {
     draggedItemId,
@@ -370,8 +382,16 @@ export function AIChatHeader({
                     tools={tools}
                     toolAudit={toolAudit}
                     modelCapabilities={modelCapabilities}
+                    mnemonicBusy={mnemonicBusy}
+                    mnemonicError={mnemonicError}
                     onContextToggle={onContextToggle}
                     onDisplayPrefChange={onDisplayPrefChange}
+                    onMnemonicSearch={onMnemonicSearch}
+                    onMnemonicSave={onMnemonicSave}
+                    onMnemonicPromote={onMnemonicPromote}
+                    onAcceptLocalProviderConsent={
+                      onAcceptLocalProviderConsent
+                    }
                   />
                 ) : null}
               </AnimatePresence>

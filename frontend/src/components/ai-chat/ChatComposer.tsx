@@ -235,11 +235,11 @@ export function ChatComposer({
               name: getActionMeta(action).label,
               description: getActionMeta(action).description,
               builtIn: true,
-              mayProposeTools: action === "build",
-              expectsToolProposals: action === "build",
-              readOnlyIntent: action !== "build",
+              mayProposeTools: action === "build" || action === "debug",
+              expectsToolProposals: false,
+              readOnlyIntent: action !== "build" && action !== "debug",
               showPlanStructure: action === "plan",
-              executionUnavailable: action === "build",
+              executionUnavailable: false,
             }) as AIChatActionDescriptor,
         );
 

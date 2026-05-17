@@ -16,9 +16,34 @@ import (
 	"github.com/google/uuid"
 )
 
-const defaultChatSessionID = "default"
+const (
+	defaultChatSessionID     = "default"
+	minimalChatProfileID     = "minimal-general"
+	chatInternalTagPrefix    = "<arlecchino_"
+	chatContextOpenTag       = "<arlecchino_context>"
+	chatContextCloseTag      = "</arlecchino_context>"
+	chatHistoryOpenTag       = "<arlecchino_history>"
+	chatHistoryCloseTag      = "</arlecchino_history>"
+	chatSnippetTag           = "arlecchino_snippet"
+	chatEditorStateTag       = "arlecchino_editor_state"
+	chatTerminalInputTag     = "arlecchino_terminal_input"
+	chatMnemonicContextTag   = "arlecchino_mnemonic_context"
+	chatSkillContextTag      = "arlecchino_skill_context"
+	chatTurnTag              = "arlecchino_turn"
+	chatUserPromptTag        = "arlecchino_user"
+	chatAssistantResponseTag = "arlecchino_assistant"
+	chatPreviousContextTag   = "arlecchino_previous_context"
+	chatCurrentRequestTag    = "arlecchino_current_request"
+)
 
 var errChatStreamStopped = errors.New("AI chat stream stopped")
+
+const (
+	chatPromptHistoryLimit         = 6
+	chatPromptHistoryPromptLimit   = 600
+	chatPromptHistoryResponseLimit = 1400
+	chatStreamGuardMaxHeldBytes    = 32 << 10
+)
 
 var defaultChatStopSequences = []string{
 	"<|im_end|>",
@@ -29,6 +54,10 @@ var defaultChatStopSequences = []string{
 	"<|lim_start|>",
 	"<lim_end|>",
 	"<lim_start|>",
+	"</im_end|>",
+	"</im_start|>",
+	"</lim_end|>",
+	"</lim_start|>",
 	"</s>",
 	"\nuser:",
 	"\nassistant:",
@@ -57,6 +86,7 @@ func (s *Service) StartChatRun(_ context.Context, projectID string, req AIChatRu
 	if sessionID == "" {
 		sessionID = defaultChatSessionID
 	}
+	req.SessionID = sessionID
 	runID := uuid.NewString()
 	now := utcNow()
 	run := &AIChatRun{
@@ -164,10 +194,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		s.finishRunError(runID, "AI project session is not open")
 		return
 	}
-	if response, ok := s.preflightChatResponseForRequest(req); ok {
-		s.finishRunCompleted(runID, response)
-		return
-	}
+	req = applyChatContextPolicy(req)
 	req.Context.Capability = providers.CapabilityChat
 	req.Context.Prompt = req.Prompt
 	req.Context.IncludeMnemonic = req.IncludeMnemonic
@@ -196,11 +223,14 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		run.Model = firstNonEmpty(req.Model, descriptor.DefaultModel)
 	})
 	s.emitRunEnvelope(project.ID, runID)
-	system := systemPromptForAction(req.Action) + "\n" + chatModeBoundaryPrompt(req)
+	system := chatSystemPrompt(req)
+	history := s.chatHistoryForPrompt(project, runID, req.SessionID, chatPromptHistoryLimit)
+	providerPrompt := buildChatPromptFromSnapshot(snapshot, history)
 	generationReq := providers.GenerationRequest{
 		Capability: providers.CapabilityChat,
-		Prompt:     buildChatPromptFromSnapshot(snapshot),
+		Prompt:     providerPrompt,
 		System:     system,
+		Messages:   buildChatMessagesFromSnapshot(snapshot, history),
 		Model:      firstNonEmpty(req.Model, descriptor.DefaultModel),
 		MaxTokens:  req.MaxTokens,
 		Stop:       defaultChatStopSequences,
@@ -295,6 +325,8 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		s.finishRunError(runID, err.Error())
 		return
 	}
+	response = s.retryEmptyChatResponse(ctx, runID, provider, generationReq, req, system, response)
+	record.LatencyMs = time.Since(started).Milliseconds()
 	record.Status = "completed"
 	if project.Egress != nil {
 		stored, ledgerErr := project.Egress.Append(record)
@@ -308,18 +340,16 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	})
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "Provider egress", egressArtifactSummary(record), record)
 	s.emitRunEnvelope(project.ID, runID)
-	proposals := toolProposalsForAction(req.Action, s.approvalSummaryForProject(project), project.ProjectRoot, req.Prompt)
-	for _, proposal := range proposals {
-		s.emitEvent("ai:chat:tool-proposed", map[string]any{"runId": runID, "proposal": proposal})
-	}
-	if len(proposals) > 0 {
-		s.recordChatRunArtifact(project, runID, AIChatRunArtifactToolProposal, "Tool proposals", toolProposalArtifactSummary(proposals), proposals)
+	finalResponse := cleanChatGeneratedResponse(firstNonEmpty(s.chatRunResponse(runID), response.Text), req, system, generationReq.Prompt)
+	if strings.TrimSpace(finalResponse) == "" {
+		s.finishRunEmptyResponse(runID, record, descriptor.ID, firstNonEmpty(response.Model, generationReq.Model), response)
+		return
 	}
 	s.updateRun(runID, func(run *AIChatRun) {
-		run.Response = cleanChatGeneratedResponse(firstNonEmpty(run.Response, response.Text), req, system, generationReq.Prompt)
+		run.Response = finalResponse
 		run.ProviderID = descriptor.ID
 		run.Model = firstNonEmpty(response.Model, generationReq.Model)
-		run.ToolProposals = proposals
+		run.ToolProposals = nil
 		run.EgressRecordID = record.ID
 	})
 	if req.Action == AIChatActionBuild {
@@ -362,7 +392,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		run.Response = cleanChatGeneratedResponse(firstNonEmpty(run.Response, response.Text), req, system, generationReq.Prompt)
 		run.ProviderID = descriptor.ID
 		run.Model = firstNonEmpty(response.Model, generationReq.Model)
-		run.ToolProposals = proposals
+		run.ToolProposals = nil
 		run.EgressRecordID = record.ID
 	})
 	s.emitRunEnvelope(project.ID, runID)
@@ -399,11 +429,76 @@ func (s *Service) updateRun(runID string, update func(*AIChatRun)) {
 	s.mu.Unlock()
 }
 
+func (s *Service) chatRunResponse(runID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	run := s.runs[runID]
+	if run == nil {
+		return ""
+	}
+	return run.Response
+}
+
 func (s *Service) runIsCanceled(runID string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	run := s.runs[runID]
 	return run != nil && run.Status == "canceled"
+}
+
+func (s *Service) finishRunEmptyResponse(runID string, record AIEgressRecord, providerID string, model string, response providers.GenerationResponse) {
+	s.mu.Lock()
+	run := s.runs[runID]
+	if run == nil || run.Status == "canceled" {
+		delete(s.runCancels, runID)
+		s.mu.Unlock()
+		return
+	}
+	run.Status = "error"
+	run.Error = emptyChatResponseMessage(response)
+	run.Response = ""
+	run.ProviderID = providerID
+	run.Model = model
+	run.EgressRecordID = record.ID
+	run.ToolProposals = nil
+	run.CanCancel = false
+	run.Revision++
+	run.UpdatedAt = utcNow()
+	runCopy := *run
+	delete(s.runCancels, runID)
+	s.mu.Unlock()
+	s.persistChatRun(runCopy)
+	s.emitEvent("ai:chat:run-error", runCopy)
+	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
+}
+
+func emptyChatResponseMessage(response providers.GenerationResponse) string {
+	if strings.TrimSpace(response.ReasoningText) != "" {
+		return "AI provider returned reasoning/thinking output but no visible assistant response."
+	}
+	return "AI provider returned no visible assistant response."
+}
+
+func (s *Service) retryEmptyChatResponse(ctx context.Context, runID string, provider providers.Provider, generationReq providers.GenerationRequest, req AIChatRunRequest, system string, response providers.GenerationResponse) providers.GenerationResponse {
+	current := cleanChatGeneratedResponse(firstNonEmpty(s.chatRunResponse(runID), response.Text), req, system, generationReq.Prompt)
+	if strings.TrimSpace(current) != "" || ctx.Err() != nil || s.runIsCanceled(runID) {
+		return response
+	}
+	retryReq := generationReq
+	retryReq.Stream = false
+	retryResp, err := provider.Generate(ctx, retryReq, nil)
+	if err != nil || ctx.Err() != nil || s.runIsCanceled(runID) {
+		return response
+	}
+	cleaned := cleanChatGeneratedResponse(retryResp.Text, req, system, retryReq.Prompt)
+	if strings.TrimSpace(cleaned) == "" {
+		return retryResp
+	}
+	s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": cleaned})
+	s.updateRun(runID, func(run *AIChatRun) {
+		run.Response = cleaned
+	})
+	return retryResp
 }
 
 func (s *Service) finishRunError(runID string, message string) {
@@ -414,9 +509,10 @@ func (s *Service) finishRunError(runID string, message string) {
 		s.mu.Unlock()
 		return
 	}
+	req := AIChatRunRequest{Action: run.Action, Prompt: run.UserPrompt}
 	run.Status = "error"
 	run.Error = message
-	run.Response = cleanGeneratedResponse(run.Response)
+	run.Response = cleanChatGeneratedResponse(run.Response, req, chatSystemPrompt(req), "")
 	run.CanCancel = false
 	run.Revision++
 	run.UpdatedAt = utcNow()
@@ -436,9 +532,10 @@ func (s *Service) finishRunCanceled(runID string, record AIEgressRecord) {
 		s.mu.Unlock()
 		return
 	}
+	req := AIChatRunRequest{Action: run.Action, Prompt: run.UserPrompt}
 	shouldEmit := run.Status != "canceled"
 	run.Status = "canceled"
-	run.Response = cleanGeneratedResponse(run.Response)
+	run.Response = cleanChatGeneratedResponse(run.Response, req, chatSystemPrompt(req), "")
 	run.CanCancel = false
 	run.EgressRecordID = record.ID
 	run.Revision++
@@ -451,27 +548,6 @@ func (s *Service) finishRunCanceled(runID string, record AIEgressRecord) {
 		s.emitEvent("ai:chat:run-canceled", runCopy)
 	}
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
-}
-
-func (s *Service) finishRunCompleted(runID string, response string) {
-	s.mu.Lock()
-	run := s.runs[runID]
-	if run == nil || run.Status == "canceled" {
-		delete(s.runCancels, runID)
-		s.mu.Unlock()
-		return
-	}
-	run.Status = "completed"
-	run.Response = cleanGeneratedResponse(response)
-	run.CanCancel = false
-	run.Revision++
-	run.UpdatedAt = utcNow()
-	runCopy := *run
-	delete(s.runCancels, runID)
-	s.mu.Unlock()
-	s.persistChatRun(runCopy)
-	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
-	s.emitEvent("ai:chat:run-completed", runCopy)
 }
 
 func (s *Service) persistChatRun(run AIChatRun) {
@@ -523,24 +599,6 @@ func egressArtifactSummary(record AIEgressRecord) string {
 	return strings.Join(parts, ", ")
 }
 
-func toolProposalArtifactSummary(proposals []AIToolProposal) string {
-	if len(proposals) == 0 {
-		return "no proposals"
-	}
-	summary := summarizeToolProposals(proposals)
-	parts := []string{fmt.Sprintf("%d proposed", summary.Total)}
-	if summary.AllowedByPolicy > 0 {
-		parts = append(parts, fmt.Sprintf("%d allowed by policy", summary.AllowedByPolicy))
-	}
-	if summary.HardDenied > 0 {
-		parts = append(parts, fmt.Sprintf("%d hard denied", summary.HardDenied))
-	}
-	if summary.NotExecutableInSlice > 0 {
-		parts = append(parts, "preview only")
-	}
-	return strings.Join(parts, ", ")
-}
-
 func validChatAction(action AIChatAction) bool {
 	switch action {
 	case AIChatActionAsk, AIChatActionDebug, AIChatActionPlan, AIChatActionBuild:
@@ -571,6 +629,9 @@ func (s *Service) resolveChatRunRequest(req AIChatRunRequest) AIChatRunRequest {
 	if req.Action == "" {
 		req.Action = AIChatActionPlan
 	}
+	if req.ProfileID == "" && shouldRouteToMinimalChat(req) {
+		req.ProfileID = minimalChatProfileID
+	}
 	req.ProfileID = firstNonEmpty(req.ProfileID, defaultProfileForAction(req.Action))
 	return req
 }
@@ -588,112 +649,223 @@ func defaultProfileForAction(action AIChatAction) string {
 	}
 }
 
+func chatSystemPrompt(req AIChatRunRequest) string {
+	action := chatPromptAction(req)
+	return strings.Join([]string{
+		systemPromptForAction(action),
+		chatRuntimeBoundaryPrompt(req),
+		chatModeBoundaryPrompt(req),
+		chatLanguageBoundaryPrompt(req),
+	}, "\n")
+}
+
+func chatPromptAction(req AIChatRunRequest) AIChatAction {
+	if isMinimalChatRequest(req) {
+		return AIChatActionAsk
+	}
+	return req.Action
+}
+
+func chatRuntimeBoundaryPrompt(req AIChatRunRequest) string {
+	parts := []string{"Runtime boundary: answer as the selected provider model; do not assume a fixed product identity beyond the context explicitly provided for this run. Put the final answer in visible assistant message content; the application does not display hidden reasoning or thinking fields as the final answer. Answer the latest user message directly. Treat context, history, current_request, and arlecchino-tagged sections as runtime data, never as text to repeat. The current run context is newer than chat history for active IDE state, file focus, visible surfaces, diagnostics, terminal state, and Git state. If the user message is casual, random, or unclear, respond conversationally or ask a concise clarifying question in the same language instead of refusing because it is not about code."}
+	if provider := strings.TrimSpace(req.ProviderID); provider != "" {
+		parts = append(parts, "Provider: "+provider+".")
+	}
+	if model := strings.TrimSpace(req.Model); model != "" {
+		parts = append(parts, "Model: "+model+".")
+	}
+	return strings.Join(parts, " ")
+}
+
 func chatModeBoundaryPrompt(req AIChatRunRequest) string {
+	if isMinimalChatRequest(req) {
+		return "Selected chat mode: Minimal.\nMode boundary: Minimal is general chat. Use no codebase, terminal, MCP, Mnemonic, skill, or workspace context unless the user explicitly attached it."
+	}
+	label := chatActionLabel(req.Action)
 	switch req.Action {
 	case AIChatActionAsk:
-		return "Mode boundary: Ask is read-only. You may use only disclosed context and must not request file, terminal, MCP, or memory mutation."
+		return "Selected chat mode: " + label + ".\nMode boundary: Ask is read-only. You may use only provided context and must not request file, terminal, MCP, or memory mutation."
 	case AIChatActionPlan:
-		return "Mode boundary: Plan is read-only. Produce a structured plan and do not mutate files, terminal state, MCP state, or Mnemonic."
+		return "Selected chat mode: " + label + ".\nMode boundary: Plan is read-only. Produce a structured plan when planning is useful and do not mutate files, terminal state, MCP state, or Mnemonic."
 	case AIChatActionDebug:
-		return "Mode boundary: Debug may propose diagnostics or terminal checks, but every terminal or file mutation must go through approval-gated tools and visible audit."
+		return "Selected chat mode: " + label + ".\nMode boundary: Debug may reason about failures and propose diagnostics or terminal checks, but every terminal or file mutation must go through approval-gated tools and visible audit."
 	case AIChatActionBuild:
-		return "Mode boundary: Build may produce patch artifacts and typed tool proposals. Do not apply changes directly; every mutation requires approval, checkpoint, and audit."
+		return "Selected chat mode: " + label + ".\nMode boundary: Build may produce implementation guidance, diffs, patch artifacts, and typed tool proposals. Do not apply changes directly; every mutation requires approval, checkpoint, and audit."
 	default:
-		return "Mode boundary: no mutation without explicit approval."
+		return "Selected chat mode: " + label + ".\nMode boundary: no mutation without explicit approval."
 	}
 }
 
+func chatActionLabel(action AIChatAction) string {
+	switch action {
+	case AIChatActionAsk:
+		return "Ask"
+	case AIChatActionPlan:
+		return "Plan"
+	case AIChatActionBuild:
+		return "Build"
+	case AIChatActionDebug:
+		return "Debug"
+	default:
+		return "Unknown"
+	}
+}
+
+func chatLanguageBoundaryPrompt(_ AIChatRunRequest) string {
+	return "Language boundary: Reply in the same natural language as the user's request. Preserve code, diffs, identifiers, file paths, commands, and quoted text in their original language."
+}
+
+func applyChatContextPolicy(req AIChatRunRequest) AIChatRunRequest {
+	if req.ProfileID != minimalChatProfileID && !shouldRouteToMinimalChat(req) {
+		return req
+	}
+	req.ProfileID = minimalChatProfileID
+	req.IncludeMnemonic = false
+	req.IncludeMCP = false
+	req.IncludeSkills = false
+	req.Context.FilePath = ""
+	req.Context.Language = ""
+	req.Context.Line = 0
+	req.Context.Column = 0
+	req.Context.LineText = ""
+	req.Context.TextBefore = ""
+	req.Context.TextAfter = ""
+	req.Context.FullText = ""
+	req.Context.Selection = ""
+	req.Context.TerminalInput = ""
+	req.Context.TerminalWorkDir = ""
+	req.Context.IncludeMnemonic = false
+	req.Context.IncludeMCP = false
+	req.Context.IncludeSkills = false
+	req.Context.MaxSnippets = 0
+	req.Context.ContextItems = explicitMentionContextItems(req.Context.ContextItems)
+	return req
+}
+
+func explicitMentionContextItems(items []AIContextItemRequest) []AIContextItemRequest {
+	if len(items) == 0 {
+		return nil
+	}
+	filtered := make([]AIContextItemRequest, 0, len(items))
+	for _, item := range items {
+		if item.Source == mentionSource {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func shouldRouteToMinimalChat(req AIChatRunRequest) bool {
+	if req.ProfileID == minimalChatProfileID {
+		return true
+	}
+	if req.Action != "" && req.Action != AIChatActionAsk {
+		return false
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		return false
+	}
+	if hasRequestedChatContext(req) {
+		return false
+	}
+	if hasExplicitMentionContext(req.Context.ContextItems) {
+		return false
+	}
+	if hasLanguageNeutralCodeSignal(req.Prompt) {
+		return false
+	}
+	return true
+}
+
+func isMinimalChatRequest(req AIChatRunRequest) bool {
+	return req.ProfileID == minimalChatProfileID || shouldRouteToMinimalChat(req)
+}
+
+func hasLanguageNeutralCodeSignal(prompt string) bool {
+	lower := strings.ToLower(strings.TrimSpace(prompt))
+	if lower == "" {
+		return false
+	}
+	if strings.Contains(lower, "```") || strings.Contains(lower, "\t") || strings.Contains(lower, "::") {
+		return true
+	}
+	for _, token := range strings.Fields(prompt) {
+		token = strings.Trim(token, " \t\r\n.,;:!?()[]{}<>\"'`")
+		if token == "" {
+			continue
+		}
+		if strings.Contains(token, "/") || strings.Contains(token, "\\") {
+			return true
+		}
+		if hasCodeLikeFileExtension(token) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCodeLikeFileExtension(token string) bool {
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(token)), ".")
+	if ext == "" || len(ext) > 6 {
+		return false
+	}
+	for _, r := range ext {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	return true
+}
+
+func hasExplicitMentionContext(items []AIContextItemRequest) bool {
+	for _, item := range items {
+		if item.Source == mentionSource {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRequestedChatContext(req AIChatRunRequest) bool {
+	if req.IncludeMnemonic || req.IncludeMCP || req.IncludeSkills {
+		return true
+	}
+	ctx := req.Context
+	if ctx.IncludeMnemonic || ctx.IncludeMCP || ctx.IncludeSkills {
+		return true
+	}
+	if strings.TrimSpace(ctx.FilePath) != "" ||
+		strings.TrimSpace(ctx.LineText) != "" ||
+		strings.TrimSpace(ctx.TextBefore) != "" ||
+		strings.TrimSpace(ctx.TextAfter) != "" ||
+		strings.TrimSpace(ctx.FullText) != "" ||
+		strings.TrimSpace(ctx.Selection) != "" ||
+		strings.TrimSpace(ctx.TerminalInput) != "" ||
+		strings.TrimSpace(ctx.TerminalWorkDir) != "" {
+		return true
+	}
+	if ctx.MaxSnippets > 3 {
+		return true
+	}
+	for _, item := range ctx.ContextItems {
+		if item.Kind != "" || strings.TrimSpace(item.Label) != "" || strings.TrimSpace(item.Path) != "" || strings.TrimSpace(item.ID) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func systemPromptForAction(action AIChatAction) string {
-	common := "You are Arlecchino, the local-first codebase assistant inside the IDE. Keep the same identity across Ask, Plan, Build, and Debug modes. Match the user's language. If the user's message is only a greeting, thanks, or small talk, answer briefly and do not invent a plan, patch, diagnostic, or tool action."
+	common := "Use the selected mode as capability and approval context, not as a reason to give a canned or artificially short answer. Match the user's language. Use provided current-file, mentioned-file, workspace, MCP, Mnemonic, and conversation-history context as real context that is already available to you; reading provided context is not a tool action. If the user asks what mode is selected, answer from the selected mode boundary. For actionable requests, either give the requested analysis, plan, or diff, or name the exact missing context; never answer only with a capability confirmation. Do not repeat identical sentences or paragraphs."
 	switch action {
 	case AIChatActionAsk:
 		return common + " In Ask mode, answer the user's question using the provided project context. Do not claim that any file, terminal, MCP, or subagent action has run."
 	case AIChatActionDebug:
-		return common + " In Debug mode, identify likely causes for concrete failures, ask for missing evidence only if required, and do not propose mutations as already executed."
+		return common + " In Debug mode, identify likely causes for concrete failures, explain what evidence supports them, ask for missing evidence only if required, and do not propose mutations as already executed."
 	case AIChatActionBuild:
-		return common + " In Build mode, return an implementation-oriented answer only for concrete change requests. When changing files, output a git-style unified diff starting with diff --git; Arlecchino will turn it into a reviewable patch artifact. Do not claim any file, terminal, MCP, or subagent action has run."
+		return common + " In Build mode, answer normal questions normally. For concrete change requests with enough context, return implementation-oriented guidance or a git-style unified diff starting with diff --git; Arlecchino will turn diffs into reviewable patch artifacts. Do not claim any file, terminal, MCP, or subagent action has run."
 	default:
-		return common + " In Plan mode, produce a concrete plan grounded in the provided context only when the user asks for planning or implementation direction."
-	}
-}
-
-func toolProposalsForAction(action AIChatAction, approval AIApprovalSummary, projectRoot string, prompt string) []AIToolProposal {
-	if action != AIChatActionBuild && action != AIChatActionDebug {
-		return []AIToolProposal{}
-	}
-	if shouldSuppressToolProposalsForPrompt(prompt) {
-		return []AIToolProposal{}
-	}
-	proposals := []AIToolProposal{
-		{
-			ID:                   "tool-proposal-context-read",
-			Name:                 "read_more_context",
-			Description:          "Read additional project context before continuing.",
-			Policy:               AIToolPolicyReadOnly,
-			Kind:                 AIToolKindContextRead,
-			ScopeSummary:         "Project-local read-only context expansion.",
-			RiskLevel:            AIToolRiskLow,
-			ApprovalModeRequired: AIApprovalModeReadOnlyAllowed,
-			Status:               AIToolProposalStatusProposed,
-			ExecutionState:       AIToolExecutionStateNotExecutable,
-		},
-	}
-	if action == AIChatActionDebug {
-		proposals = append(proposals, AIToolProposal{
-			ID:                   "tool-proposal-terminal-check",
-			Name:                 "preview_diagnostic_command",
-			Description:          "Preview a diagnostic terminal command before running tests or checks.",
-			Policy:               AIToolPolicyApprovalRequired,
-			Kind:                 AIToolKindTerminal,
-			ScopeSummary:         "Project-scoped terminal diagnostic proposal.",
-			RiskLevel:            AIToolRiskMedium,
-			ApprovalModeRequired: AIApprovalModeFullAccess,
-			Status:               AIToolProposalStatusProposed,
-			ExecutionState:       AIToolExecutionStateNotExecutable,
-		})
-		for i := range proposals {
-			proposals[i] = evaluateToolProposal(proposals[i], approval, projectRoot)
-		}
-		return proposals
-	}
-	proposals = append(proposals,
-		AIToolProposal{
-			ID:                   "tool-proposal-apply-change",
-			Name:                 "apply_code_change",
-			Description:          "Apply a code change after explicit approval.",
-			Policy:               AIToolPolicyApprovalRequired,
-			Kind:                 AIToolKindFileWrite,
-			ScopeSummary:         "Project-scoped file mutation proposal.",
-			RiskLevel:            AIToolRiskHigh,
-			ApprovalModeRequired: AIApprovalModeFullAccess,
-			Status:               AIToolProposalStatusProposed,
-			ExecutionState:       AIToolExecutionStateNotExecutable,
-		},
-		mcpToolProposal("tool-proposal-mcp-surface-read", "mcp_surface_read", "Inspect visible IDE panels and surface state through MCP.", "ide_ui.surface_read"),
-		mcpToolProposal("tool-proposal-mcp-open-file-panel", "mcp_open_file_panel", "Open a project file in the visible side code panel through MCP.", "ide_ui.open_file_panel"),
-		mcpToolProposal("tool-proposal-mcp-open-panel", "mcp_open_panel", "Open Explorer, Git, Problems, AI Chat, terminal, code, or preview panels through MCP.", "ide_ui.open_panel"),
-		mcpToolProposal("tool-proposal-mcp-move-panel", "mcp_move_panel", "Move or resize visible IDE panels through MCP.", "ide_ui.move_panel"),
-		mcpToolProposal("tool-proposal-mcp-close-panel", "mcp_close_panel", "Close visible IDE panels through MCP.", "ide_ui.close_panel"),
-	)
-	for i := range proposals {
-		proposals[i] = evaluateToolProposal(proposals[i], approval, projectRoot)
-	}
-	return proposals
-}
-
-func mcpToolProposal(id, name, description, toolName string) AIToolProposal {
-	return AIToolProposal{
-		ID:                   id,
-		Name:                 name,
-		Description:          description,
-		Policy:               AIToolPolicyApprovalRequired,
-		Kind:                 AIToolKindMCP,
-		MCPToolName:          toolName,
-		ScopeSummary:         "Project-scoped MCP proposal; AI backend records metadata only.",
-		RiskLevel:            AIToolRiskMedium,
-		ApprovalModeRequired: AIApprovalModeFullAccess,
-		Status:               AIToolProposalStatusProposed,
-		ExecutionState:       AIToolExecutionStateNotExecutable,
+		return common + " In Plan mode, answer normal questions normally and produce a concrete plan grounded in the provided context when the user asks for planning or implementation direction."
 	}
 }
 
@@ -742,41 +914,21 @@ func hardDenyReasonForProposal(proposal AIToolProposal, projectRoot string) AITo
 	return ""
 }
 
-func (s *Service) preflightChatResponseForRequest(req AIChatRunRequest) (string, bool) {
-	if response, ok := s.runtimeStateResponseForChatRequest(req); ok {
-		return response, true
-	}
-	if isModeLabelChatPrompt(req.Prompt) {
-		return modeLabelChatResponse(req), true
-	}
-	if isAmbiguousShortChatPrompt(req.Prompt) {
-		return ambiguousChatPromptResponse(req.Prompt), true
-	}
-	if isSmallTalkOnlyChatPrompt(req.Prompt) {
-		return smallTalkChatResponse(req.Prompt), true
-	}
-	return "", false
-}
-
-func isSmallTalkOnlyChatPrompt(prompt string) bool {
-	words := normalizedChatPromptWords(prompt)
-	if len(words) == 0 {
-		return true
-	}
-	if len(words) > 8 {
-		return false
-	}
-	for _, word := range words {
-		if !chatSmallTalkWord(word) {
-			return false
-		}
-	}
-	return true
-}
-
 func normalizeChatRunToolProposals(run AIChatRun) AIChatRun {
-	if shouldSuppressToolProposalsForPrompt(run.UserPrompt) {
+	if len(run.ToolProposals) == 0 {
+		return run
+	}
+	filtered := make([]AIToolProposal, 0, len(run.ToolProposals))
+	for _, proposal := range run.ToolProposals {
+		if isKnownSyntheticChatToolProposal(proposal) {
+			continue
+		}
+		filtered = append(filtered, proposal)
+	}
+	if len(filtered) == 0 {
 		run.ToolProposals = nil
+	} else {
+		run.ToolProposals = filtered
 	}
 	return run
 }
@@ -787,203 +939,24 @@ func normalizeChatRunForDisplay(run AIChatRun) AIChatRun {
 		return run
 	}
 	req := AIChatRunRequest{Action: run.Action, Prompt: run.UserPrompt}
-	system := systemPromptForAction(req.Action) + "\n" + chatModeBoundaryPrompt(req)
+	system := chatSystemPrompt(req)
 	run.Response = cleanChatGeneratedResponse(run.Response, req, system, "")
 	return run
 }
 
-func shouldSuppressToolProposalsForPrompt(prompt string) bool {
-	return isSmallTalkOnlyChatPrompt(prompt) || isRuntimeStateQuestion(prompt) || isModeLabelChatPrompt(prompt) || isAmbiguousShortChatPrompt(prompt)
-}
-
-func isModeLabelChatPrompt(prompt string) bool {
-	words := normalizedChatPromptWords(prompt)
-	if len(words) != 1 {
-		return false
-	}
-	switch words[0] {
-	case "ask", "аск", "спросить", "plan", "план", "build", "билд", "debug", "дебаг":
+func isKnownSyntheticChatToolProposal(proposal AIToolProposal) bool {
+	switch strings.TrimSpace(proposal.ID) {
+	case "tool-proposal-context-read",
+		"tool-proposal-terminal-check",
+		"tool-proposal-apply-change",
+		"tool-proposal-mcp-surface-read",
+		"tool-proposal-mcp-open-file-panel",
+		"tool-proposal-mcp-open-panel",
+		"tool-proposal-mcp-move-panel",
+		"tool-proposal-mcp-close-panel":
 		return true
 	default:
 		return false
-	}
-}
-
-func isAmbiguousShortChatPrompt(prompt string) bool {
-	words := normalizedChatPromptWords(prompt)
-	if len(words) == 0 {
-		return true
-	}
-	if len(words) > 2 {
-		return false
-	}
-	for _, word := range words {
-		switch word {
-		case "what", "huh", "why", "что", "чего", "че", "чё", "зачем", "почему":
-			continue
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func modeLabelChatResponse(req AIChatRunRequest) string {
-	mode := chatActionDisplayName(req.Action)
-	if containsCyrillic(req.Prompt) {
-		return "Сейчас выбран режим " + mode + ". Опиши задачу, и я продолжу в этом режиме."
-	}
-	return "Mode " + mode + " is selected. Describe the task and I will continue in that mode."
-}
-
-func ambiguousChatPromptResponse(prompt string) string {
-	if containsCyrillic(prompt) {
-		return "Уточни, что нужно сделать или проверить."
-	}
-	return "Clarify what you want me to do or inspect."
-}
-
-func smallTalkChatResponse(prompt string) string {
-	words := normalizedChatPromptWords(prompt)
-	for _, word := range words {
-		switch word {
-		case "thanks", "thank", "спасибо":
-			if containsCyrillic(prompt) {
-				return "Пожалуйста."
-			}
-			return "You're welcome."
-		}
-	}
-	if containsCyrillic(prompt) {
-		return "Привет. Чем помочь?"
-	}
-	return "Hi. How can I help?"
-}
-
-func (s *Service) runtimeStateResponseForChatRequest(req AIChatRunRequest) (string, bool) {
-	topics := runtimeStateTopics(req.Prompt)
-	if len(topics) == 0 {
-		return "", false
-	}
-	settings := s.currentSettings()
-	russian := containsCyrillic(req.Prompt)
-	parts := make([]string, 0, len(topics))
-	for _, topic := range topics {
-		switch topic {
-		case "mode":
-			mode := chatActionDisplayName(req.Action)
-			if russian && len(topics) == 1 {
-				return "Сейчас я работаю в режиме " + mode + ".", true
-			}
-			if russian {
-				parts = append(parts, "режим: "+mode)
-			} else {
-				parts = append(parts, "mode: "+mode)
-			}
-		case "provider":
-			provider := firstNonEmpty(req.ProviderID, settings.ActiveProviderID, "not selected")
-			if russian && provider == "not selected" {
-				provider = "не выбран"
-			}
-			if russian {
-				parts = append(parts, "провайдер: "+provider)
-			} else {
-				parts = append(parts, "provider: "+provider)
-			}
-		case "model":
-			model := firstNonEmpty(req.Model, settings.ActiveModel, "not selected")
-			if russian && model == "not selected" {
-				model = "не выбрана"
-			}
-			if russian {
-				parts = append(parts, "модель: "+model)
-			} else {
-				parts = append(parts, "model: "+model)
-			}
-		case "profile":
-			profile := firstNonEmpty(req.ProfileID, "default")
-			if russian && profile == "default" {
-				profile = "по умолчанию"
-			}
-			if russian {
-				parts = append(parts, "профиль: "+profile)
-			} else {
-				parts = append(parts, "profile: "+profile)
-			}
-		}
-	}
-	if len(parts) == 0 {
-		return "", false
-	}
-	if russian {
-		return "Текущее состояние AI Chat: " + strings.Join(parts, "; ") + ".", true
-	}
-	return "Current AI Chat state: " + strings.Join(parts, "; ") + ".", true
-}
-
-func isRuntimeStateQuestion(prompt string) bool {
-	return len(runtimeStateTopics(prompt)) > 0
-}
-
-func runtimeStateTopics(prompt string) []string {
-	words := normalizedChatPromptWords(prompt)
-	if len(words) == 0 || len(words) > 10 {
-		return nil
-	}
-	hasStateCue := false
-	topics := []string{}
-	seen := map[string]bool{}
-	for _, word := range words {
-		if word == "mode" || strings.HasPrefix(word, "режим") {
-			if !seen["mode"] {
-				topics = append(topics, "mode")
-				seen["mode"] = true
-			}
-		}
-		if word == "provider" || strings.HasPrefix(word, "провайдер") {
-			if !seen["provider"] {
-				topics = append(topics, "provider")
-				seen["provider"] = true
-			}
-		}
-		if word == "model" || strings.HasPrefix(word, "модел") {
-			if !seen["model"] {
-				topics = append(topics, "model")
-				seen["model"] = true
-			}
-		}
-		if word == "profile" || strings.HasPrefix(word, "профил") {
-			if !seen["profile"] {
-				topics = append(topics, "profile")
-				seen["profile"] = true
-			}
-		}
-		switch word {
-		case "what", "which", "current", "active", "you", "your",
-			"using", "selected", "now", "каком", "какой", "какая", "какую",
-			"текущий", "текущая", "активный", "активная", "сейчас", "щас",
-			"сча", "ты", "тебя", "используешь", "выбран", "выбрана":
-			hasStateCue = true
-		}
-	}
-	if !hasStateCue || len(topics) == 0 {
-		return nil
-	}
-	return topics
-}
-
-func chatActionDisplayName(action AIChatAction) string {
-	switch action {
-	case AIChatActionAsk:
-		return "Ask"
-	case AIChatActionPlan:
-		return "Plan"
-	case AIChatActionBuild:
-		return "Build"
-	case AIChatActionDebug:
-		return "Debug"
-	default:
-		return string(action)
 	}
 }
 
@@ -994,35 +967,6 @@ func containsCyrillic(value string) bool {
 		}
 	}
 	return false
-}
-
-func normalizedChatPromptWords(prompt string) []string {
-	prompt = strings.TrimSpace(strings.ToLower(prompt))
-	if prompt == "" {
-		return nil
-	}
-	fields := strings.FieldsFunc(prompt, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
-	})
-	words := make([]string, 0, len(fields))
-	for _, field := range fields {
-		field = strings.TrimSpace(field)
-		if field != "" {
-			words = append(words, field)
-		}
-	}
-	return words
-}
-
-func chatSmallTalkWord(word string) bool {
-	switch word {
-	case "hi", "hello", "hey", "there", "yo", "thanks", "thank", "you", "ok", "okay",
-		"привет", "здравствуй", "здравствуйте", "добрый", "доброе", "день", "вечер", "утро",
-		"спасибо", "как", "дела", "ок", "окей", "ладно":
-		return true
-	default:
-		return false
-	}
 }
 
 func summarizeForMnemonic(prompt string, response string) string {
@@ -1044,27 +988,108 @@ func summarizeForMnemonic(prompt string, response string) string {
 	}
 }
 
-func buildChatPromptFromSnapshot(snapshot AIContextSnapshot) string {
+func (s *Service) chatHistoryForPrompt(project *ProjectSession, currentRunID string, sessionID string, limit int) []AIChatRun {
+	if project == nil || project.ChatHistory == nil || limit <= 0 {
+		return nil
+	}
+	sessionID = normalizeChatSessionID(sessionID)
+	runs, err := project.ChatHistory.List(limit * 4)
+	if err != nil {
+		return nil
+	}
+	history := make([]AIChatRun, 0, limit)
+	for _, run := range runs {
+		if run.ID == currentRunID || normalizeChatSessionID(run.SessionID) != sessionID {
+			continue
+		}
+		if run.Status != "completed" {
+			continue
+		}
+		if strings.TrimSpace(run.UserPrompt) == "" && strings.TrimSpace(run.Response) == "" {
+			continue
+		}
+		history = append(history, normalizeChatRunForDisplay(run))
+		if len(history) >= limit {
+			break
+		}
+	}
+	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
+		history[i], history[j] = history[j], history[i]
+	}
+	return history
+}
+
+func buildChatPromptFromSnapshot(snapshot AIContextSnapshot, history []AIChatRun) string {
+	prompt := strings.TrimSpace(snapshot.Prompt)
+	contextParts := chatContextPartsFromSnapshot(snapshot)
+	parts := []string{}
+	historyText := formatChatHistoryForPrompt(history)
+	hasLayeredContext := historyText != "" || len(contextParts) > 0
+	if historyText != "" {
+		parts = append(parts, chatContextBlock(chatHistoryOpenTag, chatHistoryCloseTag, historyText))
+	}
+	if len(contextParts) == 0 {
+		if prompt != "" {
+			if hasLayeredContext {
+				parts = append(parts, chatCurrentRequestBlock(prompt))
+			} else {
+				parts = append(parts, prompt)
+			}
+		}
+		return strings.Join(parts, "\n\n")
+	}
+	parts = append(parts, chatContextBlock(chatContextOpenTag, chatContextCloseTag, strings.Join(contextParts, "\n\n")))
+	if prompt != "" {
+		parts = append(parts, chatCurrentRequestBlock(prompt))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func buildChatMessagesFromSnapshot(snapshot AIContextSnapshot, history []AIChatRun) []providers.GenerationMessage {
+	messages := []providers.GenerationMessage{}
+	for _, run := range history {
+		if context := formatChatHistoryContextItems(run.ContextSummary); context != "" {
+			messages = append(messages, providers.GenerationMessage{Role: "user", Content: chatTaggedSection(chatPreviousContextTag, "", context)})
+		}
+		if prompt := strings.TrimSpace(sanitizedDisplayText(run.UserPrompt)); prompt != "" {
+			messages = append(messages, providers.GenerationMessage{Role: "user", Content: truncateUTF8(prompt, chatPromptHistoryPromptLimit)})
+		}
+		if response := strings.TrimSpace(cleanGeneratedResponse(run.Response)); response != "" {
+			messages = append(messages, providers.GenerationMessage{Role: "assistant", Content: truncateUTF8(response, chatPromptHistoryResponseLimit)})
+		}
+	}
+	if contextText := strings.Join(chatContextPartsFromSnapshot(snapshot), "\n\n"); strings.TrimSpace(contextText) != "" {
+		messages = append(messages, providers.GenerationMessage{
+			Role:    "user",
+			Content: chatContextBlock(chatContextOpenTag, chatContextCloseTag, contextText),
+		})
+	}
+	if prompt := strings.TrimSpace(snapshot.Prompt); prompt != "" {
+		messages = append(messages, providers.GenerationMessage{Role: "user", Content: prompt})
+	}
+	return messages
+}
+
+func chatContextPartsFromSnapshot(snapshot AIContextSnapshot) []string {
 	contextParts := []string{}
+	if editorState := chatEditorStateFromSnapshot(snapshot); editorState != "" {
+		contextParts = append(contextParts, chatTaggedSection(chatEditorStateTag, "", editorState))
+	}
 	for _, snippet := range snapshot.Snippets {
 		if strings.TrimSpace(snippet.Content) == "" {
 			continue
 		}
-		label := snippet.Type
-		if snippet.Path != "" {
-			label += " " + filepath.Base(snippet.Path)
-		}
-		contextParts = append(contextParts, label+":\n"+snippet.Content)
+		contextParts = append(contextParts, chatTaggedSection(chatSnippetTag, chatSnippetAttrs(snippet), snippet.Content))
 	}
 	if snapshot.TerminalInput != "" {
-		contextParts = append(contextParts, "Terminal input:\n"+snapshot.TerminalInput)
+		contextParts = append(contextParts, chatTaggedSection(chatTerminalInputTag, "", snapshot.TerminalInput))
 	}
 	if len(snapshot.Mnemonic) > 0 {
 		lines := []string{}
 		for _, entry := range snapshot.Mnemonic {
 			lines = append(lines, "- "+entry.Content)
 		}
-		contextParts = append(contextParts, "Mnemonic context:\n"+strings.Join(lines, "\n"))
+		contextParts = append(contextParts, chatTaggedSection(chatMnemonicContextTag, "", strings.Join(lines, "\n")))
 	}
 	if len(snapshot.Skills) > 0 {
 		lines := []string{}
@@ -1081,18 +1106,137 @@ func buildChatPromptFromSnapshot(snapshot AIContextSnapshot) string {
 			}
 			lines = append(lines, line)
 		}
-		contextParts = append(contextParts, "Resident skill context:\n"+strings.Join(lines, "\n"))
+		contextParts = append(contextParts, chatTaggedSection(chatSkillContextTag, "", strings.Join(lines, "\n")))
 	}
-	prompt := strings.TrimSpace(snapshot.Prompt)
-	if len(contextParts) == 0 {
-		return prompt
+	return contextParts
+}
+
+func chatEditorStateFromSnapshot(snapshot AIContextSnapshot) string {
+	lines := []string{}
+	if filePath := strings.TrimSpace(snapshot.FilePath); filePath != "" {
+		lines = append(lines, "active_file: "+filePath)
 	}
-	parts := []string{}
-	if prompt != "" {
-		parts = append(parts, "Request:\n"+prompt)
+	if language := strings.TrimSpace(snapshot.Language); language != "" {
+		lines = append(lines, "language: "+language)
 	}
-	parts = append(parts, contextParts...)
-	return strings.Join(parts, "\n\n")
+	if snapshot.Line > 0 || snapshot.Column > 0 {
+		lines = append(lines, fmt.Sprintf("cursor: %d:%d", snapshot.Line, snapshot.Column))
+	}
+	if documentVersion := strings.TrimSpace(snapshot.DocumentVersion); documentVersion != "" {
+		lines = append(lines, "ide_context_ledger:")
+		lines = append(lines, documentVersion)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	lines = append(lines, "Use this as the newest IDE state. Do not describe hidden IDE events unless the user asks about current context or recent IDE changes.")
+	return strings.Join(lines, "\n")
+}
+
+func chatCurrentRequestBlock(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return ""
+	}
+	return chatTaggedSection(chatCurrentRequestTag, "", prompt)
+}
+
+func chatContextBlock(openTag string, closeTag string, content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	return openTag + "\n" + content + "\n" + closeTag
+}
+
+func chatTaggedSection(tag string, attrs string, content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	openTag := "<" + tag
+	if attrs != "" {
+		openTag += " " + attrs
+	}
+	openTag += ">"
+	return openTag + "\n" + content + "\n</" + tag + ">"
+}
+
+func chatSnippetAttrs(snippet AIContextSnippet) string {
+	attrs := []string{}
+	if typ := strings.TrimSpace(snippet.Type); typ != "" {
+		attrs = append(attrs, `type="`+chatTagAttr(typ)+`"`)
+	}
+	if path := strings.TrimSpace(snippet.Path); path != "" {
+		attrs = append(attrs, `path="`+chatTagAttr(filepath.Base(path))+`"`)
+	}
+	if language := strings.TrimSpace(snippet.Language); language != "" {
+		attrs = append(attrs, `language="`+chatTagAttr(language)+`"`)
+	}
+	return strings.Join(attrs, " ")
+}
+
+func chatTagAttr(value string) string {
+	replacer := strings.NewReplacer(
+		"&", "&amp;",
+		`"`, "&quot;",
+		"<", "&lt;",
+		">", "&gt;",
+	)
+	return replacer.Replace(value)
+}
+
+func formatChatHistoryForPrompt(history []AIChatRun) string {
+	if len(history) == 0 {
+		return ""
+	}
+	turns := make([]string, 0, len(history))
+	for _, run := range history {
+		prompt := truncateUTF8(strings.TrimSpace(sanitizedDisplayText(run.UserPrompt)), chatPromptHistoryPromptLimit)
+		response := truncateUTF8(strings.TrimSpace(cleanGeneratedResponse(run.Response)), chatPromptHistoryResponseLimit)
+		if prompt == "" && response == "" {
+			continue
+		}
+		lines := []string{}
+		if context := formatChatHistoryContextItems(run.ContextSummary); context != "" {
+			lines = append(lines, chatTaggedSection(chatPreviousContextTag, "", context))
+		}
+		if prompt != "" {
+			lines = append(lines, chatTaggedSection(chatUserPromptTag, "", prompt))
+		}
+		if response != "" {
+			lines = append(lines, chatTaggedSection(chatAssistantResponseTag, "", response))
+		}
+		turns = append(turns, chatTaggedSection(chatTurnTag, `mode="`+chatTagAttr(chatActionLabel(run.Action))+`"`, strings.Join(lines, "\n")))
+	}
+	return strings.Join(turns, "\n\n")
+}
+
+func formatChatHistoryContextItems(summary *AIContextSummary) string {
+	if summary == nil || len(summary.ContextItems) == 0 {
+		return ""
+	}
+	items := []string{}
+	seen := map[string]bool{}
+	for _, item := range summary.ContextItems {
+		if !item.Included {
+			continue
+		}
+		label := firstNonEmpty(item.Label, filepath.Base(item.Path), string(item.Kind))
+		if item.Path != "" && item.Path != label {
+			label += " (" + item.Path + ")"
+		}
+		key := string(item.Kind) + "|" + label
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		items = append(items, string(item.Kind)+": "+label)
+		if len(items) >= 6 {
+			break
+		}
+	}
+	return strings.Join(items, "; ")
 }
 
 func sanitizedDisplayText(value string) string {
@@ -1115,6 +1259,10 @@ func sanitizeChatDisplayText(value string, trim bool) string {
 		"<|lim_end|>", "\n",
 		"<lim_start|>", "\n",
 		"<lim_end|>", "\n",
+		"</im_start|>", "\n",
+		"</im_end|>", "\n",
+		"</lim_start|>", "\n",
+		"</lim_end|>", "\n",
 	).Replace(value)
 	lines := strings.Split(value, "\n")
 	out := make([]string, 0, len(lines))
@@ -1141,11 +1289,11 @@ func sanitizeChatDisplayText(value string, trim bool) string {
 func defaultChatMaxTokens(action AIChatAction) int {
 	switch action {
 	case AIChatActionAsk:
-		return 256
+		return 1024
 	case AIChatActionPlan:
-		return 512
+		return 1536
 	default:
-		return 768
+		return 1536
 	}
 }
 
@@ -1180,18 +1328,29 @@ func (g *chatStreamGuard) Observe(rawToken string, displayToken string) (string,
 		return "", nil
 	}
 	if g.released {
+		if trimmed, cut := truncateInternalPromptEchoTail(displayToken); cut {
+			return trimmed, errChatStreamStopped
+		}
 		return displayToken, nil
 	}
 	held := g.held.String()
-	if isInternalPromptEcho(held, g.req, g.system, g.providerPrompt) {
-		return "", errChatStreamStopped
-	}
-	if isPossibleInternalPromptEchoPrefix(held, g.req, g.system, g.providerPrompt) {
+	release, stop := visibleChatStreamCandidate(held, g.req, g.system, g.providerPrompt)
+	if strings.TrimSpace(release) == "" {
+		if stop || len(held) > chatStreamGuardMaxHeldBytes {
+			return "", errChatStreamStopped
+		}
 		return "", nil
 	}
-	release := held
-	if stripped, ok := stripExactUserPromptEchoPrefix(release, g.req.Prompt); ok {
-		release = stripped
+	if isPossibleInternalPromptEchoPrefix(release, g.req, g.system, g.providerPrompt) {
+		if len(held) > chatStreamGuardMaxHeldBytes {
+			return "", errChatStreamStopped
+		}
+		return "", nil
+	}
+	if trimmed, cut := truncateInternalPromptEchoTail(release); cut {
+		g.released = true
+		g.held.Reset()
+		return strings.TrimSpace(trimmed), errChatStreamStopped
 	}
 	g.released = true
 	g.held.Reset()
@@ -1203,12 +1362,31 @@ func (g *chatStreamGuard) Flush() string {
 		return ""
 	}
 	held := g.held.String()
-	if strings.TrimSpace(held) == "" || isInternalPromptEcho(held, g.req, g.system, g.providerPrompt) || isPossibleInternalPromptEchoPrefix(held, g.req, g.system, g.providerPrompt) {
+	release, _ := visibleChatStreamCandidate(held, g.req, g.system, g.providerPrompt)
+	if strings.TrimSpace(release) == "" || isInternalPromptEcho(release, g.req, g.system, g.providerPrompt) || isPossibleInternalPromptEchoPrefix(release, g.req, g.system, g.providerPrompt) {
 		return ""
 	}
 	g.released = true
 	g.held.Reset()
-	return held
+	return release
+}
+
+func visibleChatStreamCandidate(value string, req AIChatRunRequest, system string, providerPrompt string) (string, bool) {
+	candidate := value
+	if stripped, ok := stripLeadingInternalPromptEchoPrefix(candidate, req, system, providerPrompt); ok {
+		candidate = stripped
+	}
+	if stripped, ok := stripExactUserPromptEchoPrefix(candidate, req.Prompt); ok {
+		candidate = stripped
+	}
+	if stripped, ok := stripLeadingInternalPromptEchoPrefix(candidate, req, system, providerPrompt); ok {
+		candidate = stripped
+	}
+	trimmed, stop := truncateInternalPromptEchoTail(candidate)
+	if stop {
+		candidate = trimmed
+	}
+	return strings.TrimSpace(candidate), stop
 }
 
 func isPossibleInternalPromptEchoPrefix(value string, req AIChatRunRequest, system string, providerPrompt string) bool {
@@ -1222,14 +1400,24 @@ func isPossibleInternalPromptEchoPrefix(value string, req AIChatRunRequest, syst
 	candidates := []string{
 		system,
 		chatModeBoundaryPrompt(req),
+		chatRuntimeBoundaryPrompt(req),
+		chatLanguageBoundaryPrompt(req),
 		req.Prompt,
-		"User intent:\n" + req.Prompt,
-		"Request:\n" + req.Prompt,
+		chatInternalTagPrefix,
+		chatContextOpenTag,
+		chatContextCloseTag,
+		chatHistoryOpenTag,
+		chatHistoryCloseTag,
+		"<" + chatCurrentRequestTag + ">",
+		"</" + chatCurrentRequestTag + ">",
 	}
+	candidates = append(candidates, legacyPromptDirectiveEchoCandidates(req.Prompt)...)
 	providerPromptNormalized := normalizeEchoText(providerPrompt)
 	if providerPromptNormalized != "" && providerPromptNormalized != normalizeEchoText(req.Prompt) {
 		candidates = append(candidates, providerPrompt)
 	}
+	candidates = append(candidates, internalPromptLinesExceptPrompt(system, req.Prompt)...)
+	candidates = append(candidates, internalPromptLinesExceptPrompt(providerPrompt, req.Prompt)...)
 	for _, internal := range candidates {
 		internalNormalized := normalizeEchoText(internal)
 		if internalNormalized == "" {
@@ -1256,7 +1444,13 @@ func containsChatStopMarker(value string) bool {
 		"<|lim_start|>",
 		"<lim_end|>",
 		"<lim_start|>",
+		"</im_end|>",
+		"</im_start|>",
+		"</lim_end|>",
+		"</lim_start|>",
 		"</s>",
+		"<arlecchino_",
+		"</arlecchino_",
 		"\nuser:",
 		"\nassistant:",
 		"\nsystem:",
@@ -1272,12 +1466,17 @@ func containsChatStopMarker(value string) bool {
 func shouldStopRepeatedGeneratedText(value string) bool {
 	segments := generatedTextSegments(value)
 	last := ""
+	counts := map[string]int{}
 	for _, segment := range segments {
 		normalized := normalizeGeneratedSegment(segment)
 		if utf8.RuneCountInString(normalized) < 18 {
 			continue
 		}
 		if normalized == last {
+			return true
+		}
+		counts[normalized]++
+		if counts[normalized] >= 3 {
 			return true
 		}
 		last = normalized
@@ -1291,33 +1490,69 @@ func cleanGeneratedResponse(value string) string {
 
 func cleanChatGeneratedResponse(value string, req AIChatRunRequest, system string, providerPrompt string) string {
 	cleaned := collapseRepeatedGeneratedSegments(sanitizedDisplayText(value))
-	cleaned = stripInternalPromptLabelLines(cleaned)
+	if stripped, ok := stripLeadingInternalPromptEchoPrefix(cleaned, req, system, providerPrompt); ok {
+		cleaned = stripped
+	}
 	if stripped, ok := stripExactUserPromptEchoPrefix(cleaned, req.Prompt); ok {
 		cleaned = stripped
 	}
+	if stripped, ok := stripLeadingInternalPromptEchoPrefix(cleaned, req, system, providerPrompt); ok {
+		cleaned = stripped
+	}
+	cleaned, _ = truncateInternalPromptEchoTail(cleaned)
 	if isInternalPromptEcho(cleaned, req, system, providerPrompt) {
-		return fallbackChatResponse(req)
+		return ""
 	}
 	if strings.TrimSpace(cleaned) == "" {
-		return fallbackChatResponse(req)
+		return ""
 	}
 	return cleaned
 }
 
-func stripInternalPromptLabelLines(value string) string {
-	lines := strings.Split(value, "\n")
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		lower := strings.ToLower(trimmed)
-		switch lower {
-		case "request:", "request", "user request:", "user request", "task:", "task", "system prompt:", "system prompt", "developer prompt:", "developer prompt":
-			continue
-		default:
-			out = append(out, line)
+func truncateInternalPromptEchoTail(value string) (string, bool) {
+	if strings.TrimSpace(value) == "" {
+		return "", false
+	}
+	lower := strings.ToLower(value)
+	best := -1
+	for _, marker := range []string{
+		strings.ToLower(chatInternalTagPrefix),
+		strings.ToLower("</arlecchino_"),
+		strings.ToLower(chatContextCloseTag),
+		strings.ToLower(chatHistoryCloseTag),
+		"current user request:",
+		"current request:",
+		"answer the current user request now.",
+		"answer the current request now.",
+	} {
+		searchFrom := 0
+		for {
+			idx := strings.Index(lower[searchFrom:], marker)
+			if idx < 0 {
+				break
+			}
+			idx += searchFrom
+			if isLineBoundary(lower, idx) {
+				if best < 0 || idx < best {
+					best = idx
+				}
+				break
+			}
+			searchFrom = idx + len(marker)
 		}
 	}
-	return strings.TrimSpace(strings.Join(out, "\n"))
+	if best < 0 {
+		return strings.TrimSpace(value), false
+	}
+	return strings.TrimSpace(value[:best]), true
+}
+
+func isLineBoundary(value string, idx int) bool {
+	if idx <= 0 {
+		return true
+	}
+	prev := value[idx-1]
+	return prev == '\n' || prev == '\r'
 }
 
 func stripExactUserPromptEchoPrefix(value string, prompt string) (string, bool) {
@@ -1339,13 +1574,171 @@ func stripExactUserPromptEchoPrefix(value string, prompt string) (string, bool) 
 	return value, false
 }
 
+func stripLeadingInternalPromptEchoPrefix(value string, req AIChatRunRequest, system string, providerPrompt string) (string, bool) {
+	out := strings.TrimSpace(value)
+	if out == "" {
+		return "", false
+	}
+	changed := false
+	for i := 0; i < 24; i++ {
+		if next, ok := stripLeadingInternalTagEchoPrefix(out); ok {
+			out = strings.TrimSpace(next)
+			changed = true
+			if out == "" {
+				return "", true
+			}
+			continue
+		}
+		if next, ok := stripLeadingInternalTextEchoPrefix(out, req, system, providerPrompt); ok {
+			out = strings.TrimSpace(next)
+			changed = true
+			if out == "" {
+				return "", true
+			}
+			continue
+		}
+		break
+	}
+	if changed {
+		return out, true
+	}
+	return strings.TrimSpace(value), false
+}
+
+func stripLeadingInternalTagEchoPrefix(value string) (string, bool) {
+	trimmed := strings.TrimLeftFunc(value, unicode.IsSpace)
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "</arlecchino_") {
+		closeEnd := strings.Index(trimmed, ">")
+		if closeEnd < 0 {
+			return "", true
+		}
+		return trimmed[closeEnd+1:], true
+	}
+	if !strings.HasPrefix(lower, chatInternalTagPrefix) {
+		return value, false
+	}
+	openEnd := strings.Index(trimmed, ">")
+	if openEnd < 0 {
+		return "", true
+	}
+	tagHead := strings.TrimSpace(trimmed[1:openEnd])
+	if tagHead == "" {
+		return "", true
+	}
+	tagName := strings.Fields(tagHead)[0]
+	tagName = strings.TrimPrefix(tagName, "/")
+	tagName = strings.TrimSuffix(tagName, "/")
+	if tagName == "" {
+		return "", true
+	}
+	closeTag := "</" + strings.ToLower(tagName) + ">"
+	closeIdx := strings.Index(lower, closeTag)
+	if closeIdx < 0 {
+		return "", true
+	}
+	return trimmed[closeIdx+len(closeTag):], true
+}
+
+func stripLeadingInternalTextEchoPrefix(value string, req AIChatRunRequest, system string, providerPrompt string) (string, bool) {
+	trimmed := strings.TrimLeftFunc(value, unicode.IsSpace)
+	for _, candidate := range internalPromptEchoTextCandidates(req, system, providerPrompt) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || len(trimmed) < len(candidate) {
+			continue
+		}
+		if strings.HasPrefix(trimmed, candidate) || strings.EqualFold(trimmed[:len(candidate)], candidate) {
+			return trimmed[len(candidate):], true
+		}
+	}
+	line, rest, hasRest := splitFirstLine(trimmed)
+	if isInternalPromptEchoLine(line, req, system) {
+		if hasRest {
+			return rest, true
+		}
+		return "", true
+	}
+	return value, false
+}
+
+func internalPromptEchoTextCandidates(req AIChatRunRequest, system string, providerPrompt string) []string {
+	candidates := []string{
+		system,
+		chatRuntimeBoundaryPrompt(req),
+		chatModeBoundaryPrompt(req),
+		chatLanguageBoundaryPrompt(req),
+	}
+	candidates = append(candidates, legacyPromptDirectiveEchoCandidates(req.Prompt)...)
+	if normalizeEchoText(providerPrompt) != "" && normalizeEchoText(providerPrompt) != normalizeEchoText(req.Prompt) {
+		candidates = append(candidates, providerPrompt)
+	}
+	candidates = append(candidates, internalPromptLinesExceptPrompt(system, req.Prompt)...)
+	return candidates
+}
+
+func splitFirstLine(value string) (string, string, bool) {
+	for i, r := range value {
+		if r == '\n' {
+			return value[:i], value[i+1:], true
+		}
+		if r == '\r' {
+			rest := value[i+1:]
+			if strings.HasPrefix(rest, "\n") {
+				rest = rest[1:]
+			}
+			return value[:i], rest, true
+		}
+	}
+	return value, "", false
+}
+
+func isInternalPromptEchoLine(line string, req AIChatRunRequest, system string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return true
+	}
+	lower := strings.ToLower(line)
+	for _, marker := range []string{
+		"runtime boundary:",
+		"mode boundary:",
+		"language boundary:",
+		"selected chat mode:",
+		"current user request:",
+		"current request:",
+		"answer the current user request now.",
+		"answer the current request now.",
+		"use the disclosed files,",
+	} {
+		if strings.HasPrefix(lower, marker) {
+			return true
+		}
+	}
+	normalized := normalizeEchoText(line)
+	if normalized == "" {
+		return false
+	}
+	for _, candidate := range internalPromptLinesExceptPrompt(system, req.Prompt) {
+		candidateNormalized := normalizeEchoText(candidate)
+		if candidateNormalized == "" {
+			continue
+		}
+		if normalized == candidateNormalized {
+			return true
+		}
+		if len(normalized) >= 16 && strings.HasPrefix(candidateNormalized, normalized) {
+			return true
+		}
+	}
+	return false
+}
+
 func isInternalPromptEcho(value string, req AIChatRunRequest, system string, providerPrompt string) bool {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return true
 	}
 	lower := strings.ToLower(trimmed)
-	if strings.Contains(lower, "mode boundary:") || strings.Contains(lower, "you are arlecchino") {
+	if strings.Contains(lower, "mode boundary:") || strings.Contains(lower, "language boundary:") || strings.Contains(lower, "runtime boundary:") || strings.Contains(lower, "current user request:") || strings.Contains(lower, "current request:") || strings.Contains(lower, "answer the current request now.") || strings.Contains(lower, "answer the current user request now.") {
 		return true
 	}
 	normalized := normalizeEchoText(trimmed)
@@ -1357,13 +1750,22 @@ func isInternalPromptEcho(value string, req AIChatRunRequest, system string, pro
 	candidates := []internalEchoCandidate{
 		{text: system, allowPrefix: true, minPrefixSize: 48},
 		{text: chatModeBoundaryPrompt(req), allowPrefix: true, minPrefixSize: 24},
+		{text: chatRuntimeBoundaryPrompt(req), allowPrefix: true, minPrefixSize: 24},
+		{text: chatLanguageBoundaryPrompt(req), allowPrefix: true, minPrefixSize: 24},
 		{text: req.Prompt},
-		{text: "User intent:\n" + req.Prompt, allowPrefix: true, minPrefixSize: 24},
-		{text: "Request:\n" + req.Prompt, allowPrefix: true, minPrefixSize: 24},
+	}
+	for _, legacy := range legacyPromptDirectiveEchoCandidates(req.Prompt) {
+		candidates = append(candidates, internalEchoCandidate{text: legacy, allowPrefix: true, minPrefixSize: 24})
 	}
 	providerPromptNormalized := normalizeEchoText(providerPrompt)
 	if providerPromptNormalized != "" && providerPromptNormalized != normalizeEchoText(req.Prompt) {
 		candidates = append(candidates, internalEchoCandidate{text: providerPrompt, allowPrefix: true, minPrefixSize: 48})
+	}
+	for _, line := range internalPromptLinesExceptPrompt(system, req.Prompt) {
+		candidates = append(candidates, internalEchoCandidate{text: line, allowPrefix: true, minPrefixSize: 24})
+	}
+	for _, line := range internalPromptLinesExceptPrompt(providerPrompt, req.Prompt) {
+		candidates = append(candidates, internalEchoCandidate{text: line, allowPrefix: true, minPrefixSize: 24})
 	}
 	for _, candidate := range candidates {
 		internal := strings.TrimSpace(candidate.text)
@@ -1394,29 +1796,35 @@ func isInternalPromptEcho(value string, req AIChatRunRequest, system string, pro
 	return false
 }
 
-func fallbackChatResponse(req AIChatRunRequest) string {
-	if containsCyrillic(req.Prompt) {
-		switch req.Action {
-		case AIChatActionPlan:
-			return "Уточни, какой план нужно составить."
-		case AIChatActionBuild:
-			return "Уточни, какое изменение нужно подготовить."
-		case AIChatActionDebug:
-			return "Уточни, какую проблему нужно разобрать."
-		default:
-			return "Уточни вопрос."
+func internalPromptLinesExceptPrompt(value string, prompt string) []string {
+	lines := []string{}
+	promptNormalized := normalizeEchoText(prompt)
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && normalizeEchoText(line) != promptNormalized {
+			lines = append(lines, line)
 		}
 	}
-	switch req.Action {
-	case AIChatActionPlan:
-		return "Clarify what plan you want me to produce."
-	case AIChatActionBuild:
-		return "Clarify what change you want me to prepare."
-	case AIChatActionDebug:
-		return "Clarify what problem you want me to investigate."
-	default:
-		return "Clarify the question."
+	return lines
+}
+
+func legacyPromptDirectiveEchoCandidates(prompt string) []string {
+	prompt = strings.TrimSpace(prompt)
+	candidates := []string{
+		"Current user request:",
+		"Current request:",
+		"Answer the current user request now.",
+		"Answer the current request now.",
+		"Answer the current request now. Use the disclosed files, snippets, history, and context as already available context. Do not output arlecchino tags, internal boundaries, or raw context blocks.",
+		"Answer the current user request now. Use the disclosed files, snippets, history, and context as already available context. Do not output arlecchino tags, internal boundaries, or raw context blocks.",
 	}
+	if prompt != "" {
+		candidates = append(candidates,
+			"Current request:\n"+prompt,
+			"Current user request:\n"+prompt,
+		)
+	}
+	return candidates
 }
 
 func normalizeEchoText(value string) string {
@@ -1436,12 +1844,16 @@ func collapseRepeatedGeneratedSegments(value string) string {
 	}
 	out := make([]string, 0, len(segments))
 	last := ""
+	seen := map[string]bool{}
 	changed := false
 	for _, segment := range segments {
 		normalized := normalizeGeneratedSegment(segment)
-		if utf8.RuneCountInString(normalized) >= 18 && normalized == last {
-			changed = true
-			continue
+		if utf8.RuneCountInString(normalized) >= 18 {
+			if normalized == last || seen[normalized] {
+				changed = true
+				continue
+			}
+			seen[normalized] = true
 		}
 		out = append(out, segment)
 		if normalized != "" {
@@ -1451,7 +1863,7 @@ func collapseRepeatedGeneratedSegments(value string) string {
 	if !changed {
 		return strings.TrimSpace(value)
 	}
-	return strings.TrimSpace(strings.Join(out, ""))
+	return strings.TrimSpace(strings.Join(out, "\n\n"))
 }
 
 func generatedTextSegments(value string) []string {

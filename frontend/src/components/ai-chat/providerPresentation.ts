@@ -1,6 +1,8 @@
 import type {
+  AIConsentPolicy,
   AIProviderCapability,
   AIProviderStatusValue,
+  AIStatus,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 
@@ -167,13 +169,28 @@ export function selectDefaultProvider(
   return sorted[0] ?? null;
 }
 
+interface ProviderRunGateOptions {
+  selectedModel?: string;
+  consentPolicy?: AIConsentPolicy | null;
+  status?: AIStatus | null;
+}
+
 export function getProviderDisabledReason(
   provider: AIProviderDescriptor | null,
+  options: ProviderRunGateOptions = {},
 ): string {
+  if (options.status && !options.status.enabled) return "AI runtime disabled";
   if (!provider) return "Ready local provider required";
-  if (!isSupportedLocalChatProvider(provider))
+  if (provider.frontier) return "Cloud provider consent path required";
+  if (!provider.local) return "Local provider required";
+  if (!isSupportedLocalChatProvider(provider)) {
     return "Supported local provider required";
+  }
   if (!providerSupportsChat(provider)) return "Provider does not expose chat";
   if (!isReadyChatProvider(provider)) return sanitizeProviderReason(provider);
+  if (!options.consentPolicy?.localProvidersAccepted) {
+    return "Local provider consent required";
+  }
+  if (!options.selectedModel?.trim()) return "Model required";
   return "";
 }

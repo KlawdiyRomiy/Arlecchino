@@ -1,12 +1,4 @@
-import React from "react";
-import {
-  Database,
-  FileText,
-  Monitor,
-  Shield,
-  SlidersHorizontal,
-} from "lucide-react";
-import { m, useReducedMotion } from "framer-motion";
+import React, { useState } from "react";
 import type {
   AIAgentProfileDescriptor,
   AIApprovalPolicy,
@@ -22,6 +14,8 @@ import type {
   AIToolDescriptor,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIChatDisplayPrefs, ContextToggles } from "./types";
+import { AIChatPopoverFrame } from "./AIChatPopoverFrame";
+import { ContextToggleList } from "./contextToggleRows";
 
 interface SettingsPopoverProps {
   context: ContextToggles;
@@ -38,22 +32,15 @@ interface SettingsPopoverProps {
   tools: AIToolDescriptor[];
   toolAudit: AIToolAuditRecord[];
   modelCapabilities: AIModelCapabilityDescriptor[];
+  mnemonicBusy: boolean;
+  mnemonicError: string;
   onContextToggle: (key: keyof ContextToggles, value: boolean) => void;
   onDisplayPrefChange: (key: keyof AIChatDisplayPrefs, value: boolean) => void;
+  onMnemonicSearch: (query: string) => void;
+  onMnemonicSave: (content: string) => void;
+  onMnemonicPromote: (entryId: string) => void;
+  onAcceptLocalProviderConsent: () => void;
 }
-
-const contextRows: Array<{
-  key: keyof ContextToggles;
-  label: string;
-  icon: React.ReactNode;
-}> = [
-  { key: "workspace", label: "Workspace", icon: <Database size={15} /> },
-  { key: "currentFile", label: "Current file", icon: <FileText size={15} /> },
-  { key: "terminalLogs", label: "Terminal logs", icon: <Monitor size={15} /> },
-  { key: "mnemonic", label: "Mnemonic", icon: <Shield size={15} /> },
-  { key: "mcp", label: "MCP", icon: <SlidersHorizontal size={15} /> },
-  { key: "skills", label: "Skills", icon: <SlidersHorizontal size={15} /> },
-];
 
 export function SettingsPopover({
   context,
@@ -70,10 +57,17 @@ export function SettingsPopover({
   tools,
   toolAudit,
   modelCapabilities,
+  mnemonicBusy,
+  mnemonicError,
   onContextToggle,
   onDisplayPrefChange,
+  onMnemonicSearch,
+  onMnemonicSave,
+  onMnemonicPromote,
+  onAcceptLocalProviderConsent,
 }: SettingsPopoverProps) {
-  const reduceMotion = useReducedMotion();
+  const [mnemonicDraft, setMnemonicDraft] = useState("");
+  const [mnemonicQuery, setMnemonicQuery] = useState("");
   const enabledProfiles = agentProfiles.filter((profile) => profile.enabled);
   const executableTools = tools.filter((tool) => tool.executionAvailable);
   const pinnedMnemonic = mnemonicEntries.filter((entry) => entry.pinned);
@@ -83,20 +77,18 @@ export function SettingsPopover({
   );
   const localModels = modelCapabilities.filter((model) => model.local);
   const toolModels = modelCapabilities.filter((model) => model.toolSupport);
+  const visibleMnemonicEntries = mnemonicEntries.slice(0, 6);
+  const handleMnemonicSave = () => {
+    const content = mnemonicDraft.trim();
+    if (!content) return;
+    onMnemonicSave(content);
+    setMnemonicDraft("");
+  };
 
   return (
-    <m.div
-      className="ai-chat-popover ai-chat-settings-popover"
+    <AIChatPopoverFrame
+      className="ai-chat-settings-popover"
       data-testid="ai-chat-settings-popover"
-      initial={
-        reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }
-      }
-      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
-      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4, scale: 0.985 }}
-      transition={{
-        duration: reduceMotion ? 0.1 : 0.16,
-        ease: [0.22, 1, 0.36, 1],
-      }}
     >
       <div className="ai-chat-popover__section">
         <div className="ai-chat-popover__title">Display</div>
@@ -134,21 +126,11 @@ export function SettingsPopover({
 
       <div className="ai-chat-popover__section">
         <div className="ai-chat-popover__title">Context</div>
-        {contextRows.map((row) => (
-          <label className="ai-chat-toggle-row" key={row.key}>
-            <span>
-              {row.icon}
-              {row.label}
-            </span>
-            <input
-              checked={context[row.key]}
-              type="checkbox"
-              onChange={(event) =>
-                onContextToggle(row.key, event.target.checked)
-              }
-            />
-          </label>
-        ))}
+        <ContextToggleList
+          context={context}
+          showIcons
+          onContextToggle={onContextToggle}
+        />
       </div>
 
       {contextProviders.length > 0 ? (
@@ -182,6 +164,18 @@ export function SettingsPopover({
               ? "local accepted"
               : "local pending"}
           </strong>
+          {!consentPolicy?.localProvidersAccepted ? (
+            <>
+              <span>Local consent</span>
+              <button
+                className="ai-chat-secondary-button is-primary"
+                type="button"
+                onClick={onAcceptLocalProviderConsent}
+              >
+                Accept local provider
+              </button>
+            </>
+          ) : null}
           <span>Mnemonic</span>
           <strong>
             {status?.mnemonicEnabled ? "enabled" : "disabled"} ·{" "}
@@ -215,6 +209,85 @@ export function SettingsPopover({
           <strong>{embeddingStatus?.status || "unknown"}</strong>
         </div>
       </div>
-    </m.div>
+
+      <div className="ai-chat-popover__section">
+        <div className="ai-chat-popover__title">Mnemonic</div>
+        <div className="ai-chat-mnemonic-controls">
+          <div className="ai-chat-mnemonic-search">
+            <input
+              value={mnemonicQuery}
+              type="search"
+              placeholder="Search project memory"
+              onChange={(event) => setMnemonicQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") onMnemonicSearch(mnemonicQuery);
+              }}
+            />
+            <button
+              className="ai-chat-secondary-button"
+              type="button"
+              disabled={mnemonicBusy}
+              onClick={() => onMnemonicSearch(mnemonicQuery)}
+            >
+              Search
+            </button>
+          </div>
+          <textarea
+            value={mnemonicDraft}
+            rows={2}
+            placeholder="Save reviewed project fact"
+            onChange={(event) => setMnemonicDraft(event.target.value)}
+          />
+          <button
+            className="ai-chat-secondary-button is-primary"
+            type="button"
+            disabled={mnemonicBusy || !mnemonicDraft.trim()}
+            onClick={handleMnemonicSave}
+          >
+            Save reviewed memory
+          </button>
+          {mnemonicError ? (
+            <div className="ai-chat-provider-runtime-error">
+              {mnemonicError}
+            </div>
+          ) : null}
+        </div>
+        {visibleMnemonicEntries.length > 0 ? (
+          <div className="ai-chat-mnemonic-list">
+            {visibleMnemonicEntries.map((entry) => {
+              const needsReview =
+                entry.generated ||
+                entry.trust === "generated" ||
+                entry.trust === "untrusted";
+              return (
+                <div className="ai-chat-mnemonic-row" key={entry.id}>
+                  <span className="ai-chat-mnemonic-row__content">
+                    {entry.content}
+                  </span>
+                  <span className="ai-chat-mnemonic-row__meta">
+                    {entry.trust || (entry.generated ? "generated" : "trusted")}
+                    {entry.pinned ? " · pinned" : ""}
+                  </span>
+                  {needsReview ? (
+                    <button
+                      className="ai-chat-secondary-button"
+                      type="button"
+                      disabled={mnemonicBusy}
+                      onClick={() => onMnemonicPromote(entry.id)}
+                    >
+                      Trust
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="ai-chat-provider-empty">
+            No visible project memory yet.
+          </div>
+        )}
+      </div>
+    </AIChatPopoverFrame>
   );
 }

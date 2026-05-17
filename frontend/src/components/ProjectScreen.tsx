@@ -129,6 +129,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const syncEditorStoreActiveTab = useEditorStore(
     (state) => state.syncActiveTab,
   );
+  const updateEditorStoreTabContent = useEditorStore(
+    (state) => state.updateTabContent,
+  );
   const closeEditorStoreTabPath = useEditorStore((state) => state.closePath);
   const resetActiveEditorBudget = usePerformanceStore(
     (state) => state.resetActiveEditorBudget,
@@ -1233,6 +1236,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       });
     }
     scheduleContentStateFlush(activeTab, value);
+    updateEditorStoreTabContent(activeTab, value);
     markTabDirty(activeTab);
     scheduleAutoSave(activeTab);
   };

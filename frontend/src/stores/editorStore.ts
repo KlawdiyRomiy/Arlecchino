@@ -4,6 +4,11 @@ import {
   isSameOrChildPath,
   remapProjectPathPrefix,
 } from "../utils/projectPaths";
+import {
+  countLines,
+  fingerprintText,
+  recordIDEContextEvent,
+} from "./ideContextLedgerStore";
 
 export interface EditorTab {
   id: string;
@@ -158,6 +163,29 @@ const remapPaneTabIds = (
     };
   });
 
+const recordEditorTabEvent = (
+  type: string,
+  title: string,
+  tab: EditorTab,
+  extra: Record<string, string | number | boolean | null | undefined> = {},
+) => {
+  recordIDEContextEvent({
+    scope: "editor",
+    type,
+    title,
+    path: tab.path,
+    metadata: {
+      name: tab.name,
+      language: tab.language,
+      dirty: tab.isDirty,
+      contentHash: fingerprintText(tab.content),
+      contentBytes: tab.content.length,
+      lineCount: countLines(tab.content),
+      ...extra,
+    },
+  });
+};
+
 export const useEditorStore = create<EditorState & EditorActions>(
   (set, get) => ({
     tabs: new Map(),
@@ -186,6 +214,12 @@ export const useEditorStore = create<EditorState & EditorActions>(
           activePaneId: paneId,
           cursorPosition: { line: 1, col: 1 },
         }));
+        const tab = get().tabs.get(id);
+        if (tab) {
+          recordEditorTabEvent("file.activated", "Editor file activated", tab, {
+            paneId,
+          });
+        }
         return;
       }
 
@@ -213,10 +247,15 @@ export const useEditorStore = create<EditorState & EditorActions>(
           cursorPosition: { line: 1, col: 1 },
         };
       });
+      recordEditorTabEvent("file.opened", "Editor file opened", tab, {
+        paneId,
+      });
     },
 
     syncActiveTab: (paneId, path, name, content, language, dirty) => {
       const id = makeEditorTabId(path);
+      const previous = get();
+      const previousTab = previous.tabs.get(id);
       set((s) => {
         const existingTab = s.tabs.get(id);
         const tabChanged =
@@ -284,9 +323,50 @@ export const useEditorStore = create<EditorState & EditorActions>(
               : s.cursorPosition,
         };
       });
+      const nextTab = get().tabs.get(id);
+      if (nextTab) {
+        const contentChanged =
+          !previousTab || previousTab.content !== nextTab.content;
+        const activeChanged =
+          previous.activePaneId !== paneId ||
+          previous.panes.some(
+            (pane) => pane.id === paneId && pane.activeTabId !== id,
+          );
+        const dirtyChanged =
+          previousTab !== undefined && previousTab.isDirty !== nextTab.isDirty;
+
+        if (!previousTab) {
+          recordEditorTabEvent("file.opened", "Editor file opened", nextTab, {
+            paneId,
+            source: "sync",
+          });
+        } else if (contentChanged) {
+          recordEditorTabEvent(
+            "file.content_changed",
+            "Editor file content changed",
+            nextTab,
+            { paneId },
+          );
+        } else if (activeChanged) {
+          recordEditorTabEvent(
+            "file.activated",
+            "Editor file activated",
+            nextTab,
+            { paneId },
+          );
+        } else if (dirtyChanged) {
+          recordEditorTabEvent(
+            "file.dirty_changed",
+            "Editor dirty state changed",
+            nextTab,
+            { paneId },
+          );
+        }
+      }
     },
 
     closeTab: (paneId, tabId) => {
+      const tab = get().tabs.get(tabId);
       set((s) => {
         const pane = s.panes.find((p) => p.id === paneId);
         if (!pane) return s;
@@ -316,6 +396,11 @@ export const useEditorStore = create<EditorState & EditorActions>(
           ),
         };
       });
+      if (tab) {
+        recordEditorTabEvent("file.closed", "Editor file closed", tab, {
+          paneId,
+        });
+      }
     },
 
     setActiveTab: (paneId, tabId) => {
@@ -326,10 +411,22 @@ export const useEditorStore = create<EditorState & EditorActions>(
         activePaneId: paneId,
         cursorPosition: { line: 1, col: 1 },
       }));
+      const tab = get().tabs.get(tabId);
+      if (tab) {
+        recordEditorTabEvent("file.activated", "Editor file activated", tab, {
+          paneId,
+        });
+      }
     },
 
     setActivePane: (paneId) => {
       set({ activePaneId: paneId });
+      const tab = get().getActiveTab(paneId);
+      if (tab) {
+        recordEditorTabEvent("pane.activated", "Editor pane activated", tab, {
+          paneId,
+        });
+      }
     },
 
     updateTabContent: (tabId, content) => {
@@ -340,9 +437,18 @@ export const useEditorStore = create<EditorState & EditorActions>(
         newTabs.set(tabId, { ...tab, content, isDirty: true });
         return { tabs: newTabs };
       });
+      const tab = get().tabs.get(tabId);
+      if (tab) {
+        recordEditorTabEvent(
+          "file.content_changed",
+          "Editor file content changed",
+          tab,
+        );
+      }
     },
 
     replaceTabContent: (tabId, content, language) => {
+      const previous = get().tabs.get(tabId);
       set((s) => {
         const tab = s.tabs.get(tabId);
         if (!tab || tab.isDirty) return s;
@@ -358,9 +464,18 @@ export const useEditorStore = create<EditorState & EditorActions>(
         });
         return { tabs: newTabs };
       });
+      const tab = get().tabs.get(tabId);
+      if (tab && (!previous || previous.content !== tab.content)) {
+        recordEditorTabEvent(
+          "file.content_replaced",
+          "Editor file content replaced",
+          tab,
+        );
+      }
     },
 
     markTabDirty: (tabId, dirty) => {
+      const previous = get().tabs.get(tabId);
       set((s) => {
         const tab = s.tabs.get(tabId);
         if (!tab) return s;
@@ -368,6 +483,14 @@ export const useEditorStore = create<EditorState & EditorActions>(
         newTabs.set(tabId, { ...tab, isDirty: dirty });
         return { tabs: newTabs };
       });
+      const tab = get().tabs.get(tabId);
+      if (tab && previous && previous.isDirty !== tab.isDirty) {
+        recordEditorTabEvent(
+          "file.dirty_changed",
+          "Editor dirty state changed",
+          tab,
+        );
+      }
     },
 
     splitPane: (direction) => {
@@ -388,9 +511,16 @@ export const useEditorStore = create<EditorState & EditorActions>(
         panes: [...state.panes, newPane],
         splitDirection: direction,
       });
+      recordIDEContextEvent({
+        scope: "editor",
+        type: "pane.split",
+        title: "Editor pane split",
+        metadata: { direction: direction ?? "" },
+      });
     },
 
     closeSplit: () => {
+      const hadSplit = get().panes.length > 1;
       set((s) => {
         if (s.panes.length <= 1) return s;
 
@@ -405,6 +535,13 @@ export const useEditorStore = create<EditorState & EditorActions>(
           splitDirection: null,
         };
       });
+      if (hadSplit) {
+        recordIDEContextEvent({
+          scope: "editor",
+          type: "pane.split_closed",
+          title: "Editor split closed",
+        });
+      }
     },
 
     moveTabToPane: (tabId, fromPaneId, toPaneId) => {
@@ -421,14 +558,40 @@ export const useEditorStore = create<EditorState & EditorActions>(
         }),
         activePaneId: toPaneId,
       }));
+      const tab = get().tabs.get(tabId);
+      if (tab) {
+        recordEditorTabEvent("tab.moved", "Editor tab moved", tab, {
+          fromPaneId,
+          toPaneId,
+        });
+      }
     },
 
     setCursorPosition: (line, col) => {
       set({ cursorPosition: { line, col } });
+      const tab = get().getActiveTab(get().activePaneId);
+      if (tab) {
+        recordEditorTabEvent("cursor.moved", "Editor cursor moved", tab, {
+          line,
+          column: col,
+        });
+      }
     },
 
     setStatusFile: (path, name, language) => {
       set({ statusFile: { path, name, language } });
+      recordIDEContextEvent({
+        scope: "editor",
+        type: path ? "status_file.changed" : "status_file.cleared",
+        title: path
+          ? "Editor status file changed"
+          : "Editor status file cleared",
+        path: path ?? undefined,
+        metadata: {
+          name: name ?? "",
+          language: language ?? "",
+        },
+      });
     },
 
     renamePath: (oldPath, newPath) => {
@@ -463,6 +626,13 @@ export const useEditorStore = create<EditorState & EditorActions>(
               : state.statusFile,
         };
       });
+      recordIDEContextEvent({
+        scope: "editor",
+        type: "path.renamed",
+        title: "Editor path renamed",
+        path: newPrefix,
+        metadata: { oldPath: oldPrefix },
+      });
     },
 
     closePath: (path) => {
@@ -470,6 +640,9 @@ export const useEditorStore = create<EditorState & EditorActions>(
     },
 
     closePathPrefix: (pathPrefix) => {
+      const removedTabs = Array.from(get().tabs.values()).filter((tab) =>
+        isSameOrChildPath(tab.path, pathPrefix),
+      );
       set((state) => {
         const removedTabIds = new Set(
           Array.from(state.tabs.values())
@@ -508,6 +681,11 @@ export const useEditorStore = create<EditorState & EditorActions>(
               : state.statusFile,
         };
       });
+      removedTabs.forEach((tab) =>
+        recordEditorTabEvent("file.closed", "Editor file closed", tab, {
+          reason: "path_pruned",
+        }),
+      );
     },
 
     getTab: (id) => get().tabs.get(id),

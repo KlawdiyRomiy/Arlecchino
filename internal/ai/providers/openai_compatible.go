@@ -167,13 +167,18 @@ type openAIMessage struct {
 
 type openAIChatResponse struct {
 	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
+		Message openAIChoiceMessage `json:"message"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
+}
+
+type openAIChoiceMessage struct {
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content"`
+	Reasoning        string `json:"reasoning"`
+	Thinking         string `json:"thinking"`
 }
 
 func (p *OpenAICompatibleProvider) Generate(ctx context.Context, req GenerationRequest, sink TokenSink) (GenerationResponse, error) {
@@ -195,14 +200,9 @@ func (p *OpenAICompatibleProvider) Generate(ctx context.Context, req GenerationR
 	if temperature <= 0 {
 		temperature = 0.2
 	}
-	messages := []openAIMessage{}
-	if strings.TrimSpace(req.System) != "" {
-		messages = append(messages, openAIMessage{Role: "system", Content: req.System})
-	}
-	messages = append(messages, openAIMessage{Role: "user", Content: req.Prompt})
 	request := openAIChatRequest{
 		Model:       model,
-		Messages:    messages,
+		Messages:    openAIMessagesFromGenerationRequest(req),
 		MaxTokens:   maxTokens,
 		Temperature: temperature,
 		Stop:        req.Stop,
@@ -221,29 +221,85 @@ func (p *OpenAICompatibleProvider) Generate(ctx context.Context, req GenerationR
 		return GenerationResponse{RawStatus: status}, errors.New(response.Error.Message)
 	}
 	text := ""
+	reasoningText := ""
 	if len(response.Choices) > 0 {
 		text = response.Choices[0].Message.Content
+		reasoningText = openAIReasoningText(response.Choices[0].Message)
 	}
 	if sink != nil && text != "" {
 		if err := sink(text); err != nil {
-			return GenerationResponse{Text: text, Model: model, RawStatus: status, FinishedAt: NowString()}, err
+			return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString()}, err
 		}
 	}
-	return GenerationResponse{Text: text, Model: model, RawStatus: status, FinishedAt: NowString()}, nil
+	return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString()}, nil
 }
 
 type openAIStreamChunk struct {
 	Choices []struct {
-		Delta struct {
-			Content string `json:"content"`
-		} `json:"delta"`
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
+		Delta   openAIChoiceMessage `json:"delta"`
+		Message openAIChoiceMessage `json:"message"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
+}
+
+func openAIMessagesFromGenerationRequest(req GenerationRequest) []openAIMessage {
+	messages := []openAIMessage{}
+	if len(req.Messages) > 0 {
+		if strings.TrimSpace(req.System) != "" && !generationMessagesContainSystem(req.Messages) {
+			messages = append(messages, openAIMessage{Role: "system", Content: req.System})
+		}
+		for _, message := range req.Messages {
+			role := normalizedOpenAIMessageRole(message.Role)
+			content := strings.TrimSpace(message.Content)
+			if content == "" {
+				continue
+			}
+			messages = append(messages, openAIMessage{Role: role, Content: content})
+		}
+		if len(messages) > 0 {
+			return messages
+		}
+	}
+	if strings.TrimSpace(req.System) != "" {
+		messages = append(messages, openAIMessage{Role: "system", Content: req.System})
+	}
+	if strings.TrimSpace(req.Prompt) != "" {
+		messages = append(messages, openAIMessage{Role: "user", Content: req.Prompt})
+	}
+	return messages
+}
+
+func generationMessagesContainSystem(messages []GenerationMessage) bool {
+	for _, message := range messages {
+		if normalizedOpenAIMessageRole(message.Role) == "system" && strings.TrimSpace(message.Content) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizedOpenAIMessageRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "system", "assistant", "user":
+		return strings.ToLower(strings.TrimSpace(role))
+	default:
+		return "user"
+	}
+}
+
+func openAIReasoningText(message openAIChoiceMessage) string {
+	return firstNonEmptyString(message.ReasoningContent, message.Reasoning, message.Thinking)
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (p *OpenAICompatibleProvider) generateStreaming(ctx context.Context, request openAIChatRequest, sink TokenSink) (GenerationResponse, error) {
@@ -258,6 +314,7 @@ func (p *OpenAICompatibleProvider) generateStreaming(ctx context.Context, reques
 		return GenerationResponse{RawStatus: status}, fmt.Errorf("provider returned HTTP %d: %s", status, strings.TrimSpace(string(limited)))
 	}
 	var builder strings.Builder
+	var reasoningBuilder strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 4096), maxProviderResponseBytes)
 	for scanner.Scan() {
@@ -285,16 +342,23 @@ func (p *OpenAICompatibleProvider) generateStreaming(ctx context.Context, reques
 		if token == "" {
 			token = chunk.Choices[0].Message.Content
 		}
+		reasoningToken := openAIReasoningText(chunk.Choices[0].Delta)
+		if reasoningToken == "" {
+			reasoningToken = openAIReasoningText(chunk.Choices[0].Message)
+		}
+		if reasoningToken != "" {
+			reasoningBuilder.WriteString(reasoningToken)
+		}
 		if token == "" {
 			continue
 		}
 		builder.WriteString(token)
 		if err := sink(token); err != nil {
-			return GenerationResponse{Text: builder.String(), Model: request.Model, RawStatus: status, FinishedAt: NowString()}, err
+			return GenerationResponse{Text: builder.String(), ReasoningText: reasoningBuilder.String(), Model: request.Model, RawStatus: status, FinishedAt: NowString()}, err
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return GenerationResponse{Text: builder.String(), Model: request.Model, RawStatus: status, FinishedAt: NowString()}, err
+		return GenerationResponse{Text: builder.String(), ReasoningText: reasoningBuilder.String(), Model: request.Model, RawStatus: status, FinishedAt: NowString()}, err
 	}
-	return GenerationResponse{Text: builder.String(), Model: request.Model, RawStatus: status, FinishedAt: NowString()}, nil
+	return GenerationResponse{Text: builder.String(), ReasoningText: reasoningBuilder.String(), Model: request.Model, RawStatus: status, FinishedAt: NowString()}, nil
 }

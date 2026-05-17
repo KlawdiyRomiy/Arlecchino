@@ -18,6 +18,7 @@ import {
 } from "../shell/projectWindowRestore";
 import { useEditorSettingsStore } from "./editorSettingsStore";
 import { useTerminalStore } from "./terminalStore";
+import { recordIDEContextEvent } from "./ideContextLedgerStore";
 
 export interface WorkspaceProject {
   id: string;
@@ -185,6 +186,12 @@ const createWorkspaceStore = (storageName: string) =>
               ),
               uiBlockers: [],
             }));
+            recordIDEContextEvent({
+              scope: "workspace",
+              type: "project.activated",
+              title: "Workspace project activated",
+              projectPath: existing.path,
+            });
             return;
           }
 
@@ -204,6 +211,12 @@ const createWorkspaceStore = (storageName: string) =>
             switchDirection: 1,
             uiBlockers: [],
           }));
+          recordIDEContextEvent({
+            scope: "workspace",
+            type: "project.added",
+            title: "Workspace project added",
+            projectPath: path,
+          });
         },
 
         beginProjectOpen: (path: string, direction = 1) => {
@@ -231,6 +244,12 @@ const createWorkspaceStore = (storageName: string) =>
             switchDirection: direction,
             uiBlockers: [],
           }));
+          recordIDEContextEvent({
+            scope: "workspace",
+            type: "project.open_started",
+            title: "Workspace project open started",
+            projectPath: path,
+          });
 
           return id;
         },
@@ -257,6 +276,12 @@ const createWorkspaceStore = (storageName: string) =>
                 state.switchSourceId === id ? null : state.switchSourceId,
               uiBlockers: activeId === null ? [] : state.uiBlockers,
             };
+          });
+          recordIDEContextEvent({
+            scope: "workspace",
+            type: "project.removed",
+            title: "Workspace project removed",
+            projectPath: id,
           });
         },
 
@@ -285,16 +310,28 @@ const createWorkspaceStore = (storageName: string) =>
             }
             return { projects };
           });
+          recordIDEContextEvent({
+            scope: "workspace",
+            type: "project.reordered",
+            title: "Workspace project order changed",
+            metadata: { count: ids.length },
+          });
         },
 
-        clearActiveProject: () =>
+        clearActiveProject: () => {
           set({
             activeId: null,
             activeFramework: null,
             pendingId: null,
             switchSourceId: null,
             uiBlockers: [],
-          }),
+          });
+          recordIDEContextEvent({
+            scope: "workspace",
+            type: "project.active_cleared",
+            title: "Workspace active project cleared",
+          });
+        },
 
         beginProjectSwitch: (id: string, direction?: number) => {
           const state = get();
@@ -309,14 +346,28 @@ const createWorkspaceStore = (storageName: string) =>
               direction ??
               resolveProjectSwitchDirection(state.projects, state.activeId, id),
           });
+          recordIDEContextEvent({
+            scope: "workspace",
+            type: "project.switch_started",
+            title: "Workspace project switch started",
+            projectPath: id,
+            metadata: { from: state.activeId ?? "" },
+          });
         },
 
-        confirmProjectSwitch: (id: string) =>
+        confirmProjectSwitch: (id: string) => {
           set((state) => ({
             activeId: state.pendingId === id ? id : state.activeId,
-          })),
+          }));
+          recordIDEContextEvent({
+            scope: "workspace",
+            type: "project.switch_confirmed",
+            title: "Workspace project switch confirmed",
+            projectPath: id,
+          });
+        },
 
-        completeProjectSwitch: (id: string) =>
+        completeProjectSwitch: (id: string) => {
           set((state) => {
             if (state.activeId !== id) {
               return state;
@@ -327,9 +378,16 @@ const createWorkspaceStore = (storageName: string) =>
               switchSourceId: null,
               uiBlockers: [],
             };
-          }),
+          });
+          recordIDEContextEvent({
+            scope: "workspace",
+            type: "project.switch_completed",
+            title: "Workspace project switch completed",
+            projectPath: id,
+          });
+        },
 
-        cancelProjectSwitch: (id?: string | null) =>
+        cancelProjectSwitch: (id?: string | null) => {
           set((state) => {
             if (id && state.pendingId !== id) {
               return state;
@@ -343,7 +401,14 @@ const createWorkspaceStore = (storageName: string) =>
               pendingId: null,
               switchSourceId: null,
             };
-          }),
+          });
+          recordIDEContextEvent({
+            scope: "workspace",
+            type: "project.switch_canceled",
+            title: "Workspace project switch canceled",
+            projectPath: id ?? "",
+          });
+        },
 
         switchNextProject: () => {
           const { projects, activeId } = get();
@@ -369,10 +434,25 @@ const createWorkspaceStore = (storageName: string) =>
           return prev.id;
         },
 
-        setReady: (ready: boolean) => set({ ready }),
+        setReady: (ready: boolean) => {
+          set({ ready });
+          recordIDEContextEvent({
+            scope: "workspace",
+            type: "workspace.ready_changed",
+            title: "Workspace ready state changed",
+            metadata: { ready },
+          });
+        },
 
-        setActiveFramework: (activeFramework: string | null) =>
-          set({ activeFramework }),
+        setActiveFramework: (activeFramework: string | null) => {
+          set({ activeFramework });
+          recordIDEContextEvent({
+            scope: "workspace",
+            type: "workspace.framework_changed",
+            title: "Workspace framework changed",
+            metadata: { framework: activeFramework ?? "" },
+          });
+        },
 
         blockProjectSwitch: (key: string) => {
           if (!key) {

@@ -18,10 +18,10 @@ func (s *Service) ListChatActions() []AIChatActionDescriptor {
 		{
 			ID:                   AIChatActionDebug,
 			Name:                 "Debug",
-			Description:          "Investigate failures with project context and approval-gated diagnostics.",
+			Description:          "Investigate failures with project context and explicit approval-gated diagnostics.",
 			BuiltIn:              true,
 			MayProposeTools:      true,
-			ExpectsToolProposals: true,
+			ExpectsToolProposals: false,
 			ReadOnlyIntent:       false,
 			MutationAllowed:      true,
 			RequiresApproval:     true,
@@ -43,10 +43,10 @@ func (s *Service) ListChatActions() []AIChatActionDescriptor {
 		{
 			ID:                   AIChatActionBuild,
 			Name:                 "Build",
-			Description:          "Produce patch artifacts and approval-gated tool proposals.",
+			Description:          "Produce patch artifacts and explicit approval-gated tool calls.",
 			BuiltIn:              true,
 			MayProposeTools:      true,
-			ExpectsToolProposals: true,
+			ExpectsToolProposals: false,
 			ExecutionUnavailable: false,
 			MutationAllowed:      true,
 			RequiresApproval:     true,
@@ -58,6 +58,17 @@ func (s *Service) ListChatActions() []AIChatActionDescriptor {
 
 func (s *Service) ListAgentProfiles() []AIAgentProfileDescriptor {
 	return []AIAgentProfileDescriptor{
+		{
+			ID:          minimalChatProfileID,
+			Name:        "Minimal General",
+			Description: "General conversation profile with no implicit project context or tools.",
+			BuiltIn:     true,
+			Enabled:     true,
+			Action:      AIChatActionAsk,
+			ReadOnly:    true,
+			Approval:    "none",
+			ToolKinds:   []AIToolKind{},
+		},
 		{
 			ID:          "ask-readonly",
 			Name:        "Ask Readonly",
@@ -116,6 +127,16 @@ func (s *Service) ListAgentProfiles() []AIAgentProfileDescriptor {
 func (s *Service) ListPromptWorkflows() []AIPromptWorkflowDescriptor {
 	return []AIPromptWorkflowDescriptor{
 		{
+			ID:          "slash-general",
+			Name:        "General",
+			Slash:       "/general",
+			Action:      AIChatActionAsk,
+			Description: "Ask without implicit project context.",
+			BuiltIn:     true,
+			ProfileID:   minimalChatProfileID,
+			ToolKinds:   []AIToolKind{},
+		},
+		{
 			ID:          "slash-ask",
 			Name:        "Ask",
 			Slash:       "/ask",
@@ -150,7 +171,7 @@ func (s *Service) ListPromptWorkflows() []AIPromptWorkflowDescriptor {
 			Name:        "Build",
 			Slash:       "/build",
 			Action:      AIChatActionBuild,
-			Description: "Draft implementation steps and approval-gated tool proposals.",
+			Description: "Draft implementation steps and explicit approval-gated tool calls.",
 			BuiltIn:     true,
 			ProfileID:   "build-reviewer",
 			ToolKinds:   []AIToolKind{AIToolKindContextRead, AIToolKindFileWrite, AIToolKindTerminal, AIToolKindMCP},

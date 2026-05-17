@@ -1,11 +1,21 @@
-import React, { useState } from "react";
-import { CheckCircle2, Copy, FileText, Layers, Sparkles } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import {
+  CheckCircle2,
+  ChevronRight,
+  Copy,
+  FileText,
+  Layers,
+  Sparkles,
+  ShieldCheck,
+} from "lucide-react";
+import { AnimatePresence, m } from "framer-motion";
 import type {
   AIChatAction,
   AIChatRun,
   AIChatRunArtifact,
   AIChatRunEnvelope,
   AIContextItemDisclosure,
+  AIToolProposal,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import {
   AIChatRunArtifactKind,
@@ -15,6 +25,7 @@ import {
   compactText,
   formatRunTime,
   getActionMeta,
+  runActivityLabel,
 } from "./aiChatPresentation";
 import { PatchArtifactCard } from "./PatchArtifactCard";
 import { ToolProposalCard } from "./ToolProposalCard";
@@ -29,15 +40,17 @@ interface RunCardProps {
   artifactBusyId?: string | null;
   onSelect: (runId: string) => void;
   onApplyPatchArtifact?: (artifactId: string) => void;
+  onApproveMnemonicArtifact?: (artifactId: string) => void;
   onRollbackPatchCheckpoint?: (checkpointId: string) => void;
   onOpenReview?: () => void;
+  onPreviewToolProposal?: (proposal: AIToolProposal, runId: string) => void;
   searchQuery?: string;
 }
 
 function normalizeGeneratedSpacing(value: string): string {
   return value
     .replace(/(\d+)\.(?=\p{L})/gu, "$1. ")
-    .replace(/([.!?,;:])(?=\p{L})/gu, "$1 ");
+    .replace(/([!?,;:])(?=\p{L})/gu, "$1 ");
 }
 
 function cleanAssistantText(value: string, prompt: string): string {
@@ -49,7 +62,7 @@ function cleanAssistantText(value: string, prompt: string): string {
     : raw;
   const cleanedLines: string[] = [];
   for (const line of afterAssistant
-    .replace(/<\|?(?:im|lim)_(?:start|end)\|?>/gi, "\n")
+    .replace(/<\/?\|?(?:im|lim)_(?:start|end)\|?>/gi, "\n")
     .split(/\r?\n/)) {
     const trimmedLine = line.trimEnd();
     const semanticLine = trimmedLine.trim();
@@ -137,9 +150,18 @@ function mentionItemsForRun(
   envelope: AIChatRunEnvelope,
   run: AIChatRun | null,
 ): AIContextItemDisclosure[] {
+  return contextItemsForRun(envelope, run).filter(
+    (item) => item.source === "mention",
+  );
+}
+
+function contextItemsForRun(
+  envelope: AIChatRunEnvelope,
+  run: AIChatRun | null,
+): AIContextItemDisclosure[] {
   const items =
     run?.contextSummary?.contextItems ?? envelope.contextSummary?.contextItems;
-  return (items ?? []).filter((item) => item.source === "mention");
+  return items ?? [];
 }
 
 function iconForMentionItem(kind: AIContextItemKind) {
@@ -160,13 +182,17 @@ async function copyText(value: string): Promise<void> {
   await navigator.clipboard.writeText(value);
 }
 
-function elapsedMs(envelope: AIChatRunEnvelope, run: AIChatRun | null): number {
+function elapsedMs(
+  envelope: AIChatRunEnvelope,
+  run: AIChatRun | null,
+  now = Date.now(),
+): number {
   const created = Date.parse(run?.createdAt || envelope.createdAt || "");
   if (!Number.isFinite(created)) return 0;
   const updated = Date.parse(run?.updatedAt || envelope.updatedAt || "");
   const end =
     envelope.status === "running" || envelope.status === "queued"
-      ? Date.now()
+      ? now
       : updated;
   if (!Number.isFinite(end) || end < created) return 0;
   return end - created;
@@ -187,12 +213,141 @@ function formatElapsed(ms: number): string {
   return `${seconds}s`;
 }
 
-function workedForLabel(envelope: AIChatRunEnvelope, run: AIChatRun | null) {
+function workedForLabel(
+  envelope: AIChatRunEnvelope,
+  run: AIChatRun | null,
+  now?: number,
+) {
   const verb =
     envelope.status === "running" || envelope.status === "queued"
       ? "Working for"
       : "Worked for";
-  return `${verb} ${formatElapsed(elapsedMs(envelope, run))}`;
+  return `${verb} ${formatElapsed(elapsedMs(envelope, run, now))}`;
+}
+
+function canPreviewToolProposal(proposal: AIToolProposal): boolean {
+  const id = proposal.name || proposal.id || "";
+  return [
+    "context.read",
+    "file.patch.preview",
+    "git.preview",
+    "mcp.preview",
+    "terminal.preview",
+  ].includes(id);
+}
+
+function memoryCitationCountLabel(count: number): string {
+  return `${count} memory citation${count === 1 ? "" : "s"}`;
+}
+
+function memoryArtifactMeta(artifact: AIChatRunArtifact): string {
+  const parts = [artifact.status || "recorded"];
+  try {
+    const payload = JSON.parse(artifact.payloadJson || "{}") as Record<
+      string,
+      unknown
+    >;
+    const entry =
+      payload.entry && typeof payload.entry === "object"
+        ? (payload.entry as Record<string, unknown>)
+        : payload;
+    const source = typeof entry.source === "string" ? entry.source : "";
+    const trust = typeof entry.trust === "string" ? entry.trust : "";
+    if (source) parts.push(source);
+    if (trust) parts.push(trust);
+  } catch {
+    // Ignore malformed artifact payloads; the visible summary is enough.
+  }
+  return parts.filter(Boolean).join(" · ");
+}
+
+interface MemoryCitationsProps {
+  artifacts: AIChatRunArtifact[];
+  artifactBusyId: string | null;
+  onApproveMnemonicArtifact?: (artifactId: string) => void;
+}
+
+function MemoryCitations({
+  artifacts,
+  artifactBusyId,
+  onApproveMnemonicArtifact,
+}: MemoryCitationsProps) {
+  const [open, setOpen] = useState(false);
+  if (artifacts.length === 0) return null;
+  const stop = (event: React.MouseEvent) => {
+    event.stopPropagation();
+  };
+  return (
+    <div className="ai-chat-memory-citations" onClick={stop}>
+      <button
+        className="ai-chat-memory-citations__toggle"
+        type="button"
+        aria-expanded={open}
+        onClick={(event) => {
+          stop(event);
+          setOpen((value) => !value);
+        }}
+      >
+        <m.span
+          className="ai-chat-memory-citations__chevron"
+          animate={{ rotate: open ? 90 : 0 }}
+          transition={{ duration: 0.16, ease: "easeOut" }}
+        >
+          <ChevronRight size={16} />
+        </m.span>
+        <span>{memoryCitationCountLabel(artifacts.length)}</span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open ? (
+          <m.div
+            className="ai-chat-memory-citations__list"
+            initial={{ opacity: 0, height: 0, y: -3 }}
+            animate={{ opacity: 1, height: "auto", y: 0 }}
+            exit={{ opacity: 0, height: 0, y: -3 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+          >
+            {artifacts.map((artifact) => (
+              <div
+                className="ai-chat-memory-citations__item"
+                data-status={artifact.status}
+                key={artifact.id}
+              >
+                <div className="ai-chat-memory-citations__item-head">
+                  <span className="ai-chat-memory-citations__source">
+                    {artifact.title || "Mnemonic"}
+                  </span>
+                  <span className="ai-chat-memory-citations__meta">
+                    {memoryArtifactMeta(artifact)}
+                  </span>
+                </div>
+                {artifact.summary ? (
+                  <p className="ai-chat-memory-citations__summary">
+                    {artifact.summary}
+                  </p>
+                ) : null}
+                {artifact.status === "proposed" ? (
+                  <button
+                    className="ai-chat-secondary-button is-primary"
+                    type="button"
+                    disabled={artifactBusyId === artifact.id}
+                    onClick={(event) => {
+                      stop(event);
+                      onApproveMnemonicArtifact?.(artifact.id);
+                    }}
+                  >
+                    <ShieldCheck size={13} />
+                    {artifactBusyId === artifact.id
+                      ? "Approving"
+                      : "Trust and save"}
+                  </button>
+                ) : null}
+              </div>
+            ))}
+          </m.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
 }
 
 export function RunCard({
@@ -205,13 +360,27 @@ export function RunCard({
   artifactBusyId = null,
   onSelect,
   onApplyPatchArtifact,
+  onApproveMnemonicArtifact,
   onRollbackPatchCheckpoint,
   onOpenReview,
+  onPreviewToolProposal,
   searchQuery = "",
 }: RunCardProps) {
   const [copiedMessage, setCopiedMessage] = useState<
     "prompt" | "response" | null
   >(null);
+  const running = envelope.status === "running" || envelope.status === "queued";
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return undefined;
+    setNow(Date.now());
+    const id = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [running]);
   const action = envelope.action as AIChatAction;
   const meta = getActionMeta(action);
   const prompt = run?.userPrompt || "";
@@ -221,11 +390,23 @@ export function RunCard({
     run?.response || streamingText || "",
     prompt,
   );
+  const contextItems = contextItemsForRun(envelope, run);
+  const runElapsedMs = elapsedMs(envelope, run, now);
+  const activityLabel = runActivityLabel({
+    status: envelope.status,
+    activeText: response,
+    contextItems,
+    elapsedMs: runElapsedMs,
+  });
   const proposals = run?.toolProposals ?? envelope.toolProposals ?? [];
-  const mentionItems = mentionItemsForRun(envelope, run);
+  const mentionItems = contextItems.filter((item) => item.source === "mention");
   const patchArtifacts = artifacts.filter(
     (artifact) =>
       artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactPatchPreview,
+  );
+  const memoryArtifacts = artifacts.filter(
+    (artifact) =>
+      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactMemory,
   );
   const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -334,7 +515,7 @@ export function RunCard({
         <div className="ai-chat-message-bubble ai-chat-message-bubble--assistant">
           <header className="ai-chat-run-card__header">
             <span className="ai-chat-run-card__worked">
-              {workedForLabel(envelope, run)}
+              {workedForLabel(envelope, run, now)}
             </span>
           </header>
 
@@ -342,9 +523,9 @@ export function RunCard({
             <div className="ai-chat-run-card__response">
               {renderHighlightedText(response, searchQuery)}
             </div>
-          ) : envelope.status === "running" ? (
+          ) : running ? (
             <div className="ai-chat-run-card__response ai-chat-run-card__response--muted">
-              Waiting for runtime tokens&hellip;
+              {activityLabel}&hellip;
             </div>
           ) : null}
 
@@ -353,6 +534,11 @@ export function RunCard({
               {proposals.map((proposal) => (
                 <ToolProposalCard
                   key={`${proposal.kind}-${proposal.id || proposal.name}`}
+                  busy={artifactBusyId === (proposal.id || proposal.name)}
+                  canPreview={canPreviewToolProposal(proposal)}
+                  onPreview={(nextProposal) =>
+                    onPreviewToolProposal?.(nextProposal, envelope.id)
+                  }
                   proposal={proposal}
                 />
               ))}
@@ -372,6 +558,14 @@ export function RunCard({
                 />
               ))}
             </div>
+          ) : null}
+
+          {memoryArtifacts.length > 0 ? (
+            <MemoryCitations
+              artifacts={memoryArtifacts}
+              artifactBusyId={artifactBusyId}
+              onApproveMnemonicArtifact={onApproveMnemonicArtifact}
+            />
           ) : null}
 
           {envelope.error ? (
