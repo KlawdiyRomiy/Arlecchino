@@ -187,7 +187,13 @@ func normalizeCapabilities(input []providers.AIProviderCapability) []providers.A
 	output := make([]providers.AIProviderCapability, 0, len(input))
 	for _, capability := range input {
 		switch capability {
-		case providers.CapabilityCodeCompletion, providers.CapabilityLinePrediction, providers.CapabilityTerminalPrediction, providers.CapabilityChat:
+		case providers.CapabilityCodeCompletion,
+			providers.CapabilityLinePrediction,
+			providers.CapabilityTerminalPrediction,
+			providers.CapabilityChat,
+			providers.CapabilityToolCalling,
+			providers.CapabilityStructuredOutput,
+			providers.CapabilityPatchGeneration:
 			if _, ok := seen[capability]; !ok {
 				seen[capability] = struct{}{}
 				output = append(output, capability)

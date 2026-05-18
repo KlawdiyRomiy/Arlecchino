@@ -12,6 +12,9 @@ const (
 	CapabilityLinePrediction     AIProviderCapability = "line_prediction"
 	CapabilityTerminalPrediction AIProviderCapability = "terminal_prediction"
 	CapabilityChat               AIProviderCapability = "chat"
+	CapabilityToolCalling        AIProviderCapability = "tool_calling"
+	CapabilityStructuredOutput   AIProviderCapability = "structured_output"
+	CapabilityPatchGeneration    AIProviderCapability = "patch_generation"
 )
 
 type AIProviderStatusValue string
@@ -34,10 +37,15 @@ const (
 )
 
 type AIModelDescriptor struct {
-	ID            string `json:"id"`
-	DisplayName   string `json:"displayName"`
-	ContextWindow int    `json:"contextWindow,omitempty"`
-	Streaming     bool   `json:"streaming"`
+	ID               string `json:"id"`
+	DisplayName      string `json:"displayName"`
+	ContextWindow    int    `json:"contextWindow,omitempty"`
+	Streaming        bool   `json:"streaming"`
+	ToolCalling      bool   `json:"toolCalling,omitempty"`
+	StructuredOutput bool   `json:"structuredOutput,omitempty"`
+	PatchGeneration  bool   `json:"patchGeneration,omitempty"`
+	LowLatency       bool   `json:"lowLatency,omitempty"`
+	CostTier         string `json:"costTier,omitempty"`
 }
 
 type AIProviderDescriptor struct {
@@ -87,19 +95,46 @@ type GenerationRequest struct {
 	Temperature float64              `json:"temperature,omitempty"`
 	Stop        []string             `json:"stop,omitempty"`
 	Stream      bool                 `json:"stream,omitempty"`
+	Tools       []GenerationTool     `json:"tools,omitempty"`
+	ToolChoice  string               `json:"toolChoice,omitempty"`
 }
 
 type GenerationMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string               `json:"role"`
+	Content    string               `json:"content"`
+	ToolCallID string               `json:"toolCallId,omitempty"`
+	Name       string               `json:"name,omitempty"`
+	ToolCalls  []GenerationToolCall `json:"toolCalls,omitempty"`
+}
+
+type GenerationTool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+type GenerationToolCall struct {
+	ID            string `json:"id,omitempty"`
+	Name          string `json:"name"`
+	ArgumentsJSON string `json:"argumentsJson,omitempty"`
 }
 
 type GenerationResponse struct {
-	Text          string `json:"text"`
-	ReasoningText string `json:"reasoningText,omitempty"`
-	Model         string `json:"model,omitempty"`
-	RawStatus     int    `json:"rawStatus,omitempty"`
-	FinishedAt    string `json:"finishedAt,omitempty"`
+	Text          string               `json:"text"`
+	ReasoningText string               `json:"reasoningText,omitempty"`
+	Model         string               `json:"model,omitempty"`
+	RawStatus     int                  `json:"rawStatus,omitempty"`
+	FinishedAt    string               `json:"finishedAt,omitempty"`
+	ToolCalls     []GenerationToolCall `json:"toolCalls,omitempty"`
+	Usage         GenerationTokenUsage `json:"usage,omitempty"`
+}
+
+type GenerationTokenUsage struct {
+	InputTokens  int    `json:"inputTokens,omitempty"`
+	OutputTokens int    `json:"outputTokens,omitempty"`
+	TotalTokens  int    `json:"totalTokens,omitempty"`
+	Estimated    bool   `json:"estimated,omitempty"`
+	Source       string `json:"source,omitempty"`
 }
 
 type TokenSink func(token string) error

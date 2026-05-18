@@ -2,9 +2,11 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,6 +16,17 @@ import (
 )
 
 const maxToolOutputPreviewBytes = 16 * 1024
+const toolApprovalGrantTTL = 15 * time.Minute
+
+const (
+	toolApprovalScopeOnce = "once"
+	toolApprovalScopeRun  = "run"
+)
+
+var (
+	terminalOutputRedirectionPattern = regexp.MustCompile(`(?m)(^|[;&|[:space:]])([0-9]?>|>>)[[:space:]]*[A-Za-z_./~$-]`)
+	terminalTeeWritePattern          = regexp.MustCompile(`(?i)(^|[;&|][[:space:]]*)tee([[:space:]]+-a)?[[:space:]]+[^;&|]+`)
+)
 
 func (s *Service) ExecuteToolCall(ctx context.Context, projectID string, req AIToolCallRequest) (AIToolCallResult, error) {
 	project := s.project(projectID)
@@ -32,7 +45,7 @@ func (s *Service) ExecuteToolCall(ctx context.Context, projectID string, req AIT
 		return AIToolCallResult{}, fmt.Errorf("tool %q is not registered", req.ToolID)
 	}
 	if strings.TrimSpace(req.RunID) != "" {
-		if _, err := s.GetChatRun(project.ID, req.RunID); err != nil {
+		if _, err := s.validateToolCallRun(project, req); err != nil {
 			return AIToolCallResult{}, err
 		}
 	}
@@ -42,40 +55,113 @@ func (s *Service) ExecuteToolCall(ctx context.Context, projectID string, req AIT
 	if req.Action == AIToolCallActionPreview || descriptor.Kind == AIToolKindContextRead {
 		proposal.AllowedByCurrentPolicy = true
 	}
+	var approvalGrant *AIToolApprovalGrant
+	var approvalGrantErr error
+	if toolCallPerformsExecution(req.Action) && proposal.HardDenyReason == "" {
+		if req.Action == AIToolCallActionExecute {
+			if !proposal.AllowedByCurrentPolicy {
+				if grant, ok := s.consumeToolApprovalGrant(project, req, descriptor); ok {
+					approvalGrant = &grant
+					proposal.AllowedByCurrentPolicy = true
+				}
+			}
+		} else if scope := toolApprovalScopeForAction(req.Action); scope != "" {
+			grant, err := s.grantToolApproval(project, req, descriptor, scope)
+			if err != nil {
+				approvalGrantErr = err
+			} else {
+				approvalGrant = &grant
+				proposal.AllowedByCurrentPolicy = true
+			}
+		}
+	}
 	result := newToolCallResult(req, descriptor, proposal)
+	s.emitToolLifecycleArtifact(project, result, proposal, "proposed", nil)
+	if req.Action == AIToolCallActionDeny {
+		result.Status = "denied"
+		result.Error = "tool call denied by user"
+		return s.finishToolCall(project, result, proposal, nil), nil
+	}
 	if proposal.HardDenyReason != "" {
 		result.Status = "blocked"
 		result.Error = string(proposal.HardDenyReason)
 		return s.finishToolCall(project, result, proposal, nil), nil
 	}
-	if req.Action == AIToolCallActionExecute && !proposal.AllowedByCurrentPolicy {
+	if approvalGrantErr != nil {
+		result.Status = "blocked"
+		result.Error = approvalGrantErr.Error()
+		return s.finishToolCall(project, result, proposal, nil), nil
+	}
+	if toolCallPerformsExecution(req.Action) && !proposal.AllowedByCurrentPolicy {
 		result.Status = "approval_required"
 		result.Error = "tool execution requires an active approval policy"
 		return s.finishToolCall(project, result, proposal, nil), nil
 	}
 
+	if toolCallPerformsExecution(req.Action) {
+		approvalPayload := map[string]any{
+			"approvalModeRequired": proposal.ApprovalModeRequired,
+			"approvalPolicyMode":   s.approvalSummaryForProject(project).Mode,
+			"approvedByPolicy":     approvalGrant == nil,
+		}
+		if approvalGrant != nil {
+			approvalPayload["approvalGrantId"] = approvalGrant.ID
+			approvalPayload["approvalGrantScope"] = approvalGrant.Scope
+			approvalPayload["approvedByGrant"] = true
+			approvalPayload["approvedByPolicy"] = false
+		}
+		s.emitToolLifecycleArtifact(project, result, proposal, "approved", map[string]any{
+			"approvalModeRequired": approvalPayload["approvalModeRequired"],
+			"approvalPolicyMode":   approvalPayload["approvalPolicyMode"],
+			"approvedByPolicy":     approvalPayload["approvedByPolicy"],
+			"approvalGrantId":      approvalPayload["approvalGrantId"],
+			"approvalGrantScope":   approvalPayload["approvalGrantScope"],
+			"approvedByGrant":      approvalPayload["approvedByGrant"],
+		})
+	}
+	s.emitToolLifecycleArtifact(project, result, proposal, "started", nil)
+	execReq := req
+	if toolCallPerformsExecution(req.Action) {
+		execReq.Action = AIToolCallActionExecute
+	}
 	switch req.ToolID {
 	case "context.read":
-		result = s.executeContextReadTool(project, req, result)
+		result = s.executeContextReadTool(project, execReq, result)
+	case "diagnostics.read":
+		result = s.executeDiagnosticsReadTool(project, execReq, result)
+	case "file.read_range":
+		result = s.executeFileReadRangeTool(project, execReq, result)
+	case "workspace.grep":
+		result = s.executeWorkspaceGrepTool(project, execReq, result)
+	case "file.edit.preview":
+		result = s.executeFileEditPreviewTool(project, execReq, result)
+	case "file.create.preview":
+		result = s.executeFileCreatePreviewTool(project, execReq, result)
 	case "file.patch.preview":
-		result = s.executePatchPreviewTool(project, req, result)
+		result = s.executePatchPreviewTool(project, execReq, result)
 	case "file.patch.apply":
-		result = s.executePatchApplyTool(project, req, result)
+		result = s.executePatchApplyTool(project, execReq, result)
 	case "terminal.preview":
-		if req.Action == AIToolCallActionExecute {
-			result = s.executeTerminalTool(ctx, project, req, result)
+		if execReq.Action == AIToolCallActionExecute {
+			result = s.executeTerminalTool(ctx, project, execReq, result)
 		} else {
 			result.Status = "previewed"
-			result.OutputPreview = strings.TrimSpace(req.Arguments["command"])
+			result.OutputPreview = strings.TrimSpace(execReq.Arguments["command"])
 		}
 	case "git.preview":
-		result = s.executeGitPreviewTool(ctx, project, req, result)
+		result = s.executeGitPreviewTool(ctx, project, execReq, result)
 	case "mcp.preview":
-		result.Status = "previewed"
-		result.OutputPreview = firstNonEmpty(req.Arguments["tool"], req.Arguments["name"], "mcp action")
+		if execReq.Action == AIToolCallActionExecute {
+			result.Status = "blocked"
+			result.Error = "mcp.preview cannot be executed; use an MCP execution tool"
+		} else {
+			result.Status = "previewed"
+			result.OutputPreview = firstNonEmpty(execReq.Arguments["tool"], execReq.Arguments["name"], "mcp action")
+		}
 	case "mcp.execute":
-		result.Status = "blocked"
-		result.Error = "MCP execution is not available until an MCP executor is injected into the AI service"
+		result = s.executeMCPExecuteTool(ctx, project, execReq, result)
+	case "subagent.preview":
+		result = s.executeSubagentPreviewTool(project, execReq, result)
 	default:
 		result.Status = "blocked"
 		result.Error = "tool is registered but has no executor"
@@ -98,6 +184,116 @@ func (s *Service) toolDescriptor(toolID string) (AIToolDescriptor, bool) {
 		}
 	}
 	return AIToolDescriptor{}, false
+}
+
+func (s *Service) validateToolCallRun(project *ProjectSession, req AIToolCallRequest) (AIChatRun, error) {
+	run, err := s.GetChatRun(project.ID, req.RunID)
+	if err != nil {
+		return AIChatRun{}, err
+	}
+	if run.Status == "canceled" {
+		return AIChatRun{}, fmt.Errorf("cannot review a tool call for a canceled run")
+	}
+	if req.RunRevision > 0 && run.Revision != req.RunRevision {
+		return AIChatRun{}, fmt.Errorf("tool call run revision is stale: have %d, want %d", req.RunRevision, run.Revision)
+	}
+	return run, nil
+}
+
+func toolCallPerformsExecution(action AIToolCallAction) bool {
+	switch action {
+	case AIToolCallActionExecute, AIToolCallActionApproveOnce, AIToolCallActionApproveForRun:
+		return true
+	default:
+		return false
+	}
+}
+
+func toolApprovalScopeForAction(action AIToolCallAction) string {
+	switch action {
+	case AIToolCallActionApproveOnce:
+		return toolApprovalScopeOnce
+	case AIToolCallActionApproveForRun:
+		return toolApprovalScopeRun
+	default:
+		return ""
+	}
+}
+
+func (s *Service) grantToolApproval(project *ProjectSession, req AIToolCallRequest, descriptor AIToolDescriptor, scope string) (AIToolApprovalGrant, error) {
+	if strings.TrimSpace(req.RunID) == "" {
+		return AIToolApprovalGrant{}, fmt.Errorf("tool approval requires a run id")
+	}
+	run, err := s.GetChatRun(project.ID, req.RunID)
+	if err != nil {
+		return AIToolApprovalGrant{}, err
+	}
+	if run.Status == "canceled" {
+		return AIToolApprovalGrant{}, fmt.Errorf("cannot approve a tool call for a canceled run")
+	}
+	now := time.Now().UTC()
+	grant := AIToolApprovalGrant{
+		ID:               "tool-approval-" + uuid.NewString(),
+		ProjectSessionID: project.ID,
+		RunID:            req.RunID,
+		ToolID:           descriptor.ID,
+		Kind:             descriptor.Kind,
+		Scope:            scope,
+		ArgumentsHash:    toolApprovalArgumentsHash(req.Arguments),
+		GrantedBy:        "user",
+		GrantedAt:        now.Format(time.RFC3339),
+		ExpiresAt:        now.Add(toolApprovalGrantTTL).Format(time.RFC3339),
+	}
+	if scope == toolApprovalScopeRun {
+		s.mu.Lock()
+		if s.toolApprovals == nil {
+			s.toolApprovals = map[string]AIToolApprovalGrant{}
+		}
+		s.toolApprovals[toolApprovalGrantKey(project.ID, req.RunID, descriptor.ID, req.Arguments)] = grant
+		s.mu.Unlock()
+	}
+	return grant, nil
+}
+
+func (s *Service) consumeToolApprovalGrant(project *ProjectSession, req AIToolCallRequest, descriptor AIToolDescriptor) (AIToolApprovalGrant, bool) {
+	if strings.TrimSpace(req.RunID) == "" {
+		return AIToolApprovalGrant{}, false
+	}
+	run, err := s.GetChatRun(project.ID, req.RunID)
+	if err != nil || run.Status == "canceled" {
+		return AIToolApprovalGrant{}, false
+	}
+	key := toolApprovalGrantKey(project.ID, req.RunID, descriptor.ID, req.Arguments)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	grant, ok := s.toolApprovals[key]
+	if !ok {
+		return AIToolApprovalGrant{}, false
+	}
+	expiresAt, err := time.Parse(time.RFC3339, grant.ExpiresAt)
+	if err != nil || !expiresAt.After(time.Now().UTC()) {
+		delete(s.toolApprovals, key)
+		return AIToolApprovalGrant{}, false
+	}
+	if grant.Scope == toolApprovalScopeOnce {
+		grant.UsedAt = utcNow()
+		delete(s.toolApprovals, key)
+		return grant, true
+	}
+	return grant, true
+}
+
+func toolApprovalGrantKey(projectID string, runID string, toolID string, arguments map[string]string) string {
+	return strings.Join([]string{
+		normalizeProjectID(projectID),
+		strings.TrimSpace(runID),
+		strings.TrimSpace(toolID),
+		toolApprovalArgumentsHash(arguments),
+	}, ":")
+}
+
+func toolApprovalArgumentsHash(arguments map[string]string) string {
+	return shortHash(toolArgumentsJSON(arguments))
 }
 
 func newToolCallResult(req AIToolCallRequest, descriptor AIToolDescriptor, proposal AIToolProposal) AIToolCallResult {
@@ -144,21 +340,184 @@ func (s *Service) finishToolCall(project *ProjectSession, result AIToolCallResul
 			result.Audit = stored
 		}
 	}
-	if project != nil && project.ChatArtifacts != nil && strings.TrimSpace(result.Audit.RunID) != "" {
-		artifactPayload := payload
-		if artifactPayload == nil {
-			artifactPayload = result.Audit
-		}
-		kind := AIChatRunArtifactToolProposal
-		title := "Tool call"
-		if result.Kind == AIToolKindTerminal {
-			kind = AIChatRunArtifactTerminal
-			title = "Terminal preview"
-		}
-		s.recordChatRunArtifact(project, result.Audit.RunID, kind, title, result.Status, artifactPayload)
-	}
+	s.emitToolLifecycleArtifact(project, result, proposal, toolLifecycleFinalPhase(result.Status), payload)
 	s.emitEvent("ai:tool:call-recorded", result)
 	return result
+}
+
+func (s *Service) emitToolLifecycleArtifact(project *ProjectSession, result AIToolCallResult, proposal AIToolProposal, phase string, payload any) {
+	artifact, ok := s.recordToolLifecycleArtifact(project, result, proposal, phase, payload)
+	if ok {
+		s.emitEvent("ai:tool:lifecycle-recorded", artifact)
+	}
+}
+
+func (s *Service) recordToolLifecycleArtifact(project *ProjectSession, result AIToolCallResult, proposal AIToolProposal, phase string, payload any) (AIChatRunArtifact, bool) {
+	if project == nil || project.ChatArtifacts == nil || strings.TrimSpace(result.Audit.RunID) == "" {
+		return AIChatRunArtifact{}, false
+	}
+	run, err := s.GetChatRun(project.ID, result.Audit.RunID)
+	if err != nil {
+		return AIChatRunArtifact{}, false
+	}
+	kind := AIChatRunArtifactToolProposal
+	title := "Tool: " + result.ToolID
+	if result.Kind == AIToolKindTerminal {
+		kind = AIChatRunArtifactTerminal
+		title = "Terminal tool"
+	}
+	now := utcNow()
+	artifactID := toolLifecycleArtifactID(run.ID, result.ID)
+	createdAt := now
+	events := []map[string]any{}
+	if existing, getErr := project.ChatArtifacts.Get(artifactID); getErr == nil {
+		createdAt = firstNonEmpty(existing.CreatedAt, now)
+		events = toolLifecycleEventsFromPayload(existing.PayloadJSON)
+	}
+	status := toolLifecycleArtifactStatus(phase, result.Status)
+	event := map[string]any{
+		"phase":      phase,
+		"status":     status,
+		"toolId":     result.ToolID,
+		"artifactId": result.ArtifactID,
+		"error":      result.Error,
+		"at":         now,
+	}
+	if payload != nil {
+		event["payload"] = payload
+	}
+	events = append(events, event)
+	artifactPayload := toolLifecycleArtifactPayload(result, proposal, phase, status, events, payload)
+	artifact := AIChatRunArtifact{
+		ID:               artifactID,
+		RunID:            run.ID,
+		SessionID:        normalizeChatSessionID(run.SessionID),
+		ProjectSessionID: project.ID,
+		Kind:             kind,
+		Status:           status,
+		Title:            title,
+		Summary:          toolLifecycleArtifactSummary(status, result, proposal),
+		PayloadJSON:      marshalChatArtifactPayload(artifactPayload),
+		CreatedAt:        createdAt,
+		UpdatedAt:        now,
+	}
+	_ = project.ChatArtifacts.Upsert(artifact)
+	return artifact, true
+}
+
+func toolCallArtifactSummary(result AIToolCallResult, proposal AIToolProposal) string {
+	return toolLifecycleArtifactSummary(firstNonEmpty(result.Status, "recorded"), result, proposal)
+}
+
+func toolLifecycleArtifactSummary(status string, result AIToolCallResult, proposal AIToolProposal) string {
+	parts := []string{firstNonEmpty(result.Status, "recorded")}
+	if status != "" && status != result.Status {
+		parts = []string{status}
+	}
+	if proposal.ScopeSummary != "" {
+		parts = append(parts, proposal.ScopeSummary)
+	}
+	if result.ArtifactID != "" {
+		parts = append(parts, "artifact "+result.ArtifactID)
+	}
+	if result.Error != "" {
+		parts = append(parts, result.Error)
+	}
+	if result.OutputPreview != "" && result.Error == "" {
+		parts = append(parts, result.OutputPreview)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func toolLifecycleArtifactID(runID string, resultID string) string {
+	return "artifact-" + shortHash(runID+":tool:"+resultID)
+}
+
+func toolLifecycleFinalPhase(status string) string {
+	switch strings.TrimSpace(status) {
+	case "blocked", "approval_required", "denied":
+		return strings.TrimSpace(status)
+	case "error", "apply_error":
+		return "failed"
+	default:
+		return "completed"
+	}
+}
+
+func toolLifecycleArtifactStatus(phase string, resultStatus string) string {
+	phase = strings.TrimSpace(phase)
+	if phase == "proposed" || phase == "approved" || phase == "started" {
+		return phase
+	}
+	return firstNonEmpty(strings.TrimSpace(resultStatus), phase, "recorded")
+}
+
+func toolLifecycleEventsFromPayload(payloadJSON string) []map[string]any {
+	if strings.TrimSpace(payloadJSON) == "" {
+		return nil
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(payloadJSON), &raw); err != nil {
+		return nil
+	}
+	rawEvents, ok := raw["events"].([]any)
+	if !ok {
+		return nil
+	}
+	events := make([]map[string]any, 0, len(rawEvents))
+	for _, rawEvent := range rawEvents {
+		event, ok := rawEvent.(map[string]any)
+		if ok {
+			events = append(events, event)
+		}
+	}
+	return events
+}
+
+func toolLifecycleArtifactPayload(result AIToolCallResult, proposal AIToolProposal, phase string, status string, events []map[string]any, payload any) map[string]any {
+	output := map[string]any{
+		"callId":        result.ID,
+		"toolId":        result.ToolID,
+		"kind":          result.Kind,
+		"action":        result.Action,
+		"phase":         phase,
+		"status":        status,
+		"resultStatus":  result.Status,
+		"artifactId":    result.ArtifactID,
+		"outputPreview": result.OutputPreview,
+		"error":         result.Error,
+		"arguments":     result.Arguments,
+		"audit":         result.Audit,
+		"proposal": map[string]any{
+			"id":                     proposal.ID,
+			"name":                   proposal.Name,
+			"kind":                   proposal.Kind,
+			"riskLevel":              proposal.RiskLevel,
+			"scopeSummary":           proposal.ScopeSummary,
+			"targetPaths":            sanitizedToolPaths(proposal.TargetPaths),
+			"commandPreview":         sanitizedDisplayText(proposal.CommandPreview),
+			"approvalModeRequired":   proposal.ApprovalModeRequired,
+			"allowedByCurrentPolicy": proposal.AllowedByCurrentPolicy,
+			"hardDenyReason":         proposal.HardDenyReason,
+		},
+		"lifecycle": lifecyclePhases(events),
+		"events":    events,
+	}
+	if payload != nil {
+		output["payload"] = payload
+	}
+	return output
+}
+
+func lifecyclePhases(events []map[string]any) []string {
+	phases := make([]string, 0, len(events))
+	for _, event := range events {
+		phase, ok := event["phase"].(string)
+		if ok && strings.TrimSpace(phase) != "" {
+			phases = append(phases, phase)
+		}
+	}
+	return phases
 }
 
 func (s *Service) executeContextReadTool(project *ProjectSession, req AIToolCallRequest, result AIToolCallResult) AIToolCallResult {
@@ -311,10 +670,25 @@ func toolProposalForCall(descriptor AIToolDescriptor, req AIToolCallRequest, pro
 	if target := strings.TrimSpace(arguments["path"]); target != "" {
 		proposal.TargetPaths = []string{target}
 	}
+	if req.ToolID == "file.read_range" {
+		proposal.ScopeSummary = "Project-scoped file range read: " + arguments["path"]
+	}
+	if req.ToolID == "diagnostics.read" {
+		proposal.ScopeSummary = "Project-scoped diagnostics read: " + arguments["path"]
+	}
+	if req.ToolID == "workspace.grep" {
+		proposal.ScopeSummary = "Project-scoped search: " + arguments["pattern"]
+	}
 	if artifactID := strings.TrimSpace(arguments["artifactId"]); artifactID != "" {
 		proposal.ScopeSummary = "Project-scoped patch artifact apply: " + artifactID
 	}
-	if req.ToolID == "terminal.preview" && req.Action == AIToolCallActionExecute {
+	if req.ToolID == "file.edit.preview" {
+		proposal.ScopeSummary = "Project-scoped targeted edit preview: " + arguments["path"]
+	}
+	if req.ToolID == "file.create.preview" {
+		proposal.ScopeSummary = "Project-scoped new file preview: " + arguments["path"]
+	}
+	if req.ToolID == "terminal.preview" && toolCallPerformsExecution(req.Action) {
 		proposal.ApprovalModeRequired = AIApprovalModeFullAccess
 		proposal.RiskLevel = AIToolRiskHigh
 	}
@@ -326,6 +700,17 @@ func toolProposalForCall(descriptor AIToolDescriptor, req AIToolCallRequest, pro
 		proposal.Kind = AIToolKindContextRead
 		proposal.ApprovalModeRequired = AIApprovalModeReadOnlyAllowed
 	}
+	if req.ToolID == "mcp.execute" {
+		proposal.MCPToolName = firstNonEmpty(arguments["tool"], arguments["name"])
+		proposal.ScopeSummary = "MCP tool call: " + proposal.MCPToolName
+		proposal.ApprovalModeRequired = AIApprovalModeFullAccess
+		proposal.RiskLevel = AIToolRiskHigh
+	}
+	if req.ToolID == "subagent.preview" {
+		proposal.ScopeSummary = "Isolated subagent preview: " + firstNonEmpty(arguments["prompt"], "background task")
+		proposal.Kind = AIToolKindSubagent
+		proposal.ApprovalModeRequired = AIApprovalModeAskEachTime
+	}
 	if reason := hardDenyReasonForCommand(arguments["command"], projectRoot); reason != "" {
 		proposal.HardDenyReason = reason
 	}
@@ -333,34 +718,66 @@ func toolProposalForCall(descriptor AIToolDescriptor, req AIToolCallRequest, pro
 }
 
 func hardDenyReasonForCommand(command string, _ string) AIToolHardDenyReason {
-	command = strings.ToLower(strings.TrimSpace(command))
-	if command == "" {
+	normalized := strings.ToLower(strings.TrimSpace(command))
+	if normalized == "" {
 		return ""
 	}
-	if strings.Contains(command, "rm -rf") ||
-		strings.Contains(command, "sudo ") ||
-		strings.Contains(command, "mkfs") ||
-		strings.Contains(command, "diskutil erase") ||
-		strings.Contains(command, "chmod -r 777") ||
-		strings.Contains(command, ":(){") {
+	if strings.Contains(normalized, "rm -rf") ||
+		strings.Contains(normalized, "sudo ") ||
+		strings.Contains(normalized, "mkfs") ||
+		strings.Contains(normalized, "diskutil erase") ||
+		strings.Contains(normalized, "chmod -r 777") ||
+		strings.Contains(normalized, ":(){") {
 		return AIToolHardDenyReasonDestructiveShell
 	}
-	if strings.Contains(command, "api_key=") ||
-		strings.Contains(command, "authorization: bearer") ||
-		strings.Contains(command, "id_rsa") ||
-		strings.Contains(command, ".env") {
+	if strings.Contains(normalized, "api_key=") ||
+		strings.Contains(normalized, "authorization: bearer") ||
+		strings.Contains(normalized, "id_rsa") ||
+		strings.Contains(normalized, ".env") {
 		return AIToolHardDenyReasonSecrets
 	}
-	if (strings.Contains(command, "curl ") ||
-		strings.Contains(command, "wget ") ||
-		strings.Contains(command, "ssh ") ||
-		strings.Contains(command, "scp ")) &&
-		!strings.Contains(command, "localhost") &&
-		!strings.Contains(command, "127.0.0.1") &&
-		!strings.Contains(command, "::1") {
+	if terminalCommandLooksLikeFileWrite(normalized) {
+		return AIToolHardDenyReasonTerminalFileWrite
+	}
+	if (strings.Contains(normalized, "curl ") ||
+		strings.Contains(normalized, "wget ") ||
+		strings.Contains(normalized, "ssh ") ||
+		strings.Contains(normalized, "scp ")) &&
+		!strings.Contains(normalized, "localhost") &&
+		!strings.Contains(normalized, "127.0.0.1") &&
+		!strings.Contains(normalized, "::1") {
 		return AIToolHardDenyReasonNonLoopbackNetwork
 	}
 	return ""
+}
+
+func terminalCommandLooksLikeFileWrite(command string) bool {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return false
+	}
+	if terminalOutputRedirectionPattern.MatchString(command) ||
+		terminalTeeWritePattern.MatchString(command) {
+		return true
+	}
+	for _, marker := range []string{
+		"sed -i",
+		"sed -i.",
+		"perl -pi",
+		"perl -i",
+		"ed -s ",
+		"writefile",
+		"writefilesync",
+		"createwritestream",
+	} {
+		if strings.Contains(command, marker) {
+			return true
+		}
+	}
+	if strings.Contains(command, "open(") && strings.Contains(command, ".write(") {
+		return true
+	}
+	return false
 }
 
 func safeToolCWD(projectRoot string, value string) (string, error) {

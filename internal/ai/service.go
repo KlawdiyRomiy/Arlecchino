@@ -22,29 +22,36 @@ import (
 
 type EventEmitter func(name string, payload any)
 type MCPContextProvider func(projectRoot string) (AIMCPContextPlane, error)
+type DiagnosticsProvider func(projectRoot string, filePath string, language string, limit int) (string, error)
+type MCPToolExecutor func(ctx context.Context, projectRoot string, toolName string, arguments map[string]any) (any, error)
 
 type ServiceOptions struct {
 	SettingsPath       string
 	SecretStore        SecretStore
 	Emit               EventEmitter
 	MCPContextProvider MCPContextProvider
+	Diagnostics        DiagnosticsProvider
+	MCPExecutor        MCPToolExecutor
 }
 
 type Service struct {
-	mu           sync.RWMutex
-	settings     Settings
-	settingsPath string
-	secretStore  SecretStore
-	emit         EventEmitter
-	mcpContext   MCPContextProvider
-	providers    map[string]providers.Provider
-	descriptors  map[string]providers.AIProviderDescriptor
-	projects     map[string]*ProjectSession
-	runs         map[string]*AIChatRun
-	runCancels   map[string]context.CancelFunc
-	runDone      map[string]chan struct{}
-	runtimes     *providerRuntimeManager
-	started      bool
+	mu            sync.RWMutex
+	settings      Settings
+	settingsPath  string
+	secretStore   SecretStore
+	emit          EventEmitter
+	mcpContext    MCPContextProvider
+	diagnostics   DiagnosticsProvider
+	mcpExecutor   MCPToolExecutor
+	providers     map[string]providers.Provider
+	descriptors   map[string]providers.AIProviderDescriptor
+	projects      map[string]*ProjectSession
+	runs          map[string]*AIChatRun
+	runCancels    map[string]context.CancelFunc
+	runDone       map[string]chan struct{}
+	toolApprovals map[string]AIToolApprovalGrant
+	runtimes      *providerRuntimeManager
+	started       bool
 }
 
 type ProjectSession struct {
@@ -64,17 +71,20 @@ func NewService(options ServiceOptions) *Service {
 		secretStore = DefaultSecretStore()
 	}
 	return &Service{
-		settingsPath: options.SettingsPath,
-		secretStore:  secretStore,
-		emit:         options.Emit,
-		mcpContext:   options.MCPContextProvider,
-		providers:    map[string]providers.Provider{},
-		descriptors:  map[string]providers.AIProviderDescriptor{},
-		projects:     map[string]*ProjectSession{},
-		runs:         map[string]*AIChatRun{},
-		runCancels:   map[string]context.CancelFunc{},
-		runDone:      map[string]chan struct{}{},
-		runtimes:     newProviderRuntimeManager(),
+		settingsPath:  options.SettingsPath,
+		secretStore:   secretStore,
+		emit:          options.Emit,
+		mcpContext:    options.MCPContextProvider,
+		diagnostics:   options.Diagnostics,
+		mcpExecutor:   options.MCPExecutor,
+		providers:     map[string]providers.Provider{},
+		descriptors:   map[string]providers.AIProviderDescriptor{},
+		projects:      map[string]*ProjectSession{},
+		runs:          map[string]*AIChatRun{},
+		runCancels:    map[string]context.CancelFunc{},
+		runDone:       map[string]chan struct{}{},
+		toolApprovals: map[string]AIToolApprovalGrant{},
+		runtimes:      newProviderRuntimeManager(),
 	}
 }
 
@@ -108,6 +118,7 @@ func (s *Service) Close() error {
 	s.runCancels = map[string]context.CancelFunc{}
 	s.runDone = map[string]chan struct{}{}
 	s.runs = map[string]*AIChatRun{}
+	s.toolApprovals = map[string]AIToolApprovalGrant{}
 	projects := make([]*ProjectSession, 0, len(s.projects))
 	for _, project := range s.projects {
 		projects = append(projects, project)
@@ -1017,6 +1028,7 @@ func (s *Service) callProvider(ctx context.Context, project *ProjectSession, des
 	} else {
 		record.Status = "completed"
 	}
+	applyGenerationUsageToEgress(&record, req, response, descriptor, chatToolset{Profile: chatToolProfileNone, ToolSupport: true})
 	if project.Egress != nil {
 		stored, ledgerErr := project.Egress.Append(record)
 		if ledgerErr == nil {

@@ -87,9 +87,13 @@ func (p *OpenAICompatibleProvider) Descriptor() AIProviderDescriptor {
 		OAuthSupported: !p.local,
 		RequiresAuth:   p.requiresAuth,
 		AuthConfigured: authConfigured,
-		Capabilities:   DefaultCapabilities(),
-		DefaultModel:   p.model,
-		Status:         status,
+		Capabilities: append(DefaultCapabilities(),
+			CapabilityToolCalling,
+			CapabilityStructuredOutput,
+			CapabilityPatchGeneration,
+		),
+		DefaultModel: p.model,
+		Status:       status,
 	}
 }
 
@@ -158,27 +162,62 @@ type openAIChatRequest struct {
 	Temperature float64         `json:"temperature,omitempty"`
 	Stop        []string        `json:"stop,omitempty"`
 	Stream      bool            `json:"stream"`
+	Tools       []openAITool    `json:"tools,omitempty"`
+	ToolChoice  any             `json:"tool_choice,omitempty"`
 }
 
 type openAIMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+	Name       string           `json:"name,omitempty"`
+	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
+}
+
+type openAITool struct {
+	Type     string         `json:"type"`
+	Function openAIFunction `json:"function"`
+}
+
+type openAIFunction struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+type openAIToolCall struct {
+	ID       string                 `json:"id,omitempty"`
+	Type     string                 `json:"type,omitempty"`
+	Function openAIToolCallFunction `json:"function"`
+}
+
+type openAIToolCallFunction struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 type openAIChatResponse struct {
 	Choices []struct {
 		Message openAIChoiceMessage `json:"message"`
 	} `json:"choices"`
+	Usage openAIUsage `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
 }
 
+type openAIUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 type openAIChoiceMessage struct {
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content"`
-	Reasoning        string `json:"reasoning"`
-	Thinking         string `json:"thinking"`
+	Content          string           `json:"content"`
+	ReasoningContent string           `json:"reasoning_content"`
+	Reasoning        string           `json:"reasoning"`
+	Thinking         string           `json:"thinking"`
+	ToolCalls        []openAIToolCall `json:"tool_calls,omitempty"`
 }
 
 func (p *OpenAICompatibleProvider) Generate(ctx context.Context, req GenerationRequest, sink TokenSink) (GenerationResponse, error) {
@@ -206,7 +245,9 @@ func (p *OpenAICompatibleProvider) Generate(ctx context.Context, req GenerationR
 		MaxTokens:   maxTokens,
 		Temperature: temperature,
 		Stop:        req.Stop,
-		Stream:      req.Stream && sink != nil,
+		Stream:      req.Stream && sink != nil && len(req.Tools) == 0,
+		Tools:       openAIToolsFromGenerationRequest(req.Tools),
+		ToolChoice:  openAIToolChoice(req.ToolChoice, req.Tools),
 	}
 	if request.Stream {
 		return p.generateStreaming(ctx, request, sink)
@@ -226,12 +267,13 @@ func (p *OpenAICompatibleProvider) Generate(ctx context.Context, req GenerationR
 		text = response.Choices[0].Message.Content
 		reasoningText = openAIReasoningText(response.Choices[0].Message)
 	}
+	toolCalls := generationToolCallsFromOpenAIMessage(firstOpenAIChoiceMessage(response))
 	if sink != nil && text != "" {
 		if err := sink(text); err != nil {
-			return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString()}, err
+			return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString(), ToolCalls: toolCalls, Usage: generationUsageFromOpenAI(response.Usage)}, err
 		}
 	}
-	return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString()}, nil
+	return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString(), ToolCalls: toolCalls, Usage: generationUsageFromOpenAI(response.Usage)}, nil
 }
 
 type openAIStreamChunk struct {
@@ -253,10 +295,21 @@ func openAIMessagesFromGenerationRequest(req GenerationRequest) []openAIMessage 
 		for _, message := range req.Messages {
 			role := normalizedOpenAIMessageRole(message.Role)
 			content := strings.TrimSpace(message.Content)
-			if content == "" {
+			toolCallID := strings.TrimSpace(message.ToolCallID)
+			name := strings.TrimSpace(message.Name)
+			toolCalls := openAIToolCallsFromGenerationToolCalls(message.ToolCalls)
+			if content == "" && toolCallID == "" && len(toolCalls) == 0 {
 				continue
 			}
-			messages = append(messages, openAIMessage{Role: role, Content: content})
+			next := openAIMessage{Role: role, Content: content}
+			if role == "assistant" && len(toolCalls) > 0 {
+				next.ToolCalls = toolCalls
+			}
+			if role == "tool" {
+				next.ToolCallID = toolCallID
+				next.Name = name
+			}
+			messages = append(messages, next)
 		}
 		if len(messages) > 0 {
 			return messages
@@ -282,10 +335,113 @@ func generationMessagesContainSystem(messages []GenerationMessage) bool {
 
 func normalizedOpenAIMessageRole(role string) string {
 	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "system", "assistant", "user":
+	case "system", "assistant", "user", "tool":
 		return strings.ToLower(strings.TrimSpace(role))
 	default:
 		return "user"
+	}
+}
+
+func openAIToolsFromGenerationRequest(tools []GenerationTool) []openAITool {
+	if len(tools) == 0 {
+		return nil
+	}
+	output := make([]openAITool, 0, len(tools))
+	for _, tool := range tools {
+		name := strings.TrimSpace(tool.Name)
+		if name == "" {
+			continue
+		}
+		parameters := tool.Parameters
+		if parameters == nil {
+			parameters = map[string]any{"type": "object"}
+		}
+		output = append(output, openAITool{
+			Type: "function",
+			Function: openAIFunction{
+				Name:        name,
+				Description: strings.TrimSpace(tool.Description),
+				Parameters:  parameters,
+			},
+		})
+	}
+	return output
+}
+
+func openAIToolCallsFromGenerationToolCalls(calls []GenerationToolCall) []openAIToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	output := make([]openAIToolCall, 0, len(calls))
+	for _, call := range calls {
+		name := strings.TrimSpace(call.Name)
+		if name == "" {
+			continue
+		}
+		output = append(output, openAIToolCall{
+			ID:   strings.TrimSpace(call.ID),
+			Type: "function",
+			Function: openAIToolCallFunction{
+				Name:      name,
+				Arguments: strings.TrimSpace(call.ArgumentsJSON),
+			},
+		})
+	}
+	return output
+}
+
+func openAIToolChoice(choice string, tools []GenerationTool) any {
+	if len(tools) == 0 {
+		return nil
+	}
+	choice = strings.TrimSpace(choice)
+	if choice == "" {
+		return "auto"
+	}
+	return choice
+}
+
+func firstOpenAIChoiceMessage(response openAIChatResponse) openAIChoiceMessage {
+	if len(response.Choices) == 0 {
+		return openAIChoiceMessage{}
+	}
+	return response.Choices[0].Message
+}
+
+func generationToolCallsFromOpenAIMessage(message openAIChoiceMessage) []GenerationToolCall {
+	if len(message.ToolCalls) == 0 {
+		return nil
+	}
+	output := make([]GenerationToolCall, 0, len(message.ToolCalls))
+	for _, call := range message.ToolCalls {
+		name := strings.TrimSpace(call.Function.Name)
+		if name == "" {
+			continue
+		}
+		output = append(output, GenerationToolCall{
+			ID:            strings.TrimSpace(call.ID),
+			Name:          name,
+			ArgumentsJSON: strings.TrimSpace(call.Function.Arguments),
+		})
+	}
+	return output
+}
+
+func generationUsageFromOpenAI(usage openAIUsage) GenerationTokenUsage {
+	input := usage.PromptTokens
+	output := usage.CompletionTokens
+	total := usage.TotalTokens
+	if total == 0 && (input > 0 || output > 0) {
+		total = input + output
+	}
+	if input == 0 && output == 0 && total == 0 {
+		return GenerationTokenUsage{}
+	}
+	return GenerationTokenUsage{
+		InputTokens:  input,
+		OutputTokens: output,
+		TotalTokens:  total,
+		Source:       "provider",
 	}
 }
 

@@ -534,6 +534,18 @@ type AIEgressRecord struct {
 	RunID            string               `json:"runId,omitempty"`
 	Source           string               `json:"source,omitempty"`
 	ChatAction       AIChatAction         `json:"chatAction,omitempty"`
+	InputTokens      int                  `json:"inputTokens,omitempty"`
+	OutputTokens     int                  `json:"outputTokens,omitempty"`
+	TotalTokens      int                  `json:"totalTokens,omitempty"`
+	EstimatedTokens  bool                 `json:"estimatedTokens,omitempty"`
+	TokenSource      string               `json:"tokenSource,omitempty"`
+	CostMicros       int64                `json:"costMicros,omitempty"`
+	CostCurrency     string               `json:"costCurrency,omitempty"`
+	CostEstimated    bool                 `json:"costEstimated,omitempty"`
+	CostSource       string               `json:"costSource,omitempty"`
+	ToolProfile      string               `json:"toolProfile,omitempty"`
+	ToolSchemaCount  int                  `json:"toolSchemaCount,omitempty"`
+	ToolSupportKind  string               `json:"toolSupportKind,omitempty"`
 }
 
 type AIChatAction string
@@ -577,6 +589,7 @@ const (
 	AIToolHardDenyReasonNonLoopbackNetwork  AIToolHardDenyReason = "non_loopback_network"
 	AIToolHardDenyReasonFrontierCloudEgress AIToolHardDenyReason = "frontier_cloud_egress"
 	AIToolHardDenyReasonDestructiveShell    AIToolHardDenyReason = "destructive_shell_commands"
+	AIToolHardDenyReasonTerminalFileWrite   AIToolHardDenyReason = "terminal_file_write"
 	AIToolHardDenyReasonOutsideProjectWrite AIToolHardDenyReason = "outside_project_writes"
 )
 
@@ -607,22 +620,34 @@ type AIToolProposal struct {
 }
 
 type AIEgressSummary struct {
-	RecordID       string               `json:"recordId,omitempty"`
-	Status         string               `json:"status,omitempty"`
-	ProviderID     string               `json:"providerId,omitempty"`
-	ProviderKind   string               `json:"providerKind,omitempty"`
-	Endpoint       string               `json:"endpoint,omitempty"`
-	Model          string               `json:"model,omitempty"`
-	Capability     AIProviderCapability `json:"capability,omitempty"`
-	DataCategories []string             `json:"dataCategories,omitempty"`
-	Redaction      AIRedactionSummary   `json:"redaction"`
-	LatencyMs      int64                `json:"latencyMs,omitempty"`
-	Canceled       bool                 `json:"canceled"`
-	ErrorClass     string               `json:"errorClass,omitempty"`
-	CreatedAt      string               `json:"createdAt,omitempty"`
-	RunID          string               `json:"runId,omitempty"`
-	Source         string               `json:"source,omitempty"`
-	ChatAction     AIChatAction         `json:"chatAction,omitempty"`
+	RecordID        string               `json:"recordId,omitempty"`
+	Status          string               `json:"status,omitempty"`
+	ProviderID      string               `json:"providerId,omitempty"`
+	ProviderKind    string               `json:"providerKind,omitempty"`
+	Endpoint        string               `json:"endpoint,omitempty"`
+	Model           string               `json:"model,omitempty"`
+	Capability      AIProviderCapability `json:"capability,omitempty"`
+	DataCategories  []string             `json:"dataCategories,omitempty"`
+	Redaction       AIRedactionSummary   `json:"redaction"`
+	LatencyMs       int64                `json:"latencyMs,omitempty"`
+	Canceled        bool                 `json:"canceled"`
+	ErrorClass      string               `json:"errorClass,omitempty"`
+	CreatedAt       string               `json:"createdAt,omitempty"`
+	RunID           string               `json:"runId,omitempty"`
+	Source          string               `json:"source,omitempty"`
+	ChatAction      AIChatAction         `json:"chatAction,omitempty"`
+	InputTokens     int                  `json:"inputTokens,omitempty"`
+	OutputTokens    int                  `json:"outputTokens,omitempty"`
+	TotalTokens     int                  `json:"totalTokens,omitempty"`
+	EstimatedTokens bool                 `json:"estimatedTokens,omitempty"`
+	TokenSource     string               `json:"tokenSource,omitempty"`
+	CostMicros      int64                `json:"costMicros,omitempty"`
+	CostCurrency    string               `json:"costCurrency,omitempty"`
+	CostEstimated   bool                 `json:"costEstimated,omitempty"`
+	CostSource      string               `json:"costSource,omitempty"`
+	ToolProfile     string               `json:"toolProfile,omitempty"`
+	ToolSchemaCount int                  `json:"toolSchemaCount,omitempty"`
+	ToolSupportKind string               `json:"toolSupportKind,omitempty"`
 }
 
 type AIToolProposalSummary struct {
@@ -783,15 +808,19 @@ type AIToolDescriptor struct {
 type AIToolCallAction string
 
 const (
-	AIToolCallActionPreview AIToolCallAction = "preview"
-	AIToolCallActionExecute AIToolCallAction = "execute"
+	AIToolCallActionPreview       AIToolCallAction = "preview"
+	AIToolCallActionExecute       AIToolCallAction = "execute"
+	AIToolCallActionDeny          AIToolCallAction = "deny"
+	AIToolCallActionApproveOnce   AIToolCallAction = "approve_once"
+	AIToolCallActionApproveForRun AIToolCallAction = "approve_for_run"
 )
 
 type AIToolCallRequest struct {
-	RunID     string            `json:"runId,omitempty"`
-	ToolID    string            `json:"toolId"`
-	Action    AIToolCallAction  `json:"action"`
-	Arguments map[string]string `json:"arguments,omitempty"`
+	RunID       string            `json:"runId,omitempty"`
+	RunRevision int64             `json:"runRevision,omitempty"`
+	ToolID      string            `json:"toolId"`
+	Action      AIToolCallAction  `json:"action"`
+	Arguments   map[string]string `json:"arguments,omitempty"`
 }
 
 type AIToolAuditRecord struct {
@@ -826,6 +855,20 @@ type AIToolCallResult struct {
 	Error         string            `json:"error,omitempty"`
 	Audit         AIToolAuditRecord `json:"audit"`
 	CreatedAt     string            `json:"createdAt"`
+}
+
+type AIToolApprovalGrant struct {
+	ID               string     `json:"id"`
+	ProjectSessionID string     `json:"projectSessionId,omitempty"`
+	RunID            string     `json:"runId,omitempty"`
+	ToolID           string     `json:"toolId"`
+	Kind             AIToolKind `json:"kind"`
+	Scope            string     `json:"scope"`
+	ArgumentsHash    string     `json:"argumentsHash"`
+	GrantedBy        string     `json:"grantedBy,omitempty"`
+	GrantedAt        string     `json:"grantedAt"`
+	ExpiresAt        string     `json:"expiresAt,omitempty"`
+	UsedAt           string     `json:"usedAt,omitempty"`
 }
 
 type AIChatActionDescriptor struct {
@@ -893,18 +936,25 @@ type AIEmbeddingStatus struct {
 }
 
 type AIModelCapabilityDescriptor struct {
-	ProviderID       string                 `json:"providerId"`
-	ProviderName     string                 `json:"providerName,omitempty"`
-	Model            string                 `json:"model"`
-	Local            bool                   `json:"local"`
-	Frontier         bool                   `json:"frontier"`
-	ContextWindow    int                    `json:"contextWindow,omitempty"`
-	Streaming        bool                   `json:"streaming"`
-	Capabilities     []AIProviderCapability `json:"capabilities"`
-	ToolSupport      bool                   `json:"toolSupport"`
-	VisionSupport    bool                   `json:"visionSupport"`
-	CodeEditQuality  string                 `json:"codeEditQuality"`
-	RecommendedModes []AIChatAction         `json:"recommendedModes,omitempty"`
+	ProviderID              string                 `json:"providerId"`
+	ProviderName            string                 `json:"providerName,omitempty"`
+	Model                   string                 `json:"model"`
+	Local                   bool                   `json:"local"`
+	Frontier                bool                   `json:"frontier"`
+	ContextWindow           int                    `json:"contextWindow,omitempty"`
+	Streaming               bool                   `json:"streaming"`
+	Capabilities            []AIProviderCapability `json:"capabilities"`
+	ToolSupport             bool                   `json:"toolSupport"`
+	ToolSupportKind         string                 `json:"toolSupportKind,omitempty"`
+	ToolSupportReason       string                 `json:"toolSupportReason,omitempty"`
+	StructuredOutputSupport bool                   `json:"structuredOutputSupport"`
+	PatchGenerationSupport  bool                   `json:"patchGenerationSupport"`
+	LowLatency              bool                   `json:"lowLatency"`
+	CostTier                string                 `json:"costTier,omitempty"`
+	CapabilitySource        string                 `json:"capabilitySource,omitempty"`
+	VisionSupport           bool                   `json:"visionSupport"`
+	CodeEditQuality         string                 `json:"codeEditQuality"`
+	RecommendedModes        []AIChatAction         `json:"recommendedModes,omitempty"`
 }
 
 type AIBackgroundAgentPreviewRequest struct {

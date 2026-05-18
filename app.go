@@ -146,6 +146,8 @@ func NewApp() *App {
 			app.emitEvent(name, payload)
 		},
 		MCPContextProvider: app.aiMCPContextProvider,
+		Diagnostics:        app.aiDiagnosticsProvider,
+		MCPExecutor:        app.aiMCPToolExecutor,
 	})
 	app.closeConfirmationEnabled.Store(true)
 	app.projectSessions = NewProjectSessionRegistry()
@@ -174,6 +176,8 @@ func (a *App) startup(ctx context.Context) {
 				a.emitEvent(name, payload)
 			},
 			MCPContextProvider: a.aiMCPContextProvider,
+			Diagnostics:        a.aiDiagnosticsProvider,
+			MCPExecutor:        a.aiMCPToolExecutor,
 		})
 	}
 	if err := a.aiService.Start(ctx); err != nil {

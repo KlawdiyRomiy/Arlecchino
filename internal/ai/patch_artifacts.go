@@ -135,12 +135,48 @@ func (s *Service) ApplyPatchArtifact(projectID string, req AIPatchApplyRequest) 
 	if err := project.ChatArtifacts.Upsert(artifact); err != nil {
 		return AIPatchApplyResult{ArtifactID: artifact.ID, Status: "artifact_update_error", CheckpointIDs: checkpointIDs, Error: err.Error()}, err
 	}
+	s.emitPatchApplyEvents(project, artifact, files, payload.AppliedAt)
 	return AIPatchApplyResult{
 		ArtifactID:    artifact.ID,
 		Status:        "applied",
 		CheckpointIDs: checkpointIDs,
 		AppliedAt:     payload.AppliedAt,
 	}, nil
+}
+
+func (s *Service) emitPatchApplyEvents(project *ProjectSession, artifact AIChatRunArtifact, files []AIPatchFile, appliedAt string) {
+	if s == nil || project == nil {
+		return
+	}
+	eventFiles := make([]map[string]any, 0, len(files))
+	for _, file := range files {
+		absPath, err := safeProjectPath(project.ProjectRoot, file.Path)
+		if err != nil {
+			continue
+		}
+		eventFiles = append(eventFiles, map[string]any{
+			"path":         file.Path,
+			"absolutePath": absPath,
+			"status":       file.Status,
+			"created":      !file.Exists,
+		})
+		if file.Exists {
+			s.emitEvent("file:changed", absPath)
+		} else {
+			s.emitEvent("project:entry:created", map[string]any{
+				"path":        absPath,
+				"isDirectory": false,
+			})
+		}
+	}
+	s.emitEvent("ai:patch:artifact-applied", map[string]any{
+		"artifactId":       artifact.ID,
+		"runId":            artifact.RunID,
+		"sessionId":        artifact.SessionID,
+		"projectSessionId": project.ID,
+		"appliedAt":        appliedAt,
+		"files":            eventFiles,
+	})
 }
 
 func (s *Service) RollbackPatchCheckpoint(projectID string, req AIPatchRollbackRequest) (AIPatchRollbackResult, error) {

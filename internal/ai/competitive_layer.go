@@ -17,19 +17,27 @@ func (s *Service) ListModelCapabilities() []AIModelCapabilityDescriptor {
 			models = []providers.AIModelDescriptor{{ID: provider.DefaultModel, DisplayName: provider.DefaultModel, Streaming: true}}
 		}
 		for _, model := range models {
+			evidence := modelCapabilityEvidenceFor(provider, model)
 			capability := AIModelCapabilityDescriptor{
-				ProviderID:       provider.ID,
-				ProviderName:     provider.Name,
-				Model:            firstNonEmpty(model.ID, provider.DefaultModel),
-				Local:            provider.Local,
-				Frontier:         provider.Frontier,
-				ContextWindow:    model.ContextWindow,
-				Streaming:        model.Streaming,
-				Capabilities:     provider.Capabilities,
-				ToolSupport:      capabilityAllowed(provider.Capabilities, providers.CapabilityChat),
-				VisionSupport:    false,
-				CodeEditQuality:  modelCodeEditQuality(provider, model),
-				RecommendedModes: recommendedModesForProvider(provider),
+				ProviderID:              provider.ID,
+				ProviderName:            provider.Name,
+				Model:                   firstNonEmpty(model.ID, provider.DefaultModel),
+				Local:                   provider.Local,
+				Frontier:                provider.Frontier,
+				ContextWindow:           model.ContextWindow,
+				Streaming:               model.Streaming,
+				Capabilities:            provider.Capabilities,
+				ToolSupport:             evidence.ToolSupport,
+				ToolSupportKind:         evidence.ToolSupportKind,
+				ToolSupportReason:       evidence.ToolSupportReason,
+				StructuredOutputSupport: evidence.StructuredOutputSupport,
+				PatchGenerationSupport:  evidence.PatchGenerationSupport,
+				LowLatency:              evidence.LowLatency,
+				CostTier:                evidence.CostTier,
+				CapabilitySource:        evidence.CapabilitySource,
+				VisionSupport:           false,
+				CodeEditQuality:         modelCodeEditQuality(provider, model),
+				RecommendedModes:        recommendedModesForProvider(provider),
 			}
 			out = append(out, capability)
 		}
