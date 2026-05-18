@@ -1515,44 +1515,6 @@ export function AIChatPanelContent({
     };
   }, [activeRunKey, hydratedRuns, setHydratedRun]);
 
-  useEffect(() => {
-    const runTargets = activeSessionEnvelopes
-      .map((run) => run.id.trim())
-      .filter(Boolean);
-    if (runTargets.length === 0) {
-      return;
-    }
-    let cancelled = false;
-    void Promise.all(
-      runTargets.map(async (runId) => {
-        try {
-          const artifacts = await AIListChatRunArtifacts(runId);
-          return [runId, normalizeAIChatArtifacts(artifacts)] as const;
-        } catch {
-          return null;
-        }
-      }),
-    ).then((results) => {
-      if (cancelled) {
-        return;
-      }
-      setArtifactsByRunId((current) => {
-        const next = { ...current };
-        results.forEach((result) => {
-          if (!result) {
-            return;
-          }
-          const [runId, artifacts] = result;
-          next[runId] = mergeArtifactsById(current[runId] ?? [], artifacts);
-        });
-        return next;
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSessionEnvelopes]);
-
   const refreshRunArtifacts = useCallback(async (runId: string) => {
     const key = runId.trim();
     if (!key) {
@@ -1597,6 +1559,11 @@ export function AIChatPanelContent({
   useEffect(() => {
     syncInlinePatchArtifacts(allKnownArtifacts);
   }, [allKnownArtifacts, syncInlinePatchArtifacts]);
+
+  useEffect(() => {
+    if (!activeRunKey) return;
+    void refreshRunArtifacts(activeRunKey);
+  }, [activeRunKey, refreshRunArtifacts]);
 
   useLayoutEffect(() => {
     if (!state.displayPrefs.autoScroll) return;
@@ -2190,14 +2157,14 @@ export function AIChatPanelContent({
         if (result?.audit?.id) {
           upsertToolAudit(result.audit);
         }
-        await refreshActiveArtifacts();
+        await refreshRunArtifacts(runId);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
       } finally {
         setArtifactBusyId(null);
       }
     },
-    [refreshActiveArtifacts, upsertToolAudit],
+    [refreshRunArtifacts, upsertToolAudit],
   );
 
   const handleDenyToolProposal = useCallback(
@@ -2218,14 +2185,14 @@ export function AIChatPanelContent({
         if (result?.audit?.id) {
           upsertToolAudit(result.audit);
         }
-        await refreshActiveArtifacts();
+        await refreshRunArtifacts(runId);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
       } finally {
         setArtifactBusyId(null);
       }
     },
-    [refreshActiveArtifacts, upsertToolAudit],
+    [refreshRunArtifacts, upsertToolAudit],
   );
 
   const handleApproveToolProposal = useCallback(
@@ -2255,14 +2222,14 @@ export function AIChatPanelContent({
         if (result?.audit?.id) {
           upsertToolAudit(result.audit);
         }
-        await refreshActiveArtifacts();
+        await refreshRunArtifacts(runId);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
       } finally {
         setArtifactBusyId(null);
       }
     },
-    [refreshActiveArtifacts, upsertToolAudit],
+    [refreshRunArtifacts, upsertToolAudit],
   );
 
   const handleAcceptLocalProviderConsent = useCallback(async () => {
