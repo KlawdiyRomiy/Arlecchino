@@ -1577,10 +1577,23 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   const applyDeletedProjectEntry = useCallback((deletedPath: string) => {
     const currentTabs = tabsRef.current;
+    const affectedTabs = currentTabs.filter((tab) =>
+      isSameOrChildPath(tab.path, deletedPath),
+    );
+    const dirtyTabs = affectedTabs.filter((tab) => tab.isDirty);
+    dirtyTabs.forEach((tab) => {
+      useAppNotificationStore.getState().addNotification({
+        id: `deleted-dirty-tab:${tab.id}`,
+        kind: "warning",
+        title: "File deleted on disk",
+        message: `${tab.label} has unsaved editor changes.`,
+        source: "Explorer",
+        sticky: false,
+        timeoutMs: 6000,
+      });
+    });
     const removedTabIds = new Set(
-      currentTabs
-        .filter((tab) => isSameOrChildPath(tab.path, deletedPath))
-        .map((tab) => tab.id),
+      affectedTabs.filter((tab) => !tab.isDirty).map((tab) => tab.id),
     );
 
     if (removedTabIds.size === 0) {
