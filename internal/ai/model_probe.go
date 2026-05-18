@@ -113,7 +113,7 @@ func (s *Service) runModelCapabilityProbe(ctx context.Context, project *ProjectS
 			return result
 		}
 	}
-	result.Status = "failed"
+	result.Status = "unsupported"
 	result.Error = "probe completed without the required tool call"
 	return result
 }

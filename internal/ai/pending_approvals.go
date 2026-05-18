@@ -20,6 +20,7 @@ func (s *Service) ListPendingApprovals(projectID string, limit int) ([]AIPending
 	}
 	pending := make([]AIPendingApproval, 0)
 	resolved := map[string]struct{}{}
+	canceledRunIDs := s.canceledRunIDs(project)
 	for _, artifact := range artifacts {
 		if artifact.Kind != AIChatRunArtifactToolProposal && artifact.Kind != AIChatRunArtifactTerminal {
 			continue
@@ -35,6 +36,9 @@ func (s *Service) ListPendingApprovals(projectID string, limit int) ([]AIPending
 		if approval.ProjectSessionID != "" && approval.ProjectSessionID != project.ID {
 			continue
 		}
+		if _, canceled := canceledRunIDs[approval.RunID]; canceled {
+			continue
+		}
 		if _, ok := resolved[pendingApprovalKey(approval.RunID, approval.ToolID, approval.Arguments)]; ok {
 			continue
 		}
@@ -44,6 +48,36 @@ func (s *Service) ListPendingApprovals(projectID string, limit int) ([]AIPending
 		}
 	}
 	return pending, nil
+}
+
+func (s *Service) canceledRunIDs(project *ProjectSession) map[string]struct{} {
+	canceled := map[string]struct{}{}
+	if s == nil || project == nil {
+		return canceled
+	}
+	if project.ChatHistory != nil {
+		if runs, err := project.ChatHistory.List(0); err == nil {
+			for _, run := range runs {
+				run = normalizeLoadedChatRun(project.ID, run)
+				if run.Status == "canceled" {
+					canceled[run.ID] = struct{}{}
+				}
+			}
+		}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, run := range s.runs {
+		if run.ProjectSessionID != project.ID {
+			continue
+		}
+		if run.Status == "canceled" {
+			canceled[run.ID] = struct{}{}
+		} else {
+			delete(canceled, run.ID)
+		}
+	}
+	return canceled
 }
 
 func pendingApprovalFromArtifact(artifact AIChatRunArtifact) (AIPendingApproval, bool) {
