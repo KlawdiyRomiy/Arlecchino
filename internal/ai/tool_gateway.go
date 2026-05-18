@@ -425,6 +425,7 @@ func (s *Service) recordToolLifecycleArtifact(project *ProjectSession, result AI
 		Summary:          toolLifecycleArtifactSummary(status, result, proposal),
 		Capability:       AICapabilityChat,
 	})
+	s.emitRunEnvelope(project.ID, run.ID)
 	return artifact, true
 }
 
