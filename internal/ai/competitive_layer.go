@@ -40,7 +40,7 @@ func (s *Service) ListModelCapabilities(projectID string) []AIModelCapabilityDes
 				CodeEditQuality:         modelCodeEditQuality(provider, model),
 				RecommendedModes:        recommendedModesForProvider(provider),
 			}
-			if probe, ok := cachedProjectModelCapabilityProbe(project, provider.ID, capability.Model); ok {
+			if probe, ok := cachedProjectModelCapabilityProbe(project, provider.ID, capability.Model); ok && modelCapabilityProbeFresh(probe) {
 				capability.ProbeStatus = probe.Status
 				capability.ProbeCheckedAt = probe.CheckedAt
 				capability.ProbeError = probe.Error

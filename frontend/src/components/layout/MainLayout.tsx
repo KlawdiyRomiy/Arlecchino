@@ -4396,13 +4396,29 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         closeEditorTabPaths(deletedPath, { preserveDirty: true });
         prunePathDiagnostics(deletedPath);
 
+        const editorStore = useEditorStore.getState();
+        const isDirtyCodePanelPath = (path: string): boolean => {
+          const normalizedPath = normalizeProjectPath(path);
+          if (!normalizedPath) {
+            return false;
+          }
+          return (
+            editorStore.tabs.get(makeEditorTabId(normalizedPath))?.isDirty ===
+            true
+          );
+        };
+
         setCodePanelTabs((currentTabs) =>
           currentTabs.filter(
-            (tab) => !isSameOrChildPath(tab.path, deletedPath),
+            (tab) =>
+              !isSameOrChildPath(tab.path, deletedPath) ||
+              isDirtyCodePanelPath(tab.path),
           ),
         );
         setActiveCodePanelPath((currentPath) =>
-          currentPath && isSameOrChildPath(currentPath, deletedPath)
+          currentPath &&
+          isSameOrChildPath(currentPath, deletedPath) &&
+          !isDirtyCodePanelPath(currentPath)
             ? null
             : currentPath,
         );

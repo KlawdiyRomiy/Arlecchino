@@ -190,6 +190,9 @@ func (s *Service) emitPatchApplyEvents(project *ProjectSession, artifact AIChatR
 		ArtifactID:       artifact.ID,
 		Summary:          fmt.Sprintf("Applied patch artifact to %d file(s).", len(eventFiles)),
 	})
+	if strings.TrimSpace(artifact.RunID) != "" {
+		s.emitRunEnvelope(project.ID, artifact.RunID)
+	}
 }
 
 func (s *Service) RollbackPatchCheckpoint(projectID string, req AIPatchRollbackRequest) (AIPatchRollbackResult, error) {
@@ -389,6 +392,9 @@ func (s *Service) emitPatchRollbackEvent(project *ProjectSession, artifact AICha
 		ArtifactID:       artifactID,
 		Summary:          fmt.Sprintf("Rolled back patch artifact for %d file(s).", len(eventFiles)),
 	})
+	if strings.TrimSpace(artifact.RunID) != "" {
+		s.emitRunEnvelope(project.ID, artifact.RunID)
+	}
 }
 
 func (s *Service) validatePatchFiles(project *ProjectSession, diff string) ([]AIPatchFile, error) {
