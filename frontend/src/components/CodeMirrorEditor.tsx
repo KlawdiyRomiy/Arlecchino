@@ -103,6 +103,8 @@ import rainbowBrackets from "rainbowbrackets";
 import { showMinimap } from "@replit/codemirror-minimap";
 import { useEditorStore } from "../stores/editorStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
+import { createAIInlinePatchExtension } from "../extensions/aiInlinePatchExtension";
+import type { AIInlinePatchPreview } from "../stores/aiInlinePatchStore";
 import { useCodeMirrorAdaptiveExtensions } from "../hooks/useCodeMirrorAdaptiveExtensions";
 import {
   resolveAdaptiveEditorFeatureBudget,
@@ -1205,6 +1207,9 @@ interface CodeMirrorEditorProps {
   onGhostRejected?: () => void;
   projectPath?: string;
   highlightLine?: number;
+  aiInlinePatchPreview?: AIInlinePatchPreview | null;
+  onAcceptAIInlinePatch?: (preview: AIInlinePatchPreview) => void;
+  onRejectAIInlinePatch?: (preview: AIInlinePatchPreview) => void;
   onEditorViewReady?: (view: EditorView | null) => void;
   onHistoryAvailabilityChange?: (
     availability: EditorHistoryAvailability,
@@ -1232,6 +1237,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   onGhostRejected,
   projectPath,
   highlightLine,
+  aiInlinePatchPreview,
+  onAcceptAIInlinePatch,
+  onRejectAIInlinePatch,
   onEditorViewReady,
   onHistoryAvailabilityChange,
 }) => {
@@ -3264,6 +3272,22 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     adaptiveExtensionsKey,
   );
 
+  const aiInlinePatchExtension = useMemo<Extension>(
+    () =>
+      createAIInlinePatchExtension({
+        preview: aiInlinePatchPreview,
+        filePath,
+        onAccept: onAcceptAIInlinePatch ?? (() => undefined),
+        onReject: onRejectAIInlinePatch ?? (() => undefined),
+      }),
+    [
+      aiInlinePatchPreview,
+      filePath,
+      onAcceptAIInlinePatch,
+      onRejectAIInlinePatch,
+    ],
+  );
+
   const extensions = useMemo<Extension[]>(() => {
     const nextExtensions: Extension[] = [
       codeEditorTheme,
@@ -3285,6 +3309,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         if (!update.selectionSet && !update.docChanged) return;
         syncCursorPosition(update.state);
       }),
+      aiInlinePatchExtension,
     ];
 
     if (editorFeatureBudget.layoutStableLineWrapping) {
@@ -3309,6 +3334,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     return nextExtensions;
   }, [
     adaptiveCompartmentExtension,
+    aiInlinePatchExtension,
     editorFeatureBudget.layoutStableLineWrapping,
     formatKeymap,
     languageExtension,
