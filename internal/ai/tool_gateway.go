@@ -251,6 +251,9 @@ func (s *Service) grantToolApproval(project *ProjectSession, req AIToolCallReque
 		}
 		s.toolApprovals[toolApprovalGrantKey(project.ID, req.RunID, descriptor.ID, req.Arguments)] = grant
 		s.mu.Unlock()
+		if project.ToolApprovalGrants != nil {
+			_ = project.ToolApprovalGrants.Upsert(grant)
+		}
 	}
 	return grant, nil
 }
@@ -273,11 +276,17 @@ func (s *Service) consumeToolApprovalGrant(project *ProjectSession, req AIToolCa
 	expiresAt, err := time.Parse(time.RFC3339, grant.ExpiresAt)
 	if err != nil || !expiresAt.After(time.Now().UTC()) {
 		delete(s.toolApprovals, key)
+		if project.ToolApprovalGrants != nil {
+			_ = project.ToolApprovalGrants.Delete(grant.ID)
+		}
 		return AIToolApprovalGrant{}, false
 	}
 	if grant.Scope == toolApprovalScopeOnce {
 		grant.UsedAt = utcNow()
 		delete(s.toolApprovals, key)
+		if project.ToolApprovalGrants != nil {
+			_ = project.ToolApprovalGrants.Delete(grant.ID)
+		}
 		return grant, true
 	}
 	return grant, true
@@ -402,6 +411,20 @@ func (s *Service) recordToolLifecycleArtifact(project *ProjectSession, result AI
 		UpdatedAt:        now,
 	}
 	_ = project.ChatArtifacts.Upsert(artifact)
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            run.ID,
+		SessionID:        normalizeChatSessionID(run.SessionID),
+		ProjectSessionID: project.ID,
+		Source:           "tool_gateway",
+		Type:             "tool_" + phase,
+		Status:           status,
+		Actor:            "tool",
+		ToolID:           result.ToolID,
+		ArtifactID:       result.ArtifactID,
+		CorrelationID:    result.ID,
+		Summary:          toolLifecycleArtifactSummary(status, result, proposal),
+		Capability:       AICapabilityChat,
+	})
 	return artifact, true
 }
 

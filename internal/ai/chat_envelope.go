@@ -80,7 +80,19 @@ func (s *Service) ClearChatRuns(projectID string) error {
 		}
 	}
 	if project != nil && project.ChatArtifacts != nil {
-		return project.ChatArtifacts.Clear()
+		if err := project.ChatArtifacts.Clear(); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.RunTimeline != nil {
+		if err := project.RunTimeline.Clear(); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.ToolApprovalGrants != nil {
+		if err := project.ToolApprovalGrants.Clear(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -129,7 +141,9 @@ func (s *Service) DeleteChatSession(projectID string, sessionID string) error {
 		}
 	}
 	if project != nil && project.ChatArtifacts != nil {
-		return project.ChatArtifacts.DeleteSession(sessionID)
+		if err := project.ChatArtifacts.DeleteSession(sessionID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -148,6 +162,12 @@ func (s *Service) buildChatRunEnvelope(project *ProjectSession, run AIChatRun) A
 	}
 	if run.ContextSummary != nil {
 		mnemonic.Count = run.ContextSummary.MnemonicCount
+	}
+	timeline := []AIRunTimelineEvent{}
+	if project != nil && project.RunTimeline != nil {
+		if events, err := project.RunTimeline.ListByRun(run.ID, 80); err == nil {
+			timeline = events
+		}
 	}
 	return AIChatRunEnvelope{
 		ID:                  run.ID,
@@ -170,6 +190,7 @@ func (s *Service) buildChatRunEnvelope(project *ProjectSession, run AIChatRun) A
 		ToolProposals:       run.ToolProposals,
 		ToolProposalSummary: summarizeToolProposals(run.ToolProposals),
 		MnemonicInclusion:   mnemonic,
+		Timeline:            timeline,
 		Revision:            run.Revision,
 		CreatedAt:           run.CreatedAt,
 		UpdatedAt:           run.UpdatedAt,

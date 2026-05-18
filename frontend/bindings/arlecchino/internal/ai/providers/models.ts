@@ -10,6 +10,11 @@ export class AIModelDescriptor {
     "displayName": string;
     "contextWindow"?: number;
     "streaming": boolean;
+    "toolCalling"?: boolean;
+    "structuredOutput"?: boolean;
+    "patchGeneration"?: boolean;
+    "lowLatency"?: boolean;
+    "costTier"?: string;
 
     /** Creates a new AIModelDescriptor instance. */
     constructor($$source: Partial<AIModelDescriptor> = {}) {
@@ -56,6 +61,9 @@ export enum AIProviderCapability {
     CapabilityLinePrediction = "line_prediction",
     CapabilityTerminalPrediction = "terminal_prediction",
     CapabilityChat = "chat",
+    CapabilityToolCalling = "tool_calling",
+    CapabilityStructuredOutput = "structured_output",
+    CapabilityPatchGeneration = "patch_generation",
 };
 
 export class AIProviderDescriptor {

@@ -686,6 +686,7 @@ type AIChatRunEnvelope struct {
 	ToolProposals       []AIToolProposal           `json:"toolProposals,omitempty"`
 	ToolProposalSummary AIToolProposalSummary      `json:"toolProposalSummary"`
 	MnemonicInclusion   AIMnemonicInclusionSummary `json:"mnemonicInclusion"`
+	Timeline            []AIRunTimelineEvent       `json:"timeline,omitempty"`
 	Revision            int64                      `json:"revision"`
 	CreatedAt           string                     `json:"createdAt"`
 	UpdatedAt           string                     `json:"updatedAt"`
@@ -712,6 +713,48 @@ type AIChatRun struct {
 	Revision          int64             `json:"revision"`
 	CreatedAt         string            `json:"createdAt"`
 	UpdatedAt         string            `json:"updatedAt"`
+}
+
+type AIRunTimelineEvent struct {
+	ID               string               `json:"id"`
+	RunID            string               `json:"runId,omitempty"`
+	SessionID        string               `json:"sessionId,omitempty"`
+	ProjectSessionID string               `json:"projectSessionId,omitempty"`
+	Source           string               `json:"source"`
+	Type             string               `json:"type"`
+	Status           string               `json:"status,omitempty"`
+	Actor            string               `json:"actor,omitempty"`
+	ProviderID       string               `json:"providerId,omitempty"`
+	Model            string               `json:"model,omitempty"`
+	ToolID           string               `json:"toolId,omitempty"`
+	ArtifactID       string               `json:"artifactId,omitempty"`
+	CorrelationID    string               `json:"correlationId,omitempty"`
+	Summary          string               `json:"summary,omitempty"`
+	DataCategories   []string             `json:"dataCategories,omitempty"`
+	Redaction        AIRedactionSummary   `json:"redaction"`
+	Capability       AIProviderCapability `json:"capability,omitempty"`
+	CreatedAt        string               `json:"createdAt"`
+}
+
+type AIPendingApproval struct {
+	ID               string            `json:"id"`
+	RunID            string            `json:"runId"`
+	SessionID        string            `json:"sessionId"`
+	ProjectSessionID string            `json:"projectSessionId,omitempty"`
+	ArtifactID       string            `json:"artifactId"`
+	ToolID           string            `json:"toolId"`
+	Kind             AIToolKind        `json:"kind"`
+	Action           AIToolCallAction  `json:"action"`
+	Status           string            `json:"status"`
+	RiskLevel        AIToolRiskLevel   `json:"riskLevel,omitempty"`
+	ApprovalMode     AIApprovalMode    `json:"approvalModeRequired,omitempty"`
+	ScopeSummary     string            `json:"scopeSummary,omitempty"`
+	TargetPaths      []string          `json:"targetPaths,omitempty"`
+	CommandPreview   string            `json:"commandPreview,omitempty"`
+	Arguments        map[string]string `json:"arguments,omitempty"`
+	Artifact         AIChatRunArtifact `json:"artifact"`
+	CreatedAt        string            `json:"createdAt"`
+	UpdatedAt        string            `json:"updatedAt"`
 }
 
 type AIChatRunArtifactKind string
@@ -785,13 +828,17 @@ type AIPatchApplyResult struct {
 
 type AIPatchRollbackRequest struct {
 	CheckpointID string `json:"checkpointId"`
+	ArtifactID   string `json:"artifactId,omitempty"`
 }
 
 type AIPatchRollbackResult struct {
-	CheckpointID string `json:"checkpointId"`
-	Path         string `json:"path"`
-	Status       string `json:"status"`
-	RolledBackAt string `json:"rolledBackAt"`
+	CheckpointID  string   `json:"checkpointId"`
+	ArtifactID    string   `json:"artifactId,omitempty"`
+	CheckpointIDs []string `json:"checkpointIds,omitempty"`
+	Path          string   `json:"path"`
+	Paths         []string `json:"paths,omitempty"`
+	Status        string   `json:"status"`
+	RolledBackAt  string   `json:"rolledBackAt"`
 }
 
 type AIToolDescriptor struct {
@@ -952,9 +999,35 @@ type AIModelCapabilityDescriptor struct {
 	LowLatency              bool                   `json:"lowLatency"`
 	CostTier                string                 `json:"costTier,omitempty"`
 	CapabilitySource        string                 `json:"capabilitySource,omitempty"`
+	ProbeStatus             string                 `json:"probeStatus,omitempty"`
+	ProbeCheckedAt          string                 `json:"probeCheckedAt,omitempty"`
+	ProbeError              string                 `json:"probeError,omitempty"`
+	VerifiedToolSupport     bool                   `json:"verifiedToolSupport,omitempty"`
 	VisionSupport           bool                   `json:"visionSupport"`
 	CodeEditQuality         string                 `json:"codeEditQuality"`
 	RecommendedModes        []AIChatAction         `json:"recommendedModes,omitempty"`
+}
+
+type AIModelCapabilityProbeRequest struct {
+	ProviderID string `json:"providerId"`
+	Model      string `json:"model,omitempty"`
+	Force      bool   `json:"force"`
+}
+
+type AIModelCapabilityProbeResult struct {
+	ProviderID              string `json:"providerId"`
+	Model                   string `json:"model"`
+	Status                  string `json:"status"`
+	ToolSupport             bool   `json:"toolSupport"`
+	ToolSupportKind         string `json:"toolSupportKind,omitempty"`
+	StructuredOutputSupport bool   `json:"structuredOutputSupport"`
+	PatchGenerationSupport  bool   `json:"patchGenerationSupport"`
+	LatencyMs               int64  `json:"latencyMs,omitempty"`
+	Error                   string `json:"error,omitempty"`
+	EgressRecordID          string `json:"egressRecordId,omitempty"`
+	CapabilitySource        string `json:"capabilitySource"`
+	CheckedAt               string `json:"checkedAt"`
+	ExpiresAt               string `json:"expiresAt,omitempty"`
 }
 
 type AIBackgroundAgentPreviewRequest struct {

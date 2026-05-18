@@ -190,16 +190,99 @@ func toolPathLooksSensitive(relPath string) bool {
 		return false
 	}
 	for _, part := range strings.Split(clean, "/") {
-		if part == ".env" || strings.HasPrefix(part, ".env.") || part == ".git" {
+		if toolPathPartLooksSensitive(part) {
 			return true
 		}
-		if strings.Contains(part, "secret") ||
-			strings.Contains(part, "token") ||
-			strings.Contains(part, "password") ||
-			strings.Contains(part, "credential") ||
-			strings.Contains(part, "cookie") ||
-			strings.Contains(part, "private_key") ||
-			strings.Contains(part, "id_rsa") {
+	}
+	return false
+}
+
+func toolPathPartLooksSensitive(part string) bool {
+	part = strings.TrimSpace(strings.ToLower(part))
+	if part == "" {
+		return false
+	}
+	switch part {
+	case ".env", ".git", ".netrc", ".npmrc", ".pypirc", ".pgpass",
+		"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+		"private_key", "private-key", "private.key",
+		"secret", "secrets", "password", "passwords", "passwd",
+		"credential", "credentials", "cookie", "cookies":
+		return true
+	}
+	if strings.HasPrefix(part, ".env.") {
+		return true
+	}
+	ext := filepath.Ext(part)
+	base := strings.TrimSuffix(part, ext)
+	switch ext {
+	case ".pem", ".p12", ".pfx":
+		return true
+	case ".key":
+		return strings.Contains(base, "private") || strings.HasPrefix(base, "id_")
+	}
+	tokens := splitSensitivePathTokens(base)
+	if hasToken(tokens, "private") && hasToken(tokens, "key") {
+		return true
+	}
+	if hasToken(tokens, "id") && hasAnyToken(tokens, "rsa", "dsa", "ecdsa", "ed25519") {
+		return true
+	}
+	sourceLike := toolPathExtensionLooksSource(ext)
+	if sourceLike {
+		if base == "secret" ||
+			base == "secrets" ||
+			base == "password" ||
+			base == "passwords" ||
+			base == "passwd" ||
+			base == "credential" ||
+			base == "credentials" ||
+			base == "cookie" ||
+			base == "cookies" {
+			return true
+		}
+	} else if hasAnyToken(tokens, "secret", "secrets", "password", "passwords", "passwd", "credential", "credentials", "cookie", "cookies") {
+		return true
+	}
+	if hasAnyToken(tokens, "token", "tokens") {
+		if base == "token" || base == "tokens" {
+			return true
+		}
+		return hasAnyToken(tokens, "access", "auth", "api", "bearer", "refresh", "session", "github", "gitlab", "slack", "openai")
+	}
+	return false
+}
+
+func toolPathExtensionLooksSource(ext string) bool {
+	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".go", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rb", ".rs", ".java", ".kt", ".kts",
+		".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".cs", ".swift", ".php", ".lua", ".dart", ".ex", ".exs",
+		".scala", ".clj", ".cljs", ".fs", ".fsx", ".erl", ".hrl", ".zig", ".sh", ".bash", ".zsh", ".fish",
+		".md", ".mdx":
+		return true
+	default:
+		return false
+	}
+}
+
+func splitSensitivePathTokens(value string) []string {
+	return strings.FieldsFunc(value, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	})
+}
+
+func hasToken(tokens []string, want string) bool {
+	for _, token := range tokens {
+		if token == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyToken(tokens []string, wants ...string) bool {
+	for _, want := range wants {
+		if hasToken(tokens, want) {
 			return true
 		}
 	}

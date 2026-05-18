@@ -118,6 +118,19 @@ func (s *Service) StartChatRun(_ context.Context, projectID string, req AIChatRu
 	s.mu.Unlock()
 	s.persistChatRun(runCopy)
 	s.emitEvent("ai:chat:run-started", runCopy)
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runCopy.ID,
+		SessionID:        normalizeChatSessionID(runCopy.SessionID),
+		ProjectSessionID: project.ID,
+		Source:           "chat_runtime",
+		Type:             "run_started",
+		Status:           runCopy.Status,
+		Actor:            "user",
+		ProviderID:       runCopy.ProviderID,
+		Model:            runCopy.Model,
+		Capability:       providers.CapabilityChat,
+		Summary:          string(runCopy.Action) + " run started",
+	})
 	s.emitRunEnvelope(project.ID, runID)
 
 	go func() {
@@ -157,6 +170,21 @@ func (s *Service) CancelChatRun(projectID string, runID string) (AIChatRun, erro
 	}
 	s.persistChatRun(runCopy)
 	s.emitEvent("ai:chat:run-canceled", runCopy)
+	if project := s.project(runCopy.ProjectSessionID); project != nil {
+		s.recordRunTimeline(project, AIRunTimelineEvent{
+			RunID:            runCopy.ID,
+			SessionID:        normalizeChatSessionID(runCopy.SessionID),
+			ProjectSessionID: runCopy.ProjectSessionID,
+			Source:           "chat_runtime",
+			Type:             "run_canceled",
+			Status:           "canceled",
+			Actor:            "user",
+			ProviderID:       runCopy.ProviderID,
+			Model:            runCopy.Model,
+			Capability:       providers.CapabilityChat,
+			Summary:          "Run canceled by user.",
+		})
+	}
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
 	return runCopy, nil
 }
@@ -208,6 +236,19 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		run.ContextSummary = &contextSummary
 	})
 	s.emitEvent("ai:chat:context-ready", map[string]any{"runId": runID, "contextSummary": contextSummary})
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runID,
+		SessionID:        normalizeChatSessionID(req.SessionID),
+		ProjectSessionID: project.ID,
+		Source:           "context",
+		Type:             "context_ready",
+		Status:           "ready",
+		Actor:            "system",
+		Capability:       providers.CapabilityChat,
+		DataCategories:   contextSummary.DataCategories,
+		Redaction:        contextSummary.Redaction,
+		Summary:          contextArtifactSummary(contextSummary),
+	})
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactContext, "Context disclosure", contextArtifactSummary(contextSummary), snapshot)
 	s.emitRunEnvelope(project.ID, runID)
 
@@ -239,6 +280,10 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		Stream:     true,
 	}
 	toolset := generationToolsetForChatRequest(req, descriptor, generationReq.Model)
+	if probe, ok := cachedProjectModelCapabilityProbe(project, descriptor.ID, generationReq.Model); ok && modelCapabilityProbeFresh(probe) && probe.Status != "verified" && req.Action == AIChatActionBuild {
+		s.finishRunError(runID, fmt.Sprintf("model %s on provider %s failed the live tool capability probe: %s", generationReq.Model, descriptor.ID, firstNonEmpty(probe.Error, probe.Status)))
+		return
+	}
 	if req.Action == AIChatActionBuild && !toolset.ToolSupport {
 		s.finishRunError(runID, fmt.Sprintf("model %s on provider %s does not support agent tools required for Build mode; switch to a tool-capable local model such as qwen2.5-coder or use Ask/Plan mode", generationReq.Model, descriptor.ID))
 		return
@@ -272,6 +317,22 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		Source:           "chat_run",
 		ChatAction:       req.Action,
 	}
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runID,
+		SessionID:        normalizeChatSessionID(req.SessionID),
+		ProjectSessionID: project.ID,
+		Source:           "provider",
+		Type:             "provider_request",
+		Status:           "started",
+		Actor:            "model",
+		ProviderID:       descriptor.ID,
+		Model:            generationReq.Model,
+		CorrelationID:    requestID,
+		Capability:       providers.CapabilityChat,
+		DataCategories:   snapshot.DataCategories,
+		Redaction:        snapshot.Redaction,
+		Summary:          "Provider request started.",
+	})
 	streamGuard := newChatStreamGuard(req, system, generationReq.Prompt)
 	response, err := provider.Generate(ctx, generationReq, func(token string) error {
 		if ctx.Err() != nil || s.runIsCanceled(runID) {
@@ -308,6 +369,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 			}
 		}
 		s.emitEvent("ai:chat:egress-recorded", record)
+		s.recordEgressTimeline(project, runID, record)
 		s.updateRun(runID, func(run *AIChatRun) {
 			run.EgressRecordID = record.ID
 		})
@@ -328,6 +390,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 			}
 		}
 		s.emitEvent("ai:chat:egress-recorded", record)
+		s.recordEgressTimeline(project, runID, record)
 		s.updateRun(runID, func(run *AIChatRun) {
 			run.EgressRecordID = record.ID
 		})
@@ -350,6 +413,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		}
 	}
 	s.emitEvent("ai:chat:egress-recorded", record)
+	s.recordEgressTimeline(project, runID, record)
 	s.updateRun(runID, func(run *AIChatRun) {
 		run.EgressRecordID = record.ID
 	})
@@ -367,7 +431,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		s.recordBuildRewriteGuardArtifact(project, runID, rewriteGuard)
 		s.emitRunEnvelope(project.ID, runID)
 		outcome := s.retryBuildRunAfterRewriteGuard(ctx, project, runID, req, provider, descriptor, generationReq, snapshot, system, finalResponse, rewriteGuard)
-		if outcome.Canceled {
+		if outcome.Canceled || outcome.Failed {
 			return
 		}
 		if outcome.Record.ID != "" {
@@ -427,7 +491,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 			s.emitRunEnvelope(project.ID, runID)
 		} else if len(executedToolCalls) > 0 {
 			outcome := s.continueChatRunAfterToolResults(ctx, project, runID, req, provider, descriptor, generationReq, snapshot, system, modelToolResponse, executedToolCalls)
-			if outcome.Canceled {
+			if outcome.Canceled || outcome.Failed {
 				return
 			}
 			if outcome.Record.ID != "" {
@@ -467,6 +531,23 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 			})
 		}
 	}
+	completionSessionID := normalizeChatSessionID("")
+	if currentRun, err := s.GetChatRun(projectID, runID); err == nil {
+		completionSessionID = normalizeChatSessionID(currentRun.SessionID)
+	}
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runID,
+		SessionID:        completionSessionID,
+		ProjectSessionID: project.ID,
+		Source:           "chat_runtime",
+		Type:             "run_completed",
+		Status:           "completed",
+		Actor:            "system",
+		ProviderID:       descriptor.ID,
+		Model:            firstNonEmpty(response.Model, generationReq.Model),
+		Capability:       providers.CapabilityChat,
+		Summary:          "Run completed.",
+	})
 	s.updateRun(runID, func(run *AIChatRun) {
 		run.Status = "completed"
 		run.CanCancel = false
@@ -505,6 +586,7 @@ type chatToolContinuationOutcome struct {
 	Text      string
 	Completed bool
 	Canceled  bool
+	Failed    bool
 }
 
 func completedReviewArtifactToolMessage(results []chatExecutedToolCall) (string, bool) {
@@ -804,7 +886,8 @@ func (s *Service) continueChatRunAfterToolResults(ctx context.Context, project *
 			record.ErrorClass = errorClass(err)
 			applyGenerationUsageToEgress(&record, continuationReq, response, descriptor, toolset)
 			record = s.recordChatEgress(project, runID, record)
-			return chatToolContinuationOutcome{Record: record}
+			s.finishRunError(runID, err.Error())
+			return chatToolContinuationOutcome{Record: record, Failed: true}
 		}
 		record.Status = "completed"
 		applyGenerationUsageToEgress(&record, continuationReq, response, descriptor, toolset)
@@ -908,7 +991,8 @@ func (s *Service) retryBuildRunAfterRewriteGuard(ctx context.Context, project *P
 		record.ErrorClass = errorClass(err)
 		applyGenerationUsageToEgress(&record, retryReq, response, descriptor, toolset)
 		record = s.recordChatEgress(project, runID, record)
-		return chatToolContinuationOutcome{Record: record}
+		s.finishRunError(runID, err.Error())
+		return chatToolContinuationOutcome{Record: record, Failed: true}
 	}
 	record.Status = "completed"
 	applyGenerationUsageToEgress(&record, retryReq, response, descriptor, toolset)
@@ -937,7 +1021,7 @@ func (s *Service) retryBuildRunAfterRewriteGuard(ctx context.Context, project *P
 		return chatToolContinuationOutcome{Response: response, Record: record, Text: readyMessage, Completed: true}
 	}
 	outcome := s.continueChatRunAfterToolResults(ctx, project, runID, req, provider, descriptor, retryReq, snapshot, system, text, executed)
-	if outcome.Canceled {
+	if outcome.Canceled || outcome.Failed {
 		return outcome
 	}
 	if outcome.Record.ID != "" {
@@ -957,12 +1041,34 @@ func (s *Service) recordChatEgress(project *ProjectSession, runID string, record
 		}
 	}
 	s.emitEvent("ai:chat:egress-recorded", record)
+	s.recordEgressTimeline(project, runID, record)
 	s.updateRun(runID, func(run *AIChatRun) {
 		run.EgressRecordID = record.ID
 	})
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "Provider egress", egressArtifactSummary(record), record)
 	s.emitRunEnvelope(project.ID, runID)
 	return record
+}
+
+func (s *Service) recordEgressTimeline(project *ProjectSession, runID string, record AIEgressRecord) {
+	if project == nil || strings.TrimSpace(runID) == "" {
+		return
+	}
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runID,
+		ProjectSessionID: project.ID,
+		Source:           firstNonEmpty(record.Source, "provider"),
+		Type:             "provider_response",
+		Status:           record.Status,
+		Actor:            "model",
+		ProviderID:       record.ProviderID,
+		Model:            record.Model,
+		CorrelationID:    record.RequestID,
+		Capability:       record.Capability,
+		DataCategories:   record.DataCategories,
+		Redaction:        record.Redaction,
+		Summary:          egressArtifactSummary(record),
+	})
 }
 
 func buildChatToolContinuationMessages(base []providers.GenerationMessage, assistantText string, toolResults []chatExecutedToolCall) []providers.GenerationMessage {
@@ -1334,6 +1440,21 @@ func (s *Service) finishRunEmptyResponse(runID string, record AIEgressRecord, pr
 	s.mu.Unlock()
 	s.persistChatRun(runCopy)
 	s.emitEvent("ai:chat:run-error", runCopy)
+	if project := s.project(runCopy.ProjectSessionID); project != nil {
+		s.recordRunTimeline(project, AIRunTimelineEvent{
+			RunID:            runCopy.ID,
+			SessionID:        normalizeChatSessionID(runCopy.SessionID),
+			ProjectSessionID: runCopy.ProjectSessionID,
+			Source:           "chat_runtime",
+			Type:             "run_error",
+			Status:           "error",
+			Actor:            "system",
+			ProviderID:       runCopy.ProviderID,
+			Model:            runCopy.Model,
+			Capability:       providers.CapabilityChat,
+			Summary:          runCopy.Error,
+		})
+	}
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
 }
 
@@ -1386,6 +1507,21 @@ func (s *Service) finishRunError(runID string, message string) {
 	s.mu.Unlock()
 	s.persistChatRun(runCopy)
 	s.emitEvent("ai:chat:run-error", runCopy)
+	if project := s.project(runCopy.ProjectSessionID); project != nil {
+		s.recordRunTimeline(project, AIRunTimelineEvent{
+			RunID:            runCopy.ID,
+			SessionID:        normalizeChatSessionID(runCopy.SessionID),
+			ProjectSessionID: runCopy.ProjectSessionID,
+			Source:           "chat_runtime",
+			Type:             "run_error",
+			Status:           "error",
+			Actor:            "system",
+			ProviderID:       runCopy.ProviderID,
+			Model:            runCopy.Model,
+			Capability:       providers.CapabilityChat,
+			Summary:          runCopy.Error,
+		})
+	}
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
 }
 
@@ -1411,6 +1547,21 @@ func (s *Service) finishRunCanceled(runID string, record AIEgressRecord) {
 	s.persistChatRun(runCopy)
 	if shouldEmit {
 		s.emitEvent("ai:chat:run-canceled", runCopy)
+	}
+	if project := s.project(runCopy.ProjectSessionID); project != nil {
+		s.recordRunTimeline(project, AIRunTimelineEvent{
+			RunID:            runCopy.ID,
+			SessionID:        normalizeChatSessionID(runCopy.SessionID),
+			ProjectSessionID: runCopy.ProjectSessionID,
+			Source:           "chat_runtime",
+			Type:             "run_canceled",
+			Status:           "canceled",
+			Actor:            "system",
+			ProviderID:       runCopy.ProviderID,
+			Model:            runCopy.Model,
+			Capability:       providers.CapabilityChat,
+			Summary:          "Run canceled.",
+		})
 	}
 	s.emitRunEnvelope(runCopy.ProjectSessionID, runID)
 }

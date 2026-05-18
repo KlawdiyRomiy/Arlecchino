@@ -75,6 +75,23 @@ func (l *ChatArtifactLedger) ListByRun(runID string) ([]AIChatRunArtifact, error
 	return next, nil
 }
 
+func (l *ChatArtifactLedger) List(limit int) ([]AIChatRunArtifact, error) {
+	if l == nil {
+		return []AIChatRunArtifact{}, nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	artifacts, err := l.readAllLocked()
+	if err != nil {
+		return nil, err
+	}
+	sortArtifactsNewestFirst(artifacts)
+	if limit > 0 && len(artifacts) > limit {
+		artifacts = artifacts[:limit]
+	}
+	return artifacts, nil
+}
+
 func (l *ChatArtifactLedger) Get(artifactID string) (AIChatRunArtifact, error) {
 	if l == nil {
 		return AIChatRunArtifact{}, fmt.Errorf("chat artifact %q was not found", artifactID)
@@ -273,7 +290,37 @@ func (s *Service) recordChatRunArtifact(project *ProjectSession, runID string, k
 	if artifact.Title == "" {
 		artifact.Title = string(kind)
 	}
-	_ = project.ChatArtifacts.Upsert(artifact)
+	if err := project.ChatArtifacts.Upsert(artifact); err == nil {
+		eventName := ""
+		if kind == AIChatRunArtifactMemory {
+			eventName = "ai:memory:artifact-recorded"
+		}
+		s.emitChatArtifactChanged(project, artifact, eventName)
+	}
+}
+
+func (s *Service) emitChatArtifactChanged(project *ProjectSession, artifact AIChatRunArtifact, eventName string) {
+	if s == nil || project == nil || strings.TrimSpace(artifact.ID) == "" {
+		return
+	}
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            artifact.RunID,
+		SessionID:        normalizeChatSessionID(artifact.SessionID),
+		ProjectSessionID: project.ID,
+		Source:           "artifact",
+		Type:             "artifact_updated",
+		Status:           artifact.Status,
+		Actor:            "system",
+		ArtifactID:       artifact.ID,
+		Summary:          firstNonEmpty(artifact.Title, string(artifact.Kind)) + ": " + artifact.Summary,
+	})
+	s.emitEvent("ai:chat:artifact-updated", artifact)
+	if strings.TrimSpace(eventName) != "" {
+		s.emitEvent(eventName, artifact)
+	}
+	if strings.TrimSpace(artifact.RunID) != "" {
+		s.emitRunEnvelope(project.ID, artifact.RunID)
+	}
 }
 
 func marshalChatArtifactPayload(payload any) string {

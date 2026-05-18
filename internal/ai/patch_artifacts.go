@@ -82,6 +82,7 @@ func (s *Service) PreviewPatch(projectID string, req AIPatchPreviewRequest) (AIP
 	if err := project.ChatArtifacts.Upsert(artifact); err != nil {
 		return AIPatchPreviewResult{}, err
 	}
+	s.emitChatArtifactChanged(project, artifact, "ai:patch:artifact-created")
 	return AIPatchPreviewResult{Artifact: artifact, Payload: payload}, nil
 }
 
@@ -135,6 +136,7 @@ func (s *Service) ApplyPatchArtifact(projectID string, req AIPatchApplyRequest) 
 	if err := project.ChatArtifacts.Upsert(artifact); err != nil {
 		return AIPatchApplyResult{ArtifactID: artifact.ID, Status: "artifact_update_error", CheckpointIDs: checkpointIDs, Error: err.Error()}, err
 	}
+	s.emitChatArtifactChanged(project, artifact, "ai:patch:artifact-updated")
 	s.emitPatchApplyEvents(project, artifact, files, payload.AppliedAt)
 	return AIPatchApplyResult{
 		ArtifactID:    artifact.ID,
@@ -177,6 +179,17 @@ func (s *Service) emitPatchApplyEvents(project *ProjectSession, artifact AIChatR
 		"appliedAt":        appliedAt,
 		"files":            eventFiles,
 	})
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            artifact.RunID,
+		SessionID:        normalizeChatSessionID(artifact.SessionID),
+		ProjectSessionID: project.ID,
+		Source:           "patch",
+		Type:             "patch_applied",
+		Status:           "applied",
+		Actor:            "user",
+		ArtifactID:       artifact.ID,
+		Summary:          fmt.Sprintf("Applied patch artifact to %d file(s).", len(eventFiles)),
+	})
 }
 
 func (s *Service) RollbackPatchCheckpoint(projectID string, req AIPatchRollbackRequest) (AIPatchRollbackResult, error) {
@@ -184,55 +197,206 @@ func (s *Service) RollbackPatchCheckpoint(projectID string, req AIPatchRollbackR
 	if project == nil {
 		return AIPatchRollbackResult{}, fmt.Errorf("AI project session is not open")
 	}
+	if strings.TrimSpace(req.ArtifactID) != "" {
+		return s.rollbackPatchArtifact(project, strings.TrimSpace(req.ArtifactID))
+	}
 	checkpoint, err := readPatchCheckpoint(project.ProjectRoot, req.CheckpointID)
 	if err != nil {
 		return AIPatchRollbackResult{}, err
 	}
-	if checkpoint.ProjectSessionID != project.ID {
-		return AIPatchRollbackResult{}, fmt.Errorf("patch checkpoint %q was not found", req.CheckpointID)
-	}
-	absPath, err := safeProjectPath(project.ProjectRoot, checkpoint.Path)
+	rolledBackAt, err := s.rollbackPatchCheckpointPayload(project, checkpoint)
 	if err != nil {
 		return AIPatchRollbackResult{}, err
 	}
-	if checkpoint.Existed {
-		content, err := base64.StdEncoding.DecodeString(checkpoint.ContentBase64)
-		if err != nil {
-			return AIPatchRollbackResult{}, err
-		}
-		if err := os.MkdirAll(filepath.Dir(absPath), 0o700); err != nil {
-			return AIPatchRollbackResult{}, err
-		}
-		if err := os.WriteFile(absPath, content, os.FileMode(checkpoint.Mode)); err != nil {
-			return AIPatchRollbackResult{}, err
-		}
-	} else if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
-		return AIPatchRollbackResult{}, err
-	}
-	rolledBackAt := utcNow()
-	if project.ChatArtifacts != nil && strings.TrimSpace(checkpoint.ArtifactID) != "" {
-		if artifact, artifactErr := project.ChatArtifacts.Get(checkpoint.ArtifactID); artifactErr == nil {
-			if payload, payloadErr := patchPayloadFromArtifact(artifact); payloadErr == nil {
-				payload.RolledBackAt = rolledBackAt
-				artifact.Status = "rolled_back"
-				artifact.Summary = patchPreviewSummary(payload)
-				artifact.PayloadJSON = marshalChatArtifactPayload(payload)
-				artifact.UpdatedAt = rolledBackAt
-				_ = project.ChatArtifacts.Upsert(artifact)
-			}
-		}
-	}
+	artifact, _ := s.markPatchArtifactRolledBack(project, checkpoint.ArtifactID, rolledBackAt)
+	s.emitPatchRollbackFileEvent(project, checkpoint)
+	s.emitPatchRollbackEvent(project, artifact, []patchCheckpointPayload{checkpoint}, rolledBackAt)
 	return AIPatchRollbackResult{
 		CheckpointID: checkpoint.ID,
+		ArtifactID:   checkpoint.ArtifactID,
 		Path:         checkpoint.Path,
 		Status:       "rolled_back",
 		RolledBackAt: rolledBackAt,
 	}, nil
 }
 
+func (s *Service) rollbackPatchArtifact(project *ProjectSession, artifactID string) (AIPatchRollbackResult, error) {
+	if project.ChatArtifacts == nil {
+		return AIPatchRollbackResult{}, fmt.Errorf("AI project session is not open")
+	}
+	artifact, err := s.GetChatRunArtifact(project.ID, artifactID)
+	if err != nil {
+		return AIPatchRollbackResult{}, err
+	}
+	if artifact.Kind != AIChatRunArtifactPatchPreview {
+		return AIPatchRollbackResult{}, fmt.Errorf("chat artifact %q is not a patch preview", artifact.ID)
+	}
+	payload, err := patchPayloadFromArtifact(artifact)
+	if err != nil {
+		return AIPatchRollbackResult{}, err
+	}
+	if len(payload.CheckpointIDs) == 0 {
+		return AIPatchRollbackResult{ArtifactID: artifact.ID, Status: "blocked"}, fmt.Errorf("patch artifact %q has no rollback checkpoints", artifact.ID)
+	}
+	checkpoints := make([]patchCheckpointPayload, 0, len(payload.CheckpointIDs))
+	for _, checkpointID := range payload.CheckpointIDs {
+		checkpoint, err := readPatchCheckpoint(project.ProjectRoot, checkpointID)
+		if err != nil {
+			return AIPatchRollbackResult{ArtifactID: artifact.ID, Status: "blocked"}, err
+		}
+		if checkpoint.ProjectSessionID != project.ID || checkpoint.ArtifactID != artifact.ID {
+			return AIPatchRollbackResult{ArtifactID: artifact.ID, Status: "blocked"}, fmt.Errorf("patch checkpoint %q was not found", checkpointID)
+		}
+		checkpoints = append(checkpoints, checkpoint)
+	}
+	rolledBackAt := utcNow()
+	paths := make([]string, 0, len(checkpoints))
+	checkpointIDs := make([]string, 0, len(checkpoints))
+	for i := len(checkpoints) - 1; i >= 0; i-- {
+		checkpoint := checkpoints[i]
+		if _, err := s.rollbackPatchCheckpointPayload(project, checkpoint); err != nil {
+			return AIPatchRollbackResult{
+				ArtifactID:    artifact.ID,
+				CheckpointIDs: checkpointIDs,
+				Paths:         paths,
+				Status:        "rollback_error",
+				RolledBackAt:  rolledBackAt,
+			}, err
+		}
+		paths = append(paths, checkpoint.Path)
+		checkpointIDs = append(checkpointIDs, checkpoint.ID)
+		s.emitPatchRollbackFileEvent(project, checkpoint)
+	}
+	updatedArtifact, ok := s.markPatchArtifactRolledBack(project, artifact.ID, rolledBackAt)
+	if !ok {
+		updatedArtifact = artifact
+	}
+	s.emitPatchRollbackEvent(project, updatedArtifact, checkpoints, rolledBackAt)
+	return AIPatchRollbackResult{
+		CheckpointID:  checkpointIDs[0],
+		ArtifactID:    artifact.ID,
+		CheckpointIDs: checkpointIDs,
+		Path:          paths[0],
+		Paths:         paths,
+		Status:        "rolled_back",
+		RolledBackAt:  rolledBackAt,
+	}, nil
+}
+
+func (s *Service) rollbackPatchCheckpointPayload(project *ProjectSession, checkpoint patchCheckpointPayload) (string, error) {
+	if checkpoint.ProjectSessionID != project.ID {
+		return "", fmt.Errorf("patch checkpoint %q was not found", checkpoint.ID)
+	}
+	absPath, err := safeProjectPath(project.ProjectRoot, checkpoint.Path)
+	if err != nil {
+		return "", err
+	}
+	if checkpoint.Existed {
+		content, err := base64.StdEncoding.DecodeString(checkpoint.ContentBase64)
+		if err != nil {
+			return "", err
+		}
+		if err := os.MkdirAll(filepath.Dir(absPath), 0o700); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(absPath, content, os.FileMode(checkpoint.Mode)); err != nil {
+			return "", err
+		}
+	} else if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	return utcNow(), nil
+}
+
+func (s *Service) markPatchArtifactRolledBack(project *ProjectSession, artifactID string, rolledBackAt string) (AIChatRunArtifact, bool) {
+	if project == nil || project.ChatArtifacts == nil || strings.TrimSpace(artifactID) == "" {
+		return AIChatRunArtifact{}, false
+	}
+	if artifact, artifactErr := project.ChatArtifacts.Get(artifactID); artifactErr == nil {
+		if payload, payloadErr := patchPayloadFromArtifact(artifact); payloadErr == nil {
+			payload.RolledBackAt = rolledBackAt
+			artifact.Status = "rolled_back"
+			artifact.Summary = patchPreviewSummary(payload)
+			artifact.PayloadJSON = marshalChatArtifactPayload(payload)
+			artifact.UpdatedAt = rolledBackAt
+			if err := project.ChatArtifacts.Upsert(artifact); err == nil {
+				s.emitChatArtifactChanged(project, artifact, "ai:patch:artifact-updated")
+				return artifact, true
+			}
+		}
+	}
+	return AIChatRunArtifact{}, false
+}
+
+func (s *Service) emitPatchRollbackFileEvent(project *ProjectSession, checkpoint patchCheckpointPayload) {
+	if s == nil || project == nil {
+		return
+	}
+	absPath, err := safeProjectPath(project.ProjectRoot, checkpoint.Path)
+	if err != nil {
+		return
+	}
+	if checkpoint.Existed {
+		s.emitEvent("file:changed", absPath)
+		return
+	}
+	s.emitEvent("project:entry:deleted", map[string]any{
+		"path":        absPath,
+		"isDirectory": false,
+	})
+}
+
+func (s *Service) emitPatchRollbackEvent(project *ProjectSession, artifact AIChatRunArtifact, checkpoints []patchCheckpointPayload, rolledBackAt string) {
+	if s == nil || project == nil || len(checkpoints) == 0 {
+		return
+	}
+	eventFiles := make([]map[string]any, 0, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		absPath, err := safeProjectPath(project.ProjectRoot, checkpoint.Path)
+		if err != nil {
+			continue
+		}
+		eventFiles = append(eventFiles, map[string]any{
+			"path":         checkpoint.Path,
+			"absolutePath": absPath,
+			"status":       "rolled_back",
+			"created":      !checkpoint.Existed,
+		})
+	}
+	if len(eventFiles) == 0 {
+		return
+	}
+	artifactID := artifact.ID
+	if artifactID == "" {
+		artifactID = checkpoints[0].ArtifactID
+	}
+	s.emitEvent("ai:patch:artifact-rolled-back", map[string]any{
+		"artifactId":       artifactID,
+		"runId":            artifact.RunID,
+		"sessionId":        artifact.SessionID,
+		"projectSessionId": project.ID,
+		"rolledBackAt":     rolledBackAt,
+		"files":            eventFiles,
+	})
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            artifact.RunID,
+		SessionID:        normalizeChatSessionID(artifact.SessionID),
+		ProjectSessionID: project.ID,
+		Source:           "patch",
+		Type:             "patch_rolled_back",
+		Status:           "rolled_back",
+		Actor:            "user",
+		ArtifactID:       artifactID,
+		Summary:          fmt.Sprintf("Rolled back patch artifact for %d file(s).", len(eventFiles)),
+	})
+}
+
 func (s *Service) validatePatchFiles(project *ProjectSession, diff string) ([]AIPatchFile, error) {
 	if strings.Contains(diff, "\nGIT binary patch") || strings.Contains(diff, "\nBinary files ") {
 		return nil, fmt.Errorf("binary patches are not supported")
+	}
+	if patchUsesUnsupportedFileMode(diff) {
+		return nil, fmt.Errorf("patch target mode is unsupported")
 	}
 	paths, err := patchPaths(diff)
 	if err != nil {
@@ -240,6 +404,12 @@ func (s *Service) validatePatchFiles(project *ProjectSession, diff string) ([]AI
 	}
 	files := make([]AIPatchFile, 0, len(paths))
 	for _, relPath := range paths {
+		if toolPathLooksSensitive(relPath) {
+			return nil, fmt.Errorf("patch target is sensitive: %s", relPath)
+		}
+		if toolPathLooksBinaryByExtension(relPath) {
+			return nil, fmt.Errorf("patch target appears binary by extension: %s", relPath)
+		}
 		absPath, err := safeProjectPath(project.ProjectRoot, relPath)
 		if err != nil {
 			return nil, err
@@ -276,6 +446,42 @@ func (s *Service) validatePatchFiles(project *ProjectSession, diff string) ([]AI
 		files = append(files, file)
 	}
 	return files, nil
+}
+
+func patchUsesUnsupportedFileMode(diff string) bool {
+	for _, line := range strings.Split(diff, "\n") {
+		rawLine := strings.TrimRight(line, "\r")
+		if strings.HasPrefix(rawLine, "+") || strings.HasPrefix(rawLine, "-") || strings.HasPrefix(rawLine, " ") {
+			continue
+		}
+		line = strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "index ") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 && unsupportedPatchFileMode(fields[len(fields)-1]) {
+				return true
+			}
+			continue
+		}
+		if strings.Contains(line, " file mode ") || strings.HasPrefix(line, "old mode ") || strings.HasPrefix(line, "new mode ") {
+			fields := strings.Fields(line)
+			if len(fields) > 0 && unsupportedPatchFileMode(fields[len(fields)-1]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func unsupportedPatchFileMode(mode string) bool {
+	switch strings.TrimSpace(mode) {
+	case "120000", "160000":
+		return true
+	default:
+		return false
+	}
 }
 
 func patchPaths(diff string) ([]string, error) {

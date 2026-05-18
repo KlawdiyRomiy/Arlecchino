@@ -55,14 +55,17 @@ type Service struct {
 }
 
 type ProjectSession struct {
-	ID            string
-	ProjectRoot   string
-	Mnemonic      *mnemonic.Store
-	Skills        *skills.Store
-	Egress        *EgressLedger
-	ChatHistory   *ChatHistoryLedger
-	ChatArtifacts *ChatArtifactLedger
-	ToolAudit     *ToolAuditLedger
+	ID                    string
+	ProjectRoot           string
+	Mnemonic              *mnemonic.Store
+	Skills                *skills.Store
+	Egress                *EgressLedger
+	ChatHistory           *ChatHistoryLedger
+	ChatArtifacts         *ChatArtifactLedger
+	ToolAudit             *ToolAuditLedger
+	RunTimeline           *RunTimelineLedger
+	ToolApprovalGrants    *ToolApprovalGrantLedger
+	ModelCapabilityProbes *ModelCapabilityProbeLedger
 }
 
 func NewService(options ServiceOptions) *Service {
@@ -191,15 +194,36 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 		_ = store.Close()
 		return nil, err
 	}
+	runTimeline, err := openRunTimelineLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
+	toolApprovalGrants, err := openToolApprovalGrantLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
+	modelCapabilityProbes, err := openModelCapabilityProbeLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
 	project := &ProjectSession{
-		ID:            projectID,
-		ProjectRoot:   projectRoot,
-		Mnemonic:      store,
-		Skills:        skillStore,
-		Egress:        ledger,
-		ChatHistory:   chatHistory,
-		ChatArtifacts: chatArtifacts,
-		ToolAudit:     toolAudit,
+		ID:                    projectID,
+		ProjectRoot:           projectRoot,
+		Mnemonic:              store,
+		Skills:                skillStore,
+		Egress:                ledger,
+		ChatHistory:           chatHistory,
+		ChatArtifacts:         chatArtifacts,
+		ToolAudit:             toolAudit,
+		RunTimeline:           runTimeline,
+		ToolApprovalGrants:    toolApprovalGrants,
+		ModelCapabilityProbes: modelCapabilityProbes,
 	}
 	s.mu.Lock()
 	if previous := s.projects[projectID]; previous != nil {
@@ -207,6 +231,7 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 	}
 	s.projects[projectID] = project
 	s.mu.Unlock()
+	s.recoverProjectAIRuntime(project)
 	return project, nil
 }
 
@@ -528,6 +553,21 @@ func (s *Service) ClearState(projectID string) error {
 		}
 		if project.ToolAudit != nil {
 			if err := project.ToolAudit.Clear(); err != nil {
+				return err
+			}
+		}
+		if project.RunTimeline != nil {
+			if err := project.RunTimeline.Clear(); err != nil {
+				return err
+			}
+		}
+		if project.ToolApprovalGrants != nil {
+			if err := project.ToolApprovalGrants.Clear(); err != nil {
+				return err
+			}
+		}
+		if project.ModelCapabilityProbes != nil {
+			if err := project.ModelCapabilityProbes.Clear(); err != nil {
 				return err
 			}
 		}

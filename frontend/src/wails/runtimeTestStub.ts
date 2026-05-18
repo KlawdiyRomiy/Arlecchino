@@ -48,11 +48,13 @@ const callIDToMethod = new Map<number, string>([
   [4258240650, "AIListEgressRecords"],
   [1449536265, "AIListMnemonicEntries"],
   [4294009402, "AIListModelCapabilities"],
+  [814193330, "AIListPendingApprovals"],
   [3456087665, "AIListPromptWorkflows"],
   [1846561503, "AIListProviderRuntimes"],
   [1364497287, "AIListProviders"],
   [2726014700, "AIListToolAudit"],
   [3522130974, "AIListTools"],
+  [3244589006, "AIProbeModelCapability"],
   [3923597381, "AIPreviewPatch"],
   [2658808305, "AIRefreshLocalProviders"],
   [3358042629, "AIRollbackPatchCheckpoint"],
@@ -172,6 +174,7 @@ const defaultRuntimeResult = (
     case "AIListEgressRecords":
     case "AIListMnemonicEntries":
     case "AIListModelCapabilities":
+    case "AIListPendingApprovals":
     case "AIListAgentProfiles":
     case "AIListPromptWorkflows":
     case "AIListTools":
@@ -179,10 +182,28 @@ const defaultRuntimeResult = (
     case "AISearchMnemonic":
     case "AISuggestChatMentions":
       return [];
+    case "AIProbeModelCapability":
+      return {
+        providerId:
+          (_args[0] as { providerId?: string } | undefined)?.providerId ?? "",
+        model: (_args[0] as { model?: string } | undefined)?.model ?? "",
+        status: "failed",
+        toolSupport: false,
+        toolSupportKind: "none",
+        structuredOutputSupport: false,
+        patchGenerationSupport: false,
+        latencyMs: 0,
+        error: "AI model probe is unavailable in the web-only shell.",
+        capabilitySource: "probe",
+        checkedAt: new Date(0).toISOString(),
+        expiresAt: "",
+      };
     case "AIStartChatRun":
       throw new Error("AI chat run is unavailable in the web-only shell.");
     case "AIExecuteToolCall":
-      throw new Error("AI tool execution is unavailable in the web-only shell.");
+      throw new Error(
+        "AI tool execution is unavailable in the web-only shell.",
+      );
     case "AIApplyPatchArtifact":
     case "AIApproveMnemonicEntryProposal":
     case "AIPreviewPatch":

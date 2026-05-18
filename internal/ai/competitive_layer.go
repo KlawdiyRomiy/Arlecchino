@@ -9,7 +9,8 @@ import (
 	"github.com/google/uuid"
 )
 
-func (s *Service) ListModelCapabilities() []AIModelCapabilityDescriptor {
+func (s *Service) ListModelCapabilities(projectID string) []AIModelCapabilityDescriptor {
+	project := s.project(projectID)
 	out := []AIModelCapabilityDescriptor{}
 	for _, provider := range s.ListProviders() {
 		models := provider.Models
@@ -38,6 +39,19 @@ func (s *Service) ListModelCapabilities() []AIModelCapabilityDescriptor {
 				VisionSupport:           false,
 				CodeEditQuality:         modelCodeEditQuality(provider, model),
 				RecommendedModes:        recommendedModesForProvider(provider),
+			}
+			if probe, ok := cachedProjectModelCapabilityProbe(project, provider.ID, capability.Model); ok {
+				capability.ProbeStatus = probe.Status
+				capability.ProbeCheckedAt = probe.CheckedAt
+				capability.ProbeError = probe.Error
+				capability.VerifiedToolSupport = probe.ToolSupport && probe.Status == "verified"
+				if probe.Status == "verified" || probe.Status == "unsupported" {
+					capability.ToolSupport = probe.ToolSupport
+					capability.ToolSupportKind = firstNonEmpty(probe.ToolSupportKind, capability.ToolSupportKind)
+					capability.StructuredOutputSupport = probe.StructuredOutputSupport
+					capability.PatchGenerationSupport = probe.PatchGenerationSupport
+					capability.CapabilitySource = "probe"
+				}
 			}
 			out = append(out, capability)
 		}

@@ -340,8 +340,28 @@ func (a *App) AIGetEmbeddingStatus() (ai.AIEmbeddingStatus, error) {
 	return a.ensureAIService().GetEmbeddingStatus(), nil
 }
 
-func (a *App) AIListModelCapabilities() ([]ai.AIModelCapabilityDescriptor, error) {
-	return a.ensureAIService().ListModelCapabilities(), nil
+func (a *App) AIListModelCapabilities(ctx context.Context) ([]ai.AIModelCapabilityDescriptor, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().ListModelCapabilities(sessionID), nil
+}
+
+func (a *App) AIProbeModelCapability(ctx context.Context, req ai.AIModelCapabilityProbeRequest) (ai.AIModelCapabilityProbeResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIModelCapabilityProbeResult{}, err
+	}
+	return a.ensureAIService().ProbeModelCapability(ctx, sessionID, req)
+}
+
+func (a *App) AIListPendingApprovals(ctx context.Context, limit int) ([]ai.AIPendingApproval, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().ListPendingApprovals(sessionID, limit)
 }
 
 func (a *App) AIPreviewBackgroundAgent(ctx context.Context, req ai.AIBackgroundAgentPreviewRequest) (ai.AIBackgroundAgentPreviewResult, error) {

@@ -28,6 +28,11 @@ func (s *Service) executeFileEditPreviewTool(project *ProjectSession, req AITool
 		result.Error = "file edit path is empty"
 		return result
 	}
+	if !fileReadRangePathAllowed(relPath) {
+		result.Status = "blocked"
+		result.Error = "file edit path is sensitive or binary-like"
+		return result
+	}
 	absPath, err := safeProjectPath(project.ProjectRoot, relPath)
 	if err != nil {
 		result.Status = "blocked"

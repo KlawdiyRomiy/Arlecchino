@@ -236,6 +236,7 @@ func (s *Service) ProposeMnemonicEntry(projectID string, req AIMnemonicWriteProp
 	if err := project.ChatArtifacts.Upsert(artifact); err != nil {
 		return AIMnemonicWriteProposalResult{}, err
 	}
+	s.emitChatArtifactChanged(project, artifact, "ai:memory:artifact-proposed")
 	return AIMnemonicWriteProposalResult{Artifact: artifact, Payload: payload, Status: artifact.Status, RequiresApproval: true}, nil
 }
 
@@ -276,7 +277,9 @@ func (s *Service) ApproveMnemonicEntryProposal(projectID string, req AIMnemonicA
 		"entryId":  saved.ID,
 		"approved": true,
 	})
-	_ = project.ChatArtifacts.Upsert(artifact)
+	if err := project.ChatArtifacts.Upsert(artifact); err == nil {
+		s.emitChatArtifactChanged(project, artifact, "ai:memory:artifact-approved")
+	}
 	return saved, nil
 }
 
