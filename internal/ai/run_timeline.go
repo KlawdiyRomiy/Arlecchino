@@ -79,6 +79,14 @@ func (l *RunTimelineLedger) List(limit int) ([]AIRunTimelineEvent, error) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	return l.readAllLockedWithLimit(limit)
+}
+
+func (l *RunTimelineLedger) readAllLocked() ([]AIRunTimelineEvent, error) {
+	return l.readAllLockedWithLimit(0)
+}
+
+func (l *RunTimelineLedger) readAllLockedWithLimit(limit int) ([]AIRunTimelineEvent, error) {
 	file, err := os.Open(l.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -105,6 +113,42 @@ func (l *RunTimelineLedger) List(limit int) ([]AIRunTimelineEvent, error) {
 	return events, nil
 }
 
+func (l *RunTimelineLedger) writeAllLocked(events []AIRunTimelineEvent) error {
+	dir := filepath.Dir(l.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(dir, ".run_timeline-*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := file.Name()
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	encoder := json.NewEncoder(file)
+	for _, event := range events {
+		if strings.TrimSpace(event.ID) == "" {
+			continue
+		}
+		if err := encoder.Encode(event); err != nil {
+			_ = file.Close()
+			return err
+		}
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, l.path); err != nil {
+		return err
+	}
+	removeTemp = false
+	return nil
+}
+
 func (l *RunTimelineLedger) Clear() error {
 	if l == nil {
 		return nil
@@ -115,6 +159,41 @@ func (l *RunTimelineLedger) Clear() error {
 		return err
 	}
 	return nil
+}
+
+func (l *RunTimelineLedger) DeleteRuns(runIDs []string) error {
+	if l == nil || len(runIDs) == 0 {
+		return nil
+	}
+	runSet := map[string]struct{}{}
+	for _, runID := range runIDs {
+		if runID = strings.TrimSpace(runID); runID != "" {
+			runSet[runID] = struct{}{}
+		}
+	}
+	if len(runSet) == 0 {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	events, err := l.readAllLocked()
+	if err != nil {
+		return err
+	}
+	next := events[:0]
+	for _, event := range events {
+		if _, remove := runSet[event.RunID]; remove {
+			continue
+		}
+		next = append(next, event)
+	}
+	if len(next) == 0 {
+		if err := os.Remove(l.path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return l.writeAllLocked(next)
 }
 
 func (s *Service) recordRunTimeline(project *ProjectSession, event AIRunTimelineEvent) {

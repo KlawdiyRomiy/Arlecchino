@@ -102,12 +102,26 @@ func (s *Service) DeleteChatSession(projectID string, sessionID string) error {
 	sessionID = normalizeChatSessionID(sessionID)
 	project := s.project(projectID)
 	waiters := []runWaiter{}
+	runIDs := map[string]struct{}{}
+
+	if project != nil && project.ChatHistory != nil {
+		runs, err := project.ChatHistory.List(0)
+		if err != nil {
+			return err
+		}
+		for _, run := range runs {
+			if normalizeChatSessionID(run.SessionID) == sessionID {
+				runIDs[run.ID] = struct{}{}
+			}
+		}
+	}
 
 	s.mu.Lock()
 	for runID, run := range s.runs {
 		if run.ProjectSessionID != projectID || normalizeChatSessionID(run.SessionID) != sessionID {
 			continue
 		}
+		runIDs[runID] = struct{}{}
 		if done := s.runDone[runID]; done != nil {
 			waiters = append(waiters, runWaiter{runID: runID, done: done})
 		}
@@ -134,6 +148,7 @@ func (s *Service) DeleteChatSession(projectID string, sessionID string) error {
 		}
 	}
 	s.mu.Unlock()
+	s.deleteToolApprovalsForRuns(projectID, runIDs)
 
 	if project != nil && project.ChatHistory != nil {
 		if err := project.ChatHistory.DeleteSession(sessionID); err != nil {
@@ -145,7 +160,44 @@ func (s *Service) DeleteChatSession(projectID string, sessionID string) error {
 			return err
 		}
 	}
+	ids := runIDList(runIDs)
+	if project != nil && project.RunTimeline != nil {
+		if err := project.RunTimeline.DeleteRuns(ids); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.ToolApprovalGrants != nil {
+		if err := project.ToolApprovalGrants.DeleteRuns(ids); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (s *Service) deleteToolApprovalsForRuns(projectID string, runIDs map[string]struct{}) {
+	if s == nil || len(runIDs) == 0 {
+		return
+	}
+	projectID = normalizeProjectID(projectID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, grant := range s.toolApprovals {
+		if normalizeProjectID(grant.ProjectSessionID) == projectID {
+			if _, ok := runIDs[grant.RunID]; ok {
+				delete(s.toolApprovals, key)
+			}
+		}
+	}
+}
+
+func runIDList(runIDs map[string]struct{}) []string {
+	ids := make([]string, 0, len(runIDs))
+	for runID := range runIDs {
+		if strings.TrimSpace(runID) != "" {
+			ids = append(ids, runID)
+		}
+	}
+	return ids
 }
 
 func (s *Service) buildChatRunEnvelope(project *ProjectSession, run AIChatRun) AIChatRunEnvelope {

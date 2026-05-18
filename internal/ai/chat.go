@@ -280,7 +280,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		Stream:     true,
 	}
 	toolset := generationToolsetForChatRequest(req, descriptor, generationReq.Model)
-	if probe, ok := cachedProjectModelCapabilityProbe(project, descriptor.ID, generationReq.Model); ok && modelCapabilityProbeFresh(probe) && probe.Status != "verified" && req.Action == AIChatActionBuild {
+	if probe, ok := cachedProjectModelCapabilityProbe(project, descriptor.ID, generationReq.Model); ok && shouldBlockBuildForModelProbe(probe) && req.Action == AIChatActionBuild {
 		s.finishRunError(runID, fmt.Sprintf("model %s on provider %s failed the live tool capability probe: %s", generationReq.Model, descriptor.ID, firstNonEmpty(probe.Error, probe.Status)))
 		return
 	}

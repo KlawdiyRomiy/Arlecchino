@@ -19,8 +19,13 @@ func (s *Service) ListPendingApprovals(projectID string, limit int) ([]AIPending
 		return nil, err
 	}
 	pending := make([]AIPendingApproval, 0)
+	resolved := map[string]struct{}{}
 	for _, artifact := range artifacts {
 		if artifact.Kind != AIChatRunArtifactToolProposal && artifact.Kind != AIChatRunArtifactTerminal {
+			continue
+		}
+		if key, ok := resolvedApprovalKeyFromArtifact(artifact); ok {
+			resolved[key] = struct{}{}
 			continue
 		}
 		approval, ok := pendingApprovalFromArtifact(artifact)
@@ -28,6 +33,9 @@ func (s *Service) ListPendingApprovals(projectID string, limit int) ([]AIPending
 			continue
 		}
 		if approval.ProjectSessionID != "" && approval.ProjectSessionID != project.ID {
+			continue
+		}
+		if _, ok := resolved[pendingApprovalKey(approval.RunID, approval.ToolID, approval.Arguments)]; ok {
 			continue
 		}
 		pending = append(pending, approval)
@@ -80,6 +88,40 @@ func pendingApprovalFromArtifact(artifact AIChatRunArtifact) (AIPendingApproval,
 		CreatedAt:        artifact.CreatedAt,
 		UpdatedAt:        artifact.UpdatedAt,
 	}, true
+}
+
+func resolvedApprovalKeyFromArtifact(artifact AIChatRunArtifact) (string, bool) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(artifact.PayloadJSON), &payload); err != nil {
+		return "", false
+	}
+	audit, _ := payload["audit"].(map[string]any)
+	proposal, _ := payload["proposal"].(map[string]any)
+	toolID := firstString(payload["toolId"], audit["toolId"], proposal["name"])
+	if !strings.Contains(toolID, ".") {
+		return "", false
+	}
+	status := firstNonEmpty(firstString(payload["status"], audit["status"]), artifact.Status)
+	if status == "approval_required" || status == "proposed" || status == "started" {
+		return "", false
+	}
+	action := AIToolCallAction(firstString(payload["action"], audit["action"]))
+	if action != AIToolCallActionExecute && action != AIToolCallActionDeny && action != AIToolCallActionApproveOnce && action != AIToolCallActionApproveForRun {
+		return "", false
+	}
+	arguments := mapStringString(payload["arguments"])
+	if len(arguments) == 0 {
+		arguments = mapStringString(audit["arguments"])
+	}
+	return pendingApprovalKey(artifact.RunID, toolID, arguments), true
+}
+
+func pendingApprovalKey(runID string, toolID string, arguments map[string]string) string {
+	return strings.Join([]string{
+		strings.TrimSpace(runID),
+		strings.TrimSpace(toolID),
+		toolApprovalArgumentsHash(arguments),
+	}, ":")
 }
 
 func firstNonNil(values ...any) any {

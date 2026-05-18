@@ -128,3 +128,7 @@ func cachedProjectModelCapabilityProbe(project *ProjectSession, providerID strin
 	}
 	return AIModelCapabilityProbeResult{}, false
 }
+
+func shouldBlockBuildForModelProbe(result AIModelCapabilityProbeResult) bool {
+	return modelCapabilityProbeFresh(result) && result.Status == "unsupported"
+}

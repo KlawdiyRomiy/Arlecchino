@@ -69,6 +69,41 @@ func (l *ToolApprovalGrantLedger) Delete(id string) error {
 	return l.writeAllLocked(next)
 }
 
+func (l *ToolApprovalGrantLedger) DeleteRuns(runIDs []string) error {
+	if l == nil || len(runIDs) == 0 {
+		return nil
+	}
+	runSet := map[string]struct{}{}
+	for _, runID := range runIDs {
+		if runID = strings.TrimSpace(runID); runID != "" {
+			runSet[runID] = struct{}{}
+		}
+	}
+	if len(runSet) == 0 {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	grants, err := l.readAllLocked()
+	if err != nil {
+		return err
+	}
+	next := grants[:0]
+	for _, grant := range grants {
+		if _, remove := runSet[grant.RunID]; remove {
+			continue
+		}
+		next = append(next, grant)
+	}
+	if len(next) == 0 {
+		if err := os.Remove(l.path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return l.writeAllLocked(next)
+}
+
 func (l *ToolApprovalGrantLedger) ListActive() ([]AIToolApprovalGrant, error) {
 	if l == nil {
 		return []AIToolApprovalGrant{}, nil
