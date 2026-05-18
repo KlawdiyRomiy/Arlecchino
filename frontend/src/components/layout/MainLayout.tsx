@@ -4393,7 +4393,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         }
 
         pruneExplorerPathPrefix(deletedPath);
-        closeEditorTabPaths(deletedPath);
+        closeEditorTabPaths(deletedPath, { preserveDirty: true });
         prunePathDiagnostics(deletedPath);
 
         setCodePanelTabs((currentTabs) =>

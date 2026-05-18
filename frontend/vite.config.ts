@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +8,18 @@ import { fileURLToPath } from "node:url";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(dirname, "..");
+
+const goEnv = (name: string): string => {
+  try {
+    return execFileSync("go", ["env", name], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+};
 
 const resolveBundledWailsRuntime = (): string => {
   const override = process.env.ARLECCHINO_WAILS_RUNTIME_JS;
@@ -30,13 +43,12 @@ const resolveBundledWailsRuntime = (): string => {
     );
   }
 
+  const goPath =
+    process.env.GOPATH || goEnv("GOPATH") || path.join(os.homedir(), "go");
   const goModCache =
-    process.env.GOMODCACHE ??
-    path.join(
-      process.env.GOPATH ?? path.join(os.homedir(), "go"),
-      "pkg",
-      "mod",
-    );
+    process.env.GOMODCACHE ||
+    goEnv("GOMODCACHE") ||
+    path.join(goPath, "pkg", "mod");
   const runtimePath = path.join(
     goModCache,
     `github.com/wailsapp/wails/v3@${version}`,

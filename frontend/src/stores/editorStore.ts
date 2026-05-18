@@ -85,7 +85,10 @@ interface EditorActions {
   renamePath: (oldPath: string, newPath: string) => void;
   renamePathPrefix: (oldPrefix: string, newPrefix: string) => void;
   closePath: (path: string) => void;
-  closePathPrefix: (pathPrefix: string) => void;
+  closePathPrefix: (
+    pathPrefix: string,
+    options?: { preserveDirty?: boolean },
+  ) => void;
   getTab: (id: string) => EditorTab | undefined;
   getActiveTab: (paneId: string) => EditorTab | undefined;
 }
@@ -639,14 +642,19 @@ export const useEditorStore = create<EditorState & EditorActions>(
       get().closePathPrefix(path);
     },
 
-    closePathPrefix: (pathPrefix) => {
-      const removedTabs = Array.from(get().tabs.values()).filter((tab) =>
-        isSameOrChildPath(tab.path, pathPrefix),
+    closePathPrefix: (pathPrefix, options) => {
+      const removedTabs = Array.from(get().tabs.values()).filter(
+        (tab) =>
+          isSameOrChildPath(tab.path, pathPrefix) &&
+          !(options?.preserveDirty && tab.isDirty),
       );
       set((state) => {
+        const affectedTabs = Array.from(state.tabs.values()).filter((tab) =>
+          isSameOrChildPath(tab.path, pathPrefix),
+        );
         const removedTabIds = new Set(
-          Array.from(state.tabs.values())
-            .filter((tab) => isSameOrChildPath(tab.path, pathPrefix))
+          affectedTabs
+            .filter((tab) => !(options?.preserveDirty && tab.isDirty))
             .map((tab) => tab.id),
         );
 
@@ -656,6 +664,11 @@ export const useEditorStore = create<EditorState & EditorActions>(
 
         const nextTabs = new Map(state.tabs);
         removedTabIds.forEach((tabId) => nextTabs.delete(tabId));
+        const statusPathSurvived =
+          state.statusFile.path &&
+          Array.from(nextTabs.values()).some(
+            (tab) => tab.path === state.statusFile.path,
+          );
 
         const nextPanes = state.panes.map((pane) => {
           const tabIds = pane.tabIds.filter(
@@ -676,7 +689,8 @@ export const useEditorStore = create<EditorState & EditorActions>(
           panes: nextPanes,
           statusFile:
             state.statusFile.path &&
-            isSameOrChildPath(state.statusFile.path, pathPrefix)
+            isSameOrChildPath(state.statusFile.path, pathPrefix) &&
+            !statusPathSurvived
               ? { path: null, name: null, language: null }
               : state.statusFile,
         };
