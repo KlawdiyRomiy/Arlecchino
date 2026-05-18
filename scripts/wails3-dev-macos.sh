@@ -152,6 +152,17 @@ frontend_dev_url() {
   printf "http://%s:%s\n" "$FRONTEND_DEV_HOST" "$FRONTEND_DEV_PORT"
 }
 
+ensure_wails3_runtime_module() {
+  if [[ "$WEB_ONLY" == "1" ]]; then
+    return 0
+  fi
+
+  (
+    cd "$ROOT_DIR"
+    go mod download github.com/wailsapp/wails/v3
+  )
+}
+
 start_frontend_dev_server() {
   local use_runtime_stub="$1"
   local url
@@ -161,9 +172,9 @@ start_frontend_dev_server() {
   (
     cd "$ROOT_DIR/frontend"
     if [[ "$use_runtime_stub" == "1" ]]; then
-      ARLECCHINO_TEST_WAILS_RUNTIME=1 npm run dev -- --host "$FRONTEND_DEV_HOST" --port "$FRONTEND_DEV_PORT" --strictPort
+      ARLECCHINO_WEB_ONLY_WAILS_RUNTIME=1 ARLECCHINO_TEST_WAILS_RUNTIME=1 npm run dev -- --host "$FRONTEND_DEV_HOST" --port "$FRONTEND_DEV_PORT" --strictPort
     else
-      npm run dev -- --host "$FRONTEND_DEV_HOST" --port "$FRONTEND_DEV_PORT" --strictPort
+      ARLECCHINO_REAL_WAILS_RUNTIME=1 npm run dev -- --host "$FRONTEND_DEV_HOST" --port "$FRONTEND_DEV_PORT" --strictPort
     fi
   ) &
   frontend_pid="$!"
@@ -269,6 +280,7 @@ if [[ "$FRONTEND_DEV_SERVER" == "1" ]]; then
   export WAILS_VITE_PORT="$FRONTEND_DEV_PORT"
   export FRONTEND_DEVSERVER_URL
   FRONTEND_DEVSERVER_URL="$(frontend_dev_url)"
+  ensure_wails3_runtime_module
   start_frontend_dev_server "$WEB_ONLY"
   wait_for_frontend_dev_server
 fi
