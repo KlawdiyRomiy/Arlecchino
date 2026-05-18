@@ -81,7 +81,7 @@ func (s *Service) canceledRunIDs(project *ProjectSession) map[string]struct{} {
 }
 
 func pendingApprovalFromArtifact(artifact AIChatRunArtifact) (AIPendingApproval, bool) {
-	if artifact.Status != "approval_required" && artifact.Status != "proposed" && artifact.Status != "started" {
+	if artifact.Status != "approval_required" && artifact.Status != "proposed" {
 		return AIPendingApproval{}, false
 	}
 	var payload map[string]any
@@ -95,7 +95,7 @@ func pendingApprovalFromArtifact(artifact AIChatRunArtifact) (AIPendingApproval,
 		return AIPendingApproval{}, false
 	}
 	status := firstNonEmpty(firstString(payload["status"], audit["status"]), artifact.Status)
-	if status != "approval_required" && status != "proposed" && status != "started" {
+	if status != "approval_required" && status != "proposed" {
 		return AIPendingApproval{}, false
 	}
 	arguments := mapStringString(payload["arguments"])
@@ -136,7 +136,7 @@ func resolvedApprovalKeyFromArtifact(artifact AIChatRunArtifact) (string, bool) 
 		return "", false
 	}
 	status := firstNonEmpty(firstString(payload["status"], audit["status"]), artifact.Status)
-	if status == "approval_required" || status == "proposed" || status == "started" {
+	if status == "approval_required" || status == "proposed" {
 		return "", false
 	}
 	action := AIToolCallAction(firstString(payload["action"], audit["action"]))
