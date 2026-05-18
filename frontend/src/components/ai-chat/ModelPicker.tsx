@@ -2,11 +2,13 @@ import React, { useEffect, useState } from "react";
 import {
   CheckCircle2,
   ChevronDown,
+  Gauge,
   Play,
   RefreshCw,
   Square,
 } from "lucide-react";
 import { AnimatePresence, m, useReducedMotion } from "framer-motion";
+import type { AIModelCapabilityDescriptor } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 import type {
   AIProviderRuntimeDescriptor,
@@ -22,9 +24,11 @@ interface ModelPickerProps {
   providerRuntimes: AIProviderRuntimeDescriptor[];
   providerRuntimeBusy: boolean;
   providerRuntimeError: string;
+  selectedModelCapability: AIModelCapabilityDescriptor | null;
   onSelectProvider: (provider: AIProviderDescriptor) => void;
   onSelectModel: (modelId: string) => void;
   onRefreshProviders: () => void;
+  onProbeModelCapability: () => void;
   onStartProviderRuntime: (
     provider: AIProviderDescriptor,
     model: AIProviderRuntimeModel,
@@ -39,9 +43,11 @@ export function ModelPicker({
   providerRuntimes,
   providerRuntimeBusy,
   providerRuntimeError,
+  selectedModelCapability,
   onSelectProvider,
   onSelectModel,
   onRefreshProviders,
+  onProbeModelCapability,
   onStartProviderRuntime,
   onStopProviderRuntime,
 }: ModelPickerProps) {
@@ -62,6 +68,19 @@ export function ModelPicker({
     getProviderPresentation(selectedProvider);
   const selectedModelLabel =
     activeModel?.displayName || activeModel?.id || selectedModel || "No model";
+  const probeStatus = selectedModelCapability?.probeStatus || "";
+  const probeLabel =
+    probeStatus === "verified"
+      ? "Tool probe verified"
+      : probeStatus === "unsupported"
+        ? "Tool probe failed"
+        : probeStatus === "error" || probeStatus === "failed"
+          ? "Tool probe error"
+          : probeStatus === "pending"
+            ? "Tool probe running"
+            : selectedModelCapability?.toolSupport
+              ? "Tool support inferred"
+              : "Tool support unknown";
 
   useEffect(() => {
     if (!open) return;
@@ -260,6 +279,16 @@ export function ModelPicker({
                 <RefreshCw size={14} />
                 Refresh
               </button>
+              <button
+                className="ai-chat-secondary-button"
+                type="button"
+                disabled={!selectedProvider || providerRuntimeBusy}
+                title={selectedModelCapability?.probeError || probeLabel}
+                onClick={onProbeModelCapability}
+              >
+                <Gauge size={14} />
+                Probe tools
+              </button>
               {runtime?.running && runtime.managed && selectedProvider ? (
                 <button
                   className="ai-chat-secondary-button ai-chat-provider-stop"
@@ -287,6 +316,12 @@ export function ModelPicker({
                 {providerRuntimeError}
               </div>
             ) : null}
+            <div
+              className={`ai-chat-model-picker__probe is-${probeStatus || "unknown"}`}
+              title={selectedModelCapability?.probeError || probeLabel}
+            >
+              {probeLabel}
+            </div>
           </m.div>
         ) : null}
       </AnimatePresence>

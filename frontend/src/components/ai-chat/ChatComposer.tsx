@@ -13,12 +13,13 @@ import {
   X,
 } from "lucide-react";
 import type {
-  AIChatAction,
   AIChatActionDescriptor,
   AIChatMentionCandidate,
   AIContextProviderDescriptor,
+  AIModelCapabilityDescriptor,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import {
+  AIChatAction,
   AIChatMentionKind,
   AIChatMentionOperation,
   AIChatMentionQuery,
@@ -51,6 +52,7 @@ interface ChatComposerProps {
   providerRuntimes: AIProviderRuntimeDescriptor[];
   providerRuntimeBusy: boolean;
   providerRuntimeError: string;
+  selectedModelCapability: AIModelCapabilityDescriptor | null;
   context: ContextToggles;
   contextProviders: AIContextProviderDescriptor[];
   contextPickerOpen: boolean;
@@ -58,6 +60,7 @@ interface ChatComposerProps {
   onSelectProvider: (provider: AIProviderDescriptor) => void;
   onSelectModel: (modelId: string) => void;
   onRefreshProviders: () => void;
+  onProbeModelCapability: () => void;
   onStartProviderRuntime: (
     provider: AIProviderDescriptor,
     model: AIProviderRuntimeModel,
@@ -196,6 +199,7 @@ export function ChatComposer({
   providerRuntimes,
   providerRuntimeBusy,
   providerRuntimeError,
+  selectedModelCapability,
   context,
   contextProviders,
   contextPickerOpen,
@@ -203,6 +207,7 @@ export function ChatComposer({
   onSelectProvider,
   onSelectModel,
   onRefreshProviders,
+  onProbeModelCapability,
   onStartProviderRuntime,
   onStopProviderRuntime,
   onContextToggle,
@@ -228,20 +233,24 @@ export function ChatComposer({
   const actionDescriptors =
     actions.length > 0
       ? sortActionDescriptors(actions)
-      : modeOrder.map(
-          (action) =>
-            ({
-              id: action,
-              name: getActionMeta(action).label,
-              description: getActionMeta(action).description,
-              builtIn: true,
-              mayProposeTools: action === "build" || action === "debug",
-              expectsToolProposals: false,
-              readOnlyIntent: action !== "build" && action !== "debug",
-              showPlanStructure: action === "plan",
-              executionUnavailable: false,
-            }) as AIChatActionDescriptor,
-        );
+      : modeOrder.map((action) => {
+          const isBuild = action === AIChatAction.AIChatActionBuild;
+          const mayProposeTools =
+            action === AIChatAction.AIChatActionPlan ||
+            action === AIChatAction.AIChatActionDebug ||
+            isBuild;
+          return {
+            id: action,
+            name: getActionMeta(action).label,
+            description: getActionMeta(action).description,
+            builtIn: true,
+            mayProposeTools,
+            expectsToolProposals: isBuild,
+            readOnlyIntent: !isBuild,
+            showPlanStructure: action === AIChatAction.AIChatActionPlan,
+            executionUnavailable: false,
+          } as AIChatActionDescriptor;
+        });
 
   const closeMentionPicker = useCallback(() => {
     setActiveMention(null);
@@ -569,7 +578,9 @@ export function ChatComposer({
               providers={providers}
               selectedModel={selectedModel}
               selectedProvider={selectedProvider}
+              selectedModelCapability={selectedModelCapability}
               onRefreshProviders={onRefreshProviders}
+              onProbeModelCapability={onProbeModelCapability}
               onSelectModel={onSelectModel}
               onSelectProvider={onSelectProvider}
               onStartProviderRuntime={onStartProviderRuntime}

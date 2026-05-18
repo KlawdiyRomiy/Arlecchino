@@ -30,9 +30,11 @@ import {
   AIListEgressRecords,
   AIListMnemonicEntries,
   AIListModelCapabilities,
+  AIListPendingApprovals,
   AIListPromptWorkflows,
   AIListTools,
   AIListToolAudit,
+  AIProbeModelCapability,
   AIRefreshLocalProviders,
   AIRollbackPatchCheckpoint,
   AISaveConsentPolicy,
@@ -52,6 +54,7 @@ import {
   AIChatRunEnvelope,
   AIContextItemKind,
   AIToolCallAction,
+  type AIChatActionDescriptor,
   type AIChatMentionCandidate,
   type AIChatMentionQuery,
   type AIChatRun,
@@ -60,6 +63,7 @@ import {
   type AIContextSnapshot,
   type AIEgressRecord,
   type AIModelCapabilityDescriptor,
+  type AIPendingApproval,
   type AIProviderCapability,
   type AIToolProposal,
   type AIToolAuditRecord,
@@ -111,6 +115,7 @@ import {
   normalizeAIEmbeddingStatus,
   normalizeAIMnemonicEntries,
   normalizeAIModelCapabilities,
+  normalizeAIPendingApprovals,
   normalizeAIPromptWorkflows,
   normalizeAIProviderRuntimes,
   normalizeAIStatus,
@@ -171,6 +176,8 @@ interface ActiveTerminalContext {
   raw: string;
   cwd: string;
 }
+
+type ArtifactMap = Record<string, AIChatRunArtifact[]>;
 
 export function activeEditorContextFromStore(
   store: ReturnType<typeof useEditorStore.getState>,
@@ -621,6 +628,54 @@ function scrollRunIntoView(panel: HTMLElement | null, runId: string) {
   });
 }
 
+function PendingApprovalCenter({
+  approvals,
+  onOpenReview,
+  onSelectRun,
+}: {
+  approvals: AIPendingApproval[];
+  onOpenReview: () => void;
+  onSelectRun: (runId: string) => void;
+}) {
+  if (approvals.length === 0) {
+    return null;
+  }
+  return (
+    <section className="ai-chat-pending-approvals">
+      <div className="ai-chat-pending-approvals__head">
+        <span>Pending approvals</span>
+        <button type="button" onClick={onOpenReview}>
+          Review
+        </button>
+      </div>
+      <div className="ai-chat-pending-approvals__list">
+        {approvals.slice(0, 4).map((approval) => {
+          const target =
+            approval.targetPaths?.[0] ||
+            approval.scopeSummary ||
+            approval.commandPreview ||
+            approval.toolId;
+          return (
+            <button
+              className="ai-chat-pending-approvals__item"
+              key={approval.id}
+              type="button"
+              title={approval.scopeSummary || approval.commandPreview}
+              onClick={() => onSelectRun(approval.runId)}
+            >
+              <span>
+                {approval.toolId || approval.kind}
+                {approval.riskLevel ? ` · ${approval.riskLevel}` : ""}
+              </span>
+              <span>{target}</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function pushUniqueContextItem(
   items: NonNullable<AIContextRequest["contextItems"]>,
   item: NonNullable<AIContextRequest["contextItems"]>[number],
@@ -806,6 +861,88 @@ function envelopeFromRun(run: AIChatRun): AIChatRunEnvelope {
   });
 }
 
+function mergeArtifactsById(
+  existing: AIChatRunArtifact[],
+  incoming: AIChatRunArtifact[],
+): AIChatRunArtifact[] {
+  const byId = new Map(existing.map((artifact) => [artifact.id, artifact]));
+  incoming.forEach((artifact) => {
+    if (!artifact.id) return;
+    byId.set(artifact.id, artifact);
+  });
+  return [...byId.values()].sort((left, right) =>
+    String(right.updatedAt || right.createdAt || "").localeCompare(
+      String(left.updatedAt || left.createdAt || ""),
+    ),
+  );
+}
+
+function fallbackActionDescriptors(): AIChatActionDescriptor[] {
+  return [
+    {
+      id: AIChatAction.AIChatActionAsk,
+      name: "Ask",
+      description: "Answer with provided context only.",
+      builtIn: true,
+      mayProposeTools: false,
+      expectsToolProposals: false,
+      readOnlyIntent: true,
+      showPlanStructure: false,
+      executionUnavailable: false,
+    },
+    {
+      id: AIChatAction.AIChatActionPlan,
+      name: "Plan",
+      description: "Inspect read-only context and produce a plan.",
+      builtIn: true,
+      mayProposeTools: true,
+      expectsToolProposals: false,
+      readOnlyIntent: true,
+      showPlanStructure: true,
+      executionUnavailable: false,
+    },
+    {
+      id: AIChatAction.AIChatActionBuild,
+      name: "Build",
+      description: "Prepare approval-gated tool calls and patch artifacts.",
+      builtIn: true,
+      mayProposeTools: true,
+      expectsToolProposals: true,
+      readOnlyIntent: false,
+      showPlanStructure: false,
+      executionUnavailable: false,
+    },
+    {
+      id: AIChatAction.AIChatActionDebug,
+      name: "Debug",
+      description: "Diagnose failures without writing files.",
+      builtIn: true,
+      mayProposeTools: true,
+      expectsToolProposals: false,
+      readOnlyIntent: true,
+      showPlanStructure: false,
+      executionUnavailable: false,
+    },
+  ] as AIChatActionDescriptor[];
+}
+
+function sanitizeActionDescriptors(
+  descriptors: AIChatActionDescriptor[],
+): AIChatActionDescriptor[] {
+  const source =
+    descriptors.length > 0 ? descriptors : fallbackActionDescriptors();
+  return source.map((descriptor) =>
+    descriptor.id === AIChatAction.AIChatActionBuild &&
+    /non-executable|not executable/i.test(descriptor.description || "")
+      ? {
+          ...descriptor,
+          description: "Prepare approval-gated tool calls and patch artifacts.",
+          executionUnavailable: false,
+        }
+      : descriptor,
+  );
+}
+
 function previewableToolIdForProposal(proposal: AIToolProposal): string | null {
   const candidates = toolIdCandidatesForProposal(proposal);
   return (
@@ -912,9 +1049,10 @@ export function AIChatPanelContent({
   const [modelCapabilities, setModelCapabilities] = useState<
     AIModelCapabilityDescriptor[]
   >([]);
-  const [activeArtifacts, setActiveArtifacts] = useState<AIChatRunArtifact[]>(
+  const [pendingApprovals, setPendingApprovals] = useState<AIPendingApproval[]>(
     [],
   );
+  const [artifactsByRunId, setArtifactsByRunId] = useState<ArtifactMap>({});
   const syncInlinePatchArtifacts = useAIInlinePatchStore(
     (store) => store.syncArtifacts,
   );
@@ -974,6 +1112,15 @@ export function AIChatPanelContent({
     selectedProvider?.models?.[0]?.id ||
     status?.activeModel ||
     "";
+  const selectedModelCapability = useMemo(
+    () =>
+      modelCapabilities.find(
+        (capability) =>
+          capability.providerId === selectedProvider?.id &&
+          capability.model === selectedModel,
+      ) ?? null,
+    [modelCapabilities, selectedModel, selectedProvider?.id],
+  );
   const activeSessionId = state.activeSessionId || defaultChatSessionId;
   const selectedMentionsForActiveSession = useMemo(
     () => mentionsForSession(state, activeSessionId),
@@ -994,6 +1141,20 @@ export function AIChatPanelContent({
       : (activeSessionEnvelopes[0]?.id ?? "");
   const activeRun = activeRunKey ? (hydratedRuns[activeRunKey] ?? null) : null;
   const activeEnvelope = runs.find((run) => run.id === activeRunKey) ?? null;
+  const activeArtifacts = activeRunKey
+    ? (artifactsByRunId[activeRunKey] ?? [])
+    : [];
+  const allKnownArtifacts = useMemo(
+    () =>
+      activeSessionEnvelopes.flatMap(
+        (envelope) => artifactsByRunId[envelope.id] ?? [],
+      ),
+    [activeSessionEnvelopes, artifactsByRunId],
+  );
+  const composerActions = useMemo(
+    () => sanitizeActionDescriptors(actions),
+    [actions],
+  );
   const activeRunRunning = activeSessionEnvelopes.some(
     (run) => run.status === "running" || run.status === "queued",
   );
@@ -1230,6 +1391,7 @@ export function AIChatPanelContent({
         nextApprovalPolicy,
         nextMnemonicEntries,
         nextProviderRuntimes,
+        nextPendingApprovals,
       ] = await Promise.all([
         fallbackOnRuntimeError(AIGetStatus(), defaultAIStatus()),
         fallbackOnRuntimeError(AIListChatRuns(50), []),
@@ -1247,6 +1409,7 @@ export function AIChatPanelContent({
         fallbackOnRuntimeError(AIGetApprovalPolicy(), null),
         fallbackOnRuntimeError(AIListMnemonicEntries(24), []),
         fallbackOnRuntimeError(AIListProviderRuntimes(), []),
+        fallbackOnRuntimeError(AIListPendingApprovals(50), []),
       ]);
       const safeStatus = normalizeAIStatus(nextStatus);
       const nextProviders = safeStatus.providers;
@@ -1274,6 +1437,7 @@ export function AIChatPanelContent({
       setApprovalPolicy(safeApprovalPolicy);
       setMnemonicEntries(normalizeAIMnemonicEntries(nextMnemonicEntries));
       setProviderRuntimes(normalizeAIProviderRuntimes(nextProviderRuntimes));
+      setPendingApprovals(normalizeAIPendingApprovals(nextPendingApprovals));
       setRuns(safeEnvelopes);
       setContextPreview(normalizeAIContextSnapshot(preview));
 
@@ -1352,39 +1516,87 @@ export function AIChatPanelContent({
   }, [activeRunKey, hydratedRuns, setHydratedRun]);
 
   useEffect(() => {
-    if (!activeRunKey) {
-      setActiveArtifacts([]);
+    const runTargets = activeSessionEnvelopes
+      .map((run) => run.id.trim())
+      .filter(Boolean);
+    if (runTargets.length === 0) {
       return;
     }
     let cancelled = false;
-    AIListChatRunArtifacts(activeRunKey)
-      .then((artifacts) => {
-        if (!cancelled) {
-          setActiveArtifacts(normalizeAIChatArtifacts(artifacts));
+    void Promise.all(
+      runTargets.map(async (runId) => {
+        try {
+          const artifacts = await AIListChatRunArtifacts(runId);
+          return [runId, normalizeAIChatArtifacts(artifacts)] as const;
+        } catch {
+          return null;
         }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setActiveArtifacts([]);
-        }
+      }),
+    ).then((results) => {
+      if (cancelled) {
+        return;
+      }
+      setArtifactsByRunId((current) => {
+        const next = { ...current };
+        results.forEach((result) => {
+          if (!result) {
+            return;
+          }
+          const [runId, artifacts] = result;
+          next[runId] = mergeArtifactsById(current[runId] ?? [], artifacts);
+        });
+        return next;
       });
+    });
     return () => {
       cancelled = true;
     };
-  }, [activeRunKey, activeEnvelope?.updatedAt]);
+  }, [activeSessionEnvelopes]);
+
+  const refreshRunArtifacts = useCallback(async (runId: string) => {
+    const key = runId.trim();
+    if (!key) {
+      return;
+    }
+    const artifacts = await AIListChatRunArtifacts(key);
+    const normalized = normalizeAIChatArtifacts(artifacts);
+    setArtifactsByRunId((current) => ({
+      ...current,
+      [key]: mergeArtifactsById(current[key] ?? [], normalized),
+    }));
+  }, []);
+
+  const refreshPendingApprovals = useCallback(async () => {
+    const approvals = await fallbackOnRuntimeError(
+      AIListPendingApprovals(50),
+      [],
+    );
+    setPendingApprovals(normalizeAIPendingApprovals(approvals));
+  }, []);
+
+  const refreshModelCapabilities = useCallback(async () => {
+    const capabilities = await fallbackOnRuntimeError(
+      AIListModelCapabilities(),
+      [],
+    );
+    setModelCapabilities(normalizeAIModelCapabilities(capabilities));
+  }, []);
 
   const refreshActiveArtifacts = useCallback(async () => {
     if (!activeRunKey) {
-      setActiveArtifacts([]);
       return;
     }
-    const artifacts = await AIListChatRunArtifacts(activeRunKey);
-    setActiveArtifacts(normalizeAIChatArtifacts(artifacts));
-  }, [activeRunKey]);
+    await refreshRunArtifacts(activeRunKey);
+  }, [activeRunKey, refreshRunArtifacts]);
+  const refreshRunArtifactsEvent = useEffectEvent(refreshRunArtifacts);
+  const refreshPendingApprovalsEvent = useEffectEvent(refreshPendingApprovals);
+  const refreshModelCapabilitiesEvent = useEffectEvent(
+    refreshModelCapabilities,
+  );
 
   useEffect(() => {
-    syncInlinePatchArtifacts(activeArtifacts);
-  }, [activeArtifacts, syncInlinePatchArtifacts]);
+    syncInlinePatchArtifacts(allKnownArtifacts);
+  }, [allKnownArtifacts, syncInlinePatchArtifacts]);
 
   useLayoutEffect(() => {
     if (!state.displayPrefs.autoScroll) return;
@@ -1401,6 +1613,17 @@ export function AIChatPanelContent({
     if (!run?.id) return;
     setHydratedRun(run);
     upsertRunEnvelope(envelopeFromRun(run));
+    void refreshRunArtifactsEvent(run.id);
+    void refreshPendingApprovalsEvent();
+    if (
+      run.status === "completed" ||
+      run.status === "error" ||
+      run.status === "canceled"
+    ) {
+      window.setTimeout(() => {
+        void refreshRunArtifactsEvent(run.id);
+      }, 125);
+    }
     void AIGetChatRunEnvelope(run.id)
       .then((envelope) => {
         if (envelope?.id) {
@@ -1426,6 +1649,8 @@ export function AIChatPanelContent({
     (envelope: AIChatRunEnvelope) => {
       if (!envelope?.id) return;
       upsertRunEnvelope(envelope);
+      void refreshRunArtifactsEvent(envelope.id);
+      void refreshPendingApprovalsEvent();
       const runSessionId = sessionIdOf(envelope);
       if (runSessionId === state.activeSessionId || !state.activeRunId) {
         setActiveRunId(envelope.id);
@@ -1455,31 +1680,67 @@ export function AIChatPanelContent({
 
   const handleEgressRecord = useEffectEvent((record: AIEgressRecord) => {
     const source = record?.source ?? "";
-    if (!["chat_run", "ai_chat", "ai-chat"].includes(source)) return;
-    if (record.runId && activeRunKey && record.runId !== activeRunKey) return;
-    if (
-      record.chatAction &&
-      activeEnvelope?.action &&
-      record.chatAction !== activeEnvelope.action
-    ) {
+    const chatSource =
+      source === "" ||
+      source === "chat_run" ||
+      source === "ai_chat" ||
+      source === "ai-chat" ||
+      source === "chat_tool_result" ||
+      source === "chat_rewrite_guard";
+    if (!chatSource && !record.runId && !record.projectSessionId) {
       return;
     }
     upsertEgressRecord(record);
+    if (record.runId) {
+      void refreshRunArtifactsEvent(record.runId);
+    }
   });
 
   const handleToolAuditRecord = useEffectEvent((result: unknown) => {
     const audit = (result as { audit?: AIToolAuditRecord })?.audit;
     if (!audit?.id) return;
     upsertToolAudit(audit);
-    if (audit.runId && activeRunKey && audit.runId === activeRunKey) {
-      void refreshActiveArtifacts();
+    void refreshPendingApprovalsEvent();
+    if (audit.runId) {
+      void refreshRunArtifactsEvent(audit.runId);
     }
   });
 
   const handleToolLifecycleArtifact = useEffectEvent((artifact: unknown) => {
     const runId = (artifact as { runId?: string })?.runId;
-    if (runId && activeRunKey && runId === activeRunKey) {
-      void refreshActiveArtifacts();
+    void refreshPendingApprovalsEvent();
+    if (runId) {
+      void refreshRunArtifactsEvent(runId);
+    }
+  });
+
+  const handleChatArtifactUpdated = useEffectEvent((artifact: unknown) => {
+    const normalized = normalizeAIChatArtifacts([artifact]).at(0);
+    if (!normalized?.id || !normalized.runId) {
+      return;
+    }
+    setArtifactsByRunId((current) => ({
+      ...current,
+      [normalized.runId]: mergeArtifactsById(current[normalized.runId] ?? [], [
+        normalized,
+      ]),
+    }));
+    void refreshPendingApprovalsEvent();
+  });
+
+  const handleChatToolResult = useEffectEvent((payload: unknown) => {
+    const runId = (payload as { runId?: string })?.runId;
+    void refreshPendingApprovalsEvent();
+    if (runId) {
+      void refreshRunArtifactsEvent(runId);
+    }
+  });
+
+  const handlePatchArtifactAppliedEvent = useEffectEvent((payload: unknown) => {
+    const runId = (payload as { runId?: string })?.runId;
+    void refreshPendingApprovalsEvent();
+    if (runId) {
+      void refreshRunArtifactsEvent(runId);
     }
   });
 
@@ -1516,6 +1777,18 @@ export function AIChatPanelContent({
         return next;
       });
     });
+    const offRuntimeRecovered = EventsOn("ai:runtime:recovered", () => {
+      void refreshRuntimeEvent();
+    });
+    const offApprovalsRecovered = EventsOn(
+      "ai:tool:approvals-recovered",
+      () => {
+        void refreshPendingApprovalsEvent();
+      },
+    );
+    const offModelProbe = EventsOn("ai:model:capability-probed", () => {
+      void refreshModelCapabilitiesEvent();
+    });
     const offEgress = EventsOn("ai:chat:egress-recorded", (record) =>
       handleEgressRecord(record as AIEgressRecord),
     );
@@ -1526,6 +1799,20 @@ export function AIChatPanelContent({
       "ai:tool:lifecycle-recorded",
       (artifact) => handleToolLifecycleArtifact(artifact),
     );
+    const offArtifactUpdated = EventsOn(
+      "ai:chat:artifact-updated",
+      (artifact) => handleChatArtifactUpdated(artifact),
+    );
+    const offChatToolResult = EventsOn("ai:chat:tool-result", (payload) =>
+      handleChatToolResult(payload),
+    );
+    const offPatchApplied = EventsOn("ai:patch:artifact-applied", (payload) =>
+      handlePatchArtifactAppliedEvent(payload),
+    );
+    const offPatchRolledBack = EventsOn(
+      "ai:patch:artifact-rolled-back",
+      (payload) => handlePatchArtifactAppliedEvent(payload),
+    );
     return () => {
       offStarted?.();
       offCompleted?.();
@@ -1535,9 +1822,16 @@ export function AIChatPanelContent({
       offEnvelope?.();
       offStatus?.();
       offRuntime?.();
+      offRuntimeRecovered?.();
+      offApprovalsRecovered?.();
+      offModelProbe?.();
       offEgress?.();
       offToolAudit?.();
       offToolLifecycle?.();
+      offArtifactUpdated?.();
+      offChatToolResult?.();
+      offPatchApplied?.();
+      offPatchRolledBack?.();
     };
   }, []);
 
@@ -1699,12 +1993,21 @@ export function AIChatPanelContent({
   }, [activeEnvelope, activeSessionEnvelopes]);
 
   const handleApplyPatchArtifact = useCallback(
-    async (artifactId: string) => {
+    async (artifactId: string, runId?: string) => {
+      const targetRunId = runId?.trim() || activeRunKey;
+      if (targetRunId) {
+        setActiveRunId(targetRunId);
+        dispatch({ type: "setActiveRun", runId: targetRunId });
+      }
       setRuntimeError(null);
       setArtifactBusyId(artifactId);
       try {
         await AIApplyPatchArtifact({ artifactId });
-        await refreshActiveArtifacts();
+        if (targetRunId) {
+          await refreshRunArtifacts(targetRunId);
+        } else {
+          await refreshActiveArtifacts();
+        }
         dispatchChrome({ type: "openDrawer", drawer: "review" });
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
@@ -1712,16 +2015,33 @@ export function AIChatPanelContent({
         setArtifactBusyId(null);
       }
     },
-    [refreshActiveArtifacts],
+    [activeRunKey, refreshActiveArtifacts, refreshRunArtifacts, setActiveRunId],
   );
 
-  const handleRollbackPatchCheckpoint = useCallback(
-    async (checkpointId: string) => {
+  const handleRollbackPatchArtifact = useCallback(
+    async (artifactOrCheckpointId: string, runId?: string) => {
+      const targetRunId = runId?.trim() || activeRunKey;
+      if (targetRunId) {
+        setActiveRunId(targetRunId);
+        dispatch({ type: "setActiveRun", runId: targetRunId });
+      }
+      const artifact =
+        allKnownArtifacts.find(
+          (candidate) => candidate.id === artifactOrCheckpointId,
+        ) ?? null;
+      const artifactId = artifact?.id || artifactOrCheckpointId;
       setRuntimeError(null);
-      setArtifactBusyId(checkpointId);
+      setArtifactBusyId(artifactId);
       try {
-        await AIRollbackPatchCheckpoint({ checkpointId });
-        await refreshActiveArtifacts();
+        await AIRollbackPatchCheckpoint({
+          checkpointId: artifact?.id ? "" : artifactOrCheckpointId,
+          artifactId: artifact?.id,
+        });
+        if (targetRunId) {
+          await refreshRunArtifacts(targetRunId);
+        } else {
+          await refreshActiveArtifacts();
+        }
         dispatchChrome({ type: "openDrawer", drawer: "review" });
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
@@ -1729,7 +2049,13 @@ export function AIChatPanelContent({
         setArtifactBusyId(null);
       }
     },
-    [refreshActiveArtifacts],
+    [
+      activeRunKey,
+      allKnownArtifacts,
+      refreshActiveArtifacts,
+      refreshRunArtifacts,
+      setActiveRunId,
+    ],
   );
 
   const refreshMnemonicEntries = useCallback(async () => {
@@ -2019,6 +2345,29 @@ export function AIChatPanelContent({
     dispatch({ type: "setModel", model: modelId });
   }, []);
 
+  const handleProbeModelCapability = useCallback(async () => {
+    if (!selectedProvider || !selectedModel) {
+      return;
+    }
+    setProviderRuntimeBusy(true);
+    setProviderRuntimeError("");
+    try {
+      await AIProbeModelCapability({
+        providerId: selectedProvider.id,
+        model: selectedModel,
+        force: true,
+      });
+      await refreshModelCapabilities();
+    } catch (error) {
+      setProviderRuntimeError(
+        error instanceof Error ? error.message : String(error),
+      );
+      await refreshModelCapabilities();
+    } finally {
+      setProviderRuntimeBusy(false);
+    }
+  }, [refreshModelCapabilities, selectedModel, selectedProvider]);
+
   const handleStartProviderRuntime = useCallback(
     async (provider: AIProviderDescriptor, model: AIProviderRuntimeModel) => {
       setProviderRuntimeBusy(true);
@@ -2279,6 +2628,26 @@ export function AIChatPanelContent({
                 {runtimeError ? (
                   <div className="ai-chat-runtime-error">{runtimeError}</div>
                 ) : null}
+                <PendingApprovalCenter
+                  approvals={pendingApprovals}
+                  onOpenReview={() =>
+                    dispatchChrome({ type: "openDrawer", drawer: "review" })
+                  }
+                  onSelectRun={(runId) => {
+                    const envelope = runs.find(
+                      (candidate) => candidate.id === runId,
+                    );
+                    setActiveRunId(runId);
+                    if (envelope) {
+                      dispatch({
+                        type: "setActiveSession",
+                        sessionId: sessionIdOf(envelope),
+                        runId,
+                      });
+                    }
+                    dispatch({ type: "setActiveRun", runId });
+                  }}
+                />
                 {transcriptRuns.length === 0 ? (
                   <EmptyState
                     providerReady={selectedProviderReady}
@@ -2292,9 +2661,7 @@ export function AIChatPanelContent({
                         compact={state.displayPrefs.compactCards}
                         envelope={envelope}
                         artifactBusyId={artifactBusyId}
-                        artifacts={
-                          envelope.id === activeRunKey ? activeArtifacts : []
-                        }
+                        artifacts={artifactsByRunId[envelope.id] ?? []}
                         key={envelope.id}
                         run={hydratedRuns[envelope.id] ?? null}
                         streamingText={streamingTextByRunId[envelope.id] ?? ""}
@@ -2314,9 +2681,7 @@ export function AIChatPanelContent({
                         onApproveToolProposal={handleApproveToolProposal}
                         onDenyToolProposal={handleDenyToolProposal}
                         onPreviewToolProposal={handlePreviewToolProposal}
-                        onRollbackPatchCheckpoint={
-                          handleRollbackPatchCheckpoint
-                        }
+                        onRollbackPatchArtifact={handleRollbackPatchArtifact}
                         onSelect={(runId) => {
                           setActiveRunId(runId);
                           dispatch({ type: "setActiveRun", runId });
@@ -2330,7 +2695,7 @@ export function AIChatPanelContent({
 
               <ChatComposer
                 canSend={canSend}
-                actions={actions}
+                actions={composerActions}
                 context={state.context}
                 contextPickerOpen={contextPickerOpen}
                 contextProviders={contextProviders}
@@ -2344,6 +2709,7 @@ export function AIChatPanelContent({
                 selectedAction={state.selectedAction}
                 selectedMentions={selectedMentionsForActiveSession}
                 selectedModel={selectedModel}
+                selectedModelCapability={selectedModelCapability}
                 selectedProvider={selectedProvider}
                 sendShortcut={aiChatSendShortcut}
                 onActionChange={(action) =>
@@ -2359,6 +2725,7 @@ export function AIChatPanelContent({
                   dispatch({ type: "removeMention", id })
                 }
                 onMentionSelect={handleMentionSelect}
+                onProbeModelCapability={handleProbeModelCapability}
                 onRefreshContext={handleRefreshContext}
                 onRefreshProviders={handleRefreshProviders}
                 onSend={handleSend}

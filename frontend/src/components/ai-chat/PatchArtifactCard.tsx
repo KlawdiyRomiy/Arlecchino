@@ -10,7 +10,7 @@ interface PatchArtifactCardProps {
   artifact: AIChatRunArtifact;
   busy: boolean;
   onApply: (artifactId: string) => void;
-  onRollback: (checkpointId: string) => void;
+  onRollback: (artifactId: string) => void;
   onOpenReview: () => void;
 }
 
@@ -39,6 +39,14 @@ export function PatchArtifactCard({
     artifact.status === "applied" && checkpoints.length > 0 && !busy;
   const preview = compactText(payload.unifiedDiff || "", 900);
   const statusLabel = artifact.status.replace(/_/g, " ");
+  const rollbackLabel =
+    checkpoints.length > 1 ? "Rollback artifact" : "Rollback file";
+  const rollbackTitle =
+    checkpoints.length > 1
+      ? "Rollback the whole patch artifact when supported"
+      : files[0]?.path
+        ? `Rollback ${files[0].path}`
+        : "Rollback this file checkpoint";
 
   const stop = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -96,13 +104,14 @@ export function PatchArtifactCard({
           <button
             type="button"
             disabled={busy}
+            title={rollbackTitle}
             onClick={(event) => {
               stop(event);
-              onRollback(checkpoints[0]);
+              onRollback(artifact.id);
             }}
           >
             <RotateCcw size={13} />
-            Rollback
+            {rollbackLabel}
           </button>
         ) : null}
         <button

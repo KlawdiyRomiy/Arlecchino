@@ -88,7 +88,10 @@ export const useAIInlinePatchStore = create<AIInlinePatchState>((set) => ({
         ) {
           return;
         }
-        if (state.dismissedIds[artifact.id] || artifact.status !== "ready") {
+        if (artifact.status !== "ready") {
+          return;
+        }
+        if (state.dismissedIds[artifact.id]) {
           return;
         }
         const payload = parsePatchPayload(artifact);

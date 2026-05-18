@@ -12,6 +12,7 @@ import {
   type AIEgressRecord,
   type AIMnemonicEntry,
   type AIModelCapabilityDescriptor,
+  type AIPendingApproval,
   type AIPromptWorkflowDescriptor,
   type AIToolAuditRecord,
   type AIToolDescriptor,
@@ -61,7 +62,9 @@ export const normalizeAIStatus = (value: unknown): AIStatus => {
   return new AIStatus({
     ...source,
     enabled:
-      typeof source.enabled === "boolean" ? source.enabled : defaultAIStatus().enabled,
+      typeof source.enabled === "boolean"
+        ? source.enabled
+        : defaultAIStatus().enabled,
     mnemonicEnabled:
       typeof source.mnemonicEnabled === "boolean"
         ? source.mnemonicEnabled
@@ -125,8 +128,9 @@ export const normalizeAIChatRuns = (value: unknown): AIChatRunEnvelope[] =>
 export const normalizeAIChatArtifacts = (value: unknown): AIChatRunArtifact[] =>
   toArray<AIChatRunArtifact>(value);
 
-export const normalizeAIChatActions = (value: unknown): AIChatActionDescriptor[] =>
-  toArray<AIChatActionDescriptor>(value);
+export const normalizeAIChatActions = (
+  value: unknown,
+): AIChatActionDescriptor[] => toArray<AIChatActionDescriptor>(value);
 
 export const normalizeAIContextProviders = (
   value: unknown,
@@ -152,6 +156,10 @@ export const normalizeAIToolAudit = (value: unknown): AIToolAuditRecord[] =>
 export const normalizeAIModelCapabilities = (
   value: unknown,
 ): AIModelCapabilityDescriptor[] => toArray<AIModelCapabilityDescriptor>(value);
+
+export const normalizeAIPendingApprovals = (
+  value: unknown,
+): AIPendingApproval[] => toArray<AIPendingApproval>(value);
 
 export const normalizeAIMnemonicEntries = (value: unknown): AIMnemonicEntry[] =>
   toArray<AIMnemonicEntry>(value);

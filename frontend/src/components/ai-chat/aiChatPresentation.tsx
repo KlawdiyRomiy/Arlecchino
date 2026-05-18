@@ -43,7 +43,7 @@ export const modeMeta: Partial<Record<AIChatAction, AIChatActionMeta>> = {
     shortLabel: "Build",
     tone: "build",
     icon: <Hammer size={15} />,
-    description: "Prepare a non-executable build proposal.",
+    description: "Prepare approval-gated patch artifacts.",
   },
   [AIChatAction.AIChatActionDebug]: {
     label: "Debug",

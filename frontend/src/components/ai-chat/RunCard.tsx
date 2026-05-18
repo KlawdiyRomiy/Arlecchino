@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
+  Clock3,
   Copy,
   FileText,
   Layers,
@@ -17,6 +18,7 @@ import type {
   AIChatRunArtifact,
   AIChatRunEnvelope,
   AIContextItemDisclosure,
+  AIRunTimelineEvent,
   AIToolProposal,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import {
@@ -41,9 +43,9 @@ interface RunCardProps {
   artifacts?: AIChatRunArtifact[];
   artifactBusyId?: string | null;
   onSelect: (runId: string) => void;
-  onApplyPatchArtifact?: (artifactId: string) => void;
+  onApplyPatchArtifact?: (artifactId: string, runId: string) => void;
   onApproveMnemonicArtifact?: (artifactId: string) => void;
-  onRollbackPatchCheckpoint?: (checkpointId: string) => void;
+  onRollbackPatchArtifact?: (artifactId: string, runId: string) => void;
   onOpenReview?: () => void;
   onPreviewToolProposal?: (
     proposal: AIToolProposal,
@@ -536,6 +538,35 @@ function ToolLifecycleArtifacts({
   );
 }
 
+function RunTimeline({ events }: { events: AIRunTimelineEvent[] }) {
+  const visible = events.slice(-6);
+  if (visible.length === 0) return null;
+  return (
+    <div className="ai-chat-run-timeline" aria-label="Run timeline">
+      {visible.map((event) => (
+        <div
+          className="ai-chat-run-timeline__item"
+          data-status={event.status || "recorded"}
+          key={event.id}
+          title={[
+            event.source,
+            event.type,
+            event.status,
+            event.createdAt,
+            event.summary,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        >
+          <Clock3 size={12} />
+          <span>{event.type?.replace(/_/g, " ") || "event"}</span>
+          {event.status ? <small>{event.status}</small> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 interface MemoryCitationsProps {
   artifacts: AIChatRunArtifact[];
   artifactBusyId: string | null;
@@ -636,7 +667,7 @@ export function RunCard({
   onSelect,
   onApplyPatchArtifact,
   onApproveMnemonicArtifact,
-  onRollbackPatchCheckpoint,
+  onRollbackPatchArtifact,
   onOpenReview,
   onPreviewToolProposal,
   onDenyToolProposal,
@@ -691,6 +722,7 @@ export function RunCard({
     (artifact) =>
       artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactMemory,
   );
+  const timelineEvents = envelope.timeline ?? [];
   const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -863,6 +895,7 @@ export function RunCard({
           ) : null}
 
           <ToolLifecycleArtifacts artifacts={toolLifecycleArtifacts} />
+          <RunTimeline events={timelineEvents} />
 
           {patchArtifacts.length > 0 ? (
             <div className="ai-chat-run-card__artifacts">
@@ -871,9 +904,18 @@ export function RunCard({
                   artifact={artifact}
                   busy={artifactBusyId === artifact.id}
                   key={artifact.id}
-                  onApply={onApplyPatchArtifact ?? (() => undefined)}
-                  onOpenReview={onOpenReview ?? (() => undefined)}
-                  onRollback={onRollbackPatchCheckpoint ?? (() => undefined)}
+                  onApply={(artifactId) => {
+                    onSelect(envelope.id);
+                    onApplyPatchArtifact?.(artifactId, envelope.id);
+                  }}
+                  onOpenReview={() => {
+                    onSelect(envelope.id);
+                    onOpenReview?.();
+                  }}
+                  onRollback={(artifactId) => {
+                    onSelect(envelope.id);
+                    onRollbackPatchArtifact?.(artifactId, envelope.id);
+                  }}
                 />
               ))}
             </div>

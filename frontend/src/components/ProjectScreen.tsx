@@ -111,7 +111,7 @@ interface ProjectEntryDeletedEvent {
   isDirectory?: boolean;
 }
 
-interface AIPatchArtifactAppliedEvent {
+interface AIPatchArtifactMutationEvent {
   artifactId?: string;
   files?: Array<{
     path?: string;
@@ -1689,41 +1689,47 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       },
     );
 
-    const unsubscribePatchApplied = EventsOn(
-      "ai:patch:artifact-applied",
-      (event: AIPatchArtifactAppliedEvent) => {
-        const files = Array.isArray(event?.files) ? event.files : [];
-        if (files.length === 0) {
+    const handlePatchMutation = (event: AIPatchArtifactMutationEvent) => {
+      const files = Array.isArray(event?.files) ? event.files : [];
+      if (files.length === 0) {
+        return;
+      }
+      const affectedTabs = tabsRef.current.filter((tab) =>
+        files.some((file) => {
+          const path = file.absolutePath || file.path || "";
+          return path && aiInlinePatchPathMatches(tab.path, path);
+        }),
+      );
+      affectedTabs.forEach((tab) => {
+        if (tab.isDirty) {
+          useAppNotificationStore.getState().addNotification({
+            id: `ai-patch-disk-change:${tab.id}`,
+            kind: "warning",
+            title: "File changed on disk",
+            message: `${tab.label} has unsaved editor changes.`,
+            source: "AI",
+            sticky: false,
+            timeoutMs: 6000,
+          });
           return;
         }
-        const affectedTabs = tabsRef.current.filter((tab) =>
-          files.some((file) => {
-            const path = file.absolutePath || file.path || "";
-            return path && aiInlinePatchPathMatches(tab.path, path);
-          }),
-        );
-        affectedTabs.forEach((tab) => {
-          if (tab.isDirty) {
-            useAppNotificationStore.getState().addNotification({
-              id: `ai-patch-disk-change:${tab.id}`,
-              kind: "warning",
-              title: "File changed on disk",
-              message: `${tab.label} has unsaved editor changes.`,
-              source: "AI",
-              sticky: false,
-              timeoutMs: 6000,
-            });
-            return;
-          }
-          void refreshAppliedPatchTab(tab);
-        });
-      },
+        void refreshAppliedPatchTab(tab);
+      });
+    };
+    const unsubscribePatchApplied = EventsOn(
+      "ai:patch:artifact-applied",
+      handlePatchMutation,
+    );
+    const unsubscribePatchRolledBack = EventsOn(
+      "ai:patch:artifact-rolled-back",
+      handlePatchMutation,
     );
 
     return () => {
       unsubscribeRenamed();
       unsubscribeDeleted();
       unsubscribePatchApplied();
+      unsubscribePatchRolledBack();
     };
   }, [
     applyDeletedProjectEntry,
