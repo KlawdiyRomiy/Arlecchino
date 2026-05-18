@@ -84,7 +84,7 @@ func (s *Service) runModelCapabilityProbe(ctx context.Context, project *ProjectS
 				},
 			},
 		},
-		ToolChoice: "auto",
+		ToolChoice: "required",
 	}
 	record, response, err := s.callProvider(probeCtx, project, descriptor, provider, generationReq, AIContextSnapshot{
 		ID:             "model-capability-probe",
@@ -113,8 +113,8 @@ func (s *Service) runModelCapabilityProbe(ctx context.Context, project *ProjectS
 			return result
 		}
 	}
-	result.Status = "unsupported"
-	result.Error = "probe completed without a tool call"
+	result.Status = "failed"
+	result.Error = "probe completed without the required tool call"
 	return result
 }
 

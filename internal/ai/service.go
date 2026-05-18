@@ -539,11 +539,9 @@ func (s *Service) ClearMnemonic(projectID string) error {
 }
 
 func (s *Service) ClearState(projectID string) error {
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" {
-		projectID = "main"
-	}
+	projectID = normalizeProjectID(projectID)
 	s.waitForRuns(s.cancelRuns(projectID))
+	s.clearToolApprovalsForProject(projectID)
 	project := s.project(projectID)
 	if project != nil {
 		if project.Egress != nil {

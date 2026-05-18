@@ -54,9 +54,20 @@ func (s *Service) ListChatRuns(projectID string, limit int) ([]AIChatRunEnvelope
 	if len(runs) > limit {
 		runs = runs[:limit]
 	}
+	timelinesByRun := map[string][]AIRunTimelineEvent{}
+	if project.RunTimeline != nil && len(runs) > 0 {
+		runIDs := make([]string, 0, len(runs))
+		for _, run := range runs {
+			runIDs = append(runIDs, run.ID)
+		}
+		if eventsByRun, err := project.RunTimeline.ListByRuns(runIDs, 80); err == nil {
+			timelinesByRun = eventsByRun
+		}
+	}
 	envelopes := make([]AIChatRunEnvelope, 0, len(runs))
 	for _, run := range runs {
-		envelopes = append(envelopes, s.buildChatRunEnvelope(project, run))
+		timeline := timelinesByRun[run.ID]
+		envelopes = append(envelopes, s.buildChatRunEnvelopeWithTimeline(project, run, &timeline))
 	}
 	return envelopes, nil
 }
@@ -65,6 +76,7 @@ func (s *Service) ClearChatRuns(projectID string) error {
 	projectID = normalizeProjectID(projectID)
 	project := s.project(projectID)
 	s.waitForRuns(s.cancelRuns(projectID))
+	s.clearToolApprovalsForProject(projectID)
 	s.mu.Lock()
 	for runID, run := range s.runs {
 		if run.ProjectSessionID == projectID {
@@ -190,6 +202,20 @@ func (s *Service) deleteToolApprovalsForRuns(projectID string, runIDs map[string
 	}
 }
 
+func (s *Service) clearToolApprovalsForProject(projectID string) {
+	if s == nil {
+		return
+	}
+	projectID = normalizeProjectID(projectID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, grant := range s.toolApprovals {
+		if normalizeProjectID(grant.ProjectSessionID) == projectID {
+			delete(s.toolApprovals, key)
+		}
+	}
+}
+
 func runIDList(runIDs map[string]struct{}) []string {
 	ids := make([]string, 0, len(runIDs))
 	for runID := range runIDs {
@@ -201,6 +227,10 @@ func runIDList(runIDs map[string]struct{}) []string {
 }
 
 func (s *Service) buildChatRunEnvelope(project *ProjectSession, run AIChatRun) AIChatRunEnvelope {
+	return s.buildChatRunEnvelopeWithTimeline(project, run, nil)
+}
+
+func (s *Service) buildChatRunEnvelopeWithTimeline(project *ProjectSession, run AIChatRun, timelineOverride *[]AIRunTimelineEvent) AIChatRunEnvelope {
 	run = normalizeChatRunToolProposals(run)
 	approval := s.approvalSummaryForProject(project)
 	consent := s.consentSummary()
@@ -216,7 +246,9 @@ func (s *Service) buildChatRunEnvelope(project *ProjectSession, run AIChatRun) A
 		mnemonic.Count = run.ContextSummary.MnemonicCount
 	}
 	timeline := []AIRunTimelineEvent{}
-	if project != nil && project.RunTimeline != nil {
+	if timelineOverride != nil {
+		timeline = append(timeline, (*timelineOverride)...)
+	} else if project != nil && project.RunTimeline != nil {
 		if events, err := project.RunTimeline.ListByRun(run.ID, 80); err == nil {
 			timeline = events
 		}

@@ -73,6 +73,40 @@ func (l *RunTimelineLedger) ListByRun(runID string, limit int) ([]AIRunTimelineE
 	return filtered, nil
 }
 
+func (l *RunTimelineLedger) ListByRuns(runIDs []string, limit int) (map[string][]AIRunTimelineEvent, error) {
+	result := map[string][]AIRunTimelineEvent{}
+	if l == nil || len(runIDs) == 0 {
+		return result, nil
+	}
+	runSet := map[string]struct{}{}
+	for _, runID := range runIDs {
+		if runID = strings.TrimSpace(runID); runID != "" {
+			runSet[runID] = struct{}{}
+			result[runID] = []AIRunTimelineEvent{}
+		}
+	}
+	if len(runSet) == 0 {
+		return result, nil
+	}
+	events, err := l.List(0)
+	if err != nil {
+		return nil, err
+	}
+	for _, event := range events {
+		if _, ok := runSet[event.RunID]; ok {
+			result[event.RunID] = append(result[event.RunID], event)
+		}
+	}
+	if limit > 0 {
+		for runID, events := range result {
+			if len(events) > limit {
+				result[runID] = events[len(events)-limit:]
+			}
+		}
+	}
+	return result, nil
+}
+
 func (l *RunTimelineLedger) List(limit int) ([]AIRunTimelineEvent, error) {
 	if l == nil {
 		return []AIRunTimelineEvent{}, nil
