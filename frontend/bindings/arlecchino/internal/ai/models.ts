@@ -3072,10 +3072,14 @@ export enum AIToolCallAction {
 
     AIToolCallActionPreview = "preview",
     AIToolCallActionExecute = "execute",
+    AIToolCallActionDeny = "deny",
+    AIToolCallActionApproveOnce = "approve_once",
+    AIToolCallActionApproveForRun = "approve_for_run",
 };
 
 export class AIToolCallRequest {
     "runId"?: string;
+    "runRevision"?: number;
     "toolId": string;
     "action": AIToolCallAction;
     "arguments"?: { [_ in string]?: string };
@@ -3096,10 +3100,10 @@ export class AIToolCallRequest {
      * Creates a new AIToolCallRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): AIToolCallRequest {
-        const $$createField3_0 = $$createType48;
+        const $$createField4_0 = $$createType48;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("arguments" in $$parsedSource) {
-            $$parsedSource["arguments"] = $$createField3_0($$parsedSource["arguments"]);
+            $$parsedSource["arguments"] = $$createField4_0($$parsedSource["arguments"]);
         }
         return new AIToolCallRequest($$parsedSource as Partial<AIToolCallRequest>);
     }
@@ -3232,6 +3236,7 @@ export enum AIToolHardDenyReason {
     AIToolHardDenyReasonNonLoopbackNetwork = "non_loopback_network",
     AIToolHardDenyReasonFrontierCloudEgress = "frontier_cloud_egress",
     AIToolHardDenyReasonDestructiveShell = "destructive_shell_commands",
+    AIToolHardDenyReasonTerminalFileWrite = "terminal_file_write",
     AIToolHardDenyReasonOutsideProjectWrite = "outside_project_writes",
 };
 

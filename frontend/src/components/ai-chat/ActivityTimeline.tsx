@@ -55,6 +55,49 @@ interface ActivityTimelineProps extends ActivityStatusData {
   visible: boolean;
 }
 
+interface RuntimeEgressMetrics {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  estimatedTokens?: boolean;
+  tokenSource?: string;
+  costMicros?: number;
+  costCurrency?: string;
+  costEstimated?: boolean;
+  costSource?: string;
+  toolProfile?: string;
+  toolSchemaCount?: number;
+  toolSupportKind?: string;
+}
+
+const formatTokenUsage = (metrics: RuntimeEgressMetrics | null): string => {
+  if (!metrics?.totalTokens) return "n/a";
+  const prefix = metrics.estimatedTokens ? "~" : "";
+  return `${prefix}${metrics.totalTokens.toLocaleString()} tokens`;
+};
+
+const formatToolProfile = (metrics: RuntimeEgressMetrics | null): string => {
+  if (!metrics?.toolProfile || metrics.toolProfile === "none") return "n/a";
+  const count =
+    typeof metrics.toolSchemaCount === "number"
+      ? ` · ${metrics.toolSchemaCount} tools`
+      : "";
+  return `${metrics.toolProfile.replace(/_/g, " ")}${count}`;
+};
+
+const formatCost = (metrics: RuntimeEgressMetrics | null): string => {
+  if (!metrics) return "n/a";
+  if (metrics.costSource === "local_provider") return "local";
+  if (!metrics.costMicros) return metrics.costSource ? "unpriced" : "n/a";
+  const currency = metrics.costCurrency || "USD";
+  const prefix = metrics.costEstimated ? "~" : "";
+  return `${prefix}${new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 4,
+  }).format(metrics.costMicros / 1_000_000)}`;
+};
+
 export function ActivityIcon({ state }: { state: ActivityStatusState }) {
   if (state === "done") return <CheckCircle2 size={15} />;
   if (state === "active") return <Loader2 size={15} className="spin" />;
@@ -123,7 +166,7 @@ export function buildActivityStatusItems({
     items.push({
       key: "tools",
       state: "idle",
-      label: `${proposalCount} proposal${proposalCount === 1 ? "" : "s"} preview only`,
+      label: `${proposalCount} tool proposal${proposalCount === 1 ? "" : "s"} awaiting review`,
     });
   }
   if (activeEnvelope?.mnemonicInclusion?.requested) {
@@ -250,6 +293,7 @@ export function ActivityStatusPopover({
     activeEnvelope?.egressSummary?.source ||
     "chat";
   const egress = activeEnvelope?.egressSummary;
+  const egressMetrics = (egress ?? null) as RuntimeEgressMetrics | null;
   const egressLabel = egress?.canceled
     ? "canceled"
     : egress?.status || egress?.source || "not recorded";
@@ -320,6 +364,18 @@ export function ActivityStatusPopover({
         <strong>{egressLabel}</strong>
         <span>Latency</span>
         <strong>{latencyLabel}</strong>
+        <span>Tokens</span>
+        <strong title={egressMetrics?.tokenSource || undefined}>
+          {formatTokenUsage(egressMetrics)}
+        </strong>
+        <span>Tools</span>
+        <strong title={egressMetrics?.toolSupportKind || undefined}>
+          {formatToolProfile(egressMetrics)}
+        </strong>
+        <span>Cost</span>
+        <strong title={egressMetrics?.costSource || undefined}>
+          {formatCost(egressMetrics)}
+        </strong>
         <span>Approval</span>
         <strong>
           <ShieldCheck size={13} />

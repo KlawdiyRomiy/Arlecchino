@@ -4,60 +4,65 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
-const useWailsRuntimeStub = process.env.ARLECCHINO_TEST_WAILS_RUNTIME === "1";
 
-export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: [
-      ...(useWailsRuntimeStub
-        ? [
-            {
-              find: "/wails/runtime.js",
-              replacement: path.resolve(
-                dirname,
-                "src/wails/runtimeTestStub.ts",
-              ),
-            },
-          ]
-        : []),
-      {
-        find: "use-sync-external-store/shim/with-selector",
-        replacement: "use-sync-external-store/with-selector",
-      },
-      {
-        find: "../cjs/use-sync-external-store-shim/with-selector.production.js",
-        replacement: path.resolve(
-          dirname,
-          "node_modules/use-sync-external-store/cjs/use-sync-external-store-with-selector.production.js",
-        ),
-      },
-      {
-        find: "../cjs/use-sync-external-store-shim/with-selector.development.js",
-        replacement: path.resolve(
-          dirname,
-          "node_modules/use-sync-external-store/cjs/use-sync-external-store-with-selector.development.js",
-        ),
-      },
-    ],
-  },
-  server: {
-    watch: {
-      ignored: ["**/.arlecchino/**", "**/wailsjs/**"],
+export default defineConfig(({ command }) => {
+  const useWailsRuntimeStub =
+    process.env.ARLECCHINO_TEST_WAILS_RUNTIME === "1" ||
+    (command === "serve" && process.env.ARLECCHINO_REAL_WAILS_RUNTIME !== "1");
+
+  return {
+    plugins: [react()],
+    resolve: {
+      alias: [
+        ...(useWailsRuntimeStub
+          ? [
+              {
+                find: "/wails/runtime.js",
+                replacement: path.resolve(
+                  dirname,
+                  "src/wails/runtimeTestStub.ts",
+                ),
+              },
+            ]
+          : []),
+        {
+          find: "use-sync-external-store/shim/with-selector",
+          replacement: "use-sync-external-store/with-selector",
+        },
+        {
+          find: "../cjs/use-sync-external-store-shim/with-selector.production.js",
+          replacement: path.resolve(
+            dirname,
+            "node_modules/use-sync-external-store/cjs/use-sync-external-store-with-selector.production.js",
+          ),
+        },
+        {
+          find: "../cjs/use-sync-external-store-shim/with-selector.development.js",
+          replacement: path.resolve(
+            dirname,
+            "node_modules/use-sync-external-store/cjs/use-sync-external-store-with-selector.development.js",
+          ),
+        },
+      ],
     },
-  },
-  build: {
-    rollupOptions: {
-      external: ["/wails/runtime.js"],
-      onwarn(warning, warn) {
-        if (
-          warning.code === "UNRESOLVED_IMPORT" &&
-          warning.message.includes("@codingame/monaco-vscode")
-        ) {
-          return;
-        }
-        warn(warning);
+    server: {
+      watch: {
+        ignored: ["**/.arlecchino/**", "**/wailsjs/**"],
       },
     },
-  },
+    build: {
+      rollupOptions: {
+        external: ["/wails/runtime.js"],
+        onwarn(warning, warn) {
+          if (
+            warning.code === "UNRESOLVED_IMPORT" &&
+            warning.message.includes("@codingame/monaco-vscode")
+          ) {
+            return;
+          }
+          warn(warning);
+        },
+      },
+    },
+  };
 });

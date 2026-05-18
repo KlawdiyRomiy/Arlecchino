@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
+  AlertTriangle,
   CheckCircle2,
   ChevronRight,
   Copy,
@@ -7,6 +8,7 @@ import {
   Layers,
   Sparkles,
   ShieldCheck,
+  Wrench,
 } from "lucide-react";
 import { AnimatePresence, m } from "framer-motion";
 import type {
@@ -43,7 +45,22 @@ interface RunCardProps {
   onApproveMnemonicArtifact?: (artifactId: string) => void;
   onRollbackPatchCheckpoint?: (checkpointId: string) => void;
   onOpenReview?: () => void;
-  onPreviewToolProposal?: (proposal: AIToolProposal, runId: string) => void;
+  onPreviewToolProposal?: (
+    proposal: AIToolProposal,
+    runId: string,
+    runRevision?: number,
+  ) => void;
+  onDenyToolProposal?: (
+    proposal: AIToolProposal,
+    runId: string,
+    runRevision?: number,
+  ) => void;
+  onApproveToolProposal?: (
+    proposal: AIToolProposal,
+    runId: string,
+    scope: "once" | "run",
+    runRevision?: number,
+  ) => void;
   searchQuery?: string;
 }
 
@@ -229,11 +246,66 @@ function canPreviewToolProposal(proposal: AIToolProposal): boolean {
   const id = proposal.name || proposal.id || "";
   return [
     "context.read",
+    "diagnostics.read",
+    "file.read_range",
+    "file.edit.preview",
+    "file.create.preview",
     "file.patch.preview",
+    "workspace.grep",
     "git.preview",
     "mcp.preview",
+    "mcp.execute",
+    "subagent.preview",
     "terminal.preview",
   ].includes(id);
+}
+
+function canDenyToolProposal(proposal: AIToolProposal): boolean {
+  const candidates = [
+    proposal.name,
+    proposal.id,
+    proposal.id?.replace(/^tool-call-/, ""),
+  ].map((value) => value?.trim());
+  return (
+    proposal.status !== "blocked" &&
+    candidates.some(
+      (candidate) => Boolean(candidate) && candidate.includes("."),
+    )
+  );
+}
+
+function canApproveToolProposal(proposal: AIToolProposal): boolean {
+  const candidates = [
+    proposal.name,
+    proposal.id,
+    proposal.id?.replace(/^tool-call-/, ""),
+  ].map((value) => value?.trim());
+  return (
+    proposal.status !== "blocked" &&
+    candidates.some((candidate) =>
+      ["terminal.preview", "file.patch.apply", "mcp.execute"].includes(
+        candidate || "",
+      ),
+    )
+  );
+}
+
+function reviewDisabledReason(
+  envelope: AIChatRunEnvelope,
+  run: AIChatRun | null,
+): string {
+  if (envelope.status === "canceled" || run?.status === "canceled") {
+    return "Run canceled";
+  }
+  if (
+    run &&
+    envelope.revision > 0 &&
+    run.revision > 0 &&
+    run.revision < envelope.revision
+  ) {
+    return "Run updated";
+  }
+  return "";
 }
 
 function memoryCitationCountLabel(count: number): string {
@@ -259,6 +331,209 @@ function memoryArtifactMeta(artifact: AIChatRunArtifact): string {
     // Ignore malformed artifact payloads; the visible summary is enough.
   }
   return parts.filter(Boolean).join(" · ");
+}
+
+interface ToolLifecyclePayload {
+  toolId: string;
+  action: string;
+  status: string;
+  artifactId: string;
+  outputPreview: string;
+  error: string;
+  targetPaths: string[];
+  riskLevel: string;
+  approvalModeRequired: string;
+  allowedByCurrentPolicy: boolean;
+  hardDenyReason: string;
+  lifecycle: string[];
+}
+
+function parseToolLifecyclePayload(
+  artifact: AIChatRunArtifact,
+): ToolLifecyclePayload {
+  const fallback: ToolLifecyclePayload = {
+    toolId: artifact.title.replace(/^Tool:\s*/i, "") || "tool",
+    action: "",
+    status: artifact.status || "recorded",
+    artifactId: "",
+    outputPreview: artifact.summary || "",
+    error: "",
+    targetPaths: [],
+    riskLevel: "",
+    approvalModeRequired: "",
+    allowedByCurrentPolicy: false,
+    hardDenyReason: "",
+    lifecycle: [],
+  };
+  try {
+    const payload = JSON.parse(artifact.payloadJson || "{}") as Record<
+      string,
+      unknown
+    >;
+    const audit =
+      payload.audit && typeof payload.audit === "object"
+        ? (payload.audit as Record<string, unknown>)
+        : {};
+    const proposal =
+      payload.proposal && typeof payload.proposal === "object"
+        ? (payload.proposal as Record<string, unknown>)
+        : {};
+    const targetPaths = Array.isArray(proposal.targetPaths)
+      ? proposal.targetPaths.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : Array.isArray(audit.targetPaths)
+        ? audit.targetPaths.filter(
+            (value): value is string => typeof value === "string",
+          )
+        : [];
+    const lifecycle = Array.isArray(payload.lifecycle)
+      ? payload.lifecycle.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : [];
+    return {
+      toolId:
+        (typeof payload.toolId === "string" && payload.toolId) ||
+        (typeof audit.toolId === "string" && audit.toolId) ||
+        fallback.toolId,
+      action:
+        (typeof payload.action === "string" && payload.action) ||
+        (typeof audit.action === "string" && audit.action) ||
+        fallback.action,
+      status:
+        (typeof payload.status === "string" && payload.status) ||
+        (typeof audit.status === "string" && audit.status) ||
+        fallback.status,
+      artifactId:
+        (typeof payload.artifactId === "string" && payload.artifactId) ||
+        (typeof audit.artifactId === "string" && audit.artifactId) ||
+        "",
+      outputPreview:
+        (typeof payload.outputPreview === "string" && payload.outputPreview) ||
+        (typeof audit.outputPreview === "string" && audit.outputPreview) ||
+        fallback.outputPreview,
+      error:
+        (typeof payload.error === "string" && payload.error) ||
+        (typeof audit.error === "string" && audit.error) ||
+        "",
+      targetPaths,
+      riskLevel:
+        (typeof proposal.riskLevel === "string" && proposal.riskLevel) || "",
+      approvalModeRequired:
+        (typeof proposal.approvalModeRequired === "string" &&
+          proposal.approvalModeRequired) ||
+        "",
+      allowedByCurrentPolicy:
+        typeof proposal.allowedByCurrentPolicy === "boolean"
+          ? proposal.allowedByCurrentPolicy
+          : false,
+      hardDenyReason:
+        (typeof proposal.hardDenyReason === "string" &&
+          proposal.hardDenyReason) ||
+        "",
+      lifecycle,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function toolLifecycleState(status: string): "ok" | "blocked" | "active" {
+  const normalized = status.toLocaleLowerCase();
+  if (
+    normalized.includes("approval_required") ||
+    normalized.includes("blocked") ||
+    normalized.includes("error") ||
+    normalized.includes("denied")
+  ) {
+    return "blocked";
+  }
+  if (normalized.includes("started") || normalized.includes("running")) {
+    return "active";
+  }
+  return "ok";
+}
+
+function toolLifecycleMeta(payload: ToolLifecyclePayload): string {
+  return [
+    payload.action,
+    payload.status,
+    payload.lifecycle.length > 0 ? payload.lifecycle.join(" -> ") : "",
+    payload.artifactId,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function toolLifecycleApprovalLabel(payload: ToolLifecyclePayload): string {
+  if (payload.hardDenyReason) {
+    return `Hard deny: ${payload.hardDenyReason}`;
+  }
+  if (payload.allowedByCurrentPolicy) {
+    return "Policy allowed";
+  }
+  return payload.approvalModeRequired
+    ? `Requires ${payload.approvalModeRequired}`
+    : "";
+}
+
+function ToolLifecycleArtifacts({
+  artifacts,
+}: {
+  artifacts: AIChatRunArtifact[];
+}) {
+  if (artifacts.length === 0) return null;
+  return (
+    <div className="ai-chat-tool-lifecycle" aria-label="Tool execution log">
+      {artifacts.map((artifact) => {
+        const payload = parseToolLifecyclePayload(artifact);
+        const state = toolLifecycleState(payload.status);
+        const Icon = state === "blocked" ? AlertTriangle : Wrench;
+        const detail =
+          payload.error ||
+          payload.targetPaths[0] ||
+          payload.outputPreview ||
+          artifact.summary;
+        const approvalLabel = toolLifecycleApprovalLabel(payload);
+        return (
+          <div
+            className="ai-chat-tool-lifecycle__item"
+            data-state={state}
+            data-risk={payload.riskLevel || "unknown"}
+            key={artifact.id}
+          >
+            <div className="ai-chat-tool-lifecycle__head">
+              <span className="ai-chat-tool-lifecycle__title">
+                <Icon size={14} />
+                {payload.toolId}
+              </span>
+              <span className="ai-chat-tool-lifecycle__meta">
+                {toolLifecycleMeta(payload)}
+              </span>
+            </div>
+            {payload.riskLevel || approvalLabel ? (
+              <div className="ai-chat-tool-lifecycle__badges">
+                {payload.riskLevel ? (
+                  <span className="ai-chat-tool-lifecycle__badge">
+                    Risk: {payload.riskLevel}
+                  </span>
+                ) : null}
+                {approvalLabel ? (
+                  <span className="ai-chat-tool-lifecycle__badge">
+                    {approvalLabel}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            {detail ? (
+              <p className="ai-chat-tool-lifecycle__detail">{detail}</p>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 interface MemoryCitationsProps {
@@ -364,6 +639,8 @@ export function RunCard({
   onRollbackPatchCheckpoint,
   onOpenReview,
   onPreviewToolProposal,
+  onDenyToolProposal,
+  onApproveToolProposal,
   searchQuery = "",
 }: RunCardProps) {
   const [copiedMessage, setCopiedMessage] = useState<
@@ -399,10 +676,16 @@ export function RunCard({
     elapsedMs: runElapsedMs,
   });
   const proposals = run?.toolProposals ?? envelope.toolProposals ?? [];
+  const toolReviewDisabledReason = reviewDisabledReason(envelope, run);
   const mentionItems = contextItems.filter((item) => item.source === "mention");
   const patchArtifacts = artifacts.filter(
     (artifact) =>
       artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactPatchPreview,
+  );
+  const toolLifecycleArtifacts = artifacts.filter(
+    (artifact) =>
+      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactToolProposal ||
+      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactTerminal,
   );
   const memoryArtifacts = artifacts.filter(
     (artifact) =>
@@ -534,16 +817,52 @@ export function RunCard({
               {proposals.map((proposal) => (
                 <ToolProposalCard
                   key={`${proposal.kind}-${proposal.id || proposal.name}`}
+                  approveOnceBusy={
+                    artifactBusyId ===
+                    `approve:once:${proposal.id || proposal.name || proposal.kind}`
+                  }
+                  approveRunBusy={
+                    artifactBusyId ===
+                    `approve:run:${proposal.id || proposal.name || proposal.kind}`
+                  }
                   busy={artifactBusyId === (proposal.id || proposal.name)}
+                  canApprove={canApproveToolProposal(proposal)}
+                  canDeny={canDenyToolProposal(proposal)}
                   canPreview={canPreviewToolProposal(proposal)}
+                  denyBusy={
+                    artifactBusyId ===
+                    `deny:${proposal.id || proposal.name || proposal.kind}`
+                  }
+                  reviewDisabledReason={toolReviewDisabledReason}
+                  onDeny={(nextProposal) =>
+                    onDenyToolProposal?.(
+                      nextProposal,
+                      envelope.id,
+                      envelope.revision,
+                    )
+                  }
+                  onApprove={(nextProposal, scope) =>
+                    onApproveToolProposal?.(
+                      nextProposal,
+                      envelope.id,
+                      scope,
+                      envelope.revision,
+                    )
+                  }
                   onPreview={(nextProposal) =>
-                    onPreviewToolProposal?.(nextProposal, envelope.id)
+                    onPreviewToolProposal?.(
+                      nextProposal,
+                      envelope.id,
+                      envelope.revision,
+                    )
                   }
                   proposal={proposal}
                 />
               ))}
             </div>
           ) : null}
+
+          <ToolLifecycleArtifacts artifacts={toolLifecycleArtifacts} />
 
           {patchArtifacts.length > 0 ? (
             <div className="ai-chat-run-card__artifacts">

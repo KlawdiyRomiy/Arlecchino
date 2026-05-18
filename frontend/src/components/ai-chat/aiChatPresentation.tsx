@@ -29,14 +29,14 @@ export const modeMeta: Partial<Record<AIChatAction, AIChatActionMeta>> = {
     shortLabel: "Ask",
     tone: "ask",
     icon: <MessageCircle size={15} />,
-    description: "Ask about the current codebase.",
+    description: "Answer with provided context only.",
   },
   [AIChatAction.AIChatActionPlan]: {
     label: "Plan",
     shortLabel: "Plan",
     tone: "plan",
     icon: <ClipboardList size={15} />,
-    description: "Create an implementation plan.",
+    description: "Inspect read-only context and produce a plan.",
   },
   [AIChatAction.AIChatActionBuild]: {
     label: "Build",
@@ -50,7 +50,7 @@ export const modeMeta: Partial<Record<AIChatAction, AIChatActionMeta>> = {
     shortLabel: "Debug",
     tone: "debug",
     icon: <Bug size={15} />,
-    description: "Analyze a failure or regression.",
+    description: "Diagnose failures without writing files.",
   },
 };
 
@@ -61,7 +61,7 @@ export function getActionMeta(action: AIChatAction): AIChatActionMeta {
       shortLabel: action || "Ask",
       tone: "ask",
       icon: <HelpCircle size={15} />,
-      description: "Ask about the current codebase.",
+      description: "Answer with provided context only.",
     }
   );
 }

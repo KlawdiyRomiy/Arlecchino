@@ -79,6 +79,7 @@ import { useEditorStore } from "../../stores/editorStore";
 import { buildIDEContextDocument } from "../../stores/ideContextDocument";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { useAIChatStore } from "../../stores/aiChatStore";
+import { useAIInlinePatchStore } from "../../stores/aiInlinePatchStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 import { AIChatHeader } from "./AIChatHeader";
@@ -144,9 +145,16 @@ export const defaultChatContext: ContextToggles = {
 
 const previewableToolIds = new Set([
   "context.read",
+  "diagnostics.read",
+  "file.read_range",
+  "file.edit.preview",
+  "file.create.preview",
   "file.patch.preview",
+  "workspace.grep",
   "git.preview",
   "mcp.preview",
+  "mcp.execute",
+  "subagent.preview",
   "terminal.preview",
 ]);
 
@@ -799,12 +807,28 @@ function envelopeFromRun(run: AIChatRun): AIChatRunEnvelope {
 }
 
 function previewableToolIdForProposal(proposal: AIToolProposal): string | null {
-  const candidates = [proposal.name, proposal.id].map((value) => value?.trim());
+  const candidates = toolIdCandidatesForProposal(proposal);
   return (
     candidates.find(
       (candidate): candidate is string =>
         Boolean(candidate) && previewableToolIds.has(candidate),
     ) ?? null
+  );
+}
+
+function toolIdCandidatesForProposal(proposal: AIToolProposal): string[] {
+  return [proposal.name, proposal.id, proposal.id?.replace(/^tool-call-/, "")]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+}
+
+function toolIdForProposal(proposal: AIToolProposal): string | null {
+  return (
+    previewableToolIdForProposal(proposal) ??
+    toolIdCandidatesForProposal(proposal).find((candidate) =>
+      candidate.includes("."),
+    ) ??
+    null
   );
 }
 
@@ -890,6 +914,9 @@ export function AIChatPanelContent({
   >([]);
   const [activeArtifacts, setActiveArtifacts] = useState<AIChatRunArtifact[]>(
     [],
+  );
+  const syncInlinePatchArtifacts = useAIInlinePatchStore(
+    (store) => store.syncArtifacts,
   );
   const [artifactBusyId, setArtifactBusyId] = useState<string | null>(null);
   const [providerRuntimeBusy, setProviderRuntimeBusy] = useState(false);
@@ -1355,6 +1382,10 @@ export function AIChatPanelContent({
     setActiveArtifacts(normalizeAIChatArtifacts(artifacts));
   }, [activeRunKey]);
 
+  useEffect(() => {
+    syncInlinePatchArtifacts(activeArtifacts);
+  }, [activeArtifacts, syncInlinePatchArtifacts]);
+
   useLayoutEffect(() => {
     if (!state.displayPrefs.autoScroll) return;
     transcriptEndRef.current?.scrollIntoView({ block: "end" });
@@ -1440,6 +1471,16 @@ export function AIChatPanelContent({
     const audit = (result as { audit?: AIToolAuditRecord })?.audit;
     if (!audit?.id) return;
     upsertToolAudit(audit);
+    if (audit.runId && activeRunKey && audit.runId === activeRunKey) {
+      void refreshActiveArtifacts();
+    }
+  });
+
+  const handleToolLifecycleArtifact = useEffectEvent((artifact: unknown) => {
+    const runId = (artifact as { runId?: string })?.runId;
+    if (runId && activeRunKey && runId === activeRunKey) {
+      void refreshActiveArtifacts();
+    }
   });
 
   useEffect(() => {
@@ -1481,6 +1522,10 @@ export function AIChatPanelContent({
     const offToolAudit = EventsOn("ai:tool:call-recorded", (result) =>
       handleToolAuditRecord(result),
     );
+    const offToolLifecycle = EventsOn(
+      "ai:tool:lifecycle-recorded",
+      (artifact) => handleToolLifecycleArtifact(artifact),
+    );
     return () => {
       offStarted?.();
       offCompleted?.();
@@ -1492,6 +1537,7 @@ export function AIChatPanelContent({
       offRuntime?.();
       offEgress?.();
       offToolAudit?.();
+      offToolLifecycle?.();
     };
   }, []);
 
@@ -1801,7 +1847,7 @@ export function AIChatPanelContent({
   );
 
   const handlePreviewToolProposal = useCallback(
-    async (proposal: AIToolProposal, runId: string) => {
+    async (proposal: AIToolProposal, runId: string, runRevision?: number) => {
       const toolId = previewableToolIdForProposal(proposal);
       if (!toolId || !runId) return;
       const busyId = proposal.id || toolId;
@@ -1810,8 +1856,74 @@ export function AIChatPanelContent({
       try {
         const result = await AIExecuteToolCall({
           runId,
+          runRevision,
           toolId,
           action: AIToolCallAction.AIToolCallActionPreview,
+          arguments: proposal.arguments ?? {},
+        });
+        if (result?.audit?.id) {
+          upsertToolAudit(result.audit);
+        }
+        await refreshActiveArtifacts();
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setArtifactBusyId(null);
+      }
+    },
+    [refreshActiveArtifacts, upsertToolAudit],
+  );
+
+  const handleDenyToolProposal = useCallback(
+    async (proposal: AIToolProposal, runId: string, runRevision?: number) => {
+      const toolId = toolIdForProposal(proposal);
+      if (!toolId || !runId) return;
+      const busyId = `deny:${proposal.id || proposal.name || toolId}`;
+      setArtifactBusyId(busyId);
+      setRuntimeError(null);
+      try {
+        const result = await AIExecuteToolCall({
+          runId,
+          runRevision,
+          toolId,
+          action: AIToolCallAction.AIToolCallActionDeny,
+          arguments: proposal.arguments ?? {},
+        });
+        if (result?.audit?.id) {
+          upsertToolAudit(result.audit);
+        }
+        await refreshActiveArtifacts();
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setArtifactBusyId(null);
+      }
+    },
+    [refreshActiveArtifacts, upsertToolAudit],
+  );
+
+  const handleApproveToolProposal = useCallback(
+    async (
+      proposal: AIToolProposal,
+      runId: string,
+      scope: "once" | "run",
+      runRevision?: number,
+    ) => {
+      const toolId = toolIdForProposal(proposal);
+      if (!toolId || !runId) return;
+      const action =
+        scope === "run"
+          ? AIToolCallAction.AIToolCallActionApproveForRun
+          : AIToolCallAction.AIToolCallActionApproveOnce;
+      const busyId = `approve:${scope}:${proposal.id || proposal.name || toolId}`;
+      setArtifactBusyId(busyId);
+      setRuntimeError(null);
+      try {
+        const result = await AIExecuteToolCall({
+          runId,
+          runRevision,
+          toolId,
+          action,
           arguments: proposal.arguments ?? {},
         });
         if (result?.audit?.id) {
@@ -2199,6 +2311,8 @@ export function AIChatPanelContent({
                             drawer: "review",
                           })
                         }
+                        onApproveToolProposal={handleApproveToolProposal}
+                        onDenyToolProposal={handleDenyToolProposal}
                         onPreviewToolProposal={handlePreviewToolProposal}
                         onRollbackPatchCheckpoint={
                           handleRollbackPatchCheckpoint
