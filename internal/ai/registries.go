@@ -54,6 +54,19 @@ func (s *Service) ListChatActions() []AIChatActionDescriptor {
 			ToolKinds:            []AIToolKind{AIToolKindContextRead, AIToolKindFileWrite, AIToolKindTerminal, AIToolKindMCP},
 			ApprovalBoundary:     "patch apply, terminal, and MCP actions require approval, checkpoint, and audit",
 		},
+		{
+			ID:                   AIChatActionReview,
+			Name:                 "Review",
+			Description:          "Review changes and surface defects, risks, and missing verification without mutating files.",
+			BuiltIn:              true,
+			MayProposeTools:      true,
+			ExpectsToolProposals: false,
+			ReadOnlyIntent:       true,
+			MutationAllowed:      false,
+			RequiresApproval:     false,
+			ToolKinds:            []AIToolKind{AIToolKindContextRead},
+			ApprovalBoundary:     "read-only review",
+		},
 	}
 }
 
@@ -125,6 +138,17 @@ func (s *Service) ListAgentProfiles() []AIAgentProfileDescriptor {
 			Approval:    "preview only",
 			ToolKinds:   []AIToolKind{AIToolKindSubagent},
 		},
+		{
+			ID:          "review-auditor",
+			Name:        "Review Auditor",
+			Description: "Read-only review profile focused on defects, regressions, and missing tests.",
+			BuiltIn:     true,
+			Enabled:     true,
+			Action:      AIChatActionReview,
+			ReadOnly:    true,
+			Approval:    "none",
+			ToolKinds:   []AIToolKind{AIToolKindContextRead},
+		},
 	}
 }
 
@@ -179,6 +203,16 @@ func (s *Service) ListPromptWorkflows() []AIPromptWorkflowDescriptor {
 			BuiltIn:     true,
 			ProfileID:   "build-reviewer",
 			ToolKinds:   []AIToolKind{AIToolKindContextRead, AIToolKindFileWrite, AIToolKindTerminal, AIToolKindMCP},
+		},
+		{
+			ID:          "slash-review",
+			Name:        "Review",
+			Slash:       "/review",
+			Action:      AIChatActionReview,
+			Description: "Review current changes and risks without mutation.",
+			BuiltIn:     true,
+			ProfileID:   "review-auditor",
+			ToolKinds:   []AIToolKind{AIToolKindContextRead},
 		},
 	}
 }

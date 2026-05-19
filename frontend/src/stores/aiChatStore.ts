@@ -134,7 +134,8 @@ const mergeRunEnvelope = (
           run.consentSummary?.policySource ||
           run.consentSummary?.localProvidersAccepted ||
           run.consentSummary?.remoteProvidersAccepted ||
-          run.consentSummary?.frontierProvidersAccepted
+          run.consentSummary?.frontierProvidersAccepted ||
+          run.consentSummary?.externalAgentCliAccepted
             ? run.consentSummary
             : existing.consentSummary,
         toolProposals: mergeToolProposals(existing, run),

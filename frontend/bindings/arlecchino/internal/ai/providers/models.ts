@@ -70,11 +70,21 @@ export class AIProviderDescriptor {
     "id": string;
     "name": string;
     "kind": string;
+    "runtimeFamily"?: string;
     "endpoint"?: string;
+    "endpointClass"?: string;
+    "externalAccount"?: boolean;
+    "binary"?: string;
     "local": boolean;
     "manual": boolean;
     "frontier": boolean;
     "authMode"?: AIProviderAuthMode;
+    "authStatus"?: string;
+    "billingMode"?: string;
+    "legalBasis"?: string;
+    "riskTier"?: string;
+    "sourceLinks"?: string[];
+    "supportedActions"?: string[];
     "oauthSupported": boolean;
     "requiresAuth": boolean;
     "authConfigured": boolean;
@@ -131,14 +141,22 @@ export class AIProviderDescriptor {
      * Creates a new AIProviderDescriptor instance from a string or object.
      */
     static createFrom($$source: any = {}): AIProviderDescriptor {
-        const $$createField11_0 = $$createType0;
-        const $$createField12_0 = $$createType2;
+        const $$createField16_0 = $$createType0;
+        const $$createField17_0 = $$createType0;
+        const $$createField21_0 = $$createType1;
+        const $$createField22_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("sourceLinks" in $$parsedSource) {
+            $$parsedSource["sourceLinks"] = $$createField16_0($$parsedSource["sourceLinks"]);
+        }
+        if ("supportedActions" in $$parsedSource) {
+            $$parsedSource["supportedActions"] = $$createField17_0($$parsedSource["supportedActions"]);
+        }
         if ("capabilities" in $$parsedSource) {
-            $$parsedSource["capabilities"] = $$createField11_0($$parsedSource["capabilities"]);
+            $$parsedSource["capabilities"] = $$createField21_0($$parsedSource["capabilities"]);
         }
         if ("models" in $$parsedSource) {
-            $$parsedSource["models"] = $$createField12_0($$parsedSource["models"]);
+            $$parsedSource["models"] = $$createField22_0($$parsedSource["models"]);
         }
         return new AIProviderDescriptor($$parsedSource as Partial<AIProviderDescriptor>);
     }
@@ -182,7 +200,7 @@ export class AIProviderSettings {
      * Creates a new AIProviderSettings instance from a string or object.
      */
     static createFrom($$source: any = {}): AIProviderSettings {
-        const $$createField7_0 = $$createType0;
+        const $$createField7_0 = $$createType1;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("capabilities" in $$parsedSource) {
             $$parsedSource["capabilities"] = $$createField7_0($$parsedSource["capabilities"]);
@@ -207,5 +225,6 @@ export enum AIProviderStatusValue {
 
 // Private type creation functions
 const $$createType0 = $Create.Array($Create.Any);
-const $$createType1 = AIModelDescriptor.createFrom;
-const $$createType2 = $Create.Array($$createType1);
+const $$createType1 = $Create.Array($Create.Any);
+const $$createType2 = AIModelDescriptor.createFrom;
+const $$createType3 = $Create.Array($$createType2);

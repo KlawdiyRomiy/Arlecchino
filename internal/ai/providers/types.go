@@ -49,23 +49,33 @@ type AIModelDescriptor struct {
 }
 
 type AIProviderDescriptor struct {
-	ID             string                 `json:"id"`
-	Name           string                 `json:"name"`
-	Kind           string                 `json:"kind"`
-	Endpoint       string                 `json:"endpoint,omitempty"`
-	Local          bool                   `json:"local"`
-	Manual         bool                   `json:"manual"`
-	Frontier       bool                   `json:"frontier"`
-	AuthMode       AIProviderAuthMode     `json:"authMode,omitempty"`
-	OAuthSupported bool                   `json:"oauthSupported"`
-	RequiresAuth   bool                   `json:"requiresAuth"`
-	AuthConfigured bool                   `json:"authConfigured"`
-	Capabilities   []AIProviderCapability `json:"capabilities"`
-	Models         []AIModelDescriptor    `json:"models"`
-	DefaultModel   string                 `json:"defaultModel,omitempty"`
-	Status         AIProviderStatusValue  `json:"status"`
-	Reason         string                 `json:"reason,omitempty"`
-	LastCheckedAt  string                 `json:"lastCheckedAt,omitempty"`
+	ID               string                 `json:"id"`
+	Name             string                 `json:"name"`
+	Kind             string                 `json:"kind"`
+	RuntimeFamily    string                 `json:"runtimeFamily,omitempty"`
+	Endpoint         string                 `json:"endpoint,omitempty"`
+	EndpointClass    string                 `json:"endpointClass,omitempty"`
+	ExternalAccount  bool                   `json:"externalAccount,omitempty"`
+	Binary           string                 `json:"binary,omitempty"`
+	Local            bool                   `json:"local"`
+	Manual           bool                   `json:"manual"`
+	Frontier         bool                   `json:"frontier"`
+	AuthMode         AIProviderAuthMode     `json:"authMode,omitempty"`
+	AuthStatus       string                 `json:"authStatus,omitempty"`
+	BillingMode      string                 `json:"billingMode,omitempty"`
+	LegalBasis       string                 `json:"legalBasis,omitempty"`
+	RiskTier         string                 `json:"riskTier,omitempty"`
+	SourceLinks      []string               `json:"sourceLinks,omitempty"`
+	SupportedActions []string               `json:"supportedActions,omitempty"`
+	OAuthSupported   bool                   `json:"oauthSupported"`
+	RequiresAuth     bool                   `json:"requiresAuth"`
+	AuthConfigured   bool                   `json:"authConfigured"`
+	Capabilities     []AIProviderCapability `json:"capabilities"`
+	Models           []AIModelDescriptor    `json:"models"`
+	DefaultModel     string                 `json:"defaultModel,omitempty"`
+	Status           AIProviderStatusValue  `json:"status"`
+	Reason           string                 `json:"reason,omitempty"`
+	LastCheckedAt    string                 `json:"lastCheckedAt,omitempty"`
 }
 
 type AIProviderSettings struct {

@@ -285,6 +285,10 @@ export function AIRefreshLocalProviders(): $CancellablePromise<ai$0.AIDiscoveryR
     });
 }
 
+export function AIResizeAgentTerminal(runID: string, rows: number, cols: number): $CancellablePromise<void> {
+    return $Call.ByID(870118260, runID, rows, cols);
+}
+
 export function AIRevokeApprovalPolicy(): $CancellablePromise<ai$0.AIApprovalPolicy> {
     return $Call.ByID(2979631040).then(($result: any) => {
         return $$createType5($result);
@@ -333,6 +337,12 @@ export function AISetMnemonicEnabled(enabled: boolean): $CancellablePromise<ai$0
     });
 }
 
+export function AIStartAgentAuthRun(providerID: string): $CancellablePromise<ai$0.AIChatRun> {
+    return $Call.ByID(3335823601, providerID).then(($result: any) => {
+        return $$createType2($result);
+    });
+}
+
 export function AIStartChatRun(req: ai$0.AIChatRunRequest): $CancellablePromise<ai$0.AIChatRun> {
     return $Call.ByID(1756960180, req).then(($result: any) => {
         return $$createType2($result);
@@ -367,6 +377,10 @@ export function AIUpdateMnemonicEntry(id: string, patch: ai$0.AIMnemonicEntryPat
     return $Call.ByID(3053338550, id, patch).then(($result: any) => {
         return $$createType1($result);
     });
+}
+
+export function AIWriteAgentTerminalInput(runID: string, data: string): $CancellablePromise<void> {
+    return $Call.ByID(3673067297, runID, data);
 }
 
 export function AnalyzeModels(modelName: string): $CancellablePromise<any> {

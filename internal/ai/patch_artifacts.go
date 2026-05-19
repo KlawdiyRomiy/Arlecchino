@@ -664,18 +664,25 @@ func (s *Service) createPatchCheckpoint(project *ProjectSession, artifactID stri
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	path := patchCheckpointPath(project.ProjectRoot, payload.ID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", err
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+	if err := writePatchCheckpointPayload(project.ProjectRoot, payload); err != nil {
 		return "", err
 	}
 	return payload.ID, nil
+}
+
+func writePatchCheckpointPayload(projectRoot string, payload patchCheckpointPayload) error {
+	path := patchCheckpointPath(projectRoot, payload.ID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		return err
+	}
+	return nil
 }
 
 func readPatchCheckpoint(projectRoot string, checkpointID string) (patchCheckpointPayload, error) {
@@ -710,6 +717,9 @@ func patchArtifactStatus(payload AIPatchArtifactPayload) string {
 	if payload.AppliedAt != "" {
 		return "applied"
 	}
+	if payload.AlreadyApplied {
+		return "applied"
+	}
 	if payload.CheckReady {
 		return "ready"
 	}
@@ -728,6 +738,8 @@ func patchPreviewSummary(payload AIPatchArtifactPayload) string {
 	}
 	if payload.AppliedAt != "" {
 		parts = append(parts, "applied")
+	} else if payload.AlreadyApplied {
+		parts = append(parts, "captured direct writes")
 	}
 	if payload.RolledBackAt != "" {
 		parts = append(parts, "rolled back")

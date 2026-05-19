@@ -261,6 +261,7 @@ func (s *Service) buildChatRunEnvelopeWithTimeline(project *ProjectSession, run 
 		ProfileID:           run.ProfileID,
 		WorkflowID:          run.WorkflowID,
 		Status:              run.Status,
+		RuntimeFamily:       run.RuntimeFamily,
 		ProviderID:          firstNonEmpty(run.ProviderID, providerIDFromEnvelope(providerEnvelope)),
 		Model:               firstNonEmpty(run.Model, modelFromEnvelope(providerEnvelope)),
 		Error:               sanitizedDisplayText(run.Error),
@@ -275,6 +276,7 @@ func (s *Service) buildChatRunEnvelopeWithTimeline(project *ProjectSession, run 
 		ToolProposalSummary: summarizeToolProposals(run.ToolProposals),
 		MnemonicInclusion:   mnemonic,
 		Timeline:            timeline,
+		AgentRuntime:        run.AgentRuntime,
 		Revision:            run.Revision,
 		CreatedAt:           run.CreatedAt,
 		UpdatedAt:           run.UpdatedAt,
@@ -305,16 +307,30 @@ func (s *Service) providerEnvelopeForRun(run AIChatRun) *AIProviderEnvelope {
 	descriptor, ok := s.descriptors[providerID]
 	s.mu.RUnlock()
 	if !ok {
+		if agentDescriptor, agentOK := s.agentProviderDescriptor(providerID); agentOK {
+			descriptor = agentDescriptor
+			ok = true
+		}
+	}
+	if !ok {
 		return nil
 	}
 	return &AIProviderEnvelope{
-		ProviderID: descriptor.ID,
-		Kind:       descriptor.Kind,
-		Endpoint:   descriptor.Endpoint,
-		Model:      firstNonEmpty(run.Model, descriptor.DefaultModel),
-		Status:     descriptor.Status,
-		Local:      descriptor.Local,
-		Frontier:   descriptor.Frontier,
+		ProviderID:      descriptor.ID,
+		Kind:            descriptor.Kind,
+		RuntimeFamily:   descriptor.RuntimeFamily,
+		Endpoint:        descriptor.Endpoint,
+		EndpointClass:   descriptor.EndpointClass,
+		Model:           firstNonEmpty(run.Model, descriptor.DefaultModel),
+		Status:          descriptor.Status,
+		AuthStatus:      descriptor.AuthStatus,
+		BillingMode:     descriptor.BillingMode,
+		LegalBasis:      descriptor.LegalBasis,
+		RiskTier:        descriptor.RiskTier,
+		SourceLinks:     descriptor.SourceLinks,
+		Local:           descriptor.Local,
+		Frontier:        descriptor.Frontier,
+		ExternalAccount: descriptor.ExternalAccount,
 	}
 }
 
@@ -383,12 +399,22 @@ func disclosureSummary(provider *AIProviderEnvelope, contextSummary *AIContextSu
 	summary.Local = provider.Local
 	summary.Frontier = provider.Frontier
 	summary.ProviderPolicyAllowed = provider.Local && !provider.Frontier && consent.LocalProvidersAccepted
+	if provider.EndpointClass == "local_process_external_account" || provider.ExternalAccount {
+		summary.ProviderPolicyAllowed = consent.ExternalAgentCLIAccepted
+		summary.RetentionSummary = "external CLI account; Arlecchino stores metadata and redacted transcript locally"
+	}
 	return summary
 }
 
 func endpointClass(provider *AIProviderEnvelope) string {
 	if provider == nil || provider.Endpoint == "" {
+		if provider != nil && provider.EndpointClass != "" {
+			return provider.EndpointClass
+		}
 		return "unknown"
+	}
+	if provider.EndpointClass != "" {
+		return provider.EndpointClass
 	}
 	switch {
 	case provider.Frontier:

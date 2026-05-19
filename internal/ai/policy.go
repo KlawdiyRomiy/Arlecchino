@@ -184,6 +184,7 @@ func (s *Service) consentSummary() AIConsentSummary {
 		LocalProvidersAccepted:    policy.LocalProvidersAccepted,
 		RemoteProvidersAccepted:   policy.RemoteProvidersAccepted,
 		FrontierProvidersAccepted: policy.FrontierProvidersAccepted,
+		ExternalAgentCLIAccepted:  policy.ExternalAgentCLIAccepted,
 		PolicySource:              "user_settings",
 	}
 }
@@ -228,7 +229,11 @@ func normalizeConsentPolicy(policy AIConsentPolicy) AIConsentPolicy {
 		provider.ProviderKind = strings.TrimSpace(provider.ProviderKind)
 		provider.Endpoint = strings.TrimSpace(provider.Endpoint)
 		provider.Model = strings.TrimSpace(provider.Model)
-		provider.Allowed = provider.Local && !provider.Frontier
+		if strings.TrimSpace(provider.Endpoint) == "local_process_external_account" || strings.TrimSpace(provider.ProviderKind) == "external_agent_cli" {
+			provider.Allowed = policy.ExternalAgentCLIAccepted
+		} else {
+			provider.Allowed = provider.Local && !provider.Frontier
+		}
 		if provider.UpdatedAt == "" {
 			provider.UpdatedAt = policy.UpdatedAt
 		}

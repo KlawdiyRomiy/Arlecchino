@@ -268,11 +268,6 @@ func (p *OpenAICompatibleProvider) Generate(ctx context.Context, req GenerationR
 		reasoningText = openAIReasoningText(response.Choices[0].Message)
 	}
 	toolCalls := generationToolCallsFromOpenAIMessage(firstOpenAIChoiceMessage(response))
-	if sink != nil && text != "" {
-		if err := sink(text); err != nil {
-			return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString(), ToolCalls: toolCalls, Usage: generationUsageFromOpenAI(response.Usage)}, err
-		}
-	}
 	return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString(), ToolCalls: toolCalls, Usage: generationUsageFromOpenAI(response.Usage)}, nil
 }
 

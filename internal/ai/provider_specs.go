@@ -202,7 +202,9 @@ func descriptorFromSpec(setting providers.AIProviderSettings, spec providerSpec,
 		ID:             firstNonEmpty(setting.ID, spec.DefaultID),
 		Name:           firstNonEmpty(setting.Name, spec.Name, spec.Kind),
 		Kind:           firstNonEmpty(setting.Kind, spec.Kind),
+		RuntimeFamily:  "model_api",
 		Endpoint:       firstNonEmpty(setting.Endpoint, spec.DefaultEndpoint),
+		EndpointClass:  endpointClassForSpec(setting, spec),
 		Manual:         setting.Manual,
 		Local:          spec.Local,
 		Frontier:       spec.Frontier,
@@ -215,6 +217,19 @@ func descriptorFromSpec(setting providers.AIProviderSettings, spec providerSpec,
 		Status:         status,
 		Reason:         reasonForProviderSpec(spec),
 	}
+}
+
+func endpointClassForSpec(setting providers.AIProviderSettings, spec providerSpec) string {
+	if spec.Frontier {
+		return "frontier"
+	}
+	if isLoopbackEndpoint(firstNonEmpty(setting.Endpoint, spec.DefaultEndpoint)) {
+		return "loopback"
+	}
+	if spec.Local {
+		return "local_non_loopback"
+	}
+	return "remote"
 }
 
 func firstNonEmptyCapabilities(values ...[]providers.AIProviderCapability) []providers.AIProviderCapability {

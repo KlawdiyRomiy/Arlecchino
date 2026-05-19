@@ -5,6 +5,7 @@ import {
   Hammer,
   HelpCircle,
   MessageCircle,
+  SearchCheck,
 } from "lucide-react";
 import { AIChatAction } from "../../../bindings/arlecchino/internal/ai/models";
 
@@ -13,12 +14,13 @@ export const modeOrder: AIChatAction[] = [
   AIChatAction.AIChatActionPlan,
   AIChatAction.AIChatActionBuild,
   AIChatAction.AIChatActionDebug,
+  AIChatAction.AIChatActionReview,
 ];
 
 export interface AIChatActionMeta {
   label: string;
   shortLabel: string;
-  tone: "ask" | "plan" | "build" | "debug";
+  tone: "ask" | "plan" | "build" | "debug" | "review";
   icon: React.ReactNode;
   description: string;
 }
@@ -51,6 +53,13 @@ export const modeMeta: Partial<Record<AIChatAction, AIChatActionMeta>> = {
     tone: "debug",
     icon: <Bug size={15} />,
     description: "Diagnose failures without writing files.",
+  },
+  [AIChatAction.AIChatActionReview]: {
+    label: "Review",
+    shortLabel: "Review",
+    tone: "review",
+    icon: <SearchCheck size={15} />,
+    description: "Find defects and missing verification.",
   },
 };
 

@@ -40,6 +40,7 @@ import {
   AISaveConsentPolicy,
   AISaveMnemonicEntry,
   AISearchMnemonic,
+  AIStartAgentAuthRun,
   AIStartChatRun,
   AIStartProviderRuntime,
   AIStopProviderRuntime,
@@ -87,13 +88,16 @@ import { useAIInlinePatchStore } from "../../stores/aiInlinePatchStore";
 import { useTerminalStore } from "../../stores/terminalStore";
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 import { AIChatHeader } from "./AIChatHeader";
+import { AgentConsole } from "./AgentConsole";
 import { ChatGitReview } from "./ChatGitReview";
 import { ChatHistoryRail } from "./ChatHistoryRail";
 import { ChatComposer } from "./ChatComposer";
 import { EmptyState } from "./EmptyState";
 import { RunCard } from "./RunCard";
 import {
+  externalAgentRuntimeFamily,
   getProviderDisabledReason,
+  isExternalAgentProvider,
   isSupportedLocalChatProvider,
   selectDefaultProvider,
   sortProviders,
@@ -923,6 +927,17 @@ function fallbackActionDescriptors(): AIChatActionDescriptor[] {
       showPlanStructure: false,
       executionUnavailable: false,
     },
+    {
+      id: AIChatAction.AIChatActionReview,
+      name: "Review",
+      description: "Review changes and risks without writing files.",
+      builtIn: true,
+      mayProposeTools: true,
+      expectsToolProposals: false,
+      readOnlyIntent: true,
+      showPlanStructure: false,
+      executionUnavailable: false,
+    },
   ] as AIChatActionDescriptor[];
 }
 
@@ -1165,6 +1180,11 @@ export function AIChatPanelContent({
     status,
   });
   const selectedProviderReady = providerDisabledReason === "";
+  const agentConsoleVisible =
+    isExternalAgentProvider(selectedProvider) ||
+    activeEnvelope?.runtimeFamily === externalAgentRuntimeFamily ||
+    activeEnvelope?.providerEnvelope?.runtimeFamily ===
+      externalAgentRuntimeFamily;
   const disabledReason = activeRunRunning
     ? "Generation is running"
     : !inputReady
@@ -1590,6 +1610,11 @@ export function AIChatPanelContent({
       window.setTimeout(() => {
         void refreshRunArtifactsEvent(run.id);
       }, 125);
+      if (run.agentRuntime?.operation === "auth_login") {
+        window.setTimeout(() => {
+          void refreshRuntimeEvent();
+        }, 250);
+      }
     }
     void AIGetChatRunEnvelope(run.id)
       .then((envelope) => {
@@ -1913,6 +1938,9 @@ export function AIChatPanelContent({
         profileId: state.selectedProfileId,
         workflowId: state.selectedWorkflowId,
         prompt: state.input.trim(),
+        runtimeFamily: isExternalAgentProvider(selectedProvider)
+          ? externalAgentRuntimeFamily
+          : "model_api",
         providerId: selectedProvider.id,
         model: selectedModel,
         includeMnemonic: request.includeMnemonic,
@@ -1945,6 +1973,28 @@ export function AIChatPanelContent({
     state.selectedWorkflowId,
     upsertRunEnvelope,
   ]);
+
+  const handleStartAgentLogin = useCallback(
+    async (provider: AIProviderDescriptor) => {
+      if (!provider?.id || activeRunRunning) return;
+      setRuntimeError(null);
+      try {
+        const run = await AIStartAgentAuthRun(provider.id);
+        setHydratedRun(run);
+        upsertRunEnvelope(envelopeFromRun(run));
+        setActiveRunId(run.id);
+        dispatch({
+          type: "setActiveSession",
+          sessionId: run.sessionId || defaultChatSessionId,
+          runId: run.id,
+        });
+        dispatch({ type: "setActiveRun", runId: run.id });
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [activeRunRunning, setActiveRunId, setHydratedRun, upsertRunEnvelope],
+  );
 
   const handleCancel = useCallback(async () => {
     const running =
@@ -2238,6 +2288,21 @@ export function AIChatPanelContent({
       const nextPolicy = await AISaveConsentPolicy({
         ...(consentPolicy ?? defaultAIConsentPolicy()),
         localProvidersAccepted: true,
+      });
+      setConsentPolicy(
+        normalizeAIConsentPolicy(nextPolicy) ?? defaultAIConsentPolicy(),
+      );
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+  }, [consentPolicy, setConsentPolicy]);
+
+  const handleAcceptExternalAgentConsent = useCallback(async () => {
+    setRuntimeError(null);
+    try {
+      const nextPolicy = await AISaveConsentPolicy({
+        ...(consentPolicy ?? defaultAIConsentPolicy()),
+        externalAgentCliAccepted: true,
       });
       setConsentPolicy(
         normalizeAIConsentPolicy(nextPolicy) ?? defaultAIConsentPolicy(),
@@ -2554,6 +2619,7 @@ export function AIChatPanelContent({
           onMnemonicSave={handleMnemonicSave}
           onMnemonicPromote={handleMnemonicPromote}
           onAcceptLocalProviderConsent={handleAcceptLocalProviderConsent}
+          onAcceptExternalAgentConsent={handleAcceptExternalAgentConsent}
           onToggleSettingsPopover={() => {
             dispatch({ type: "toggleSettingsPopover" });
             dispatchChrome({
@@ -2615,6 +2681,10 @@ export function AIChatPanelContent({
                     dispatch({ type: "setActiveRun", runId });
                   }}
                 />
+                <AgentConsole
+                  activeEnvelope={activeEnvelope}
+                  visible={agentConsoleVisible}
+                />
                 {transcriptRuns.length === 0 ? (
                   <EmptyState
                     providerReady={selectedProviderReady}
@@ -2672,6 +2742,7 @@ export function AIChatPanelContent({
                 providerRuntimeError={providerRuntimeError}
                 providerRuntimes={providerRuntimes}
                 providers={sortedProviders}
+                consentPolicy={consentPolicy}
                 running={activeRunRunning}
                 selectedAction={state.selectedAction}
                 selectedMentions={selectedMentionsForActiveSession}
@@ -2698,6 +2769,8 @@ export function AIChatPanelContent({
                 onSend={handleSend}
                 onSelectModel={handleModelSelect}
                 onSelectProvider={handleProviderSelect}
+                onStartAgentLogin={handleStartAgentLogin}
+                onAcceptExternalAgentConsent={handleAcceptExternalAgentConsent}
                 onStartProviderRuntime={handleStartProviderRuntime}
                 onStopProviderRuntime={handleStopProviderRuntime}
                 onToggleContextPicker={() => {

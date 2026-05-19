@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"arlecchino/internal/ai/agents"
 	"arlecchino/internal/ai/mnemonic"
 	"arlecchino/internal/ai/providers"
 
@@ -99,6 +100,7 @@ func (s *Service) StartChatRun(_ context.Context, projectID string, req AIChatRu
 		ProfileID:         req.ProfileID,
 		WorkflowID:        req.WorkflowID,
 		Status:            "running",
+		RuntimeFamily:     req.RuntimeFamily,
 		ProviderID:        req.ProviderID,
 		Model:             req.Model,
 		UserPrompt:        sanitizedDisplayText(req.Prompt),
@@ -252,6 +254,16 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactContext, "Context disclosure", contextArtifactSummary(contextSummary), snapshot)
 	s.emitRunEnvelope(project.ID, runID)
 
+	if req.RuntimeFamily == agents.RuntimeFamilyExternalAgentCLI || strings.HasPrefix(strings.TrimSpace(req.ProviderID), "agent-cli-") {
+		adapter, descriptor, ok := s.resolveAgentAdapter(ctx, req.ProviderID)
+		if !ok {
+			s.finishRunError(runID, fmt.Sprintf("external agent runtime %q is not available", req.ProviderID))
+			return
+		}
+		s.runExternalAgentChat(ctx, project, runID, req, snapshot, contextSummary, adapter, descriptor)
+		return
+	}
+
 	provider, descriptor, err := s.resolveProvider(req.ProviderID)
 	if err != nil {
 		s.finishRunError(runID, err.Error())
@@ -287,6 +299,12 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	if req.Action == AIChatActionBuild && !toolset.ToolSupport {
 		s.finishRunError(runID, fmt.Sprintf("model %s on provider %s does not support agent tools required for Build mode; switch to a tool-capable local model such as qwen2.5-coder or use Ask/Plan mode", generationReq.Model, descriptor.ID))
 		return
+	}
+	if req.Action == AIChatActionBuild {
+		if err := s.ensureBuildToolCapability(ctx, project, descriptor, generationReq.Model, toolset); err != nil {
+			s.finishRunError(runID, err.Error())
+			return
+		}
 	}
 	generationReq.Tools = toolset.Tools
 	if len(generationReq.Tools) > 0 {
@@ -333,29 +351,45 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		Redaction:        snapshot.Redaction,
 		Summary:          "Provider request started.",
 	})
-	streamGuard := newChatStreamGuard(req, system, generationReq.Prompt)
-	response, err := provider.Generate(ctx, generationReq, func(token string) error {
-		if ctx.Err() != nil || s.runIsCanceled(runID) {
-			return context.Canceled
+	var streamGuard *chatStreamGuard
+	var tokenSink providers.TokenSink
+	releaseBufferedProviderResponse := false
+	if generationReq.Stream {
+		streamGuard = newChatStreamGuard(req, system, generationReq.Prompt)
+		tokenSink = func(token string) error {
+			if ctx.Err() != nil || s.runIsCanceled(runID) {
+				return context.Canceled
+			}
+			if token == "" {
+				return nil
+			}
+			displayToken := sanitizedDisplayChunk(token)
+			releaseToken, observeErr := streamGuard.Observe(token, displayToken)
+			if releaseToken != "" {
+				s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": releaseToken})
+				s.updateRun(runID, func(run *AIChatRun) {
+					run.Response += releaseToken
+				})
+			}
+			return observeErr
 		}
-		if token == "" {
+	} else if len(generationReq.Tools) > 0 {
+		releaseBufferedProviderResponse = true
+		tokenSink = func(token string) error {
+			if ctx.Err() != nil || s.runIsCanceled(runID) {
+				return context.Canceled
+			}
 			return nil
 		}
-		displayToken := sanitizedDisplayChunk(token)
-		releaseToken, observeErr := streamGuard.Observe(token, displayToken)
-		if releaseToken != "" {
+	}
+	response, err := provider.Generate(ctx, generationReq, tokenSink)
+	if streamGuard != nil {
+		if releaseToken := streamGuard.Flush(); releaseToken != "" {
 			s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": releaseToken})
 			s.updateRun(runID, func(run *AIChatRun) {
 				run.Response += releaseToken
 			})
 		}
-		return observeErr
-	})
-	if releaseToken := streamGuard.Flush(); releaseToken != "" {
-		s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": releaseToken})
-		s.updateRun(runID, func(run *AIChatRun) {
-			run.Response += releaseToken
-		})
 	}
 	record.LatencyMs = time.Since(started).Milliseconds()
 	if ctx.Err() != nil || s.runIsCanceled(runID) {
@@ -427,7 +461,28 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	for index, toolReq := range fencedToolCallRequests {
 		toolCallRequests = append(toolCallRequests, chatToolCallRequestFromToolRequest(toolReq, fencedStartIndex+index))
 	}
+	fallbackEditUsed := false
+	if len(toolCallRequests) == 0 {
+		fallback := s.resolveBuildEditFallback(project, runID, req, snapshot, finalResponse)
+		if fallback.Attempted {
+			releaseBufferedProviderResponse = false
+			s.clearChatRunResponse(project.ID, runID)
+			if fallback.Err != nil {
+				s.finishRunError(runID, fallback.Err.Error())
+				return
+			}
+			if len(fallback.Calls) > 0 {
+				toolCallRequests = fallback.Calls
+				fallbackEditUsed = true
+				finalResponse = firstNonEmpty(fallback.Message, "Prepared fallback edit preview.")
+				response.Text = finalResponse
+				modelToolResponse = finalResponse
+			}
+		}
+	}
 	if rewriteGuard, ok := detectBuildRewriteGuard(req, finalResponse, len(toolCallRequests) > 0); ok {
+		releaseBufferedProviderResponse = false
+		s.clearChatRunResponse(project.ID, runID)
 		s.recordBuildRewriteGuardArtifact(project, runID, rewriteGuard)
 		s.emitRunEnvelope(project.ID, runID)
 		outcome := s.retryBuildRunAfterRewriteGuard(ctx, project, runID, req, provider, descriptor, generationReq, snapshot, system, finalResponse, rewriteGuard)
@@ -443,9 +498,8 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 			modelToolResponse = finalResponse
 			toolCallRequests = nil
 		} else {
-			finalResponse = buildRewriteGuardFallbackMessage(rewriteGuard)
-			modelToolResponse = finalResponse
-			toolCallRequests = nil
+			s.finishRunError(runID, buildRewriteGuardProtocolError(rewriteGuard))
+			return
 		}
 	}
 	if strings.TrimSpace(finalResponse) == "" && len(toolCallRequests) > 0 {
@@ -462,6 +516,9 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		run.ToolProposals = nil
 		run.EgressRecordID = record.ID
 	})
+	if releaseBufferedProviderResponse && len(toolCallRequests) == 0 {
+		s.emitBufferedChatResponseToken(runID, finalResponse)
+	}
 	executedToolCalls := []chatExecutedToolCall{}
 	if chatActionUsesToolLoop(req.Action) {
 		executedToolCalls = s.executeChatToolCalls(ctx, project, runID, req, toolCallRequests)
@@ -490,6 +547,10 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 			})
 			s.emitRunEnvelope(project.ID, runID)
 		} else if len(executedToolCalls) > 0 {
+			if fallbackEditUsed {
+				s.finishRunError(runID, fallbackEditToolFailureMessage(executedToolCalls))
+				return
+			}
 			outcome := s.continueChatRunAfterToolResults(ctx, project, runID, req, provider, descriptor, generationReq, snapshot, system, modelToolResponse, executedToolCalls)
 			if outcome.Canceled || outcome.Failed {
 				return
@@ -518,7 +579,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 				Type:       "chat_summary",
 				Source:     "ai-chat",
 				Tags:       []string{string(req.Action)},
-				Content:    summarizeForMnemonic(req.Prompt, cleanChatGeneratedResponse(response.Text, req, system, generationReq.Prompt)),
+				Content:    summarizeForMnemonic(req.Prompt, cleanChatGeneratedResponse(finalResponse, req, system, generationReq.Prompt)),
 				Importance: 5,
 				Trust:      mnemonic.TrustGenerated,
 				Provenance: map[string]string{"source": "ai-chat-summary", "runId": runID},
@@ -575,6 +636,49 @@ func chatActionAllowsContinuationTools(action AIChatAction) bool {
 	return action == AIChatActionBuild || action == AIChatActionPlan || action == AIChatActionDebug
 }
 
+func (s *Service) emitBufferedChatResponseToken(runID string, response string) {
+	if token := sanitizedDisplayChunk(response); strings.TrimSpace(token) != "" {
+		s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": token})
+	}
+}
+
+func (s *Service) ensureBuildToolCapability(ctx context.Context, project *ProjectSession, descriptor AIProviderDescriptor, model string, toolset chatToolset) error {
+	if !buildRequiresVerifiedToolProbe(descriptor, toolset) {
+		return nil
+	}
+	model = strings.TrimSpace(firstNonEmpty(model, descriptor.DefaultModel))
+	if model == "" {
+		return fmt.Errorf("Build mode requires a model before live tool capability probing")
+	}
+	if probe, ok := cachedProjectModelCapabilityProbe(project, descriptor.ID, model); ok && modelCapabilityProbeFresh(probe) {
+		if probe.Status == "verified" && probe.ToolSupport {
+			return nil
+		}
+		return fmt.Errorf("model %s on provider %s failed the live tool capability probe: %s", model, descriptor.ID, firstNonEmpty(probe.Error, probe.Status))
+	}
+	result, err := s.ProbeModelCapability(ctx, project.ID, AIModelCapabilityProbeRequest{
+		ProviderID: descriptor.ID,
+		Model:      model,
+	})
+	if err != nil {
+		return fmt.Errorf("model %s on provider %s could not complete the live tool capability probe: %s", model, descriptor.ID, err)
+	}
+	if result.Status == "verified" && result.ToolSupport {
+		return nil
+	}
+	return fmt.Errorf("model %s on provider %s did not pass the live tool capability probe: %s", model, descriptor.ID, firstNonEmpty(result.Error, result.Status))
+}
+
+func buildRequiresVerifiedToolProbe(descriptor AIProviderDescriptor, toolset chatToolset) bool {
+	if !toolset.ToolSupport || len(toolset.Tools) == 0 {
+		return false
+	}
+	if toolset.Profile == chatToolProfileFastCurrentFile {
+		return false
+	}
+	return strings.TrimSpace(descriptor.Kind) == "ollama"
+}
+
 type chatExecutedToolCall struct {
 	Call   chatToolCallRequest
 	Result AIToolCallResult
@@ -608,6 +712,15 @@ func completedReviewArtifactToolMessage(results []chatExecutedToolCall) (string,
 		return "Patch preview is ready for review.", true
 	}
 	return fmt.Sprintf("%d patch previews are ready for review.", readyCount), true
+}
+
+func fallbackEditToolFailureMessage(results []chatExecutedToolCall) string {
+	for _, executed := range results {
+		if message := strings.TrimSpace(executed.Result.Error); message != "" {
+			return "model did not produce a reviewable edit operation; no file was changed: " + message
+		}
+	}
+	return "model did not produce a reviewable edit operation; no file was changed"
 }
 
 func toolCreatesReviewablePatchArtifact(toolID string) bool {
@@ -1005,10 +1118,7 @@ func (s *Service) retryBuildRunAfterRewriteGuard(ctx context.Context, project *P
 		toolCallRequests = append(toolCallRequests, chatToolCallRequestFromToolRequest(toolReq, fencedStartIndex+index))
 	}
 	if len(toolCallRequests) == 0 {
-		if _, stillBroad := detectBuildRewriteGuard(req, text, false); stillBroad || strings.TrimSpace(text) == "" {
-			return chatToolContinuationOutcome{Response: response, Record: record}
-		}
-		return chatToolContinuationOutcome{Response: response, Record: record, Text: text, Completed: true}
+		return chatToolContinuationOutcome{Response: response, Record: record}
 	}
 	if strings.TrimSpace(text) == "" {
 		text = "Prepared targeted tool results for review."
@@ -1031,6 +1141,82 @@ func (s *Service) retryBuildRunAfterRewriteGuard(ctx context.Context, project *P
 		return outcome
 	}
 	return chatToolContinuationOutcome{Response: response, Record: record, Text: text, Completed: true}
+}
+
+func (s *Service) clearChatRunResponse(projectID string, runID string) {
+	s.updateRun(runID, func(run *AIChatRun) {
+		run.Response = ""
+	})
+	if strings.TrimSpace(projectID) != "" {
+		s.emitRunEnvelope(projectID, runID)
+	}
+}
+
+func rewriteGuardTargetPath(projectRoot string, req AIChatRunRequest, snapshot AIContextSnapshot) (string, bool) {
+	candidates := []string{
+		req.Context.FilePath,
+		snapshot.FilePath,
+	}
+	for _, item := range req.Context.ContextItems {
+		if item.Kind == AIContextItemKindFile || item.Kind == AIContextItemKindSelection {
+			candidates = append(candidates, item.Path)
+		}
+	}
+	for _, item := range snapshot.ContextItems {
+		if item.Kind == AIContextItemKindFile || item.Kind == AIContextItemKindSelection {
+			candidates = append(candidates, item.Path)
+		}
+	}
+	for _, snippet := range snapshot.Snippets {
+		switch strings.TrimSpace(snippet.Type) {
+		case "current_file", "selection", "file":
+			candidates = append(candidates, snippet.Path)
+		}
+	}
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		relPath, ok := normalizeRewriteGuardTargetPath(projectRoot, candidate)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[relPath]; exists {
+			continue
+		}
+		seen[relPath] = struct{}{}
+		return relPath, true
+	}
+	return "", false
+}
+
+func normalizeRewriteGuardTargetPath(projectRoot string, value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	if filepath.IsAbs(value) {
+		if evaluated, err := filepath.EvalSymlinks(value); err == nil {
+			value = evaluated
+		}
+		rel, err := filepath.Rel(projectRoot, value)
+		if err != nil {
+			return "", false
+		}
+		value = rel
+	}
+	return normalizePatchPath(value)
+}
+
+func fileBytesLookBinary(value []byte) bool {
+	for _, b := range value {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func buildRewriteGuardProtocolError(guard buildRewriteGuardDecision) string {
+	return buildRewriteGuardFallbackMessage(guard) + " The model did not produce a reviewable edit tool call, so no file was changed."
 }
 
 func (s *Service) recordChatEgress(project *ProjectSession, runID string, record AIEgressRecord) AIEgressRecord {
@@ -1345,7 +1531,7 @@ func (s *Service) recordBuildRewriteGuardArtifact(project *ProjectSession, runID
 			"status":        "blocked",
 			"resultStatus":  "blocked",
 			"error":         buildRewriteGuardFallbackMessage(guard),
-			"outputPreview": guard.OriginalExcerpt,
+			"outputPreview": "Suppressed broad full-file content from the chat response.",
 			"proposal": map[string]any{
 				"name":                   "rewrite.guard",
 				"kind":                   AIToolKindFileWrite,
@@ -1478,6 +1664,9 @@ func (s *Service) retryEmptyChatResponse(ctx context.Context, runID string, prov
 	}
 	cleaned := cleanChatGeneratedResponse(retryResp.Text, req, system, retryReq.Prompt)
 	if strings.TrimSpace(cleaned) == "" {
+		return retryResp
+	}
+	if len(generationReq.Tools) > 0 {
 		return retryResp
 	}
 	s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": cleaned})
@@ -1627,7 +1816,7 @@ func egressArtifactSummary(record AIEgressRecord) string {
 
 func validChatAction(action AIChatAction) bool {
 	switch action {
-	case AIChatActionAsk, AIChatActionDebug, AIChatActionPlan, AIChatActionBuild:
+	case AIChatActionAsk, AIChatActionDebug, AIChatActionPlan, AIChatActionBuild, AIChatActionReview:
 		return true
 	default:
 		return false
@@ -1670,6 +1859,8 @@ func defaultProfileForAction(action AIChatAction) string {
 		return "debug-operator"
 	case AIChatActionBuild:
 		return "build-reviewer"
+	case AIChatActionReview:
+		return "plan-architect"
 	default:
 		return "plan-architect"
 	}
@@ -1717,6 +1908,8 @@ func chatModeBoundaryPrompt(req AIChatRunRequest) string {
 		return "Selected chat mode: " + label + ".\nMode boundary: Debug is diagnostic. You may gather evidence with diagnostics, bounded file reads, workspace search, git preview, and terminal-preview proposals when tools are available. Do not write files or create patch artifacts. Any terminal execution remains user-approved and audit-visible."
 	case AIChatActionBuild:
 		return "Selected chat mode: " + label + ".\nMode boundary: Build may produce implementation guidance, diffs, patch artifacts, and typed tool proposals. Do not apply changes directly; every mutation requires approval, checkpoint, and audit."
+	case AIChatActionReview:
+		return "Selected chat mode: " + label + ".\nMode boundary: Review is read-only. Inspect the worktree, diffs, diagnostics, and provided context, then produce findings. Do not write files or apply patches."
 	default:
 		return "Selected chat mode: " + label + ".\nMode boundary: no mutation without explicit approval."
 	}
@@ -1732,6 +1925,8 @@ func chatActionLabel(action AIChatAction) string {
 		return "Build"
 	case AIChatActionDebug:
 		return "Debug"
+	case AIChatActionReview:
+		return "Review"
 	default:
 		return "Unknown"
 	}
@@ -1890,6 +2085,8 @@ func systemPromptForAction(action AIChatAction) string {
 		return common + " In Debug mode, investigate concrete failures and produce evidence-backed findings, likely root causes, and verification steps. Use diagnostics.read, workspace.grep, file.read_range, git.preview, and terminal.preview when available to gather or propose diagnostic evidence. Do not write files, create patch artifacts, or describe mutations as already executed."
 	case AIChatActionBuild:
 		return common + " In Build mode, answer normal questions normally. For concrete file edits, use the available tools instead of pasting rewritten files: diagnostics.read, workspace.grep, git.preview, and file.read_range to find anchors, file.edit.preview for narrow edits, file.create.preview for new files, terminal.preview for verification commands, and file.patch.preview only for genuinely multi-file or multi-hunk diffs. For a small local edit when the exact target file and anchor are already visible in provided current-file or mentioned-file context, call file.edit.preview directly instead of calling file.read_range, workspace.grep, diagnostics.read, or terminal.preview only to rediscover the same anchor. Use mcp.execute only when MCP context was explicitly included, and treat subagent.preview as an isolated preview artifact rather than executed background work. Arlecchino will turn edit/create/patch tool calls into reviewable patch artifacts and reject whole-file oldText/newText rewrites. Do not rewrite a whole file for a small local edit. Do not claim any file, terminal, MCP, or subagent action has run."
+	case AIChatActionReview:
+		return common + " In Review mode, prioritize concrete bugs, regressions, missing tests, unsafe edits, and unclear risk. Findings should lead, with file/path references when available. Do not write files or claim fixes were applied."
 	default:
 		return common + " In Plan mode, create a concrete implementation or investigation plan grounded in the provided context. Use diagnostics.read, workspace.grep, file.read_range, and git.preview when available to inspect read-only evidence, but stop before patching, terminal execution, MCP calls, file writes, dependency changes, or Mnemonic mutation."
 	}

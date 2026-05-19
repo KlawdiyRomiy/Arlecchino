@@ -204,12 +204,36 @@ func (a *App) AIStartChatRun(ctx context.Context, req ai.AIChatRunRequest) (ai.A
 	return a.ensureAIService().StartChatRun(ctx, sessionID, req)
 }
 
+func (a *App) AIStartAgentAuthRun(ctx context.Context, providerID string) (ai.AIChatRun, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIChatRun{}, err
+	}
+	return a.ensureAIService().StartAgentAuthRun(ctx, sessionID, providerID)
+}
+
 func (a *App) AICancelChatRun(ctx context.Context, runID string) (ai.AIChatRun, error) {
 	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {
 		return ai.AIChatRun{}, err
 	}
 	return a.ensureAIService().CancelChatRun(sessionID, runID)
+}
+
+func (a *App) AIWriteAgentTerminalInput(ctx context.Context, runID string, data string) error {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return err
+	}
+	return a.ensureAIService().WriteAgentTerminalInput(sessionID, runID, data)
+}
+
+func (a *App) AIResizeAgentTerminal(ctx context.Context, runID string, rows int, cols int) error {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return err
+	}
+	return a.ensureAIService().ResizeAgentTerminal(sessionID, runID, rows, cols)
 }
 
 func (a *App) AIGetChatRun(ctx context.Context, runID string) (ai.AIChatRun, error) {

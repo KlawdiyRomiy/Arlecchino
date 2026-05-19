@@ -13,6 +13,19 @@ const supportedLocalProviderKinds = new Set([
   "huggingface-tgi",
 ]);
 
+export const externalAgentRuntimeFamily = "external_agent_cli";
+
+export function isExternalAgentProvider(
+  provider: AIProviderDescriptor | null,
+): boolean {
+  return Boolean(
+    provider &&
+    (provider.runtimeFamily === externalAgentRuntimeFamily ||
+      provider.endpointClass === "local_process_external_account" ||
+      provider.externalAccount),
+  );
+}
+
 const rawReasonPatterns = [
   /dial tcp/i,
   /connection refused/i,
@@ -54,6 +67,9 @@ export function providerSupportsChat(
 export function isSupportedLocalChatProvider(
   provider: AIProviderDescriptor | null,
 ): boolean {
+  if (isExternalAgentProvider(provider)) {
+    return providerSupportsChat(provider);
+  }
   return Boolean(
     provider &&
     provider.local &&
@@ -80,6 +96,15 @@ export function sanitizeProviderReason(
   const rawReason = provider.reason?.trim() ?? "";
 
   if (provider.frontier) {
+    if (isExternalAgentProvider(provider)) {
+      if (provider.status === ("needs_auth" as AIProviderStatusValue)) {
+        return provider.reason?.trim() || "CLI login required";
+      }
+      if (provider.status === ("ready" as AIProviderStatusValue)) {
+        return provider.reason?.trim() || "External CLI ready";
+      }
+      return provider.reason?.trim() || "External CLI unavailable";
+    }
     return "Cloud provider unavailable";
   }
   if (provider.status === ("ready" as AIProviderStatusValue)) {
@@ -110,14 +135,16 @@ export function getProviderPresentation(
   provider: AIProviderDescriptor | null,
 ): ProviderPresentation {
   const ready = isReadyChatProvider(provider);
-  const local = Boolean(provider && !provider.frontier);
+  const externalAgent = isExternalAgentProvider(provider);
+  const local = Boolean(provider && !provider.frontier && !externalAgent);
   const status = provider?.status ?? ("unavailable" as AIProviderStatusValue);
   const tone: ProviderTone = ready
     ? "ready"
-    : provider?.frontier || status === ("disabled" as AIProviderStatusValue)
-      ? "disabled"
-      : status === ("needs_auth" as AIProviderStatusValue)
-        ? "warning"
+    : status === ("needs_auth" as AIProviderStatusValue)
+      ? "warning"
+      : (provider?.frontier && !externalAgent) ||
+          status === ("disabled" as AIProviderStatusValue)
+        ? "disabled"
         : status === ("error" as AIProviderStatusValue) ||
             status === ("unavailable" as AIProviderStatusValue)
           ? "error"
@@ -141,6 +168,7 @@ export function sortProviders(
 ): AIProviderDescriptor[] {
   const score = (provider: AIProviderDescriptor): number => {
     if (isReadyChatProvider(provider)) return 0;
+    if (isExternalAgentProvider(provider)) return 1;
     if (!isSupportedLocalChatProvider(provider)) return 4;
     if (provider.status === ("needs_auth" as AIProviderStatusValue)) return 1;
     return 2;
@@ -181,6 +209,19 @@ export function getProviderDisabledReason(
 ): string {
   if (options.status && !options.status.enabled) return "AI runtime disabled";
   if (!provider) return "Ready local provider required";
+  if (isExternalAgentProvider(provider)) {
+    if (!providerSupportsChat(provider))
+      return "Agent CLI does not expose chat";
+    if (provider.status === ("needs_auth" as AIProviderStatusValue)) {
+      return sanitizeProviderReason(provider);
+    }
+    if (!isReadyChatProvider(provider)) return sanitizeProviderReason(provider);
+    if (!options.consentPolicy?.externalAgentCliAccepted) {
+      return "External agent CLI consent required";
+    }
+    if (!options.selectedModel?.trim()) return "Runtime model required";
+    return "";
+  }
   if (provider.frontier) return "Cloud provider consent path required";
   if (!provider.local) return "Local provider required";
   if (!isSupportedLocalChatProvider(provider)) {

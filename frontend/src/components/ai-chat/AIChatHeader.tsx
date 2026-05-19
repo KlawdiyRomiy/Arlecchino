@@ -97,6 +97,7 @@ interface AIChatHeaderProps {
   onMnemonicSave: (content: string) => void;
   onMnemonicPromote: (entryId: string) => void;
   onAcceptLocalProviderConsent: () => void;
+  onAcceptExternalAgentConsent: () => void;
 }
 
 export function AIChatHeader({
@@ -150,6 +151,7 @@ export function AIChatHeader({
   onMnemonicSave,
   onMnemonicPromote,
   onAcceptLocalProviderConsent,
+  onAcceptExternalAgentConsent,
 }: AIChatHeaderProps) {
   const {
     draggedItemId,
@@ -389,9 +391,8 @@ export function AIChatHeader({
                     onMnemonicSearch={onMnemonicSearch}
                     onMnemonicSave={onMnemonicSave}
                     onMnemonicPromote={onMnemonicPromote}
-                    onAcceptLocalProviderConsent={
-                      onAcceptLocalProviderConsent
-                    }
+                    onAcceptLocalProviderConsent={onAcceptLocalProviderConsent}
+                    onAcceptExternalAgentConsent={onAcceptExternalAgentConsent}
                   />
                 ) : null}
               </AnimatePresence>

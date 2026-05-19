@@ -5,6 +5,7 @@ import {
   FileText,
   Layers,
   ListChecks,
+  ShieldCheck,
   Paperclip,
   Send,
   Slash,
@@ -15,6 +16,7 @@ import {
 import type {
   AIChatActionDescriptor,
   AIChatMentionCandidate,
+  AIConsentPolicy,
   AIContextProviderDescriptor,
   AIModelCapabilityDescriptor,
 } from "../../../bindings/arlecchino/internal/ai/models";
@@ -53,6 +55,7 @@ interface ChatComposerProps {
   providerRuntimeBusy: boolean;
   providerRuntimeError: string;
   selectedModelCapability: AIModelCapabilityDescriptor | null;
+  consentPolicy: AIConsentPolicy | null;
   context: ContextToggles;
   contextProviders: AIContextProviderDescriptor[];
   contextPickerOpen: boolean;
@@ -60,6 +63,8 @@ interface ChatComposerProps {
   onSelectProvider: (provider: AIProviderDescriptor) => void;
   onSelectModel: (modelId: string) => void;
   onRefreshProviders: () => void;
+  onStartAgentLogin: (provider: AIProviderDescriptor) => void;
+  onAcceptExternalAgentConsent: () => void;
   onProbeModelCapability: () => void;
   onStartProviderRuntime: (
     provider: AIProviderDescriptor,
@@ -200,6 +205,7 @@ export function ChatComposer({
   providerRuntimeBusy,
   providerRuntimeError,
   selectedModelCapability,
+  consentPolicy,
   context,
   contextProviders,
   contextPickerOpen,
@@ -207,6 +213,8 @@ export function ChatComposer({
   onSelectProvider,
   onSelectModel,
   onRefreshProviders,
+  onStartAgentLogin,
+  onAcceptExternalAgentConsent,
   onProbeModelCapability,
   onStartProviderRuntime,
   onStopProviderRuntime,
@@ -579,7 +587,10 @@ export function ChatComposer({
               selectedModel={selectedModel}
               selectedProvider={selectedProvider}
               selectedModelCapability={selectedModelCapability}
+              consentPolicy={consentPolicy}
               onRefreshProviders={onRefreshProviders}
+              onStartAgentLogin={onStartAgentLogin}
+              onAcceptExternalAgentConsent={onAcceptExternalAgentConsent}
               onProbeModelCapability={onProbeModelCapability}
               onSelectModel={onSelectModel}
               onSelectProvider={onSelectProvider}
@@ -587,7 +598,20 @@ export function ChatComposer({
               onStopProviderRuntime={onStopProviderRuntime}
             />
             {disabledReason ? (
-              <span className="ai-chat-composer__reason">{disabledReason}</span>
+              disabledReason === "External agent CLI consent required" ? (
+                <button
+                  className="ai-chat-inline-consent-button"
+                  type="button"
+                  onClick={onAcceptExternalAgentConsent}
+                >
+                  <ShieldCheck size={13} />
+                  Accept external CLI consent
+                </button>
+              ) : (
+                <span className="ai-chat-composer__reason">
+                  {disabledReason}
+                </span>
+              )
             ) : null}
           </div>
           <div className="ai-chat-composer__buttons">

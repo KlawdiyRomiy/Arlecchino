@@ -49,7 +49,7 @@ func (p *OllamaProvider) Descriptor() AIProviderDescriptor {
 		Local:        true,
 		Manual:       p.manual,
 		AuthMode:     ProviderAuthModeNone,
-		Capabilities: append(DefaultCapabilities(), CapabilityToolCalling, CapabilityStructuredOutput, CapabilityPatchGeneration),
+		Capabilities: append(DefaultCapabilities(), CapabilityStructuredOutput, CapabilityPatchGeneration),
 		DefaultModel: p.model,
 		Status:       ProviderStatusDiscovered,
 	}
@@ -179,11 +179,12 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerationRequest, si
 		options["stop"] = req.Stop
 	}
 	if len(req.Tools) > 0 || ollamaMessagesNeedChat(req.Messages) {
+		tools := openAIToolsFromGenerationRequest(req.Tools)
 		request := ollamaChatRequest{
 			Model:    model,
 			Messages: ollamaMessagesFromGenerationRequest(req),
 			Stream:   false,
-			Tools:    openAIToolsFromGenerationRequest(req.Tools),
+			Tools:    tools,
 			Options:  options,
 		}
 		return p.generateChat(ctx, request, sink)
@@ -210,11 +211,6 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerationRequest, si
 		return GenerationResponse{RawStatus: status}, err
 	}
 	text := response.Response
-	if sink != nil && text != "" {
-		if err := sink(text); err != nil {
-			return GenerationResponse{Text: text, Model: model, RawStatus: status, FinishedAt: NowString(), Usage: generationUsageFromOllama(response.PromptEvalCount, response.EvalCount)}, err
-		}
-	}
 	return GenerationResponse{Text: text, Model: model, RawStatus: status, FinishedAt: NowString(), Usage: generationUsageFromOllama(response.PromptEvalCount, response.EvalCount)}, nil
 }
 
@@ -238,11 +234,6 @@ func (p *OllamaProvider) generateChat(ctx context.Context, request ollamaChatReq
 		if parsed := ollamaToolCallsFromContent(text, request.Tools); len(parsed) > 0 {
 			toolCalls = parsed
 			text = ""
-		}
-	}
-	if sink != nil && text != "" {
-		if err := sink(text); err != nil {
-			return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString(), ToolCalls: toolCalls, Usage: generationUsageFromOllama(response.PromptEvalCount, response.EvalCount)}, err
 		}
 	}
 	return GenerationResponse{Text: text, ReasoningText: reasoningText, Model: model, RawStatus: status, FinishedAt: NowString(), ToolCalls: toolCalls, Usage: generationUsageFromOllama(response.PromptEvalCount, response.EvalCount)}, nil

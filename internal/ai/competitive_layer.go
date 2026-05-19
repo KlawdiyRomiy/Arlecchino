@@ -2,6 +2,7 @@ package ai
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"arlecchino/internal/ai/providers"
@@ -56,6 +57,15 @@ func (s *Service) ListModelCapabilities(projectID string) []AIModelCapabilityDes
 			out = append(out, capability)
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Local != out[j].Local {
+			return out[i].Local
+		}
+		if out[i].ToolSupport != out[j].ToolSupport {
+			return out[i].ToolSupport
+		}
+		return out[i].ProviderName < out[j].ProviderName
+	})
 	return out
 }
 
@@ -140,6 +150,9 @@ func recommendedModesForProvider(provider providers.AIProviderDescriptor) []AICh
 		return nil
 	}
 	if provider.Frontier {
+		if provider.RuntimeFamily == agentRuntimeFamilyExternalCLI {
+			return []AIChatAction{AIChatActionAsk, AIChatActionPlan, AIChatActionDebug, AIChatActionBuild, AIChatActionReview}
+		}
 		return []AIChatAction{AIChatActionAsk, AIChatActionPlan}
 	}
 	return []AIChatAction{AIChatActionAsk, AIChatActionPlan, AIChatActionDebug, AIChatActionBuild}

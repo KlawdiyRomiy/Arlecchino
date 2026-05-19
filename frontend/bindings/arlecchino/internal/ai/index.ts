@@ -42,6 +42,7 @@ export {
     AIEgressSummary,
     AIEmbeddingProviderDescriptor,
     AIEmbeddingStatus,
+    AIExternalAgentRunSummary,
     AIMCPContextPlane,
     AIMCPToolGroupSummary,
     AIMnemonicApproveProposalRequest,

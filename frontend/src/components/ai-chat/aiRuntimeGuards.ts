@@ -39,6 +39,7 @@ export const defaultAIConsentPolicy = (): AIConsentPolicy =>
     localProvidersAccepted: false,
     remoteProvidersAccepted: false,
     frontierProvidersAccepted: false,
+    externalAgentCliAccepted: false,
     providerPolicies: [],
   });
 

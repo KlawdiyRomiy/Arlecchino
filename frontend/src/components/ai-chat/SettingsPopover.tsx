@@ -40,6 +40,7 @@ interface SettingsPopoverProps {
   onMnemonicSave: (content: string) => void;
   onMnemonicPromote: (entryId: string) => void;
   onAcceptLocalProviderConsent: () => void;
+  onAcceptExternalAgentConsent: () => void;
 }
 
 export function SettingsPopover({
@@ -65,6 +66,7 @@ export function SettingsPopover({
   onMnemonicSave,
   onMnemonicPromote,
   onAcceptLocalProviderConsent,
+  onAcceptExternalAgentConsent,
 }: SettingsPopoverProps) {
   const [mnemonicDraft, setMnemonicDraft] = useState("");
   const [mnemonicQuery, setMnemonicQuery] = useState("");
@@ -160,9 +162,11 @@ export function SettingsPopover({
           <strong>{approvalPolicy?.mode || "ask_each_time"}</strong>
           <span>Consent</span>
           <strong>
-            {consentPolicy?.localProvidersAccepted
-              ? "local accepted"
-              : "local pending"}
+            {consentPolicy?.externalAgentCliAccepted
+              ? "agent CLI accepted"
+              : consentPolicy?.localProvidersAccepted
+                ? "local accepted"
+                : "local pending"}
           </strong>
           {!consentPolicy?.localProvidersAccepted ? (
             <>
@@ -173,6 +177,18 @@ export function SettingsPopover({
                 onClick={onAcceptLocalProviderConsent}
               >
                 Accept local provider
+              </button>
+            </>
+          ) : null}
+          {!consentPolicy?.externalAgentCliAccepted ? (
+            <>
+              <span>Agent CLI consent</span>
+              <button
+                className="ai-chat-secondary-button is-primary"
+                type="button"
+                onClick={onAcceptExternalAgentConsent}
+              >
+                Accept external CLI
               </button>
             </>
           ) : null}

@@ -3,19 +3,24 @@ import {
   CheckCircle2,
   ChevronDown,
   Gauge,
+  LogIn,
   Play,
   RefreshCw,
   Square,
 } from "lucide-react";
 import { AnimatePresence, m, useReducedMotion } from "framer-motion";
 import type { AIModelCapabilityDescriptor } from "../../../bindings/arlecchino/internal/ai/models";
+import type { AIConsentPolicy } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 import type {
   AIProviderRuntimeDescriptor,
   AIProviderRuntimeModel,
 } from "../../wails/app";
 import { mergeModelOptions } from "./providerModelOptions";
-import { getProviderPresentation } from "./providerPresentation";
+import {
+  getProviderPresentation,
+  isExternalAgentProvider,
+} from "./providerPresentation";
 
 interface ModelPickerProps {
   providers: AIProviderDescriptor[];
@@ -25,9 +30,12 @@ interface ModelPickerProps {
   providerRuntimeBusy: boolean;
   providerRuntimeError: string;
   selectedModelCapability: AIModelCapabilityDescriptor | null;
+  consentPolicy: AIConsentPolicy | null;
   onSelectProvider: (provider: AIProviderDescriptor) => void;
   onSelectModel: (modelId: string) => void;
   onRefreshProviders: () => void;
+  onStartAgentLogin: (provider: AIProviderDescriptor) => void;
+  onAcceptExternalAgentConsent: () => void;
   onProbeModelCapability: () => void;
   onStartProviderRuntime: (
     provider: AIProviderDescriptor,
@@ -44,9 +52,12 @@ export function ModelPicker({
   providerRuntimeBusy,
   providerRuntimeError,
   selectedModelCapability,
+  consentPolicy,
   onSelectProvider,
   onSelectModel,
   onRefreshProviders,
+  onStartAgentLogin,
+  onAcceptExternalAgentConsent,
   onProbeModelCapability,
   onStartProviderRuntime,
   onStopProviderRuntime,
@@ -66,6 +77,13 @@ export function ModelPicker({
   const selectedProviderLabel = selectedProvider?.name || selectedProvider?.id;
   const selectedProviderPresentation =
     getProviderPresentation(selectedProvider);
+  const selectedProviderNeedsAuth =
+    isExternalAgentProvider(selectedProvider) &&
+    selectedProvider?.status === "needs_auth";
+  const selectedProviderIsExternalAgent =
+    isExternalAgentProvider(selectedProvider);
+  const selectedProviderNeedsConsent =
+    selectedProviderIsExternalAgent && !consentPolicy?.externalAgentCliAccepted;
   const selectedModelLabel =
     activeModel?.displayName || activeModel?.id || selectedModel || "No model";
   const probeStatus = selectedModelCapability?.probeStatus || "";
@@ -198,7 +216,7 @@ export function ModelPicker({
                 </div>
               ) : (
                 <div className="ai-chat-provider-empty">
-                  No local chat providers detected.
+                  No chat runtimes detected.
                 </div>
               )}
             </section>
@@ -218,6 +236,7 @@ export function ModelPicker({
                       (!selectedModel && model.active);
                     const canStart =
                       Boolean(selectedProvider?.local) &&
+                      !isExternalAgentProvider(selectedProvider) &&
                       model.runnable &&
                       (!runtime?.running || !model.active);
                     return (
@@ -279,6 +298,35 @@ export function ModelPicker({
                 <RefreshCw size={14} />
                 Refresh
               </button>
+              {selectedProviderIsExternalAgent && selectedProvider ? (
+                <button
+                  className="ai-chat-secondary-button is-primary"
+                  type="button"
+                  disabled={providerRuntimeBusy}
+                  title={
+                    selectedProviderNeedsAuth
+                      ? "Start the official CLI login flow inside AI Chat"
+                      : "Open the official CLI account flow inside AI Chat"
+                  }
+                  onClick={() => {
+                    setOpen(false);
+                    onStartAgentLogin(selectedProvider);
+                  }}
+                >
+                  <LogIn size={14} />
+                  {selectedProviderNeedsAuth ? "Sign in" : "Account"}
+                </button>
+              ) : null}
+              {selectedProviderNeedsConsent ? (
+                <button
+                  className="ai-chat-secondary-button is-primary"
+                  type="button"
+                  title="Allow this local CLI to receive selected project context"
+                  onClick={onAcceptExternalAgentConsent}
+                >
+                  Accept CLI consent
+                </button>
+              ) : null}
               <button
                 className="ai-chat-secondary-button"
                 type="button"
@@ -304,7 +352,9 @@ export function ModelPicker({
             <div className="ai-chat-provider-runtime-note">
               {selectedProvider?.local
                 ? "Runs locally."
-                : "Select a local provider to continue."}
+                : isExternalAgentProvider(selectedProvider)
+                  ? "Runs through the provider-owned CLI account."
+                  : "Select a local provider or Agent CLI runtime to continue."}
             </div>
             {runtime?.reason ? (
               <div className="ai-chat-provider-runtime-note">

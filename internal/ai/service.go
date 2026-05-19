@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"arlecchino/internal/ai/agents"
 	"arlecchino/internal/ai/mnemonic"
 	"arlecchino/internal/ai/providers"
 	"arlecchino/internal/ai/skills"
@@ -49,8 +50,11 @@ type Service struct {
 	runs          map[string]*AIChatRun
 	runCancels    map[string]context.CancelFunc
 	runDone       map[string]chan struct{}
+	agentInputs   map[string]func([]byte) error
+	agentResizes  map[string]func(uint16, uint16) error
 	toolApprovals map[string]AIToolApprovalGrant
 	runtimes      *providerRuntimeManager
+	agents        *agents.Registry
 	started       bool
 }
 
@@ -86,8 +90,11 @@ func NewService(options ServiceOptions) *Service {
 		runs:          map[string]*AIChatRun{},
 		runCancels:    map[string]context.CancelFunc{},
 		runDone:       map[string]chan struct{}{},
+		agentInputs:   map[string]func([]byte) error{},
+		agentResizes:  map[string]func(uint16, uint16) error{},
 		toolApprovals: map[string]AIToolApprovalGrant{},
 		runtimes:      newProviderRuntimeManager(),
+		agents:        agents.NewRegistry(),
 	}
 }
 
@@ -120,6 +127,8 @@ func (s *Service) Close() error {
 	s.mu.Lock()
 	s.runCancels = map[string]context.CancelFunc{}
 	s.runDone = map[string]chan struct{}{}
+	s.agentInputs = map[string]func([]byte) error{}
+	s.agentResizes = map[string]func(uint16, uint16) error{}
 	s.runs = map[string]*AIChatRun{}
 	s.toolApprovals = map[string]AIToolApprovalGrant{}
 	projects := make([]*ProjectSession, 0, len(s.projects))
@@ -299,10 +308,17 @@ func (s *Service) Status(projectID string) AIStatus {
 
 func (s *Service) ListProviders() []providers.AIProviderDescriptor {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	result := make([]providers.AIProviderDescriptor, 0, len(s.descriptors))
 	for _, descriptor := range s.descriptors {
 		result = append(result, descriptor)
+	}
+	s.mu.RUnlock()
+	if s.agents != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		for _, descriptor := range s.agents.Descriptors(ctx) {
+			result = append(result, agents.DescriptorToProvider(descriptor))
+		}
 	}
 	sortDescriptors(result)
 	return result

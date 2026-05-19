@@ -22,7 +22,12 @@ func modelCapabilityEvidenceFor(provider providers.AIProviderDescriptor, model p
 	toolSupport := false
 	toolKind := "none"
 	reason := "provider has not advertised or implemented tool calling"
-	if model.ToolCalling || capabilityAllowed(provider.Capabilities, providers.CapabilityToolCalling) {
+	if provider.Kind == "ollama" {
+		source = "adapter"
+		toolSupport = true
+		toolKind = "adapter"
+		reason = "Ollama chat adapter can send tool schemas and parse tool calls, but Build requires a live probe before use"
+	} else if model.ToolCalling || capabilityAllowed(provider.Capabilities, providers.CapabilityToolCalling) {
 		source = "advertised"
 		toolSupport = true
 		toolKind = "native"
@@ -31,10 +36,6 @@ func modelCapabilityEvidenceFor(provider providers.AIProviderDescriptor, model p
 		toolSupport = true
 		toolKind = "adapter"
 		reason = "Arlecchino adapter can send OpenAI-compatible tool schemas"
-	} else if provider.Kind == "ollama" {
-		toolSupport = true
-		toolKind = "adapter"
-		reason = "Ollama chat adapter can send tool schemas and parse tool calls"
 	}
 
 	structured := model.StructuredOutput || capabilityAllowed(provider.Capabilities, providers.CapabilityStructuredOutput) || toolSupport

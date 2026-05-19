@@ -300,9 +300,11 @@ export function ActivityStatusPopover({
   const approvalLabel =
     activeEnvelope?.approvalSummary?.mode || "ask_each_time";
   const consentLabel = activeEnvelope?.consentSummary
-    ? activeEnvelope.consentSummary.localProvidersAccepted
-      ? "local accepted"
-      : "local pending"
+    ? activeEnvelope.consentSummary.externalAgentCliAccepted
+      ? "agent CLI accepted"
+      : activeEnvelope.consentSummary.localProvidersAccepted
+        ? "local accepted"
+        : "local pending"
     : selectedProvider?.local
       ? "local"
       : "provider policy";

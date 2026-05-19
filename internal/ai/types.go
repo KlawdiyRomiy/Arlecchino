@@ -113,6 +113,7 @@ type AIConsentPolicy struct {
 	LocalProvidersAccepted    bool                   `json:"localProvidersAccepted"`
 	RemoteProvidersAccepted   bool                   `json:"remoteProvidersAccepted"`
 	FrontierProvidersAccepted bool                   `json:"frontierProvidersAccepted"`
+	ExternalAgentCLIAccepted  bool                   `json:"externalAgentCliAccepted"`
 	ProviderPolicies          []AIProviderDataPolicy `json:"providerPolicies,omitempty"`
 	AcceptedAt                string                 `json:"acceptedAt,omitempty"`
 	UpdatedAt                 string                 `json:"updatedAt,omitempty"`
@@ -122,6 +123,7 @@ type AIConsentSummary struct {
 	LocalProvidersAccepted    bool   `json:"localProvidersAccepted"`
 	RemoteProvidersAccepted   bool   `json:"remoteProvidersAccepted"`
 	FrontierProvidersAccepted bool   `json:"frontierProvidersAccepted"`
+	ExternalAgentCLIAccepted  bool   `json:"externalAgentCliAccepted"`
 	PolicySource              string `json:"policySource"`
 }
 
@@ -150,13 +152,21 @@ type AIContextDisclosureSummary struct {
 }
 
 type AIProviderEnvelope struct {
-	ProviderID string                `json:"providerId,omitempty"`
-	Kind       string                `json:"kind,omitempty"`
-	Endpoint   string                `json:"endpoint,omitempty"`
-	Model      string                `json:"model,omitempty"`
-	Status     AIProviderStatusValue `json:"status,omitempty"`
-	Local      bool                  `json:"local"`
-	Frontier   bool                  `json:"frontier"`
+	ProviderID      string                `json:"providerId,omitempty"`
+	Kind            string                `json:"kind,omitempty"`
+	RuntimeFamily   string                `json:"runtimeFamily,omitempty"`
+	Endpoint        string                `json:"endpoint,omitempty"`
+	EndpointClass   string                `json:"endpointClass,omitempty"`
+	Model           string                `json:"model,omitempty"`
+	Status          AIProviderStatusValue `json:"status,omitempty"`
+	AuthStatus      string                `json:"authStatus,omitempty"`
+	BillingMode     string                `json:"billingMode,omitempty"`
+	LegalBasis      string                `json:"legalBasis,omitempty"`
+	RiskTier        string                `json:"riskTier,omitempty"`
+	SourceLinks     []string              `json:"sourceLinks,omitempty"`
+	Local           bool                  `json:"local"`
+	Frontier        bool                  `json:"frontier"`
+	ExternalAccount bool                  `json:"externalAccount,omitempty"`
 }
 
 type AIContextSnippetBreakdown struct {
@@ -551,10 +561,11 @@ type AIEgressRecord struct {
 type AIChatAction string
 
 const (
-	AIChatActionAsk   AIChatAction = "ask"
-	AIChatActionDebug AIChatAction = "debug"
-	AIChatActionPlan  AIChatAction = "plan"
-	AIChatActionBuild AIChatAction = "build"
+	AIChatActionAsk    AIChatAction = "ask"
+	AIChatActionDebug  AIChatAction = "debug"
+	AIChatActionPlan   AIChatAction = "plan"
+	AIChatActionBuild  AIChatAction = "build"
+	AIChatActionReview AIChatAction = "review"
 )
 
 type AIToolPolicy string
@@ -665,6 +676,23 @@ type AIMnemonicInclusionSummary struct {
 	Trusts    []string `json:"trusts,omitempty"`
 }
 
+type AIExternalAgentRunSummary struct {
+	RuntimeID      string   `json:"runtimeId,omitempty"`
+	RuntimeFamily  string   `json:"runtimeFamily,omitempty"`
+	Operation      string   `json:"operation,omitempty"`
+	Transport      string   `json:"transport,omitempty"`
+	EndpointClass  string   `json:"endpointClass,omitempty"`
+	AuthStatus     string   `json:"authStatus,omitempty"`
+	AuthFlow       bool     `json:"authFlow,omitempty"`
+	Status         string   `json:"status,omitempty"`
+	ExitCode       int      `json:"exitCode,omitempty"`
+	CapturedDiffID string   `json:"capturedDiffId,omitempty"`
+	BaselineID     string   `json:"baselineId,omitempty"`
+	TranscriptID   string   `json:"transcriptId,omitempty"`
+	BlockedReason  string   `json:"blockedReason,omitempty"`
+	SourceLinks    []string `json:"sourceLinks,omitempty"`
+}
+
 type AIChatRunEnvelope struct {
 	ID                  string                     `json:"id"`
 	SessionID           string                     `json:"sessionId"`
@@ -673,6 +701,7 @@ type AIChatRunEnvelope struct {
 	ProfileID           string                     `json:"profileId,omitempty"`
 	WorkflowID          string                     `json:"workflowId,omitempty"`
 	Status              string                     `json:"status"`
+	RuntimeFamily       string                     `json:"runtimeFamily,omitempty"`
 	ProviderID          string                     `json:"providerId,omitempty"`
 	Model               string                     `json:"model,omitempty"`
 	Error               string                     `json:"error,omitempty"`
@@ -687,32 +716,35 @@ type AIChatRunEnvelope struct {
 	ToolProposalSummary AIToolProposalSummary      `json:"toolProposalSummary"`
 	MnemonicInclusion   AIMnemonicInclusionSummary `json:"mnemonicInclusion"`
 	Timeline            []AIRunTimelineEvent       `json:"timeline,omitempty"`
+	AgentRuntime        *AIExternalAgentRunSummary `json:"agentRuntime,omitempty"`
 	Revision            int64                      `json:"revision"`
 	CreatedAt           string                     `json:"createdAt"`
 	UpdatedAt           string                     `json:"updatedAt"`
 }
 
 type AIChatRun struct {
-	ID                string            `json:"id"`
-	SessionID         string            `json:"sessionId"`
-	ProjectSessionID  string            `json:"projectSessionId,omitempty"`
-	Action            AIChatAction      `json:"action"`
-	ProfileID         string            `json:"profileId,omitempty"`
-	WorkflowID        string            `json:"workflowId,omitempty"`
-	Status            string            `json:"status"`
-	ProviderID        string            `json:"providerId,omitempty"`
-	Model             string            `json:"model,omitempty"`
-	UserPrompt        string            `json:"userPrompt,omitempty"`
-	Response          string            `json:"response,omitempty"`
-	Error             string            `json:"error,omitempty"`
-	ContextSummary    *AIContextSummary `json:"contextSummary,omitempty"`
-	ToolProposals     []AIToolProposal  `json:"toolProposals,omitempty"`
-	EgressRecordID    string            `json:"egressRecordId,omitempty"`
-	MnemonicRequested bool              `json:"mnemonicRequested"`
-	CanCancel         bool              `json:"canCancel"`
-	Revision          int64             `json:"revision"`
-	CreatedAt         string            `json:"createdAt"`
-	UpdatedAt         string            `json:"updatedAt"`
+	ID                string                     `json:"id"`
+	SessionID         string                     `json:"sessionId"`
+	ProjectSessionID  string                     `json:"projectSessionId,omitempty"`
+	Action            AIChatAction               `json:"action"`
+	ProfileID         string                     `json:"profileId,omitempty"`
+	WorkflowID        string                     `json:"workflowId,omitempty"`
+	Status            string                     `json:"status"`
+	RuntimeFamily     string                     `json:"runtimeFamily,omitempty"`
+	ProviderID        string                     `json:"providerId,omitempty"`
+	Model             string                     `json:"model,omitempty"`
+	UserPrompt        string                     `json:"userPrompt,omitempty"`
+	Response          string                     `json:"response,omitempty"`
+	Error             string                     `json:"error,omitempty"`
+	ContextSummary    *AIContextSummary          `json:"contextSummary,omitempty"`
+	ToolProposals     []AIToolProposal           `json:"toolProposals,omitempty"`
+	EgressRecordID    string                     `json:"egressRecordId,omitempty"`
+	AgentRuntime      *AIExternalAgentRunSummary `json:"agentRuntime,omitempty"`
+	MnemonicRequested bool                       `json:"mnemonicRequested"`
+	CanCancel         bool                       `json:"canCancel"`
+	Revision          int64                      `json:"revision"`
+	CreatedAt         string                     `json:"createdAt"`
+	UpdatedAt         string                     `json:"updatedAt"`
 }
 
 type AIRunTimelineEvent struct {
@@ -760,13 +792,15 @@ type AIPendingApproval struct {
 type AIChatRunArtifactKind string
 
 const (
-	AIChatRunArtifactContext      AIChatRunArtifactKind = "context"
-	AIChatRunArtifactEgress       AIChatRunArtifactKind = "egress"
-	AIChatRunArtifactToolProposal AIChatRunArtifactKind = "tool_proposal"
-	AIChatRunArtifactMemory       AIChatRunArtifactKind = "memory"
-	AIChatRunArtifactPatchPreview AIChatRunArtifactKind = "patch_preview"
-	AIChatRunArtifactTerminal     AIChatRunArtifactKind = "terminal_preview"
-	AIChatRunArtifactBackground   AIChatRunArtifactKind = "background_agent"
+	AIChatRunArtifactContext       AIChatRunArtifactKind = "context"
+	AIChatRunArtifactEgress        AIChatRunArtifactKind = "egress"
+	AIChatRunArtifactToolProposal  AIChatRunArtifactKind = "tool_proposal"
+	AIChatRunArtifactMemory        AIChatRunArtifactKind = "memory"
+	AIChatRunArtifactPatchPreview  AIChatRunArtifactKind = "patch_preview"
+	AIChatRunArtifactTerminal      AIChatRunArtifactKind = "terminal_preview"
+	AIChatRunArtifactBackground    AIChatRunArtifactKind = "background_agent"
+	AIChatRunArtifactAgentTerminal AIChatRunArtifactKind = "agent_terminal"
+	AIChatRunArtifactAgentWorktree AIChatRunArtifactKind = "agent_worktree"
 )
 
 type AIChatRunArtifact struct {
@@ -800,13 +834,17 @@ type AIPatchFile struct {
 }
 
 type AIPatchArtifactPayload struct {
-	UnifiedDiff   string        `json:"unifiedDiff"`
-	Files         []AIPatchFile `json:"files"`
-	CheckReady    bool          `json:"checkReady"`
-	CheckError    string        `json:"checkError,omitempty"`
-	CheckpointIDs []string      `json:"checkpointIds,omitempty"`
-	AppliedAt     string        `json:"appliedAt,omitempty"`
-	RolledBackAt  string        `json:"rolledBackAt,omitempty"`
+	UnifiedDiff    string        `json:"unifiedDiff"`
+	Files          []AIPatchFile `json:"files"`
+	CheckReady     bool          `json:"checkReady"`
+	CheckError     string        `json:"checkError,omitempty"`
+	CheckpointIDs  []string      `json:"checkpointIds,omitempty"`
+	Source         string        `json:"source,omitempty"`
+	AlreadyApplied bool          `json:"alreadyApplied,omitempty"`
+	BaselineID     string        `json:"baselineId,omitempty"`
+	ReverseDiff    string        `json:"reverseDiff,omitempty"`
+	AppliedAt      string        `json:"appliedAt,omitempty"`
+	RolledBackAt   string        `json:"rolledBackAt,omitempty"`
 }
 
 type AIPatchPreviewResult struct {
@@ -1061,6 +1099,7 @@ type AIChatRunRequest struct {
 	ProfileID       string           `json:"profileId,omitempty"`
 	WorkflowID      string           `json:"workflowId,omitempty"`
 	Prompt          string           `json:"prompt"`
+	RuntimeFamily   string           `json:"runtimeFamily,omitempty"`
 	ProviderID      string           `json:"providerId,omitempty"`
 	Model           string           `json:"model,omitempty"`
 	IncludeMnemonic bool             `json:"includeMnemonic"`

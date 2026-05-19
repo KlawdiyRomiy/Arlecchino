@@ -2,6 +2,7 @@ package ai
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ const (
 	maxTargetedEditTextBytes    = 32 * 1024
 	maxTargetedEditAnchorBytes  = 8 * 1024
 	maxTargetedEditChangedLines = 80
+	maxTargetedEditSequence     = 8
 	maxFileCreatePreviewBytes   = 96 * 1024
 )
 
@@ -172,6 +174,51 @@ func (s *Service) executeFileCreatePreviewTool(project *ProjectSession, req AITo
 }
 
 func applyTargetedEdit(before []byte, arguments map[string]string) ([]byte, string, error) {
+	if editsJSON := strings.TrimSpace(arguments["edits"]); editsJSON != "" {
+		return applyTargetedEditSequence(before, editsJSON)
+	}
+	return applySingleTargetedEdit(before, arguments)
+}
+
+type targetedEditSequenceItem struct {
+	Operation string `json:"operation"`
+	OldText   string `json:"oldText,omitempty"`
+	NewText   string `json:"newText"`
+}
+
+func applyTargetedEditSequence(before []byte, editsJSON string) ([]byte, string, error) {
+	var edits []targetedEditSequenceItem
+	if err := json.Unmarshal([]byte(editsJSON), &edits); err != nil {
+		return nil, "", fmt.Errorf("targeted edit sequence is invalid JSON: %w", err)
+	}
+	if len(edits) == 0 {
+		return nil, "", fmt.Errorf("targeted edit sequence is empty")
+	}
+	if len(edits) > maxTargetedEditSequence {
+		return nil, "", fmt.Errorf("targeted edit sequence has %d edits; limit is %d", len(edits), maxTargetedEditSequence)
+	}
+	current := before
+	changedLines := 0
+	for index, edit := range edits {
+		args := map[string]string{
+			"operation": edit.Operation,
+			"oldText":   edit.OldText,
+			"newText":   edit.NewText,
+		}
+		changedLines += targetedEditChangedLineEstimate(edit.Operation, edit.OldText, edit.NewText)
+		if changedLines > maxTargetedEditChangedLines {
+			return nil, "", fmt.Errorf("targeted edit sequence changes about %d lines; split into smaller edits or use a reviewed patch", changedLines)
+		}
+		after, _, err := applySingleTargetedEdit(current, args)
+		if err != nil {
+			return nil, "", fmt.Errorf("targeted edit sequence item %d failed: %w", index+1, err)
+		}
+		current = after
+	}
+	return current, fmt.Sprintf("apply %d targeted edits", len(edits)), nil
+}
+
+func applySingleTargetedEdit(before []byte, arguments map[string]string) ([]byte, string, error) {
 	operation := strings.TrimSpace(arguments["operation"])
 	if operation == "" {
 		operation = "replace"
@@ -420,8 +467,8 @@ func buildGitStyleContentPatch(projectRoot string, relPath string, before []byte
 			return "", fmt.Errorf("%s", message)
 		}
 	}
-	diff := strings.TrimSpace(string(output))
-	if diff == "" {
+	diff := string(output)
+	if strings.TrimSpace(diff) == "" {
 		return "", fmt.Errorf("content patch has no diff")
 	}
 	return ensurePatchTrailingNewline(rewriteNoIndexDiffPaths(diff, relPath)), nil
