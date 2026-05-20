@@ -29,6 +29,7 @@ type agentWorktreeBaseline struct {
 	ProjectSessionID string   `json:"projectSessionId"`
 	ProjectPathHash  string   `json:"projectPathHash"`
 	Clean            bool     `json:"clean"`
+	SnapshotTree     string   `json:"snapshotTree,omitempty"`
 	StatusShort      []string `json:"statusShort,omitempty"`
 	TrackedDiffHash  string   `json:"trackedDiffHash,omitempty"`
 	StagedDiffHash   string   `json:"stagedDiffHash,omitempty"`
@@ -1178,22 +1179,41 @@ func captureAgentWorktreeBaseline(project *ProjectSession) agentWorktreeBaseline
 	baseline.StagedDiffHash = shortHash(stagedDiff)
 	baseline.UntrackedPaths = untrackedPathsFromStatus(baseline.StatusShort)
 	baseline.Clean = len(baseline.StatusShort) == 0 && strings.TrimSpace(trackedDiff) == "" && strings.TrimSpace(stagedDiff) == ""
+	snapshotTree, snapshotErr := captureAgentWorktreeSnapshotTree(project.ProjectRoot)
+	if snapshotErr != nil {
+		baseline.Error = snapshotErr.Error()
+		return baseline
+	}
+	baseline.SnapshotTree = snapshotTree
 	return baseline
 }
 
+func agentWorktreeBaselineUnchanged(projectRoot string, baseline agentWorktreeBaseline) (bool, error) {
+	status, statusErr := gitOutput(projectRoot, "status", "--short", "--untracked-files=all")
+	trackedDiff, trackedErr := gitOutput(projectRoot, "diff", "--binary", "--no-ext-diff")
+	stagedDiff, stagedErr := gitOutput(projectRoot, "diff", "--cached", "--binary", "--no-ext-diff")
+	if statusErr != nil || trackedErr != nil || stagedErr != nil {
+		return false, firstNonNilError(statusErr, trackedErr, stagedErr)
+	}
+	return stringSlicesEqual(filterAgentWorktreeStatus(nonEmptyLines(status)), baseline.StatusShort) &&
+		shortHash(trackedDiff) == baseline.TrackedDiffHash &&
+		shortHash(stagedDiff) == baseline.StagedDiffHash, nil
+}
+
 func (s *Service) recordAgentCapturedDiff(project *ProjectSession, runID string, req AIChatRunRequest, baseline agentWorktreeBaseline) (AIChatRunArtifact, error) {
-	diff, err := agentWorktreeDiff(project.ProjectRoot)
+	if baseline.Error != "" {
+		unchanged, unchangedErr := agentWorktreeBaselineUnchanged(project.ProjectRoot, baseline)
+		if unchangedErr == nil && unchanged {
+			return AIChatRunArtifact{}, nil
+		}
+		return s.recordBlockedCapturedDiff(project, runID, req, "", baseline, baseline.Error), fmt.Errorf("agent worktree baseline failed: %s", baseline.Error)
+	}
+	diff, err := agentWorktreeDiff(project.ProjectRoot, baseline)
 	if err != nil {
 		return AIChatRunArtifact{}, err
 	}
 	if strings.TrimSpace(diff) == "" {
 		return AIChatRunArtifact{}, nil
-	}
-	if baseline.Error != "" {
-		return s.recordBlockedCapturedDiff(project, runID, req, diff, baseline, baseline.Error), fmt.Errorf("agent worktree baseline failed: %s", baseline.Error)
-	}
-	if !baseline.Clean {
-		return s.recordBlockedCapturedDiff(project, runID, req, diff, baseline, "dirty_baseline_conflict"), fmt.Errorf("agent changed the worktree, but the baseline was already dirty; review the diff manually before accepting or rolling back")
 	}
 	files, validateErr := s.validatePatchFiles(project, diff)
 	if validateErr != nil {
@@ -1202,7 +1222,7 @@ func (s *Service) recordAgentCapturedDiff(project *ProjectSession, runID string,
 	artifactID := "patch-" + uuid.NewString()
 	checkpointIDs := make([]string, 0, len(files))
 	for _, file := range files {
-		checkpointID, checkpointErr := createGitBaselineCheckpoint(project, artifactID, file.Path)
+		checkpointID, checkpointErr := createGitBaselineCheckpoint(project, artifactID, file.Path, baseline.SnapshotTree)
 		if checkpointErr != nil {
 			return s.recordBlockedCapturedDiff(project, runID, req, diff, baseline, checkpointErr.Error()), checkpointErr
 		}
@@ -1217,7 +1237,7 @@ func (s *Service) recordAgentCapturedDiff(project *ProjectSession, runID string,
 		Source:         "captured_direct_write",
 		AlreadyApplied: true,
 		BaselineID:     baseline.ID,
-		ReverseDiff:    reverseAgentWorktreeDiff(project.ProjectRoot),
+		ReverseDiff:    reverseAgentWorktreeDiff(project.ProjectRoot, baseline),
 		AppliedAt:      now,
 	}
 	artifact := AIChatRunArtifact{
@@ -1275,7 +1295,7 @@ func (s *Service) recordBlockedCapturedDiff(project *ProjectSession, runID strin
 	return artifact
 }
 
-func createGitBaselineCheckpoint(project *ProjectSession, artifactID string, relPath string) (string, error) {
+func createGitBaselineCheckpoint(project *ProjectSession, artifactID string, relPath string, treeish string) (string, error) {
 	relPath, ok := normalizePatchPath(relPath)
 	if !ok {
 		return "", fmt.Errorf("unsafe patch path: %s", relPath)
@@ -1290,9 +1310,10 @@ func createGitBaselineCheckpoint(project *ProjectSession, artifactID string, rel
 		Path:             relPath,
 		CreatedAt:        utcNow(),
 	}
-	if content, err := gitOutputBytes(project.ProjectRoot, "show", "HEAD:"+relPath); err == nil {
+	treeish = firstNonEmpty(strings.TrimSpace(treeish), "HEAD")
+	if content, err := gitOutputBytes(project.ProjectRoot, "show", treeish+":"+relPath); err == nil {
 		payload.Existed = true
-		payload.Mode = uint32(gitFileMode(project.ProjectRoot, relPath))
+		payload.Mode = uint32(gitFileMode(project.ProjectRoot, treeish, relPath))
 		if payload.Mode == 0 {
 			payload.Mode = 0o644
 		}
@@ -1308,8 +1329,9 @@ func createGitBaselineCheckpoint(project *ProjectSession, artifactID string, rel
 	return payload.ID, nil
 }
 
-func gitFileMode(projectRoot string, relPath string) os.FileMode {
-	output, err := gitOutput(projectRoot, "ls-tree", "HEAD", "--", relPath)
+func gitFileMode(projectRoot string, treeish string, relPath string) os.FileMode {
+	treeish = firstNonEmpty(strings.TrimSpace(treeish), "HEAD")
+	output, err := gitOutput(projectRoot, "ls-tree", treeish, "--", relPath)
 	if err != nil {
 		return 0
 	}
@@ -1327,7 +1349,22 @@ func gitFileMode(projectRoot string, relPath string) os.FileMode {
 	}
 }
 
-func agentWorktreeDiff(projectRoot string) (string, error) {
+func agentWorktreeDiff(projectRoot string, baseline agentWorktreeBaseline) (string, error) {
+	if strings.TrimSpace(baseline.SnapshotTree) != "" {
+		currentTree, err := captureAgentWorktreeSnapshotTree(projectRoot)
+		if err != nil {
+			return "", err
+		}
+		output, err := gitOutput(projectRoot, "diff", "--binary", "--no-ext-diff", baseline.SnapshotTree, currentTree)
+		if err != nil {
+			return "", err
+		}
+		return ensurePatchTrailingNewline(output), nil
+	}
+	return agentWorktreeDiffFromHead(projectRoot)
+}
+
+func agentWorktreeDiffFromHead(projectRoot string) (string, error) {
 	tracked, err := gitOutput(projectRoot, "diff", "--binary", "--no-ext-diff", "HEAD")
 	if err != nil {
 		return "", err
@@ -1352,12 +1389,142 @@ func agentWorktreeDiff(projectRoot string) (string, error) {
 	return b.String(), nil
 }
 
-func reverseAgentWorktreeDiff(projectRoot string) string {
+func reverseAgentWorktreeDiff(projectRoot string, baseline agentWorktreeBaseline) string {
+	if strings.TrimSpace(baseline.SnapshotTree) != "" {
+		currentTree, err := captureAgentWorktreeSnapshotTree(projectRoot)
+		if err != nil {
+			return ""
+		}
+		output, err := gitOutput(projectRoot, "diff", "--binary", "--no-ext-diff", currentTree, baseline.SnapshotTree)
+		if err != nil {
+			return ""
+		}
+		return ensurePatchTrailingNewline(output)
+	}
 	output, err := gitOutput(projectRoot, "diff", "--binary", "--no-ext-diff", "--reverse", "HEAD")
 	if err != nil {
 		return ""
 	}
 	return ensurePatchTrailingNewline(output)
+}
+
+func captureAgentWorktreeSnapshotTree(projectRoot string) (string, error) {
+	tempDir, err := os.MkdirTemp("", "arlecchino-agent-index-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tempDir)
+	env := []string{
+		"GIT_INDEX_FILE=" + filepath.Join(tempDir, "index"),
+		"GIT_LITERAL_PATHSPECS=1",
+	}
+	if _, err := gitOutputWithEnv(projectRoot, env, "read-tree", "HEAD"); err != nil {
+		return "", err
+	}
+	paths, err := agentSnapshotCandidatePaths(projectRoot)
+	if err != nil {
+		return "", err
+	}
+	if len(paths) > 0 {
+		args := append([]string{"add", "-A", "--"}, paths...)
+		if _, err := gitOutputWithEnv(projectRoot, env, args...); err != nil {
+			return "", err
+		}
+	}
+	tree, err := gitOutputWithEnv(projectRoot, env, "write-tree")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(tree), nil
+}
+
+func agentSnapshotCandidatePaths(projectRoot string) ([]string, error) {
+	tracked, err := gitOutputBytes(projectRoot, "diff", "--name-only", "-z", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	untracked, err := gitOutputBytes(projectRoot, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	paths := []string{}
+	addPath := func(path string) error {
+		relPath, ok := normalizePatchPath(path)
+		if !ok {
+			return fmt.Errorf("unsafe agent snapshot path: %s", path)
+		}
+		if agentInternalPath(relPath) {
+			return nil
+		}
+		if toolPathLooksSensitive(relPath) {
+			return fmt.Errorf("agent snapshot path is sensitive: %s", relPath)
+		}
+		if toolPathLooksBinaryByExtension(relPath) {
+			return fmt.Errorf("agent snapshot path appears binary by extension: %s", relPath)
+		}
+		if err := validateAgentSnapshotPath(projectRoot, relPath); err != nil {
+			return err
+		}
+		if _, exists := seen[relPath]; exists {
+			return nil
+		}
+		seen[relPath] = struct{}{}
+		paths = append(paths, relPath)
+		return nil
+	}
+	for _, path := range nulSeparatedGitPaths(tracked) {
+		if err := addPath(path); err != nil {
+			return nil, err
+		}
+	}
+	for _, path := range nulSeparatedGitPaths(untracked) {
+		if err := addPath(path); err != nil {
+			return nil, err
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+func validateAgentSnapshotPath(projectRoot string, relPath string) error {
+	absPath, err := safeProjectPath(projectRoot, relPath)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(absPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("agent snapshot target is not a regular file: %s", relPath)
+	}
+	if info.Size() > maxPatchCheckpointBytes {
+		return fmt.Errorf("agent snapshot target exceeds checkpoint limit: %s", relPath)
+	}
+	content, err := os.ReadFile(absPath)
+	if err != nil {
+		return err
+	}
+	if bytes.IndexByte(content, 0) >= 0 {
+		return fmt.Errorf("agent snapshot target appears binary: %s", relPath)
+	}
+	return nil
+}
+
+func nulSeparatedGitPaths(output []byte) []string {
+	parts := bytes.Split(output, []byte{0})
+	paths := make([]string, 0, len(parts))
+	for _, part := range parts {
+		path := strings.TrimSpace(string(part))
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
 }
 
 func untrackedFilePatch(projectRoot string, relPath string) (string, error) {
@@ -1421,10 +1588,22 @@ func gitOutput(projectRoot string, args ...string) (string, error) {
 	return string(output), err
 }
 
+func gitOutputWithEnv(projectRoot string, env []string, args ...string) (string, error) {
+	output, err := gitOutputBytesWithEnv(projectRoot, env, args...)
+	return string(output), err
+}
+
 func gitOutputBytes(projectRoot string, args ...string) ([]byte, error) {
+	return gitOutputBytesWithEnv(projectRoot, nil, args...)
+}
+
+func gitOutputBytesWithEnv(projectRoot string, env []string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", projectRoot}, args...)...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
 		return output, ctx.Err()
@@ -1528,6 +1707,27 @@ func filterAgentInternalPaths(paths []string) []string {
 func agentInternalPath(path string) bool {
 	path = filepath.ToSlash(strings.TrimSpace(path))
 	return path == ".arlecchino" || strings.HasPrefix(path, ".arlecchino/")
+}
+
+func stringSlicesEqual(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func firstNonNilError(values ...error) error {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
 }
 
 func errorString(err error) string {
