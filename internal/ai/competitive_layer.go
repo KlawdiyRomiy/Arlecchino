@@ -150,7 +150,7 @@ func recommendedModesForProvider(provider providers.AIProviderDescriptor) []AICh
 		return nil
 	}
 	if provider.Frontier {
-		if provider.RuntimeFamily == agentRuntimeFamilyExternalCLI {
+		if isExternalAgentProviderDescriptor(provider) {
 			return []AIChatAction{AIChatActionAsk, AIChatActionPlan, AIChatActionDebug, AIChatActionBuild, AIChatActionReview}
 		}
 		return []AIChatAction{AIChatActionAsk, AIChatActionPlan}

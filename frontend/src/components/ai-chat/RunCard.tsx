@@ -335,6 +335,200 @@ function memoryArtifactMeta(artifact: AIChatRunArtifact): string {
   return parts.filter(Boolean).join(" · ");
 }
 
+function runtimeFamilyLabel(value?: string): string {
+  switch (value) {
+    case "structured_agent_runtime":
+      return "Structured agent";
+    case "jsonl_exec_runtime":
+      return "JSONL exec";
+    case "model_agent_runtime":
+      return "Model runtime";
+    case "interactive_fallback_runtime":
+    case "external_agent_cli":
+      return "Interactive fallback";
+    default:
+      return value || "Runtime";
+  }
+}
+
+function runtimeProofState(
+  envelope: AIChatRunEnvelope,
+  artifacts: AIChatRunArtifact[],
+): { state: "ok" | "active" | "blocked"; label: string } {
+  const agentRuntime = envelope.agentRuntime;
+  const buildMode = envelope.action === "build";
+  const patchArtifact = artifacts.find(
+    (artifact) =>
+      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactPatchPreview,
+  );
+  const terminalArtifact = artifacts.find(
+    (artifact) =>
+      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactTerminal ||
+      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactAgentTerminal,
+  );
+  const worktreeEvidenceArtifact = artifacts.find(
+    (artifact) =>
+      artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactAgentWorktree,
+  );
+  const typedBuildEvidence =
+    agentRuntime?.proofState === "proved" &&
+    isTypedBuildEvidenceArtifactState(agentRuntime.artifactState);
+  if (agentRuntime?.blockedReason || envelope.status === "error") {
+    return {
+      state: "blocked",
+      label: agentRuntime?.blockedReason || envelope.error || "blocked",
+    };
+  }
+  if (patchArtifact) {
+    return {
+      state: "ok",
+      label: `Patch artifact ${patchArtifact.status || "recorded"}`,
+    };
+  }
+  if (agentRuntime?.capturedDiffId) {
+    return { state: "ok", label: "Captured diff artifact" };
+  }
+  if (terminalArtifact && !buildMode) {
+    return {
+      state: "ok",
+      label: `Runtime evidence ${terminalArtifact.status || "recorded"}`,
+    };
+  }
+  if (worktreeEvidenceArtifact && !buildMode) {
+    return {
+      state: "ok",
+      label: `Worktree evidence ${
+        worktreeEvidenceArtifact.status || "recorded"
+      }`,
+    };
+  }
+  if (typedBuildEvidence) {
+    return {
+      state: "ok",
+      label: agentRuntime?.artifactState || "typed build evidence",
+    };
+  }
+  if (envelope.status === "running" || envelope.status === "queued") {
+    return { state: "active", label: "Waiting for proof" };
+  }
+  if (buildMode) {
+    return { state: "blocked", label: "Build proof missing" };
+  }
+  return { state: "ok", label: "No artifact required" };
+}
+
+function isTypedBuildEvidenceArtifactState(value?: string | null): boolean {
+  switch (`${value ?? ""}`.trim()) {
+    case "explicit_no_change":
+    case "diagnostic_evidence":
+    case "test_evidence":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function compactRuntimeValue(value?: string | number | null): string {
+  const text = `${value ?? ""}`.trim();
+  return text || "n/a";
+}
+
+function RuntimeTruthCard({
+  envelope,
+  artifacts,
+}: {
+  envelope: AIChatRunEnvelope;
+  artifacts: AIChatRunArtifact[];
+}) {
+  const agentRuntime = envelope.agentRuntime;
+  const providerEnvelope = envelope.providerEnvelope;
+  const runtimeReasoningEffort =
+    (agentRuntime as { reasoningEffort?: string } | null | undefined)
+      ?.reasoningEffort ||
+    (envelope as { reasoningEffort?: string }).reasoningEffort ||
+    (envelope.egressSummary as { reasoningEffort?: string } | null | undefined)
+      ?.reasoningEffort;
+  const runtimeFamily =
+    agentRuntime?.runtimeFamily ||
+    envelope.runtimeFamily ||
+    providerEnvelope?.runtimeFamily ||
+    "";
+  const transport =
+    agentRuntime?.transport || providerEnvelope?.transport || "";
+  const provider =
+    envelope.providerId ||
+    providerEnvelope?.providerId ||
+    agentRuntime?.runtimeId;
+  const model = envelope.model || providerEnvelope?.model;
+  const proof = runtimeProofState(envelope, artifacts);
+  const consent = providerEnvelope?.externalAccount
+    ? envelope.consentSummary?.externalAgentCliAccepted
+      ? "agent consent accepted"
+      : "agent consent pending"
+    : envelope.consentSummary?.localProvidersAccepted
+      ? "local consent accepted"
+      : "local consent pending";
+  const proposalTotal = envelope.toolProposalSummary?.total ?? 0;
+  const toolPolicy =
+    proposalTotal > 0
+      ? `${proposalTotal} proposal${proposalTotal === 1 ? "" : "s"}`
+      : agentRuntime?.toolPolicy ||
+        envelope.approvalSummary?.mode ||
+        "ask_each_time";
+  const proofValue =
+    proof.state === "blocked"
+      ? proof.label
+      : agentRuntime?.proofState || proof.label;
+  const rows = [
+    ["Runtime", runtimeFamilyLabel(runtimeFamily)],
+    ["Transport", compactRuntimeValue(transport)],
+    ["Provider", compactRuntimeValue(provider)],
+    ["Model", compactRuntimeValue(model)],
+    ["Reasoning", compactRuntimeValue(runtimeReasoningEffort || "auto")],
+    ["Status", compactRuntimeValue(agentRuntime?.status || envelope.status)],
+    ["Health", compactRuntimeValue(agentRuntime?.healthStatus)],
+    ["Consent", consent],
+    ["Tools", toolPolicy],
+    ["Sandbox", compactRuntimeValue(agentRuntime?.sandboxPolicy)],
+    ["Adapter", compactRuntimeValue(agentRuntime?.adapterVersion)],
+    ["Protocol", compactRuntimeValue(agentRuntime?.protocolVersion)],
+    ["Fallback", agentRuntime?.fallbackRuntime ? "yes" : "no"],
+    ["Proof", compactRuntimeValue(proofValue)],
+    [
+      "Artifact",
+      compactRuntimeValue(agentRuntime?.artifactState || proof.label),
+    ],
+  ];
+  if (agentRuntime?.failureCode) {
+    rows.push(["Failure", compactRuntimeValue(agentRuntime.failureCode)]);
+  }
+  return (
+    <div className="ai-chat-runtime-proof" data-state={proof.state}>
+      <div className="ai-chat-runtime-proof__head">
+        <span>
+          {proof.state === "blocked" ? (
+            <AlertTriangle size={14} />
+          ) : proof.state === "active" ? (
+            <Wrench size={14} />
+          ) : (
+            <ShieldCheck size={14} />
+          )}
+          Runtime proof
+        </span>
+        <small>{runtimeFamilyLabel(runtimeFamily)}</small>
+      </div>
+      <div className="ai-chat-runtime-proof__grid">
+        {rows.map(([label, value]) => (
+          <React.Fragment key={label}>
+            <span>{label}</span>
+            <strong title={value}>{value}</strong>
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 interface ToolLifecyclePayload {
   toolId: string;
   action: string;
@@ -833,6 +1027,7 @@ export function RunCard({
               {workedForLabel(envelope, run, now)}
             </span>
           </header>
+          <RuntimeTruthCard envelope={envelope} artifacts={artifacts} />
 
           {response ? (
             <div className="ai-chat-run-card__response">

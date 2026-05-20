@@ -39,16 +39,22 @@ func NewOllamaProvider(id string, endpoint string, model string, manual bool, ti
 
 func (p *OllamaProvider) Descriptor() AIProviderDescriptor {
 	return AIProviderDescriptor{
-		ID:           p.id,
-		Name:         p.name,
-		Kind:         "ollama",
-		Endpoint:     p.endpoint,
-		Local:        true,
-		Manual:       p.manual,
-		AuthMode:     ProviderAuthModeNone,
-		Capabilities: append(DefaultCapabilities(), CapabilityStructuredOutput, CapabilityPatchGeneration),
-		DefaultModel: p.model,
-		Status:       ProviderStatusDiscovered,
+		ID:                 p.id,
+		Name:               p.name,
+		Kind:               "ollama",
+		RuntimeFamily:      "model_agent_runtime",
+		Transport:          "model_api",
+		Endpoint:           p.endpoint,
+		EndpointClass:      "loopback",
+		AdapterVersion:     "arlecchino-model-runtime-v1",
+		ProtocolVersion:    "ollama_http_api",
+		CompatibilityRange: "ollama_api_tags_generate",
+		Local:              true,
+		Manual:             p.manual,
+		AuthMode:           ProviderAuthModeNone,
+		Capabilities:       append(DefaultCapabilities(), CapabilityStructuredOutput, CapabilityPatchGeneration),
+		DefaultModel:       p.model,
+		Status:             ProviderStatusDiscovered,
 	}
 }
 

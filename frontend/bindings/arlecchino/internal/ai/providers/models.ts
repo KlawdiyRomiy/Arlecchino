@@ -15,6 +15,8 @@ export class AIModelDescriptor {
     "patchGeneration"?: boolean;
     "lowLatency"?: boolean;
     "costTier"?: string;
+    "reasoningEfforts"?: string[];
+    "accountScoped"?: boolean;
 
     /** Creates a new AIModelDescriptor instance. */
     constructor($$source: Partial<AIModelDescriptor> = {}) {
@@ -35,7 +37,11 @@ export class AIModelDescriptor {
      * Creates a new AIModelDescriptor instance from a string or object.
      */
     static createFrom($$source: any = {}): AIModelDescriptor {
+        const $$createField9_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("reasoningEfforts" in $$parsedSource) {
+            $$parsedSource["reasoningEfforts"] = $$createField9_0($$parsedSource["reasoningEfforts"]);
+        }
         return new AIModelDescriptor($$parsedSource as Partial<AIModelDescriptor>);
     }
 }
@@ -71,6 +77,7 @@ export class AIProviderDescriptor {
     "name": string;
     "kind": string;
     "runtimeFamily"?: string;
+    "transport"?: string;
     "endpoint"?: string;
     "endpointClass"?: string;
     "externalAccount"?: boolean;
@@ -84,6 +91,10 @@ export class AIProviderDescriptor {
     "legalBasis"?: string;
     "riskTier"?: string;
     "sourceLinks"?: string[];
+    "runtimeVersion"?: string;
+    "adapterVersion"?: string;
+    "protocolVersion"?: string;
+    "compatibilityRange"?: string;
     "supportedActions"?: string[];
     "oauthSupported": boolean;
     "requiresAuth": boolean;
@@ -141,22 +152,22 @@ export class AIProviderDescriptor {
      * Creates a new AIProviderDescriptor instance from a string or object.
      */
     static createFrom($$source: any = {}): AIProviderDescriptor {
-        const $$createField16_0 = $$createType0;
         const $$createField17_0 = $$createType0;
-        const $$createField21_0 = $$createType1;
-        const $$createField22_0 = $$createType3;
+        const $$createField22_0 = $$createType0;
+        const $$createField26_0 = $$createType1;
+        const $$createField27_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("sourceLinks" in $$parsedSource) {
-            $$parsedSource["sourceLinks"] = $$createField16_0($$parsedSource["sourceLinks"]);
+            $$parsedSource["sourceLinks"] = $$createField17_0($$parsedSource["sourceLinks"]);
         }
         if ("supportedActions" in $$parsedSource) {
-            $$parsedSource["supportedActions"] = $$createField17_0($$parsedSource["supportedActions"]);
+            $$parsedSource["supportedActions"] = $$createField22_0($$parsedSource["supportedActions"]);
         }
         if ("capabilities" in $$parsedSource) {
-            $$parsedSource["capabilities"] = $$createField21_0($$parsedSource["capabilities"]);
+            $$parsedSource["capabilities"] = $$createField26_0($$parsedSource["capabilities"]);
         }
         if ("models" in $$parsedSource) {
-            $$parsedSource["models"] = $$createField22_0($$parsedSource["models"]);
+            $$parsedSource["models"] = $$createField27_0($$parsedSource["models"]);
         }
         return new AIProviderDescriptor($$parsedSource as Partial<AIProviderDescriptor>);
     }

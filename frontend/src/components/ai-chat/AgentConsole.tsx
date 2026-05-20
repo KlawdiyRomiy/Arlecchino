@@ -48,7 +48,8 @@ interface AgentRuntimeAnalysis {
   notices: string[];
 }
 
-const externalAgentRuntimeFamily = "external_agent_cli";
+const interactiveFallbackRuntimeFamily = "interactive_fallback_runtime";
+const ptyFallbackTransport = "pty_fallback";
 const terminalBufferLimit = 32 * 1024;
 const statusLimit = 24;
 
@@ -56,12 +57,17 @@ const ansiPattern =
   // eslint-disable-next-line no-control-regex
   /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
 
-function isExternalAgentEnvelope(envelope: AIChatRunEnvelope | null): boolean {
+function isInteractiveFallbackEnvelope(
+  envelope: AIChatRunEnvelope | null,
+): boolean {
   if (!envelope) return false;
   return (
-    envelope.runtimeFamily === externalAgentRuntimeFamily ||
-    envelope.providerEnvelope?.runtimeFamily === externalAgentRuntimeFamily ||
-    envelope.agentRuntime?.runtimeFamily === externalAgentRuntimeFamily
+    envelope.runtimeFamily === interactiveFallbackRuntimeFamily ||
+    envelope.providerEnvelope?.runtimeFamily ===
+      interactiveFallbackRuntimeFamily ||
+    envelope.agentRuntime?.runtimeFamily === interactiveFallbackRuntimeFamily ||
+    envelope.agentRuntime?.transport === ptyFallbackTransport ||
+    Boolean(envelope.agentRuntime?.authFlow)
   );
 }
 
@@ -202,7 +208,7 @@ export function AgentConsole({ activeEnvelope, visible }: AgentConsoleProps) {
   const [runs, setRuns] = useState<Record<string, AgentRunViewState>>({});
   const activeRunId = activeEnvelope?.id ?? "";
   const activeRunState = activeRunId ? runs[activeRunId] : undefined;
-  const externalAgent = isExternalAgentEnvelope(activeEnvelope);
+  const fallbackRuntime = isInteractiveFallbackEnvelope(activeEnvelope);
   const running = isRunning(activeEnvelope);
 
   useEffect(() => {
@@ -258,9 +264,9 @@ export function AgentConsole({ activeEnvelope, visible }: AgentConsoleProps) {
   }, []);
 
   const analysis = useMemo(() => {
-    if (!activeEnvelope || !externalAgent) return null;
+    if (!activeEnvelope || !fallbackRuntime) return null;
     return analyzeAgentRuntime(activeRunState, activeEnvelope);
-  }, [activeEnvelope, activeRunState, externalAgent]);
+  }, [activeEnvelope, activeRunState, fallbackRuntime]);
 
   const markAcknowledged = useCallback((runId: string, key: string) => {
     setRuns((current) => {
@@ -325,7 +331,7 @@ export function AgentConsole({ activeEnvelope, visible }: AgentConsoleProps) {
   if (
     !visible ||
     !activeEnvelope ||
-    !externalAgent ||
+    !fallbackRuntime ||
     !analysis ||
     (!running && activeEnvelope.status !== "error")
   ) {

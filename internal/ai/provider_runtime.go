@@ -26,13 +26,15 @@ const (
 )
 
 type AIProviderRuntimeModel struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"displayName"`
-	Path        string `json:"path,omitempty"`
-	Source      string `json:"source"`
-	Active      bool   `json:"active"`
-	Runnable    bool   `json:"runnable"`
-	Reason      string `json:"reason,omitempty"`
+	ID               string   `json:"id"`
+	DisplayName      string   `json:"displayName"`
+	Path             string   `json:"path,omitempty"`
+	Source           string   `json:"source"`
+	Active           bool     `json:"active"`
+	Runnable         bool     `json:"runnable"`
+	Reason           string   `json:"reason,omitempty"`
+	ReasoningEfforts []string `json:"reasoningEfforts,omitempty"`
+	AccountScoped    bool     `json:"accountScoped,omitempty"`
 }
 
 type AIProviderRuntimeDescriptor struct {
@@ -277,6 +279,16 @@ func (s *Service) runtimeDescriptorForProvider(provider providers.AIProviderDesc
 		ActiveModel: firstNonEmpty(provider.DefaultModel, firstModelID(provider.Models)),
 		Models:      modelsFromProvider(provider),
 	}
+	if isExternalAgentProviderDescriptor(provider) {
+		runtime.Status = localRuntimeStatusUnavailable
+		runtime.Reason = firstNonEmpty(provider.Reason, "provider-owned CLI account runtime")
+		if provider.Status == providers.ProviderStatusReady {
+			runtime.Running = true
+			runtime.Status = localRuntimeStatusRunning
+		}
+		markRuntimeActiveModel(&runtime)
+		return runtime
+	}
 	if !provider.Local || provider.Frontier {
 		runtime.Status = localRuntimeStatusUnavailable
 		runtime.Reason = "cloud providers are configured through BYOK credentials"
@@ -336,6 +348,14 @@ func (s *Service) runtimeDescriptorForProvider(provider providers.AIProviderDesc
 		}
 		s.runtimes.mu.Unlock()
 	}
+	markRuntimeActiveModel(&runtime)
+	return runtime
+}
+
+func markRuntimeActiveModel(runtime *AIProviderRuntimeDescriptor) {
+	if runtime == nil {
+		return
+	}
 	for i := range runtime.Models {
 		if runtime.Models[i].ID == runtime.ActiveModel || runtime.Models[i].Path != "" && filepath.Base(runtime.Models[i].Path) == runtime.ActiveModel {
 			runtime.Models[i].Active = true
@@ -345,7 +365,6 @@ func (s *Service) runtimeDescriptorForProvider(provider providers.AIProviderDesc
 			runtime.Models[i].Reason = firstNonEmpty(runtime.Models[i].Reason, runtime.Reason)
 		}
 	}
-	return runtime
 }
 
 func runtimeSortRank(kind string) int {
@@ -371,14 +390,23 @@ func modelsFromProvider(provider providers.AIProviderDescriptor) []AIProviderRun
 			continue
 		}
 		models = append(models, AIProviderRuntimeModel{
-			ID:          id,
-			DisplayName: firstNonEmpty(model.DisplayName, id),
-			Source:      "active",
-			Active:      id == provider.DefaultModel,
-			Runnable:    false,
+			ID:               id,
+			DisplayName:      firstNonEmpty(model.DisplayName, id),
+			Source:           modelSource(model),
+			Active:           id == provider.DefaultModel,
+			Runnable:         false,
+			ReasoningEfforts: append([]string{}, model.ReasoningEfforts...),
+			AccountScoped:    model.AccountScoped,
 		})
 	}
 	return models
+}
+
+func modelSource(model providers.AIModelDescriptor) string {
+	if model.AccountScoped {
+		return "account"
+	}
+	return "active"
 }
 
 func mergeRuntimeModels(left []AIProviderRuntimeModel, right []AIProviderRuntimeModel) []AIProviderRuntimeModel {

@@ -59,6 +59,7 @@ import {
   type AIChatMentionCandidate,
   type AIChatMentionQuery,
   type AIChatRun,
+  type AIChatRunRequest,
   type AIChatRunArtifact,
   type AIContextRequest,
   type AIContextSnapshot,
@@ -95,10 +96,12 @@ import { ChatComposer } from "./ChatComposer";
 import { EmptyState } from "./EmptyState";
 import { RunCard } from "./RunCard";
 import {
-  externalAgentRuntimeFamily,
   getProviderDisabledReason,
+  isInteractiveFallbackRuntime,
   isExternalAgentProvider,
   isSupportedLocalChatProvider,
+  jsonlExecRuntimeFamily,
+  modelAgentRuntimeFamily,
   selectDefaultProvider,
   sortProviders,
 } from "./providerPresentation";
@@ -181,6 +184,10 @@ interface ActiveTerminalContext {
   cwd: string;
 }
 
+type ReasoningModelDescriptor = {
+  reasoningEfforts?: string[];
+};
+
 type ArtifactMap = Record<string, AIChatRunArtifact[]>;
 
 export function activeEditorContextFromStore(
@@ -212,6 +219,7 @@ const initialState: AIChatUIState = {
   selectedMentionsBySession: {},
   selectedProviderId: "",
   selectedModel: "",
+  selectedReasoningEffort: "",
   context: defaultChatContext,
   displayPrefs: {
     autoScroll: true,
@@ -373,11 +381,18 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         ...state,
         selectedProviderId: action.providerId,
         selectedModel: action.model ?? state.selectedModel,
+        selectedReasoningEffort: "",
         providerPopoverOpen: false,
         activityPopoverOpen: false,
       };
     case "setModel":
-      return { ...state, selectedModel: action.model };
+      return {
+        ...state,
+        selectedModel: action.model,
+        selectedReasoningEffort: "",
+      };
+    case "setReasoningEffort":
+      return { ...state, selectedReasoningEffort: action.reasoningEffort };
     case "setContext":
       return {
         ...state,
@@ -1112,11 +1127,52 @@ export function AIChatPanelContent({
       selectDefaultProvider(sortedProviders, status?.activeProviderId)
     );
   }, [sortedProviders, state.selectedProviderId, status?.activeProviderId]);
-  const selectedModel =
-    state.selectedModel ||
-    selectedProvider?.models?.[0]?.id ||
-    status?.activeModel ||
-    "";
+  const selectedProviderIsExternalAgent = selectedProvider
+    ? isExternalAgentProvider(selectedProvider)
+    : false;
+  const selectedModel = useMemo(() => {
+    const providerModels = selectedProvider?.models ?? [];
+    const providerModelIds = new Set(
+      providerModels.map((model) => model.id).filter(Boolean),
+    );
+    const requestedModel = state.selectedModel || status?.activeModel || "";
+    if (requestedModel && providerModelIds.has(requestedModel)) {
+      return requestedModel;
+    }
+    if (providerModels[0]?.id) {
+      return providerModels[0].id;
+    }
+    return selectedProviderIsExternalAgent ? "" : status?.activeModel || "";
+  }, [
+    selectedProvider?.models,
+    selectedProviderIsExternalAgent,
+    state.selectedModel,
+    status?.activeModel,
+  ]);
+  const selectedModelDescriptor = useMemo(
+    () =>
+      selectedProvider?.models?.find((model) => model.id === selectedModel) ??
+      null,
+    [selectedModel, selectedProvider?.models],
+  );
+  const selectedReasoningEffort = useMemo(() => {
+    const effort = state.selectedReasoningEffort;
+    if (
+      !effort ||
+      !selectedProvider ||
+      !isExternalAgentProvider(selectedProvider)
+    ) {
+      return "";
+    }
+    const reasoningEfforts =
+      (selectedModelDescriptor as ReasoningModelDescriptor | null)
+        ?.reasoningEfforts ?? [];
+    return reasoningEfforts.includes(effort) ? effort : "";
+  }, [
+    selectedModelDescriptor,
+    selectedProvider,
+    state.selectedReasoningEffort,
+  ]);
   const selectedModelCapability = useMemo(
     () =>
       modelCapabilities.find(
@@ -1174,10 +1230,12 @@ export function AIChatPanelContent({
   });
   const selectedProviderReady = providerDisabledReason === "";
   const agentConsoleVisible =
-    isExternalAgentProvider(selectedProvider) ||
-    activeEnvelope?.runtimeFamily === externalAgentRuntimeFamily ||
-    activeEnvelope?.providerEnvelope?.runtimeFamily ===
-      externalAgentRuntimeFamily;
+    isInteractiveFallbackRuntime(activeEnvelope?.runtimeFamily) ||
+    isInteractiveFallbackRuntime(
+      activeEnvelope?.providerEnvelope?.runtimeFamily,
+    ) ||
+    isInteractiveFallbackRuntime(activeEnvelope?.agentRuntime?.runtimeFamily) ||
+    activeEnvelope?.agentRuntime?.transport === "pty_fallback";
   const disabledReason = activeRunRunning
     ? "Generation is running"
     : selectedActionDescriptor?.executionUnavailable
@@ -1933,22 +1991,26 @@ export function AIChatPanelContent({
         );
       }
       setContextPreview(preview);
-      const run = await AIStartChatRun({
+      const startRequest: AIChatRunRequest & { reasoningEffort?: string } = {
         action: state.selectedAction,
         sessionId: activeSessionId,
         profileId: state.selectedProfileId,
         workflowId: state.selectedWorkflowId,
         prompt: state.input.trim(),
         runtimeFamily: isExternalAgentProvider(selectedProvider)
-          ? externalAgentRuntimeFamily
-          : "model_api",
+          ? selectedProvider.runtimeFamily || jsonlExecRuntimeFamily
+          : modelAgentRuntimeFamily,
         providerId: selectedProvider.id,
         model: selectedModel,
         includeMnemonic: request.includeMnemonic,
         includeMCP: request.includeMCP,
         includeSkills: request.includeSkills,
         context: request,
-      });
+      };
+      if (selectedReasoningEffort) {
+        startRequest.reasoningEffort = selectedReasoningEffort;
+      }
+      const run = await AIStartChatRun(startRequest);
       setHydratedRun(run);
       upsertRunEnvelope(envelopeFromRun(run));
       setActiveRunId(run.id);
@@ -1961,6 +2023,7 @@ export function AIChatPanelContent({
     activeTerminal,
     canSend,
     selectedModel,
+    selectedReasoningEffort,
     selectedProvider,
     setActiveRunId,
     setContextPreview,
@@ -2748,6 +2811,7 @@ export function AIChatPanelContent({
                 selectedAction={state.selectedAction}
                 selectedMentions={selectedMentionsForActiveSession}
                 selectedModel={selectedModel}
+                selectedReasoningEffort={selectedReasoningEffort}
                 selectedModelCapability={selectedModelCapability}
                 selectedProvider={selectedProvider}
                 sendShortcut={aiChatSendShortcut}
@@ -2769,6 +2833,12 @@ export function AIChatPanelContent({
                 onRefreshProviders={handleRefreshProviders}
                 onSend={handleSend}
                 onSelectModel={handleModelSelect}
+                onSelectReasoningEffort={(reasoningEffort) =>
+                  dispatch({
+                    type: "setReasoningEffort",
+                    reasoningEffort,
+                  })
+                }
                 onSelectProvider={handleProviderSelect}
                 onStartAgentLogin={handleStartAgentLogin}
                 onAcceptExternalAgentConsent={handleAcceptExternalAgentConsent}

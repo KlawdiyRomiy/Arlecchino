@@ -6,18 +6,7 @@ import (
 )
 
 var agentLaunchBinaries = map[string]struct{}{
-	"opencode":       {},
-	"claude":         {},
-	"codex":          {},
-	"aider":          {},
-	"agenthub":       {},
-	"crush":          {},
-	"qwen":           {},
-	"qwen-code":      {},
-	"gemini":         {},
-	"gemini-cli":     {},
-	"copilot":        {},
-	"github-copilot": {},
+	"codex": {},
 }
 
 var previewCandidateScripts = map[string]struct{}{

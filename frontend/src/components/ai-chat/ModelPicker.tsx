@@ -26,6 +26,7 @@ interface ModelPickerProps {
   providers: AIProviderDescriptor[];
   selectedProvider: AIProviderDescriptor | null;
   selectedModel: string;
+  selectedReasoningEffort: string;
   providerRuntimes: AIProviderRuntimeDescriptor[];
   providerRuntimeBusy: boolean;
   providerRuntimeError: string;
@@ -33,6 +34,7 @@ interface ModelPickerProps {
   consentPolicy: AIConsentPolicy | null;
   onSelectProvider: (provider: AIProviderDescriptor) => void;
   onSelectModel: (modelId: string) => void;
+  onSelectReasoningEffort: (reasoningEffort: string) => void;
   onRefreshProviders: () => void;
   onStartAgentLogin: (provider: AIProviderDescriptor) => void;
   onAcceptExternalAgentConsent: () => void;
@@ -48,6 +50,7 @@ export function ModelPicker({
   providers,
   selectedProvider,
   selectedModel,
+  selectedReasoningEffort,
   providerRuntimes,
   providerRuntimeBusy,
   providerRuntimeError,
@@ -55,6 +58,7 @@ export function ModelPicker({
   consentPolicy,
   onSelectProvider,
   onSelectModel,
+  onSelectReasoningEffort,
   onRefreshProviders,
   onStartAgentLogin,
   onAcceptExternalAgentConsent,
@@ -86,6 +90,14 @@ export function ModelPicker({
     selectedProviderIsExternalAgent && !consentPolicy?.externalAgentCliAccepted;
   const selectedModelLabel =
     activeModel?.displayName || activeModel?.id || selectedModel || "No model";
+  const reasoningEfforts = activeModel?.reasoningEfforts ?? [];
+  const activeReasoningEffort = reasoningEfforts.includes(
+    selectedReasoningEffort,
+  )
+    ? selectedReasoningEffort
+    : "";
+  const reasoningLabel = activeReasoningEffort || "auto";
+  const selectedModelAccountScoped = Boolean(activeModel?.accountScoped);
   const probeStatus = selectedModelCapability?.probeStatus || "";
   const probeLabel =
     probeStatus === "verified"
@@ -147,6 +159,7 @@ export function ModelPicker({
         />
         <span className="ai-chat-composer__model-label">
           {selectedProviderLabel || "No provider"} / {selectedModelLabel}
+          {selectedProviderIsExternalAgent ? ` / ${reasoningLabel}` : ""}
         </span>
         <ChevronDown size={14} />
       </button>
@@ -259,6 +272,7 @@ export function ModelPicker({
                             <span className="ai-chat-model-row__detail">
                               {model.source}
                               {model.active ? " · active" : ""}
+                              {model.accountScoped ? " · account" : ""}
                             </span>
                           </span>
                           {active ? <CheckCircle2 size={14} /> : null}
@@ -282,12 +296,46 @@ export function ModelPicker({
                 </div>
               ) : (
                 <div className="ai-chat-provider-empty">
-                  {selectedProvider?.frontier
-                    ? "Configure BYOK credentials to query provider models."
-                    : "No active or installed models detected."}
+                  {selectedProviderIsExternalAgent
+                    ? selectedProviderNeedsAuth
+                      ? "Sign in to load account models."
+                      : "Account model catalog unavailable."
+                    : selectedProvider?.frontier
+                      ? "Configure BYOK credentials to query provider models."
+                      : "No active or installed models detected."}
                 </div>
               )}
             </section>
+
+            {selectedProviderIsExternalAgent && reasoningEfforts.length > 0 ? (
+              <section className="ai-chat-popover__section">
+                <div className="ai-chat-popover__label">
+                  Reasoning
+                  <span>
+                    {selectedModelAccountScoped ? "account model" : "model"}
+                  </span>
+                </div>
+                <div className="ai-chat-reasoning-list">
+                  <button
+                    className={`ai-chat-reasoning-chip${activeReasoningEffort === "" ? " is-selected" : ""}`}
+                    type="button"
+                    onClick={() => onSelectReasoningEffort("")}
+                  >
+                    Auto
+                  </button>
+                  {reasoningEfforts.map((effort) => (
+                    <button
+                      key={effort}
+                      className={`ai-chat-reasoning-chip${activeReasoningEffort === effort ? " is-selected" : ""}`}
+                      type="button"
+                      onClick={() => onSelectReasoningEffort(effort)}
+                    >
+                      {effort}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
 
             <div className="ai-chat-model-picker__actions">
               <button

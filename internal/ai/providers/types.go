@@ -37,45 +37,52 @@ const (
 )
 
 type AIModelDescriptor struct {
-	ID               string `json:"id"`
-	DisplayName      string `json:"displayName"`
-	ContextWindow    int    `json:"contextWindow,omitempty"`
-	Streaming        bool   `json:"streaming"`
-	ToolCalling      bool   `json:"toolCalling,omitempty"`
-	StructuredOutput bool   `json:"structuredOutput,omitempty"`
-	PatchGeneration  bool   `json:"patchGeneration,omitempty"`
-	LowLatency       bool   `json:"lowLatency,omitempty"`
-	CostTier         string `json:"costTier,omitempty"`
+	ID               string   `json:"id"`
+	DisplayName      string   `json:"displayName"`
+	ContextWindow    int      `json:"contextWindow,omitempty"`
+	Streaming        bool     `json:"streaming"`
+	ToolCalling      bool     `json:"toolCalling,omitempty"`
+	StructuredOutput bool     `json:"structuredOutput,omitempty"`
+	PatchGeneration  bool     `json:"patchGeneration,omitempty"`
+	LowLatency       bool     `json:"lowLatency,omitempty"`
+	CostTier         string   `json:"costTier,omitempty"`
+	ReasoningEfforts []string `json:"reasoningEfforts,omitempty"`
+	AccountScoped    bool     `json:"accountScoped,omitempty"`
 }
 
 type AIProviderDescriptor struct {
-	ID               string                 `json:"id"`
-	Name             string                 `json:"name"`
-	Kind             string                 `json:"kind"`
-	RuntimeFamily    string                 `json:"runtimeFamily,omitempty"`
-	Endpoint         string                 `json:"endpoint,omitempty"`
-	EndpointClass    string                 `json:"endpointClass,omitempty"`
-	ExternalAccount  bool                   `json:"externalAccount,omitempty"`
-	Binary           string                 `json:"binary,omitempty"`
-	Local            bool                   `json:"local"`
-	Manual           bool                   `json:"manual"`
-	Frontier         bool                   `json:"frontier"`
-	AuthMode         AIProviderAuthMode     `json:"authMode,omitempty"`
-	AuthStatus       string                 `json:"authStatus,omitempty"`
-	BillingMode      string                 `json:"billingMode,omitempty"`
-	LegalBasis       string                 `json:"legalBasis,omitempty"`
-	RiskTier         string                 `json:"riskTier,omitempty"`
-	SourceLinks      []string               `json:"sourceLinks,omitempty"`
-	SupportedActions []string               `json:"supportedActions,omitempty"`
-	OAuthSupported   bool                   `json:"oauthSupported"`
-	RequiresAuth     bool                   `json:"requiresAuth"`
-	AuthConfigured   bool                   `json:"authConfigured"`
-	Capabilities     []AIProviderCapability `json:"capabilities"`
-	Models           []AIModelDescriptor    `json:"models"`
-	DefaultModel     string                 `json:"defaultModel,omitempty"`
-	Status           AIProviderStatusValue  `json:"status"`
-	Reason           string                 `json:"reason,omitempty"`
-	LastCheckedAt    string                 `json:"lastCheckedAt,omitempty"`
+	ID                 string                 `json:"id"`
+	Name               string                 `json:"name"`
+	Kind               string                 `json:"kind"`
+	RuntimeFamily      string                 `json:"runtimeFamily,omitempty"`
+	Transport          string                 `json:"transport,omitempty"`
+	Endpoint           string                 `json:"endpoint,omitempty"`
+	EndpointClass      string                 `json:"endpointClass,omitempty"`
+	ExternalAccount    bool                   `json:"externalAccount,omitempty"`
+	Binary             string                 `json:"binary,omitempty"`
+	Local              bool                   `json:"local"`
+	Manual             bool                   `json:"manual"`
+	Frontier           bool                   `json:"frontier"`
+	AuthMode           AIProviderAuthMode     `json:"authMode,omitempty"`
+	AuthStatus         string                 `json:"authStatus,omitempty"`
+	BillingMode        string                 `json:"billingMode,omitempty"`
+	LegalBasis         string                 `json:"legalBasis,omitempty"`
+	RiskTier           string                 `json:"riskTier,omitempty"`
+	SourceLinks        []string               `json:"sourceLinks,omitempty"`
+	RuntimeVersion     string                 `json:"runtimeVersion,omitempty"`
+	AdapterVersion     string                 `json:"adapterVersion,omitempty"`
+	ProtocolVersion    string                 `json:"protocolVersion,omitempty"`
+	CompatibilityRange string                 `json:"compatibilityRange,omitempty"`
+	SupportedActions   []string               `json:"supportedActions,omitempty"`
+	OAuthSupported     bool                   `json:"oauthSupported"`
+	RequiresAuth       bool                   `json:"requiresAuth"`
+	AuthConfigured     bool                   `json:"authConfigured"`
+	Capabilities       []AIProviderCapability `json:"capabilities"`
+	Models             []AIModelDescriptor    `json:"models"`
+	DefaultModel       string                 `json:"defaultModel,omitempty"`
+	Status             AIProviderStatusValue  `json:"status"`
+	Reason             string                 `json:"reason,omitempty"`
+	LastCheckedAt      string                 `json:"lastCheckedAt,omitempty"`
 }
 
 type AIProviderSettings struct {
@@ -96,17 +103,18 @@ type AIProviderSettings struct {
 }
 
 type GenerationRequest struct {
-	Capability  AIProviderCapability `json:"capability"`
-	Prompt      string               `json:"prompt"`
-	System      string               `json:"system,omitempty"`
-	Messages    []GenerationMessage  `json:"messages,omitempty"`
-	Model       string               `json:"model,omitempty"`
-	MaxTokens   int                  `json:"maxTokens,omitempty"`
-	Temperature float64              `json:"temperature,omitempty"`
-	Stop        []string             `json:"stop,omitempty"`
-	Stream      bool                 `json:"stream,omitempty"`
-	Tools       []GenerationTool     `json:"tools,omitempty"`
-	ToolChoice  string               `json:"toolChoice,omitempty"`
+	Capability      AIProviderCapability `json:"capability"`
+	Prompt          string               `json:"prompt"`
+	System          string               `json:"system,omitempty"`
+	Messages        []GenerationMessage  `json:"messages,omitempty"`
+	Model           string               `json:"model,omitempty"`
+	ReasoningEffort string               `json:"reasoningEffort,omitempty"`
+	MaxTokens       int                  `json:"maxTokens,omitempty"`
+	Temperature     float64              `json:"temperature,omitempty"`
+	Stop            []string             `json:"stop,omitempty"`
+	Stream          bool                 `json:"stream,omitempty"`
+	Tools           []GenerationTool     `json:"tools,omitempty"`
+	ToolChoice      string               `json:"toolChoice,omitempty"`
 }
 
 type GenerationMessage struct {

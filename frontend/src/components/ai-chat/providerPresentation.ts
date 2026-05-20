@@ -13,14 +13,37 @@ const supportedLocalProviderKinds = new Set([
   "huggingface-tgi",
 ]);
 
-export const externalAgentRuntimeFamily = "external_agent_cli";
+export const structuredAgentRuntimeFamily = "structured_agent_runtime";
+export const jsonlExecRuntimeFamily = "jsonl_exec_runtime";
+export const modelAgentRuntimeFamily = "model_agent_runtime";
+export const interactiveFallbackRuntimeFamily = "interactive_fallback_runtime";
+
+const externalAgentRuntimeFamilies = new Set([
+  structuredAgentRuntimeFamily,
+  jsonlExecRuntimeFamily,
+  interactiveFallbackRuntimeFamily,
+]);
+
+export function isExternalAgentRuntimeFamily(
+  runtimeFamily?: string | null,
+): boolean {
+  return Boolean(
+    runtimeFamily && externalAgentRuntimeFamilies.has(runtimeFamily),
+  );
+}
+
+export function isInteractiveFallbackRuntime(
+  runtimeFamily?: string | null,
+): boolean {
+  return runtimeFamily === interactiveFallbackRuntimeFamily;
+}
 
 export function isExternalAgentProvider(
   provider: AIProviderDescriptor | null,
 ): boolean {
   return Boolean(
     provider &&
-    (provider.runtimeFamily === externalAgentRuntimeFamily ||
+    (isExternalAgentRuntimeFamily(provider.runtimeFamily) ||
       provider.endpointClass === "local_process_external_account" ||
       provider.externalAccount),
   );
@@ -218,6 +241,9 @@ export function getProviderDisabledReason(
     if (!isReadyChatProvider(provider)) return sanitizeProviderReason(provider);
     if (!options.consentPolicy?.externalAgentCliAccepted) {
       return "External agent CLI consent required";
+    }
+    if ((provider.models?.length ?? 0) === 0) {
+      return "Account model catalog required";
     }
     if (!options.selectedModel?.trim()) return "Runtime model required";
     return "";

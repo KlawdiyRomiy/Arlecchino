@@ -103,6 +103,7 @@ func (s *Service) StartChatRun(_ context.Context, projectID string, req AIChatRu
 		RuntimeFamily:     req.RuntimeFamily,
 		ProviderID:        req.ProviderID,
 		Model:             req.Model,
+		ReasoningEffort:   req.ReasoningEffort,
 		UserPrompt:        sanitizedDisplayText(req.Prompt),
 		MnemonicRequested: req.IncludeMnemonic,
 		CanCancel:         true,
@@ -254,12 +255,23 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactContext, "Context disclosure", contextArtifactSummary(contextSummary), snapshot)
 	s.emitRunEnvelope(project.ID, runID)
 
-	if req.RuntimeFamily == agents.RuntimeFamilyExternalAgentCLI || strings.HasPrefix(strings.TrimSpace(req.ProviderID), "agent-cli-") {
+	if isExternalAgentRuntimeFamily(req.RuntimeFamily) || strings.HasPrefix(strings.TrimSpace(req.ProviderID), "agent-cli-") {
 		adapter, descriptor, ok := s.resolveAgentAdapter(ctx, req.ProviderID)
 		if !ok {
 			s.finishRunError(runID, fmt.Sprintf("external agent runtime %q is not available", req.ProviderID))
 			return
 		}
+		if !normalizeConsentPolicy(s.currentSettings().ConsentPolicy).ExternalAgentCLIAccepted {
+			s.blockExternalAgentConsent(project, runID, req, snapshot, descriptor)
+			return
+		}
+		modelID, reasoningEffort, err := resolveExternalAgentAccountSelection(req, descriptor)
+		if err != nil {
+			s.finishRunError(runID, err.Error())
+			return
+		}
+		req.Model = modelID
+		req.ReasoningEffort = reasoningEffort
 		s.runExternalAgentChat(ctx, project, runID, req, snapshot, contextSummary, adapter, descriptor)
 		return
 	}
@@ -273,23 +285,30 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		s.finishRunError(runID, fmt.Sprintf("provider %s does not support %s", descriptor.ID, providers.CapabilityChat))
 		return
 	}
+	modelRuntimeFamily := modelRuntimeFamilyForDescriptor(req.RuntimeFamily, descriptor)
 	s.updateRun(runID, func(run *AIChatRun) {
+		run.RuntimeFamily = modelRuntimeFamily
 		run.ProviderID = descriptor.ID
 		run.Model = firstNonEmpty(req.Model, descriptor.DefaultModel)
+		run.ReasoningEffort = req.ReasoningEffort
+		run.AgentRuntime = newAIRuntimeProofSummary(descriptor, modelRuntimeFamily, agents.TransportModelAPI, run.Model, req.Action, "running", req.ReasoningEffort)
+		run.AgentRuntime.PreflightStatus = "provider_resolved"
+		run.AgentRuntime.ConsentStatus = "accepted"
 	})
 	s.emitRunEnvelope(project.ID, runID)
 	system := chatSystemPrompt(req)
 	history := s.chatHistoryForPrompt(project, runID, req.SessionID, chatPromptHistoryLimit)
 	providerPrompt := buildChatPromptFromSnapshot(snapshot, history)
 	generationReq := providers.GenerationRequest{
-		Capability: providers.CapabilityChat,
-		Prompt:     providerPrompt,
-		System:     system,
-		Messages:   buildChatMessagesFromSnapshot(snapshot, history),
-		Model:      firstNonEmpty(req.Model, descriptor.DefaultModel),
-		MaxTokens:  req.MaxTokens,
-		Stop:       defaultChatStopSequences,
-		Stream:     true,
+		Capability:      providers.CapabilityChat,
+		Prompt:          providerPrompt,
+		System:          system,
+		Messages:        buildChatMessagesFromSnapshot(snapshot, history),
+		Model:           firstNonEmpty(req.Model, descriptor.DefaultModel),
+		ReasoningEffort: req.ReasoningEffort,
+		MaxTokens:       req.MaxTokens,
+		Stop:            defaultChatStopSequences,
+		Stream:          true,
 	}
 	toolset := generationToolsetForChatRequest(req, descriptor, generationReq.Model)
 	if probe, ok := cachedProjectModelCapabilityProbe(project, descriptor.ID, generationReq.Model); ok && shouldBlockBuildForModelProbe(probe) && req.Action == AIChatActionBuild {
@@ -323,6 +342,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		ProviderKind:     descriptor.Kind,
 		Endpoint:         descriptor.Endpoint,
 		Model:            generationReq.Model,
+		ReasoningEffort:  generationReq.ReasoningEffort,
 		Capability:       providers.CapabilityChat,
 		ProjectPathHash:  hashProjectPath(project.ProjectRoot),
 		ProjectSessionID: project.ID,
@@ -406,6 +426,12 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		s.recordEgressTimeline(project, runID, record)
 		s.updateRun(runID, func(run *AIChatRun) {
 			run.EgressRecordID = record.ID
+			if run.AgentRuntime != nil {
+				run.AgentRuntime.Status = "canceled"
+				run.AgentRuntime.HealthStatus = "canceled"
+				run.AgentRuntime.ProofState = "canceled"
+				run.AgentRuntime.FailureCode = agents.FailureCanceled
+			}
 		})
 		s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "Provider egress", egressArtifactSummary(record), record)
 		s.finishRunCanceled(runID, record)
@@ -427,6 +453,13 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		s.recordEgressTimeline(project, runID, record)
 		s.updateRun(runID, func(run *AIChatRun) {
 			run.EgressRecordID = record.ID
+			if run.AgentRuntime != nil {
+				run.AgentRuntime.Status = "error"
+				run.AgentRuntime.HealthStatus = "error"
+				run.AgentRuntime.ProofState = "error"
+				run.AgentRuntime.FailureCode = record.ErrorClass
+				run.AgentRuntime.BlockedReason = err.Error()
+			}
 		})
 		s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "Provider egress", egressArtifactSummary(record), record)
 		if record.Canceled {
@@ -450,6 +483,12 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	s.recordEgressTimeline(project, runID, record)
 	s.updateRun(runID, func(run *AIChatRun) {
 		run.EgressRecordID = record.ID
+		if run.AgentRuntime != nil {
+			run.AgentRuntime.HealthStatus = "provider_response_received"
+			if strings.TrimSpace(run.AgentRuntime.ProofState) == "" || run.AgentRuntime.ProofState == "starting" {
+				run.AgentRuntime.ProofState = "running"
+			}
+		}
 	})
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "Provider egress", egressArtifactSummary(record), record)
 	s.emitRunEnvelope(project.ID, runID)
@@ -601,20 +640,18 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	s.emitRunEnvelope(project.ID, runID)
 	if project.Mnemonic != nil && project.Mnemonic.Enabled() {
 		if ctx.Err() == nil && s.projectIsCurrent(projectID, project) {
-			entry, _ := project.Mnemonic.Save(mnemonic.Entry{
-				Type:       "chat_summary",
-				Source:     "ai-chat",
-				Tags:       []string{string(req.Action)},
-				Content:    summarizeForMnemonic(req.Prompt, cleanChatGeneratedResponse(finalResponse, req, system, generationReq.Prompt)),
-				Importance: 5,
-				Trust:      mnemonic.TrustGenerated,
-				Provenance: map[string]string{"source": "ai-chat-summary", "runId": runID},
-			})
-			s.recordChatRunArtifact(project, runID, AIChatRunArtifactMemory, "Mnemonic update", "Generated chat summary saved to Mnemonic", map[string]string{
-				"id":     entry.ID,
-				"type":   entry.Type,
-				"source": entry.Source,
-				"trust":  string(entry.Trust),
+			_, _ = s.ProposeMnemonicEntry(project.ID, AIMnemonicWriteProposalRequest{
+				RunID: runID,
+				Entry: AIMnemonicEntryInput{
+					Type:       "chat_summary",
+					Source:     "ai-chat",
+					Tags:       []string{string(req.Action)},
+					Content:    summarizeForMnemonic(req.Prompt, cleanChatGeneratedResponse(finalResponse, req, system, generationReq.Prompt)),
+					Importance: 5,
+					Trust:      mnemonic.TrustGenerated,
+					Provenance: map[string]string{"source": "ai-chat-summary", "runId": runID},
+				},
+				Reason: "Generated chat summary requires review before durable Mnemonic promotion.",
 			})
 		}
 	}
@@ -639,10 +676,28 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		run.Status = "completed"
 		run.CanCancel = false
 		run.Response = cleanChatGeneratedResponse(firstNonEmpty(run.Response, response.Text), req, system, generationReq.Prompt)
+		run.RuntimeFamily = modelRuntimeFamily
 		run.ProviderID = descriptor.ID
 		run.Model = firstNonEmpty(response.Model, generationReq.Model)
 		run.ToolProposals = nil
 		run.EgressRecordID = record.ID
+		if run.AgentRuntime != nil {
+			run.AgentRuntime.Status = "completed"
+			run.AgentRuntime.HealthStatus = "completed"
+			if req.Action == AIChatActionBuild && buildPatchArtifactReady {
+				run.AgentRuntime.ProofState = "proved"
+				run.AgentRuntime.ProofReason = "model runtime completed through Arlecchino-owned tool and artifact path"
+				run.AgentRuntime.ArtifactState = "patch_artifact"
+			} else if req.Action == AIChatActionBuild {
+				run.AgentRuntime.ProofState = "completed"
+				run.AgentRuntime.ProofReason = "model runtime completed without a reviewable patch artifact; no file change was recorded"
+				run.AgentRuntime.ArtifactState = "no_patch_artifact"
+			} else {
+				run.AgentRuntime.ProofState = "proved"
+				run.AgentRuntime.ProofReason = "model runtime completed without requiring a build artifact"
+				run.AgentRuntime.ArtifactState = "not_required"
+			}
+		}
 	})
 	s.emitRunEnvelope(project.ID, runID)
 	if run, err := s.GetChatRun(projectID, runID); err == nil {
@@ -656,6 +711,22 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 
 func chatActionUsesToolLoop(action AIChatAction) bool {
 	return action == AIChatActionBuild || action == AIChatActionPlan || action == AIChatActionDebug
+}
+
+func modelRuntimeFamilyForDescriptor(requested string, descriptor AIProviderDescriptor) string {
+	switch strings.TrimSpace(requested) {
+	case agents.RuntimeFamilyModelAgent:
+		return agents.RuntimeFamilyModelAgent
+	case agents.TransportModelAPI:
+		return agents.RuntimeFamilyModelAgent
+	}
+	switch strings.TrimSpace(descriptor.RuntimeFamily) {
+	case agents.RuntimeFamilyModelAgent:
+		return agents.RuntimeFamilyModelAgent
+	case agents.TransportModelAPI:
+		return agents.RuntimeFamilyModelAgent
+	}
+	return agents.RuntimeFamilyModelAgent
 }
 
 func chatActionAllowsContinuationTools(action AIChatAction) bool {
@@ -1031,6 +1102,7 @@ func (s *Service) continueChatRunAfterToolResults(ctx context.Context, project *
 			ProviderKind:     descriptor.Kind,
 			Endpoint:         descriptor.Endpoint,
 			Model:            continuationReq.Model,
+			ReasoningEffort:  continuationReq.ReasoningEffort,
 			Capability:       providers.CapabilityChat,
 			ProjectPathHash:  hashProjectPath(project.ProjectRoot),
 			ProjectSessionID: project.ID,
@@ -1137,6 +1209,7 @@ func (s *Service) retryBuildRunAfterRewriteGuard(ctx context.Context, project *P
 		ProviderKind:     descriptor.Kind,
 		Endpoint:         descriptor.Endpoint,
 		Model:            retryReq.Model,
+		ReasoningEffort:  retryReq.ReasoningEffort,
 		Capability:       providers.CapabilityChat,
 		ProjectPathHash:  hashProjectPath(project.ProjectRoot),
 		ProjectSessionID: project.ID,
@@ -1678,6 +1751,17 @@ func (s *Service) finishRunEmptyResponse(runID string, record AIEgressRecord, pr
 	run.Model = model
 	run.EgressRecordID = record.ID
 	run.ToolProposals = nil
+	if run.AgentRuntime != nil {
+		run.AgentRuntime.Status = "error"
+		run.AgentRuntime.HealthStatus = "error"
+		if strings.TrimSpace(run.AgentRuntime.ProofState) == "" || run.AgentRuntime.ProofState == "starting" || run.AgentRuntime.ProofState == "running" {
+			run.AgentRuntime.ProofState = "error"
+		}
+		if strings.TrimSpace(run.AgentRuntime.FailureCode) == "" {
+			run.AgentRuntime.FailureCode = agentFailureCodeForResult(agents.Result{Status: "error", Error: run.Error})
+		}
+		run.AgentRuntime.BlockedReason = run.Error
+	}
 	run.CanCancel = false
 	run.Revision++
 	run.UpdatedAt = utcNow()
@@ -1748,6 +1832,17 @@ func (s *Service) finishRunError(runID string, message string) {
 	run.Status = "error"
 	run.Error = message
 	run.Response = cleanChatGeneratedResponse(run.Response, req, chatSystemPrompt(req), "")
+	if run.AgentRuntime != nil {
+		run.AgentRuntime.Status = "error"
+		run.AgentRuntime.HealthStatus = "error"
+		if strings.TrimSpace(run.AgentRuntime.ProofState) == "" || run.AgentRuntime.ProofState == "starting" || run.AgentRuntime.ProofState == "running" {
+			run.AgentRuntime.ProofState = "error"
+		}
+		if strings.TrimSpace(run.AgentRuntime.FailureCode) == "" {
+			run.AgentRuntime.FailureCode = agentFailureCodeForResult(agents.Result{Status: "error", Error: message})
+		}
+		run.AgentRuntime.BlockedReason = sanitizedDisplayText(message)
+	}
 	run.CanCancel = false
 	run.Revision++
 	run.UpdatedAt = utcNow()
@@ -1786,6 +1881,9 @@ func (s *Service) finishRunCanceled(runID string, record AIEgressRecord) {
 	shouldEmit := run.Status != "canceled"
 	run.Status = "canceled"
 	run.Response = cleanChatGeneratedResponse(run.Response, req, chatSystemPrompt(req), "")
+	if run.AgentRuntime != nil {
+		run.AgentRuntime.Status = "canceled"
+	}
 	run.CanCancel = false
 	run.EgressRecordID = record.ID
 	run.Revision++
@@ -1887,6 +1985,7 @@ func (s *Service) resolveChatRunRequest(req AIChatRunRequest) AIChatRunRequest {
 	req.Prompt = strings.TrimSpace(req.Prompt)
 	req.WorkflowID = strings.TrimSpace(req.WorkflowID)
 	req.ProfileID = strings.TrimSpace(req.ProfileID)
+	req.ReasoningEffort = normalizeReasoningEffort(req.ReasoningEffort)
 	for _, workflow := range s.ListPromptWorkflows() {
 		if req.WorkflowID != "" && workflow.ID == req.WorkflowID {
 			req.Action = workflow.Action
@@ -1951,7 +2050,19 @@ func chatRuntimeBoundaryPrompt(req AIChatRunRequest) string {
 	if model := strings.TrimSpace(req.Model); model != "" {
 		parts = append(parts, "Model: "+model+".")
 	}
+	if effort := normalizeReasoningEffort(req.ReasoningEffort); effort != "" {
+		parts = append(parts, "Reasoning effort: "+effort+".")
+	}
 	return strings.Join(parts, " ")
+}
+
+func normalizeReasoningEffort(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "low", "medium", "high", "xhigh":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
 }
 
 func chatModeBoundaryPrompt(req AIChatRunRequest) string {

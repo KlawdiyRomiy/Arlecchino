@@ -51,6 +51,7 @@ interface ChatComposerProps {
   providers: AIProviderDescriptor[];
   selectedProvider: AIProviderDescriptor | null;
   selectedModel: string;
+  selectedReasoningEffort: string;
   providerRuntimes: AIProviderRuntimeDescriptor[];
   providerRuntimeBusy: boolean;
   providerRuntimeError: string;
@@ -62,6 +63,7 @@ interface ChatComposerProps {
   onActionChange: (action: AIChatAction) => void;
   onSelectProvider: (provider: AIProviderDescriptor) => void;
   onSelectModel: (modelId: string) => void;
+  onSelectReasoningEffort: (reasoningEffort: string) => void;
   onRefreshProviders: () => void;
   onStartAgentLogin: (provider: AIProviderDescriptor) => void;
   onAcceptExternalAgentConsent: () => void;
@@ -201,6 +203,7 @@ export function ChatComposer({
   providers,
   selectedProvider,
   selectedModel,
+  selectedReasoningEffort,
   providerRuntimes,
   providerRuntimeBusy,
   providerRuntimeError,
@@ -212,6 +215,7 @@ export function ChatComposer({
   onActionChange,
   onSelectProvider,
   onSelectModel,
+  onSelectReasoningEffort,
   onRefreshProviders,
   onStartAgentLogin,
   onAcceptExternalAgentConsent,
@@ -586,6 +590,7 @@ export function ChatComposer({
               providerRuntimes={providerRuntimes}
               providers={providers}
               selectedModel={selectedModel}
+              selectedReasoningEffort={selectedReasoningEffort}
               selectedProvider={selectedProvider}
               selectedModelCapability={selectedModelCapability}
               consentPolicy={consentPolicy}
@@ -594,6 +599,7 @@ export function ChatComposer({
               onAcceptExternalAgentConsent={onAcceptExternalAgentConsent}
               onProbeModelCapability={onProbeModelCapability}
               onSelectModel={onSelectModel}
+              onSelectReasoningEffort={onSelectReasoningEffort}
               onSelectProvider={onSelectProvider}
               onStartProviderRuntime={onStartProviderRuntime}
               onStopProviderRuntime={onStopProviderRuntime}

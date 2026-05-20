@@ -75,6 +75,8 @@ export interface AIProviderRuntimeModel {
   active: boolean;
   runnable: boolean;
   reason?: string;
+  reasoningEfforts?: string[];
+  accountScoped?: boolean;
 }
 
 export interface AIProviderRuntimeDescriptor {

@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	agentRuntimeFamilyExternalCLI = agents.RuntimeFamilyExternalAgentCLI
-	agentTerminalTranscriptLimit  = 48 * 1024
+	agentRuntimeFamilyInteractiveFallback = agents.RuntimeFamilyInteractiveFallback
+	agentTerminalTranscriptLimit          = 48 * 1024
+	agentDescriptorProbeTimeout           = 10 * time.Second
 )
 
 type agentWorktreeBaseline struct {
@@ -41,7 +42,7 @@ func (s *Service) agentProviderDescriptor(providerID string) (providers.AIProvid
 	if s == nil || s.agents == nil || providerID == "" {
 		return providers.AIProviderDescriptor{}, false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), agentDescriptorProbeTimeout)
 	defer cancel()
 	for _, descriptor := range s.agents.Descriptors(ctx) {
 		if descriptor.ID == providerID {
@@ -65,7 +66,184 @@ func (s *Service) resolveAgentAdapter(ctx context.Context, providerID string) (a
 }
 
 func isExternalAgentProviderDescriptor(descriptor providers.AIProviderDescriptor) bool {
-	return descriptor.RuntimeFamily == agentRuntimeFamilyExternalCLI || descriptor.EndpointClass == agents.EndpointClassExternalAccount || descriptor.ExternalAccount
+	if isExternalAgentRuntimeFamily(descriptor.RuntimeFamily) {
+		return true
+	}
+	return descriptor.EndpointClass == agents.EndpointClassExternalAccount || descriptor.ExternalAccount
+}
+
+func isExternalAgentRuntimeFamily(runtimeFamily string) bool {
+	switch strings.TrimSpace(runtimeFamily) {
+	case agents.RuntimeFamilyStructuredAgent, agents.RuntimeFamilyJSONLExec, agents.RuntimeFamilyInteractiveFallback:
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveExternalAgentAccountSelection(req AIChatRunRequest, descriptor providers.AIProviderDescriptor) (string, string, error) {
+	modelID := strings.TrimSpace(firstNonEmpty(req.Model, descriptor.DefaultModel))
+	models := descriptor.Models
+	if len(models) == 0 {
+		if descriptor.Status == providers.ProviderStatusNeedsAuth || strings.TrimSpace(descriptor.AuthStatus) == "needs_auth" {
+			return "", "", fmt.Errorf("sign in to %s before selecting account models", firstNonEmpty(descriptor.Name, descriptor.ID))
+		}
+		return "", "", fmt.Errorf("%s account model catalog is unavailable", firstNonEmpty(descriptor.Name, descriptor.ID))
+	}
+	if modelID == "" {
+		modelID = strings.TrimSpace(models[0].ID)
+	}
+	for _, model := range models {
+		if strings.TrimSpace(model.ID) != modelID {
+			continue
+		}
+		reasoningEffort := normalizeReasoningEffort(req.ReasoningEffort)
+		if reasoningEffort != "" && !reasoningEffortAllowedForModel(reasoningEffort, model) {
+			return "", "", fmt.Errorf("reasoning effort %q is not available for model %q on this account", reasoningEffort, modelID)
+		}
+		return modelID, reasoningEffort, nil
+	}
+	return "", "", fmt.Errorf("model %q is not available in %s account model catalog", modelID, firstNonEmpty(descriptor.Name, descriptor.ID))
+}
+
+func reasoningEffortAllowedForModel(effort string, model providers.AIModelDescriptor) bool {
+	effort = normalizeReasoningEffort(effort)
+	if effort == "" {
+		return true
+	}
+	for _, candidate := range model.ReasoningEfforts {
+		if normalizeReasoningEffort(candidate) == effort {
+			return true
+		}
+	}
+	return false
+}
+
+func agentRuntimeFamilyForDescriptor(descriptor providers.AIProviderDescriptor) string {
+	switch strings.TrimSpace(descriptor.RuntimeFamily) {
+	case agents.RuntimeFamilyStructuredAgent, agents.RuntimeFamilyJSONLExec, agents.RuntimeFamilyInteractiveFallback:
+		return strings.TrimSpace(descriptor.RuntimeFamily)
+	case agents.ProviderKindExternalAgentCLI:
+		return agents.RuntimeFamilyInteractiveFallback
+	default:
+		if descriptor.EndpointClass == agents.EndpointClassExternalAccount || descriptor.ExternalAccount {
+			return agents.RuntimeFamilyJSONLExec
+		}
+		return agents.RuntimeFamilyStructuredAgent
+	}
+}
+
+func agentRuntimeFamilyForRun(req AIChatRunRequest, descriptor providers.AIProviderDescriptor) string {
+	requested := strings.TrimSpace(req.RuntimeFamily)
+	if requested == agents.ProviderKindExternalAgentCLI {
+		return agents.RuntimeFamilyInteractiveFallback
+	}
+	if requested != "" && isExternalAgentRuntimeFamily(requested) {
+		return requested
+	}
+	return agentRuntimeFamilyForDescriptor(descriptor)
+}
+
+func agentTransportForRuntimeFamily(runtimeFamily string) string {
+	switch strings.TrimSpace(runtimeFamily) {
+	case agents.RuntimeFamilyStructuredAgent:
+		return agents.TransportAppServerSTDIO
+	case agents.RuntimeFamilyJSONLExec:
+		return agents.TransportJSONLExec
+	case agents.RuntimeFamilyInteractiveFallback, agents.ProviderKindExternalAgentCLI:
+		return agents.TransportPTYFallback
+	default:
+		return agents.TransportJSONLExec
+	}
+}
+
+func agentTransportForRun(runtimeFamily string, descriptor providers.AIProviderDescriptor) string {
+	if strings.TrimSpace(descriptor.Transport) != "" && strings.TrimSpace(descriptor.RuntimeFamily) == strings.TrimSpace(runtimeFamily) {
+		return strings.TrimSpace(descriptor.Transport)
+	}
+	return agentTransportForRuntimeFamily(runtimeFamily)
+}
+
+func newAIRuntimeProofSummary(descriptor providers.AIProviderDescriptor, runtimeFamily string, transport string, model string, action AIChatAction, status string, reasoningEfforts ...string) *AIExternalAgentRunSummary {
+	if transport == "" {
+		transport = agentTransportForRuntimeFamily(runtimeFamily)
+	}
+	if status == "" {
+		status = "starting"
+	}
+	model = firstNonEmpty(model, descriptor.DefaultModel)
+	reasoningEffort := ""
+	if len(reasoningEfforts) > 0 {
+		reasoningEffort = normalizeReasoningEffort(reasoningEfforts[0])
+	}
+	promptTransport := "provider_request"
+	switch strings.TrimSpace(transport) {
+	case agents.TransportAppServerSTDIO:
+		promptTransport = "stdio_jsonrpc_no_argv"
+	case agents.TransportJSONLExec:
+		promptTransport = "stdin_jsonl_no_argv"
+	case agents.TransportModelAPI:
+		promptTransport = "model_api_request"
+	case agents.TransportPTYFallback:
+		promptTransport = "interactive_terminal_fallback"
+	case agents.TransportHTTPServerSSE:
+		promptTransport = "http_sse_request_no_argv"
+	}
+	consentStatus := "pending"
+	if runtimeFamily == agents.RuntimeFamilyModelAgent {
+		consentStatus = "accepted"
+	}
+	artifactState := "not_required"
+	if action == AIChatActionBuild {
+		artifactState = "pending"
+	}
+	return &AIExternalAgentRunSummary{
+		RuntimeID:          descriptor.ID,
+		ProviderID:         descriptor.ID,
+		Model:              model,
+		ReasoningEffort:    reasoningEffort,
+		RuntimeFamily:      runtimeFamily,
+		Transport:          transport,
+		EndpointClass:      firstNonEmpty(descriptor.EndpointClass, descriptor.Endpoint),
+		RuntimeBinary:      descriptor.Binary,
+		RuntimeVersion:     descriptor.RuntimeVersion,
+		AdapterVersion:     firstNonEmpty(descriptor.AdapterVersion, "arlecchino-runtime-v1"),
+		ProtocolVersion:    firstNonEmpty(descriptor.ProtocolVersion, descriptor.Kind),
+		CompatibilityRange: descriptor.CompatibilityRange,
+		AuthStatus:         descriptor.AuthStatus,
+		Status:             status,
+		HealthStatus:       status,
+		ProofState:         status,
+		PreflightStatus:    "pending",
+		ConsentStatus:      consentStatus,
+		ToolPolicy:         "arlecchino_approval_gateway",
+		SandboxPolicy:      agentSandboxPolicyForProof(action, runtimeFamily),
+		ArtifactState:      artifactState,
+		PromptTransport:    promptTransport,
+		FallbackRuntime:    runtimeFamily == agents.RuntimeFamilyInteractiveFallback || transport == agents.TransportPTYFallback,
+		SourceLinks:        descriptor.SourceLinks,
+	}
+}
+
+func agentSandboxPolicyForProof(action AIChatAction, runtimeFamily string) string {
+	if runtimeFamily == agents.RuntimeFamilyModelAgent {
+		switch action {
+		case AIChatActionBuild:
+			return "arlecchino_tool_approval_required"
+		case AIChatActionDebug:
+			return "read_only_command_approval_required"
+		default:
+			return "read_only"
+		}
+	}
+	switch action {
+	case AIChatActionBuild:
+		return "workspace_write_after_agent_consent"
+	case AIChatActionDebug:
+		return "read_only_command_approval_required"
+	default:
+		return "read_only"
+	}
 }
 
 func (s *Service) registerAgentTerminalIO(runID string, write func([]byte) error, resize func(uint16, uint16) error) {
@@ -157,26 +335,19 @@ func (s *Service) StartAgentAuthRun(ctx context.Context, projectID string, provi
 		ProjectSessionID: project.ID,
 		Action:           AIChatActionAsk,
 		Status:           "running",
-		RuntimeFamily:    agentRuntimeFamilyExternalCLI,
+		RuntimeFamily:    agentRuntimeFamilyInteractiveFallback,
 		ProviderID:       descriptor.ID,
 		Model:            descriptor.DefaultModel,
 		UserPrompt:       "Sign in to " + firstNonEmpty(descriptor.Name, descriptor.ID),
-		AgentRuntime: &AIExternalAgentRunSummary{
-			RuntimeID:     descriptor.ID,
-			RuntimeFamily: agentRuntimeFamilyExternalCLI,
-			Operation:     "auth_login",
-			Transport:     "pty",
-			EndpointClass: descriptor.EndpointClass,
-			AuthStatus:    descriptor.AuthStatus,
-			AuthFlow:      true,
-			Status:        "starting",
-			SourceLinks:   descriptor.SourceLinks,
-		},
-		CanCancel: true,
-		Revision:  1,
-		CreatedAt: now,
-		UpdatedAt: now,
+		AgentRuntime:     newAIRuntimeProofSummary(descriptor, agentRuntimeFamilyInteractiveFallback, agents.TransportPTYFallback, descriptor.DefaultModel, AIChatActionAsk, "starting"),
+		CanCancel:        true,
+		Revision:         1,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
+	run.AgentRuntime.Operation = "auth_login"
+	run.AgentRuntime.AuthFlow = true
+	run.AgentRuntime.ConsentStatus = "not_required"
 	runCtx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	s.mu.Lock()
@@ -191,7 +362,7 @@ func (s *Service) StartAgentAuthRun(ctx context.Context, projectID string, provi
 		RunID:            runCopy.ID,
 		SessionID:        sessionID,
 		ProjectSessionID: project.ID,
-		Source:           "external_agent_cli",
+		Source:           "interactive_fallback_runtime",
 		Type:             "auth_started",
 		Status:           "running",
 		Actor:            "user",
@@ -202,7 +373,7 @@ func (s *Service) StartAgentAuthRun(ctx context.Context, projectID string, provi
 	})
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "External agent auth disclosure", "Authentication starts the official provider CLI locally. Arlecchino does not receive or store provider credentials.", map[string]any{
 		"providerId":    descriptor.ID,
-		"runtimeFamily": agentRuntimeFamilyExternalCLI,
+		"runtimeFamily": agentRuntimeFamilyInteractiveFallback,
 		"endpointClass": descriptor.EndpointClass,
 		"authMode":      descriptor.AuthMode,
 		"legalBasis":    descriptor.LegalBasis,
@@ -219,19 +390,14 @@ func (s *Service) StartAgentAuthRun(ctx context.Context, projectID string, provi
 }
 
 func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSession, runID string, req AIChatRunRequest, snapshot AIContextSnapshot, contextSummary AIContextSummary, adapter agents.Adapter, descriptor providers.AIProviderDescriptor) {
+	runtimeFamily := agentRuntimeFamilyForRun(req, descriptor)
+	transport := agentTransportForRun(runtimeFamily, descriptor)
 	s.updateRun(runID, func(run *AIChatRun) {
-		run.RuntimeFamily = agentRuntimeFamilyExternalCLI
+		run.RuntimeFamily = runtimeFamily
 		run.ProviderID = descriptor.ID
 		run.Model = firstNonEmpty(req.Model, descriptor.DefaultModel)
-		run.AgentRuntime = &AIExternalAgentRunSummary{
-			RuntimeID:     descriptor.ID,
-			RuntimeFamily: agentRuntimeFamilyExternalCLI,
-			Transport:     "pty",
-			EndpointClass: descriptor.EndpointClass,
-			AuthStatus:    descriptor.AuthStatus,
-			Status:        "starting",
-			SourceLinks:   descriptor.SourceLinks,
-		}
+		run.ReasoningEffort = req.ReasoningEffort
+		run.AgentRuntime = newAIRuntimeProofSummary(descriptor, runtimeFamily, transport, run.Model, req.Action, "starting", req.ReasoningEffort)
 	})
 	s.emitRunEnvelope(project.ID, runID)
 
@@ -241,18 +407,7 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 	}
 	record := s.startAgentEgressRecord(project, runID, req, descriptor, snapshot)
 	if !normalizeConsentPolicy(s.currentSettings().ConsentPolicy).ExternalAgentCLIAccepted {
-		record.Status = "blocked"
-		record.ErrorClass = "external_agent_cli_consent_required"
-		record = s.storeAgentEgressRecord(project, runID, record)
-		s.updateRun(runID, func(run *AIChatRun) {
-			run.EgressRecordID = record.ID
-			if run.AgentRuntime != nil {
-				run.AgentRuntime.Status = "blocked"
-				run.AgentRuntime.BlockedReason = "external agent CLI consent required"
-			}
-		})
-		s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "External agent egress blocked", "External agent CLI consent is required before context is sent.", record)
-		s.finishRunError(runID, "external agent CLI consent is required before sending context to this provider-owned CLI")
+		s.finishExternalAgentConsentBlocked(project, runID, record)
 		return
 	}
 	baseline := captureAgentWorktreeBaseline(project)
@@ -261,6 +416,10 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 		if run.AgentRuntime != nil {
 			run.AgentRuntime.BaselineID = baseline.ID
 			run.AgentRuntime.Status = "running"
+			run.AgentRuntime.HealthStatus = "running"
+			run.AgentRuntime.ProofState = "running"
+			run.AgentRuntime.PreflightStatus = "baseline_captured"
+			run.AgentRuntime.ConsentStatus = "accepted"
 		}
 	})
 	s.emitRunEnvelope(project.ID, runID)
@@ -268,16 +427,19 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 	started := time.Now()
 	agentPrompt := buildExternalAgentPrompt(req, snapshot, contextSummary)
 	result := adapter.Run(ctx, agents.RunRequest{
-		RunID:          runID,
-		SessionID:      normalizeChatSessionID(req.SessionID),
-		ProjectRoot:    project.ProjectRoot,
-		Action:         string(req.Action),
-		Prompt:         agentPrompt,
-		Model:          firstNonEmpty(req.Model, descriptor.DefaultModel),
-		Rows:           34,
-		Cols:           116,
-		DataCategories: snapshot.DataCategories,
-		RegisterInput:  s.registerAgentTerminalIO,
+		RunID:           runID,
+		SessionID:       normalizeChatSessionID(req.SessionID),
+		ProjectRoot:     project.ProjectRoot,
+		Action:          string(req.Action),
+		Prompt:          agentPrompt,
+		Model:           firstNonEmpty(req.Model, descriptor.DefaultModel),
+		ReasoningEffort: req.ReasoningEffort,
+		RuntimeFamily:   runtimeFamily,
+		Transport:       transport,
+		Rows:            34,
+		Cols:            116,
+		DataCategories:  snapshot.DataCategories,
+		RegisterInput:   s.registerAgentTerminalIO,
 	}, func(event agents.Event) {
 		s.handleAgentRuntimeEvent(project, runID, event)
 	})
@@ -287,12 +449,16 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 	if result.Status == "canceled" || ctx.Err() != nil || s.runIsCanceled(runID) {
 		record.Status = "canceled"
 		record.Canceled = true
+		record.ErrorClass = agents.FailureCanceled
 		record = s.storeAgentEgressRecord(project, runID, record)
 		transcriptID := s.recordAgentTranscriptArtifact(project, runID, result)
 		s.updateRun(runID, func(run *AIChatRun) {
 			run.EgressRecordID = record.ID
 			if run.AgentRuntime != nil {
 				run.AgentRuntime.Status = "canceled"
+				run.AgentRuntime.HealthStatus = "canceled"
+				run.AgentRuntime.ProofState = "canceled"
+				run.AgentRuntime.FailureCode = agents.FailureCanceled
 				run.AgentRuntime.ExitCode = result.ExitCode
 				run.AgentRuntime.TranscriptID = transcriptID
 			}
@@ -302,7 +468,7 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 	}
 	if result.Status == "error" {
 		record.Status = "error"
-		record.ErrorClass = errorClass(fmt.Errorf("%s", result.Error))
+		record.ErrorClass = firstNonEmpty(agentFailureCodeForResult(result), errorClass(fmt.Errorf("%s", result.Error)))
 		record = s.storeAgentEgressRecord(project, runID, record)
 		transcriptID := s.recordAgentTranscriptArtifact(project, runID, result)
 		s.updateRun(runID, func(run *AIChatRun) {
@@ -310,11 +476,35 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 			run.Response = agentRunDisplayResponse(result, nil)
 			if run.AgentRuntime != nil {
 				run.AgentRuntime.Status = "error"
+				run.AgentRuntime.HealthStatus = "error"
+				run.AgentRuntime.ProofState = "error"
+				run.AgentRuntime.FailureCode = record.ErrorClass
 				run.AgentRuntime.ExitCode = result.ExitCode
 				run.AgentRuntime.TranscriptID = transcriptID
 			}
 		})
 		s.finishRunError(runID, firstNonEmpty(result.Error, "agent CLI run failed"))
+		return
+	}
+	if !s.agentRuntimeHasProviderEvent(runID) {
+		record.Status = "blocked"
+		record.ErrorClass = agents.FailureRuntimeUnhealthy
+		record = s.storeAgentEgressRecord(project, runID, record)
+		transcriptID := s.recordAgentTranscriptArtifact(project, runID, result)
+		s.updateRun(runID, func(run *AIChatRun) {
+			run.EgressRecordID = record.ID
+			run.Response = agentRunDisplayResponse(result, nil)
+			if run.AgentRuntime != nil {
+				run.AgentRuntime.Status = "blocked"
+				run.AgentRuntime.HealthStatus = "blocked"
+				run.AgentRuntime.ProofState = "blocked"
+				run.AgentRuntime.FailureCode = agents.FailureRuntimeUnhealthy
+				run.AgentRuntime.ExitCode = result.ExitCode
+				run.AgentRuntime.TranscriptID = transcriptID
+				run.AgentRuntime.BlockedReason = "runtime completed without a provider event"
+			}
+		})
+		s.finishRunError(runID, "Runtime completed without proof that the selected provider emitted an event")
 		return
 	}
 
@@ -323,11 +513,18 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 	transcriptID := s.recordAgentTranscriptArtifact(project, runID, result)
 	diffArtifact, diffErr := s.recordAgentCapturedDiff(project, runID, req, baseline)
 	if diffErr != nil {
+		record.Status = "blocked"
+		record.ErrorClass = agents.FailurePatchCaptureFailed
+		record = s.storeAgentEgressRecord(project, runID, record)
 		s.updateRun(runID, func(run *AIChatRun) {
 			run.EgressRecordID = record.ID
 			run.Response = agentRunDisplayResponse(result, nil)
 			if run.AgentRuntime != nil {
 				run.AgentRuntime.Status = "blocked"
+				run.AgentRuntime.HealthStatus = "blocked"
+				run.AgentRuntime.ProofState = "blocked"
+				run.AgentRuntime.FailureCode = agents.FailurePatchCaptureFailed
+				run.AgentRuntime.ArtifactState = "capture_failed"
 				run.AgentRuntime.ExitCode = result.ExitCode
 				run.AgentRuntime.TranscriptID = transcriptID
 				run.AgentRuntime.BlockedReason = diffErr.Error()
@@ -337,11 +534,29 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 		return
 	}
 	if req.Action == AIChatActionBuild && diffArtifact.ID == "" {
+		evidenceState := s.agentRuntimeArtifactState(runID)
+		if buildEvidenceArtifactStateAccepted(evidenceState) {
+			s.recordAgentBuildEvidenceArtifact(project, runID, req, result, evidenceState)
+			s.updateRun(runID, func(run *AIChatRun) {
+				if run.AgentRuntime != nil {
+					run.AgentRuntime.ArtifactState = evidenceState
+				}
+			})
+			s.finishAgentRunCompleted(project, runID, req, descriptor, record, result, transcriptID, diffArtifact)
+			return
+		}
+		record.Status = "blocked"
+		record.ErrorClass = agents.FailureBuildArtifactMissing
+		record = s.storeAgentEgressRecord(project, runID, record)
 		s.updateRun(runID, func(run *AIChatRun) {
 			run.EgressRecordID = record.ID
 			run.Response = agentRunDisplayResponse(result, nil)
 			if run.AgentRuntime != nil {
 				run.AgentRuntime.Status = "blocked"
+				run.AgentRuntime.HealthStatus = "blocked"
+				run.AgentRuntime.ProofState = "blocked"
+				run.AgentRuntime.FailureCode = agents.FailureBuildArtifactMissing
+				run.AgentRuntime.ArtifactState = "missing"
 				run.AgentRuntime.ExitCode = result.ExitCode
 				run.AgentRuntime.TranscriptID = transcriptID
 				run.AgentRuntime.BlockedReason = "build completed without reviewable diff evidence"
@@ -353,10 +568,46 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 	s.finishAgentRunCompleted(project, runID, req, descriptor, record, result, transcriptID, diffArtifact)
 }
 
+func (s *Service) blockExternalAgentConsent(project *ProjectSession, runID string, req AIChatRunRequest, snapshot AIContextSnapshot, descriptor providers.AIProviderDescriptor) {
+	runtimeFamily := agentRuntimeFamilyForRun(req, descriptor)
+	transport := agentTransportForRun(runtimeFamily, descriptor)
+	s.updateRun(runID, func(run *AIChatRun) {
+		run.RuntimeFamily = runtimeFamily
+		run.ProviderID = descriptor.ID
+		run.Model = firstNonEmpty(req.Model, descriptor.DefaultModel)
+		run.ReasoningEffort = req.ReasoningEffort
+		run.AgentRuntime = newAIRuntimeProofSummary(descriptor, runtimeFamily, transport, run.Model, req.Action, "blocked", req.ReasoningEffort)
+	})
+	record := s.startAgentEgressRecord(project, runID, req, descriptor, snapshot)
+	s.finishExternalAgentConsentBlocked(project, runID, record)
+}
+
+func (s *Service) finishExternalAgentConsentBlocked(project *ProjectSession, runID string, record AIEgressRecord) {
+	record.Status = "blocked"
+	record.ErrorClass = agents.FailureConsentRequired
+	record = s.storeAgentEgressRecord(project, runID, record)
+	s.updateRun(runID, func(run *AIChatRun) {
+		run.EgressRecordID = record.ID
+		if run.AgentRuntime != nil {
+			run.AgentRuntime.Status = "blocked"
+			run.AgentRuntime.HealthStatus = "blocked"
+			run.AgentRuntime.ProofState = "blocked"
+			run.AgentRuntime.FailureCode = agents.FailureConsentRequired
+			run.AgentRuntime.ConsentStatus = "blocked"
+			run.AgentRuntime.BlockedReason = "external agent CLI consent required"
+		}
+	})
+	s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "External agent egress blocked", "External agent CLI consent is required before context is sent.", record)
+	s.finishRunError(runID, "external agent CLI consent is required before sending context to this provider-owned CLI")
+}
+
 func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSession, runID string, authRunner agents.AuthRunner, adapter agents.Adapter, descriptor providers.AIProviderDescriptor) {
 	s.updateRun(runID, func(run *AIChatRun) {
 		if run.AgentRuntime != nil {
 			run.AgentRuntime.Status = "running"
+			run.AgentRuntime.HealthStatus = "running"
+			run.AgentRuntime.ProofState = "running"
+			run.AgentRuntime.PreflightStatus = "interactive_fallback_started"
 		}
 	})
 	s.emitRunEnvelope(project.ID, runID)
@@ -383,6 +634,9 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 			run.Response = "External agent authentication was canceled."
 			if run.AgentRuntime != nil {
 				run.AgentRuntime.Status = "canceled"
+				run.AgentRuntime.HealthStatus = "canceled"
+				run.AgentRuntime.ProofState = "canceled"
+				run.AgentRuntime.FailureCode = agents.FailureCanceled
 				run.AgentRuntime.ExitCode = result.ExitCode
 				run.AgentRuntime.TranscriptID = transcriptID
 			}
@@ -391,14 +645,14 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 			RunID:            runID,
 			SessionID:        defaultChatSessionID,
 			ProjectSessionID: project.ID,
-			Source:           "external_agent_cli",
+			Source:           "agent_runtime",
 			Type:             "auth_completed",
 			Status:           "canceled",
 			Actor:            "system",
 			ProviderID:       descriptor.ID,
 			Model:            descriptor.DefaultModel,
 			Capability:       providers.CapabilityChat,
-			Summary:          "External agent CLI authentication canceled.",
+			Summary:          "Interactive fallback authentication canceled.",
 		})
 		if run, err := s.GetChatRun(project.ID, runID); err == nil {
 			s.persistChatRun(run)
@@ -416,6 +670,9 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 			run.Response = agentRunDisplayResponse(result, nil)
 			if run.AgentRuntime != nil {
 				run.AgentRuntime.Status = "error"
+				run.AgentRuntime.HealthStatus = "error"
+				run.AgentRuntime.ProofState = "error"
+				run.AgentRuntime.FailureCode = agentFailureCodeForResult(result)
 				run.AgentRuntime.ExitCode = result.ExitCode
 				run.AgentRuntime.TranscriptID = transcriptID
 				run.AgentRuntime.BlockedReason = sanitizedDisplayText(message)
@@ -425,14 +682,14 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 			RunID:            runID,
 			SessionID:        defaultChatSessionID,
 			ProjectSessionID: project.ID,
-			Source:           "external_agent_cli",
+			Source:           "agent_runtime",
 			Type:             "auth_completed",
 			Status:           "error",
 			Actor:            "system",
 			ProviderID:       descriptor.ID,
 			Model:            descriptor.DefaultModel,
 			Capability:       providers.CapabilityChat,
-			Summary:          "External agent CLI authentication failed.",
+			Summary:          "Interactive fallback authentication failed.",
 		})
 		if run, err := s.GetChatRun(project.ID, runID); err == nil {
 			s.persistChatRun(run)
@@ -452,6 +709,10 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 		run.Response = "External agent authentication completed. Refreshing provider status."
 		if run.AgentRuntime != nil {
 			run.AgentRuntime.Status = "completed"
+			run.AgentRuntime.HealthStatus = "completed"
+			run.AgentRuntime.ProofState = "proved"
+			run.AgentRuntime.ProofReason = "interactive auth completed through fallback runtime"
+			run.AgentRuntime.ArtifactState = "transcript_evidence"
 			run.AgentRuntime.AuthStatus = authStatus
 			run.AgentRuntime.ExitCode = result.ExitCode
 			run.AgentRuntime.TranscriptID = transcriptID
@@ -461,14 +722,14 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 		RunID:            runID,
 		SessionID:        defaultChatSessionID,
 		ProjectSessionID: project.ID,
-		Source:           "external_agent_cli",
+		Source:           "agent_runtime",
 		Type:             "auth_completed",
 		Status:           "completed",
 		Actor:            "system",
 		ProviderID:       descriptor.ID,
 		Model:            descriptor.DefaultModel,
 		Capability:       providers.CapabilityChat,
-		Summary:          fmt.Sprintf("External agent CLI authentication completed in %d ms.", latencyMs),
+		Summary:          fmt.Sprintf("Interactive fallback authentication completed in %d ms.", latencyMs),
 	})
 	if run, err := s.GetChatRun(project.ID, runID); err == nil {
 		s.persistChatRun(run)
@@ -481,7 +742,7 @@ func (s *Service) finishAgentAuthCleanup(runID string, adapter agents.Adapter) {
 	if invalidator, ok := adapter.(agents.CacheInvalidator); ok {
 		invalidator.Invalidate()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), agentDescriptorProbeTimeout)
 	defer cancel()
 	s.emitEvent("ai:provider:status", agents.DescriptorToProvider(adapter.Descriptor(ctx)))
 	s.mu.Lock()
@@ -490,6 +751,7 @@ func (s *Service) finishAgentAuthCleanup(runID string, adapter agents.Adapter) {
 }
 
 func (s *Service) handleAgentRuntimeEvent(project *ProjectSession, runID string, event agents.Event) {
+	s.updateAgentRuntimeProofFromEvent(runID, event)
 	if event.Type == agents.EventTerminalData {
 		s.emitEvent("ai:agent:terminal-data", map[string]any{
 			"runId":            runID,
@@ -499,14 +761,200 @@ func (s *Service) handleAgentRuntimeEvent(project *ProjectSession, runID string,
 		})
 		return
 	}
+	if event.Type == agents.EventMessage {
+		if strings.TrimSpace(event.Text) != "" && event.Status == "message.delta" {
+			s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": sanitizedDisplayChunk(event.Text)})
+			s.updateRun(runID, func(run *AIChatRun) {
+				run.Response += sanitizedDisplayChunk(event.Text)
+			})
+			return
+		}
+	}
+	if shouldDropAgentRuntimeStatusEvent(event) {
+		return
+	}
 	s.emitEvent("ai:agent:status", map[string]any{
 		"runId":            runID,
 		"projectSessionId": project.ID,
 		"type":             event.Type,
 		"status":           event.Status,
 		"text":             sanitizedDisplayText(event.Text),
+		"payload":          event.Payload,
 		"createdAt":        event.CreatedAt,
 	})
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runID,
+		ProjectSessionID: project.ID,
+		Source:           "agent_runtime",
+		Type:             string(event.Type),
+		Status:           string(event.Status),
+		Actor:            "agent",
+		Summary:          sanitizedDisplayText(event.Text),
+	})
+}
+
+func shouldDropAgentRuntimeStatusEvent(event agents.Event) bool {
+	if event.Type != agents.EventStatus {
+		return false
+	}
+	status := strings.ToLower(strings.TrimSpace(event.Status))
+	if status == "" {
+		return false
+	}
+	return strings.Contains(status, "delta") ||
+		strings.Contains(status, "transcript/chunk") ||
+		strings.Contains(status, "command/output") ||
+		strings.Contains(status, "exec/output")
+}
+
+func (s *Service) updateAgentRuntimeProofFromEvent(runID string, event agents.Event) {
+	status := strings.TrimSpace(event.Status)
+	if status == "" {
+		status = string(event.Type)
+	}
+	createdAt := firstNonEmpty(event.CreatedAt, utcNow())
+	s.updateRun(runID, func(run *AIChatRun) {
+		if run.AgentRuntime == nil {
+			return
+		}
+		proof := run.AgentRuntime
+		if proof.FirstEventAt == "" {
+			proof.FirstEventAt = createdAt
+			proof.FirstEventType = status
+		}
+		proof.LastEventAt = createdAt
+		if status == "runtime_proof" && proof.PreflightStatus == "pending" {
+			proof.PreflightStatus = "process_started"
+		}
+		if status == "first_provider_event" {
+			proof.PreflightStatus = "first_provider_event"
+		}
+		if event.Type == agents.EventError {
+			proof.HealthStatus = "error"
+			proof.ProofState = "error"
+		}
+		if strings.Contains(status, "blocked") {
+			proof.HealthStatus = "blocked"
+			proof.ProofState = "blocked"
+		}
+		if value := runtimePayloadString(event.Payload, "transport"); value != "" {
+			proof.Transport = value
+		}
+		if value := runtimePayloadString(event.Payload, "protocol"); value != "" {
+			proof.ProtocolVersion = value
+		}
+		if value := runtimePayloadString(event.Payload, "sandbox"); value != "" {
+			proof.SandboxPolicy = value
+		}
+		if value := runtimePayloadString(event.Payload, "sandboxPolicy"); value != "" {
+			proof.SandboxPolicy = value
+		}
+		if value := runtimePayloadString(event.Payload, "failureCode"); value != "" {
+			proof.FailureCode = value
+		}
+		if value := runtimePayloadString(event.Payload, "artifactState"); value != "" {
+			proof.ArtifactState = value
+		}
+		if value := runtimePayloadString(event.Payload, "proofState"); value != "" {
+			proof.ProofState = value
+		}
+		if value := runtimePayloadString(event.Payload, "proofReason"); value != "" {
+			proof.ProofReason = sanitizedDisplayText(value)
+		}
+		if value := runtimePayloadString(event.Payload, "threadId"); value != "" {
+			proof.ThreadID = value
+		} else if value := runtimePayloadString(event.Payload, "thread_id"); value != "" {
+			proof.ThreadID = value
+		} else if value := runtimePayloadPathString(event.Payload, "thread", "id"); value != "" {
+			proof.ThreadID = value
+		}
+		if value := runtimePayloadString(event.Payload, "turnId"); value != "" {
+			proof.TurnID = value
+		} else if value := runtimePayloadString(event.Payload, "turn_id"); value != "" {
+			proof.TurnID = value
+		} else if value := runtimePayloadPathString(event.Payload, "turn", "id"); value != "" {
+			proof.TurnID = value
+		}
+	})
+}
+
+func runtimePayloadString(payload map[string]any, key string) string {
+	if len(payload) == 0 || key == "" {
+		return ""
+	}
+	value, ok := payload[key]
+	if !ok {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	case bool:
+		return fmt.Sprintf("%t", typed)
+	case int, int64, float64:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	default:
+		return ""
+	}
+}
+
+func runtimePayloadPathString(payload map[string]any, path ...string) string {
+	if len(payload) == 0 || len(path) == 0 {
+		return ""
+	}
+	var current any = payload
+	for _, segment := range path {
+		object, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = object[segment]
+	}
+	switch typed := current.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return ""
+	}
+}
+
+func (s *Service) agentRuntimeArtifactState(runID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.runs == nil {
+		return ""
+	}
+	run := s.runs[runID]
+	if run == nil || run.AgentRuntime == nil {
+		return ""
+	}
+	return strings.TrimSpace(run.AgentRuntime.ArtifactState)
+}
+
+func (s *Service) agentRuntimeHasProviderEvent(runID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.runs == nil {
+		return false
+	}
+	run := s.runs[runID]
+	if run == nil || run.AgentRuntime == nil {
+		return false
+	}
+	return strings.TrimSpace(run.AgentRuntime.PreflightStatus) == "first_provider_event"
+}
+
+func buildEvidenceArtifactStateAccepted(state string) bool {
+	switch strings.TrimSpace(state) {
+	case "explicit_no_change", "diagnostic_evidence", "test_evidence":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) startAgentEgressRecord(project *ProjectSession, runID string, req AIChatRunRequest, descriptor providers.AIProviderDescriptor, snapshot AIContextSnapshot) AIEgressRecord {
@@ -518,23 +966,24 @@ func (s *Service) startAgentEgressRecord(project *ProjectSession, runID string, 
 		ProviderKind:     descriptor.Kind,
 		Endpoint:         firstNonEmpty(descriptor.EndpointClass, descriptor.Endpoint),
 		Model:            firstNonEmpty(req.Model, descriptor.DefaultModel),
+		ReasoningEffort:  req.ReasoningEffort,
 		Capability:       providers.CapabilityChat,
 		ProjectPathHash:  hashProjectPath(project.ProjectRoot),
 		ProjectSessionID: project.ID,
 		DataCategories:   snapshot.DataCategories,
 		Redaction:        snapshot.Redaction,
 		Status:           "started",
-		OptInSource:      "external_agent_cli",
+		OptInSource:      "agent_runtime",
 		CreatedAt:        utcNow(),
 		RunID:            runID,
-		Source:           "external_agent_cli",
+		Source:           "agent_runtime",
 		ChatAction:       req.Action,
 	}
 	s.recordRunTimeline(project, AIRunTimelineEvent{
 		RunID:            runID,
 		SessionID:        normalizeChatSessionID(req.SessionID),
 		ProjectSessionID: project.ID,
-		Source:           "external_agent_cli",
+		Source:           "agent_runtime",
 		Type:             "provider_request",
 		Status:           "started",
 		Actor:            "agent",
@@ -544,7 +993,7 @@ func (s *Service) startAgentEgressRecord(project *ProjectSession, runID string, 
 		Capability:       providers.CapabilityChat,
 		DataCategories:   snapshot.DataCategories,
 		Redaction:        snapshot.Redaction,
-		Summary:          "External agent CLI request started.",
+		Summary:          "Agent runtime request started.",
 	})
 	return record
 }
@@ -563,18 +1012,41 @@ func (s *Service) storeAgentEgressRecord(project *ProjectSession, runID string, 
 
 func (s *Service) recordAgentTranscriptArtifact(project *ProjectSession, runID string, result agents.Result) string {
 	transcript := truncateUTF8(result.Transcript, agentTerminalTranscriptLimit)
+	transport := firstNonEmpty(result.Transport, agents.TransportPTYFallback)
 	payload := map[string]any{
-		"transport":  "pty",
+		"transport":  transport,
 		"status":     result.Status,
 		"exitCode":   result.ExitCode,
 		"startedAt":  result.StartedAt,
 		"finishedAt": result.FinishedAt,
 		"transcript": transcript,
 	}
-	title := "Agent terminal transcript"
-	summary := "Redacted bounded transcript from the external agent CLI."
+	title := "Agent runtime transcript"
+	summary := "Redacted bounded runtime evidence from the selected agent transport."
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactAgentTerminal, title, summary, payload)
 	return "artifact-" + shortHash(runID+":"+string(AIChatRunArtifactAgentTerminal)+":"+title)
+}
+
+func (s *Service) recordAgentBuildEvidenceArtifact(project *ProjectSession, runID string, req AIChatRunRequest, result agents.Result, evidenceState string) {
+	payload := map[string]any{
+		"artifactState": evidenceState,
+		"transport":     firstNonEmpty(result.Transport, agents.TransportPTYFallback),
+		"status":        result.Status,
+		"message":       sanitizedDisplayText(result.Message),
+		"action":        req.Action,
+		"createdAt":     utcNow(),
+	}
+	title := "Agent Build evidence"
+	summary := "Build completed with typed runtime evidence instead of file changes."
+	switch strings.TrimSpace(evidenceState) {
+	case "explicit_no_change":
+		summary = "Runtime reported an explicit no-change Build result."
+	case "diagnostic_evidence":
+		summary = "Runtime produced diagnostic evidence instead of a patch."
+	case "test_evidence":
+		summary = "Runtime produced test evidence instead of a patch."
+	}
+	s.recordChatRunArtifact(project, runID, AIChatRunArtifactAgentWorktree, title, summary, payload)
 }
 
 func (s *Service) finishAgentRunCompleted(project *ProjectSession, runID string, req AIChatRunRequest, descriptor providers.AIProviderDescriptor, record AIEgressRecord, result agents.Result, transcriptID string, diffArtifact AIChatRunArtifact) {
@@ -583,30 +1055,40 @@ func (s *Service) finishAgentRunCompleted(project *ProjectSession, runID string,
 		RunID:            runID,
 		SessionID:        normalizeChatSessionID(req.SessionID),
 		ProjectSessionID: project.ID,
-		Source:           "chat_runtime",
+		Source:           "agent_runtime",
 		Type:             "run_completed",
 		Status:           "completed",
 		Actor:            "system",
 		ProviderID:       descriptor.ID,
 		Model:            firstNonEmpty(req.Model, descriptor.DefaultModel),
 		Capability:       providers.CapabilityChat,
-		Summary:          "External agent CLI run completed.",
+		Summary:          "Agent runtime run completed.",
 	})
 	s.updateRun(runID, func(run *AIChatRun) {
 		run.Status = "completed"
 		run.CanCancel = false
 		run.Response = response
 		run.ProviderID = descriptor.ID
-		run.RuntimeFamily = agentRuntimeFamilyExternalCLI
+		run.RuntimeFamily = agentRuntimeFamilyForRun(req, descriptor)
 		run.Model = firstNonEmpty(req.Model, descriptor.DefaultModel)
 		run.ToolProposals = nil
 		run.EgressRecordID = record.ID
 		if run.AgentRuntime != nil {
 			run.AgentRuntime.Status = "completed"
+			run.AgentRuntime.HealthStatus = "completed"
+			run.AgentRuntime.ProofState = "proved"
+			run.AgentRuntime.ProofReason = "runtime completed with Arlecchino envelope evidence"
 			run.AgentRuntime.ExitCode = result.ExitCode
 			run.AgentRuntime.TranscriptID = transcriptID
 			if diffArtifact.ID != "" {
 				run.AgentRuntime.CapturedDiffID = diffArtifact.ID
+				run.AgentRuntime.ArtifactState = "captured_diff"
+			} else if req.Action == AIChatActionBuild && buildEvidenceArtifactStateAccepted(run.AgentRuntime.ArtifactState) {
+				// Keep the typed no-change/diagnostic/test evidence state captured before completion.
+			} else if req.Action == AIChatActionBuild {
+				run.AgentRuntime.ArtifactState = "missing"
+			} else {
+				run.AgentRuntime.ArtifactState = "not_required"
 			}
 		}
 	})
@@ -632,11 +1114,33 @@ func agentSupportsAction(descriptor providers.AIProviderDescriptor, action AICha
 	return false
 }
 
+func agentFailureCodeForResult(result agents.Result) string {
+	text := strings.ToLower(strings.TrimSpace(result.Error + " " + result.Message))
+	switch {
+	case result.Status == "canceled":
+		return agents.FailureCanceled
+	case strings.Contains(text, "auth") || strings.Contains(text, "login") || strings.Contains(text, "sign in"):
+		return agents.FailureAuthRequired
+	case strings.Contains(text, "quota") || strings.Contains(text, "billing") || strings.Contains(text, "payment"):
+		return agents.FailureQuotaOrBillingBlocked
+	case strings.Contains(text, "protected") || strings.Contains(text, "secret") || strings.Contains(text, "credential"):
+		return agents.FailureProtectedResourceDenied
+	case strings.Contains(text, "unsupported") || strings.Contains(text, "not found") || strings.Contains(text, "unavailable") || strings.Contains(text, "gated"):
+		return agents.FailureRuntimeUnavailable
+	case strings.Contains(text, "malformed") || strings.Contains(text, "protocol") || strings.Contains(text, "json"):
+		return agents.FailureProtocolDrift
+	case strings.Contains(text, "approval") || strings.Contains(text, "permission"):
+		return agents.FailureProviderApprovalBypass
+	default:
+		return agents.FailureProviderError
+	}
+}
+
 func buildExternalAgentPrompt(req AIChatRunRequest, snapshot AIContextSnapshot, summary AIContextSummary) string {
 	history := []AIChatRun{}
 	contextPrompt := buildChatPromptFromSnapshot(snapshot, history)
 	var b strings.Builder
-	b.WriteString("You are running as an external terminal agent inside Arlecchino AI Chat.\n")
+	b.WriteString("You are running as a structured external agent runtime inside Arlecchino AI Chat.\n")
 	b.WriteString("Mode: ")
 	b.WriteString(string(req.Action))
 	b.WriteString(". Keep all visible work grounded in the supplied Arlecchino context.\n")
@@ -824,7 +1328,7 @@ func gitFileMode(projectRoot string, relPath string) os.FileMode {
 }
 
 func agentWorktreeDiff(projectRoot string) (string, error) {
-	tracked, err := gitOutput(projectRoot, "diff", "--binary", "--no-ext-diff")
+	tracked, err := gitOutput(projectRoot, "diff", "--binary", "--no-ext-diff", "HEAD")
 	if err != nil {
 		return "", err
 	}
@@ -849,7 +1353,7 @@ func agentWorktreeDiff(projectRoot string) (string, error) {
 }
 
 func reverseAgentWorktreeDiff(projectRoot string) string {
-	output, err := gitOutput(projectRoot, "diff", "--binary", "--no-ext-diff", "--reverse")
+	output, err := gitOutput(projectRoot, "diff", "--binary", "--no-ext-diff", "--reverse", "HEAD")
 	if err != nil {
 		return ""
 	}

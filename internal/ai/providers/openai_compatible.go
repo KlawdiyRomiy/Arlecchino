@@ -84,21 +84,34 @@ func (p *OpenAICompatibleProvider) Descriptor() AIProviderDescriptor {
 		)
 	}
 	return AIProviderDescriptor{
-		ID:             p.id,
-		Name:           p.name,
-		Kind:           p.kind,
-		Endpoint:       p.endpoint,
-		Local:          p.local,
-		Manual:         p.manual,
-		Frontier:       !p.local,
-		AuthMode:       authMode,
-		OAuthSupported: false,
-		RequiresAuth:   p.requiresAuth,
-		AuthConfigured: authConfigured,
-		Capabilities:   capabilities,
-		DefaultModel: p.model,
-		Status:       status,
+		ID:                 p.id,
+		Name:               p.name,
+		Kind:               p.kind,
+		RuntimeFamily:      "model_agent_runtime",
+		Transport:          "model_api",
+		Endpoint:           p.endpoint,
+		EndpointClass:      openAICompatibleEndpointClass(p.local),
+		AdapterVersion:     "arlecchino-model-runtime-v1",
+		ProtocolVersion:    "openai_compatible_http_sse",
+		CompatibilityRange: "openai_compatible_chat_completions",
+		Local:              p.local,
+		Manual:             p.manual,
+		Frontier:           !p.local,
+		AuthMode:           authMode,
+		OAuthSupported:     false,
+		RequiresAuth:       p.requiresAuth,
+		AuthConfigured:     authConfigured,
+		Capabilities:       capabilities,
+		DefaultModel:       p.model,
+		Status:             status,
 	}
+}
+
+func openAICompatibleEndpointClass(local bool) string {
+	if local {
+		return "loopback"
+	}
+	return "frontier"
 }
 
 type openAIModelsResponse struct {

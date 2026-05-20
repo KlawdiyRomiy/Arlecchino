@@ -4,6 +4,11 @@ import type {
   AIProviderRuntimeModel,
 } from "../../wails/app";
 
+type AccountModelDescriptor = {
+  reasoningEfforts?: string[];
+  accountScoped?: boolean;
+};
+
 export function mergeModelOptions(
   provider: AIProviderDescriptor | null,
   runtime: AIProviderRuntimeDescriptor | null | undefined,
@@ -11,12 +16,15 @@ export function mergeModelOptions(
   const merged = new Map<string, AIProviderRuntimeModel>();
   for (const model of provider?.models ?? []) {
     if (!model.id) continue;
+    const accountModel = model as typeof model & AccountModelDescriptor;
     merged.set(model.id, {
       id: model.id,
       displayName: model.displayName || model.id,
-      source: "active",
+      source: accountModel.accountScoped ? "account" : "active",
       active: model.id === provider?.defaultModel,
       runnable: false,
+      reasoningEfforts: accountModel.reasoningEfforts ?? [],
+      accountScoped: Boolean(accountModel.accountScoped),
     });
   }
   for (const model of runtime?.models ?? []) {
@@ -28,6 +36,8 @@ export function mergeModelOptions(
       source: existing?.source === "active" ? "active" : model.source,
       active: Boolean(existing?.active || model.active),
       runnable: Boolean(existing?.runnable || model.runnable),
+      reasoningEfforts: model.reasoningEfforts ?? existing?.reasoningEfforts,
+      accountScoped: Boolean(model.accountScoped || existing?.accountScoped),
     });
   }
   return Array.from(merged.values()).sort((left, right) => {

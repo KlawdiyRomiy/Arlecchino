@@ -227,7 +227,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setQuickLook((prev) => ({ ...prev, isOpen: false }));
   };
 
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveTimerRefs = useRef<
+    Record<string, ReturnType<typeof setTimeout>>
+  >({});
   const contentStateFlushTimerRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
@@ -1233,11 +1235,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   const scheduleAutoSave = useCallback(
     (tabId: string) => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
+      const existingTimer = autoSaveTimerRefs.current[tabId];
+      if (existingTimer) {
+        clearTimeout(existingTimer);
       }
 
-      autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRefs.current[tabId] = setTimeout(() => {
+        delete autoSaveTimerRefs.current[tabId];
         autoSaveFile(tabId);
       }, AUTO_SAVE_DELAY);
     },
@@ -1271,10 +1275,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   const flushDirtyTabsForProjectMove = useCallback(async () => {
     flushPendingContentState();
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-      autoSaveTimerRef.current = null;
-    }
+    Object.values(autoSaveTimerRefs.current).forEach((timer) =>
+      clearTimeout(timer),
+    );
+    autoSaveTimerRefs.current = {};
 
     const dirtyTabs = tabsRef.current.filter((tab) => tab.isDirty);
     if (dirtyTabs.length === 0) {
@@ -1396,9 +1400,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     const tab = tabsRef.current.find((t) => t.id === tabId);
     if (!tab) return;
 
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-      autoSaveTimerRef.current = null;
+    const pendingAutoSave = autoSaveTimerRefs.current[tabId];
+    if (pendingAutoSave) {
+      clearTimeout(pendingAutoSave);
+      delete autoSaveTimerRefs.current[tabId];
     }
 
     setIsSaving(true);
@@ -2002,9 +2007,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   useEffect(() => {
     return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-      }
+      Object.values(autoSaveTimerRefs.current).forEach((timer) =>
+        clearTimeout(timer),
+      );
+      autoSaveTimerRefs.current = {};
       if (contentStateFlushTimerRef.current) {
         clearTimeout(contentStateFlushTimerRef.current);
       }

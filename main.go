@@ -236,11 +236,8 @@ func maybeRunMCPBootstrapMode(args []string) (bool, error) {
 	fmt.Fprintln(os.Stdout, "")
 	fmt.Fprintln(os.Stdout, "Next steps:")
 	if bootstrapOptions.global {
-		fmt.Fprintln(os.Stdout, "- OpenCode/Copilot: restart agent session in any directory.")
-		fmt.Fprintln(os.Stdout, "- Qwen/Codex/Claude: if status shows configured, restart session; otherwise run client mcp add manually.")
+		fmt.Fprintln(os.Stdout, "- Codex: if status shows configured, restart session; otherwise run `codex mcp add` manually.")
 	} else {
-		fmt.Fprintln(os.Stdout, "- OpenCode: restart agent session in this project (uses opencode.json).")
-		fmt.Fprintln(os.Stdout, "- Claude Code: restart session in this project (uses .mcp.json).")
 		fmt.Fprintf(os.Stdout, "- Codex CLI: codex mcp add arlecchino -- %s\n", renderBootstrapServerCommand(serverCommand, projectAbs))
 		fmt.Fprintln(os.Stdout, "- Want all directories? rerun with --global.")
 	}
@@ -452,13 +449,12 @@ func printMCPBootstrapUsage() {
 	fmt.Fprintln(os.Stdout, "")
 	fmt.Fprintln(os.Stdout, "Creates project MCP config files for Arlecchino server:")
 	fmt.Fprintln(os.Stdout, "- .mcp.json")
-	fmt.Fprintln(os.Stdout, "- opencode.json (mcp.arlecchino)")
 	fmt.Fprintln(os.Stdout, "")
 	fmt.Fprintln(os.Stdout, "Default behavior:")
-	fmt.Fprintln(os.Stdout, "- Also updates ~/.config/opencode/opencode.json for all directories")
+	fmt.Fprintln(os.Stdout, "- Also registers Arlecchino MCP in Codex CLI when codex is available")
 	fmt.Fprintln(os.Stdout, "")
 	fmt.Fprintln(os.Stdout, "Optional:")
-	fmt.Fprintln(os.Stdout, "- --project-only skips global opencode config update")
+	fmt.Fprintln(os.Stdout, "- --project-only skips Codex CLI registration")
 	fmt.Fprintln(os.Stdout, "- Auto-dev: when running from go run in arlecchino repo, bootstrap writes go-run MCP command automatically")
 	fmt.Fprintln(os.Stdout, "- --dev writes MCP command for `go -C <repo> run . mcp-server`")
 	fmt.Fprintln(os.Stdout, "- --dev-repo sets repo root for --dev (default: current directory)")

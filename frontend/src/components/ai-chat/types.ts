@@ -36,6 +36,7 @@ export interface AIChatUIState {
   selectedMentionsBySession: Record<string, AIChatMentionCandidate[]>;
   selectedProviderId: string;
   selectedModel: string;
+  selectedReasoningEffort: string;
   context: ContextToggles;
   displayPrefs: AIChatDisplayPrefs;
   providerPopoverOpen: boolean;
@@ -55,6 +56,7 @@ export type AIChatUIAction =
   | { type: "setActiveSession"; sessionId: string; runId?: string }
   | { type: "setProvider"; providerId: string; model?: string }
   | { type: "setModel"; model: string }
+  | { type: "setReasoningEffort"; reasoningEffort: string }
   | { type: "setContext"; key: keyof ContextToggles; value: boolean }
   | { type: "setDisplayPref"; key: keyof AIChatDisplayPrefs; value: boolean }
   | { type: "toggleProviderPopover"; open?: boolean }

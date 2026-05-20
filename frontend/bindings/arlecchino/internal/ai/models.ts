@@ -520,6 +520,7 @@ export class AIChatRun {
     "runtimeFamily"?: string;
     "providerId"?: string;
     "model"?: string;
+    "reasoningEffort"?: string;
     "userPrompt"?: string;
     "response"?: string;
     "error"?: string;
@@ -570,18 +571,18 @@ export class AIChatRun {
      * Creates a new AIChatRun instance from a string or object.
      */
     static createFrom($$source: any = {}): AIChatRun {
-        const $$createField13_0 = $$createType9;
-        const $$createField14_0 = $$createType11;
-        const $$createField16_0 = $$createType13;
+        const $$createField14_0 = $$createType9;
+        const $$createField15_0 = $$createType11;
+        const $$createField17_0 = $$createType13;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("contextSummary" in $$parsedSource) {
-            $$parsedSource["contextSummary"] = $$createField13_0($$parsedSource["contextSummary"]);
+            $$parsedSource["contextSummary"] = $$createField14_0($$parsedSource["contextSummary"]);
         }
         if ("toolProposals" in $$parsedSource) {
-            $$parsedSource["toolProposals"] = $$createField14_0($$parsedSource["toolProposals"]);
+            $$parsedSource["toolProposals"] = $$createField15_0($$parsedSource["toolProposals"]);
         }
         if ("agentRuntime" in $$parsedSource) {
-            $$parsedSource["agentRuntime"] = $$createField16_0($$parsedSource["agentRuntime"]);
+            $$parsedSource["agentRuntime"] = $$createField17_0($$parsedSource["agentRuntime"]);
         }
         return new AIChatRun($$parsedSource as Partial<AIChatRun>);
     }
@@ -667,6 +668,7 @@ export class AIChatRunEnvelope {
     "runtimeFamily"?: string;
     "providerId"?: string;
     "model"?: string;
+    "reasoningEffort"?: string;
     "error"?: string;
     "canCancel": boolean;
     "contextSummary"?: AIContextSummary | null;
@@ -733,50 +735,50 @@ export class AIChatRunEnvelope {
      * Creates a new AIChatRunEnvelope instance from a string or object.
      */
     static createFrom($$source: any = {}): AIChatRunEnvelope {
-        const $$createField12_0 = $$createType9;
-        const $$createField13_0 = $$createType15;
-        const $$createField14_0 = $$createType17;
-        const $$createField15_0 = $$createType18;
-        const $$createField16_0 = $$createType19;
-        const $$createField17_0 = $$createType20;
-        const $$createField18_0 = $$createType11;
-        const $$createField19_0 = $$createType21;
-        const $$createField20_0 = $$createType22;
-        const $$createField21_0 = $$createType24;
-        const $$createField22_0 = $$createType13;
+        const $$createField13_0 = $$createType9;
+        const $$createField14_0 = $$createType15;
+        const $$createField15_0 = $$createType17;
+        const $$createField16_0 = $$createType18;
+        const $$createField17_0 = $$createType19;
+        const $$createField18_0 = $$createType20;
+        const $$createField19_0 = $$createType11;
+        const $$createField20_0 = $$createType21;
+        const $$createField21_0 = $$createType22;
+        const $$createField22_0 = $$createType24;
+        const $$createField23_0 = $$createType13;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("contextSummary" in $$parsedSource) {
-            $$parsedSource["contextSummary"] = $$createField12_0($$parsedSource["contextSummary"]);
+            $$parsedSource["contextSummary"] = $$createField13_0($$parsedSource["contextSummary"]);
         }
         if ("providerEnvelope" in $$parsedSource) {
-            $$parsedSource["providerEnvelope"] = $$createField13_0($$parsedSource["providerEnvelope"]);
+            $$parsedSource["providerEnvelope"] = $$createField14_0($$parsedSource["providerEnvelope"]);
         }
         if ("egressSummary" in $$parsedSource) {
-            $$parsedSource["egressSummary"] = $$createField14_0($$parsedSource["egressSummary"]);
+            $$parsedSource["egressSummary"] = $$createField15_0($$parsedSource["egressSummary"]);
         }
         if ("disclosureSummary" in $$parsedSource) {
-            $$parsedSource["disclosureSummary"] = $$createField15_0($$parsedSource["disclosureSummary"]);
+            $$parsedSource["disclosureSummary"] = $$createField16_0($$parsedSource["disclosureSummary"]);
         }
         if ("approvalSummary" in $$parsedSource) {
-            $$parsedSource["approvalSummary"] = $$createField16_0($$parsedSource["approvalSummary"]);
+            $$parsedSource["approvalSummary"] = $$createField17_0($$parsedSource["approvalSummary"]);
         }
         if ("consentSummary" in $$parsedSource) {
-            $$parsedSource["consentSummary"] = $$createField17_0($$parsedSource["consentSummary"]);
+            $$parsedSource["consentSummary"] = $$createField18_0($$parsedSource["consentSummary"]);
         }
         if ("toolProposals" in $$parsedSource) {
-            $$parsedSource["toolProposals"] = $$createField18_0($$parsedSource["toolProposals"]);
+            $$parsedSource["toolProposals"] = $$createField19_0($$parsedSource["toolProposals"]);
         }
         if ("toolProposalSummary" in $$parsedSource) {
-            $$parsedSource["toolProposalSummary"] = $$createField19_0($$parsedSource["toolProposalSummary"]);
+            $$parsedSource["toolProposalSummary"] = $$createField20_0($$parsedSource["toolProposalSummary"]);
         }
         if ("mnemonicInclusion" in $$parsedSource) {
-            $$parsedSource["mnemonicInclusion"] = $$createField20_0($$parsedSource["mnemonicInclusion"]);
+            $$parsedSource["mnemonicInclusion"] = $$createField21_0($$parsedSource["mnemonicInclusion"]);
         }
         if ("timeline" in $$parsedSource) {
-            $$parsedSource["timeline"] = $$createField21_0($$parsedSource["timeline"]);
+            $$parsedSource["timeline"] = $$createField22_0($$parsedSource["timeline"]);
         }
         if ("agentRuntime" in $$parsedSource) {
-            $$parsedSource["agentRuntime"] = $$createField22_0($$parsedSource["agentRuntime"]);
+            $$parsedSource["agentRuntime"] = $$createField23_0($$parsedSource["agentRuntime"]);
         }
         return new AIChatRunEnvelope($$parsedSource as Partial<AIChatRunEnvelope>);
     }
@@ -791,6 +793,7 @@ export class AIChatRunRequest {
     "runtimeFamily"?: string;
     "providerId"?: string;
     "model"?: string;
+    "reasoningEffort"?: string;
     "includeMnemonic": boolean;
     "includeMCP": boolean;
     "includeSkills": boolean;
@@ -822,10 +825,10 @@ export class AIChatRunRequest {
      * Creates a new AIChatRunRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): AIChatRunRequest {
-        const $$createField12_0 = $$createType25;
+        const $$createField13_0 = $$createType25;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("context" in $$parsedSource) {
-            $$parsedSource["context"] = $$createField12_0($$parsedSource["context"]);
+            $$parsedSource["context"] = $$createField13_0($$parsedSource["context"]);
         }
         return new AIChatRunRequest($$parsedSource as Partial<AIChatRunRequest>);
     }
@@ -1516,6 +1519,7 @@ export class AIEgressRecord {
     "providerKind": string;
     "endpoint"?: string;
     "model"?: string;
+    "reasoningEffort"?: string;
     "capability": AIProviderCapability;
     "projectPathHash"?: string;
     "projectSessionId"?: string;
@@ -1583,14 +1587,14 @@ export class AIEgressRecord {
      * Creates a new AIEgressRecord instance from a string or object.
      */
     static createFrom($$source: any = {}): AIEgressRecord {
-        const $$createField9_0 = $$createType4;
-        const $$createField10_0 = $$createType28;
+        const $$createField10_0 = $$createType4;
+        const $$createField11_0 = $$createType28;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("dataCategories" in $$parsedSource) {
-            $$parsedSource["dataCategories"] = $$createField9_0($$parsedSource["dataCategories"]);
+            $$parsedSource["dataCategories"] = $$createField10_0($$parsedSource["dataCategories"]);
         }
         if ("redaction" in $$parsedSource) {
-            $$parsedSource["redaction"] = $$createField10_0($$parsedSource["redaction"]);
+            $$parsedSource["redaction"] = $$createField11_0($$parsedSource["redaction"]);
         }
         return new AIEgressRecord($$parsedSource as Partial<AIEgressRecord>);
     }
@@ -1603,6 +1607,7 @@ export class AIEgressSummary {
     "providerKind"?: string;
     "endpoint"?: string;
     "model"?: string;
+    "reasoningEffort"?: string;
     "capability"?: AIProviderCapability;
     "dataCategories"?: string[];
     "redaction": AIRedactionSummary;
@@ -1642,14 +1647,14 @@ export class AIEgressSummary {
      * Creates a new AIEgressSummary instance from a string or object.
      */
     static createFrom($$source: any = {}): AIEgressSummary {
-        const $$createField7_0 = $$createType4;
-        const $$createField8_0 = $$createType28;
+        const $$createField8_0 = $$createType4;
+        const $$createField9_0 = $$createType28;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("dataCategories" in $$parsedSource) {
-            $$parsedSource["dataCategories"] = $$createField7_0($$parsedSource["dataCategories"]);
+            $$parsedSource["dataCategories"] = $$createField8_0($$parsedSource["dataCategories"]);
         }
         if ("redaction" in $$parsedSource) {
-            $$parsedSource["redaction"] = $$createField8_0($$parsedSource["redaction"]);
+            $$parsedSource["redaction"] = $$createField9_0($$parsedSource["redaction"]);
         }
         return new AIEgressSummary($$parsedSource as Partial<AIEgressSummary>);
     }
@@ -1728,13 +1733,37 @@ export class AIEmbeddingStatus {
 
 export class AIExternalAgentRunSummary {
     "runtimeId"?: string;
+    "providerId"?: string;
+    "model"?: string;
+    "reasoningEffort"?: string;
     "runtimeFamily"?: string;
     "operation"?: string;
     "transport"?: string;
     "endpointClass"?: string;
+    "runtimeBinary"?: string;
+    "runtimeVersion"?: string;
+    "adapterVersion"?: string;
+    "protocolVersion"?: string;
+    "compatibilityRange"?: string;
     "authStatus"?: string;
     "authFlow"?: boolean;
     "status"?: string;
+    "healthStatus"?: string;
+    "proofState"?: string;
+    "proofReason"?: string;
+    "preflightStatus"?: string;
+    "consentStatus"?: string;
+    "toolPolicy"?: string;
+    "sandboxPolicy"?: string;
+    "artifactState"?: string;
+    "promptTransport"?: string;
+    "fallbackRuntime"?: boolean;
+    "threadId"?: string;
+    "turnId"?: string;
+    "firstEventType"?: string;
+    "firstEventAt"?: string;
+    "lastEventAt"?: string;
+    "failureCode"?: string;
     "exitCode"?: number;
     "capturedDiffId"?: string;
     "baselineId"?: string;
@@ -1752,10 +1781,10 @@ export class AIExternalAgentRunSummary {
      * Creates a new AIExternalAgentRunSummary instance from a string or object.
      */
     static createFrom($$source: any = {}): AIExternalAgentRunSummary {
-        const $$createField13_0 = $$createType4;
+        const $$createField37_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("sourceLinks" in $$parsedSource) {
-            $$parsedSource["sourceLinks"] = $$createField13_0($$parsedSource["sourceLinks"]);
+            $$parsedSource["sourceLinks"] = $$createField37_0($$parsedSource["sourceLinks"]);
         }
         return new AIExternalAgentRunSummary($$parsedSource as Partial<AIExternalAgentRunSummary>);
     }
@@ -2964,6 +2993,7 @@ export class AIProviderEnvelope {
     "providerId"?: string;
     "kind"?: string;
     "runtimeFamily"?: string;
+    "transport"?: string;
     "endpoint"?: string;
     "endpointClass"?: string;
     "model"?: string;
@@ -2973,6 +3003,10 @@ export class AIProviderEnvelope {
     "legalBasis"?: string;
     "riskTier"?: string;
     "sourceLinks"?: string[];
+    "runtimeVersion"?: string;
+    "adapterVersion"?: string;
+    "protocolVersion"?: string;
+    "compatibilityRange"?: string;
     "local": boolean;
     "frontier": boolean;
     "externalAccount"?: boolean;
@@ -2993,10 +3027,10 @@ export class AIProviderEnvelope {
      * Creates a new AIProviderEnvelope instance from a string or object.
      */
     static createFrom($$source: any = {}): AIProviderEnvelope {
-        const $$createField11_0 = $$createType4;
+        const $$createField12_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("sourceLinks" in $$parsedSource) {
-            $$parsedSource["sourceLinks"] = $$createField11_0($$parsedSource["sourceLinks"]);
+            $$parsedSource["sourceLinks"] = $$createField12_0($$parsedSource["sourceLinks"]);
         }
         return new AIProviderEnvelope($$parsedSource as Partial<AIProviderEnvelope>);
     }
@@ -3069,6 +3103,8 @@ export class AIProviderRuntimeModel {
     "active": boolean;
     "runnable": boolean;
     "reason"?: string;
+    "reasoningEfforts"?: string[];
+    "accountScoped"?: boolean;
 
     /** Creates a new AIProviderRuntimeModel instance. */
     constructor($$source: Partial<AIProviderRuntimeModel> = {}) {
@@ -3095,7 +3131,11 @@ export class AIProviderRuntimeModel {
      * Creates a new AIProviderRuntimeModel instance from a string or object.
      */
     static createFrom($$source: any = {}): AIProviderRuntimeModel {
+        const $$createField7_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("reasoningEfforts" in $$parsedSource) {
+            $$parsedSource["reasoningEfforts"] = $$createField7_0($$parsedSource["reasoningEfforts"]);
+        }
         return new AIProviderRuntimeModel($$parsedSource as Partial<AIProviderRuntimeModel>);
     }
 }

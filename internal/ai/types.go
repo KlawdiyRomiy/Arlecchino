@@ -152,21 +152,26 @@ type AIContextDisclosureSummary struct {
 }
 
 type AIProviderEnvelope struct {
-	ProviderID      string                `json:"providerId,omitempty"`
-	Kind            string                `json:"kind,omitempty"`
-	RuntimeFamily   string                `json:"runtimeFamily,omitempty"`
-	Endpoint        string                `json:"endpoint,omitempty"`
-	EndpointClass   string                `json:"endpointClass,omitempty"`
-	Model           string                `json:"model,omitempty"`
-	Status          AIProviderStatusValue `json:"status,omitempty"`
-	AuthStatus      string                `json:"authStatus,omitempty"`
-	BillingMode     string                `json:"billingMode,omitempty"`
-	LegalBasis      string                `json:"legalBasis,omitempty"`
-	RiskTier        string                `json:"riskTier,omitempty"`
-	SourceLinks     []string              `json:"sourceLinks,omitempty"`
-	Local           bool                  `json:"local"`
-	Frontier        bool                  `json:"frontier"`
-	ExternalAccount bool                  `json:"externalAccount,omitempty"`
+	ProviderID         string                `json:"providerId,omitempty"`
+	Kind               string                `json:"kind,omitempty"`
+	RuntimeFamily      string                `json:"runtimeFamily,omitempty"`
+	Transport          string                `json:"transport,omitempty"`
+	Endpoint           string                `json:"endpoint,omitempty"`
+	EndpointClass      string                `json:"endpointClass,omitempty"`
+	Model              string                `json:"model,omitempty"`
+	Status             AIProviderStatusValue `json:"status,omitempty"`
+	AuthStatus         string                `json:"authStatus,omitempty"`
+	BillingMode        string                `json:"billingMode,omitempty"`
+	LegalBasis         string                `json:"legalBasis,omitempty"`
+	RiskTier           string                `json:"riskTier,omitempty"`
+	SourceLinks        []string              `json:"sourceLinks,omitempty"`
+	RuntimeVersion     string                `json:"runtimeVersion,omitempty"`
+	AdapterVersion     string                `json:"adapterVersion,omitempty"`
+	ProtocolVersion    string                `json:"protocolVersion,omitempty"`
+	CompatibilityRange string                `json:"compatibilityRange,omitempty"`
+	Local              bool                  `json:"local"`
+	Frontier           bool                  `json:"frontier"`
+	ExternalAccount    bool                  `json:"externalAccount,omitempty"`
 }
 
 type AIContextSnippetBreakdown struct {
@@ -530,6 +535,7 @@ type AIEgressRecord struct {
 	ProviderKind     string               `json:"providerKind"`
 	Endpoint         string               `json:"endpoint,omitempty"`
 	Model            string               `json:"model,omitempty"`
+	ReasoningEffort  string               `json:"reasoningEffort,omitempty"`
 	Capability       AIProviderCapability `json:"capability"`
 	ProjectPathHash  string               `json:"projectPathHash,omitempty"`
 	ProjectSessionID string               `json:"projectSessionId,omitempty"`
@@ -637,6 +643,7 @@ type AIEgressSummary struct {
 	ProviderKind    string               `json:"providerKind,omitempty"`
 	Endpoint        string               `json:"endpoint,omitempty"`
 	Model           string               `json:"model,omitempty"`
+	ReasoningEffort string               `json:"reasoningEffort,omitempty"`
 	Capability      AIProviderCapability `json:"capability,omitempty"`
 	DataCategories  []string             `json:"dataCategories,omitempty"`
 	Redaction       AIRedactionSummary   `json:"redaction"`
@@ -677,20 +684,44 @@ type AIMnemonicInclusionSummary struct {
 }
 
 type AIExternalAgentRunSummary struct {
-	RuntimeID      string   `json:"runtimeId,omitempty"`
-	RuntimeFamily  string   `json:"runtimeFamily,omitempty"`
-	Operation      string   `json:"operation,omitempty"`
-	Transport      string   `json:"transport,omitempty"`
-	EndpointClass  string   `json:"endpointClass,omitempty"`
-	AuthStatus     string   `json:"authStatus,omitempty"`
-	AuthFlow       bool     `json:"authFlow,omitempty"`
-	Status         string   `json:"status,omitempty"`
-	ExitCode       int      `json:"exitCode,omitempty"`
-	CapturedDiffID string   `json:"capturedDiffId,omitempty"`
-	BaselineID     string   `json:"baselineId,omitempty"`
-	TranscriptID   string   `json:"transcriptId,omitempty"`
-	BlockedReason  string   `json:"blockedReason,omitempty"`
-	SourceLinks    []string `json:"sourceLinks,omitempty"`
+	RuntimeID          string   `json:"runtimeId,omitempty"`
+	ProviderID         string   `json:"providerId,omitempty"`
+	Model              string   `json:"model,omitempty"`
+	ReasoningEffort    string   `json:"reasoningEffort,omitempty"`
+	RuntimeFamily      string   `json:"runtimeFamily,omitempty"`
+	Operation          string   `json:"operation,omitempty"`
+	Transport          string   `json:"transport,omitempty"`
+	EndpointClass      string   `json:"endpointClass,omitempty"`
+	RuntimeBinary      string   `json:"runtimeBinary,omitempty"`
+	RuntimeVersion     string   `json:"runtimeVersion,omitempty"`
+	AdapterVersion     string   `json:"adapterVersion,omitempty"`
+	ProtocolVersion    string   `json:"protocolVersion,omitempty"`
+	CompatibilityRange string   `json:"compatibilityRange,omitempty"`
+	AuthStatus         string   `json:"authStatus,omitempty"`
+	AuthFlow           bool     `json:"authFlow,omitempty"`
+	Status             string   `json:"status,omitempty"`
+	HealthStatus       string   `json:"healthStatus,omitempty"`
+	ProofState         string   `json:"proofState,omitempty"`
+	ProofReason        string   `json:"proofReason,omitempty"`
+	PreflightStatus    string   `json:"preflightStatus,omitempty"`
+	ConsentStatus      string   `json:"consentStatus,omitempty"`
+	ToolPolicy         string   `json:"toolPolicy,omitempty"`
+	SandboxPolicy      string   `json:"sandboxPolicy,omitempty"`
+	ArtifactState      string   `json:"artifactState,omitempty"`
+	PromptTransport    string   `json:"promptTransport,omitempty"`
+	FallbackRuntime    bool     `json:"fallbackRuntime,omitempty"`
+	ThreadID           string   `json:"threadId,omitempty"`
+	TurnID             string   `json:"turnId,omitempty"`
+	FirstEventType     string   `json:"firstEventType,omitempty"`
+	FirstEventAt       string   `json:"firstEventAt,omitempty"`
+	LastEventAt        string   `json:"lastEventAt,omitempty"`
+	FailureCode        string   `json:"failureCode,omitempty"`
+	ExitCode           int      `json:"exitCode,omitempty"`
+	CapturedDiffID     string   `json:"capturedDiffId,omitempty"`
+	BaselineID         string   `json:"baselineId,omitempty"`
+	TranscriptID       string   `json:"transcriptId,omitempty"`
+	BlockedReason      string   `json:"blockedReason,omitempty"`
+	SourceLinks        []string `json:"sourceLinks,omitempty"`
 }
 
 type AIChatRunEnvelope struct {
@@ -704,6 +735,7 @@ type AIChatRunEnvelope struct {
 	RuntimeFamily       string                     `json:"runtimeFamily,omitempty"`
 	ProviderID          string                     `json:"providerId,omitempty"`
 	Model               string                     `json:"model,omitempty"`
+	ReasoningEffort     string                     `json:"reasoningEffort,omitempty"`
 	Error               string                     `json:"error,omitempty"`
 	CanCancel           bool                       `json:"canCancel"`
 	ContextSummary      *AIContextSummary          `json:"contextSummary,omitempty"`
@@ -733,6 +765,7 @@ type AIChatRun struct {
 	RuntimeFamily     string                     `json:"runtimeFamily,omitempty"`
 	ProviderID        string                     `json:"providerId,omitempty"`
 	Model             string                     `json:"model,omitempty"`
+	ReasoningEffort   string                     `json:"reasoningEffort,omitempty"`
 	UserPrompt        string                     `json:"userPrompt,omitempty"`
 	Response          string                     `json:"response,omitempty"`
 	Error             string                     `json:"error,omitempty"`
@@ -1102,6 +1135,7 @@ type AIChatRunRequest struct {
 	RuntimeFamily   string           `json:"runtimeFamily,omitempty"`
 	ProviderID      string           `json:"providerId,omitempty"`
 	Model           string           `json:"model,omitempty"`
+	ReasoningEffort string           `json:"reasoningEffort,omitempty"`
 	IncludeMnemonic bool             `json:"includeMnemonic"`
 	IncludeMCP      bool             `json:"includeMCP"`
 	IncludeSkills   bool             `json:"includeSkills"`

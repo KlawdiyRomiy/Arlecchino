@@ -314,7 +314,7 @@ func (s *Service) ListProviders() []providers.AIProviderDescriptor {
 	}
 	s.mu.RUnlock()
 	if s.agents != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), agentDescriptorProbeTimeout)
 		defer cancel()
 		for _, descriptor := range s.agents.Descriptors(ctx) {
 			result = append(result, agents.DescriptorToProvider(descriptor))
@@ -1061,6 +1061,7 @@ func (s *Service) callProvider(ctx context.Context, project *ProjectSession, des
 		ProviderKind:     descriptor.Kind,
 		Endpoint:         descriptor.Endpoint,
 		Model:            firstNonEmpty(req.Model, descriptor.DefaultModel),
+		ReasoningEffort:  req.ReasoningEffort,
 		Capability:       req.Capability,
 		ProjectPathHash:  hashProjectPath(project.ProjectRoot),
 		ProjectSessionID: project.ID,

@@ -27,9 +27,6 @@ func (a *App) SaveMCPSettings(settings mcp.Settings) (MCPSettingsStatus, error) 
 	}
 
 	if normalized.Enabled {
-		if _, err := mcp.SetOpenCodeMCPEnabled("", a.currentProjectPath(), true); err != nil {
-			return MCPSettingsStatus{}, err
-		}
 		a.startMCPBridge()
 		a.ensureMCPConfigs()
 	} else {
