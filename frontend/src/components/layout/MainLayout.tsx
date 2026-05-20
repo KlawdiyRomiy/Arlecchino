@@ -694,7 +694,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     actionId: ShortcutActionId;
     lastAt: number;
   } | null>(null);
-  const openCanonicalBrowserPreviewRef = React.useRef<() => void>(() => {});
+  const openCanonicalBrowserPreviewRef = React.useRef<() => boolean>(
+    () => false,
+  );
   const toggleCanonicalBrowserPreviewRef = React.useRef<() => void>(() => {});
   const executionProfilesRequestRef = React.useRef(0);
   const codePanelOpenRequestRef = React.useRef(0);

@@ -563,17 +563,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-async function fallbackOnRuntimeError<T>(
-  request: Promise<T>,
-  fallback: T,
-): Promise<T> {
-  try {
-    return await request;
-  } catch {
-    return fallback;
-  }
-}
-
 function sessionIdOf(run: Pick<AIChatRunEnvelope, "sessionId">): string {
   return run.sessionId?.trim() || defaultChatSessionId;
 }
@@ -892,7 +881,7 @@ function fallbackActionDescriptors(): AIChatActionDescriptor[] {
       expectsToolProposals: false,
       readOnlyIntent: true,
       showPlanStructure: false,
-      executionUnavailable: false,
+      executionUnavailable: true,
     },
     {
       id: AIChatAction.AIChatActionPlan,
@@ -903,18 +892,18 @@ function fallbackActionDescriptors(): AIChatActionDescriptor[] {
       expectsToolProposals: false,
       readOnlyIntent: true,
       showPlanStructure: true,
-      executionUnavailable: false,
+      executionUnavailable: true,
     },
     {
       id: AIChatAction.AIChatActionBuild,
       name: "Build",
       description: "Prepare approval-gated tool calls and patch artifacts.",
       builtIn: true,
-      mayProposeTools: true,
-      expectsToolProposals: true,
+      mayProposeTools: false,
+      expectsToolProposals: false,
       readOnlyIntent: false,
       showPlanStructure: false,
-      executionUnavailable: false,
+      executionUnavailable: true,
     },
     {
       id: AIChatAction.AIChatActionDebug,
@@ -925,7 +914,7 @@ function fallbackActionDescriptors(): AIChatActionDescriptor[] {
       expectsToolProposals: false,
       readOnlyIntent: true,
       showPlanStructure: false,
-      executionUnavailable: false,
+      executionUnavailable: true,
     },
     {
       id: AIChatAction.AIChatActionReview,
@@ -936,7 +925,7 @@ function fallbackActionDescriptors(): AIChatActionDescriptor[] {
       expectsToolProposals: false,
       readOnlyIntent: true,
       showPlanStructure: false,
-      executionUnavailable: false,
+      executionUnavailable: true,
     },
   ] as AIChatActionDescriptor[];
 }
@@ -951,8 +940,9 @@ function sanitizeActionDescriptors(
     /non-executable|not executable/i.test(descriptor.description || "")
       ? {
           ...descriptor,
-          description: "Prepare approval-gated tool calls and patch artifacts.",
-          executionUnavailable: false,
+          executionUnavailable: true,
+          mutationAllowed: false,
+          expectsToolProposals: false,
         }
       : descriptor,
   );
@@ -1170,6 +1160,9 @@ export function AIChatPanelContent({
     () => sanitizeActionDescriptors(actions),
     [actions],
   );
+  const selectedActionDescriptor = composerActions.find(
+    (descriptor) => descriptor.id === state.selectedAction,
+  );
   const activeRunRunning = activeSessionEnvelopes.some(
     (run) => run.status === "running" || run.status === "queued",
   );
@@ -1187,10 +1180,16 @@ export function AIChatPanelContent({
       externalAgentRuntimeFamily;
   const disabledReason = activeRunRunning
     ? "Generation is running"
-    : !inputReady
-      ? providerDisabledReason
-      : providerDisabledReason;
-  const canSend = inputReady && selectedProviderReady && !activeRunRunning;
+    : selectedActionDescriptor?.executionUnavailable
+      ? selectedActionDescriptor.description || "Action unavailable"
+      : !inputReady
+        ? providerDisabledReason
+        : providerDisabledReason;
+  const canSend =
+    inputReady &&
+    selectedProviderReady &&
+    !activeRunRunning &&
+    !selectedActionDescriptor?.executionUnavailable;
   const transcriptRuns = useMemo(
     () => [...activeSessionEnvelopes].reverse(),
     [activeSessionEnvelopes],
@@ -1413,23 +1412,23 @@ export function AIChatPanelContent({
         nextProviderRuntimes,
         nextPendingApprovals,
       ] = await Promise.all([
-        fallbackOnRuntimeError(AIGetStatus(), defaultAIStatus()),
-        fallbackOnRuntimeError(AIListChatRuns(50), []),
-        fallbackOnRuntimeError(AIGetContextPreview(contextRequest), null),
-        fallbackOnRuntimeError(AIListChatActions(), []),
-        fallbackOnRuntimeError(AIListContextProviders(), []),
-        fallbackOnRuntimeError(AIListEgressRecords(50), []),
-        fallbackOnRuntimeError(AIListAgentProfiles(), []),
-        fallbackOnRuntimeError(AIListPromptWorkflows(), []),
-        fallbackOnRuntimeError(AIListTools(), []),
-        fallbackOnRuntimeError(AIListToolAudit(50), []),
-        fallbackOnRuntimeError(AIListModelCapabilities(), []),
-        fallbackOnRuntimeError(AIGetConsentPolicy(), null),
-        fallbackOnRuntimeError(AIGetEmbeddingStatus(), null),
-        fallbackOnRuntimeError(AIGetApprovalPolicy(), null),
-        fallbackOnRuntimeError(AIListMnemonicEntries(24), []),
-        fallbackOnRuntimeError(AIListProviderRuntimes(), []),
-        fallbackOnRuntimeError(AIListPendingApprovals(50), []),
+        AIGetStatus(),
+        AIListChatRuns(50),
+        AIGetContextPreview(contextRequest),
+        AIListChatActions(),
+        AIListContextProviders(),
+        AIListEgressRecords(50),
+        AIListAgentProfiles(),
+        AIListPromptWorkflows(),
+        AIListTools(),
+        AIListToolAudit(50),
+        AIListModelCapabilities(),
+        AIGetConsentPolicy(),
+        AIGetEmbeddingStatus(),
+        AIGetApprovalPolicy(),
+        AIListMnemonicEntries(24),
+        AIListProviderRuntimes(),
+        AIListPendingApprovals(50),
       ]);
       const safeStatus = normalizeAIStatus(nextStatus);
       const nextProviders = safeStatus.providers;
@@ -1549,20 +1548,22 @@ export function AIChatPanelContent({
   }, []);
 
   const refreshPendingApprovals = useCallback(async () => {
-    const approvals = await fallbackOnRuntimeError(
-      AIListPendingApprovals(50),
-      [],
-    );
-    setPendingApprovals(normalizeAIPendingApprovals(approvals));
-  }, []);
+    try {
+      const approvals = await AIListPendingApprovals(50);
+      setPendingApprovals(normalizeAIPendingApprovals(approvals));
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+  }, [setRuntimeError]);
 
   const refreshModelCapabilities = useCallback(async () => {
-    const capabilities = await fallbackOnRuntimeError(
-      AIListModelCapabilities(),
-      [],
-    );
-    setModelCapabilities(normalizeAIModelCapabilities(capabilities));
-  }, []);
+    try {
+      const capabilities = await AIListModelCapabilities();
+      setModelCapabilities(normalizeAIModelCapabilities(capabilities));
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+  }, [setModelCapabilities, setRuntimeError]);
 
   const refreshActiveArtifacts = useCallback(async () => {
     if (!activeRunKey) {
@@ -1832,8 +1833,8 @@ export function AIChatPanelContent({
     try {
       const discovery = await AIRefreshLocalProviders();
       const [nextStatus, nextProviderRuntimes] = await Promise.all([
-        fallbackOnRuntimeError(AIGetStatus(), defaultAIStatus()),
-        fallbackOnRuntimeError(AIListProviderRuntimes(), []),
+        AIGetStatus(),
+        AIListProviderRuntimes(),
       ]);
       const safeStatus = normalizeAIStatus(nextStatus);
       const statusProviders = safeStatus.providers;

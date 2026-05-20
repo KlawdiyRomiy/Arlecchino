@@ -617,7 +617,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
 
     // Read current line from terminal buffer (for history navigation sync)
     const readCurrentLineFromTerminal = (): string | null => {
-      const term: any = activeSession.terminal as any;
+      const term = activeSession.terminal;
       const buffer = term.buffer?.active;
       if (!buffer) return null;
 
@@ -1735,9 +1735,9 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
       : null;
     if (!container) return null;
 
-    const term: any = activeSession.terminal as any;
+    const term = activeSession.terminal;
 
-    const buffer: any = term.buffer?.active;
+    const buffer = term.buffer?.active;
     if (!buffer) return null;
     const cursorX = buffer.cursorX ?? 0;
     const cursorY = buffer.cursorY ?? 0;
@@ -1755,10 +1755,8 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     const xtermScreen = container.querySelector(".xterm-screen") as HTMLElement;
     if (!xtermScreen) return null;
 
-    // Get cell dimensions from xterm's internal dimensions
-    const dims = term._core?._renderService?.dimensions;
-    const cellW = dims?.css?.cell?.width || dims?.actualCellWidth;
-    const cellH = dims?.css?.cell?.height || dims?.actualCellHeight;
+    const cellW = term.cols > 0 ? xtermScreen.clientWidth / term.cols : 0;
+    const cellH = term.rows > 0 ? xtermScreen.clientHeight / term.rows : 0;
     if (!cellW || !cellH) return null;
 
     // Get font settings directly from xterm options

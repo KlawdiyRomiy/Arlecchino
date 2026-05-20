@@ -829,8 +829,8 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
 
     try {
       const [unstagedDiff, stagedDiff] = await Promise.all([
-        GetGitDiff(relativePath, false).catch(() => ""),
-        GetGitDiff(relativePath, true).catch(() => ""),
+        GetGitDiff(relativePath, false),
+        GetGitDiff(relativePath, true),
       ]);
 
       const unstagedMarkers = parseUnifiedDiffLineMarkers(
@@ -861,11 +861,13 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
           markerLoading: nextLoading,
         };
       });
-    } catch {
+    } catch (error) {
       set((state) => ({
+        error: toErrorMessage(error),
         markerLoading: {
           ...state.markerLoading,
           [markerKey]: false,
+          ...(filePath !== markerKey ? { [filePath]: false } : {}),
         },
       }));
     }

@@ -1,5 +1,6 @@
 import React from "react";
 import {
+  AlertCircle,
   Bot,
   Boxes,
   CheckCircle2,
@@ -29,7 +30,7 @@ import {
   runActivityLabel,
 } from "./aiChatPresentation";
 
-export type ActivityStatusState = "done" | "active" | "idle";
+export type ActivityStatusState = "done" | "active" | "idle" | "error";
 
 export interface ActivityStatusItem {
   key: string;
@@ -99,6 +100,7 @@ const formatCost = (metrics: RuntimeEgressMetrics | null): string => {
 };
 
 export function ActivityIcon({ state }: { state: ActivityStatusState }) {
+  if (state === "error") return <AlertCircle size={15} />;
   if (state === "done") return <CheckCircle2 size={15} />;
   if (state === "active") return <Loader2 size={15} className="spin" />;
   return <Circle size={15} />;
@@ -119,8 +121,8 @@ export function buildActivityStatusItems({
 }: ActivityStatusData): ActivityStatusItem[] {
   const provider = getProviderPresentation(selectedProvider);
   const runState = activeEnvelope?.status ?? "";
-  const completed =
-    runState === "completed" || runState === "error" || runState === "canceled";
+  const completed = runState === "completed";
+  const failed = runState === "error" || runState === "canceled";
   const items: ActivityStatusItem[] = [];
   if (!selectedProviderReady) {
     items.push({ key: "provider", state: "idle", label: provider.subtitle });
@@ -128,7 +130,13 @@ export function buildActivityStatusItems({
   if (activeEnvelope) {
     items.push({
       key: "run",
-      state: runState === "running" ? "active" : completed ? "done" : "idle",
+      state: failed
+        ? "error"
+        : runState === "running"
+          ? "active"
+          : completed
+            ? "done"
+            : "idle",
       label: runActivityLabel({
         status: activeEnvelope.status,
         activeText: activeRunText || activeRun?.response || "",

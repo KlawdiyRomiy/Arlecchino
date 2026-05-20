@@ -75,6 +75,14 @@ func (p *OpenAICompatibleProvider) Descriptor() AIProviderDescriptor {
 	if p.requiresAuth && !authConfigured {
 		status = ProviderStatusNeedsAuth
 	}
+	capabilities := DefaultCapabilities()
+	if !p.local {
+		capabilities = append(capabilities,
+			CapabilityToolCalling,
+			CapabilityStructuredOutput,
+			CapabilityPatchGeneration,
+		)
+	}
 	return AIProviderDescriptor{
 		ID:             p.id,
 		Name:           p.name,
@@ -84,14 +92,10 @@ func (p *OpenAICompatibleProvider) Descriptor() AIProviderDescriptor {
 		Manual:         p.manual,
 		Frontier:       !p.local,
 		AuthMode:       authMode,
-		OAuthSupported: !p.local,
+		OAuthSupported: false,
 		RequiresAuth:   p.requiresAuth,
 		AuthConfigured: authConfigured,
-		Capabilities: append(DefaultCapabilities(),
-			CapabilityToolCalling,
-			CapabilityStructuredOutput,
-			CapabilityPatchGeneration,
-		),
+		Capabilities:   capabilities,
 		DefaultModel: p.model,
 		Status:       status,
 	}

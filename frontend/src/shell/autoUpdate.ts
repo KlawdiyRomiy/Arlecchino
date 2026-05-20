@@ -531,9 +531,10 @@ export async function clearPrivateUpdateToken(): Promise<PrivateUpdateAuthStatus
 
 export async function checkForAutoUpdate(): Promise<AutoUpdateStatus> {
   const payload = await callByKnownName("check");
-  return payload !== undefined
-    ? syncAutoUpdateStatusFromPayload(payload)
-    : getAutoUpdateStatusSnapshot();
+  if (payload === undefined) {
+    throw new Error("Auto-update backend bridge is unavailable.");
+  }
+  return syncAutoUpdateStatusFromPayload(payload);
 }
 
 export const shouldRunAutoUpdateStartupCheck = (

@@ -28,7 +28,7 @@ const toArray = <T>(value: unknown): T[] =>
 
 export const defaultAIStatus = (): AIStatus =>
   new AIStatus({
-    enabled: true,
+    enabled: false,
     mnemonicEnabled: false,
     providers: [],
     settingsConfigured: false,

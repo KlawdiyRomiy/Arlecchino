@@ -754,7 +754,7 @@ func (m *Manager) CompleteWithContext(ctx context.Context, language, filePath st
 	server, err := m.ensureStartedWithContext(ctx, language)
 	if err != nil {
 		log.Printf("[LSP-MGR] Complete: start failed lang=%s err=%v", language, err)
-		return nil, nil
+		return nil, err
 	}
 
 	positionLine := line - 1

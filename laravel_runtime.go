@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"arlecchino/internal/plugins/laravel"
@@ -64,7 +65,7 @@ func (a *App) InspectProject() (interface{}, error) {
 func (a *App) IndexLaravelModels() (string, error) {
 	provider := a.getDefinitionProvider()
 	if provider == nil {
-		return "{}", nil
+		return "", fmt.Errorf("no Laravel project opened")
 	}
 
 	a.emitEvent("indexing:started", map[string]string{
@@ -77,12 +78,12 @@ func (a *App) IndexLaravelModels() (string, error) {
 			"type":  "models",
 			"error": err.Error(),
 		})
-		return "{}", nil
+		return "", err
 	}
 
 	jsonBytes, err := json.Marshal(models)
 	if err != nil {
-		return "{}", nil
+		return "", err
 	}
 	jsonData := string(jsonBytes)
 
@@ -199,22 +200,34 @@ func (a *App) IndexLaravelConfig() (string, error) {
 
 func (a *App) IndexLaravelAll() (map[string]interface{}, error) {
 	result := make(map[string]interface{})
+	failures := make([]error, 0)
 
 	if modelsData, err := a.IndexLaravelModels(); err == nil {
 		result["models"] = modelsData
+	} else {
+		failures = append(failures, fmt.Errorf("models: %w", err))
 	}
 
 	if routesData, err := a.IndexLaravelRoutes(); err == nil {
 		result["routes"] = routesData
+	} else {
+		failures = append(failures, fmt.Errorf("routes: %w", err))
 	}
 
 	if viewsData, err := a.IndexLaravelViews(); err == nil {
 		result["views"] = viewsData
+	} else {
+		failures = append(failures, fmt.Errorf("views: %w", err))
 	}
 
 	if configData, err := a.IndexLaravelConfig(); err == nil {
 		result["config"] = configData
+	} else {
+		failures = append(failures, fmt.Errorf("config: %w", err))
 	}
 
+	if len(failures) > 0 {
+		return result, errors.Join(failures...)
+	}
 	return result, nil
 }

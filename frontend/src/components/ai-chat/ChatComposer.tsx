@@ -256,7 +256,7 @@ export function ChatComposer({
             expectsToolProposals: isBuild,
             readOnlyIntent: !isBuild,
             showPlanStructure: action === AIChatAction.AIChatActionPlan,
-            executionUnavailable: false,
+            executionUnavailable: true,
           } as AIChatActionDescriptor;
         });
 
@@ -493,6 +493,7 @@ export function ChatComposer({
               }}
               role="tab"
               title={descriptor.description || meta.description}
+              disabled={descriptor.executionUnavailable}
               onClick={() => onActionChange(descriptor.id)}
               onKeyDown={(event) => handleModeKeyDown(event, index)}
             >

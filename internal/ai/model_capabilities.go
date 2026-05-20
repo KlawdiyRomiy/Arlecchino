@@ -33,6 +33,7 @@ func modelCapabilityEvidenceFor(provider providers.AIProviderDescriptor, model p
 		toolKind = "native"
 		reason = "provider/model advertises native tool calling"
 	} else if providerKindHasOpenAIToolAdapter(provider.Kind) {
+		source = "adapter"
 		toolSupport = true
 		toolKind = "adapter"
 		reason = "Arlecchino adapter can send OpenAI-compatible tool schemas"

@@ -143,7 +143,7 @@ interface UseMainLayoutPanelEventsOptions {
     from: PanelPosition,
     to: PanelPosition,
   ) => boolean | void;
-  openCanonicalBrowserPreviewRef: MutableRefObject<() => void>;
+  openCanonicalBrowserPreviewRef: MutableRefObject<() => boolean>;
   openCommandDispatcher: () => void;
   openDebugDialog: () => void;
   openFileFromPath: (path: string, line?: number) => Promise<void> | void;
@@ -491,8 +491,10 @@ export const useMainLayoutPanelEvents = ({
       }
 
       if (request.panel === "browser" || request.panel === "web") {
-        openCanonicalBrowserPreviewRef.current();
-        return { handled: true };
+        const handled = openCanonicalBrowserPreviewRef.current();
+        return handled
+          ? { handled: true }
+          : { handled: false, reason: "No browser preview is available." };
       }
 
       const appAction = resolveAppSurfaceAction(request.panel);

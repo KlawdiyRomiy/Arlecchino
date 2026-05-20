@@ -444,7 +444,14 @@ func (a *App) LSPGetCodeActions(filePath string, content string, line int, chara
 			HasCommand:  action.Command != nil,
 		}
 		if action.Edit != nil {
-			item.Edit = convertIndexerWorkspaceEdit(action.Edit)
+			converted, err := convertIndexerWorkspaceEdit(action.Edit)
+			if err != nil {
+				if isUnsupportedLSPResourceOperationError(err) {
+					continue
+				}
+				return nil, fmt.Errorf("failed to convert code action workspace edit %q: %w", action.Title, err)
+			}
+			item.Edit = converted
 		}
 		result = append(result, item)
 	}
@@ -524,9 +531,9 @@ func (a *App) applyLSPWorkspaceEdit(edit *LSPWorkspaceEdit) (int, error) {
 	return changedFiles, nil
 }
 
-func convertIndexerWorkspaceEdit(edit *indexerlsp.WorkspaceEdit) *LSPWorkspaceEdit {
+func convertIndexerWorkspaceEdit(edit *indexerlsp.WorkspaceEdit) (*LSPWorkspaceEdit, error) {
 	if edit == nil {
-		return nil
+		return nil, nil
 	}
 
 	converted := &LSPWorkspaceEdit{}
@@ -538,21 +545,28 @@ func convertIndexerWorkspaceEdit(edit *indexerlsp.WorkspaceEdit) *LSPWorkspaceEd
 	}
 	if len(edit.DocumentChanges) > 0 {
 		converted.DocumentChanges = make([]LSPDocumentChange, 0, len(edit.DocumentChanges))
-		for _, raw := range edit.DocumentChanges {
+		for index, raw := range edit.DocumentChanges {
 			if len(raw) == 0 {
 				continue
 			}
 			var change LSPDocumentChange
 			if err := json.Unmarshal(raw, &change); err != nil {
-				continue
+				return nil, fmt.Errorf("malformed documentChanges[%d]: %w", index, err)
+			}
+			if change.Kind != "" {
+				return nil, fmt.Errorf("unsupported documentChanges[%d] resource operation: %s", index, change.Kind)
 			}
 			converted.DocumentChanges = append(converted.DocumentChanges, change)
 		}
 	}
 	if len(converted.Changes) == 0 && len(converted.DocumentChanges) == 0 {
-		return nil
+		return nil, nil
 	}
-	return converted
+	return converted, nil
+}
+
+func isUnsupportedLSPResourceOperationError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "resource operation")
 }
 
 func convertIndexerTextEdits(edits []indexerlsp.TextEdit) []LSPTextEdit {

@@ -1219,6 +1219,15 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       );
     } catch (error) {
       console.error("Auto-save error:", error);
+      useAppNotificationStore.getState().addNotification({
+        id: `autosave-error:${tab.path}`,
+        kind: "error",
+        title: "Auto-save failed",
+        message: error instanceof Error ? error.message : String(error),
+        source: "Editor",
+        sticky: false,
+        timeoutMs: 7000,
+      });
     }
   }, []);
 
@@ -1329,19 +1338,22 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     });
   }, []);
 
-  const handleContentChange = (value: string | undefined) => {
-    if (!activeTab || value === undefined) return;
+  const handleContentChangeForTab = (
+    tabId: string,
+    value: string | undefined,
+  ) => {
+    if (!tabId || value === undefined) return;
 
-    fileContentsRef.current[activeTab] = value;
-    const currentLoadState = fileLoadStatesRef.current[activeTab];
+    fileContentsRef.current[tabId] = value;
+    const currentLoadState = fileLoadStatesRef.current[tabId];
     if (currentLoadState?.kind === "editable") {
       const nextLoadState: EditorFileLoadState = {
         ...currentLoadState,
         content: value,
       };
-      fileLoadStatesRef.current[activeTab] = nextLoadState;
+      fileLoadStatesRef.current[tabId] = nextLoadState;
     }
-    const tab = tabsRef.current.find((item) => item.id === activeTab);
+    const tab = tabsRef.current.find((item) => item.id === tabId);
     if (tab && isMarkdownPath(tab.path)) {
       onMarkdownPreviewSourceChange?.({
         path: tab.path,
@@ -1349,10 +1361,15 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         content: value,
       });
     }
-    scheduleContentStateFlush(activeTab, value);
-    updateEditorStoreTabContent(activeTab, value);
-    markTabDirty(activeTab);
-    scheduleAutoSave(activeTab);
+    scheduleContentStateFlush(tabId, value);
+    updateEditorStoreTabContent(tabId, value);
+    markTabDirty(tabId);
+    scheduleAutoSave(tabId);
+  };
+
+  const handleContentChange = (value: string | undefined) => {
+    if (!activeTab) return;
+    handleContentChangeForTab(activeTab, value);
   };
 
   const recordTypingActivity = useCallback((chars: number) => {
@@ -1373,10 +1390,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }, 500);
   }, []);
 
-  const handleSaveFile = useCallback(async () => {
-    if (!activeTab || isSaving) return;
+  const handleSaveFileForTab = useCallback(async (tabId: string) => {
+    if (!tabId || isSaving) return;
 
-    const tab = tabs.find((t) => t.id === activeTab);
+    const tab = tabsRef.current.find((t) => t.id === tabId);
     if (!tab) return;
 
     if (autoSaveTimerRef.current) {
@@ -1387,7 +1404,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setIsSaving(true);
 
     try {
-      let contentToSave = fileContentsRef.current[activeTab];
+      let contentToSave = fileContentsRef.current[tabId];
       if (contentToSave === undefined) {
         return;
       }
@@ -1401,15 +1418,15 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         if (formatted && formatted !== contentToSave) {
           console.log("File formatted successfully");
           contentToSave = formatted;
-          fileContentsRef.current[activeTab] = formatted;
+          fileContentsRef.current[tabId] = formatted;
           // Update editor content with formatted version
           setFileContents((prev) => ({
             ...prev,
-            [activeTab]: formatted,
+            [tabId]: formatted,
           }));
-          const currentLoadState = fileLoadStatesRef.current[activeTab];
+          const currentLoadState = fileLoadStatesRef.current[tabId];
           if (currentLoadState?.kind === "editable") {
-            fileLoadStatesRef.current[activeTab] = {
+            fileLoadStatesRef.current[tabId] = {
               ...currentLoadState,
               content: formatted,
             };
@@ -1422,10 +1439,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
       await AppFunctions.WriteFile(tab.path, contentToSave);
       tabsRef.current = tabsRef.current.map((item) =>
-        item.id === activeTab ? { ...item, isDirty: false } : item,
+        item.id === tabId ? { ...item, isDirty: false } : item,
       );
-      setTabs(
-        tabs.map((t) => (t.id === activeTab ? { ...t, isDirty: false } : t)),
+      setTabs((prevTabs) =>
+        prevTabs.map((t) =>
+          t.id === tabId ? { ...t, isDirty: false } : t,
+        ),
       );
       console.log("File write completed:", tab.path);
 
@@ -1446,7 +1465,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     } finally {
       setIsSaving(false);
     }
-  }, [activeTab, tabs, isSaving]);
+  }, [isSaving]);
+
+  const handleSaveFile = useCallback(async () => {
+    if (!activeTab) return;
+    await handleSaveFileForTab(activeTab);
+  }, [activeTab, handleSaveFileForTab]);
 
   const handleOpenFileRequest = async (path: string, line?: number) => {
     const requestId = openFileRequestRef.current + 1;
@@ -2022,8 +2046,16 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       filePath={tabData.path}
       content={content}
       language={getLanguageFromPath(tabData.path)}
-      onChange={isSecondary ? () => {} : handleContentChange}
-      onSave={handleSaveFile}
+      onChange={
+        isSecondary
+          ? (value) => handleContentChangeForTab(tabData.id, value)
+          : handleContentChange
+      }
+      onSave={
+        isSecondary
+          ? () => handleSaveFileForTab(tabData.id)
+          : handleSaveFile
+      }
       onToggleProblems={onToggleProblems}
       onOpenFile={handleOpenFileRequest}
       onQuickLook={handleQuickLookRequest}

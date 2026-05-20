@@ -118,6 +118,19 @@ func (b *LinearSearchBackend) SearchFiles(pattern string, limit int) []ResultIte
 	return b.SearchFilesContext(context.Background(), pattern, limit)
 }
 
+func searchErrorItems(title string, err error) []ResultItem {
+	if err == nil {
+		return nil
+	}
+	return []ResultItem{{
+		ID:       "search-error",
+		Icon:     "alert-triangle",
+		Title:    title,
+		Subtitle: err.Error(),
+		Action:   "error",
+	}}
+}
+
 func (b *LinearSearchBackend) SearchFilesContext(ctx context.Context, pattern string, limit int) []ResultItem {
 	if ctx == nil {
 		ctx = context.Background()
@@ -151,11 +164,11 @@ func (b *LinearSearchBackend) SearchFilesContext(ctx context.Context, pattern st
 		SkipDirs:     excludeDirsToSet(excludeDirs),
 	})
 	if err != nil {
-		return results
+		return searchErrorItems("File search failed", err)
 	}
 	entries, _, err := scanner.Scan(ctx)
 	if err != nil && !errors.Is(err, workspace.ErrScanBudgetExceeded) {
-		return results
+		return searchErrorItems("File search failed", err)
 	}
 	for _, entry := range entries {
 		if entry.IsDirectory || len(results) >= limit {
@@ -242,11 +255,11 @@ func (b *LinearSearchBackend) SearchContentContext(ctx context.Context, query st
 		SkipDirs:     excludeDirsToSet(excludeDirs),
 	})
 	if err != nil {
-		return results
+		return searchErrorItems("Content search failed", err)
 	}
 	entries, _, err := scanner.Scan(ctx)
 	if err != nil && !errors.Is(err, workspace.ErrScanBudgetExceeded) {
-		return results
+		return searchErrorItems("Content search failed", err)
 	}
 	for _, entry := range entries {
 		if ctxErr := ctx.Err(); ctxErr != nil {

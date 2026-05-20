@@ -377,6 +377,9 @@ func (a *App) handleMCPBridgeCall(method string, params map[string]any) (any, er
 				result["handlerError"] = ack.errText
 				return result, fmt.Errorf("ui event handler failed: %s", ack.errText)
 			}
+			if !ack.handled {
+				return result, fmt.Errorf("ui event was emitted but frontend did not handle %s", eventName)
+			}
 			return result, nil
 		case <-time.After(defaultMCPUIEventAckTimeout):
 			result["confirmed"] = false

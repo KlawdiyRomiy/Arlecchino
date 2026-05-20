@@ -65,7 +65,7 @@ interface UseMainLayoutPreviewEventsOptions {
   closePreviewWindowWithMotion: (id: string) => void;
   currentTheme: Theme;
   getBrowserPreviewWindowForShortcut: () => PreviewWindow | null;
-  openCanonicalBrowserPreviewRef: MutableRefObject<() => void>;
+  openCanonicalBrowserPreviewRef: MutableRefObject<() => boolean>;
   onPreviewFocus?: () => void;
   previewLaunchInput: OpenPreviewWindowInput | null;
   resolveBrowserPreviewOpenInput: (
@@ -410,16 +410,17 @@ export const useMainLayoutPreviewEvents = ({
         "error",
         "[Preview] No preview is available for the current context",
       );
-      return;
+      return false;
     }
 
-    handlePreviewWindowOpenEvent({
+    const result = handlePreviewWindowOpenEvent({
       ...nextInput,
       payload: {
         ...(nextInput.payload ?? {}),
         revision: Date.now(),
       },
     });
+    return Boolean((result as { handled?: boolean } | undefined)?.handled);
   }, [handlePreviewWindowOpenEvent, previewLaunchInput, showNotification]);
 
   useEffect(() => {

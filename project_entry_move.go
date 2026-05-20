@@ -99,7 +99,11 @@ func (a *App) MoveProjectEntry(path string, targetDirectory string) (ProjectEntr
 		if err != nil {
 			return ProjectEntryMoveResult{}, err
 		}
-		if converted := convertIndexerWorkspaceEdit(edit); converted != nil {
+		converted, err := convertIndexerWorkspaceEdit(edit)
+		if err != nil {
+			return ProjectEntryMoveResult{}, err
+		}
+		if converted != nil {
 			lspWorkspaceFiles, err = a.applyLSPWorkspaceEdit(converted)
 			if err != nil {
 				return ProjectEntryMoveResult{}, err

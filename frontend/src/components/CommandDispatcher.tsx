@@ -67,6 +67,21 @@ interface CommandDispatcherProps {
   projectPath?: string;
 }
 
+const dispatcherErrorItem = (
+  id: string,
+  title: string,
+  error: unknown,
+): DispatcherItem => ({
+  id,
+  icon: <AlertCircle size={16} />,
+  title,
+  subtitle: error instanceof Error ? error.message : String(error),
+  action: "error",
+});
+
+const backendSearchAction = (action: string | undefined): string =>
+  action === "error" ? "error" : "open";
+
 type InputMode = "default" | "ide" | "file" | "grep" | "symbol" | "ai" | "tag";
 
 interface AnsiSpan {
@@ -343,6 +358,9 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
               });
             } catch (e) {
               console.error("[Dispatcher] GetDispatcherSuggestions error:", e);
+              newItems.push(
+                dispatcherErrorItem("ide-error", "Command search failed", e),
+              );
             }
             break;
           case "file":
@@ -354,13 +372,16 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
                   icon: <FileText size={16} />,
                   title: f.title,
                   subtitle: f.subtitle,
-                  action: "open",
+                  action: backendSearchAction(f.action),
                   filePath: f.filePath,
                   line: f.line,
                 });
               });
             } catch (e) {
               console.error("[Dispatcher] SearchFiles error:", e);
+              newItems.push(
+                dispatcherErrorItem("file-error", "File search failed", e),
+              );
             }
             break;
           case "grep":
@@ -373,13 +394,16 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
                   icon: <FileText size={16} />,
                   title: r.title,
                   subtitle: r.subtitle,
-                  action: "open",
+                  action: backendSearchAction(r.action),
                   filePath: r.filePath,
                   line: r.line,
                 });
               });
             } catch (e) {
               console.error("[Dispatcher] SearchContent error:", e);
+              newItems.push(
+                dispatcherErrorItem("grep-error", "Content search failed", e),
+              );
             }
             break;
           case "symbol":
@@ -398,14 +422,17 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
               });
             } catch (e) {
               console.error("[Dispatcher] SearchSymbols error:", e);
+              newItems.push(
+                dispatcherErrorItem("symbol-error", "Symbol search failed", e),
+              );
             }
             break;
           default:
             if (input.length >= 2) {
               try {
                 const [files, content] = await Promise.all([
-                  SearchFiles(input).catch(() => []),
-                  SearchContent(input).catch(() => []),
+                  SearchFiles(input),
+                  SearchContent(input),
                 ]);
 
                 files?.slice(0, 10).forEach((f, i) => {
@@ -414,7 +441,7 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
                     icon: <FileText size={16} />,
                     title: f.title,
                     subtitle: f.subtitle,
-                    action: "open",
+                    action: backendSearchAction(f.action),
                     filePath: f.filePath,
                     line: f.line,
                   });
@@ -426,13 +453,16 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
                     icon: <Search size={16} />,
                     title: r.title,
                     subtitle: r.subtitle,
-                    action: "open",
+                    action: backendSearchAction(r.action),
                     filePath: r.filePath,
                     line: r.line,
                   });
                 });
               } catch (e) {
                 console.error("[Dispatcher] Search error:", e);
+                newItems.push(
+                  dispatcherErrorItem("search-error", "Search failed", e),
+                );
               }
             }
         }
@@ -526,6 +556,7 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
       case "copy":
         return <Copy size={16} />;
       case "alert-circle":
+      case "alert-triangle":
         return <AlertCircle size={16} />;
       case "x-circle":
         return <X size={16} />;
@@ -576,6 +607,9 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
 
   const executeItem = useCallback(
     (item: DispatcherItem) => {
+      if (item.action === "error") {
+        return;
+      }
       if (item.filePath && onOpenFile) {
         onOpenFile(item.filePath, item.line);
         onClose();

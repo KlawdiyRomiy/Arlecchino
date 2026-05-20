@@ -911,15 +911,18 @@ func (s *ToolService) bridgeEmitConfirmedUIEvent(toolName, eventName string, pay
 		Source:        "frontend",
 		Tool:          toolName,
 		Risk:          s.riskClassForTool(toolName, params),
-		Status:        "acknowledged",
+		Status:        "error",
+		Error:         "frontend acknowledgement payload was not structured",
 		DurationMs:    time.Since(startedAt).Milliseconds(),
 		CorrelationID: requestID,
 		Args:          map[string]any{"event": eventName},
 	})
-	return map[string]any{
+	resultMap := map[string]any{
 		"result":       result,
 		"mcpRequestId": requestID,
-	}, nil
+		"confirmed":    false,
+	}
+	return resultMap, fmt.Errorf("%s failed for %s: frontend acknowledgement payload was not structured", toolName, eventName)
 }
 
 func (s *ToolService) bridgeSurfaceRead(args map[string]any) (any, error) {

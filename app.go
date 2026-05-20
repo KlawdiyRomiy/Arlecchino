@@ -336,20 +336,21 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 	defer session.lifecycleMu.Unlock()
 
 	if session.currentProjectPath() != "" {
-		_ = a.closeProjectInSessionLocked(session, false)
+		if err := a.closeProjectInSessionLocked(session, false); err != nil {
+			return err
+		}
+	}
+
+	if session.projectManager != nil {
+		if err := session.projectManager.OpenProject(path); err != nil {
+			return err
+		}
 	}
 
 	projectGeneration := session.projectGeneration.Add(1)
 	session.setProjectPath(path)
 	session.projectCtx, session.projectCancel = context.WithCancel(context.Background())
 	a.syncDefaultProjectSession(session)
-
-	if session.projectManager != nil {
-		err := session.projectManager.OpenProject(path)
-		if err != nil {
-			return err
-		}
-	}
 	if a.aiService != nil {
 		aiSession, err := a.aiService.OpenProject(session.ID, path)
 		if err != nil {
@@ -422,6 +423,9 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 				a.emitEvent("indexer:progress", payload)
 			case core.IndexingCompleted:
 				a.emitEvent("indexer:completed", payload)
+			case core.IndexingFailed:
+				payload["error"] = evt.Error
+				a.emitEvent("indexer:error", payload)
 			}
 		})
 
@@ -444,7 +448,13 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 			case <-projectCtx.Done():
 				return
 			default:
-				_ = coreEngine.IndexProjectContext(projectCtx)
+				if err := coreEngine.IndexProjectContext(projectCtx); err != nil {
+					a.emitEvent("indexer:error", map[string]any{
+						"projectPath": path,
+						"sessionId":   session.ID,
+						"error":       err.Error(),
+					})
+				}
 			}
 		}()
 	}

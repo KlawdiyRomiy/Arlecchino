@@ -27,9 +27,6 @@ func NewOllamaProvider(id string, endpoint string, model string, manual bool, ti
 	if strings.TrimSpace(id) == "" {
 		id = "ollama-local"
 	}
-	if strings.TrimSpace(model) == "" {
-		model = "codellama:7b-code"
-	}
 	return &OllamaProvider{
 		id:       id,
 		name:     "Ollama",

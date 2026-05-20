@@ -74,7 +74,7 @@ interface UseMainLayoutShortcutBridgeOptions {
     windowId: string,
     targetPosition: PanelPosition,
   ) => boolean;
-  openCanonicalBrowserPreviewRef: MutableRefObject<() => void>;
+  openCanonicalBrowserPreviewRef: MutableRefObject<() => boolean>;
   panelConfigsRef: MutableRefObject<PanelConfigs>;
   panelsRef: MutableRefObject<PanelVisibility>;
   pressedShortcutCodesRef: MutableRefObject<Set<string>>;

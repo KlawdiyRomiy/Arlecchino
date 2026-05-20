@@ -19,12 +19,14 @@ const (
 	IndexingStarted IndexingEventType = iota
 	IndexingProgress
 	IndexingCompleted
+	IndexingFailed
 )
 
 type IndexingEvent struct {
 	Type    IndexingEventType
 	Current int
 	Total   int
+	Error   string
 }
 
 type Engine struct {
@@ -47,6 +49,7 @@ type Engine struct {
 	batchProgressAt   atomic.Int64
 	batchScanDone     atomic.Bool
 	batchCompleted    atomic.Bool
+	batchFailed       atomic.Bool
 }
 
 type EngineConfig struct {
@@ -108,13 +111,24 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		extMap:      make(map[string]string),
 	}
 
-	scheduler.OnJobComplete(func(job Job, _ error) {
+	scheduler.OnJobComplete(func(job Job, err error) {
 		bid := e.activeBatchID.Load()
 		if job.BatchID == 0 || job.BatchID != bid {
 			return
 		}
 		done := e.batchDone.Add(1)
 		total := e.batchTotal.Load()
+		if err != nil {
+			e.batchFailed.Store(true)
+			e.notifyIndexing(IndexingEvent{
+				Type:    IndexingFailed,
+				Current: int(done),
+				Total:   int(total),
+				Error:   err.Error(),
+			})
+			e.completeActiveBatchIfReady(bid)
+			return
+		}
 		if e.shouldEmitIndexingProgress(done, total) {
 			e.notifyIndexing(IndexingEvent{
 				Type:    IndexingProgress,
@@ -261,6 +275,7 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 	e.batchProgressAt.Store(0)
 	e.batchScanDone.Store(false)
 	e.batchCompleted.Store(false)
+	e.batchFailed.Store(false)
 
 	e.notifyIndexing(IndexingEvent{Type: IndexingStarted})
 
@@ -276,6 +291,8 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 
 	scanner, err := workspace.NewScanner(e.projectRoot, workspace.ScannerOptions{UseGitIgnore: true})
 	if err != nil {
+		e.batchFailed.Store(true)
+		e.notifyIndexing(IndexingEvent{Type: IndexingFailed, Error: err.Error()})
 		return err
 	}
 	walkSummary, walkErr := scanner.Walk(ctx, func(entry workspace.Entry) error {
@@ -327,6 +344,8 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 	})
 	flushInventory()
 	if walkErr != nil {
+		e.batchFailed.Store(true)
+		e.notifyIndexing(IndexingEvent{Type: IndexingFailed, Error: walkErr.Error()})
 		return walkErr
 	}
 	if walkSummary.Files > count {
