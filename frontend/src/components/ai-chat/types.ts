@@ -58,7 +58,9 @@ export type AIChatUIAction =
   | { type: "setModel"; model: string }
   | { type: "setReasoningEffort"; reasoningEffort: string }
   | { type: "setContext"; key: keyof ContextToggles; value: boolean }
+  | { type: "setContextPrefs"; context: ContextToggles }
   | { type: "setDisplayPref"; key: keyof AIChatDisplayPrefs; value: boolean }
+  | { type: "setDisplayPrefs"; displayPrefs: AIChatDisplayPrefs }
   | { type: "toggleProviderPopover"; open?: boolean }
   | { type: "toggleSettingsPopover"; open?: boolean }
   | { type: "toggleActivityPopover"; open?: boolean }

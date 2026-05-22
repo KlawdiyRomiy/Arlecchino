@@ -41,6 +41,8 @@ interface SettingsPopoverProps {
   onMnemonicPromote: (entryId: string) => void;
   onAcceptLocalProviderConsent: () => void;
   onAcceptExternalAgentConsent: () => void;
+  onAcceptRemoteBYOKProviderConsent: () => void;
+  onAcceptFrontierProviderConsent: () => void;
 }
 
 export function SettingsPopover({
@@ -67,6 +69,8 @@ export function SettingsPopover({
   onMnemonicPromote,
   onAcceptLocalProviderConsent,
   onAcceptExternalAgentConsent,
+  onAcceptRemoteBYOKProviderConsent,
+  onAcceptFrontierProviderConsent,
 }: SettingsPopoverProps) {
   const [mnemonicDraft, setMnemonicDraft] = useState("");
   const [mnemonicQuery, setMnemonicQuery] = useState("");
@@ -164,9 +168,13 @@ export function SettingsPopover({
           <strong>
             {consentPolicy?.externalAgentCliAccepted
               ? "agent CLI accepted"
-              : consentPolicy?.localProvidersAccepted
-                ? "local accepted"
-                : "local pending"}
+              : consentPolicy?.frontierProvidersAccepted
+                ? "frontier accepted"
+                : consentPolicy?.remoteProvidersAccepted
+                  ? "remote provider accepted"
+                  : consentPolicy?.localProvidersAccepted
+                    ? "local accepted"
+                    : "local pending"}
           </strong>
           {!consentPolicy?.localProvidersAccepted ? (
             <>
@@ -189,6 +197,30 @@ export function SettingsPopover({
                 onClick={onAcceptExternalAgentConsent}
               >
                 Accept external CLI
+              </button>
+            </>
+          ) : null}
+          {!consentPolicy?.remoteProvidersAccepted ? (
+            <>
+              <span>Remote provider consent</span>
+              <button
+                className="ai-chat-secondary-button is-primary"
+                type="button"
+                onClick={onAcceptRemoteBYOKProviderConsent}
+              >
+                Accept remote provider
+              </button>
+            </>
+          ) : null}
+          {!consentPolicy?.frontierProvidersAccepted ? (
+            <>
+              <span>Frontier consent</span>
+              <button
+                className="ai-chat-secondary-button is-primary"
+                type="button"
+                onClick={onAcceptFrontierProviderConsent}
+              >
+                Accept frontier providers
               </button>
             </>
           ) : null}

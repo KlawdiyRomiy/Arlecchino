@@ -32,7 +32,6 @@ import type {
   AIToolDescriptor,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIChatDisplayPrefs, ContextToggles } from "./types";
-import { SettingsPopover } from "./SettingsPopover";
 import {
   ActivityIcon,
   ActivityStatusPopover,
@@ -98,6 +97,8 @@ interface AIChatHeaderProps {
   onMnemonicPromote: (entryId: string) => void;
   onAcceptLocalProviderConsent: () => void;
   onAcceptExternalAgentConsent: () => void;
+  onAcceptRemoteBYOKProviderConsent: () => void;
+  onAcceptFrontierProviderConsent: () => void;
 }
 
 export function AIChatHeader({
@@ -152,6 +153,8 @@ export function AIChatHeader({
   onMnemonicPromote,
   onAcceptLocalProviderConsent,
   onAcceptExternalAgentConsent,
+  onAcceptRemoteBYOKProviderConsent,
+  onAcceptFrontierProviderConsent,
 }: AIChatHeaderProps) {
   const {
     draggedItemId,
@@ -354,49 +357,15 @@ export function AIChatHeader({
           );
         case "settings":
           return (
-            <div
-              className="ai-chat-header__menu ai-chat-header__menu--settings"
-              data-ai-chat-popover-scope
+            <button
+              className="ai-chat-icon-button"
+              data-testid="ai-chat-settings-button"
+              type="button"
+              title="Open app settings"
+              onClick={onToggleSettingsPopover}
             >
-              <button
-                className="ai-chat-icon-button"
-                data-testid="ai-chat-settings-button"
-                type="button"
-                title="AI Chat settings"
-                onClick={onToggleSettingsPopover}
-              >
-                <Settings size={17} />
-              </button>
-              <AnimatePresence initial={false}>
-                {settingsPopoverOpen ? (
-                  <SettingsPopover
-                    context={context}
-                    contextProviders={contextProviders}
-                    displayPrefs={displayPrefs}
-                    status={status}
-                    approvalPolicy={approvalPolicy}
-                    consentPolicy={consentPolicy}
-                    embeddingStatus={embeddingStatus}
-                    egressRecords={egressRecords}
-                    mnemonicEntries={mnemonicEntries}
-                    agentProfiles={agentProfiles}
-                    promptWorkflows={promptWorkflows}
-                    tools={tools}
-                    toolAudit={toolAudit}
-                    modelCapabilities={modelCapabilities}
-                    mnemonicBusy={mnemonicBusy}
-                    mnemonicError={mnemonicError}
-                    onContextToggle={onContextToggle}
-                    onDisplayPrefChange={onDisplayPrefChange}
-                    onMnemonicSearch={onMnemonicSearch}
-                    onMnemonicSave={onMnemonicSave}
-                    onMnemonicPromote={onMnemonicPromote}
-                    onAcceptLocalProviderConsent={onAcceptLocalProviderConsent}
-                    onAcceptExternalAgentConsent={onAcceptExternalAgentConsent}
-                  />
-                ) : null}
-              </AnimatePresence>
-            </div>
+              <Settings size={17} />
+            </button>
           );
       }
     })();

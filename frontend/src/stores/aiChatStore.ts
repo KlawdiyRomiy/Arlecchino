@@ -251,14 +251,23 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
       };
     }),
   setHydratedRun: (run) =>
-    set((state) => ({
-      hydratedRuns: { ...state.hydratedRuns, [run.id]: run },
-      streamingTextByRunId: {
-        ...state.streamingTextByRunId,
-        [run.id]: run.response ?? state.streamingTextByRunId[run.id] ?? "",
-      },
-      activeRunId: state.activeRunId ?? run.id,
-    })),
+    set((state) => {
+      const existingStream = state.streamingTextByRunId[run.id] ?? "";
+      const response = run.response ?? "";
+      const streamingText =
+        isTerminalRunStatus(run.status) ||
+        response.length > existingStream.length
+          ? response
+          : existingStream;
+      return {
+        hydratedRuns: { ...state.hydratedRuns, [run.id]: run },
+        streamingTextByRunId: {
+          ...state.streamingTextByRunId,
+          [run.id]: streamingText,
+        },
+        activeRunId: state.activeRunId ?? run.id,
+      };
+    }),
   appendRunToken: (runId, token) =>
     set((state) => {
       const envelope = state.runs.find((run) => run.id === runId);

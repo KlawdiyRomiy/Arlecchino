@@ -37,7 +37,6 @@ export function ProviderPopover({
               title={presentation.rawReason || presentation.subtitle}
               onClick={() => onSelectProvider(provider)}
             >
-              <span className="ai-chat-provider-row__dot" />
               <span className="ai-chat-provider-row__body">
                 <span className="ai-chat-provider-row__name">
                   {presentation.title}

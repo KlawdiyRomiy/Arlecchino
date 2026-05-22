@@ -13,6 +13,17 @@ const supportedLocalProviderKinds = new Set([
   "huggingface-tgi",
 ]);
 
+const supportedRemoteProviderKinds = new Set([
+  "openai-compatible",
+  "openrouter",
+]);
+
+const supportedFrontierProviderKinds = new Set([
+  "openai",
+  "anthropic",
+  "google-gemini",
+]);
+
 export const structuredAgentRuntimeFamily = "structured_agent_runtime";
 export const jsonlExecRuntimeFamily = "jsonl_exec_runtime";
 export const modelAgentRuntimeFamily = "model_agent_runtime";
@@ -49,6 +60,29 @@ export function isExternalAgentProvider(
   );
 }
 
+export function isRemoteBYOKProvider(
+  provider: AIProviderDescriptor | null,
+): boolean {
+  return Boolean(
+    provider &&
+    !provider.local &&
+    !provider.frontier &&
+    (provider.endpointClass === "remote_byok" ||
+      supportedRemoteProviderKinds.has(provider.kind)),
+  );
+}
+
+export function isFrontierModelProvider(
+  provider: AIProviderDescriptor | null,
+): boolean {
+  return Boolean(
+    provider &&
+    provider.frontier &&
+    !isExternalAgentProvider(provider) &&
+    supportedFrontierProviderKinds.has(provider.kind),
+  );
+}
+
 const rawReasonPatterns = [
   /dial tcp/i,
   /connection refused/i,
@@ -79,6 +113,16 @@ export interface ProviderPresentation {
   modelLabel: string;
 }
 
+export function displayProviderName(
+  provider: AIProviderDescriptor | null,
+): string {
+  const rawName = provider?.name?.trim() || provider?.id?.trim() || "";
+  if (rawName === "OpenAI-compatible BYOK") {
+    return "OpenAI-compatible";
+  }
+  return rawName || "No local provider";
+}
+
 export function providerSupportsChat(
   provider: AIProviderDescriptor | null,
 ): boolean {
@@ -91,6 +135,9 @@ export function isSupportedLocalChatProvider(
   provider: AIProviderDescriptor | null,
 ): boolean {
   if (isExternalAgentProvider(provider)) {
+    return providerSupportsChat(provider);
+  }
+  if (isRemoteBYOKProvider(provider) || isFrontierModelProvider(provider)) {
     return providerSupportsChat(provider);
   }
   return Boolean(
@@ -128,7 +175,16 @@ export function sanitizeProviderReason(
       }
       return provider.reason?.trim() || "External CLI unavailable";
     }
-    return "Cloud provider unavailable";
+    if (provider.status === ("needs_auth" as AIProviderStatusValue)) {
+      return "API key required";
+    }
+    if (provider.status === ("ready" as AIProviderStatusValue)) {
+      const modelCount = provider.models?.length ?? 0;
+      return modelCount > 0
+        ? `${modelCount} model${modelCount === 1 ? "" : "s"} ready`
+        : "Ready";
+    }
+    return rawReason || "Cloud provider unavailable";
   }
   if (provider.status === ("ready" as AIProviderStatusValue)) {
     const modelCount = provider.models?.length ?? 0;
@@ -174,7 +230,7 @@ export function getProviderPresentation(
           : "neutral";
 
   return {
-    title: provider?.name || provider?.id || "No local provider",
+    title: displayProviderName(provider),
     subtitle: sanitizeProviderReason(provider),
     rawReason: provider?.reason?.trim() ?? "",
     tone,
@@ -200,7 +256,7 @@ export function sortProviders(
   return [...providers].filter(isSupportedLocalChatProvider).sort((a, b) => {
     const byScore = score(a) - score(b);
     if (byScore !== 0) return byScore;
-    return (a.name || a.id).localeCompare(b.name || b.id);
+    return displayProviderName(a).localeCompare(displayProviderName(b));
   });
 }
 
@@ -248,8 +304,28 @@ export function getProviderDisabledReason(
     if (!options.selectedModel?.trim()) return "Runtime model required";
     return "";
   }
+  if (isRemoteBYOKProvider(provider) || isFrontierModelProvider(provider)) {
+    if (provider.status === ("needs_auth" as AIProviderStatusValue)) {
+      return "API key required";
+    }
+    if (!isReadyChatProvider(provider)) return sanitizeProviderReason(provider);
+    if (
+      isRemoteBYOKProvider(provider) &&
+      !options.consentPolicy?.remoteProvidersAccepted
+    ) {
+      return "Remote provider consent required";
+    }
+    if (
+      isFrontierModelProvider(provider) &&
+      !options.consentPolicy?.frontierProvidersAccepted
+    ) {
+      return "Frontier provider consent required";
+    }
+    if (!options.selectedModel?.trim()) return "Model required";
+    return "";
+  }
   if (provider.frontier) return "Cloud provider consent path required";
-  if (!provider.local) return "Local provider required";
+  if (!provider.local) return "Supported provider required";
   if (!isSupportedLocalChatProvider(provider)) {
     return "Supported local provider required";
   }

@@ -2,17 +2,23 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
   Boxes,
+  Check,
+  ChevronDown,
+  Database,
   FileText,
   Layers,
   ListChecks,
+  Monitor,
   ShieldCheck,
   Paperclip,
   Send,
   Slash,
+  SlidersHorizontal,
   Sparkles,
   Square,
   X,
 } from "lucide-react";
+import { AnimatePresence, m, useReducedMotion } from "framer-motion";
 import type {
   AIChatActionDescriptor,
   AIChatMentionCandidate,
@@ -67,6 +73,8 @@ interface ChatComposerProps {
   onRefreshProviders: () => void;
   onStartAgentLogin: (provider: AIProviderDescriptor) => void;
   onAcceptExternalAgentConsent: () => void;
+  onAcceptRemoteBYOKProviderConsent: () => void;
+  onAcceptFrontierProviderConsent: () => void;
   onProbeModelCapability: () => void;
   onStartProviderRuntime: (
     provider: AIProviderDescriptor,
@@ -191,6 +199,46 @@ const mentionDetail = (mention: AIChatMentionCandidate): string =>
   mention.description ||
   "";
 
+const contextChipMeta: Record<
+  keyof ContextToggles,
+  {
+    label: string;
+    detail: string;
+    icon: React.ComponentType<{ size?: number }>;
+  }
+> = {
+  workspace: {
+    label: "Workspace",
+    detail: "project",
+    icon: Layers,
+  },
+  currentFile: {
+    label: "Current file",
+    detail: "editor",
+    icon: FileText,
+  },
+  terminalLogs: {
+    label: "Terminal logs",
+    detail: "shell",
+    icon: Monitor,
+  },
+  mnemonic: {
+    label: "Mnemonic",
+    detail: "memory",
+    icon: Database,
+  },
+  mcp: {
+    label: "MCP",
+    detail: "tools",
+    icon: SlidersHorizontal,
+  },
+  skills: {
+    label: "Skills",
+    detail: "instructions",
+    icon: Boxes,
+  },
+};
+
 export function ChatComposer({
   selectedAction,
   selectedMentions,
@@ -219,6 +267,8 @@ export function ChatComposer({
   onRefreshProviders,
   onStartAgentLogin,
   onAcceptExternalAgentConsent,
+  onAcceptRemoteBYOKProviderConsent,
+  onAcceptFrontierProviderConsent,
   onProbeModelCapability,
   onStartProviderRuntime,
   onStopProviderRuntime,
@@ -232,7 +282,9 @@ export function ChatComposer({
   onSend,
   onCancel,
 }: ChatComposerProps) {
+  const reduceMotion = useReducedMotion();
   const modeButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const composerRef = useRef<HTMLElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const mentionRequestIdRef = useRef(0);
   const [activeMention, setActiveMention] =
@@ -242,6 +294,7 @@ export function ChatComposer({
   >([]);
   const [mentionLoading, setMentionLoading] = useState(false);
   const [mentionIndex, setMentionIndex] = useState(-1);
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const actionDescriptors =
     actions.length > 0
       ? sortActionDescriptors(actions)
@@ -263,6 +316,9 @@ export function ChatComposer({
             executionUnavailable: true,
           } as AIChatActionDescriptor;
         });
+  const enabledContextChips = (
+    Object.keys(contextChipMeta) as Array<keyof ContextToggles>
+  ).filter((key) => context[key]);
 
   const closeMentionPicker = useCallback(() => {
     setActiveMention(null);
@@ -344,6 +400,28 @@ export function ChatComposer({
       window.removeEventListener("pointerdown", handlePointerDown, true);
   }, [activeMention, closeMentionPicker]);
 
+  useEffect(() => {
+    if (!modeMenuOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && composerRef.current?.contains(target)) {
+        return;
+      }
+      setModeMenuOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setModeMenuOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [modeMenuOpen]);
+
   const replaceMentionTrigger = useCallback(
     (candidate: AIChatMentionCandidate) => {
       if (!activeMention) return;
@@ -387,6 +465,12 @@ export function ChatComposer({
     if (!nextAction) return;
     onActionChange(nextAction);
     modeButtonRefs.current[nextIndex]?.focus();
+  };
+
+  const selectMode = (action: AIChatAction) => {
+    onActionChange(action);
+    setModeMenuOpen(false);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const cycleMode = (direction: 1 | -1) => {
@@ -476,46 +560,152 @@ export function ChatComposer({
   };
 
   return (
-    <footer className="ai-chat-composer">
-      <div
-        className="ai-chat-mode-switch"
-        role="tablist"
-        aria-label="AI chat mode"
-      >
-        {actionDescriptors.map((descriptor, index) => {
-          const meta = getActionMeta(descriptor.id);
-          const selected = selectedAction === descriptor.id;
-          return (
-            <button
-              key={descriptor.id}
-              className={`ai-chat-mode-button ai-chat-tone-${meta.tone}${selected ? " is-selected" : ""}`}
-              data-testid={`ai-chat-mode-${(descriptor.name || meta.label).toLowerCase()}`}
-              type="button"
-              aria-selected={selected}
-              ref={(element) => {
-                modeButtonRefs.current[index] = element;
-              }}
-              role="tab"
-              title={descriptor.description || meta.description}
-              disabled={descriptor.executionUnavailable}
-              onClick={() => onActionChange(descriptor.id)}
-              onKeyDown={(event) => handleModeKeyDown(event, index)}
-            >
-              {meta.icon}
-              {descriptor.name || meta.label}
-            </button>
-          );
-        })}
-        <ContextPickerMenu
-          context={context}
-          contextProviders={contextProviders}
-          open={contextPickerOpen}
-          onContextToggle={onContextToggle}
-          onToggle={onToggleContextPicker}
-        />
-      </div>
-
+    <footer ref={composerRef} className="ai-chat-composer">
       <div className="ai-chat-composer__box" data-ai-chat-mention-scope>
+        <div className="ai-chat-composer__topbar">
+          <div
+            className="ai-chat-mode-dropdown"
+            data-ai-chat-popover-scope
+            role="presentation"
+          >
+            <button
+              className={`ai-chat-mode-dropdown__trigger ai-chat-tone-${getActionMeta(selectedAction).tone}${modeMenuOpen ? " is-selected" : ""}`}
+              data-testid={`ai-chat-mode-${getActionMeta(selectedAction).label.toLowerCase()}`}
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={modeMenuOpen}
+              title="Change chat mode"
+              onClick={() => setModeMenuOpen((open) => !open)}
+            >
+              {getActionMeta(selectedAction).icon}
+              <span>{getActionMeta(selectedAction).label}</span>
+              <ChevronDown size={14} />
+            </button>
+            <AnimatePresence initial={false}>
+              {modeMenuOpen ? (
+                <m.div
+                  className="ai-chat-mode-dropdown__menu"
+                  role="menu"
+                  aria-label="AI chat mode"
+                  initial={
+                    reduceMotion
+                      ? { opacity: 0 }
+                      : { opacity: 0, y: 6, scale: 0.98 }
+                  }
+                  animate={
+                    reduceMotion
+                      ? { opacity: 1 }
+                      : { opacity: 1, y: 0, scale: 1 }
+                  }
+                  exit={
+                    reduceMotion
+                      ? { opacity: 0 }
+                      : { opacity: 0, y: 4, scale: 0.98 }
+                  }
+                  transition={{
+                    duration: reduceMotion ? 0.1 : 0.16,
+                    ease: [0.22, 1, 0.36, 1],
+                  }}
+                >
+                  {actionDescriptors.map((descriptor, index) => {
+                    const meta = getActionMeta(descriptor.id);
+                    const selected = selectedAction === descriptor.id;
+                    return (
+                      <button
+                        key={descriptor.id}
+                        ref={(element) => {
+                          modeButtonRefs.current[index] = element;
+                        }}
+                        className={`ai-chat-mode-dropdown__item ai-chat-tone-${meta.tone}${selected ? " is-selected" : ""}`}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={selected}
+                        title={descriptor.description || meta.description}
+                        disabled={descriptor.executionUnavailable}
+                        onClick={() => selectMode(descriptor.id)}
+                        onKeyDown={(event) => handleModeKeyDown(event, index)}
+                      >
+                        <span className="ai-chat-mode-dropdown__item-icon">
+                          {meta.icon}
+                        </span>
+                        <span className="ai-chat-mode-dropdown__item-body">
+                          <strong>{descriptor.name || meta.label}</strong>
+                          <small>
+                            {descriptor.description || meta.description}
+                          </small>
+                        </span>
+                        <AnimatePresence initial={false}>
+                          {selected ? (
+                            <m.span
+                              className="ai-chat-mode-dropdown__check"
+                              initial={{ opacity: 0, scale: 0.85 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 0.85 }}
+                              transition={{
+                                duration: reduceMotion ? 0.1 : 0.14,
+                              }}
+                            >
+                              <Check size={14} />
+                            </m.span>
+                          ) : null}
+                        </AnimatePresence>
+                      </button>
+                    );
+                  })}
+                </m.div>
+              ) : null}
+            </AnimatePresence>
+          </div>
+          <ContextPickerMenu
+            context={context}
+            contextProviders={contextProviders}
+            open={contextPickerOpen}
+            onContextToggle={onContextToggle}
+            onToggle={onToggleContextPicker}
+          />
+        </div>
+        {enabledContextChips.length > 0 ? (
+          <div
+            className="ai-chat-composer__context-chips"
+            aria-label="Included context"
+          >
+            <AnimatePresence initial={false}>
+              {enabledContextChips.map((key) => {
+                const meta = contextChipMeta[key];
+                const ContextIcon = meta.icon;
+                return (
+                  <m.button
+                    key={key}
+                    className="ai-chat-composer__context-chip"
+                    layout
+                    initial={
+                      reduceMotion ? { opacity: 0 } : { opacity: 0, y: 5 }
+                    }
+                    animate={
+                      reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }
+                    }
+                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+                    transition={{
+                      duration: reduceMotion ? 0.1 : 0.16,
+                      ease: [0.22, 1, 0.36, 1],
+                    }}
+                    type="button"
+                    title={`Remove ${meta.label} from this request`}
+                    onClick={() => onContextToggle(key, false)}
+                    whileTap={reduceMotion ? undefined : { scale: 0.985 }}
+                  >
+                    <span className="ai-chat-composer__context-icon">
+                      <ContextIcon size={14} />
+                    </span>
+                    <span>{meta.label}</span>
+                    <small>{meta.detail}</small>
+                    <X size={12} />
+                  </m.button>
+                );
+              })}
+            </AnimatePresence>
+          </div>
+        ) : null}
         {selectedMentions.length > 0 ? (
           <div className="ai-chat-composer__mentions">
             {selectedMentions.map((mention) => {
@@ -597,6 +787,10 @@ export function ChatComposer({
               onRefreshProviders={onRefreshProviders}
               onStartAgentLogin={onStartAgentLogin}
               onAcceptExternalAgentConsent={onAcceptExternalAgentConsent}
+              onAcceptRemoteBYOKProviderConsent={
+                onAcceptRemoteBYOKProviderConsent
+              }
+              onAcceptFrontierProviderConsent={onAcceptFrontierProviderConsent}
               onProbeModelCapability={onProbeModelCapability}
               onSelectModel={onSelectModel}
               onSelectReasoningEffort={onSelectReasoningEffort}
@@ -613,6 +807,24 @@ export function ChatComposer({
                 >
                   <ShieldCheck size={13} />
                   Accept external CLI consent
+                </button>
+              ) : disabledReason === "Remote provider consent required" ? (
+                <button
+                  className="ai-chat-inline-consent-button"
+                  type="button"
+                  onClick={onAcceptRemoteBYOKProviderConsent}
+                >
+                  <ShieldCheck size={13} />
+                  Accept remote provider consent
+                </button>
+              ) : disabledReason === "Frontier provider consent required" ? (
+                <button
+                  className="ai-chat-inline-consent-button"
+                  type="button"
+                  onClick={onAcceptFrontierProviderConsent}
+                >
+                  <ShieldCheck size={13} />
+                  Accept frontier consent
                 </button>
               ) : (
                 <span className="ai-chat-composer__reason">

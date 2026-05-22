@@ -9,6 +9,16 @@ import React, {
   useState,
 } from "react";
 import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  GitBranch,
+  History,
+  MessageSquarePlus,
+  Search,
+  Settings,
+} from "lucide-react";
+import {
   AIApplyPatchArtifact,
   AIApproveMnemonicEntryProposal,
   AICancelChatRun,
@@ -53,6 +63,7 @@ import { EventsOn } from "../../wails/runtime";
 import {
   AIChatAction,
   AIChatRunEnvelope,
+  type AIChatRunNotice,
   AIContextItemKind,
   AIToolCallAction,
   type AIChatActionDescriptor,
@@ -83,12 +94,23 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import { useEditorStore } from "../../stores/editorStore";
 import { buildIDEContextDocument } from "../../stores/ideContextDocument";
-import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
+import {
+  type AIChatUIPreferences,
+  useEditorSettingsStore,
+} from "../../stores/editorSettingsStore";
 import { useAIChatStore } from "../../stores/aiChatStore";
 import { useAIInlinePatchStore } from "../../stores/aiInlinePatchStore";
+import { useAppNotificationStore } from "../../stores/appNotificationStore";
+import { usePerformanceStore } from "../../stores/performanceStore";
 import { useTerminalStore } from "../../stores/terminalStore";
+import { dispatchApplicationMenuAction } from "../../utils/applicationMenu";
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 import { AIChatHeader } from "./AIChatHeader";
+import {
+  ActivityStatusPopover,
+  buildActivityStatusItems,
+  summarizeActivityStatus,
+} from "./ActivityTimeline";
 import { AgentConsole } from "./AgentConsole";
 import { ChatGitReview } from "./ChatGitReview";
 import { ChatHistoryRail } from "./ChatHistoryRail";
@@ -129,6 +151,7 @@ import {
   normalizeAIToolAudit,
   normalizeAITools,
 } from "./aiRuntimeGuards";
+import { mergeModelOptions } from "./providerModelOptions";
 import type {
   AIChatPanelProps,
   AIChatUIAction,
@@ -233,6 +256,22 @@ const initialState: AIChatUIState = {
   hydratedRuns: {},
 };
 
+function initialAIChatStateFromPrefs(
+  preferences: AIChatUIPreferences,
+): AIChatUIState {
+  return {
+    ...initialState,
+    context: {
+      ...initialState.context,
+      ...preferences.defaultContext,
+    },
+    displayPrefs: {
+      ...initialState.displayPrefs,
+      ...preferences.displayPrefs,
+    },
+  };
+}
+
 interface AIChatPanelChromeState {
   historyOpen: boolean;
   reviewOpen: boolean;
@@ -261,6 +300,8 @@ type AIChatPanelChromeAction =
   | { type: "resizeReview"; edge: "start" | "end"; delta: number }
   | { type: "toggleContextPicker" };
 
+const fullscreenDrawerRailInset = 66;
+
 const initialChromeState: AIChatPanelChromeState = {
   historyOpen: false,
   reviewOpen: false,
@@ -268,9 +309,9 @@ const initialChromeState: AIChatPanelChromeState = {
   historyEdge: "left",
   reviewEdge: "right",
   historyWidth: 270,
-  reviewWidth: 380,
-  historyInset: 12,
-  reviewInset: 12,
+  reviewWidth: 520,
+  historyInset: fullscreenDrawerRailInset,
+  reviewInset: fullscreenDrawerRailInset,
   contextPickerOpen: false,
   sessionSearchOpen: false,
   historySearch: "",
@@ -398,10 +439,20 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         ...state,
         context: { ...state.context, [action.key]: action.value },
       };
+    case "setContextPrefs":
+      return {
+        ...state,
+        context: { ...state.context, ...action.context },
+      };
     case "setDisplayPref":
       return {
         ...state,
         displayPrefs: { ...state.displayPrefs, [action.key]: action.value },
+      };
+    case "setDisplayPrefs":
+      return {
+        ...state,
+        displayPrefs: { ...state.displayPrefs, ...action.displayPrefs },
       };
     case "toggleProviderPopover": {
       const providerPopoverOpen = action.open ?? !state.providerPopoverOpen;
@@ -499,22 +550,22 @@ function chromeReducer(
         const nextState = {
           ...state,
           historyEdge: action.edge,
-          historyInset: 12,
+          historyInset: fullscreenDrawerRailInset,
         };
         if (state.reviewOpen && state.reviewEdge === action.edge) {
           nextState.reviewEdge = oppositeEdge(action.edge);
-          nextState.reviewInset = 12;
+          nextState.reviewInset = fullscreenDrawerRailInset;
         }
         return nextState;
       }
       const nextState = {
         ...state,
         reviewEdge: action.edge,
-        reviewInset: 12,
+        reviewInset: fullscreenDrawerRailInset,
       };
       if (state.historyOpen && state.historyEdge === action.edge) {
         nextState.historyEdge = oppositeEdge(action.edge);
-        nextState.historyInset = 12;
+        nextState.historyInset = fullscreenDrawerRailInset;
       }
       return nextState;
     }
@@ -525,7 +576,7 @@ function chromeReducer(
           ...state,
           historyInset: clamp(
             state.historyInset + state.historyWidth - nextWidth,
-            12,
+            fullscreenDrawerRailInset,
             520,
           ),
           historyWidth: nextWidth,
@@ -537,12 +588,12 @@ function chromeReducer(
       };
     case "resizeReview":
       if (action.edge === "end") {
-        const nextWidth = clamp(state.reviewWidth + action.delta, 320, 620);
+        const nextWidth = clamp(state.reviewWidth + action.delta, 360, 760);
         return {
           ...state,
           reviewInset: clamp(
             state.reviewInset - (nextWidth - state.reviewWidth),
-            12,
+            fullscreenDrawerRailInset,
             520,
           ),
           reviewWidth: nextWidth,
@@ -550,7 +601,7 @@ function chromeReducer(
       }
       return {
         ...state,
-        reviewWidth: clamp(state.reviewWidth - action.delta, 320, 620),
+        reviewWidth: clamp(state.reviewWidth - action.delta, 360, 760),
       };
     case "toggleContextPicker":
       return {
@@ -869,6 +920,46 @@ function envelopeFromRun(run: AIChatRun): AIChatRunEnvelope {
   });
 }
 
+function notificationKindForRunNotice(
+  notice: AIChatRunNotice,
+): "info" | "success" | "warning" | "error" {
+  switch (notice.severity) {
+    case "warning":
+      return "warning";
+    case "success":
+      return "success";
+    case "info":
+      return "info";
+    case "error":
+    default:
+      return "error";
+  }
+}
+
+function runNoticeNotificationId(
+  envelope: Pick<AIChatRunEnvelope, "id">,
+  notice: AIChatRunNotice,
+): string {
+  return (
+    notice.notificationId?.trim() ||
+    `ai-chat-run:${envelope.id || "unknown"}:notice`
+  );
+}
+
+function runNoticeSignature(
+  envelope: Pick<AIChatRunEnvelope, "revision" | "updatedAt">,
+  notice: AIChatRunNotice,
+): string {
+  return [
+    envelope.revision || 0,
+    envelope.updatedAt || "",
+    notice.severity || "",
+    notice.title || "",
+    notice.message || "",
+    notice.details || "",
+  ].join("\u001f");
+}
+
 function mergeArtifactsById(
   existing: AIChatRunArtifact[],
   incoming: AIChatRunArtifact[],
@@ -1009,9 +1100,20 @@ export function AIChatPanelContent({
       };
     }),
   );
+  const beginPanelMotionWindow = usePerformanceStore(
+    (store) => store.beginPanelMotionWindow,
+  );
   const aiChatSendShortcut = useEditorSettingsStore(
     (store) => store.aiChatSendShortcut,
   );
+  const { aiChatPreferences, setAIChatDefaultContext, setAIChatDisplayPref } =
+    useEditorSettingsStore(
+      useShallow((store) => ({
+        aiChatPreferences: store.aiChatPreferences,
+        setAIChatDefaultContext: store.setAIChatDefaultContext,
+        setAIChatDisplayPref: store.setAIChatDisplayPref,
+      })),
+    );
   const {
     status,
     providers,
@@ -1056,7 +1158,11 @@ export function AIChatPanelContent({
     setEmbeddingStatus,
   } = useAIChatStore();
 
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, dispatch] = useReducer(
+    reducer,
+    aiChatPreferences,
+    initialAIChatStateFromPrefs,
+  );
   const [chrome, dispatchChrome] = useReducer(
     chromeReducer,
     initialChromeState,
@@ -1090,6 +1196,7 @@ export function AIChatPanelContent({
   const workbenchRef = useRef<HTMLDivElement | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const initialSelectionHydratedRef = useRef(false);
+  const runNoticeSignaturesRef = useRef<Record<string, string>>({});
   const drawerDragRef = useRef<{
     drawer: DrawerId;
     startX: number;
@@ -1115,8 +1222,64 @@ export function AIChatPanelContent({
     commitMessage,
   } = chrome;
 
+  useEffect(() => {
+    dispatch({
+      type: "setContextPrefs",
+      context: aiChatPreferences.defaultContext,
+    });
+    dispatch({
+      type: "setDisplayPrefs",
+      displayPrefs: aiChatPreferences.displayPrefs,
+    });
+  }, [aiChatPreferences]);
+
+  const handleContextToggle = useCallback(
+    (key: keyof ContextToggles, value: boolean) => {
+      dispatch({ type: "setContext", key, value });
+      setAIChatDefaultContext(key, value);
+    },
+    [setAIChatDefaultContext],
+  );
+
+  const handleDisplayPrefChange = useCallback(
+    (key: keyof typeof state.displayPrefs, value: boolean) => {
+      dispatch({ type: "setDisplayPref", key, value });
+      setAIChatDisplayPref(key, value);
+    },
+    [setAIChatDisplayPref],
+  );
+
+  const publishRunNotice = useCallback((envelope: AIChatRunEnvelope) => {
+    const notice = envelope.runNotice;
+    if (!notice?.title) {
+      return;
+    }
+    const notificationId = runNoticeNotificationId(envelope, notice);
+    const signature = runNoticeSignature(envelope, notice);
+    if (runNoticeSignaturesRef.current[notificationId] === signature) {
+      return;
+    }
+    runNoticeSignaturesRef.current[notificationId] = signature;
+    useAppNotificationStore.getState().addNotification({
+      id: notificationId,
+      kind: notificationKindForRunNotice(notice),
+      title: notice.title,
+      message: notice.message,
+      details: notice.details,
+      detailsLabel: notice.details ? "Run details" : undefined,
+      source: notice.source || "AI Runtime",
+      tag: notice.tag || "agent",
+      sticky: notice.severity === "error",
+    });
+  }, []);
+
   const fullscreen = presentation === "fullscreen";
   const reduceMotion = useReducedMotion();
+  const beginChatMotionWindow = useCallback(() => {
+    if (!reduceMotion) {
+      beginPanelMotionWindow(280);
+    }
+  }, [beginPanelMotionWindow, reduceMotion]);
   const sortedProviders = useMemo(() => sortProviders(providers), [providers]);
   const selectedProvider = useMemo(() => {
     const explicit = sortedProviders.find(
@@ -1130,8 +1293,21 @@ export function AIChatPanelContent({
   const selectedProviderIsExternalAgent = selectedProvider
     ? isExternalAgentProvider(selectedProvider)
     : false;
+  const selectedProviderRuntime = useMemo(
+    () =>
+      selectedProvider
+        ? (providerRuntimes.find(
+            (candidate) => candidate.providerId === selectedProvider.id,
+          ) ?? null)
+        : null,
+    [providerRuntimes, selectedProvider],
+  );
+  const selectedModelOptions = useMemo(
+    () => mergeModelOptions(selectedProvider, selectedProviderRuntime),
+    [selectedProvider, selectedProviderRuntime],
+  );
   const selectedModel = useMemo(() => {
-    const providerModels = selectedProvider?.models ?? [];
+    const providerModels = selectedModelOptions;
     const providerModelIds = new Set(
       providerModels.map((model) => model.id).filter(Boolean),
     );
@@ -1139,29 +1315,28 @@ export function AIChatPanelContent({
     if (requestedModel && providerModelIds.has(requestedModel)) {
       return requestedModel;
     }
+    const activeModel = providerModels.find((model) => model.active);
+    if (activeModel?.id) {
+      return activeModel.id;
+    }
     if (providerModels[0]?.id) {
       return providerModels[0].id;
     }
     return selectedProviderIsExternalAgent ? "" : status?.activeModel || "";
   }, [
-    selectedProvider?.models,
+    selectedModelOptions,
     selectedProviderIsExternalAgent,
     state.selectedModel,
     status?.activeModel,
   ]);
   const selectedModelDescriptor = useMemo(
     () =>
-      selectedProvider?.models?.find((model) => model.id === selectedModel) ??
-      null,
-    [selectedModel, selectedProvider?.models],
+      selectedModelOptions.find((model) => model.id === selectedModel) ?? null,
+    [selectedModel, selectedModelOptions],
   );
   const selectedReasoningEffort = useMemo(() => {
     const effort = state.selectedReasoningEffort;
-    if (
-      !effort ||
-      !selectedProvider ||
-      !isExternalAgentProvider(selectedProvider)
-    ) {
+    if (!effort || !selectedProvider) {
       return "";
     }
     const reasoningEfforts =
@@ -1229,6 +1404,24 @@ export function AIChatPanelContent({
     status,
   });
   const selectedProviderReady = providerDisabledReason === "";
+  const activityItems = buildActivityStatusItems({
+    selectedProvider,
+    selectedProviderReady,
+    contextPreview,
+    activeEnvelope,
+    artifacts: activeArtifacts,
+    activeRun,
+    activeRunText:
+      activeRun?.response ?? streamingTextByRunId[activeRunKey] ?? "",
+    approvalPolicy,
+    consentPolicy,
+    embeddingStatus,
+    workflowCount: promptWorkflows.length,
+  });
+  const activitySummary = summarizeActivityStatus(
+    activityItems,
+    selectedProviderReady,
+  );
   const agentConsoleVisible =
     isInteractiveFallbackRuntime(activeEnvelope?.runtimeFamily) ||
     isInteractiveFallbackRuntime(
@@ -1679,6 +1872,7 @@ export function AIChatPanelContent({
       .then((envelope) => {
         if (envelope?.id) {
           upsertRunEnvelope(envelope);
+          publishRunNotice(envelope);
         }
       })
       .catch(() => {
@@ -1700,6 +1894,7 @@ export function AIChatPanelContent({
     (envelope: AIChatRunEnvelope) => {
       if (!envelope?.id) return;
       upsertRunEnvelope(envelope);
+      publishRunNotice(envelope);
       void refreshRunArtifactsEvent(envelope.id);
       void refreshPendingApprovalsEvent();
       const runSessionId = sessionIdOf(envelope);
@@ -2376,6 +2571,36 @@ export function AIChatPanelContent({
     }
   }, [consentPolicy, setConsentPolicy]);
 
+  const handleAcceptRemoteBYOKProviderConsent = useCallback(async () => {
+    setRuntimeError(null);
+    try {
+      const nextPolicy = await AISaveConsentPolicy({
+        ...(consentPolicy ?? defaultAIConsentPolicy()),
+        remoteProvidersAccepted: true,
+      });
+      setConsentPolicy(
+        normalizeAIConsentPolicy(nextPolicy) ?? defaultAIConsentPolicy(),
+      );
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+  }, [consentPolicy, setConsentPolicy]);
+
+  const handleAcceptFrontierProviderConsent = useCallback(async () => {
+    setRuntimeError(null);
+    try {
+      const nextPolicy = await AISaveConsentPolicy({
+        ...(consentPolicy ?? defaultAIConsentPolicy()),
+        frontierProvidersAccepted: true,
+      });
+      setConsentPolicy(
+        normalizeAIConsentPolicy(nextPolicy) ?? defaultAIConsentPolicy(),
+      );
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    }
+  }, [consentPolicy, setConsentPolicy]);
+
   const handleNewChat = useCallback(() => {
     const sessionId = createChatSessionId();
     setActiveRunId(null);
@@ -2580,118 +2805,124 @@ export function AIChatPanelContent({
   return (
     <section ref={panelRef} className={panelClass} data-testid="ai-chat-panel">
       <LazyMotion features={domAnimation}>
-        <AIChatHeader
-          activeEnvelope={activeEnvelope}
-          activeRun={activeRun}
-          activeRunText={
-            activeRun?.response ?? streamingTextByRunId[activeRunKey] ?? ""
-          }
-          activityPopoverOpen={state.activityPopoverOpen}
-          agentProfiles={agentProfiles}
-          approvalPolicy={approvalPolicy}
-          artifacts={activeArtifacts}
-          context={state.context}
-          contextPreview={contextPreview}
-          contextProviders={contextProviders}
-          consentPolicy={consentPolicy}
-          displayPrefs={state.displayPrefs}
-          egressRecords={egressRecords}
-          embeddingStatus={embeddingStatus}
-          loading={loading}
-          mnemonicEntries={mnemonicEntries}
-          promptWorkflows={promptWorkflows}
-          historyOpen={historyOpen}
-          reviewExpanded={reviewExpanded}
-          reviewOpen={reviewOpen}
-          sessionSearch={sessionSearch}
-          sessionSearchOpen={sessionSearchOpen}
-          sessionSearchMatchCount={
-            sessionSearchTerms.length > 0 && sessionSearchMatches.length > 0
-              ? Math.max(activeSessionSearchIndex, 0) + 1
-              : 0
-          }
-          sessionSearchTotalCount={
-            sessionSearchTerms.length > 0 ? sessionSearchMatches.length : 0
-          }
-          selectedProvider={selectedProvider}
-          selectedProviderReady={selectedProviderReady}
-          settingsPopoverOpen={state.settingsPopoverOpen}
-          status={status}
-          tools={tools}
-          toolAudit={toolAudit}
-          modelCapabilities={modelCapabilities}
-          mnemonicBusy={mnemonicBusy}
-          mnemonicError={mnemonicError}
-          onContextToggle={(key, value) =>
-            dispatch({ type: "setContext", key, value })
-          }
-          onDisplayPrefChange={(key, value) =>
-            dispatch({ type: "setDisplayPref", key, value })
-          }
-          onToggleActivityPopover={() => {
-            dispatch({ type: "toggleActivityPopover" });
-            dispatchChrome({
-              type: "patch",
-              value: { contextPickerOpen: false, sessionSearchOpen: false },
-            });
-          }}
-          onToggleHistory={() => {
-            closeTransientPopovers();
-            dispatchChrome({
-              type: historyOpen ? "closeDrawer" : "openDrawer",
-              drawer: "history",
-            });
-          }}
-          onToggleReview={() => {
-            closeTransientPopovers();
-            if (reviewExpanded) {
+        {!fullscreen ? (
+          <AIChatHeader
+            activeEnvelope={activeEnvelope}
+            activeRun={activeRun}
+            activeRunText={
+              activeRun?.response ?? streamingTextByRunId[activeRunKey] ?? ""
+            }
+            activityPopoverOpen={state.activityPopoverOpen}
+            agentProfiles={agentProfiles}
+            approvalPolicy={approvalPolicy}
+            artifacts={activeArtifacts}
+            context={state.context}
+            contextPreview={contextPreview}
+            contextProviders={contextProviders}
+            consentPolicy={consentPolicy}
+            displayPrefs={state.displayPrefs}
+            egressRecords={egressRecords}
+            embeddingStatus={embeddingStatus}
+            loading={loading}
+            mnemonicEntries={mnemonicEntries}
+            promptWorkflows={promptWorkflows}
+            historyOpen={historyOpen}
+            reviewExpanded={reviewExpanded}
+            reviewOpen={reviewOpen}
+            sessionSearch={sessionSearch}
+            sessionSearchOpen={sessionSearchOpen}
+            sessionSearchMatchCount={
+              sessionSearchTerms.length > 0 && sessionSearchMatches.length > 0
+                ? Math.max(activeSessionSearchIndex, 0) + 1
+                : 0
+            }
+            sessionSearchTotalCount={
+              sessionSearchTerms.length > 0 ? sessionSearchMatches.length : 0
+            }
+            selectedProvider={selectedProvider}
+            selectedProviderReady={selectedProviderReady}
+            settingsPopoverOpen={state.settingsPopoverOpen}
+            status={status}
+            tools={tools}
+            toolAudit={toolAudit}
+            modelCapabilities={modelCapabilities}
+            mnemonicBusy={mnemonicBusy}
+            mnemonicError={mnemonicError}
+            onContextToggle={handleContextToggle}
+            onDisplayPrefChange={handleDisplayPrefChange}
+            onToggleActivityPopover={() => {
+              dispatch({ type: "toggleActivityPopover" });
               dispatchChrome({
                 type: "patch",
-                value: { reviewExpanded: false, reviewOpen: false },
+                value: { contextPickerOpen: false, sessionSearchOpen: false },
               });
-              return;
+            }}
+            onToggleHistory={() => {
+              beginChatMotionWindow();
+              closeTransientPopovers();
+              dispatchChrome({
+                type: historyOpen ? "closeDrawer" : "openDrawer",
+                drawer: "history",
+              });
+            }}
+            onToggleReview={() => {
+              beginChatMotionWindow();
+              closeTransientPopovers();
+              if (reviewExpanded) {
+                dispatchChrome({
+                  type: "patch",
+                  value: { reviewExpanded: false, reviewOpen: false },
+                });
+                return;
+              }
+              dispatchChrome({
+                type: reviewOpen ? "closeDrawer" : "openDrawer",
+                drawer: "review",
+              });
+            }}
+            onToggleSessionSearch={() => {
+              const nextOpen = !sessionSearchOpen;
+              dispatch({ type: "toggleProviderPopover", open: false });
+              dispatch({ type: "toggleSettingsPopover", open: false });
+              dispatch({ type: "toggleActivityPopover", open: false });
+              dispatchChrome({
+                type: "patch",
+                value: {
+                  contextPickerOpen: false,
+                  sessionSearchOpen: nextOpen,
+                },
+              });
+            }}
+            onSessionSearchChange={(value) =>
+              dispatchChrome({ type: "patch", value: { sessionSearch: value } })
             }
-            dispatchChrome({
-              type: reviewOpen ? "closeDrawer" : "openDrawer",
-              drawer: "review",
-            });
-          }}
-          onToggleSessionSearch={() => {
-            const nextOpen = !sessionSearchOpen;
-            dispatch({ type: "toggleProviderPopover", open: false });
-            dispatch({ type: "toggleSettingsPopover", open: false });
-            dispatch({ type: "toggleActivityPopover", open: false });
-            dispatchChrome({
-              type: "patch",
-              value: {
-                contextPickerOpen: false,
-                sessionSearchOpen: nextOpen,
-              },
-            });
-          }}
-          onSessionSearchChange={(value) =>
-            dispatchChrome({ type: "patch", value: { sessionSearch: value } })
-          }
-          onSessionSearchPrevious={() => handleNavigateSessionSearch(-1)}
-          onSessionSearchNext={() => handleNavigateSessionSearch(1)}
-          onClearSessionSearch={() =>
-            dispatchChrome({ type: "patch", value: { sessionSearch: "" } })
-          }
-          onNewChat={handleNewChat}
-          onRefreshRuntime={refreshRuntime}
-          onMnemonicSearch={handleMnemonicSearch}
-          onMnemonicSave={handleMnemonicSave}
-          onMnemonicPromote={handleMnemonicPromote}
-          onAcceptLocalProviderConsent={handleAcceptLocalProviderConsent}
-          onAcceptExternalAgentConsent={handleAcceptExternalAgentConsent}
-          onToggleSettingsPopover={() => {
-            dispatch({ type: "toggleSettingsPopover" });
-            dispatchChrome({
-              type: "patch",
-              value: { contextPickerOpen: false, sessionSearchOpen: false },
-            });
-          }}
-        />
+            onSessionSearchPrevious={() => handleNavigateSessionSearch(-1)}
+            onSessionSearchNext={() => handleNavigateSessionSearch(1)}
+            onClearSessionSearch={() =>
+              dispatchChrome({ type: "patch", value: { sessionSearch: "" } })
+            }
+            onNewChat={handleNewChat}
+            onRefreshRuntime={refreshRuntime}
+            onMnemonicSearch={handleMnemonicSearch}
+            onMnemonicSave={handleMnemonicSave}
+            onMnemonicPromote={handleMnemonicPromote}
+            onAcceptLocalProviderConsent={handleAcceptLocalProviderConsent}
+            onAcceptExternalAgentConsent={handleAcceptExternalAgentConsent}
+            onAcceptRemoteBYOKProviderConsent={
+              handleAcceptRemoteBYOKProviderConsent
+            }
+            onAcceptFrontierProviderConsent={
+              handleAcceptFrontierProviderConsent
+            }
+            onToggleSettingsPopover={() => {
+              dispatchApplicationMenuAction("settings.toggle");
+              dispatchChrome({
+                type: "patch",
+                value: { contextPickerOpen: false, sessionSearchOpen: false },
+              });
+            }}
+          />
+        ) : null}
 
         <div
           ref={workbenchRef}
@@ -2717,6 +2948,219 @@ export function AIChatPanelContent({
                 />
               </div>
             ) : null}
+            <AnimatePresence initial={false}>
+              {fullscreen ? (
+                <m.nav
+                  className="ai-chat-focus-rail ai-chat-focus-rail--left"
+                  data-ai-chat-popover-scope
+                  aria-label="AI Chat navigation"
+                  initial={
+                    reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }
+                  }
+                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }}
+                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }}
+                  transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
+                >
+                  <button
+                    className={`ai-chat-icon-button${historyOpen ? " is-active" : ""}`}
+                    type="button"
+                    title="History"
+                    onClick={() => {
+                      beginChatMotionWindow();
+                      closeTransientPopovers();
+                      dispatchChrome({
+                        type: historyOpen ? "closeDrawer" : "openDrawer",
+                        drawer: "history",
+                      });
+                    }}
+                  >
+                    <History size={16} />
+                  </button>
+                  <button
+                    className="ai-chat-icon-button"
+                    type="button"
+                    title="New chat"
+                    onClick={handleNewChat}
+                  >
+                    <MessageSquarePlus size={16} />
+                  </button>
+                  <button
+                    className={`ai-chat-icon-button${sessionSearchOpen ? " is-active" : ""}`}
+                    type="button"
+                    title="Search current session"
+                    onClick={() => {
+                      dispatch({ type: "toggleProviderPopover", open: false });
+                      dispatch({ type: "toggleSettingsPopover", open: false });
+                      dispatch({ type: "toggleActivityPopover", open: false });
+                      dispatchChrome({
+                        type: "patch",
+                        value: {
+                          contextPickerOpen: false,
+                          sessionSearchOpen: !sessionSearchOpen,
+                        },
+                      });
+                    }}
+                  >
+                    <Search size={16} />
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {sessionSearchOpen ? (
+                      <m.div
+                        className="ai-chat-popover ai-chat-header-search ai-chat-rail-popover"
+                        role="search"
+                        aria-label="Search current chat session"
+                        initial={
+                          reduceMotion
+                            ? { opacity: 0 }
+                            : { opacity: 0, x: -6, scale: 0.98 }
+                        }
+                        animate={
+                          reduceMotion
+                            ? { opacity: 1 }
+                            : { opacity: 1, x: 0, scale: 1 }
+                        }
+                        exit={
+                          reduceMotion
+                            ? { opacity: 0 }
+                            : { opacity: 0, x: -4, scale: 0.98 }
+                        }
+                        transition={{ duration: reduceMotion ? 0.1 : 0.16 }}
+                      >
+                        <div className="ai-chat-search-field ai-chat-search-field--header">
+                          {sessionSearch ? null : <Search size={14} />}
+                          <input
+                            autoFocus
+                            aria-label="Search current chat session"
+                            placeholder="Search this session..."
+                            value={sessionSearch}
+                            onChange={(event) =>
+                              dispatchChrome({
+                                type: "patch",
+                                value: { sessionSearch: event.target.value },
+                              })
+                            }
+                          />
+                          {sessionSearch ? (
+                            <>
+                              <span className="ai-chat-header-search__count">
+                                {sessionSearchTerms.length > 0 &&
+                                sessionSearchMatches.length > 0
+                                  ? Math.max(activeSessionSearchIndex, 0) + 1
+                                  : 0}
+                                /
+                                {sessionSearchTerms.length > 0
+                                  ? sessionSearchMatches.length
+                                  : 0}
+                              </span>
+                              <div
+                                className="ai-chat-header-search__nav"
+                                aria-label="Search result navigation"
+                              >
+                                <button
+                                  className="ai-chat-icon-button ai-chat-icon-button--compact"
+                                  type="button"
+                                  title="Previous search result"
+                                  disabled={sessionSearchMatches.length === 0}
+                                  onClick={() =>
+                                    handleNavigateSessionSearch(-1)
+                                  }
+                                >
+                                  <ChevronUp size={14} />
+                                </button>
+                                <button
+                                  className="ai-chat-icon-button ai-chat-icon-button--compact"
+                                  type="button"
+                                  title="Next search result"
+                                  disabled={sessionSearchMatches.length === 0}
+                                  onClick={() => handleNavigateSessionSearch(1)}
+                                >
+                                  <ChevronDown size={14} />
+                                </button>
+                              </div>
+                            </>
+                          ) : null}
+                        </div>
+                      </m.div>
+                    ) : null}
+                  </AnimatePresence>
+                </m.nav>
+              ) : null}
+            </AnimatePresence>
+            <AnimatePresence initial={false}>
+              {fullscreen ? (
+                <m.nav
+                  className="ai-chat-focus-rail ai-chat-focus-rail--right"
+                  data-ai-chat-popover-scope
+                  aria-label="AI Chat tools"
+                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
+                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }}
+                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
+                  transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
+                >
+                  <button
+                    className={`ai-chat-icon-button${reviewOpen || reviewExpanded ? " is-active" : ""}`}
+                    type="button"
+                    title="Git review"
+                    onClick={() => {
+                      beginChatMotionWindow();
+                      closeTransientPopovers();
+                      if (reviewExpanded) {
+                        dispatchChrome({
+                          type: "patch",
+                          value: { reviewExpanded: false, reviewOpen: false },
+                        });
+                        return;
+                      }
+                      dispatchChrome({
+                        type: reviewOpen ? "closeDrawer" : "openDrawer",
+                        drawer: "review",
+                      });
+                    }}
+                  >
+                    <GitBranch size={16} />
+                  </button>
+                  <button
+                    className={`ai-chat-icon-button${state.activityPopoverOpen ? " is-active" : ""}`}
+                    type="button"
+                    title="Runtime activity"
+                    onClick={() => {
+                      dispatch({ type: "toggleActivityPopover" });
+                      dispatchChrome({
+                        type: "patch",
+                        value: {
+                          contextPickerOpen: false,
+                          sessionSearchOpen: false,
+                        },
+                      });
+                    }}
+                  >
+                    <CheckCircle2 size={16} />
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {state.activityPopoverOpen ? (
+                      <ActivityStatusPopover
+                        activeEnvelope={activeEnvelope}
+                        activeRun={activeRun}
+                        contextPreview={contextPreview}
+                        items={activityItems}
+                        selectedProvider={selectedProvider}
+                        summary={activitySummary}
+                      />
+                    ) : null}
+                  </AnimatePresence>
+                  <button
+                    className="ai-chat-icon-button"
+                    type="button"
+                    title="AI Chat settings"
+                    onClick={() =>
+                      dispatchApplicationMenuAction("settings.toggle")
+                    }
+                  >
+                    <Settings size={16} />
+                  </button>
+                </m.nav>
+              ) : null}
+            </AnimatePresence>
             <div
               className="ai-chat-conversation"
               data-dimmed={reviewExpanded ? "true" : "false"}
@@ -2727,9 +3171,10 @@ export function AIChatPanelContent({
                 ) : null}
                 <PendingApprovalCenter
                   approvals={pendingApprovals}
-                  onOpenReview={() =>
-                    dispatchChrome({ type: "openDrawer", drawer: "review" })
-                  }
+                  onOpenReview={() => {
+                    beginChatMotionWindow();
+                    dispatchChrome({ type: "openDrawer", drawer: "review" });
+                  }}
                   onSelectRun={(runId) => {
                     const envelope = runs.find(
                       (candidate) => candidate.id === runId,
@@ -2753,42 +3198,51 @@ export function AIChatPanelContent({
                   <EmptyState
                     providerReady={selectedProviderReady}
                     onRefresh={handleRefreshProviders}
+                    onStarterSelect={(action, prompt) => {
+                      dispatch({ type: "setAction", action });
+                      dispatch({ type: "setInput", input: prompt });
+                    }}
                   />
                 ) : (
                   <div className="ai-chat-transcript">
-                    {transcriptRuns.map((envelope: AIChatRunEnvelope) => (
-                      <RunCard
-                        active={envelope.id === activeRunKey}
-                        compact={state.displayPrefs.compactCards}
-                        envelope={envelope}
-                        artifactBusyId={artifactBusyId}
-                        artifacts={artifactsByRunId[envelope.id] ?? []}
-                        key={envelope.id}
-                        run={hydratedRuns[envelope.id] ?? null}
-                        streamingText={streamingTextByRunId[envelope.id] ?? ""}
-                        searchQuery={
-                          sessionSearchTerms.length > 0 ? sessionSearch : ""
-                        }
-                        onApplyPatchArtifact={handleApplyPatchArtifact}
-                        onApproveMnemonicArtifact={
-                          handleApproveMnemonicArtifact
-                        }
-                        onOpenReview={() =>
-                          dispatchChrome({
-                            type: "openDrawer",
-                            drawer: "review",
-                          })
-                        }
-                        onApproveToolProposal={handleApproveToolProposal}
-                        onDenyToolProposal={handleDenyToolProposal}
-                        onPreviewToolProposal={handlePreviewToolProposal}
-                        onRollbackPatchArtifact={handleRollbackPatchArtifact}
-                        onSelect={(runId) => {
-                          setActiveRunId(runId);
-                          dispatch({ type: "setActiveRun", runId });
-                        }}
-                      />
-                    ))}
+                    <AnimatePresence initial={false} mode="popLayout">
+                      {transcriptRuns.map((envelope: AIChatRunEnvelope) => (
+                        <RunCard
+                          active={envelope.id === activeRunKey}
+                          compact={state.displayPrefs.compactCards}
+                          envelope={envelope}
+                          artifactBusyId={artifactBusyId}
+                          artifacts={artifactsByRunId[envelope.id] ?? []}
+                          key={envelope.id}
+                          run={hydratedRuns[envelope.id] ?? null}
+                          streamingText={
+                            streamingTextByRunId[envelope.id] ?? ""
+                          }
+                          searchQuery={
+                            sessionSearchTerms.length > 0 ? sessionSearch : ""
+                          }
+                          onApplyPatchArtifact={handleApplyPatchArtifact}
+                          onApproveMnemonicArtifact={
+                            handleApproveMnemonicArtifact
+                          }
+                          onOpenReview={() => {
+                            beginChatMotionWindow();
+                            dispatchChrome({
+                              type: "openDrawer",
+                              drawer: "review",
+                            });
+                          }}
+                          onApproveToolProposal={handleApproveToolProposal}
+                          onDenyToolProposal={handleDenyToolProposal}
+                          onPreviewToolProposal={handlePreviewToolProposal}
+                          onRollbackPatchArtifact={handleRollbackPatchArtifact}
+                          onSelect={(runId) => {
+                            setActiveRunId(runId);
+                            dispatch({ type: "setActiveRun", runId });
+                          }}
+                        />
+                      ))}
+                    </AnimatePresence>
                     <div ref={transcriptEndRef} />
                   </div>
                 )}
@@ -2819,9 +3273,7 @@ export function AIChatPanelContent({
                   dispatch({ type: "setAction", action })
                 }
                 onCancel={handleCancel}
-                onContextToggle={(key, value) =>
-                  dispatch({ type: "setContext", key, value })
-                }
+                onContextToggle={handleContextToggle}
                 onInputChange={(input) => dispatch({ type: "setInput", input })}
                 onMentionQuery={handleMentionQuery}
                 onMentionRemove={(id) =>
@@ -2842,6 +3294,12 @@ export function AIChatPanelContent({
                 onSelectProvider={handleProviderSelect}
                 onStartAgentLogin={handleStartAgentLogin}
                 onAcceptExternalAgentConsent={handleAcceptExternalAgentConsent}
+                onAcceptRemoteBYOKProviderConsent={
+                  handleAcceptRemoteBYOKProviderConsent
+                }
+                onAcceptFrontierProviderConsent={
+                  handleAcceptFrontierProviderConsent
+                }
                 onStartProviderRuntime={handleStartProviderRuntime}
                 onStopProviderRuntime={handleStopProviderRuntime}
                 onToggleContextPicker={() => {
@@ -2888,8 +3346,18 @@ export function AIChatPanelContent({
                     width: historyWidth,
                     ...(fullscreen
                       ? historyEdge === "left"
-                        ? { left: historyInset }
-                        : { right: historyInset }
+                        ? {
+                            left: Math.max(
+                              historyInset,
+                              fullscreenDrawerRailInset,
+                            ),
+                          }
+                        : {
+                            right: Math.max(
+                              historyInset,
+                              fullscreenDrawerRailInset,
+                            ),
+                          }
                       : {}),
                   }}
                   transition={
@@ -2987,8 +3455,18 @@ export function AIChatPanelContent({
                     width: reviewWidth,
                     ...(fullscreen
                       ? reviewEdge === "left"
-                        ? { left: reviewInset }
-                        : { right: reviewInset }
+                        ? {
+                            left: Math.max(
+                              reviewInset,
+                              fullscreenDrawerRailInset,
+                            ),
+                          }
+                        : {
+                            right: Math.max(
+                              reviewInset,
+                              fullscreenDrawerRailInset,
+                            ),
+                          }
                       : {}),
                   }}
                   transition={

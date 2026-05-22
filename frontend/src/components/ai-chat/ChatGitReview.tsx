@@ -370,10 +370,6 @@ export function ChatGitReview({
   const selectedFileIndex = selectedFile
     ? filteredFiles.findIndex((file) => fileKey(file) === fileKey(selectedFile))
     : -1;
-  const selectedFileStats = useMemo(
-    () => diffStats(parseDiffRows(diff, "")),
-    [diff],
-  );
   const largeDiff = filteredFiles.length > 1 || diff.split("\n").length > 260;
   const canCommit =
     commitMessage.trim().length > 0 && stagedFiles.length > 0 && !busy;
@@ -597,12 +593,6 @@ export function ChatGitReview({
                 {branchTarget}
               </span>
             ) : null}
-            <span className="ai-chat-shell-pill ai-chat-git-count-pill is-add">
-              +{selectedFileStats.additions}
-            </span>
-            <span className="ai-chat-shell-pill ai-chat-git-count-pill is-delete">
-              -{selectedFileStats.deletions}
-            </span>
             <span className="ai-chat-shell-pill">{changedCount} changed</span>
             {canMove ? (
               <span className="ai-chat-drawer-grip" title="Move review">
