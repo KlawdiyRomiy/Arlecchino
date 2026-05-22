@@ -198,7 +198,7 @@ test("update notification summarizes curated notes and hides raw commit digests"
 
   const curatedNotes = `Improved
 - Faster update cards while downloading packages.
-- Wails updated to v3.0.0-alpha.87.
+- Wails updated to v3.0.0-alpha.95.
 - Private updater smoke is easier to audit.
 - Release artifacts stay outside the repo.
 - Extra detail remains available on GitHub.`;

@@ -9,7 +9,7 @@ import {
 test("release notes policy accepts curated notes", () => {
   const notes = `Improved
 - Faster update notifications while downloading packages.
-- Wails updated to v3.0.0-alpha.87.
+- Wails updated to v3.0.0-alpha.95.
 
 Fixed
 - Update cards no longer show raw commit logs.`;

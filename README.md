@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="Go 1.26">
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React 19">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/Wails-v3.0.0--alpha.87-EB4034" alt="Wails v3.0.0-alpha.87">
+  <img src="https://img.shields.io/badge/Wails-v3.0.0--alpha.95-EB4034" alt="Wails v3.0.0-alpha.95">
   <img src="https://img.shields.io/badge/Platform-macOS%20beta-000000?logo=apple&logoColor=white" alt="macOS beta">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License">
 </p>
@@ -23,7 +23,7 @@
 ## Beta Status
 
 Arlecchino is now a **macOS-first IDE Beta**, built on
-**Wails v3.0.0-alpha.87**.
+**Wails v3.0.0-alpha.95**.
 
 The beta keeps the editor shell, terminal/workspace flow, floating panels,
 Git/preview surfaces, local-first defaults, and MCP control as the foundation.
@@ -313,7 +313,7 @@ an upstream/runtime dependency status, not the product release status.
 
 The current strategy is:
 
-- keep `main` on the pinned **Wails v3.0.0-alpha.87** module
+- keep `main` on the pinned **Wails v3.0.0-alpha.95** module
 - use `./scripts/wails3-dev-macos.sh` for source runs
 - keep generated bindings controlled by `./scripts/wails3-generate-bindings.sh`
 - keep detached/native delivery surfaces gated until their smoke evidence is
@@ -342,7 +342,7 @@ shell status and release gate.
 | Backend  | Go 1.26                       |
 | Frontend | React 19, TypeScript (strict) |
 | Editor   | CodeMirror 6                  |
-| Desktop  | Wails v3.0.0-alpha.87         |
+| Desktop  | Wails v3.0.0-alpha.95         |
 | Database | SQLite with GORM              |
 | Parsing  | Tree-sitter                   |
 | Terminal | xterm.js + PTY                |
