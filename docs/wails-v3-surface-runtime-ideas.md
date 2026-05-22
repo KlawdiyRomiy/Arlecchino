@@ -424,19 +424,19 @@ Baseline hardening для этой ветки теперь имеет отдел
 | Protocol/file associations | Green | `arlecchino://` and file association payloads normalize through strict open-intent allowlist; real OS smoke now proves Wails handler entry and emitted dispatch through LaunchServices/AppleEvent routes. | Keep production default-handler claims scoped to signed/notarized release packaging. |
 | Tray/notifications/dock badge | Yellow | Native delivery is wired to Background Shell only behind packaged spike env flags; `.app` smoke validates projection, and live smoke proves tray startup, dock badge set, accepted/rejected action routing and tracked failure states. Notification manual smoke now records permission status and delivery result. In-app notifications use a separate app-wide stack for foreground IDE feedback. | Run `--include-notifications` permission smoke manually before claiming native notification delivery; keep default-off until signed/bundled UX is acceptable. |
 | Auto-update runtime | Yellow | Custom updater v1 is implemented without Sparkle/Wails alpha updater API: `GetBuildInfo()`, `GetAutoUpdateStatus()`, `CheckForAutoUpdate()`, `DownloadAutoUpdate()`, `ApplyStagedAutoUpdate()`, `CancelAutoUpdate()`, plus private GitHub release access methods for Keychain token status/save/clear. It verifies channel/platform/version/build, SHA256 and Ed25519, stages signed `arlecchino-macos-universal.zip` containing `Arlecchino.app`, then runs a user-confirmed helper to backup/replace/relaunch without `sudo`. Private smoke passed for `0.1.3-alpha.103`; `0.1.1`/`0.1.2` are superseded. Foreground update UX uses the neutral bottom-right `framer-motion` app notification stack; startup/background checks are quiet unless an update is present, while manual checks in Settings/topbar remain explicit and refresh unchanged results. Update cards show compact curated notes with expandable details, reject raw commit digests in manifests, include target build labels, compare `version` first and `build` second, and switch immediately to progress states for download/install. Private repo updates use `github-release://` manifest source and temporary macOS Keychain token storage; manual-required is returned when private access is missing during manual checks. Manual DMG fallback remains for unwritable bundles. | Keep recording old-app -> private GitHub release manifest/ZIP -> apply/relaunch smoke evidence with `wails3-private-updater-live-smoke-macos.sh`; migrate to public no-auth releases when the repo opens; keep Developer ID/notarization marked absent. |
-| Packaging/release OS integration | Yellow | Local-alpha release profile now builds universal `arm64+x86_64` ad-hoc signed `Arlecchino.app`, `arlecchino-macos-universal.zip` and optional `arlecchino-macos-universal.dmg` for Big Sur 11.0 through Tahoe 26.x. Evidence records split GitHub asset names, confirms public names do not contain `v3`, installed-app smoke distinguishes `wails://localhost` renderer labels from real TCP listeners, and release draft flow is documented as one tag with split assets. | Developer ID/notarization remains inactive until credentials exist; ad-hoc artifacts are local/tester alpha only and not trusted public distribution. Keep stale dev-orphan cleanup green before release evidence is accepted. |
+| Packaging/release OS integration | Yellow | The historical local-alpha release script now builds universal `arm64+x86_64` ad-hoc signed `Arlecchino.app`, `arlecchino-macos-universal.zip` and optional `arlecchino-macos-universal.dmg` for Big Sur 11.0 through Tahoe 26.x. Evidence records split GitHub asset names, confirms public names do not contain `v3`, installed-app smoke distinguishes `wails://localhost` renderer labels from real TCP listeners, and release draft flow is documented as one tag with split assets. | Developer ID/notarization remains inactive until credentials exist; ad-hoc artifacts are local/tester beta only and not trusted public distribution. Keep stale dev-orphan cleanup green before release evidence is accepted. |
 | Real OS handoff | Green | `wails3-real-os-smoke-macos.sh` launches a registered ad-hoc `.app`, traces Wails application-event handler entry, proves `ide:intent:open` emitted dispatch for protocol/file payloads and proves gated second-instance handoff. | Keep the evidence as smoke-gated; browser/Finder UX still depends on production registration/signing decisions. |
 
 Blockers before Arlehub:
 
 - Keep current shell contracts stable for surface read, open intent, Background Shell and Window Lease.
 - Keep detached helper lifecycle under spike free of stale state or lost return-to-main.
-- Keep local-alpha release smoke green for universal macOS artifacts before hub work starts.
+- Keep local/tester release smoke green for universal macOS artifacts before hub work starts.
 - Avoid adding Arlehub timeline/UI until Flight Recorder and Background Shell remain readable without hub.
 
 Blockers before default-on native delivery:
 
-- Keep packaging evidence current for universal Intel+Apple Silicon local-alpha artifacts.
+- Keep packaging evidence current for universal Intel+Apple Silicon local/tester beta artifacts.
 - Keep GitHub release assets split by platform/architecture and keep product artifact names free of `v3`.
 - Keep real OS handoff smoke green as packaging/signing evolves.
 - Verify notification permission/startup in the packaged app, not only in report projection.
@@ -451,7 +451,7 @@ Ready for Arlehub checklist:
 - Green Open Intent parser/queue/real OS handoff smoke.
 - Green Background Shell and Flight Recorder backend readability without hub UI.
 - Yellow but stable Window Lease helper lifecycle with manual Terminal smoke recorded.
-- Yellow local-alpha release evidence for universal macOS artifacts without Developer ID.
+- Yellow local/tester beta release evidence for universal macOS artifacts without Developer ID.
 - Yellow auto-update runtime with signed ZIP trust root, quiet startup check, explicit manual trigger UX, private updater smoke evidence and manual fallback.
 - Public GitHub release asset policy uses `arlecchino-macos-universal.dmg` as macOS primary and `arlecchino-macos-universal.zip` as updater/fallback artifact.
 
@@ -868,8 +868,10 @@ file/code panels, browser preview.
 - `docs/arlehub-architecture.md` уже описывает Arlehub как host applet, projection graph,
   provider catalog, provider-backed chat, subagent runtime, skill residency, Docker
   sandbox и shared operator context.
-- `frontend/src/components/AIChatPanel.tsx` сейчас фактически placeholder: есть локальные
-  message states и mock response, но rendered UI показывает Coming Soon.
+- `frontend/src/components/ai-chat/AIChatPanel.tsx` now renders the beta AI Chat
+  surface and connects to backend runtime state, provider/model selection,
+  context preview, live run events, consent gates, tool review, patch artifacts,
+  and activity state.
 - Backend AI context already has typed Mnemonic + Skill Residency contracts:
   `AIContextRequest.includeMnemonic`, `includeMCP`, `includeSkills`,
   `AIContextSnapshot.skills`, and `AIContextSummary.skillCount`.

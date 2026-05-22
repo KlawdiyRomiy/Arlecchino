@@ -1,23 +1,32 @@
-# Alpha Release Checklist
+# Beta Release Checklist
 
-Status: practical release gate for the macOS-first Editor/Shell Alpha, source
-alpha path, and local macOS alpha bundle. There is still no Apple Developer ID,
+Status: practical release gate for the macOS-first Arlecchino Beta, source
+checkout path, and local macOS beta bundle. There is still no Apple Developer ID,
 so this is not a trusted notarized distribution path.
 
-The public alpha message is: editor shell first, AI later. Do not position the
-current release as a complete AI IDE. Cloud AI/chat integration is planned but
-not shipped in this alpha; local ARLE autocomplete/ranking remains experimental.
+The filename is retained for link compatibility with existing release scripts
+and docs; the release track described here is beta.
+
+The public beta message is: local-first desktop IDE with integrated AI
+assistance, MCP control, and approval-gated agent surfaces. Do not position the
+current release as GA/stable or as a complete autonomous AI IDE. AI Chat,
+provider configuration, context preview, consent gates, tool review, patch
+artifacts, Codex CLI runtime integration, and optional editor predictions are
+part of the beta surface. Provider setup, model capability, approval policy, and
+runtime coverage still vary; local ARLE autocomplete/ranking remains
+experimental.
 
 ## Release Formats
 
 - Primary path: source checkout through `git clone`, then run
   `./scripts/bootstrap-dev-macos.sh` once and `./scripts/wails3-dev-macos.sh` for
   development launches.
-- Convenience path: `./scripts/wails3-local-alpha-release-macos.sh` creates an
-  ad-hoc signed universal `arm64+x86_64` `Arlecchino.app` for macOS Big Sur
-  11.0 through Tahoe 26.x, `arlecchino-macos-universal.zip`, JSON evidence
-  report, and optional `arlecchino-macos-universal.dmg` through
-  `sindresorhus/create-dmg` (`create-dmg`/`npx create-dmg`).
+- Convenience path: `./scripts/wails3-local-alpha-release-macos.sh` is the
+  historical packaging script name. It creates an ad-hoc signed universal
+  `arm64+x86_64` `Arlecchino.app` for macOS Big Sur 11.0 through Tahoe 26.x,
+  `arlecchino-macos-universal.zip`, JSON evidence report, and optional
+  `arlecchino-macos-universal.dmg` through `sindresorhus/create-dmg`
+  (`create-dmg`/`npx create-dmg`).
 - GitHub Releases should use split assets by platform/architecture. For macOS,
   the primary asset is `arlecchino-macos-universal.dmg`; the fallback/manual
   asset is `arlecchino-macos-universal.zip`. Version belongs to the GitHub tag
@@ -32,7 +41,7 @@ not shipped in this alpha; local ARLE autocomplete/ranking remains experimental.
 
 ## GitHub Release Draft Flow
 
-- Use one GitHub release tag per alpha build.
+- Use one GitHub release tag per beta build.
 - Upload macOS assets as separate files:
   - `arlecchino-macos-universal.dmg`
   - `arlecchino-macos-universal.zip`
@@ -42,7 +51,7 @@ not shipped in this alpha; local ARLE autocomplete/ranking remains experimental.
 - Do not put the version in the macOS asset filename; the version belongs to
   the GitHub tag, release title, release notes, and manifest metadata.
 - Updater manifests must include both `version` and `build`. Installed apps
-  compare `version` first and `build` second, so build-only alpha patches are
+  compare `version` first and `build` second, so build-only beta patches are
   detectable after this gate.
 - Release notes used for updater manifests must be curated user-facing notes,
   not raw `git log` digests. Use short sections such as `Improved`, `Fixed`,
@@ -50,7 +59,7 @@ not shipped in this alpha; local ARLE autocomplete/ranking remains experimental.
   `scripts/wails3-update-manifest.mjs` rejects notes that look like commit
   hash lists.
 - Do not publish a trusted macOS distribution claim until Developer ID signing
-  and notarization are available. Local-alpha ad-hoc assets are for local/tester
+  and notarization are available. Ad-hoc assets are for local/tester
   workflows only.
 - Future platform assets should follow the same split-asset model by platform
   and architecture, rather than mixing installers into one catch-all artifact.
@@ -63,12 +72,13 @@ not shipped in this alpha; local ARLE autocomplete/ranking remains experimental.
 - `docs/model-provenance.md`
 - `docs/lsp-supply-chain.md`
 - `docs/trademark-clearance.md`
-- clear release notes stating that telemetry, accounts, and cloud AI providers
-  are disabled by default in the current alpha.
+- clear release notes stating that telemetry and accounts are not enabled by
+  default, and cloud AI providers/external agent runtimes require explicit
+  provider configuration, consent, and runtime gates.
 - README feature sections and release notes with demo-video placeholders or
   links for every public feature being claimed.
 
-## Manual Gates Before Public Alpha
+## Manual Gates Before Public Beta
 
 - Confirm the gated Hugging Face terms state for
   `https://huggingface.co/datasets/bigcode/the-stack-dedup` using the
@@ -84,15 +94,16 @@ not shipped in this alpha; local ARLE autocomplete/ranking remains experimental.
 - Resolve packages with missing local license metadata, including
   `codemirror-extension-inline-suggestion`.
 - Review `docs/trademark-clearance.md` before broader public launch.
-- Confirm README and public release notes describe this as an Editor/Shell Alpha,
-  not as a finished AI IDE.
+- Confirm README and public release notes describe this as a Beta with
+  integrated AI assistance, not as GA/stable and not as a finished autonomous AI
+  IDE.
 - Confirm every public feature claim has either a demo video link or a visible
   `TBD` placeholder that makes the missing demo explicit.
 - Do a release dogfood pass: startup, project open, editor interaction,
   terminal command, autocomplete/ranking path, and one MCP approval flow.
 - Run the narrow release checks for the current tree and do not publish with
   known red checks unless the release notes explicitly classify the issue as an
-  accepted alpha limitation.
+  accepted beta limitation.
 - Verify in-app notifications through the neutral notification stack: save
   progress, save success/error, dispatcher result, and terminal/git errors.
   Native macOS notifications remain separate and default-off.
@@ -112,18 +123,18 @@ not shipped in this alpha; local ARLE autocomplete/ranking remains experimental.
 - If using update manifests, generate them with
   `./scripts/wails3-update-manifest.mjs`; keep the Ed25519 private key outside
   the repository and publish only the manifest/artifacts/public verifier key.
-- For updater-enabled local-alpha builds, generate release candidates with
+- For updater-enabled local/tester builds, generate release candidates with
   `./scripts/wails3-local-alpha-release-macos.sh --update-private-key <external-ed25519.pem>`.
   This produces the public DMG, the updater ZIP, signed manifest, public key
   output, and release evidence. The ZIP must contain only `Arlecchino.app`.
-- For private GitHub alpha updates, use
+- For private GitHub beta updates, use
   `./scripts/wails3-private-github-alpha-release-macos.sh` first without
   `--publish` to inspect the plan. Live publish requires `--publish`, GitHub CLI
   authentication, a clean tracked worktree, and an external Ed25519 private key. The
   script uploads `arlecchino-macos-universal.zip` first, regenerates the update
   manifest with the private GitHub release asset API URL, then uploads the
   manifest, public verifier key, checksums, optional DMG and release evidence.
-- Installed private-alpha apps should embed
+- Installed private-beta apps should embed
   `github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-update-manifest.json`
   as the manifest source. Users configure private release access in Settings;
   Arlecchino stores the fine-grained GitHub token in macOS Keychain under
@@ -168,14 +179,14 @@ not shipped in this alpha; local ARLE autocomplete/ranking remains experimental.
 ## Security Gates
 
 - MCP mutating tools must require explicit approval by default.
-- Public alpha approval path should use the in-app UI prompt when the live IDE
+- Public beta approval path should use the in-app UI prompt when the live IDE
   is available.
 - `ARLECCHINO_MCP_APPROVAL_CODE` is acceptable for developer or scripted flows,
-  but should not be the only public alpha approval mechanism.
+  but should not be the only public beta approval mechanism.
 - In-app direct binary downloads for LSP servers must be pinned and verified, or
   kept out of the public in-app install path until a manifest with checksums is
   added.
-- For the macOS alpha, `zls`, `marksman`, and `lua-language-server` should
+- For the macOS beta, `zls`, `marksman`, and `lua-language-server` should
   install through Homebrew instead of Arlecchino-managed direct binary
   downloads.
 - Auto-update install/apply is enabled only for signed updater ZIPs verified by

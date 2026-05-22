@@ -3,10 +3,16 @@
 Use this for GitHub release notes and updater manifest `releaseNotes`.
 Do not paste raw `git log` output or commit hash lists into user-facing notes.
 
-## Alpha Positioning
+## Beta Positioning
 
-- Arlecchino is an Editor/Shell Alpha focused on the local desktop IDE surface.
-- Built-in cloud AI/chat integration is planned, but not part of this alpha.
+- Arlecchino is a macOS-first IDE Beta with integrated AI assistance, local-first
+  defaults, and MCP-based IDE control.
+- AI Chat, provider/model selection, context preview, consent gates,
+  approval-gated tool review, patch artifacts, Codex CLI runtime integration,
+  and optional editor predictions are part of the beta surface.
+- Do not describe the release as GA/stable, fully autonomous, or a finished AI
+  IDE. Provider setup, model capability, consent, approvals, and runtime
+  coverage still vary.
 - macOS artifacts are not Developer ID signed or notarized yet.
 
 ## Demo Videos
@@ -16,8 +22,9 @@ Do not paste raw `git log` output or commit hash lists into user-facing notes.
 - Editor and navigation: TBD
 - Built-in IDE tools: TBD
 - MCP integration and approvals: TBD
-- Predictive autocomplete / ARLE brain: TBD
-- Install, update, and local-alpha macOS flow: TBD
+- AI Chat, provider consent, and tool review: TBD
+- Predictive autocomplete / ARLE brain / AI prediction: TBD
+- Install, update, and local/tester macOS flow: TBD
 
 ## Improved
 

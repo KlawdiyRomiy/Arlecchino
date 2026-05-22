@@ -80,7 +80,7 @@ Remaining risks:
 
 ## Recommendation
 
-Keep the name for the alpha if the product stays clearly positioned as a
+Keep the name for the beta if the product stays clearly positioned as a
 desktop IDE / developer tool and avoids game-character branding. Before a larger
 public launch, run a formal clearance search or hire a trademark attorney,
 especially if you plan to file a U.S. or EU trademark application.

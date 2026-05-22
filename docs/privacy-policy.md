@@ -1,18 +1,23 @@
 # Arlecchino Privacy Policy
 
-Status: alpha policy draft for source builds and local alpha bundles.
+Status: beta policy draft for source builds and local tester bundles.
 
 This document describes the privacy behavior Arlecchino is intended to follow.
 It should be reviewed before any public binary release, app store release, or
-cloud AI provider integration.
+new provider/runtime integration.
 
-## Current Alpha Position
+## Current Beta Position
 
 - Arlecchino does not include product analytics, advertising SDKs, or crash
   reporting SDKs.
 - Arlecchino does not require an account.
-- Arlecchino does not enable cloud AI providers by default.
-- Arlecchino's AI chat panel is currently unavailable.
+- Arlecchino includes an AI Chat surface, optional editor AI predictions,
+  provider/model selection, context preview, consent gates, approval-gated tool
+  review, patch artifacts, local egress records, Mnemonic memory, and a
+  Codex-backed external agent runtime path.
+- Cloud AI providers and external agent runtimes are not enabled silently. They
+  require explicit provider configuration, consent, runtime gating, or
+  account/CLI setup depending on the provider.
 - Project indexing, editor state, terminal state, and MCP audit data are local
   to the user's machine unless the user explicitly enables a feature that talks
   to an external service.
@@ -26,6 +31,9 @@ Arlecchino may store local data needed to behave like an IDE:
 - panel layout, tabs, search history, preview state, and UI preferences;
 - terminal session metadata and terminal-assisted prediction context;
 - project-local MCP audit logs, checkpoints, and agent memory;
+- AI run metadata, AI chat history/envelopes, patch artifacts, tool audit
+  records, run timelines, egress metadata, provider settings, and Mnemonic
+  entries;
 - browser webview storage used by the desktop shell.
 
 Project-local state may be written under the opened project, including
@@ -34,7 +42,7 @@ standard application data or browser/webview storage locations.
 
 ## External Network Activity
 
-The current source alpha can perform network activity for development and IDE
+The current source beta can perform network activity for development and IDE
 features:
 
 - `scripts/bootstrap-dev-macos.sh` uses Homebrew, Go modules, npm, and npm
@@ -48,16 +56,20 @@ features:
 - Documentation enrichment code contains clients for Context7 and GitHub code
   search. These flows must remain opt-in before release if they send package,
   symbol, version, or repository context to external services.
-- Future AI provider integrations may send selected editor context, prompts,
-  code snippets, and completion requests to the configured provider. These
-  integrations must be disabled by default and require explicit user opt-in.
-  Provider-side logging, abuse monitoring, retention, training use, telemetry,
-  and regional processing are controlled by that provider's terms and data
-  processing documentation, not by Arlecchino.
+- AI provider integrations may send selected editor context, prompts, code
+  snippets, terminal facts, Mnemonic summaries, and completion or chat requests
+  to a configured provider. These integrations are gated by provider setup,
+  consent, and runtime policy. Provider-side logging, abuse monitoring,
+  retention, training use, telemetry, and regional processing are controlled by
+  that provider's terms and data processing documentation, not by Arlecchino.
+- External agent CLI runtimes, currently centered on Codex, may use the
+  provider-owned account/CLI process. Arlecchino should pass prompt/context
+  through safe runtime channels, not through process arguments, and should keep
+  provider credentials owned by the provider runtime.
 
 ## AI Provider Rules
 
-Before enabling any external AI provider in a user-facing release:
+When enabling or using any external AI provider in a user-facing release:
 
 1. Keep cloud AI disabled by default.
 2. Show the provider name, endpoint, model, and categories of data that may be
@@ -71,6 +83,9 @@ Before enabling any external AI provider in a user-facing release:
    in project files, logs, or prompts.
 8. Do not describe provider telemetry as Arlecchino telemetry. The UI and docs
    must distinguish local app telemetry from provider-side processing.
+9. Keep file edits, terminal commands, MCP calls, and subagent work behind
+   Arlecchino's approval, patch-artifact, audit, and rollback surfaces where
+   applicable.
 
 ## MCP And Agent Control
 
@@ -87,15 +102,17 @@ Audit logs must continue to redact approval codes and direct file content.
 
 ## Data Deletion
 
-For local alpha builds, users can remove Arlecchino's stored data by deleting:
+For local beta builds, users can remove Arlecchino's stored data by deleting:
 
 - project-local `.arlecchino/` directories in opened projects;
 - Arlecchino app data under the operating system's standard application data
   directories;
 - browser/webview local storage associated with the Arlecchino app.
 
-Before public release, Arlecchino should expose an in-app data clearing flow for
-project indexes, MCP logs, chat/provider state, and local webview storage.
+Arlecchino has backend support for clearing project-scoped AI state, but the
+release gate remains a comprehensive in-app data clearing flow for project
+indexes, MCP logs, chat/provider state, Mnemonic state, and local webview
+storage.
 
 ## No Sale Of Personal Data
 
@@ -105,5 +122,5 @@ cross-context behavioral advertising.
 ## Release Gate
 
 Before public distribution, update this policy to match the shipped behavior,
-including any telemetry, update checks, cloud AI, documentation enrichment,
-crash reporting, or marketplace integrations.
+including any telemetry, update checks, cloud AI, external agent runtimes,
+documentation enrichment, crash reporting, or marketplace integrations.

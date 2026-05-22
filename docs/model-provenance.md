@@ -26,7 +26,7 @@ and license questions.
 - Covered artifacts: `assets/arle_model.onnx` and
   `assets/arle_tokenizer.json`.
 - Redistribution: these model artifacts may be redistributed as part of
-  Arlecchino source archives and alpha binary bundles, provided the root
+  Arlecchino source archives and beta binary bundles, provided the root
   `LICENSE`, `THIRD_PARTY_NOTICES.md`, and this provenance document are kept
   with the distribution.
 - No raw training dataset files are redistributed with Arlecchino.
@@ -141,8 +141,8 @@ from scratch. It still needs release discipline:
 
 The notebook's ONNX smoke test passed one example and failed one example: the
 Fibonacci context scored `print("hello world")` higher than the intended
-recursive return. This is not a legal blocker, but it should be documented as an
-alpha quality limitation before presenting the model as reliable.
+recursive return. This is not a legal blocker, but it should be documented as a
+beta quality limitation before presenting the model as reliable.
 
 ## Required Provenance Fields
 
@@ -161,7 +161,7 @@ Remaining release gates:
 
 ## Release Decision
 
-Ship the model in alpha builds because local ranking-backed autocomplete depends
+Ship the model in beta builds because local ranking-backed autocomplete depends
 on it. Do not claim the bundled model is fully release-cleared until the
 release-time memorization check is recorded and the release notes cite The Stack
 / BigCode as required.

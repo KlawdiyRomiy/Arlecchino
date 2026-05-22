@@ -5,12 +5,13 @@
 As of **2026-05-05**, Arlecchino `main` is on the pinned
 `github.com/wailsapp/wails/v3 v3.0.0-alpha.87` module.
 
-This is now the source-alpha shell baseline, not a separate future-only branch.
-The public product message should still call this an Editor/Shell Alpha because
-Wails v3 is still an alpha dependency and several native delivery surfaces are
-gated behind explicit smoke paths.
+This is now the Wails v3 shell baseline, not a separate future-only branch.
+The public product message can now call Arlecchino a Beta because the IDE and AI
+surface have moved beyond the earlier editor/shell-only alpha. Keep Wails v3
+called out separately as an upstream alpha dependency because several native
+delivery surfaces are gated behind explicit smoke paths.
 
-## Current Source-Alpha Path
+## Current Wails v3 Source Path
 
 - Use `./scripts/wails3-dev-macos.sh` on `main`.
 - Do not use the global Wails v2 CLI for current `main` verification.
@@ -34,23 +35,27 @@ looks nicer" question.
 
 ## Release Positioning
 
-The current alpha should be described as:
+The current beta should be described as:
 
 - editor and shell first;
 - local-first by default;
 - no accounts or product analytics by default;
-- no cloud AI/chat integration in the current alpha;
+- AI Chat, provider/model selection, consent gates, approval-gated tool review,
+  patch artifacts, Codex CLI runtime integration, and optional editor AI
+  prediction as the integrated beta AI surface;
+- cloud AI providers and external agent runtimes disabled until configured,
+  consented, and gated;
 - local ARLE autocomplete/ranking as experimental;
 - no Apple Developer ID signing or notarization yet.
 
 ## Demo Video Slots
 
-- Wails v3 source-alpha launch: TBD
+- Wails v3 source launch: TBD
 - Bubble shell panel lifecycle: TBD
 - Detached helper surface behind gate: TBD
 - Native menu/context menu path: TBD
 - Single-instance/open-intent path: TBD
-- Local-alpha packaging/install flow: TBD
+- Local/tester packaging/install flow: TBD
 - Auto-update check/apply flow: TBD
 
 ## Decision Gate
@@ -63,10 +68,10 @@ Do not call the Wails v3 shell complete unless all of these are true:
 - shortcut behavior across windows is sane;
 - packaging/build flow is credible on target platforms;
 - migration effort and rollback path are understood;
-- no alpha blocker threatens release confidence;
+- no beta blocker threatens release confidence;
 - release smoke and installed-app smoke evidence are current.
 
-If these do not pass, Arlecchino can still ship as a technical source alpha, but
+If these do not pass, Arlecchino can still ship as a technical source beta, but
 the affected native shell capability must remain gated or explicitly documented
 as experimental.
 
