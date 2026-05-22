@@ -209,6 +209,7 @@ func (s *Service) ProposeMnemonicEntry(projectID string, req AIMnemonicWriteProp
 	if err != nil {
 		return AIMnemonicWriteProposalResult{}, err
 	}
+	req.Entry.Content = truncateUTF8(sanitizedDisplayText(req.Entry.Content), 4096)
 	if strings.TrimSpace(req.Entry.Content) == "" {
 		return AIMnemonicWriteProposalResult{}, fmt.Errorf("mnemonic proposal content is empty")
 	}

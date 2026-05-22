@@ -75,6 +75,7 @@ import {
   type AIContextRequest,
   type AIContextSnapshot,
   type AIEgressRecord,
+  type AIRunTimelineEvent,
   type AIModelCapabilityDescriptor,
   type AIPendingApproval,
   type AIProviderCapability,
@@ -689,10 +690,16 @@ function scrollRunIntoView(panel: HTMLElement | null, runId: string) {
 
 function PendingApprovalCenter({
   approvals,
+  busyId,
+  onApprove,
+  onDeny,
   onOpenReview,
   onSelectRun,
 }: {
   approvals: AIPendingApproval[];
+  busyId?: string | null;
+  onApprove: (approval: AIPendingApproval, scope: "once" | "run") => void;
+  onDeny: (approval: AIPendingApproval) => void;
   onOpenReview: () => void;
   onSelectRun: (runId: string) => void;
 }) {
@@ -714,20 +721,49 @@ function PendingApprovalCenter({
             approval.scopeSummary ||
             approval.commandPreview ||
             approval.toolId;
+          const disabled = Boolean(busyId);
+          const busy = busyId?.endsWith(`:${approval.id}`) ?? false;
           return (
-            <button
+            <div
               className="ai-chat-pending-approvals__item"
               key={approval.id}
-              type="button"
               title={approval.scopeSummary || approval.commandPreview}
-              onClick={() => onSelectRun(approval.runId)}
             >
-              <span>
-                {approval.toolId || approval.kind}
-                {approval.riskLevel ? ` · ${approval.riskLevel}` : ""}
-              </span>
-              <span>{target}</span>
-            </button>
+              <button
+                className="ai-chat-pending-approvals__item-main"
+                type="button"
+                onClick={() => onSelectRun(approval.runId)}
+              >
+                <span>
+                  {approval.toolId || approval.kind}
+                  {approval.riskLevel ? ` · ${approval.riskLevel}` : ""}
+                </span>
+                <span>{target}</span>
+              </button>
+              <div className="ai-chat-pending-approvals__actions">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onApprove(approval, "once")}
+                >
+                  {busy && busyId?.includes(":once:") ? "Approving" : "Once"}
+                </button>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onApprove(approval, "run")}
+                >
+                  {busy && busyId?.includes(":run:") ? "Approving" : "Run"}
+                </button>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onDeny(approval)}
+                >
+                  {busy && busyId?.includes(":deny:") ? "Denying" : "Deny"}
+                </button>
+              </div>
+            </div>
           );
         })}
       </div>
@@ -1144,6 +1180,7 @@ export function AIChatPanelContent({
     upsertProvider,
     setRuns,
     upsertRunEnvelope,
+    appendRunTimelineEvent,
     deleteSessionRuns,
     setHydratedRun,
     appendRunToken,
@@ -1417,6 +1454,8 @@ export function AIChatPanelContent({
     consentPolicy,
     embeddingStatus,
     workflowCount: promptWorkflows.length,
+    artifactBusyId,
+    mnemonicBusy,
   });
   const activitySummary = summarizeActivityStatus(
     activityItems,
@@ -1974,6 +2013,11 @@ export function AIChatPanelContent({
     void refreshPendingApprovalsEvent();
   });
 
+  const handleRunTimelineEvent = useEffectEvent((event: AIRunTimelineEvent) => {
+    if (!event?.runId) return;
+    appendRunTimelineEvent(event);
+  });
+
   const handleChatToolResult = useEffectEvent((payload: unknown) => {
     const runId = (payload as { runId?: string })?.runId;
     void refreshPendingApprovalsEvent();
@@ -2008,6 +2052,9 @@ export function AIChatPanelContent({
     );
     const offEnvelope = EventsOn("ai:chat:run-envelope-updated", (envelope) =>
       handleRunEnvelopeUpdate(envelope as AIChatRunEnvelope),
+    );
+    const offTimeline = EventsOn("ai:run:timeline-event", (event) =>
+      handleRunTimelineEvent(event as AIRunTimelineEvent),
     );
     const offStatus = EventsOn("ai:provider:status", (provider) =>
       handleProviderDescriptor(provider as AIProviderDescriptor),
@@ -2066,6 +2113,7 @@ export function AIChatPanelContent({
       offCanceled?.();
       offToken?.();
       offEnvelope?.();
+      offTimeline?.();
       offStatus?.();
       offRuntime?.();
       offRuntimeRecovered?.();
@@ -2466,14 +2514,17 @@ export function AIChatPanelContent({
         if (result?.audit?.id) {
           upsertToolAudit(result.audit);
         }
-        await refreshRunArtifacts(runId);
+        await Promise.all([
+          refreshRunArtifacts(runId),
+          refreshPendingApprovalsEvent(),
+        ]);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
       } finally {
         setArtifactBusyId(null);
       }
     },
-    [refreshRunArtifacts, upsertToolAudit],
+    [refreshPendingApprovalsEvent, refreshRunArtifacts, upsertToolAudit],
   );
 
   const handleDenyToolProposal = useCallback(
@@ -2494,14 +2545,17 @@ export function AIChatPanelContent({
         if (result?.audit?.id) {
           upsertToolAudit(result.audit);
         }
-        await refreshRunArtifacts(runId);
+        await Promise.all([
+          refreshRunArtifacts(runId),
+          refreshPendingApprovalsEvent(),
+        ]);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
       } finally {
         setArtifactBusyId(null);
       }
     },
-    [refreshRunArtifacts, upsertToolAudit],
+    [refreshPendingApprovalsEvent, refreshRunArtifacts, upsertToolAudit],
   );
 
   const handleApproveToolProposal = useCallback(
@@ -2531,14 +2585,79 @@ export function AIChatPanelContent({
         if (result?.audit?.id) {
           upsertToolAudit(result.audit);
         }
-        await refreshRunArtifacts(runId);
+        await Promise.all([
+          refreshRunArtifacts(runId),
+          refreshPendingApprovalsEvent(),
+        ]);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
       } finally {
         setArtifactBusyId(null);
       }
     },
-    [refreshRunArtifacts, upsertToolAudit],
+    [refreshPendingApprovalsEvent, refreshRunArtifacts, upsertToolAudit],
+  );
+
+  const handleApprovePendingApproval = useCallback(
+    async (approval: AIPendingApproval, scope: "once" | "run") => {
+      if (!approval.runId || !approval.toolId) return;
+      const action =
+        scope === "run"
+          ? AIToolCallAction.AIToolCallActionApproveForRun
+          : AIToolCallAction.AIToolCallActionApproveOnce;
+      const busyId = `approval:${scope}:${approval.id}`;
+      setArtifactBusyId(busyId);
+      setRuntimeError(null);
+      try {
+        const result = await AIExecuteToolCall({
+          runId: approval.runId,
+          toolId: approval.toolId,
+          action,
+          arguments: approval.arguments ?? {},
+        });
+        if (result?.audit?.id) {
+          upsertToolAudit(result.audit);
+        }
+        await Promise.all([
+          refreshRunArtifacts(approval.runId),
+          refreshPendingApprovalsEvent(),
+        ]);
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setArtifactBusyId(null);
+      }
+    },
+    [refreshPendingApprovalsEvent, refreshRunArtifacts, upsertToolAudit],
+  );
+
+  const handleDenyPendingApproval = useCallback(
+    async (approval: AIPendingApproval) => {
+      if (!approval.runId || !approval.toolId) return;
+      const busyId = `approval:deny:${approval.id}`;
+      setArtifactBusyId(busyId);
+      setRuntimeError(null);
+      try {
+        const result = await AIExecuteToolCall({
+          runId: approval.runId,
+          toolId: approval.toolId,
+          action: AIToolCallAction.AIToolCallActionDeny,
+          arguments: approval.arguments ?? {},
+        });
+        if (result?.audit?.id) {
+          upsertToolAudit(result.audit);
+        }
+        await Promise.all([
+          refreshRunArtifacts(approval.runId),
+          refreshPendingApprovalsEvent(),
+        ]);
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setArtifactBusyId(null);
+      }
+    },
+    [refreshPendingApprovalsEvent, refreshRunArtifacts, upsertToolAudit],
   );
 
   const handleAcceptLocalProviderConsent = useCallback(async () => {
@@ -2815,6 +2934,7 @@ export function AIChatPanelContent({
             activityPopoverOpen={state.activityPopoverOpen}
             agentProfiles={agentProfiles}
             approvalPolicy={approvalPolicy}
+            artifactBusyId={artifactBusyId}
             artifacts={activeArtifacts}
             context={state.context}
             contextPreview={contextPreview}
@@ -3171,6 +3291,9 @@ export function AIChatPanelContent({
                 ) : null}
                 <PendingApprovalCenter
                   approvals={pendingApprovals}
+                  busyId={artifactBusyId}
+                  onApprove={handleApprovePendingApproval}
+                  onDeny={handleDenyPendingApproval}
                   onOpenReview={() => {
                     beginChatMotionWindow();
                     dispatchChrome({ type: "openDrawer", drawer: "review" });

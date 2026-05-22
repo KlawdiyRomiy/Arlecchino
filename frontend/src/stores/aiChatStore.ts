@@ -5,6 +5,7 @@ import type {
   AIChatActionDescriptor,
   AIChatRun,
   AIChatRunEnvelope,
+  AIRunTimelineEvent,
   AIAgentProfileDescriptor,
   AIApprovalPolicy,
   AIConsentPolicy,
@@ -54,6 +55,7 @@ interface AIChatRuntimeState {
   setContextProviders: (providers: AIContextProviderDescriptor[]) => void;
   setRuns: (runs: AIChatRunEnvelope[]) => void;
   upsertRunEnvelope: (run: AIChatRunEnvelope) => void;
+  appendRunTimelineEvent: (event: AIRunTimelineEvent) => void;
   deleteSessionRuns: (sessionId: string) => void;
   setHydratedRun: (run: AIChatRun) => void;
   appendRunToken: (runId: string, token: string) => void;
@@ -96,6 +98,45 @@ const mergeToolProposals = (
     return [];
   }
   return existing.toolProposals;
+};
+
+const timelineEventKey = (event: AIRunTimelineEvent): string =>
+  event.id?.trim() ||
+  [
+    event.runId,
+    event.source,
+    event.type,
+    event.status,
+    event.createdAt,
+    event.summary,
+  ]
+    .filter(Boolean)
+    .join(":");
+
+const sortTimelineEvents = (
+  events: AIRunTimelineEvent[],
+): AIRunTimelineEvent[] =>
+  [...events].sort((left, right) => {
+    const leftTime = Date.parse(left.createdAt || "");
+    const rightTime = Date.parse(right.createdAt || "");
+    return (
+      (Number.isFinite(leftTime) ? leftTime : 0) -
+      (Number.isFinite(rightTime) ? rightTime : 0)
+    );
+  });
+
+const mergeTimelineEvents = (
+  existing: AIRunTimelineEvent[] = [],
+  incoming: AIRunTimelineEvent[] = [],
+): AIRunTimelineEvent[] => {
+  if (existing.length === 0 && incoming.length === 0) return [];
+  const byKey = new Map<string, AIRunTimelineEvent>();
+  for (const event of [...existing, ...incoming]) {
+    const key = timelineEventKey(event);
+    if (!key) continue;
+    byKey.set(key, event);
+  }
+  return sortTimelineEvents([...byKey.values()]).slice(-80);
 };
 
 const mergeRunEnvelope = (
@@ -141,8 +182,12 @@ const mergeRunEnvelope = (
         toolProposals: mergeToolProposals(existing, run),
         toolProposalSummary:
           run.toolProposalSummary ?? existing.toolProposalSummary,
+        timeline: mergeTimelineEvents(
+          existing.timeline ?? [],
+          run.timeline ?? [],
+        ),
         mnemonicInclusion:
-          run.mnemonicInclusion?.count || run.mnemonicInclusion?.included
+          run.mnemonicInclusion !== undefined && run.mnemonicInclusion !== null
             ? run.mnemonicInclusion
             : existing.mnemonicInclusion,
       }
@@ -221,6 +266,21 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
       runs: mergeRunEnvelope(state.runs, run),
       activeRunId: state.activeRunId ?? run.id,
     })),
+  appendRunTimelineEvent: (event) =>
+    set((state) => {
+      const runId = event?.runId?.trim();
+      if (!runId) return state;
+      let changed = false;
+      const runs = state.runs.map((run) => {
+        if (run.id !== runId) return run;
+        changed = true;
+        return {
+          ...run,
+          timeline: mergeTimelineEvents(run.timeline ?? [], [event]),
+        };
+      });
+      return changed ? { runs } : state;
+    }),
   deleteSessionRuns: (sessionId) =>
     set((state) => {
       const normalizedSessionId = sessionId.trim() || "default";

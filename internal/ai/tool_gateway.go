@@ -150,6 +150,12 @@ func (s *Service) ExecuteToolCall(ctx context.Context, projectID string, req AIT
 		}
 	case "git.preview":
 		result = s.executeGitPreviewTool(ctx, project, execReq, result)
+	case "memory.search":
+		result = s.executeMemorySearchTool(project, execReq, result)
+	case "memory.context":
+		result = s.executeMemoryContextTool(project, execReq, result)
+	case "memory.propose_save":
+		result = s.executeMemoryProposeSaveTool(project, execReq, result)
 	case "mcp.preview":
 		if execReq.Action == AIToolCallActionExecute {
 			result.Status = "blocked"
@@ -724,11 +730,33 @@ func toolProposalForCall(descriptor AIToolDescriptor, req AIToolCallRequest, pro
 		proposal.Kind = AIToolKindContextRead
 		proposal.ApprovalModeRequired = AIApprovalModeReadOnlyAllowed
 	}
+	if req.ToolID == "memory.search" {
+		proposal.Kind = AIToolKindContextRead
+		proposal.ScopeSummary = "Mnemonic memory search: " + firstNonEmpty(arguments["query"], "recent entries")
+		proposal.ApprovalModeRequired = AIApprovalModeReadOnlyAllowed
+		proposal.RiskLevel = AIToolRiskLow
+	}
+	if req.ToolID == "memory.context" {
+		proposal.Kind = AIToolKindContextRead
+		proposal.ScopeSummary = "Shared Mnemonic memory context"
+		proposal.ApprovalModeRequired = AIApprovalModeReadOnlyAllowed
+		proposal.RiskLevel = AIToolRiskLow
+	}
+	if req.ToolID == "memory.propose_save" {
+		proposal.Kind = AIToolKindContextRead
+		proposal.ScopeSummary = "Reviewable Mnemonic memory-save proposal"
+		proposal.ApprovalModeRequired = AIApprovalModeReadOnlyAllowed
+		proposal.RiskLevel = AIToolRiskMedium
+	}
 	if req.ToolID == "mcp.execute" {
 		proposal.MCPToolName = firstNonEmpty(arguments["tool"], arguments["name"])
-		proposal.ScopeSummary = "MCP tool call: " + proposal.MCPToolName
-		proposal.ApprovalModeRequired = AIApprovalModeFullAccess
-		proposal.RiskLevel = AIToolRiskHigh
+		class := classifyMCPSubtool(proposal.MCPToolName)
+		proposal.ScopeSummary = class.ScopeSummary(proposal.MCPToolName)
+		proposal.ApprovalModeRequired = class.ApprovalMode
+		proposal.RiskLevel = class.RiskLevel
+		if class.HardDenyReason != "" {
+			proposal.HardDenyReason = class.HardDenyReason
+		}
 	}
 	if req.ToolID == "subagent.preview" {
 		proposal.ScopeSummary = "Isolated subagent preview: " + firstNonEmpty(arguments["prompt"], "background task")

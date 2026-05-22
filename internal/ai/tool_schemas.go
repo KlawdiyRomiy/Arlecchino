@@ -13,6 +13,9 @@ const (
 	providerToolFileReadRange     = "file_read_range"
 	providerToolWorkspaceGrep     = "workspace_grep"
 	providerToolGitPreview        = "git_preview"
+	providerToolMemorySearch      = "memory_search"
+	providerToolMemoryContext     = "memory_context"
+	providerToolMemoryProposeSave = "memory_propose_save"
 	providerToolTerminalPreview   = "terminal_preview"
 	providerToolFileEditPreview   = "file_edit_preview"
 	providerToolFileCreatePreview = "file_create_preview"
@@ -113,7 +116,7 @@ func buildUsesFastCurrentFileEditToolset(req AIChatRunRequest) bool {
 	if req.Action != AIChatActionBuild {
 		return false
 	}
-	if strings.TrimSpace(req.ProfileID) == "subagent-runner" || req.IncludeMCP || req.Context.IncludeMCP {
+	if strings.TrimSpace(req.ProfileID) == "subagent-runner" {
 		return false
 	}
 	if len(strings.TrimSpace(req.Prompt)) > 260 {
@@ -231,6 +234,46 @@ func generationToolsForChatRequest(req AIChatRunRequest) []providers.GenerationT
 				},
 			},
 		},
+		{
+			Name:        providerToolMemorySearch,
+			Description: "Search shared project Mnemonic memory, including generated agent-memory entries, with trust/source labels. Use before relying on older project context.",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type":        "string",
+						"description": "Search terms. Leave empty to list recent shared memory entries.",
+					},
+					"tags": map[string]any{
+						"type":        "string",
+						"description": "Optional comma-separated tags.",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"minimum":     1,
+						"maximum":     12,
+						"description": "Maximum memory entries to return.",
+					},
+				},
+			},
+		},
+		{
+			Name:        providerToolMemoryContext,
+			Description: "Read a compact shared Mnemonic memory context summary with trust/source labels. This includes generated agent-memory entries but does not promote them to trusted facts.",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"maxChars": map[string]any{
+						"type":        "integer",
+						"minimum":     200,
+						"maximum":     4000,
+						"description": "Maximum characters to return.",
+					},
+				},
+			},
+		},
 	}
 	if req.Action == AIChatActionDebug || req.Action == AIChatActionBuild {
 		tools = append(tools, providers.GenerationTool{
@@ -259,6 +302,39 @@ func generationToolsForChatRequest(req AIChatRunRequest) []providers.GenerationT
 	}
 	if req.Action == AIChatActionBuild {
 		tools = append(tools,
+			providers.GenerationTool{
+				Name:        providerToolMemoryProposeSave,
+				Description: "Create a reviewable Mnemonic memory-save proposal. This does not save trusted memory; the user must review and approve the proposal before durable promotion.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"required":             []string{"content"},
+					"properties": map[string]any{
+						"content": map[string]any{
+							"type":        "string",
+							"description": "Compact fact, decision, workflow, or handoff note to propose for shared Mnemonic memory.",
+						},
+						"type": map[string]any{
+							"type":        "string",
+							"description": "Memory type such as decision, fact, pattern, bug-fix, workflow, or session-summary.",
+						},
+						"tags": map[string]any{
+							"type":        "string",
+							"description": "Optional comma-separated tags.",
+						},
+						"importance": map[string]any{
+							"type":        "integer",
+							"minimum":     1,
+							"maximum":     10,
+							"description": "Relative importance from 1 to 10.",
+						},
+						"reason": map[string]any{
+							"type":        "string",
+							"description": "Why this should be reviewed for durable memory.",
+						},
+					},
+				},
+			},
 			providers.GenerationTool{
 				Name:        providerToolFileEditPreview,
 				Description: "Create a reviewable patch artifact for a narrow file edit. Use this for small comments, local replacements, and insertions. If the anchor is already visible in provided context, call this directly. Do not pass whole-file oldText/newText rewrites.",
@@ -372,32 +448,30 @@ func generationToolsForChatRequest(req AIChatRunRequest) []providers.GenerationT
 				},
 			})
 		}
-		if req.IncludeMCP || req.Context.IncludeMCP {
-			tools = append(tools, providers.GenerationTool{
-				Name:        providerToolMCPExecute,
-				Description: "Preview an MCP tool call for user approval. Execution remains approval-gated by both AI policy and MCP policy.",
-				Parameters: map[string]any{
-					"type":                 "object",
-					"additionalProperties": false,
-					"required":             []string{"tool", "arguments"},
-					"properties": map[string]any{
-						"tool": map[string]any{
-							"type":        "string",
-							"description": "MCP tool name, for example ide_ui.open_file_panel or ide_control.search_files.",
-						},
-						"arguments": map[string]any{
-							"type":                 "object",
-							"additionalProperties": true,
-							"description":          "JSON object arguments for the MCP tool.",
-						},
-						"summary": map[string]any{
-							"type":        "string",
-							"description": "Short reason for the MCP action.",
-						},
+		tools = append(tools, providers.GenerationTool{
+			Name:        providerToolMCPExecute,
+			Description: "Preview an Arlecchino MCP tool call. Execution remains policy-gated by AI approval, MCP permission, subtool risk classification, audit, and visible UI acknowledgement when applicable.",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"tool", "arguments"},
+				"properties": map[string]any{
+					"tool": map[string]any{
+						"type":        "string",
+						"description": "MCP tool name, for example ide_ui.open_file_panel, ide_control.capabilities, or agent_memory.search.",
+					},
+					"arguments": map[string]any{
+						"type":                 "object",
+						"additionalProperties": true,
+						"description":          "JSON object arguments for the MCP tool.",
+					},
+					"summary": map[string]any{
+						"type":        "string",
+						"description": "Short reason for the MCP action.",
 					},
 				},
-			})
-		}
+			},
+		})
 	}
 	return tools
 }
@@ -463,6 +537,12 @@ func toolIDForProviderToolName(name string) string {
 		return "workspace.grep"
 	case providerToolGitPreview:
 		return "git.preview"
+	case providerToolMemorySearch:
+		return "memory.search"
+	case providerToolMemoryContext:
+		return "memory.context"
+	case providerToolMemoryProposeSave:
+		return "memory.propose_save"
 	case providerToolTerminalPreview:
 		return "terminal.preview"
 	case providerToolFileEditPreview:
@@ -490,6 +570,12 @@ func providerToolNameForToolID(toolID string) string {
 		return providerToolWorkspaceGrep
 	case "git.preview":
 		return providerToolGitPreview
+	case "memory.search":
+		return providerToolMemorySearch
+	case "memory.context":
+		return providerToolMemoryContext
+	case "memory.propose_save":
+		return providerToolMemoryProposeSave
 	case "terminal.preview":
 		return providerToolTerminalPreview
 	case "file.edit.preview":

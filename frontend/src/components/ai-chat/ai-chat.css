@@ -2380,7 +2380,8 @@
 }
 
 .ai-chat-pending-approvals__head button,
-.ai-chat-pending-approvals__item {
+.ai-chat-pending-approvals__item-main,
+.ai-chat-pending-approvals__actions button {
   border: 1px solid var(--ai-chat-border);
   border-radius: var(--ai-chat-control-radius);
   background: var(--ai-chat-surface-raised);
@@ -2404,27 +2405,58 @@
 .ai-chat-pending-approvals__item {
   display: grid;
   min-width: 0;
-  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
   padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--ai-chat-border) 72%, transparent);
+  border-radius: var(--ai-chat-control-radius);
+  background: color-mix(in srgb, var(--ai-chat-surface) 64%, transparent);
+}
+
+.ai-chat-pending-approvals__item-main {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   text-align: left;
 }
 
-.ai-chat-pending-approvals__item span {
+.ai-chat-pending-approvals__item-main span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ai-chat-pending-approvals__item span:first-child {
+.ai-chat-pending-approvals__item-main span:first-child {
   color: var(--ai-chat-text);
   font-size: 11px;
   font-weight: 750;
 }
 
-.ai-chat-pending-approvals__item span:last-child {
+.ai-chat-pending-approvals__item-main span:last-child {
   color: var(--ai-chat-muted);
   font-size: 11px;
+}
+
+.ai-chat-pending-approvals__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.ai-chat-pending-approvals__actions button {
+  min-height: 24px;
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.ai-chat-pending-approvals__actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .ai-chat-tone-ask {

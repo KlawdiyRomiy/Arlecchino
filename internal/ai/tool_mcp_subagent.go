@@ -10,6 +10,49 @@ import (
 
 const maxMCPToolOutputPreviewBytes = 12 * 1024
 
+type mcpSubtoolClass struct {
+	ApprovalMode   AIApprovalMode
+	RiskLevel      AIToolRiskLevel
+	HardDenyReason AIToolHardDenyReason
+	Category       string
+}
+
+func (c mcpSubtoolClass) ScopeSummary(toolName string) string {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		toolName = "unknown"
+	}
+	if strings.TrimSpace(c.Category) == "" {
+		return "MCP tool call: " + toolName
+	}
+	return "MCP " + c.Category + " tool call: " + toolName
+}
+
+func classifyMCPSubtool(toolName string) mcpSubtoolClass {
+	normalized := strings.TrimSpace(toolName)
+	switch normalized {
+	case "agent_memory.search", "agent_memory.list", "agent_memory.context",
+		"ide_control.capabilities", "ide_control.permission_status",
+		"ide_control.search_files", "ide_control.search_content",
+		"ide_control.audit_logs", "ide_control.flight_recorder":
+		return mcpSubtoolClass{ApprovalMode: AIApprovalModeReadOnlyAllowed, RiskLevel: AIToolRiskLow, Category: "read-only"}
+	case "ide_ui.open_file_panel", "ide_ui.preview_open", "ide_ui.hot_switch",
+		"ide_ui.apply_layout_profile", "ide_ui.apply_layout_snapshot",
+		"ide_ui.register_layout_profile":
+		return mcpSubtoolClass{ApprovalMode: AIApprovalModeAskEachTime, RiskLevel: AIToolRiskMedium, Category: "UI"}
+	case "agent_memory.save":
+		return mcpSubtoolClass{ApprovalMode: AIApprovalModeAskEachTime, RiskLevel: AIToolRiskMedium, Category: "memory-write"}
+	case "ide_control.write_file", "ide_backend.terminal_create", "ide_backend.terminal_write",
+		"ide_backend.terminal_resize", "ide_backend.terminal_close", "ide_backend.terminal_close_all",
+		"ide_backend.dispatch_command", "ide_backend.project_close",
+		"ide_backend.lsp_restart", "ide_backend.lsp_install",
+		"change_journal.rollback_checkpoint":
+		return mcpSubtoolClass{ApprovalMode: AIApprovalModeFullAccess, RiskLevel: AIToolRiskHigh, Category: "write/admin"}
+	default:
+		return mcpSubtoolClass{ApprovalMode: AIApprovalModeAskEachTime, RiskLevel: AIToolRiskMedium, Category: "unknown"}
+	}
+}
+
 func (s *Service) executeMCPExecuteTool(ctx context.Context, project *ProjectSession, req AIToolCallRequest, result AIToolCallResult) AIToolCallResult {
 	toolName := strings.TrimSpace(firstNonEmpty(req.Arguments["tool"], req.Arguments["name"]))
 	if toolName == "" {

@@ -31,6 +31,7 @@ import {
   formatRunTime,
   getActionMeta,
   runActivityLabel,
+  timelineEventActivityLabel,
 } from "./aiChatPresentation";
 import { AIChatMarkdownMessage } from "./AIChatMarkdownMessage";
 import { PatchArtifactCard } from "./PatchArtifactCard";
@@ -893,7 +894,11 @@ function RunTimeline({ events }: { events: AIRunTimelineEvent[] }) {
             .join(" · ")}
         >
           <Clock3 size={12} />
-          <span>{event.type?.replace(/_/g, " ") || "event"}</span>
+          <span>
+            {timelineEventActivityLabel(event) ||
+              event.type?.replace(/_/g, " ") ||
+              "event"}
+          </span>
           {event.status ? <small>{event.status}</small> : null}
         </div>
       ))}
@@ -1039,15 +1044,7 @@ export function RunCard({
   const response = cleanAssistantText(responseSource || "", prompt);
   const contextItems = contextItemsForRun(envelope, run);
   const runElapsedMs = elapsedMs(envelope, run, now);
-  const activityLabel = runActivityLabel({
-    status: envelope.status,
-    activeText: response,
-    contextItems,
-    elapsedMs: runElapsedMs,
-  });
   const proposals = run?.toolProposals ?? envelope.toolProposals ?? [];
-  const toolReviewDisabledReason = reviewDisabledReason(envelope, run);
-  const mentionItems = contextItems.filter((item) => item.source === "mention");
   const patchArtifacts = artifacts.filter(
     (artifact) =>
       artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactPatchPreview,
@@ -1063,6 +1060,18 @@ export function RunCard({
   );
   const timelineEvents = envelope.timeline ?? [];
   const runtimeNotice = envelope.runNotice;
+  const activityLabel = runActivityLabel({
+    status: envelope.status,
+    activeText: response,
+    contextItems,
+    elapsedMs: runElapsedMs,
+    timelineEvents,
+    artifacts,
+    toolProposalCount: proposals.length,
+    artifactBusyId,
+  });
+  const toolReviewDisabledReason = reviewDisabledReason(envelope, run);
+  const mentionItems = contextItems.filter((item) => item.source === "mention");
   const proof = runtimeProofState(envelope, artifacts);
   const optionalGitBaselineError = isOptionalGitBaselineFailure(envelope);
   const hasRunDetails =

@@ -228,6 +228,9 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		return
 	}
 	req = applyChatContextPolicy(req)
+	s.updateRun(runID, func(run *AIChatRun) {
+		run.MnemonicRequested = req.IncludeMnemonic || req.Context.IncludeMnemonic
+	})
 	req.Context.Capability = providers.CapabilityChat
 	req.Context.Prompt = req.Prompt
 	req.Context.IncludeMnemonic = req.IncludeMnemonic
@@ -235,6 +238,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	req.Context.IncludeSkills = req.IncludeSkills || req.Context.IncludeSkills
 	snapshot := s.buildContextSnapshot(project, req.Context)
 	contextSummary := summarizeContextSnapshot(snapshot)
+	s.recordContextPlaneTimeline(project, runID, req, contextSummary)
 	s.updateRun(runID, func(run *AIChatRun) {
 		run.ContextSummary = &contextSummary
 	})
@@ -256,6 +260,19 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	s.emitRunEnvelope(project.ID, runID)
 
 	if isExternalAgentRuntimeFamily(req.RuntimeFamily) || strings.HasPrefix(strings.TrimSpace(req.ProviderID), "agent-cli-") {
+		if contextSummary.MCPContext != nil {
+			s.recordRunTimeline(project, AIRunTimelineEvent{
+				RunID:            runID,
+				SessionID:        normalizeChatSessionID(req.SessionID),
+				ProjectSessionID: project.ID,
+				Source:           "mcp_context",
+				Type:             "mcp_tools_degraded",
+				Status:           "degraded",
+				Actor:            "system",
+				Capability:       providers.CapabilityChat,
+				Summary:          "MCP metadata is available; external runtime tool bridge is not enabled.",
+			})
+		}
 		adapter, descriptor, ok := s.resolveAgentAdapter(ctx, req.ProviderID)
 		if !ok {
 			s.finishRunError(runID, fmt.Sprintf("external agent runtime %q is not available", req.ProviderID))
@@ -2109,7 +2126,7 @@ func chatLanguageBoundaryPrompt(_ AIChatRunRequest) string {
 
 func applyChatContextPolicy(req AIChatRunRequest) AIChatRunRequest {
 	if req.ProfileID != minimalChatProfileID && !shouldRouteToMinimalChat(req) {
-		return req
+		return applyAgentContextDefaults(req)
 	}
 	req.ProfileID = minimalChatProfileID
 	req.IncludeMnemonic = false
@@ -2132,6 +2149,78 @@ func applyChatContextPolicy(req AIChatRunRequest) AIChatRunRequest {
 	req.Context.MaxSnippets = 0
 	req.Context.ContextItems = explicitMentionContextItems(req.Context.ContextItems)
 	return req
+}
+
+func applyAgentContextDefaults(req AIChatRunRequest) AIChatRunRequest {
+	req.IncludeMnemonic = true
+	req.Context.IncludeMnemonic = true
+	req.IncludeMCP = true
+	req.Context.IncludeMCP = true
+	return req
+}
+
+func (s *Service) recordContextPlaneTimeline(project *ProjectSession, runID string, req AIChatRunRequest, summary AIContextSummary) {
+	sessionID := normalizeChatSessionID(req.SessionID)
+	projectID := ""
+	if project != nil {
+		projectID = project.ID
+	}
+	if req.IncludeMnemonic || req.Context.IncludeMnemonic {
+		status := "disabled"
+		message := "Mnemonic: memory is disabled."
+		if project != nil && project.Mnemonic != nil && project.Mnemonic.Enabled() {
+			if summary.MnemonicCount > 0 {
+				status = "included"
+				message = fmt.Sprintf("Mnemonic: %d trusted memory entries included.", summary.MnemonicCount)
+			} else {
+				status = "empty"
+				message = "Mnemonic: no trusted memory entries included."
+			}
+		}
+		s.recordRunTimeline(project, AIRunTimelineEvent{
+			RunID:            runID,
+			SessionID:        sessionID,
+			ProjectSessionID: projectID,
+			Source:           "mnemonic_context",
+			Type:             "mnemonic_context",
+			Status:           status,
+			Actor:            "system",
+			Summary:          message,
+			DataCategories:   []string{"mnemonic"},
+			Redaction:        summary.Redaction,
+			Capability:       providers.CapabilityChat,
+		})
+	}
+	if req.IncludeMCP || req.Context.IncludeMCP {
+		status := "unavailable"
+		message := "MCP metadata unavailable."
+		dataCategories := []string{"mcp_tool_metadata"}
+		if plane := summary.MCPContext; plane != nil {
+			if plane.Available {
+				status = "metadata_ready"
+				message = fmt.Sprintf("MCP metadata ready: %d enabled tools; memory backend %s.", plane.EnabledToolCount, firstNonEmpty(plane.MemoryBackend, "unknown"))
+			} else {
+				status = "metadata_unavailable"
+				message = "MCP metadata unavailable: " + firstNonEmpty(plane.ExecutionState, "not available")
+			}
+			if plane.MnemonicSharedContext {
+				dataCategories = append(dataCategories, "mnemonic")
+			}
+		}
+		s.recordRunTimeline(project, AIRunTimelineEvent{
+			RunID:            runID,
+			SessionID:        sessionID,
+			ProjectSessionID: projectID,
+			Source:           "mcp_context",
+			Type:             "mcp_context",
+			Status:           status,
+			Actor:            "system",
+			Summary:          message,
+			DataCategories:   dataCategories,
+			Redaction:        summary.Redaction,
+			Capability:       providers.CapabilityChat,
+		})
+	}
 }
 
 func explicitMentionContextItems(items []AIContextItemRequest) []AIContextItemRequest {

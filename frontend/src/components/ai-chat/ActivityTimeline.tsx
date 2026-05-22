@@ -27,6 +27,7 @@ import { getProviderPresentation } from "./providerPresentation";
 import {
   compactText,
   getActionMeta,
+  memoryArtifactActivityLabel,
   runActivityLabel,
 } from "./aiChatPresentation";
 
@@ -50,6 +51,8 @@ export interface ActivityStatusData {
   consentPolicy: AIConsentPolicy | null;
   embeddingStatus: AIEmbeddingStatus | null;
   workflowCount: number;
+  artifactBusyId?: string | null;
+  mnemonicBusy?: boolean;
 }
 
 interface ActivityTimelineProps extends ActivityStatusData {
@@ -118,6 +121,8 @@ export function buildActivityStatusItems({
   consentPolicy,
   embeddingStatus,
   workflowCount,
+  artifactBusyId = null,
+  mnemonicBusy = false,
 }: ActivityStatusData): ActivityStatusItem[] {
   const provider = getProviderPresentation(selectedProvider);
   const runState = activeEnvelope?.status ?? "";
@@ -144,6 +149,11 @@ export function buildActivityStatusItems({
           activeEnvelope.contextSummary?.contextItems ??
           contextPreview?.contextItems ??
           [],
+        timelineEvents: activeEnvelope.timeline ?? [],
+        artifacts,
+        toolProposalCount: activeEnvelope.toolProposalSummary?.total ?? 0,
+        artifactBusyId,
+        mnemonicBusy,
       }),
     });
   }
@@ -167,6 +177,45 @@ export function buildActivityStatusItems({
       key: "artifacts",
       state: completed ? "done" : "active",
       label: `${artifacts.length} audit artifact${artifacts.length === 1 ? "" : "s"}`,
+    });
+  }
+  const memoryArtifacts = artifacts.filter(
+    (artifact) => artifact.kind === "memory",
+  );
+  if (mnemonicBusy) {
+    items.push({
+      key: "mnemonic-memory",
+      state: "active",
+      label: "Mnemonic: updating memory",
+    });
+  } else if (memoryArtifacts.length > 0) {
+    const busyMemoryArtifact = memoryArtifacts.find(
+      (artifact) => artifact.id === artifactBusyId,
+    );
+    const latestMemoryArtifact =
+      busyMemoryArtifact ??
+      [...memoryArtifacts].sort((left, right) => {
+        const leftTime = Date.parse(left.updatedAt || left.createdAt || "");
+        const rightTime = Date.parse(right.updatedAt || right.createdAt || "");
+        return (
+          (Number.isFinite(leftTime) ? leftTime : 0) -
+          (Number.isFinite(rightTime) ? rightTime : 0)
+        );
+      })[memoryArtifacts.length - 1];
+    const proposedCount = memoryArtifacts.filter(
+      (artifact) => artifact.status === "proposed",
+    ).length;
+    items.push({
+      key: "mnemonic-memory",
+      state: busyMemoryArtifact
+        ? "active"
+        : proposedCount > 0
+          ? "idle"
+          : "done",
+      label:
+        proposedCount > 1
+          ? `Mnemonic: ${proposedCount} memories ready to save`
+          : memoryArtifactActivityLabel(latestMemoryArtifact, artifactBusyId),
     });
   }
   const proposalCount = activeEnvelope?.toolProposalSummary?.total ?? 0;
@@ -216,15 +265,20 @@ export function summarizeActivityStatus(
   const active = items.find((item) => item.state === "active");
   if (active) return active;
 
-  const run = items.find((item) => item.key === "run");
-  if (run) return run;
-
   const attention = items.find((item) =>
-    ["provider", "consent", "embedding"].includes(item.key),
+    ["provider", "consent", "embedding", "mnemonic-memory", "tools"].includes(
+      item.key,
+    ),
   );
   if (attention) {
+    if (attention.key === "mnemonic-memory" || attention.key === "tools") {
+      return attention;
+    }
     return { key: "summary", state: "idle", label: "Needs attention" };
   }
+
+  const run = items.find((item) => item.key === "run");
+  if (run) return run;
 
   return {
     key: "summary",

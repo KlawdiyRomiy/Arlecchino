@@ -78,6 +78,7 @@ interface AIChatHeaderProps {
   activeRun: AIChatRun | null;
   activeRunText: string;
   artifacts: AIChatRunArtifact[];
+  artifactBusyId: string | null;
   contextPreview: AIContextSnapshot | null;
   onNewChat: () => void;
   onRefreshRuntime: () => void;
@@ -134,6 +135,7 @@ export function AIChatHeader({
   activeRun,
   activeRunText,
   artifacts,
+  artifactBusyId,
   contextPreview,
   onNewChat,
   onRefreshRuntime,
@@ -176,6 +178,8 @@ export function AIChatHeader({
     selectedProvider,
     selectedProviderReady,
     workflowCount: promptWorkflows.length,
+    artifactBusyId,
+    mnemonicBusy,
   });
   const activitySummary = summarizeActivityStatus(
     activityItems,
