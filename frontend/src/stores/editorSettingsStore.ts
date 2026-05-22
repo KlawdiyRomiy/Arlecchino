@@ -11,6 +11,27 @@ import {
 export type ProjectWindowMode = "projects" | "windows";
 export type AppIconAppearance = "system" | "light" | "dark";
 export type AIChatSendShortcut = "enter" | "mod-enter";
+
+export interface AIChatDefaultContextPrefs {
+  workspace: boolean;
+  currentFile: boolean;
+  terminalLogs: boolean;
+  mnemonic: boolean;
+  mcp: boolean;
+  skills: boolean;
+}
+
+export interface AIChatDisplayPreferences {
+  autoScroll: boolean;
+  compactCards: boolean;
+  showActivity: boolean;
+}
+
+export interface AIChatUIPreferences {
+  displayPrefs: AIChatDisplayPreferences;
+  defaultContext: AIChatDefaultContextPrefs;
+}
+
 export const TOPBAR_ITEM_IDS = [
   "explorer",
   "search",
@@ -90,6 +111,7 @@ interface EditorSettingsState {
   projectWindowMode: ProjectWindowMode;
   appIconAppearance: AppIconAppearance;
   aiChatSendShortcut: AIChatSendShortcut;
+  aiChatPreferences: AIChatUIPreferences;
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
@@ -115,6 +137,15 @@ interface EditorSettingsState {
   setProjectWindowMode: (value: ProjectWindowMode) => void;
   setAppIconAppearance: (value: AppIconAppearance) => void;
   setAIChatSendShortcut: (value: AIChatSendShortcut) => void;
+  setAIChatDisplayPref: (
+    key: keyof AIChatDisplayPreferences,
+    value: boolean,
+  ) => void;
+  setAIChatDefaultContext: (
+    key: keyof AIChatDefaultContextPrefs,
+    value: boolean,
+  ) => void;
+  setAIChatPreferences: (preferences: Partial<AIChatUIPreferences>) => void;
   toggleZenMode: () => void;
 }
 
@@ -143,6 +174,23 @@ const DEFAULT_ZEN_MODE_ENABLED = false;
 const DEFAULT_PROJECT_WINDOW_MODE: ProjectWindowMode = "projects";
 const DEFAULT_APP_ICON_APPEARANCE: AppIconAppearance = "system";
 const DEFAULT_AI_CHAT_SEND_SHORTCUT: AIChatSendShortcut = "enter";
+export const DEFAULT_AI_CHAT_DISPLAY_PREFS: AIChatDisplayPreferences = {
+  autoScroll: true,
+  compactCards: false,
+  showActivity: true,
+};
+export const DEFAULT_AI_CHAT_DEFAULT_CONTEXT: AIChatDefaultContextPrefs = {
+  workspace: false,
+  currentFile: true,
+  terminalLogs: false,
+  mnemonic: true,
+  mcp: false,
+  skills: false,
+};
+export const DEFAULT_AI_CHAT_PREFERENCES: AIChatUIPreferences = {
+  displayPrefs: DEFAULT_AI_CHAT_DISPLAY_PREFS,
+  defaultContext: DEFAULT_AI_CHAT_DEFAULT_CONTEXT,
+};
 
 type PersistedEditorSettingsState = Partial<
   Pick<
@@ -165,6 +213,7 @@ type PersistedEditorSettingsState = Partial<
     | "projectWindowMode"
     | "appIconAppearance"
     | "aiChatSendShortcut"
+    | "aiChatPreferences"
   >
 >;
 
@@ -240,6 +289,38 @@ const isAppIconAppearance = (value: unknown): value is AppIconAppearance =>
 
 const isAIChatSendShortcut = (value: unknown): value is AIChatSendShortcut =>
   value === "enter" || value === "mod-enter";
+
+const normalizeBooleanRecord = <T extends object>(
+  value: unknown,
+  fallback: T,
+): T => {
+  const next = { ...fallback };
+  if (!isRecord(value)) {
+    return next;
+  }
+  Object.keys(fallback).forEach((key) => {
+    if (typeof value[key] === "boolean") {
+      (next as Record<string, boolean>)[key] = value[key];
+    }
+  });
+  return next;
+};
+
+export const normalizeAIChatPreferences = (
+  value: unknown,
+): AIChatUIPreferences => {
+  const source = isRecord(value) ? value : {};
+  return {
+    displayPrefs: normalizeBooleanRecord(
+      source.displayPrefs,
+      DEFAULT_AI_CHAT_DISPLAY_PREFS,
+    ),
+    defaultContext: normalizeBooleanRecord(
+      source.defaultContext,
+      DEFAULT_AI_CHAT_DEFAULT_CONTEXT,
+    ),
+  };
+};
 
 const migratedProjectWindowMode = (
   value: unknown,
@@ -345,6 +426,12 @@ const sanitizePersistedEditorSettings = (
     nextState.aiChatSendShortcut = persistedState.aiChatSendShortcut;
   }
 
+  if ("aiChatPreferences" in persistedState) {
+    nextState.aiChatPreferences = normalizeAIChatPreferences(
+      persistedState.aiChatPreferences,
+    );
+  }
+
   return nextState;
 };
 
@@ -386,6 +473,7 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       projectWindowMode: DEFAULT_PROJECT_WINDOW_MODE,
       appIconAppearance: DEFAULT_APP_ICON_APPEARANCE,
       aiChatSendShortcut: DEFAULT_AI_CHAT_SEND_SHORTCUT,
+      aiChatPreferences: DEFAULT_AI_CHAT_PREFERENCES,
 
       zoomIn: () =>
         set((state) => ({
@@ -497,6 +585,44 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setAIChatSendShortcut: (value) =>
         set(() => ({ aiChatSendShortcut: value })),
+
+      setAIChatDisplayPref: (key, value) =>
+        set((state) => ({
+          aiChatPreferences: {
+            ...state.aiChatPreferences,
+            displayPrefs: {
+              ...state.aiChatPreferences.displayPrefs,
+              [key]: value,
+            },
+          },
+        })),
+
+      setAIChatDefaultContext: (key, value) =>
+        set((state) => ({
+          aiChatPreferences: {
+            ...state.aiChatPreferences,
+            defaultContext: {
+              ...state.aiChatPreferences.defaultContext,
+              [key]: value,
+            },
+          },
+        })),
+
+      setAIChatPreferences: (preferences) =>
+        set((state) => ({
+          aiChatPreferences: normalizeAIChatPreferences({
+            ...state.aiChatPreferences,
+            ...preferences,
+            displayPrefs: {
+              ...state.aiChatPreferences.displayPrefs,
+              ...preferences.displayPrefs,
+            },
+            defaultContext: {
+              ...state.aiChatPreferences.defaultContext,
+              ...preferences.defaultContext,
+            },
+          }),
+        })),
 
       toggleZenMode: () =>
         set((state) => ({ zenModeEnabled: !state.zenModeEnabled })),

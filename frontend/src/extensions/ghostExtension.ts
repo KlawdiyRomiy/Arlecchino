@@ -31,6 +31,15 @@ type GhostCompletionResult = {
   stale?: boolean;
 };
 
+type GhostAIPredictionResult = {
+  text?: string;
+  stale?: boolean;
+  requestId?: string;
+  documentVersion?: string;
+  providerId?: string;
+  model?: string;
+};
+
 type CompletionContextPayload = {
   filePath: string;
   language: string;
@@ -44,6 +53,15 @@ type CompletionContextPayload = {
   currentMethod: string;
   imports: string[];
   triggerChar: string;
+};
+
+type AIPredictionContextPayload = CompletionContextPayload & {
+  requestId: string;
+  documentVersion: string;
+  baseText: string;
+  effectivePrefix: string;
+  from: number;
+  to: number;
 };
 
 type BuildCompletionContext = (
@@ -73,6 +91,9 @@ type GhostExtensionOptions = {
   fetchCompletions: (
     payload: CompletionContextPayload,
   ) => Promise<GhostCompletionResult | null>;
+  fetchAIPrediction?: (
+    payload: AIPredictionContextPayload,
+  ) => Promise<GhostAIPredictionResult | null>;
   onGhostShown?: () => void;
   onGhostRejected?: () => void;
   onCompletionAccepted?: (label: string) => void;
@@ -198,7 +219,7 @@ export function ghostExtension(
 
   const { helpers } = options;
 
-  const resolveGhostContext = (view: EditorView) => {
+  const resolveGhostContext = (view: EditorView, allowEmptyPrefix = false) => {
     const cursorPos = view.state.selection.main.head;
     const pos = cursorPos;
     const line = view.state.doc.lineAt(pos);
@@ -220,7 +241,7 @@ export function ghostExtension(
     const effectivePrefix =
       stringPrefix ?? accessInfo?.prefix ?? wordAtCursor?.word ?? "";
 
-    if (!effectivePrefix && !accessInfo) {
+    if (!effectivePrefix && !accessInfo && !allowEmptyPrefix) {
       return null;
     }
 
@@ -399,7 +420,10 @@ export function ghostExtension(
     forceIdle?: boolean,
   ) => {
     const currentVersion = ++ghostRequestVersion;
-    const context = resolveGhostContext(view);
+    const context = resolveGhostContext(
+      view,
+      Boolean(forceIdle && options.fetchAIPrediction),
+    );
     if (!context) {
       clearGhostText(view, false);
       return;
@@ -495,6 +519,73 @@ export function ghostExtension(
     const { currentClass, currentMethod, imports } =
       options.buildCompletionContext(context.fullText, context.lineNumber);
 
+    const tryAIPredictionGhost = async (): Promise<boolean> => {
+      if (!forceIdle || !options.fetchAIPrediction || status === "active") {
+        return false;
+      }
+
+      try {
+        const baseText = view.state.doc.sliceString(context.from, context.to);
+        const result = await options.fetchAIPrediction({
+          filePath: options.filePath,
+          language: options.language,
+          line: context.lineNumber,
+          column: context.column,
+          lineText: context.lineText,
+          textBefore: context.textBeforeDoc,
+          textAfter: context.textAfterDoc,
+          fullText: context.fullText,
+          currentClass,
+          currentMethod,
+          imports,
+          triggerChar: "",
+          requestId: `ghost-ai-${currentVersion}`,
+          documentVersion: `${currentVersion}`,
+          baseText,
+          effectivePrefix: context.effectivePrefix,
+          from: context.from,
+          to: context.to,
+        });
+
+        if (currentVersion !== ghostRequestVersion) return true;
+        if (view.state.selection.main.head !== context.cursorPos) return true;
+        if (!result || result.stale) return false;
+
+        let displayText = helpers.snippetToPlainText(result.text || "");
+        displayText = helpers.trimToTokenLimit(displayText, 24);
+        if (!displayText) return false;
+
+        let insertText = `${baseText}${displayText}`;
+        if (
+          context.effectivePrefix &&
+          displayText
+            .toLowerCase()
+            .startsWith(context.effectivePrefix.toLowerCase())
+        ) {
+          insertText = displayText;
+          displayText = displayText.slice(context.effectivePrefix.length);
+        }
+
+        if (!displayText) return false;
+
+        setGhostText(
+          view,
+          context.to,
+          displayText,
+          insertText,
+          false,
+          "AI prediction",
+          context.from,
+          context.to,
+        );
+        options.onGhostShown?.();
+        return true;
+      } catch (error) {
+        console.debug("AI prediction ghost skipped:", error);
+        return false;
+      }
+    };
+
     try {
       const result = await options.fetchCompletions({
         filePath: options.filePath,
@@ -520,11 +611,13 @@ export function ghostExtension(
         !result.items ||
         result.items.length === 0
       ) {
+        if (await tryAIPredictionGhost()) return;
         clearGhostText(view, false);
         return;
       }
 
       if (!result.showGhost || !result.ghostText) {
+        if (await tryAIPredictionGhost()) return;
         clearGhostText(view, false);
         return;
       }
@@ -532,12 +625,14 @@ export function ghostExtension(
       const primary = (result.primary ||
         result.items[0]) as GhostCompletionItem;
       if (!primary) {
+        if (await tryAIPredictionGhost()) return;
         clearGhostText(view, false);
         return;
       }
 
       let ghostText = helpers.snippetToPlainText(result.ghostText);
       if (!ghostText) {
+        if (await tryAIPredictionGhost()) return;
         clearGhostText(view, false);
         return;
       }
@@ -556,6 +651,7 @@ export function ghostExtension(
       }
 
       if (!displayText) {
+        if (await tryAIPredictionGhost()) return;
         clearGhostText(view, false);
         return;
       }
@@ -564,6 +660,7 @@ export function ghostExtension(
         primary.insertText || primary.text || primary.label || "";
       const insertText = helpers.snippetToPlainText(rawInsertText);
       if (!insertText) {
+        if (await tryAIPredictionGhost()) return;
         clearGhostText(view, false);
         return;
       }
@@ -580,6 +677,7 @@ export function ghostExtension(
       );
       options.onGhostShown?.();
     } catch (error) {
+      if (await tryAIPredictionGhost()) return;
       console.error("Ghost completion error:", error);
       clearGhostText(view, false);
     }

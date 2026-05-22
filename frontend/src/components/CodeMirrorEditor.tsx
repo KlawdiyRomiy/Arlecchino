@@ -128,6 +128,8 @@ import type {
 } from "../../bindings/arlecchino/models";
 import {
   GetEditorCompletions,
+  AIGetEditorContinuation,
+  AIGetPredictionStatus,
   LSPHover,
   NotifyFileOpened,
   NotifyFileClosed,
@@ -137,7 +139,9 @@ import {
   RecordFileAccess,
   RevealProjectEntry,
   SearchClasses,
+  type AIPredictionStatus,
 } from "../wails/app";
+import { EventsOn } from "../wails/runtime";
 import { createCompletionOrchestrator } from "../extensions/completionOrchestrator";
 import { createDiagnosticsExtension } from "../extensions/diagnosticsExtension";
 import { createGitGutterExtension } from "../extensions/gitGutterExtension";
@@ -1394,6 +1398,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     definition: false,
     selection: false,
   });
+  const [predictionStatus, setPredictionStatus] =
+    useState<AIPredictionStatus | null>(null);
 
   const signatureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notifyChangeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -1423,6 +1429,38 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     },
     [resetActiveEditorBudget],
   );
+
+  useEffect(() => {
+    let disposed = false;
+    const loadPredictionStatus = async () => {
+      try {
+        const status = await AIGetPredictionStatus();
+        if (!disposed) {
+          setPredictionStatus(status);
+        }
+      } catch (error) {
+        console.debug("AI prediction status unavailable:", error);
+        if (!disposed) {
+          setPredictionStatus(null);
+        }
+      }
+    };
+
+    void loadPredictionStatus();
+    const unsubscribe = EventsOn<[AIPredictionStatus]>(
+      "ai:prediction:settings-updated",
+      (status) => {
+        if (!disposed) {
+          setPredictionStatus(status);
+        }
+      },
+    );
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (!filePath || !language) return;
@@ -1723,7 +1761,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       filePath,
       language,
       ghostDebounceMs: GHOST_DEBOUNCE_MS,
-      ghostIdleDelayMs: GHOST_IDLE_DELAY_MS,
+      ghostIdleDelayMs:
+        predictionStatus?.settings?.enabled && predictionStatus.settings.idleMs
+          ? predictionStatus.settings.idleMs
+          : GHOST_IDLE_DELAY_MS,
       buildCompletionContext,
       fetchCompletions: async (payload) => {
         const result = (await GetEditorCompletions({
@@ -1736,6 +1777,59 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         return {
           ...result,
           primary: result.primary ?? undefined,
+        };
+      },
+      fetchAIPrediction: async (payload) => {
+        const status = predictionStatus;
+        if (!status?.enabled || !status.providerReady) {
+          return null;
+        }
+
+        const settings = status.settings;
+        const versionAtRequest = documentVersionRef.current;
+        const documentVersion = `${versionAtRequest}`;
+        const response = (await AIGetEditorContinuation(
+          {
+            ...payload,
+            requestId: `${payload.requestId}-${documentVersion}`,
+            documentVersion,
+            capability: "line_prediction",
+            prompt: "Continue the code at the cursor.",
+            includeMnemonic: false,
+            includeMCP: false,
+            includeSkills: false,
+            maxBytes: settings.maxPromptBytes,
+            maxSnippets: 0,
+            optInSource: "editor_prediction_background",
+          } as Parameters<typeof AIGetEditorContinuation>[0] & {
+            optInSource: string;
+          },
+          settings.providerId || status.providerId || "",
+          settings.model || status.model || "",
+        )) as {
+          text?: string;
+          requestId?: string;
+          documentVersion?: string;
+          providerId?: string;
+          model?: string;
+        };
+
+        if (versionAtRequest !== documentVersionRef.current) {
+          return { stale: true };
+        }
+        if (
+          response.documentVersion &&
+          response.documentVersion !== documentVersion
+        ) {
+          return { stale: true };
+        }
+
+        return {
+          text: response.text || "",
+          requestId: response.requestId,
+          documentVersion: response.documentVersion,
+          providerId: response.providerId,
+          model: response.model,
         };
       },
       onGhostShown: metrics.recordGhostShown,
@@ -1760,6 +1854,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     handleEditorEscape,
     language,
     metrics,
+    predictionStatus,
   ]);
 
   useEffect(() => () => ghost.cleanup(), [ghost]);

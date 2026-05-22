@@ -11,12 +11,17 @@ import * as Switch from "@radix-ui/react-switch";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   AlertCircle,
+  Boxes,
   Check,
   ChevronDown,
   Code2,
+  Database,
+  FileText,
   Globe,
   Keyboard,
   KeyRound,
+  Layers,
+  Monitor,
   Palette,
   Pencil,
   Plus,
@@ -25,6 +30,7 @@ import {
   Search,
   Settings,
   Shield,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   X,
@@ -32,12 +38,31 @@ import {
 } from "lucide-react";
 
 import {
+  AIGetConsentPolicy,
+  AIGetPredictionStatus,
+  AIListEgressRecords,
+  AIListProviders,
+  AISaveConsentPolicy,
+  AISavePredictionSettings,
+  AISaveProviderSettings,
+  AITestProvider,
   GetAutocompleteLanguageCapabilities,
   InstallLSPServer,
   IsLSPInstalling,
+  type AIPredictionMode,
+  type AIPredictionSettings,
+  type AIPredictionStatus,
 } from "../wails/app";
 import { EventsOn } from "../wails/runtime";
 import type { AutocompleteLanguageCapability } from "../../bindings/arlecchino/models";
+import type {
+  AIConsentPolicy,
+  AIEgressRecord,
+} from "../../bindings/arlecchino/internal/ai/models";
+import type {
+  AIProviderDescriptor,
+  AIProviderSettings,
+} from "../../bindings/arlecchino/internal/ai/providers/models";
 import { useTheme } from "../hooks/useTheme";
 import {
   type MarkdownLinkOpenMode,
@@ -66,6 +91,8 @@ import {
   MIN_UI_FONT_SIZE,
   useEditorSettingsStore,
   type AppIconAppearance,
+  type AIChatDefaultContextPrefs,
+  type AIChatDisplayPreferences,
   type CustomFontFaceDefinition,
   type AIChatSendShortcut,
   type ProjectWindowMode,
@@ -105,6 +132,8 @@ const settingsDropdownContentClass =
   "z-[130] overflow-y-auto overscroll-contain rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-overlay)_98%,transparent)] p-2 shadow-[var(--shadow-overlay)] backdrop-blur-xl";
 const settingsDropdownItemClass =
   "flex min-h-[44px] cursor-pointer items-center gap-3 rounded-[14px] px-4 text-[15px] text-[var(--text-secondary)] outline-none transition-colors data-[highlighted]:bg-[var(--surface-hover)] data-[highlighted]:text-[var(--text-primary)]";
+const settingsInputClass =
+  "h-9 min-w-0 rounded-[16px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] px-3 text-[12px] text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
 
 const autocompleteTierOrder = [
   "native",
@@ -398,6 +427,246 @@ const aiChatSendShortcutOptions: Array<{
   },
 ];
 
+const aiChatDisplayPreferenceRows: Array<{
+  key: keyof AIChatDisplayPreferences;
+  title: string;
+  description: string;
+}> = [
+  {
+    key: "autoScroll",
+    title: "Auto-scroll transcript",
+    description:
+      "Keep the active run visible while tokens and artifacts arrive.",
+  },
+  {
+    key: "compactCards",
+    title: "Compact cards",
+    description: "Use tighter transcript cards in dense sidebar layouts.",
+  },
+  {
+    key: "showActivity",
+    title: "Runtime activity",
+    description: "Show compact runtime state in the AI Chat header.",
+  },
+];
+
+const aiChatContextPreferenceRows: Array<{
+  key: keyof AIChatDefaultContextPrefs;
+  title: string;
+  description: string;
+  icon: LucideIcon;
+}> = [
+  {
+    key: "workspace",
+    title: "Workspace",
+    description: "Include indexed project snippets by default.",
+    icon: Layers,
+  },
+  {
+    key: "currentFile",
+    title: "Current file",
+    description: "Include the active editor file by default.",
+    icon: FileText,
+  },
+  {
+    key: "terminalLogs",
+    title: "Terminal logs",
+    description: "Include recent terminal input by default.",
+    icon: Monitor,
+  },
+  {
+    key: "mnemonic",
+    title: "Mnemonic",
+    description: "Allow reviewed project memory by default.",
+    icon: Database,
+  },
+  {
+    key: "mcp",
+    title: "MCP",
+    description: "Allow MCP context providers by default.",
+    icon: SlidersHorizontal,
+  },
+  {
+    key: "skills",
+    title: "Skills",
+    description: "Allow selected skills as default context.",
+    icon: Boxes,
+  },
+];
+
+const aiPredictionModeOptions: Array<{
+  value: Exclude<AIPredictionMode, "off">;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "subtle",
+    label: "Subtle",
+    description: "Wait longer and request fewer background predictions.",
+  },
+  {
+    value: "eager",
+    label: "Eager",
+    description: "Use the same hard budget with a more responsive idle delay.",
+  },
+];
+
+const predictionBackgroundOptInSource = "editor_prediction_background";
+const remoteBYOKProviderKind = "openai-compatible";
+const defaultRemoteBYOKProviderID = "openai-compatible-byok";
+
+type RemoteBYOKConsentPolicy = AIConsentPolicy & {
+  remoteByokProvidersAccepted?: boolean;
+};
+
+type PredictionEgressRecord = AIEgressRecord & {
+  budgetDecision?: string;
+  budgetReason?: string;
+};
+
+type RemoteBYOKSetupState = {
+  providerId: string;
+  endpoint: string;
+  model: string;
+  apiKey: string;
+  consentAccepted: boolean;
+  statusTone: "idle" | "success" | "error";
+  statusMessage: string;
+};
+
+type ProviderClassificationSource = {
+  kind?: string;
+  endpointClass?: string;
+  local?: boolean;
+  frontier?: boolean;
+  externalAccount?: boolean;
+  billingMode?: string;
+  status?: string;
+  reason?: string;
+  authConfigured?: boolean;
+  requiresAuth?: boolean;
+};
+
+const defaultRemoteBYOKSetupState = (): RemoteBYOKSetupState => ({
+  providerId: defaultRemoteBYOKProviderID,
+  endpoint: "https://api.openai.com/v1",
+  model: "",
+  apiKey: "",
+  consentAccepted: false,
+  statusTone: "idle",
+  statusMessage: "",
+});
+
+const normalizeProviderIDInput = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+const isBackgroundPredictionEgress = (
+  record: AIEgressRecord,
+): record is PredictionEgressRecord =>
+  record.optInSource === predictionBackgroundOptInSource ||
+  record.source === predictionBackgroundOptInSource ||
+  String(record.capability) === "line_prediction";
+
+const mergePredictionEgressRecord = (
+  records: PredictionEgressRecord[],
+  record: PredictionEgressRecord,
+) => {
+  const withoutDuplicate = records.filter((item) => item.id !== record.id);
+  return [record, ...withoutDuplicate]
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, 8);
+};
+
+const describeProviderClass = (
+  source: ProviderClassificationSource | null | undefined,
+) => {
+  if (!source) {
+    return {
+      label: "Not configured",
+      detail: "No prediction provider is selected.",
+      tone: "warning" as const,
+    };
+  }
+  if (
+    source.externalAccount ||
+    source.endpointClass === "local_process_external_account" ||
+    source.billingMode === "provider_account"
+  ) {
+    return {
+      label: "External account",
+      detail:
+        "Provider-account adapters are unavailable for passive prediction.",
+      tone: "error" as const,
+    };
+  }
+  if (source.frontier) {
+    return {
+      label: "Frontier unavailable",
+      detail:
+        "Frontier prediction adapters need a separate legal adapter path.",
+      tone: "error" as const,
+    };
+  }
+  if (
+    source.endpointClass === "remote_byok" ||
+    (!source.local && source.kind)
+  ) {
+    return {
+      label: "Remote API key",
+      detail: source.authConfigured
+        ? "Uses a user-supplied API key and remote provider terms."
+        : "Requires a user-supplied API key before predictions can run.",
+      tone: source.authConfigured ? ("success" as const) : ("warning" as const),
+    };
+  }
+  if (source.local) {
+    return {
+      label: "Local",
+      detail: "Runs against a local provider endpoint.",
+      tone: "success" as const,
+    };
+  }
+  return {
+    label: "Unknown endpoint",
+    detail: "Provider endpoint class is not verified.",
+    tone: "warning" as const,
+  };
+};
+
+const providerClassTone = (tone: "success" | "warning" | "error") => {
+  switch (tone) {
+    case "success":
+      return "text-[var(--status-success)]";
+    case "error":
+      return "text-[var(--status-error)]";
+    default:
+      return "text-[var(--status-warning)]";
+  }
+};
+
+const formatPredictionEgressTime = (createdAt: string) => {
+  if (!createdAt) {
+    return "unknown time";
+  }
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) {
+    return createdAt;
+  }
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
+
+const formatPredictionEgressTokens = (record: PredictionEgressRecord) => {
+  const total = record.totalTokens || record.inputTokens || record.outputTokens;
+  if (!total) {
+    return "tokens n/a";
+  }
+  return `${total}${record.estimatedTokens ? " est." : ""} tokens`;
+};
+
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -626,11 +895,33 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
     suggested: true,
   },
   {
+    id: "ai-chat-surface",
+    tab: "ai",
+    label: "AI chat surface",
+    description: "Persist transcript display and default context preferences.",
+    keywords: ["ai", "chat", "context", "display", "runtime activity"],
+  },
+  {
     id: "ai-provider-launch",
     tab: "ai",
     label: "Provider launch",
     description: "Start local AI runtimes from the AI Chat provider popup.",
     keywords: ["ai", "provider", "model", "llama", "ollama", "byok"],
+  },
+  {
+    id: "ai-predictions",
+    tab: "ai",
+    label: "AI predictions",
+    description: "Enable passive editor predictions with hard request budgets.",
+    keywords: ["ai", "prediction", "autocomplete", "ghost", "byok", "budget"],
+    suggested: true,
+  },
+  {
+    id: "ai-remote-byok",
+    tab: "ai",
+    label: "Remote API key setup",
+    description: "Connect an OpenAI-compatible API key for predictions.",
+    keywords: ["ai", "provider", "byok", "api key", "openai", "endpoint"],
   },
   {
     id: "mcp-enabled",
@@ -958,6 +1249,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [mcpSaving, setMCPSaving] = useState(false);
   const [mcpError, setMCPError] = useState<string | null>(null);
   const [mcpToolQuery, setMCPToolQuery] = useState("");
+  const [predictionStatus, setPredictionStatus] =
+    useState<AIPredictionStatus | null>(null);
+  const [predictionLoading, setPredictionLoading] = useState(false);
+  const [predictionSaving, setPredictionSaving] = useState(false);
+  const [predictionError, setPredictionError] = useState<string | null>(null);
+  const [aiProviders, setAIProviders] = useState<AIProviderDescriptor[]>([]);
+  const [aiProviderLoading, setAIProviderLoading] = useState(false);
+  const [predictionActivityLoading, setPredictionActivityLoading] =
+    useState(false);
+  const [predictionActivityError, setPredictionActivityError] = useState<
+    string | null
+  >(null);
+  const [predictionEgressRecords, setPredictionEgressRecords] = useState<
+    PredictionEgressRecord[]
+  >([]);
+  const [remoteBYOKSetup, setRemoteBYOKSetup] = useState<RemoteBYOKSetupState>(
+    () => defaultRemoteBYOKSetupState(),
+  );
+  const [remoteBYOKBusy, setRemoteBYOKBusy] = useState(false);
   const [customThemeStatus, setCustomThemeStatus] = useState<{
     tone: "success" | "error";
     message: string;
@@ -1009,6 +1319,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     projectWindowMode,
     appIconAppearance,
     aiChatSendShortcut,
+    aiChatPreferences,
     setUiScale,
     setUiFontFamily,
     resetUiFontFamily,
@@ -1031,6 +1342,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setProjectWindowMode,
     setAppIconAppearance,
     setAIChatSendShortcut,
+    setAIChatDisplayPref,
+    setAIChatDefaultContext,
   } = useEditorSettingsStore();
   const {
     autoOpenFromTerminal,
@@ -1209,6 +1522,219 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     [mcpStatus, saveMCPSettingsUpdate],
   );
 
+  const refreshPredictionStatus = useCallback(async () => {
+    setPredictionLoading(true);
+    setPredictionError(null);
+    try {
+      const status = await AIGetPredictionStatus();
+      setPredictionStatus(status);
+      return status;
+    } catch (error) {
+      setPredictionError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load AI prediction settings.",
+      );
+      return null;
+    } finally {
+      setPredictionLoading(false);
+    }
+  }, []);
+
+  const refreshAIProviders = useCallback(async () => {
+    setAIProviderLoading(true);
+    try {
+      const providers = await AIListProviders();
+      setAIProviders(providers ?? []);
+      return providers ?? [];
+    } catch {
+      setAIProviders([]);
+      return [];
+    } finally {
+      setAIProviderLoading(false);
+    }
+  }, []);
+
+  const refreshPredictionActivity = useCallback(async () => {
+    setPredictionActivityLoading(true);
+    setPredictionActivityError(null);
+    try {
+      const records = await AIListEgressRecords(50);
+      const predictionRecords = (records ?? [])
+        .filter(isBackgroundPredictionEgress)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .slice(0, 8);
+      setPredictionEgressRecords(predictionRecords);
+      return predictionRecords;
+    } catch (error) {
+      setPredictionActivityError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load prediction activity.",
+      );
+      return [];
+    } finally {
+      setPredictionActivityLoading(false);
+    }
+  }, []);
+
+  const savePredictionSettingsUpdate = useCallback(
+    async (patch: Partial<AIPredictionSettings>) => {
+      if (!predictionStatus) {
+        return null;
+      }
+      setPredictionSaving(true);
+      setPredictionError(null);
+      const current = predictionStatus.settings;
+      const nextSettings: AIPredictionSettings = {
+        ...current,
+        ...patch,
+        budget: {
+          ...current.budget,
+          ...(patch.budget ?? {}),
+        },
+      };
+      try {
+        const status = await AISavePredictionSettings(nextSettings);
+        setPredictionStatus(status);
+        return status;
+      } catch (error) {
+        setPredictionError(
+          error instanceof Error
+            ? error.message
+            : "Unable to save AI prediction settings.",
+        );
+        return null;
+      } finally {
+        setPredictionSaving(false);
+      }
+    },
+    [predictionStatus],
+  );
+
+  const connectRemoteBYOKForPrediction = useCallback(async () => {
+    const providerId =
+      normalizeProviderIDInput(remoteBYOKSetup.providerId) ||
+      defaultRemoteBYOKProviderID;
+    const endpoint = remoteBYOKSetup.endpoint.trim();
+    const model = remoteBYOKSetup.model.trim();
+    const apiKey = remoteBYOKSetup.apiKey.trim();
+    if (!endpoint) {
+      setRemoteBYOKSetup((current) => ({
+        ...current,
+        statusTone: "error",
+        statusMessage: "Endpoint is required.",
+      }));
+      return;
+    }
+    if (!apiKey) {
+      setRemoteBYOKSetup((current) => ({
+        ...current,
+        statusTone: "error",
+        statusMessage: "API key is required for the remote provider.",
+      }));
+      return;
+    }
+    if (!remoteBYOKSetup.consentAccepted) {
+      setRemoteBYOKSetup((current) => ({
+        ...current,
+        statusTone: "error",
+        statusMessage:
+          "Accept the remote provider disclosure before connecting.",
+      }));
+      return;
+    }
+
+    setRemoteBYOKBusy(true);
+    setPredictionError(null);
+    setRemoteBYOKSetup((current) => ({
+      ...current,
+      providerId,
+      statusTone: "idle",
+      statusMessage: "Saving provider without enabling predictions...",
+    }));
+
+    const disabledProviderSettings: AIProviderSettings = {
+      id: providerId,
+      name: "OpenAI-compatible",
+      kind: remoteBYOKProviderKind,
+      endpoint,
+      model,
+      enabled: false,
+      manual: true,
+      secretValue: apiKey,
+    };
+
+    try {
+      await AISaveProviderSettings(disabledProviderSettings);
+      setRemoteBYOKSetup((current) => ({
+        ...current,
+        statusMessage: "Testing provider connection...",
+      }));
+      const checked = await AITestProvider(providerId);
+      if (String(checked.status) !== "ready") {
+        throw new Error(checked.reason || "Provider test did not pass.");
+      }
+
+      const enabledProviderSettings: AIProviderSettings = {
+        ...disabledProviderSettings,
+        enabled: true,
+        secretValue: "",
+      };
+      await AISaveProviderSettings(enabledProviderSettings);
+
+      const consentPolicy =
+        (await AIGetConsentPolicy()) as RemoteBYOKConsentPolicy;
+      const nextConsentPolicy: RemoteBYOKConsentPolicy = {
+        ...consentPolicy,
+        remoteByokProvidersAccepted: true,
+      };
+      await AISaveConsentPolicy(nextConsentPolicy);
+
+      const latestStatus = await AIGetPredictionStatus();
+      const nextSettings: AIPredictionSettings = {
+        ...latestStatus.settings,
+        enabled: true,
+        mode:
+          latestStatus.settings.mode && latestStatus.settings.mode !== "off"
+            ? latestStatus.settings.mode
+            : "subtle",
+        providerId,
+        model: checked.defaultModel || model || latestStatus.model || "",
+      };
+      const nextStatus = await AISavePredictionSettings(nextSettings);
+      setPredictionStatus(nextStatus);
+      setRemoteBYOKSetup((current) => ({
+        ...current,
+        apiKey: "",
+        statusTone: "success",
+        statusMessage:
+          "Remote provider is connected and selected for predictions.",
+      }));
+      void refreshAIProviders();
+      void refreshPredictionActivity();
+    } catch (error) {
+      setRemoteBYOKSetup((current) => ({
+        ...current,
+        statusTone: "error",
+        statusMessage:
+          error instanceof Error
+            ? error.message
+            : "Unable to connect remote provider.",
+      }));
+    } finally {
+      setRemoteBYOKBusy(false);
+    }
+  }, [
+    refreshAIProviders,
+    refreshPredictionActivity,
+    remoteBYOKSetup.apiKey,
+    remoteBYOKSetup.consentAccepted,
+    remoteBYOKSetup.endpoint,
+    remoteBYOKSetup.model,
+    remoteBYOKSetup.providerId,
+  ]);
+
   const setMCPToolEnabled = useCallback(
     (tool: MCPToolSettingsEntry, enabled: boolean) => {
       if (!mcpStatus) {
@@ -1372,6 +1898,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       offError();
     };
   }, [recordAutocompleteInstallEvent, refreshAutocompleteCapabilities]);
+
+  useEffect(() => {
+    const unsubscribe = EventsOn<[AIPredictionStatus]>(
+      "ai:prediction:settings-updated",
+      (status) => setPredictionStatus(status),
+    );
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = EventsOn<[AIEgressRecord]>(
+      "ai:chat:egress-recorded",
+      (record) => {
+        if (!isBackgroundPredictionEgress(record)) {
+          return;
+        }
+        setPredictionEgressRecords((current) =>
+          mergePredictionEgressRecord(current, record),
+        );
+      },
+    );
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     if (!pendingSettingScrollId) {
@@ -1629,6 +2178,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     void refreshMCPSettings();
   }, [activeTab, isOpen, refreshMCPSettings]);
+
+  useEffect(() => {
+    if (!isOpen || activeTab !== "ai") {
+      return;
+    }
+
+    void refreshPredictionStatus();
+    void refreshAIProviders();
+    void refreshPredictionActivity();
+  }, [
+    activeTab,
+    isOpen,
+    refreshAIProviders,
+    refreshPredictionActivity,
+    refreshPredictionStatus,
+  ]);
 
   const clearThemePreview = () => {
     previewTheme(null);
@@ -1987,71 +2552,536 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </div>
   );
 
-  const renderAISettings = () => (
-    <div className="mx-auto max-w-3xl space-y-7">
-      <SettingHeader
-        title="AI"
-        description="Configure AI Chat input behavior and local provider launch defaults."
-      />
+  const renderAISettings = () => {
+    const predictionSettings = predictionStatus?.settings ?? null;
+    const predictionEnabled = Boolean(predictionSettings?.enabled);
+    const predictionMode =
+      predictionSettings?.mode && predictionSettings.mode !== "off"
+        ? predictionSettings.mode
+        : "subtle";
+    const providerLabel =
+      predictionStatus?.provider?.providerId ||
+      predictionStatus?.providerId ||
+      "Active provider";
+    const modelLabel = predictionStatus?.model || "default model";
+    const budget = predictionStatus?.budget;
+    const selectedProviderDescriptor =
+      aiProviders.find(
+        (provider) => provider.id === predictionStatus?.providerId,
+      ) ?? null;
+    const providerClass = describeProviderClass(
+      selectedProviderDescriptor ?? predictionStatus?.provider ?? null,
+    );
+    const predictionBadge = predictionLoading
+      ? "Loading"
+      : predictionStatus?.enabled
+        ? "Ready"
+        : predictionEnabled
+          ? "Blocked"
+          : "Off";
 
-      <div
-        data-setting-id="ai-chat-send"
-        className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
-          "ai-chat-send",
-        )}`}
-      >
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-[var(--text-primary)]">
-              Send messages
+    return (
+      <div className="mx-auto max-w-3xl space-y-7">
+        <SettingHeader
+          title="AI"
+          description="Configure AI Chat input behavior and local provider launch defaults."
+        />
+
+        <div
+          data-setting-id="ai-chat-send"
+          className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+            "ai-chat-send",
+          )}`}
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-[var(--text-primary)]">
+                Send messages
+              </div>
+              <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                Choose how the AI Chat composer sends messages. Tab and
+                Shift+Tab cycle Ask, Plan, Build, and Debug.
+              </div>
             </div>
-            <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-              Choose how the AI Chat composer sends messages. Tab and Shift+Tab
-              cycle Ask, Plan, Build, and Debug.
+            <div
+              role="group"
+              aria-label="AI Chat send shortcut"
+              className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+            >
+              {aiChatSendShortcutOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={aiChatSendShortcut === option.value}
+                  title={option.description}
+                  onClick={() => setAIChatSendShortcut(option.value)}
+                  className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
+                    aiChatSendShortcut === option.value
+                      ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                      : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
-          <div
-            role="group"
-            aria-label="AI Chat send shortcut"
-            className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
-          >
-            {aiChatSendShortcutOptions.map((option) => (
+        </div>
+
+        <div
+          data-setting-id="ai-chat-surface"
+          className={`${settingsPanelClass} overflow-hidden transition-shadow ${getSettingTargetClass(
+            "ai-chat-surface",
+          )}`}
+        >
+          {aiChatDisplayPreferenceRows.map((row) => (
+            <SwitchRow
+              key={row.key}
+              title={row.title}
+              description={row.description}
+              checked={aiChatPreferences.displayPrefs[row.key]}
+              onCheckedChange={(checked) =>
+                setAIChatDisplayPref(row.key, checked)
+              }
+              controlLabel={row.title}
+            />
+          ))}
+          <div className="space-y-3 px-4 py-4">
+            <div>
+              <div className="text-sm font-semibold text-[var(--text-primary)]">
+                Default context
+              </div>
+              <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                These defaults seed the composer context chips and the compact +
+                Context menu.
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {aiChatContextPreferenceRows.map((row) => {
+                const Icon = row.icon;
+                const active = aiChatPreferences.defaultContext[row.key];
+                return (
+                  <button
+                    key={row.key}
+                    type="button"
+                    aria-pressed={active}
+                    title={row.description}
+                    onClick={() => setAIChatDefaultContext(row.key, !active)}
+                    className={`flex min-h-[52px] items-center gap-3 rounded-[14px] border px-3 text-left transition-colors ${
+                      active
+                        ? "border-[color-mix(in_srgb,var(--focus-ring)_42%,var(--border-subtle))] bg-[color-mix(in_srgb,var(--focus-ring)_10%,var(--surface-1))] text-[var(--text-primary)]"
+                        : "border-[var(--border-subtle)] bg-[var(--surface-1)] text-[var(--text-secondary)] hover:border-[var(--border-default)] hover:text-[var(--text-primary)]"
+                    }`}
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--border-subtle)] bg-[var(--surface-overlay)]">
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">
+                        {row.title}
+                      </span>
+                      <span className="block truncate text-[11px] text-[var(--text-muted)]">
+                        {active ? "Included by default" : "Off by default"}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div
+          data-setting-id="ai-predictions"
+          className={`${settingsPanelClass} overflow-hidden transition-shadow ${getSettingTargetClass(
+            "ai-predictions",
+          )}`}
+        >
+          <SwitchRow
+            title="AI predictions"
+            description="Passive editor ghost text uses the active provider only after this switch is enabled."
+            checked={predictionEnabled}
+            onCheckedChange={(enabled) => {
+              void savePredictionSettingsUpdate({
+                enabled,
+                mode: enabled ? predictionMode : "off",
+              });
+            }}
+            badge={predictionBadge}
+            controlLabel="Toggle AI predictions"
+            highlighted={highlightedSettingId === "ai-predictions"}
+          />
+          <div className="space-y-4 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <div className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Provider
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <span className="truncate text-sm text-[var(--text-primary)]">
+                    {providerLabel} · {modelLabel}
+                  </span>
+                  <span
+                    className={`${settingsPillClass} min-h-[24px] px-2 ${providerClassTone(
+                      providerClass.tone,
+                    )}`}
+                  >
+                    {providerClass.label}
+                  </span>
+                </div>
+                <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                  {providerClass.detail}
+                </div>
+                {predictionStatus?.providerReason ? (
+                  <div className="mt-1 text-[12px] leading-5 text-[var(--status-warning)]">
+                    {predictionStatus.providerReason}
+                  </div>
+                ) : null}
+              </div>
               <button
-                key={option.value}
                 type="button"
-                aria-pressed={aiChatSendShortcut === option.value}
-                title={option.description}
-                onClick={() => setAIChatSendShortcut(option.value)}
-                className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors ${
-                  aiChatSendShortcut === option.value
-                    ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
-                    : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
-                }`}
+                onClick={() => void refreshPredictionStatus()}
+                disabled={predictionLoading || predictionSaving}
+                className={settingsActionButtonClass}
               >
-                {option.label}
+                <RefreshCw className="h-3.5 w-3.5" />
+                Refresh
               </button>
-            ))}
+            </div>
+
+            <div
+              role="group"
+              aria-label="AI prediction mode"
+              className="shell-cluster-soft inline-flex min-h-[42px] items-center gap-1 px-1.5 py-1"
+            >
+              {aiPredictionModeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={
+                    predictionEnabled && predictionMode === option.value
+                  }
+                  title={option.description}
+                  disabled={!predictionSettings || predictionSaving}
+                  onClick={() =>
+                    void savePredictionSettingsUpdate({
+                      enabled: true,
+                      mode: option.value,
+                      idleMs: option.value === "eager" ? 450 : 600,
+                    })
+                  }
+                  className={`h-8 rounded-full border px-3 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                    predictionEnabled && predictionMode === option.value
+                      ? "border-[var(--border-default)] bg-[var(--surface-active)] text-[var(--text-primary)]"
+                      : "border-transparent text-[var(--text-secondary)] hover:border-[var(--border-subtle)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="grid gap-3 text-[12px] sm:grid-cols-3">
+              {[
+                [
+                  "Requests/min",
+                  `${budget?.requestsThisMinute ?? 0} / ${
+                    predictionSettings?.budget.requestsPerMinute ?? 0
+                  }`,
+                ],
+                [
+                  "Tokens/min",
+                  `${budget?.tokensThisMinute ?? 0} / ${
+                    predictionSettings?.budget.tokensPerMinute ?? 0
+                  }`,
+                ],
+                [
+                  "Tokens/day",
+                  `${budget?.tokensToday ?? 0} / ${
+                    predictionSettings?.budget.tokensPerDay ?? 0
+                  }`,
+                ],
+              ].map(([label, value]) => (
+                <div
+                  key={label}
+                  className="rounded-[12px] border border-[var(--border-subtle)] px-3 py-2"
+                >
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                    {label}
+                  </div>
+                  <div className="mt-1 font-mono text-[12px] text-[var(--text-primary)]">
+                    {value}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {predictionError ||
+            budget?.blockedReason ||
+            budget?.cooldownReason ? (
+              <div className="rounded-[12px] border border-[color-mix(in_srgb,var(--status-warning)_40%,var(--border-subtle))] px-3 py-2 text-[12px] leading-5 text-[var(--status-warning)]">
+                {predictionError ||
+                  budget?.blockedReason ||
+                  budget?.cooldownReason}
+              </div>
+            ) : null}
+
+            <div className={settingsInsetClass}>
+              <div className="flex flex-col gap-3 border-b border-[var(--border-subtle)] px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                    Background activity
+                  </div>
+                  <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                    Only passive editor prediction egress is shown here.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void refreshPredictionActivity()}
+                  disabled={predictionActivityLoading}
+                  className={settingsActionButtonClass}
+                >
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 ${
+                      predictionActivityLoading ? "animate-spin" : ""
+                    }`}
+                  />
+                  Activity
+                </button>
+              </div>
+              {predictionActivityError ? (
+                <div className="px-3 py-3 text-[12px] leading-5 text-[var(--status-error)]">
+                  {predictionActivityError}
+                </div>
+              ) : predictionEgressRecords.length > 0 ? (
+                <div className="divide-y divide-[var(--border-subtle)]">
+                  {predictionEgressRecords.map((record) => {
+                    const reason =
+                      record.budgetReason ||
+                      record.errorClass ||
+                      (record.canceled ? "canceled" : "");
+                    return (
+                      <div key={record.id} className="px-3 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-[11px] text-[var(--text-muted)]">
+                            {formatPredictionEgressTime(record.createdAt)}
+                          </span>
+                          <span className={settingsPillClass}>
+                            {record.status || "recorded"}
+                          </span>
+                          {record.budgetDecision ? (
+                            <span className={settingsPillClass}>
+                              budget: {record.budgetDecision}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 truncate text-[12px] text-[var(--text-primary)]">
+                          {record.providerId || "provider"} ·{" "}
+                          {record.model || "model"} ·{" "}
+                          {formatPredictionEgressTokens(record)}
+                        </div>
+                        {reason ? (
+                          <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                            {reason}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="px-3 py-5 text-center text-[12px] text-[var(--text-muted)]">
+                  No background prediction egress has been recorded yet.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div
+          data-setting-id="ai-remote-byok"
+          className={`${settingsPanelClass} overflow-hidden transition-shadow ${getSettingTargetClass(
+            "ai-remote-byok",
+          )}`}
+        >
+          <div className="border-b border-[var(--border-subtle)] p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
+                  <KeyRound size={15} className="text-[var(--text-muted)]" />
+                  Remote API key setup
+                </div>
+                <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
+                  Connect an OpenAI-compatible endpoint with a write-only API
+                  key. The provider is saved disabled, tested, then enabled for
+                  prediction only after disclosure is accepted.
+                </div>
+              </div>
+              <span className={settingsPillClass}>
+                {aiProviderLoading
+                  ? "Refreshing"
+                  : `${aiProviders.length} providers`}
+              </span>
+            </div>
+          </div>
+          <div className="space-y-3 p-4">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.4fr)]">
+              <label className="min-w-0">
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Provider ID
+                </div>
+                <input
+                  value={remoteBYOKSetup.providerId}
+                  disabled={remoteBYOKBusy}
+                  onChange={(event) =>
+                    setRemoteBYOKSetup((current) => ({
+                      ...current,
+                      providerId: event.currentTarget.value,
+                    }))
+                  }
+                  className={`${settingsInputClass} w-full font-mono`}
+                  placeholder={defaultRemoteBYOKProviderID}
+                />
+              </label>
+              <label className="min-w-0">
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Endpoint
+                </div>
+                <input
+                  value={remoteBYOKSetup.endpoint}
+                  disabled={remoteBYOKBusy}
+                  onChange={(event) =>
+                    setRemoteBYOKSetup((current) => ({
+                      ...current,
+                      endpoint: event.currentTarget.value,
+                    }))
+                  }
+                  className={`${settingsInputClass} w-full font-mono`}
+                  placeholder="https://api.openai.com/v1"
+                />
+              </label>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <label className="min-w-0">
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  Model
+                </div>
+                <input
+                  value={remoteBYOKSetup.model}
+                  disabled={remoteBYOKBusy}
+                  onChange={(event) =>
+                    setRemoteBYOKSetup((current) => ({
+                      ...current,
+                      model: event.currentTarget.value,
+                    }))
+                  }
+                  className={`${settingsInputClass} w-full font-mono`}
+                  placeholder="optional; discovered from /models when possible"
+                />
+              </label>
+              <label className="min-w-0">
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)]">
+                  API key
+                </div>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={remoteBYOKSetup.apiKey}
+                  disabled={remoteBYOKBusy}
+                  onChange={(event) =>
+                    setRemoteBYOKSetup((current) => ({
+                      ...current,
+                      apiKey: event.currentTarget.value,
+                    }))
+                  }
+                  className={`${settingsInputClass} w-full font-mono`}
+                  placeholder="Stored in the local credential vault"
+                />
+              </label>
+            </div>
+
+            <label className="flex items-start gap-3 rounded-[16px] border border-[var(--border-subtle)] px-3 py-3">
+              <input
+                type="checkbox"
+                checked={remoteBYOKSetup.consentAccepted}
+                disabled={remoteBYOKBusy}
+                onChange={(event) =>
+                  setRemoteBYOKSetup((current) => ({
+                    ...current,
+                    consentAccepted: event.currentTarget.checked,
+                  }))
+                }
+                className="mt-0.5 h-4 w-4 accent-[var(--accent-brand)]"
+              />
+              <span className="min-w-0 text-[12px] leading-5 text-[var(--text-muted)]">
+                I understand passive predictions may send current editor context
+                to this endpoint under the provider's own processing, retention,
+                abuse-monitoring, and billing terms.
+              </span>
+            </label>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-center gap-2 text-[12px] leading-5">
+                <Shield
+                  size={14}
+                  className={
+                    remoteBYOKSetup.statusTone === "error"
+                      ? "text-[var(--status-error)]"
+                      : remoteBYOKSetup.statusTone === "success"
+                        ? "text-[var(--status-success)]"
+                        : "text-[var(--text-muted)]"
+                  }
+                />
+                <span
+                  className={
+                    remoteBYOKSetup.statusTone === "error"
+                      ? "text-[var(--status-error)]"
+                      : remoteBYOKSetup.statusTone === "success"
+                        ? "text-[var(--status-success)]"
+                        : "text-[var(--text-muted)]"
+                  }
+                >
+                  {remoteBYOKSetup.statusMessage ||
+                    "Endpoint validation and provider test run before predictions are enabled."}
+                </span>
+              </div>
+              <button
+                type="button"
+                className={settingsActionButtonClass}
+                disabled={remoteBYOKBusy}
+                onClick={() => void connectRemoteBYOKForPrediction()}
+              >
+                {remoteBYOKBusy ? (
+                  <RefreshCw size={14} className="animate-spin" />
+                ) : (
+                  <Check size={14} />
+                )}
+                Connect for predictions
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          data-setting-id="ai-provider-launch"
+          className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
+            "ai-provider-launch",
+          )}`}
+        >
+          <div className="text-sm font-semibold text-[var(--text-primary)]">
+            Provider launch
+          </div>
+          <div className="mt-2 text-[12px] leading-5 text-[var(--text-muted)]">
+            Local provider servers are launched from the AI Chat provider popup
+            using loopback endpoints only. Cloud providers use your configured
+            API key before model discovery.
           </div>
         </div>
       </div>
-
-      <div
-        data-setting-id="ai-provider-launch"
-        className={`${settingsPanelClass} p-4 transition-shadow ${getSettingTargetClass(
-          "ai-provider-launch",
-        )}`}
-      >
-        <div className="text-sm font-semibold text-[var(--text-primary)]">
-          Provider launch
-        </div>
-        <div className="mt-2 text-[12px] leading-5 text-[var(--text-muted)]">
-          Local provider servers are launched from the AI Chat provider popup
-          using loopback endpoints only. Cloud providers stay BYOK and require a
-          configured key before model discovery.
-        </div>
-      </div>
-    </div>
-  );
+    );
+  };
 
   const renderMCPSettings = () => {
     const settings = mcpStatus?.settings ?? null;
