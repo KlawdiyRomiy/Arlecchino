@@ -161,6 +161,12 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
     tab: Tab,
     event: React.PointerEvent<HTMLElement>,
   ) => {
+    if (event.button === 1) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
     if (!onTabDetachToPanel || event.button !== 0) {
       return;
     }
@@ -306,6 +312,19 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
     window.addEventListener("pointercancel", handlePointerCancel, true);
   };
 
+  const handleTabAuxClick = (
+    tab: Tab,
+    event: React.MouseEvent<HTMLElement>,
+  ) => {
+    if (event.button !== 1) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    onTabClose(tab.id);
+  };
+
   const renderTab = (tab: Tab) => {
     const sourceHidden = draggedOutTabId === tab.id;
     const tabStyle: React.CSSProperties = {
@@ -319,6 +338,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         value={tab}
         onClick={() => onTabClick(tab.id)}
         onPointerDown={(event) => handleTabPointerDown(tab, event)}
+        onAuxClick={(event) => handleTabAuxClick(tab, event)}
         data-tab-id={tab.id}
         data-drag-source-hidden={sourceHidden ? "true" : undefined}
         className={`${tabClassName(tab)} cursor-grab`}
@@ -331,6 +351,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         key={tab.id}
         onClick={() => onTabClick(tab.id)}
         onPointerDown={(event) => handleTabPointerDown(tab, event)}
+        onAuxClick={(event) => handleTabAuxClick(tab, event)}
         data-tab-id={tab.id}
         data-drag-source-hidden={sourceHidden ? "true" : undefined}
         className={`${tabClassName(tab)} cursor-pointer`}
