@@ -72,7 +72,7 @@ watch_bundle() {
         icon_file="$(plutil -extract CFBundleIconFile raw -o - "$info_plist" 2>/dev/null || echo "")"
         icon_name="$(plutil -extract CFBundleIconName raw -o - "$info_plist" 2>/dev/null || echo "")"
 
-        if [[ "$icon_file" != "appicon" || "$icon_name" != "appicon" || ! -f "$APP_BUNDLE/Contents/Resources/Assets.car" || ! -f "$APP_BUNDLE/Contents/Resources/appicon.icns" ]]; then
+        if [[ "$icon_file" != "appicon" || "$icon_name" != "appicon" || ! -f "$APP_BUNDLE/Contents/Resources/Assets.car" || ! -f "$APP_BUNDLE/Contents/Resources/appicon.icns" || ! -f "$APP_BUNDLE/Contents/Resources/appicon-light.png" || ! -f "$APP_BUNDLE/Contents/Resources/appicon-dark.png" ]]; then
           sync_bundle
           info_mtime="$(stat -f '%m' "$info_plist" 2>/dev/null || echo "$info_mtime")"
         fi

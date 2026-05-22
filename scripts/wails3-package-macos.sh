@@ -164,6 +164,12 @@ cp -Xf "$ROOT_DIR/build/darwin/iconfile.icns" "$RESOURCES_DIR/iconfile.icns"
 if [[ -f "$ROOT_DIR/build/darwin/Assets.car" ]]; then
   cp -Xf "$ROOT_DIR/build/darwin/Assets.car" "$RESOURCES_DIR/Assets.car"
 fi
+if [[ -f "$ROOT_DIR/build/darwin/appicon-light.png" ]]; then
+  cp -Xf "$ROOT_DIR/build/darwin/appicon-light.png" "$RESOURCES_DIR/appicon-light.png"
+fi
+if [[ -f "$ROOT_DIR/build/darwin/appicon-dark.png" ]]; then
+  cp -Xf "$ROOT_DIR/build/darwin/appicon-dark.png" "$RESOURCES_DIR/appicon-dark.png"
+fi
 xattr -cr "$APP_BUNDLE" >/dev/null 2>&1 || true
 
 /usr/bin/plutil -lint "$APP_BUNDLE/Contents/Info.plist" >/dev/null

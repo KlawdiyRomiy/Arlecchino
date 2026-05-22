@@ -21,6 +21,32 @@ static NSImage* arlecchinoCopyApplicationIconSource(void) {
     return source == nil ? nil : [source copy];
 }
 
+static NSImage* arlecchinoCopyApplicationIconResource(NSString *appearanceValue) {
+    NSString *resourceName = nil;
+    if ([appearanceValue isEqualToString:@"light"]) {
+        resourceName = @"appicon-light";
+    } else if ([appearanceValue isEqualToString:@"dark"]) {
+        resourceName = @"appicon-dark";
+    } else {
+        return nil;
+    }
+
+    NSImage *source = [[NSBundle mainBundle] imageForResource:resourceName];
+    if (source == nil) {
+        NSString *path = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"png"];
+        if (path != nil) {
+            source = [[[NSImage alloc] initWithContentsOfFile:path] autorelease];
+        }
+    }
+    if (source == nil) {
+        return nil;
+    }
+
+    NSImage *icon = [source copy];
+    [icon setTemplate:NO];
+    return icon;
+}
+
 static NSImage* arlecchinoRenderApplicationIconForAppearance(NSString *appearanceName) {
     NSAppearance *appearance = [NSAppearance appearanceNamed:appearanceName];
     if (appearance == nil) {
@@ -162,7 +188,13 @@ static bool arlecchinoSetApplicationIconAppearance(const char *appearanceCString
             return;
         }
 
-        NSImage *icon = arlecchinoRenderApplicationIconFromMask(appearanceValue);
+        NSImage *icon = arlecchinoCopyApplicationIconResource(appearanceValue);
+        if (icon == nil && [appearanceValue isEqualToString:@"light"]) {
+            icon = arlecchinoRenderApplicationIconForAppearance(appearanceName);
+        }
+        if (icon == nil) {
+            icon = arlecchinoRenderApplicationIconFromMask(appearanceValue);
+        }
         if (icon == nil) {
             icon = arlecchinoRenderApplicationIconForAppearance(appearanceName);
         }
