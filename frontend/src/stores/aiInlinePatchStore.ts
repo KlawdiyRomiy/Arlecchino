@@ -16,6 +16,8 @@ export interface AIInlinePatchPreview {
   summary?: string;
   unifiedDiff: string;
   files: AIPatchFile[];
+  alreadyApplied?: boolean;
+  source?: string;
   updatedAt?: string;
 }
 
@@ -88,15 +90,22 @@ export const useAIInlinePatchStore = create<AIInlinePatchState>((set) => ({
         ) {
           return;
         }
-        if (artifact.status !== "ready") {
-          return;
-        }
         if (state.dismissedIds[artifact.id]) {
           return;
         }
         const payload = parsePatchPayload(artifact);
+        if (!payload) {
+          return;
+        }
+        const alreadyApplied =
+          artifact.status === "applied" &&
+          payload.alreadyApplied === true &&
+          payload.source === "captured_direct_write";
+        if (artifact.status !== "ready" && !alreadyApplied) {
+          return;
+        }
         if (
-          !payload?.checkReady ||
+          (!payload.checkReady && !alreadyApplied) ||
           !payload.unifiedDiff.trim() ||
           payload.files.length === 0
         ) {
@@ -111,6 +120,8 @@ export const useAIInlinePatchStore = create<AIInlinePatchState>((set) => ({
           summary: artifact.summary,
           unifiedDiff: payload.unifiedDiff,
           files: payload.files,
+          alreadyApplied,
+          source: payload.source,
           updatedAt: artifact.updatedAt,
         };
       });

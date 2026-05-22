@@ -190,8 +190,10 @@ const createInlinePatchMiniActions = (
 
   const accept = document.createElement("button");
   accept.type = "button";
-  accept.textContent = "Apply";
-  accept.title = "Apply AI patch";
+  accept.textContent = preview.alreadyApplied ? "Keep" : "Apply";
+  accept.title = preview.alreadyApplied
+    ? "Keep applied AI edit"
+    : "Apply AI patch";
   accept.dataset.testid = "ai-inline-patch-mini-apply";
   accept.addEventListener("mousedown", stopEditorEvent);
   accept.addEventListener("click", (event) => {
@@ -201,8 +203,10 @@ const createInlinePatchMiniActions = (
 
   const reject = document.createElement("button");
   reject.type = "button";
-  reject.textContent = "Reject";
-  reject.title = "Reject AI patch";
+  reject.textContent = preview.alreadyApplied ? "Rollback" : "Reject";
+  reject.title = preview.alreadyApplied
+    ? "Rollback applied AI edit"
+    : "Reject AI patch";
   reject.dataset.testid = "ai-inline-patch-mini-reject";
   reject.addEventListener("mousedown", stopEditorEvent);
   reject.addEventListener("click", (event) => {
@@ -238,14 +242,17 @@ class AIInlinePatchToolbarWidget extends WidgetType {
     const label = document.createElement("span");
     label.className = "cm-ai-inline-patch-title";
     label.textContent =
-      this.preview.summary || this.preview.title || "AI patch";
+      this.preview.summary ||
+      (this.preview.alreadyApplied
+        ? "Review applied AI edit"
+        : this.preview.title || "AI patch");
 
     const actions = document.createElement("span");
     actions.className = "cm-ai-inline-patch-actions";
 
     const accept = document.createElement("button");
     accept.type = "button";
-    accept.textContent = "Apply";
+    accept.textContent = this.preview.alreadyApplied ? "Keep" : "Apply";
     accept.dataset.testid = "ai-inline-patch-apply";
     accept.addEventListener("mousedown", stopEditorEvent);
     accept.addEventListener("click", (event) => {
@@ -255,7 +262,7 @@ class AIInlinePatchToolbarWidget extends WidgetType {
 
     const reject = document.createElement("button");
     reject.type = "button";
-    reject.textContent = "Reject";
+    reject.textContent = this.preview.alreadyApplied ? "Rollback" : "Reject";
     reject.dataset.testid = "ai-inline-patch-reject";
     reject.addEventListener("mousedown", stopEditorEvent);
     reject.addEventListener("click", (event) => {
@@ -311,6 +318,12 @@ const buildDecorations = (
   );
 
   changes.forEach((change, index) => {
+    const linePos = lineToPosition(state, change.line);
+    decorations.push(
+      Decoration.line({
+        class: `cm-ai-inline-patch-target-line cm-ai-inline-patch-target-line--${change.kind}`,
+      }).range(linePos),
+    );
     decorations.push(
       Decoration.widget({
         widget: new AIInlinePatchLineWidget(
@@ -322,7 +335,7 @@ const buildDecorations = (
         ),
         block: true,
         side: change.kind === "add" ? -1 : 0,
-      }).range(lineToPosition(state, change.line)),
+      }).range(linePos),
     );
   });
 
@@ -419,6 +432,14 @@ export const createAIInlinePatchExtension = (options: {
       ".cm-ai-inline-patch-actions button:last-child": {
         background: "color-mix(in srgb, #d73a49 10%, transparent)",
         color: "var(--danger, #b31d28)",
+      },
+      ".cm-ai-inline-patch-target-line": {
+        background:
+          "linear-gradient(90deg, color-mix(in srgb, var(--accent, #3aa76d) 12%, transparent), transparent 68%)",
+      },
+      ".cm-ai-inline-patch-target-line--remove": {
+        background:
+          "linear-gradient(90deg, color-mix(in srgb, #d73a49 10%, transparent), transparent 68%)",
       },
       ".cm-ai-inline-patch-row": {
         boxSizing: "border-box",

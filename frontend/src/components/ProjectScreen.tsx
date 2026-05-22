@@ -816,6 +816,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   const handleAcceptAIInlinePatch = useCallback(
     async (preview: AIInlinePatchPreview) => {
+      if (preview.alreadyApplied) {
+        clearAIInlinePatchPreview(preview.id);
+        return;
+      }
       const affectedTabs = tabsRef.current.filter((tab) =>
         preview.files.some((file) =>
           aiInlinePatchPathMatches(tab.path, file.path),
@@ -857,10 +861,55 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   );
 
   const handleRejectAIInlinePatch = useCallback(
-    (preview: AIInlinePatchPreview) => {
-      dismissAIInlinePatchPreview(preview.id);
+    async (preview: AIInlinePatchPreview) => {
+      if (!preview.alreadyApplied) {
+        dismissAIInlinePatchPreview(preview.id);
+        return;
+      }
+      const affectedTabs = tabsRef.current.filter((tab) =>
+        preview.files.some((file) =>
+          aiInlinePatchPathMatches(tab.path, file.path),
+        ),
+      );
+      const dirtyTab = affectedTabs.find((tab) => tab.isDirty);
+      if (dirtyTab) {
+        useAppNotificationStore.getState().addNotification({
+          id: `ai-inline-patch-rollback-dirty:${preview.id}`,
+          kind: "warning",
+          title: "Save editor changes first",
+          message: `${dirtyTab.label} has unsaved changes.`,
+          source: "AI",
+          sticky: false,
+          timeoutMs: 6000,
+        });
+        return;
+      }
+      try {
+        await AppFunctions.AIRollbackPatchCheckpoint({
+          artifactId: preview.id,
+          checkpointId: "",
+        });
+        clearAIInlinePatchPreview(preview.id);
+        await Promise.all(
+          affectedTabs.map((tab) => refreshAppliedPatchTab(tab)),
+        );
+      } catch (error) {
+        useAppNotificationStore.getState().addNotification({
+          id: `ai-inline-patch-rollback:${preview.id}`,
+          kind: "error",
+          title: "Failed to rollback AI edit",
+          message: error instanceof Error ? error.message : String(error),
+          source: "AI",
+          sticky: false,
+          timeoutMs: 7000,
+        });
+      }
     },
-    [dismissAIInlinePatchPreview],
+    [
+      clearAIInlinePatchPreview,
+      dismissAIInlinePatchPreview,
+      refreshAppliedPatchTab,
+    ],
   );
 
   const buildMarkdownPreviewSource = useCallback(
