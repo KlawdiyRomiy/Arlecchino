@@ -272,19 +272,13 @@ These stay outside the default beta bootstrap:
 
 Some of these can still be installed later from Arlecchino's language server flows or manually through your own environment.
 
-See [docs/lsp-supply-chain.md](docs/lsp-supply-chain.md) for the language
-server and toolchain supply-chain policy.
-
 ### ONNX Runtime Note
 
 `onnxruntime` is **not** a hard blocker for starting Arlecchino.
 
 If it is missing, the app still boots and falls back away from the ONNX-backed path. Installing it simply gives the autocomplete stack access to the faster ML backend where available.
 
-The bundled ARLE model artifacts are tracked in
-[docs/model-provenance.md](docs/model-provenance.md). The beta release keeps
-the model bundled for local autocomplete ranking; release gates and the
-remaining memorization check are recorded in that document.
+The beta release keeps the bundled ARLE model for local autocomplete ranking.
 
 ---
 
@@ -296,11 +290,7 @@ explicit provider configuration, consent, and runtime gates. Project indexes,
 workspace state, MCP audit logs, AI run metadata, provider settings, and
 editor/runtime state may be stored locally to support IDE features.
 
-See [docs/privacy-policy.md](docs/privacy-policy.md) for the beta privacy
-policy and AI provider disclosure rules.
-
-See [docs/release-alpha-checklist.md](docs/release-alpha-checklist.md) for the
-Beta, source checkout, and unsigned DMG release gates.
+Beta privacy and release notes are published with the release artifacts.
 
 ---
 
@@ -329,9 +319,6 @@ The Wails v3 shell work supports:
 - custom protocols and file associations
 - updater / release plumbing
 - future material backends such as Liquid Glass on supported macOS
-
-See [docs/wails-v3-spike.md](docs/wails-v3-spike.md) for the current Wails v3
-shell status and release gate.
 
 ---
 
