@@ -37,7 +37,9 @@ const callIDToMethod = new Map<number, string>([
   [1421136122, "AIGetChatRunArtifact"],
   [185739619, "AIGetConsentPolicy"],
   [1617810636, "AIGetContextPreview"],
+  [2602162403, "AIGetEditorContinuation"],
   [669940112, "AIGetEmbeddingStatus"],
+  [3220199461, "AIGetPredictionStatus"],
   [2936535171, "AIGetStatus"],
   [2485175480, "AIGetChatRun"],
   [1109101670, "AIListAgentProfiles"],
@@ -61,6 +63,7 @@ const callIDToMethod = new Map<number, string>([
   [3005051643, "AISaveApprovalPolicy"],
   [2566415454, "AISaveConsentPolicy"],
   [1107955538, "AISaveMnemonicEntry"],
+  [395653597, "AISavePredictionSettings"],
   [2894980274, "AISaveProviderSettings"],
   [3224526211, "AISearchMnemonic"],
   [32224322, "AISetMnemonicEnabled"],
@@ -131,6 +134,7 @@ const defaultRuntimeResult = (
       return {
         localProvidersAccepted: false,
         remoteProvidersAccepted: false,
+        remoteByokProvidersAccepted: false,
         frontierProvidersAccepted: false,
         providerPolicies: [],
       };
@@ -138,9 +142,72 @@ const defaultRuntimeResult = (
       return {
         localProvidersAccepted: false,
         remoteProvidersAccepted: false,
+        remoteByokProvidersAccepted: false,
         frontierProvidersAccepted: false,
         providerPolicies: [],
         ...((_args[0] as Record<string, unknown> | undefined) ?? {}),
+      };
+    case "AIGetPredictionStatus":
+      return {
+        enabled: false,
+        settings: {
+          enabled: false,
+          mode: "off",
+          idleMs: 600,
+          minIntervalMs: 1200,
+          maxPending: 1,
+          maxOutputTokens: 96,
+          maxPromptBytes: 12288,
+          budget: {
+            requestsPerMinute: 20,
+            tokensPerMinute: 12000,
+            tokensPerDay: 100000,
+            requestsPerFilePerMinute: 8,
+          },
+        },
+        providerReady: false,
+        providerReason: "AI predictions are unavailable in the web-only shell.",
+        budget: {
+          requestsThisMinute: 0,
+          tokensThisMinute: 0,
+          tokensToday: 0,
+          pendingRequests: 0,
+        },
+        consent: {
+          localProvidersAccepted: false,
+          remoteProvidersAccepted: false,
+          remoteByokProvidersAccepted: false,
+          frontierProvidersAccepted: false,
+          externalAgentCliAccepted: false,
+        },
+      };
+    case "AISavePredictionSettings":
+      return {
+        ...(defaultRuntimeResult("AIGetPredictionStatus") as Record<
+          string,
+          unknown
+        >),
+        settings: _args[0],
+        enabled:
+          Boolean((_args[0] as { enabled?: boolean } | undefined)?.enabled) &&
+          false,
+      };
+    case "AIGetEditorContinuation":
+      return {
+        text: "",
+        context: {
+          id: "web-only-editor-continuation",
+          capability: "line_prediction",
+          snippets: [],
+          contextItems: [],
+          dataCategories: [],
+          redaction: {},
+          disclosure: {},
+          disclosureSummary: {},
+          approvalSummary: {},
+          byteSize: 0,
+          createdAt: new Date(0).toISOString(),
+        },
       };
     case "AIGetEmbeddingStatus":
       return {
@@ -165,6 +232,63 @@ const defaultRuntimeResult = (
       };
     case "AIRefreshLocalProviders":
       return { providers: [], checkedAt: new Date(0).toISOString() };
+    case "AISaveProviderSettings": {
+      const settings =
+        (_args[0] as
+          | {
+              id?: string;
+              name?: string;
+              kind?: string;
+              endpoint?: string;
+              model?: string;
+              enabled?: boolean;
+              manual?: boolean;
+              secretRef?: string;
+              secretValue?: string;
+            }
+          | undefined) ?? {};
+      const remoteByok = settings.kind === "openai-compatible";
+      return {
+        id: settings.id ?? "",
+        name: settings.name ?? settings.kind ?? "",
+        kind: settings.kind ?? "",
+        endpoint: settings.endpoint ?? "",
+        endpointClass: remoteByok ? "remote_byok" : "loopback",
+        local: !remoteByok,
+        manual: Boolean(settings.manual),
+        frontier: false,
+        oauthSupported: false,
+        requiresAuth: remoteByok,
+        authConfigured: Boolean(settings.secretRef || settings.secretValue),
+        capabilities: [
+          "code_completion",
+          "line_prediction",
+          "terminal_prediction",
+          "chat",
+        ],
+        models: [],
+        defaultModel: settings.model ?? "",
+        status: settings.enabled ? "needs_auth" : "disabled",
+        reason: "Provider testing is unavailable in the web-only shell.",
+      };
+    }
+    case "AIClearProviderSecret":
+      return {
+        id: _args[0] ?? "",
+        kind: "openai-compatible",
+        endpointClass: "remote_byok",
+        local: false,
+        manual: true,
+        frontier: false,
+        oauthSupported: false,
+        requiresAuth: true,
+        authConfigured: false,
+        capabilities: [],
+        models: [],
+        status: "needs_auth",
+      };
+    case "AITestProvider":
+      throw new Error("AI provider test is unavailable in the web-only shell.");
     case "AIListProviders":
     case "AIListProviderRuntimes":
     case "AIListChatRuns":

@@ -940,12 +940,8 @@ func codexDiscoveryProcessEnv(extra ...string) []string {
 	return env
 }
 
-func codexAppServerProcessEnv(isolatedCodexHome string, extra ...string) []string {
+func codexAppServerProcessEnv(extra ...string) []string {
 	env := filteredCodexEnv()
-	env = removeEnvKey(env, "CODEX_HOME", "XDG_CONFIG_HOME")
-	if strings.TrimSpace(isolatedCodexHome) != "" {
-		env = append(env, "CODEX_HOME="+isolatedCodexHome)
-	}
 	env = appendCodexCommonProcessEnv(env, extra...)
 	return env
 }

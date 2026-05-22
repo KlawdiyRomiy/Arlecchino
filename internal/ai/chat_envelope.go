@@ -3,6 +3,8 @@ package ai
 import (
 	"fmt"
 	"strings"
+
+	"arlecchino/internal/ai/agents"
 )
 
 func (s *Service) GetChatRunEnvelope(projectID string, runID string) (AIChatRunEnvelope, error) {
@@ -230,6 +232,142 @@ func (s *Service) buildChatRunEnvelope(project *ProjectSession, run AIChatRun) A
 	return s.buildChatRunEnvelopeWithTimeline(project, run, nil)
 }
 
+func runNoticeForRun(run AIChatRun, timeline []AIRunTimelineEvent) *AIChatRunNotice {
+	status := strings.TrimSpace(run.Status)
+	if status == "canceled" {
+		return nil
+	}
+
+	runtime := run.AgentRuntime
+	runtimeStatus := ""
+	runtimeProof := ""
+	runtimeFailure := ""
+	runtimeBlocked := ""
+	if runtime != nil {
+		runtimeStatus = strings.TrimSpace(runtime.Status)
+		runtimeProof = strings.TrimSpace(runtime.ProofState)
+		runtimeFailure = strings.TrimSpace(runtime.FailureCode)
+		runtimeBlocked = strings.TrimSpace(runtime.BlockedReason)
+	}
+
+	latestRunError := latestRunErrorSummary(timeline)
+	details := sanitizedDisplayText(firstNonEmpty(run.Error, runtimeBlocked, latestRunError))
+	if agentBaselineGitUnavailable(details) {
+		return nil
+	}
+	hasRuntimeFailure := runtimeStatus == "error" || runtimeStatus == "blocked" || runtimeProof == "error" || runtimeProof == "blocked" || runtimeFailure != ""
+	if status != "error" && !hasRuntimeFailure && details == "" {
+		return nil
+	}
+	if runtimeFailure == agents.FailureCanceled || runtimeStatus == "canceled" || runtimeProof == "canceled" {
+		return nil
+	}
+
+	severity := "error"
+	if status != "error" && (runtimeStatus == "blocked" || runtimeProof == "blocked") {
+		severity = "warning"
+	}
+
+	title := runNoticeTitle(runtimeFailure, details)
+	message := runNoticeMessage(title, details, runtimeFailure)
+	notificationID := strings.TrimSpace(run.ID)
+	if notificationID != "" {
+		notificationID = "ai-chat-run:" + notificationID + ":notice"
+	}
+
+	return &AIChatRunNotice{
+		Severity:       severity,
+		Title:          title,
+		Message:        message,
+		Details:        compactRunNoticeDetails(details),
+		Source:         "AI Runtime",
+		Tag:            string(run.Action),
+		NotificationID: notificationID,
+	}
+}
+
+func latestRunErrorSummary(timeline []AIRunTimelineEvent) string {
+	for index := len(timeline) - 1; index >= 0; index-- {
+		event := timeline[index]
+		if event.Type == "run_error" && strings.TrimSpace(event.Summary) != "" {
+			return event.Summary
+		}
+	}
+	return ""
+}
+
+func runNoticeTitle(failureCode string, details string) string {
+	normalizedFailure := strings.TrimSpace(failureCode)
+	normalizedDetails := strings.ToLower(strings.TrimSpace(details))
+	switch normalizedFailure {
+	case agents.FailureNoReviewableArtifact:
+		return "Build proof missing"
+	case agents.FailureConsentRequired:
+		return "Runtime consent required"
+	case agents.FailureProviderNotConfigured:
+		return "Provider not configured"
+	case agents.FailureProviderNotRunning:
+		return "Provider runtime unavailable"
+	case agents.FailureRuntimeTimeout:
+		return "Provider timed out"
+	case agents.FailureToolDenied:
+		return "Tool approval blocked"
+	case agents.FailureProtectedResourceDenied:
+		return "Protected resource blocked"
+	}
+	switch {
+	case strings.Contains(normalizedDetails, "baseline") || strings.Contains(normalizedDetails, "not a git repository"):
+		return "Worktree baseline failed"
+	case strings.Contains(normalizedDetails, "deadline exceeded") || strings.Contains(normalizedDetails, "timeout"):
+		return "Provider timed out"
+	case strings.Contains(normalizedDetails, "does not support agent tools") || strings.Contains(normalizedDetails, "tool-capable"):
+		return "Tool-capable model required"
+	case strings.Contains(normalizedDetails, "consent"):
+		return "Runtime consent required"
+	default:
+		return "AI run failed"
+	}
+}
+
+func runNoticeMessage(title string, details string, failureCode string) string {
+	switch title {
+	case "Worktree baseline failed":
+		return "The agent could not establish a clean worktree baseline."
+	case "Build proof missing":
+		return "The run ended without reviewable diff or accepted no-change evidence."
+	case "Provider timed out":
+		return "The provider did not complete the run in time."
+	case "Runtime consent required":
+		return "Runtime consent is required before this provider can continue."
+	case "Tool-capable model required":
+		return "Switch to a model that can use the required agent tools."
+	case "Provider not configured":
+		return "Select and configure a compatible AI provider."
+	case "Provider runtime unavailable":
+		return "Start the selected runtime or choose another provider."
+	case "Tool approval blocked":
+		return "A tool request was blocked by the current approval policy."
+	case "Protected resource blocked":
+		return "The runtime tried to access a protected resource."
+	}
+	if strings.TrimSpace(failureCode) != "" {
+		return "The runtime reported a failure."
+	}
+	if details != "" {
+		return compactRunNoticeDetails(details)
+	}
+	return "The runtime needs attention."
+}
+
+func compactRunNoticeDetails(value string) string {
+	const max = 1200
+	text := sanitizedDisplayText(value)
+	if len(text) <= max {
+		return text
+	}
+	return strings.TrimSpace(text[:max-3]) + "..."
+}
+
 func (s *Service) buildChatRunEnvelopeWithTimeline(project *ProjectSession, run AIChatRun, timelineOverride *[]AIRunTimelineEvent) AIChatRunEnvelope {
 	run = normalizeChatRunToolProposals(run)
 	approval := s.approvalSummaryForProject(project)
@@ -266,6 +404,7 @@ func (s *Service) buildChatRunEnvelopeWithTimeline(project *ProjectSession, run 
 		Model:               firstNonEmpty(run.Model, modelFromEnvelope(providerEnvelope)),
 		ReasoningEffort:     run.ReasoningEffort,
 		Error:               sanitizedDisplayText(run.Error),
+		RunNotice:           runNoticeForRun(run, timeline),
 		CanCancel:           run.CanCancel,
 		ContextSummary:      run.ContextSummary,
 		ProviderEnvelope:    providerEnvelope,
@@ -316,14 +455,19 @@ func (s *Service) providerEnvelopeForRun(run AIChatRun) *AIProviderEnvelope {
 	if !ok {
 		return nil
 	}
-	return &AIProviderEnvelope{
+	envelope := providerEnvelopeFromDescriptor(descriptor, firstNonEmpty(run.Model, descriptor.DefaultModel))
+	return &envelope
+}
+
+func providerEnvelopeFromDescriptor(descriptor AIProviderDescriptor, model string) AIProviderEnvelope {
+	return AIProviderEnvelope{
 		ProviderID:         descriptor.ID,
 		Kind:               descriptor.Kind,
 		RuntimeFamily:      descriptor.RuntimeFamily,
 		Transport:          descriptor.Transport,
 		Endpoint:           descriptor.Endpoint,
 		EndpointClass:      descriptor.EndpointClass,
-		Model:              firstNonEmpty(run.Model, descriptor.DefaultModel),
+		Model:              firstNonEmpty(model, descriptor.DefaultModel),
 		Status:             descriptor.Status,
 		AuthStatus:         descriptor.AuthStatus,
 		BillingMode:        descriptor.BillingMode,
@@ -406,6 +550,14 @@ func disclosureSummary(provider *AIProviderEnvelope, contextSummary *AIContextSu
 	summary.Local = provider.Local
 	summary.Frontier = provider.Frontier
 	summary.ProviderPolicyAllowed = provider.Local && !provider.Frontier && consent.LocalProvidersAccepted
+	if provider.EndpointClass == "remote_byok" {
+		summary.ProviderPolicyAllowed = consent.RemoteBYOKProvidersAccepted
+		summary.RetentionSummary = "remote BYOK provider call; Arlecchino stores metadata-only egress locally"
+	}
+	if provider.Frontier {
+		summary.ProviderPolicyAllowed = consent.FrontierProvidersAccepted
+		summary.RetentionSummary = "frontier provider API call; Arlecchino stores metadata-only egress locally"
+	}
 	if provider.EndpointClass == "local_process_external_account" || provider.ExternalAccount {
 		summary.ProviderPolicyAllowed = consent.ExternalAgentCLIAccepted
 		summary.RetentionSummary = "external CLI account; Arlecchino stores metadata and redacted transcript locally"

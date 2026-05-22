@@ -412,14 +412,22 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 		return
 	}
 	baseline := captureAgentWorktreeBaseline(project)
-	s.recordChatRunArtifact(project, runID, AIChatRunArtifactAgentWorktree, "Agent worktree baseline", agentBaselineSummary(baseline), baseline)
+	if baseline.Error == "" {
+		s.recordChatRunArtifact(project, runID, AIChatRunArtifactAgentWorktree, "Agent worktree baseline", agentBaselineSummary(baseline), baseline)
+	} else {
+		s.recordAgentWorktreeBaselineDiagnostic(project, runID, req, baseline)
+	}
 	s.updateRun(runID, func(run *AIChatRun) {
 		if run.AgentRuntime != nil {
 			run.AgentRuntime.BaselineID = baseline.ID
 			run.AgentRuntime.Status = "running"
 			run.AgentRuntime.HealthStatus = "running"
 			run.AgentRuntime.ProofState = "running"
-			run.AgentRuntime.PreflightStatus = "baseline_captured"
+			if baseline.Error == "" {
+				run.AgentRuntime.PreflightStatus = "baseline_captured"
+			} else {
+				run.AgentRuntime.PreflightStatus = "baseline_unavailable"
+			}
 			run.AgentRuntime.ConsentStatus = "accepted"
 		}
 	})
@@ -541,6 +549,15 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 			s.updateRun(runID, func(run *AIChatRun) {
 				if run.AgentRuntime != nil {
 					run.AgentRuntime.ArtifactState = evidenceState
+				}
+			})
+			s.finishAgentRunCompleted(project, runID, req, descriptor, record, result, transcriptID, diffArtifact)
+			return
+		}
+		if agentBaselineGitUnavailable(baseline.Error) {
+			s.updateRun(runID, func(run *AIChatRun) {
+				if run.AgentRuntime != nil {
+					run.AgentRuntime.ArtifactState = "baseline_unavailable"
 				}
 			})
 			s.finishAgentRunCompleted(project, runID, req, descriptor, record, result, transcriptID, diffArtifact)
@@ -763,10 +780,14 @@ func (s *Service) handleAgentRuntimeEvent(project *ProjectSession, runID string,
 		return
 	}
 	if event.Type == agents.EventMessage {
-		if strings.TrimSpace(event.Text) != "" && event.Status == "message.delta" {
-			s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": sanitizedDisplayChunk(event.Text)})
+		if event.Text != "" && event.Status == "message.delta" {
+			token := sanitizedDisplayChunk(event.Text)
+			if token == "" {
+				return
+			}
+			s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": token})
 			s.updateRun(runID, func(run *AIChatRun) {
-				run.Response += sanitizedDisplayChunk(event.Text)
+				run.Response += token
 			})
 			return
 		}
@@ -958,6 +979,18 @@ func buildEvidenceArtifactStateAccepted(state string) bool {
 	}
 }
 
+func buildArtifactStateCanCompleteWithoutPatch(state string) bool {
+	if buildEvidenceArtifactStateAccepted(state) {
+		return true
+	}
+	switch strings.TrimSpace(state) {
+	case "baseline_unavailable", "no_patch_artifact", "not_required":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Service) startAgentEgressRecord(project *ProjectSession, runID string, req AIChatRunRequest, descriptor providers.AIProviderDescriptor, snapshot AIContextSnapshot) AIEgressRecord {
 	requestID := uuid.NewString()
 	record := AIEgressRecord{
@@ -1028,6 +1061,29 @@ func (s *Service) recordAgentTranscriptArtifact(project *ProjectSession, runID s
 	return "artifact-" + shortHash(runID+":"+string(AIChatRunArtifactAgentTerminal)+":"+title)
 }
 
+func (s *Service) recordAgentWorktreeBaselineDiagnostic(project *ProjectSession, runID string, req AIChatRunRequest, baseline agentWorktreeBaseline) {
+	if s == nil || project == nil || strings.TrimSpace(baseline.Error) == "" {
+		return
+	}
+	status := "diagnostic"
+	summary := "Agent worktree baseline unavailable: " + sanitizedDisplayText(baseline.Error)
+	if agentBaselineGitUnavailable(baseline.Error) {
+		status = "skipped"
+		summary = "Git worktree baseline skipped because this project is not a Git repository."
+	}
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            runID,
+		SessionID:        normalizeChatSessionID(req.SessionID),
+		ProjectSessionID: project.ID,
+		Source:           "agent_runtime",
+		Type:             "worktree_baseline",
+		Status:           status,
+		Actor:            "system",
+		Capability:       providers.CapabilityChat,
+		Summary:          summary,
+	})
+}
+
 func (s *Service) recordAgentBuildEvidenceArtifact(project *ProjectSession, runID string, req AIChatRunRequest, result agents.Result, evidenceState string) {
 	payload := map[string]any{
 		"artifactState": evidenceState,
@@ -1084,8 +1140,8 @@ func (s *Service) finishAgentRunCompleted(project *ProjectSession, runID string,
 			if diffArtifact.ID != "" {
 				run.AgentRuntime.CapturedDiffID = diffArtifact.ID
 				run.AgentRuntime.ArtifactState = "captured_diff"
-			} else if req.Action == AIChatActionBuild && buildEvidenceArtifactStateAccepted(run.AgentRuntime.ArtifactState) {
-				// Keep the typed no-change/diagnostic/test evidence state captured before completion.
+			} else if req.Action == AIChatActionBuild && buildArtifactStateCanCompleteWithoutPatch(run.AgentRuntime.ArtifactState) {
+				// Keep typed no-change/diagnostic/test evidence, or an optional baseline skip captured before completion.
 			} else if req.Action == AIChatActionBuild {
 				run.AgentRuntime.ArtifactState = "missing"
 			} else {
@@ -1202,6 +1258,9 @@ func agentWorktreeBaselineUnchanged(projectRoot string, baseline agentWorktreeBa
 
 func (s *Service) recordAgentCapturedDiff(project *ProjectSession, runID string, req AIChatRunRequest, baseline agentWorktreeBaseline) (AIChatRunArtifact, error) {
 	if baseline.Error != "" {
+		if agentBaselineGitUnavailable(baseline.Error) {
+			return AIChatRunArtifact{}, nil
+		}
 		unchanged, unchangedErr := agentWorktreeBaselineUnchanged(project.ProjectRoot, baseline)
 		if unchangedErr == nil && unchanged {
 			return AIChatRunArtifact{}, nil
@@ -1257,7 +1316,66 @@ func (s *Service) recordAgentCapturedDiff(project *ProjectSession, runID string,
 		return AIChatRunArtifact{}, err
 	}
 	s.emitChatArtifactChanged(project, artifact, "ai:agent:captured-diff")
+	s.emitAgentCapturedDiffAppliedEvents(project, artifact, files, now)
 	return artifact, nil
+}
+
+func agentBaselineGitUnavailable(value string) bool {
+	text := strings.ToLower(strings.TrimSpace(value))
+	return strings.Contains(text, "not a git repository")
+}
+
+func (s *Service) emitAgentCapturedDiffAppliedEvents(project *ProjectSession, artifact AIChatRunArtifact, files []AIPatchFile, appliedAt string) {
+	if s == nil || project == nil || len(files) == 0 {
+		return
+	}
+	eventFiles := make([]map[string]any, 0, len(files))
+	for _, file := range files {
+		absPath, err := safeProjectPath(project.ProjectRoot, file.Path)
+		if err != nil {
+			continue
+		}
+		eventFiles = append(eventFiles, map[string]any{
+			"path":         file.Path,
+			"absolutePath": absPath,
+			"status":       file.Status,
+			"created":      !file.Exists,
+		})
+		if file.Exists {
+			s.emitEvent("file:changed", absPath)
+		} else {
+			s.emitEvent("project:entry:created", map[string]any{
+				"path":        absPath,
+				"isDirectory": false,
+			})
+		}
+	}
+	if len(eventFiles) == 0 {
+		return
+	}
+	s.emitEvent("ai:patch:artifact-applied", map[string]any{
+		"artifactId":       artifact.ID,
+		"runId":            artifact.RunID,
+		"sessionId":        artifact.SessionID,
+		"projectSessionId": project.ID,
+		"appliedAt":        appliedAt,
+		"source":           "captured_direct_write",
+		"files":            eventFiles,
+	})
+	s.recordRunTimeline(project, AIRunTimelineEvent{
+		RunID:            artifact.RunID,
+		SessionID:        normalizeChatSessionID(artifact.SessionID),
+		ProjectSessionID: project.ID,
+		Source:           "agent_runtime",
+		Type:             "patch_captured",
+		Status:           "applied",
+		Actor:            "agent",
+		ArtifactID:       artifact.ID,
+		Summary:          fmt.Sprintf("Captured already-applied agent diff for %d file(s).", len(eventFiles)),
+	})
+	if strings.TrimSpace(artifact.RunID) != "" {
+		s.emitRunEnvelope(project.ID, artifact.RunID)
+	}
 }
 
 func (s *Service) recordBlockedCapturedDiff(project *ProjectSession, runID string, req AIChatRunRequest, diff string, baseline agentWorktreeBaseline, reason string) AIChatRunArtifact {
@@ -1629,14 +1747,24 @@ func agentBaselineSummary(baseline agentWorktreeBaseline) string {
 }
 
 func agentRunDisplayResponse(result agents.Result, artifact *AIChatRunArtifact) string {
-	if artifact != nil && artifact.ID != "" {
-		return "External agent completed and Arlecchino captured a reviewable direct diff artifact."
-	}
+	response := ""
 	if strings.TrimSpace(result.Message) != "" {
-		return sanitizedDisplayText(result.Message)
+		response = sanitizedDisplayText(result.Message)
+	} else if strings.TrimSpace(result.Transcript) != "" {
+		response = compactTranscriptSummary(result.Transcript)
 	}
-	if strings.TrimSpace(result.Transcript) != "" {
-		return compactTranscriptSummary(result.Transcript)
+	if artifact != nil && artifact.ID != "" {
+		notice := "Arlecchino captured the direct file changes as a reviewable diff artifact."
+		if response != "" {
+			if strings.Contains(response, notice) {
+				return response
+			}
+			return truncateUTF8(strings.TrimSpace(response)+"\n\n"+notice, 2000)
+		}
+		return "External agent completed. " + notice
+	}
+	if response != "" {
+		return response
 	}
 	return "External agent run completed."
 }

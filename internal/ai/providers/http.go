@@ -25,7 +25,27 @@ func newHTTPClient(timeout time.Duration) *http.Client {
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
-	return &http.Client{Timeout: timeout}
+	return &http.Client{
+		Timeout:       timeout,
+		CheckRedirect: sameOriginRedirectPolicy,
+	}
+}
+
+func sameOriginRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	if len(via) >= 10 {
+		return fmt.Errorf("provider redirect limit exceeded")
+	}
+	previous := via[len(via)-1]
+	if previous == nil || previous.URL == nil || req == nil || req.URL == nil {
+		return fmt.Errorf("provider redirect blocked")
+	}
+	if strings.EqualFold(req.URL.Scheme, previous.URL.Scheme) && strings.EqualFold(req.URL.Host, previous.URL.Host) {
+		return nil
+	}
+	return fmt.Errorf("provider redirect blocked: cross-origin redirect from %s://%s to %s://%s", previous.URL.Scheme, previous.URL.Host, req.URL.Scheme, req.URL.Host)
 }
 
 func decodeJSONResponse(resp *http.Response, target any) error {

@@ -22,11 +22,12 @@ func DefaultApprovalPolicy() AIApprovalPolicy {
 func DefaultConsentPolicy() AIConsentPolicy {
 	now := utcNow()
 	return AIConsentPolicy{
-		LocalProvidersAccepted:    true,
-		RemoteProvidersAccepted:   false,
-		FrontierProvidersAccepted: false,
-		AcceptedAt:                now,
-		UpdatedAt:                 now,
+		LocalProvidersAccepted:      true,
+		RemoteProvidersAccepted:     false,
+		RemoteBYOKProvidersAccepted: false,
+		FrontierProvidersAccepted:   false,
+		AcceptedAt:                  now,
+		UpdatedAt:                   now,
 	}
 }
 
@@ -181,11 +182,12 @@ func (s *Service) approvalSummaryForProject(project *ProjectSession) AIApprovalS
 func (s *Service) consentSummary() AIConsentSummary {
 	policy := normalizeConsentPolicy(s.currentSettings().ConsentPolicy)
 	return AIConsentSummary{
-		LocalProvidersAccepted:    policy.LocalProvidersAccepted,
-		RemoteProvidersAccepted:   policy.RemoteProvidersAccepted,
-		FrontierProvidersAccepted: policy.FrontierProvidersAccepted,
-		ExternalAgentCLIAccepted:  policy.ExternalAgentCLIAccepted,
-		PolicySource:              "user_settings",
+		LocalProvidersAccepted:      policy.LocalProvidersAccepted,
+		RemoteProvidersAccepted:     policy.RemoteProvidersAccepted,
+		RemoteBYOKProvidersAccepted: policy.RemoteBYOKProvidersAccepted,
+		FrontierProvidersAccepted:   policy.FrontierProvidersAccepted,
+		ExternalAgentCLIAccepted:    policy.ExternalAgentCLIAccepted,
+		PolicySource:                "user_settings",
 	}
 }
 
@@ -221,8 +223,12 @@ func normalizeConsentPolicy(policy AIConsentPolicy) AIConsentPolicy {
 		policy.UpdatedAt = utcNow()
 	}
 	policy.LocalProvidersAccepted = true
-	policy.RemoteProvidersAccepted = false
-	policy.FrontierProvidersAccepted = false
+	if policy.RemoteProvidersAccepted {
+		policy.RemoteBYOKProvidersAccepted = true
+	}
+	if policy.RemoteBYOKProvidersAccepted {
+		policy.RemoteProvidersAccepted = true
+	}
 	for i := range policy.ProviderPolicies {
 		provider := &policy.ProviderPolicies[i]
 		provider.ProviderID = strings.TrimSpace(provider.ProviderID)
@@ -231,6 +237,10 @@ func normalizeConsentPolicy(policy AIConsentPolicy) AIConsentPolicy {
 		provider.Model = strings.TrimSpace(provider.Model)
 		if strings.TrimSpace(provider.Endpoint) == "local_process_external_account" || strings.TrimSpace(provider.ProviderKind) == "external_agent_cli" {
 			provider.Allowed = policy.ExternalAgentCLIAccepted
+		} else if provider.Frontier {
+			provider.Allowed = policy.FrontierProvidersAccepted
+		} else if !provider.Local && !provider.Frontier {
+			provider.Allowed = policy.RemoteBYOKProvidersAccepted
 		} else {
 			provider.Allowed = provider.Local && !provider.Frontier
 		}

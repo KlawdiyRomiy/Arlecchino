@@ -7,9 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -83,16 +81,9 @@ func (a *CodexAdapter) runAppServer(ctx context.Context, req RunRequest, emit fu
 		return UnsupportedResult("agent prompt is empty")
 	}
 
-	isolatedCodexHome, cleanupCodexHome, err := prepareCodexAppServerHome()
-	if err != nil {
-		return Result{Status: "error", Error: err.Error(), ExitCode: -1, Transport: TransportAppServerSTDIO, StartedAt: startedAt, FinishedAt: time.Now().UTC().Format(time.RFC3339)}
-	}
-	defer cleanupCodexHome()
-
 	cmd := exec.CommandContext(ctx, binary, codexAppServerArgs(req)...)
 	cmd.Dir = req.ProjectRoot
 	cmd.Env = codexAppServerProcessEnv(
-		isolatedCodexHome,
 		"ARLECCHINO_EXTERNAL_AGENT_RUN_ID="+req.RunID,
 		"ARLECCHINO_EXTERNAL_AGENT_RUNTIME_FAMILY="+RuntimeFamilyStructuredAgent,
 		"ARLECCHINO_EXTERNAL_AGENT_TRANSPORT="+TransportAppServerSTDIO,
@@ -250,55 +241,6 @@ func (s *codexAppServerSession) startReaders(stdout io.Reader, stderr io.Reader)
 			s.emit(NewEvent(s.runID, EventStatus, "stream_closed", sanitizeCLIStatusLine(err.Error()), nil))
 		})
 	}()
-}
-
-func prepareCodexAppServerHome() (string, func(), error) {
-	dir, err := os.MkdirTemp("", "arlecchino-codex-app-server-*")
-	if err != nil {
-		return "", func() {}, fmt.Errorf("create isolated Codex app-server home: %w", err)
-	}
-	cleanup := func() {
-		_ = os.RemoveAll(dir)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(codexAppServerIsolatedConfig()), 0o600); err != nil {
-		cleanup()
-		return "", func() {}, fmt.Errorf("write isolated Codex app-server config: %w", err)
-	}
-	if source := codexAuthFilePath(); source != "" {
-		// Keep auth Codex-owned: Arlecchino never reads or copies auth.json contents.
-		if err := os.Symlink(source, filepath.Join(dir, filepath.Base(source))); err != nil && !errors.Is(err, os.ErrExist) {
-			cleanup()
-			return "", func() {}, fmt.Errorf("link Codex app-server auth: %w", err)
-		}
-	}
-	return dir, cleanup, nil
-}
-
-func codexAppServerIsolatedConfig() string {
-	var b strings.Builder
-	b.WriteString("[features]\n")
-	for _, feature := range codexAppServerDisabledFeatures {
-		b.WriteString(feature)
-		b.WriteString(" = false\n")
-	}
-	b.WriteString("\n[mcp_servers]\n")
-	return b.String()
-}
-
-func codexAuthFilePath() string {
-	home := strings.TrimSpace(os.Getenv("CODEX_HOME"))
-	if home == "" {
-		userHome, err := os.UserHomeDir()
-		if err != nil || strings.TrimSpace(userHome) == "" {
-			return ""
-		}
-		home = filepath.Join(userHome, ".codex")
-	}
-	candidate := filepath.Join(home, "auth.json")
-	if _, err := os.Lstat(candidate); err == nil {
-		return candidate
-	}
-	return ""
 }
 
 func codexAppServerTranscriptLine(rawLine []byte) []byte {

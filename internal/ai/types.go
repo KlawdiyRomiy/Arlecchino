@@ -110,21 +110,23 @@ type AIProviderDataPolicy struct {
 }
 
 type AIConsentPolicy struct {
-	LocalProvidersAccepted    bool                   `json:"localProvidersAccepted"`
-	RemoteProvidersAccepted   bool                   `json:"remoteProvidersAccepted"`
-	FrontierProvidersAccepted bool                   `json:"frontierProvidersAccepted"`
-	ExternalAgentCLIAccepted  bool                   `json:"externalAgentCliAccepted"`
-	ProviderPolicies          []AIProviderDataPolicy `json:"providerPolicies,omitempty"`
-	AcceptedAt                string                 `json:"acceptedAt,omitempty"`
-	UpdatedAt                 string                 `json:"updatedAt,omitempty"`
+	LocalProvidersAccepted      bool                   `json:"localProvidersAccepted"`
+	RemoteProvidersAccepted     bool                   `json:"remoteProvidersAccepted"`
+	RemoteBYOKProvidersAccepted bool                   `json:"remoteByokProvidersAccepted"`
+	FrontierProvidersAccepted   bool                   `json:"frontierProvidersAccepted"`
+	ExternalAgentCLIAccepted    bool                   `json:"externalAgentCliAccepted"`
+	ProviderPolicies            []AIProviderDataPolicy `json:"providerPolicies,omitempty"`
+	AcceptedAt                  string                 `json:"acceptedAt,omitempty"`
+	UpdatedAt                   string                 `json:"updatedAt,omitempty"`
 }
 
 type AIConsentSummary struct {
-	LocalProvidersAccepted    bool   `json:"localProvidersAccepted"`
-	RemoteProvidersAccepted   bool   `json:"remoteProvidersAccepted"`
-	FrontierProvidersAccepted bool   `json:"frontierProvidersAccepted"`
-	ExternalAgentCLIAccepted  bool   `json:"externalAgentCliAccepted"`
-	PolicySource              string `json:"policySource"`
+	LocalProvidersAccepted      bool   `json:"localProvidersAccepted"`
+	RemoteProvidersAccepted     bool   `json:"remoteProvidersAccepted"`
+	RemoteBYOKProvidersAccepted bool   `json:"remoteByokProvidersAccepted"`
+	FrontierProvidersAccepted   bool   `json:"frontierProvidersAccepted"`
+	ExternalAgentCLIAccepted    bool   `json:"externalAgentCliAccepted"`
+	PolicySource                string `json:"policySource"`
 }
 
 type AIContextDisclosure struct {
@@ -302,6 +304,7 @@ type AIContextRequest struct {
 	RequestID       string                 `json:"requestId,omitempty"`
 	DocumentVersion string                 `json:"documentVersion,omitempty"`
 	Capability      AIProviderCapability   `json:"capability"`
+	OptInSource     string                 `json:"optInSource,omitempty"`
 	Prompt          string                 `json:"prompt,omitempty"`
 	FilePath        string                 `json:"filePath,omitempty"`
 	Language        string                 `json:"language,omitempty"`
@@ -559,6 +562,8 @@ type AIEgressRecord struct {
 	CostCurrency     string               `json:"costCurrency,omitempty"`
 	CostEstimated    bool                 `json:"costEstimated,omitempty"`
 	CostSource       string               `json:"costSource,omitempty"`
+	BudgetDecision   string               `json:"budgetDecision,omitempty"`
+	BudgetReason     string               `json:"budgetReason,omitempty"`
 	ToolProfile      string               `json:"toolProfile,omitempty"`
 	ToolSchemaCount  int                  `json:"toolSchemaCount,omitempty"`
 	ToolSupportKind  string               `json:"toolSupportKind,omitempty"`
@@ -724,6 +729,16 @@ type AIExternalAgentRunSummary struct {
 	SourceLinks        []string `json:"sourceLinks,omitempty"`
 }
 
+type AIChatRunNotice struct {
+	Severity       string `json:"severity"`
+	Title          string `json:"title"`
+	Message        string `json:"message,omitempty"`
+	Details        string `json:"details,omitempty"`
+	Source         string `json:"source,omitempty"`
+	Tag            string `json:"tag,omitempty"`
+	NotificationID string `json:"notificationId,omitempty"`
+}
+
 type AIChatRunEnvelope struct {
 	ID                  string                     `json:"id"`
 	SessionID           string                     `json:"sessionId"`
@@ -737,6 +752,7 @@ type AIChatRunEnvelope struct {
 	Model               string                     `json:"model,omitempty"`
 	ReasoningEffort     string                     `json:"reasoningEffort,omitempty"`
 	Error               string                     `json:"error,omitempty"`
+	RunNotice           *AIChatRunNotice           `json:"runNotice,omitempty"`
 	CanCancel           bool                       `json:"canCancel"`
 	ContextSummary      *AIContextSummary          `json:"contextSummary,omitempty"`
 	ProviderEnvelope    *AIProviderEnvelope        `json:"providerEnvelope,omitempty"`
@@ -1151,6 +1167,57 @@ type AIContinuationResponse struct {
 	Model           string            `json:"model,omitempty"`
 	Context         AIContextSnapshot `json:"context"`
 	Egress          *AIEgressRecord   `json:"egress,omitempty"`
+}
+
+type AIPredictionMode string
+
+const (
+	AIPredictionModeOff    AIPredictionMode = "off"
+	AIPredictionModeSubtle AIPredictionMode = "subtle"
+	AIPredictionModeEager  AIPredictionMode = "eager"
+)
+
+type AIPredictionBudgetSettings struct {
+	RequestsPerMinute        int `json:"requestsPerMinute"`
+	TokensPerMinute          int `json:"tokensPerMinute"`
+	TokensPerDay             int `json:"tokensPerDay"`
+	RequestsPerFilePerMinute int `json:"requestsPerFilePerMinute"`
+}
+
+type AIPredictionSettings struct {
+	Enabled         bool                       `json:"enabled"`
+	Mode            AIPredictionMode           `json:"mode"`
+	ProviderID      string                     `json:"providerId,omitempty"`
+	Model           string                     `json:"model,omitempty"`
+	IdleMs          int                        `json:"idleMs"`
+	MinIntervalMs   int                        `json:"minIntervalMs"`
+	MaxPending      int                        `json:"maxPending"`
+	MaxOutputTokens int                        `json:"maxOutputTokens"`
+	MaxPromptBytes  int                        `json:"maxPromptBytes"`
+	Budget          AIPredictionBudgetSettings `json:"budget"`
+}
+
+type AIPredictionBudgetSnapshot struct {
+	RequestsThisMinute int    `json:"requestsThisMinute"`
+	TokensThisMinute   int    `json:"tokensThisMinute"`
+	TokensToday        int    `json:"tokensToday"`
+	PendingRequests    int    `json:"pendingRequests"`
+	MinIntervalLeftMs  int    `json:"minIntervalLeftMs,omitempty"`
+	CooldownUntil      string `json:"cooldownUntil,omitempty"`
+	CooldownReason     string `json:"cooldownReason,omitempty"`
+	BlockedReason      string `json:"blockedReason,omitempty"`
+}
+
+type AIPredictionStatus struct {
+	Enabled        bool                       `json:"enabled"`
+	Settings       AIPredictionSettings       `json:"settings"`
+	ProviderID     string                     `json:"providerId,omitempty"`
+	Model          string                     `json:"model,omitempty"`
+	ProviderReady  bool                       `json:"providerReady"`
+	ProviderReason string                     `json:"providerReason,omitempty"`
+	Provider       *AIProviderEnvelope        `json:"provider,omitempty"`
+	Budget         AIPredictionBudgetSnapshot `json:"budget"`
+	Consent        AIConsentSummary           `json:"consent"`
 }
 
 func utcNow() string {

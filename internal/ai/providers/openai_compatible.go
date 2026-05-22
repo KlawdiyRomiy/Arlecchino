@@ -13,35 +13,41 @@ import (
 )
 
 const (
-	DefaultLMStudioEndpoint = "http://127.0.0.1:1234/v1"
-	DefaultLlamaEndpoint    = "http://127.0.0.1:8080/v1"
-	DefaultTGIEndpoint      = "http://127.0.0.1:3000/v1"
+	DefaultLMStudioEndpoint   = "http://127.0.0.1:1234/v1"
+	DefaultLlamaEndpoint      = "http://127.0.0.1:8080/v1"
+	DefaultTGIEndpoint        = "http://127.0.0.1:3000/v1"
+	DefaultOpenAIEndpoint     = "https://api.openai.com/v1"
+	DefaultOpenRouterEndpoint = "https://openrouter.ai/api/v1"
 )
 
 type OpenAICompatibleProvider struct {
-	id           string
-	name         string
-	kind         string
-	endpoint     string
-	model        string
-	manual       bool
-	local        bool
-	requiresAuth bool
-	secret       string
-	client       *http.Client
+	id            string
+	name          string
+	kind          string
+	endpoint      string
+	model         string
+	manual        bool
+	local         bool
+	frontier      bool
+	endpointClass string
+	requiresAuth  bool
+	secret        string
+	client        *http.Client
 }
 
 type OpenAICompatibleOptions struct {
-	ID           string
-	Name         string
-	Kind         string
-	Endpoint     string
-	Model        string
-	Manual       bool
-	Local        bool
-	RequiresAuth bool
-	Secret       string
-	Timeout      time.Duration
+	ID            string
+	Name          string
+	Kind          string
+	Endpoint      string
+	Model         string
+	Manual        bool
+	Local         bool
+	Frontier      bool
+	EndpointClass string
+	RequiresAuth  bool
+	Secret        string
+	Timeout       time.Duration
 }
 
 func NewOpenAICompatibleProvider(opts OpenAICompatibleOptions) *OpenAICompatibleProvider {
@@ -52,16 +58,18 @@ func NewOpenAICompatibleProvider(opts OpenAICompatibleOptions) *OpenAICompatible
 		opts.Name = opts.Kind
 	}
 	return &OpenAICompatibleProvider{
-		id:           strings.TrimSpace(opts.ID),
-		name:         strings.TrimSpace(opts.Name),
-		kind:         strings.TrimSpace(opts.Kind),
-		endpoint:     normalizeEndpoint(opts.Endpoint, ""),
-		model:        strings.TrimSpace(opts.Model),
-		manual:       opts.Manual,
-		local:        opts.Local,
-		requiresAuth: opts.RequiresAuth,
-		secret:       strings.TrimSpace(opts.Secret),
-		client:       newHTTPClient(opts.Timeout),
+		id:            strings.TrimSpace(opts.ID),
+		name:          strings.TrimSpace(opts.Name),
+		kind:          strings.TrimSpace(opts.Kind),
+		endpoint:      normalizeEndpoint(opts.Endpoint, ""),
+		model:         strings.TrimSpace(opts.Model),
+		manual:        opts.Manual,
+		local:         opts.Local,
+		frontier:      opts.Frontier || (!opts.Local && strings.TrimSpace(opts.EndpointClass) == ""),
+		endpointClass: strings.TrimSpace(opts.EndpointClass),
+		requiresAuth:  opts.RequiresAuth,
+		secret:        strings.TrimSpace(opts.Secret),
+		client:        newHTTPClient(opts.Timeout),
 	}
 }
 
@@ -90,13 +98,13 @@ func (p *OpenAICompatibleProvider) Descriptor() AIProviderDescriptor {
 		RuntimeFamily:      "model_agent_runtime",
 		Transport:          "model_api",
 		Endpoint:           p.endpoint,
-		EndpointClass:      openAICompatibleEndpointClass(p.local),
+		EndpointClass:      openAICompatibleEndpointClass(p.local, p.endpointClass),
 		AdapterVersion:     "arlecchino-model-runtime-v1",
 		ProtocolVersion:    "openai_compatible_http_sse",
 		CompatibilityRange: "openai_compatible_chat_completions",
 		Local:              p.local,
 		Manual:             p.manual,
-		Frontier:           !p.local,
+		Frontier:           p.frontier,
 		AuthMode:           authMode,
 		OAuthSupported:     false,
 		RequiresAuth:       p.requiresAuth,
@@ -107,7 +115,10 @@ func (p *OpenAICompatibleProvider) Descriptor() AIProviderDescriptor {
 	}
 }
 
-func openAICompatibleEndpointClass(local bool) string {
+func openAICompatibleEndpointClass(local bool, endpointClass string) string {
+	if strings.TrimSpace(endpointClass) != "" {
+		return strings.TrimSpace(endpointClass)
+	}
 	if local {
 		return "loopback"
 	}

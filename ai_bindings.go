@@ -152,6 +152,20 @@ func (a *App) AITestProvider(ctx context.Context, providerID string) (ai.AIProvi
 	return a.ensureAIService().TestProvider(ctx, providerID)
 }
 
+func (a *App) AIGetPredictionStatus(ctx context.Context) (ai.AIPredictionStatus, error) {
+	projectID := a.aiProjectSessionID(ctx)
+	if session := a.projectSessionForContext(ctx); session != nil && session.currentProjectPath() != "" {
+		if err := a.ensureAIProjectSessionOpen(session); err != nil {
+			a.logWarning(fmt.Sprintf("[AI] failed to sync prediction project context: %v", err))
+		}
+	}
+	return a.ensureAIService().PredictionStatus(projectID), nil
+}
+
+func (a *App) AISavePredictionSettings(settings ai.AIPredictionSettings) (ai.AIPredictionStatus, error) {
+	return a.ensureAIService().SavePredictionSettings(settings)
+}
+
 func (a *App) AIListProviderRuntimes() ([]ai.AIProviderRuntimeDescriptor, error) {
 	return a.ensureAIService().ListProviderRuntimes(), nil
 }

@@ -26,6 +26,7 @@ type Settings struct {
 	MnemonicDefaultEnabled bool                           `json:"mnemonicDefaultEnabled"`
 	ApprovalPolicy         AIApprovalPolicy               `json:"approvalPolicy"`
 	ConsentPolicy          AIConsentPolicy                `json:"consentPolicy"`
+	Prediction             AIPredictionSettings           `json:"prediction"`
 	Providers              []providers.AIProviderSettings `json:"providers"`
 }
 
@@ -36,6 +37,7 @@ func DefaultSettings() Settings {
 		MnemonicDefaultEnabled: true,
 		ApprovalPolicy:         DefaultApprovalPolicy(),
 		ConsentPolicy:          DefaultConsentPolicy(),
+		Prediction:             DefaultPredictionSettings(),
 		Providers:              []providers.AIProviderSettings{},
 	}
 }
@@ -135,6 +137,7 @@ func NormalizeSettings(settings Settings) Settings {
 	}
 	settings.ApprovalPolicy = normalizeApprovalPolicy(settings.ApprovalPolicy)
 	settings.ConsentPolicy = normalizeConsentPolicy(settings.ConsentPolicy)
+	settings.Prediction = normalizePredictionSettings(settings.Prediction)
 	seen := make(map[string]struct{}, len(settings.Providers))
 	providersOut := make([]providers.AIProviderSettings, 0, min(len(settings.Providers), maxProviderConfigs))
 	for _, provider := range settings.Providers {
@@ -155,6 +158,91 @@ func NormalizeSettings(settings Settings) Settings {
 	settings.Providers = providersOut
 	settings.ActiveProviderID = strings.TrimSpace(settings.ActiveProviderID)
 	settings.ActiveModel = strings.TrimSpace(settings.ActiveModel)
+	return settings
+}
+
+func DefaultPredictionSettings() AIPredictionSettings {
+	return AIPredictionSettings{
+		Enabled:         false,
+		Mode:            AIPredictionModeOff,
+		IdleMs:          600,
+		MinIntervalMs:   1200,
+		MaxPending:      1,
+		MaxOutputTokens: 96,
+		MaxPromptBytes:  12 * 1024,
+		Budget: AIPredictionBudgetSettings{
+			RequestsPerMinute:        20,
+			TokensPerMinute:          12_000,
+			TokensPerDay:             100_000,
+			RequestsPerFilePerMinute: 8,
+		},
+	}
+}
+
+func normalizePredictionSettings(settings AIPredictionSettings) AIPredictionSettings {
+	defaults := DefaultPredictionSettings()
+	settings.ProviderID = strings.TrimSpace(settings.ProviderID)
+	settings.Model = strings.TrimSpace(settings.Model)
+	switch settings.Mode {
+	case AIPredictionModeSubtle, AIPredictionModeEager:
+	default:
+		if settings.Enabled {
+			settings.Mode = AIPredictionModeSubtle
+		} else {
+			settings.Mode = AIPredictionModeOff
+		}
+	}
+	if !settings.Enabled {
+		settings.Mode = AIPredictionModeOff
+	}
+	if settings.IdleMs <= 0 {
+		settings.IdleMs = defaults.IdleMs
+	}
+	if settings.IdleMs < 350 {
+		settings.IdleMs = 350
+	}
+	if settings.IdleMs > 5000 {
+		settings.IdleMs = 5000
+	}
+	if settings.MinIntervalMs <= 0 {
+		settings.MinIntervalMs = defaults.MinIntervalMs
+	}
+	if settings.MinIntervalMs < 250 {
+		settings.MinIntervalMs = 250
+	}
+	if settings.MinIntervalMs > 10000 {
+		settings.MinIntervalMs = 10000
+	}
+	if settings.MaxPending <= 0 {
+		settings.MaxPending = defaults.MaxPending
+	}
+	if settings.MaxPending > 2 {
+		settings.MaxPending = 2
+	}
+	if settings.MaxOutputTokens <= 0 {
+		settings.MaxOutputTokens = defaults.MaxOutputTokens
+	}
+	if settings.MaxOutputTokens > 256 {
+		settings.MaxOutputTokens = 256
+	}
+	if settings.MaxPromptBytes <= 0 {
+		settings.MaxPromptBytes = defaults.MaxPromptBytes
+	}
+	if settings.MaxPromptBytes > 48*1024 {
+		settings.MaxPromptBytes = 48 * 1024
+	}
+	if settings.Budget.RequestsPerMinute <= 0 {
+		settings.Budget.RequestsPerMinute = defaults.Budget.RequestsPerMinute
+	}
+	if settings.Budget.TokensPerMinute <= 0 {
+		settings.Budget.TokensPerMinute = defaults.Budget.TokensPerMinute
+	}
+	if settings.Budget.TokensPerDay <= 0 {
+		settings.Budget.TokensPerDay = defaults.Budget.TokensPerDay
+	}
+	if settings.Budget.RequestsPerFilePerMinute <= 0 {
+		settings.Budget.RequestsPerFilePerMinute = defaults.Budget.RequestsPerFilePerMinute
+	}
 	return settings
 }
 

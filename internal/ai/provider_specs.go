@@ -21,6 +21,7 @@ type providerSpec struct {
 	OAuthSupported     bool
 	RequiresAuth       bool
 	Capabilities       []providers.AIProviderCapability
+	DefaultModel       string
 	DiscoveryEndpoints []providerDiscoveryEndpoint
 	Factory            providerFactory
 }
@@ -89,25 +90,66 @@ var providerSpecs = map[string]providerSpec{
 		},
 		Factory: newOpenAICompatibleLocalProvider,
 	},
-	"openai": {
-		Kind:           "openai",
-		Name:           "OpenAI",
-		DefaultID:      "openai-frontier",
-		Frontier:       true,
+	"openai-compatible": {
+		Kind:           "openai-compatible",
+		Name:           "OpenAI-compatible",
+		DefaultID:      "openai-compatible-byok",
+		Local:          false,
+		Frontier:       false,
 		AuthMode:       providers.ProviderAuthModeAPIKey,
 		OAuthSupported: false,
 		RequiresAuth:   true,
 		Capabilities:   providers.DefaultCapabilities(),
+		Factory:        newOpenAICompatibleRemoteBYOKProvider,
+	},
+	"openrouter": {
+		Kind:            "openrouter",
+		Name:            "OpenRouter",
+		DefaultID:       "openrouter-byok",
+		DefaultEndpoint: providers.DefaultOpenRouterEndpoint,
+		Local:           false,
+		Frontier:        false,
+		AuthMode:        providers.ProviderAuthModeAPIKey,
+		OAuthSupported:  false,
+		RequiresAuth:    true,
+		Capabilities:    cloudProviderCapabilities(),
+		Factory:         newOpenAICompatibleRemoteBYOKProvider,
+	},
+	"openai": {
+		Kind:            "openai",
+		Name:            "OpenAI",
+		DefaultID:       "openai-frontier",
+		DefaultEndpoint: providers.DefaultOpenAIEndpoint,
+		Frontier:        true,
+		AuthMode:        providers.ProviderAuthModeAPIKey,
+		OAuthSupported:  false,
+		RequiresAuth:    true,
+		Capabilities:    cloudProviderCapabilities(),
+		Factory:         newOpenAICompatibleFrontierProvider,
 	},
 	"anthropic": {
-		Kind:           "anthropic",
-		Name:           "Anthropic",
-		DefaultID:      "anthropic-frontier",
-		Frontier:       true,
-		AuthMode:       providers.ProviderAuthModeAPIKey,
-		OAuthSupported: false,
-		RequiresAuth:   true,
-		Capabilities:   providers.DefaultCapabilities(),
+		Kind:            "anthropic",
+		Name:            "Anthropic",
+		DefaultID:       "anthropic-frontier",
+		DefaultEndpoint: providers.DefaultAnthropicEndpoint,
+		Frontier:        true,
+		AuthMode:        providers.ProviderAuthModeAPIKey,
+		OAuthSupported:  false,
+		RequiresAuth:    true,
+		Capabilities:    cloudProviderCapabilities(),
+		Factory:         newAnthropicProvider,
+	},
+	"google-gemini": {
+		Kind:            "google-gemini",
+		Name:            "Google Gemini",
+		DefaultID:       "google-gemini-frontier",
+		DefaultEndpoint: providers.DefaultGeminiEndpoint,
+		Frontier:        true,
+		AuthMode:        providers.ProviderAuthModeAPIKey,
+		OAuthSupported:  false,
+		RequiresAuth:    true,
+		Capabilities:    cloudProviderCapabilities(),
+		Factory:         newGeminiProvider,
 	},
 }
 
@@ -116,8 +158,11 @@ var providerSpecOrder = []string{
 	"lm-studio",
 	"llama.cpp",
 	"huggingface-tgi",
+	"openai-compatible",
+	"openrouter",
 	"openai",
 	"anthropic",
+	"google-gemini",
 }
 
 func newOpenAICompatibleLocalProvider(setting providers.AIProviderSettings, spec providerSpec, _ string) providers.Provider {
@@ -131,6 +176,82 @@ func newOpenAICompatibleLocalProvider(setting providers.AIProviderSettings, spec
 		Local:    true,
 		Timeout:  localProviderRequestTimeout,
 	})
+}
+
+func newOpenAICompatibleRemoteBYOKProvider(setting providers.AIProviderSettings, spec providerSpec, secret string) providers.Provider {
+	return providers.NewOpenAICompatibleProvider(providers.OpenAICompatibleOptions{
+		ID:            setting.ID,
+		Name:          firstNonEmpty(setting.Name, spec.Name),
+		Kind:          setting.Kind,
+		Endpoint:      firstNonEmpty(setting.Endpoint, spec.DefaultEndpoint),
+		Model:         firstNonEmpty(setting.Model, spec.DefaultModel),
+		Manual:        true,
+		Local:         false,
+		Frontier:      false,
+		EndpointClass: "remote_byok",
+		RequiresAuth:  true,
+		Secret:        secret,
+		Timeout:       localProviderRequestTimeout,
+	})
+}
+
+func newOpenAICompatibleFrontierProvider(setting providers.AIProviderSettings, spec providerSpec, secret string) providers.Provider {
+	return providers.NewOpenAICompatibleProvider(providers.OpenAICompatibleOptions{
+		ID:            setting.ID,
+		Name:          firstNonEmpty(setting.Name, spec.Name),
+		Kind:          setting.Kind,
+		Endpoint:      firstNonEmpty(setting.Endpoint, spec.DefaultEndpoint),
+		Model:         firstNonEmpty(setting.Model, spec.DefaultModel),
+		Manual:        setting.Manual,
+		Local:         false,
+		Frontier:      true,
+		EndpointClass: "frontier",
+		RequiresAuth:  true,
+		Secret:        secret,
+		Timeout:       localProviderRequestTimeout,
+	})
+}
+
+func newAnthropicProvider(setting providers.AIProviderSettings, spec providerSpec, secret string) providers.Provider {
+	return providers.NewAnthropicProvider(providers.AnthropicOptions{
+		ID:            setting.ID,
+		Name:          firstNonEmpty(setting.Name, spec.Name),
+		Kind:          setting.Kind,
+		Endpoint:      firstNonEmpty(setting.Endpoint, spec.DefaultEndpoint),
+		Model:         firstNonEmpty(setting.Model, spec.DefaultModel),
+		Manual:        setting.Manual,
+		Frontier:      true,
+		EndpointClass: "frontier",
+		Secret:        secret,
+		Timeout:       localProviderRequestTimeout,
+	})
+}
+
+func newGeminiProvider(setting providers.AIProviderSettings, spec providerSpec, secret string) providers.Provider {
+	return providers.NewGeminiProvider(providers.GeminiOptions{
+		ID:            setting.ID,
+		Name:          firstNonEmpty(setting.Name, spec.Name),
+		Kind:          setting.Kind,
+		Endpoint:      firstNonEmpty(setting.Endpoint, spec.DefaultEndpoint),
+		Model:         firstNonEmpty(setting.Model, spec.DefaultModel),
+		Manual:        setting.Manual,
+		Frontier:      true,
+		EndpointClass: "frontier",
+		Secret:        secret,
+		Timeout:       localProviderRequestTimeout,
+	})
+}
+
+func cloudProviderCapabilities() []providers.AIProviderCapability {
+	return []providers.AIProviderCapability{
+		providers.CapabilityCodeCompletion,
+		providers.CapabilityLinePrediction,
+		providers.CapabilityTerminalPrediction,
+		providers.CapabilityChat,
+		providers.CapabilityToolCalling,
+		providers.CapabilityStructuredOutput,
+		providers.CapabilityPatchGeneration,
+	}
 }
 
 func providerSpecForKind(kind string) (providerSpec, bool) {
@@ -159,19 +280,25 @@ func localDiscoveryProviderSettings() []providers.AIProviderSettings {
 	return settings
 }
 
-func frontierProviderDescriptors() []providers.AIProviderDescriptor {
+func catalogProviderDescriptors() []providers.AIProviderDescriptor {
 	descriptors := []providers.AIProviderDescriptor{}
 	for _, kind := range orderedProviderKinds() {
 		spec := providerSpecs[kind]
-		if !spec.Frontier {
+		if spec.Local || spec.DefaultID == "" {
 			continue
+		}
+		status := providers.ProviderStatusDisabled
+		if spec.Factory != nil && spec.RequiresAuth {
+			status = providers.ProviderStatusNeedsAuth
 		}
 		descriptors = append(descriptors, descriptorFromSpec(providers.AIProviderSettings{
 			ID:       spec.DefaultID,
 			Name:     spec.Name,
 			Kind:     spec.Kind,
+			Endpoint: spec.DefaultEndpoint,
+			Model:    spec.DefaultModel,
 			AuthMode: spec.AuthMode,
-		}, spec, providers.ProviderStatusDisabled))
+		}, spec, status))
 	}
 	return descriptors
 }
@@ -217,15 +344,21 @@ func descriptorFromSpec(setting providers.AIProviderSettings, spec providerSpec,
 		RequiresAuth:       spec.RequiresAuth,
 		AuthConfigured:     !spec.RequiresAuth || setting.SecretRef != "" || setting.SecretValue != "",
 		Capabilities:       normalizeCapabilities(firstNonEmptyCapabilities(setting.Capabilities, spec.Capabilities)),
-		DefaultModel:       setting.Model,
+		DefaultModel:       firstNonEmpty(setting.Model, spec.DefaultModel),
 		Status:             status,
 		Reason:             reasonForProviderSpec(spec),
+		BillingMode:        billingModeForSpec(spec),
+		LegalBasis:         legalBasisForSpec(spec),
+		RiskTier:           riskTierForSpec(spec),
 	}
 }
 
 func endpointClassForSpec(setting providers.AIProviderSettings, spec providerSpec) string {
 	if spec.Frontier {
 		return "frontier"
+	}
+	if !spec.Local && spec.RequiresAuth {
+		return "remote_byok"
 	}
 	if isLoopbackEndpoint(firstNonEmpty(setting.Endpoint, spec.DefaultEndpoint)) {
 		return "loopback"
@@ -234,6 +367,49 @@ func endpointClassForSpec(setting providers.AIProviderSettings, spec providerSpe
 		return "local_non_loopback"
 	}
 	return "remote"
+}
+
+func billingModeForSpec(spec providerSpec) string {
+	switch {
+	case spec.Local:
+		return "local"
+	case !spec.Frontier && spec.RequiresAuth:
+		return "byok"
+	case spec.Frontier:
+		return "byok"
+	default:
+		return ""
+	}
+}
+
+func legalBasisForSpec(spec providerSpec) string {
+	switch {
+	case spec.Local:
+		return "local_runtime"
+	case !spec.Frontier && spec.RequiresAuth:
+		return "user_supplied_api_key"
+	case spec.Frontier && spec.Factory != nil:
+		return "official_provider_api_key"
+	case spec.Frontier:
+		return "blocked_until_provider_specific_adapter"
+	default:
+		return ""
+	}
+}
+
+func riskTierForSpec(spec providerSpec) string {
+	switch {
+	case spec.Local:
+		return "local"
+	case !spec.Frontier && spec.RequiresAuth:
+		return "remote_byok"
+	case spec.Frontier && spec.Factory != nil:
+		return "frontier_byok"
+	case spec.Frontier:
+		return "frontier_blocked"
+	default:
+		return ""
+	}
 }
 
 func firstNonEmptyCapabilities(values ...[]providers.AIProviderCapability) []providers.AIProviderCapability {
@@ -246,6 +422,9 @@ func firstNonEmptyCapabilities(values ...[]providers.AIProviderCapability) []pro
 }
 
 func reasonForProviderSpec(spec providerSpec) string {
+	if spec.RequiresAuth && spec.Factory != nil {
+		return "API key required"
+	}
 	if !spec.Frontier {
 		return ""
 	}

@@ -36,26 +36,27 @@ type ServiceOptions struct {
 }
 
 type Service struct {
-	mu            sync.RWMutex
-	settings      Settings
-	settingsPath  string
-	secretStore   SecretStore
-	emit          EventEmitter
-	mcpContext    MCPContextProvider
-	diagnostics   DiagnosticsProvider
-	mcpExecutor   MCPToolExecutor
-	providers     map[string]providers.Provider
-	descriptors   map[string]providers.AIProviderDescriptor
-	projects      map[string]*ProjectSession
-	runs          map[string]*AIChatRun
-	runCancels    map[string]context.CancelFunc
-	runDone       map[string]chan struct{}
-	agentInputs   map[string]func([]byte) error
-	agentResizes  map[string]func(uint16, uint16) error
-	toolApprovals map[string]AIToolApprovalGrant
-	runtimes      *providerRuntimeManager
-	agents        *agents.Registry
-	started       bool
+	mu               sync.RWMutex
+	settings         Settings
+	settingsPath     string
+	secretStore      SecretStore
+	emit             EventEmitter
+	mcpContext       MCPContextProvider
+	diagnostics      DiagnosticsProvider
+	mcpExecutor      MCPToolExecutor
+	providers        map[string]providers.Provider
+	descriptors      map[string]providers.AIProviderDescriptor
+	projects         map[string]*ProjectSession
+	runs             map[string]*AIChatRun
+	runCancels       map[string]context.CancelFunc
+	runDone          map[string]chan struct{}
+	agentInputs      map[string]func([]byte) error
+	agentResizes     map[string]func(uint16, uint16) error
+	toolApprovals    map[string]AIToolApprovalGrant
+	runtimes         *providerRuntimeManager
+	agents           *agents.Registry
+	predictionBudget *predictionBudgetLedger
+	started          bool
 }
 
 type ProjectSession struct {
@@ -78,23 +79,24 @@ func NewService(options ServiceOptions) *Service {
 		secretStore = DefaultSecretStore()
 	}
 	return &Service{
-		settingsPath:  options.SettingsPath,
-		secretStore:   secretStore,
-		emit:          options.Emit,
-		mcpContext:    options.MCPContextProvider,
-		diagnostics:   options.Diagnostics,
-		mcpExecutor:   options.MCPExecutor,
-		providers:     map[string]providers.Provider{},
-		descriptors:   map[string]providers.AIProviderDescriptor{},
-		projects:      map[string]*ProjectSession{},
-		runs:          map[string]*AIChatRun{},
-		runCancels:    map[string]context.CancelFunc{},
-		runDone:       map[string]chan struct{}{},
-		agentInputs:   map[string]func([]byte) error{},
-		agentResizes:  map[string]func(uint16, uint16) error{},
-		toolApprovals: map[string]AIToolApprovalGrant{},
-		runtimes:      newProviderRuntimeManager(),
-		agents:        agents.NewRegistry(),
+		settingsPath:     options.SettingsPath,
+		secretStore:      secretStore,
+		emit:             options.Emit,
+		mcpContext:       options.MCPContextProvider,
+		diagnostics:      options.Diagnostics,
+		mcpExecutor:      options.MCPExecutor,
+		providers:        map[string]providers.Provider{},
+		descriptors:      map[string]providers.AIProviderDescriptor{},
+		projects:         map[string]*ProjectSession{},
+		runs:             map[string]*AIChatRun{},
+		runCancels:       map[string]context.CancelFunc{},
+		runDone:          map[string]chan struct{}{},
+		agentInputs:      map[string]func([]byte) error{},
+		agentResizes:     map[string]func(uint16, uint16) error{},
+		toolApprovals:    map[string]AIToolApprovalGrant{},
+		runtimes:         newProviderRuntimeManager(),
+		agents:           agents.NewRegistry(),
+		predictionBudget: newPredictionBudgetLedger(),
 	}
 }
 
@@ -107,7 +109,7 @@ func (s *Service) Start(ctx context.Context) error {
 	s.settings = settings
 	s.settingsPath = path
 	s.started = true
-	s.registerFrontierPlaceholdersLocked()
+	s.registerCatalogPlaceholdersLocked()
 	s.registerConfiguredProvidersLocked()
 	s.mu.Unlock()
 
@@ -306,6 +308,51 @@ func (s *Service) Status(projectID string) AIStatus {
 	return status
 }
 
+func (s *Service) PredictionStatus(projectID string) AIPredictionStatus {
+	settings := s.currentSettings()
+	predictionSettings := normalizePredictionSettings(settings.Prediction)
+	providerID := firstNonEmpty(predictionSettings.ProviderID, settings.ActiveProviderID)
+	model := firstNonEmpty(predictionSettings.Model, settings.ActiveModel)
+	s.mu.RLock()
+	descriptor := s.descriptors[providerID]
+	providerReady := s.providers[providerID] != nil && (descriptor.Status == providers.ProviderStatusReady || descriptor.Status == providers.ProviderStatusDiscovered)
+	s.mu.RUnlock()
+	reason := predictionProviderBlockReason(settings, descriptor, providerReady)
+	status := AIPredictionStatus{
+		Enabled:        settings.Enabled && predictionSettings.Enabled && reason == "",
+		Settings:       predictionSettings,
+		ProviderID:     providerID,
+		Model:          model,
+		ProviderReady:  providerReady && reason == "",
+		ProviderReason: reason,
+		Budget:         s.predictionBudget.Snapshot(predictionSettings),
+		Consent:        s.consentSummary(),
+	}
+	if descriptor.ID != "" {
+		envelope := providerEnvelopeFromDescriptor(descriptor, model)
+		status.Provider = &envelope
+	}
+	return status
+}
+
+func (s *Service) SavePredictionSettings(settings AIPredictionSettings) (AIPredictionStatus, error) {
+	normalized := normalizePredictionSettings(settings)
+	s.mu.Lock()
+	current := s.settings
+	current.Prediction = normalized
+	saved, path, err := SaveSettings(s.settingsPath, current)
+	if err != nil {
+		s.mu.Unlock()
+		return AIPredictionStatus{}, err
+	}
+	s.settings = saved
+	s.settingsPath = path
+	s.mu.Unlock()
+	status := s.PredictionStatus("")
+	s.emitEvent("ai:prediction:settings-updated", status)
+	return status, nil
+}
+
 func (s *Service) ListProviders() []providers.AIProviderDescriptor {
 	s.mu.RLock()
 	result := make([]providers.AIProviderDescriptor, 0, len(s.descriptors))
@@ -366,6 +413,9 @@ func (s *Service) SaveProviderSettings(ctx context.Context, providerSettings pro
 		providerSettings.SecretRef = ref
 		providerSettings.SecretValue = ""
 	}
+	if err := validateProviderActivationSettings(providerSettings); err != nil {
+		return providers.AIProviderDescriptor{}, err
+	}
 
 	s.mu.Lock()
 	settings := s.settings
@@ -380,7 +430,7 @@ func (s *Service) SaveProviderSettings(ctx context.Context, providerSettings pro
 	if !replaced {
 		settings.Providers = append(settings.Providers, providerSettings)
 	}
-	if providerSettings.Enabled && settings.ActiveProviderID == "" && !isFrontierProviderKind(providerSettings.Kind) {
+	if providerSettings.Enabled && settings.ActiveProviderID == "" && providerSettingsCanBecomeActive(providerSettings) {
 		settings.ActiveProviderID = providerSettings.ID
 		settings.ActiveModel = providerSettings.Model
 	}
@@ -475,7 +525,25 @@ func (s *Service) refreshLocalProviders(ctx context.Context, candidates []provid
 }
 
 func (s *Service) TestProvider(ctx context.Context, providerID string) (providers.AIProviderDescriptor, error) {
+	providerID = strings.TrimSpace(providerID)
 	provider, ok := s.provider(providerID)
+	if !ok {
+		s.mu.RLock()
+		var setting providers.AIProviderSettings
+		found := false
+		for _, candidate := range s.settings.Providers {
+			if candidate.ID == providerID {
+				setting = candidate
+				found = true
+				break
+			}
+		}
+		s.mu.RUnlock()
+		if found {
+			provider = s.providerFromSettings(setting)
+			ok = provider != nil
+		}
+	}
 	if !ok {
 		return providers.AIProviderDescriptor{}, fmt.Errorf("provider %q is not configured", providerID)
 	}
@@ -616,8 +684,45 @@ func (s *Service) generateContinuation(ctx context.Context, projectID string, re
 	if project == nil {
 		return AIContinuationResponse{}, fmt.Errorf("AI project session is not open")
 	}
+	optInSource := strings.TrimSpace(req.OptInSource)
+	if optInSource == "" {
+		optInSource = "editor_continuation"
+		if req.Capability == providers.CapabilityTerminalPrediction {
+			optInSource = "terminal_continuation"
+		}
+	}
+	predictionSettings := AIPredictionSettings{}
+	if optInSource == editorPredictionBackgroundOptInSource {
+		settings := s.currentSettings()
+		predictionSettings = normalizePredictionSettings(settings.Prediction)
+		if !settings.Enabled {
+			return AIContinuationResponse{}, fmt.Errorf("AI providers are disabled")
+		}
+		if !predictionSettings.Enabled {
+			return AIContinuationResponse{}, fmt.Errorf("AI predictions are disabled")
+		}
+		if req.MaxBytes <= 0 || req.MaxBytes > predictionSettings.MaxPromptBytes {
+			req.MaxBytes = predictionSettings.MaxPromptBytes
+		}
+		if predictionSettings.MaxOutputTokens > 0 {
+			maxTokens = predictionSettings.MaxOutputTokens
+		}
+		if providerID == "" {
+			providerID = predictionSettings.ProviderID
+		}
+		if model == "" {
+			model = predictionSettings.Model
+		}
+	}
 	snapshot := s.buildContextSnapshot(project, req)
-	provider, descriptor, err := s.resolveProvider(providerID)
+	var provider providers.Provider
+	var descriptor providers.AIProviderDescriptor
+	var err error
+	if optInSource == editorPredictionBackgroundOptInSource {
+		provider, descriptor, err = s.resolvePredictionProvider(providerID)
+	} else {
+		provider, descriptor, err = s.resolveProvider(providerID)
+	}
 	if err != nil {
 		return AIContinuationResponse{Context: snapshot}, err
 	}
@@ -625,17 +730,35 @@ func (s *Service) generateContinuation(ctx context.Context, projectID string, re
 		return AIContinuationResponse{Context: snapshot}, fmt.Errorf("provider %s does not support %s", descriptor.ID, req.Capability)
 	}
 	prompt := buildPromptFromSnapshot(snapshot)
-	optInSource := "editor_continuation"
-	if req.Capability == providers.CapabilityTerminalPrediction {
-		optInSource = "terminal_continuation"
+	if optInSource == editorPredictionBackgroundOptInSource && predictionSettings.MaxPromptBytes > 0 {
+		prompt = truncateUTF8(prompt, predictionSettings.MaxPromptBytes)
 	}
-	record, response, err := s.callProvider(ctx, project, descriptor, provider, providers.GenerationRequest{
+	generationReq := providers.GenerationRequest{
 		Capability: req.Capability,
 		Prompt:     prompt,
 		System:     "Return only the next safe code or terminal continuation. Do not include explanations.",
 		Model:      firstNonEmpty(model, descriptor.DefaultModel),
 		MaxTokens:  maxTokens,
-	}, snapshot, optInSource)
+	}
+	var reservation predictionBudgetReservation
+	if optInSource == editorPredictionBackgroundOptInSource {
+		estimatedInput := estimateGenerationInputTokens(generationReq)
+		var budgetSnapshot AIPredictionBudgetSnapshot
+		reservation, budgetSnapshot, err = s.predictionBudget.Reserve(predictionSettings, req.FilePath, estimatedInput)
+		if err != nil {
+			record := s.recordBlockedPredictionEgress(project, descriptor, generationReq, snapshot, budgetSnapshot.BlockedReason)
+			return AIContinuationResponse{Context: snapshot, Egress: &record}, err
+		}
+	}
+	record, response, err := s.callProvider(ctx, project, descriptor, provider, generationReq, snapshot, optInSource)
+	if optInSource == editorPredictionBackgroundOptInSource {
+		s.predictionBudget.Reconcile(reservation, record.TotalTokens)
+		if err != nil {
+			if reason, duration := predictionProviderCooldown(err); duration > 0 {
+				s.predictionBudget.Cooldown(reason, duration)
+			}
+		}
+	}
 	if err != nil {
 		return AIContinuationResponse{Context: snapshot, Egress: &record}, err
 	}
@@ -1072,7 +1195,12 @@ func (s *Service) callProvider(ctx context.Context, project *ProjectSession, des
 		CreatedAt:        utcNow(),
 		Source:           optInSource,
 	}
-	providerCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	timeout := 3 * time.Minute
+	if optInSource == editorPredictionBackgroundOptInSource {
+		timeout = 8 * time.Second
+		record.BudgetDecision = "reserved"
+	}
+	providerCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	response, err := provider.Generate(providerCtx, req, nil)
 	record.LatencyMs = time.Since(started).Milliseconds()
@@ -1092,6 +1220,43 @@ func (s *Service) callProvider(ctx context.Context, project *ProjectSession, des
 	}
 	s.emitEvent("ai:chat:egress-recorded", record)
 	return record, response, err
+}
+
+func (s *Service) recordBlockedPredictionEgress(project *ProjectSession, descriptor providers.AIProviderDescriptor, req providers.GenerationRequest, snapshot AIContextSnapshot, reason string) AIEgressRecord {
+	if project == nil {
+		return AIEgressRecord{}
+	}
+	requestID := uuid.NewString()
+	record := AIEgressRecord{
+		ID:               "eg-" + requestID,
+		RequestID:        requestID,
+		ProviderID:       descriptor.ID,
+		ProviderKind:     descriptor.Kind,
+		Endpoint:         descriptor.Endpoint,
+		Model:            firstNonEmpty(req.Model, descriptor.DefaultModel),
+		ReasoningEffort:  req.ReasoningEffort,
+		Capability:       req.Capability,
+		ProjectPathHash:  hashProjectPath(project.ProjectRoot),
+		ProjectSessionID: project.ID,
+		DataCategories:   snapshot.DataCategories,
+		Redaction:        snapshot.Redaction,
+		Status:           "blocked",
+		ErrorClass:       "prediction_budget_blocked",
+		OptInSource:      editorPredictionBackgroundOptInSource,
+		CreatedAt:        utcNow(),
+		Source:           editorPredictionBackgroundOptInSource,
+		BudgetDecision:   "blocked",
+		BudgetReason:     strings.TrimSpace(reason),
+	}
+	applyGenerationUsageToEgress(&record, req, providers.GenerationResponse{}, descriptor, chatToolset{Profile: chatToolProfileNone, ToolSupport: true})
+	if project.Egress != nil {
+		stored, ledgerErr := project.Egress.Append(record)
+		if ledgerErr == nil {
+			record = stored
+		}
+	}
+	s.emitEvent("ai:chat:egress-recorded", record)
+	return record
 }
 
 func (s *Service) ListEgressRecords(projectID string, limit int) ([]AIEgressRecord, error) {
@@ -1146,9 +1311,6 @@ func (s *Service) resolveProvider(providerID string) (providers.Provider, provid
 	if !settings.Enabled {
 		return nil, providers.AIProviderDescriptor{}, fmt.Errorf("AI providers are disabled")
 	}
-	if !normalizeConsentPolicy(settings.ConsentPolicy).LocalProvidersAccepted {
-		return nil, providers.AIProviderDescriptor{}, fmt.Errorf("local AI provider disclosure is not accepted")
-	}
 	if strings.TrimSpace(providerID) == "" {
 		providerID = settings.ActiveProviderID
 	}
@@ -1156,8 +1318,14 @@ func (s *Service) resolveProvider(providerID string) (providers.Provider, provid
 	provider := s.providers[providerID]
 	descriptor := s.descriptors[providerID]
 	s.mu.RUnlock()
-	if descriptor.Frontier || !descriptor.Local {
-		return nil, descriptor, fmt.Errorf("frontier providers are disabled in this backend slice")
+	if descriptor.ID == "" {
+		return nil, descriptor, fmt.Errorf("AI provider %q is not configured", providerID)
+	}
+	if reason := providerConsentBlockReason(settings, descriptor); reason != "" {
+		return nil, descriptor, fmt.Errorf("%s", reason)
+	}
+	if descriptor.RequiresAuth && !descriptor.AuthConfigured {
+		return nil, descriptor, fmt.Errorf("AI provider %q requires an API key", providerID)
 	}
 	if provider == nil {
 		return nil, descriptor, fmt.Errorf("AI provider %q is not ready", providerID)
@@ -1166,6 +1334,99 @@ func (s *Service) resolveProvider(providerID string) (providers.Provider, provid
 		return nil, descriptor, fmt.Errorf("AI provider %q status is %s", providerID, descriptor.Status)
 	}
 	return provider, descriptor, nil
+}
+
+func providerConsentBlockReason(settings Settings, descriptor providers.AIProviderDescriptor) string {
+	consent := normalizeConsentPolicy(settings.ConsentPolicy)
+	if descriptor.ExternalAccount || descriptor.EndpointClass == "local_process_external_account" || descriptor.BillingMode == "provider_account" {
+		if !consent.ExternalAgentCLIAccepted {
+			return "external agent CLI consent is not accepted"
+		}
+		return ""
+	}
+	if descriptor.Local {
+		if !consent.LocalProvidersAccepted {
+			return "local AI provider disclosure is not accepted"
+		}
+		return ""
+	}
+	if descriptor.EndpointClass == "remote_byok" || (!descriptor.Frontier && descriptor.RequiresAuth) {
+		if !consent.RemoteBYOKProvidersAccepted {
+			return "remote BYOK provider disclosure is not accepted"
+		}
+		return ""
+	}
+	if descriptor.Frontier {
+		if !consent.FrontierProvidersAccepted {
+			return "frontier provider disclosure is not accepted"
+		}
+		return ""
+	}
+	if !consent.RemoteProvidersAccepted {
+		return "remote AI provider disclosure is not accepted"
+	}
+	return ""
+}
+
+func (s *Service) resolvePredictionProvider(providerID string) (providers.Provider, providers.AIProviderDescriptor, error) {
+	settings := s.currentSettings()
+	if !settings.Enabled {
+		return nil, providers.AIProviderDescriptor{}, fmt.Errorf("AI providers are disabled")
+	}
+	predictionSettings := normalizePredictionSettings(settings.Prediction)
+	if !predictionSettings.Enabled {
+		return nil, providers.AIProviderDescriptor{}, fmt.Errorf("AI predictions are disabled")
+	}
+	providerID = firstNonEmpty(strings.TrimSpace(providerID), predictionSettings.ProviderID, settings.ActiveProviderID)
+	s.mu.RLock()
+	provider := s.providers[providerID]
+	descriptor := s.descriptors[providerID]
+	providerReady := provider != nil && (descriptor.Status == providers.ProviderStatusReady || descriptor.Status == providers.ProviderStatusDiscovered)
+	s.mu.RUnlock()
+	if reason := predictionProviderBlockReason(settings, descriptor, providerReady); reason != "" {
+		return nil, descriptor, fmt.Errorf("%s", reason)
+	}
+	if !capabilityAllowed(descriptor.Capabilities, providers.CapabilityLinePrediction) {
+		return nil, descriptor, fmt.Errorf("provider %s does not support %s", descriptor.ID, providers.CapabilityLinePrediction)
+	}
+	return provider, descriptor, nil
+}
+
+func predictionProviderBlockReason(settings Settings, descriptor providers.AIProviderDescriptor, providerReady bool) string {
+	consent := normalizeConsentPolicy(settings.ConsentPolicy)
+	if descriptor.ID == "" {
+		return "prediction provider is not configured"
+	}
+	if descriptor.ExternalAccount || descriptor.EndpointClass == "local_process_external_account" || descriptor.BillingMode == "provider_account" {
+		return "provider-account prediction adapter is not implemented"
+	}
+	if descriptor.Frontier {
+		return "frontier prediction adapter is not implemented"
+	}
+	if descriptor.Local {
+		if !consent.LocalProvidersAccepted {
+			return "local AI provider disclosure is not accepted"
+		}
+	} else if descriptor.EndpointClass == "remote_byok" || (!descriptor.Local && !descriptor.Frontier) {
+		if !consent.RemoteBYOKProvidersAccepted {
+			return "remote BYOK provider disclosure is not accepted"
+		}
+		if descriptor.RequiresAuth && !descriptor.AuthConfigured {
+			return "remote BYOK provider requires an API key"
+		}
+	} else if !consent.RemoteProvidersAccepted {
+		return "remote AI provider disclosure is not accepted"
+	}
+	if !providerReady {
+		return "AI prediction provider is not ready"
+	}
+	if descriptor.Status != providers.ProviderStatusReady && descriptor.Status != providers.ProviderStatusDiscovered {
+		return fmt.Sprintf("AI prediction provider status is %s", descriptor.Status)
+	}
+	if !capabilityAllowed(descriptor.Capabilities, providers.CapabilityLinePrediction) {
+		return fmt.Sprintf("provider %s does not support %s", descriptor.ID, providers.CapabilityLinePrediction)
+	}
+	return ""
 }
 
 func (s *Service) registerConfiguredProvidersLocked() {
@@ -1187,14 +1448,19 @@ func (s *Service) registerConfiguredProvidersLocked() {
 			continue
 		}
 		descriptor := provider.Descriptor()
+		if descriptor.RequiresAuth && !descriptor.AuthConfigured {
+			s.descriptors[descriptor.ID] = descriptor
+			delete(s.providers, descriptor.ID)
+			continue
+		}
 		s.providers[descriptor.ID] = provider
 		s.descriptors[descriptor.ID] = descriptor
 	}
-	s.registerFrontierPlaceholdersLocked()
+	s.registerCatalogPlaceholdersLocked()
 }
 
-func (s *Service) registerFrontierPlaceholdersLocked() {
-	for _, descriptor := range frontierProviderDescriptors() {
+func (s *Service) registerCatalogPlaceholdersLocked() {
+	for _, descriptor := range catalogProviderDescriptors() {
 		if _, exists := s.descriptors[descriptor.ID]; !exists {
 			s.descriptors[descriptor.ID] = descriptor
 		}
@@ -1215,7 +1481,13 @@ func (s *Service) providerFromSettingsLocked(setting providers.AIProviderSetting
 	if spec.Local && setting.Endpoint != "" && !isLoopbackEndpoint(setting.Endpoint) {
 		return nil
 	}
-	return spec.Factory(setting, spec, "")
+	secret := strings.TrimSpace(setting.SecretValue)
+	if secret == "" && setting.SecretRef != "" && s.secretStore != nil {
+		if value, err := s.secretStore.FindSecret(context.Background(), setting.SecretRef); err == nil {
+			secret = value
+		}
+	}
+	return spec.Factory(setting, spec, secret)
 }
 
 func descriptorFromSettings(setting providers.AIProviderSettings) providers.AIProviderDescriptor {
@@ -1245,15 +1517,70 @@ func isFrontierProviderKind(kind string) bool {
 	return ok && spec.Frontier
 }
 
+func providerSettingsCanBecomeActive(setting providers.AIProviderSettings) bool {
+	spec, ok := providerSpecForKind(setting.Kind)
+	if !ok || spec.Factory == nil {
+		return false
+	}
+	if !spec.RequiresAuth {
+		return true
+	}
+	return strings.TrimSpace(setting.SecretRef) != "" || strings.TrimSpace(setting.SecretValue) != ""
+}
+
 func validateProviderSettings(setting providers.AIProviderSettings) error {
 	spec, ok := providerSpecForKind(setting.Kind)
 	if !ok {
 		return nil
 	}
+	if strings.TrimSpace(setting.Endpoint) != "" {
+		parsed, err := validateProviderEndpoint(setting)
+		if err != nil {
+			return err
+		}
+		if !spec.Local && !isLoopbackEndpoint(setting.Endpoint) && parsed.Scheme != "https" {
+			return fmt.Errorf("remote AI provider %q endpoint must use https unless it is loopback", setting.ID)
+		}
+	}
 	if spec.Local && setting.Endpoint != "" && !isLoopbackEndpoint(setting.Endpoint) {
 		return fmt.Errorf("local AI provider %q endpoint must use localhost, 127.0.0.1, or ::1", setting.ID)
 	}
+	if setting.Kind == "openai-compatible" && strings.TrimSpace(setting.Endpoint) == "" {
+		return fmt.Errorf("remote BYOK provider %q endpoint is required", setting.ID)
+	}
 	return nil
+}
+
+func validateProviderActivationSettings(setting providers.AIProviderSettings) error {
+	if !setting.Enabled {
+		return nil
+	}
+	spec, ok := providerSpecForKind(setting.Kind)
+	if !ok || !spec.RequiresAuth || spec.Local || spec.Frontier {
+		return nil
+	}
+	if strings.TrimSpace(setting.SecretRef) == "" && strings.TrimSpace(setting.SecretValue) == "" {
+		return fmt.Errorf("AI provider %q requires an API key before it can be enabled", setting.ID)
+	}
+	return nil
+}
+
+func validateProviderEndpoint(setting providers.AIProviderSettings) (*url.URL, error) {
+	endpoint := strings.TrimSpace(setting.Endpoint)
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("AI provider %q endpoint must be an absolute http or https URL", setting.ID)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("AI provider %q endpoint must use http or https", setting.ID)
+	}
+	if parsed.User != nil {
+		return nil, fmt.Errorf("AI provider %q endpoint must not include credentials", setting.ID)
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("AI provider %q endpoint must not include query strings or fragments", setting.ID)
+	}
+	return parsed, nil
 }
 
 func isLoopbackEndpoint(endpoint string) bool {

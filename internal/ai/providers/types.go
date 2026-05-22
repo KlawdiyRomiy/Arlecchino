@@ -173,6 +173,18 @@ func DefaultCapabilities() []AIProviderCapability {
 	}
 }
 
+func CloudCapabilities() []AIProviderCapability {
+	return []AIProviderCapability{
+		CapabilityCodeCompletion,
+		CapabilityLinePrediction,
+		CapabilityTerminalPrediction,
+		CapabilityChat,
+		CapabilityToolCalling,
+		CapabilityStructuredOutput,
+		CapabilityPatchGeneration,
+	}
+}
+
 func NowString() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }

@@ -104,6 +104,76 @@ export interface AIProviderRuntimeStartRequest {
   contextSize?: number;
 }
 
+export type AIPredictionMode = "off" | "subtle" | "eager";
+
+export interface AIPredictionBudgetSettings {
+  requestsPerMinute: number;
+  tokensPerMinute: number;
+  tokensPerDay: number;
+  requestsPerFilePerMinute: number;
+}
+
+export interface AIPredictionSettings {
+  enabled: boolean;
+  mode: AIPredictionMode;
+  providerId?: string;
+  model?: string;
+  idleMs: number;
+  minIntervalMs: number;
+  maxPending: number;
+  maxOutputTokens: number;
+  maxPromptBytes: number;
+  budget: AIPredictionBudgetSettings;
+}
+
+export interface AIPredictionBudgetSnapshot {
+  requestsThisMinute: number;
+  tokensThisMinute: number;
+  tokensToday: number;
+  pendingRequests: number;
+  minIntervalLeftMs?: number;
+  cooldownUntil?: string;
+  cooldownReason?: string;
+  blockedReason?: string;
+}
+
+export interface AIConsentSummary {
+  localProvidersAccepted: boolean;
+  remoteProvidersAccepted: boolean;
+  remoteByokProvidersAccepted?: boolean;
+  frontierProvidersAccepted: boolean;
+  externalAgentCliAccepted?: boolean;
+  policySource?: string;
+}
+
+export interface AIProviderEnvelope {
+  providerId?: string;
+  kind?: string;
+  endpointClass?: string;
+  displayName?: string;
+  model?: string;
+  local?: boolean;
+  frontier?: boolean;
+  authConfigured?: boolean;
+  billingMode?: string;
+  legalBasis?: string;
+  riskTier?: string;
+  status?: string;
+  reason?: string;
+}
+
+export interface AIPredictionStatus {
+  enabled: boolean;
+  settings: AIPredictionSettings;
+  providerId?: string;
+  model?: string;
+  providerReady: boolean;
+  providerReason?: string;
+  provider?: AIProviderEnvelope | null;
+  budget: AIPredictionBudgetSnapshot;
+  consent: AIConsentSummary;
+}
+
 export type SelectedOpenTargetIntent =
   | { kind: "openProject"; projectPath: string; source?: string }
   | { kind: "openFile"; path: string; line?: number; source?: string };
@@ -208,6 +278,16 @@ const aiDeleteChatSessionMethodNames = [
   "arlecchino.App.AIDeleteChatSession",
 ] as const;
 
+const aiGetPredictionStatusMethodNames = [
+  "main.App.AIGetPredictionStatus",
+  "arlecchino.App.AIGetPredictionStatus",
+] as const;
+
+const aiSavePredictionSettingsMethodNames = [
+  "main.App.AISavePredictionSettings",
+  "arlecchino.App.AISavePredictionSettings",
+] as const;
+
 let nativeWindowControlsMethodName:
   | (typeof nativeWindowControlsMethodNames)[number]
   | undefined;
@@ -258,6 +338,12 @@ let aiStopProviderRuntimeMethodName:
   | undefined;
 let aiDeleteChatSessionMethodName:
   | (typeof aiDeleteChatSessionMethodNames)[number]
+  | undefined;
+let aiGetPredictionStatusMethodName:
+  | (typeof aiGetPredictionStatusMethodNames)[number]
+  | undefined;
+let aiSavePredictionSettingsMethodName:
+  | (typeof aiSavePredictionSettingsMethodNames)[number]
   | undefined;
 
 const getNativeWindowControlsBridge = ():
@@ -1025,5 +1111,30 @@ export async function AIDeleteChatSession(sessionId: string): Promise<void> {
     },
     aiDeleteChatSessionMethodNames,
     [sessionId],
+  );
+}
+
+export async function AIGetPredictionStatus(): Promise<AIPredictionStatus> {
+  return callRuntimeBridgeMethod<AIPredictionStatus>(
+    aiGetPredictionStatusMethodName,
+    (methodName) => {
+      aiGetPredictionStatusMethodName =
+        methodName as (typeof aiGetPredictionStatusMethodNames)[number];
+    },
+    aiGetPredictionStatusMethodNames,
+  );
+}
+
+export async function AISavePredictionSettings(
+  settings: AIPredictionSettings,
+): Promise<AIPredictionStatus> {
+  return callRuntimeBridgeMethod<AIPredictionStatus>(
+    aiSavePredictionSettingsMethodName,
+    (methodName) => {
+      aiSavePredictionSettingsMethodName =
+        methodName as (typeof aiSavePredictionSettingsMethodNames)[number];
+    },
+    aiSavePredictionSettingsMethodNames,
+    [settings],
   );
 }
