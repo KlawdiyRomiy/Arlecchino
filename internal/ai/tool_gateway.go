@@ -168,6 +168,8 @@ func (s *Service) ExecuteToolCall(ctx context.Context, projectID string, req AIT
 		result = s.executeMCPExecuteTool(ctx, project, execReq, result)
 	case "subagent.preview":
 		result = s.executeSubagentPreviewTool(project, execReq, result)
+	case "interaction.question":
+		result = s.executeInteractionQuestionTool(project, execReq, result)
 	default:
 		result.Status = "blocked"
 		result.Error = "tool is registered but has no executor"
@@ -762,6 +764,12 @@ func toolProposalForCall(descriptor AIToolDescriptor, req AIToolCallRequest, pro
 		proposal.ScopeSummary = "Isolated subagent preview: " + firstNonEmpty(arguments["prompt"], "background task")
 		proposal.Kind = AIToolKindSubagent
 		proposal.ApprovalModeRequired = AIApprovalModeAskEachTime
+	}
+	if req.ToolID == "interaction.question" {
+		proposal.Kind = AIToolKindContextRead
+		proposal.ScopeSummary = "Structured user question: " + firstNonEmpty(arguments["prompt"], arguments["question"], "clarifying question")
+		proposal.ApprovalModeRequired = AIApprovalModeReadOnlyAllowed
+		proposal.RiskLevel = AIToolRiskLow
 	}
 	if reason := hardDenyReasonForCommand(arguments["command"], projectRoot); reason != "" {
 		proposal.HardDenyReason = reason

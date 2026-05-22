@@ -65,6 +65,10 @@ interface RuntimeEgressMetrics {
   totalTokens?: number;
   estimatedTokens?: boolean;
   tokenSource?: string;
+  requestCount?: number;
+  apiDurationMs?: number;
+  wallDurationMs?: number;
+  firstTokenLatencyMs?: number;
   costMicros?: number;
   costCurrency?: string;
   costEstimated?: boolean;
@@ -74,10 +78,20 @@ interface RuntimeEgressMetrics {
   toolSupportKind?: string;
 }
 
+const formatDuration = (value?: number): string =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? `${value.toLocaleString()} ms`
+    : "n/a";
+
 const formatTokenUsage = (metrics: RuntimeEgressMetrics | null): string => {
   if (!metrics?.totalTokens) return "n/a";
   const prefix = metrics.estimatedTokens ? "~" : "";
   return `${prefix}${metrics.totalTokens.toLocaleString()} tokens`;
+};
+
+const formatRequestCount = (metrics: RuntimeEgressMetrics | null): string => {
+  if (!metrics?.requestCount) return "n/a";
+  return `${metrics.requestCount.toLocaleString()} request${metrics.requestCount === 1 ? "" : "s"}`;
 };
 
 const formatToolProfile = (metrics: RuntimeEgressMetrics | null): string => {
@@ -358,7 +372,7 @@ export function ActivityStatusPopover({
   const egressMetrics = (egress ?? null) as RuntimeEgressMetrics | null;
   const egressLabel = egress?.canceled
     ? "canceled"
-    : egress?.status || egress?.source || "not recorded";
+    : egress?.finalStatus || egress?.status || egress?.source || "not recorded";
   const approvalLabel =
     activeEnvelope?.approvalSummary?.mode || "ask_each_time";
   const consentLabel = activeEnvelope?.consentSummary
@@ -371,8 +385,11 @@ export function ActivityStatusPopover({
       ? "local"
       : "provider policy";
   const providerTone = getProviderPresentation(selectedProvider).tone;
-  const latencyLabel =
-    typeof egress?.latencyMs === "number" ? `${egress.latencyMs} ms` : "n/a";
+  const apiDurationLabel = formatDuration(
+    egressMetrics?.apiDurationMs ?? egress?.latencyMs,
+  );
+  const wallDurationLabel = formatDuration(egressMetrics?.wallDurationMs);
+  const firstTokenLabel = formatDuration(egressMetrics?.firstTokenLatencyMs);
 
   return (
     <m.div
@@ -426,8 +443,14 @@ export function ActivityStatusPopover({
         <strong>{compactText(modelLabel, 34)}</strong>
         <span>Egress</span>
         <strong>{egressLabel}</strong>
-        <span>Latency</span>
-        <strong>{latencyLabel}</strong>
+        <span>Requests</span>
+        <strong>{formatRequestCount(egressMetrics)}</strong>
+        <span>Wall time</span>
+        <strong>{wallDurationLabel}</strong>
+        <span>Model time</span>
+        <strong>{apiDurationLabel}</strong>
+        <span>First token</span>
+        <strong>{firstTokenLabel}</strong>
         <span>Tokens</span>
         <strong title={egressMetrics?.tokenSource || undefined}>
           {formatTokenUsage(egressMetrics)}

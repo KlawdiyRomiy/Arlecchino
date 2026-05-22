@@ -8,6 +8,7 @@ import {
   FileText,
   Info,
   Layers,
+  MessageSquareText,
   Sparkles,
   ShieldCheck,
   Wrench,
@@ -19,6 +20,7 @@ import type {
   AIChatRunArtifact,
   AIChatRunEnvelope,
   AIContextItemDisclosure,
+  AIQuestionAnswerRequest,
   AIRunTimelineEvent,
   AIToolProposal,
 } from "../../../bindings/arlecchino/internal/ai/models";
@@ -36,6 +38,10 @@ import {
 import { AIChatMarkdownMessage } from "./AIChatMarkdownMessage";
 import { PatchArtifactCard } from "./PatchArtifactCard";
 import { ToolProposalCard } from "./ToolProposalCard";
+import {
+  ContextActionMenu,
+  type ContextActionMenuItem,
+} from "../ui/ContextActionMenu";
 
 interface RunCardProps {
   envelope: AIChatRunEnvelope;
@@ -43,12 +49,16 @@ interface RunCardProps {
   active: boolean;
   compact: boolean;
   streamingText: string;
+  hydrationStatus?: "idle" | "loading" | "failed" | "hydrated";
   artifacts?: AIChatRunArtifact[];
   artifactBusyId?: string | null;
   onSelect: (runId: string) => void;
   onApplyPatchArtifact?: (artifactId: string, runId: string) => void;
   onApproveMnemonicArtifact?: (artifactId: string) => void;
   onRollbackPatchArtifact?: (artifactId: string, runId: string) => void;
+  onSubmitQuestionAnswer?: (request: AIQuestionAnswerRequest) => void;
+  onAcceptPlan?: (planRunId: string) => void;
+  onRequestPlanRevision?: (planRunId: string, reason: string) => void;
   onOpenReview?: () => void;
   onPreviewToolProposal?: (
     proposal: AIToolProposal,
@@ -112,6 +122,107 @@ function cleanAssistantText(value: string, prompt: string): string {
   return normalizeGeneratedSpacing(
     cleaned.replace(/^(?:User\s+)?intent:\s*\n?/i, "").trim(),
   );
+}
+
+function typewriterStepSize(remaining: number): number {
+  if (remaining > 1600) return 160;
+  if (remaining > 640) return 80;
+  if (remaining > 240) return 32;
+  if (remaining > 80) return 10;
+  return 2;
+}
+
+function typewriterDelayMs(displayedText: string): number {
+  const last = displayedText.charAt(displayedText.length - 1);
+  if (last === "\n") return 34;
+  if (/[.!?;:]$/.test(last)) return 46;
+  return 18;
+}
+
+function nextTypewriterLength(
+  displayedText: string,
+  targetText: string,
+): number {
+  const nextLength = Math.min(
+    targetText.length,
+    displayedText.length +
+      typewriterStepSize(targetText.length - displayedText.length),
+  );
+  const partialFence = /(^|\n)( {0,3})(`{1,2}|~{1,2})$/.exec(
+    targetText.slice(0, nextLength),
+  );
+  if (!partialFence) return nextLength;
+  return Math.min(targetText.length, nextLength + 3 - partialFence[3].length);
+}
+
+function initialTypewriterLength(targetText: string): number {
+  return nextTypewriterLength("", targetText);
+}
+
+function useAssistantTypewriterText({
+  enabled,
+  reduceMotion,
+  runId,
+  targetText,
+}: {
+  enabled: boolean;
+  reduceMotion: boolean;
+  runId: string;
+  targetText: string;
+}): string {
+  const animate = enabled && !reduceMotion && targetText.length > 0;
+  const [displayedText, setDisplayedText] = useState(() =>
+    animate
+      ? targetText.slice(0, initialTypewriterLength(targetText))
+      : targetText,
+  );
+  const displayedTextRef = React.useRef(displayedText);
+  const runIdRef = React.useRef(runId);
+
+  useEffect(() => {
+    displayedTextRef.current = displayedText;
+  }, [displayedText]);
+
+  useEffect(() => {
+    if (runIdRef.current === runId) return;
+    runIdRef.current = runId;
+    const nextText = animate
+      ? targetText.slice(0, initialTypewriterLength(targetText))
+      : targetText;
+    displayedTextRef.current = nextText;
+    setDisplayedText(nextText);
+  }, [animate, runId, targetText]);
+
+  useEffect(() => {
+    if (!animate) {
+      if (displayedTextRef.current !== targetText) {
+        displayedTextRef.current = targetText;
+        setDisplayedText(targetText);
+      }
+      return undefined;
+    }
+
+    const currentText = displayedTextRef.current;
+    if (currentText === targetText) return undefined;
+    if (!targetText.startsWith(currentText)) {
+      displayedTextRef.current = targetText;
+      setDisplayedText(targetText);
+      return undefined;
+    }
+
+    const nextLength = nextTypewriterLength(currentText, targetText);
+    const nextText = targetText.slice(0, nextLength);
+    const timer = window.setTimeout(() => {
+      displayedTextRef.current = nextText;
+      setDisplayedText(nextText);
+    }, typewriterDelayMs(currentText));
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [animate, displayedText, targetText]);
+
+  return displayedText;
 }
 
 function friendlyRunError(value?: string): string {
@@ -388,6 +499,46 @@ function memoryArtifactMeta(artifact: AIChatRunArtifact): string {
   return parts.filter(Boolean).join(" · ");
 }
 
+type InteractionQuestionOption = {
+  id?: string;
+  label?: string;
+  value?: string;
+  description?: string;
+};
+
+type InteractionQuestionPayload = {
+  questionId?: string;
+  prompt?: string;
+  options?: InteractionQuestionOption[];
+  allowCustomAnswer?: boolean;
+  status?: string;
+  selectedOptionId?: string;
+  selectedValue?: string;
+  customAnswer?: string;
+};
+
+type PlanGatePayload = {
+  state?: string;
+  acceptedBuildRunId?: string;
+  revisionPlanRunIds?: string[];
+  revisionReason?: string;
+};
+
+function parseArtifactPayload<T extends object>(
+  artifact: AIChatRunArtifact,
+  fallback: T,
+): T {
+  try {
+    const parsed = JSON.parse(artifact.payloadJson || "{}");
+    if (parsed && typeof parsed === "object") {
+      return parsed as T;
+    }
+  } catch {
+    // Malformed artifact payloads should not break transcript rendering.
+  }
+  return fallback;
+}
+
 function runtimeFamilyLabel(value?: string): string {
   switch (value) {
     case "structured_agent_runtime":
@@ -402,6 +553,13 @@ function runtimeFamilyLabel(value?: string): string {
     default:
       return value || "Runtime";
   }
+}
+
+function isBackgroundLinkedReviewRun(envelope: AIChatRunEnvelope): boolean {
+  return (
+    envelope.action === "review" &&
+    Boolean(envelope.links?.autoReviewForBuildRunId?.trim())
+  );
 }
 
 function isGitBaselineUnavailableText(value?: string | null): boolean {
@@ -995,18 +1153,233 @@ function MemoryCitations({
   );
 }
 
+function InteractionQuestionCard({
+  artifact,
+  busy,
+  runId,
+  onSubmit,
+}: {
+  artifact: AIChatRunArtifact;
+  busy: boolean;
+  runId: string;
+  onSubmit?: (request: AIQuestionAnswerRequest) => void;
+}) {
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customAnswer, setCustomAnswer] = useState("");
+  const payload = parseArtifactPayload<InteractionQuestionPayload>(
+    artifact,
+    {},
+  );
+  const questionId = payload.questionId || artifact.id;
+  const status = payload.status || artifact.status;
+  const answered = status === "answered";
+  const options = Array.isArray(payload.options)
+    ? payload.options.slice(0, 4)
+    : [];
+  const selectedAnswer =
+    payload.customAnswer ||
+    payload.selectedValue ||
+    options.find((option) => option.id === payload.selectedOptionId)?.label ||
+    "";
+  const submitCustomAnswer = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const answer = customAnswer.trim();
+    if (!answer || busy || answered) return;
+    onSubmit?.({ runId, questionId, customAnswer: answer });
+  };
+
+  return (
+    <div
+      className="ai-chat-question-card"
+      data-status={status || "pending"}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="ai-chat-question-card__head">
+        <strong>{payload.prompt || artifact.summary || "Question"}</strong>
+        <span>{answered ? "Answered" : "Input needed"}</span>
+      </div>
+      {answered ? (
+        <div className="ai-chat-question-card__answer">
+          {selectedAnswer || "Answered"}
+        </div>
+      ) : (
+        <>
+          <div className="ai-chat-question-card__options">
+            {options.map((option, index) => {
+              const optionId = option.id || `option-${index + 1}`;
+              const description = option.description || option.label || "";
+              return (
+                <button
+                  key={optionId}
+                  type="button"
+                  className="ai-chat-question-card__option"
+                  disabled={busy || !onSubmit}
+                  title={description}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onSubmit?.({ runId, questionId, optionId });
+                  }}
+                >
+                  <span>{option.label || optionId}</span>
+                  <span
+                    className="ai-chat-question-card__info"
+                    title={description}
+                  >
+                    <Info size={13} />
+                  </span>
+                </button>
+              );
+            })}
+            {payload.allowCustomAnswer !== false ? (
+              <button
+                type="button"
+                className="ai-chat-question-card__option ai-chat-question-card__option--custom"
+                disabled={busy || !onSubmit}
+                title="Enter a custom answer"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setCustomOpen((open) => !open);
+                }}
+              >
+                <span>Custom answer</span>
+                <ChevronRight size={13} />
+              </button>
+            ) : null}
+          </div>
+          {customOpen ? (
+            <div className="ai-chat-question-card__custom">
+              <textarea
+                value={customAnswer}
+                placeholder="Enter a custom answer"
+                onChange={(event) => setCustomAnswer(event.target.value)}
+              />
+              <button
+                type="button"
+                disabled={busy || !customAnswer.trim() || !onSubmit}
+                onClick={submitCustomAnswer}
+              >
+                Send
+              </button>
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+function PlanGateCard({
+  artifact,
+  busyId,
+  planRunId,
+  onAcceptPlan,
+  onRequestPlanRevision,
+}: {
+  artifact: AIChatRunArtifact;
+  busyId: string | null;
+  planRunId: string;
+  onAcceptPlan?: (planRunId: string) => void;
+  onRequestPlanRevision?: (planRunId: string, reason: string) => void;
+}) {
+  const [revisionOpen, setRevisionOpen] = useState(false);
+  const [revisionReason, setRevisionReason] = useState("");
+  const payload = parseArtifactPayload<PlanGatePayload>(artifact, {});
+  const state = payload.state || artifact.status || "pending";
+  const pending = state === "pending";
+  const accepting = busyId === `plan:${planRunId}:accept`;
+  const revising = busyId === `plan:${planRunId}:revision`;
+
+  return (
+    <div
+      className="ai-chat-plan-gate"
+      data-state={state}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="ai-chat-plan-gate__head">
+        <strong>Plan decision</strong>
+        <span>{state.replace(/_/g, " ")}</span>
+      </div>
+      {pending ? (
+        <>
+          <div className="ai-chat-plan-gate__actions">
+            <button
+              type="button"
+              disabled={accepting || revising || !onAcceptPlan}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onAcceptPlan?.(planRunId);
+              }}
+            >
+              <CheckCircle2 size={14} />
+              Do the plan
+            </button>
+            <button
+              type="button"
+              disabled={accepting || revising || !onRequestPlanRevision}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setRevisionOpen((open) => !open);
+              }}
+            >
+              <ChevronRight size={14} />
+              No, change it
+            </button>
+          </div>
+          {revisionOpen ? (
+            <div className="ai-chat-plan-gate__revision">
+              <textarea
+                value={revisionReason}
+                placeholder="What should change in the plan?"
+                onChange={(event) => setRevisionReason(event.target.value)}
+              />
+              <button
+                type="button"
+                disabled={accepting || revising || !onRequestPlanRevision}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onRequestPlanRevision?.(planRunId, revisionReason.trim());
+                }}
+              >
+                Propose a new plan
+              </button>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div className="ai-chat-plan-gate__summary">
+          {state === "accepted" && payload.acceptedBuildRunId
+            ? `Build run started: ${payload.acceptedBuildRunId.slice(0, 8)}`
+            : state === "revision_requested"
+              ? "Plan revision requested."
+              : artifact.summary || state}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function RunCard({
   envelope,
   run,
   active,
   compact,
   streamingText,
+  hydrationStatus = "idle",
   artifacts = [],
   artifactBusyId = null,
   onSelect,
   onApplyPatchArtifact,
   onApproveMnemonicArtifact,
   onRollbackPatchArtifact,
+  onSubmitQuestionAnswer,
+  onAcceptPlan,
+  onRequestPlanRevision,
   onOpenReview,
   onPreviewToolProposal,
   onDenyToolProposal,
@@ -1032,16 +1405,38 @@ export function RunCard({
   }, [running]);
   const action = envelope.action as AIChatAction;
   const meta = getActionMeta(action);
-  const prompt = run?.userPrompt || "";
+  const backgroundLinkedReview = isBackgroundLinkedReviewRun(envelope);
+  const prompt = backgroundLinkedReview ? "" : run?.userPrompt || "";
   const displayPrompt = compactText(prompt, compact ? 180 : 360);
   const createdTime = formatRunTime(envelope.createdAt);
   const assistantTime = formatRunTime(
     run?.updatedAt || envelope.updatedAt || envelope.createdAt,
   );
-  const assistantTitle = assistantModelTitle(envelope);
+  const assistantTitle = backgroundLinkedReview
+    ? "Background review"
+    : assistantModelTitle(envelope);
   const responseSource =
     running && streamingText ? streamingText : run?.response || streamingText;
   const response = cleanAssistantText(responseSource || "", prompt);
+  const terminalEnvelopeOnly =
+    !run &&
+    !running &&
+    ["completed", "error", "canceled", "blocked"].includes(envelope.status);
+  const responsePlaceholder = terminalEnvelopeOnly
+    ? hydrationStatus === "failed"
+      ? "Saved message unavailable."
+      : "Loading saved message..."
+    : run && !running && !response
+      ? "No assistant text recorded."
+      : "";
+  const displayedResponse = useAssistantTypewriterText({
+    enabled: running && Boolean(response),
+    reduceMotion: Boolean(reduceMotion),
+    runId: envelope.id,
+    targetText: response,
+  });
+  const typewriterActive =
+    running && !reduceMotion && displayedResponse.length < response.length;
   const contextItems = contextItemsForRun(envelope, run);
   const runElapsedMs = elapsedMs(envelope, run, now);
   const proposals = run?.toolProposals ?? envelope.toolProposals ?? [];
@@ -1057,6 +1452,20 @@ export function RunCard({
   const memoryArtifacts = artifacts.filter(
     (artifact) =>
       artifact.kind === AIChatRunArtifactKind.AIChatRunArtifactMemory,
+  );
+  const questionArtifacts = artifacts.filter(
+    (artifact) =>
+      artifact.kind ===
+      AIChatRunArtifactKind.AIChatRunArtifactInteractionQuestion,
+  );
+  const planGateArtifact =
+    artifacts.find(
+      (artifact) =>
+        artifact.kind ===
+        AIChatRunArtifactKind.AIChatRunArtifactWorkflowPlanGate,
+    ) ?? null;
+  const questionBusy = Boolean(
+    artifactBusyId && artifactBusyId.startsWith(`question:${envelope.id}:`),
   );
   const timelineEvents = envelope.timeline ?? [];
   const runtimeNotice = envelope.runNotice;
@@ -1099,13 +1508,7 @@ export function RunCard({
       onSelect(envelope.id);
     }
   };
-  const handleCopy = async (
-    event: React.MouseEvent<HTMLButtonElement>,
-    kind: "prompt" | "response",
-    value: string,
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const copyMessage = async (kind: "prompt" | "response", value: string) => {
     if (!value.trim()) return;
     await copyText(value);
     setCopiedMessage(kind);
@@ -1113,306 +1516,556 @@ export function RunCard({
       setCopiedMessage((current) => (current === kind ? null : current));
     }, 1200);
   };
+  const handleCopy = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    kind: "prompt" | "response",
+    value: string,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void copyMessage(kind, value);
+  };
+  const selectRun = () => {
+    onSelect(envelope.id);
+  };
+  const openRunReview = () => {
+    selectRun();
+    onOpenReview?.();
+  };
+  const toggleDetails = () => {
+    selectRun();
+    setDetailsOpen((open) => !open);
+  };
   const handleToggleDetails = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    setDetailsOpen((open) => !open);
+    toggleDetails();
   };
+  const sessionId = (run?.sessionId || envelope.sessionId || "").trim();
+  const canOpenReview = Boolean(
+    onOpenReview && (proposals.length > 0 || patchArtifacts.length > 0),
+  );
+  const copyRunId = () => {
+    void copyText(envelope.id);
+  };
+  const copySessionId = () => {
+    if (sessionId) void copyText(sessionId);
+  };
+  const userMessageContextItems: ContextActionMenuItem[] = [
+    {
+      key: "copy-user-message",
+      label: "Copy User Message",
+      icon: <MessageSquareText size={13} />,
+      onSelect: () => {
+        void copyMessage("prompt", prompt);
+      },
+    },
+    {
+      key: "select-run",
+      label: active ? "Current Run" : "Select Run",
+      icon: <CheckCircle2 size={13} />,
+      disabled: active,
+      onSelect: selectRun,
+    },
+    { separator: true },
+    {
+      key: "copy-run-id",
+      label: "Copy Run ID",
+      icon: <Copy size={13} />,
+      onSelect: copyRunId,
+    },
+    {
+      key: "copy-session-id",
+      label: "Copy Session ID",
+      icon: <Copy size={13} />,
+      hidden: !sessionId,
+      onSelect: copySessionId,
+    },
+  ];
+  const assistantMessageContextItems: ContextActionMenuItem[] = [
+    {
+      key: "copy-assistant-message",
+      label: "Copy Assistant Message",
+      icon: <Sparkles size={13} />,
+      hidden: !response,
+      onSelect: () => {
+        void copyMessage("response", response);
+      },
+    },
+    {
+      key: "copy-run-error",
+      label: "Copy Error",
+      icon: <AlertTriangle size={13} />,
+      hidden: !envelope.error,
+      onSelect: () => {
+        if (envelope.error) void copyText(envelope.error);
+      },
+    },
+    { separator: true },
+    {
+      key: "toggle-details",
+      label: detailsOpen ? "Hide Run Details" : "Show Run Details",
+      icon: <Info size={13} />,
+      hidden: !hasRunDetails,
+      onSelect: toggleDetails,
+    },
+    {
+      key: "open-review",
+      label: "Open Review",
+      icon: <FileText size={13} />,
+      hidden: !canOpenReview,
+      onSelect: openRunReview,
+    },
+    { separator: true },
+    {
+      key: "select-run",
+      label: active ? "Current Run" : "Select Run",
+      icon: <CheckCircle2 size={13} />,
+      disabled: active,
+      onSelect: selectRun,
+    },
+    {
+      key: "copy-run-id",
+      label: "Copy Run ID",
+      icon: <Copy size={13} />,
+      onSelect: copyRunId,
+    },
+    {
+      key: "copy-session-id",
+      label: "Copy Session ID",
+      icon: <Copy size={13} />,
+      hidden: !sessionId,
+      onSelect: copySessionId,
+    },
+  ];
+  const runContextItems: ContextActionMenuItem[] = [
+    {
+      key: "select-run",
+      label: active ? "Current Run" : "Select Run",
+      icon: <CheckCircle2 size={13} />,
+      disabled: active,
+      onSelect: selectRun,
+    },
+    { separator: true },
+    {
+      key: "copy-user-message",
+      label: "Copy User Message",
+      icon: <MessageSquareText size={13} />,
+      hidden: !prompt,
+      onSelect: () => {
+        void copyMessage("prompt", prompt);
+      },
+    },
+    {
+      key: "copy-assistant-message",
+      label: "Copy Assistant Message",
+      icon: <Sparkles size={13} />,
+      hidden: !response,
+      onSelect: () => {
+        void copyMessage("response", response);
+      },
+    },
+    {
+      key: "copy-run-error",
+      label: "Copy Error",
+      icon: <AlertTriangle size={13} />,
+      hidden: !envelope.error,
+      onSelect: () => {
+        if (envelope.error) void copyText(envelope.error);
+      },
+    },
+    { separator: true },
+    {
+      key: "toggle-details",
+      label: detailsOpen ? "Hide Run Details" : "Show Run Details",
+      icon: <Info size={13} />,
+      hidden: !hasRunDetails,
+      onSelect: toggleDetails,
+    },
+    {
+      key: "open-review",
+      label: "Open Review",
+      icon: <FileText size={13} />,
+      hidden: !canOpenReview,
+      onSelect: openRunReview,
+    },
+    { separator: true },
+    {
+      key: "copy-run-id",
+      label: "Copy Run ID",
+      icon: <Copy size={13} />,
+      onSelect: copyRunId,
+    },
+    {
+      key: "copy-session-id",
+      label: "Copy Session ID",
+      icon: <Copy size={13} />,
+      hidden: !sessionId,
+      onSelect: copySessionId,
+    },
+  ];
 
   return (
-    <m.article
-      className={`ai-chat-run-card ai-chat-tone-${meta.tone}${active ? " is-active" : ""}`}
-      aria-pressed={active}
-      data-ai-chat-run-id={envelope.id}
-      data-status={envelope.status}
-      data-compact={compact ? "true" : "false"}
-      layout
-      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12 }}
-      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
-      exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
-      transition={{
-        layout: { duration: reduceMotion ? 0.1 : 0.2 },
-        duration: reduceMotion ? 0.1 : 0.18,
-        ease: [0.22, 1, 0.36, 1],
-      }}
-      role="button"
-      tabIndex={0}
-      onClick={() => onSelect(envelope.id)}
-      onKeyDown={handleKeyDown}
+    <ContextActionMenu
+      ignoredTargetSelector=".ai-chat-message-bubble, .ai-chat-message-action, .ai-chat-code-block, .ai-chat-markdown__inline-code, button, input, textarea, a"
+      items={runContextItems}
+      nativeScope="ai-chat-run"
+      nativeTargetId={envelope.id}
     >
-      {prompt ? (
-        <div className="ai-chat-message-group ai-chat-message-group--user">
-          <span className="ai-chat-message-avatar ai-chat-message-avatar--user">
-            Y
-          </span>
-          <div className="ai-chat-message-content">
-            <div className="ai-chat-message-bubble ai-chat-message-bubble--user">
-              <div className="ai-chat-message-meta ai-chat-message-meta--user">
-                <strong>You</strong>
-                {createdTime ? (
-                  <time dateTime={envelope.createdAt}>{createdTime}</time>
-                ) : null}
-                <span
-                  className="ai-chat-run-card__mode-icon"
-                  role="img"
-                  aria-label={`${meta.label} mode`}
-                  title={`${meta.label} mode`}
-                >
-                  {meta.icon}
-                </span>
-              </div>
-              <p className="ai-chat-run-card__prompt">
-                {renderHighlightedText(displayPrompt, searchQuery)}
-              </p>
-              {mentionItems.length > 0 ? (
-                <div
-                  className="ai-chat-run-card__mentions"
-                  aria-label="Mentioned context"
-                >
-                  {mentionItems.map((item) => {
-                    const Icon = iconForMentionItem(item.kind);
-                    const label = item.label || item.path || "Mention";
-                    const detail = item.path || item.reason || "";
-                    return (
-                      <span
-                        className="ai-chat-run-card__mention"
-                        key={`${item.kind}-${item.id}-${item.path}-${label}`}
-                        title={item.path || item.reason || label}
-                      >
-                        <span className="ai-chat-run-card__mention-icon">
-                          <Icon size={16} />
-                        </span>
-                        <span className="ai-chat-run-card__mention-body">
-                          <strong>{label}</strong>
-                          {detail && detail !== label ? (
-                            <small>{detail}</small>
-                          ) : null}
-                        </span>
-                      </span>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-            <div className="ai-chat-message-actions ai-chat-message-actions--user">
-              <button
-                className="ai-chat-message-action"
-                type="button"
-                title="Copy user message"
-                onClick={(event) => handleCopy(event, "prompt", prompt)}
+      <m.article
+        className={`ai-chat-run-card ai-chat-tone-${meta.tone}${active ? " is-active" : ""}`}
+        aria-pressed={active}
+        data-ai-chat-run-id={envelope.id}
+        data-status={envelope.status}
+        data-compact={compact ? "true" : "false"}
+        layout
+        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12 }}
+        animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+        exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
+        transition={{
+          layout: { duration: reduceMotion ? 0.1 : 0.2 },
+          duration: reduceMotion ? 0.1 : 0.18,
+          ease: [0.22, 1, 0.36, 1],
+        }}
+        role="button"
+        tabIndex={0}
+        onClick={() => onSelect(envelope.id)}
+        onKeyDown={handleKeyDown}
+      >
+        {prompt ? (
+          <div className="ai-chat-message-group ai-chat-message-group--user">
+            <span className="ai-chat-message-avatar ai-chat-message-avatar--user">
+              Y
+            </span>
+            <div className="ai-chat-message-content">
+              <ContextActionMenu
+                items={userMessageContextItems}
+                nativeScope="ai-chat-message"
+                nativeSurfaceId={envelope.id}
+                nativeTargetId={`${envelope.id}:prompt`}
               >
-                {copiedMessage === "prompt" ? (
-                  <CheckCircle2 size={14} />
-                ) : (
-                  <Copy size={14} />
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-      <div className="ai-chat-message-group ai-chat-message-group--assistant">
-        <span className="ai-chat-message-avatar ai-chat-message-avatar--assistant">
-          <Sparkles size={15} />
-        </span>
-        <div className="ai-chat-message-content">
-          <div className="ai-chat-message-meta ai-chat-message-meta--assistant">
-            <strong>{assistantTitle}</strong>
-            {assistantTime ? (
-              <time
-                dateTime={
-                  run?.updatedAt || envelope.updatedAt || envelope.createdAt
-                }
-              >
-                {assistantTime}
-              </time>
-            ) : null}
-          </div>
-          <div className="ai-chat-message-bubble ai-chat-message-bubble--assistant">
-            {response ? (
-              <AIChatMarkdownMessage
-                className="ai-chat-run-card__response"
-                content={response}
-                searchQuery={searchQuery}
-                streaming={running}
-              />
-            ) : running ? (
-              <div className="ai-chat-run-card__response ai-chat-run-card__response--muted">
-                {activityLabel}&hellip;
-              </div>
-            ) : null}
-
-            <AnimatePresence initial={false}>
-              {detailsOpen && hasRunDetails ? (
-                <m.div
-                  className="ai-chat-run-details"
-                  layout
-                  initial={
-                    reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }
-                  }
-                  animate={
-                    reduceMotion
-                      ? { opacity: 1 }
-                      : { opacity: 1, height: "auto" }
-                  }
-                  exit={
-                    reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }
-                  }
-                  transition={{
-                    duration: reduceMotion ? 0.1 : 0.18,
-                    ease: [0.22, 1, 0.36, 1],
-                  }}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  {runtimeNotice?.details ? (
-                    <div className="ai-chat-run-details__notice">
-                      <strong>
-                        {runtimeNotice.message || runtimeNotice.title}
-                      </strong>
-                      <span>{runtimeNotice.details}</span>
+                <div className="ai-chat-message-bubble ai-chat-message-bubble--user">
+                  <div className="ai-chat-message-meta ai-chat-message-meta--user">
+                    <strong>You</strong>
+                    {createdTime ? (
+                      <time dateTime={envelope.createdAt}>{createdTime}</time>
+                    ) : null}
+                    <span
+                      className="ai-chat-run-card__mode-icon"
+                      role="img"
+                      aria-label={`${meta.label} mode`}
+                      title={`${meta.label} mode`}
+                    >
+                      {meta.icon}
+                    </span>
+                  </div>
+                  <p className="ai-chat-run-card__prompt">
+                    {renderHighlightedText(displayPrompt, searchQuery)}
+                  </p>
+                  {mentionItems.length > 0 ? (
+                    <div
+                      className="ai-chat-run-card__mentions"
+                      aria-label="Mentioned context"
+                    >
+                      {mentionItems.map((item) => {
+                        const Icon = iconForMentionItem(item.kind);
+                        const label = item.label || item.path || "Mention";
+                        const detail = item.path || item.reason || "";
+                        return (
+                          <span
+                            className="ai-chat-run-card__mention"
+                            key={`${item.kind}-${item.id}-${item.path}-${label}`}
+                            title={item.path || item.reason || label}
+                          >
+                            <span className="ai-chat-run-card__mention-icon">
+                              <Icon size={16} />
+                            </span>
+                            <span className="ai-chat-run-card__mention-body">
+                              <strong>{label}</strong>
+                              {detail && detail !== label ? (
+                                <small>{detail}</small>
+                              ) : null}
+                            </span>
+                          </span>
+                        );
+                      })}
                     </div>
                   ) : null}
-                  <ToolLifecycleArtifacts artifacts={toolLifecycleArtifacts} />
-                  <RuntimeTruthCard envelope={envelope} artifacts={artifacts} />
-                  <RunTimeline events={timelineEvents} />
-                </m.div>
-              ) : null}
-            </AnimatePresence>
-
-            {proposals.length > 0 ? (
-              <RunWorkSection
-                icon={<Wrench size={14} />}
-                meta={`${proposals.length} proposal${proposals.length === 1 ? "" : "s"}`}
-                title="Approval"
-                tone="warning"
-              >
-                <div className="ai-chat-run-card__tools">
-                  {proposals.map((proposal) => (
-                    <ToolProposalCard
-                      key={`${proposal.kind}-${proposal.id || proposal.name}`}
-                      approveOnceBusy={
-                        artifactBusyId ===
-                        `approve:once:${proposal.id || proposal.name || proposal.kind}`
-                      }
-                      approveRunBusy={
-                        artifactBusyId ===
-                        `approve:run:${proposal.id || proposal.name || proposal.kind}`
-                      }
-                      busy={artifactBusyId === (proposal.id || proposal.name)}
-                      canApprove={canApproveToolProposal(proposal)}
-                      canDeny={canDenyToolProposal(proposal)}
-                      canPreview={canPreviewToolProposal(proposal)}
-                      denyBusy={
-                        artifactBusyId ===
-                        `deny:${proposal.id || proposal.name || proposal.kind}`
-                      }
-                      reviewDisabledReason={toolReviewDisabledReason}
-                      onDeny={(nextProposal) =>
-                        onDenyToolProposal?.(
-                          nextProposal,
-                          envelope.id,
-                          envelope.revision,
-                        )
-                      }
-                      onApprove={(nextProposal, scope) =>
-                        onApproveToolProposal?.(
-                          nextProposal,
-                          envelope.id,
-                          scope,
-                          envelope.revision,
-                        )
-                      }
-                      onPreview={(nextProposal) =>
-                        onPreviewToolProposal?.(
-                          nextProposal,
-                          envelope.id,
-                          envelope.revision,
-                        )
-                      }
-                      proposal={proposal}
-                    />
-                  ))}
                 </div>
-              </RunWorkSection>
-            ) : null}
-
-            {patchArtifacts.length > 0 ? (
-              <RunWorkSection
-                icon={<FileText size={14} />}
-                meta={`${patchArtifacts.length} artifact${patchArtifacts.length === 1 ? "" : "s"}`}
-                title="Patch"
-                tone="warning"
-              >
-                <div className="ai-chat-run-card__artifacts">
-                  {patchArtifacts.map((artifact) => (
-                    <PatchArtifactCard
-                      artifact={artifact}
-                      busy={artifactBusyId === artifact.id}
-                      key={artifact.id}
-                      onApply={(artifactId) => {
-                        onSelect(envelope.id);
-                        onApplyPatchArtifact?.(artifactId, envelope.id);
-                      }}
-                      onOpenReview={() => {
-                        onSelect(envelope.id);
-                        onOpenReview?.();
-                      }}
-                      onRollback={(artifactId) => {
-                        onSelect(envelope.id);
-                        onRollbackPatchArtifact?.(artifactId, envelope.id);
-                      }}
-                    />
-                  ))}
-                </div>
-              </RunWorkSection>
-            ) : null}
-
-            {memoryArtifacts.length > 0 ? (
-              <MemoryCitations
-                artifacts={memoryArtifacts}
-                artifactBusyId={artifactBusyId}
-                onApproveMnemonicArtifact={onApproveMnemonicArtifact}
-              />
-            ) : null}
-
-            {envelope.error && !runtimeNotice && !optionalGitBaselineError ? (
-              <div className="ai-chat-run-card__error" title={envelope.error}>
-                {friendlyRunError(envelope.error)}
-              </div>
-            ) : null}
-          </div>
-          {response || hasRunDetails ? (
-            <div className="ai-chat-message-actions ai-chat-message-actions--assistant">
-              {response ? (
+              </ContextActionMenu>
+              <div className="ai-chat-message-actions ai-chat-message-actions--user">
                 <button
                   className="ai-chat-message-action"
                   type="button"
-                  title="Copy assistant message"
-                  onClick={(event) => handleCopy(event, "response", response)}
+                  title="Copy user message"
+                  onClick={(event) => handleCopy(event, "prompt", prompt)}
                 >
-                  {copiedMessage === "response" ? (
+                  {copiedMessage === "prompt" ? (
                     <CheckCircle2 size={14} />
                   ) : (
                     <Copy size={14} />
                   )}
                 </button>
-              ) : null}
-              {hasRunDetails ? (
-                <button
-                  aria-expanded={detailsOpen}
-                  aria-label={runDetailsTitle}
-                  className={runDetailsActionClass}
-                  title={runDetailsTitle}
-                  type="button"
-                  onClick={handleToggleDetails}
+              </div>
+            </div>
+          </div>
+        ) : null}
+        <div className="ai-chat-message-group ai-chat-message-group--assistant">
+          <span className="ai-chat-message-avatar ai-chat-message-avatar--assistant">
+            <Sparkles size={15} />
+          </span>
+          <div className="ai-chat-message-content">
+            <div className="ai-chat-message-meta ai-chat-message-meta--assistant">
+              <strong>{assistantTitle}</strong>
+              {assistantTime ? (
+                <time
+                  dateTime={
+                    run?.updatedAt || envelope.updatedAt || envelope.createdAt
+                  }
                 >
-                  <Info size={14} />
-                </button>
+                  {assistantTime}
+                </time>
               ) : null}
             </div>
-          ) : null}
+            <ContextActionMenu
+              ignoredTargetSelector=".ai-chat-code-block, .ai-chat-markdown__inline-code, button, input, textarea, a"
+              items={assistantMessageContextItems}
+              nativeScope="ai-chat-message"
+              nativeSurfaceId={envelope.id}
+              nativeTargetId={`${envelope.id}:response`}
+            >
+              <div className="ai-chat-message-bubble ai-chat-message-bubble--assistant">
+                {response ? (
+                  <AIChatMarkdownMessage
+                    className="ai-chat-run-card__response"
+                    content={displayedResponse}
+                    searchQuery={searchQuery}
+                    streaming={running}
+                    typewriterActive={typewriterActive}
+                  />
+                ) : running ? (
+                  <div className="ai-chat-run-card__response ai-chat-run-card__response--muted">
+                    {activityLabel}&hellip;
+                  </div>
+                ) : responsePlaceholder ? (
+                  <div className="ai-chat-run-card__response ai-chat-run-card__response--muted">
+                    {responsePlaceholder}
+                  </div>
+                ) : null}
+
+                {questionArtifacts.length > 0 ? (
+                  <div className="ai-chat-question-stack">
+                    {questionArtifacts.map((artifact) => (
+                      <InteractionQuestionCard
+                        artifact={artifact}
+                        busy={questionBusy}
+                        key={artifact.id}
+                        runId={envelope.id}
+                        onSubmit={onSubmitQuestionAnswer}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+
+                {planGateArtifact ? (
+                  <PlanGateCard
+                    artifact={planGateArtifact}
+                    busyId={artifactBusyId}
+                    planRunId={envelope.id}
+                    onAcceptPlan={onAcceptPlan}
+                    onRequestPlanRevision={onRequestPlanRevision}
+                  />
+                ) : null}
+
+                <AnimatePresence initial={false}>
+                  {detailsOpen && hasRunDetails ? (
+                    <m.div
+                      className="ai-chat-run-details"
+                      layout
+                      initial={
+                        reduceMotion
+                          ? { opacity: 0 }
+                          : { opacity: 0, height: 0 }
+                      }
+                      animate={
+                        reduceMotion
+                          ? { opacity: 1 }
+                          : { opacity: 1, height: "auto" }
+                      }
+                      exit={
+                        reduceMotion
+                          ? { opacity: 0 }
+                          : { opacity: 0, height: 0 }
+                      }
+                      transition={{
+                        duration: reduceMotion ? 0.1 : 0.18,
+                        ease: [0.22, 1, 0.36, 1],
+                      }}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      {runtimeNotice?.details ? (
+                        <div className="ai-chat-run-details__notice">
+                          <strong>
+                            {runtimeNotice.message || runtimeNotice.title}
+                          </strong>
+                          <span>{runtimeNotice.details}</span>
+                        </div>
+                      ) : null}
+                      <ToolLifecycleArtifacts
+                        artifacts={toolLifecycleArtifacts}
+                      />
+                      <RuntimeTruthCard
+                        envelope={envelope}
+                        artifacts={artifacts}
+                      />
+                      <RunTimeline events={timelineEvents} />
+                    </m.div>
+                  ) : null}
+                </AnimatePresence>
+
+                {proposals.length > 0 ? (
+                  <RunWorkSection
+                    icon={<Wrench size={14} />}
+                    meta={`${proposals.length} proposal${proposals.length === 1 ? "" : "s"}`}
+                    title="Approval"
+                    tone="warning"
+                  >
+                    <div className="ai-chat-run-card__tools">
+                      {proposals.map((proposal) => (
+                        <ToolProposalCard
+                          key={`${proposal.kind}-${proposal.id || proposal.name}`}
+                          approveOnceBusy={
+                            artifactBusyId ===
+                            `approve:once:${proposal.id || proposal.name || proposal.kind}`
+                          }
+                          approveRunBusy={
+                            artifactBusyId ===
+                            `approve:run:${proposal.id || proposal.name || proposal.kind}`
+                          }
+                          busy={
+                            artifactBusyId === (proposal.id || proposal.name)
+                          }
+                          canApprove={canApproveToolProposal(proposal)}
+                          canDeny={canDenyToolProposal(proposal)}
+                          canPreview={canPreviewToolProposal(proposal)}
+                          denyBusy={
+                            artifactBusyId ===
+                            `deny:${proposal.id || proposal.name || proposal.kind}`
+                          }
+                          reviewDisabledReason={toolReviewDisabledReason}
+                          onDeny={(nextProposal) =>
+                            onDenyToolProposal?.(
+                              nextProposal,
+                              envelope.id,
+                              envelope.revision,
+                            )
+                          }
+                          onApprove={(nextProposal, scope) =>
+                            onApproveToolProposal?.(
+                              nextProposal,
+                              envelope.id,
+                              scope,
+                              envelope.revision,
+                            )
+                          }
+                          onPreview={(nextProposal) =>
+                            onPreviewToolProposal?.(
+                              nextProposal,
+                              envelope.id,
+                              envelope.revision,
+                            )
+                          }
+                          proposal={proposal}
+                        />
+                      ))}
+                    </div>
+                  </RunWorkSection>
+                ) : null}
+
+                {patchArtifacts.length > 0 ? (
+                  <RunWorkSection
+                    icon={<FileText size={14} />}
+                    meta={`${patchArtifacts.length} artifact${patchArtifacts.length === 1 ? "" : "s"}`}
+                    title="Patch"
+                    tone="warning"
+                  >
+                    <div className="ai-chat-run-card__artifacts">
+                      {patchArtifacts.map((artifact) => (
+                        <PatchArtifactCard
+                          artifact={artifact}
+                          busy={artifactBusyId === artifact.id}
+                          key={artifact.id}
+                          onApply={(artifactId) => {
+                            onSelect(envelope.id);
+                            onApplyPatchArtifact?.(artifactId, envelope.id);
+                          }}
+                          onOpenReview={() => {
+                            onSelect(envelope.id);
+                            onOpenReview?.();
+                          }}
+                          onRollback={(artifactId) => {
+                            onSelect(envelope.id);
+                            onRollbackPatchArtifact?.(artifactId, envelope.id);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </RunWorkSection>
+                ) : null}
+
+                {memoryArtifacts.length > 0 ? (
+                  <MemoryCitations
+                    artifacts={memoryArtifacts}
+                    artifactBusyId={artifactBusyId}
+                    onApproveMnemonicArtifact={onApproveMnemonicArtifact}
+                  />
+                ) : null}
+
+                {envelope.error &&
+                !runtimeNotice &&
+                !optionalGitBaselineError ? (
+                  <div
+                    className="ai-chat-run-card__error"
+                    title={envelope.error}
+                  >
+                    {friendlyRunError(envelope.error)}
+                  </div>
+                ) : null}
+              </div>
+            </ContextActionMenu>
+            {response || hasRunDetails ? (
+              <div className="ai-chat-message-actions ai-chat-message-actions--assistant">
+                {response ? (
+                  <button
+                    className="ai-chat-message-action"
+                    type="button"
+                    title="Copy assistant message"
+                    onClick={(event) => handleCopy(event, "response", response)}
+                  >
+                    {copiedMessage === "response" ? (
+                      <CheckCircle2 size={14} />
+                    ) : (
+                      <Copy size={14} />
+                    )}
+                  </button>
+                ) : null}
+                {hasRunDetails ? (
+                  <button
+                    aria-expanded={detailsOpen}
+                    aria-label={runDetailsTitle}
+                    className={runDetailsActionClass}
+                    title={runDetailsTitle}
+                    type="button"
+                    onClick={handleToggleDetails}
+                  >
+                    <Info size={14} />
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
-      </div>
-    </m.article>
+      </m.article>
+    </ContextActionMenu>
   );
 }

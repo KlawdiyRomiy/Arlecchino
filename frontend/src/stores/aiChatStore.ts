@@ -58,6 +58,8 @@ interface AIChatRuntimeState {
   appendRunTimelineEvent: (event: AIRunTimelineEvent) => void;
   deleteSessionRuns: (sessionId: string) => void;
   setHydratedRun: (run: AIChatRun) => void;
+  upsertHydratedRun: (run: AIChatRun) => void;
+  upsertHydratedRuns: (runs: AIChatRun[]) => void;
   appendRunToken: (runId: string, token: string) => void;
   setActiveRunId: (runId: string | null) => void;
   setContextPreview: (preview: AIContextSnapshot | null) => void;
@@ -162,7 +164,12 @@ const mergeRunEnvelope = (
         ...existing,
         ...run,
         providerEnvelope: run.providerEnvelope ?? existing.providerEnvelope,
-        egressSummary: run.egressSummary ?? existing.egressSummary,
+        egressSummary: Object.prototype.hasOwnProperty.call(
+          run,
+          "egressSummary",
+        )
+          ? run.egressSummary
+          : existing.egressSummary,
         disclosureSummary:
           run.disclosureSummary?.providerId || run.disclosureSummary?.model
             ? run.disclosureSummary
@@ -204,6 +211,26 @@ const mergeEgressRecord = (
   const next = records.filter((candidate) => candidate.id !== record.id);
   next.unshift(record);
   return next.slice(0, 50);
+};
+
+const mergeHydratedRunState = (
+  state: Pick<AIChatRuntimeState, "hydratedRuns" | "streamingTextByRunId">,
+  runs: AIChatRun[],
+) => {
+  const hydratedRuns = { ...state.hydratedRuns };
+  const streamingTextByRunId = { ...state.streamingTextByRunId };
+  for (const run of runs) {
+    if (!run?.id) continue;
+    const existingStream = streamingTextByRunId[run.id] ?? "";
+    const response = run.response ?? "";
+    const streamingText =
+      isTerminalRunStatus(run.status) || response.length > existingStream.length
+        ? response
+        : existingStream;
+    hydratedRuns[run.id] = run;
+    streamingTextByRunId[run.id] = streamingText;
+  }
+  return { hydratedRuns, streamingTextByRunId };
 };
 
 const initialRuntimeState = {
@@ -312,22 +339,16 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
     }),
   setHydratedRun: (run) =>
     set((state) => {
-      const existingStream = state.streamingTextByRunId[run.id] ?? "";
-      const response = run.response ?? "";
-      const streamingText =
-        isTerminalRunStatus(run.status) ||
-        response.length > existingStream.length
-          ? response
-          : existingStream;
+      const merged = mergeHydratedRunState(state, [run]);
       return {
-        hydratedRuns: { ...state.hydratedRuns, [run.id]: run },
-        streamingTextByRunId: {
-          ...state.streamingTextByRunId,
-          [run.id]: streamingText,
-        },
+        ...merged,
         activeRunId: state.activeRunId ?? run.id,
       };
     }),
+  upsertHydratedRun: (run) =>
+    set((state) => mergeHydratedRunState(state, [run])),
+  upsertHydratedRuns: (runs) =>
+    set((state) => mergeHydratedRunState(state, runs)),
   appendRunToken: (runId, token) =>
     set((state) => {
       const envelope = state.runs.find((run) => run.id === runId);

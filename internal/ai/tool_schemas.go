@@ -9,19 +9,20 @@ import (
 )
 
 const (
-	providerToolDiagnosticsRead   = "diagnostics_read"
-	providerToolFileReadRange     = "file_read_range"
-	providerToolWorkspaceGrep     = "workspace_grep"
-	providerToolGitPreview        = "git_preview"
-	providerToolMemorySearch      = "memory_search"
-	providerToolMemoryContext     = "memory_context"
-	providerToolMemoryProposeSave = "memory_propose_save"
-	providerToolTerminalPreview   = "terminal_preview"
-	providerToolFileEditPreview   = "file_edit_preview"
-	providerToolFileCreatePreview = "file_create_preview"
-	providerToolFilePatchPreview  = "file_patch_preview"
-	providerToolMCPExecute        = "mcp_execute"
-	providerToolSubagentPreview   = "subagent_preview"
+	providerToolDiagnosticsRead     = "diagnostics_read"
+	providerToolFileReadRange       = "file_read_range"
+	providerToolWorkspaceGrep       = "workspace_grep"
+	providerToolGitPreview          = "git_preview"
+	providerToolMemorySearch        = "memory_search"
+	providerToolMemoryContext       = "memory_context"
+	providerToolMemoryProposeSave   = "memory_propose_save"
+	providerToolTerminalPreview     = "terminal_preview"
+	providerToolFileEditPreview     = "file_edit_preview"
+	providerToolFileCreatePreview   = "file_create_preview"
+	providerToolFilePatchPreview    = "file_patch_preview"
+	providerToolMCPExecute          = "mcp_execute"
+	providerToolSubagentPreview     = "subagent_preview"
+	providerToolInteractionQuestion = "interaction_question"
 )
 
 type chatToolCallRequest struct {
@@ -139,6 +140,50 @@ func generationToolsForChatRequest(req AIChatRunRequest) []providers.GenerationT
 		return nil
 	}
 	tools := []providers.GenerationTool{
+		{
+			Name:        providerToolInteractionQuestion,
+			Description: "Ask the user one structured clarifying question only when the answer materially changes the outcome. Do not ask by default or as a routine confirmation step. Provide one to four mutually exclusive options; each option must include a concise hover description. Arlecchino renders a separate custom-answer path.",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"prompt", "options"},
+				"properties": map[string]any{
+					"prompt": map[string]any{
+						"type":        "string",
+						"description": "The concrete clarifying question to show to the user.",
+					},
+					"options": map[string]any{
+						"type":        "array",
+						"minItems":    1,
+						"maxItems":    maxInteractionQuestionOptions,
+						"description": "One to four ready answers. The UI adds a separate custom-answer option.",
+						"items": map[string]any{
+							"type":                 "object",
+							"additionalProperties": false,
+							"required":             []string{"label", "description"},
+							"properties": map[string]any{
+								"id": map[string]any{
+									"type":        "string",
+									"description": "Stable short option id.",
+								},
+								"label": map[string]any{
+									"type":        "string",
+									"description": "Short button label.",
+								},
+								"value": map[string]any{
+									"type":        "string",
+									"description": "Answer value sent back if this option is selected.",
+								},
+								"description": map[string]any{
+									"type":        "string",
+									"description": "Hover explanation of this option's impact or tradeoff.",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 		{
 			Name:        providerToolDiagnosticsRead,
 			Description: "Read current LSP diagnostics for a project file. Use before fixing compile or lint errors when diagnostics are available.",
@@ -555,6 +600,8 @@ func toolIDForProviderToolName(name string) string {
 		return "mcp.execute"
 	case providerToolSubagentPreview:
 		return "subagent.preview"
+	case providerToolInteractionQuestion:
+		return "interaction.question"
 	default:
 		return ""
 	}
@@ -588,6 +635,8 @@ func providerToolNameForToolID(toolID string) string {
 		return providerToolMCPExecute
 	case "subagent.preview":
 		return providerToolSubagentPreview
+	case "interaction.question":
+		return providerToolInteractionQuestion
 	default:
 		return strings.ReplaceAll(strings.TrimSpace(toolID), ".", "_")
 	}
@@ -661,6 +710,8 @@ func normalizeProviderToolArguments(toolID string, arguments map[string]string) 
 	case "subagent.preview":
 		applyToolArgumentAlias(normalized, "prompt", "task", "query", "instruction")
 		applyToolArgumentAlias(normalized, "profileId", "profile_id", "profile")
+	case "interaction.question":
+		applyToolArgumentAlias(normalized, "prompt", "question", "message")
 	}
 	return normalized
 }

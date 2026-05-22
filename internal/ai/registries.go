@@ -315,6 +315,15 @@ func (s *Service) ListTools() []AIToolDescriptor {
 			RequiresArtifactReview: false,
 		},
 		{
+			ID:                     "interaction.question",
+			Name:                   "Ask structured question",
+			Description:            "Create a persistent clarifying-question artifact with up to four ready answers and hover descriptions.",
+			Kind:                   AIToolKindContextRead,
+			ExecutionAvailable:     true,
+			DefaultApprovalMode:    AIApprovalModeReadOnlyAllowed,
+			RequiresArtifactReview: false,
+		},
+		{
 			ID:                     "file.read_range",
 			Name:                   "Read file range",
 			Description:            "Read a bounded, line-numbered range from a project text file before proposing targeted edits.",

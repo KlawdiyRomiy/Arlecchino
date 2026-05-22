@@ -2,12 +2,17 @@ import React from "react";
 import { CheckCircle2, Copy } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  ContextActionMenu,
+  type ContextActionMenuItem,
+} from "../ui/ContextActionMenu";
 
 interface AIChatMarkdownMessageProps {
   className?: string;
   content: string;
   searchQuery?: string;
   streaming?: boolean;
+  typewriterActive?: boolean;
 }
 
 interface AIChatCodeBlockProps {
@@ -19,6 +24,14 @@ interface AIChatCodeBlockProps {
 type CodeNodeMetadata = {
   data?: {
     meta?: unknown;
+  };
+  position?: {
+    start?: {
+      line?: unknown;
+    };
+    end?: {
+      line?: unknown;
+    };
   };
   properties?: {
     file?: unknown;
@@ -107,9 +120,30 @@ function highlightedChildren(
 
 function closeUnfinishedFence(content: string, streaming: boolean): string {
   if (!streaming) return content;
-  const fenceCount = content.match(/(^|\n)```/g)?.length ?? 0;
-  if (fenceCount % 2 === 0) return content;
-  return `${content}\n\`\`\``;
+  const partialFence = /(^|\n)( {0,3})(`{1,2}|~{1,2})$/.exec(content);
+  if (partialFence) {
+    const marker = partialFence[3];
+    const fenceChar = marker.startsWith("~") ? "~" : "`";
+    const completedFence = fenceChar.repeat(3);
+    return `${content}${fenceChar.repeat(3 - marker.length)}\n${completedFence}`;
+  }
+
+  let openFence: { char: string; length: number } | null = null;
+  for (const line of content.split(/\r?\n/)) {
+    const match = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (!match) continue;
+    const marker = match[1];
+    const fence = { char: marker[0], length: marker.length };
+    if (!openFence) {
+      openFence = fence;
+      continue;
+    }
+    if (openFence.char === fence.char && fence.length >= openFence.length) {
+      openFence = null;
+    }
+  }
+  if (!openFence) return content;
+  return `${content}\n${openFence.char.repeat(openFence.length)}`;
 }
 
 function textFromChildren(children: React.ReactNode): string {
@@ -147,6 +181,17 @@ function codeMetaFromNode(node: unknown): string {
   );
 }
 
+function numericLine(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function codeNodeSpansMultipleSourceLines(node: unknown): boolean {
+  const metadata = node as CodeNodeMetadata | undefined;
+  const startLine = numericLine(metadata?.position?.start?.line);
+  const endLine = numericLine(metadata?.position?.end?.line);
+  return startLine > 0 && endLine > startLine;
+}
+
 function unquote(value: string): string {
   const trimmed = value.trim();
   if (
@@ -171,6 +216,11 @@ function fileNameFromMeta(meta: string): string {
   return barePath?.[1] ? unquote(barePath[1]) : "";
 }
 
+async function copyText(value: string): Promise<void> {
+  if (!navigator.clipboard?.writeText) return;
+  await navigator.clipboard.writeText(value);
+}
+
 function inlineCodeKind(value: string): "reference" | "code" {
   const trimmed = value.trim();
   if (
@@ -190,49 +240,92 @@ function AIChatCodeBlock({ code, language, meta }: AIChatCodeBlockProps) {
   const title = fileName || language || "Code";
   const languageLabel = language && language !== title ? language : "";
 
-  const handleCopy = async (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const copyCode = React.useCallback(async () => {
     if (!navigator.clipboard?.writeText) return;
     await navigator.clipboard.writeText(code);
     setCopied(true);
     window.setTimeout(() => {
       setCopied(false);
     }, 1200);
+  }, [code]);
+
+  const handleCopy = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    await copyCode();
   };
 
+  const contextItems = React.useMemo<ContextActionMenuItem[]>(
+    () => [
+      {
+        key: "copy-code",
+        label: "Copy Code",
+        icon: <Copy size={13} />,
+        onSelect: () => {
+          void copyCode();
+        },
+      },
+      {
+        key: "copy-file-path",
+        label: "Copy File Path",
+        icon: <Copy size={13} />,
+        hidden: !fileName,
+        onSelect: () => {
+          if (fileName) void copyText(fileName);
+        },
+      },
+      {
+        key: "copy-language",
+        label: "Copy Language",
+        icon: <Copy size={13} />,
+        hidden: !language,
+        onSelect: () => {
+          if (language) void copyText(language);
+        },
+      },
+    ],
+    [copyCode, fileName, language],
+  );
+
   return (
-    <figure className="ai-chat-code-block" data-testid="ai-chat-code-block">
-      <figcaption className="ai-chat-code-block__header">
-        <span
-          className="ai-chat-code-block__title"
-          data-testid="ai-chat-code-block-title"
-          title={title}
-        >
-          {title}
-        </span>
-        <span className="ai-chat-code-block__meta">
-          {languageLabel ? (
-            <span className="ai-chat-code-block__language">
-              {languageLabel}
-            </span>
-          ) : null}
-          <button
-            className="ai-chat-code-block__copy"
-            type="button"
-            title={copied ? "Copied code" : "Copy code"}
-            aria-label={copied ? "Copied code" : "Copy code"}
-            data-testid="ai-chat-code-copy"
-            onClick={handleCopy}
+    <ContextActionMenu
+      ignoredTargetSelector="button"
+      items={contextItems}
+      nativeScope="ai-chat-code-block"
+      nativeTargetId={fileName || language || "code"}
+    >
+      <figure className="ai-chat-code-block" data-testid="ai-chat-code-block">
+        <figcaption className="ai-chat-code-block__header">
+          <span
+            className="ai-chat-code-block__title"
+            data-testid="ai-chat-code-block-title"
+            title={title}
           >
-            {copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
-          </button>
-        </span>
-      </figcaption>
-      <pre className="ai-chat-code-block__pre">
-        <code className="ai-chat-code-block__code">{code}</code>
-      </pre>
-    </figure>
+            {title}
+          </span>
+          <span className="ai-chat-code-block__meta">
+            {languageLabel ? (
+              <span className="ai-chat-code-block__language">
+                {languageLabel}
+              </span>
+            ) : null}
+            <button
+              className="ai-chat-code-block__copy"
+              type="button"
+              title={copied ? "Copied code" : "Copy code"}
+              aria-label={copied ? "Copied code" : "Copy code"}
+              data-testid="ai-chat-code-copy"
+              onClick={handleCopy}
+            >
+              {copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+            </button>
+          </span>
+        </figcaption>
+        <pre className="ai-chat-code-block__pre">
+          <code className="ai-chat-code-block__code">{code}</code>
+        </pre>
+      </figure>
+    </ContextActionMenu>
   );
 }
 
@@ -241,6 +334,7 @@ export function AIChatMarkdownMessage({
   content,
   searchQuery = "",
   streaming = false,
+  typewriterActive = false,
 }: AIChatMarkdownMessageProps) {
   const terms = React.useMemo(() => searchTerms(searchQuery), [searchQuery]);
   const preparedContent = React.useMemo(
@@ -277,20 +371,45 @@ export function AIChatMarkdownMessage({
         const language = languageFromClassName(className);
         const meta = codeMetaFromNode(node);
         const text = textFromChildren(children).replace(/\n$/, "");
-        const block = Boolean(language || meta || text.includes("\n"));
+        const block = Boolean(
+          language ||
+          meta ||
+          text.includes("\n") ||
+          codeNodeSpansMultipleSourceLines(node),
+        );
         if (block) {
           return (
             <AIChatCodeBlock code={text} language={language} meta={meta} />
           );
         }
+        const inlineKind = inlineCodeKind(text);
+        const inlineContextItems: ContextActionMenuItem[] = [
+          {
+            key: "copy-inline-code",
+            label:
+              inlineKind === "reference"
+                ? "Copy Reference"
+                : "Copy Inline Code",
+            icon: <Copy size={13} />,
+            onSelect: () => {
+              void copyText(text);
+            },
+          },
+        ];
         return (
-          <code
-            className="ai-chat-markdown__inline-code"
-            data-kind={inlineCodeKind(text)}
-            {...props}
+          <ContextActionMenu
+            items={inlineContextItems}
+            nativeScope="ai-chat-inline-code"
+            nativeTargetId={text.slice(0, 80)}
           >
-            {children}
-          </code>
+            <code
+              className="ai-chat-markdown__inline-code"
+              data-kind={inlineKind}
+              {...props}
+            >
+              {children}
+            </code>
+          </ContextActionMenu>
         );
       },
       em: ({ children, ...props }) => (
@@ -344,6 +463,7 @@ export function AIChatMarkdownMessage({
       className={rootClassName}
       data-streaming={streaming ? "true" : "false"}
       data-testid="ai-chat-markdown"
+      data-typewriter-active={typewriterActive ? "true" : "false"}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {preparedContent}

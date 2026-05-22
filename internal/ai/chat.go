@@ -70,7 +70,11 @@ var defaultChatStopSequences = []string{
 	"\nSystem:",
 }
 
-func (s *Service) StartChatRun(_ context.Context, projectID string, req AIChatRunRequest) (AIChatRun, error) {
+func (s *Service) StartChatRun(ctx context.Context, projectID string, req AIChatRunRequest) (AIChatRun, error) {
+	return s.startChatRun(ctx, projectID, req, "")
+}
+
+func (s *Service) startChatRun(_ context.Context, projectID string, req AIChatRunRequest, displayPrompt string) (AIChatRun, error) {
 	project := s.project(projectID)
 	if project == nil {
 		return AIChatRun{}, fmt.Errorf("AI project session is not open")
@@ -84,6 +88,9 @@ func (s *Service) StartChatRun(_ context.Context, projectID string, req AIChatRu
 	}
 	if !validChatAction(req.Action) {
 		return AIChatRun{}, fmt.Errorf("unsupported chat action %q", req.Action)
+	}
+	if strings.TrimSpace(displayPrompt) == "" {
+		displayPrompt = req.Prompt
 	}
 	sessionID := strings.TrimSpace(req.SessionID)
 	if sessionID == "" {
@@ -104,7 +111,8 @@ func (s *Service) StartChatRun(_ context.Context, projectID string, req AIChatRu
 		ProviderID:        req.ProviderID,
 		Model:             req.Model,
 		ReasoningEffort:   req.ReasoningEffort,
-		UserPrompt:        sanitizedDisplayText(req.Prompt),
+		UserPrompt:        sanitizedDisplayText(displayPrompt),
+		Links:             req.Links,
 		MnemonicRequested: req.IncludeMnemonic,
 		CanCancel:         true,
 		Revision:          1,
@@ -403,10 +411,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 			displayToken := sanitizedDisplayChunk(token)
 			releaseToken, observeErr := streamGuard.Observe(token, displayToken)
 			if releaseToken != "" {
-				s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": releaseToken})
-				s.updateRun(runID, func(run *AIChatRun) {
-					run.Response += releaseToken
-				})
+				s.emitStreamingChatToken(runID, releaseToken)
 			}
 			return observeErr
 		}
@@ -422,10 +427,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	response, err := provider.Generate(ctx, generationReq, tokenSink)
 	if streamGuard != nil {
 		if releaseToken := streamGuard.Flush(); releaseToken != "" {
-			s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": releaseToken})
-			s.updateRun(runID, func(run *AIChatRun) {
-				run.Response += releaseToken
-			})
+			s.emitStreamingChatToken(runID, releaseToken)
 		}
 	}
 	record.LatencyMs = time.Since(started).Milliseconds()
@@ -608,6 +610,16 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 				run.EgressRecordID = record.ID
 			})
 			s.emitRunEnvelope(project.ID, runID)
+		} else if waitingMessage, ok := chatToolResultsContainInteractionQuestion(executedToolCalls); ok {
+			finalResponse = waitingMessage
+			s.updateRun(runID, func(run *AIChatRun) {
+				run.Response = finalResponse
+				run.ProviderID = descriptor.ID
+				run.Model = firstNonEmpty(response.Model, generationReq.Model)
+				run.ToolProposals = nil
+				run.EgressRecordID = record.ID
+			})
+			s.emitRunEnvelope(project.ID, runID)
 		} else if len(executedToolCalls) > 0 {
 			if fallbackEditUsed {
 				s.finishRunError(runID, fallbackEditToolFailureMessage(executedToolCalls))
@@ -716,6 +728,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 			}
 		}
 	})
+	s.recordPlanGateIfNeeded(project, runID, req.Action)
 	s.emitRunEnvelope(project.ID, runID)
 	if run, err := s.GetChatRun(projectID, runID); err == nil {
 		s.persistChatRun(run)
@@ -752,8 +765,37 @@ func chatActionAllowsContinuationTools(action AIChatAction) bool {
 
 func (s *Service) emitBufferedChatResponseToken(runID string, response string) {
 	if token := sanitizedDisplayChunk(response); strings.TrimSpace(token) != "" {
-		s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": token})
+		s.emitChatToken(runID, token, nil)
 	}
+}
+
+func (s *Service) emitStreamingChatToken(runID string, token string) {
+	s.emitChatToken(runID, token, func(run *AIChatRun, token string) {
+		run.Response += token
+	})
+}
+
+func (s *Service) emitReplacementChatToken(runID string, token string) {
+	s.emitChatToken(runID, token, func(run *AIChatRun, token string) {
+		run.Response = token
+	})
+}
+
+func (s *Service) emitChatToken(runID string, token string, apply func(*AIChatRun, string)) {
+	token = sanitizedDisplayChunk(token)
+	if token == "" {
+		return
+	}
+	firstTokenAt := utcNow()
+	s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": token})
+	s.updateRun(runID, func(run *AIChatRun) {
+		if strings.TrimSpace(run.FirstTokenAt) == "" {
+			run.FirstTokenAt = firstTokenAt
+		}
+		if apply != nil {
+			apply(run, token)
+		}
+	})
 }
 
 func (s *Service) ensureBuildToolCapability(ctx context.Context, project *ProjectSession, descriptor AIProviderDescriptor, model string, toolset chatToolset) error {
@@ -1180,6 +1222,11 @@ func (s *Service) continueChatRunAfterToolResults(ctx context.Context, project *
 				last.Text = readyMessage
 				last.Completed = true
 				last.ArtifactReady = true
+				return last
+			}
+			if waitingMessage, ok := chatToolResultsContainInteractionQuestion(executed); ok {
+				last.Text = waitingMessage
+				last.Completed = true
 				return last
 			}
 			messages = buildChatToolContinuationMessages(messages, text, executed)
@@ -1830,10 +1877,7 @@ func (s *Service) retryEmptyChatResponse(ctx context.Context, runID string, prov
 	if len(generationReq.Tools) > 0 {
 		return retryResp
 	}
-	s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": cleaned})
-	s.updateRun(runID, func(run *AIChatRun) {
-		run.Response = cleaned
-	})
+	s.emitReplacementChatToken(runID, cleaned)
 	return retryResp
 }
 
@@ -2044,12 +2088,16 @@ func defaultProfileForAction(action AIChatAction) string {
 
 func chatSystemPrompt(req AIChatRunRequest) string {
 	action := chatPromptAction(req)
-	return strings.Join([]string{
+	parts := []string{
 		systemPromptForAction(action),
 		chatRuntimeBoundaryPrompt(req),
 		chatModeBoundaryPrompt(req),
 		chatLanguageBoundaryPrompt(req),
-	}, "\n")
+	}
+	if continuity := chatContinuityBoundaryPrompt(req); continuity != "" {
+		parts = append(parts, continuity)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func chatPromptAction(req AIChatRunRequest) AIChatAction {
@@ -2100,6 +2148,18 @@ func chatModeBoundaryPrompt(req AIChatRunRequest) string {
 		return "Selected chat mode: " + label + ".\nMode boundary: Review is read-only. Inspect the worktree, diffs, diagnostics, and provided context, then produce findings. Do not write files or apply patches."
 	default:
 		return "Selected chat mode: " + label + ".\nMode boundary: no mutation without explicit approval."
+	}
+}
+
+func chatContinuityBoundaryPrompt(req AIChatRunRequest) string {
+	if isMinimalChatRequest(req) {
+		return ""
+	}
+	switch req.Action {
+	case AIChatActionPlan, AIChatActionBuild, AIChatActionDebug, AIChatActionReview:
+		return "Conversation continuity boundary: Recent same-session history is task context for this mode, not decorative chat transcript. If the latest user message is brief, ambiguous, or a follow-up, first resolve it against the recent same-session turns and provided context. Ask for missing context only after that resolution fails, and name the exact missing file, behavior, bug, or decision instead of saying only that the latest message is not specific enough."
+	default:
+		return ""
 	}
 }
 
@@ -2342,13 +2402,13 @@ func systemPromptForAction(action AIChatAction) string {
 	case AIChatActionAsk:
 		return common + " In Ask mode, answer the user's question directly using only the user message, explicit attachments, and provided project context. Ask is context-only: do not request tools, do not propose command execution as completed, and do not claim that any file, terminal, MCP, memory, or subagent action has run."
 	case AIChatActionDebug:
-		return common + " In Debug mode, investigate concrete failures and produce evidence-backed findings, likely root causes, and verification steps. Use diagnostics.read, workspace.grep, file.read_range, git.preview, and terminal.preview when available to gather or propose diagnostic evidence. Do not write files, create patch artifacts, or describe mutations as already executed."
+		return common + " In Debug mode, investigate concrete failures and produce evidence-backed findings, likely root causes, and verification steps. Use interaction.question only when one user decision materially changes the diagnostic path; do not ask by default or for routine confirmation. Provide one to four options with hover descriptions. Use diagnostics.read, workspace.grep, file.read_range, git.preview, and terminal.preview when available to gather or propose diagnostic evidence. Do not write files, create patch artifacts, or describe mutations as already executed."
 	case AIChatActionBuild:
-		return common + " In Build mode, answer normal questions normally. For concrete file edits, use the available tools instead of pasting rewritten files: diagnostics.read, workspace.grep, git.preview, and file.read_range to find anchors, file.edit.preview for narrow edits, file.create.preview for new files, terminal.preview for verification commands, and file.patch.preview only for genuinely multi-file or multi-hunk diffs. For a small local edit when the exact target file and anchor are already visible in provided current-file or mentioned-file context, call file.edit.preview directly instead of calling file.read_range, workspace.grep, diagnostics.read, or terminal.preview only to rediscover the same anchor. Use mcp.execute only when MCP context was explicitly included, and treat subagent.preview as an isolated preview artifact rather than executed background work. Arlecchino will turn edit/create/patch tool calls into reviewable patch artifacts and reject whole-file oldText/newText rewrites. Do not rewrite a whole file for a small local edit. Do not claim any file, terminal, MCP, or subagent action has run."
+		return common + " In Build mode, answer normal questions normally. Use interaction.question only when one user decision materially changes what should be built; do not ask by default or for routine confirmation. Provide one to four options with hover descriptions. For concrete file edits, use the available tools instead of pasting rewritten files: diagnostics.read, workspace.grep, git.preview, and file.read_range to find anchors, file.edit.preview for narrow edits, file.create.preview for new files, terminal.preview for verification commands, and file.patch.preview only for genuinely multi-file or multi-hunk diffs. For a small local edit when the exact target file and anchor are already visible in provided current-file or mentioned-file context, call file.edit.preview directly instead of calling file.read_range, workspace.grep, diagnostics.read, or terminal.preview only to rediscover the same anchor. Use mcp.execute only when MCP context was explicitly included, and treat subagent.preview as an isolated preview artifact rather than executed background work. Arlecchino will turn edit/create/patch tool calls into reviewable patch artifacts and reject whole-file oldText/newText rewrites. Do not rewrite a whole file for a small local edit. Do not claim any file, terminal, MCP, or subagent action has run."
 	case AIChatActionReview:
 		return common + " In Review mode, prioritize concrete bugs, regressions, missing tests, unsafe edits, and unclear risk. Findings should lead, with file/path references when available. Do not write files or claim fixes were applied."
 	default:
-		return common + " In Plan mode, create a concrete implementation or investigation plan grounded in the provided context. Use diagnostics.read, workspace.grep, file.read_range, and git.preview when available to inspect read-only evidence, but stop before patching, terminal execution, MCP calls, file writes, dependency changes, or Mnemonic mutation."
+		return common + " In Plan mode, create a concrete implementation or investigation plan grounded in the provided context. Use interaction.question only when one user decision materially changes the plan; do not ask by default or for routine confirmation. Provide one to four mutually exclusive options and concise hover descriptions for each option. Use diagnostics.read, workspace.grep, file.read_range, and git.preview when available to inspect read-only evidence, but stop before patching, terminal execution, MCP calls, file writes, dependency changes, or Mnemonic mutation."
 	}
 }
 
@@ -2691,7 +2751,10 @@ func formatChatHistoryForPrompt(history []AIChatRun) string {
 		}
 		turns = append(turns, chatTaggedSection(chatTurnTag, `mode="`+chatTagAttr(chatActionLabel(run.Action))+`"`, strings.Join(lines, "\n")))
 	}
-	return strings.Join(turns, "\n\n")
+	if len(turns) == 0 {
+		return ""
+	}
+	return strings.Join(append([]string{"Recent same-session history. Use it to resolve short follow-up requests before asking for missing context."}, turns...), "\n\n")
 }
 
 func formatChatHistoryContextItems(summary *AIContextSummary) string {
@@ -3068,7 +3131,7 @@ func parseChatToolCallBlock(value string) (AIToolCallRequest, bool) {
 
 func allowedChatToolBlockID(toolID string) bool {
 	switch strings.TrimSpace(toolID) {
-	case "file.read_range", "file.edit.preview", "file.patch.preview":
+	case "file.read_range", "file.edit.preview", "file.patch.preview", "interaction.question":
 		return true
 	default:
 		return false

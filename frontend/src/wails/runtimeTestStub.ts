@@ -22,6 +22,7 @@ type RuntimeWindow = typeof window & {
 };
 
 const callIDToMethod = new Map<number, string>([
+  [3331270676, "AIAcceptPlan"],
   [720800651, "AIApplyPatchArtifact"],
   [3627176462, "AIApproveMnemonicEntryProposal"],
   [2942042952, "AICancelChatRun"],
@@ -59,6 +60,7 @@ const callIDToMethod = new Map<number, string>([
   [3244589006, "AIProbeModelCapability"],
   [3923597381, "AIPreviewPatch"],
   [2658808305, "AIRefreshLocalProviders"],
+  [36506442, "AIRequestPlanRevision"],
   [3358042629, "AIRollbackPatchCheckpoint"],
   [3005051643, "AISaveApprovalPolicy"],
   [2566415454, "AISaveConsentPolicy"],
@@ -68,8 +70,10 @@ const callIDToMethod = new Map<number, string>([
   [3224526211, "AISearchMnemonic"],
   [32224322, "AISetMnemonicEnabled"],
   [1756960180, "AIStartChatRun"],
+  [312642972, "AIStartLinkedReview"],
   [733577160, "AIStartProviderRuntime"],
   [622949094, "AIStopProviderRuntime"],
+  [3065643437, "AISubmitQuestionAnswer"],
   [1979552010, "AISuggestChatMentions"],
   [1815374578, "AITestProvider"],
   [3053338550, "AIUpdateMnemonicEntry"],
@@ -328,11 +332,15 @@ const defaultRuntimeResult = (
       throw new Error(
         "AI tool execution is unavailable in the web-only shell.",
       );
+    case "AIAcceptPlan":
     case "AIApplyPatchArtifact":
     case "AIApproveMnemonicEntryProposal":
     case "AIPreviewPatch":
+    case "AIRequestPlanRevision":
     case "AIRollbackPatchCheckpoint":
     case "AISaveMnemonicEntry":
+    case "AIStartLinkedReview":
+    case "AISubmitQuestionAnswer":
     case "AIUpdateMnemonicEntry":
       throw new Error("AI mutation is unavailable in the web-only shell.");
     default:

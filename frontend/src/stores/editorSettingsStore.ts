@@ -27,9 +27,14 @@ export interface AIChatDisplayPreferences {
   showActivity: boolean;
 }
 
+export interface AIChatWorkflowPreferences {
+  autoReviewAfterBuild: boolean;
+}
+
 export interface AIChatUIPreferences {
   displayPrefs: AIChatDisplayPreferences;
   defaultContext: AIChatDefaultContextPrefs;
+  workflowPrefs: AIChatWorkflowPreferences;
 }
 
 export const TOPBAR_ITEM_IDS = [
@@ -145,6 +150,10 @@ interface EditorSettingsState {
     key: keyof AIChatDefaultContextPrefs,
     value: boolean,
   ) => void;
+  setAIChatWorkflowPref: (
+    key: keyof AIChatWorkflowPreferences,
+    value: boolean,
+  ) => void;
   setAIChatPreferences: (preferences: Partial<AIChatUIPreferences>) => void;
   toggleZenMode: () => void;
 }
@@ -187,9 +196,13 @@ export const DEFAULT_AI_CHAT_DEFAULT_CONTEXT: AIChatDefaultContextPrefs = {
   mcp: false,
   skills: false,
 };
+export const DEFAULT_AI_CHAT_WORKFLOW_PREFS: AIChatWorkflowPreferences = {
+  autoReviewAfterBuild: true,
+};
 export const DEFAULT_AI_CHAT_PREFERENCES: AIChatUIPreferences = {
   displayPrefs: DEFAULT_AI_CHAT_DISPLAY_PREFS,
   defaultContext: DEFAULT_AI_CHAT_DEFAULT_CONTEXT,
+  workflowPrefs: DEFAULT_AI_CHAT_WORKFLOW_PREFS,
 };
 
 type PersistedEditorSettingsState = Partial<
@@ -318,6 +331,10 @@ export const normalizeAIChatPreferences = (
     defaultContext: normalizeBooleanRecord(
       source.defaultContext,
       DEFAULT_AI_CHAT_DEFAULT_CONTEXT,
+    ),
+    workflowPrefs: normalizeBooleanRecord(
+      source.workflowPrefs,
+      DEFAULT_AI_CHAT_WORKFLOW_PREFS,
     ),
   };
 };
@@ -608,6 +625,17 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
           },
         })),
 
+      setAIChatWorkflowPref: (key, value) =>
+        set((state) => ({
+          aiChatPreferences: {
+            ...state.aiChatPreferences,
+            workflowPrefs: {
+              ...state.aiChatPreferences.workflowPrefs,
+              [key]: value,
+            },
+          },
+        })),
+
       setAIChatPreferences: (preferences) =>
         set((state) => ({
           aiChatPreferences: normalizeAIChatPreferences({
@@ -620,6 +648,10 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
             defaultContext: {
               ...state.aiChatPreferences.defaultContext,
               ...preferences.defaultContext,
+            },
+            workflowPrefs: {
+              ...state.aiChatPreferences.workflowPrefs,
+              ...preferences.workflowPrefs,
             },
           }),
         })),

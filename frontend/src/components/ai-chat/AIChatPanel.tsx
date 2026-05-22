@@ -11,6 +11,8 @@ import React, {
 import {
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   GitBranch,
   History,
@@ -19,6 +21,7 @@ import {
   Settings,
 } from "lucide-react";
 import {
+  AIAcceptPlan,
   AIApplyPatchArtifact,
   AIApproveMnemonicEntryProposal,
   AICancelChatRun,
@@ -46,14 +49,17 @@ import {
   AIListToolAudit,
   AIProbeModelCapability,
   AIRefreshLocalProviders,
+  AIRequestPlanRevision,
   AIRollbackPatchCheckpoint,
   AISaveConsentPolicy,
   AISaveMnemonicEntry,
   AISearchMnemonic,
+  AIStartLinkedReview,
   AIStartAgentAuthRun,
   AIStartChatRun,
   AIStartProviderRuntime,
   AIStopProviderRuntime,
+  AISubmitQuestionAnswer,
   AISuggestChatMentions,
   AIUpdateMnemonicEntry,
   type AIProviderRuntimeDescriptor,
@@ -72,6 +78,7 @@ import {
   type AIChatRun,
   type AIChatRunRequest,
   type AIChatRunArtifact,
+  type AIQuestionAnswerRequest,
   type AIContextRequest,
   type AIContextSnapshot,
   type AIEgressRecord,
@@ -83,6 +90,10 @@ import {
   type AIToolAuditRecord,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { PanelPosition } from "../ui/FloatingPanel";
+import {
+  ContextActionMenu,
+  type ContextActionMenuItem,
+} from "../ui/ContextActionMenu";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 import {
   AnimatePresence,
@@ -163,6 +174,7 @@ import "./ai-chat.css";
 
 const defaultChatSessionId = "default";
 const minimalGeneralProfileId = "minimal-general";
+const chatHydrationBatchSize = 4;
 
 const noContext: ContextToggles = {
   workspace: false,
@@ -277,6 +289,9 @@ interface AIChatPanelChromeState {
   historyOpen: boolean;
   reviewOpen: boolean;
   reviewExpanded: boolean;
+  controlsCollapsed: boolean;
+  leftControlsCollapsed: boolean;
+  rightControlsCollapsed: boolean;
   historyEdge: DrawerSnapEdge;
   reviewEdge: DrawerSnapEdge;
   historyWidth: number;
@@ -307,6 +322,9 @@ const initialChromeState: AIChatPanelChromeState = {
   historyOpen: false,
   reviewOpen: false,
   reviewExpanded: false,
+  controlsCollapsed: false,
+  leftControlsCollapsed: false,
+  rightControlsCollapsed: false,
   historyEdge: "left",
   reviewEdge: "right",
   historyWidth: 270,
@@ -634,6 +652,31 @@ function sessionIdOf(run: Pick<AIChatRunEnvelope, "sessionId">): string {
   return run.sessionId?.trim() || defaultChatSessionId;
 }
 
+function isBackgroundLinkedReviewRun(
+  run:
+    | Pick<AIChatRunEnvelope, "action" | "links">
+    | Pick<AIChatRun, "action" | "links">
+    | null
+    | undefined,
+): boolean {
+  return (
+    run?.action === AIChatAction.AIChatActionReview &&
+    Boolean(run.links?.autoReviewForBuildRunId?.trim())
+  );
+}
+
+function shouldRequestAutoLinkedReview(
+  run: AIChatRun,
+  autoReviewAfterBuild: boolean,
+): boolean {
+  return (
+    run.status === "completed" &&
+    run.action === AIChatAction.AIChatActionBuild &&
+    autoReviewAfterBuild !== false &&
+    Boolean(run.links?.sourcePlanRunId?.trim())
+  );
+}
+
 function normalizeSessionSearchTerms(query: string): string[] {
   const seen = new Set<string>();
   return query
@@ -950,6 +993,7 @@ function envelopeFromRun(run: AIChatRun): AIChatRunEnvelope {
     canCancel: run.canCancel,
     contextSummary: run.contextSummary,
     toolProposals: run.toolProposals,
+    links: run.links,
     revision: run.revision,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
@@ -1183,6 +1227,7 @@ export function AIChatPanelContent({
     appendRunTimelineEvent,
     deleteSessionRuns,
     setHydratedRun,
+    upsertHydratedRuns,
     appendRunToken,
     setActiveRunId,
     setContextPreview,
@@ -1234,6 +1279,16 @@ export function AIChatPanelContent({
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const initialSelectionHydratedRef = useRef(false);
   const runNoticeSignaturesRef = useRef<Record<string, string>>({});
+  const autoReviewBuildRunIdsRef = useRef<Record<string, true>>({});
+  const requestedHydrationRunIdsRef = useRef<Set<string>>(new Set());
+  const failedHydrationRunIdsRef = useRef<Set<string>>(new Set());
+  const hydrationMountedRef = useRef(true);
+  const [hydratingRunIds, setHydratingRunIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [failedHydrationRunIds, setFailedHydrationRunIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   const drawerDragRef = useRef<{
     drawer: DrawerId;
     startX: number;
@@ -1244,6 +1299,9 @@ export function AIChatPanelContent({
     historyOpen,
     reviewOpen,
     reviewExpanded,
+    controlsCollapsed,
+    leftControlsCollapsed,
+    rightControlsCollapsed,
     historyEdge,
     reviewEdge,
     historyWidth,
@@ -1258,6 +1316,12 @@ export function AIChatPanelContent({
     diffSearch,
     commitMessage,
   } = chrome;
+
+  useEffect(() => {
+    return () => {
+      hydrationMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     dispatch({
@@ -1483,6 +1547,34 @@ export function AIChatPanelContent({
   const transcriptRuns = useMemo(
     () => [...activeSessionEnvelopes].reverse(),
     [activeSessionEnvelopes],
+  );
+  const newestSessionRunIds = useMemo(() => {
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    for (const run of runs) {
+      const sessionId = sessionIdOf(run);
+      if (!run.id || seen.has(sessionId)) continue;
+      seen.add(sessionId);
+      ids.push(run.id);
+    }
+    return ids;
+  }, [runs]);
+  const hydrationTargetRunIds = useMemo(() => {
+    const ids = new Set<string>();
+    newestSessionRunIds.forEach((id) => ids.add(id));
+    transcriptRuns.forEach((run) => {
+      if (run.id) ids.add(run.id);
+    });
+    return [...ids];
+  }, [newestSessionRunIds, transcriptRuns]);
+  const hydrationStatusForRun = useCallback(
+    (runId: string) => {
+      if (hydratedRuns[runId]) return "hydrated";
+      if (failedHydrationRunIds.has(runId)) return "failed";
+      if (hydratingRunIds.has(runId)) return "loading";
+      return "idle";
+    },
+    [failedHydrationRunIds, hydratedRuns, hydratingRunIds],
   );
   const sessionSearchTerms = useMemo(
     () => (sessionSearchOpen ? normalizeSessionSearchTerms(sessionSearch) : []),
@@ -1762,13 +1854,17 @@ export function AIChatPanelContent({
             safeStatus.activeModel || defaultProvider.models?.[0]?.id || "",
         });
       }
-      if (!initialSelectionHydratedRef.current && safeEnvelopes[0]?.id) {
+      const initialEnvelope =
+        safeEnvelopes.find(
+          (envelope) => !isBackgroundLinkedReviewRun(envelope),
+        ) ?? safeEnvelopes[0];
+      if (!initialSelectionHydratedRef.current && initialEnvelope?.id) {
         initialSelectionHydratedRef.current = true;
-        setActiveRunId(safeEnvelopes[0].id);
+        setActiveRunId(initialEnvelope.id);
         dispatch({
           type: "setActiveSession",
-          sessionId: sessionIdOf(safeEnvelopes[0]),
-          runId: safeEnvelopes[0].id,
+          sessionId: sessionIdOf(initialEnvelope),
+          runId: initialEnvelope.id,
         });
       }
     } catch (error) {
@@ -1807,22 +1903,57 @@ export function AIChatPanelContent({
   }, []);
 
   useEffect(() => {
-    if (!activeRunKey) return;
-    if (hydratedRuns[activeRunKey]) return;
-    let cancelled = false;
-    AIGetChatRun(activeRunKey)
-      .then((run) => {
-        if (!cancelled && run) {
-          setHydratedRun(run);
+    const pendingRunIds = hydrationTargetRunIds
+      .filter((runId) => runId.trim())
+      .filter((runId) => !hydratedRuns[runId])
+      .filter((runId) => !requestedHydrationRunIdsRef.current.has(runId))
+      .filter((runId) => !failedHydrationRunIdsRef.current.has(runId))
+      .slice(0, chatHydrationBatchSize);
+    if (pendingRunIds.length === 0) return undefined;
+
+    pendingRunIds.forEach((runId) =>
+      requestedHydrationRunIdsRef.current.add(runId),
+    );
+    setHydratingRunIds((current) => {
+      const next = new Set(current);
+      pendingRunIds.forEach((runId) => next.add(runId));
+      return next;
+    });
+
+    Promise.allSettled(pendingRunIds.map((runId) => AIGetChatRun(runId))).then(
+      (results) => {
+        pendingRunIds.forEach((runId) =>
+          requestedHydrationRunIdsRef.current.delete(runId),
+        );
+        if (!hydrationMountedRef.current) {
+          return;
         }
-      })
-      .catch(() => {
-        // Metadata-only envelopes remain renderable when full run hydration fails.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeRunKey, hydratedRuns, setHydratedRun]);
+        const loadedRuns: AIChatRun[] = [];
+        const failedRunIds: string[] = [];
+        results.forEach((result, index) => {
+          const runId = pendingRunIds[index];
+          if (result.status === "fulfilled" && result.value?.id) {
+            loadedRuns.push(result.value);
+            return;
+          }
+          failedRunIds.push(runId);
+          failedHydrationRunIdsRef.current.add(runId);
+        });
+        if (loadedRuns.length > 0) {
+          upsertHydratedRuns(loadedRuns);
+        }
+        setHydratingRunIds((current) => {
+          const next = new Set(current);
+          pendingRunIds.forEach((runId) => next.delete(runId));
+          return next;
+        });
+        if (failedRunIds.length > 0) {
+          setFailedHydrationRunIds(new Set(failedHydrationRunIdsRef.current));
+        }
+      },
+    );
+    return undefined;
+  }, [hydratedRuns, hydrationTargetRunIds, upsertHydratedRuns]);
 
   const refreshRunArtifacts = useCallback(async (runId: string) => {
     const key = runId.trim();
@@ -1887,6 +2018,37 @@ export function AIChatPanelContent({
     state.displayPrefs.autoScroll,
   ]);
 
+  const startLinkedReviewForBuild = useEffectEvent((run: AIChatRun) => {
+    if (
+      !shouldRequestAutoLinkedReview(
+        run,
+        aiChatPreferences.workflowPrefs.autoReviewAfterBuild,
+      ) ||
+      autoReviewBuildRunIdsRef.current[run.id]
+    ) {
+      return;
+    }
+    autoReviewBuildRunIdsRef.current[run.id] = true;
+    void AIStartLinkedReview({ buildRunId: run.id })
+      .then((result) => {
+        if (!result?.run?.id || result.status.startsWith("skipped_")) return;
+        setHydratedRun(result.run);
+        upsertRunEnvelope(envelopeFromRun(result.run));
+        if (!isBackgroundLinkedReviewRun(result.run)) {
+          setActiveRunId(result.run.id);
+          dispatch({
+            type: "setActiveSession",
+            sessionId: result.run.sessionId || defaultChatSessionId,
+            runId: result.run.id,
+          });
+          dispatch({ type: "setActiveRun", runId: result.run.id });
+        }
+      })
+      .catch((error) => {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      });
+  });
+
   const handleRunUpdate = useEffectEvent((run: AIChatRun) => {
     if (!run?.id) return;
     setHydratedRun(run);
@@ -1906,6 +2068,7 @@ export function AIChatPanelContent({
           void refreshRuntimeEvent();
         }, 250);
       }
+      startLinkedReviewForBuild(run);
     }
     void AIGetChatRunEnvelope(run.id)
       .then((envelope) => {
@@ -1918,7 +2081,10 @@ export function AIChatPanelContent({
         // The run payload is enough to keep the transcript live.
       });
     const runSessionId = run.sessionId || defaultChatSessionId;
-    if (runSessionId === state.activeSessionId || !state.activeRunId) {
+    if (
+      !isBackgroundLinkedReviewRun(run) &&
+      (runSessionId === state.activeSessionId || !state.activeRunId)
+    ) {
       setActiveRunId(run.id);
       dispatch({
         type: "setActiveSession",
@@ -2249,6 +2415,7 @@ export function AIChatPanelContent({
         includeMCP: request.includeMCP,
         includeSkills: request.includeSkills,
         context: request,
+        links: {},
       };
       if (selectedReasoningEffort) {
         startRequest.reasoningEffort = selectedReasoningEffort;
@@ -2301,6 +2468,91 @@ export function AIChatPanelContent({
       }
     },
     [activeRunRunning, setActiveRunId, setHydratedRun, upsertRunEnvelope],
+  );
+
+  const activateWorkflowRun = useCallback(
+    (run: AIChatRun | null | undefined) => {
+      if (!run?.id) return;
+      setHydratedRun(run);
+      upsertRunEnvelope(envelopeFromRun(run));
+      setActiveRunId(run.id);
+      dispatch({
+        type: "setActiveSession",
+        sessionId: run.sessionId || defaultChatSessionId,
+        runId: run.id,
+      });
+      dispatch({ type: "setActiveRun", runId: run.id });
+    },
+    [setActiveRunId, setHydratedRun, upsertRunEnvelope],
+  );
+
+  const handleSubmitQuestionAnswer = useCallback(
+    async (request: AIQuestionAnswerRequest) => {
+      if (!request.runId) return;
+      const busyId = `question:${request.runId}:${request.questionId || request.optionId || "custom"}`;
+      setRuntimeError(null);
+      setArtifactBusyId(busyId);
+      try {
+        const result = await AISubmitQuestionAnswer(request);
+        activateWorkflowRun(result.run);
+        await refreshRunArtifacts(request.runId);
+        if (result.run?.id) {
+          await refreshRunArtifacts(result.run.id);
+        }
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setArtifactBusyId(null);
+      }
+    },
+    [activateWorkflowRun, refreshRunArtifacts],
+  );
+
+  const handleAcceptPlan = useCallback(
+    async (planRunId: string) => {
+      const targetRunId = planRunId.trim();
+      if (!targetRunId) return;
+      setRuntimeError(null);
+      setArtifactBusyId(`plan:${targetRunId}:accept`);
+      try {
+        const result = await AIAcceptPlan({ planRunId: targetRunId });
+        activateWorkflowRun(result.run);
+        await refreshRunArtifacts(targetRunId);
+        if (result.run?.id) {
+          await refreshRunArtifacts(result.run.id);
+        }
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setArtifactBusyId(null);
+      }
+    },
+    [activateWorkflowRun, refreshRunArtifacts],
+  );
+
+  const handleRequestPlanRevision = useCallback(
+    async (planRunId: string, reason: string) => {
+      const targetRunId = planRunId.trim();
+      if (!targetRunId) return;
+      setRuntimeError(null);
+      setArtifactBusyId(`plan:${targetRunId}:revision`);
+      try {
+        const result = await AIRequestPlanRevision({
+          planRunId: targetRunId,
+          reason,
+        });
+        activateWorkflowRun(result.run);
+        await refreshRunArtifacts(targetRunId);
+        if (result.run?.id) {
+          await refreshRunArtifacts(result.run.id);
+        }
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setArtifactBusyId(null);
+      }
+    },
+    [activateWorkflowRun, refreshRunArtifacts],
   );
 
   const handleCancel = useCallback(async () => {
@@ -2875,6 +3127,123 @@ export function AIChatPanelContent({
     });
   }, []);
 
+  const handleToggleControlsCollapsed = useCallback(() => {
+    beginChatMotionWindow();
+    closeTransientPopovers();
+    dispatchChrome({
+      type: "patch",
+      value: { controlsCollapsed: !controlsCollapsed },
+    });
+  }, [beginChatMotionWindow, closeTransientPopovers, controlsCollapsed]);
+
+  const handleToggleLeftControlsCollapsed = useCallback(() => {
+    beginChatMotionWindow();
+    closeTransientPopovers();
+    dispatchChrome({
+      type: "patch",
+      value: { leftControlsCollapsed: !leftControlsCollapsed },
+    });
+  }, [beginChatMotionWindow, closeTransientPopovers, leftControlsCollapsed]);
+
+  const handleToggleRightControlsCollapsed = useCallback(() => {
+    beginChatMotionWindow();
+    closeTransientPopovers();
+    dispatchChrome({
+      type: "patch",
+      value: { rightControlsCollapsed: !rightControlsCollapsed },
+    });
+  }, [beginChatMotionWindow, closeTransientPopovers, rightControlsCollapsed]);
+
+  const handlePanelToggleHistory = useCallback(() => {
+    beginChatMotionWindow();
+    closeTransientPopovers();
+    dispatchChrome({
+      type: historyOpen ? "closeDrawer" : "openDrawer",
+      drawer: "history",
+    });
+  }, [beginChatMotionWindow, closeTransientPopovers, historyOpen]);
+
+  const handlePanelToggleSessionSearch = useCallback(() => {
+    const nextOpen = !sessionSearchOpen;
+    dispatch({ type: "toggleProviderPopover", open: false });
+    dispatch({ type: "toggleSettingsPopover", open: false });
+    dispatch({ type: "toggleActivityPopover", open: false });
+    dispatchChrome({
+      type: "patch",
+      value: {
+        contextPickerOpen: false,
+        sessionSearchOpen: nextOpen,
+        sessionSearch: nextOpen ? sessionSearch : "",
+      },
+    });
+  }, [sessionSearch, sessionSearchOpen]);
+
+  const handlePanelToggleActivity = useCallback(() => {
+    dispatch({ type: "toggleActivityPopover" });
+    dispatchChrome({
+      type: "patch",
+      value: { contextPickerOpen: false, sessionSearchOpen: false },
+    });
+  }, []);
+
+  const handlePanelOpenSettings = useCallback(() => {
+    dispatchApplicationMenuAction("settings.toggle");
+    dispatchChrome({
+      type: "patch",
+      value: { contextPickerOpen: false, sessionSearchOpen: false },
+    });
+  }, []);
+
+  const panelContextItems = useMemo<ContextActionMenuItem[]>(
+    () => [
+      {
+        key: "new-chat",
+        label: "New Chat",
+        icon: <MessageSquarePlus size={13} />,
+        onSelect: handleNewChat,
+      },
+      {
+        key: "toggle-history",
+        label: historyOpen ? "Close History" : "Open History",
+        icon: <History size={13} />,
+        onSelect: handlePanelToggleHistory,
+      },
+      {
+        key: "search-session",
+        label: sessionSearchOpen ? "Close Search" : "Search Current Chat",
+        icon: <Search size={13} />,
+        disabled: transcriptRuns.length === 0 && !sessionSearchOpen,
+        onSelect: handlePanelToggleSessionSearch,
+      },
+      { separator: true },
+      {
+        key: "runtime-activity",
+        label: state.activityPopoverOpen
+          ? "Close Runtime Activity"
+          : "Runtime Activity",
+        icon: <CheckCircle2 size={13} />,
+        onSelect: handlePanelToggleActivity,
+      },
+      {
+        key: "settings",
+        label: "AI Chat Settings",
+        icon: <Settings size={13} />,
+        onSelect: handlePanelOpenSettings,
+      },
+    ],
+    [
+      handleNewChat,
+      handlePanelOpenSettings,
+      handlePanelToggleActivity,
+      handlePanelToggleHistory,
+      handlePanelToggleSessionSearch,
+      historyOpen,
+      sessionSearchOpen,
+      state.activityPopoverOpen,
+      transcriptRuns.length,
+    ],
+  );
+
   useEffect(() => {
     const popoverOpen =
       state.providerPopoverOpen ||
@@ -2949,6 +3318,7 @@ export function AIChatPanelContent({
             historyOpen={historyOpen}
             reviewExpanded={reviewExpanded}
             reviewOpen={reviewOpen}
+            controlsCollapsed={controlsCollapsed}
             sessionSearch={sessionSearch}
             sessionSearchOpen={sessionSearchOpen}
             sessionSearchMatchCount={
@@ -3000,6 +3370,7 @@ export function AIChatPanelContent({
                 drawer: "review",
               });
             }}
+            onToggleControlsCollapsed={handleToggleControlsCollapsed}
             onToggleSessionSearch={() => {
               const nextOpen = !sessionSearchOpen;
               dispatch({ type: "toggleProviderPopover", open: false });
@@ -3069,7 +3440,45 @@ export function AIChatPanelContent({
               </div>
             ) : null}
             <AnimatePresence initial={false}>
-              {fullscreen ? (
+              {fullscreen && leftControlsCollapsed ? (
+                <m.button
+                  className="ai-chat-fullscreen-curtain-toggle ai-chat-fullscreen-curtain-toggle--left"
+                  data-testid="ai-chat-fullscreen-left-controls-toggle"
+                  type="button"
+                  title="Show left chat controls"
+                  aria-pressed="true"
+                  initial={
+                    reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }
+                  }
+                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }}
+                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }}
+                  transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
+                  onClick={handleToggleLeftControlsCollapsed}
+                >
+                  <ChevronRight size={16} />
+                </m.button>
+              ) : null}
+            </AnimatePresence>
+            <AnimatePresence initial={false}>
+              {fullscreen && rightControlsCollapsed ? (
+                <m.button
+                  className="ai-chat-fullscreen-curtain-toggle ai-chat-fullscreen-curtain-toggle--right"
+                  data-testid="ai-chat-fullscreen-right-controls-toggle"
+                  type="button"
+                  title="Show right chat controls"
+                  aria-pressed="true"
+                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
+                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0 }}
+                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
+                  transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
+                  onClick={handleToggleRightControlsCollapsed}
+                >
+                  <ChevronLeft size={16} />
+                </m.button>
+              ) : null}
+            </AnimatePresence>
+            <AnimatePresence initial={false}>
+              {fullscreen && !leftControlsCollapsed ? (
                 <m.nav
                   className="ai-chat-focus-rail ai-chat-focus-rail--left"
                   data-ai-chat-popover-scope
@@ -3081,6 +3490,16 @@ export function AIChatPanelContent({
                   exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -8 }}
                   transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
                 >
+                  <button
+                    className="ai-chat-icon-button ai-chat-chrome-toggle"
+                    data-testid="ai-chat-fullscreen-controls-collapse"
+                    type="button"
+                    title="Hide left chat controls"
+                    aria-pressed="false"
+                    onClick={handleToggleLeftControlsCollapsed}
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
                   <button
                     className={`ai-chat-icon-button${historyOpen ? " is-active" : ""}`}
                     type="button"
@@ -3207,7 +3626,7 @@ export function AIChatPanelContent({
               ) : null}
             </AnimatePresence>
             <AnimatePresence initial={false}>
-              {fullscreen ? (
+              {fullscreen && !rightControlsCollapsed ? (
                 <m.nav
                   className="ai-chat-focus-rail ai-chat-focus-rail--right"
                   data-ai-chat-popover-scope
@@ -3217,6 +3636,16 @@ export function AIChatPanelContent({
                   exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 8 }}
                   transition={{ duration: reduceMotion ? 0.1 : 0.18 }}
                 >
+                  <button
+                    className="ai-chat-icon-button ai-chat-chrome-toggle"
+                    data-testid="ai-chat-fullscreen-right-controls-collapse"
+                    type="button"
+                    title="Hide right chat controls"
+                    aria-pressed="false"
+                    onClick={handleToggleRightControlsCollapsed}
+                  >
+                    <ChevronRight size={16} />
+                  </button>
                   <button
                     className={`ai-chat-icon-button${reviewOpen || reviewExpanded ? " is-active" : ""}`}
                     type="button"
@@ -3281,158 +3710,175 @@ export function AIChatPanelContent({
                 </m.nav>
               ) : null}
             </AnimatePresence>
-            <div
-              className="ai-chat-conversation"
-              data-dimmed={reviewExpanded ? "true" : "false"}
+            <ContextActionMenu
+              ignoredTargetSelector=".ai-chat-run-card, .ai-chat-composer, .ai-chat-popover, .ai-chat-focus-rail, .ai-chat-drawer, button, input, textarea, a"
+              items={panelContextItems}
+              nativeScope="ai-chat-panel"
+              nativeTargetId={activeSessionId}
             >
-              <main className="ai-chat-body">
-                {runtimeError ? (
-                  <div className="ai-chat-runtime-error">{runtimeError}</div>
-                ) : null}
-                <PendingApprovalCenter
-                  approvals={pendingApprovals}
-                  busyId={artifactBusyId}
-                  onApprove={handleApprovePendingApproval}
-                  onDeny={handleDenyPendingApproval}
-                  onOpenReview={() => {
-                    beginChatMotionWindow();
-                    dispatchChrome({ type: "openDrawer", drawer: "review" });
-                  }}
-                  onSelectRun={(runId) => {
-                    const envelope = runs.find(
-                      (candidate) => candidate.id === runId,
-                    );
-                    setActiveRunId(runId);
-                    if (envelope) {
-                      dispatch({
-                        type: "setActiveSession",
-                        sessionId: sessionIdOf(envelope),
-                        runId,
-                      });
-                    }
-                    dispatch({ type: "setActiveRun", runId });
-                  }}
-                />
-                <AgentConsole
-                  activeEnvelope={activeEnvelope}
-                  visible={agentConsoleVisible}
-                />
-                {transcriptRuns.length === 0 ? (
-                  <EmptyState
-                    providerReady={selectedProviderReady}
-                    onRefresh={handleRefreshProviders}
-                    onStarterSelect={(action, prompt) => {
-                      dispatch({ type: "setAction", action });
-                      dispatch({ type: "setInput", input: prompt });
+              <div
+                className="ai-chat-conversation"
+                data-dimmed={reviewExpanded ? "true" : "false"}
+              >
+                <main className="ai-chat-body">
+                  {runtimeError ? (
+                    <div className="ai-chat-runtime-error">{runtimeError}</div>
+                  ) : null}
+                  <PendingApprovalCenter
+                    approvals={pendingApprovals}
+                    busyId={artifactBusyId}
+                    onApprove={handleApprovePendingApproval}
+                    onDeny={handleDenyPendingApproval}
+                    onOpenReview={() => {
+                      beginChatMotionWindow();
+                      dispatchChrome({ type: "openDrawer", drawer: "review" });
+                    }}
+                    onSelectRun={(runId) => {
+                      const envelope = runs.find(
+                        (candidate) => candidate.id === runId,
+                      );
+                      setActiveRunId(runId);
+                      if (envelope) {
+                        dispatch({
+                          type: "setActiveSession",
+                          sessionId: sessionIdOf(envelope),
+                          runId,
+                        });
+                      }
+                      dispatch({ type: "setActiveRun", runId });
                     }}
                   />
-                ) : (
-                  <div className="ai-chat-transcript">
-                    <AnimatePresence initial={false} mode="popLayout">
-                      {transcriptRuns.map((envelope: AIChatRunEnvelope) => (
-                        <RunCard
-                          active={envelope.id === activeRunKey}
-                          compact={state.displayPrefs.compactCards}
-                          envelope={envelope}
-                          artifactBusyId={artifactBusyId}
-                          artifacts={artifactsByRunId[envelope.id] ?? []}
-                          key={envelope.id}
-                          run={hydratedRuns[envelope.id] ?? null}
-                          streamingText={
-                            streamingTextByRunId[envelope.id] ?? ""
-                          }
-                          searchQuery={
-                            sessionSearchTerms.length > 0 ? sessionSearch : ""
-                          }
-                          onApplyPatchArtifact={handleApplyPatchArtifact}
-                          onApproveMnemonicArtifact={
-                            handleApproveMnemonicArtifact
-                          }
-                          onOpenReview={() => {
-                            beginChatMotionWindow();
-                            dispatchChrome({
-                              type: "openDrawer",
-                              drawer: "review",
-                            });
-                          }}
-                          onApproveToolProposal={handleApproveToolProposal}
-                          onDenyToolProposal={handleDenyToolProposal}
-                          onPreviewToolProposal={handlePreviewToolProposal}
-                          onRollbackPatchArtifact={handleRollbackPatchArtifact}
-                          onSelect={(runId) => {
-                            setActiveRunId(runId);
-                            dispatch({ type: "setActiveRun", runId });
-                          }}
-                        />
-                      ))}
-                    </AnimatePresence>
-                    <div ref={transcriptEndRef} />
-                  </div>
-                )}
-              </main>
+                  <AgentConsole
+                    activeEnvelope={activeEnvelope}
+                    visible={agentConsoleVisible}
+                  />
+                  {transcriptRuns.length === 0 ? (
+                    <EmptyState
+                      providerReady={selectedProviderReady}
+                      onRefresh={handleRefreshProviders}
+                      onStarterSelect={(action, prompt) => {
+                        dispatch({ type: "setAction", action });
+                        dispatch({ type: "setInput", input: prompt });
+                      }}
+                    />
+                  ) : (
+                    <div className="ai-chat-transcript">
+                      <AnimatePresence initial={false} mode="popLayout">
+                        {transcriptRuns.map((envelope: AIChatRunEnvelope) => (
+                          <RunCard
+                            active={envelope.id === activeRunKey}
+                            compact={state.displayPrefs.compactCards}
+                            envelope={envelope}
+                            artifactBusyId={artifactBusyId}
+                            artifacts={artifactsByRunId[envelope.id] ?? []}
+                            key={envelope.id}
+                            run={hydratedRuns[envelope.id] ?? null}
+                            hydrationStatus={hydrationStatusForRun(envelope.id)}
+                            streamingText={
+                              streamingTextByRunId[envelope.id] ?? ""
+                            }
+                            searchQuery={
+                              sessionSearchTerms.length > 0 ? sessionSearch : ""
+                            }
+                            onApplyPatchArtifact={handleApplyPatchArtifact}
+                            onApproveMnemonicArtifact={
+                              handleApproveMnemonicArtifact
+                            }
+                            onOpenReview={() => {
+                              beginChatMotionWindow();
+                              dispatchChrome({
+                                type: "openDrawer",
+                                drawer: "review",
+                              });
+                            }}
+                            onApproveToolProposal={handleApproveToolProposal}
+                            onAcceptPlan={handleAcceptPlan}
+                            onDenyToolProposal={handleDenyToolProposal}
+                            onPreviewToolProposal={handlePreviewToolProposal}
+                            onRequestPlanRevision={handleRequestPlanRevision}
+                            onRollbackPatchArtifact={
+                              handleRollbackPatchArtifact
+                            }
+                            onSelect={(runId) => {
+                              setActiveRunId(runId);
+                              dispatch({ type: "setActiveRun", runId });
+                            }}
+                            onSubmitQuestionAnswer={handleSubmitQuestionAnswer}
+                          />
+                        ))}
+                      </AnimatePresence>
+                      <div ref={transcriptEndRef} />
+                    </div>
+                  )}
+                </main>
 
-              <ChatComposer
-                canSend={canSend}
-                actions={composerActions}
-                context={state.context}
-                contextPickerOpen={contextPickerOpen}
-                contextProviders={contextProviders}
-                disabledReason={disabledReason}
-                input={state.input}
-                providerRuntimeBusy={providerRuntimeBusy}
-                providerRuntimeError={providerRuntimeError}
-                providerRuntimes={providerRuntimes}
-                providers={sortedProviders}
-                consentPolicy={consentPolicy}
-                running={activeRunRunning}
-                selectedAction={state.selectedAction}
-                selectedMentions={selectedMentionsForActiveSession}
-                selectedModel={selectedModel}
-                selectedReasoningEffort={selectedReasoningEffort}
-                selectedModelCapability={selectedModelCapability}
-                selectedProvider={selectedProvider}
-                sendShortcut={aiChatSendShortcut}
-                onActionChange={(action) =>
-                  dispatch({ type: "setAction", action })
-                }
-                onCancel={handleCancel}
-                onContextToggle={handleContextToggle}
-                onInputChange={(input) => dispatch({ type: "setInput", input })}
-                onMentionQuery={handleMentionQuery}
-                onMentionRemove={(id) =>
-                  dispatch({ type: "removeMention", id })
-                }
-                onMentionSelect={handleMentionSelect}
-                onProbeModelCapability={handleProbeModelCapability}
-                onRefreshContext={handleRefreshContext}
-                onRefreshProviders={handleRefreshProviders}
-                onSend={handleSend}
-                onSelectModel={handleModelSelect}
-                onSelectReasoningEffort={(reasoningEffort) =>
-                  dispatch({
-                    type: "setReasoningEffort",
-                    reasoningEffort,
-                  })
-                }
-                onSelectProvider={handleProviderSelect}
-                onStartAgentLogin={handleStartAgentLogin}
-                onAcceptExternalAgentConsent={handleAcceptExternalAgentConsent}
-                onAcceptRemoteBYOKProviderConsent={
-                  handleAcceptRemoteBYOKProviderConsent
-                }
-                onAcceptFrontierProviderConsent={
-                  handleAcceptFrontierProviderConsent
-                }
-                onStartProviderRuntime={handleStartProviderRuntime}
-                onStopProviderRuntime={handleStopProviderRuntime}
-                onToggleContextPicker={() => {
-                  dispatch({ type: "toggleProviderPopover", open: false });
-                  dispatch({ type: "toggleSettingsPopover", open: false });
-                  dispatch({ type: "toggleActivityPopover", open: false });
-                  dispatchChrome({ type: "toggleContextPicker" });
-                }}
-              />
-            </div>
+                <ChatComposer
+                  canSend={canSend}
+                  actions={composerActions}
+                  context={state.context}
+                  contextPickerOpen={contextPickerOpen}
+                  contextProviders={contextProviders}
+                  disabledReason={disabledReason}
+                  input={state.input}
+                  providerRuntimeBusy={providerRuntimeBusy}
+                  providerRuntimeError={providerRuntimeError}
+                  providerRuntimes={providerRuntimes}
+                  providers={sortedProviders}
+                  consentPolicy={consentPolicy}
+                  running={activeRunRunning}
+                  selectedAction={state.selectedAction}
+                  selectedMentions={selectedMentionsForActiveSession}
+                  selectedModel={selectedModel}
+                  selectedReasoningEffort={selectedReasoningEffort}
+                  selectedModelCapability={selectedModelCapability}
+                  selectedProvider={selectedProvider}
+                  sendShortcut={aiChatSendShortcut}
+                  onActionChange={(action) =>
+                    dispatch({ type: "setAction", action })
+                  }
+                  onCancel={handleCancel}
+                  onContextToggle={handleContextToggle}
+                  onInputChange={(input) =>
+                    dispatch({ type: "setInput", input })
+                  }
+                  onMentionQuery={handleMentionQuery}
+                  onMentionRemove={(id) =>
+                    dispatch({ type: "removeMention", id })
+                  }
+                  onMentionSelect={handleMentionSelect}
+                  onProbeModelCapability={handleProbeModelCapability}
+                  onRefreshContext={handleRefreshContext}
+                  onRefreshProviders={handleRefreshProviders}
+                  onSend={handleSend}
+                  onSelectModel={handleModelSelect}
+                  onSelectReasoningEffort={(reasoningEffort) =>
+                    dispatch({
+                      type: "setReasoningEffort",
+                      reasoningEffort,
+                    })
+                  }
+                  onSelectProvider={handleProviderSelect}
+                  onStartAgentLogin={handleStartAgentLogin}
+                  onAcceptExternalAgentConsent={
+                    handleAcceptExternalAgentConsent
+                  }
+                  onAcceptRemoteBYOKProviderConsent={
+                    handleAcceptRemoteBYOKProviderConsent
+                  }
+                  onAcceptFrontierProviderConsent={
+                    handleAcceptFrontierProviderConsent
+                  }
+                  onStartProviderRuntime={handleStartProviderRuntime}
+                  onStopProviderRuntime={handleStopProviderRuntime}
+                  onToggleContextPicker={() => {
+                    dispatch({ type: "toggleProviderPopover", open: false });
+                    dispatch({ type: "toggleSettingsPopover", open: false });
+                    dispatch({ type: "toggleActivityPopover", open: false });
+                    dispatchChrome({ type: "toggleContextPicker" });
+                  }}
+                />
+              </div>
+            </ContextActionMenu>
 
             <AnimatePresence>
               {historyOpen ? (

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import {
   Check,
   Circle,
+  Copy,
   GripHorizontal,
   History,
   Loader2,
@@ -59,6 +60,11 @@ const statusIcon = (status: string): React.ReactNode => {
   }
   return <Circle size={13} />;
 };
+
+async function copyText(value: string): Promise<void> {
+  if (!navigator.clipboard?.writeText) return;
+  await navigator.clipboard.writeText(value);
+}
 
 function buildSessionGroups(
   runs: AIChatRunEnvelope[],
@@ -150,6 +156,29 @@ export function ChatHistoryRail({
       label: "Open chat",
       icon: <Check size={13} />,
       onSelect: () => onSelectSession(group.id),
+    },
+    {
+      key: "new-chat",
+      label: "New chat",
+      icon: <MessageSquarePlus size={13} />,
+      onSelect: onNewChat,
+    },
+    { separator: true },
+    {
+      key: "copy-title",
+      label: "Copy Chat Title",
+      icon: <Copy size={13} />,
+      onSelect: () => {
+        void copyText(group.title);
+      },
+    },
+    {
+      key: "copy-session-id",
+      label: "Copy Session ID",
+      icon: <Copy size={13} />,
+      onSelect: () => {
+        void copyText(group.id);
+      },
     },
     { separator: true },
     {

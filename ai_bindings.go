@@ -226,6 +226,38 @@ func (a *App) AIStartAgentAuthRun(ctx context.Context, providerID string) (ai.AI
 	return a.ensureAIService().StartAgentAuthRun(ctx, sessionID, providerID)
 }
 
+func (a *App) AISubmitQuestionAnswer(ctx context.Context, req ai.AIQuestionAnswerRequest) (ai.AIQuestionAnswerResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIQuestionAnswerResult{}, err
+	}
+	return a.ensureAIService().SubmitQuestionAnswer(ctx, sessionID, req)
+}
+
+func (a *App) AIAcceptPlan(ctx context.Context, req ai.AIAcceptPlanRequest) (ai.AIWorkflowRunResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIWorkflowRunResult{}, err
+	}
+	return a.ensureAIService().AcceptPlan(ctx, sessionID, req)
+}
+
+func (a *App) AIRequestPlanRevision(ctx context.Context, req ai.AIRequestPlanRevisionRequest) (ai.AIWorkflowRunResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIWorkflowRunResult{}, err
+	}
+	return a.ensureAIService().RequestPlanRevision(ctx, sessionID, req)
+}
+
+func (a *App) AIStartLinkedReview(ctx context.Context, req ai.AIStartLinkedReviewRequest) (ai.AIWorkflowRunResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIWorkflowRunResult{}, err
+	}
+	return a.ensureAIService().StartLinkedReview(ctx, sessionID, req)
+}
+
 func (a *App) AICancelChatRun(ctx context.Context, runID string) (ai.AIChatRun, error) {
 	sessionID, err := a.ensureAIProjectSessionID(ctx)
 	if err != nil {

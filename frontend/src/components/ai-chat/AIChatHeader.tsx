@@ -1,6 +1,8 @@
 import React from "react";
 import {
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   GitBranch,
   History,
@@ -11,7 +13,7 @@ import {
   Settings,
   X,
 } from "lucide-react";
-import { AnimatePresence } from "framer-motion";
+import { AnimatePresence, m } from "framer-motion";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 import type {
   AIAgentProfileDescriptor,
@@ -54,6 +56,7 @@ interface AIChatHeaderProps {
   historyOpen: boolean;
   reviewOpen: boolean;
   reviewExpanded: boolean;
+  controlsCollapsed: boolean;
   sessionSearch: string;
   sessionSearchOpen: boolean;
   sessionSearchMatchCount: number;
@@ -85,6 +88,7 @@ interface AIChatHeaderProps {
   onToggleActivityPopover: () => void;
   onToggleHistory: () => void;
   onToggleReview: () => void;
+  onToggleControlsCollapsed: () => void;
   onToggleSessionSearch: () => void;
   onSessionSearchChange: (value: string) => void;
   onSessionSearchNext: () => void;
@@ -111,6 +115,7 @@ export function AIChatHeader({
   historyOpen,
   reviewOpen,
   reviewExpanded,
+  controlsCollapsed,
   sessionSearch,
   sessionSearchOpen,
   sessionSearchMatchCount,
@@ -142,6 +147,7 @@ export function AIChatHeader({
   onToggleActivityPopover,
   onToggleHistory,
   onToggleReview,
+  onToggleControlsCollapsed,
   onToggleSessionSearch,
   onSessionSearchChange,
   onSessionSearchNext,
@@ -392,16 +398,49 @@ export function AIChatHeader({
   };
 
   return (
-    <header className="ai-chat-header">
-      <div className="ai-chat-header__left" ref={leftGroupRef}>
-        {effectiveLayout.left.map((itemId) => renderHeaderItem(itemId, "left"))}
-      </div>
-
-      <div className="ai-chat-header__actions" ref={rightGroupRef}>
-        {effectiveLayout.right.map((itemId) =>
-          renderHeaderItem(itemId, "right"),
+    <header
+      className="ai-chat-header"
+      data-controls-collapsed={controlsCollapsed ? "true" : "false"}
+    >
+      <button
+        className="ai-chat-icon-button ai-chat-chrome-toggle"
+        data-testid="ai-chat-controls-toggle"
+        type="button"
+        title={controlsCollapsed ? "Show chat controls" : "Hide chat controls"}
+        aria-pressed={controlsCollapsed}
+        onClick={onToggleControlsCollapsed}
+      >
+        {controlsCollapsed ? (
+          <ChevronRight size={16} />
+        ) : (
+          <ChevronLeft size={16} />
         )}
-      </div>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {!controlsCollapsed ? (
+          <m.div
+            className="ai-chat-header__curtain"
+            key="ai-chat-header-curtain"
+            initial={{ opacity: 0, x: -10, width: 0 }}
+            animate={{ opacity: 1, x: 0, width: "auto" }}
+            exit={{ opacity: 0, x: -10, width: 0 }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div className="ai-chat-header__left" ref={leftGroupRef}>
+              {effectiveLayout.left.map((itemId) =>
+                renderHeaderItem(itemId, "left"),
+              )}
+            </div>
+
+            <div className="ai-chat-header__actions" ref={rightGroupRef}>
+              {effectiveLayout.right.map((itemId) =>
+                renderHeaderItem(itemId, "right"),
+              )}
+            </div>
+          </m.div>
+        ) : null}
+      </AnimatePresence>
     </header>
   );
 }

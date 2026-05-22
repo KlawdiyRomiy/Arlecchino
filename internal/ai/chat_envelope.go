@@ -3,6 +3,7 @@ package ai
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"arlecchino/internal/ai/agents"
 )
@@ -56,20 +57,27 @@ func (s *Service) ListChatRuns(projectID string, limit int) ([]AIChatRunEnvelope
 	if len(runs) > limit {
 		runs = runs[:limit]
 	}
+	runIDs := make([]string, 0, len(runs))
+	for _, run := range runs {
+		runIDs = append(runIDs, run.ID)
+	}
 	timelinesByRun := map[string][]AIRunTimelineEvent{}
-	if project.RunTimeline != nil && len(runs) > 0 {
-		runIDs := make([]string, 0, len(runs))
-		for _, run := range runs {
-			runIDs = append(runIDs, run.ID)
-		}
+	if project.RunTimeline != nil && len(runIDs) > 0 {
 		if eventsByRun, err := project.RunTimeline.ListByRuns(runIDs, 80); err == nil {
 			timelinesByRun = eventsByRun
+		}
+	}
+	egressByRun := map[string][]AIEgressRecord{}
+	if project.Egress != nil && len(runIDs) > 0 {
+		if recordsByRun, err := project.Egress.ListByRuns(runIDs, 0); err == nil {
+			egressByRun = recordsByRun
 		}
 	}
 	envelopes := make([]AIChatRunEnvelope, 0, len(runs))
 	for _, run := range runs {
 		timeline := timelinesByRun[run.ID]
-		envelopes = append(envelopes, s.buildChatRunEnvelopeWithTimeline(project, run, &timeline))
+		egressRecords := egressByRun[run.ID]
+		envelopes = append(envelopes, s.buildChatRunEnvelopeWithTimelineAndEgress(project, run, &timeline, &egressRecords))
 	}
 	return envelopes, nil
 }
@@ -369,11 +377,15 @@ func compactRunNoticeDetails(value string) string {
 }
 
 func (s *Service) buildChatRunEnvelopeWithTimeline(project *ProjectSession, run AIChatRun, timelineOverride *[]AIRunTimelineEvent) AIChatRunEnvelope {
+	return s.buildChatRunEnvelopeWithTimelineAndEgress(project, run, timelineOverride, nil)
+}
+
+func (s *Service) buildChatRunEnvelopeWithTimelineAndEgress(project *ProjectSession, run AIChatRun, timelineOverride *[]AIRunTimelineEvent, egressRecords *[]AIEgressRecord) AIChatRunEnvelope {
 	run = normalizeChatRunToolProposals(run)
 	approval := s.approvalSummaryForProject(project)
 	consent := s.consentSummary()
 	providerEnvelope := s.providerEnvelopeForRun(run)
-	egressSummary := s.egressSummaryForRun(project, run)
+	egressSummary := s.egressSummaryForRunRecords(project, run, egressRecords)
 	disclosure := disclosureSummary(providerEnvelope, run.ContextSummary, consent, firstNonEmpty(sourceFromEgress(egressSummary), "chat_run"))
 	mnemonic := AIMnemonicInclusionSummary{
 		Requested: run.MnemonicRequested,
@@ -417,6 +429,7 @@ func (s *Service) buildChatRunEnvelopeWithTimeline(project *ProjectSession, run 
 		MnemonicInclusion:   mnemonic,
 		Timeline:            timeline,
 		AgentRuntime:        run.AgentRuntime,
+		Links:               run.Links,
 		Revision:            run.Revision,
 		CreatedAt:           run.CreatedAt,
 		UpdatedAt:           run.UpdatedAt,
@@ -485,51 +498,270 @@ func providerEnvelopeFromDescriptor(descriptor AIProviderDescriptor, model strin
 }
 
 func (s *Service) egressSummaryForRun(project *ProjectSession, run AIChatRun) *AIEgressSummary {
-	if project == nil || project.Egress == nil || strings.TrimSpace(run.EgressRecordID) == "" {
+	return s.egressSummaryForRunRecords(project, run, nil)
+}
+
+func (s *Service) egressSummaryForRunRecords(project *ProjectSession, run AIChatRun, recordsOverride *[]AIEgressRecord) *AIEgressSummary {
+	if project == nil || project.Egress == nil {
 		return nil
 	}
-	records, err := project.Egress.List(200)
+	records := []AIEgressRecord{}
+	if recordsOverride != nil {
+		records = append(records, (*recordsOverride)...)
+	} else if strings.TrimSpace(run.ID) != "" {
+		if runRecords, err := project.Egress.ListByRun(run.ID, 0); err == nil {
+			records = runRecords
+		}
+	}
+	if len(records) == 0 && strings.TrimSpace(run.EgressRecordID) != "" {
+		if record, ok, err := project.Egress.FindByID(run.EgressRecordID); err == nil && ok {
+			records = append(records, record)
+		}
+	}
+	return aggregateEgressSummaryForRun(run, records)
+}
+
+func aggregateEgressSummaryForRun(run AIChatRun, records []AIEgressRecord) *AIEgressSummary {
+	if len(records) == 0 {
+		return nil
+	}
+	latestByRequest := map[string]AIEgressRecord{}
+	requestOrder := []string{}
+	for index, record := range records {
+		key := strings.TrimSpace(record.RequestID)
+		if key == "" {
+			key = strings.TrimSpace(record.ID)
+		}
+		if key == "" {
+			key = fmt.Sprintf("record-%d", index)
+		}
+		if _, exists := latestByRequest[key]; !exists {
+			requestOrder = append(requestOrder, key)
+		}
+		latestByRequest[key] = record
+	}
+	latestRecords := make([]AIEgressRecord, 0, len(requestOrder))
+	for _, key := range requestOrder {
+		latestRecords = append(latestRecords, latestByRequest[key])
+	}
+	finalRecord := records[len(records)-1]
+	summary := &AIEgressSummary{
+		RecordID:        finalRecord.ID,
+		Status:          finalRecord.Status,
+		FinalStatus:     finalRecord.Status,
+		ProviderID:      firstNonEmpty(run.ProviderID, finalRecord.ProviderID),
+		ProviderKind:    finalRecord.ProviderKind,
+		Endpoint:        finalRecord.Endpoint,
+		Model:           firstNonEmpty(run.Model, finalRecord.Model),
+		ReasoningEffort: firstNonEmpty(run.ReasoningEffort, finalRecord.ReasoningEffort),
+		Capability:      finalRecord.Capability,
+		Redaction:       mergeEgressRedactions(latestRecords),
+		Canceled:        finalRecord.Canceled,
+		ErrorClass:      finalRecord.ErrorClass,
+		CreatedAt:       finalRecord.CreatedAt,
+		RunID:           firstNonEmpty(run.ID, finalRecord.RunID),
+		Source:          finalRecord.Source,
+		ChatAction:      finalRecord.ChatAction,
+		RequestCount:    len(latestRecords),
+	}
+	if summary.ChatAction == "" {
+		summary.ChatAction = run.Action
+	}
+
+	tokenSources := []string{}
+	costSources := []string{}
+	toolProfiles := []string{}
+	toolSupportKinds := []string{}
+	var costCurrency string
+	var costMicros int64
+	var pricedRecords int
+	mixedCurrency := false
+	hasTokenEvidence := false
+	for _, record := range latestRecords {
+		if record.ID != "" {
+			summary.RecordIDs = appendUniqueString(summary.RecordIDs, record.ID)
+		}
+		if record.ProviderID != "" {
+			summary.ProviderIDs = appendUniqueString(summary.ProviderIDs, record.ProviderID)
+		}
+		if record.Model != "" {
+			summary.Models = appendUniqueString(summary.Models, record.Model)
+		}
+		summary.DataCategories = appendUniqueStrings(summary.DataCategories, record.DataCategories)
+		summary.InputTokens += record.InputTokens
+		summary.OutputTokens += record.OutputTokens
+		totalTokens := record.TotalTokens
+		if totalTokens == 0 && (record.InputTokens > 0 || record.OutputTokens > 0) {
+			totalTokens = record.InputTokens + record.OutputTokens
+		}
+		summary.TotalTokens += totalTokens
+		if totalTokens > 0 || record.InputTokens > 0 || record.OutputTokens > 0 {
+			hasTokenEvidence = true
+		}
+		if record.EstimatedTokens {
+			summary.EstimatedTokens = true
+		}
+		if record.TokenSource != "" {
+			tokenSources = appendUniqueString(tokenSources, record.TokenSource)
+		}
+		if record.LatencyMs > 0 {
+			summary.APIDurationMs += record.LatencyMs
+		}
+		if record.Canceled {
+			summary.Canceled = true
+		}
+		if record.CostEstimated {
+			summary.CostEstimated = true
+		}
+		if record.CostSource != "" {
+			costSources = appendUniqueString(costSources, record.CostSource)
+		}
+		if record.CostMicros > 0 {
+			pricedRecords++
+			if costCurrency == "" {
+				costCurrency = record.CostCurrency
+			} else if record.CostCurrency != "" && record.CostCurrency != costCurrency {
+				mixedCurrency = true
+			}
+			costMicros += record.CostMicros
+		}
+		if record.ToolProfile != "" {
+			toolProfiles = appendUniqueString(toolProfiles, record.ToolProfile)
+		}
+		if record.ToolSchemaCount > summary.ToolSchemaCount {
+			summary.ToolSchemaCount = record.ToolSchemaCount
+		}
+		if record.ToolSupportKind != "" {
+			toolSupportKinds = appendUniqueString(toolSupportKinds, record.ToolSupportKind)
+		}
+	}
+	if len(summary.ProviderIDs) > 0 && summary.ProviderID == "" {
+		summary.ProviderID = summary.ProviderIDs[0]
+	}
+	if len(summary.Models) > 0 && summary.Model == "" {
+		summary.Model = summary.Models[0]
+	}
+	summary.MixedProviders = len(summary.ProviderIDs) > 1
+	summary.MixedModels = len(summary.Models) > 1
+	summary.LatencyMs = summary.APIDurationMs
+	summary.TokenSource = aggregateSourceLabel(tokenSources, hasTokenEvidence, summary.EstimatedTokens, "unavailable")
+	summary.CostMicros, summary.CostCurrency, summary.CostSource = aggregateCostFields(costMicros, costCurrency, pricedRecords, mixedCurrency, costSources)
+	summary.ToolProfile = aggregateStringField(toolProfiles, "none")
+	summary.ToolSupportKind = aggregateStringField(toolSupportKinds, "")
+	if terminalRunStatus(run.Status) {
+		if durationMs, ok := durationMsBetween(run.CreatedAt, run.UpdatedAt); ok {
+			summary.WallDurationMs = durationMs
+		}
+	}
+	summary.FirstTokenAt = run.FirstTokenAt
+	if firstTokenLatencyMs, ok := durationMsBetween(run.CreatedAt, run.FirstTokenAt); ok {
+		summary.FirstTokenLatencyMs = firstTokenLatencyMs
+	}
+	return summary
+}
+
+func appendUniqueString(values []string, next string) []string {
+	next = strings.TrimSpace(next)
+	if next == "" {
+		return values
+	}
+	for _, value := range values {
+		if value == next {
+			return values
+		}
+	}
+	return append(values, next)
+}
+
+func appendUniqueStrings(values []string, next []string) []string {
+	for _, value := range next {
+		values = appendUniqueString(values, value)
+	}
+	return values
+}
+
+func mergeEgressRedactions(records []AIEgressRecord) AIRedactionSummary {
+	var summary AIRedactionSummary
+	for _, record := range records {
+		redaction := record.Redaction
+		summary.SecretsRedacted += redaction.SecretsRedacted
+		summary.PathsRedacted += redaction.PathsRedacted
+		summary.Truncated = summary.Truncated || redaction.Truncated
+		summary.OriginalBytes += redaction.OriginalBytes
+		summary.SanitizedBytes += redaction.SanitizedBytes
+		summary.BlockedCategories = appendUniqueStrings(summary.BlockedCategories, redaction.BlockedCategories)
+		summary.AppliedRules = appendUniqueStrings(summary.AppliedRules, redaction.AppliedRules)
+	}
+	return summary
+}
+
+func aggregateSourceLabel(values []string, hasEvidence bool, estimated bool, unavailable string) string {
+	if len(values) == 1 {
+		return values[0]
+	}
+	if len(values) > 1 {
+		return "mixed"
+	}
+	if !hasEvidence {
+		return unavailable
+	}
+	if estimated {
+		return "estimated"
+	}
+	return "provider"
+}
+
+func aggregateStringField(values []string, emptyValue string) string {
+	if len(values) == 0 {
+		return emptyValue
+	}
+	if len(values) == 1 {
+		return values[0]
+	}
+	return "mixed"
+}
+
+func aggregateCostFields(costMicros int64, costCurrency string, pricedRecords int, mixedCurrency bool, costSources []string) (int64, string, string) {
+	if mixedCurrency {
+		return 0, "", "mixed_currency"
+	}
+	if pricedRecords > 0 {
+		return costMicros, costCurrency, aggregateStringField(costSources, "priced")
+	}
+	if len(costSources) > 1 {
+		return 0, "", "mixed_or_unpriced"
+	}
+	if len(costSources) == 1 {
+		return 0, "", costSources[0]
+	}
+	return 0, "", "unpriced"
+}
+
+func terminalRunStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "completed", "error", "canceled", "blocked":
+		return true
+	default:
+		return false
+	}
+}
+
+func durationMsBetween(start string, end string) (int64, bool) {
+	if strings.TrimSpace(start) == "" || strings.TrimSpace(end) == "" {
+		return 0, false
+	}
+	startTime, err := time.Parse(time.RFC3339, start)
 	if err != nil {
-		return nil
+		return 0, false
 	}
-	for i := len(records) - 1; i >= 0; i-- {
-		record := records[i]
-		if record.ID != run.EgressRecordID {
-			continue
-		}
-		return &AIEgressSummary{
-			RecordID:        record.ID,
-			Status:          record.Status,
-			ProviderID:      record.ProviderID,
-			ProviderKind:    record.ProviderKind,
-			Endpoint:        record.Endpoint,
-			Model:           record.Model,
-			ReasoningEffort: record.ReasoningEffort,
-			Capability:      record.Capability,
-			DataCategories:  record.DataCategories,
-			Redaction:       record.Redaction,
-			LatencyMs:       record.LatencyMs,
-			Canceled:        record.Canceled,
-			ErrorClass:      record.ErrorClass,
-			CreatedAt:       record.CreatedAt,
-			RunID:           record.RunID,
-			Source:          record.Source,
-			ChatAction:      record.ChatAction,
-			InputTokens:     record.InputTokens,
-			OutputTokens:    record.OutputTokens,
-			TotalTokens:     record.TotalTokens,
-			EstimatedTokens: record.EstimatedTokens,
-			TokenSource:     record.TokenSource,
-			CostMicros:      record.CostMicros,
-			CostCurrency:    record.CostCurrency,
-			CostEstimated:   record.CostEstimated,
-			CostSource:      record.CostSource,
-			ToolProfile:     record.ToolProfile,
-			ToolSchemaCount: record.ToolSchemaCount,
-			ToolSupportKind: record.ToolSupportKind,
-		}
+	endTime, err := time.Parse(time.RFC3339, end)
+	if err != nil {
+		return 0, false
 	}
-	return nil
+	if endTime.Before(startTime) {
+		return 0, false
+	}
+	return endTime.Sub(startTime).Milliseconds(), true
 }
 
 func disclosureSummary(provider *AIProviderEnvelope, contextSummary *AIContextSummary, consent AIConsentSummary, optInSource string) AIContextDisclosureSummary {

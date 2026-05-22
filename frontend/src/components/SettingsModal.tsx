@@ -93,6 +93,7 @@ import {
   type AppIconAppearance,
   type AIChatDefaultContextPrefs,
   type AIChatDisplayPreferences,
+  type AIChatWorkflowPreferences,
   type CustomFontFaceDefinition,
   type AIChatSendShortcut,
   type ProjectWindowMode,
@@ -447,6 +448,19 @@ const aiChatDisplayPreferenceRows: Array<{
     key: "showActivity",
     title: "Runtime activity",
     description: "Show compact runtime state in the AI Chat header.",
+  },
+];
+
+const aiChatWorkflowPreferenceRows: Array<{
+  key: keyof AIChatWorkflowPreferences;
+  title: string;
+  description: string;
+}> = [
+  {
+    key: "autoReviewAfterBuild",
+    title: "Auto review large Builds",
+    description:
+      "Run a quiet linked Review only for large plan-linked Build results.",
   },
 ];
 
@@ -902,6 +916,13 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
     keywords: ["ai", "chat", "context", "display", "runtime activity"],
   },
   {
+    id: "ai-chat-workflow",
+    tab: "ai",
+    label: "AI chat workflow",
+    description: "Control linked Plan, Build, and Review run behavior.",
+    keywords: ["ai", "chat", "plan", "build", "review", "workflow"],
+  },
+  {
     id: "ai-provider-launch",
     tab: "ai",
     label: "Provider launch",
@@ -1344,6 +1365,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setAIChatSendShortcut,
     setAIChatDisplayPref,
     setAIChatDefaultContext,
+    setAIChatWorkflowPref,
   } = useEditorSettingsStore();
   const {
     autoOpenFromTerminal,
@@ -2644,6 +2666,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 setAIChatDisplayPref(row.key, checked)
               }
               controlLabel={row.title}
+            />
+          ))}
+          {aiChatWorkflowPreferenceRows.map((row) => (
+            <SwitchRow
+              key={row.key}
+              settingId="ai-chat-workflow"
+              title={row.title}
+              description={row.description}
+              checked={aiChatPreferences.workflowPrefs[row.key]}
+              onCheckedChange={(checked) =>
+                setAIChatWorkflowPref(row.key, checked)
+              }
+              controlLabel={row.title}
+              highlighted={highlightedSettingId === "ai-chat-workflow"}
             />
           ))}
           <div className="space-y-3 px-4 py-4">

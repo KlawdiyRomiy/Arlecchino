@@ -642,35 +642,46 @@ type AIToolProposal struct {
 }
 
 type AIEgressSummary struct {
-	RecordID        string               `json:"recordId,omitempty"`
-	Status          string               `json:"status,omitempty"`
-	ProviderID      string               `json:"providerId,omitempty"`
-	ProviderKind    string               `json:"providerKind,omitempty"`
-	Endpoint        string               `json:"endpoint,omitempty"`
-	Model           string               `json:"model,omitempty"`
-	ReasoningEffort string               `json:"reasoningEffort,omitempty"`
-	Capability      AIProviderCapability `json:"capability,omitempty"`
-	DataCategories  []string             `json:"dataCategories,omitempty"`
-	Redaction       AIRedactionSummary   `json:"redaction"`
-	LatencyMs       int64                `json:"latencyMs,omitempty"`
-	Canceled        bool                 `json:"canceled"`
-	ErrorClass      string               `json:"errorClass,omitempty"`
-	CreatedAt       string               `json:"createdAt,omitempty"`
-	RunID           string               `json:"runId,omitempty"`
-	Source          string               `json:"source,omitempty"`
-	ChatAction      AIChatAction         `json:"chatAction,omitempty"`
-	InputTokens     int                  `json:"inputTokens,omitempty"`
-	OutputTokens    int                  `json:"outputTokens,omitempty"`
-	TotalTokens     int                  `json:"totalTokens,omitempty"`
-	EstimatedTokens bool                 `json:"estimatedTokens,omitempty"`
-	TokenSource     string               `json:"tokenSource,omitempty"`
-	CostMicros      int64                `json:"costMicros,omitempty"`
-	CostCurrency    string               `json:"costCurrency,omitempty"`
-	CostEstimated   bool                 `json:"costEstimated,omitempty"`
-	CostSource      string               `json:"costSource,omitempty"`
-	ToolProfile     string               `json:"toolProfile,omitempty"`
-	ToolSchemaCount int                  `json:"toolSchemaCount,omitempty"`
-	ToolSupportKind string               `json:"toolSupportKind,omitempty"`
+	RecordID            string               `json:"recordId,omitempty"`
+	RecordIDs           []string             `json:"recordIds,omitempty"`
+	RequestCount        int                  `json:"requestCount,omitempty"`
+	Status              string               `json:"status,omitempty"`
+	FinalStatus         string               `json:"finalStatus,omitempty"`
+	ProviderID          string               `json:"providerId,omitempty"`
+	ProviderIDs         []string             `json:"providerIds,omitempty"`
+	ProviderKind        string               `json:"providerKind,omitempty"`
+	Endpoint            string               `json:"endpoint,omitempty"`
+	Model               string               `json:"model,omitempty"`
+	Models              []string             `json:"models,omitempty"`
+	ReasoningEffort     string               `json:"reasoningEffort,omitempty"`
+	Capability          AIProviderCapability `json:"capability,omitempty"`
+	DataCategories      []string             `json:"dataCategories,omitempty"`
+	Redaction           AIRedactionSummary   `json:"redaction"`
+	LatencyMs           int64                `json:"latencyMs,omitempty"`
+	APIDurationMs       int64                `json:"apiDurationMs,omitempty"`
+	WallDurationMs      int64                `json:"wallDurationMs,omitempty"`
+	FirstTokenAt        string               `json:"firstTokenAt,omitempty"`
+	FirstTokenLatencyMs int64                `json:"firstTokenLatencyMs,omitempty"`
+	Canceled            bool                 `json:"canceled"`
+	ErrorClass          string               `json:"errorClass,omitempty"`
+	CreatedAt           string               `json:"createdAt,omitempty"`
+	RunID               string               `json:"runId,omitempty"`
+	Source              string               `json:"source,omitempty"`
+	ChatAction          AIChatAction         `json:"chatAction,omitempty"`
+	InputTokens         int                  `json:"inputTokens,omitempty"`
+	OutputTokens        int                  `json:"outputTokens,omitempty"`
+	TotalTokens         int                  `json:"totalTokens,omitempty"`
+	EstimatedTokens     bool                 `json:"estimatedTokens,omitempty"`
+	TokenSource         string               `json:"tokenSource,omitempty"`
+	CostMicros          int64                `json:"costMicros,omitempty"`
+	CostCurrency        string               `json:"costCurrency,omitempty"`
+	CostEstimated       bool                 `json:"costEstimated,omitempty"`
+	CostSource          string               `json:"costSource,omitempty"`
+	ToolProfile         string               `json:"toolProfile,omitempty"`
+	ToolSchemaCount     int                  `json:"toolSchemaCount,omitempty"`
+	ToolSupportKind     string               `json:"toolSupportKind,omitempty"`
+	MixedProviders      bool                 `json:"mixedProviders,omitempty"`
+	MixedModels         bool                 `json:"mixedModels,omitempty"`
 }
 
 type AIToolProposalSummary struct {
@@ -739,6 +750,12 @@ type AIChatRunNotice struct {
 	NotificationID string `json:"notificationId,omitempty"`
 }
 
+type AIChatRunLinks struct {
+	SourcePlanRunID         string `json:"sourcePlanRunId,omitempty"`
+	SourceBuildRunID        string `json:"sourceBuildRunId,omitempty"`
+	AutoReviewForBuildRunID string `json:"autoReviewForBuildRunId,omitempty"`
+}
+
 type AIChatRunEnvelope struct {
 	ID                  string                     `json:"id"`
 	SessionID           string                     `json:"sessionId"`
@@ -765,6 +782,7 @@ type AIChatRunEnvelope struct {
 	MnemonicInclusion   AIMnemonicInclusionSummary `json:"mnemonicInclusion"`
 	Timeline            []AIRunTimelineEvent       `json:"timeline,omitempty"`
 	AgentRuntime        *AIExternalAgentRunSummary `json:"agentRuntime,omitempty"`
+	Links               AIChatRunLinks             `json:"links"`
 	Revision            int64                      `json:"revision"`
 	CreatedAt           string                     `json:"createdAt"`
 	UpdatedAt           string                     `json:"updatedAt"`
@@ -789,6 +807,8 @@ type AIChatRun struct {
 	ToolProposals     []AIToolProposal           `json:"toolProposals,omitempty"`
 	EgressRecordID    string                     `json:"egressRecordId,omitempty"`
 	AgentRuntime      *AIExternalAgentRunSummary `json:"agentRuntime,omitempty"`
+	Links             AIChatRunLinks             `json:"links"`
+	FirstTokenAt      string                     `json:"firstTokenAt,omitempty"`
 	MnemonicRequested bool                       `json:"mnemonicRequested"`
 	CanCancel         bool                       `json:"canCancel"`
 	Revision          int64                      `json:"revision"`
@@ -841,15 +861,17 @@ type AIPendingApproval struct {
 type AIChatRunArtifactKind string
 
 const (
-	AIChatRunArtifactContext       AIChatRunArtifactKind = "context"
-	AIChatRunArtifactEgress        AIChatRunArtifactKind = "egress"
-	AIChatRunArtifactToolProposal  AIChatRunArtifactKind = "tool_proposal"
-	AIChatRunArtifactMemory        AIChatRunArtifactKind = "memory"
-	AIChatRunArtifactPatchPreview  AIChatRunArtifactKind = "patch_preview"
-	AIChatRunArtifactTerminal      AIChatRunArtifactKind = "terminal_preview"
-	AIChatRunArtifactBackground    AIChatRunArtifactKind = "background_agent"
-	AIChatRunArtifactAgentTerminal AIChatRunArtifactKind = "agent_terminal"
-	AIChatRunArtifactAgentWorktree AIChatRunArtifactKind = "agent_worktree"
+	AIChatRunArtifactContext             AIChatRunArtifactKind = "context"
+	AIChatRunArtifactEgress              AIChatRunArtifactKind = "egress"
+	AIChatRunArtifactToolProposal        AIChatRunArtifactKind = "tool_proposal"
+	AIChatRunArtifactMemory              AIChatRunArtifactKind = "memory"
+	AIChatRunArtifactInteractionQuestion AIChatRunArtifactKind = "interaction_question"
+	AIChatRunArtifactWorkflowPlanGate    AIChatRunArtifactKind = "workflow_plan_gate"
+	AIChatRunArtifactPatchPreview        AIChatRunArtifactKind = "patch_preview"
+	AIChatRunArtifactTerminal            AIChatRunArtifactKind = "terminal_preview"
+	AIChatRunArtifactBackground          AIChatRunArtifactKind = "background_agent"
+	AIChatRunArtifactAgentTerminal       AIChatRunArtifactKind = "agent_terminal"
+	AIChatRunArtifactAgentWorktree       AIChatRunArtifactKind = "agent_worktree"
 )
 
 type AIChatRunArtifact struct {
@@ -864,6 +886,80 @@ type AIChatRunArtifact struct {
 	PayloadJSON      string                `json:"payloadJson,omitempty"`
 	CreatedAt        string                `json:"createdAt"`
 	UpdatedAt        string                `json:"updatedAt"`
+}
+
+type AIInteractionQuestionOption struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Value       string `json:"value,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+type AIInteractionQuestionPayload struct {
+	QuestionID        string                        `json:"questionId"`
+	Prompt            string                        `json:"prompt"`
+	Options           []AIInteractionQuestionOption `json:"options"`
+	AllowCustomAnswer bool                          `json:"allowCustomAnswer"`
+	Status            string                        `json:"status"`
+	SelectedOptionID  string                        `json:"selectedOptionId,omitempty"`
+	SelectedValue     string                        `json:"selectedValue,omitempty"`
+	CustomAnswer      string                        `json:"customAnswer,omitempty"`
+	AnsweredAt        string                        `json:"answeredAt,omitempty"`
+	CreatedAt         string                        `json:"createdAt,omitempty"`
+	UpdatedAt         string                        `json:"updatedAt,omitempty"`
+}
+
+type AIQuestionAnswerRequest struct {
+	RunID        string `json:"runId"`
+	QuestionID   string `json:"questionId,omitempty"`
+	OptionID     string `json:"optionId,omitempty"`
+	CustomAnswer string `json:"customAnswer,omitempty"`
+}
+
+type AIQuestionAnswerResult struct {
+	Artifact AIChatRunArtifact            `json:"artifact"`
+	Payload  AIInteractionQuestionPayload `json:"payload"`
+	Run      AIChatRun                    `json:"run"`
+	Status   string                       `json:"status"`
+}
+
+type AIPlanGateState string
+
+const (
+	AIPlanGateStatePending           AIPlanGateState = "pending"
+	AIPlanGateStateAccepted          AIPlanGateState = "accepted"
+	AIPlanGateStateRevisionRequested AIPlanGateState = "revision_requested"
+	AIPlanGateStateSuperseded        AIPlanGateState = "superseded"
+)
+
+type AIPlanGatePayload struct {
+	PlanRunID          string          `json:"planRunId"`
+	State              AIPlanGateState `json:"state"`
+	AcceptedBuildRunID string          `json:"acceptedBuildRunId,omitempty"`
+	RevisionPlanRunIDs []string        `json:"revisionPlanRunIds,omitempty"`
+	RevisionReason     string          `json:"revisionReason,omitempty"`
+	CreatedAt          string          `json:"createdAt,omitempty"`
+	UpdatedAt          string          `json:"updatedAt,omitempty"`
+}
+
+type AIAcceptPlanRequest struct {
+	PlanRunID string `json:"planRunId"`
+}
+
+type AIRequestPlanRevisionRequest struct {
+	PlanRunID string `json:"planRunId"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type AIStartLinkedReviewRequest struct {
+	BuildRunID string `json:"buildRunId"`
+}
+
+type AIWorkflowRunResult struct {
+	Run      AIChatRun         `json:"run"`
+	Artifact AIChatRunArtifact `json:"artifact,omitempty"`
+	Status   string            `json:"status"`
+	Started  bool              `json:"started"`
 }
 
 type AIPatchPreviewRequest struct {
@@ -1157,6 +1253,7 @@ type AIChatRunRequest struct {
 	IncludeSkills   bool             `json:"includeSkills"`
 	MaxTokens       int              `json:"maxTokens,omitempty"`
 	Context         AIContextRequest `json:"context,omitempty"`
+	Links           AIChatRunLinks   `json:"links"`
 }
 
 type AIContinuationResponse struct {

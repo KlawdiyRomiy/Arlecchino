@@ -785,10 +785,7 @@ func (s *Service) handleAgentRuntimeEvent(project *ProjectSession, runID string,
 			if token == "" {
 				return
 			}
-			s.emitEvent("ai:chat:token", map[string]any{"runId": runID, "token": token})
-			s.updateRun(runID, func(run *AIChatRun) {
-				run.Response += token
-			})
+			s.emitStreamingChatToken(runID, token)
 			return
 		}
 	}
@@ -1041,6 +1038,9 @@ func (s *Service) storeAgentEgressRecord(project *ProjectSession, runID string, 
 	s.emitEvent("ai:chat:egress-recorded", record)
 	s.recordEgressTimeline(project, runID, record)
 	s.recordChatRunArtifact(project, runID, AIChatRunArtifactEgress, "External agent egress", egressArtifactSummary(record), record)
+	if project != nil {
+		s.emitRunEnvelope(project.ID, runID)
+	}
 	return record
 }
 
@@ -1149,6 +1149,7 @@ func (s *Service) finishAgentRunCompleted(project *ProjectSession, runID string,
 			}
 		}
 	})
+	s.recordPlanGateIfNeeded(project, runID, req.Action)
 	s.emitRunEnvelope(project.ID, runID)
 	if run, err := s.GetChatRun(project.ID, runID); err == nil {
 		s.persistChatRun(run)
