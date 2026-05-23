@@ -701,6 +701,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const executionProfilesRequestRef = React.useRef(0);
   const codePanelOpenRequestRef = React.useRef(0);
   const openFileFromPathRequestRef = React.useRef(0);
+  const userCreatedFileOpenRef = React.useRef<(path: string) => void>(() => {});
   const editorFileOpenLoadingTimerRef = React.useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
@@ -2059,6 +2060,12 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     canAccessPath,
     onBeforeMoveEntry: async () => {
       await dirtyEditorFlushHandlerRef.current?.();
+    },
+    onUserCreatedEntry: (path, isDirectory) => {
+      requestExplorerRevealFile(path);
+      if (!isDirectory) {
+        userCreatedFileOpenRef.current(path);
+      }
     },
     showNotification,
     setProjectPathCopiedVisible,
@@ -4324,6 +4331,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       tuiModeActive,
     ],
   );
+  userCreatedFileOpenRef.current = (path: string) => {
+    void openFileFromPath(path);
+  };
 
   useEffect(() => {
     const normalizedProjectPath = normalizeProjectPath(activeProjectPath);

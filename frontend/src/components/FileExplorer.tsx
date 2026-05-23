@@ -82,6 +82,10 @@ interface CreatedEntryEvent {
   isDirectory?: boolean;
 }
 
+interface RefreshDirectoryOptions {
+  preserveExpansion?: boolean;
+}
+
 interface RenamedEntryEvent {
   oldPath?: string;
   newPath?: string;
@@ -383,6 +387,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       return;
     }
 
+    const parentPath = getProjectPathDirname(path);
+    if (parentPath && isSameOrChildPath(parentPath, normalizedProjectPath)) {
+      await refreshDirectoryPath(parentPath);
+    }
     await expandToPath(path);
     setHighlightedPath(path);
 
@@ -573,7 +581,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     void loadProject();
   }, [initialProjectPath]);
 
-  const refreshDirectoryPath = async (dirPath: string) => {
+  const refreshDirectoryPath = async (
+    dirPath: string,
+    options: RefreshDirectoryOptions = {},
+  ) => {
     if (!dirPath) return;
 
     try {
@@ -596,7 +607,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
             return {
               ...node,
               isLoaded: true,
-              isExpanded: true,
+              isExpanded: options.preserveExpansion
+                ? getIsExpanded(node.path)
+                : true,
               children: nextChildren,
             };
           }
@@ -609,7 +622,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       const updatedFiles = updateDirectory(filesRef.current);
       filesRef.current = updatedFiles;
       setFiles(updatedFiles);
-      setExpanded(dirPath, true);
+      if (!options.preserveExpansion) {
+        setExpanded(dirPath, true);
+      }
     } catch (error) {
       console.error("Error refreshing directory:", dirPath, error);
     }
@@ -661,66 +676,65 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     return false;
   };
 
-  const openCreatedFile = async (createdPath: string) => {
-    const fileName = createdPath.split("/").pop() || "";
-    const requestId = latestFileOpenRequestRef.current + 1;
-    latestFileOpenRequestRef.current = requestId;
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        if (latestFileOpenRequestRef.current !== requestId) {
-          return;
-        }
-        onFileOpenRef.current?.(createdPath, "", fileName);
-        return;
-      } catch (error) {
-        if (latestFileOpenRequestRef.current !== requestId) {
-          return;
-        }
-        if (attempt === 1) {
-          console.error("Error opening created file:", error);
-          return;
-        }
-        await new Promise<void>((resolve) => setTimeout(resolve, 120));
+  const findLoadedDirectory = (
+    nodes: FileNode[],
+    targetPath: string,
+  ): FileNode | null => {
+    for (const node of nodes) {
+      if (node.path === targetPath) {
+        return node.isDirectory && node.isLoaded ? node : null;
+      }
+      if (!node.children) {
+        continue;
+      }
+      const match = findLoadedDirectory(node.children, targetPath);
+      if (match) {
+        return match;
       }
     }
+    return null;
   };
 
-  const refreshPathChain = async (targetPath: string, isDirectory: boolean) => {
+  const refreshCreatedEntryParent = async (createdPath: string) => {
     const currentProjectPath = normalizeProjectPath(projectPathRef.current);
     if (!currentProjectPath) {
       return;
     }
 
-    const targetDirectory = isDirectory
-      ? targetPath
-      : targetPath.slice(0, targetPath.lastIndexOf("/")) || currentProjectPath;
-
-    await refreshDirectoryPath(currentProjectPath);
-
-    if (targetDirectory === currentProjectPath) {
+    if (!isSameOrChildPath(createdPath, currentProjectPath)) {
       return;
     }
 
-    const relativePath = targetDirectory.startsWith(`${currentProjectPath}/`)
-      ? targetDirectory.slice(currentProjectPath.length + 1)
-      : "";
-
-    if (!relativePath) {
+    const parentPath = normalizeProjectPath(
+      getProjectPathDirname(createdPath) || currentProjectPath,
+    );
+    if (!parentPath) {
       return;
     }
 
-    let currentPath = currentProjectPath;
-    for (const segment of relativePath.split("/").filter(Boolean)) {
-      currentPath += `/${segment}`;
-      await refreshDirectoryPath(currentPath);
+    if (parentPath === currentProjectPath) {
+      await refreshDirectoryPath(currentProjectPath, {
+        preserveExpansion: true,
+      });
+      return;
     }
+
+    if (!getIsExpanded(parentPath)) {
+      return;
+    }
+    const parentNode = findLoadedDirectory(filesRef.current, parentPath);
+    if (!parentNode) {
+      return;
+    }
+
+    await refreshDirectoryPath(parentPath, { preserveExpansion: true });
   };
 
   useEffect(() => {
     const handleCreatedEntry = async (payload: string | CreatedEntryEvent) => {
-      const createdPath =
-        typeof payload === "string" ? payload : (payload.path ?? "");
+      const createdPath = normalizeProjectPath(
+        typeof payload === "string" ? payload : (payload.path ?? ""),
+      );
       const isDirectory =
         typeof payload === "string" ? false : Boolean(payload.isDirectory);
       const currentProjectPath = normalizeProjectPath(projectPathRef.current);
@@ -729,10 +743,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         return;
       }
 
-      if (
-        createdPath !== currentProjectPath &&
-        !createdPath.startsWith(`${currentProjectPath}/`)
-      ) {
+      if (!isSameOrChildPath(createdPath, currentProjectPath)) {
         return;
       }
 
@@ -740,14 +751,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         return;
       }
 
-      await refreshPathChain(createdPath, isDirectory);
-      await revealPath(createdPath);
-
-      if (isDirectory) {
-        return;
-      }
-
-      await openCreatedFile(createdPath);
+      await refreshCreatedEntryParent(createdPath);
     };
 
     const unsubscribeFileCreated = EventsOn("file:created", (createdPath) => {

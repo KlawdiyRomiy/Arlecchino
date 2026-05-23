@@ -25,6 +25,7 @@ const installMCPFilePanelBridges = async (
     };
     const writeFileCalls: Array<{ path: unknown; content: unknown }> = [];
     const createDirectoryCalls: unknown[] = [];
+    const createdDirectories: string[] = [];
     const scrollFixtureFiles = Array.from({ length: 48 }, (_, index) => {
       const name = `scroll-fixture-${String(index).padStart(2, "0")}.ts`;
       return {
@@ -78,9 +79,45 @@ const installMCPFilePanelBridges = async (
                 return true;
               case "CreateDirectory":
                 createDirectoryCalls.push(args[0]);
+                if (typeof args[0] === "string") {
+                  createdDirectories.push(args[0]);
+                }
                 return true;
               case "ReadDirectory":
                 if (args[0] === "/workspace") {
+                  const dynamicRootFiles = Object.keys(fileContents)
+                    .filter((path) => {
+                      if (!path.startsWith("/workspace/")) {
+                        return false;
+                      }
+                      const relative = path.slice("/workspace/".length);
+                      return relative.length > 0 && !relative.includes("/");
+                    })
+                    .filter(
+                      (path) =>
+                        ![
+                          "/workspace/Makefile",
+                          "/workspace/package.json",
+                        ].includes(path),
+                    )
+                    .map((path) => ({
+                      name: path.split("/").pop() || path,
+                      path,
+                      isDirectory: false,
+                    }));
+                  const dynamicRootDirs = createdDirectories
+                    .filter((path) => {
+                      if (!path.startsWith("/workspace/")) {
+                        return false;
+                      }
+                      const relative = path.slice("/workspace/".length);
+                      return relative.length > 0 && !relative.includes("/");
+                    })
+                    .map((path) => ({
+                      name: path.split("/").pop() || path,
+                      path,
+                      isDirectory: true,
+                    }));
                   return [
                     {
                       name: "Makefile",
@@ -97,6 +134,13 @@ const installMCPFilePanelBridges = async (
                       path: "/workspace/src",
                       isDirectory: true,
                     },
+                    {
+                      name: "node_modules",
+                      path: "/workspace/node_modules",
+                      isDirectory: true,
+                    },
+                    ...dynamicRootDirs,
+                    ...dynamicRootFiles,
                     ...scrollFixtureFiles,
                   ];
                 }
@@ -105,6 +149,24 @@ const installMCPFilePanelBridges = async (
                     {
                       name: "main.ts",
                       path: "/workspace/src/main.ts",
+                      isDirectory: false,
+                    },
+                  ];
+                }
+                if (args[0] === "/workspace/node_modules") {
+                  return [
+                    {
+                      name: "pkg",
+                      path: "/workspace/node_modules/pkg",
+                      isDirectory: true,
+                    },
+                  ];
+                }
+                if (args[0] === "/workspace/node_modules/pkg") {
+                  return [
+                    {
+                      name: "index.js",
+                      path: "/workspace/node_modules/pkg/index.js",
                       isDirectory: false,
                     },
                   ];
@@ -475,6 +537,80 @@ test("TUI code panel refreshes when an open file changes externally", async ({
   await expect(codePanel.locator(".cm-content")).toContainText("go test ./...");
 });
 
+test("background created-entry events refresh Explorer without opening editor tabs", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(
+    async ({ path, content }) => {
+      const { useEditorStore } = await import("/src/stores/editorStore.ts");
+      useEditorStore
+        .getState()
+        .openTab("pane-main", path, "package.json", content, "json");
+    },
+    { path: packageJsonPath, content: packageJsonContent },
+  );
+
+  await page.evaluate(() => {
+    window.runtime.EventsEmit("project:entry:created", {
+      path: "/workspace/src/generated.ts",
+      isDirectory: false,
+    });
+  });
+
+  await expect(page.getByText("Opening file")).toHaveCount(0);
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useEditorStore } = await import("/src/stores/editorStore.ts");
+        return {
+          activePath:
+            useEditorStore.getState().getActiveTab("pane-main")?.path ?? null,
+          paths: Array.from(useEditorStore.getState().tabs.values()).map(
+            (tab) => tab.path,
+          ),
+        };
+      }),
+    )
+    .toEqual({
+      activePath: packageJsonPath,
+      paths: [packageJsonPath],
+    });
+});
+
+test("background dependency created-entry events do not expand skipped folders", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await page.evaluate(() => {
+    window.runtime.EventsEmit("ide:panel:open", {
+      panel: "explorer",
+      position: "left",
+      mode: "snapped",
+    });
+  });
+
+  await expect(
+    page.locator('[data-file-path="/workspace/node_modules/pkg"]'),
+  ).toHaveCount(0);
+
+  await page.evaluate(() => {
+    window.runtime.EventsEmit("project:entry:created", {
+      path: "/workspace/node_modules/pkg/index.js",
+      isDirectory: false,
+    });
+  });
+
+  await expect(
+    page.locator('[data-file-path="/workspace/node_modules/pkg"]'),
+  ).toHaveCount(0);
+  await expect(
+    page.locator('[data-file-path="/workspace/node_modules/pkg/index.js"]'),
+  ).toHaveCount(0);
+  await expect(page.getByText("Opening file")).toHaveCount(0);
+});
+
 test("TUI explorer file clicks open code panel tabs and keeps New File working", async ({
   page,
 }) => {
@@ -490,7 +626,9 @@ test("TUI explorer file clicks open code panel tabs and keeps New File working",
       "Codex",
     );
     terminalStore.enterTUIMode(terminalId, "playwright");
+    window.runtime.EventsEmit("ide:tui:enter");
   });
+  await expect(page.getByTestId("tui-center-terminal")).toBeVisible();
 
   await page.evaluate(() => {
     window.runtime.EventsEmit("ide:panel:open", {
@@ -688,6 +826,30 @@ test("TUI explorer file clicks open code panel tabs and keeps New File working",
     path: "/workspace/created.txt",
     content: "",
   });
+  await expect(
+    page.getByTestId("code-panel-tab-workspace-created-txt"),
+  ).toBeVisible();
+  await expect(
+    explorerPanel.locator('[data-file-path="/workspace/created.txt"]'),
+  ).toBeVisible();
+
+  await explorerPanel
+    .getByRole("button", { name: "Create", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "New Folder" }).click();
+  await expect(page.locator('input[placeholder="new-folder"]')).toBeVisible();
+  await page.locator('input[placeholder="new-folder"]').fill("generated");
+  await page.getByRole("button", { name: "Create Folder" }).click();
+
+  await expect
+    .poll(async () => page.evaluate(() => window.__createDirectoryCalls))
+    .toContain("/workspace/generated");
+  await expect(
+    explorerPanel.locator('[data-file-path="/workspace/generated"]'),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId("code-panel-tab-workspace-generated"),
+  ).toHaveCount(0);
 });
 
 test("code panel tab drops back into Explorer without creating another panel", async ({

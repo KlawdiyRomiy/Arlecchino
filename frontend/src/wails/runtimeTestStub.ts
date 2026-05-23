@@ -78,6 +78,7 @@ const callIDToMethod = new Map<number, string>([
   [1815374578, "AITestProvider"],
   [3053338550, "AIUpdateMnemonicEntry"],
   [371497096, "CloseProject"],
+  [148843624, "CreateDirectory"],
   [3924508043, "GetCurrentProjectFramework"],
   [3018154166, "GetCurrentProjectPath"],
   [4288915571, "GetDevToolsStatus"],

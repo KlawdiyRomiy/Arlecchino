@@ -25,10 +25,11 @@ const (
 )
 
 type IndexingEvent struct {
-	Type    IndexingEventType
-	Current int
-	Total   int
-	Error   string
+	Type     IndexingEventType
+	Current  int
+	Total    int
+	Error    string
+	Terminal bool
 }
 
 type Engine struct {
@@ -320,7 +321,7 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 	scanner, err := workspace.NewScanner(e.projectRoot, workspace.ScannerOptions{UseGitIgnore: true})
 	if err != nil {
 		e.batchFailed.Store(true)
-		e.notifyIndexing(IndexingEvent{Type: IndexingFailed, Error: err.Error()})
+		e.notifyIndexing(IndexingEvent{Type: IndexingFailed, Error: err.Error(), Terminal: true})
 		return err
 	}
 	walkSummary, walkErr := scanner.Walk(ctx, func(entry workspace.Entry) error {
@@ -377,7 +378,7 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 	flushInventory()
 	if walkErr != nil {
 		e.batchFailed.Store(true)
-		e.notifyIndexing(IndexingEvent{Type: IndexingFailed, Error: walkErr.Error()})
+		e.notifyIndexing(IndexingEvent{Type: IndexingFailed, Error: walkErr.Error(), Terminal: true})
 		return walkErr
 	}
 	if walkSummary.Files > count {

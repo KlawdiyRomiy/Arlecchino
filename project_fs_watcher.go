@@ -31,6 +31,20 @@ const (
 	projectWatchMaxEvents       = 256
 )
 
+var projectWatchSkippedDirs = map[string]struct{}{
+	".arlecchino":  {},
+	".cache":       {},
+	".git":         {},
+	".next":        {},
+	".turbo":       {},
+	"build":        {},
+	"coverage":     {},
+	"dist":         {},
+	"node_modules": {},
+	"tmp":          {},
+	"vendor":       {},
+}
+
 func (a *App) startProjectFilesystemWatcher(projectPath string, generation uint64) {
 	a.startProjectFilesystemWatcherForSession(a.activeProjectSession(), projectPath, generation)
 }
@@ -50,6 +64,7 @@ func (a *App) startProjectFilesystemWatcherForSession(session *ProjectRuntimeSes
 			MaxEvents:           projectWatchMaxEvents,
 			InitialPollInterval: projectWatchInitialInterval,
 			MaxPollInterval:     projectWatchMaxInterval,
+			SkipDirs:            projectWatchSkipDirs(),
 		})
 		err := service.Start(ctx, projectPath, func(events []watcher.Event) {
 			if session.projectGeneration.Load() != generation {
@@ -82,25 +97,24 @@ func scanProjectEntries(projectPath string) (map[string]projectEntrySnapshot, er
 }
 
 func scanProjectEntriesWithBudget(projectPath string, maxEntries int) (projectEntryScanResult, error) {
-	result, err := watcher.Scan(context.Background(), projectPath, maxEntries)
+	result, err := watcher.ScanWithSkipDirs(context.Background(), projectPath, maxEntries, projectWatchSkipDirs())
 	if err != nil {
 		return projectEntryScanResult{}, err
 	}
 	return projectEntryScanResult{Entries: toProjectEntrySnapshots(result.Entries), Bounded: result.Bounded}, nil
 }
 
+func projectWatchSkipDirs() map[string]struct{} {
+	skipDirs := make(map[string]struct{}, len(projectWatchSkippedDirs))
+	for name := range projectWatchSkippedDirs {
+		skipDirs[name] = struct{}{}
+	}
+	return skipDirs
+}
+
 func shouldSkipProjectWatchDir(name string) bool {
-	return name == ".arlecchino" ||
-		name == ".cache" ||
-		name == ".git" ||
-		name == ".next" ||
-		name == ".turbo" ||
-		name == "build" ||
-		name == "coverage" ||
-		name == "dist" ||
-		name == "node_modules" ||
-		name == "tmp" ||
-		name == "vendor"
+	_, ok := projectWatchSkippedDirs[name]
+	return ok
 }
 
 func limitProjectWatchCreatedEvents(events []projectEntryCreatedEvent, limit int) []projectEntryCreatedEvent {

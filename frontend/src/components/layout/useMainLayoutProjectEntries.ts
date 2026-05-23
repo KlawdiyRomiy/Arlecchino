@@ -42,6 +42,7 @@ interface UseMainLayoutProjectEntriesOptions {
     mode: ProjectEntryAccessMode,
   ) => ProjectEntryAccessDecision;
   onBeforeMoveEntry?: () => Promise<void>;
+  onUserCreatedEntry?: (path: string, isDirectory: boolean) => void;
   showNotification: (type: NotificationType, message: string) => void;
   setProjectPathCopiedVisible: (visible: boolean) => void;
 }
@@ -51,6 +52,7 @@ export const useMainLayoutProjectEntries = ({
   tuiModeActive,
   canAccessPath,
   onBeforeMoveEntry,
+  onUserCreatedEntry,
   showNotification,
   setProjectPathCopiedVisible,
 }: UseMainLayoutProjectEntriesOptions) => {
@@ -386,8 +388,10 @@ export const useMainLayoutProjectEntries = ({
     try {
       if (createEntryDialog.type === "file") {
         await WriteFile(targetPath, "");
+        onUserCreatedEntry?.(targetPath, false);
       } else {
         await CreateDirectory(targetPath);
+        onUserCreatedEntry?.(targetPath, true);
       }
 
       showNotification(
@@ -408,6 +412,7 @@ export const useMainLayoutProjectEntries = ({
     createEntryDialog,
     createEntryName,
     ensureProjectEntryAccess,
+    onUserCreatedEntry,
     showNotification,
   ]);
 

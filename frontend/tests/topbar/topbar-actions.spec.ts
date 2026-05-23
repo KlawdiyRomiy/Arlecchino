@@ -690,6 +690,56 @@ test("indexing state remains visible in the compact topbar context bubble", asyn
   await expect(page.getByTestId("topbar-project-path")).toHaveCount(0);
 });
 
+test("terminal indexer errors clear the compact topbar indexing state", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await setCompactTopbarActions(page);
+
+  await page.evaluate(() => {
+    (
+      window as unknown as {
+        runtime: {
+          EventsEmit: (eventName: string, payload?: unknown) => void;
+        };
+      }
+    ).runtime.EventsEmit("indexer:started", {
+      current: 0,
+      total: 10,
+    });
+  });
+  await expect(page.getByTestId("topbar-indexing-status")).toBeVisible();
+
+  await page.evaluate(() => {
+    (
+      window as unknown as {
+        runtime: {
+          EventsEmit: (eventName: string, payload?: unknown) => void;
+        };
+      }
+    ).runtime.EventsEmit("indexer:error", {
+      terminal: false,
+      error: "single file failed",
+    });
+  });
+  await expect(page.getByTestId("topbar-indexing-status")).toBeVisible();
+
+  await page.evaluate(() => {
+    (
+      window as unknown as {
+        runtime: {
+          EventsEmit: (eventName: string, payload?: unknown) => void;
+        };
+      }
+    ).runtime.EventsEmit("indexer:error", {
+      terminal: true,
+      error: "scan canceled",
+    });
+  });
+
+  await expect(page.getByTestId("topbar-indexing-status")).toHaveCount(0);
+});
+
 test("Cmd+Shift+. toggles zen chrome and edge hover reveals it", async ({
   page,
 }) => {

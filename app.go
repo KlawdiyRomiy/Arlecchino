@@ -415,6 +415,7 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 				"configuredWorkerCount": schedulerStats.Workers,
 				"projectPath":           path,
 				"sessionId":             session.ID,
+				"terminal":              evt.Terminal,
 			}
 			switch evt.Type {
 			case core.IndexingStarted:
@@ -453,6 +454,7 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 						"projectPath": path,
 						"sessionId":   session.ID,
 						"error":       err.Error(),
+						"terminal":    true,
 					})
 				}
 			}

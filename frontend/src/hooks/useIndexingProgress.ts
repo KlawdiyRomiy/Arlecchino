@@ -18,6 +18,7 @@ interface IndexerEventPayload {
   queueDepth?: number;
   projectFileCount?: number;
   sessionId?: string;
+  terminal?: boolean;
 }
 
 const MIN_INDEXING_MS = 800;
@@ -152,6 +153,21 @@ EventsOn("indexer:progress", (data: IndexerEventPayload) => {
     total,
     percentage: toPercentage(boundedCurrent, total),
   });
+});
+
+EventsOn("indexer:error", (data?: IndexerEventPayload) => {
+  if (!matchesCurrentProjectSession(data)) {
+    return;
+  }
+  if (data?.terminal !== true) {
+    recordIndexerBudget(data);
+    return;
+  }
+
+  recordIndexerBudget({ ...(data ?? {}), queueDepth: 0 });
+  clearAllTimers();
+  indexingStartedAt = 0;
+  emit({ phase: "revealed", current: 0, total: 0, percentage: 0 });
 });
 
 EventsOn("indexer:completed", (data?: IndexerEventPayload) => {

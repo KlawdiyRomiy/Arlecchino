@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -51,6 +52,7 @@ type Options struct {
 	FSNotifyDirLimit    int
 	InitialPollInterval time.Duration
 	MaxPollInterval     time.Duration
+	SkipDirs            map[string]struct{}
 }
 
 type ProjectWatcher struct {
@@ -73,7 +75,7 @@ func (w *ProjectWatcher) Start(ctx context.Context, root string, emit func([]Eve
 		emit = func([]Event) {}
 	}
 
-	initial, err := Scan(ctx, root, w.options.MaxEntries)
+	initial, err := scanWithOptions(ctx, root, w.options.MaxEntries, w.options.SkipDirs)
 	if err != nil {
 		return err
 	}
@@ -111,6 +113,9 @@ func (w *ProjectWatcher) runFSNotify(ctx context.Context, root string, initial S
 
 	watched := map[string]struct{}{}
 	addWatch := func(path string) {
+		if w.shouldSkipPath(root, path) {
+			return
+		}
 		if _, ok := watched[path]; ok {
 			return
 		}
@@ -137,7 +142,7 @@ func (w *ProjectWatcher) runFSNotify(ctx context.Context, root string, initial S
 			if event.Name == "" {
 				continue
 			}
-			events := w.eventsFromFSNotify(event, known, addWatch)
+			events := w.eventsFromFSNotify(root, event, known, addWatch)
 			if len(events) > 0 {
 				emit(limitEvents(events, w.options.MaxEvents))
 			}
@@ -145,7 +150,11 @@ func (w *ProjectWatcher) runFSNotify(ctx context.Context, root string, initial S
 	}
 }
 
-func (w *ProjectWatcher) eventsFromFSNotify(event fsnotify.Event, known map[string]Snapshot, addWatch func(string)) []Event {
+func (w *ProjectWatcher) eventsFromFSNotify(root string, event fsnotify.Event, known map[string]Snapshot, addWatch func(string)) []Event {
+	if w.shouldSkipPath(root, event.Name) {
+		delete(known, event.Name)
+		return nil
+	}
 	info, statErr := os.Stat(event.Name)
 	if statErr != nil {
 		delete(known, event.Name)
@@ -169,6 +178,26 @@ func (w *ProjectWatcher) eventsFromFSNotify(event fsnotify.Event, known map[stri
 	return nil
 }
 
+func (w *ProjectWatcher) shouldSkipPath(root string, path string) bool {
+	if len(w.options.SkipDirs) == 0 {
+		return false
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." || rel == "" {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return false
+	}
+	for _, part := range strings.Split(rel, "/") {
+		if _, ok := w.options.SkipDirs[part]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (w *ProjectWatcher) runPolling(ctx context.Context, root string, initial ScanResult, emit func([]Event)) {
 	known := initial.Entries
 	interval := w.options.InitialPollInterval
@@ -185,7 +214,7 @@ func (w *ProjectWatcher) runPolling(ctx context.Context, root string, initial Sc
 		case <-timer.C:
 		}
 
-		current, err := Scan(ctx, root, w.options.MaxEntries)
+		current, err := scanWithOptions(ctx, root, w.options.MaxEntries, w.options.SkipDirs)
 		if err != nil {
 			timer.Reset(w.options.MaxPollInterval)
 			continue
@@ -210,10 +239,19 @@ func (w *ProjectWatcher) runPolling(ctx context.Context, root string, initial Sc
 }
 
 func Scan(ctx context.Context, root string, maxEntries int) (ScanResult, error) {
+	return scanWithOptions(ctx, root, maxEntries, nil)
+}
+
+func ScanWithSkipDirs(ctx context.Context, root string, maxEntries int, skipDirs map[string]struct{}) (ScanResult, error) {
+	return scanWithOptions(ctx, root, maxEntries, skipDirs)
+}
+
+func scanWithOptions(ctx context.Context, root string, maxEntries int, skipDirs map[string]struct{}) (ScanResult, error) {
 	scanner, err := workspace.NewScanner(root, workspace.ScannerOptions{
 		MaxEntries:   maxEntries,
 		IncludeDirs:  true,
 		UseGitIgnore: true,
+		SkipDirs:     skipDirs,
 	})
 	if err != nil {
 		return ScanResult{}, err
@@ -301,6 +339,13 @@ func normalizeOptions(options Options) Options {
 	}
 	if options.MaxPollInterval <= 0 {
 		options.MaxPollInterval = 5 * time.Second
+	}
+	if len(options.SkipDirs) > 0 {
+		skipDirs := make(map[string]struct{}, len(options.SkipDirs))
+		for name := range options.SkipDirs {
+			skipDirs[name] = struct{}{}
+		}
+		options.SkipDirs = skipDirs
 	}
 	return options
 }
