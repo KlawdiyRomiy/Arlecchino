@@ -2,15 +2,20 @@ package main
 
 import (
 	"path/filepath"
+	"sort"
 
 	"arlecchino/internal/indexer"
 	"arlecchino/internal/indexer/core"
 )
 
 func (a *App) GetRelatedFiles(filePath string) ([]indexer.FileRelation, error) {
-	engine := a.activeCoreEngine()
+	engine := a.activeCoreEngineForPath(filePath)
 	if engine == nil {
 		return nil, nil
+	}
+	resolver, err := engine.NewDependencyTargetResolver()
+	if err != nil {
+		return nil, err
 	}
 
 	forward, err := engine.QueryEdges(core.EdgeQuery{FilePath: filePath, Limit: 100})
@@ -18,12 +23,7 @@ func (a *App) GetRelatedFiles(filePath string) ([]indexer.FileRelation, error) {
 		return nil, err
 	}
 
-	toSymbols := make([]string, 0, len(forward))
-	for _, e := range forward {
-		toSymbols = append(toSymbols, e.ToSymbol)
-	}
-
-	resolved, _ := engine.ResolveImportFiles(toSymbols)
+	resolvedForward, _ := resolver.ResolveEdges(filePath, forward)
 
 	basename := filepath.Base(filePath)
 	reverse, err := engine.FindDependants(basename, 100)
@@ -34,14 +34,9 @@ func (a *App) GetRelatedFiles(filePath string) ([]indexer.FileRelation, error) {
 	seen := make(map[string]struct{}, len(forward)+len(reverse))
 	relations := make([]indexer.FileRelation, 0, len(forward)+len(reverse))
 
-	for _, e := range forward {
-		targetPath := e.ToSymbol
-		if resolved != nil {
-			if p, ok := resolved[e.ToSymbol]; ok {
-				targetPath = p
-			}
-		}
-
+	for _, resolved := range resolvedForward {
+		e := resolved.Edge
+		targetPath := resolved.TargetPath
 		key := targetPath + string(e.Kind)
 		if _, dup := seen[key]; dup {
 			continue
@@ -63,6 +58,10 @@ func (a *App) GetRelatedFiles(filePath string) ([]indexer.FileRelation, error) {
 		if sourcePath == "" {
 			sourcePath = e.FromSymbol
 		}
+		resolvedReverse, _ := resolver.ResolveEdges(sourcePath, []core.Edge{e})
+		if len(resolvedReverse) == 0 || filepath.Clean(resolvedReverse[0].TargetPath) != filepath.Clean(filePath) {
+			continue
+		}
 		key := sourcePath + string(e.Kind)
 		if _, dup := seen[key]; dup {
 			continue
@@ -80,9 +79,13 @@ func (a *App) GetRelatedFiles(filePath string) ([]indexer.FileRelation, error) {
 }
 
 func (a *App) GetDependencyGraph(filePath string, depth int) (*indexer.DependencyGraph, error) {
-	engine := a.activeCoreEngine()
+	engine := a.activeCoreEngineForPath(filePath)
 	if engine == nil {
 		return &indexer.DependencyGraph{}, nil
+	}
+	resolver, err := engine.NewDependencyTargetResolver()
+	if err != nil {
+		return nil, err
 	}
 	if depth < 1 {
 		depth = 1
@@ -96,6 +99,7 @@ func (a *App) GetDependencyGraph(filePath string, depth int) (*indexer.Dependenc
 
 	nodeSet := make(map[string]struct{}, 64)
 	edgeBuf := make([]indexer.DependencyEdge, 0, maxEdgesTotal)
+	edgeSet := make(map[string]struct{}, maxEdgesTotal)
 	nodeSet[filePath] = struct{}{}
 
 	frontier := []string{filePath}
@@ -111,25 +115,24 @@ func (a *App) GetDependencyGraph(filePath string, depth int) (*indexer.Dependenc
 			if err != nil {
 				continue
 			}
+			sort.Slice(edges, func(i, j int) bool {
+				if edges[i].Line != edges[j].Line {
+					return edges[i].Line < edges[j].Line
+				}
+				if edges[i].ToSymbol != edges[j].ToSymbol {
+					return edges[i].ToSymbol < edges[j].ToSymbol
+				}
+				return edges[i].Kind < edges[j].Kind
+			})
 
-			toSymbols := make([]string, 0, len(edges))
-			for _, e := range edges {
-				toSymbols = append(toSymbols, e.ToSymbol)
-			}
+			resolvedEdges, _ := resolver.ResolveEdges(fp, edges)
 
-			resolved, _ := engine.ResolveImportFiles(toSymbols)
-
-			for _, e := range edges {
+			for _, resolved := range resolvedEdges {
 				if len(edgeBuf) >= maxEdgesTotal {
 					break
 				}
-
-				targetPath := e.ToSymbol
-				if resolved != nil {
-					if p, ok := resolved[e.ToSymbol]; ok {
-						targetPath = p
-					}
-				}
+				e := resolved.Edge
+				targetPath := resolved.TargetPath
 
 				if targetPath == "" || targetPath == fp {
 					continue
@@ -138,6 +141,11 @@ func (a *App) GetDependencyGraph(filePath string, depth int) (*indexer.Dependenc
 				if !filepath.IsAbs(targetPath) {
 					continue
 				}
+				edgeKey := fp + "\x00" + targetPath + "\x00" + string(e.Kind)
+				if _, exists := edgeSet[edgeKey]; exists {
+					continue
+				}
+				edgeSet[edgeKey] = struct{}{}
 
 				edgeBuf = append(edgeBuf, indexer.DependencyEdge{
 					Source: fp,
@@ -161,6 +169,7 @@ func (a *App) GetDependencyGraph(filePath string, depth int) (*indexer.Dependenc
 	for nodePath := range nodeSet {
 		allPaths = append(allPaths, nodePath)
 	}
+	sort.Strings(allPaths)
 
 	symbolsByFile, _ := engine.QuerySymbolsByFiles(allPaths)
 

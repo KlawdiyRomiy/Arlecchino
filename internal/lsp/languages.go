@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -134,14 +135,76 @@ var Languages = map[string]*LanguageInfo{
 	"env":       {ID: "env", Name: "Environment", Extensions: []string{".env", ".env.local", ".env.example"}, LSPServerID: "", CodeMirrorID: "properties", TreeSitterID: "dotenv", ARLESupported: true},
 }
 
-var extensionToLanguage = make(map[string]string)
+var (
+	extensionToLanguage = make(map[string]string)
+	filenameToLanguage  = make(map[string]string)
+	suffixToLanguage    = make(map[string]string)
+	sortedSuffixes      []string
+)
+
+var extensionLanguagePriority = map[string][]string{
+	".cls": {"latex", "vba"},
+	".pl":  {"perl", "prolog"},
+}
 
 func init() {
-	for langID, info := range Languages {
+	extensionCandidates := make(map[string][]string)
+	filenameCandidates := make(map[string][]string)
+	suffixCandidates := make(map[string][]string)
+
+	langIDs := make([]string, 0, len(Languages))
+	for langID := range Languages {
+		langIDs = append(langIDs, langID)
+	}
+	sort.Strings(langIDs)
+
+	for _, langID := range langIDs {
+		info := Languages[langID]
 		for _, ext := range info.Extensions {
-			extensionToLanguage[strings.ToLower(ext)] = langID
+			normalized := strings.ToLower(ext)
+			if strings.HasPrefix(normalized, ".") {
+				extensionCandidates[normalized] = append(extensionCandidates[normalized], langID)
+				suffixCandidates[normalized] = append(suffixCandidates[normalized], langID)
+				continue
+			}
+			filenameCandidates[normalized] = append(filenameCandidates[normalized], langID)
 		}
 	}
+
+	for ext, candidates := range extensionCandidates {
+		extensionToLanguage[ext] = preferredLanguageForExtension(ext, candidates)
+	}
+	for name, candidates := range filenameCandidates {
+		sort.Strings(candidates)
+		filenameToLanguage[name] = candidates[0]
+	}
+	for suffix, candidates := range suffixCandidates {
+		suffixToLanguage[suffix] = preferredLanguageForExtension(suffix, candidates)
+		sortedSuffixes = append(sortedSuffixes, suffix)
+	}
+	sort.Slice(sortedSuffixes, func(i, j int) bool {
+		if len(sortedSuffixes[i]) == len(sortedSuffixes[j]) {
+			return sortedSuffixes[i] < sortedSuffixes[j]
+		}
+		return len(sortedSuffixes[i]) > len(sortedSuffixes[j])
+	})
+}
+
+func preferredLanguageForExtension(ext string, candidates []string) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		seen[candidate] = struct{}{}
+	}
+	for _, preferred := range extensionLanguagePriority[ext] {
+		if _, ok := seen[preferred]; ok {
+			return preferred
+		}
+	}
+	sort.Strings(candidates)
+	return candidates[0]
 }
 
 func GetLanguageByExtension(ext string) *LanguageInfo {
@@ -164,21 +227,15 @@ func GetLanguageByFilename(filename string) *LanguageInfo {
 	filenameLower := strings.ToLower(filename)
 	baseLower := strings.ToLower(filepath.Base(filename))
 
-	for _, info := range Languages {
-		for _, ext := range info.Extensions {
-			if !strings.HasPrefix(ext, ".") && strings.EqualFold(ext, baseLower) {
-				return info
-			}
-		}
+	if langID, ok := filenameToLanguage[baseLower]; ok {
+		return Languages[langID]
 	}
 
 	filename = filenameLower
 
-	for _, info := range Languages {
-		for _, ext := range info.Extensions {
-			if strings.HasPrefix(ext, ".") && strings.HasSuffix(filename, strings.ToLower(ext)) {
-				return info
-			}
+	for _, suffix := range sortedSuffixes {
+		if strings.HasSuffix(filename, suffix) {
+			return Languages[suffixToLanguage[suffix]]
 		}
 	}
 

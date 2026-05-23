@@ -12,38 +12,44 @@ import (
 )
 
 type TypeScriptAdapter struct {
-	importRegex    *regexp.Regexp
-	classRegex     *regexp.Regexp
-	interfaceRegex *regexp.Regexp
-	typeRegex      *regexp.Regexp
-	enumRegex      *regexp.Regexp
-	functionRegex  *regexp.Regexp
-	arrowFuncRegex *regexp.Regexp
-	methodRegex    *regexp.Regexp
-	propertyRegex  *regexp.Regexp
-	constRegex     *regexp.Regexp
-	letRegex       *regexp.Regexp
-	exportRegex    *regexp.Regexp
-	decoratorRegex *regexp.Regexp
-	componentRegex *regexp.Regexp
+	importRegex           *regexp.Regexp
+	sideEffectImportRegex *regexp.Regexp
+	exportFromRegex       *regexp.Regexp
+	dynamicImportRegex    *regexp.Regexp
+	classRegex            *regexp.Regexp
+	interfaceRegex        *regexp.Regexp
+	typeRegex             *regexp.Regexp
+	enumRegex             *regexp.Regexp
+	functionRegex         *regexp.Regexp
+	arrowFuncRegex        *regexp.Regexp
+	methodRegex           *regexp.Regexp
+	propertyRegex         *regexp.Regexp
+	constRegex            *regexp.Regexp
+	letRegex              *regexp.Regexp
+	exportRegex           *regexp.Regexp
+	decoratorRegex        *regexp.Regexp
+	componentRegex        *regexp.Regexp
 }
 
 func NewTypeScriptAdapter() *TypeScriptAdapter {
 	return &TypeScriptAdapter{
-		importRegex:    regexp.MustCompile(`^import\s+(?:\{[^}]+\}|\*\s+as\s+\w+|\w+)\s+from\s+['"]([^'"]+)['"]`),
-		classRegex:     regexp.MustCompile(`^(?:export\s+)?(?:abstract\s+)?class\s+(\w+)`),
-		interfaceRegex: regexp.MustCompile(`^(?:export\s+)?interface\s+(\w+)`),
-		typeRegex:      regexp.MustCompile(`^(?:export\s+)?type\s+(\w+)`),
-		enumRegex:      regexp.MustCompile(`^(?:export\s+)?(?:const\s+)?enum\s+(\w+)`),
-		functionRegex:  regexp.MustCompile(`^(?:export\s+)?(?:async\s+)?function\s+(\w+)`),
-		arrowFuncRegex: regexp.MustCompile(`^(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s+)?\(`),
-		methodRegex:    regexp.MustCompile(`^\s+(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:async\s+)?(\w+)\s*\(`),
-		propertyRegex:  regexp.MustCompile(`^\s+(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:readonly\s+)?(\w+)\s*[?:;=]`),
-		constRegex:     regexp.MustCompile(`^(?:export\s+)?const\s+(\w+)\s*[=:]`),
-		letRegex:       regexp.MustCompile(`^(?:export\s+)?let\s+(\w+)\s*[=:]`),
-		exportRegex:    regexp.MustCompile(`^export\s+(?:default\s+)?(?:class|function|const|let|interface|type|enum)\s+(\w+)`),
-		decoratorRegex: regexp.MustCompile(`^@(\w+)`),
-		componentRegex: regexp.MustCompile(`(?:function|const)\s+(\w+).*(?:React\.FC|JSX\.Element|ReactElement)`),
+		importRegex:           regexp.MustCompile(`^import\s+(?:type\s+)?(?:\{[^}]+\}|\*\s+as\s+\w+|\w+|[^'"]+)\s+from\s+['"]([^'"]+)['"]`),
+		sideEffectImportRegex: regexp.MustCompile(`^import\s+['"]([^'"]+)['"]`),
+		exportFromRegex:       regexp.MustCompile(`^export\s+(?:type\s+)?(?:\*|\{[^}]+\}|[^'"]+)\s+from\s+['"]([^'"]+)['"]`),
+		dynamicImportRegex:    regexp.MustCompile(`\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)`),
+		classRegex:            regexp.MustCompile(`^(?:export\s+)?(?:abstract\s+)?class\s+(\w+)`),
+		interfaceRegex:        regexp.MustCompile(`^(?:export\s+)?interface\s+(\w+)`),
+		typeRegex:             regexp.MustCompile(`^(?:export\s+)?type\s+(\w+)`),
+		enumRegex:             regexp.MustCompile(`^(?:export\s+)?(?:const\s+)?enum\s+(\w+)`),
+		functionRegex:         regexp.MustCompile(`^(?:export\s+)?(?:async\s+)?function\s+(\w+)`),
+		arrowFuncRegex:        regexp.MustCompile(`^(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s+)?\(`),
+		methodRegex:           regexp.MustCompile(`^\s+(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:async\s+)?(\w+)\s*\(`),
+		propertyRegex:         regexp.MustCompile(`^\s+(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:readonly\s+)?(\w+)\s*[?:;=]`),
+		constRegex:            regexp.MustCompile(`^(?:export\s+)?const\s+(\w+)\s*[=:]`),
+		letRegex:              regexp.MustCompile(`^(?:export\s+)?let\s+(\w+)\s*[=:]`),
+		exportRegex:           regexp.MustCompile(`^export\s+(?:default\s+)?(?:class|function|const|let|interface|type|enum)\s+(\w+)`),
+		decoratorRegex:        regexp.MustCompile(`^@(\w+)`),
+		componentRegex:        regexp.MustCompile(`(?:function|const)\s+(\w+).*(?:React\.FC|JSX\.Element|ReactElement)`),
 	}
 }
 
@@ -85,10 +91,10 @@ func (a *TypeScriptAdapter) ParseContent(path string, content []byte) ([]core.Sy
 			continue
 		}
 
-		if m := a.importRegex.FindStringSubmatch(trimmed); m != nil {
+		if target := a.importTarget(trimmed); target != "" {
 			edges = append(edges, core.Edge{
 				FromSymbol: path,
-				ToSymbol:   m[1],
+				ToSymbol:   target,
 				Kind:       core.EdgeKindImports,
 				FilePath:   path,
 				Line:       lineNum,
@@ -244,6 +250,20 @@ func (a *TypeScriptAdapter) ParseContent(path string, content []byte) ([]core.Sy
 	}
 
 	return symbols, edges, scanner.Err()
+}
+
+func (a *TypeScriptAdapter) importTarget(line string) string {
+	for _, pattern := range []*regexp.Regexp{
+		a.importRegex,
+		a.sideEffectImportRegex,
+		a.exportFromRegex,
+		a.dynamicImportRegex,
+	} {
+		if m := pattern.FindStringSubmatch(line); m != nil {
+			return m[1]
+		}
+	}
+	return ""
 }
 
 func (a *TypeScriptAdapter) isReactComponent(line string) bool {

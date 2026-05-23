@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -106,6 +107,9 @@ func NewScheduler(workers int, store *Store) *Scheduler {
 func (s *Scheduler) RegisterAdapter(language string, adapter LanguageAdapter) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, exists := s.adapters[language]; exists {
+		return
+	}
 	s.adapters[language] = adapter
 }
 
@@ -271,18 +275,32 @@ func (s *Scheduler) processFull(job Job) error {
 	}
 	s.mu.Unlock()
 
-	// Build extension/name -> adapter mapping
-	extToAdapter := make(map[string]LanguageAdapter)
+	// Build suffix/name -> adapter mapping.
+	suffixToAdapter := make(map[string]LanguageAdapter)
 	nameToAdapter := make(map[string]LanguageAdapter)
+	suffixes := make([]string, 0)
 	for _, adapter := range adapters {
 		for _, ext := range adapter.Extensions() {
-			if strings.HasPrefix(ext, ".") {
-				extToAdapter[ext] = adapter
-			} else if ext != "" {
-				nameToAdapter[strings.ToLower(ext)] = adapter
+			normalized := strings.ToLower(strings.TrimSpace(ext))
+			if normalized == "" {
+				continue
+			}
+			if strings.HasPrefix(normalized, ".") {
+				if _, exists := suffixToAdapter[normalized]; !exists {
+					suffixToAdapter[normalized] = adapter
+					suffixes = append(suffixes, normalized)
+				}
+			} else if _, exists := nameToAdapter[normalized]; !exists {
+				nameToAdapter[normalized] = adapter
 			}
 		}
 	}
+	sort.Slice(suffixes, func(i, j int) bool {
+		if len(suffixes[i]) == len(suffixes[j]) {
+			return suffixes[i] < suffixes[j]
+		}
+		return len(suffixes[i]) > len(suffixes[j])
+	})
 
 	count := 0
 	return filepath.Walk(job.ProjectRoot, func(path string, info os.FileInfo, err error) error {
@@ -297,14 +315,20 @@ func (s *Scheduler) processFull(job Job) error {
 			return nil
 		}
 
-		ext := filepath.Ext(path)
-		adapter, ok := extToAdapter[ext]
+		base := strings.ToLower(filepath.Base(path))
+		adapter, ok := nameToAdapter[base]
 		if !ok {
-			base := strings.ToLower(filepath.Base(path))
-			adapter, ok = nameToAdapter[base]
-			if !ok {
-				return nil // No adapter for this extension
+			normalizedPath := strings.ToLower(filepath.ToSlash(path))
+			for _, suffix := range suffixes {
+				if strings.HasSuffix(normalizedPath, suffix) {
+					adapter = suffixToAdapter[suffix]
+					ok = true
+					break
+				}
 			}
+		}
+		if !ok {
+			return nil // No adapter for this path
 		}
 
 		// Notify progress

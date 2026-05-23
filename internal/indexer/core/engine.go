@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,7 +38,9 @@ type Engine struct {
 	scheduler   *Scheduler
 	speculative *SpeculativeStore
 	adapters    map[string]LanguageAdapter
-	extMap      map[string]string
+	nameMap     map[string]string
+	suffixMap   map[string]string
+	suffixes    []string
 	mu          sync.RWMutex
 	stats       EngineStats
 
@@ -76,6 +80,8 @@ const (
 	criticalProjectFileCount        = 15000
 	speculativeChangeMaxBytes       = 256 << 10
 	foregroundIndexMaxBytes         = 1 << 20
+	dependencyIndexFingerprint      = "depgraph-v2"
+	dependencyIndexPendingMarker    = ":pending:"
 )
 
 func RecommendedWorkerCount() int {
@@ -108,7 +114,8 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		scheduler:   scheduler,
 		speculative: NewSpeculativeStore(),
 		adapters:    make(map[string]LanguageAdapter),
-		extMap:      make(map[string]string),
+		nameMap:     make(map[string]string),
+		suffixMap:   make(map[string]string),
 	}
 
 	scheduler.OnJobComplete(func(job Job, err error) {
@@ -204,12 +211,33 @@ func (e *Engine) RegisterAdapter(adapter LanguageAdapter) {
 	defer e.mu.Unlock()
 
 	lang := adapter.Language()
-	e.adapters[lang] = adapter
+	if _, exists := e.adapters[lang]; !exists {
+		e.adapters[lang] = adapter
+	}
 	e.scheduler.RegisterAdapter(lang, adapter)
 
 	for _, ext := range adapter.Extensions() {
-		e.extMap[ext] = lang
+		normalized := strings.ToLower(strings.TrimSpace(ext))
+		if normalized == "" {
+			continue
+		}
+		if strings.HasPrefix(normalized, ".") {
+			if _, exists := e.suffixMap[normalized]; !exists {
+				e.suffixMap[normalized] = lang
+				e.suffixes = append(e.suffixes, normalized)
+			}
+			continue
+		}
+		if _, exists := e.nameMap[normalized]; !exists {
+			e.nameMap[normalized] = lang
+		}
 	}
+	sort.Slice(e.suffixes, func(i, j int) bool {
+		if len(e.suffixes[i]) == len(e.suffixes[j]) {
+			return e.suffixes[i] < e.suffixes[j]
+		}
+		return len(e.suffixes[i]) > len(e.suffixes[j])
+	})
 }
 
 func (e *Engine) Start() {
@@ -304,10 +332,7 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 		}
 
 		lang := e.detectLanguage(entry.Path)
-		inventoryBatch = append(inventoryBatch, e.inventoryFileFromWorkspaceEntry(entry, lang, false))
-		if len(inventoryBatch) >= indexProjectInventoryBatchSize {
-			flushInventory()
-		}
+		versionedFingerprint := versionFileFingerprint(entry.Fingerprint)
 		count++
 		switch count {
 		case largeProjectFileCount, criticalProjectFileCount:
@@ -317,6 +342,10 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 			runtime.Gosched()
 		}
 		if lang == "" {
+			inventoryBatch = append(inventoryBatch, e.inventoryFileFromWorkspaceEntry(entry, lang, false))
+			if len(inventoryBatch) >= indexProjectInventoryBatchSize {
+				flushInventory()
+			}
 			return nil
 		}
 
@@ -324,11 +353,14 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 			meta.Language == lang &&
 			meta.Size == entry.Size &&
 			meta.Hash != "" {
-			if meta.Hash == entry.Fingerprint {
+			if meta.Hash == versionedFingerprint {
 				return nil
 			}
 		}
 
+		inventory := e.inventoryFileFromWorkspaceEntry(entry, lang, false)
+		inventory.Hash = pendingFileFingerprint(entry.Fingerprint)
+		inventoryBatch = append(inventoryBatch, inventory)
 		flushInventory()
 		e.batchTotal.Add(1)
 		e.scheduler.Enqueue(Job{
@@ -471,9 +503,19 @@ func (e *Engine) Stats() EngineStats {
 }
 
 func (e *Engine) detectLanguage(path string) string {
-	ext := filepath.Ext(path)
-	if lang, ok := e.extMap[ext]; ok {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	base := strings.ToLower(filepath.Base(path))
+	if lang, ok := e.nameMap[base]; ok {
 		return lang
+	}
+
+	normalized := strings.ToLower(filepath.ToSlash(path))
+	for _, suffix := range e.suffixes {
+		if strings.HasSuffix(normalized, suffix) {
+			return e.suffixMap[suffix]
+		}
 	}
 	return ""
 }
@@ -529,7 +571,7 @@ func (e *Engine) inventoryFileFromWorkspaceEntry(entry workspace.Entry, language
 		Path:       entry.Path,
 		Language:   language,
 		Kind:       classifyFileKind(entry.Path, language),
-		Hash:       entry.Fingerprint,
+		Hash:       versionFileFingerprint(entry.Fingerprint),
 		Size:       entry.Size,
 		HasSymbols: hasSymbols,
 	}
@@ -559,7 +601,21 @@ func fileFingerprint(info os.FileInfo) string {
 	b = strconv.AppendInt(b, info.ModTime().UnixNano(), 10)
 	b = append(b, ':')
 	b = strconv.AppendInt(b, info.Size(), 10)
-	return string(b)
+	return versionFileFingerprint(string(b))
+}
+
+func versionFileFingerprint(raw string) string {
+	if raw == "" {
+		return dependencyIndexFingerprint
+	}
+	return dependencyIndexFingerprint + ":" + raw
+}
+
+func pendingFileFingerprint(raw string) string {
+	if raw == "" {
+		return dependencyIndexFingerprint + dependencyIndexPendingMarker
+	}
+	return dependencyIndexFingerprint + dependencyIndexPendingMarker + raw
 }
 
 func (e *Engine) shouldSkip(path string) bool {

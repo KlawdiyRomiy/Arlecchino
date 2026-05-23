@@ -233,6 +233,9 @@ func indexLanguage(canonical string) string {
 	case "php", "go", "python", "ruby", "vue":
 		return canonical
 	default:
+		if info := lspregistry.GetLanguageByID(canonical); info != nil && info.ARLESupported {
+			return canonical
+		}
 		return ""
 	}
 }
@@ -296,12 +299,8 @@ func stubLanguage(canonical string) string {
 }
 
 func supportsIndex(language string) bool {
-	switch language {
-	case "php", "go", "typescript", "python", "ruby", "vue":
-		return true
-	default:
-		return false
-	}
+	info := lspregistry.GetLanguageByID(language)
+	return info != nil && info.ARLESupported
 }
 
 func supportsLocal(language string) bool {
@@ -325,7 +324,10 @@ func supportsPredictive(language string) bool {
 func supportsImports(canonical string) bool {
 	switch canonical {
 	case "go", "javascript", "typescript", "javascriptreact", "typescriptreact", "vue", "svelte", "astro", "css", "scss", "sass", "less",
-		"python", "php", "rust", "ruby", "java", "kotlin", "groovy", "scala", "dart", "swift", "csharp", "fsharp", "terraform":
+		"python", "php", "rust", "ruby", "java", "kotlin", "groovy", "scala", "dart", "swift", "csharp", "fsharp", "terraform",
+		"html", "blade", "xml", "markdown", "json", "yaml", "toml", "ini", "nginx", "cmake", "makefile", "dockerfile", "latex",
+		"c", "cpp", "objectivec", "lua", "perl", "elixir", "erlang", "haskell", "julia", "clojure", "ocaml", "zig", "solidity",
+		"gdscript", "protobuf", "bash", "powershell", "r", "matlab", "ada", "fortran", "cobol", "delphi", "lisp", "prolog":
 		return true
 	default:
 		return false
@@ -356,7 +358,7 @@ func supportsFill(language string) bool {
 
 func capabilityTier(sources CapabilitySources) CapabilityTier {
 	deepNativeCount := 0
-	for _, enabled := range []bool{sources.Index, sources.Local, sources.Predictive, sources.FillAll} {
+	for _, enabled := range []bool{sources.Local, sources.Predictive, sources.FillAll} {
 		if enabled {
 			deepNativeCount++
 		}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"os"
 	"regexp"
+	"strings"
 
 	"arlecchino/internal/indexer/core"
 )
@@ -176,15 +177,62 @@ func (a *PHPAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 		}
 
 		if m := a.useRegex.FindStringSubmatch(line); m != nil && currentClass == "" {
-			edges = append(edges, core.Edge{
-				FromSymbol: path,
-				ToSymbol:   m[1],
-				Kind:       core.EdgeKindImports,
-				FilePath:   path,
-				Line:       lineNum,
-			})
+			for _, target := range phpUseTargets(m[1]) {
+				edges = append(edges, core.Edge{
+					FromSymbol: path,
+					ToSymbol:   target,
+					Kind:       core.EdgeKindImports,
+					FilePath:   path,
+					Line:       lineNum,
+				})
+			}
 		}
 	}
 
 	return symbols, edges, scanner.Err()
+}
+
+func phpUseTargets(value string) []string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSuffix(value, ";")
+	if value == "" {
+		return nil
+	}
+
+	if open := strings.Index(value, "{"); open >= 0 {
+		close := strings.Index(value[open:], "}")
+		if close < 0 {
+			return []string{strings.TrimSpace(value)}
+		}
+		base := strings.TrimSpace(value[:open])
+		inner := value[open+1 : open+close]
+		targets := make([]string, 0, 4)
+		for _, item := range strings.Split(inner, ",") {
+			item = strings.TrimSpace(stripPHPUseAlias(item))
+			if item != "" {
+				targets = append(targets, base+item)
+			}
+		}
+		return targets
+	}
+
+	parts := strings.Split(value, ",")
+	targets := make([]string, 0, len(parts))
+	for _, part := range parts {
+		target := strings.TrimSpace(stripPHPUseAlias(part))
+		if target != "" {
+			targets = append(targets, target)
+		}
+	}
+	return targets
+}
+
+func stripPHPUseAlias(value string) string {
+	fields := strings.Fields(value)
+	for i, field := range fields {
+		if strings.EqualFold(field, "as") {
+			return strings.Join(fields[:i], " ")
+		}
+	}
+	return value
 }

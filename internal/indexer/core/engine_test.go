@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -24,6 +25,34 @@ func (a *stubAdapter) ParseContent(path string, content []byte) ([]Symbol, []Edg
 	return nil, nil, nil
 }
 
+type languageTestAdapter struct {
+	language   string
+	extensions []string
+}
+
+func (a languageTestAdapter) Language() string     { return a.language }
+func (a languageTestAdapter) Extensions() []string { return a.extensions }
+func (a languageTestAdapter) ParseFile(path string) ([]Symbol, []Edge, error) {
+	return nil, nil, nil
+}
+func (a languageTestAdapter) ParseContent(path string, content []byte) ([]Symbol, []Edge, error) {
+	return nil, nil, nil
+}
+
+type ownerTestAdapter struct {
+	language   string
+	extensions []string
+}
+
+func (a *ownerTestAdapter) Language() string     { return a.language }
+func (a *ownerTestAdapter) Extensions() []string { return a.extensions }
+func (a *ownerTestAdapter) ParseFile(path string) ([]Symbol, []Edge, error) {
+	return nil, nil, nil
+}
+func (a *ownerTestAdapter) ParseContent(path string, content []byte) ([]Symbol, []Edge, error) {
+	return nil, nil, nil
+}
+
 func drainQueuedPaths(s *Scheduler) []string {
 	paths := make([]string, 0, s.PendingCount())
 	for {
@@ -32,6 +61,62 @@ func drainQueuedPaths(s *Scheduler) []string {
 			return paths
 		}
 		paths = append(paths, job.FilePath)
+	}
+}
+
+func TestEngineDetectLanguageUsesExactNamesAndLongestSuffixes(t *testing.T) {
+	dir := t.TempDir()
+	eng, err := NewEngine(EngineConfig{
+		ProjectID:   "detect",
+		ProjectRoot: dir,
+		DBPath:      filepath.Join(dir, ".arlecchino", "brain.db"),
+		Workers:     1,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Stop()
+	eng.RegisterAdapter(languageTestAdapter{language: "php", extensions: []string{".php"}})
+	eng.RegisterAdapter(languageTestAdapter{language: "blade", extensions: []string{".blade.php"}})
+	eng.RegisterAdapter(languageTestAdapter{language: "makefile", extensions: []string{"Makefile"}})
+
+	if got := eng.detectLanguage("/tmp/views/welcome.blade.php"); got != "blade" {
+		t.Fatalf("detectLanguage(.blade.php)=%q, want blade", got)
+	}
+	if got := eng.detectLanguage("/tmp/Makefile"); got != "makefile" {
+		t.Fatalf("detectLanguage(Makefile)=%q, want makefile", got)
+	}
+}
+
+func TestRegisterAdapterPreservesFirstLanguageOwnerAndAddsLaterExtensions(t *testing.T) {
+	dir := t.TempDir()
+	eng, err := NewEngine(EngineConfig{
+		ProjectID:   "owner",
+		ProjectRoot: dir,
+		DBPath:      filepath.Join(dir, ".arlecchino", "brain.db"),
+		Workers:     1,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Stop()
+
+	first := &ownerTestAdapter{language: "example", extensions: []string{".first"}}
+	second := &ownerTestAdapter{language: "example", extensions: []string{".second"}}
+	eng.RegisterAdapter(first)
+	eng.RegisterAdapter(second)
+
+	if got := eng.adapters["example"]; got != first {
+		t.Fatalf("engine adapter owner = %#v, want first registered adapter", got)
+	}
+	eng.scheduler.mu.Lock()
+	schedulerOwner := eng.scheduler.adapters["example"]
+	eng.scheduler.mu.Unlock()
+	if schedulerOwner != first {
+		t.Fatalf("scheduler adapter owner = %#v, want first registered adapter", schedulerOwner)
+	}
+	if got := eng.detectLanguage(filepath.Join(dir, "file.second")); got != "example" {
+		t.Fatalf("detectLanguage(.second)=%q, want example", got)
 	}
 }
 
@@ -125,6 +210,53 @@ func TestIndexProject_QueuesChangedFiles(t *testing.T) {
 	}
 }
 
+func TestIndexProject_KeepsQueuedChangedFilePendingUntilParsed(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(goFile, []byte("package main"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	eng, err := NewEngine(EngineConfig{
+		ProjectID:   "pending",
+		ProjectRoot: dir,
+		DBPath:      filepath.Join(dir, "test.db"),
+		Workers:     1,
+	})
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer eng.Stop()
+	eng.RegisterAdapter(&stubAdapter{})
+
+	if err := eng.IndexProjectContext(context.Background()); err != nil {
+		t.Fatalf("IndexProjectContext: %v", err)
+	}
+	drainQueuedPaths(eng.scheduler)
+
+	meta, err := eng.store.GetFile(goFile)
+	if err != nil {
+		t.Fatalf("GetFile: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected file metadata")
+	}
+	if !strings.Contains(meta.Hash, dependencyIndexPendingMarker) {
+		t.Fatalf("queued file hash = %q, want pending marker", meta.Hash)
+	}
+
+	if err := eng.IndexProjectContext(context.Background()); err != nil {
+		t.Fatalf("second IndexProjectContext: %v", err)
+	}
+	queued := drainQueuedPaths(eng.scheduler)
+	for _, path := range queued {
+		if path == goFile {
+			return
+		}
+	}
+	t.Fatalf("pending file was not requeued; queued=%v", queued)
+}
+
 func TestIndexProject_ReportsEachSmallBatchProgress(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 3; i++ {
@@ -173,6 +305,31 @@ func TestIndexProject_ReportsEachSmallBatchProgress(t *testing.T) {
 	want := []int{1, 2, 3}
 	if !reflect.DeepEqual(progress, want) {
 		t.Fatalf("progress = %v, want %v", progress, want)
+	}
+}
+
+func TestFailedIndexingBatchStillEmitsCompletion(t *testing.T) {
+	eng := &Engine{}
+	eng.activeBatchID.Store(7)
+	eng.batchScanDone.Store(true)
+	eng.batchTotal.Store(2)
+	eng.batchDone.Store(2)
+	eng.batchFailed.Store(true)
+
+	events := make(chan IndexingEvent, 2)
+	eng.OnIndexing(func(evt IndexingEvent) {
+		events <- evt
+	})
+
+	eng.completeActiveBatchIfReady(7)
+
+	select {
+	case evt := <-events:
+		if evt.Type != IndexingCompleted || evt.Current != 2 || evt.Total != 2 {
+			t.Fatalf("completion event = %#v", evt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("failed indexing batch did not emit completion")
 	}
 }
 

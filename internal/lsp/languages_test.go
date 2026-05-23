@@ -51,6 +51,32 @@ func TestTextDocumentLanguageID(t *testing.T) {
 	}
 }
 
+func TestGetLanguageByFilename_DeterministicCompoundAndConflictExtensions(t *testing.T) {
+	tests := []struct {
+		file string
+		want string
+	}{
+		{file: "Dockerfile", want: "dockerfile"},
+		{file: "Makefile", want: "makefile"},
+		{file: "CMakeLists.txt", want: "cmake"},
+		{file: "welcome.blade.php", want: "blade"},
+		{file: "script.pl", want: "perl"},
+		{file: "layout.cls", want: "latex"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.file, func(t *testing.T) {
+			got := GetLanguageByFilename(tt.file)
+			if got == nil {
+				t.Fatalf("GetLanguageByFilename(%q) returned nil", tt.file)
+			}
+			if got.ID != tt.want {
+				t.Fatalf("GetLanguageByFilename(%q)=%q, want %q", tt.file, got.ID, tt.want)
+			}
+		})
+	}
+}
+
 func containsCandidate(candidates []string, value string) bool {
 	for _, candidate := range candidates {
 		if candidate == value {
