@@ -1,6 +1,19 @@
 const SYSTEM_FONT_SCALE_EPSILON = 0.001;
 const SYSTEM_FONT_SCALE_DECIMALS = 1000;
 const SYSTEM_FONT_SIZE_DECIMALS = 100;
+const ORIGINAL_INLINE_FONT_SIZE_ATTRIBUTE =
+  "data-ui-font-scale-original-inline-size";
+const SCALED_INLINE_FONT_SIZE_ATTRIBUTE =
+  "data-ui-font-scale-scaled-inline-size";
+interface ScaledFontElementState {
+  originalInlineFontSize: string;
+  scaledInlineFontSize: string;
+}
+
+const scaledFontElementState = new WeakMap<
+  HTMLElement,
+  ScaledFontElementState
+>();
 const TEXT_CONTROL_SELECTOR = [
   "textarea",
   "select",
@@ -84,11 +97,21 @@ const formatScale = (scale: number): string =>
 const formatFontSize = (fontSize: number): string =>
   `${Math.round(fontSize * SYSTEM_FONT_SIZE_DECIMALS) / SYSTEM_FONT_SIZE_DECIMALS}px`;
 
+const setInlineFontSize = (
+  element: HTMLElement,
+  inlineFontSize: string,
+): void => {
+  if (inlineFontSize) {
+    element.style.fontSize = inlineFontSize;
+  } else {
+    element.style.removeProperty("font-size");
+  }
+};
+
 export const createSystemFontSizeScaler = (
   uiFontSize: number,
   defaultUiFontSize: number,
 ): (() => void) => {
-  const originalInlineFontSizes = new WeakMap<HTMLElement, string>();
   const scaledElements = new Set<HTMLElement>();
   let cancelled = false;
   let scheduled = false;
@@ -112,13 +135,81 @@ export const createSystemFontSizeScaler = (
     };
   }
 
-  const restoreScaledElements = () => {
-    scaledElements.forEach((element) => {
-      const originalInlineFontSize = originalInlineFontSizes.get(element) ?? "";
-      if (originalInlineFontSize) {
-        element.style.fontSize = originalInlineFontSize;
+  const readScaledElementState = (
+    element: HTMLElement,
+  ): ScaledFontElementState | null => {
+    const weakState = scaledFontElementState.get(element);
+    if (weakState) {
+      return weakState;
+    }
+
+    const scaledInlineFontSize = element.getAttribute(
+      SCALED_INLINE_FONT_SIZE_ATTRIBUTE,
+    );
+    if (scaledInlineFontSize === null) {
+      return null;
+    }
+
+    return {
+      originalInlineFontSize:
+        element.getAttribute(ORIGINAL_INLINE_FONT_SIZE_ATTRIBUTE) ?? "",
+      scaledInlineFontSize,
+    };
+  };
+
+  const withTransitionSuppressed = <T>(
+    element: HTMLElement,
+    callback: () => T,
+  ): T => {
+    const originalTransition = element.style.transition;
+    element.style.transition = "none";
+    try {
+      const result = callback();
+      void element.offsetWidth;
+      return result;
+    } finally {
+      if (originalTransition) {
+        element.style.transition = originalTransition;
       } else {
-        element.style.removeProperty("font-size");
+        element.style.removeProperty("transition");
+      }
+    }
+  };
+
+  const restoreScaledElement = (element: HTMLElement): void => {
+    const scaledState = readScaledElementState(element);
+    if (!scaledState) {
+      return;
+    }
+
+    if (
+      element.style.fontSize !== scaledState.scaledInlineFontSize &&
+      element.style.fontSize !== scaledState.originalInlineFontSize
+    ) {
+      return;
+    }
+
+    withTransitionSuppressed(element, () =>
+      setInlineFontSize(element, scaledState.originalInlineFontSize),
+    );
+  };
+
+  const restoreScaledElements = (forget: boolean) => {
+    const elementsToRestore = new Set<HTMLElement>([
+      ...scaledElements,
+      ...Array.from(
+        document.querySelectorAll<HTMLElement>(
+          `[${SCALED_INLINE_FONT_SIZE_ATTRIBUTE}]`,
+        ),
+      ),
+    ]);
+
+    elementsToRestore.forEach((element) => {
+      restoreScaledElement(element);
+      if (forget) {
+        scaledFontElementState.delete(element);
+        element.removeAttribute(ORIGINAL_INLINE_FONT_SIZE_ATTRIBUTE);
+        element.removeAttribute(SCALED_INLINE_FONT_SIZE_ATTRIBUTE);
       }
     });
     scaledElements.clear();
@@ -130,16 +221,38 @@ export const createSystemFontSizeScaler = (
     }
 
     applying = true;
-    restoreScaledElements();
+    restoreScaledElements(false);
 
     collectFontScaleCandidates().forEach((element) => {
-      const fontSize = Number.parseFloat(getComputedStyle(element).fontSize);
-      if (!Number.isFinite(fontSize) || fontSize <= 0) {
+      restoreScaledElement(element);
+
+      const originalInlineFontSize = element.style.fontSize;
+      const scaledInlineFontSize = withTransitionSuppressed(element, () => {
+        const fontSize = Number.parseFloat(getComputedStyle(element).fontSize);
+        if (!Number.isFinite(fontSize) || fontSize <= 0) {
+          return null;
+        }
+
+        const scaled = formatFontSize(fontSize * scale);
+        element.style.fontSize = scaled;
+        return scaled;
+      });
+      if (scaledInlineFontSize === null) {
         return;
       }
 
-      originalInlineFontSizes.set(element, element.style.fontSize);
-      element.style.fontSize = formatFontSize(fontSize * scale);
+      scaledFontElementState.set(element, {
+        originalInlineFontSize,
+        scaledInlineFontSize,
+      });
+      element.setAttribute(
+        ORIGINAL_INLINE_FONT_SIZE_ATTRIBUTE,
+        originalInlineFontSize,
+      );
+      element.setAttribute(
+        SCALED_INLINE_FONT_SIZE_ATTRIBUTE,
+        scaledInlineFontSize,
+      );
       scaledElements.add(element);
     });
 
@@ -174,7 +287,7 @@ export const createSystemFontSizeScaler = (
   return () => {
     cancelled = true;
     observer.disconnect();
-    restoreScaledElements();
+    restoreScaledElements(true);
     document.documentElement.style.removeProperty("--ui-font-size");
     document.documentElement.style.removeProperty("--ui-font-scale");
   };
