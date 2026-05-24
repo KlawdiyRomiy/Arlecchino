@@ -1251,6 +1251,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     previewWindows,
   ]);
 
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("arlecchino:menu-state", {
+        detail: { canCloseFullscreenPanel: fullscreenSurfaceIds.length > 0 },
+      }),
+    );
+  }, [fullscreenSurfaceIds.length]);
+
   const startFullscreenPanelTransition = useCallback(
     (panelId: FullscreenPanelId, applyTransition: () => void) => {
       if (reducePanelMotion || typeof window === "undefined") {

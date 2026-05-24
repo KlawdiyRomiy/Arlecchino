@@ -1,6 +1,8 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { EventsOff, EventsOn } from "../wails/runtime";
+import { useAIChatStore } from "../stores/aiChatStore";
+import { useGitStore } from "../stores/gitStore";
 import { useKeybindingsStore } from "../stores/keybindingsStore";
 import {
   dispatchApplicationMenuAction,
@@ -12,10 +14,14 @@ import { toggleWindowFullscreen } from "../utils/windowFullscreen";
 
 const OPEN_TARGET_EVENT = "arlecchino:open";
 const NEW_PROJECT_EVENT = "arlecchino:new-project";
+const MENU_STATE_EVENT = "arlecchino:menu-state";
 
 interface WailsAppBridge {
   SyncApplicationMenuShortcuts?: (
     shortcuts: ApplicationMenuShortcutPayload[],
+  ) => Promise<void> | void;
+  SyncApplicationMenuState?: (
+    state: ShellMenuStatePayload,
   ) => Promise<void> | void;
 }
 
@@ -25,6 +31,18 @@ interface WailsWindow {
       App?: WailsAppBridge;
     };
   };
+}
+
+interface ShellMenuStatePayload {
+  hasSelection: boolean;
+  canCloseFullscreenPanel: boolean;
+  canStopAgent: boolean;
+  canCommit: boolean;
+  hasGitChanges: boolean;
+}
+
+interface ApplicationMenuStateDetail {
+  canCloseFullscreenPanel?: boolean;
 }
 
 const parseMenuActionId = (payload: unknown): ShortcutActionId | null => {
@@ -47,9 +65,43 @@ const parseMenuActionId = (payload: unknown): ShortcutActionId | null => {
 
 export const useApplicationMenuBridge = (): void => {
   const overrides = useKeybindingsStore((state) => state.overrides);
+  const runs = useAIChatStore((state) => state.runs);
+  const activeRunId = useAIChatStore((state) => state.activeRunId);
+  const gitBusy = useGitStore((state) => state.busy);
+  const isRepositoryMissing = useGitStore((state) => state.isRepositoryMissing);
+  const stagedFiles = useGitStore((state) => state.stagedFiles);
+  const unstagedFiles = useGitStore((state) => state.unstagedFiles);
+  const conflictedFiles = useGitStore((state) => state.conflictedFiles);
+  const [canCloseFullscreenPanel, setCanCloseFullscreenPanel] = useState(false);
   const menuShortcuts = useMemo(
     () => getApplicationMenuShortcutPayload(overrides),
     [overrides],
+  );
+  const canStopAgent = useMemo(() => {
+    const active = activeRunId
+      ? runs.find((run) => run.id === activeRunId)
+      : undefined;
+    return runs.some((run) => {
+      if (active && run.id !== active.id && active.status === "running") {
+        return false;
+      }
+      return run.status === "running" || run.status === "queued";
+    });
+  }, [activeRunId, runs]);
+  const hasGitChanges =
+    stagedFiles.length > 0 ||
+    unstagedFiles.length > 0 ||
+    conflictedFiles.length > 0;
+  const canCommit = hasGitChanges && !gitBusy && !isRepositoryMissing;
+  const shellMenuState = useMemo<ShellMenuStatePayload>(
+    () => ({
+      hasSelection: false,
+      canCloseFullscreenPanel,
+      canStopAgent,
+      canCommit,
+      hasGitChanges,
+    }),
+    [canCloseFullscreenPanel, canCommit, canStopAgent, hasGitChanges],
   );
 
   useEffect(() => {
@@ -65,6 +117,33 @@ export const useApplicationMenuBridge = (): void => {
       },
     );
   }, [menuShortcuts]);
+
+  useEffect(() => {
+    const syncApplicationMenuState = (window as WailsWindow).go?.main?.App
+      ?.SyncApplicationMenuState;
+    if (!syncApplicationMenuState) {
+      return;
+    }
+
+    void Promise.resolve(syncApplicationMenuState(shellMenuState)).catch(
+      (error) => {
+        console.error("[ApplicationMenu] Failed to sync state:", error);
+      },
+    );
+  }, [shellMenuState]);
+
+  useEffect(() => {
+    const handleMenuState = (event: Event) => {
+      const detail = (event as CustomEvent<ApplicationMenuStateDetail>).detail;
+      if (!detail) return;
+      if (typeof detail.canCloseFullscreenPanel === "boolean") {
+        setCanCloseFullscreenPanel(detail.canCloseFullscreenPanel);
+      }
+    };
+
+    window.addEventListener(MENU_STATE_EVENT, handleMenuState);
+    return () => window.removeEventListener(MENU_STATE_EVENT, handleMenuState);
+  }, []);
 
   useEffect(() => {
     const handleMenuAction = (payload: unknown) => {

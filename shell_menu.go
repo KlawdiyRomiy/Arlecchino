@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	stdRuntime "runtime"
 	"strings"
 
@@ -63,6 +64,14 @@ type ApplicationMenuShortcutPayload struct {
 	Shortcuts []string `json:"shortcuts"`
 }
 
+type ShellMenuStatePayload struct {
+	HasSelection            bool `json:"hasSelection"`
+	CanCloseFullscreenPanel bool `json:"canCloseFullscreenPanel"`
+	CanStopAgent            bool `json:"canStopAgent"`
+	CanCommit               bool `json:"canCommit"`
+	HasGitChanges           bool `json:"hasGitChanges"`
+}
+
 func (a *App) SyncApplicationMenuShortcuts(payload []ApplicationMenuShortcutPayload) {
 	shortcuts := make(map[string][]string, len(payload))
 	for _, item := range payload {
@@ -90,10 +99,35 @@ func (a *App) SyncApplicationMenuShortcuts(payload []ApplicationMenuShortcutPayl
 			a.wailsApp.Menu.SetApplicationMenu(a.buildApplicationMenu(shortcuts))
 		}
 		a.patchNativeApplicationMenu(shortcuts)
+		a.syncNativeApplicationMenuState()
 	}
 }
 
+func (a *App) SyncApplicationMenuState(payload ShellMenuStatePayload) {
+	if a == nil {
+		return
+	}
+	payload.CanCommit = payload.CanCommit || payload.HasGitChanges
+
+	a.shellMenuMu.Lock()
+	a.shellMenuState = payload
+	items := make(map[string]*application.MenuItem, len(a.shellMenuItems))
+	for actionID, item := range a.shellMenuItems {
+		items[actionID] = item
+	}
+	a.shellMenuMu.Unlock()
+
+	setTrackedMenuEnabled(items, "panel.closeFullscreen", payload.CanCloseFullscreenPanel)
+	setTrackedMenuEnabled(items, "ai.stopAgent", payload.CanStopAgent)
+	setTrackedMenuEnabled(items, "git.commit", payload.CanCommit)
+	a.syncNativeApplicationMenuState()
+}
+
 func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.Menu {
+	a.shellMenuMu.Lock()
+	a.shellMenuItems = make(map[string]*application.MenuItem)
+	a.shellMenuMu.Unlock()
+
 	appMenu := application.NewMenu()
 	if stdRuntime.GOOS == "darwin" && application.Get() != nil {
 		appMenu.AddRole(application.AppMenu)
@@ -102,6 +136,7 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.M
 	fileMenu := appMenu.AddSubmenu("File")
 	a.addMenuAction(fileMenu, "New Project", "project.new", shortcuts)
 	a.addMenuAction(fileMenu, "Open...", "project.open", shortcuts)
+	a.addOpenRecentMenu(fileMenu)
 
 	if stdRuntime.GOOS == "darwin" && application.Get() != nil {
 		appMenu.AddRole(application.EditMenu)
@@ -130,6 +165,12 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.M
 	a.addMenuAction(viewMenu, "Close Fullscreen Panel", "panel.closeFullscreen", shortcuts)
 	a.addMenuAction(viewMenu, "Enter Full Screen", "window.toggleFullscreen", shortcuts)
 
+	aiMenu := appMenu.AddSubmenu("AI")
+	a.addMenuAction(aiMenu, "Stop Agent", "ai.stopAgent", shortcuts)
+
+	sourceControlMenu := appMenu.AddSubmenu("Source Control")
+	a.addMenuAction(sourceControlMenu, "Commit...", "git.commit", shortcuts)
+
 	windowMenu := appMenu.AddSubmenu("Window")
 	windowMenu.Add("Minimize").SetAccelerator("cmd+m").OnClick(func(_ *application.Context) {
 		if window := a.currentNativeWindow(); window != nil {
@@ -140,19 +181,66 @@ func (a *App) buildApplicationMenu(shortcuts map[string][]string) *application.M
 	helpMenu := appMenu.AddSubmenu("Help")
 	a.addMenuAction(helpMenu, "Settings", "settings.toggle", shortcuts)
 
+	a.applyShellMenuStateToTrackedItems()
 	return appMenu
 }
 
-func (a *App) addMenuAction(target *application.Menu, label string, actionID string, shortcuts map[string][]string) {
+func (a *App) addOpenRecentMenu(fileMenu *application.Menu) {
+	recentMenu := fileMenu.AddSubmenu("Open Recent")
+	projects, err := a.GetRecentProjects(10)
+	if err != nil || len(projects) == 0 {
+		recentMenu.Add("No Recent Projects").SetEnabled(false)
+		return
+	}
+	for _, project := range projects {
+		projectPath := strings.TrimSpace(project.Path)
+		if projectPath == "" {
+			continue
+		}
+		label := strings.TrimSpace(project.Name)
+		if label == "" {
+			label = filepath.Base(projectPath)
+		}
+		path := projectPath
+		recentMenu.Add(label).OnClick(func(*application.Context) {
+			a.dispatchOpenIntent(map[string]any{
+				"kind":        "openProject",
+				"projectPath": path,
+				"source":      "native-menu",
+			})
+			a.showLastActiveWindow()
+		})
+	}
+}
+
+func (a *App) addMenuAction(target *application.Menu, label string, actionID string, shortcuts map[string][]string) *application.MenuItem {
 	item := target.Add(label).OnClick(a.emitMenuAction(actionID))
 	if accelerator := menuAcceleratorForAction(actionID, shortcuts); accelerator != "" {
 		item.SetAccelerator(accelerator)
 	}
+	a.shellMenuMu.Lock()
+	if a.shellMenuItems == nil {
+		a.shellMenuItems = make(map[string]*application.MenuItem)
+	}
+	a.shellMenuItems[actionID] = item
+	a.shellMenuMu.Unlock()
+	return item
 }
 
 func (a *App) emitMenuAction(actionID string) func(*application.Context) {
 	return func(_ *application.Context) {
 		if a.ctx == nil {
+			return
+		}
+		if !a.shellMenuActionEnabled(actionID) {
+			return
+		}
+		switch actionID {
+		case "ai.stopAgent":
+			a.emitWindowEvent("ide:ai:stop-agent")
+			return
+		case "git.commit":
+			a.emitWindowEvent("ide:git:commit")
 			return
 		}
 		if window := a.currentNativeWindow(); window != nil {
@@ -161,6 +249,112 @@ func (a *App) emitMenuAction(actionID string) func(*application.Context) {
 		}
 		a.emitEvent(menuActionEventName, actionID)
 	}
+}
+
+func (a *App) emitWindowEvent(name string, payload ...any) {
+	if a == nil || a.ctx == nil {
+		return
+	}
+	if window := a.currentNativeWindow(); window != nil {
+		if len(payload) == 0 {
+			window.EmitEvent(name)
+		} else {
+			window.EmitEvent(name, payload...)
+		}
+		return
+	}
+	if len(payload) == 0 {
+		a.emitEvent(name)
+	} else {
+		a.emitEvent(name, payload...)
+	}
+}
+
+func (a *App) shellMenuActionEnabled(actionID string) bool {
+	switch strings.TrimSpace(actionID) {
+	case "panel.closeFullscreen":
+		a.shellMenuMu.Lock()
+		defer a.shellMenuMu.Unlock()
+		return a.shellMenuState.CanCloseFullscreenPanel
+	case "ai.stopAgent":
+		a.shellMenuMu.Lock()
+		defer a.shellMenuMu.Unlock()
+		return a.shellMenuState.CanStopAgent
+	case "git.commit":
+		a.shellMenuMu.Lock()
+		defer a.shellMenuMu.Unlock()
+		return a.shellMenuState.CanCommit || a.shellMenuState.HasGitChanges
+	default:
+		return true
+	}
+}
+
+func (a *App) applyShellMenuStateToTrackedItems() {
+	if a == nil {
+		return
+	}
+	a.shellMenuMu.Lock()
+	state := a.shellMenuState
+	items := make(map[string]*application.MenuItem, len(a.shellMenuItems))
+	for actionID, item := range a.shellMenuItems {
+		items[actionID] = item
+	}
+	a.shellMenuMu.Unlock()
+
+	setTrackedMenuEnabled(items, "panel.closeFullscreen", state.CanCloseFullscreenPanel)
+	setTrackedMenuEnabled(items, "ai.stopAgent", state.CanStopAgent)
+	setTrackedMenuEnabled(items, "git.commit", state.CanCommit || state.HasGitChanges)
+}
+
+func setTrackedMenuEnabled(items map[string]*application.MenuItem, actionID string, enabled bool) {
+	if item := items[actionID]; item != nil {
+		item.SetEnabled(enabled)
+	}
+}
+
+func (a *App) syncNativeApplicationMenuState() {
+	if a == nil || !nativeMacOSBridgeAvailable() {
+		return
+	}
+	a.shellMenuMu.Lock()
+	state := a.shellMenuState
+	a.shellMenuMu.Unlock()
+
+	recent := a.nativeMenuRecentProjects(10)
+	_, _ = callNativeMacOSBridge("menu.updateState", map[string]any{
+		"commands": []map[string]any{
+			{"title": "Close Fullscreen Panel", "enabled": state.CanCloseFullscreenPanel},
+			{"title": "Stop Agent", "enabled": state.CanStopAgent},
+			{"title": "Commit...", "enabled": state.CanCommit || state.HasGitChanges},
+		},
+		"recentProjects": recent,
+	})
+}
+
+func (a *App) nativeMenuRecentProjects(limit int) []map[string]string {
+	if a == nil || a.projectManager == nil {
+		return nil
+	}
+	projects, err := a.GetRecentProjects(limit)
+	if err != nil {
+		return nil
+	}
+	result := make([]map[string]string, 0, len(projects))
+	for _, project := range projects {
+		projectPath := strings.TrimSpace(project.Path)
+		if projectPath == "" {
+			continue
+		}
+		title := strings.TrimSpace(project.Name)
+		if title == "" {
+			title = filepath.Base(projectPath)
+		}
+		result = append(result, map[string]string{
+			"title": title,
+			"path":  projectPath,
+		})
+	}
+	return result
 }
 
 func (a *App) emitViewZoom(action string) func(*application.Context) {

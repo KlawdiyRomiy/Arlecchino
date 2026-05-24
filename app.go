@@ -56,6 +56,8 @@ type App struct {
 	backgroundShell          *BackgroundShellStatusService
 	shellMenuMu              sync.Mutex
 	shellMenuShortcuts       map[string][]string
+	shellMenuState           ShellMenuStatePayload
+	shellMenuItems           map[string]*application.MenuItem
 	openIntentMu             sync.Mutex
 	openIntentReady          bool
 	pendingOpenIntents       []map[string]any

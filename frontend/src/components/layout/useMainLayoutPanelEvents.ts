@@ -991,6 +991,9 @@ export const useMainLayoutPanelEvents = ({
     onGitStatus: useCallback(() => {
       applyPanelOpenState("git", { panel: "git" });
     }, [applyPanelOpenState]),
+    onGitCommit: useCallback(() => {
+      applyPanelOpenState("git", { panel: "git" });
+    }, [applyPanelOpenState]),
   });
 
   return {

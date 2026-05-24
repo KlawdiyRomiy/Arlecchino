@@ -100,6 +100,45 @@ func TestBuildApplicationMenuAddsOpenAction(t *testing.T) {
 	if findOptionalMenuItem(fileMenu, "Open Project...") != nil {
 		t.Fatalf("File menu should use one Open action")
 	}
+	if findSubmenu(t, menuModel, "File").ItemAt(2).Label() != "Open Recent" {
+		t.Fatalf("File menu should include Open Recent after Open")
+	}
+}
+
+func TestApplicationMenuStateDisablesContextualActionsByDefault(t *testing.T) {
+	app := NewApp()
+	menuModel := app.buildApplicationMenu(map[string][]string{
+		"panel.closeFullscreen": {"option+w"},
+	})
+
+	viewMenu := findSubmenu(t, menuModel, "View")
+	if findMenuItem(t, viewMenu, "Close Fullscreen Panel").Enabled() {
+		t.Fatalf("Close Fullscreen Panel enabled = true, want false by default")
+	}
+	aiMenu := findSubmenu(t, menuModel, "AI")
+	if findMenuItem(t, aiMenu, "Stop Agent").Enabled() {
+		t.Fatalf("Stop Agent enabled = true, want false by default")
+	}
+	sourceMenu := findSubmenu(t, menuModel, "Source Control")
+	if findMenuItem(t, sourceMenu, "Commit...").Enabled() {
+		t.Fatalf("Commit enabled = true, want false by default")
+	}
+
+	app.SyncApplicationMenuState(ShellMenuStatePayload{
+		CanCloseFullscreenPanel: true,
+		CanStopAgent:            true,
+		HasGitChanges:           true,
+	})
+
+	if !findMenuItem(t, viewMenu, "Close Fullscreen Panel").Enabled() {
+		t.Fatalf("Close Fullscreen Panel enabled = false, want true")
+	}
+	if !findMenuItem(t, aiMenu, "Stop Agent").Enabled() {
+		t.Fatalf("Stop Agent enabled = false, want true")
+	}
+	if !findMenuItem(t, sourceMenu, "Commit...").Enabled() {
+		t.Fatalf("Commit enabled = false, want true")
+	}
 }
 
 func TestBuildApplicationMenuUsesUpdatedPanelAccelerators(t *testing.T) {
