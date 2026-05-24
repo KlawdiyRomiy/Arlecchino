@@ -179,6 +179,8 @@ import "./ai-chat.css";
 
 const defaultChatSessionId = "default";
 const chatHydrationBatchSize = 4;
+const chatHydrationMaxAttempts = 3;
+const chatHydrationRetryDelayMs = 750;
 
 const mergeProviderDescriptorList = (
   current: readonly AIProviderDescriptor[],
@@ -1366,11 +1368,17 @@ export function AIChatPanelContent({
   const runNoticeSignaturesRef = useRef<Record<string, string>>({});
   const autoReviewBuildRunIdsRef = useRef<Record<string, true>>({});
   const requestedHydrationRunIdsRef = useRef<Set<string>>(new Set());
+  const retryingHydrationRunIdsRef = useRef<Set<string>>(new Set());
   const failedHydrationRunIdsRef = useRef<Set<string>>(new Set());
+  const hydrationFailureAttemptsRef = useRef<Record<string, number>>({});
+  const hydrationRetryTimersRef = useRef<Record<string, number>>({});
   const hydrationMountedRef = useRef(true);
   const [hydratingRunIds, setHydratingRunIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [retryingHydrationRunIds, setRetryingHydrationRunIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   const [failedHydrationRunIds, setFailedHydrationRunIds] = useState<
     ReadonlySet<string>
   >(() => new Set());
@@ -1404,8 +1412,98 @@ export function AIChatPanelContent({
   useEffect(() => {
     return () => {
       hydrationMountedRef.current = false;
+      Object.values(hydrationRetryTimersRef.current).forEach((timerId) => {
+        window.clearTimeout(timerId);
+      });
+      hydrationRetryTimersRef.current = {};
     };
   }, []);
+
+  const publishRetryingHydrationRunIds = useCallback(() => {
+    if (!hydrationMountedRef.current) return;
+    setRetryingHydrationRunIds(new Set(retryingHydrationRunIdsRef.current));
+  }, []);
+
+  const publishFailedHydrationRunIds = useCallback(() => {
+    if (!hydrationMountedRef.current) return;
+    setFailedHydrationRunIds(new Set(failedHydrationRunIdsRef.current));
+  }, []);
+
+  const clearHydrationRetryTimer = useCallback((runId: string) => {
+    const timerId = hydrationRetryTimersRef.current[runId];
+    if (timerId === undefined) return;
+    window.clearTimeout(timerId);
+    delete hydrationRetryTimersRef.current[runId];
+  }, []);
+
+  const clearHydrationFailuresForRunIds = useCallback(
+    (runIds: readonly string[]) => {
+      let retryingChanged = false;
+      let failedChanged = false;
+      runIds.forEach((runId) => {
+        const key = runId.trim();
+        if (!key) return;
+        clearHydrationRetryTimer(key);
+        delete hydrationFailureAttemptsRef.current[key];
+        if (retryingHydrationRunIdsRef.current.delete(key)) {
+          retryingChanged = true;
+        }
+        if (failedHydrationRunIdsRef.current.delete(key)) {
+          failedChanged = true;
+        }
+      });
+      if (retryingChanged) {
+        publishRetryingHydrationRunIds();
+      }
+      if (failedChanged) {
+        publishFailedHydrationRunIds();
+      }
+    },
+    [
+      clearHydrationRetryTimer,
+      publishFailedHydrationRunIds,
+      publishRetryingHydrationRunIds,
+    ],
+  );
+
+  const markHydrationFailure = useCallback(
+    (runId: string) => {
+      const key = runId.trim();
+      if (!key) return;
+      const attempts = (hydrationFailureAttemptsRef.current[key] ?? 0) + 1;
+      hydrationFailureAttemptsRef.current[key] = attempts;
+
+      if (attempts >= chatHydrationMaxAttempts) {
+        clearHydrationRetryTimer(key);
+        if (retryingHydrationRunIdsRef.current.delete(key)) {
+          publishRetryingHydrationRunIds();
+        }
+        if (!failedHydrationRunIdsRef.current.has(key)) {
+          failedHydrationRunIdsRef.current.add(key);
+          publishFailedHydrationRunIds();
+        }
+        return;
+      }
+
+      if (!retryingHydrationRunIdsRef.current.has(key)) {
+        retryingHydrationRunIdsRef.current.add(key);
+        publishRetryingHydrationRunIds();
+      }
+      if (hydrationRetryTimersRef.current[key] !== undefined) return;
+      hydrationRetryTimersRef.current[key] = window.setTimeout(() => {
+        delete hydrationRetryTimersRef.current[key];
+        if (!hydrationMountedRef.current) return;
+        if (retryingHydrationRunIdsRef.current.delete(key)) {
+          publishRetryingHydrationRunIds();
+        }
+      }, chatHydrationRetryDelayMs);
+    },
+    [
+      clearHydrationRetryTimer,
+      publishFailedHydrationRunIds,
+      publishRetryingHydrationRunIds,
+    ],
+  );
 
   useEffect(() => {
     dispatch({
@@ -1951,6 +2049,9 @@ export function AIChatPanelContent({
         normalizeAIEmbeddingStatus(nextEmbeddingStatus) ??
         defaultAIEmbeddingStatus();
       const safeEnvelopes = normalizeAIChatRuns(envelopes);
+      clearHydrationFailuresForRunIds(
+        safeEnvelopes.map((envelope) => envelope.id),
+      );
       setStatus(safeStatus);
       setProviders(nextProviders);
       setActions(normalizeAIChatActions(nextActions));
@@ -2007,6 +2108,7 @@ export function AIChatPanelContent({
   }, [
     activeSessionId,
     activeTerminal,
+    clearHydrationFailuresForRunIds,
     setContextPreview,
     setContextProviders,
     setEgressRecords,
@@ -2038,6 +2140,9 @@ export function AIChatPanelContent({
   ]);
 
   const refreshRuntimeEvent = useEffectEvent(refreshRuntime);
+  const clearHydrationFailuresForTargetsEvent = useEffectEvent(() => {
+    clearHydrationFailuresForRunIds(hydrationTargetRunIds);
+  });
 
   useEffect(() => {
     refreshRuntimeEvent();
@@ -2048,6 +2153,7 @@ export function AIChatPanelContent({
       .filter((runId) => runId.trim())
       .filter((runId) => !hydratedRuns[runId])
       .filter((runId) => !requestedHydrationRunIdsRef.current.has(runId))
+      .filter((runId) => !retryingHydrationRunIdsRef.current.has(runId))
       .filter((runId) => !failedHydrationRunIdsRef.current.has(runId))
       .slice(0, chatHydrationBatchSize);
     if (pendingRunIds.length === 0) return undefined;
@@ -2070,17 +2176,20 @@ export function AIChatPanelContent({
           return;
         }
         const loadedRuns: AIChatRun[] = [];
+        const loadedRunIds = new Set<string>();
         const failedRunIds: string[] = [];
         results.forEach((result, index) => {
           const runId = pendingRunIds[index];
           if (result.status === "fulfilled" && result.value?.id) {
             loadedRuns.push(result.value);
+            loadedRunIds.add(runId);
+            loadedRunIds.add(result.value.id);
             return;
           }
           failedRunIds.push(runId);
-          failedHydrationRunIdsRef.current.add(runId);
         });
         if (loadedRuns.length > 0) {
+          clearHydrationFailuresForRunIds([...loadedRunIds]);
           upsertHydratedRuns(loadedRuns);
         }
         setHydratingRunIds((current) => {
@@ -2089,12 +2198,20 @@ export function AIChatPanelContent({
           return next;
         });
         if (failedRunIds.length > 0) {
-          setFailedHydrationRunIds(new Set(failedHydrationRunIdsRef.current));
+          failedRunIds.forEach((runId) => markHydrationFailure(runId));
         }
       },
     );
     return undefined;
-  }, [hydratedRuns, hydrationTargetRunIds, upsertHydratedRuns]);
+  }, [
+    clearHydrationFailuresForRunIds,
+    failedHydrationRunIds,
+    hydratedRuns,
+    hydrationTargetRunIds,
+    markHydrationFailure,
+    retryingHydrationRunIds,
+    upsertHydratedRuns,
+  ]);
 
   const refreshRunArtifacts = useCallback(async (runId: string) => {
     const key = runId.trim();
@@ -2194,6 +2311,7 @@ export function AIChatPanelContent({
 
   const handleRunUpdate = useEffectEvent((run: AIChatRun) => {
     if (!run?.id) return;
+    clearHydrationFailuresForRunIds([run.id]);
     setHydratedRun(run);
     upsertRunEnvelope(envelopeFromRun(run));
     void refreshRunArtifactsEvent(run.id);
@@ -2241,6 +2359,7 @@ export function AIChatPanelContent({
   const handleRunEnvelopeUpdate = useEffectEvent(
     (envelope: AIChatRunEnvelope) => {
       if (!envelope?.id) return;
+      clearHydrationFailuresForRunIds([envelope.id]);
       upsertRunEnvelope(envelope);
       publishRunNotice(envelope);
       void refreshRunArtifactsEvent(envelope.id);
@@ -2390,6 +2509,7 @@ export function AIChatPanelContent({
       });
     });
     const offRuntimeRecovered = EventsOn("ai:runtime:recovered", () => {
+      clearHydrationFailuresForTargetsEvent();
       void refreshRuntimeEvent();
     });
     const offApprovalsRecovered = EventsOn(
@@ -3399,12 +3519,15 @@ export function AIChatPanelContent({
   const handleNewChat = useCallback(() => {
     const sessionId = createChatSessionId();
     setActiveRunId(null);
+    dispatch({ type: "resetComposer" });
     dispatch({ type: "setActiveSession", sessionId });
   }, [setActiveRunId]);
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
-      const nextRun = runs.find((run) => sessionIdOf(run) === sessionId);
+      const sessionRuns = runs.filter((run) => sessionIdOf(run) === sessionId);
+      clearHydrationFailuresForRunIds(sessionRuns.map((run) => run.id));
+      const nextRun = sessionRuns[0];
       setActiveRunId(nextRun?.id ?? null);
       dispatch({
         type: "setActiveSession",
@@ -3412,7 +3535,7 @@ export function AIChatPanelContent({
         runId: nextRun?.id ?? "",
       });
     },
-    [runs, setActiveRunId],
+    [clearHydrationFailuresForRunIds, runs, setActiveRunId],
   );
 
   const handleDeleteSession = useCallback(

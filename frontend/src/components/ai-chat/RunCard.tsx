@@ -1423,9 +1423,11 @@ export function RunCard({
     !running &&
     ["completed", "error", "canceled", "blocked"].includes(envelope.status);
   const responsePlaceholder = terminalEnvelopeOnly
-    ? hydrationStatus === "failed"
-      ? "Saved message unavailable."
-      : "Loading saved message..."
+    ? hydrationStatus === "loading"
+      ? "Loading saved message..."
+      : hydrationStatus === "failed"
+        ? "Saved message unavailable."
+        : ""
     : run && !running && !response
       ? "No assistant text recorded."
       : "";
