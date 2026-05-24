@@ -72,6 +72,75 @@ const WAILS_NO_DRAG_STYLE = {
   WebkitAppRegion: "no-drag",
 } as React.CSSProperties;
 const warmedPanelContentIds = new Set<string>();
+const PROJECTED_READABLE_SCALE_MIN = 0.05;
+const PROJECTED_READABLE_SCALE_MAX = 12;
+
+const clampProjectedReadableScale = (value: number): number =>
+  Number.isFinite(value)
+    ? Math.min(
+        PROJECTED_READABLE_SCALE_MAX,
+        Math.max(PROJECTED_READABLE_SCALE_MIN, value),
+      )
+    : 1;
+
+const parseProjectedReadableScale = (value: string): number => {
+  const parsed = Number.parseFloat(value);
+  return clampProjectedReadableScale(parsed);
+};
+
+const readInlineProjectedScale = (
+  node: HTMLElement,
+): { x: number; y: number } => {
+  const inlineScale = node.style.scale;
+
+  if (inlineScale && inlineScale !== "none") {
+    const [rawX = "1", rawY = rawX] = inlineScale.trim().split(/\s+/);
+    return {
+      x: parseProjectedReadableScale(rawX),
+      y: parseProjectedReadableScale(rawY),
+    };
+  }
+
+  const inlineTransform = node.style.transform;
+  if (inlineTransform && inlineTransform !== "none") {
+    try {
+      const matrix = new DOMMatrixReadOnly(inlineTransform);
+      return {
+        x: clampProjectedReadableScale(Math.hypot(matrix.a, matrix.b) || 1),
+        y: clampProjectedReadableScale(Math.hypot(matrix.c, matrix.d) || 1),
+      };
+    } catch {
+      return { x: 1, y: 1 };
+    }
+  }
+
+  return { x: 1, y: 1 };
+};
+
+const writeProjectedReadableScale = (
+  node: HTMLElement,
+  scale: { x: number; y: number },
+) => {
+  const nextScaleX = scale.x.toFixed(4);
+  const nextScaleY = scale.y.toFixed(4);
+  if (
+    node.style.getPropertyValue("--panel-projected-scale-x") === nextScaleX &&
+    node.style.getPropertyValue("--panel-projected-scale-y") === nextScaleY
+  ) {
+    return;
+  }
+
+  node.style.setProperty("--panel-projected-scale-x", nextScaleX);
+  node.style.setProperty("--panel-projected-scale-y", nextScaleY);
+  node.style.setProperty(
+    "--panel-projected-inverse-scale-x",
+    (1 / scale.x).toFixed(4),
+  );
+  node.style.setProperty(
+    "--panel-projected-inverse-scale-y",
+    (1 / scale.y).toFixed(4),
+  );
+};
 
 const getSlideVectorForEdge = (
   edge: PanelPosition,
@@ -230,6 +299,7 @@ export const FloatingPanel = React.forwardRef<
       reduceMotion || mode === "floating" || warmedPanelContentIds.has(id),
     );
     const panelRef = useRef<HTMLDivElement>(null);
+    const readableLayerRef = useRef<HTMLDivElement>(null);
     const latestBoundsRef = useRef<PanelBounds | null>(null);
     const frozenExitBoundsRef = useRef<PanelBounds | null>(null);
     const latestDragOffsetRef = useRef({ x: 0, y: 0 });
@@ -1380,6 +1450,48 @@ export const FloatingPanel = React.forwardRef<
         : flowLayoutMotionEnabled
           ? `floating-panel-${id}`
           : undefined;
+    const readableLayerLayoutMotionEnabled = fullscreenLayoutMotionEnabled;
+    useLayoutEffect(() => {
+      const panelNode = panelRef.current;
+      const readableLayerNode = readableLayerRef.current;
+      if (!panelNode || !readableLayerNode) {
+        return;
+      }
+
+      if (
+        !readableLayerLayoutMotionEnabled ||
+        !fullscreenMotionActive ||
+        reduceMotion
+      ) {
+        writeProjectedReadableScale(readableLayerNode, { x: 1, y: 1 });
+        return;
+      }
+
+      const updateProjectedScale = () => {
+        writeProjectedReadableScale(
+          readableLayerNode,
+          readInlineProjectedScale(panelNode),
+        );
+      };
+      const observer = new MutationObserver(() => {
+        updateProjectedScale();
+      });
+
+      observer.observe(panelNode, {
+        attributes: true,
+        attributeFilter: ["style"],
+      });
+      updateProjectedScale();
+
+      return () => {
+        observer.disconnect();
+        writeProjectedReadableScale(readableLayerNode, { x: 1, y: 1 });
+      };
+    }, [
+      fullscreenMotionActive,
+      readableLayerLayoutMotionEnabled,
+      reduceMotion,
+    ]);
     const containerMotionStyle: MotionStyle = isDragging
       ? {
           ...(getContainerStyle() as MotionStyle),
@@ -1479,6 +1591,41 @@ export const FloatingPanel = React.forwardRef<
       position: "relative",
       zIndex: 0,
       pointerEvents: isResizing ? "none" : "auto",
+    };
+
+    const readableClipStyle: React.CSSProperties = {
+      ...WAILS_NO_DRAG_STYLE,
+      display: "flex",
+      flexDirection: "column",
+      flex: 1,
+      width: "100%",
+      height: "100%",
+      minWidth: 0,
+      minHeight: 0,
+      position: "relative",
+      overflow: "hidden",
+    };
+
+    const readableLayerStyle: React.CSSProperties = {
+      ...WAILS_NO_DRAG_STYLE,
+      display: "flex",
+      flexDirection: "column",
+      flex: readableLayerLayoutMotionEnabled ? "0 0 auto" : 1,
+      width: readableLayerLayoutMotionEnabled
+        ? "calc(100% * var(--panel-projected-scale-x, 1))"
+        : "100%",
+      height: readableLayerLayoutMotionEnabled
+        ? "calc(100% * var(--panel-projected-scale-y, 1))"
+        : "100%",
+      minWidth: 0,
+      minHeight: 0,
+      position: "relative",
+      transform: readableLayerLayoutMotionEnabled
+        ? "scale(var(--panel-projected-inverse-scale-x, 1), var(--panel-projected-inverse-scale-y, 1))"
+        : undefined,
+      transformOrigin: "top left",
+      willChange: readableLayerLayoutMotionEnabled ? "transform" : "auto",
+      backfaceVisibility: "hidden",
     };
 
     const renderResizeHandle = (edge: string) => (
@@ -1634,6 +1781,26 @@ export const FloatingPanel = React.forwardRef<
         </div>
       </div>
     );
+    const panelBody = (
+      <>
+        <ContextActionMenu
+          items={panelHeaderContextMenuItems}
+          nativeScope="floating-panel-header"
+          nativeTargetId={id}
+          nativeContext={{ panelId: id, position, mode }}
+        >
+          {panelHeader}
+        </ContextActionMenu>
+
+        <div
+          style={contentStyle}
+          data-panel-content="true"
+          data-panel-content-ready={contentReady ? "true" : "false"}
+        >
+          {contentReady ? children : null}
+        </div>
+      </>
+    );
 
     return (
       <motion.div
@@ -1689,22 +1856,20 @@ export const FloatingPanel = React.forwardRef<
           </>
         )}
 
-        <ContextActionMenu
-          items={panelHeaderContextMenuItems}
-          nativeScope="floating-panel-header"
-          nativeTargetId={id}
-          nativeContext={{ panelId: id, position, mode }}
-        >
-          {panelHeader}
-        </ContextActionMenu>
-
-        <div
-          style={contentStyle}
-          data-panel-content="true"
-          data-panel-content-ready={contentReady ? "true" : "false"}
-        >
-          {contentReady ? children : null}
-        </div>
+        {readableLayerLayoutMotionEnabled ? (
+          <div style={readableClipStyle} data-panel-readable-clip="true">
+            <div
+              ref={readableLayerRef}
+              style={readableLayerStyle}
+              data-panel-readable-layer="true"
+              data-panel-readable-motion="true"
+            >
+              {panelBody}
+            </div>
+          </div>
+        ) : (
+          panelBody
+        )}
       </motion.div>
     );
   },

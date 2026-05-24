@@ -346,7 +346,11 @@ const mountProjectUI = async (
   });
 
   await expect(page.getByTestId("main-layout")).toBeVisible();
-  await expect(page.getByTitle("Search")).toBeVisible({ timeout: 10000 });
+  await expect(
+    page.getByTestId("topbar-item-search").getByRole("button", {
+      name: "Search",
+    }),
+  ).toBeVisible({ timeout: 10000 });
 };
 
 const nextAnimationFrame = async (
@@ -358,6 +362,228 @@ const nextAnimationFrame = async (
         window.requestAnimationFrame(() => resolve());
       }),
   );
+};
+
+type ReadableMotionSample = {
+  clipOutsidePanel: number;
+  effectiveReadableScaleX: number;
+  effectiveReadableScaleY: number;
+  fullscreenMotion: string;
+  panelHeight: number;
+  panelScaleX: number;
+  panelScaleY: number;
+  projectedScaleX: number;
+  projectedScaleY: number;
+  panelWidth: number;
+  readableLayerClipGap: number;
+  readableLayerClipOffset: number;
+  readableLayerHeight: number;
+  readableLayerOutsidePanel: number;
+  readableLayerScaleX: number;
+  readableLayerScaleY: number;
+  readableLayerWidth: number;
+  readableMotion: string;
+};
+
+type ReadableMotionTrigger =
+  | { kind: "button"; title: string }
+  | { actionId: string; kind: "menu-action" };
+
+const collectReadableFullscreenMotionSamples = async (
+  page: Parameters<typeof test>[0]["page"],
+  options: {
+    panelSelector: string;
+    sampleCount?: number;
+    trigger: ReadableMotionTrigger;
+  },
+): Promise<{
+  samples: ReadableMotionSample[];
+  start: { height: number; width: number; x: number; y: number };
+  workspace: { height: number; width: number; x: number; y: number } | null;
+} | null> => {
+  return page.evaluate(async ({ panelSelector, sampleCount, trigger }) => {
+    type RectSample = {
+      bottom: number;
+      height: number;
+      left: number;
+      right: number;
+      top: number;
+      width: number;
+      x: number;
+      y: number;
+    };
+
+    const readRect = (element: Element): RectSample => {
+      const rect = element.getBoundingClientRect();
+      return {
+        bottom: rect.bottom,
+        height: rect.height,
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        width: rect.width,
+        x: rect.x,
+        y: rect.y,
+      };
+    };
+    const readScale = (element: Element): { x: number; y: number } => {
+      const styles = window.getComputedStyle(element);
+      if (styles.scale && styles.scale !== "none") {
+        const [rawX = "1", rawY = rawX] = styles.scale.split(" ");
+        return {
+          x: Number.parseFloat(rawX) || 1,
+          y: Number.parseFloat(rawY) || 1,
+        };
+      }
+      if (styles.transform && styles.transform !== "none") {
+        const matrix = new DOMMatrixReadOnly(styles.transform);
+        return { x: matrix.a, y: matrix.d };
+      }
+      return { x: 1, y: 1 };
+    };
+    const readOutside = (inner: RectSample, outer: RectSample) =>
+      Math.max(
+        0,
+        outer.left - inner.left,
+        inner.right - outer.right,
+        outer.top - inner.top,
+        inner.bottom - outer.bottom,
+      );
+    const waitForFrame = () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const findPanel = () => document.querySelector<HTMLElement>(panelSelector);
+    const panel = findPanel();
+    const workspace = document.querySelector<HTMLElement>(
+      '[data-testid="panel-workspace"]',
+    );
+    if (!panel) {
+      return null;
+    }
+
+    const startRect = readRect(panel);
+    const workspaceRect = workspace ? readRect(workspace) : null;
+    const start = {
+      height: startRect.height,
+      width: startRect.width,
+      x: startRect.x,
+      y: startRect.y,
+    };
+    const workspaceSample = workspaceRect
+      ? {
+          height: workspaceRect.height,
+          width: workspaceRect.width,
+          x: workspaceRect.x,
+          y: workspaceRect.y,
+        }
+      : null;
+
+    if (trigger.kind === "button") {
+      const button = Array.from(
+        panel.querySelectorAll<HTMLButtonElement>("button"),
+      ).find((candidate) => candidate.title === trigger.title);
+      if (!button) {
+        return null;
+      }
+      button.click();
+    } else {
+      window.dispatchEvent(
+        new CustomEvent("arlecchino:application-menu-action", {
+          detail: { actionId: trigger.actionId },
+        }),
+      );
+    }
+
+    const samples: ReadableMotionSample[] = [];
+    for (let index = 0; index < (sampleCount ?? 14); index += 1) {
+      await waitForFrame();
+      const currentPanel = findPanel();
+      const currentReadableLayer = currentPanel?.querySelector<HTMLElement>(
+        '[data-panel-readable-layer="true"]',
+      );
+      const currentReadableClip = currentPanel?.querySelector<HTMLElement>(
+        '[data-panel-readable-clip="true"]',
+      );
+      if (!currentPanel || !currentReadableLayer || !currentReadableClip) {
+        continue;
+      }
+
+      const panelRect = readRect(currentPanel);
+      const clipRect = readRect(currentReadableClip);
+      const readableLayerRect = readRect(currentReadableLayer);
+      const panelScale = readScale(currentPanel);
+      const readableLayerScale = readScale(currentReadableLayer);
+      const projectedScaleX = Number.parseFloat(
+        currentReadableLayer.style.getPropertyValue(
+          "--panel-projected-scale-x",
+        ) || "1",
+      );
+      const projectedScaleY = Number.parseFloat(
+        currentReadableLayer.style.getPropertyValue(
+          "--panel-projected-scale-y",
+        ) || "1",
+      );
+      const readableLayerClipGap = Math.max(
+        Math.abs(readableLayerRect.width - clipRect.width),
+        Math.abs(readableLayerRect.height - clipRect.height),
+      );
+      const readableLayerClipOffset = Math.max(
+        Math.abs(readableLayerRect.left - clipRect.left),
+        Math.abs(readableLayerRect.top - clipRect.top),
+      );
+      samples.push({
+        clipOutsidePanel: readOutside(clipRect, panelRect),
+        effectiveReadableScaleX: panelScale.x * readableLayerScale.x,
+        effectiveReadableScaleY: panelScale.y * readableLayerScale.y,
+        fullscreenMotion: currentPanel.dataset.panelFullscreenMotion ?? "",
+        panelHeight: panelRect.height,
+        panelScaleX: panelScale.x,
+        panelScaleY: panelScale.y,
+        projectedScaleX,
+        projectedScaleY,
+        panelWidth: panelRect.width,
+        readableLayerClipGap,
+        readableLayerClipOffset,
+        readableLayerHeight: readableLayerRect.height,
+        readableLayerOutsidePanel: readOutside(readableLayerRect, panelRect),
+        readableLayerScaleX: readableLayerScale.x,
+        readableLayerScaleY: readableLayerScale.y,
+        readableLayerWidth: readableLayerRect.width,
+        readableMotion: currentReadableLayer.dataset.panelReadableMotion ?? "",
+      });
+    }
+
+    return { samples, start, workspace: workspaceSample };
+  }, options);
+};
+
+const expectReadableFullscreenMotionSafe = (
+  samples: ReadableMotionSample[],
+) => {
+  const fullscreenSamples = samples.filter(
+    (sample) => sample.fullscreenMotion === "true",
+  );
+  expect(fullscreenSamples.length).toBeGreaterThan(0);
+  const scaledFullscreenSamples = fullscreenSamples.filter(
+    (sample) =>
+      Math.abs(sample.panelScaleX - 1) > 0.02 ||
+      Math.abs(sample.panelScaleY - 1) > 0.02,
+  );
+  expect(scaledFullscreenSamples.length).toBeGreaterThan(0);
+
+  for (const sample of scaledFullscreenSamples) {
+    expect(sample.readableMotion).toBe("true");
+    expect(Math.abs(sample.projectedScaleX - sample.panelScaleX)).toBeLessThan(
+      0.08,
+    );
+    expect(Math.abs(sample.projectedScaleY - sample.panelScaleY)).toBeLessThan(
+      0.08,
+    );
+    expect(Math.abs(sample.effectiveReadableScaleX - 1)).toBeLessThan(0.08);
+    expect(Math.abs(sample.effectiveReadableScaleY - 1)).toBeLessThan(0.08);
+    expect(sample.clipOutsidePanel).toBeLessThanOrEqual(2);
+    expect(sample.readableLayerClipGap).toBeLessThanOrEqual(4);
+    expect(sample.readableLayerClipOffset).toBeLessThanOrEqual(4);
+  }
 };
 
 const readPanelFrame = async (
@@ -563,67 +789,25 @@ test("floating code panel opens fullscreen with shared panel motion", async ({
     "codePanelFullscreen",
   );
 
-  const motionSamples = await page.evaluate(async () => {
-    type RectSample = {
-      height: number;
-      width: number;
-      x: number;
-      y: number;
-    };
-    type MotionSample = RectSample & {
-      fullscreenMotion: string;
-    };
-    const readRect = (element: Element): RectSample => {
-      const rect = element.getBoundingClientRect();
-      return {
-        height: rect.height,
-        width: rect.width,
-        x: rect.x,
-        y: rect.y,
-      };
-    };
-    const waitForFrame = () =>
-      new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    const panel = document.querySelector<HTMLElement>(
-      '[data-testid="panel-code"]',
-    );
-    const workspace = document.querySelector<HTMLElement>(
-      '[data-testid="panel-workspace"]',
-    );
-    const fullscreenButton = panel?.querySelector<HTMLButtonElement>(
-      'button[title="Полный экран"]',
-    );
-    if (!panel || !workspace || !fullscreenButton) {
-      return null;
-    }
-
-    const start = readRect(panel);
-    const workspaceRect = readRect(workspace);
-    fullscreenButton.click();
-
-    const samples: MotionSample[] = [];
-    for (let index = 0; index < 14; index += 1) {
-      await waitForFrame();
-      samples.push({
-        ...readRect(panel),
-        fullscreenMotion: panel.dataset.panelFullscreenMotion ?? "",
-      });
-    }
-
-    return { start, workspace: workspaceRect, samples };
+  const motionSamples = await collectReadableFullscreenMotionSamples(page, {
+    panelSelector: '[data-testid="panel-code"]',
+    trigger: { kind: "button", title: "Полный экран" },
   });
 
   if (!motionSamples) {
     throw new Error("Code panel fullscreen motion should be measurable");
   }
-  expect(
-    motionSamples.samples.some((sample) => sample.fullscreenMotion === "true"),
-  ).toBe(true);
+  expectReadableFullscreenMotionSafe(motionSamples.samples);
+  const workspace = motionSamples.workspace;
+  expect(workspace).not.toBeNull();
+  if (!workspace) {
+    throw new Error("Panel workspace should be measurable");
+  }
   expect(
     motionSamples.samples.some(
       (sample) =>
-        sample.width > motionSamples.start.width + 80 &&
-        sample.width < motionSamples.workspace.width - 40,
+        sample.panelWidth > motionSamples.start.width + 80 &&
+        sample.panelWidth < workspace.width - 40,
     ),
   ).toBe(true);
 
@@ -648,6 +832,202 @@ test("floating code panel opens fullscreen with shared panel motion", async ({
       }),
     )
     .toBe(true);
+});
+
+test("AI Chat fullscreen shortcut keeps readable content clipped", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+        markdownPreview: false,
+      },
+    },
+  });
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent("arlecchino:application-menu-action", {
+        detail: { actionId: "ai.toggle" },
+      }),
+    );
+  });
+
+  const chatPanel = page.locator('[data-testid="panel-aiChat"]').last();
+  await expect(chatPanel).toBeVisible();
+  await waitForPanelSettled(page, "panel-aiChat");
+
+  const motionSamples = await collectReadableFullscreenMotionSamples(page, {
+    panelSelector: '[data-testid="panel-aiChat"]',
+    trigger: { kind: "menu-action", actionId: "ai.fullscreen" },
+  });
+
+  if (!motionSamples) {
+    throw new Error("AI Chat fullscreen shortcut motion should be measurable");
+  }
+  expectReadableFullscreenMotionSafe(motionSamples.samples);
+});
+
+test("Git fullscreen restore keeps readable content filling the projected frame", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: true,
+        git: false,
+        problems: true,
+        code: false,
+        markdownPreview: false,
+      },
+      panelConfigs: {
+        aiChat: {
+          position: "right",
+          mode: "snapped",
+          size: { width: 360, height: 0 },
+          x: 0,
+          y: 0,
+        },
+        problems: {
+          position: "left",
+          mode: "snapped",
+          size: { width: 520, height: 0 },
+          x: 0,
+          y: 0,
+        },
+        git: {
+          position: "left",
+          mode: "snapped",
+          size: { width: 520, height: 0 },
+          x: 0,
+          y: 0,
+        },
+      },
+    },
+  });
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent("arlecchino:application-menu-action", {
+        detail: { actionId: "git.fullscreen" },
+      }),
+    );
+  });
+
+  const gitPanel = page.locator('[data-testid="panel-git"]').last();
+  await expect(gitPanel).toBeVisible();
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const panel = document.querySelector<HTMLElement>(
+          '[data-testid="panel-git"]',
+        );
+        const workspace = document.querySelector<HTMLElement>(
+          '[data-testid="panel-workspace"]',
+        );
+        if (!panel || !workspace) {
+          return false;
+        }
+        const panelRect = panel.getBoundingClientRect();
+        const workspaceRect = workspace.getBoundingClientRect();
+        return (
+          panelRect.width >= workspaceRect.width - 8 &&
+          panelRect.height >= workspaceRect.height - 8
+        );
+      }),
+    )
+    .toBe(true);
+
+  const motionSamples = await collectReadableFullscreenMotionSamples(page, {
+    panelSelector: '[data-testid="panel-git"]',
+    trigger: { kind: "button", title: "Полный экран" },
+  });
+
+  if (!motionSamples) {
+    throw new Error("Git fullscreen restore motion should be measurable");
+  }
+  expectReadableFullscreenMotionSafe(motionSamples.samples);
+});
+
+test("light theme readable layer does not leave a fullscreen trail", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+        markdownPreview: false,
+      },
+    },
+  });
+
+  await page.evaluate(async () => {
+    const { getThemeDefinition } = await import("/src/styles/themes.ts");
+    const nextTheme = getThemeDefinition("arlecchino-light");
+    const htmlElement = document.documentElement;
+
+    Object.entries(nextTheme.cssVariables).forEach(([name, value]) => {
+      htmlElement.style.setProperty(name, value);
+    });
+
+    htmlElement.classList.remove("light", "dark");
+    htmlElement.classList.add("light");
+    htmlElement.dataset.theme = nextTheme.id;
+    htmlElement.dataset.themeAppearance = nextTheme.appearance;
+    localStorage.setItem("arlecchino-theme", nextTheme.id);
+  });
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent("arlecchino:application-menu-action", {
+        detail: { actionId: "ai.toggle" },
+      }),
+    );
+  });
+
+  const chatPanel = page.locator('[data-testid="panel-aiChat"]').last();
+  await expect(chatPanel).toBeVisible();
+  await waitForPanelSettled(page, "panel-aiChat");
+
+  const motionSamples = await collectReadableFullscreenMotionSamples(page, {
+    panelSelector: '[data-testid="panel-aiChat"]',
+    trigger: { kind: "button", title: "Полный экран" },
+  });
+
+  if (!motionSamples) {
+    throw new Error("Light theme fullscreen trail motion should be measurable");
+  }
+  expectReadableFullscreenMotionSafe(motionSamples.samples);
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const panel = document.querySelector<HTMLElement>(
+          '[data-testid="panel-aiChat"]',
+        );
+        return panel?.dataset.panelFullscreenMotion ?? "";
+      }),
+    )
+    .toBe("false");
+
+  await chatPanel.locator('button[title="Закрыть панель"]').click();
+  await expect(page.locator('[data-testid="panel-aiChat"]')).toHaveCount(0);
+  await expect(page.locator('[data-panel-readable-layer="true"]')).toHaveCount(
+    0,
+  );
 });
 
 const readElementBox = async (
