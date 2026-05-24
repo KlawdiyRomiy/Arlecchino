@@ -125,7 +125,7 @@ import {
 import type {
   EditorCompletionResult,
   TextEditJSON,
-} from "../../bindings/arlecchino/models";
+} from "../../bindings/arlecchino/internal/app/models";
 import {
   GetEditorCompletions,
   AIGetEditorContinuation,

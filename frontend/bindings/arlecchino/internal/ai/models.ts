@@ -688,6 +688,7 @@ export enum AIChatRunArtifactKind {
     AIChatRunArtifactBackground = "background_agent",
     AIChatRunArtifactAgentTerminal = "agent_terminal",
     AIChatRunArtifactAgentWorktree = "agent_worktree",
+    AIChatRunArtifactRuntimeEvidence = "runtime_build_evidence",
 };
 
 export class AIChatRunEnvelope {

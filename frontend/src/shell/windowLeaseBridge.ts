@@ -346,10 +346,12 @@ const loadRuntimeModule = async (): Promise<
 };
 
 const statusMethodNames = [
+  "arlecchino/internal/app.App.GetWindowLeaseStatus",
   "main.App.GetWindowLeaseStatus",
   "arlecchino.App.GetWindowLeaseStatus",
 ] as const;
 const actionMethodNames = [
+  "arlecchino/internal/app.App.RunWindowLeaseAction",
   "main.App.RunWindowLeaseAction",
   "arlecchino.App.RunWindowLeaseAction",
 ] as const;

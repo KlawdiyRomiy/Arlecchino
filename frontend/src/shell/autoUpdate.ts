@@ -125,29 +125,47 @@ interface AutoUpdateRuntimeModule {
 
 const methodNames = {
   getStatus: [
+    "arlecchino/internal/app.App.GetAutoUpdateStatus",
     "main.App.GetAutoUpdateStatus",
     "arlecchino.App.GetAutoUpdateStatus",
   ],
-  check: ["main.App.CheckForAutoUpdate", "arlecchino.App.CheckForAutoUpdate"],
+  check: [
+    "arlecchino/internal/app.App.CheckForAutoUpdate",
+    "main.App.CheckForAutoUpdate",
+    "arlecchino.App.CheckForAutoUpdate",
+  ],
   download: [
+    "arlecchino/internal/app.App.DownloadAutoUpdate",
     "main.App.DownloadAutoUpdate",
     "arlecchino.App.DownloadAutoUpdate",
   ],
   apply: [
+    "arlecchino/internal/app.App.ApplyStagedAutoUpdate",
     "main.App.ApplyStagedAutoUpdate",
     "arlecchino.App.ApplyStagedAutoUpdate",
   ],
-  cancel: ["main.App.CancelAutoUpdate", "arlecchino.App.CancelAutoUpdate"],
-  buildInfo: ["main.App.GetBuildInfo", "arlecchino.App.GetBuildInfo"],
+  cancel: [
+    "arlecchino/internal/app.App.CancelAutoUpdate",
+    "main.App.CancelAutoUpdate",
+    "arlecchino.App.CancelAutoUpdate",
+  ],
+  buildInfo: [
+    "arlecchino/internal/app.App.GetBuildInfo",
+    "main.App.GetBuildInfo",
+    "arlecchino.App.GetBuildInfo",
+  ],
   privateAuthStatus: [
+    "arlecchino/internal/app.App.GetPrivateUpdateAuthStatus",
     "main.App.GetPrivateUpdateAuthStatus",
     "arlecchino.App.GetPrivateUpdateAuthStatus",
   ],
   savePrivateToken: [
+    "arlecchino/internal/app.App.SavePrivateUpdateToken",
     "main.App.SavePrivateUpdateToken",
     "arlecchino.App.SavePrivateUpdateToken",
   ],
   clearPrivateToken: [
+    "arlecchino/internal/app.App.ClearPrivateUpdateToken",
     "main.App.ClearPrivateUpdateToken",
     "arlecchino.App.ClearPrivateUpdateToken",
   ],

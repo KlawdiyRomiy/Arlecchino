@@ -156,11 +156,13 @@ const SEVERITIES: readonly BackgroundShellSeverity[] = [
 ];
 
 const backgroundShellStatusMethodNames = [
+  "arlecchino/internal/app.App.GetBackgroundShellStatus",
   "main.App.GetBackgroundShellStatus",
   "arlecchino.App.GetBackgroundShellStatus",
 ] as const;
 
 const backgroundShellActionMethodNames = [
+  "arlecchino/internal/app.App.RunBackgroundShellAction",
   "main.App.RunBackgroundShellAction",
   "arlecchino.App.RunBackgroundShellAction",
 ] as const;

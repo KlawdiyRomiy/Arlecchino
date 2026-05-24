@@ -75,6 +75,7 @@ interface NativeContextMenuRuntimeModule {
 }
 
 const nativeContextMenuMethodNames = [
+  "arlecchino/internal/app.App.OpenNativeContextMenu",
   "main.App.OpenNativeContextMenu",
   "arlecchino.App.OpenNativeContextMenu",
 ] as const;

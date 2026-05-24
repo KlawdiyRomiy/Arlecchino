@@ -6,7 +6,7 @@ import { SuggestCommand, PredictCommand, ParseCommand } from "../wails/app";
 import type {
   ClassResult,
   CommandSuggestion,
-} from "../../bindings/arlecchino/models";
+} from "../../bindings/arlecchino/internal/app/models";
 
 interface CommandAutocompleteProps {
   input: string;

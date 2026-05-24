@@ -8,7 +8,7 @@ import {
   GetGitStatus,
   RunGitCommand,
 } from "../wails/app";
-import type { GitCommitInfo } from "../../bindings/arlecchino/models";
+import type { GitCommitInfo } from "../../bindings/arlecchino/internal/app/models";
 import { EventsOn } from "../wails/runtime";
 import {
   GitBranchInfo,

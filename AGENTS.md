@@ -77,7 +77,7 @@ go vet ./path/to/package
 Examples:
 
 ```bash
-go test -run TestName .
+go test -run TestName ./internal/app
 go test ./internal/indexer/brain
 go test ./internal/indexer/lsp
 go test ./internal/terminal

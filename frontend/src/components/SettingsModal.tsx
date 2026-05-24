@@ -54,7 +54,7 @@ import {
   type AIPredictionStatus,
 } from "../wails/app";
 import { EventsOn } from "../wails/runtime";
-import type { AutocompleteLanguageCapability } from "../../bindings/arlecchino/models";
+import type { AutocompleteLanguageCapability } from "../../bindings/arlecchino/internal/app/models";
 import type {
   AIConsentPolicy,
   AIEgressRecord,

@@ -18,4 +18,4 @@ NATIVE_SWIFT_DIR="${ARLE_NATIVE_MACOS_BUILD_DIR:-$BUILD_DIR/native/macos}"
 
 cd "$ROOT_DIR"
 export CGO_LDFLAGS="-L$NATIVE_SWIFT_DIR ${CGO_LDFLAGS:-}"
-go test -tags arle_swift_bridge -run 'Test(ShouldRestoreWindowForMacReopen|ShouldFocusWindowForMacReopen|BuildOpenIntentFromLaunchArgs|DispatchOpenIntentFromOSTarget|Wails3InfoPlist|ApplicationMenu|ShellMenu|PackagedOSNative|Credential)' .
+go test -tags arle_swift_bridge -run 'Test(ShouldRestoreWindowForMacReopen|ShouldFocusWindowForMacReopen|BuildOpenIntentFromLaunchArgs|DispatchOpenIntentFromOSTarget|Wails3InfoPlist|ApplicationMenu|ShellMenu|PackagedOSNative|Credential)' ./internal/app

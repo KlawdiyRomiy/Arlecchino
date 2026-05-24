@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 import * as AppFunctions from "../wails/app";
-import type { GitCommitInfo } from "../../bindings/arlecchino/models";
+import type { GitCommitInfo } from "../../bindings/arlecchino/internal/app/models";
 import { useTheme } from "../hooks/useTheme";
 import { radius, transitions, zIndex } from "../styles/colors";
 

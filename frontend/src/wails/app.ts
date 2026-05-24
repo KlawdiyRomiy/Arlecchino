@@ -2,9 +2,9 @@ import {
   PositionNativeWindowControls as generatedPositionNativeWindowControls,
   RefreshNativeWindowControls as generatedRefreshNativeWindowControls,
   SetNativeWindowControlsVisible as generatedSetNativeWindowControlsVisible,
-} from "../../bindings/arlecchino/app";
+} from "../../bindings/arlecchino/internal/app/app";
 
-export * from "../../bindings/arlecchino/app";
+export * from "../../bindings/arlecchino/internal/app/app";
 
 interface WailsRuntimeCallModule {
   Call?: {
@@ -214,111 +214,133 @@ export interface ProjectEntryMoveResult {
 }
 
 const nativeWindowControlsMethodNames = [
+  "arlecchino/internal/app.App.SetNativeWindowControlsVisible",
   "main.App.SetNativeWindowControlsVisible",
   "arlecchino.App.SetNativeWindowControlsVisible",
 ] as const;
 
 const nativeWindowControlsPositionMethodNames = [
+  "arlecchino/internal/app.App.PositionNativeWindowControls",
   "main.App.PositionNativeWindowControls",
   "arlecchino.App.PositionNativeWindowControls",
 ] as const;
 
 const nativeWindowControlsRefreshMethodNames = [
+  "arlecchino/internal/app.App.RefreshNativeWindowControls",
   "main.App.RefreshNativeWindowControls",
   "arlecchino.App.RefreshNativeWindowControls",
 ] as const;
 
 const applicationIconMethodNames = [
+  "arlecchino/internal/app.App.SetApplicationIconAppearance",
   "main.App.SetApplicationIconAppearance",
   "arlecchino.App.SetApplicationIconAppearance",
 ] as const;
 
 const setCloseConfirmationEnabledMethodNames = [
+  "arlecchino/internal/app.App.SetCloseConfirmationEnabled",
   "main.App.SetCloseConfirmationEnabled",
   "arlecchino.App.SetCloseConfirmationEnabled",
 ] as const;
 
 const confirmApplicationCloseMethodNames = [
+  "arlecchino/internal/app.App.ConfirmApplicationClose",
   "main.App.ConfirmApplicationClose",
   "arlecchino.App.ConfirmApplicationClose",
 ] as const;
 
 const cancelApplicationCloseMethodNames = [
+  "arlecchino/internal/app.App.CancelApplicationClose",
   "main.App.CancelApplicationClose",
   "arlecchino.App.CancelApplicationClose",
 ] as const;
 
 const projectWindowMethodNames = [
+  "arlecchino/internal/app.App.OpenProjectWindow",
   "main.App.OpenProjectWindow",
   "arlecchino.App.OpenProjectWindow",
 ] as const;
 
 const projectWindowSessionMethodNames = [
+  "arlecchino/internal/app.App.GetProjectWindowSession",
   "main.App.GetProjectWindowSession",
   "arlecchino.App.GetProjectWindowSession",
 ] as const;
 
 const openProjectWindowSessionMethodNames = [
+  "arlecchino/internal/app.App.OpenProjectWindowSession",
   "main.App.OpenProjectWindowSession",
   "arlecchino.App.OpenProjectWindowSession",
 ] as const;
 
 const currentProjectWindowSessionMethodNames = [
+  "arlecchino/internal/app.App.GetCurrentProjectWindowSession",
   "main.App.GetCurrentProjectWindowSession",
   "arlecchino.App.GetCurrentProjectWindowSession",
 ] as const;
 
 const projectEntryMoveMethodNames = [
+  "arlecchino/internal/app.App.MoveProjectEntry",
   "main.App.MoveProjectEntry",
   "arlecchino.App.MoveProjectEntry",
 ] as const;
 
 const selectOpenTargetMethodNames = [
+  "arlecchino/internal/app.App.SelectOpenTarget",
   "main.App.SelectOpenTarget",
   "arlecchino.App.SelectOpenTarget",
 ] as const;
 
 const aiListProviderRuntimesMethodNames = [
+  "arlecchino/internal/app.App.AIListProviderRuntimes",
   "main.App.AIListProviderRuntimes",
   "arlecchino.App.AIListProviderRuntimes",
 ] as const;
 
 const aiStartProviderRuntimeMethodNames = [
+  "arlecchino/internal/app.App.AIStartProviderRuntime",
   "main.App.AIStartProviderRuntime",
   "arlecchino.App.AIStartProviderRuntime",
 ] as const;
 
 const aiStopProviderRuntimeMethodNames = [
+  "arlecchino/internal/app.App.AIStopProviderRuntime",
   "main.App.AIStopProviderRuntime",
   "arlecchino.App.AIStopProviderRuntime",
 ] as const;
 
 const aiStartProviderOAuthMethodNames = [
+  "arlecchino/internal/app.App.AIStartProviderOAuth",
   "main.App.AIStartProviderOAuth",
   "arlecchino.App.AIStartProviderOAuth",
 ] as const;
 
 const aiGetProviderAuthSessionMethodNames = [
+  "arlecchino/internal/app.App.AIGetProviderAuthSession",
   "main.App.AIGetProviderAuthSession",
   "arlecchino.App.AIGetProviderAuthSession",
 ] as const;
 
 const aiCancelProviderAuthMethodNames = [
+  "arlecchino/internal/app.App.AICancelProviderAuth",
   "main.App.AICancelProviderAuth",
   "arlecchino.App.AICancelProviderAuth",
 ] as const;
 
 const aiDeleteChatSessionMethodNames = [
+  "arlecchino/internal/app.App.AIDeleteChatSession",
   "main.App.AIDeleteChatSession",
   "arlecchino.App.AIDeleteChatSession",
 ] as const;
 
 const aiGetPredictionStatusMethodNames = [
+  "arlecchino/internal/app.App.AIGetPredictionStatus",
   "main.App.AIGetPredictionStatus",
   "arlecchino.App.AIGetPredictionStatus",
 ] as const;
 
 const aiSavePredictionSettingsMethodNames = [
+  "arlecchino/internal/app.App.AISavePredictionSettings",
   "main.App.AISavePredictionSettings",
   "arlecchino.App.AISavePredictionSettings",
 ] as const;

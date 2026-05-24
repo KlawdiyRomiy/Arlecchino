@@ -312,13 +312,13 @@ fi
 
 build_ldflags() {
   local flags=(
-    "-X" "main.buildVersion=$VERSION"
-    "-X" "main.buildNumber=$BUILD_NUMBER"
-    "-X" "main.buildCommit=$BUILD_COMMIT"
-    "-X" "main.buildTime=$BUILD_TIME"
-    "-X" "main.buildChannel=$UPDATE_CHANNEL"
-    "-X" "main.buildManifestURL=$UPDATE_MANIFEST_URL"
-    "-X" "main.buildUpdatePubKey=$UPDATE_PUBLIC_KEY"
+    "-X" "arlecchino/internal/app.buildVersion=$VERSION"
+    "-X" "arlecchino/internal/app.buildNumber=$BUILD_NUMBER"
+    "-X" "arlecchino/internal/app.buildCommit=$BUILD_COMMIT"
+    "-X" "arlecchino/internal/app.buildTime=$BUILD_TIME"
+    "-X" "arlecchino/internal/app.buildChannel=$UPDATE_CHANNEL"
+    "-X" "arlecchino/internal/app.buildManifestURL=$UPDATE_MANIFEST_URL"
+    "-X" "arlecchino/internal/app.buildUpdatePubKey=$UPDATE_PUBLIC_KEY"
   )
   echo "${flags[*]}"
 }

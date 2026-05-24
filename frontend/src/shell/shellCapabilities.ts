@@ -416,6 +416,7 @@ interface ShellCapabilitiesRuntimeModule {
 }
 
 const shellCapabilitiesMethodNames = [
+  "arlecchino/internal/app.App.GetShellCapabilities",
   "main.App.GetShellCapabilities",
   "arlecchino.App.GetShellCapabilities",
 ] as const;

@@ -553,10 +553,12 @@ export const syncPackagedOSIntegrationFromPayload = (
 };
 
 const packagedOSMethodNames = [
+  "arlecchino/internal/app.App.GetPackagedOSIntegrationStatus",
   "main.App.GetPackagedOSIntegrationStatus",
   "arlecchino.App.GetPackagedOSIntegrationStatus",
 ] as const;
 const packagedOSActionMethodNames = [
+  "arlecchino/internal/app.App.RunPackagedOSIntegrationAction",
   "main.App.RunPackagedOSIntegrationAction",
   "arlecchino.App.RunPackagedOSIntegrationAction",
 ] as const;

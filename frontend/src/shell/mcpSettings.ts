@@ -30,8 +30,16 @@ interface RuntimeCallModule {
 }
 
 const methodNames = {
-  get: ["main.App.GetMCPSettings", "arlecchino.App.GetMCPSettings"],
-  save: ["main.App.SaveMCPSettings", "arlecchino.App.SaveMCPSettings"],
+  get: [
+    "arlecchino/internal/app.App.GetMCPSettings",
+    "main.App.GetMCPSettings",
+    "arlecchino.App.GetMCPSettings",
+  ],
+  save: [
+    "arlecchino/internal/app.App.SaveMCPSettings",
+    "main.App.SaveMCPSettings",
+    "arlecchino.App.SaveMCPSettings",
+  ],
 } as const;
 
 type MethodKey = keyof typeof methodNames;
