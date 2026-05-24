@@ -78,6 +78,7 @@ func (a *App) OpenProjectWindow(path string) (ProjectWindowLaunchResult, error) 
 		Frameless:             runtime.GOOS != "darwin",
 		URL:                   windowURL,
 		UseApplicationMenu:    true,
+		EnableFileDrop:        true,
 		BackgroundType:        application.BackgroundTypeTransparent,
 		BackgroundColour:      application.NewRGBA(10, 10, 10, 0),
 		MinimiseButtonState:   webviewOwnedWindowButtonState(),
@@ -102,6 +103,7 @@ func (a *App) OpenProjectWindow(path string) (ProjectWindowLaunchResult, error) 
 	window.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
 		a.closeProjectWindowSession(sessionID)
 	})
+	a.registerWindowFileDropIntents(window)
 	if roleWindow, ok := window.(application.Window); ok {
 		a.registerWindowRole(roleWindow, WindowRoleProject)
 	}

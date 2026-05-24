@@ -20,6 +20,36 @@ func mainWindowMacOptions() application.MacWindow {
 	}
 }
 
+func mainWebviewWindowOptions() application.WebviewWindowOptions {
+	return application.WebviewWindowOptions{
+		Name:                  "main",
+		Title:                 mainWindowTitle,
+		Width:                 1440,
+		Height:                900,
+		MinWidth:              1024,
+		MinHeight:             768,
+		Frameless:             runtime.GOOS != "darwin",
+		StartState:            application.WindowStateMaximised,
+		Hidden:                false,
+		URL:                   "/",
+		UseApplicationMenu:    true,
+		EnableFileDrop:        true,
+		BackgroundType:        application.BackgroundTypeTransparent,
+		BackgroundColour:      application.NewRGBA(10, 10, 10, 0),
+		MinimiseButtonState:   webviewOwnedWindowButtonState(),
+		MaximiseButtonState:   webviewOwnedWindowButtonState(),
+		CloseButtonState:      webviewOwnedWindowButtonState(),
+		FullscreenButtonState: webviewOwnedWindowButtonState(),
+		Mac:                   mainWindowMacOptions(),
+		Windows: application.WindowsWindow{
+			DisableIcon: false,
+		},
+		Linux: application.LinuxWindow{
+			WebviewGpuPolicy: application.WebviewGpuPolicyAlways,
+		},
+	}
+}
+
 func webviewOwnedWindowButtonState() application.ButtonState {
 	if runtime.GOOS == "darwin" {
 		return application.ButtonHidden

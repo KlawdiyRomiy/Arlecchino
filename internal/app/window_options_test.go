@@ -42,3 +42,10 @@ func TestProjectWindowsUseMainWindowMacOptions(t *testing.T) {
 		t.Fatalf("project window invisible titlebar height = %d, want webview-owned drag regions", options.InvisibleTitleBarHeight)
 	}
 }
+
+func TestMainWindowOptionsEnableFileDrop(t *testing.T) {
+	options := mainWebviewWindowOptions()
+	if !options.EnableFileDrop {
+		t.Fatal("main window EnableFileDrop = false, want true")
+	}
+}

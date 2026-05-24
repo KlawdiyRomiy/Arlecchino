@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 
@@ -85,32 +84,7 @@ func Run(assets fs.FS) {
 	registerOpenIntentApplicationEvents(app, wailsApp)
 	registerApplicationLifecycleEvents(app, wailsApp)
 
-	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:                  "main",
-		Title:                 mainWindowTitle,
-		Width:                 1440,
-		Height:                900,
-		MinWidth:              1024,
-		MinHeight:             768,
-		Frameless:             runtime.GOOS != "darwin",
-		StartState:            application.WindowStateMaximised,
-		Hidden:                false,
-		URL:                   "/",
-		UseApplicationMenu:    true,
-		BackgroundType:        application.BackgroundTypeTransparent,
-		BackgroundColour:      application.NewRGBA(10, 10, 10, 0),
-		MinimiseButtonState:   webviewOwnedWindowButtonState(),
-		MaximiseButtonState:   webviewOwnedWindowButtonState(),
-		CloseButtonState:      webviewOwnedWindowButtonState(),
-		FullscreenButtonState: webviewOwnedWindowButtonState(),
-		Mac:                   mainWindowMacOptions(),
-		Windows: application.WindowsWindow{
-			DisableIcon: false,
-		},
-		Linux: application.LinuxWindow{
-			WebviewGpuPolicy: application.WebviewGpuPolicyAlways,
-		},
-	})
+	mainWindow := wailsApp.Window.NewWithOptions(mainWebviewWindowOptions())
 	app.attachMainWindow(mainWindow)
 	wailsApp.Menu.SetApplicationMenu(app.buildApplicationMenu(nil))
 	app.configurePackagedOSNativeDelivery()

@@ -766,7 +766,7 @@ const App: React.FC = () => {
     }
 
     return (
-      <div data-testid="app-shell" style={appShellStyle}>
+      <div data-testid="app-shell" data-file-drop-target style={appShellStyle}>
         <div
           data-testid="app-scaled-surface"
           style={buildScaledSurfaceStyle(effectiveUiScale)}
@@ -793,7 +793,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div data-testid="app-shell" style={appShellStyle}>
+    <div data-testid="app-shell" data-file-drop-target style={appShellStyle}>
       <div
         data-testid="app-scaled-surface"
         style={buildScaledSurfaceStyle(effectiveUiScale)}

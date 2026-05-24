@@ -563,6 +563,17 @@ test("opening a new project uses the same transition path as project switching",
   expect(appSource).toContain("__welcome__");
 });
 
+test("app shell is the Wails file drop target in loading and workspace states", async ({
+  page,
+}) => {
+  const appSource = await readSource(page, "/src/App.tsx");
+  const matches =
+    appSource.match(/data-testid=\\?"app-shell\\?"\s+data-file-drop-target/g) ??
+    [];
+
+  expect(matches.length).toBeGreaterThanOrEqual(2);
+});
+
 test("workspace startup reveals the restored project before backend warmup finishes", async ({
   page,
 }) => {

@@ -115,6 +115,9 @@ func TestOpenProjectWindowCreatesInProcessWailsWindow(t *testing.T) {
 	if gotOptions.URL != buildProjectSessionURL(result.SessionID) {
 		t.Fatalf("window URL = %q, want project session URL", gotOptions.URL)
 	}
+	if !gotOptions.EnableFileDrop {
+		t.Fatal("project window EnableFileDrop = false, want true")
+	}
 	if gotOptions.Mac.TitleBar != mainWindowMacOptions().TitleBar {
 		t.Fatalf("project window titlebar = %v, want main titlebar", gotOptions.Mac.TitleBar)
 	}

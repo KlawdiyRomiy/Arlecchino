@@ -101,6 +101,7 @@ func (a *App) attachMainWindow(window *application.WebviewWindow) {
 	if a != nil && window != nil {
 		a.ensureProjectSessions().attachWindow(defaultProjectSessionID, window)
 		a.registerWindowRole(window, WindowRoleMain)
+		a.registerWindowFileDropIntents(window)
 		registerNativeFullscreenEvents(window)
 		a.registerMainWindowCloseConfirmation(window)
 	}
