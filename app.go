@@ -65,6 +65,7 @@ type App struct {
 	managerMu                sync.Mutex
 	nativeControlsMu         sync.Mutex
 	nativeControlsByWindow   map[string]nativeWindowControlsState
+	windowRoles              *WindowRoleRegistry
 	diagnosticsPreloadMu     sync.Mutex
 	diagnosticsPreloadCancel context.CancelFunc
 	diagnosticsPreloadSeq    uint64
@@ -97,6 +98,7 @@ func (a *App) attachMainWindow(window *application.WebviewWindow) {
 	a.mainWindow = window
 	if a != nil && window != nil {
 		a.ensureProjectSessions().attachWindow(defaultProjectSessionID, window)
+		a.registerWindowRole(window, WindowRoleMain)
 		registerNativeFullscreenEvents(window)
 		a.registerMainWindowCloseConfirmation(window)
 	}
@@ -133,18 +135,19 @@ func NewApp() *App {
 	termManager := terminal.NewManager()
 
 	app := &App{
-		projectManager:   pm,
-		welcomeScreen:    welcome.NewWelcomeScreen(pm),
-		termManager:      termManager,
-		carapaceProvider: terminal.NewCarapaceProvider(),
-		plugins:          pluginRegistry,
-		executionService: execution.NewService(pluginRegistry),
-		backgroundShell:  NewBackgroundShellStatusService(),
-		windowLeases:     NewWindowLeaseRegistry(),
+		projectManager:           pm,
+		welcomeScreen:            welcome.NewWelcomeScreen(pm),
+		termManager:              termManager,
+		carapaceProvider:         terminal.NewCarapaceProvider(),
+		plugins:                  pluginRegistry,
+		executionService:         execution.NewService(pluginRegistry),
+		backgroundShell:          NewBackgroundShellStatusService(),
+		windowLeases:             NewWindowLeaseRegistry(),
+		windowRoles:              NewWindowRoleRegistry(),
 		pendingMCPApprovalNonces: make(map[string]string),
 		pendingOAuthStates:       make(map[string]string),
-		packagedOSNative: NewPackagedOSNativeDelivery(defaultPackagedOSIntegrationOptions()),
-		autoUpdater:      NewAutoUpdateService(),
+		packagedOSNative:         NewPackagedOSNativeDelivery(defaultPackagedOSIntegrationOptions()),
+		autoUpdater:              NewAutoUpdateService(),
 	}
 	app.aiService = ai.NewService(ai.ServiceOptions{
 		Emit: func(name string, payload any) {
@@ -157,6 +160,7 @@ func NewApp() *App {
 	app.closeConfirmationEnabled.Store(true)
 	app.projectSessions = NewProjectSessionRegistry()
 	app.projectSessions.register(defaultProjectSessionFromApp(app))
+	initializeNativeMacOSBridge(app)
 	return app
 }
 

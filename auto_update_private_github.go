@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 )
@@ -370,48 +369,15 @@ func redactAutoUpdateError(value string) string {
 }
 
 func (keychainAutoUpdateTokenStore) FindToken() (string, error) {
-	output, err := exec.Command(
-		"/usr/bin/security",
-		"find-generic-password",
-		"-w",
-		"-s", autoUpdateGitHubKeychainService,
-		"-a", autoUpdateGitHubKeychainAccount,
-	).CombinedOutput()
-	if err != nil {
-		if strings.Contains(strings.ToLower(string(output)), "could not be found") {
-			return "", errAutoUpdateTokenNotFound
-		}
-		return "", fmt.Errorf("Keychain token lookup failed: %s", strings.TrimSpace(string(output)))
-	}
-	return strings.TrimSpace(string(output)), nil
+	return credentialVaultFind(autoUpdateGitHubKeychainService, autoUpdateGitHubKeychainAccount)
 }
 
 func (keychainAutoUpdateTokenStore) SaveToken(token string) error {
-	output, err := exec.Command(
-		"/usr/bin/security",
-		"add-generic-password",
-		"-U",
-		"-s", autoUpdateGitHubKeychainService,
-		"-a", autoUpdateGitHubKeychainAccount,
-		"-w", token,
-	).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("Keychain token save failed: %s", strings.TrimSpace(string(output)))
-	}
-	return nil
+	return credentialVaultSave(autoUpdateGitHubKeychainService, autoUpdateGitHubKeychainAccount, token)
 }
 
 func (keychainAutoUpdateTokenStore) ClearToken() error {
-	output, err := exec.Command(
-		"/usr/bin/security",
-		"delete-generic-password",
-		"-s", autoUpdateGitHubKeychainService,
-		"-a", autoUpdateGitHubKeychainAccount,
-	).CombinedOutput()
-	if err != nil && !strings.Contains(strings.ToLower(string(output)), "could not be found") {
-		return fmt.Errorf("Keychain token delete failed: %s", strings.TrimSpace(string(output)))
-	}
-	return nil
+	return credentialVaultDelete(autoUpdateGitHubKeychainService, autoUpdateGitHubKeychainAccount)
 }
 
 func (unsupportedAutoUpdateTokenStore) FindToken() (string, error) {

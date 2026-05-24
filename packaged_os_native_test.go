@@ -2,15 +2,14 @@ package main
 
 import "testing"
 
-func TestPackagedOSNativeDeliveryReady_RequiresPackagedSpikeAndExplicitAdapter(t *testing.T) {
+func TestPackagedOSNativeDeliveryReady_RequiresPackagedBuildAndAdapter(t *testing.T) {
 	if packagedOSNativeDeliveryReady(PackagedOSIntegrationOptions{
 		PackagedBuild:     true,
 		NativeTrayEnabled: true,
 	}) {
-		t.Fatal("delivery ready without spike = true, want false")
+		t.Fatal("delivery ready with tray only without spike = true, want false")
 	}
 	if packagedOSNativeDeliveryReady(PackagedOSIntegrationOptions{
-		SpikeEnabled:               true,
 		NativeNotificationsEnabled: true,
 	}) {
 		t.Fatal("delivery ready without packaged build = true, want false")
@@ -22,11 +21,16 @@ func TestPackagedOSNativeDeliveryReady_RequiresPackagedSpikeAndExplicitAdapter(t
 		t.Fatal("delivery ready without explicit native adapter = true, want false")
 	}
 	if !packagedOSNativeDeliveryReady(PackagedOSIntegrationOptions{
+		PackagedBuild:              true,
+		NativeNotificationsEnabled: true,
+	}) {
+		t.Fatal("delivery ready with packaged notifications = false, want true")
+	}
+	if !packagedOSNativeDeliveryReady(PackagedOSIntegrationOptions{
 		PackagedBuild:     true,
-		SpikeEnabled:      true,
 		DockBadgesEnabled: true,
 	}) {
-		t.Fatal("delivery ready with packaged spike and dock badges = false, want true")
+		t.Fatal("delivery ready with packaged dock badges = false, want true")
 	}
 }
 
@@ -121,6 +125,41 @@ func TestPackagedOSNativeDockBadgeLabel_UsesAttentionCount(t *testing.T) {
 	}
 }
 
+func TestNativeNotificationPayloadNestsRoutingData(t *testing.T) {
+	payload := nativeNotificationPayload(BackgroundShellNotificationCandidate{
+		ID:       "notification:terminal:input",
+		JobID:    "terminal:input",
+		Severity: BackgroundShellSeverityWarning,
+		Title:    "Terminal task needs input",
+		Body:     "A command is waiting for stdin.",
+		Action: &BackgroundShellAction{
+			ID:             "focus:panel:terminal",
+			Intent:         "focus-surface",
+			JobID:          "terminal:input",
+			OwnerSurfaceID: "panel:terminal",
+			Enabled:        true,
+		},
+	}, "terminal:input:blocked")
+
+	if _, ok := payload["backgroundActionId"]; ok {
+		t.Fatalf("native payload leaked routing field at top level: %#v", payload)
+	}
+	data, ok := payload["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload data = %#v, want map", payload["data"])
+	}
+	if data["backgroundActionId"] != "focus:panel:terminal" || data["surfaceId"] != "panel:terminal" {
+		t.Fatalf("routing data = %#v, want action and surface", data)
+	}
+	intent, ok := data["openIntent"].(map[string]any)
+	if !ok {
+		t.Fatalf("openIntent = %#v, want map", data["openIntent"])
+	}
+	if intent["kind"] != "focusSurface" || intent["source"] != "notification" || intent["surfaceId"] != "panel:terminal" {
+		t.Fatalf("openIntent = %#v, want notification focus intent", intent)
+	}
+}
+
 func TestPackagedOSNativeDeliveryDecorate_ReportsActualNativeState(t *testing.T) {
 	delivery := NewPackagedOSNativeDelivery(PackagedOSIntegrationOptions{})
 	delivery.trayReady = true
@@ -147,7 +186,6 @@ func TestPackagedOSNativeFailureStates_AreClassified(t *testing.T) {
 		delivery,
 		PackagedOSIntegrationOptions{
 			PackagedBuild:              true,
-			SpikeEnabled:               true,
 			NativeNotificationsEnabled: true,
 		},
 		emptyBackgroundShellStatusSnapshot(),

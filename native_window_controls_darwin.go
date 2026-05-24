@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && !arle_swift_bridge
 
 package main
 

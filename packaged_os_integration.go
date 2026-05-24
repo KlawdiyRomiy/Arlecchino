@@ -11,16 +11,18 @@ import (
 const packagedOSIntegrationVersion = 1
 
 const (
-	packagedOSSpikeEnv               = "ARLECCHINO_ENABLE_PACKAGED_OS_SPIKE"
-	packagedOSPackagedBuildEnv       = "ARLECCHINO_PACKAGED_BUILD"
-	packagedOSNativeTrayEnv          = "ARLECCHINO_ENABLE_NATIVE_TRAY"
-	packagedOSNativeNotificationsEnv = "ARLECCHINO_ENABLE_NATIVE_NOTIFICATIONS"
-	packagedOSDockBadgesEnv          = "ARLECCHINO_ENABLE_DOCK_BADGES"
-	packagedOSAutoUpdateManifestEnv  = "ARLECCHINO_AUTO_UPDATE_MANIFEST"
-	autoUpdateManifestURLEnv         = "ARLECCHINO_AUTO_UPDATE_MANIFEST_URL"
-	packagedOSAutoUpdateChannelEnv   = "ARLECCHINO_AUTO_UPDATE_CHANNEL"
-	packagedOSAutoUpdatePublicKeyEnv = "ARLECCHINO_AUTO_UPDATE_PUBLIC_KEY"
-	packagedOSAutoUpdateApplyEnv     = "ARLECCHINO_ENABLE_AUTO_UPDATE_APPLY_SMOKE"
+	packagedOSSpikeEnv                = "ARLECCHINO_ENABLE_PACKAGED_OS_SPIKE"
+	packagedOSPackagedBuildEnv        = "ARLECCHINO_PACKAGED_BUILD"
+	packagedOSNativeTrayEnv           = "ARLECCHINO_ENABLE_NATIVE_TRAY"
+	packagedOSNativeNotificationsEnv  = "ARLECCHINO_ENABLE_NATIVE_NOTIFICATIONS"
+	packagedOSDisableNotificationsEnv = "ARLECCHINO_DISABLE_NATIVE_NOTIFICATIONS"
+	packagedOSDockBadgesEnv           = "ARLECCHINO_ENABLE_DOCK_BADGES"
+	packagedOSDisableDockBadgesEnv    = "ARLECCHINO_DISABLE_DOCK_BADGES"
+	packagedOSAutoUpdateManifestEnv   = "ARLECCHINO_AUTO_UPDATE_MANIFEST"
+	autoUpdateManifestURLEnv          = "ARLECCHINO_AUTO_UPDATE_MANIFEST_URL"
+	packagedOSAutoUpdateChannelEnv    = "ARLECCHINO_AUTO_UPDATE_CHANNEL"
+	packagedOSAutoUpdatePublicKeyEnv  = "ARLECCHINO_AUTO_UPDATE_PUBLIC_KEY"
+	packagedOSAutoUpdateApplyEnv      = "ARLECCHINO_ENABLE_AUTO_UPDATE_APPLY_SMOKE"
 )
 
 type PackagedOSAdapter struct {
@@ -99,12 +101,13 @@ func envFlag(name string) bool {
 
 func defaultPackagedOSIntegrationOptions() PackagedOSIntegrationOptions {
 	manifest, manifestReason := readAutoUpdateManifest(os.Getenv(packagedOSAutoUpdateManifestEnv))
+	packagedBuild := envFlag(packagedOSPackagedBuildEnv)
 	return PackagedOSIntegrationOptions{
-		PackagedBuild:              envFlag(packagedOSPackagedBuildEnv),
+		PackagedBuild:              packagedBuild,
 		SpikeEnabled:               envFlag(packagedOSSpikeEnv),
 		NativeTrayEnabled:          envFlag(packagedOSNativeTrayEnv),
-		NativeNotificationsEnabled: envFlag(packagedOSNativeNotificationsEnv),
-		DockBadgesEnabled:          envFlag(packagedOSDockBadgesEnv),
+		NativeNotificationsEnabled: (packagedBuild || envFlag(packagedOSNativeNotificationsEnv)) && !envFlag(packagedOSDisableNotificationsEnv),
+		DockBadgesEnabled:          (packagedBuild || envFlag(packagedOSDockBadgesEnv)) && !envFlag(packagedOSDisableDockBadgesEnv),
 		AutoUpdateManifest:         manifest,
 		AutoUpdateManifestReason:   manifestReason,
 	}
@@ -117,8 +120,8 @@ func buildPackagedOSIntegrationSnapshot(
 ) PackagedOSIntegrationSnapshot {
 	packagedSpikeReady := options.PackagedBuild && options.SpikeEnabled
 	trayEnabled := packagedSpikeReady && options.NativeTrayEnabled
-	notificationsEnabled := packagedSpikeReady && options.NativeNotificationsEnabled
-	dockBadgesEnabled := packagedSpikeReady && options.DockBadgesEnabled
+	notificationsEnabled := options.PackagedBuild && options.NativeNotificationsEnabled
+	dockBadgesEnabled := options.PackagedBuild && options.DockBadgesEnabled
 
 	trayStatus := ShellCapabilityUnavailable
 	trayReason := "Tray adapter is prepared, but native tray remains off until packaged smoke enables it."
@@ -132,25 +135,25 @@ func buildPackagedOSIntegrationSnapshot(
 	}
 
 	notificationStatus := ShellCapabilityUnavailable
-	notificationReason := "Notification adapter is prepared, but native delivery remains off until packaged smoke enables it."
-	if packagedSpikeReady {
+	notificationReason := "Notification adapter is prepared; native delivery requires a packaged macOS app."
+	if options.PackagedBuild {
 		notificationStatus = ShellCapabilityExperimental
-		notificationReason = "Notification adapter can consume Background Shell notification candidates in packaged spike mode."
+		notificationReason = "Notification adapter consumes centralized Background Shell notification candidates in packaged macOS builds."
 	}
 	if notificationsEnabled {
 		notificationStatus = ShellCapabilityAvailable
-		notificationReason = "Native notification delivery is enabled by packaged OS spike flags."
+		notificationReason = "Native notification delivery is enabled for packaged macOS builds."
 	}
 
 	dockBadgeStatus := ShellCapabilityPlatformLimited
-	dockBadgeReason := "Dock/taskbar badge adapter is prepared, but native badges remain off until packaged smoke enables them."
-	if packagedSpikeReady {
+	dockBadgeReason := "Dock/taskbar badge adapter is prepared; native badges require a packaged macOS app."
+	if options.PackagedBuild {
 		dockBadgeStatus = ShellCapabilityExperimental
-		dockBadgeReason = "Dock/taskbar badge adapter can mirror Background Shell attention counts in packaged spike mode."
+		dockBadgeReason = "Dock/taskbar badge adapter mirrors Background Shell attention counts in packaged macOS builds."
 	}
 	if dockBadgesEnabled {
 		dockBadgeStatus = ShellCapabilityAvailable
-		dockBadgeReason = "Dock/taskbar badge delivery is enabled by packaged OS spike flags."
+		dockBadgeReason = "Dock/taskbar badge delivery is enabled for packaged macOS builds."
 	}
 
 	autoUpdateStatus := ShellCapabilityExperimental

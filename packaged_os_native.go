@@ -53,6 +53,8 @@ type PackagedOSNativeDelivery struct {
 	dockReady            bool
 	lastDockBadge        string
 
+	lastAttentionRevision uint64
+
 	lastError string
 	failures  map[string]struct{}
 }
@@ -84,12 +86,12 @@ func (d *PackagedOSNativeDelivery) failureStatesLocked() []string {
 }
 
 func packagedOSNativeDeliveryReady(options PackagedOSIntegrationOptions) bool {
-	if !options.PackagedBuild || !options.SpikeEnabled {
+	if !options.PackagedBuild {
 		return false
 	}
-	return options.NativeTrayEnabled ||
-		options.NativeNotificationsEnabled ||
-		options.DockBadgesEnabled
+	return packagedOSNativeTrayReady(options) ||
+		packagedOSNativeNotificationsReady(options) ||
+		packagedOSNativeDockBadgesReady(options)
 }
 
 func packagedOSNativeTrayReady(options PackagedOSIntegrationOptions) bool {
@@ -97,11 +99,11 @@ func packagedOSNativeTrayReady(options PackagedOSIntegrationOptions) bool {
 }
 
 func packagedOSNativeNotificationsReady(options PackagedOSIntegrationOptions) bool {
-	return options.PackagedBuild && options.SpikeEnabled && options.NativeNotificationsEnabled
+	return options.PackagedBuild && options.NativeNotificationsEnabled
 }
 
 func packagedOSNativeDockBadgesReady(options PackagedOSIntegrationOptions) bool {
-	return options.PackagedBuild && options.SpikeEnabled && options.DockBadgesEnabled
+	return options.PackagedBuild && options.DockBadgesEnabled
 }
 
 func buildPackagedOSNativeTrayModel(snapshot BackgroundShellStatusSnapshot) PackagedOSNativeTrayModel {
@@ -232,6 +234,7 @@ func (d *PackagedOSNativeDelivery) Apply(
 	if packagedOSNativeDockBadgesReady(d.options) {
 		d.updateDockBadge(ctx, snapshot)
 	}
+	d.requestAttentionIfNeeded(owner, snapshot)
 
 	return d.Decorate(snapshot)
 }
@@ -307,7 +310,8 @@ func (d *PackagedOSNativeDelivery) sendNotificationCandidates(
 	}
 
 	service, ok := d.ensureNotificationService(ctx, owner)
-	if !ok || service == nil {
+	useSwiftBridge := nativeMacOSBridgeAvailable()
+	if !useSwiftBridge && (!ok || service == nil) {
 		return
 	}
 
@@ -317,21 +321,13 @@ func (d *PackagedOSNativeDelivery) sendNotificationCandidates(
 		if key == "" {
 			continue
 		}
-		options := notifications.NotificationOptions{
-			ID:    candidate.ID,
-			Title: candidate.Title,
-			Body:  candidate.Body,
-			Data: map[string]interface{}{
-				"jobId":     candidate.JobID,
-				"dedupeKey": key,
-			},
-		}
-		if candidate.Action != nil {
-			options.Data["backgroundActionId"] = candidate.Action.ID
-			options.Data["surfaceId"] = candidate.Action.OwnerSurfaceID
-		}
-
-		if err := service.SendNotification(options); err != nil {
+		if useSwiftBridge {
+			if _, err := callNativeMacOSBridge("notification.send", nativeNotificationPayload(candidate, key)); err != nil {
+				d.recordNotificationDeliveryAttempt("failed")
+				d.setLastError(fmt.Sprintf("native notification failed: %v", err))
+				continue
+			}
+		} else if err := service.SendNotification(wailsNotificationOptions(candidate, key)); err != nil {
 			d.recordNotificationDeliveryAttempt("failed")
 			d.setLastError(fmt.Sprintf("native notification failed: %v", err))
 			continue
@@ -345,10 +341,59 @@ func (d *PackagedOSNativeDelivery) sendNotificationCandidates(
 	}
 }
 
+func wailsNotificationOptions(candidate BackgroundShellNotificationCandidate, key string) notifications.NotificationOptions {
+	options := notifications.NotificationOptions{
+		ID:    candidate.ID,
+		Title: candidate.Title,
+		Body:  candidate.Body,
+		Data: map[string]interface{}{
+			"jobId":     candidate.JobID,
+			"dedupeKey": key,
+		},
+	}
+	if candidate.Action != nil {
+		options.Data["backgroundActionId"] = candidate.Action.ID
+		options.Data["surfaceId"] = candidate.Action.OwnerSurfaceID
+	}
+	return options
+}
+
+func nativeNotificationPayload(candidate BackgroundShellNotificationCandidate, key string) map[string]any {
+	data := map[string]any{
+		"jobId":     candidate.JobID,
+		"dedupeKey": key,
+		"severity":  string(candidate.Severity),
+	}
+	if candidate.Action != nil {
+		data["backgroundActionId"] = candidate.Action.ID
+		data["surfaceId"] = candidate.Action.OwnerSurfaceID
+		data["actionIntent"] = candidate.Action.Intent
+		if intent := openIntentForBackgroundShellAction(*candidate.Action); len(intent) > 0 {
+			data["openIntent"] = intent
+		}
+	}
+	return map[string]any{
+		"id":    candidate.ID,
+		"title": candidate.Title,
+		"body":  candidate.Body,
+		"data":  data,
+	}
+}
+
 func (d *PackagedOSNativeDelivery) ensureNotificationService(
 	ctx context.Context,
 	owner *App,
 ) (*notifications.NotificationService, bool) {
+	if nativeMacOSBridgeAvailable() {
+		d.mu.Lock()
+		d.notificationStartupAttempted = true
+		d.notificationReady = true
+		if d.notificationPermissionStatus == "" {
+			d.notificationPermissionStatus = "bridge"
+		}
+		d.mu.Unlock()
+		return nil, true
+	}
 	if ctx == nil {
 		return nil, false
 	}
@@ -449,16 +494,85 @@ func (d *PackagedOSNativeDelivery) handleNotificationResponse(
 		return
 	}
 	go func() {
-		_, _ = owner.RunBackgroundShellAction(actionID)
+		if _, err := owner.RunBackgroundShellAction(actionID); err != nil {
+			d.recordFailureState("action-rejected")
+			d.setLastError(fmt.Sprintf("native notification action rejected: %v", err))
+		}
 	}()
 }
 
-func (d *PackagedOSNativeDelivery) updateDockBadge(ctx context.Context, snapshot BackgroundShellStatusSnapshot) {
-	service, ok := d.ensureDockService(ctx)
-	if !ok || service == nil {
+func (a *App) handleNativeNotificationBridgeResponse(payload map[string]any) {
+	if a == nil || len(payload) == 0 {
 		return
 	}
+	userInfo := payload
+	if nested, ok := payload["userInfo"].(map[string]any); ok {
+		userInfo = nested
+	}
+	actionID := strings.TrimSpace(stringMapValue(userInfo, "backgroundActionId"))
+	if actionID != "" {
+		go func() {
+			if _, err := a.RunBackgroundShellAction(actionID); err != nil && a.packagedOSNative != nil {
+				a.packagedOSNative.recordFailureState("action-rejected")
+				a.packagedOSNative.setLastError(fmt.Sprintf("native notification action rejected: %v", err))
+			}
+		}()
+		return
+	}
+	if intent, ok := userInfo["openIntent"].(map[string]any); ok && len(intent) > 0 {
+		if a.dispatchTrustedNotificationOpenIntent(intent) {
+			return
+		}
+	}
+	if a.showLastActiveWindow() {
+		return
+	}
+}
 
+func stringMapValue(values map[string]any, key string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	switch value := values[key].(type) {
+	case string:
+		return value
+	default:
+		return ""
+	}
+}
+
+func openIntentForBackgroundShellAction(action BackgroundShellAction) map[string]any {
+	switch strings.TrimSpace(action.Intent) {
+	case "focus-surface":
+		if strings.TrimSpace(action.OwnerSurfaceID) == "" {
+			return nil
+		}
+		return map[string]any{
+			"id":        "background-shell:" + strings.TrimSpace(action.ID),
+			"kind":      "focusSurface",
+			"source":    "notification",
+			"surfaceId": strings.TrimSpace(action.OwnerSurfaceID),
+			"jobId":     strings.TrimSpace(action.JobID),
+		}
+	default:
+		return nil
+	}
+}
+
+func (a *App) dispatchTrustedNotificationOpenIntent(intent map[string]any) bool {
+	if a == nil || len(intent) == 0 {
+		return false
+	}
+	if source := strings.TrimSpace(stringMapValue(intent, "source")); source == "" {
+		intent = cloneOpenIntentPayload(intent)
+		intent["source"] = "notification"
+	}
+	a.focusMainWindow()
+	a.dispatchOpenIntent(intent)
+	return true
+}
+
+func (d *PackagedOSNativeDelivery) updateDockBadge(ctx context.Context, snapshot BackgroundShellStatusSnapshot) {
 	label := packagedOSNativeDockBadgeLabel(snapshot)
 
 	d.mu.Lock()
@@ -468,21 +582,61 @@ func (d *PackagedOSNativeDelivery) updateDockBadge(ctx context.Context, snapshot
 	}
 	d.mu.Unlock()
 
-	var err error
-	if label == "" {
-		err = service.RemoveBadge()
+	if nativeMacOSBridgeAvailable() {
+		if _, err := callNativeMacOSBridge("dock.setBadge", map[string]any{"label": label}); err != nil {
+			d.setLastError(fmt.Sprintf("dock badge update failed: %v", err))
+			return
+		}
 	} else {
-		err = service.SetBadge(label)
-	}
-	if err != nil {
-		d.setLastError(fmt.Sprintf("dock badge update failed: %v", err))
-		return
+		service, ok := d.ensureDockService(ctx)
+		if !ok || service == nil {
+			return
+		}
+
+		var err error
+		if label == "" {
+			err = service.RemoveBadge()
+		} else {
+			err = service.SetBadge(label)
+		}
+		if err != nil {
+			d.setLastError(fmt.Sprintf("dock badge update failed: %v", err))
+			return
+		}
 	}
 
 	d.mu.Lock()
 	d.lastDockBadge = label
 	d.dockReady = true
 	d.mu.Unlock()
+}
+
+func (d *PackagedOSNativeDelivery) requestAttentionIfNeeded(owner *App, snapshot BackgroundShellStatusSnapshot) {
+	if d == nil || owner == nil || snapshot.AttentionCount <= 0 || owner.hasVisibleWindow() {
+		return
+	}
+	if !nativeMacOSBridgeAvailable() {
+		return
+	}
+
+	d.mu.Lock()
+	if d.lastAttentionRevision == snapshot.Revision {
+		d.mu.Unlock()
+		return
+	}
+	d.lastAttentionRevision = snapshot.Revision
+	d.mu.Unlock()
+
+	critical := false
+	for _, candidate := range snapshot.NotificationCandidates {
+		if candidate.Severity == BackgroundShellSeverityError {
+			critical = true
+			break
+		}
+	}
+	if _, err := callNativeMacOSBridge("attention.request", map[string]any{"critical": critical}); err != nil {
+		d.setLastError(fmt.Sprintf("dock attention request failed: %v", err))
+	}
 }
 
 func (d *PackagedOSNativeDelivery) ensureDockService(ctx context.Context) (*dock.DockService, bool) {

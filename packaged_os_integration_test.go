@@ -62,21 +62,19 @@ func TestBuildPackagedOSIntegrationSnapshot_DefaultsOff(t *testing.T) {
 	}
 }
 
-func TestBuildPackagedOSIntegrationSnapshot_PackagedSpikeStillExplicit(t *testing.T) {
+func TestBuildPackagedOSIntegrationSnapshot_PackagedNativeDefaults(t *testing.T) {
 	snapshot := buildPackagedOSIntegrationSnapshot(
 		"darwin",
 		emptyBackgroundShellStatusSnapshot(),
 		PackagedOSIntegrationOptions{
 			PackagedBuild:              true,
-			SpikeEnabled:               true,
-			NativeTrayEnabled:          true,
 			NativeNotificationsEnabled: true,
 			DockBadgesEnabled:          true,
 		},
 	)
 
-	if snapshot.Adapters["tray"].Status != ShellCapabilityAvailable {
-		t.Fatalf("tray status = %q, want available", snapshot.Adapters["tray"].Status)
+	if snapshot.Adapters["tray"].Status != ShellCapabilityUnavailable {
+		t.Fatalf("tray status = %q, want unavailable", snapshot.Adapters["tray"].Status)
 	}
 	if snapshot.Adapters["notifications"].Status != ShellCapabilityAvailable {
 		t.Fatalf("notifications status = %q, want available", snapshot.Adapters["notifications"].Status)

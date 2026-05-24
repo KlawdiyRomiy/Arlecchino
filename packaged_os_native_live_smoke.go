@@ -201,7 +201,7 @@ func packagedOSNativeDeliveryLiveStatus(
 	status.NotificationDedupeSuppressed =
 		status.SentNotificationCount > 0 &&
 			len(selectPackagedOSNativeNotificationCandidates(snapshot, sentKeys)) < len(snapshot.NotificationCandidates)
-	status.DeliveryAttempted = status.TrayReady || status.NotificationStartupAttempted || status.DockStartupAttempted
+	status.DeliveryAttempted = status.TrayReady || status.NotificationStartupAttempted || status.DockStartupAttempted || status.DockReady
 	return status
 }
 
