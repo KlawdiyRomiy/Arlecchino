@@ -66,6 +66,41 @@ func (s *Service) resolveAgentAdapter(ctx context.Context, providerID string) (a
 	return adapter, descriptor, true
 }
 
+func (s *Service) refreshAgentProviderDescriptor(ctx context.Context, adapter agents.Adapter, invalidate bool) (providers.AIProviderDescriptor, bool) {
+	if s == nil || adapter == nil {
+		return providers.AIProviderDescriptor{}, false
+	}
+	if invalidate {
+		if invalidator, ok := adapter.(agents.CacheInvalidator); ok {
+			invalidator.Invalidate()
+		}
+	}
+	descriptor := agents.DescriptorToProvider(adapter.Descriptor(ctx))
+	if strings.TrimSpace(descriptor.ID) == "" {
+		return providers.AIProviderDescriptor{}, false
+	}
+	s.mu.Lock()
+	s.descriptors[descriptor.ID] = descriptor
+	s.mu.Unlock()
+	s.emitEvent("ai:provider:status", descriptor)
+	return descriptor, true
+}
+
+func (s *Service) refreshAgentProviderDescriptors(ctx context.Context, invalidate bool) []providers.AIProviderDescriptor {
+	if s == nil || s.agents == nil {
+		return nil
+	}
+	adapters := s.agents.Adapters()
+	descriptors := make([]providers.AIProviderDescriptor, 0, len(adapters))
+	for _, adapter := range adapters {
+		descriptor, ok := s.refreshAgentProviderDescriptor(ctx, adapter, invalidate)
+		if ok {
+			descriptors = append(descriptors, descriptor)
+		}
+	}
+	return descriptors
+}
+
 func isExternalAgentProviderDescriptor(descriptor providers.AIProviderDescriptor) bool {
 	if isExternalAgentRuntimeFamily(descriptor.RuntimeFamily) {
 		return true
@@ -434,7 +469,11 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 	s.emitRunEnvelope(project.ID, runID)
 
 	started := time.Now()
-	agentPrompt := buildExternalAgentPrompt(req, snapshot, contextSummary)
+	history := s.chatHistoryForPrompt(project, runID, req.SessionID, chatPromptHistoryLimit)
+	if compaction, ok := latestIncludedCompactionCapsule(snapshot.Continuity); ok {
+		history = s.chatHistoryForPromptAfter(project, runID, req.SessionID, chatPromptHistoryLimit, compaction.CreatedAt)
+	}
+	agentPrompt := buildExternalAgentPrompt(req, snapshot, contextSummary, history)
 	result := adapter.Run(ctx, agents.RunRequest{
 		RunID:           runID,
 		SessionID:       normalizeChatSessionID(req.SessionID),
@@ -716,10 +755,6 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 		s.finishAgentAuthCleanup(runID, adapter)
 		return
 	}
-	authStatus := "ready"
-	if fresh := adapter.Descriptor(context.Background()); fresh.AuthStatus != "" {
-		authStatus = fresh.AuthStatus
-	}
 	latencyMs := time.Since(started).Milliseconds()
 	s.updateRun(runID, func(run *AIChatRun) {
 		run.Status = "completed"
@@ -731,7 +766,7 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 			run.AgentRuntime.ProofState = "proved"
 			run.AgentRuntime.ProofReason = "interactive auth completed through fallback runtime"
 			run.AgentRuntime.ArtifactState = "transcript_evidence"
-			run.AgentRuntime.AuthStatus = authStatus
+			run.AgentRuntime.AuthStatus = "ready"
 			run.AgentRuntime.ExitCode = result.ExitCode
 			run.AgentRuntime.TranscriptID = transcriptID
 		}
@@ -757,12 +792,9 @@ func (s *Service) runExternalAgentAuth(ctx context.Context, project *ProjectSess
 }
 
 func (s *Service) finishAgentAuthCleanup(runID string, adapter agents.Adapter) {
-	if invalidator, ok := adapter.(agents.CacheInvalidator); ok {
-		invalidator.Invalidate()
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), agentDescriptorProbeTimeout)
 	defer cancel()
-	s.emitEvent("ai:provider:status", agents.DescriptorToProvider(adapter.Descriptor(ctx)))
+	s.refreshAgentProviderDescriptor(ctx, adapter, true)
 	s.mu.Lock()
 	delete(s.runCancels, runID)
 	s.mu.Unlock()
@@ -1149,6 +1181,11 @@ func (s *Service) finishAgentRunCompleted(project *ProjectSession, runID string,
 			}
 		}
 	})
+	contextSummary := AIContextSummary{}
+	if run, err := s.GetChatRun(project.ID, runID); err == nil && run.ContextSummary != nil {
+		contextSummary = *run.ContextSummary
+	}
+	s.recordTurnContextCapsule(project, runID, req, contextSummary, response)
 	s.recordPlanGateIfNeeded(project, runID, req.Action)
 	s.emitRunEnvelope(project.ID, runID)
 	if run, err := s.GetChatRun(project.ID, runID); err == nil {
@@ -1194,8 +1231,7 @@ func agentFailureCodeForResult(result agents.Result) string {
 	}
 }
 
-func buildExternalAgentPrompt(req AIChatRunRequest, snapshot AIContextSnapshot, summary AIContextSummary) string {
-	history := []AIChatRun{}
+func buildExternalAgentPrompt(req AIChatRunRequest, snapshot AIContextSnapshot, summary AIContextSummary, history []AIChatRun) string {
 	contextPrompt := buildChatPromptFromSnapshot(snapshot, history)
 	var b strings.Builder
 	b.WriteString("You are running as a structured external agent runtime inside Arlecchino AI Chat.\n")

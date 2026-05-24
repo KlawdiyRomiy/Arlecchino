@@ -23,7 +23,7 @@ import type {
   AIChatActionDescriptor,
   AIChatMentionCandidate,
   AIConsentPolicy,
-  AIContextProviderDescriptor,
+  AIContextSnapshot,
   AIModelCapabilityDescriptor,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import {
@@ -32,21 +32,24 @@ import {
   AIChatMentionOperation,
   AIChatMentionQuery,
   AIChatMentionTrigger,
+  type AIChatRun,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 import type { AIChatSendShortcut } from "../../stores/editorSettingsStore";
 import type {
   AIProviderRuntimeDescriptor,
   AIProviderRuntimeModel,
+  AIProviderAuthSession,
 } from "../../wails/app";
-import { ContextPickerMenu } from "./ContextPickerMenu";
 import { getActionMeta, modeOrder } from "./aiChatPresentation";
 import { MentionPicker } from "./MentionPicker";
 import { ModelPicker } from "./ModelPicker";
+import { askReadonlyProfileId, minimalGeneralProfileId } from "./types";
 import type { ContextToggles } from "./types";
 
 interface ChatComposerProps {
   selectedAction: AIChatAction;
+  selectedProfileId: string;
   selectedMentions: AIChatMentionCandidate[];
   actions: AIChatActionDescriptor[];
   input: string;
@@ -58,20 +61,29 @@ interface ChatComposerProps {
   selectedProvider: AIProviderDescriptor | null;
   selectedModel: string;
   selectedReasoningEffort: string;
+  agentAuthRun?: AIChatRun | null;
   providerRuntimes: AIProviderRuntimeDescriptor[];
   providerRuntimeBusy: boolean;
   providerRuntimeError: string;
   selectedModelCapability: AIModelCapabilityDescriptor | null;
   consentPolicy: AIConsentPolicy | null;
   context: ContextToggles;
-  contextProviders: AIContextProviderDescriptor[];
-  contextPickerOpen: boolean;
-  onActionChange: (action: AIChatAction) => void;
+  contextPreview?: AIContextSnapshot | null;
+  onActionChange: (action: AIChatAction, profileId?: string) => void;
   onSelectProvider: (provider: AIProviderDescriptor) => void;
   onSelectModel: (modelId: string) => void;
   onSelectReasoningEffort: (reasoningEffort: string) => void;
   onRefreshProviders: () => void;
-  onStartAgentLogin: (provider: AIProviderDescriptor) => void;
+  onStartAgentLogin: (
+    provider: AIProviderDescriptor,
+  ) => Promise<AIChatRun | null> | AIChatRun | null | void;
+  onCancelAgentLogin?: (runId: string) => Promise<void> | void;
+  onStartProviderOAuth?: (
+    provider: AIProviderDescriptor,
+  ) => Promise<AIProviderAuthSession | null> | AIProviderAuthSession | null;
+  onCancelProviderAuth?: (
+    sessionId: string,
+  ) => Promise<AIProviderAuthSession | null> | AIProviderAuthSession | null;
   onAcceptExternalAgentConsent: () => void;
   onAcceptRemoteBYOKProviderConsent: () => void;
   onAcceptFrontierProviderConsent: () => void;
@@ -89,7 +101,6 @@ interface ChatComposerProps {
   onMentionSelect: (candidate: AIChatMentionCandidate) => void;
   onMentionRemove: (id: string) => void;
   onRefreshContext: () => void;
-  onToggleContextPicker: () => void;
   onSend: () => void;
   onCancel: () => void;
 }
@@ -106,6 +117,29 @@ const sortActionDescriptors = (
   sorted.sort((left, right) => actionIndex(left.id) - actionIndex(right.id));
   return sorted;
 };
+
+interface ComposerModeOption {
+  key: string;
+  action: AIChatAction;
+  profileId: string;
+  name: string;
+  description: string;
+  executionUnavailable: boolean;
+}
+
+const composerModeKey = (action: AIChatAction, profileId: string): string => {
+  if (
+    action === AIChatAction.AIChatActionAsk &&
+    (!profileId || profileId === minimalGeneralProfileId)
+  ) {
+    return "chat";
+  }
+  if (action === AIChatAction.AIChatActionAsk) return "ask-project";
+  return action;
+};
+
+const modeOptionTestId = (key: string): string =>
+  `ai-chat-mode-${key.replace(/\s+/g, "-").toLowerCase()}`;
 
 interface ComposerMentionTrigger {
   trigger: AIChatMentionTrigger;
@@ -199,6 +233,61 @@ const mentionDetail = (mention: AIChatMentionCandidate): string =>
   mention.description ||
   "";
 
+const formatContextTokenCount = (tokens = 0): string => {
+  const trimUnitValue = (value: string) =>
+    value.replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+  if (tokens >= 1_000_000) {
+    const value = tokens / 1_000_000;
+    return `${value >= 10 ? Math.round(value) : trimUnitValue(value.toFixed(value < 2 ? 2 : 1))}m`;
+  }
+  if (tokens >= 1_000) {
+    const value = tokens / 1_000;
+    return `${value >= 10 ? Math.round(value) : trimUnitValue(value.toFixed(1))}k`;
+  }
+  return `${Math.max(0, tokens)}`;
+};
+
+const contextBudgetPercent = (
+  budget: AIContextSnapshot["budget"] | undefined,
+): number => {
+  if (!budget?.contextWindow) return 0;
+  return Math.min(100, Math.max(0, (budget.usageRatio || 0) * 100));
+};
+
+const formatContextPercent = (percent: number): string => {
+  if (percent > 0 && percent < 0.01) return "<0.01%";
+  if (percent < 10) return `${percent.toFixed(2)}%`;
+  if (percent < 99.95) return `${percent.toFixed(1)}%`;
+  return `${Math.min(100, Math.round(percent))}%`;
+};
+
+const contextBudgetTooltip = (
+  budget: AIContextSnapshot["budget"] | undefined,
+): string => {
+  if (!budget) return "Context budget is being measured.";
+  const input = formatContextTokenCount(budget.inputTokens);
+  if (!budget.contextWindow) {
+    return `${input} estimated input tokens. Model context window is not available yet.`;
+  }
+  const windowSize = formatContextTokenCount(budget.contextWindow);
+  const remainingWindow = formatContextTokenCount(budget.remainingTokens);
+  const source =
+    budget.source === "assembled_external_agent_prompt"
+      ? "external agent prompt"
+      : "provider request";
+  const percent = formatContextPercent(contextBudgetPercent(budget));
+  if (budget.autoCompactRecommended) {
+    return `${input}/${windowSize} estimated input tokens from the ${source} (${percent} used). Compaction is recommended before the next large turn.`;
+  }
+  if (budget.autoCompactThresholdTokens) {
+    const remainingCompact = formatContextTokenCount(
+      budget.remainingBeforeCompact,
+    );
+    return `${input}/${windowSize} estimated input tokens from the ${source} (${percent} used). ${remainingCompact} before the compaction threshold; ${remainingWindow} to the model limit.`;
+  }
+  return `${input}/${windowSize} estimated input tokens from the ${source} (${percent} used). ${remainingWindow} to the model limit.`;
+};
+
 const contextChipMeta: Record<
   keyof ContextToggles,
   {
@@ -227,6 +316,11 @@ const contextChipMeta: Record<
     detail: "memory",
     icon: Database,
   },
+  continuity: {
+    label: "Continuity",
+    detail: "resume",
+    icon: ListChecks,
+  },
   mcp: {
     label: "MCP",
     detail: "tools",
@@ -241,6 +335,7 @@ const contextChipMeta: Record<
 
 export function ChatComposer({
   selectedAction,
+  selectedProfileId,
   selectedMentions,
   actions,
   input,
@@ -252,20 +347,23 @@ export function ChatComposer({
   selectedProvider,
   selectedModel,
   selectedReasoningEffort,
+  agentAuthRun,
   providerRuntimes,
   providerRuntimeBusy,
   providerRuntimeError,
   selectedModelCapability,
   consentPolicy,
   context,
-  contextProviders,
-  contextPickerOpen,
+  contextPreview,
   onActionChange,
   onSelectProvider,
   onSelectModel,
   onSelectReasoningEffort,
   onRefreshProviders,
   onStartAgentLogin,
+  onCancelAgentLogin,
+  onStartProviderOAuth,
+  onCancelProviderAuth,
   onAcceptExternalAgentConsent,
   onAcceptRemoteBYOKProviderConsent,
   onAcceptFrontierProviderConsent,
@@ -278,7 +376,6 @@ export function ChatComposer({
   onMentionSelect,
   onMentionRemove,
   onRefreshContext,
-  onToggleContextPicker,
   onSend,
   onCancel,
 }: ChatComposerProps) {
@@ -295,6 +392,7 @@ export function ChatComposer({
   const [mentionLoading, setMentionLoading] = useState(false);
   const [mentionIndex, setMentionIndex] = useState(-1);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const actionDescriptors =
     actions.length > 0
       ? sortActionDescriptors(actions)
@@ -316,9 +414,57 @@ export function ChatComposer({
             executionUnavailable: true,
           } as AIChatActionDescriptor;
         });
-  const enabledContextChips = (
-    Object.keys(contextChipMeta) as Array<keyof ContextToggles>
-  ).filter((key) => context[key]);
+  const modeOptions: ComposerModeOption[] = [
+    {
+      key: "chat",
+      action: AIChatAction.AIChatActionAsk,
+      profileId: minimalGeneralProfileId,
+      name: "Chat",
+      description: "General chat without implicit project context.",
+      executionUnavailable: false,
+    },
+    ...actionDescriptors.map((descriptor) => {
+      const isAsk = descriptor.id === AIChatAction.AIChatActionAsk;
+      const meta = getActionMeta(descriptor.id);
+      return {
+        key: isAsk ? "ask-project" : descriptor.id,
+        action: descriptor.id,
+        profileId: isAsk ? askReadonlyProfileId : "",
+        name: isAsk ? "Ask Project" : descriptor.name || meta.label,
+        description:
+          descriptor.description ||
+          (isAsk
+            ? "Answer with visible project context only."
+            : meta.description),
+        executionUnavailable: Boolean(descriptor.executionUnavailable),
+      };
+    }),
+  ];
+  const selectedModeKey = composerModeKey(selectedAction, selectedProfileId);
+  const selectedMode =
+    modeOptions.find((option) => option.key === selectedModeKey) ??
+    modeOptions[0];
+  const contextChipKeys = Object.keys(contextChipMeta) as Array<
+    keyof ContextToggles
+  >;
+  const enabledContextChips =
+    selectedModeKey === "chat"
+      ? []
+      : contextChipKeys.filter((key) => context[key]);
+  const contextBudget = contextPreview?.budget;
+  const contextPercent = contextBudgetPercent(contextBudget);
+  const contextMeterStyle = {
+    "--context-meter": `${contextPercent}%`,
+  } as React.CSSProperties;
+  const contextMeterClassName = [
+    "ai-chat-composer__context-meter",
+    contextBudget?.autoCompactRecommended
+      ? "is-hot"
+      : contextPercent >= 70
+        ? "is-warm"
+        : "is-cool",
+  ].join(" ");
+  const contextMeterTooltip = contextBudgetTooltip(contextBudget);
 
   const closeMentionPicker = useCallback(() => {
     setActiveMention(null);
@@ -460,30 +606,29 @@ export function ChatComposer({
     event.preventDefault();
     const direction = event.shiftKey ? -1 : 1;
     const nextIndex =
-      (index + direction + actionDescriptors.length) % actionDescriptors.length;
-    const nextAction = actionDescriptors[nextIndex]?.id;
-    if (!nextAction) return;
-    onActionChange(nextAction);
+      (index + direction + modeOptions.length) % modeOptions.length;
+    const nextMode = modeOptions[nextIndex];
+    if (!nextMode) return;
+    onActionChange(nextMode.action, nextMode.profileId);
     modeButtonRefs.current[nextIndex]?.focus();
   };
 
-  const selectMode = (action: AIChatAction) => {
-    onActionChange(action);
+  const selectMode = (option: ComposerModeOption) => {
+    onActionChange(option.action, option.profileId);
     setModeMenuOpen(false);
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const cycleMode = (direction: 1 | -1) => {
-    const currentIndex = actionDescriptors.findIndex(
-      (descriptor) => descriptor.id === selectedAction,
+    const currentIndex = modeOptions.findIndex(
+      (option) => option.key === selectedModeKey,
     );
     const baseIndex = currentIndex === -1 ? 0 : currentIndex;
     const nextIndex =
-      (baseIndex + direction + actionDescriptors.length) %
-      actionDescriptors.length;
-    const nextAction = actionDescriptors[nextIndex]?.id;
-    if (nextAction) {
-      onActionChange(nextAction);
+      (baseIndex + direction + modeOptions.length) % modeOptions.length;
+    const nextMode = modeOptions[nextIndex];
+    if (nextMode) {
+      onActionChange(nextMode.action, nextMode.profileId);
     }
   };
 
@@ -561,7 +706,10 @@ export function ChatComposer({
 
   return (
     <footer ref={composerRef} className="ai-chat-composer">
-      <div className="ai-chat-composer__box" data-ai-chat-mention-scope>
+      <div
+        className={`ai-chat-composer__box${modelPickerOpen ? " is-model-picker-open" : ""}`}
+        data-ai-chat-mention-scope
+      >
         <div className="ai-chat-composer__topbar">
           <div
             className="ai-chat-mode-dropdown"
@@ -569,16 +717,16 @@ export function ChatComposer({
             role="presentation"
           >
             <button
-              className={`ai-chat-mode-dropdown__trigger ai-chat-tone-${getActionMeta(selectedAction).tone}${modeMenuOpen ? " is-selected" : ""}`}
-              data-testid={`ai-chat-mode-${getActionMeta(selectedAction).label.toLowerCase()}`}
+              className={`ai-chat-mode-dropdown__trigger ai-chat-tone-${getActionMeta(selectedMode.action).tone}${modeMenuOpen ? " is-selected" : ""}`}
+              data-testid={modeOptionTestId(selectedMode.key)}
               type="button"
               aria-haspopup="menu"
               aria-expanded={modeMenuOpen}
               title="Change chat mode"
               onClick={() => setModeMenuOpen((open) => !open)}
             >
-              {getActionMeta(selectedAction).icon}
-              <span>{getActionMeta(selectedAction).label}</span>
+              {getActionMeta(selectedMode.action).icon}
+              <span>{selectedMode.name}</span>
               <ChevronDown size={14} />
             </button>
             <AnimatePresence initial={false}>
@@ -607,12 +755,12 @@ export function ChatComposer({
                     ease: [0.22, 1, 0.36, 1],
                   }}
                 >
-                  {actionDescriptors.map((descriptor, index) => {
-                    const meta = getActionMeta(descriptor.id);
-                    const selected = selectedAction === descriptor.id;
+                  {modeOptions.map((option, index) => {
+                    const meta = getActionMeta(option.action);
+                    const selected = selectedModeKey === option.key;
                     return (
                       <button
-                        key={descriptor.id}
+                        key={option.key}
                         ref={(element) => {
                           modeButtonRefs.current[index] = element;
                         }}
@@ -620,18 +768,18 @@ export function ChatComposer({
                         type="button"
                         role="menuitemradio"
                         aria-checked={selected}
-                        title={descriptor.description || meta.description}
-                        disabled={descriptor.executionUnavailable}
-                        onClick={() => selectMode(descriptor.id)}
+                        title={option.description || meta.description}
+                        disabled={option.executionUnavailable}
+                        onClick={() => selectMode(option)}
                         onKeyDown={(event) => handleModeKeyDown(event, index)}
                       >
                         <span className="ai-chat-mode-dropdown__item-icon">
                           {meta.icon}
                         </span>
                         <span className="ai-chat-mode-dropdown__item-body">
-                          <strong>{descriptor.name || meta.label}</strong>
+                          <strong>{option.name || meta.label}</strong>
                           <small>
-                            {descriptor.description || meta.description}
+                            {option.description || meta.description}
                           </small>
                         </span>
                         <AnimatePresence initial={false}>
@@ -656,13 +804,6 @@ export function ChatComposer({
               ) : null}
             </AnimatePresence>
           </div>
-          <ContextPickerMenu
-            context={context}
-            contextProviders={contextProviders}
-            open={contextPickerOpen}
-            onContextToggle={onContextToggle}
-            onToggle={onToggleContextPicker}
-          />
         </div>
         {enabledContextChips.length > 0 ? (
           <div
@@ -739,7 +880,7 @@ export function ChatComposer({
           ref={textareaRef}
           className="ai-chat-composer__textarea"
           data-testid="ai-chat-input"
-          placeholder={disabledReason || "Ask, plan, build, or debug..."}
+          placeholder={disabledReason || "Chat, ask project, plan, or build..."}
           rows={3}
           value={input}
           aria-expanded={Boolean(activeMention)}
@@ -775,6 +916,8 @@ export function ChatComposer({
         <div className="ai-chat-composer__controls">
           <div className="ai-chat-composer__meta">
             <ModelPicker
+              open={modelPickerOpen}
+              onOpenChange={setModelPickerOpen}
               providerRuntimeBusy={providerRuntimeBusy}
               providerRuntimeError={providerRuntimeError}
               providerRuntimes={providerRuntimes}
@@ -782,10 +925,14 @@ export function ChatComposer({
               selectedModel={selectedModel}
               selectedReasoningEffort={selectedReasoningEffort}
               selectedProvider={selectedProvider}
+              agentAuthRun={agentAuthRun}
               selectedModelCapability={selectedModelCapability}
               consentPolicy={consentPolicy}
               onRefreshProviders={onRefreshProviders}
               onStartAgentLogin={onStartAgentLogin}
+              onCancelAgentLogin={onCancelAgentLogin}
+              onStartProviderOAuth={onStartProviderOAuth}
+              onCancelProviderAuth={onCancelProviderAuth}
               onAcceptExternalAgentConsent={onAcceptExternalAgentConsent}
               onAcceptRemoteBYOKProviderConsent={
                 onAcceptRemoteBYOKProviderConsent
@@ -834,6 +981,37 @@ export function ChatComposer({
             ) : null}
           </div>
           <div className="ai-chat-composer__buttons">
+            {contextBudget ? (
+              <button
+                className={contextMeterClassName}
+                style={contextMeterStyle}
+                type="button"
+                aria-label={contextMeterTooltip}
+                onClick={onRefreshContext}
+              >
+                <span className="ai-chat-composer__context-meter-ring">
+                  <span className="ai-chat-composer__context-meter-core" />
+                </span>
+                <span
+                  className="ai-chat-composer__context-meter-popover"
+                  role="tooltip"
+                >
+                  <strong>
+                    {formatContextTokenCount(contextBudget.inputTokens)}
+                    {contextBudget.contextWindow
+                      ? ` / ${formatContextTokenCount(contextBudget.contextWindow)}`
+                      : ""}
+                  </strong>
+                  <span>
+                    {contextBudget.contextWindow
+                      ? contextBudget.autoCompactRecommended
+                        ? "Compact before the next large turn"
+                        : `${formatContextPercent(contextPercent)} used; ${formatContextTokenCount(contextBudget.remainingBeforeCompact)} before compaction`
+                      : "Context window unavailable"}
+                  </span>
+                </span>
+              </button>
+            ) : null}
             <button
               className="ai-chat-icon-button"
               type="button"

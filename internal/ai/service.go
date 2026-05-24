@@ -52,6 +52,7 @@ type Service struct {
 	runDone          map[string]chan struct{}
 	agentInputs      map[string]func([]byte) error
 	agentResizes     map[string]func(uint16, uint16) error
+	authSessions     map[string]*AIProviderAuthSession
 	toolApprovals    map[string]AIToolApprovalGrant
 	runtimes         *providerRuntimeManager
 	agents           *agents.Registry
@@ -64,6 +65,7 @@ type ProjectSession struct {
 	ProjectRoot           string
 	Mnemonic              *mnemonic.Store
 	Skills                *skills.Store
+	Continuity            *ContextContinuityStore
 	Egress                *EgressLedger
 	ChatHistory           *ChatHistoryLedger
 	ChatArtifacts         *ChatArtifactLedger
@@ -93,6 +95,7 @@ func NewService(options ServiceOptions) *Service {
 		runDone:          map[string]chan struct{}{},
 		agentInputs:      map[string]func([]byte) error{},
 		agentResizes:     map[string]func(uint16, uint16) error{},
+		authSessions:     map[string]*AIProviderAuthSession{},
 		toolApprovals:    map[string]AIToolApprovalGrant{},
 		runtimes:         newProviderRuntimeManager(),
 		agents:           agents.NewRegistry(),
@@ -223,11 +226,18 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 		_ = store.Close()
 		return nil, err
 	}
+	continuity, err := openContextContinuityStore(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
 	project := &ProjectSession{
 		ID:                    projectID,
 		ProjectRoot:           projectRoot,
 		Mnemonic:              store,
 		Skills:                skillStore,
+		Continuity:            continuity,
 		Egress:                ledger,
 		ChatHistory:           chatHistory,
 		ChatArtifacts:         chatArtifacts,
@@ -279,6 +289,11 @@ func (p *ProjectSession) Close() error {
 			firstErr = err
 		}
 	}
+	if p.Continuity != nil {
+		if err := p.Continuity.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 	if p.Mnemonic != nil {
 		if err := p.Mnemonic.Close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -314,7 +329,7 @@ func (s *Service) PredictionStatus(projectID string) AIPredictionStatus {
 	providerID := firstNonEmpty(predictionSettings.ProviderID, settings.ActiveProviderID)
 	model := firstNonEmpty(predictionSettings.Model, settings.ActiveModel)
 	s.mu.RLock()
-	descriptor := s.descriptors[providerID]
+	descriptor := providers.EnrichProviderDescriptorModels(s.descriptors[providerID])
 	providerReady := s.providers[providerID] != nil && (descriptor.Status == providers.ProviderStatusReady || descriptor.Status == providers.ProviderStatusDiscovered)
 	s.mu.RUnlock()
 	reason := predictionProviderBlockReason(settings, descriptor, providerReady)
@@ -355,17 +370,26 @@ func (s *Service) SavePredictionSettings(settings AIPredictionSettings) (AIPredi
 
 func (s *Service) ListProviders() []providers.AIProviderDescriptor {
 	s.mu.RLock()
-	result := make([]providers.AIProviderDescriptor, 0, len(s.descriptors))
+	byID := make(map[string]providers.AIProviderDescriptor, len(s.descriptors))
 	for _, descriptor := range s.descriptors {
-		result = append(result, descriptor)
+		if descriptor.ID != "" {
+			byID[descriptor.ID] = providers.EnrichProviderDescriptorModels(descriptor)
+		}
 	}
 	s.mu.RUnlock()
 	if s.agents != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), agentDescriptorProbeTimeout)
 		defer cancel()
 		for _, descriptor := range s.agents.Descriptors(ctx) {
-			result = append(result, agents.DescriptorToProvider(descriptor))
+			providerDescriptor := agents.DescriptorToProvider(descriptor)
+			if providerDescriptor.ID != "" {
+				byID[providerDescriptor.ID] = providers.EnrichProviderDescriptorModels(providerDescriptor)
+			}
 		}
+	}
+	result := make([]providers.AIProviderDescriptor, 0, len(byID))
+	for _, descriptor := range byID {
+		result = append(result, descriptor)
 	}
 	sortDescriptors(result)
 	return result
@@ -472,7 +496,17 @@ func (s *Service) ClearProviderSecret(ctx context.Context, providerID string) (p
 }
 
 func (s *Service) RefreshLocalProviders(ctx context.Context) (AIDiscoveryResult, error) {
-	return s.refreshLocalProviders(ctx, localDiscoveryProviderSettings())
+	result, err := s.refreshLocalProviders(ctx, localDiscoveryProviderSettings())
+	agentCtx, cancel := context.WithTimeout(ctx, agentDescriptorProbeTimeout)
+	agentDescriptors := s.refreshAgentProviderDescriptors(agentCtx, true)
+	cancel()
+	if len(agentDescriptors) > 0 {
+		result.Providers = mergeProviderDescriptorSlices(result.Providers, agentDescriptors)
+		sortDescriptors(result.Providers)
+		result.CheckedAt = utcNow()
+		s.emitEvent("ai:discovery:completed", result)
+	}
+	return result, err
 }
 
 func (s *Service) refreshLocalProviders(ctx context.Context, candidates []providers.AIProviderSettings) (AIDiscoveryResult, error) {
@@ -489,7 +523,7 @@ func (s *Service) refreshLocalProviders(ctx context.Context, candidates []provid
 			continue
 		}
 		checkCtx, cancel := context.WithTimeout(ctx, 350*time.Millisecond)
-		descriptor := provider.HealthCheck(checkCtx)
+		descriptor := providers.EnrichProviderDescriptorModels(provider.HealthCheck(checkCtx))
 		cancel()
 		if descriptor.Status != providers.ProviderStatusReady {
 			s.mu.Lock()
@@ -549,7 +583,7 @@ func (s *Service) TestProvider(ctx context.Context, providerID string) (provider
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	descriptor := provider.HealthCheck(checkCtx)
+	descriptor := providers.EnrichProviderDescriptorModels(provider.HealthCheck(checkCtx))
 	s.mu.Lock()
 	s.descriptors[descriptor.ID] = descriptor
 	s.mu.Unlock()
@@ -616,6 +650,11 @@ func (s *Service) ClearMnemonic(projectID string) error {
 			return err
 		}
 	}
+	if project.Continuity != nil {
+		if err := project.Continuity.Clear(project.ID); err != nil {
+			return err
+		}
+	}
 	if err := resetMnemonicContextFile(project.ProjectRoot); err != nil {
 		return err
 	}
@@ -660,6 +699,11 @@ func (s *Service) ClearState(projectID string) error {
 		}
 		if project.Skills != nil {
 			if err := project.Skills.ClearRuntime(); err != nil {
+				return err
+			}
+		}
+		if project.Continuity != nil {
+			if err := project.Continuity.Clear(project.ID); err != nil {
 				return err
 			}
 		}
@@ -784,6 +828,7 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 		Capability:       req.Capability,
 		ProjectPathHash:  hashProjectPath(project.ProjectRoot),
 		ProjectSessionID: project.ID,
+		SessionID:        normalizeChatSessionID(req.SessionID),
 		FilePath:         req.FilePath,
 		Language:         strings.TrimSpace(req.Language),
 		Line:             req.Line,
@@ -865,6 +910,29 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 			}
 		}
 	}
+	if req.IncludeContinuity {
+		if project.Continuity != nil && project.Mnemonic != nil && project.Mnemonic.Enabled() {
+			capsules, _ := project.Continuity.ActiveForSession(project.ID, snapshot.SessionID, req.ContinuityCapsuleIDs, 4)
+			snapshot.Continuity = append(snapshot.Continuity, capsules...)
+			if len(capsules) > 0 {
+				snapshot.DataCategories = append(snapshot.DataCategories, "context_continuity")
+			}
+			addContextItemDisclosure(&snapshot, AIContextItemKindContinuity, "Context continuity", "", "continuity", true, len(capsules) > 0, continuityContextByteSize(capsules), continuityContextReason(capsules))
+			if req.RecordRetrievalEvents {
+				_ = project.Continuity.RecordRetrieval(contextRetrievalEvent{
+					ProjectSessionID:   project.ID,
+					ChatSessionID:      snapshot.SessionID,
+					QueryText:          req.Prompt,
+					QueryTags:          []string{string(req.Capability)},
+					SelectedCapsuleIDs: contextCapsuleIDs(capsules),
+					PolicyReason:       "includeContinuity=true; session-scoped generated continuity only",
+					ResultCount:        len(capsules),
+				})
+			}
+		} else {
+			addContextItemDisclosure(&snapshot, AIContextItemKindContinuity, "Context continuity", "", "continuity", true, false, 0, "disabled")
+		}
+	}
 	if req.IncludeMnemonic && project.Mnemonic != nil && project.Mnemonic.Enabled() {
 		entries, _ := project.Mnemonic.List(12)
 		for _, entry := range entries {
@@ -909,6 +977,7 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 		DataCategories: snapshot.DataCategories,
 		OptInSource:    "context_preview",
 	}
+	snapshot.Budget = s.contextBudgetForSnapshot(project, snapshot, req)
 	return snapshot
 }
 
@@ -939,25 +1008,30 @@ func currentFileContextContent(projectRoot string, req AIContextRequest) (string
 
 func summarizeContextSnapshot(snapshot AIContextSnapshot) AIContextSummary {
 	return AIContextSummary{
-		ID:                snapshot.ID,
-		RequestID:         snapshot.RequestID,
-		DocumentVersion:   snapshot.DocumentVersion,
-		Capability:        snapshot.Capability,
-		ProjectSessionID:  snapshot.ProjectSessionID,
-		FilePath:          snapshot.FilePath,
-		Language:          snapshot.Language,
-		SnippetCount:      len(snapshot.Snippets),
-		MnemonicCount:     len(snapshot.Mnemonic),
-		SkillCount:        len(snapshot.Skills),
-		MCPIncluded:       snapshot.MCPContext != nil && snapshot.MCPContext.Available,
-		MCPContext:        snapshot.MCPContext,
-		SnippetBreakdown:  snapshot.SnippetBreakdown,
-		ContextItems:      snapshot.ContextItems,
-		DataCategories:    snapshot.DataCategories,
-		Redaction:         snapshot.Redaction,
-		DisclosureSummary: snapshot.DisclosureSummary,
-		ByteSize:          snapshot.ByteSize,
-		CreatedAt:         snapshot.CreatedAt,
+		ID:                     snapshot.ID,
+		RequestID:              snapshot.RequestID,
+		DocumentVersion:        snapshot.DocumentVersion,
+		SessionID:              snapshot.SessionID,
+		Capability:             snapshot.Capability,
+		ProjectSessionID:       snapshot.ProjectSessionID,
+		FilePath:               snapshot.FilePath,
+		Language:               snapshot.Language,
+		SnippetCount:           len(snapshot.Snippets),
+		MnemonicCount:          len(snapshot.Mnemonic),
+		SkillCount:             len(snapshot.Skills),
+		MCPIncluded:            snapshot.MCPContext != nil && snapshot.MCPContext.Available,
+		ContinuityCapsuleCount: len(snapshot.Continuity),
+		ContinuityIncluded:     len(snapshot.Continuity) > 0,
+		Continuity:             snapshot.Continuity,
+		MCPContext:             snapshot.MCPContext,
+		SnippetBreakdown:       snapshot.SnippetBreakdown,
+		ContextItems:           snapshot.ContextItems,
+		DataCategories:         snapshot.DataCategories,
+		Redaction:              snapshot.Redaction,
+		DisclosureSummary:      snapshot.DisclosureSummary,
+		Budget:                 snapshot.Budget,
+		ByteSize:               snapshot.ByteSize,
+		CreatedAt:              snapshot.CreatedAt,
 	}
 }
 
@@ -1117,6 +1191,52 @@ func fastContextFileAllowed(name string) bool {
 	default:
 		return false
 	}
+}
+
+func continuityContextReason(capsules []AIContextCapsuleSummary) string {
+	if len(capsules) == 0 {
+		return "no_active_capsules"
+	}
+	stale := 0
+	compactions := 0
+	for _, capsule := range capsules {
+		if capsule.Status == AIContextCapsuleStale || strings.TrimSpace(capsule.StaleReason) != "" {
+			stale++
+		}
+		if capsule.Kind == AIContextCapsuleCompaction {
+			compactions++
+		}
+	}
+	parts := []string{fmt.Sprintf("%d included", len(capsules))}
+	if compactions > 0 {
+		parts = append(parts, fmt.Sprintf("%d compaction", compactions))
+	}
+	if stale > 0 {
+		parts = append(parts, fmt.Sprintf("%d stale", stale))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func continuityContextByteSize(capsules []AIContextCapsuleSummary) int {
+	total := 0
+	for _, capsule := range capsules {
+		if capsule.ByteSize > 0 {
+			total += capsule.ByteSize
+		} else {
+			total += contextCapsuleByteSize(capsule)
+		}
+	}
+	return total
+}
+
+func contextCapsuleIDs(capsules []AIContextCapsuleSummary) []string {
+	ids := make([]string, 0, len(capsules))
+	for _, capsule := range capsules {
+		if strings.TrimSpace(capsule.ID) != "" {
+			ids = append(ids, capsule.ID)
+		}
+	}
+	return ids
 }
 
 func skillContextReason(items []AISkillContext) string {
@@ -1316,7 +1436,7 @@ func (s *Service) resolveProvider(providerID string) (providers.Provider, provid
 	}
 	s.mu.RLock()
 	provider := s.providers[providerID]
-	descriptor := s.descriptors[providerID]
+	descriptor := providers.EnrichProviderDescriptorModels(s.descriptors[providerID])
 	s.mu.RUnlock()
 	if descriptor.ID == "" {
 		return nil, descriptor, fmt.Errorf("AI provider %q is not configured", providerID)
@@ -1380,7 +1500,7 @@ func (s *Service) resolvePredictionProvider(providerID string) (providers.Provid
 	providerID = firstNonEmpty(strings.TrimSpace(providerID), predictionSettings.ProviderID, settings.ActiveProviderID)
 	s.mu.RLock()
 	provider := s.providers[providerID]
-	descriptor := s.descriptors[providerID]
+	descriptor := providers.EnrichProviderDescriptorModels(s.descriptors[providerID])
 	providerReady := provider != nil && (descriptor.Status == providers.ProviderStatusReady || descriptor.Status == providers.ProviderStatusDiscovered)
 	s.mu.RUnlock()
 	if reason := predictionProviderBlockReason(settings, descriptor, providerReady); reason != "" {
@@ -1447,7 +1567,7 @@ func (s *Service) registerConfiguredProvidersLocked() {
 			}
 			continue
 		}
-		descriptor := provider.Descriptor()
+		descriptor := providers.EnrichProviderDescriptorModels(provider.Descriptor())
 		if descriptor.RequiresAuth && !descriptor.AuthConfigured {
 			s.descriptors[descriptor.ID] = descriptor
 			delete(s.providers, descriptor.ID)
@@ -1824,6 +1944,25 @@ func (s *Service) waitForRuns(waiters []runWaiter) {
 			return
 		}
 	}
+}
+
+func mergeProviderDescriptorSlices(base []providers.AIProviderDescriptor, overlay []providers.AIProviderDescriptor) []providers.AIProviderDescriptor {
+	byID := make(map[string]providers.AIProviderDescriptor, len(base)+len(overlay))
+	for _, descriptor := range base {
+		if descriptor.ID != "" {
+			byID[descriptor.ID] = descriptor
+		}
+	}
+	for _, descriptor := range overlay {
+		if descriptor.ID != "" {
+			byID[descriptor.ID] = descriptor
+		}
+	}
+	result := make([]providers.AIProviderDescriptor, 0, len(byID))
+	for _, descriptor := range byID {
+		result = append(result, descriptor)
+	}
+	return result
 }
 
 func sortDescriptors(descriptors []providers.AIProviderDescriptor) {

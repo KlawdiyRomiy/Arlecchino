@@ -16,15 +16,6 @@ import (
 
 const codexAppServerProtocolVersion = "codex-app-server-v2-jsonrpc"
 
-var codexAppServerDisabledFeatures = []string{
-	"apps",
-	"plugins",
-	"enable_mcp_apps",
-	"builtin_mcp",
-	"hooks",
-	"plugin_hooks",
-}
-
 type codexRPCMessage struct {
 	ID     any            `json:"id,omitempty"`
 	Method string         `json:"method,omitempty"`
@@ -81,7 +72,7 @@ func (a *CodexAdapter) runAppServer(ctx context.Context, req RunRequest, emit fu
 		return UnsupportedResult("agent prompt is empty")
 	}
 
-	cmd := exec.CommandContext(ctx, binary, codexAppServerArgs(req)...)
+	cmd := exec.CommandContext(ctx, binary, codexAppServerArgs(req, codexDisableFeatureArgs(ctx, binary))...)
 	cmd.Dir = req.ProjectRoot
 	cmd.Env = codexAppServerProcessEnv(
 		"ARLECCHINO_EXTERNAL_AGENT_RUN_ID="+req.RunID,
@@ -685,11 +676,9 @@ func codexModelForRequest(model string) any {
 	return model
 }
 
-func codexAppServerArgs(req RunRequest) []string {
+func codexAppServerArgs(req RunRequest, disableFeatureArgs []string) []string {
 	args := []string{"app-server", "--listen", "stdio://", "-c", "mcp_servers={}"}
-	for _, feature := range codexAppServerDisabledFeatures {
-		args = append(args, "--disable", feature)
-	}
+	args = append(args, disableFeatureArgs...)
 	if effort := codexReasoningEffortForRequest(req.ReasoningEffort); effort != "" {
 		args = append(args, "-c", "model_reasoning_effort=\""+effort+"\"")
 	}

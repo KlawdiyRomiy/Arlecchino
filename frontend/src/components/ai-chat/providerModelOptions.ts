@@ -5,6 +5,7 @@ import type {
 } from "../../wails/app";
 
 type AccountModelDescriptor = {
+  contextWindow?: number;
   reasoningEfforts?: string[];
   accountScoped?: boolean;
 };
@@ -20,6 +21,7 @@ export function mergeModelOptions(
     merged.set(model.id, {
       id: model.id,
       displayName: model.displayName || model.id,
+      contextWindow: accountModel.contextWindow,
       source: accountModel.accountScoped ? "account" : "active",
       active: model.id === provider?.defaultModel,
       runnable: false,
@@ -36,6 +38,7 @@ export function mergeModelOptions(
       source: existing?.source === "active" ? "active" : model.source,
       active: Boolean(existing?.active || model.active),
       runnable: Boolean(existing?.runnable || model.runnable),
+      contextWindow: model.contextWindow ?? existing?.contextWindow,
       reasoningEfforts: model.reasoningEfforts ?? existing?.reasoningEfforts,
       accountScoped: Boolean(model.accountScoped || existing?.accountScoped),
     });

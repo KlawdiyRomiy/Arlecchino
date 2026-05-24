@@ -5,6 +5,9 @@ import type {
   AIChatRunEnvelope,
 } from "../../../bindings/arlecchino/internal/ai/models";
 
+export const minimalGeneralProfileId = "minimal-general";
+export const askReadonlyProfileId = "ask-readonly";
+
 export type AIChatPresentation = "panel" | "fullscreen" | "preview";
 
 export interface AIChatPanelProps {
@@ -19,6 +22,7 @@ export interface ContextToggles {
   mnemonic: boolean;
   mcp: boolean;
   skills: boolean;
+  continuity: boolean;
 }
 
 export interface AIChatDisplayPrefs {
@@ -26,6 +30,8 @@ export interface AIChatDisplayPrefs {
   compactCards: boolean;
   showActivity: boolean;
 }
+
+export type AIChatProviderSelectionSource = "auto" | "user";
 
 export interface AIChatUIState {
   selectedAction: AIChatAction;
@@ -35,6 +41,7 @@ export interface AIChatUIState {
   selectedWorkflowId: string;
   selectedMentionsBySession: Record<string, AIChatMentionCandidate[]>;
   selectedProviderId: string;
+  providerSelectionSource: AIChatProviderSelectionSource;
   selectedModel: string;
   selectedReasoningEffort: string;
   context: ContextToggles;
@@ -47,14 +54,19 @@ export interface AIChatUIState {
 }
 
 export type AIChatUIAction =
-  | { type: "setAction"; action: AIChatAction }
+  | { type: "setAction"; action: AIChatAction; profileId?: string }
   | { type: "setProfile"; profileId: string }
   | { type: "setWorkflow"; workflowId: string }
   | { type: "addMention"; mention: AIChatMentionCandidate }
   | { type: "removeMention"; id: string }
   | { type: "setInput"; input: string }
   | { type: "setActiveSession"; sessionId: string; runId?: string }
-  | { type: "setProvider"; providerId: string; model?: string }
+  | {
+      type: "setProvider";
+      providerId: string;
+      model?: string;
+      source?: AIChatProviderSelectionSource;
+    }
   | { type: "setModel"; model: string }
   | { type: "setReasoningEffort"; reasoningEffort: string }
   | { type: "setContext"; key: keyof ContextToggles; value: boolean }
@@ -67,7 +79,12 @@ export type AIChatUIAction =
   | { type: "setActiveRun"; runId: string }
   | { type: "hydrateRun"; run: AIChatRun }
   | { type: "resetComposer" }
-  | { type: "ensureProvider"; providerId: string; model?: string };
+  | {
+      type: "ensureProvider";
+      providerId: string;
+      model?: string;
+      source?: AIChatProviderSelectionSource;
+    };
 
 export interface TranscriptItem {
   envelope: AIChatRunEnvelope;

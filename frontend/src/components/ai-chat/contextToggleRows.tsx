@@ -3,6 +3,7 @@ import {
   Database,
   FileText,
   Monitor,
+  RefreshCw,
   Shield,
   SlidersHorizontal,
   type LucideIcon,
@@ -20,6 +21,7 @@ export const contextToggleRows: ContextToggleRowDescriptor[] = [
   { key: "currentFile", label: "Current file", Icon: FileText },
   { key: "terminalLogs", label: "Terminal logs", Icon: Monitor },
   { key: "mnemonic", label: "Mnemonic", Icon: Shield },
+  { key: "continuity", label: "Continuity", Icon: RefreshCw },
   { key: "mcp", label: "MCP", Icon: SlidersHorizontal },
   { key: "skills", label: "Skills", Icon: SlidersHorizontal },
 ];

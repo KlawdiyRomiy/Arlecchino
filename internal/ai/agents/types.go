@@ -250,6 +250,19 @@ func (r *Registry) Register(adapter Adapter) {
 	r.adapters[adapter.ID()] = adapter
 }
 
+func (r *Registry) Adapters() []Adapter {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	adapters := make([]Adapter, 0, len(r.adapters))
+	for _, adapter := range r.adapters {
+		adapters = append(adapters, adapter)
+	}
+	return adapters
+}
+
 func (r *Registry) Adapter(id string) (Adapter, bool) {
 	if r == nil {
 		return nil, false
@@ -264,12 +277,7 @@ func (r *Registry) Descriptors(ctx context.Context) []Descriptor {
 	if r == nil {
 		return nil
 	}
-	r.mu.RLock()
-	adapters := make([]Adapter, 0, len(r.adapters))
-	for _, adapter := range r.adapters {
-		adapters = append(adapters, adapter)
-	}
-	r.mu.RUnlock()
+	adapters := r.Adapters()
 	descriptors := make([]Descriptor, 0, len(adapters))
 	for _, adapter := range adapters {
 		descriptors = append(descriptors, adapter.Descriptor(ctx))
@@ -285,9 +293,11 @@ func DescriptorToProvider(descriptor Descriptor) providers.AIProviderDescriptor 
 	if status == "" {
 		status = providers.ProviderStatusError
 	}
+	authStatus := strings.ToLower(strings.TrimSpace(descriptor.AuthStatus))
+	authConfigured := authStatus == "ready" || authStatus == "authenticated"
 	runtimeFamily := firstNonEmpty(descriptor.RuntimeFamily, RuntimeFamilyStructuredAgent)
 	endpointClass := firstNonEmpty(descriptor.EndpointClass, EndpointClassLocalProcess)
-	return providers.AIProviderDescriptor{
+	return providers.EnrichProviderDescriptorModels(providers.AIProviderDescriptor{
 		ID:                 descriptor.ID,
 		Name:               descriptor.Name,
 		Kind:               firstNonEmpty(descriptor.Kind, ProviderKindExternalAgentCLI),
@@ -313,14 +323,14 @@ func DescriptorToProvider(descriptor Descriptor) providers.AIProviderDescriptor 
 		SupportedActions:   descriptor.SupportedActions,
 		OAuthSupported:     false,
 		RequiresAuth:       true,
-		AuthConfigured:     descriptor.AuthStatus == "ready",
+		AuthConfigured:     authConfigured,
 		Capabilities:       descriptor.Capabilities,
 		Models:             descriptor.Models,
 		DefaultModel:       descriptor.DefaultModel,
 		Status:             status,
 		Reason:             descriptor.Reason,
 		LastCheckedAt:      descriptor.LastCheckedAt,
-	}
+	})
 }
 
 func NewEvent(runID string, eventType EventType, status string, text string, data []byte) Event {

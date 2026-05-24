@@ -127,6 +127,10 @@ const settingsIconButtonClass =
   "inline-flex h-9 w-9 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-1)_96%,transparent)] text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-40";
 const settingsActionButtonClass =
   "inline-flex h-9 items-center gap-2 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)] px-3 text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45";
+const settingsSwitchRootClass =
+  "relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border border-[var(--border-default)] bg-[var(--surface-3)] p-0.5 transition-colors focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-60 data-[state=checked]:border-[var(--text-primary)] data-[state=checked]:bg-[var(--text-primary)]";
+const settingsSwitchThumbClass =
+  "block h-6 w-6 translate-x-0 rounded-full bg-[var(--text-secondary)] shadow-sm transition-transform data-[state=checked]:translate-x-5 data-[state=checked]:bg-[var(--surface-canvas)]";
 const settingsDropdownTriggerClass =
   "flex min-h-[44px] w-full items-center justify-between gap-3 rounded-[18px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_96%,transparent)] px-4 text-left text-[13px] text-[var(--text-primary)] outline-none transition-colors hover:border-[var(--border-default)] focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=open]:border-[var(--border-default)]";
 const settingsDropdownContentClass =
@@ -493,6 +497,12 @@ const aiChatContextPreferenceRows: Array<{
     title: "Mnemonic",
     description: "Allow reviewed project memory by default.",
     icon: Database,
+  },
+  {
+    key: "continuity",
+    title: "Continuity",
+    description: "Allow session resume capsules by default.",
+    icon: RefreshCw,
   },
   {
     key: "mcp",
@@ -1110,9 +1120,9 @@ const SwitchRow: React.FC<{
       checked={checked}
       onCheckedChange={onCheckedChange}
       aria-label={controlLabel ?? title}
-      className="relative h-7 w-12 shrink-0 rounded-full border border-[var(--switch-border)] bg-[var(--switch-track)] transition-colors focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] data-[state=checked]:border-[var(--switch-border-checked)] data-[state=checked]:bg-[var(--switch-track-checked)]"
+      className={settingsSwitchRootClass}
     >
-      <Switch.Thumb className="block h-6 w-6 translate-x-0.5 rounded-full bg-[var(--switch-thumb)] shadow-sm transition-transform data-[state=checked]:translate-x-[22px]" />
+      <Switch.Thumb className={settingsSwitchThumbClass} />
     </Switch.Root>
   </div>
 );
@@ -3331,9 +3341,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     setMCPToolEnabled(tool, checked)
                   }
                   aria-label={`Enable ${tool.name}`}
-                  className="relative h-7 w-12 shrink-0 rounded-full border border-[var(--switch-border)] bg-[var(--switch-track)] transition-colors focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-45 data-[state=checked]:border-[var(--switch-border-checked)] data-[state=checked]:bg-[var(--switch-track-checked)]"
+                  className={settingsSwitchRootClass}
                 >
-                  <Switch.Thumb className="block h-6 w-6 translate-x-0.5 rounded-full bg-[var(--switch-thumb)] shadow-sm transition-transform data-[state=checked]:translate-x-[22px]" />
+                  <Switch.Thumb className={settingsSwitchThumbClass} />
                 </Switch.Root>
               </div>
             ))}

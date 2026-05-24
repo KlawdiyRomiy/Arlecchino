@@ -74,6 +74,7 @@ export {
     ShellCapabilitiesSnapshot,
     ShellCapabilityDescriptor,
     ShellCapabilityStatus,
+    ShellMenuStatePayload,
     SignatureHelpResult,
     SignatureInfo,
     TerminalPredictionRequest,

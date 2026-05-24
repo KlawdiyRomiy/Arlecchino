@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -144,6 +145,9 @@ func (a *CodexAdapter) Descriptor(ctx context.Context) Descriptor {
 	if modelsErr != nil {
 		descriptor.Status = providers.ProviderStatusDegraded
 		descriptor.Reason = "Codex account is authenticated, but the account model catalog could not be read."
+		if detail := sanitizeCLIStatusLine(modelsErr.Error()); detail != "" {
+			descriptor.Reason = "Codex account is authenticated, but the account model catalog could not be read: " + detail
+		}
 		descriptor.Models = []providers.AIModelDescriptor{}
 		descriptor.DefaultModel = ""
 		return a.cacheDescriptor(descriptor)
@@ -192,7 +196,7 @@ func (a *CodexAdapter) Run(ctx context.Context, req RunRequest, emit func(Event)
 	}
 
 	sandbox := codexSandboxForAction(req.Action)
-	args := codexExecArgs(req, sandbox)
+	args := codexExecArgs(req, sandbox, codexDisableFeatureArgs(ctx, binary))
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = req.ProjectRoot
 	cmd.Env = codexProcessEnv(
@@ -558,7 +562,7 @@ func codexSandboxForAction(action string) string {
 	}
 }
 
-func codexExecArgs(req RunRequest, sandbox string) []string {
+func codexExecArgs(req RunRequest, sandbox string, disableFeatureArgs []string) []string {
 	args := []string{
 		"exec",
 		"--ignore-user-config",
@@ -568,9 +572,7 @@ func codexExecArgs(req RunRequest, sandbox string) []string {
 		"-s", sandbox,
 		"-c", "mcp_servers={}",
 	}
-	for _, feature := range codexAppServerDisabledFeatures {
-		args = append(args, "--disable", feature)
-	}
+	args = append(args, disableFeatureArgs...)
 	if model := strings.TrimSpace(req.Model); model != "" && model != codexDefaultModelID {
 		args = append(args, "-m", model)
 	}
@@ -581,18 +583,16 @@ func codexExecArgs(req RunRequest, sandbox string) []string {
 }
 
 func codexAccountModels(ctx context.Context, binary string) ([]providers.AIModelDescriptor, error) {
-	output, err := runCommandWithTimeout(ctx, codexModelCatalogTimeout, binary, codexDebugModelsArgs()...)
+	output, err := runCommandWithTimeout(ctx, codexModelCatalogTimeout, binary, codexDebugModelsArgs(codexDisableFeatureArgs(ctx, binary))...)
 	if err != nil {
 		return nil, err
 	}
 	return codexModelsFromCatalogJSON([]byte(output))
 }
 
-func codexDebugModelsArgs() []string {
+func codexDebugModelsArgs(disableFeatureArgs []string) []string {
 	args := []string{"debug", "models", "-c", "mcp_servers={}"}
-	for _, feature := range codexAppServerDisabledFeatures {
-		args = append(args, "--disable", feature)
-	}
+	args = append(args, disableFeatureArgs...)
 	return args
 }
 
@@ -607,7 +607,7 @@ func codexModelsFromCatalogJSON(data []byte) ([]providers.AIModelDescriptor, err
 		if id == "" || model.Upgrade != nil || strings.EqualFold(strings.TrimSpace(model.Visibility), "hide") {
 			continue
 		}
-		models = append(models, providers.AIModelDescriptor{
+		models = append(models, providers.EnrichModelDescriptor("codex", providers.AIModelDescriptor{
 			ID:               id,
 			DisplayName:      firstNonEmpty(model.DisplayName, id),
 			Streaming:        true,
@@ -615,7 +615,7 @@ func codexModelsFromCatalogJSON(data []byte) ([]providers.AIModelDescriptor, err
 			StructuredOutput: true,
 			ReasoningEfforts: codexReasoningEfforts(model.SupportedReasoningLevels),
 			AccountScoped:    true,
-		})
+		}))
 	}
 	return models, nil
 }
@@ -989,15 +989,27 @@ func filteredCodexEnv() []string {
 		"CODEX_API_KEY",
 	}
 	env := make([]string, 0, len(allowed))
+	pathIncluded := false
 	for _, key := range allowed {
 		value, ok := os.LookupEnv(key)
 		if !ok {
 			continue
 		}
+		if key == "PATH" {
+			value = codexAugmentedPathValue(value)
+		}
 		if strings.ContainsAny(value, "\x00\r\n") {
 			continue
 		}
+		if key == "PATH" {
+			pathIncluded = true
+		}
 		env = append(env, key+"="+value)
+	}
+	if !pathIncluded {
+		if path := codexAugmentedPathValue(""); path != "" && !strings.ContainsAny(path, "\x00\r\n") {
+			env = append(env, "PATH="+path)
+		}
 	}
 	return env
 }
@@ -1059,14 +1071,93 @@ func extractCodexPromptValue(text string, pattern string) string {
 }
 
 func (a *CodexAdapter) binaryPath() (string, error) {
-	if strings.TrimSpace(a.binary) != "" {
-		return a.binary, nil
+	if binary := strings.TrimSpace(a.binary); binary != "" {
+		if !filepath.IsAbs(binary) && !strings.ContainsRune(binary, os.PathSeparator) {
+			if path, err := codexLookPath(binary); err == nil {
+				return path, nil
+			}
+		}
+		return binary, nil
 	}
-	path, err := exec.LookPath("codex")
+	return codexLookPath("codex")
+}
+
+func codexLookPath(name string) (string, error) {
+	path, err := exec.LookPath(name)
 	if err != nil {
-		return "", err
+		for _, dir := range codexSearchDirs() {
+			candidate := filepath.Join(dir, name)
+			if codexExecutableFileExists(candidate) {
+				return candidate, nil
+			}
+		}
+		return "", errors.New(name + " not found in PATH or common CLI directories")
 	}
 	return path, nil
+}
+
+func codexSearchDirs() []string {
+	return codexSearchDirsForPath(os.Getenv("PATH"))
+}
+
+func codexSearchDirsForPath(pathValue string) []string {
+	dirs := []string{}
+	seen := map[string]bool{}
+	add := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		dirs = append(dirs, path)
+	}
+	addGlob := func(pattern string) {
+		matches, _ := filepath.Glob(pattern)
+		for i := len(matches) - 1; i >= 0; i-- {
+			add(matches[i])
+		}
+	}
+
+	for _, path := range filepath.SplitList(pathValue) {
+		add(path)
+	}
+	if npmPrefix := strings.TrimSpace(os.Getenv("NPM_CONFIG_PREFIX")); npmPrefix != "" {
+		add(filepath.Join(npmPrefix, "bin"))
+	}
+	if home, _ := os.UserHomeDir(); home != "" {
+		add(filepath.Join(home, ".local", "bin"))
+		add(filepath.Join(home, ".npm-global", "bin"))
+		add(filepath.Join(home, ".volta", "bin"))
+		add(filepath.Join(home, ".asdf", "shims"))
+		add(filepath.Join(home, ".local", "share", "mise", "shims"))
+		add(filepath.Join(home, ".config", "mise", "shims"))
+		add(filepath.Join(home, "Library", "pnpm"))
+		add(filepath.Join(home, ".local", "share", "pnpm"))
+		add(filepath.Join(home, "go", "bin"))
+		addGlob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin"))
+	}
+	add("/opt/homebrew/bin")
+	add("/opt/homebrew/sbin")
+	add("/usr/local/bin")
+	add("/usr/local/sbin")
+	add("/usr/bin")
+	add("/bin")
+	add("/usr/sbin")
+	add("/sbin")
+	add("/Applications/Codex.app/Contents/Resources")
+	return dirs
+}
+
+func codexAugmentedPathValue(current string) string {
+	return strings.Join(codexSearchDirsForPath(current), string(os.PathListSeparator))
+}
+
+func codexExecutableFileExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return info.Mode()&0111 != 0
 }
 
 func runShortCommand(parent context.Context, binary string, args ...string) (string, error) {

@@ -6,7 +6,7 @@ func (s *Service) ListChatActions() []AIChatActionDescriptor {
 	return []AIChatActionDescriptor{
 		{
 			ID:               AIChatActionAsk,
-			Name:             "Ask",
+			Name:             "Ask Project",
 			Description:      "Answer a project-grounded question without proposing execution.",
 			BuiltIn:          true,
 			ReadOnlyIntent:   true,

@@ -253,6 +253,15 @@ export function buildActivityStatusItems({
         : "Mnemonic requested, nothing included",
     });
   }
+  if (contextSummary?.continuityCapsuleCount) {
+    items.push({
+      key: "continuity",
+      state: contextSummary.continuityIncluded ? "done" : "idle",
+      label: contextSummary.continuityIncluded
+        ? `Continuity: ${contextSummary.continuityCapsuleCount} capsule${contextSummary.continuityCapsuleCount === 1 ? "" : "s"} used`
+        : "Continuity requested, nothing included",
+    });
+  }
   if (approvalPolicy?.mode) {
     items.push({
       key: "approval",

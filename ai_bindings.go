@@ -152,6 +152,46 @@ func (a *App) AITestProvider(ctx context.Context, providerID string) (ai.AIProvi
 	return a.ensureAIService().TestProvider(ctx, providerID)
 }
 
+func (a *App) AIStartProviderOAuth(ctx context.Context, providerID string) (ai.AIProviderAuthSession, error) {
+	session, err := a.ensureAIService().StartProviderOAuth(ctx, providerID)
+	if err != nil {
+		return ai.AIProviderAuthSession{}, err
+	}
+	if !a.registerPendingProtocolOAuthState(session.ProviderID, session.State) {
+		_, _ = a.ensureAIService().CancelProviderAuth(session.ID)
+		return ai.AIProviderAuthSession{}, fmt.Errorf("failed to register OAuth callback state")
+	}
+	return session, nil
+}
+
+func (a *App) AIGetProviderAuthSession(sessionID string) (ai.AIProviderAuthSession, error) {
+	session, err := a.ensureAIService().GetProviderAuthSession(sessionID)
+	if err == nil && providerAuthSessionTerminal(session.Status) {
+		a.clearPendingProtocolOAuthState(session.ProviderID, session.State)
+	}
+	return session, err
+}
+
+func (a *App) AICancelProviderAuth(sessionID string) (ai.AIProviderAuthSession, error) {
+	session, err := a.ensureAIService().CancelProviderAuth(sessionID)
+	if err == nil {
+		a.clearPendingProtocolOAuthState(session.ProviderID, session.State)
+	}
+	return session, err
+}
+
+func providerAuthSessionTerminal(status string) bool {
+	switch status {
+	case ai.AIProviderAuthStatusCompleted,
+		ai.AIProviderAuthStatusFailed,
+		ai.AIProviderAuthStatusCanceled,
+		ai.AIProviderAuthStatusExpired:
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *App) AIGetPredictionStatus(ctx context.Context) (ai.AIPredictionStatus, error) {
 	projectID := a.aiProjectSessionID(ctx)
 	if session := a.projectSessionForContext(ctx); session != nil && session.currentProjectPath() != "" {
@@ -360,6 +400,38 @@ func (a *App) AIDeleteChatSession(ctx context.Context, chatSessionID string) err
 		return err
 	}
 	return a.ensureAIService().DeleteChatSession(sessionID, chatSessionID)
+}
+
+func (a *App) AIListContextCapsules(ctx context.Context, chatSessionID string, limit int) ([]ai.AIContextCapsuleSummary, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.ensureAIService().AIListContextCapsules(sessionID, chatSessionID, limit)
+}
+
+func (a *App) AICompactChatSession(ctx context.Context, req ai.AIContextCompactionRequest) (ai.AIContextCompactionResult, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIContextCompactionResult{}, err
+	}
+	return a.ensureAIService().AICompactChatSession(sessionID, req)
+}
+
+func (a *App) AIRevokeContextCapsule(ctx context.Context, capsuleID string) (ai.AIContextCapsuleSummary, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIContextCapsuleSummary{}, err
+	}
+	return a.ensureAIService().AIRevokeContextCapsule(sessionID, capsuleID)
+}
+
+func (a *App) AIGetContextContinuationPlan(ctx context.Context, chatSessionID string) (ai.AIContextContinuationPlan, error) {
+	sessionID, err := a.ensureAIProjectSessionID(ctx)
+	if err != nil {
+		return ai.AIContextContinuationPlan{}, err
+	}
+	return a.ensureAIService().AIGetContextContinuationPlan(sessionID, chatSessionID)
 }
 
 func (a *App) AIListEgressRecords(ctx context.Context, limit int) ([]ai.AIEgressRecord, error) {

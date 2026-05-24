@@ -126,7 +126,7 @@ func (p *GeminiProvider) ListModels(ctx context.Context) ([]AIModelDescriptor, e
 		if id == "" || !geminiSupportsGenerateContent(model.SupportedMethods) {
 			continue
 		}
-		models = append(models, AIModelDescriptor{
+		models = append(models, EnrichModelDescriptor(p.kind, AIModelDescriptor{
 			ID:               id,
 			DisplayName:      firstNonEmptyString(model.DisplayName, id),
 			ContextWindow:    model.InputTokenLimit,
@@ -134,7 +134,7 @@ func (p *GeminiProvider) ListModels(ctx context.Context) ([]AIModelDescriptor, e
 			ToolCalling:      true,
 			StructuredOutput: true,
 			PatchGeneration:  true,
-		})
+		}))
 	}
 	return models, nil
 }

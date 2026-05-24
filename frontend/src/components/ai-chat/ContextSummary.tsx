@@ -1,5 +1,11 @@
 import React from "react";
-import { FileText, FolderTree, ShieldCheck, TriangleAlert } from "lucide-react";
+import {
+  FileText,
+  FolderTree,
+  ListChecks,
+  ShieldCheck,
+  TriangleAlert,
+} from "lucide-react";
 import type {
   AIContextSnapshot,
   AIContextSummary,
@@ -37,6 +43,13 @@ export function ContextSummary({
   }
 
   const snippetCount = getSnippetCount(context);
+  const continuityCapsules =
+    "continuityCapsuleCount" in context &&
+    typeof context.continuityCapsuleCount === "number"
+      ? context.continuityCapsuleCount
+      : "continuity" in context && Array.isArray(context.continuity)
+        ? context.continuity.length
+        : 0;
   const source = context.capability || "runtime";
   const filePath = context.filePath || "";
   const contextItems = context.contextItems ?? [];
@@ -79,6 +92,13 @@ export function ContextSummary({
         >
           <FolderTree size={14} />
           {includedContextItems.length}/{contextItems.length} items
+        </span>
+      ) : null}
+      {continuityCapsules > 0 ? (
+        <span className="ai-chat-context-pill" title="Session continuity">
+          <ListChecks size={14} />
+          {continuityCapsules} capsule
+          {continuityCapsules === 1 ? "" : "s"}
         </span>
       ) : null}
       {redacted || truncated ? (

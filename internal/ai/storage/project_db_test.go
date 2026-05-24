@@ -25,11 +25,14 @@ func TestOpenSharesProjectDBHandleAndKeepsSchemaVersioned(t *testing.T) {
 	if err := first.DB().QueryRow(`SELECT COUNT(*) FROM ai_schema_migrations`).Scan(&migrations); err != nil {
 		t.Fatalf("schema migrations table: %v", err)
 	}
-	if migrations < 2 {
-		t.Fatalf("migration count = %d, want at least 2", migrations)
+	if migrations < 3 {
+		t.Fatalf("migration count = %d, want at least 3", migrations)
 	}
 	if _, err := first.DB().Exec(`SELECT 1 FROM ai_skill_registry LIMIT 1`); err != nil {
 		t.Fatalf("skill registry schema missing: %v", err)
+	}
+	if _, err := first.DB().Exec(`SELECT 1 FROM ai_context_capsules LIMIT 1`); err != nil {
+		t.Fatalf("context continuity schema missing: %v", err)
 	}
 
 	if err := first.Close(); err != nil {

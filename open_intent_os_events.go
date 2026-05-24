@@ -68,8 +68,30 @@ func (a *App) dispatchOpenIntentFromOSTarget(source string, target string, worki
 		})
 		return false
 	}
-	payload["source"] = source
+	prepared, allowed := a.prepareExternalOpenIntent(payload, source, workingDir)
+	if !allowed {
+		traceOpenIntent("rejected", map[string]any{
+			"source":      source,
+			"target":      target,
+			"routeSource": stringMapValue(payload, "source"),
+			"reason":      "external intent validation rejected payload",
+		})
+		return false
+	}
+	if openIntentPayloadIsOAuthCallback(prepared, payload) {
+		session, err := a.completeProviderOAuthCallbackFromRawTarget(target)
+		if err != nil {
+			traceOpenIntent("rejected", map[string]any{
+				"source":      source,
+				"target":      target,
+				"routeSource": stringMapValue(payload, "source"),
+				"reason":      "OAuth callback handling failed",
+			})
+			return false
+		}
+		prepared["oauthStatus"] = session.Status
+	}
 	a.focusMainWindow()
-	a.dispatchOpenIntent(payload)
+	a.dispatchOpenIntent(prepared)
 	return true
 }

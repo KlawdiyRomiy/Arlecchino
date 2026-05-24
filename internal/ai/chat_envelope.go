@@ -116,6 +116,11 @@ func (s *Service) ClearChatRuns(projectID string) error {
 			return err
 		}
 	}
+	if project != nil && project.Continuity != nil {
+		if err := project.Continuity.Clear(project.ID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -190,6 +195,11 @@ func (s *Service) DeleteChatSession(projectID string, sessionID string) error {
 	}
 	if project != nil && project.ToolApprovalGrants != nil {
 		if err := project.ToolApprovalGrants.DeleteRuns(ids); err != nil {
+			return err
+		}
+	}
+	if project != nil && project.Continuity != nil {
+		if err := project.Continuity.DeleteSession(project.ID, sessionID); err != nil {
 			return err
 		}
 	}

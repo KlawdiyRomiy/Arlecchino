@@ -187,6 +187,7 @@ func migrations() []migration {
 	return []migration{
 		{ID: "001_mnemonic_entries", Apply: migrateMnemonicEntries},
 		{ID: "002_skill_residency", Apply: migrateSkillResidency},
+		{ID: "003_context_continuity", Apply: migrateContextContinuity},
 	}
 }
 
@@ -334,6 +335,70 @@ func migrateSkillResidency(db *sql.DB, _ *sharedProjectDB) error {
 			return err
 		}
 	}
+	return nil
+}
+
+func migrateContextContinuity(db *sql.DB, _ *sharedProjectDB) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS ai_context_capsules (
+			id TEXT PRIMARY KEY,
+			project_session_id TEXT NOT NULL,
+			chat_session_id TEXT NOT NULL,
+			run_id TEXT,
+			kind TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			trust TEXT NOT NULL DEFAULT 'generated',
+			summary TEXT NOT NULL,
+			facts_candidates_json TEXT NOT NULL DEFAULT '[]',
+			source_refs_json TEXT NOT NULL DEFAULT '[]',
+			retrieval_tags_json TEXT NOT NULL DEFAULT '[]',
+			continuation_hint TEXT,
+			redaction_json TEXT NOT NULL DEFAULT '{}',
+			data_categories_json TEXT NOT NULL DEFAULT '[]',
+			branch TEXT,
+			head TEXT,
+			worktree_hash TEXT,
+			stale_reason TEXT,
+			byte_size INTEGER DEFAULT 0,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			expires_at TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS ai_context_capsule_links (
+			id TEXT PRIMARY KEY,
+			from_capsule_id TEXT NOT NULL,
+			to_capsule_id TEXT NOT NULL,
+			link_type TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			FOREIGN KEY(from_capsule_id) REFERENCES ai_context_capsules(id) ON DELETE CASCADE,
+			FOREIGN KEY(to_capsule_id) REFERENCES ai_context_capsules(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS ai_context_retrieval_events (
+			id TEXT PRIMARY KEY,
+			project_session_id TEXT NOT NULL,
+			chat_session_id TEXT NOT NULL,
+			run_id TEXT,
+			query_text TEXT,
+			query_tags_json TEXT NOT NULL DEFAULT '[]',
+			selected_capsule_ids_json TEXT NOT NULL DEFAULT '[]',
+			selected_mnemonic_ids_json TEXT NOT NULL DEFAULT '[]',
+			policy_reason TEXT,
+			result_count INTEGER DEFAULT 0,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_context_capsules_session ON ai_context_capsules(project_session_id, chat_session_id, status, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_context_capsules_kind ON ai_context_capsules(project_session_id, kind, status, updated_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_context_capsules_trust ON ai_context_capsules(trust, status, updated_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_context_capsule_links_from ON ai_context_capsule_links(from_capsule_id, link_type)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_context_capsule_links_to ON ai_context_capsule_links(to_capsule_id, link_type)`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_context_retrieval_events_session ON ai_context_retrieval_events(project_session_id, chat_session_id, created_at)`,
+	}
+	for _, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	_, _ = db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ai_context_capsules_fts USING fts5(id UNINDEXED, summary, facts, retrieval_tags)`)
 	return nil
 }
 

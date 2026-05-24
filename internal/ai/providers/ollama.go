@@ -79,11 +79,11 @@ func (p *OllamaProvider) ListModels(ctx context.Context) ([]AIModelDescriptor, e
 		if name == "" {
 			continue
 		}
-		models = append(models, AIModelDescriptor{
+		models = append(models, EnrichModelDescriptor("ollama", AIModelDescriptor{
 			ID:          name,
 			DisplayName: name,
 			Streaming:   true,
-		})
+		}))
 	}
 	return models, nil
 }

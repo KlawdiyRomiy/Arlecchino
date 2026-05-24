@@ -19,11 +19,20 @@ type providerSpec struct {
 	Frontier           bool
 	AuthMode           providers.AIProviderAuthMode
 	OAuthSupported     bool
+	OAuth              *providerOAuthConfig
 	RequiresAuth       bool
 	Capabilities       []providers.AIProviderCapability
 	DefaultModel       string
 	DiscoveryEndpoints []providerDiscoveryEndpoint
 	Factory            providerFactory
+}
+
+type providerOAuthConfig struct {
+	AuthURL      string
+	TokenURL     string
+	ClientID     string
+	Scopes       []string
+	RedirectMode string
 }
 
 type providerDiscoveryEndpoint struct {

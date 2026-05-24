@@ -67,6 +67,14 @@ func (privacyGate) SanitizeSnapshot(snapshot AIContextSnapshot, maxBytes int, ma
 		snapshot.Skills[i] = sanitizeSkillContext(snapshot.Skills[i], &summary)
 		totalBytes += skillContextBytes(snapshot.Skills[i])
 	}
+	for i := range snapshot.Continuity {
+		snapshot.Continuity[i] = sanitizeContextCapsule(snapshot.Continuity[i])
+		summary.SecretsRedacted += snapshot.Continuity[i].Redaction.SecretsRedacted
+		summary.PathsRedacted += snapshot.Continuity[i].Redaction.PathsRedacted
+		summary.BlockedCategories = appendUniqueStrings(summary.BlockedCategories, snapshot.Continuity[i].Redaction.BlockedCategories)
+		summary.AppliedRules = appendUniqueStrings(summary.AppliedRules, snapshot.Continuity[i].Redaction.AppliedRules)
+		totalBytes += snapshot.Continuity[i].ByteSize
+	}
 	summary.OriginalBytes = totalBytes
 	if totalBytes > maxBytes {
 		remaining := maxBytes
@@ -80,6 +88,9 @@ func (privacyGate) SanitizeSnapshot(snapshot AIContextSnapshot, maxBytes int, ma
 		}
 		for i := range snapshot.Skills {
 			consumeSkillContextBudget(&snapshot.Skills[i], &remaining, &summary)
+		}
+		for i := range snapshot.Continuity {
+			consumeContextCapsuleBudget(&snapshot.Continuity[i], &remaining, &summary)
 		}
 	}
 	snapshot.ByteSize = estimateSnapshotBytes(snapshot)
@@ -124,6 +135,17 @@ func consumeSkillContextBudget(skill *AISkillContext, remaining *int, summary *A
 func consumeStringListBudget(values []string, remaining *int, summary *AIRedactionSummary) {
 	for i := range values {
 		values[i] = consumeTextBudget(values[i], remaining, summary)
+	}
+}
+
+func consumeContextCapsuleBudget(capsule *AIContextCapsuleSummary, remaining *int, summary *AIRedactionSummary) {
+	if capsule == nil {
+		return
+	}
+	capsule.Summary = consumeTextBudget(capsule.Summary, remaining, summary)
+	capsule.ContinuationHint = consumeTextBudget(capsule.ContinuationHint, remaining, summary)
+	for i := range capsule.FactsCandidates {
+		capsule.FactsCandidates[i].Content = consumeTextBudget(capsule.FactsCandidates[i].Content, remaining, summary)
 	}
 }
 
@@ -190,6 +212,9 @@ func estimateSnapshotBytes(snapshot AIContextSnapshot) int {
 	}
 	for _, skill := range snapshot.Skills {
 		total += skillContextBytes(skill)
+	}
+	for _, capsule := range snapshot.Continuity {
+		total += capsule.ByteSize
 	}
 	return total
 }

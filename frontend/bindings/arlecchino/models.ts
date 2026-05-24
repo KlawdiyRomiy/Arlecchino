@@ -2647,6 +2647,43 @@ export enum ShellCapabilityStatus {
     ShellCapabilityPlatformLimited = "platform-limited",
 };
 
+export class ShellMenuStatePayload {
+    "hasSelection": boolean;
+    "canCloseFullscreenPanel": boolean;
+    "canStopAgent": boolean;
+    "canCommit": boolean;
+    "hasGitChanges": boolean;
+
+    /** Creates a new ShellMenuStatePayload instance. */
+    constructor($$source: Partial<ShellMenuStatePayload> = {}) {
+        if (!("hasSelection" in $$source)) {
+            this["hasSelection"] = false;
+        }
+        if (!("canCloseFullscreenPanel" in $$source)) {
+            this["canCloseFullscreenPanel"] = false;
+        }
+        if (!("canStopAgent" in $$source)) {
+            this["canStopAgent"] = false;
+        }
+        if (!("canCommit" in $$source)) {
+            this["canCommit"] = false;
+        }
+        if (!("hasGitChanges" in $$source)) {
+            this["hasGitChanges"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ShellMenuStatePayload instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ShellMenuStatePayload {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ShellMenuStatePayload($$parsedSource as Partial<ShellMenuStatePayload>);
+    }
+}
+
 /**
  * SignatureHelpResult represents a signature help result for frontend
  */

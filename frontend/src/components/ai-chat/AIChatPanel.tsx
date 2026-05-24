@@ -25,6 +25,7 @@ import {
   AIApplyPatchArtifact,
   AIApproveMnemonicEntryProposal,
   AICancelChatRun,
+  AICancelProviderAuth,
   AIDeleteChatSession,
   AIExecuteToolCall,
   AIGetApprovalPolicy,
@@ -58,12 +59,14 @@ import {
   AIStartAgentAuthRun,
   AIStartChatRun,
   AIStartProviderRuntime,
+  AIStartProviderOAuth,
   AIStopProviderRuntime,
   AISubmitQuestionAnswer,
   AISuggestChatMentions,
   AIUpdateMnemonicEntry,
   type AIProviderRuntimeDescriptor,
   type AIProviderRuntimeModel,
+  type AIProviderAuthSession,
 } from "../../wails/app";
 import { EventsOn } from "../../wails/runtime";
 import {
@@ -86,6 +89,7 @@ import {
   type AIModelCapabilityDescriptor,
   type AIPendingApproval,
   type AIProviderCapability,
+  type AIStatus,
   type AIToolProposal,
   type AIToolAuditRecord,
 } from "../../../bindings/arlecchino/internal/ai/models";
@@ -164,6 +168,7 @@ import {
   normalizeAITools,
 } from "./aiRuntimeGuards";
 import { mergeModelOptions } from "./providerModelOptions";
+import { askReadonlyProfileId, minimalGeneralProfileId } from "./types";
 import type {
   AIChatPanelProps,
   AIChatUIAction,
@@ -173,8 +178,37 @@ import type {
 import "./ai-chat.css";
 
 const defaultChatSessionId = "default";
-const minimalGeneralProfileId = "minimal-general";
 const chatHydrationBatchSize = 4;
+
+const mergeProviderDescriptorList = (
+  current: readonly AIProviderDescriptor[],
+  provider: AIProviderDescriptor,
+): AIProviderDescriptor[] => {
+  const next = current.filter((candidate) => candidate.id !== provider.id);
+  next.push(provider);
+  return next;
+};
+
+const isProviderAuthRun = (
+  run: AIChatRun | null | undefined,
+  providerId: string,
+): run is AIChatRun =>
+  Boolean(
+    run?.id &&
+    providerId &&
+    run.providerId === providerId &&
+    run.agentRuntime?.authFlow,
+  );
+
+const modelForProviderSelection = (
+  provider: AIProviderDescriptor,
+  status: AIStatus | null,
+): string => {
+  if (status?.activeProviderId === provider.id && status.activeModel) {
+    return status.activeModel;
+  }
+  return provider.models?.[0]?.id ?? "";
+};
 
 const noContext: ContextToggles = {
   workspace: false,
@@ -183,12 +217,14 @@ const noContext: ContextToggles = {
   mnemonic: false,
   mcp: false,
   skills: false,
+  continuity: false,
 };
 
 export const defaultChatContext: ContextToggles = {
   ...noContext,
   currentFile: true,
   mnemonic: true,
+  continuity: true,
 };
 
 const previewableToolIds = new Set([
@@ -250,10 +286,11 @@ const initialState: AIChatUIState = {
   selectedAction: AIChatAction.AIChatActionAsk,
   input: "",
   activeSessionId: defaultChatSessionId,
-  selectedProfileId: "",
+  selectedProfileId: minimalGeneralProfileId,
   selectedWorkflowId: "",
   selectedMentionsBySession: {},
   selectedProviderId: "",
+  providerSelectionSource: "auto",
   selectedModel: "",
   selectedReasoningEffort: "",
   context: defaultChatContext,
@@ -298,7 +335,6 @@ interface AIChatPanelChromeState {
   reviewWidth: number;
   historyInset: number;
   reviewInset: number;
-  contextPickerOpen: boolean;
   sessionSearchOpen: boolean;
   historySearch: string;
   reviewSearch: string;
@@ -313,8 +349,7 @@ type AIChatPanelChromeAction =
   | { type: "closeDrawer"; drawer: DrawerId }
   | { type: "snapDrawer"; drawer: DrawerId; edge: DrawerSnapEdge }
   | { type: "resizeHistory"; edge: "start" | "end"; delta: number }
-  | { type: "resizeReview"; edge: "start" | "end"; delta: number }
-  | { type: "toggleContextPicker" };
+  | { type: "resizeReview"; edge: "start" | "end"; delta: number };
 
 const fullscreenDrawerRailInset = 66;
 
@@ -331,7 +366,6 @@ const initialChromeState: AIChatPanelChromeState = {
   reviewWidth: 520,
   historyInset: fullscreenDrawerRailInset,
   reviewInset: fullscreenDrawerRailInset,
-  contextPickerOpen: false,
   sessionSearchOpen: false,
   historySearch: "",
   reviewSearch: "",
@@ -354,7 +388,8 @@ function mentionsForSession(
 function selectionFromMentions(mentions: AIChatMentionCandidate[]) {
   return {
     selectedProfileId:
-      mentions.find((mention) => mention.profileId)?.profileId ?? "",
+      mentions.find((mention) => mention.profileId)?.profileId ??
+      minimalGeneralProfileId,
     selectedWorkflowId:
       mentions.find((mention) => mention.workflowId)?.workflowId ?? "",
   };
@@ -380,9 +415,15 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
       const actionMentions = mentionsForSession(state).filter(
         (mention) => !mention.workflowId,
       );
+      const profileId =
+        action.profileId ??
+        (action.action === AIChatAction.AIChatActionAsk
+          ? askReadonlyProfileId
+          : "");
       return {
         ...state,
         selectedAction: action.action,
+        selectedProfileId: profileId,
         selectedWorkflowId: "",
         selectedMentionsBySession: setMentionsForSession(state, actionMentions),
       };
@@ -440,6 +481,7 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
       return {
         ...state,
         selectedProviderId: action.providerId,
+        providerSelectionSource: action.source ?? "auto",
         selectedModel: action.model ?? state.selectedModel,
         selectedReasoningEffort: "",
         providerPopoverOpen: false,
@@ -523,7 +565,8 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
       return {
         ...state,
         input: "",
-        selectedProfileId: "",
+        selectedAction: AIChatAction.AIChatActionAsk,
+        selectedProfileId: minimalGeneralProfileId,
         selectedWorkflowId: "",
         selectedMentionsBySession: setMentionsForSession(state, []),
       };
@@ -532,6 +575,7 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
       return {
         ...state,
         selectedProviderId: action.providerId,
+        providerSelectionSource: action.source ?? "auto",
         selectedModel: action.model ?? state.selectedModel,
       };
     default:
@@ -621,12 +665,6 @@ function chromeReducer(
       return {
         ...state,
         reviewWidth: clamp(state.reviewWidth - action.delta, 360, 760),
-      };
-    case "toggleContextPicker":
-      return {
-        ...state,
-        contextPickerOpen: !state.contextPickerOpen,
-        sessionSearchOpen: false,
       };
     default:
       return state;
@@ -872,9 +910,21 @@ export function buildContextRequest(
   mentions: AIChatMentionCandidate[] = [],
   profileId = "",
   activeTerminal: ActiveTerminalContext | null = null,
+  action: AIChatAction = AIChatAction.AIChatActionAsk,
+  sessionId = "",
+  runtime: {
+    providerId?: string;
+    model?: string;
+    runtimeFamily?: string;
+    reasoningEffort?: string;
+    contextWindowHint?: number;
+  } = {},
 ): AIContextRequest {
   const effectiveContext =
-    profileId === minimalGeneralProfileId ? noContext : context;
+    action === AIChatAction.AIChatActionAsk &&
+    (!profileId || profileId === minimalGeneralProfileId)
+      ? noContext
+      : context;
   const activeFile = activeEditor.path;
   const contextItems: NonNullable<AIContextRequest["contextItems"]> = [];
   if (effectiveContext.workspace) {
@@ -920,6 +970,13 @@ export function buildContextRequest(
       source: "composer",
     });
   }
+  if (effectiveContext.continuity) {
+    pushUniqueContextItem(contextItems, {
+      kind: AIContextItemKind.AIContextItemKindContinuity,
+      label: "Continuity",
+      source: "composer",
+    });
+  }
   mentions.forEach((mention) => {
     const item = contextItemForMention(mention, activeEditor);
     if (item) {
@@ -938,6 +995,12 @@ export function buildContextRequest(
   const includeSkills =
     effectiveContext.skills ||
     hasMentionContextKind(mentions, AIContextItemKind.AIContextItemKindSkill);
+  const includeContinuity =
+    effectiveContext.continuity ||
+    hasMentionContextKind(
+      mentions,
+      AIContextItemKind.AIContextItemKindContinuity,
+    );
   const includeWorkspace =
     effectiveContext.workspace ||
     hasMentionContextKind(
@@ -961,7 +1024,15 @@ export function buildContextRequest(
       includeCurrentFile || includeWorkspace || terminalInput
         ? activeEditor.documentVersion
         : "",
+    sessionId,
     capability: "chat" as AIProviderCapability,
+    action,
+    profileId,
+    providerId: runtime.providerId || "",
+    model: runtime.model || "",
+    runtimeFamily: runtime.runtimeFamily || "",
+    reasoningEffort: runtime.reasoningEffort || "",
+    contextWindowHint: runtime.contextWindowHint || undefined,
     prompt,
     filePath: includeCurrentFile ? activeFile : "",
     language: includeCurrentFile ? activeEditor.language : "",
@@ -973,6 +1044,7 @@ export function buildContextRequest(
     includeMnemonic,
     includeMCP,
     includeSkills,
+    includeContinuity,
     contextItems,
     maxSnippets: includeWorkspace ? 8 : 3,
   };
@@ -1060,8 +1132,8 @@ function fallbackActionDescriptors(): AIChatActionDescriptor[] {
   return [
     {
       id: AIChatAction.AIChatActionAsk,
-      name: "Ask",
-      description: "Answer with provided context only.",
+      name: "Ask Project",
+      description: "Answer with visible project context only.",
       builtIn: true,
       mayProposeTools: false,
       expectsToolProposals: false,
@@ -1308,7 +1380,6 @@ export function AIChatPanelContent({
     reviewWidth,
     historyInset,
     reviewInset,
-    contextPickerOpen,
     sessionSearchOpen,
     historySearch,
     reviewSearch,
@@ -1412,7 +1483,11 @@ export function AIChatPanelContent({
     const providerModelIds = new Set(
       providerModels.map((model) => model.id).filter(Boolean),
     );
-    const requestedModel = state.selectedModel || status?.activeModel || "";
+    const statusActiveModel =
+      status?.activeProviderId === selectedProvider?.id
+        ? status?.activeModel || ""
+        : "";
+    const requestedModel = state.selectedModel || statusActiveModel;
     if (requestedModel && providerModelIds.has(requestedModel)) {
       return requestedModel;
     }
@@ -1423,11 +1498,13 @@ export function AIChatPanelContent({
     if (providerModels[0]?.id) {
       return providerModels[0].id;
     }
-    return selectedProviderIsExternalAgent ? "" : status?.activeModel || "";
+    return selectedProviderIsExternalAgent ? "" : statusActiveModel;
   }, [
     selectedModelOptions,
     selectedProviderIsExternalAgent,
+    selectedProvider?.id,
     state.selectedModel,
+    status?.activeProviderId,
     status?.activeModel,
   ]);
   const selectedModelDescriptor = useMemo(
@@ -1458,6 +1535,15 @@ export function AIChatPanelContent({
       ) ?? null,
     [modelCapabilities, selectedModel, selectedProvider?.id],
   );
+  const selectedContextWindowHint =
+    selectedModelCapability?.contextWindow ??
+    selectedModelDescriptor?.contextWindow ??
+    0;
+  const selectedRuntimeFamily = selectedProvider
+    ? isExternalAgentProvider(selectedProvider)
+      ? selectedProvider.runtimeFamily || jsonlExecRuntimeFamily
+      : modelAgentRuntimeFamily
+    : "";
   const activeSessionId = state.activeSessionId || defaultChatSessionId;
   const selectedMentionsForActiveSession = useMemo(
     () => mentionsForSession(state, activeSessionId),
@@ -1478,6 +1564,24 @@ export function AIChatPanelContent({
       : (activeSessionEnvelopes[0]?.id ?? "");
   const activeRun = activeRunKey ? (hydratedRuns[activeRunKey] ?? null) : null;
   const activeEnvelope = runs.find((run) => run.id === activeRunKey) ?? null;
+  const selectedProviderAuthRun = useMemo(() => {
+    const providerId = selectedProvider?.id || "";
+    if (!providerId) return null;
+    return (
+      Object.values(hydratedRuns)
+        .filter((run) => isProviderAuthRun(run, providerId))
+        .sort((left, right) => {
+          const rightTime = Date.parse(
+            right.updatedAt || right.createdAt || "",
+          );
+          const leftTime = Date.parse(left.updatedAt || left.createdAt || "");
+          return (
+            (Number.isFinite(rightTime) ? rightTime : 0) -
+            (Number.isFinite(leftTime) ? leftTime : 0)
+          );
+        })[0] ?? null
+    );
+  }, [hydratedRuns, selectedProvider?.id]);
   const activeArtifacts = activeRunKey
     ? (artifactsByRunId[activeRunKey] ?? [])
     : [];
@@ -1603,11 +1707,12 @@ export function AIChatPanelContent({
   }, [activeRunKey, sessionSearchMatches, sessionSearchTerms.length]);
 
   useEffect(() => {
+    setContextPreview(null);
     dispatchChrome({
       type: "patch",
       value: { sessionSearch: "", sessionSearchOpen: false },
     });
-  }, [activeSessionId]);
+  }, [activeSessionId, setContextPreview]);
 
   useEffect(() => {
     if (sessionSearchTerms.length === 0 || sessionSearchMatches.length === 0) {
@@ -1774,6 +1879,15 @@ export function AIChatPanelContent({
         selectedMentionsForActiveSession,
         state.selectedProfileId,
         activeTerminal,
+        state.selectedAction,
+        activeSessionId,
+        {
+          providerId: selectedProvider?.id || state.selectedProviderId,
+          model: selectedModel,
+          runtimeFamily: selectedRuntimeFamily,
+          reasoningEffort: selectedReasoningEffort,
+          contextWindowHint: selectedContextWindowHint,
+        },
       );
       const [
         nextStatus,
@@ -1850,8 +1964,8 @@ export function AIChatPanelContent({
         dispatch({
           type: "ensureProvider",
           providerId: defaultProvider.id,
-          model:
-            safeStatus.activeModel || defaultProvider.models?.[0]?.id || "",
+          model: modelForProviderSelection(defaultProvider, safeStatus),
+          source: "auto",
         });
       }
       const initialEnvelope =
@@ -1873,6 +1987,7 @@ export function AIChatPanelContent({
       setLoading(false);
     }
   }, [
+    activeSessionId,
     activeTerminal,
     setContextPreview,
     setContextProviders,
@@ -1890,9 +2005,16 @@ export function AIChatPanelContent({
     setActiveRunId,
     setTools,
     setToolAudit,
+    selectedContextWindowHint,
+    selectedModel,
+    selectedProvider?.id,
+    selectedReasoningEffort,
+    selectedRuntimeFamily,
     state.context,
     state.input,
+    state.selectedAction,
     state.selectedProfileId,
+    state.selectedProviderId,
     selectedMentionsForActiveSession,
   ]);
 
@@ -2126,6 +2248,16 @@ export function AIChatPanelContent({
     (provider: AIProviderDescriptor) => {
       if (!provider?.id) return;
       upsertProvider(provider);
+      const currentStatus = status ?? defaultAIStatus();
+      setStatus(
+        normalizeAIStatus({
+          ...currentStatus,
+          providers: mergeProviderDescriptorList(
+            currentStatus.providers ?? providers,
+            provider,
+          ),
+        }),
+      );
     },
   );
 
@@ -2312,48 +2444,106 @@ export function AIChatPanelContent({
       setStatus(safeStatus);
       setProviders(nextProviders);
       setProviderRuntimes(normalizeAIProviderRuntimes(nextProviderRuntimes));
+      const userPinnedProvider =
+        state.providerSelectionSource === "user"
+          ? nextProviders.find(
+              (provider) =>
+                provider.id === state.selectedProviderId &&
+                isSupportedLocalChatProvider(provider),
+            )
+          : null;
       const defaultProvider = selectDefaultProvider(
         nextProviders,
         safeStatus.activeProviderId,
       );
-      if (defaultProvider) {
+      if (!userPinnedProvider && defaultProvider) {
         dispatch({
           type: "setProvider",
           providerId: defaultProvider.id,
-          model:
-            safeStatus.activeModel || defaultProvider.models?.[0]?.id || "",
+          model: modelForProviderSelection(defaultProvider, safeStatus),
+          source: "auto",
         });
       }
     } finally {
       setLoading(false);
     }
-  }, [setProviders, setStatus]);
-
-  const handleRefreshContext = useCallback(async () => {
-    setRuntimeError(null);
-    try {
-      const preview = await AIGetContextPreview(
-        buildContextRequest(
-          state.context,
-          activeEditorContextFromStore(useEditorStore.getState()),
-          state.input,
-          selectedMentionsForActiveSession,
-          state.selectedProfileId,
-          activeTerminal,
-        ),
-      );
-      setContextPreview(normalizeAIContextSnapshot(preview));
-    } catch (error) {
-      setRuntimeError(error instanceof Error ? error.message : String(error));
-    }
   }, [
-    activeTerminal,
-    setContextPreview,
-    state.context,
-    state.input,
-    state.selectedProfileId,
-    selectedMentionsForActiveSession,
+    setProviders,
+    setStatus,
+    state.providerSelectionSource,
+    state.selectedProviderId,
   ]);
+
+  const refreshContextPreview = useCallback(
+    async (silent = false) => {
+      if (!silent) {
+        setRuntimeError(null);
+      }
+      try {
+        const preview = await AIGetContextPreview(
+          buildContextRequest(
+            state.context,
+            activeEditorContextFromStore(useEditorStore.getState()),
+            state.input,
+            selectedMentionsForActiveSession,
+            state.selectedProfileId,
+            activeTerminal,
+            state.selectedAction,
+            activeSessionId,
+            {
+              providerId: selectedProvider?.id || state.selectedProviderId,
+              model: selectedModel,
+              runtimeFamily: selectedRuntimeFamily,
+              reasoningEffort: selectedReasoningEffort,
+              contextWindowHint: selectedContextWindowHint,
+            },
+          ),
+        );
+        setContextPreview(normalizeAIContextSnapshot(preview));
+      } catch (error) {
+        if (!silent) {
+          setRuntimeError(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      }
+    },
+    [
+      activeSessionId,
+      activeTerminal,
+      selectedContextWindowHint,
+      selectedModel,
+      selectedProvider?.id,
+      selectedReasoningEffort,
+      selectedRuntimeFamily,
+      setContextPreview,
+      state.context,
+      state.input,
+      state.selectedAction,
+      state.selectedProfileId,
+      state.selectedProviderId,
+      selectedMentionsForActiveSession,
+    ],
+  );
+
+  const handleRefreshContext = useCallback(() => {
+    void refreshContextPreview(false);
+  }, [refreshContextPreview]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      void refreshContextPreview(true);
+    }, 450);
+    return () => window.clearTimeout(timeout);
+  }, [refreshContextPreview]);
+
+  useEffect(() => {
+    if (activeRunRunning) return;
+    const timeout = window.setTimeout(() => {
+      void refreshContextPreview(true);
+    }, 120);
+    return () => window.clearTimeout(timeout);
+  }, [activeRunRunning, activeSessionEnvelopes, refreshContextPreview]);
 
   const handleMentionQuery = useCallback(
     async (request: AIChatMentionQuery): Promise<AIChatMentionCandidate[]> =>
@@ -2389,6 +2579,15 @@ export function AIChatPanelContent({
       selectedMentionsForActiveSession,
       state.selectedProfileId,
       activeTerminal,
+      state.selectedAction,
+      activeSessionId,
+      {
+        providerId: selectedProvider.id,
+        model: selectedModel,
+        runtimeFamily: selectedRuntimeFamily,
+        reasoningEffort: selectedReasoningEffort,
+        contextWindowHint: selectedContextWindowHint,
+      },
     );
     try {
       const preview = normalizeAIContextSnapshot(
@@ -2406,14 +2605,13 @@ export function AIChatPanelContent({
         profileId: state.selectedProfileId,
         workflowId: state.selectedWorkflowId,
         prompt: state.input.trim(),
-        runtimeFamily: isExternalAgentProvider(selectedProvider)
-          ? selectedProvider.runtimeFamily || jsonlExecRuntimeFamily
-          : modelAgentRuntimeFamily,
+        runtimeFamily: selectedRuntimeFamily,
         providerId: selectedProvider.id,
         model: selectedModel,
         includeMnemonic: request.includeMnemonic,
         includeMCP: request.includeMCP,
         includeSkills: request.includeSkills,
+        includeContinuity: request.includeContinuity,
         context: request,
         links: {},
       };
@@ -2432,9 +2630,11 @@ export function AIChatPanelContent({
   }, [
     activeTerminal,
     canSend,
+    selectedContextWindowHint,
     selectedModel,
     selectedReasoningEffort,
     selectedProvider,
+    selectedRuntimeFamily,
     setActiveRunId,
     setContextPreview,
     setHydratedRun,
@@ -2449,8 +2649,8 @@ export function AIChatPanelContent({
   ]);
 
   const handleStartAgentLogin = useCallback(
-    async (provider: AIProviderDescriptor) => {
-      if (!provider?.id || activeRunRunning) return;
+    async (provider: AIProviderDescriptor): Promise<AIChatRun | null> => {
+      if (!provider?.id || activeRunRunning) return null;
       setRuntimeError(null);
       try {
         const run = await AIStartAgentAuthRun(provider.id);
@@ -2463,11 +2663,58 @@ export function AIChatPanelContent({
           runId: run.id,
         });
         dispatch({ type: "setActiveRun", runId: run.id });
+        return run;
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+        return null;
+      }
+    },
+    [activeRunRunning, setActiveRunId, setHydratedRun, upsertRunEnvelope],
+  );
+
+  const handleCancelAgentLogin = useCallback(
+    async (runId: string) => {
+      if (!runId) return;
+      setRuntimeError(null);
+      try {
+        const run = await AICancelChatRun(runId);
+        upsertRunEnvelope(envelopeFromRun(run));
+        setHydratedRun(run);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
       }
     },
-    [activeRunRunning, setActiveRunId, setHydratedRun, upsertRunEnvelope],
+    [setHydratedRun, upsertRunEnvelope],
+  );
+
+  const handleStartProviderOAuth = useCallback(
+    async (
+      provider: AIProviderDescriptor,
+    ): Promise<AIProviderAuthSession | null> => {
+      if (!provider?.id) return null;
+      setRuntimeError(null);
+      try {
+        return await AIStartProviderOAuth(provider.id);
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+        return null;
+      }
+    },
+    [],
+  );
+
+  const handleCancelProviderAuth = useCallback(
+    async (sessionId: string): Promise<AIProviderAuthSession | null> => {
+      if (!sessionId) return null;
+      setRuntimeError(null);
+      try {
+        return await AICancelProviderAuth(sessionId);
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+        return null;
+      }
+    },
+    [],
   );
 
   const activateWorkflowRun = useCallback(
@@ -2567,6 +2814,13 @@ export function AIChatPanelContent({
     if (!running) return;
     await AICancelChatRun(running.id);
   }, [activeEnvelope, activeSessionEnvelopes]);
+
+  useEffect(() => {
+    const offStopAgent = EventsOn("ide:ai:stop-agent", () => {
+      void handleCancel();
+    });
+    return () => offStopAgent?.();
+  }, [handleCancel]);
 
   const handleApplyPatchArtifact = useCallback(
     async (artifactId: string, runId?: string) => {
@@ -3030,6 +3284,7 @@ export function AIChatPanelContent({
       type: "setProvider",
       providerId: provider.id,
       model: provider.models?.[0]?.id ?? "",
+      source: "user",
     });
   }, []);
 
@@ -3123,7 +3378,7 @@ export function AIChatPanelContent({
     dispatch({ type: "toggleActivityPopover", open: false });
     dispatchChrome({
       type: "patch",
-      value: { contextPickerOpen: false, sessionSearchOpen: false },
+      value: { sessionSearchOpen: false },
     });
   }, []);
 
@@ -3171,7 +3426,6 @@ export function AIChatPanelContent({
     dispatchChrome({
       type: "patch",
       value: {
-        contextPickerOpen: false,
         sessionSearchOpen: nextOpen,
         sessionSearch: nextOpen ? sessionSearch : "",
       },
@@ -3182,7 +3436,7 @@ export function AIChatPanelContent({
     dispatch({ type: "toggleActivityPopover" });
     dispatchChrome({
       type: "patch",
-      value: { contextPickerOpen: false, sessionSearchOpen: false },
+      value: { sessionSearchOpen: false },
     });
   }, []);
 
@@ -3190,7 +3444,7 @@ export function AIChatPanelContent({
     dispatchApplicationMenuAction("settings.toggle");
     dispatchChrome({
       type: "patch",
-      value: { contextPickerOpen: false, sessionSearchOpen: false },
+      value: { sessionSearchOpen: false },
     });
   }, []);
 
@@ -3249,7 +3503,6 @@ export function AIChatPanelContent({
       state.providerPopoverOpen ||
       state.settingsPopoverOpen ||
       state.activityPopoverOpen ||
-      contextPickerOpen ||
       sessionSearchOpen;
     if (!popoverOpen) return;
 
@@ -3275,7 +3528,6 @@ export function AIChatPanelContent({
     };
   }, [
     closeTransientPopovers,
-    contextPickerOpen,
     sessionSearchOpen,
     state.activityPopoverOpen,
     state.providerPopoverOpen,
@@ -3344,7 +3596,7 @@ export function AIChatPanelContent({
               dispatch({ type: "toggleActivityPopover" });
               dispatchChrome({
                 type: "patch",
-                value: { contextPickerOpen: false, sessionSearchOpen: false },
+                value: { sessionSearchOpen: false },
               });
             }}
             onToggleHistory={() => {
@@ -3379,7 +3631,6 @@ export function AIChatPanelContent({
               dispatchChrome({
                 type: "patch",
                 value: {
-                  contextPickerOpen: false,
                   sessionSearchOpen: nextOpen,
                 },
               });
@@ -3409,7 +3660,7 @@ export function AIChatPanelContent({
               dispatchApplicationMenuAction("settings.toggle");
               dispatchChrome({
                 type: "patch",
-                value: { contextPickerOpen: false, sessionSearchOpen: false },
+                value: { sessionSearchOpen: false },
               });
             }}
           />
@@ -3534,7 +3785,6 @@ export function AIChatPanelContent({
                       dispatchChrome({
                         type: "patch",
                         value: {
-                          contextPickerOpen: false,
                           sessionSearchOpen: !sessionSearchOpen,
                         },
                       });
@@ -3677,7 +3927,6 @@ export function AIChatPanelContent({
                       dispatchChrome({
                         type: "patch",
                         value: {
-                          contextPickerOpen: false,
                           sessionSearchOpen: false,
                         },
                       });
@@ -3756,8 +4005,8 @@ export function AIChatPanelContent({
                     <EmptyState
                       providerReady={selectedProviderReady}
                       onRefresh={handleRefreshProviders}
-                      onStarterSelect={(action, prompt) => {
-                        dispatch({ type: "setAction", action });
+                      onStarterSelect={(action, prompt, profileId) => {
+                        dispatch({ type: "setAction", action, profileId });
                         dispatch({ type: "setInput", input: prompt });
                       }}
                     />
@@ -3816,8 +4065,7 @@ export function AIChatPanelContent({
                   canSend={canSend}
                   actions={composerActions}
                   context={state.context}
-                  contextPickerOpen={contextPickerOpen}
-                  contextProviders={contextProviders}
+                  contextPreview={contextPreview}
                   disabledReason={disabledReason}
                   input={state.input}
                   providerRuntimeBusy={providerRuntimeBusy}
@@ -3827,14 +4075,16 @@ export function AIChatPanelContent({
                   consentPolicy={consentPolicy}
                   running={activeRunRunning}
                   selectedAction={state.selectedAction}
+                  selectedProfileId={state.selectedProfileId}
                   selectedMentions={selectedMentionsForActiveSession}
                   selectedModel={selectedModel}
                   selectedReasoningEffort={selectedReasoningEffort}
+                  agentAuthRun={selectedProviderAuthRun}
                   selectedModelCapability={selectedModelCapability}
                   selectedProvider={selectedProvider}
                   sendShortcut={aiChatSendShortcut}
-                  onActionChange={(action) =>
-                    dispatch({ type: "setAction", action })
+                  onActionChange={(action, profileId) =>
+                    dispatch({ type: "setAction", action, profileId })
                   }
                   onCancel={handleCancel}
                   onContextToggle={handleContextToggle}
@@ -3859,6 +4109,9 @@ export function AIChatPanelContent({
                   }
                   onSelectProvider={handleProviderSelect}
                   onStartAgentLogin={handleStartAgentLogin}
+                  onCancelAgentLogin={handleCancelAgentLogin}
+                  onStartProviderOAuth={handleStartProviderOAuth}
+                  onCancelProviderAuth={handleCancelProviderAuth}
                   onAcceptExternalAgentConsent={
                     handleAcceptExternalAgentConsent
                   }
@@ -3870,12 +4123,6 @@ export function AIChatPanelContent({
                   }
                   onStartProviderRuntime={handleStartProviderRuntime}
                   onStopProviderRuntime={handleStopProviderRuntime}
-                  onToggleContextPicker={() => {
-                    dispatch({ type: "toggleProviderPopover", open: false });
-                    dispatch({ type: "toggleSettingsPopover", open: false });
-                    dispatch({ type: "toggleActivityPopover", open: false });
-                    dispatchChrome({ type: "toggleContextPicker" });
-                  }}
                 />
               </div>
             </ContextActionMenu>

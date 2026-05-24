@@ -123,14 +123,14 @@ func (p *AnthropicProvider) ListModels(ctx context.Context) ([]AIModelDescriptor
 		if id == "" {
 			continue
 		}
-		models = append(models, AIModelDescriptor{
+		models = append(models, EnrichModelDescriptor(p.kind, AIModelDescriptor{
 			ID:               id,
 			DisplayName:      firstNonEmptyString(model.DisplayName, id),
 			Streaming:        false,
 			ToolCalling:      true,
 			StructuredOutput: true,
 			PatchGeneration:  true,
-		})
+		}))
 	}
 	return models, nil
 }

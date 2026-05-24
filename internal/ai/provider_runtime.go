@@ -28,6 +28,7 @@ const (
 type AIProviderRuntimeModel struct {
 	ID               string   `json:"id"`
 	DisplayName      string   `json:"displayName"`
+	ContextWindow    int      `json:"contextWindow,omitempty"`
 	Path             string   `json:"path,omitempty"`
 	Source           string   `json:"source"`
 	Active           bool     `json:"active"`
@@ -221,7 +222,7 @@ func (s *Service) StartProviderRuntime(ctx context.Context, req AIProviderRuntim
 			case <-probeCtx.Done():
 				return
 			case <-ticker.C:
-				if _, err := s.RefreshLocalProviders(probeCtx); err == nil {
+				if _, err := s.refreshLocalProviders(probeCtx, localDiscoveryProviderSettings()); err == nil {
 					if current := s.descriptor(descriptor.ID); current.Status == providers.ProviderStatusReady {
 						return
 					}
@@ -257,7 +258,7 @@ func (s *Service) StopProviderRuntime(ctx context.Context, providerID string) (A
 	stopRuntimeProcess(process)
 	refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_, _ = s.RefreshLocalProviders(refreshCtx)
+	_, _ = s.refreshLocalProviders(refreshCtx, localDiscoveryProviderSettings())
 	runtimeDescriptor := s.runtimeDescriptorForProvider(descriptor)
 	s.emitEvent("ai:provider:runtime", runtimeDescriptor)
 	return runtimeDescriptor, nil
@@ -266,7 +267,7 @@ func (s *Service) StopProviderRuntime(ctx context.Context, providerID string) (A
 func (s *Service) descriptor(providerID string) providers.AIProviderDescriptor {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.descriptors[strings.TrimSpace(providerID)]
+	return providers.EnrichProviderDescriptorModels(s.descriptors[strings.TrimSpace(providerID)])
 }
 
 func (s *Service) runtimeDescriptorForProvider(provider providers.AIProviderDescriptor) AIProviderRuntimeDescriptor {
@@ -392,6 +393,7 @@ func modelsFromProvider(provider providers.AIProviderDescriptor) []AIProviderRun
 		models = append(models, AIProviderRuntimeModel{
 			ID:               id,
 			DisplayName:      firstNonEmpty(model.DisplayName, id),
+			ContextWindow:    model.ContextWindow,
 			Source:           modelSource(model),
 			Active:           id == provider.DefaultModel,
 			Runnable:         false,

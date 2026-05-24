@@ -9,14 +9,34 @@ import {
 } from "lucide-react";
 import { m, useReducedMotion } from "framer-motion";
 import { AIChatAction } from "../../../bindings/arlecchino/internal/ai/models";
+import { minimalGeneralProfileId } from "./types";
 
 interface EmptyStateProps {
   providerReady: boolean;
   onRefresh: () => void;
-  onStarterSelect?: (action: AIChatAction, prompt: string) => void;
+  onStarterSelect?: (
+    action: AIChatAction,
+    prompt: string,
+    profileId?: string,
+  ) => void;
 }
 
-const starters = [
+interface EmptyStarter {
+  action: AIChatAction;
+  profileId?: string;
+  icon: React.ReactNode;
+  label: string;
+  prompt: string;
+}
+
+const starters: EmptyStarter[] = [
+  {
+    action: AIChatAction.AIChatActionAsk,
+    profileId: minimalGeneralProfileId,
+    icon: <MessageCircle size={14} />,
+    label: "Chat freely",
+    prompt: "Let's just chat.",
+  },
   {
     action: AIChatAction.AIChatActionPlan,
     icon: <ClipboardList size={14} />,
@@ -59,7 +79,7 @@ export function EmptyState({
         <MessageCircle size={34} />
       </div>
       <div className="ai-chat-empty__title">
-        Ask anything about your codebase.
+        Start with chat or project context.
       </div>
       <div className="ai-chat-empty__subtitle">
         {providerReady
@@ -77,7 +97,13 @@ export function EmptyState({
               animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
               transition={starterTransition}
               type="button"
-              onClick={() => onStarterSelect?.(starter.action, starter.prompt)}
+              onClick={() =>
+                onStarterSelect?.(
+                  starter.action,
+                  starter.prompt,
+                  starter.profileId,
+                )
+              }
               whileTap={reduceMotion ? undefined : { scale: 0.985 }}
             >
               {starter.icon}

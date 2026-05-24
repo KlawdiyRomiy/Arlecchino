@@ -152,11 +152,11 @@ func (p *OpenAICompatibleProvider) ListModels(ctx context.Context) ([]AIModelDes
 		if id == "" {
 			continue
 		}
-		models = append(models, AIModelDescriptor{
+		models = append(models, EnrichModelDescriptor(p.kind, AIModelDescriptor{
 			ID:          id,
 			DisplayName: id,
 			Streaming:   true,
-		})
+		}))
 	}
 	return models, nil
 }

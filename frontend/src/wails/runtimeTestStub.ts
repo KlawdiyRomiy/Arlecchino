@@ -294,6 +294,33 @@ const defaultRuntimeResult = (
       };
     case "AITestProvider":
       throw new Error("AI provider test is unavailable in the web-only shell.");
+    case "AIStartProviderOAuth":
+      return {
+        id: "web-only-oauth-session",
+        providerId: _args[0] ?? "",
+        status: "waiting",
+        authorizationUrl: "https://auth.example.test/oauth/authorize",
+        startedAt: new Date(0).toISOString(),
+        expiresAt: new Date(600000).toISOString(),
+        authMode: "oauth",
+      };
+    case "AIGetProviderAuthSession":
+      return {
+        id: _args[0] ?? "web-only-oauth-session",
+        providerId: "web-only-provider",
+        status: "waiting",
+        authorizationUrl: "https://auth.example.test/oauth/authorize",
+        startedAt: new Date(0).toISOString(),
+        expiresAt: new Date(600000).toISOString(),
+        authMode: "oauth",
+      };
+    case "AICancelProviderAuth":
+      return {
+        id: _args[0] ?? "web-only-oauth-session",
+        providerId: "web-only-provider",
+        status: "canceled",
+        authMode: "oauth",
+      };
     case "AIListProviders":
     case "AIListProviderRuntimes":
     case "AIListChatRuns":

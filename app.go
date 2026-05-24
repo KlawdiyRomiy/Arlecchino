@@ -59,6 +59,9 @@ type App struct {
 	openIntentMu             sync.Mutex
 	openIntentReady          bool
 	pendingOpenIntents       []map[string]any
+	externalIntentMu         sync.Mutex
+	pendingMCPApprovalNonces map[string]string
+	pendingOAuthStates       map[string]string
 	managerMu                sync.Mutex
 	nativeControlsMu         sync.Mutex
 	nativeControlsByWindow   map[string]nativeWindowControlsState
@@ -138,6 +141,8 @@ func NewApp() *App {
 		executionService: execution.NewService(pluginRegistry),
 		backgroundShell:  NewBackgroundShellStatusService(),
 		windowLeases:     NewWindowLeaseRegistry(),
+		pendingMCPApprovalNonces: make(map[string]string),
+		pendingOAuthStates:       make(map[string]string),
 		packagedOSNative: NewPackagedOSNativeDelivery(defaultPackagedOSIntegrationOptions()),
 		autoUpdater:      NewAutoUpdateService(),
 	}

@@ -32,11 +32,11 @@ export interface AIChatActionMeta {
 
 export const modeMeta: Partial<Record<AIChatAction, AIChatActionMeta>> = {
   [AIChatAction.AIChatActionAsk]: {
-    label: "Ask",
+    label: "Ask Project",
     shortLabel: "Ask",
     tone: "ask",
     icon: <MessageCircle size={15} />,
-    description: "Answer with provided context only.",
+    description: "Answer with visible project context only.",
   },
   [AIChatAction.AIChatActionPlan]: {
     label: "Plan",

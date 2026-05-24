@@ -36,6 +36,30 @@ type AIDiscoveryResult struct {
 	CheckedAt string                 `json:"checkedAt"`
 }
 
+type AIProviderAuthSession struct {
+	ID               string `json:"id"`
+	ProviderID       string `json:"providerId"`
+	Status           string `json:"status"`
+	AuthorizationURL string `json:"authorizationUrl,omitempty"`
+	StartedAt        string `json:"startedAt,omitempty"`
+	ExpiresAt        string `json:"expiresAt,omitempty"`
+	Error            string `json:"error,omitempty"`
+	AuthMode         string `json:"authMode,omitempty"`
+	State            string `json:"-"`
+	CodeVerifier     string `json:"-"`
+	RedirectURI      string `json:"-"`
+}
+
+const (
+	AIProviderAuthStatusIdle      = "idle"
+	AIProviderAuthStatusOpening   = "opening"
+	AIProviderAuthStatusWaiting   = "waiting"
+	AIProviderAuthStatusCompleted = "completed"
+	AIProviderAuthStatusFailed    = "failed"
+	AIProviderAuthStatusCanceled  = "canceled"
+	AIProviderAuthStatusExpired   = "expired"
+)
+
 type AIApprovalMode string
 
 const (
@@ -194,6 +218,7 @@ const (
 	AIContextItemKindMCP         AIContextItemKind = "mcp"
 	AIContextItemKindSkill       AIContextItemKind = "skill"
 	AIContextItemKindWorkspace   AIContextItemKind = "workspace"
+	AIContextItemKindContinuity  AIContextItemKind = "continuity"
 )
 
 type AIContextItemRequest struct {
@@ -300,29 +325,150 @@ type AIMCPContextPlane struct {
 	UpdatedAt             string                  `json:"updatedAt"`
 }
 
+type AIContextCapsuleKind string
+
+const (
+	AIContextCapsuleTurn       AIContextCapsuleKind = "turn"
+	AIContextCapsuleCompaction AIContextCapsuleKind = "compaction"
+	AIContextCapsuleHandoff    AIContextCapsuleKind = "handoff"
+	AIContextCapsuleIDEState   AIContextCapsuleKind = "ide_state"
+)
+
+type AIContextCapsuleStatus string
+
+const (
+	AIContextCapsuleActive     AIContextCapsuleStatus = "active"
+	AIContextCapsuleSuperseded AIContextCapsuleStatus = "superseded"
+	AIContextCapsuleStale      AIContextCapsuleStatus = "stale"
+	AIContextCapsuleRevoked    AIContextCapsuleStatus = "revoked"
+	AIContextCapsuleExpired    AIContextCapsuleStatus = "expired"
+)
+
+type AIContextCapsuleTrust string
+
+const (
+	AIContextCapsuleGenerated AIContextCapsuleTrust = "generated"
+	AIContextCapsuleTrusted   AIContextCapsuleTrust = "trusted"
+	AIContextCapsuleUntrusted AIContextCapsuleTrust = "untrusted"
+)
+
+type AIContextCapsuleFactCandidate struct {
+	Kind       string  `json:"kind,omitempty"`
+	Content    string  `json:"content,omitempty"`
+	Source     string  `json:"source,omitempty"`
+	Confidence float64 `json:"confidence,omitempty"`
+}
+
+type AIContextCapsuleSourceRef struct {
+	Kind       string `json:"kind,omitempty"`
+	Path       string `json:"path,omitempty"`
+	RunID      string `json:"runId,omitempty"`
+	ArtifactID string `json:"artifactId,omitempty"`
+	Hash       string `json:"hash,omitempty"`
+	Label      string `json:"label,omitempty"`
+	Stale      bool   `json:"stale,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+type AIContextCapsuleSummary struct {
+	ID               string                          `json:"id"`
+	ProjectSessionID string                          `json:"projectSessionId,omitempty"`
+	ChatSessionID    string                          `json:"chatSessionId,omitempty"`
+	RunID            string                          `json:"runId,omitempty"`
+	Kind             AIContextCapsuleKind            `json:"kind"`
+	Status           AIContextCapsuleStatus          `json:"status"`
+	Trust            AIContextCapsuleTrust           `json:"trust"`
+	Summary          string                          `json:"summary"`
+	FactsCandidates  []AIContextCapsuleFactCandidate `json:"factsCandidates,omitempty"`
+	SourceRefs       []AIContextCapsuleSourceRef     `json:"sourceRefs,omitempty"`
+	RetrievalTags    []string                        `json:"retrievalTags,omitempty"`
+	ContinuationHint string                          `json:"continuationHint,omitempty"`
+	Redaction        AIRedactionSummary              `json:"redaction"`
+	DataCategories   []string                        `json:"dataCategories,omitempty"`
+	Branch           string                          `json:"branch,omitempty"`
+	Head             string                          `json:"head,omitempty"`
+	WorktreeHash     string                          `json:"worktreeHash,omitempty"`
+	StaleReason      string                          `json:"staleReason,omitempty"`
+	ByteSize         int                             `json:"byteSize"`
+	CreatedAt        string                          `json:"createdAt"`
+	UpdatedAt        string                          `json:"updatedAt"`
+	ExpiresAt        string                          `json:"expiresAt,omitempty"`
+}
+
+type AIContextContinuationPlan struct {
+	SessionID    string                    `json:"sessionId"`
+	Included     []AIContextCapsuleSummary `json:"included,omitempty"`
+	Superseded   []string                  `json:"superseded,omitempty"`
+	Stale        []AIContextCapsuleSummary `json:"stale,omitempty"`
+	PolicyReason string                    `json:"policyReason,omitempty"`
+	CreatedAt    string                    `json:"createdAt"`
+}
+
+type AIContextCompactionRequest struct {
+	SessionID     string `json:"sessionId,omitempty"`
+	RunID         string `json:"runId,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	MaxTurns      int    `json:"maxTurns,omitempty"`
+	ModelAssisted bool   `json:"modelAssisted"`
+}
+
+type AIContextCompactionResult struct {
+	Capsule             AIContextCapsuleSummary `json:"capsule"`
+	CompactedCapsuleIDs []string                `json:"compactedCapsuleIds,omitempty"`
+	PolicyReason        string                  `json:"policyReason,omitempty"`
+	CreatedAt           string                  `json:"createdAt"`
+}
+
 type AIContextRequest struct {
-	RequestID       string                 `json:"requestId,omitempty"`
-	DocumentVersion string                 `json:"documentVersion,omitempty"`
-	Capability      AIProviderCapability   `json:"capability"`
-	OptInSource     string                 `json:"optInSource,omitempty"`
-	Prompt          string                 `json:"prompt,omitempty"`
-	FilePath        string                 `json:"filePath,omitempty"`
-	Language        string                 `json:"language,omitempty"`
-	Line            int                    `json:"line,omitempty"`
-	Column          int                    `json:"column,omitempty"`
-	LineText        string                 `json:"lineText,omitempty"`
-	TextBefore      string                 `json:"textBefore,omitempty"`
-	TextAfter       string                 `json:"textAfter,omitempty"`
-	FullText        string                 `json:"fullText,omitempty"`
-	Selection       string                 `json:"selection,omitempty"`
-	TerminalInput   string                 `json:"terminalInput,omitempty"`
-	TerminalWorkDir string                 `json:"terminalWorkDir,omitempty"`
-	IncludeMnemonic bool                   `json:"includeMnemonic"`
-	IncludeMCP      bool                   `json:"includeMCP"`
-	IncludeSkills   bool                   `json:"includeSkills"`
-	ContextItems    []AIContextItemRequest `json:"contextItems,omitempty"`
-	MaxBytes        int                    `json:"maxBytes,omitempty"`
-	MaxSnippets     int                    `json:"maxSnippets,omitempty"`
+	RequestID             string                 `json:"requestId,omitempty"`
+	DocumentVersion       string                 `json:"documentVersion,omitempty"`
+	SessionID             string                 `json:"sessionId,omitempty"`
+	Capability            AIProviderCapability   `json:"capability"`
+	Action                AIChatAction           `json:"action,omitempty"`
+	ProfileID             string                 `json:"profileId,omitempty"`
+	ProviderID            string                 `json:"providerId,omitempty"`
+	Model                 string                 `json:"model,omitempty"`
+	RuntimeFamily         string                 `json:"runtimeFamily,omitempty"`
+	ReasoningEffort       string                 `json:"reasoningEffort,omitempty"`
+	ContextWindowHint     int                    `json:"contextWindowHint,omitempty"`
+	RecordRetrievalEvents bool                   `json:"recordRetrievalEvents,omitempty"`
+	OptInSource           string                 `json:"optInSource,omitempty"`
+	Prompt                string                 `json:"prompt,omitempty"`
+	FilePath              string                 `json:"filePath,omitempty"`
+	Language              string                 `json:"language,omitempty"`
+	Line                  int                    `json:"line,omitempty"`
+	Column                int                    `json:"column,omitempty"`
+	LineText              string                 `json:"lineText,omitempty"`
+	TextBefore            string                 `json:"textBefore,omitempty"`
+	TextAfter             string                 `json:"textAfter,omitempty"`
+	FullText              string                 `json:"fullText,omitempty"`
+	Selection             string                 `json:"selection,omitempty"`
+	TerminalInput         string                 `json:"terminalInput,omitempty"`
+	TerminalWorkDir       string                 `json:"terminalWorkDir,omitempty"`
+	IncludeMnemonic       bool                   `json:"includeMnemonic"`
+	IncludeMCP            bool                   `json:"includeMCP"`
+	IncludeSkills         bool                   `json:"includeSkills"`
+	IncludeContinuity     bool                   `json:"includeContinuity"`
+	ContinuityCapsuleIDs  []string               `json:"continuityCapsuleIds,omitempty"`
+	ContextItems          []AIContextItemRequest `json:"contextItems,omitempty"`
+	MaxBytes              int                    `json:"maxBytes,omitempty"`
+	MaxSnippets           int                    `json:"maxSnippets,omitempty"`
+}
+
+type AIContextBudget struct {
+	InputTokens                int     `json:"inputTokens"`
+	ContextWindow              int     `json:"contextWindow,omitempty"`
+	RemainingTokens            int     `json:"remainingTokens,omitempty"`
+	UsageRatio                 float64 `json:"usageRatio"`
+	AutoCompactThresholdTokens int     `json:"autoCompactThresholdTokens,omitempty"`
+	RemainingBeforeCompact     int     `json:"remainingBeforeCompact,omitempty"`
+	AutoCompactRecommended     bool    `json:"autoCompactRecommended"`
+	Estimated                  bool    `json:"estimated"`
+	Source                     string  `json:"source,omitempty"`
+	Status                     string  `json:"status,omitempty"`
+	Reason                     string  `json:"reason,omitempty"`
+	ProviderID                 string  `json:"providerId,omitempty"`
+	Model                      string  `json:"model,omitempty"`
 }
 
 type AIContextSnippet struct {
@@ -336,6 +482,7 @@ type AIContextSnapshot struct {
 	ID                string                      `json:"id"`
 	RequestID         string                      `json:"requestId,omitempty"`
 	DocumentVersion   string                      `json:"documentVersion,omitempty"`
+	SessionID         string                      `json:"sessionId,omitempty"`
 	Capability        AIProviderCapability        `json:"capability"`
 	ProjectPathHash   string                      `json:"projectPathHash,omitempty"`
 	ProjectSessionID  string                      `json:"projectSessionId,omitempty"`
@@ -352,36 +499,43 @@ type AIContextSnapshot struct {
 	MCPContext        *AIMCPContextPlane          `json:"mcpContext,omitempty"`
 	Mnemonic          []AIMnemonicEntry           `json:"mnemonic,omitempty"`
 	Skills            []AISkillContext            `json:"skills,omitempty"`
+	Continuity        []AIContextCapsuleSummary   `json:"continuity,omitempty"`
 	DataCategories    []string                    `json:"dataCategories"`
 	Redaction         AIRedactionSummary          `json:"redaction"`
 	ProviderEnvelope  *AIProviderEnvelope         `json:"providerEnvelope,omitempty"`
 	Disclosure        AIContextDisclosure         `json:"disclosure"`
 	DisclosureSummary AIContextDisclosureSummary  `json:"disclosureSummary"`
 	ApprovalSummary   AIApprovalSummary           `json:"approvalSummary"`
+	Budget            AIContextBudget             `json:"budget"`
 	ByteSize          int                         `json:"byteSize"`
 	CreatedAt         string                      `json:"createdAt"`
 }
 
 type AIContextSummary struct {
-	ID                string                      `json:"id"`
-	RequestID         string                      `json:"requestId,omitempty"`
-	DocumentVersion   string                      `json:"documentVersion,omitempty"`
-	Capability        AIProviderCapability        `json:"capability"`
-	ProjectSessionID  string                      `json:"projectSessionId,omitempty"`
-	FilePath          string                      `json:"filePath,omitempty"`
-	Language          string                      `json:"language,omitempty"`
-	SnippetCount      int                         `json:"snippetCount"`
-	MnemonicCount     int                         `json:"mnemonicCount"`
-	SkillCount        int                         `json:"skillCount"`
-	MCPIncluded       bool                        `json:"mcpIncluded"`
-	MCPContext        *AIMCPContextPlane          `json:"mcpContext,omitempty"`
-	SnippetBreakdown  []AIContextSnippetBreakdown `json:"snippetBreakdown,omitempty"`
-	ContextItems      []AIContextItemDisclosure   `json:"contextItems,omitempty"`
-	DataCategories    []string                    `json:"dataCategories"`
-	Redaction         AIRedactionSummary          `json:"redaction"`
-	DisclosureSummary AIContextDisclosureSummary  `json:"disclosureSummary"`
-	ByteSize          int                         `json:"byteSize"`
-	CreatedAt         string                      `json:"createdAt"`
+	ID                     string                      `json:"id"`
+	RequestID              string                      `json:"requestId,omitempty"`
+	DocumentVersion        string                      `json:"documentVersion,omitempty"`
+	SessionID              string                      `json:"sessionId,omitempty"`
+	Capability             AIProviderCapability        `json:"capability"`
+	ProjectSessionID       string                      `json:"projectSessionId,omitempty"`
+	FilePath               string                      `json:"filePath,omitempty"`
+	Language               string                      `json:"language,omitempty"`
+	SnippetCount           int                         `json:"snippetCount"`
+	MnemonicCount          int                         `json:"mnemonicCount"`
+	SkillCount             int                         `json:"skillCount"`
+	MCPIncluded            bool                        `json:"mcpIncluded"`
+	ContinuityCapsuleCount int                         `json:"continuityCapsuleCount"`
+	ContinuityIncluded     bool                        `json:"continuityIncluded"`
+	Continuity             []AIContextCapsuleSummary   `json:"continuity,omitempty"`
+	MCPContext             *AIMCPContextPlane          `json:"mcpContext,omitempty"`
+	SnippetBreakdown       []AIContextSnippetBreakdown `json:"snippetBreakdown,omitempty"`
+	ContextItems           []AIContextItemDisclosure   `json:"contextItems,omitempty"`
+	DataCategories         []string                    `json:"dataCategories"`
+	Redaction              AIRedactionSummary          `json:"redaction"`
+	DisclosureSummary      AIContextDisclosureSummary  `json:"disclosureSummary"`
+	Budget                 AIContextBudget             `json:"budget"`
+	ByteSize               int                         `json:"byteSize"`
+	CreatedAt              string                      `json:"createdAt"`
 }
 
 type AIRedactionSummary struct {
@@ -862,6 +1016,7 @@ type AIChatRunArtifactKind string
 
 const (
 	AIChatRunArtifactContext             AIChatRunArtifactKind = "context"
+	AIChatRunArtifactContextCompaction   AIChatRunArtifactKind = "context_compaction"
 	AIChatRunArtifactEgress              AIChatRunArtifactKind = "egress"
 	AIChatRunArtifactToolProposal        AIChatRunArtifactKind = "tool_proposal"
 	AIChatRunArtifactMemory              AIChatRunArtifactKind = "memory"
@@ -1239,21 +1394,23 @@ type AIBackgroundAgentPreviewResult struct {
 }
 
 type AIChatRunRequest struct {
-	SessionID       string           `json:"sessionId,omitempty"`
-	Action          AIChatAction     `json:"action"`
-	ProfileID       string           `json:"profileId,omitempty"`
-	WorkflowID      string           `json:"workflowId,omitempty"`
-	Prompt          string           `json:"prompt"`
-	RuntimeFamily   string           `json:"runtimeFamily,omitempty"`
-	ProviderID      string           `json:"providerId,omitempty"`
-	Model           string           `json:"model,omitempty"`
-	ReasoningEffort string           `json:"reasoningEffort,omitempty"`
-	IncludeMnemonic bool             `json:"includeMnemonic"`
-	IncludeMCP      bool             `json:"includeMCP"`
-	IncludeSkills   bool             `json:"includeSkills"`
-	MaxTokens       int              `json:"maxTokens,omitempty"`
-	Context         AIContextRequest `json:"context,omitempty"`
-	Links           AIChatRunLinks   `json:"links"`
+	SessionID            string           `json:"sessionId,omitempty"`
+	Action               AIChatAction     `json:"action"`
+	ProfileID            string           `json:"profileId,omitempty"`
+	WorkflowID           string           `json:"workflowId,omitempty"`
+	Prompt               string           `json:"prompt"`
+	RuntimeFamily        string           `json:"runtimeFamily,omitempty"`
+	ProviderID           string           `json:"providerId,omitempty"`
+	Model                string           `json:"model,omitempty"`
+	ReasoningEffort      string           `json:"reasoningEffort,omitempty"`
+	IncludeMnemonic      bool             `json:"includeMnemonic"`
+	IncludeMCP           bool             `json:"includeMCP"`
+	IncludeSkills        bool             `json:"includeSkills"`
+	IncludeContinuity    bool             `json:"includeContinuity"`
+	ContinuityCapsuleIDs []string         `json:"continuityCapsuleIds,omitempty"`
+	MaxTokens            int              `json:"maxTokens,omitempty"`
+	Context              AIContextRequest `json:"context,omitempty"`
+	Links                AIChatRunLinks   `json:"links"`
 }
 
 type AIContinuationResponse struct {

@@ -70,6 +70,7 @@ interface FileDialogBridge {
 export interface AIProviderRuntimeModel {
   id: string;
   displayName: string;
+  contextWindow?: number;
   path?: string;
   source: "active" | "installed" | "cloud" | string;
   active: boolean;
@@ -102,6 +103,25 @@ export interface AIProviderRuntimeStartRequest {
   modelId?: string;
   modelPath?: string;
   contextSize?: number;
+}
+
+export interface AIProviderAuthSession {
+  id: string;
+  providerId: string;
+  status:
+    | "idle"
+    | "opening"
+    | "waiting"
+    | "completed"
+    | "failed"
+    | "canceled"
+    | "expired"
+    | string;
+  authorizationUrl?: string;
+  startedAt?: string;
+  expiresAt?: string;
+  error?: string;
+  authMode?: string;
 }
 
 export type AIPredictionMode = "off" | "subtle" | "eager";
@@ -273,6 +293,21 @@ const aiStopProviderRuntimeMethodNames = [
   "arlecchino.App.AIStopProviderRuntime",
 ] as const;
 
+const aiStartProviderOAuthMethodNames = [
+  "main.App.AIStartProviderOAuth",
+  "arlecchino.App.AIStartProviderOAuth",
+] as const;
+
+const aiGetProviderAuthSessionMethodNames = [
+  "main.App.AIGetProviderAuthSession",
+  "arlecchino.App.AIGetProviderAuthSession",
+] as const;
+
+const aiCancelProviderAuthMethodNames = [
+  "main.App.AICancelProviderAuth",
+  "arlecchino.App.AICancelProviderAuth",
+] as const;
+
 const aiDeleteChatSessionMethodNames = [
   "main.App.AIDeleteChatSession",
   "arlecchino.App.AIDeleteChatSession",
@@ -335,6 +370,15 @@ let aiStartProviderRuntimeMethodName:
   | undefined;
 let aiStopProviderRuntimeMethodName:
   | (typeof aiStopProviderRuntimeMethodNames)[number]
+  | undefined;
+let aiStartProviderOAuthMethodName:
+  | (typeof aiStartProviderOAuthMethodNames)[number]
+  | undefined;
+let aiGetProviderAuthSessionMethodName:
+  | (typeof aiGetProviderAuthSessionMethodNames)[number]
+  | undefined;
+let aiCancelProviderAuthMethodName:
+  | (typeof aiCancelProviderAuthMethodNames)[number]
   | undefined;
 let aiDeleteChatSessionMethodName:
   | (typeof aiDeleteChatSessionMethodNames)[number]
@@ -1099,6 +1143,48 @@ export async function AIStopProviderRuntime(
     },
     aiStopProviderRuntimeMethodNames,
     [providerId],
+  );
+}
+
+export async function AIStartProviderOAuth(
+  providerId: string,
+): Promise<AIProviderAuthSession> {
+  return callRuntimeBridgeMethod<AIProviderAuthSession>(
+    aiStartProviderOAuthMethodName,
+    (methodName) => {
+      aiStartProviderOAuthMethodName =
+        methodName as (typeof aiStartProviderOAuthMethodNames)[number];
+    },
+    aiStartProviderOAuthMethodNames,
+    [providerId],
+  );
+}
+
+export async function AIGetProviderAuthSession(
+  sessionId: string,
+): Promise<AIProviderAuthSession> {
+  return callRuntimeBridgeMethod<AIProviderAuthSession>(
+    aiGetProviderAuthSessionMethodName,
+    (methodName) => {
+      aiGetProviderAuthSessionMethodName =
+        methodName as (typeof aiGetProviderAuthSessionMethodNames)[number];
+    },
+    aiGetProviderAuthSessionMethodNames,
+    [sessionId],
+  );
+}
+
+export async function AICancelProviderAuth(
+  sessionId: string,
+): Promise<AIProviderAuthSession> {
+  return callRuntimeBridgeMethod<AIProviderAuthSession>(
+    aiCancelProviderAuthMethodName,
+    (methodName) => {
+      aiCancelProviderAuthMethodName =
+        methodName as (typeof aiCancelProviderAuthMethodNames)[number];
+    },
+    aiCancelProviderAuthMethodNames,
+    [sessionId],
   );
 }
 
