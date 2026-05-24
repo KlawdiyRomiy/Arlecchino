@@ -79,8 +79,8 @@ func TestWails3PackagedSmokeReport_DefaultsStayOff(t *testing.T) {
 		time.Unix(0, 0).UTC(),
 	)
 
-	if report.SingleInstance.Enabled {
-		t.Fatal("SingleInstance.Enabled = true, want false by default")
+	if !report.SingleInstance.Enabled {
+		t.Fatal("SingleInstance.Enabled = false, want true by default")
 	}
 	if report.PackagedOSIntegration.PackagedBuild {
 		t.Fatal("PackagedBuild = true, want false by default")

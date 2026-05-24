@@ -320,18 +320,18 @@ func resolveWails3PackagedSmokeBuildTarget() string {
 }
 
 func buildWails3SmokeSingleInstanceStatus() Wails3SmokeGateStatus {
-	enabled := envFlagEnabled(envEnableSingleInstanceSpike)
+	enabled := singleInstanceEnabled()
 	if enabled {
 		return Wails3SmokeGateStatus{
 			Enabled: true,
-			Status:  ShellCapabilityExperimental,
-			Reason:  "Single-instance spike env is enabled; launch args are routed through the open-intent queue.",
+			Status:  ShellCapabilityAvailable,
+			Reason:  "Single-instance routing is enabled by default; launch args are routed through the open-intent queue.",
 		}
 	}
 	return Wails3SmokeGateStatus{
 		Enabled: false,
 		Status:  ShellCapabilityRequiresBuild,
-		Reason:  "Single-instance routing remains default-off until packaged smoke validates launch/open-file handoff.",
+		Reason:  "Single-instance routing was disabled by diagnostic env.",
 	}
 }
 
@@ -352,10 +352,10 @@ func buildWails3SmokeSecondInstanceProbe(
 	probe := Wails3SmokeSecondInstanceProbe{
 		Enabled: singleInstance.Enabled,
 		Status:  ShellCapabilityRequiresBuild,
-		Reason:  "Second-instance launch probe is gated until ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=1.",
+		Reason:  "Second-instance launch probe requires enabled single-instance routing.",
 	}
 	if singleInstance.Enabled {
-		probe.Status = ShellCapabilityExperimental
+		probe.Status = ShellCapabilityAvailable
 		probe.Reason = "Second-instance launch args did not produce an allowed open intent."
 	}
 
@@ -433,11 +433,11 @@ func buildWails3SmokeNativeDeliveryProbe(
 			Label:   packagedOSNativeDockBadgeLabel(background),
 			Reason:  dockAdapter.Reason,
 		},
-		Reason: "Native delivery remains default-off; packaged smoke can enable tray, notifications, and dock badges with explicit env flags.",
+		Reason: "Native delivery is active for packaged macOS notification and dock-badge paths; tray remains explicitly gated.",
 	}
 	if probe.Enabled {
-		probe.Status = ShellCapabilityExperimental
-		probe.Reason = "Native delivery adapters are enabled by packaged smoke flags and projected from Background Shell status."
+		probe.Status = ShellCapabilityAvailable
+		probe.Reason = "Native delivery adapters are projected from Background Shell status."
 	}
 	if lastError != "" {
 		probe.Status = ShellCapabilityUnavailable

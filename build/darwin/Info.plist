@@ -73,6 +73,23 @@
             </array>
           </dict>
           <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+              <string>arlecchino</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>Arlecchino Project</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+              <string>io.arlecchino.project</string>
+              <string>public.data</string>
+            </array>
+          </dict>
+          <dict>
             <key>CFBundleTypeName</key>
             <string>Arlecchino Folder</string>
             <key>CFBundleTypeRole</key>
@@ -84,8 +101,8 @@
               <string>public.folder</string>
             </array>
           </dict>
-          {{if .Info.FileAssociations}}
-          {{range .Info.FileAssociations}}
+          <!-- {{if .Info.FileAssociations}} -->
+          <!-- {{range .Info.FileAssociations}} -->
           <dict>
             <key>CFBundleTypeExtensions</key>
             <array>
@@ -98,13 +115,13 @@
             <key>CFBundleTypeIconFile</key>
             <string>{{.IconName}}</string>
           </dict>
-          {{end}}
-          {{end}}
+          <!-- {{end}} -->
+          <!-- {{end}} -->
         </array>
-        {{if .Info.Protocols}}
+        <!-- {{if .Info.Protocols}} -->
         <key>CFBundleURLTypes</key>
         <array>
-          {{range .Info.Protocols}}
+          <!-- {{range .Info.Protocols}} -->
             <dict>
                 <key>CFBundleURLName</key>
                 <string>com.wails.{{.Scheme}}</string>
@@ -115,8 +132,8 @@
                 <key>CFBundleTypeRole</key>
                 <string>{{.Role}}</string>
             </dict>
-          {{end}}
+          <!-- {{end}} -->
         </array>
-        {{end}}
+        <!-- {{end}} -->
     </dict>
 </plist>

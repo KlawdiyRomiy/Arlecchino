@@ -22,7 +22,7 @@ func (a *App) startOpenIntentBridge() {
 	a.onEvent(openIntentFrontendReadyName, func(data ...interface{}) {
 		a.markOpenIntentFrontendReady()
 	})
-	if envFlagEnabled(envEnableSingleInstanceSpike) {
+	if singleInstanceEnabled() {
 		a.dispatchInitialLaunchOpenIntent()
 	}
 }
@@ -78,10 +78,14 @@ func (a *App) emitOpenIntentNow(payload map[string]any) {
 }
 
 func (a *App) focusMainWindow() {
-	if a == nil || a.mainWindow == nil {
+	if a == nil {
 		return
 	}
-
-	a.mainWindow.Restore()
-	a.mainWindow.Focus()
+	if a.showLastActiveWindow() {
+		return
+	}
+	if a.mainWindow == nil {
+		return
+	}
+	a.showAndFocusWindow(a.mainWindow)
 }

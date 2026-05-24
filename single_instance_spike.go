@@ -12,7 +12,8 @@ import (
 
 const (
 	envEnableSingleInstanceSpike = "ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE"
-	singleInstanceUniqueID       = "com.arlecchino.ide.wails3-spike"
+	envDisableSingleInstance     = "ARLECCHINO_DISABLE_SINGLE_INSTANCE"
+	singleInstanceUniqueID       = "com.arlecchino.ide.single-instance"
 	customProtocolScheme         = "arlecchino"
 )
 
@@ -27,10 +28,25 @@ func buildSingleInstanceOptions(app *App) *application.SingleInstanceOptions {
 			if app == nil {
 				return
 			}
-			app.focusMainWindow()
 			if payload, ok := buildOpenIntentFromLaunchArgs(data.Args, data.WorkingDir); ok {
-				payload["source"] = "single-instance"
-				app.dispatchOpenIntent(payload)
+				if prepared, allowed := app.prepareExternalOpenIntent(payload, "single-instance", data.WorkingDir); allowed {
+					if openIntentPayloadIsOAuthCallback(prepared, payload) {
+						rawTarget := firstLaunchProtocolTarget(data.Args)
+						session, err := app.completeProviderOAuthCallbackFromRawTarget(rawTarget)
+						if err != nil {
+							traceOpenIntent("rejected", map[string]any{
+								"source":      "single-instance",
+								"target":      rawTarget,
+								"routeSource": stringMapValue(payload, "source"),
+								"reason":      "OAuth callback handling failed",
+							})
+							return
+						}
+						prepared["oauthStatus"] = session.Status
+					}
+					app.focusMainWindow()
+					app.dispatchOpenIntent(prepared)
+				}
 			}
 		},
 		AdditionalData: map[string]string{
@@ -40,13 +56,35 @@ func buildSingleInstanceOptions(app *App) *application.SingleInstanceOptions {
 }
 
 func singleInstanceEnabledForLaunchArgs(args []string) bool {
-	return envFlagEnabled(envEnableSingleInstanceSpike)
+	return singleInstanceEnabled()
+}
+
+func singleInstanceEnabled() bool {
+	if envFlagEnabled(envDisableSingleInstance) {
+		return false
+	}
+	return true
 }
 
 func (a *App) dispatchInitialLaunchOpenIntent() {
 	if payload, ok := buildOpenIntentFromLaunchArgs(os.Args, currentWorkingDir()); ok {
-		payload["source"] = "launch-args"
-		a.dispatchOpenIntent(payload)
+		if prepared, allowed := a.prepareExternalOpenIntent(payload, "launch-args", currentWorkingDir()); allowed {
+			if openIntentPayloadIsOAuthCallback(prepared, payload) {
+				rawTarget := firstLaunchProtocolTarget(os.Args)
+				session, err := a.completeProviderOAuthCallbackFromRawTarget(rawTarget)
+				if err != nil {
+					traceOpenIntent("rejected", map[string]any{
+						"source":      "launch-args",
+						"target":      rawTarget,
+						"routeSource": stringMapValue(payload, "source"),
+						"reason":      "OAuth callback handling failed",
+					})
+					return
+				}
+				prepared["oauthStatus"] = session.Status
+			}
+			a.dispatchOpenIntent(prepared)
+		}
 	}
 }
 
@@ -139,6 +177,15 @@ func inferOpenIntentFromLaunchTarget(target string, workingDir string, line int)
 			"projectPath": resolvedPath,
 		}, true
 	}
+	if isArlecchinoProjectMarker(resolvedPath) {
+		projectPath := filepath.Dir(resolvedPath)
+		if info, err := os.Stat(projectPath); err == nil && info.IsDir() {
+			return map[string]any{
+				"kind":        "openProject",
+				"projectPath": projectPath,
+			}, true
+		}
+	}
 
 	return openFileIntent(resolvedPath, line), true
 }
@@ -156,38 +203,122 @@ func customProtocolOpenIntent(rawURL string, workingDir string, line int) (map[s
 		switch target {
 		case "project":
 			path := firstQueryValue(values, "project", "projectPath", "path")
-			return projectIntentFromExternalPath(path, workingDir)
+			return protocolProjectIntent(path, workingDir)
 		case "file":
 			path := firstQueryValue(values, "file", "filePath", "path")
-			return fileIntentFromExternalPath(path, workingDir, protocolLine(values, line))
+			return protocolFileIntent(path, workingDir, protocolLine(values, line))
 		case "preview":
-			return openPreviewIntent(firstQueryValue(values, "preview", "previewUrl", "url"))
+			return protocolPreviewIntent(firstQueryValue(values, "preview", "previewUrl", "url"))
 		case "":
 			if path := firstQueryValue(values, "project", "projectPath"); path != "" {
-				return projectIntentFromExternalPath(path, workingDir)
+				return protocolProjectIntent(path, workingDir)
 			}
 			if path := firstQueryValue(values, "file", "filePath"); path != "" {
-				return fileIntentFromExternalPath(path, workingDir, protocolLine(values, line))
+				return protocolFileIntent(path, workingDir, protocolLine(values, line))
 			}
 			if previewURL := firstQueryValue(values, "preview", "previewUrl", "url"); previewURL != "" {
-				return openPreviewIntent(previewURL)
+				return protocolPreviewIntent(previewURL)
 			}
 		}
 	case "open-project":
-		return projectIntentFromExternalPath(firstQueryValue(values, "project", "projectPath", "path"), workingDir)
+		return protocolProjectIntent(firstQueryValue(values, "project", "projectPath", "path"), workingDir)
 	case "open-file":
-		return fileIntentFromExternalPath(
+		return protocolFileIntent(
 			firstQueryValue(values, "file", "filePath", "path"),
 			workingDir,
 			protocolLine(values, line),
 		)
 	case "open-preview":
-		return openPreviewIntent(firstQueryValue(values, "preview", "previewUrl", "url"))
+		return protocolPreviewIntent(firstQueryValue(values, "preview", "previewUrl", "url"))
 	case "focus", "focus-surface":
-		return focusSurfaceIntentFromProtocol(values)
+		return protocolFocusIntent(values)
+	case "agent":
+		if target == "run" {
+			return agentRunIntentFromProtocol(values)
+		}
+	case "mcp":
+		if target == "approve" || target == "approval" {
+			return mcpApprovalIntentFromProtocol(values)
+		}
+	case "oauth", "auth":
+		if target == "callback" || target == "" {
+			return oauthCallbackIntentFromProtocol(values)
+		}
 	}
 
 	return nil, false
+}
+
+func withProtocolSource(payload map[string]any, ok bool, source string) (map[string]any, bool) {
+	if !ok {
+		return nil, false
+	}
+	payload["source"] = source
+	return payload, true
+}
+
+func protocolProjectIntent(path string, workingDir string) (map[string]any, bool) {
+	payload, ok := projectIntentFromExternalPath(path, workingDir)
+	return withProtocolSource(payload, ok, "protocol-open")
+}
+
+func protocolFileIntent(path string, workingDir string, line int) (map[string]any, bool) {
+	payload, ok := fileIntentFromExternalPath(path, workingDir, line)
+	return withProtocolSource(payload, ok, "protocol-open")
+}
+
+func protocolPreviewIntent(rawURL string) (map[string]any, bool) {
+	payload, ok := openPreviewIntent(rawURL)
+	return withProtocolSource(payload, ok, "protocol-open")
+}
+
+func protocolFocusIntent(values url.Values) (map[string]any, bool) {
+	payload, ok := focusSurfaceIntentFromProtocol(values)
+	return withProtocolSource(payload, ok, "protocol-focus")
+}
+
+func agentRunIntentFromProtocol(values url.Values) (map[string]any, bool) {
+	runID := firstQueryValue(values, "id", "run", "runId")
+	if !isSafeProtocolIdentifier(runID) {
+		return nil, false
+	}
+	return map[string]any{
+		"kind":    "focusSurface",
+		"panelId": "aiChat",
+		"runId":   runID,
+		"source":  "protocol-agent-run",
+	}, true
+}
+
+func mcpApprovalIntentFromProtocol(values url.Values) (map[string]any, bool) {
+	requestID := firstQueryValue(values, "id", "request", "requestId")
+	nonce := firstQueryValue(values, "nonce", "state")
+	if !isSafeProtocolIdentifier(requestID) || !isSafeProtocolIdentifier(nonce) {
+		return nil, false
+	}
+	return map[string]any{
+		"kind":       "focusSurface",
+		"panelId":    "aiChat",
+		"approvalId": requestID,
+		"nonce":      nonce,
+		"source":     "protocol-mcp-approval",
+	}, true
+}
+
+func oauthCallbackIntentFromProtocol(values url.Values) (map[string]any, bool) {
+	provider := firstQueryValue(values, "provider", "id")
+	state := firstQueryValue(values, "state")
+	if !isSafeProtocolIdentifier(provider) || !isSafeProtocolIdentifier(state) {
+		return nil, false
+	}
+	return map[string]any{
+		"kind":           "focusSurface",
+		"panelId":        "aiChat",
+		"providerId":     provider,
+		"oauthState":     state,
+		"externalAction": "oauthCallback",
+		"source":         "protocol-oauth-callback",
+	}, true
 }
 
 func customProtocolActionTarget(parsed *url.URL) (string, string) {
@@ -251,6 +382,15 @@ func fileIntentFromExternalPath(path string, workingDir string, line int) (map[s
 	if err != nil || info.IsDir() {
 		return nil, false
 	}
+	if isArlecchinoProjectMarker(resolvedPath) {
+		projectPath := filepath.Dir(resolvedPath)
+		if info, err := os.Stat(projectPath); err == nil && info.IsDir() {
+			return map[string]any{
+				"kind":        "openProject",
+				"projectPath": projectPath,
+			}, true
+		}
+	}
 	return openFileIntent(resolvedPath, line), true
 }
 
@@ -277,7 +417,21 @@ func fileURLAssociationOpenIntent(rawURL string, workingDir string, line int) (m
 			"projectPath": resolvedPath,
 		}, true
 	}
+	if isArlecchinoProjectMarker(resolvedPath) {
+		projectPath := filepath.Dir(resolvedPath)
+		if info, err := os.Stat(projectPath); err == nil && info.IsDir() {
+			return map[string]any{
+				"kind":        "openProject",
+				"projectPath": projectPath,
+			}, true
+		}
+	}
 	return openFileIntent(resolvedPath, line), true
+}
+
+func isArlecchinoProjectMarker(path string) bool {
+	base := strings.TrimSpace(filepath.Base(path))
+	return strings.EqualFold(base, ".arlecchino") || strings.EqualFold(filepath.Ext(base), ".arlecchino")
 }
 
 func focusSurfaceIntentFromProtocol(values url.Values) (map[string]any, bool) {

@@ -61,6 +61,73 @@ func TestDispatchOpenIntentFromOSTargetQueuesAllowedProtocolAndRejectsCommandPay
 	}
 }
 
+func TestDispatchOpenIntentFromOSTargetRejectsProtocolActionsWithoutPendingState(t *testing.T) {
+	tracePath := filepath.Join(t.TempDir(), "open-intents.jsonl")
+	t.Setenv(envOpenIntentTracePath, tracePath)
+
+	app := &App{}
+	if app.dispatchOpenIntentFromOSTarget(openIntentSourceOSURL, "arlecchino://mcp/approve?id=req_123&nonce=state_456", "/") {
+		t.Fatal("dispatchOpenIntentFromOSTarget mcp approval without pending state = true, want false")
+	}
+	if app.dispatchOpenIntentFromOSTarget(openIntentSourceOSURL, "arlecchino://oauth/callback?provider=github&state=state_456&code=secret-code", "/") {
+		t.Fatal("dispatchOpenIntentFromOSTarget oauth callback without pending state = true, want false")
+	}
+
+	events := readOpenIntentTraceForTest(t, tracePath)
+	if len(events) != 2 {
+		t.Fatalf("trace event count = %d, want 2: %#v", len(events), events)
+	}
+	for _, event := range events {
+		if event.Stage != "rejected" {
+			t.Fatalf("trace event = %#v, want rejected", event)
+		}
+	}
+}
+
+func TestPrepareExternalOpenIntentAllowsPendingProtocolApproval(t *testing.T) {
+	app := &App{}
+	if !app.registerPendingProtocolMCPApproval("req_123", "state_456") {
+		t.Fatal("registerPendingProtocolMCPApproval = false, want true")
+	}
+
+	payload, ok := buildOpenIntentFromLaunchArgs(
+		[]string{"/tmp/Arlecchino", "arlecchino://mcp/approve?id=req_123&nonce=state_456"},
+		"/",
+	)
+	if !ok {
+		t.Fatal("buildOpenIntentFromLaunchArgs = false, want true")
+	}
+	prepared, allowed := app.prepareExternalOpenIntent(payload, openIntentSourceOSURL, "/")
+	if !allowed {
+		t.Fatal("prepareExternalOpenIntent = false, want true")
+	}
+	if prepared["source"] != openIntentSourceOSURL || prepared["routeSource"] != "protocol-mcp-approval" {
+		t.Fatalf("prepared = %#v, want source and protocol routeSource", prepared)
+	}
+}
+
+func TestPrepareExternalOpenIntentMarksProtocolFileOutsideProjectReadOnly(t *testing.T) {
+	projectRoot := t.TempDir()
+	externalRoot := t.TempDir()
+	externalFile := filepath.Join(externalRoot, "outside.go")
+	if err := os.WriteFile(externalFile, []byte("package outside\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	app := &App{}
+	app.setProjectPath(projectRoot)
+	payload := openFileIntent(externalFile, 0)
+	payload["source"] = "protocol-open"
+
+	prepared, allowed := app.prepareExternalOpenIntent(payload, openIntentSourceOSURL, projectRoot)
+	if !allowed {
+		t.Fatal("prepareExternalOpenIntent = false, want true")
+	}
+	if prepared["external"] != true || prepared["readOnly"] != true || prepared["requiresConfirmation"] != true {
+		t.Fatalf("prepared = %#v, want external read-only confirmation intent", prepared)
+	}
+}
+
 func TestDispatchOpenIntentFromOSTargetQueuesFolderAsProject(t *testing.T) {
 	root := t.TempDir()
 	tracePath := filepath.Join(root, "trace.jsonl")

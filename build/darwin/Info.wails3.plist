@@ -91,6 +91,23 @@
       </array>
     </dict>
     <dict>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>arlecchino</string>
+      </array>
+      <key>CFBundleTypeName</key>
+      <string>Arlecchino Project</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>io.arlecchino.project</string>
+        <string>public.data</string>
+      </array>
+    </dict>
+    <dict>
       <key>CFBundleTypeName</key>
       <string>Arlecchino Folder</string>
       <key>CFBundleTypeRole</key>

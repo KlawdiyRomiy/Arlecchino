@@ -154,12 +154,88 @@ func TestBuildOpenIntentFromLaunchArgsSupportsFolderURLAssociation(t *testing.T)
 	}
 }
 
+func TestBuildOpenIntentFromLaunchArgsSupportsArlecchinoProjectMarker(t *testing.T) {
+	root := t.TempDir()
+	markerPath := filepath.Join(root, ".arlecchino")
+	if err := os.WriteFile(markerPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	fileURL := url.URL{Scheme: "file", Path: markerPath}
+
+	payload, ok := buildOpenIntentFromLaunchArgs(
+		[]string{"/tmp/Arlecchino", fileURL.String()},
+		"/",
+	)
+	if !ok {
+		t.Fatalf("buildOpenIntentFromLaunchArgs() ok = false, want true")
+	}
+	if payload["kind"] != "openProject" || payload["projectPath"] != root {
+		t.Fatalf("payload = %#v, want project marker openProject", payload)
+	}
+}
+
+func TestBuildOpenIntentFromLaunchArgsSupportsSafeExternalProtocolFocusRoutes(t *testing.T) {
+	tests := []struct {
+		name       string
+		target     string
+		wantField  string
+		wantValue  string
+		wantSource string
+	}{
+		{
+			name:       "agent run",
+			target:     "arlecchino://agent/run?id=run_123",
+			wantField:  "runId",
+			wantValue:  "run_123",
+			wantSource: "protocol-agent-run",
+		},
+		{
+			name:       "mcp approval requires nonce",
+			target:     "arlecchino://mcp/approve?id=req_123&nonce=state_456",
+			wantField:  "approvalId",
+			wantValue:  "req_123",
+			wantSource: "protocol-mcp-approval",
+		},
+		{
+			name:       "oauth callback keeps code out of intent",
+			target:     "arlecchino://oauth/callback?provider=github&state=state_456&code=secret-code",
+			wantField:  "providerId",
+			wantValue:  "github",
+			wantSource: "protocol-oauth-callback",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload, ok := buildOpenIntentFromLaunchArgs(
+				[]string{"/tmp/Arlecchino", tt.target},
+				"/",
+			)
+			if !ok {
+				t.Fatalf("buildOpenIntentFromLaunchArgs() ok = false, want true")
+			}
+			if payload["kind"] != "focusSurface" || payload["panelId"] != "aiChat" {
+				t.Fatalf("payload = %#v, want aiChat focus intent", payload)
+			}
+			if payload[tt.wantField] != tt.wantValue || payload["source"] != tt.wantSource {
+				t.Fatalf("payload = %#v, want %s=%s source=%s", payload, tt.wantField, tt.wantValue, tt.wantSource)
+			}
+			if _, ok := payload["code"]; ok {
+				t.Fatalf("payload = %#v, must not expose OAuth code", payload)
+			}
+		})
+	}
+}
+
 func TestBuildOpenIntentFromLaunchArgsRejectsUnsafeCustomProtocolPayloads(t *testing.T) {
 	unsupported := []string{
 		"arlecchino://open?command=rm%20-rf%20/",
 		"arlecchino://open?preview=file:///etc/passwd",
 		"arlecchino://focus?surface=terminal",
 		"arlecchino://focus?preview=../../secret",
+		"arlecchino://agent/run?id=../../run",
+		"arlecchino://mcp/approve?id=req_123",
+		"arlecchino://oauth/callback?provider=github&code=secret-code",
 	}
 	for _, target := range unsupported {
 		if payload, ok := buildOpenIntentFromLaunchArgs(
@@ -187,21 +263,20 @@ func TestBuildOpenIntentFromLaunchArgsRejectsUnsupportedTargets(t *testing.T) {
 	}
 }
 
-func TestBuildSingleInstanceOptionsIsGatedByEnvironment(t *testing.T) {
-	t.Setenv(envEnableSingleInstanceSpike, "")
-	if options := buildSingleInstanceOptions(&App{}); options != nil {
-		t.Fatalf("buildSingleInstanceOptions() = %#v, want nil when env is disabled", options)
-	}
-
-	t.Setenv(envEnableSingleInstanceSpike, "1")
+func TestBuildSingleInstanceOptionsEnabledByDefaultWithDiagnosticDisable(t *testing.T) {
 	options := buildSingleInstanceOptions(&App{})
 	if options == nil {
-		t.Fatalf("buildSingleInstanceOptions() = nil, want options when env is enabled")
+		t.Fatalf("buildSingleInstanceOptions() = nil, want options by default")
 	}
 	if options.UniqueID != singleInstanceUniqueID {
 		t.Fatalf("UniqueID = %q, want %q", options.UniqueID, singleInstanceUniqueID)
 	}
 	if options.OnSecondInstanceLaunch == nil {
 		t.Fatalf("OnSecondInstanceLaunch = nil, want callback")
+	}
+
+	t.Setenv(envDisableSingleInstance, "1")
+	if options := buildSingleInstanceOptions(&App{}); options != nil {
+		t.Fatalf("buildSingleInstanceOptions() = %#v, want nil when diagnostic disable is set", options)
 	}
 }

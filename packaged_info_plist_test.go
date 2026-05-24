@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,18 @@ func TestWails3InfoPlistAcceptsDockDroppedFilesAndFolders(t *testing.T) {
 			}
 
 			assertOpenFileDocumentTypes(t, plistName, string(data))
+		})
+	}
+}
+
+func TestDarwinInfoPlistsAreRawLintable(t *testing.T) {
+	for _, plistName := range []string{"Info.wails3.plist", "Info.plist", "Info.dev.plist"} {
+		t.Run(plistName, func(t *testing.T) {
+			path := filepath.Join("build", "darwin", plistName)
+			output, err := exec.Command("/usr/bin/plutil", "-lint", path).CombinedOutput()
+			if err != nil {
+				t.Fatalf("plutil -lint %s failed: %v\n%s", plistName, err, string(output))
+			}
 		})
 	}
 }
@@ -35,6 +48,9 @@ func assertOpenFileDocumentTypes(t *testing.T, plistName string, content string)
 		"<string>public.data</string>",
 		"<string>public.text</string>",
 		"<string>public.source-code</string>",
+		"<string>Arlecchino Project</string>",
+		"<string>arlecchino</string>",
+		"<string>io.arlecchino.project</string>",
 		"<string>Arlecchino Folder</string>",
 		"<string>public.folder</string>",
 	} {
