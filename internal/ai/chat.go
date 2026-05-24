@@ -318,12 +318,15 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		return
 	}
 	modelRuntimeFamily := modelRuntimeFamilyForDescriptor(req.RuntimeFamily, descriptor)
+	modelRuntimeTurn := syntheticRuntimeTurn(runID, req.Action, modelRuntimeFamily, agents.TransportModelAPI)
 	s.updateRun(runID, func(run *AIChatRun) {
 		run.RuntimeFamily = modelRuntimeFamily
 		run.ProviderID = descriptor.ID
 		run.Model = firstNonEmpty(req.Model, descriptor.DefaultModel)
 		run.ReasoningEffort = req.ReasoningEffort
 		run.AgentRuntime = newAIRuntimeProofSummary(descriptor, modelRuntimeFamily, agents.TransportModelAPI, run.Model, req.Action, "running", req.ReasoningEffort)
+		run.AgentRuntime.ThreadID = modelRuntimeTurn.ThreadID
+		run.AgentRuntime.TurnID = modelRuntimeTurn.TurnID
 		run.AgentRuntime.PreflightStatus = "provider_resolved"
 		run.AgentRuntime.ConsentStatus = "accepted"
 	})
@@ -525,6 +528,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	finalResponse, fencedToolCallRequests := extractChatToolCallRequests(finalResponse)
 	modelToolResponse := finalResponse
 	buildPatchArtifactReady := false
+	buildEvidenceState := ""
 	toolCallRequests := chatToolCallRequestsFromGenerationResponse(response)
 	fencedStartIndex := len(toolCallRequests)
 	for index, toolReq := range fencedToolCallRequests {
@@ -662,7 +666,14 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	if req.Action == AIChatActionBuild && !buildPatchArtifactReady {
 		buildPatchArtifactReady = s.buildRunHasReviewablePatchArtifact(project, runID)
 	}
-	if req.Action == AIChatActionBuild && !buildPatchArtifactReady && buildResponseClaimsReviewablePatchArtifact(finalResponse) {
+	if req.Action == AIChatActionBuild && !buildPatchArtifactReady {
+		buildEvidenceState = firstNonEmpty(buildEvidenceState, s.firstRunBuildEvidenceArtifactState(project, runID))
+		if buildEvidenceState == "" && !buildResponseClaimsReviewablePatchArtifact(finalResponse) {
+			buildEvidenceState = s.recordModelRuntimeBuildEvidenceArtifact(project, runID, req, finalResponse)
+			s.emitRunEnvelope(project.ID, runID)
+		}
+	}
+	if req.Action == AIChatActionBuild && !buildPatchArtifactReady && buildEvidenceState == "" {
 		s.updateRun(runID, func(run *AIChatRun) {
 			if run.AgentRuntime != nil {
 				run.AgentRuntime.Status = "blocked"
@@ -728,6 +739,10 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 				run.AgentRuntime.ProofState = "proved"
 				run.AgentRuntime.ProofReason = "model runtime completed through Arlecchino-owned tool and artifact path"
 				run.AgentRuntime.ArtifactState = "patch_artifact"
+			} else if req.Action == AIChatActionBuild && buildEvidenceState != "" {
+				run.AgentRuntime.ProofState = "completed"
+				run.AgentRuntime.ProofReason = "model runtime completed with typed Build evidence and no reviewable file change"
+				run.AgentRuntime.ArtifactState = buildEvidenceState
 			} else if req.Action == AIChatActionBuild {
 				run.AgentRuntime.ProofState = "completed"
 				run.AgentRuntime.ProofReason = "model runtime completed without a reviewable patch artifact; no file change was recorded"
@@ -912,6 +927,29 @@ func buildResponseClaimsReviewablePatchArtifact(response string) bool {
 		strings.Contains(text, "patch artifact is ready") ||
 		strings.Contains(text, "patch artifacts are ready") ||
 		(strings.Contains(text, "patch") && strings.Contains(text, "ready for review"))
+}
+
+func (s *Service) recordModelRuntimeBuildEvidenceArtifact(project *ProjectSession, runID string, req AIChatRunRequest, response string) string {
+	if s == nil || project == nil || strings.TrimSpace(runID) == "" {
+		return ""
+	}
+	const evidenceKind = "diagnostic_evidence"
+	summary := "Model Build completed without a reviewable patch; recorded as typed diagnostic evidence."
+	evidence := RuntimeBuildEvidence{
+		RunID:     runID,
+		Kind:      evidenceKind,
+		Status:    "recorded",
+		Summary:   summary,
+		Details:   sanitizedDisplayText(response),
+		Source:    agents.RuntimeFamilyModelAgent,
+		CreatedAt: utcNow(),
+		Metadata: map[string]string{
+			"action":        string(req.Action),
+			"runtimeFamily": agents.RuntimeFamilyModelAgent,
+		},
+	}
+	s.recordChatRunArtifact(project, runID, AIChatRunArtifactRuntimeEvidence, "Model Build evidence", summary, evidence)
+	return evidenceKind
 }
 
 func fallbackEditToolFailureMessage(results []chatExecutedToolCall) string {

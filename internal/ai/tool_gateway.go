@@ -358,6 +358,7 @@ func (s *Service) finishToolCall(project *ProjectSession, result AIToolCallResul
 		}
 	}
 	s.emitToolLifecycleArtifact(project, result, proposal, toolLifecycleFinalPhase(result.Status), payload)
+	s.updatePendingApprovalFromToolResult(project, result, proposal)
 	s.emitEvent("ai:tool:call-recorded", result)
 	return result
 }

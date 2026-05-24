@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -583,8 +584,7 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 	}
 	if req.Action == AIChatActionBuild && diffArtifact.ID == "" {
 		evidenceState := s.agentRuntimeArtifactState(runID)
-		if buildEvidenceArtifactStateAccepted(evidenceState) {
-			s.recordAgentBuildEvidenceArtifact(project, runID, req, result, evidenceState)
+		if buildEvidenceArtifactStateAccepted(evidenceState) && s.agentRuntimeHasBuildEvidenceArtifact(project, runID, evidenceState) {
 			s.updateRun(runID, func(run *AIChatRun) {
 				if run.AgentRuntime != nil {
 					run.AgentRuntime.ArtifactState = evidenceState
@@ -594,12 +594,24 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 			return
 		}
 		if agentBaselineGitUnavailable(baseline.Error) {
+			record.Status = "blocked"
+			record.ErrorClass = agents.FailureDirtyBaseline
+			record = s.storeAgentEgressRecord(project, runID, record)
 			s.updateRun(runID, func(run *AIChatRun) {
+				run.EgressRecordID = record.ID
+				run.Response = agentRunDisplayResponse(result, nil)
 				if run.AgentRuntime != nil {
+					run.AgentRuntime.Status = "blocked"
+					run.AgentRuntime.HealthStatus = "blocked"
+					run.AgentRuntime.ProofState = "blocked"
+					run.AgentRuntime.FailureCode = agents.FailureDirtyBaseline
 					run.AgentRuntime.ArtifactState = "baseline_unavailable"
+					run.AgentRuntime.ExitCode = result.ExitCode
+					run.AgentRuntime.TranscriptID = transcriptID
+					run.AgentRuntime.BlockedReason = "build baseline was unavailable; no typed build evidence artifact was produced"
 				}
 			})
-			s.finishAgentRunCompleted(project, runID, req, descriptor, record, result, transcriptID, diffArtifact)
+			s.finishRunError(runID, "Build mode cannot complete without a git baseline, reviewable diff, or typed build evidence artifact")
 			return
 		}
 		record.Status = "blocked"
@@ -802,6 +814,7 @@ func (s *Service) finishAgentAuthCleanup(runID string, adapter agents.Adapter) {
 
 func (s *Service) handleAgentRuntimeEvent(project *ProjectSession, runID string, event agents.Event) {
 	s.updateAgentRuntimeProofFromEvent(runID, event)
+	s.recordRuntimeApprovalEvent(project, runID, event)
 	if event.Type == agents.EventTerminalData {
 		s.emitEvent("ai:agent:terminal-data", map[string]any{
 			"runId":            runID,
@@ -821,6 +834,10 @@ func (s *Service) handleAgentRuntimeEvent(project *ProjectSession, runID string,
 			return
 		}
 	}
+	if event.Type == agents.EventArtifact {
+		s.recordAgentRuntimeEvidenceFromEvent(project, runID, event)
+	}
+	s.recordAgentRuntimePatchFromEvent(project, runID, event)
 	if shouldDropAgentRuntimeStatusEvent(event) {
 		return
 	}
@@ -1009,15 +1026,7 @@ func buildEvidenceArtifactStateAccepted(state string) bool {
 }
 
 func buildArtifactStateCanCompleteWithoutPatch(state string) bool {
-	if buildEvidenceArtifactStateAccepted(state) {
-		return true
-	}
-	switch strings.TrimSpace(state) {
-	case "baseline_unavailable", "no_patch_artifact", "not_required":
-		return true
-	default:
-		return false
-	}
+	return buildEvidenceArtifactStateAccepted(state)
 }
 
 func (s *Service) startAgentEgressRecord(project *ProjectSession, runID string, req AIChatRunRequest, descriptor providers.AIProviderDescriptor, snapshot AIContextSnapshot) AIEgressRecord {
@@ -1117,17 +1126,26 @@ func (s *Service) recordAgentWorktreeBaselineDiagnostic(project *ProjectSession,
 }
 
 func (s *Service) recordAgentBuildEvidenceArtifact(project *ProjectSession, runID string, req AIChatRunRequest, result agents.Result, evidenceState string) {
-	payload := map[string]any{
-		"artifactState": evidenceState,
-		"transport":     firstNonEmpty(result.Transport, agents.TransportPTYFallback),
-		"status":        result.Status,
-		"message":       sanitizedDisplayText(result.Message),
-		"action":        req.Action,
-		"createdAt":     utcNow(),
+	evidenceState = strings.TrimSpace(evidenceState)
+	if !buildEvidenceArtifactStateAccepted(evidenceState) {
+		return
+	}
+	payload := RuntimeBuildEvidence{
+		RunID:     runID,
+		Kind:      evidenceState,
+		Status:    "recorded",
+		Summary:   sanitizedDisplayText(result.Message),
+		Details:   sanitizedDisplayText(result.Transcript),
+		Source:    firstNonEmpty(result.Transport, agents.TransportPTYFallback),
+		CreatedAt: utcNow(),
+		Metadata: map[string]string{
+			"action": string(req.Action),
+			"status": result.Status,
+		},
 	}
 	title := "Agent Build evidence"
 	summary := "Build completed with typed runtime evidence instead of file changes."
-	switch strings.TrimSpace(evidenceState) {
+	switch evidenceState {
 	case "explicit_no_change":
 		summary = "Runtime reported an explicit no-change Build result."
 	case "diagnostic_evidence":
@@ -1135,7 +1153,141 @@ func (s *Service) recordAgentBuildEvidenceArtifact(project *ProjectSession, runI
 	case "test_evidence":
 		summary = "Runtime produced test evidence instead of a patch."
 	}
-	s.recordChatRunArtifact(project, runID, AIChatRunArtifactAgentWorktree, title, summary, payload)
+	s.recordChatRunArtifact(project, runID, AIChatRunArtifactRuntimeEvidence, title, summary, payload)
+	s.recordAgentBuildEvidenceCompatArtifact(project, runID, summary, payload)
+}
+
+func (s *Service) recordAgentRuntimeEvidenceFromEvent(project *ProjectSession, runID string, event agents.Event) {
+	if project == nil || strings.TrimSpace(runID) == "" {
+		return
+	}
+	evidenceState := firstNonEmpty(
+		runtimePayloadString(event.Payload, "artifactState"),
+		runtimePayloadString(event.Payload, "buildEvidenceKind"),
+	)
+	if !buildEvidenceArtifactStateAccepted(evidenceState) {
+		return
+	}
+	evidence := RuntimeBuildEvidence{
+		RunID:         runID,
+		Kind:          evidenceState,
+		Status:        firstNonEmpty(runtimePayloadString(event.Payload, "status"), "recorded"),
+		CorrelationID: firstNonEmpty(runtimePayloadString(event.Payload, "correlationId"), runtimeCorrelationID(runID, evidenceState, event.CreatedAt)),
+		Summary:       sanitizedDisplayText(firstNonEmpty(runtimePayloadString(event.Payload, "summary"), event.Text)),
+		Details:       sanitizedDisplayText(runtimePayloadString(event.Payload, "details")),
+		Source:        firstNonEmpty(runtimePayloadString(event.Payload, "source"), string(event.Type)),
+		CreatedAt:     firstNonEmpty(event.CreatedAt, utcNow()),
+		Metadata: map[string]string{
+			"providerStatus": strings.TrimSpace(event.Status),
+		},
+	}
+	if evidence.Summary == "" {
+		evidence.Summary = "Runtime produced typed Build evidence."
+	}
+	s.recordChatRunArtifact(project, runID, AIChatRunArtifactRuntimeEvidence, "Agent Build evidence", evidence.Summary, evidence)
+	s.recordAgentBuildEvidenceCompatArtifact(project, runID, evidence.Summary, evidence)
+	s.updateRun(runID, func(run *AIChatRun) {
+		if run.AgentRuntime != nil {
+			run.AgentRuntime.ArtifactState = evidenceState
+		}
+	})
+}
+
+func (s *Service) recordAgentBuildEvidenceCompatArtifact(project *ProjectSession, runID string, summary string, evidence RuntimeBuildEvidence) {
+	if s == nil || project == nil || strings.TrimSpace(runID) == "" || !buildEvidenceArtifactStateAccepted(evidence.Kind) {
+		return
+	}
+	s.recordChatRunArtifact(project, runID, AIChatRunArtifactAgentWorktree, "Agent Build evidence", summary, evidence)
+}
+
+func (s *Service) agentRuntimeHasBuildEvidenceArtifact(project *ProjectSession, runID string, evidenceState string) bool {
+	if project == nil || project.ChatArtifacts == nil || strings.TrimSpace(runID) == "" || !buildEvidenceArtifactStateAccepted(evidenceState) {
+		return false
+	}
+	artifacts, err := project.ChatArtifacts.ListByRun(runID)
+	if err != nil {
+		return false
+	}
+	for _, artifact := range artifacts {
+		if artifact.Kind != AIChatRunArtifactRuntimeEvidence {
+			continue
+		}
+		var evidence RuntimeBuildEvidence
+		if err := json.Unmarshal([]byte(artifact.PayloadJSON), &evidence); err != nil {
+			continue
+		}
+		if evidence.Kind == evidenceState && strings.TrimSpace(evidence.Status) != "blocked" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) runHasAnyBuildEvidenceArtifact(project *ProjectSession, runID string) bool {
+	return s.firstRunBuildEvidenceArtifactState(project, runID) != ""
+}
+
+func (s *Service) firstRunBuildEvidenceArtifactState(project *ProjectSession, runID string) string {
+	if project == nil || project.ChatArtifacts == nil || strings.TrimSpace(runID) == "" {
+		return ""
+	}
+	artifacts, err := project.ChatArtifacts.ListByRun(runID)
+	if err != nil {
+		return ""
+	}
+	for _, artifact := range artifacts {
+		if artifact.Kind != AIChatRunArtifactRuntimeEvidence {
+			continue
+		}
+		var evidence RuntimeBuildEvidence
+		if err := json.Unmarshal([]byte(artifact.PayloadJSON), &evidence); err != nil {
+			continue
+		}
+		if buildEvidenceArtifactStateAccepted(evidence.Kind) && strings.TrimSpace(evidence.Status) != "blocked" {
+			return evidence.Kind
+		}
+	}
+	return ""
+}
+
+func (s *Service) recordAgentRuntimePatchFromEvent(project *ProjectSession, runID string, event agents.Event) {
+	if project == nil || strings.TrimSpace(runID) == "" {
+		return
+	}
+	status := strings.TrimSpace(event.Status)
+	if status != "turn/diff/updated" && status != "item/fileChange/patchUpdated" {
+		return
+	}
+	diff := runtimePayloadString(event.Payload, "unifiedDiff")
+	if strings.TrimSpace(diff) == "" || s.buildRunHasReviewablePatchArtifact(project, runID) {
+		return
+	}
+	result, err := s.PreviewPatch(project.ID, AIPatchPreviewRequest{
+		RunID:       runID,
+		Title:       "Runtime patch preview",
+		Summary:     "Generated from structured runtime diff event; review before applying.",
+		UnifiedDiff: diff,
+	})
+	if err != nil {
+		s.recordRunTimeline(project, AIRunTimelineEvent{
+			RunID:            runID,
+			ProjectSessionID: project.ID,
+			Source:           "agent_runtime",
+			Type:             "runtime_patch",
+			Status:           "blocked",
+			Actor:            "agent",
+			CorrelationID:    runtimeCorrelationID(runID, status),
+			Summary:          "Runtime patch event failed validation: " + sanitizedDisplayText(err.Error()),
+			Capability:       providers.CapabilityChat,
+		})
+		return
+	}
+	s.updateRun(runID, func(run *AIChatRun) {
+		if run.AgentRuntime != nil {
+			run.AgentRuntime.ArtifactState = "patch_artifact"
+			run.AgentRuntime.CapturedDiffID = result.Artifact.ID
+		}
+	})
 }
 
 func (s *Service) finishAgentRunCompleted(project *ProjectSession, runID string, req AIChatRunRequest, descriptor providers.AIProviderDescriptor, record AIEgressRecord, result agents.Result, transcriptID string, diffArtifact AIChatRunArtifact) {

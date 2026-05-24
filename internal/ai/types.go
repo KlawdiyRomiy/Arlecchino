@@ -1027,6 +1027,7 @@ const (
 	AIChatRunArtifactBackground          AIChatRunArtifactKind = "background_agent"
 	AIChatRunArtifactAgentTerminal       AIChatRunArtifactKind = "agent_terminal"
 	AIChatRunArtifactAgentWorktree       AIChatRunArtifactKind = "agent_worktree"
+	AIChatRunArtifactRuntimeEvidence     AIChatRunArtifactKind = "runtime_build_evidence"
 )
 
 type AIChatRunArtifact struct {

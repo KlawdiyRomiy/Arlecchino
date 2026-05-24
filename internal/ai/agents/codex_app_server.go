@@ -705,7 +705,35 @@ func codexAppServerSandboxPolicy(action string, root string) map[string]any {
 func codexAppServerBlockedPayload(method string, params map[string]any, failureCode string) map[string]any {
 	payload := codexAppServerEventPayload(method, params)
 	payload["failureCode"] = failureCode
+	payload["approvalId"] = firstNonEmpty(stringFromPath(params, "approvalId"), stringFromPath(params, "requestId"))
+	payload["reason"] = sanitizedEventText(firstNonEmpty(stringFromPath(params, "reason"), stringFromPath(params, "message")))
+	payload["command"] = sanitizedEventText(stringFromPath(params, "command"))
+	payload["cwd"] = sanitizedEventText(stringFromPath(params, "cwd"))
+	payload["grantRoot"] = sanitizedEventText(stringFromPath(params, "grantRoot"))
+	payload["hostDecision"] = "cancel"
+	payload["hostPermissionScope"] = "turn"
+	payload["hostSessionScopeAllowed"] = false
+	payload["hostGrantedPermissions"] = []string{}
+	payload["hostDeniedPermissions"] = codexDeniedPermissionsForRequest(method, params)
 	return payload
+}
+
+func codexDeniedPermissionsForRequest(method string, params map[string]any) []string {
+	denied := []string{}
+	switch method {
+	case "item/permissions/requestApproval":
+		denied = append(denied, "file_write_project", "terminal_command")
+		if stringFromPath(params, "permissions", "network", "enabled") != "" {
+			denied = append(denied, "external_network_denied")
+		}
+	case "item/commandExecution/requestApproval", "execCommandApproval":
+		denied = append(denied, "terminal_command")
+	case "item/fileChange/requestApproval", "applyPatchApproval":
+		denied = append(denied, "file_write_project")
+	default:
+		denied = append(denied, "unsupported_host_callback")
+	}
+	return denied
 }
 
 func codexAppServerEventPayload(method string, params map[string]any) map[string]any {
@@ -724,6 +752,9 @@ func codexAppServerEventPayload(method string, params map[string]any) map[string
 	}
 	if status := firstNonEmpty(stringFromPath(params, "turn", "status"), stringFromPath(params, "status")); status != "" {
 		payload["status"] = sanitizedEventText(status)
+	}
+	if diff := stringFromPath(params, "diff"); diff != "" {
+		payload["unifiedDiff"] = diff
 	}
 	return payload
 }

@@ -72,6 +72,7 @@ type ProjectSession struct {
 	ToolAudit             *ToolAuditLedger
 	RunTimeline           *RunTimelineLedger
 	ToolApprovalGrants    *ToolApprovalGrantLedger
+	PendingApprovals      *PendingApprovalLedger
 	ModelCapabilityProbes *ModelCapabilityProbeLedger
 }
 
@@ -220,6 +221,12 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 		_ = store.Close()
 		return nil, err
 	}
+	pendingApprovals, err := openPendingApprovalLedger(projectRoot)
+	if err != nil {
+		_ = skillStore.Close()
+		_ = store.Close()
+		return nil, err
+	}
 	modelCapabilityProbes, err := openModelCapabilityProbeLedger(projectRoot)
 	if err != nil {
 		_ = skillStore.Close()
@@ -244,6 +251,7 @@ func (s *Service) OpenProject(projectID string, projectRoot string) (*ProjectSes
 		ToolAudit:             toolAudit,
 		RunTimeline:           runTimeline,
 		ToolApprovalGrants:    toolApprovalGrants,
+		PendingApprovals:      pendingApprovals,
 		ModelCapabilityProbes: modelCapabilityProbes,
 	}
 	s.mu.Lock()
