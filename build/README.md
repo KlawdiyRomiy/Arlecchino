@@ -1,36 +1,55 @@
-# Build Directory
+# Build Assets
 
-The build directory is used to house all the build files and assets for your s
-.
+This directory contains checked-in assets and platform templates used by
+Arlecchino packaging flows.
 
-The structure is:
+The current public beta is macOS-first. Windows files are kept as metadata and
+packaging templates for future platform work; they are not a claim that Windows
+release artifacts are currently supported.
 
-- bin - Output directory
-- darwin - macOS specific files
-- windows - Windows specific files
+## Structure
 
-## Mac
+- `appicon.png` - root application icon used by Wails packaging flows.
+- `appicon.icon/` - icon source metadata.
+- `darwin/` - macOS plist templates, app icons, and packaged-app assets.
+- `windows/` - Windows manifest, icon, installer, and version metadata
+  templates for future Windows releases.
+- `bin/` - generated output directory when created during packaging; ignored by
+  git.
 
-The `darwin` directory holds files specific to Mac builds.
-These may be customised and used as part of the build. To return these files to the default state, simply delete them
-and
-build with `wails build`.
+## macOS
 
-The directory contains the following files:
+Tester validation should start from the DMG artifact, installation of
+`Arlecchino.app`, and launch of the installed app bundle. Public beta docs
+should not direct testers to non-DMG launch paths.
 
-- `Info.plist` - the main plist file used for Mac builds. It is used when building using `wails build`.
-- `Info.dev.plist` - same as the main plist file but used when building using `wails dev`.
+Ad-hoc tester beta artifacts remain a packaging-stage path until Developer ID
+signing and notarization are available. Gatekeeper warnings are expected for
+those unsigned, non-notarized artifacts.
+
+Important macOS files:
+
+- `darwin/Info.plist` - macOS bundle metadata template.
+- `darwin/Info.dev.plist` - development bundle metadata template.
+- `darwin/Info.wails3.plist` - Wails v3 packaging template.
+- `darwin/iconfile.icns` - packaged macOS icon.
+- `darwin/appicon-dark.png` and `darwin/appicon-light.png` - app icon variants.
 
 ## Windows
 
-The `windows` directory contains the manifest and rc files used when building with `wails build`.
-These may be customised for your application. To return these files to the default state, simply delete them and
-build with `wails build`.
+Windows release artifacts are planned later. The files under `windows/` are
+kept so platform metadata can evolve with the repo, but they are not the active
+public beta distribution path.
 
-- `icon.ico` - The icon used for the application. This is used when building using `wails build`. If you wish to
-  use a different icon, simply replace this file with your own. If it is missing, a new `icon.ico` file
-  will be created using the `appicon.png` file in the build directory.
-- `installer/*` - The files used to create the Windows installer. These are used when building using `wails build`.
-- `info.json` - Application details used for Windows builds. The data here will be used by the Windows installer,
-  as well as the application itself (right click the exe -> properties -> details)
-- `wails.exe.manifest` - The main application manifest file.
+Important Windows files:
+
+- `windows/icon.ico` - Windows application icon.
+- `windows/info.json` - Windows version metadata template.
+- `windows/wails.exe.manifest` - application manifest.
+- `windows/installer/*` - installer template files.
+
+## Generated Output
+
+Do not commit generated build output from this directory. Keep packaged apps,
+release archives, smoke reports, and temporary packaging output outside git
+unless a release process explicitly says otherwise.

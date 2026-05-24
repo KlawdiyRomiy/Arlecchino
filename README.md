@@ -5,322 +5,109 @@
 <h1 align="center">Arlecchino</h1>
 
 <p align="center">
-  A local-first desktop IDE beta for building software with integrated AI assistance.<br>
-  Go backend, React frontend, floating tools, AI Chat, and built-in MCP control.
+  A desktop IDE in macOS open beta, built for controlled AI-assisted development.<br>
+  Go backend, React frontend, floating IDE tools, AI Chat, and MCP-based agent control.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="Go 1.26">
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React 19">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/Wails-v3.0.0--alpha.95-EB4034" alt="Wails v3.0.0-alpha.95">
-  <img src="https://img.shields.io/badge/Platform-macOS%20beta-000000?logo=apple&logoColor=white" alt="macOS beta">
+  <img src="https://img.shields.io/badge/Wails-v3%20alpha-EB4034" alt="Wails v3 alpha">
+  <img src="https://img.shields.io/badge/Platform-macOS%20open%20beta-000000?logo=apple&logoColor=white" alt="macOS open beta">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License">
 </p>
 
 ---
 
-## Beta Status
-
-Arlecchino is now a **macOS-first IDE Beta**, built on
-**Wails v3.0.0-alpha.95**.
-
-The beta keeps the editor shell, terminal/workspace flow, floating panels,
-Git/preview surfaces, local-first defaults, and MCP control as the foundation.
-It now also includes the integrated AI surface: AI Chat, provider/model
-selection, context preview, consent gates, approval-gated tool review,
-reviewable patch artifacts, optional passive editor predictions, and a
-Codex-backed external agent runtime path.
-
-This is not a GA/stable AI IDE yet. AI availability depends on configured
-providers, model capability, user consent, approval settings, and the selected
-runtime. Background agents are preview-only, embeddings/RAG are disabled, and
-some advanced runtime flows remain gated while the beta hardens.
-
-There is no Apple Developer ID signing or notarization yet. The primary path is
-source checkout for technical users; ad-hoc DMG/ZIP artifacts are convenience
-tester builds and may require manual approval in macOS Privacy & Security.
-
----
-
-## What Ships In Beta Now
-
-### Bubble Shell And Panels
-
-Demo video: TBD - add a short clip showing panel open, snap, float, move, and
-restore behavior.
-
-- Rounded shell chrome with a calmer, darker bubble-style interface
-- Floating and snapped panels for Explorer, Terminal, Git, Problems
-- Per-project panel layouts and workspace state
-- A serious dense IDE layout, not a generic web dashboard
-
-### Command Palette And Terminal Dispatcher
-
-Demo video: TBD - add a short clip showing `Cmd+F`, `>` commands, `@t `
-terminal dispatch, and TUI-aware terminal behavior.
-
-- `Cmd+F` opens the command palette / search bar
-- Plain search for files
-- `>` for IDE commands
-- `@t ` for terminal-mode command dispatch with ghost text prediction
-- TUI-aware terminal flow for tools like `vim`, `htop`, and `less`
-
-### Editor And Navigation
-
-Demo video: TBD - add a short clip showing editing, diagnostics, hover,
-signature help, minimap, split views, and file navigation.
-
-- CodeMirror 6 editor
-- Multi-language editing with LSP integration
-- Inline diagnostics, hover, signature help, minimap, split views
-- Quick file relations and dependency graph flows
-- Multi-project workspace and tab history
-
-### Built-In IDE Tools
-
-Demo video: TBD - add a short clip showing Explorer, Problems, Git, Browser
-Preview, project switching, and settings.
-
-- Explorer
-- Problems panel
-- Git panel with details and diff views
-- Browser Preview
-- Status bar, settings, project switching
-
-### MCP Integration
-
-Demo video: TBD - add a short clip showing an external coding agent reading IDE
-state, opening a file/panel, and hitting the approval boundary for a mutating
-action.
-
-Arlecchino ships with a built-in MCP server so external coding agents can interact with the IDE through a controlled protocol surface.
-
-That includes:
-
-- file operations
-- terminal orchestration
-- project and layout control
-- preview and panel control
-- audit-aware sensitive access boundaries
-
-### Integrated AI Surface
-
-Demo video: TBD - add a short clip showing AI Chat, provider/model selection,
-context preview, consent gates, tool proposal review, patch preview, and an
-optional editor prediction.
-
-Arlecchino now ships an integrated AI surface wired to the backend runtime:
-
-- AI Chat panel with `Ask`, `Plan`, `Build`, `Debug`, and `Review` modes
-- provider/model selection for local, BYOK/API-key, and external agent runtimes
-- context preview and disclosure before provider calls
-- local egress records without storing full prompts or provider responses
-- approval-gated tool proposals for file, terminal, MCP, and subagent-preview
-  flows
-- reviewable patch artifacts with apply and rollback paths
-- project-local Mnemonic memory with reviewed/trusted entry handling
-- optional passive editor AI predictions behind provider and consent gates
-- Codex CLI runtime integration behind the same consent, run-envelope, artifact,
-  and audit surfaces
-
----
-
-## Experimental / Partial
-
-These parts exist, but they should not be described as fully finished yet:
-
-- **Predictive autocomplete / ARLE brain**
-
-  Demo video: TBD - add a short clip showing local autocomplete/ranking in a
-  project where the current beta behavior is representative.
-
-  The ranking and suggestion pipeline is real, but consistency still varies by language and project shape.
-
-- **AI chat panel**
-
-  Demo video: TBD - add a focused clip after provider setup and tool-review
-  paths are representative.
-
-  The panel is now real and wired to backend chat runs, but provider setup,
-  model capability, consent, tool support, and runtime coverage still vary. Do
-  not market this beta as a finished autonomous AI IDE.
-
-- **Agent/runtime coverage**
-
-  Background agents are preview-only. The built-in external-agent path is
-  currently centered on Codex CLI; do not describe the beta as a generic
-  multi-agent runtime.
-
----
-
-## Quick Start (macOS beta)
-
-### Prerequisite 0
-
-You should already have:
-
-- Xcode Command Line Tools
-- Homebrew
-
-If either one is missing, install it first and then come back.
-
-### Clone
-
-```bash
-git clone https://github.com/KlawdiyRomiy/Arlecchino.git
-cd Arlecchino
-```
-
-### Bootstrap
-
-```bash
-./scripts/bootstrap-dev-macos.sh
-```
-
-What the bootstrap does:
-
-- installs the core dev toolchain needed for local beta development
-- installs recommended extras for a better beta experience
-- runs `go mod download`
-- runs `npm ci` inside `frontend/`
-- prints a summary of what is installed, already present, or optional
-
-### Run
-
-```bash
-./scripts/wails3-dev-macos.sh
-```
-
-This is the canonical beta dev path on `main`.
-
-`./scripts/wails3-dev-macos.sh` builds the Wails v3 app through the
-repo-local Go module, runs the frontend build, writes output under
-`/tmp/Arlecchino-wails-build`, and owns child-process cleanup for stale dev MCP
-server processes.
-
-This is an **early technical beta** path:
-
-- source checkout first
-- no Apple Developer signing
-- no notarization
-- no frictionless trusted macOS installer yet
-- ad-hoc DMG/ZIP artifacts are convenience builds, not trusted
-  notarized distribution
-
-Unsigned local beta bundles or DMGs may require macOS Privacy & Security ->
-Open Anyway. That is expected for this early beta path until an Apple
-Developer signing and notarization flow exists.
-
-### Build Local Beta Artifacts
-
-```bash
-./scripts/wails3-local-alpha-release-macos.sh
-```
-
-This currently uses the historical local-alpha packaging script name, but it
-creates ad-hoc local/tester macOS artifacts such as `Arlecchino.app`,
-`arlecchino-macos-universal.zip`, JSON release evidence, and optionally
-`arlecchino-macos-universal.dmg`. These artifacts are for local/tester beta
-use until Developer ID signing and notarization are available.
-
----
-
-## Dependency Model
-
-### Required For App Boot
-
-These are the dependencies the bootstrap treats as required:
-
-- `go`
-- `node@22`
-- `npm`
-- `go mod download`
-- `frontend/npm ci`
-- Wails v3 is resolved from the pinned Go module in `go.mod`
-
-If one of these cannot be installed or resolved, the bootstrap exits with a clear instruction instead of pretending everything is fine.
-
-Arlecchino's beta toolchain intentionally prefers **Node.js 22 LTS** instead of the newest Homebrew `node`. That keeps `npm ci`, `vite`, and Wails frontend packaging reproducible for this repo.
-
-The legacy Homebrew `wails` CLI may still be present for older wrappers and
-diagnostics, but the current `main` source runner is
-`./scripts/wails3-dev-macos.sh`.
-
-### Recommended Extras Installed By Bootstrap
-
-These are not hard blockers for app boot, but they make the beta feel closer to the intended experience:
-
-- `carapace`
-- `onnxruntime`
-- `gopls`
-- `typescript-language-server`
-- `pyright`
-- `vscode-langservers-extracted`
-- `yaml-language-server`
-- `bash-language-server`
-- `dockerfile-language-server-nodejs`
-
-### Optional / Later
-
-These stay outside the default beta bootstrap:
-
-- `php`, `composer`, `phpactor`
-- Rust toolchain and Rust analyzers
-- Ruby / Solargraph
-- Terraform, Lua, Kotlin, Scala, and other language-specific chains
-
-Some of these can still be installed later from Arlecchino's language server flows or manually through your own environment.
-
-### ONNX Runtime Note
-
-`onnxruntime` is **not** a hard blocker for starting Arlecchino.
-
-If it is missing, the app still boots and falls back away from the ONNX-backed path. Installing it simply gives the autocomplete stack access to the faster ML backend where available.
-
-The beta release keeps the bundled ARLE model for local autocomplete ranking.
-
----
-
-## Privacy And Data
-
-Arlecchino's beta builds are intended to run locally without product analytics
-or accounts. Cloud AI and external agent runtimes are optional and require
-explicit provider configuration, consent, and runtime gates. Project indexes,
-workspace state, MCP audit logs, AI run metadata, provider settings, and
-editor/runtime state may be stored locally to support IDE features.
-
-Beta privacy and release notes are published with the release artifacts.
-
----
-
-## Wails v3 Alpha Shell Track
-
-Arlecchino's current `main` branch is already on Wails v3 alpha. The Wails v3
-dependency remains alpha-quality because Wails v3 itself is still on the alpha
-docs track and some native delivery surfaces are intentionally gated. This is
-an upstream/runtime dependency status, not the product release status.
-
-The current strategy is:
-
-- keep `main` on the pinned **Wails v3.0.0-alpha.95** module
-- use `./scripts/wails3-dev-macos.sh` for source runs
-- keep generated bindings controlled by `./scripts/wails3-generate-bindings.sh`
-- keep detached/native delivery surfaces gated until their smoke evidence is
-  release-ready
-
-The Wails v3 shell work supports:
-
-- multi-window applets
-- detached terminal / preview/helper windows behind gates
-- native menus and context menus
-- tray and notifications
-- single-instance handling
-- custom protocols and file associations
-- updater / release plumbing
-- future material backends such as Liquid Glass on supported macOS
-
----
+## Status
+
+Arlecchino is currently a **macOS open beta**. Windows and Linux releases are
+planned later, but the current public path is macOS-first.
+
+The beta includes the editor shell, Command Dispatcher, terminal/workspace
+flow, floating panels, Git and preview surfaces, packaged macOS routing,
+provider-aware defaults, MCP control, and an integrated AI surface with AI
+Chat, provider/model selection, context preview, consent gates, approval-gated
+tool review, reviewable patch artifacts, optional passive editor predictions,
+and a Codex-backed external agent runtime path.
+
+This is not a general-availability release or a stable autonomous AI IDE. AI
+behavior depends on configured providers, model capabilities, consent, approval
+settings, and selected runtime. Background agents are preview-only,
+embeddings/RAG are disabled, and advanced runtime coverage is still being
+hardened.
+
+There is no Apple Developer ID signing or notarization yet. The beta tester path
+is a DMG artifact, installation of `Arlecchino.app`, and launch of the installed
+app bundle. Because the app is not Developer ID signed or notarized, Gatekeeper
+will warn that macOS cannot verify the developer or check the app for malicious
+software. That warning is expected for this beta until signing and notarization
+exist.
+
+## DMG Launch Path
+
+Use the macOS beta DMG from the release artifacts:
+
+1. Open the DMG.
+2. Copy `Arlecchino.app` to `/Applications`.
+3. Launch `/Applications/Arlecchino.app`.
+
+On first launch, macOS may block the app because it is unsigned and not
+notarized. If you trust the beta artifact, use the macOS Gatekeeper override:
+
+- Open **System Settings -> Privacy & Security**.
+- Find the blocked Arlecchino warning.
+- Choose **Open Anyway**, then confirm the launch.
+
+## What It Includes
+
+- A dense desktop IDE shell with floating and snapped panels.
+- CodeMirror 6 editing with LSP-backed diagnostics, hover, signature help, and
+  navigation flows.
+- Explorer, Problems, Git, Browser Preview, Markdown Preview, terminal, Code
+  panel, status, settings, and multi-project switching surfaces.
+- Integrated terminal tabs with search, splits, command prediction,
+  TUI-awareness, and preview detection from terminal output.
+- Command Dispatcher flows with `Cmd+Shift+F`, default search, `>` IDE
+  commands, `>>` file search, quoted grep search, `#` symbol search, `@t `
+  terminal dispatch, and `@ai ` AI dispatch.
+- Built-in MCP server for controlled IDE access by external coding agents.
+- Chat-first AI Chat with provider/model selection, context disclosure, consent
+  gates, `@ai` bare prompts, `/chat`, `/plan`, `/debug`, `/build`, `/review`,
+  plan-to-build handoff, linked review, session-scoped continuity, runtime
+  status, pending approvals, tool review, patch artifacts, Mnemonic memory, and
+  optional passive editor predictions.
+- macOS native bridge work for menu, fullscreen, window controls, packaged app
+  open intents, Dock reopen behavior, and Keychain-backed credential storage.
+- Bundled internal autocomplete model for suggestion ranking.
+
+See [FEATURES.md](FEATURES.md) for the feature and demo-video map.
+
+## Current Limits
+
+- macOS is the active open-beta platform; Windows/Linux are future release
+  targets.
+- Wails v3 remains an upstream alpha dependency.
+- Builds do not have Developer ID signing or notarization; Gatekeeper will warn
+  or block first launch until the user explicitly opens the trusted beta
+  artifact.
+- AI provider availability depends on provider accounts, BYOK/API-key or OAuth
+  setup, configured external CLIs/runtimes, and model capability.
+- Background agent behavior is preview-only.
+- Embeddings/RAG are disabled in the current beta.
+- The bundled internal autocomplete model is a ranker, not a generative code
+  model.
+
+## Documentation
+
+- [FEATURES.md](FEATURES.md) - public feature map and demo-video slots.
+- [PRIVACY.md](PRIVACY.md) - beta privacy and provider/runtime disclosure.
+- [MODEL_PROVENANCE.md](MODEL_PROVENANCE.md) - bundled autocomplete model
+  notice.
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) - third-party notices and
+  release checklist caveats.
+- [build/README.md](build/README.md) - build asset and packaging template notes.
 
 ## Tech Stack
 
@@ -329,14 +116,12 @@ The Wails v3 shell work supports:
 | Backend  | Go 1.26                       |
 | Frontend | React 19, TypeScript (strict) |
 | Editor   | CodeMirror 6                  |
-| Desktop  | Wails v3.0.0-alpha.95         |
+| Desktop  | Wails v3 alpha                |
 | Database | SQLite with GORM              |
 | Parsing  | Tree-sitter                   |
 | Terminal | xterm.js + PTY                |
 | Styling  | Tailwind CSS v4               |
 | State    | Zustand                       |
-
----
 
 ## License
 
