@@ -1704,7 +1704,6 @@ export function RunCard({
       onSelect: copySessionId,
     },
   ];
-
   return (
     <ContextActionMenu
       ignoredTargetSelector=".ai-chat-message-bubble, .ai-chat-message-action, .ai-chat-code-block, .ai-chat-markdown__inline-code, button, input, textarea, a"
@@ -1718,7 +1717,6 @@ export function RunCard({
         data-ai-chat-run-id={envelope.id}
         data-status={envelope.status}
         data-compact={compact ? "true" : "false"}
-        layout
         initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12 }}
         animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
         exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
