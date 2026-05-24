@@ -296,8 +296,7 @@ func aiQuerySuggestions(query string) []ResultItem {
 		title    string
 		subtitle string
 	}{
-		{id: "ai-ask", slash: "/ask", title: "@ai /ask", subtitle: "Ask with project context"},
-		{id: "ai-general", slash: "/general", title: "@ai /general", subtitle: "Ask without implicit project context"},
+		{id: "ai-chat", slash: "/chat", title: "@ai /chat", subtitle: "Chat with visible project context"},
 		{id: "ai-plan", slash: "/plan", title: "@ai /plan", subtitle: "Create a read-only implementation plan"},
 		{id: "ai-debug", slash: "/debug", title: "@ai /debug", subtitle: "Investigate failures with evidence"},
 		{id: "ai-build", slash: "/build", title: "@ai /build", subtitle: "Draft approval-gated implementation work"},

@@ -40,6 +40,7 @@ type chatToolset struct {
 const (
 	chatToolProfileNone            = "none"
 	chatToolProfileUnsupported     = "unsupported"
+	chatToolProfileChatReadOnly    = "chat_read_only"
 	chatToolProfilePlanReadOnly    = "plan_read_only"
 	chatToolProfileDebugDiagnostic = "debug_diagnostic"
 	chatToolProfileFullAgentLoop   = "full_agent_loop"
@@ -47,7 +48,7 @@ const (
 )
 
 func generationToolsetForChatRequest(req AIChatRunRequest, descriptor AIProviderDescriptor, model string) chatToolset {
-	if req.Action != AIChatActionBuild && req.Action != AIChatActionDebug && req.Action != AIChatActionPlan {
+	if !chatRequestUsesProviderTools(req) {
 		return chatToolset{Profile: chatToolProfileNone, ToolSupport: true}
 	}
 	modelDescriptor := modelDescriptorForCapabilityEvidence(descriptor, model)
@@ -60,7 +61,7 @@ func generationToolsetForChatRequest(req AIChatRunRequest, descriptor AIProvider
 		}
 	}
 	tools := generationToolsForChatRequest(req)
-	profile := chatToolProfileForAction(req.Action)
+	profile := chatToolProfileForRequest(req)
 	if buildUsesFastCurrentFileEditToolset(req) {
 		tools = filterGenerationTools(tools, providerToolFileEditPreview, providerToolFileCreatePreview)
 		profile = chatToolProfileFastCurrentFile
@@ -73,8 +74,24 @@ func generationToolsetForChatRequest(req AIChatRunRequest, descriptor AIProvider
 	}
 }
 
-func chatToolProfileForAction(action AIChatAction) string {
-	switch action {
+func chatRequestUsesProviderTools(req AIChatRunRequest) bool {
+	switch req.Action {
+	case AIChatActionAsk:
+		return !isMinimalChatRequest(req)
+	case AIChatActionBuild, AIChatActionDebug, AIChatActionPlan:
+		return true
+	default:
+		return false
+	}
+}
+
+func chatToolProfileForRequest(req AIChatRunRequest) string {
+	switch req.Action {
+	case AIChatActionAsk:
+		if isMinimalChatRequest(req) {
+			return chatToolProfileNone
+		}
+		return chatToolProfileChatReadOnly
 	case AIChatActionPlan:
 		return chatToolProfilePlanReadOnly
 	case AIChatActionDebug:
@@ -136,7 +153,7 @@ func buildUsesFastCurrentFileEditToolset(req AIChatRunRequest) bool {
 }
 
 func generationToolsForChatRequest(req AIChatRunRequest) []providers.GenerationTool {
-	if req.Action != AIChatActionBuild && req.Action != AIChatActionDebug && req.Action != AIChatActionPlan {
+	if !chatRequestUsesProviderTools(req) {
 		return nil
 	}
 	tools := []providers.GenerationTool{

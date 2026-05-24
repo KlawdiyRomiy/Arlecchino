@@ -46,20 +46,12 @@ const AI_CHAT_ACTION_REVIEW = "review" as AIChatAction;
 
 export const AI_WORKFLOW_MODES: AIWorkflowMode[] = [
   {
-    slash: "/ask",
+    slash: "/chat",
     action: AI_CHAT_ACTION_ASK,
-    workflowId: "slash-ask",
+    workflowId: "slash-chat",
     profileId: "ask-readonly",
-    label: "Ask",
-    description: "Ask with project context.",
-  },
-  {
-    slash: "/general",
-    action: AI_CHAT_ACTION_ASK,
-    workflowId: "slash-general",
-    profileId: "minimal-general",
-    label: "General",
-    description: "Ask without implicit project context.",
+    label: "Chat",
+    description: "Chat with visible project context.",
   },
   {
     slash: "/plan",
@@ -95,6 +87,30 @@ export const AI_WORKFLOW_MODES: AIWorkflowMode[] = [
   },
 ];
 
+const AI_WORKFLOW_PARSE_ALIASES: AIWorkflowMode[] = [
+  {
+    slash: "/ask",
+    action: AI_CHAT_ACTION_ASK,
+    workflowId: "slash-ask",
+    profileId: "ask-readonly",
+    label: "Chat",
+    description: "Chat with visible project context.",
+  },
+  {
+    slash: "/general",
+    action: AI_CHAT_ACTION_ASK,
+    workflowId: "slash-general",
+    profileId: "minimal-general",
+    label: "Chat",
+    description: "Chat without implicit project context.",
+  },
+];
+
+const AI_WORKFLOW_PARSE_MODES = [
+  ...AI_WORKFLOW_MODES,
+  ...AI_WORKFLOW_PARSE_ALIASES,
+];
+
 export type ParsedAICommandInput =
   | { kind: "invalid"; reason: string }
   | { kind: "empty" }
@@ -122,7 +138,7 @@ export function parseAICommandInput(input: string): ParsedAICommandInput {
 
   const firstToken = body.split(/\s+/, 1)[0] ?? "";
   if (firstToken.startsWith("/")) {
-    const mode = AI_WORKFLOW_MODES.find(
+    const mode = AI_WORKFLOW_PARSE_MODES.find(
       (candidate) => candidate.slash === firstToken.toLowerCase(),
     );
     if (!mode) {
@@ -137,11 +153,11 @@ export function parseAICommandInput(input: string): ParsedAICommandInput {
     return { kind: "start", mode, prompt };
   }
 
-  const askMode = AI_WORKFLOW_MODES.find((mode) => mode.slash === "/ask");
-  if (!askMode) {
-    return { kind: "invalid", reason: "Ask workflow is unavailable." };
+  const chatMode = AI_WORKFLOW_MODES.find((mode) => mode.slash === "/chat");
+  if (!chatMode) {
+    return { kind: "invalid", reason: "Chat workflow is unavailable." };
   }
-  return { kind: "start", mode: askMode, prompt: body };
+  return { kind: "start", mode: chatMode, prompt: body };
 }
 
 export function createAIChatCommandIntent(

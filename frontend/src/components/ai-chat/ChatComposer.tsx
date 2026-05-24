@@ -4,16 +4,13 @@ import {
   Boxes,
   Check,
   ChevronDown,
-  Database,
   FileText,
   Layers,
   ListChecks,
-  Monitor,
-  ShieldCheck,
   Paperclip,
+  ShieldCheck,
   Send,
   Slash,
-  SlidersHorizontal,
   Sparkles,
   Square,
   X,
@@ -37,19 +34,17 @@ import {
 import type { AIProviderDescriptor } from "../../../bindings/arlecchino/internal/ai/providers/models";
 import type { AIChatSendShortcut } from "../../stores/editorSettingsStore";
 import type {
+  AIProviderAuthSession,
   AIProviderRuntimeDescriptor,
   AIProviderRuntimeModel,
-  AIProviderAuthSession,
 } from "../../wails/app";
 import { getActionMeta, modeOrder } from "./aiChatPresentation";
 import { MentionPicker } from "./MentionPicker";
 import { ModelPicker } from "./ModelPicker";
-import { askReadonlyProfileId, minimalGeneralProfileId } from "./types";
-import type { ContextToggles } from "./types";
+import { askReadonlyProfileId } from "./types";
 
 interface ChatComposerProps {
   selectedAction: AIChatAction;
-  selectedProfileId: string;
   selectedMentions: AIChatMentionCandidate[];
   actions: AIChatActionDescriptor[];
   input: string;
@@ -67,7 +62,6 @@ interface ChatComposerProps {
   providerRuntimeError: string;
   selectedModelCapability: AIModelCapabilityDescriptor | null;
   consentPolicy: AIConsentPolicy | null;
-  context: ContextToggles;
   contextPreview?: AIContextSnapshot | null;
   onActionChange: (action: AIChatAction, profileId?: string) => void;
   onSelectProvider: (provider: AIProviderDescriptor) => void;
@@ -93,7 +87,6 @@ interface ChatComposerProps {
     model: AIProviderRuntimeModel,
   ) => void;
   onStopProviderRuntime: (providerId: string) => void;
-  onContextToggle: (key: keyof ContextToggles, value: boolean) => void;
   onInputChange: (value: string) => void;
   onMentionQuery: (
     request: AIChatMentionQuery,
@@ -127,14 +120,10 @@ interface ComposerModeOption {
   executionUnavailable: boolean;
 }
 
-const composerModeKey = (action: AIChatAction, profileId: string): string => {
-  if (
-    action === AIChatAction.AIChatActionAsk &&
-    (!profileId || profileId === minimalGeneralProfileId)
-  ) {
+const composerModeKey = (action: AIChatAction): string => {
+  if (action === AIChatAction.AIChatActionAsk) {
     return "chat";
   }
-  if (action === AIChatAction.AIChatActionAsk) return "ask-project";
   return action;
 };
 
@@ -146,6 +135,7 @@ interface ComposerMentionTrigger {
   query: string;
   start: number;
   end: number;
+  source?: "input" | "attachment";
 }
 
 const parseComposerMentionTrigger = (
@@ -187,7 +177,8 @@ const sameComposerMentionTrigger = (
   left?.trigger === right?.trigger &&
   left?.query === right?.query &&
   left?.start === right?.start &&
-  left?.end === right?.end;
+  left?.end === right?.end &&
+  left?.source === right?.source;
 
 const firstSelectableMentionIndex = (
   candidates: AIChatMentionCandidate[],
@@ -206,6 +197,14 @@ const nextSelectableMentionIndex = (
   }
   return -1;
 };
+
+const isAttachmentMentionCandidate = (
+  candidate: AIChatMentionCandidate,
+): boolean =>
+  candidate.operation ===
+    AIChatMentionOperation.AIChatMentionOperationAttachFile ||
+  candidate.operation ===
+    AIChatMentionOperation.AIChatMentionOperationAttachSkill;
 
 const iconForMentionKind = (kind: AIChatMentionKind) => {
   switch (kind) {
@@ -288,54 +287,8 @@ const contextBudgetTooltip = (
   return `${input}/${windowSize} estimated input tokens from the ${source} (${percent} used). ${remainingWindow} to the model limit.`;
 };
 
-const contextChipMeta: Record<
-  keyof ContextToggles,
-  {
-    label: string;
-    detail: string;
-    icon: React.ComponentType<{ size?: number }>;
-  }
-> = {
-  workspace: {
-    label: "Workspace",
-    detail: "project",
-    icon: Layers,
-  },
-  currentFile: {
-    label: "Current file",
-    detail: "editor",
-    icon: FileText,
-  },
-  terminalLogs: {
-    label: "Terminal logs",
-    detail: "shell",
-    icon: Monitor,
-  },
-  mnemonic: {
-    label: "Mnemonic",
-    detail: "memory",
-    icon: Database,
-  },
-  continuity: {
-    label: "Continuity",
-    detail: "resume",
-    icon: ListChecks,
-  },
-  mcp: {
-    label: "MCP",
-    detail: "tools",
-    icon: SlidersHorizontal,
-  },
-  skills: {
-    label: "Skills",
-    detail: "instructions",
-    icon: Boxes,
-  },
-};
-
 export function ChatComposer({
   selectedAction,
-  selectedProfileId,
   selectedMentions,
   actions,
   input,
@@ -353,7 +306,6 @@ export function ChatComposer({
   providerRuntimeError,
   selectedModelCapability,
   consentPolicy,
-  context,
   contextPreview,
   onActionChange,
   onSelectProvider,
@@ -370,7 +322,6 @@ export function ChatComposer({
   onProbeModelCapability,
   onStartProviderRuntime,
   onStopProviderRuntime,
-  onContextToggle,
   onInputChange,
   onMentionQuery,
   onMentionSelect,
@@ -414,43 +365,37 @@ export function ChatComposer({
             executionUnavailable: true,
           } as AIChatActionDescriptor;
         });
+  const chatDescriptor = actionDescriptors.find(
+    (descriptor) => descriptor.id === AIChatAction.AIChatActionAsk,
+  );
   const modeOptions: ComposerModeOption[] = [
     {
       key: "chat",
       action: AIChatAction.AIChatActionAsk,
-      profileId: minimalGeneralProfileId,
+      profileId: askReadonlyProfileId,
       name: "Chat",
-      description: "General chat without implicit project context.",
+      description:
+        chatDescriptor?.description || "Chat with the default project context.",
       executionUnavailable: false,
     },
-    ...actionDescriptors.map((descriptor) => {
-      const isAsk = descriptor.id === AIChatAction.AIChatActionAsk;
-      const meta = getActionMeta(descriptor.id);
-      return {
-        key: isAsk ? "ask-project" : descriptor.id,
-        action: descriptor.id,
-        profileId: isAsk ? askReadonlyProfileId : "",
-        name: isAsk ? "Ask Project" : descriptor.name || meta.label,
-        description:
-          descriptor.description ||
-          (isAsk
-            ? "Answer with visible project context only."
-            : meta.description),
-        executionUnavailable: Boolean(descriptor.executionUnavailable),
-      };
-    }),
+    ...actionDescriptors
+      .filter((descriptor) => descriptor.id !== AIChatAction.AIChatActionAsk)
+      .map((descriptor) => {
+        const meta = getActionMeta(descriptor.id);
+        return {
+          key: descriptor.id,
+          action: descriptor.id,
+          profileId: "",
+          name: descriptor.name || meta.label,
+          description: descriptor.description || meta.description,
+          executionUnavailable: Boolean(descriptor.executionUnavailable),
+        };
+      }),
   ];
-  const selectedModeKey = composerModeKey(selectedAction, selectedProfileId);
+  const selectedModeKey = composerModeKey(selectedAction);
   const selectedMode =
     modeOptions.find((option) => option.key === selectedModeKey) ??
     modeOptions[0];
-  const contextChipKeys = Object.keys(contextChipMeta) as Array<
-    keyof ContextToggles
-  >;
-  const enabledContextChips =
-    selectedModeKey === "chat"
-      ? []
-      : contextChipKeys.filter((key) => context[key]);
   const contextBudget = contextPreview?.budget;
   const contextPercent = contextBudgetPercent(contextBudget);
   const contextMeterStyle = {
@@ -472,6 +417,28 @@ export function ChatComposer({
     setMentionLoading(false);
     setMentionIndex(-1);
   }, []);
+
+  const openAttachmentPicker = useCallback(() => {
+    if (activeMention?.source === "attachment") {
+      closeMentionPicker();
+      return;
+    }
+    const textarea = textareaRef.current;
+    const cursor = textarea?.selectionStart ?? input.length;
+    setModeMenuOpen(false);
+    setModelPickerOpen(false);
+    setMentionCandidates([]);
+    setMentionLoading(true);
+    setMentionIndex(-1);
+    setActiveMention({
+      trigger: AIChatMentionTrigger.AIChatMentionTriggerSlash,
+      query: "",
+      start: cursor,
+      end: cursor,
+      source: "attachment",
+    });
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [activeMention?.source, closeMentionPicker, input.length]);
 
   const syncMentionTrigger = useCallback(
     (value = input) => {
@@ -514,8 +481,12 @@ export function ChatComposer({
           }),
         );
         if (mentionRequestIdRef.current !== requestId) return;
-        setMentionCandidates(candidates);
-        setMentionIndex(firstSelectableMentionIndex(candidates));
+        const nextCandidates =
+          activeMention.source === "attachment"
+            ? candidates.filter(isAttachmentMentionCandidate)
+            : candidates;
+        setMentionCandidates(nextCandidates);
+        setMentionIndex(firstSelectableMentionIndex(nextCandidates));
       } catch {
         if (mentionRequestIdRef.current !== requestId) return;
         setMentionCandidates([]);
@@ -805,48 +776,6 @@ export function ChatComposer({
             </AnimatePresence>
           </div>
         </div>
-        {enabledContextChips.length > 0 ? (
-          <div
-            className="ai-chat-composer__context-chips"
-            aria-label="Included context"
-          >
-            <AnimatePresence initial={false}>
-              {enabledContextChips.map((key) => {
-                const meta = contextChipMeta[key];
-                const ContextIcon = meta.icon;
-                return (
-                  <m.button
-                    key={key}
-                    className="ai-chat-composer__context-chip"
-                    layout
-                    initial={
-                      reduceMotion ? { opacity: 0 } : { opacity: 0, y: 5 }
-                    }
-                    animate={
-                      reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }
-                    }
-                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
-                    transition={{
-                      duration: reduceMotion ? 0.1 : 0.16,
-                      ease: [0.22, 1, 0.36, 1],
-                    }}
-                    type="button"
-                    title={`Remove ${meta.label} from this request`}
-                    onClick={() => onContextToggle(key, false)}
-                    whileTap={reduceMotion ? undefined : { scale: 0.985 }}
-                  >
-                    <span className="ai-chat-composer__context-icon">
-                      <ContextIcon size={14} />
-                    </span>
-                    <span>{meta.label}</span>
-                    <small>{meta.detail}</small>
-                    <X size={12} />
-                  </m.button>
-                );
-              })}
-            </AnimatePresence>
-          </div>
-        ) : null}
         {selectedMentions.length > 0 ? (
           <div className="ai-chat-composer__mentions">
             {selectedMentions.map((mention) => {
@@ -880,7 +809,9 @@ export function ChatComposer({
           ref={textareaRef}
           className="ai-chat-composer__textarea"
           data-testid="ai-chat-input"
-          placeholder={disabledReason || "Chat, ask project, plan, or build..."}
+          placeholder={
+            disabledReason || "Chat, plan, debug, build, or review..."
+          }
           rows={3}
           value={input}
           aria-expanded={Boolean(activeMention)}
@@ -906,6 +837,12 @@ export function ChatComposer({
           candidates={mentionCandidates}
           selectedIndex={mentionIndex}
           loading={mentionLoading}
+          title={activeMention?.source === "attachment" ? "Attach" : undefined}
+          ariaLabel={
+            activeMention?.source === "attachment"
+              ? "Attachment suggestions"
+              : undefined
+          }
           onHover={(index) => {
             if (!mentionCandidates[index]?.disabledReason) {
               setMentionIndex(index);
@@ -1013,12 +950,17 @@ export function ChatComposer({
               </button>
             ) : null}
             <button
-              className="ai-chat-icon-button"
+              className={`ai-chat-attachment-button${
+                activeMention?.source === "attachment" ? " is-selected" : ""
+              }`}
+              data-testid="ai-chat-attach-button"
               type="button"
-              title="Attach runtime context"
-              onClick={onRefreshContext}
+              aria-expanded={activeMention?.source === "attachment"}
+              aria-label="Attach file or skill"
+              title="Attach file or skill"
+              onClick={openAttachmentPicker}
             >
-              <Paperclip size={17} />
+              <Paperclip size={18} />
             </button>
             {running ? (
               <button

@@ -288,7 +288,7 @@ const initialState: AIChatUIState = {
   selectedAction: AIChatAction.AIChatActionAsk,
   input: "",
   activeSessionId: defaultChatSessionId,
-  selectedProfileId: minimalGeneralProfileId,
+  selectedProfileId: askReadonlyProfileId,
   selectedWorkflowId: "",
   selectedMentionsBySession: {},
   selectedProviderId: "",
@@ -391,7 +391,7 @@ function selectionFromMentions(mentions: AIChatMentionCandidate[]) {
   return {
     selectedProfileId:
       mentions.find((mention) => mention.profileId)?.profileId ??
-      minimalGeneralProfileId,
+      askReadonlyProfileId,
     selectedWorkflowId:
       mentions.find((mention) => mention.workflowId)?.workflowId ?? "",
   };
@@ -460,7 +460,9 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         selectedMentionsBySession: setMentionsForSession(state, nextMentions),
         selectedProfileId:
           removed?.profileId && removed.profileId === state.selectedProfileId
-            ? ""
+            ? state.selectedAction === AIChatAction.AIChatActionAsk
+              ? askReadonlyProfileId
+              : ""
             : state.selectedProfileId,
         selectedWorkflowId:
           removed?.workflowId && removed.workflowId === state.selectedWorkflowId
@@ -568,7 +570,7 @@ function reducer(state: AIChatUIState, action: AIChatUIAction): AIChatUIState {
         ...state,
         input: "",
         selectedAction: AIChatAction.AIChatActionAsk,
-        selectedProfileId: minimalGeneralProfileId,
+        selectedProfileId: askReadonlyProfileId,
         selectedWorkflowId: "",
         selectedMentionsBySession: setMentionsForSession(state, []),
       };
@@ -905,6 +907,39 @@ function contextItemForMention(
   return item;
 }
 
+function hasVisibleChatContext(
+  context: ContextToggles,
+  mentions: AIChatMentionCandidate[],
+): boolean {
+  return (
+    context.workspace ||
+    context.currentFile ||
+    context.terminalLogs ||
+    context.mnemonic ||
+    context.mcp ||
+    context.skills ||
+    context.continuity ||
+    mentions.some((mention) => Boolean(mention.contextItem))
+  );
+}
+
+function profileIdForChatRequest(
+  action: AIChatAction,
+  profileId: string,
+  context: ContextToggles,
+  mentions: AIChatMentionCandidate[],
+): string {
+  if (action !== AIChatAction.AIChatActionAsk) {
+    return profileId;
+  }
+  if (profileId === minimalGeneralProfileId) {
+    return minimalGeneralProfileId;
+  }
+  return hasVisibleChatContext(context, mentions)
+    ? askReadonlyProfileId
+    : minimalGeneralProfileId;
+}
+
 export function buildContextRequest(
   context: ContextToggles,
   activeEditor: ActiveEditorContext,
@@ -922,9 +957,15 @@ export function buildContextRequest(
     contextWindowHint?: number;
   } = {},
 ): AIContextRequest {
+  const requestProfileId = profileIdForChatRequest(
+    action,
+    profileId,
+    context,
+    mentions,
+  );
   const effectiveContext =
     action === AIChatAction.AIChatActionAsk &&
-    (!profileId || profileId === minimalGeneralProfileId)
+    requestProfileId === minimalGeneralProfileId
       ? noContext
       : context;
   const activeFile = activeEditor.path;
@@ -1029,7 +1070,7 @@ export function buildContextRequest(
     sessionId,
     capability: "chat" as AIProviderCapability,
     action,
-    profileId,
+    profileId: requestProfileId,
     providerId: runtime.providerId || "",
     model: runtime.model || "",
     runtimeFamily: runtime.runtimeFamily || "",
@@ -1134,10 +1175,10 @@ function fallbackActionDescriptors(): AIChatActionDescriptor[] {
   return [
     {
       id: AIChatAction.AIChatActionAsk,
-      name: "Ask Project",
-      description: "Answer with visible project context only.",
+      name: "Chat",
+      description: "Chat with the default project context.",
       builtIn: true,
-      mayProposeTools: false,
+      mayProposeTools: true,
       expectsToolProposals: false,
       readOnlyIntent: true,
       showPlanStructure: false,
@@ -2773,7 +2814,7 @@ export function AIChatPanelContent({
         const startRequest: AIChatRunRequest & { reasoningEffort?: string } = {
           action,
           sessionId,
-          profileId,
+          profileId: request.profileId,
           workflowId,
           prompt,
           runtimeFamily: selectedRuntimeFamily,
@@ -4298,10 +4339,7 @@ export function AIChatPanelContent({
                     <EmptyState
                       providerReady={selectedProviderReady}
                       onRefresh={handleRefreshProviders}
-                      onStarterSelect={(action, prompt, profileId) => {
-                        dispatch({ type: "setAction", action, profileId });
-                        dispatch({ type: "setInput", input: prompt });
-                      }}
+                      sessionId={activeSessionId}
                     />
                   ) : (
                     <div className="ai-chat-transcript">
@@ -4357,7 +4395,6 @@ export function AIChatPanelContent({
                 <ChatComposer
                   canSend={canSend}
                   actions={composerActions}
-                  context={state.context}
                   contextPreview={contextPreview}
                   disabledReason={disabledReason}
                   input={state.input}
@@ -4368,7 +4405,6 @@ export function AIChatPanelContent({
                   consentPolicy={consentPolicy}
                   running={activeRunRunning}
                   selectedAction={state.selectedAction}
-                  selectedProfileId={state.selectedProfileId}
                   selectedMentions={selectedMentionsForActiveSession}
                   selectedModel={selectedModel}
                   selectedReasoningEffort={selectedReasoningEffort}
@@ -4380,7 +4416,6 @@ export function AIChatPanelContent({
                     dispatch({ type: "setAction", action, profileId })
                   }
                   onCancel={handleCancel}
-                  onContextToggle={handleContextToggle}
                   onInputChange={(input) =>
                     dispatch({ type: "setInput", input })
                   }

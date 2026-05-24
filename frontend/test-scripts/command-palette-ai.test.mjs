@@ -39,13 +39,31 @@ test("@ai without prompt returns mode suggestions state", async () => {
   assert.deepEqual(parseAICommandInput("@ai"), { kind: "empty" });
 });
 
-test("@ai default prompt maps to project ask workflow", async () => {
+test("@ai default prompt maps to chat workflow", async () => {
   const { parseAICommandInput } = await loadModule();
   const parsed = parseAICommandInput("@ai explain dispatcher");
   assert.equal(parsed.kind, "start");
   assert.equal(parsed.prompt, "explain dispatcher");
-  assert.equal(parsed.mode.slash, "/ask");
-  assert.equal(parsed.mode.workflowId, "slash-ask");
+  assert.equal(parsed.mode.slash, "/chat");
+  assert.equal(parsed.mode.workflowId, "slash-chat");
+});
+
+test("@ai legacy ask and general aliases still parse but stay hidden", async () => {
+  const { AI_WORKFLOW_MODES, parseAICommandInput } = await loadModule();
+  assert.deepEqual(
+    AI_WORKFLOW_MODES.map((mode) => mode.slash),
+    ["/chat", "/plan", "/debug", "/build", "/review"],
+  );
+
+  const ask = parseAICommandInput("@ai /ask explain dispatcher");
+  assert.equal(ask.kind, "start");
+  assert.equal(ask.mode.workflowId, "slash-ask");
+  assert.equal(ask.mode.profileId, "ask-readonly");
+
+  const general = parseAICommandInput("@ai /general hello");
+  assert.equal(general.kind, "start");
+  assert.equal(general.mode.workflowId, "slash-general");
+  assert.equal(general.mode.profileId, "minimal-general");
 });
 
 test("@ai slash workflow strips directive and preserves prompt", async () => {

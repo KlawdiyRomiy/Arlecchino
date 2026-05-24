@@ -6,14 +6,15 @@ func (s *Service) ListChatActions() []AIChatActionDescriptor {
 	return []AIChatActionDescriptor{
 		{
 			ID:               AIChatActionAsk,
-			Name:             "Ask Project",
-			Description:      "Answer a project-grounded question without proposing execution.",
+			Name:             "Chat",
+			Description:      "Chat with visible project context when context is selected.",
 			BuiltIn:          true,
+			MayProposeTools:  true,
 			ReadOnlyIntent:   true,
 			MutationAllowed:  false,
 			RequiresApproval: false,
 			ToolKinds:        []AIToolKind{AIToolKindContextRead},
-			ApprovalBoundary: "read-only context only",
+			ApprovalBoundary: "read-only context and inspection tools only",
 		},
 		{
 			ID:                   AIChatActionDebug,
@@ -74,7 +75,7 @@ func (s *Service) ListAgentProfiles() []AIAgentProfileDescriptor {
 	return []AIAgentProfileDescriptor{
 		{
 			ID:          minimalChatProfileID,
-			Name:        "Minimal General",
+			Name:        "Minimal Chat",
 			Description: "General conversation profile with no implicit project context or tools.",
 			BuiltIn:     true,
 			Enabled:     true,
@@ -85,8 +86,8 @@ func (s *Service) ListAgentProfiles() []AIAgentProfileDescriptor {
 		},
 		{
 			ID:          "ask-readonly",
-			Name:        "Ask Readonly",
-			Description: "Project-grounded answer profile with no mutation capability.",
+			Name:        "Chat Readonly",
+			Description: "Project-grounded chat profile with no mutation capability.",
 			BuiltIn:     true,
 			Enabled:     true,
 			Action:      AIChatActionAsk,
@@ -155,21 +156,11 @@ func (s *Service) ListAgentProfiles() []AIAgentProfileDescriptor {
 func (s *Service) ListPromptWorkflows() []AIPromptWorkflowDescriptor {
 	return []AIPromptWorkflowDescriptor{
 		{
-			ID:          "slash-general",
-			Name:        "General",
-			Slash:       "/general",
+			ID:          "slash-chat",
+			Name:        "Chat",
+			Slash:       "/chat",
 			Action:      AIChatActionAsk,
-			Description: "Ask without implicit project context.",
-			BuiltIn:     true,
-			ProfileID:   minimalChatProfileID,
-			ToolKinds:   []AIToolKind{},
-		},
-		{
-			ID:          "slash-ask",
-			Name:        "Ask",
-			Slash:       "/ask",
-			Action:      AIChatActionAsk,
-			Description: "Ask a project-grounded question without tool execution.",
+			Description: "Chat with visible project context.",
 			BuiltIn:     true,
 			ProfileID:   "ask-readonly",
 			ToolKinds:   []AIToolKind{AIToolKindContextRead},

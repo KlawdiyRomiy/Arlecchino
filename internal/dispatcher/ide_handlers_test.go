@@ -74,10 +74,20 @@ func TestDispatcher_AIQuerySuggestionsUseLiveLauncherModes(t *testing.T) {
 	if len(result.Items) == 0 {
 		t.Fatal("Dispatch(@ai) returned no AI suggestions")
 	}
+	hasChat := false
 	for _, item := range result.Items {
 		if item.ID == "ai-unavailable" || item.Title == "AI недоступен" {
 			t.Fatalf("stale unavailable AI suggestion returned: %#v", item)
 		}
+		if item.Title == "@ai /ask" || item.Title == "@ai /general" {
+			t.Fatalf("legacy AI alias leaked into suggestions: %#v", item)
+		}
+		if item.Title == "@ai /chat" {
+			hasChat = true
+		}
+	}
+	if !hasChat {
+		t.Fatalf("chat AI suggestion missing: %#v", result.Items)
 	}
 }
 

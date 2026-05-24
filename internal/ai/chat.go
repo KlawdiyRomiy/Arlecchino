@@ -238,6 +238,8 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	}
 	req = applyChatContextPolicy(req)
 	s.updateRun(runID, func(run *AIChatRun) {
+		run.ProfileID = req.ProfileID
+		run.WorkflowID = req.WorkflowID
 		run.MnemonicRequested = req.IncludeMnemonic || req.Context.IncludeMnemonic
 	})
 	req.Context.Capability = providers.CapabilityChat
@@ -354,7 +356,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		return
 	}
 	if req.Action == AIChatActionBuild && !toolset.ToolSupport {
-		s.finishRunError(runID, fmt.Sprintf("model %s on provider %s does not support agent tools required for Build mode; switch to a tool-capable local model such as qwen2.5-coder or use Ask/Plan mode", generationReq.Model, descriptor.ID))
+		s.finishRunError(runID, fmt.Sprintf("model %s on provider %s does not support agent tools required for Build mode; switch to a tool-capable local model such as qwen2.5-coder or use Chat/Plan mode", generationReq.Model, descriptor.ID))
 		return
 	}
 	if req.Action == AIChatActionBuild {
@@ -596,7 +598,7 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 		s.emitBufferedChatResponseToken(runID, finalResponse)
 	}
 	executedToolCalls := []chatExecutedToolCall{}
-	if chatActionUsesToolLoop(req.Action) {
+	if chatRequestUsesToolLoop(req) {
 		executedToolCalls = s.executeChatToolCalls(ctx, project, runID, req, toolCallRequests)
 		if req.Action == AIChatActionBuild {
 			if finalResponse, err := s.GetChatRun(project.ID, runID); err == nil {
@@ -765,8 +767,8 @@ func (s *Service) runChat(ctx context.Context, projectID string, runID string, r
 	s.mu.Unlock()
 }
 
-func chatActionUsesToolLoop(action AIChatAction) bool {
-	return action == AIChatActionBuild || action == AIChatActionPlan || action == AIChatActionDebug
+func chatRequestUsesToolLoop(req AIChatRunRequest) bool {
+	return chatRequestUsesProviderTools(req)
 }
 
 func modelRuntimeFamilyForDescriptor(requested string, descriptor AIProviderDescriptor) string {
@@ -785,8 +787,8 @@ func modelRuntimeFamilyForDescriptor(requested string, descriptor AIProviderDesc
 	return agents.RuntimeFamilyModelAgent
 }
 
-func chatActionAllowsContinuationTools(action AIChatAction) bool {
-	return action == AIChatActionBuild || action == AIChatActionPlan || action == AIChatActionDebug
+func chatRequestAllowsContinuationTools(req AIChatRunRequest) bool {
+	return chatRequestUsesProviderTools(req)
 }
 
 func (s *Service) emitBufferedChatResponseToken(runID string, response string) {
@@ -1185,7 +1187,7 @@ func (s *Service) continueChatRunAfterToolResults(ctx context.Context, project *
 	messages := buildChatToolContinuationMessages(baseReq.Messages, assistantText, toolResults)
 	var last chatToolContinuationOutcome
 	for round := 0; round < maxChatToolContinuationRounds; round++ {
-		allowMoreTools := chatActionAllowsContinuationTools(req.Action) && round < maxChatToolContinuationRounds-1
+		allowMoreTools := chatRequestAllowsContinuationTools(req) && round < maxChatToolContinuationRounds-1
 		continuationReq := baseReq
 		continuationReq.Prompt = ""
 		continuationReq.Messages = messages
@@ -2094,18 +2096,62 @@ func validChatAction(action AIChatAction) bool {
 	}
 }
 
+func hiddenPromptWorkflowAliases() []AIPromptWorkflowDescriptor {
+	return []AIPromptWorkflowDescriptor{
+		{
+			ID:          "slash-ask",
+			Name:        "Chat",
+			Slash:       "/ask",
+			Action:      AIChatActionAsk,
+			Description: "Legacy alias for project-grounded Chat.",
+			BuiltIn:     true,
+			ProfileID:   "ask-readonly",
+			ToolKinds:   []AIToolKind{AIToolKindContextRead},
+		},
+		{
+			ID:          "slash-general",
+			Name:        "Chat",
+			Slash:       "/general",
+			Action:      AIChatActionAsk,
+			Description: "Legacy alias for Chat without implicit project context.",
+			BuiltIn:     true,
+			ProfileID:   minimalChatProfileID,
+			ToolKinds:   []AIToolKind{},
+		},
+	}
+}
+
+func (s *Service) promptWorkflowRoutes() []AIPromptWorkflowDescriptor {
+	workflows := append([]AIPromptWorkflowDescriptor{}, s.ListPromptWorkflows()...)
+	workflows = append(workflows, hiddenPromptWorkflowAliases()...)
+	return workflows
+}
+
+func promptStartsWithWorkflowSlash(prompt string, slash string) bool {
+	prompt = strings.TrimSpace(prompt)
+	slash = strings.TrimSpace(slash)
+	if slash == "" || !strings.HasPrefix(prompt, slash) {
+		return false
+	}
+	if len(prompt) == len(slash) {
+		return true
+	}
+	next, _ := utf8.DecodeRuneInString(prompt[len(slash):])
+	return unicode.IsSpace(next)
+}
+
 func (s *Service) resolveChatRunRequest(req AIChatRunRequest) AIChatRunRequest {
 	req.Prompt = strings.TrimSpace(req.Prompt)
 	req.WorkflowID = strings.TrimSpace(req.WorkflowID)
 	req.ProfileID = strings.TrimSpace(req.ProfileID)
 	req.ReasoningEffort = normalizeReasoningEffort(req.ReasoningEffort)
-	for _, workflow := range s.ListPromptWorkflows() {
+	for _, workflow := range s.promptWorkflowRoutes() {
 		if req.WorkflowID != "" && workflow.ID == req.WorkflowID {
 			req.Action = workflow.Action
 			req.ProfileID = firstNonEmpty(req.ProfileID, workflow.ProfileID)
 			break
 		}
-		if workflow.Slash != "" && strings.HasPrefix(req.Prompt, workflow.Slash) {
+		if promptStartsWithWorkflowSlash(req.Prompt, workflow.Slash) {
 			req.WorkflowID = workflow.ID
 			req.Action = workflow.Action
 			req.ProfileID = firstNonEmpty(req.ProfileID, workflow.ProfileID)
@@ -2210,7 +2256,7 @@ func chatModeBoundaryPrompt(req AIChatRunRequest) string {
 	label := chatActionLabel(req.Action)
 	switch req.Action {
 	case AIChatActionAsk:
-		return "Selected chat mode: " + label + ".\nMode boundary: Ask Project is read-only and context-only. You may use only the user message, explicit attachments, and already-provided project context. Do not request tool use, terminal checks, file writes, MCP actions, or memory mutation."
+		return "Selected chat mode: " + label + ".\nMode boundary: Chat is read-only. Use only the user message, explicit attachments, provided project context, and available read-only inspection tools. Do not request terminal checks, file writes, MCP actions, subagents, or memory mutation."
 	case AIChatActionPlan:
 		return "Selected chat mode: " + label + ".\nMode boundary: Plan is read-only. You may gather evidence with diagnostics, bounded file reads, workspace search, and git preview when tools are available, then stop at an implementation plan. Do not create patch artifacts, write files, execute terminal commands, call MCP, or mutate Mnemonic."
 	case AIChatActionDebug:
@@ -2239,7 +2285,7 @@ func chatContinuityBoundaryPrompt(req AIChatRunRequest) string {
 func chatActionLabel(action AIChatAction) string {
 	switch action {
 	case AIChatActionAsk:
-		return "Ask Project"
+		return "Chat"
 	case AIChatActionPlan:
 		return "Plan"
 	case AIChatActionBuild:
@@ -2497,7 +2543,7 @@ func systemPromptForAction(action AIChatAction) string {
 	common := chatBaseSystemPrompt()
 	switch action {
 	case AIChatActionAsk:
-		return common + " In Ask Project mode, answer the user's question directly using only the user message, explicit attachments, and provided project context. Ask Project is context-only: do not request tools, do not propose command execution as completed, and do not claim that any file, terminal, integration, memory, or subagent action has run."
+		return common + " In Chat mode, answer the user's question directly using the user message, explicit attachments, provided project context, and available read-only inspection tools. Use interaction.question only when one user decision materially changes the answer; do not ask by default or for routine confirmation. Use diagnostics.read, workspace.grep, file.read_range, git.preview, memory.search, and memory.context only when they are available and needed for a grounded answer. Do not request terminal execution, file writes, MCP actions, subagents, or memory mutation, and do not claim that any file, terminal, integration, memory, or subagent action has run."
 	case AIChatActionDebug:
 		return common + " In Debug mode, investigate concrete failures and produce evidence-backed findings, likely root causes, and verification steps. Use interaction.question only when one user decision materially changes the diagnostic path; do not ask by default or for routine confirmation. Provide one to four options with hover descriptions. Use diagnostics.read, workspace.grep, file.read_range, git.preview, and terminal.preview when available to gather or propose diagnostic evidence. Do not write files, create patch artifacts, or describe mutations as already executed."
 	case AIChatActionBuild:
@@ -2603,7 +2649,7 @@ func chatToolPolicySummaryPrompt(req AIChatRunRequest) string {
 	}
 	switch req.Action {
 	case AIChatActionAsk:
-		return "Tool policy summary: no tools are available in Ask Project mode."
+		return "Tool policy summary: Chat may use read-only inspection tools when project context is selected; mutation, terminal execution, MCP actions, subagents, and memory writes are unavailable."
 	case AIChatActionPlan:
 		return "Tool policy summary: only read-only inspection tools may be proposed when available; mutation is unavailable."
 	case AIChatActionDebug:

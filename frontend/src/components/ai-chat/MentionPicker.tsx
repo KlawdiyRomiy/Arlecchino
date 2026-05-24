@@ -21,6 +21,8 @@ interface MentionPickerProps {
   candidates: AIChatMentionCandidate[];
   selectedIndex: number;
   loading: boolean;
+  title?: string;
+  ariaLabel?: string;
   onSelect: (candidate: AIChatMentionCandidate) => void;
   onHover: (index: number) => void;
 }
@@ -67,6 +69,8 @@ export function MentionPicker({
   candidates,
   selectedIndex,
   loading,
+  title,
+  ariaLabel,
   onSelect,
   onHover,
 }: MentionPickerProps) {
@@ -93,7 +97,8 @@ export function MentionPicker({
           data-testid="ai-chat-mention-picker"
           role="listbox"
           aria-label={
-            trigger === "/" ? "Command suggestions" : "Mention suggestions"
+            ariaLabel ??
+            (trigger === "/" ? "Command suggestions" : "Mention suggestions")
           }
           onMouseDown={(event) => {
             event.preventDefault();
@@ -115,7 +120,7 @@ export function MentionPicker({
           }}
         >
           <div className="ai-chat-popover__title">
-            {trigger === "/" ? "Commands" : "Mentions"}
+            {title ?? (trigger === "/" ? "Commands" : "Mentions")}
           </div>
           {loading ? (
             <div className="ai-chat-mention-picker__empty">Loading...</div>

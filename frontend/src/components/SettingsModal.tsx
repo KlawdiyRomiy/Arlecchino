@@ -2698,8 +2698,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 Default context
               </div>
               <div className="mt-1 text-[12px] leading-5 text-[var(--text-muted)]">
-                These defaults seed the composer context chips and the compact +
-                Context menu.
+                These defaults seed AI Chat context and can be adjusted from AI
+                Chat settings.
               </div>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">

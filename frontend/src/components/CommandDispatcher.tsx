@@ -204,18 +204,16 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
           source: "local",
           paletteActionId: "ai.newChat",
         },
-        ...AI_WORKFLOW_MODES.filter((mode) => mode.slash !== "/general").map(
-          (mode) => ({
-            id: `ai-select-${mode.action}`,
-            icon: <Sparkles size={16} />,
-            title: `AI: ${mode.label}`,
-            subtitle: mode.description,
-            action: "palette",
-            source: "local" as const,
-            paletteActionId: "ai.selectAction" as const,
-            palettePayload: { action: mode.action },
-          }),
-        ),
+        ...AI_WORKFLOW_MODES.map((mode) => ({
+          id: `ai-select-${mode.action}`,
+          icon: <Sparkles size={16} />,
+          title: `AI: ${mode.label}`,
+          subtitle: mode.description,
+          action: "palette",
+          source: "local" as const,
+          paletteActionId: "ai.selectAction" as const,
+          palettePayload: { action: mode.action },
+        })),
         {
           id: "ai-pending-approvals",
           icon: <AlertCircle size={16} />,
