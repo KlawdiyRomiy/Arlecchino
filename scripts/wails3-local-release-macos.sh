@@ -390,7 +390,7 @@ validate_runtime_assets_in_app() {
       echo "ERROR: required packaged runtime asset is missing, unreadable, or empty: $path" >&2
       return 1
     fi
-    if ! cmp -s "$source" "$path"; then
+    if ! /usr/bin/cmp -s "$source" "$path"; then
       echo "ERROR: packaged runtime asset does not match source asset: $path" >&2
       return 1
     fi

@@ -139,7 +139,7 @@ copy_runtime_assets() {
       echo "ERROR: packaged runtime asset is missing, unreadable, or empty: $dest" >&2
       exit 1
     fi
-    if ! cmp -s "$source" "$dest"; then
+    if ! /usr/bin/cmp -s "$source" "$dest"; then
       echo "ERROR: packaged runtime asset differs from source: $asset" >&2
       exit 1
     fi
