@@ -295,6 +295,8 @@ SMOKE_STATUS="skipped"
 SMOKE_EXIT="0"
 SMOKE_LOG="$RELEASE_DIR/logs/release-smoke.log"
 SMOKE_REPORT="$RELEASE_DIR/release-smoke-report.json"
+DMG_RUNTIME_ASSETS_STATUS="skipped"
+DMG_RUNTIME_ASSETS_REASON=""
 
 if [[ -n "$UPDATE_PRIVATE_KEY" && -z "$UPDATE_PUBLIC_KEY" ]]; then
   UPDATE_PUBLIC_KEY="$(node - "$UPDATE_PRIVATE_KEY" <<'NODE'
@@ -373,6 +375,63 @@ run_create_dmg() {
   echo "$canonical_path"
 }
 
+validate_runtime_assets_in_app() {
+  local app_bundle="$1"
+  local asset path source
+  local runtime_assets=(arle_model.onnx arle_tokenizer.json)
+  for asset in "${runtime_assets[@]}"; do
+    source="$ROOT_DIR/assets/$asset"
+    path="$app_bundle/Contents/Resources/assets/$asset"
+    if [[ ! -r "$source" || ! -s "$source" ]]; then
+      echo "ERROR: required source runtime asset is missing, unreadable, or empty: $source" >&2
+      return 1
+    fi
+    if [[ ! -r "$path" || ! -s "$path" ]]; then
+      echo "ERROR: required packaged runtime asset is missing, unreadable, or empty: $path" >&2
+      return 1
+    fi
+    if ! cmp -s "$source" "$path"; then
+      echo "ERROR: packaged runtime asset does not match source asset: $path" >&2
+      return 1
+    fi
+  done
+}
+
+validate_dmg_runtime_assets() {
+  local dmg_path="$1"
+  local mount_dir="$RELEASE_DIR/dmg-mount"
+  rm -rf "$mount_dir"
+  mkdir -p "$mount_dir"
+  if ! hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$dmg_path" >/dev/null; then
+    DMG_RUNTIME_ASSETS_STATUS="failed"
+    DMG_RUNTIME_ASSETS_REASON="failed to attach DMG"
+    rm -rf "$mount_dir"
+    return 1
+  fi
+
+  set +e
+  validate_runtime_assets_in_app "$mount_dir/$APP_NAME.app"
+  local validate_exit="$?"
+  hdiutil detach "$mount_dir" >/dev/null 2>&1
+  local detach_exit="$?"
+  set -e
+  rm -rf "$mount_dir"
+
+  if [[ "$validate_exit" != "0" ]]; then
+    DMG_RUNTIME_ASSETS_STATUS="failed"
+    DMG_RUNTIME_ASSETS_REASON="mounted DMG app is missing required runtime assets"
+    return "$validate_exit"
+  fi
+  if [[ "$detach_exit" != "0" ]]; then
+    DMG_RUNTIME_ASSETS_STATUS="failed"
+    DMG_RUNTIME_ASSETS_REASON="failed to detach DMG mount"
+    return "$detach_exit"
+  fi
+  DMG_RUNTIME_ASSETS_STATUS="passed"
+  DMG_RUNTIME_ASSETS_REASON="mounted DMG app contains required runtime assets"
+  return 0
+}
+
 if [[ "$ARCH_TARGET" == "universal" ]]; then
   ARM64_BINARY="$RELEASE_DIR/bin/$APP_NAME-arm64"
   AMD64_BINARY="$RELEASE_DIR/bin/$APP_NAME-x86_64"
@@ -396,6 +455,8 @@ env ARLE_WAILS3_MIN_MACOS="$MIN_MACOS_VERSION" \
   --build "$BUILD_NUMBER" \
   --min-macos "$MIN_MACOS_VERSION" \
   --sign "$SIGN_MODE"
+
+validate_runtime_assets_in_app "$APP_BUNDLE"
 
 COPYFILE_DISABLE=1 ditto --norsrc --noextattr --noqtn --noacl -c -k --keepParent "$APP_BUNDLE" "$ZIP_PATH"
 
@@ -424,6 +485,7 @@ fi
 
 if [[ "$CREATE_DMG" == "1" ]]; then
   DMG_PATH="$(run_create_dmg "$RELEASE_DIR/artifacts")"
+  validate_dmg_runtime_assets "$DMG_PATH"
 fi
 
 if [[ "$RUN_SMOKE" == "1" ]]; then
@@ -467,7 +529,10 @@ export ARLE_RELEASE_APP_BUNDLE="$APP_BUNDLE"
 export ARLE_RELEASE_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 export ARLE_RELEASE_ZIP_PATH="$ZIP_PATH"
 export ARLE_RELEASE_DMG_PATH="$DMG_PATH"
+export ARLE_RELEASE_DMG_RUNTIME_ASSETS_STATUS="$DMG_RUNTIME_ASSETS_STATUS"
+export ARLE_RELEASE_DMG_RUNTIME_ASSETS_REASON="$DMG_RUNTIME_ASSETS_REASON"
 export ARLE_RELEASE_CREATE_DMG="$CREATE_DMG"
+export ARLE_RELEASE_ROOT_DIR="$ROOT_DIR"
 export ARLE_RELEASE_RUN_SMOKE="$RUN_SMOKE"
 export ARLE_RELEASE_SMOKE_STATUS="$SMOKE_STATUS"
 export ARLE_RELEASE_SMOKE_EXIT="$SMOKE_EXIT"
@@ -487,6 +552,8 @@ export ARLE_RELEASE_UPDATE_PUBLIC_KEY_OUT="$UPDATE_PUBLIC_KEY_OUT"
 export ARLE_RELEASE_UPDATE_ARTIFACT_URL="$UPDATE_ARTIFACT_URL"
 node <<'NODE'
 const fs = require("fs");
+const crypto = require("crypto");
+const path = require("path");
 const { spawnSync } = require("child_process");
 
 const env = process.env;
@@ -502,7 +569,47 @@ const readPlist = (appBundle) => {
 };
 const exists = (path) => Boolean(path && fs.existsSync(path));
 const statSize = (path) => exists(path) ? fs.statSync(path).size : 0;
-const basename = (path) => path ? require("path").basename(path) : "";
+const basename = (value) => value ? path.basename(value) : "";
+const sha256 = (value) => {
+  try {
+    return crypto.createHash("sha256").update(fs.readFileSync(value)).digest("hex");
+  } catch {
+    return "";
+  }
+};
+const runtimeAssetsForApp = (appBundle) => {
+  const names = ["arle_model.onnx", "arle_tokenizer.json"];
+  const assetsDir = path.join(appBundle || "", "Contents", "Resources", "assets");
+  const files = names.map((name) => {
+    const filePath = path.join(assetsDir, name);
+    const sourcePath = path.join(env.ARLE_RELEASE_ROOT_DIR || "", "assets", name);
+    const packagedSha256 = sha256(filePath);
+    const sourceSha256 = sha256(sourcePath);
+    let readable = false;
+    try {
+      fs.accessSync(filePath, fs.constants.R_OK);
+      readable = true;
+    } catch {
+      readable = false;
+    }
+    return {
+      name,
+      path: filePath,
+      exists: exists(filePath),
+      readable,
+      size: statSize(filePath),
+      sha256: packagedSha256,
+      sourcePath,
+      sourceSha256,
+      matchesSource: Boolean(packagedSha256 && sourceSha256 && packagedSha256 === sourceSha256),
+    };
+  });
+  return {
+    assetsDir,
+    files,
+    passed: files.every((file) => file.exists && file.readable && file.size > 0 && file.sha256 && file.matchesSource),
+  };
+};
 const parseArchs = (lipoInfo) => {
   const archs = new Set();
   const matches = [...lipoInfo.matchAll(/architecture(?:s)?:? ([A-Za-z0-9_ ]+)/g)];
@@ -606,8 +713,13 @@ const report = {
       exists: exists(env.ARLE_RELEASE_DMG_PATH),
       size: statSize(env.ARLE_RELEASE_DMG_PATH),
       tool: env.ARLE_RELEASE_CREATE_DMG === "1" ? "sindresorhus/create-dmg" : "",
+      runtimeAssets: {
+        status: env.ARLE_RELEASE_DMG_RUNTIME_ASSETS_STATUS || "skipped",
+        reason: env.ARLE_RELEASE_DMG_RUNTIME_ASSETS_REASON || "",
+      },
     },
   },
+  runtimeAssets: runtimeAssetsForApp(env.ARLE_RELEASE_APP_BUNDLE),
   autoUpdate: {
     channel: env.ARLE_RELEASE_UPDATE_CHANNEL,
     manifestUrl: env.ARLE_RELEASE_UPDATE_MANIFEST_URL || "",
@@ -644,6 +756,14 @@ const report = {
 };
 fs.mkdirSync(require("path").dirname(env.ARLE_RELEASE_REPORT_PATH), { recursive: true });
 fs.writeFileSync(env.ARLE_RELEASE_REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
+if (!report.runtimeAssets.passed) {
+  console.error(JSON.stringify(report, null, 2));
+  process.exit(1);
+}
+if (report.artifacts.dmg.requested && report.artifacts.dmg.runtimeAssets.status !== "passed") {
+  console.error(JSON.stringify(report, null, 2));
+  process.exit(1);
+}
 if (report.smoke.requested && report.smoke.status !== "passed") {
   console.error(JSON.stringify(report, null, 2));
   process.exit(1);

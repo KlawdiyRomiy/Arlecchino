@@ -89,9 +89,35 @@ func findAssetsDir() string {
 	exe, err := os.Executable()
 	log.Printf("[ARLE] findAssetsDir: executable=%s err=%v", exe, err)
 
-	if err == nil {
-		exeDir := filepath.Dir(exe)
-		log.Printf("[ARLE] findAssetsDir: exeDir=%s", exeDir)
+	cwd, _ := os.Getwd()
+	log.Printf("[ARLE] findAssetsDir: cwd=%s", cwd)
+	homeDir, _ := os.UserHomeDir()
+
+	return resolveAssetsDir(assetsDirLookup{
+		exePath: exe,
+		cwd:     cwd,
+		homeDir: homeDir,
+		goos:    runtime.GOOS,
+	}, func(format string, args ...any) {
+		log.Printf(format, args...)
+	})
+}
+
+type assetsDirLookup struct {
+	exePath string
+	cwd     string
+	homeDir string
+	goos    string
+}
+
+func resolveAssetsDir(lookup assetsDirLookup, logf func(string, ...any)) string {
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+
+	if lookup.exePath != "" {
+		exeDir := filepath.Dir(lookup.exePath)
+		logf("[ARLE] findAssetsDir: exeDir=%s", exeDir)
 
 		candidates := []string{
 			filepath.Join(exeDir, "assets"),
@@ -99,53 +125,49 @@ func findAssetsDir() string {
 			filepath.Join(exeDir, "..", "Resources", "assets"),
 		}
 
-		if runtime.GOOS == "darwin" {
+		if lookup.goos == "darwin" {
 			candidates = append(candidates, filepath.Join(exeDir, "..", "Resources"))
 		}
 
 		for _, dir := range candidates {
 			if hasArleModel(dir) {
-				log.Printf("[ARLE] findAssetsDir: found exeDir candidate with model %s", dir)
+				logf("[ARLE] findAssetsDir: found exeDir candidate with model %s", dir)
 				return dir
 			}
 		}
 	}
 
-	cwd, _ := os.Getwd()
-	log.Printf("[ARLE] findAssetsDir: cwd=%s", cwd)
-
 	candidates := []string{
-		filepath.Join(cwd, "assets"),
-		filepath.Join(cwd, "..", "assets"),
-		filepath.Join(cwd, "..", "..", "assets"),
-		filepath.Join(cwd, "..", "..", "..", "assets"),
-		filepath.Join(cwd, "arlecchino", "assets"),
-		filepath.Join(cwd, "..", "arlecchino", "assets"),
+		filepath.Join(lookup.cwd, "assets"),
+		filepath.Join(lookup.cwd, "..", "assets"),
+		filepath.Join(lookup.cwd, "..", "..", "assets"),
+		filepath.Join(lookup.cwd, "..", "..", "..", "assets"),
+		filepath.Join(lookup.cwd, "arlecchino", "assets"),
+		filepath.Join(lookup.cwd, "..", "arlecchino", "assets"),
 	}
 
 	for _, dir := range candidates {
 		if hasArleModel(dir) {
-			log.Printf("[ARLE] findAssetsDir: found cwd candidate with model %s", dir)
+			logf("[ARLE] findAssetsDir: found cwd candidate with model %s", dir)
 			return dir
 		}
 	}
 
-	if found := findAssetsDirByMarker(cwd); found != "" {
-		log.Printf("[ARLE] findAssetsDir: found by marker %s", found)
+	if found := findAssetsDirByMarker(lookup.cwd); found != "" {
+		logf("[ARLE] findAssetsDir: found by marker %s", found)
 		return found
 	}
 
-	if exe != "" {
-		exeDir := filepath.Dir(exe)
+	if lookup.exePath != "" {
+		exeDir := filepath.Dir(lookup.exePath)
 		if found := findAssetsDirByMarker(exeDir); found != "" {
-			log.Printf("[ARLE] findAssetsDir: found by marker from exeDir %s", found)
+			logf("[ARLE] findAssetsDir: found by marker from exeDir %s", found)
 			return found
 		}
 	}
 
-	homeDir, _ := os.UserHomeDir()
-	fallback := filepath.Join(homeDir, ".arlecchino", "models")
-	log.Printf("[ARLE] findAssetsDir: using fallback %s", fallback)
+	fallback := filepath.Join(lookup.homeDir, ".arlecchino", "models")
+	logf("[ARLE] findAssetsDir: using fallback %s", fallback)
 	return fallback
 }
 

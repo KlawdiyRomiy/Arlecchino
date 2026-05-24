@@ -1,6 +1,7 @@
 package app
 
 import (
+	"arlecchino/internal/indexer/brain"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -40,6 +41,7 @@ type Wails3PackagedSmokeReport struct {
 	SecondInstance        Wails3SmokeSecondInstanceProbe `json:"secondInstance,omitempty"`
 	WindowLease           Wails3SmokeWindowLeaseSnapshot `json:"windowLease"`
 	AppBundle             Wails3SmokeAppBundleSnapshot   `json:"appBundle,omitempty"`
+	RuntimeAssets         Wails3SmokeRuntimeAssetsProbe  `json:"runtimeAssets"`
 	Checks                []Wails3SmokeCheck             `json:"checks"`
 }
 
@@ -108,6 +110,22 @@ type Wails3SmokeAppBundleSnapshot struct {
 	RegisteredOSHandlers bool                  `json:"registeredOSHandlers"`
 	Status               ShellCapabilityStatus `json:"status"`
 	Reason               string                `json:"reason"`
+}
+
+type Wails3SmokeRuntimeAssetsProbe struct {
+	AssetsDir               string                           `json:"assetsDir"`
+	Model                   Wails3SmokeRuntimeAssetFileProbe `json:"model"`
+	Tokenizer               Wails3SmokeRuntimeAssetFileProbe `json:"tokenizer"`
+	UsingAppBundleResources bool                             `json:"usingAppBundleResources"`
+	Status                  ShellCapabilityStatus            `json:"status"`
+	Reason                  string                           `json:"reason"`
+}
+
+type Wails3SmokeRuntimeAssetFileProbe struct {
+	Path     string `json:"path"`
+	Exists   bool   `json:"exists"`
+	Readable bool   `json:"readable"`
+	Size     int64  `json:"size"`
 }
 
 type Wails3SmokeCheck struct {
@@ -226,6 +244,7 @@ func buildWails3PackagedSmokeReport(
 	secondInstance := buildWails3SmokeSecondInstanceProbe(app, workingDir, singleInstance)
 	windowLease := buildWails3SmokeWindowLeaseSnapshot(app)
 	appBundle := buildWails3SmokeAppBundleSnapshot()
+	runtimeAssets := buildWails3SmokeRuntimeAssetsProbe(appBundle)
 
 	return Wails3PackagedSmokeReport{
 		Version:               wails3PackagedSmokeVersion,
@@ -246,6 +265,7 @@ func buildWails3PackagedSmokeReport(
 		SecondInstance:        secondInstance,
 		WindowLease:           windowLease,
 		AppBundle:             appBundle,
+		RuntimeAssets:         runtimeAssets,
 		Checks: buildWails3PackagedSmokeChecks(
 			shellCapabilities,
 			packagedOS,
@@ -256,6 +276,7 @@ func buildWails3PackagedSmokeReport(
 			secondInstance,
 			windowLease,
 			appBundle,
+			runtimeAssets,
 			hasOpenIntent,
 		),
 	}
@@ -555,6 +576,71 @@ func buildWails3SmokeAppBundleSnapshot() Wails3SmokeAppBundleSnapshot {
 	}
 }
 
+func buildWails3SmokeRuntimeAssetsProbe(appBundle Wails3SmokeAppBundleSnapshot) Wails3SmokeRuntimeAssetsProbe {
+	config := brain.DefaultArleConfig()
+	assetsDir := filepath.Dir(config.ModelPath)
+	if config.ModelPath == "" {
+		assetsDir = ""
+	}
+	model := probeWails3RuntimeAsset(filepath.Join(assetsDir, "arle_model.onnx"))
+	tokenizer := probeWails3RuntimeAsset(filepath.Join(assetsDir, "arle_tokenizer.json"))
+
+	expectedBundleAssetsDir := ""
+	usingBundleResources := false
+	if appBundle.Path != "" {
+		expectedBundleAssetsDir = filepath.Clean(filepath.Join(appBundle.Path, "Contents", "Resources", "assets"))
+		usingBundleResources = canonicalSmokePath(assetsDir) == canonicalSmokePath(expectedBundleAssetsDir)
+	}
+
+	assetsReady := model.Exists && model.Readable && model.Size > 0 &&
+		tokenizer.Exists && tokenizer.Readable && tokenizer.Size > 0
+	status := ShellCapabilityAvailable
+	reason := "Runtime assets are present and readable."
+	if !assetsReady {
+		status = ShellCapabilityUnavailable
+		reason = "Runtime assets are missing, unreadable, or empty."
+	} else if appBundle.LaunchMode == "packaged-app" && !usingBundleResources {
+		status = ShellCapabilityUnavailable
+		reason = "Packaged app did not resolve runtime assets from Contents/Resources/assets."
+	}
+
+	return Wails3SmokeRuntimeAssetsProbe{
+		AssetsDir:               filepath.Clean(assetsDir),
+		Model:                   model,
+		Tokenizer:               tokenizer,
+		UsingAppBundleResources: usingBundleResources,
+		Status:                  status,
+		Reason:                  reason,
+	}
+}
+
+func probeWails3RuntimeAsset(path string) Wails3SmokeRuntimeAssetFileProbe {
+	probe := Wails3SmokeRuntimeAssetFileProbe{Path: filepath.Clean(path)}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return probe
+	}
+	probe.Exists = true
+	probe.Size = info.Size()
+	file, err := os.Open(path)
+	if err == nil {
+		probe.Readable = true
+		_ = file.Close()
+	}
+	return probe
+}
+
+func canonicalSmokePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return filepath.Clean(resolved)
+	}
+	return filepath.Clean(path)
+}
+
 func buildWails3PackagedSmokeChecks(
 	shell ShellCapabilitiesSnapshot,
 	packaged PackagedOSIntegrationSnapshot,
@@ -565,6 +651,7 @@ func buildWails3PackagedSmokeChecks(
 	secondInstance Wails3SmokeSecondInstanceProbe,
 	windowLease Wails3SmokeWindowLeaseSnapshot,
 	appBundle Wails3SmokeAppBundleSnapshot,
+	runtimeAssets Wails3SmokeRuntimeAssetsProbe,
 	hasOpenIntent bool,
 ) []Wails3SmokeCheck {
 	checks := []Wails3SmokeCheck{
@@ -622,6 +709,12 @@ func buildWails3PackagedSmokeChecks(
 			Status:  ShellCapabilityExperimental,
 			Passed:  windowLease.Available,
 			Message: windowLease.Reason,
+		},
+		{
+			ID:      "runtime-assets",
+			Status:  runtimeAssets.Status,
+			Passed:  runtimeAssets.Status == ShellCapabilityAvailable,
+			Message: runtimeAssets.Reason,
 		},
 	}
 	if appBundle.LaunchMode == "packaged-app" {

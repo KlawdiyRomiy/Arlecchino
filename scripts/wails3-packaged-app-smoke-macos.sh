@@ -25,6 +25,7 @@ OUTPUT="$TMP_ROOT/bin/Arlecchino-v3"
 APP_BUNDLE="$TMP_ROOT/Arlecchino-v3.app"
 REPORT="$TMP_ROOT/report.json"
 FIXTURE_DIR="$TMP_ROOT/fixture"
+SMOKE_HOME="$TMP_ROOT/home"
 BUNDLE_ID="${ARLE_WAILS3_APP_SMOKE_BUNDLE_ID:-dev.arlecchino.v3smoke}"
 REGISTER_OS_HANDLERS="0"
 SIGN_MODE="${ARLE_WAILS3_APP_SMOKE_SIGN_MODE:-adhoc}"
@@ -87,7 +88,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-mkdir -p "$(dirname "$OUTPUT")" "$FIXTURE_DIR" "$(dirname "$REPORT")"
+mkdir -p "$(dirname "$OUTPUT")" "$FIXTURE_DIR" "$(dirname "$REPORT")" "$SMOKE_HOME"
 printf 'package main\n' > "$FIXTURE_DIR/main.go"
 printf '# smoke fixture\n' > "$FIXTURE_DIR/README.md"
 
@@ -110,6 +111,7 @@ if [[ "$REGISTER_OS_HANDLERS" == "1" ]]; then
 fi
 
 APP_ENV_ARGS=(
+  --env "HOME=$SMOKE_HOME"
   --env "ARLECCHINO_PACKAGED_BUILD=${ARLECCHINO_PACKAGED_BUILD:-1}"
   --env "ARLECCHINO_ENABLE_PACKAGED_OS_SPIKE=${ARLECCHINO_ENABLE_PACKAGED_OS_SPIKE:-1}"
   --env "ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE=${ARLECCHINO_ENABLE_SINGLE_INSTANCE_SPIKE:-0}"
@@ -156,6 +158,7 @@ fi
 
 node -e '
 const fs = require("fs");
+const path = require("path");
 const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
 const fail = (message) => {
   console.error(message);
@@ -170,6 +173,24 @@ if (report.appBundle.bundleId !== process.argv[2]) {
 }
 if (!report.appBundle.path || !report.appBundle.path.endsWith(".app")) {
   fail("appBundle.path must point to a .app");
+}
+const runtimeAssets = report.runtimeAssets || {};
+const realpath = (value) => fs.realpathSync(value);
+const expectedAssetsDir = path.join(realpath(report.appBundle.path), "Contents", "Resources", "assets");
+if (realpath(runtimeAssets.assetsDir) !== expectedAssetsDir) {
+  fail(`runtime assets resolved from ${runtimeAssets.assetsDir}, want ${expectedAssetsDir}`);
+}
+if (!runtimeAssets.usingAppBundleResources) {
+  fail("runtime assets must resolve from app bundle resources");
+}
+for (const [label, fileName] of [["model", "arle_model.onnx"], ["tokenizer", "arle_tokenizer.json"]]) {
+  const probe = runtimeAssets[label] || {};
+  if (!probe.exists || !probe.readable || !probe.size) {
+    fail(`runtime asset ${label} is missing, unreadable, or empty`);
+  }
+  if (realpath(probe.path) !== path.join(expectedAssetsDir, fileName)) {
+    fail(`runtime asset ${label} path = ${probe.path}`);
+  }
 }
 ' "$REPORT" "$BUNDLE_ID"
 

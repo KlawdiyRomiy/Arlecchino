@@ -671,6 +671,9 @@ func validateStagedAppBundle(appPath string, verifyCodesign func(string) error) 
 	} else if stat.Mode()&0o111 == 0 {
 		return fmt.Errorf("staged Arlecchino.app executable is not executable")
 	}
+	if err := validatePackagedRuntimeAssets(appPath); err != nil {
+		return err
+	}
 	if version := readPlistRaw(infoPlist, "CFBundleShortVersionString"); strings.TrimSpace(version) == "" {
 		return fmt.Errorf("staged Arlecchino.app has no CFBundleShortVersionString")
 	}
@@ -681,6 +684,28 @@ func validateStagedAppBundle(appPath string, verifyCodesign func(string) error) 
 		if err := verifyCodesign(appPath); err != nil {
 			return fmt.Errorf("staged Arlecchino.app codesign verification failed: %w", err)
 		}
+	}
+	return nil
+}
+
+func validatePackagedRuntimeAssets(appPath string) error {
+	for _, name := range []string{"arle_model.onnx", "arle_tokenizer.json"} {
+		path := filepath.Join(appPath, "Contents", "Resources", "assets", name)
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("staged Arlecchino.app is missing runtime asset %s: %w", name, err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("staged Arlecchino.app runtime asset %s is a directory", name)
+		}
+		if info.Size() == 0 {
+			return fmt.Errorf("staged Arlecchino.app runtime asset %s is empty", name)
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("staged Arlecchino.app runtime asset %s is unreadable: %w", name, err)
+		}
+		_ = file.Close()
 	}
 	return nil
 }

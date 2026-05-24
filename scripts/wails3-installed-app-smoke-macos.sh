@@ -88,13 +88,29 @@ if [[ -f "$INFO_PLIST" ]]; then
   fi
 fi
 
+find_app_processes() {
+  local exe="$1"
+  if [[ -z "$exe" ]]; then
+    return 0
+  fi
+  ps -axo pid=,ppid=,rss=,command= | awk -v exe="$exe" '
+    {
+      command = $0
+      sub(/^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+/, "", command)
+      if (command == exe || index(command, exe " ") == 1) {
+        print
+      }
+    }
+  '
+}
+
 LAUNCHED_BY_SMOKE=0
 if [[ "$SHOULD_LAUNCH" == "1" && -d "$APP_BUNDLE" ]]; then
-  if [[ -z "$APP_EXECUTABLE" || -z "$(pgrep -f "$APP_EXECUTABLE" 2>/dev/null || true)" ]]; then
+  if [[ -z "$APP_EXECUTABLE" || -z "$(find_app_processes "$APP_EXECUTABLE" 2>/dev/null || true)" ]]; then
     open -n "$APP_BUNDLE"
     LAUNCHED_BY_SMOKE=1
     for _ in {1..40}; do
-      if [[ -n "$APP_EXECUTABLE" && -n "$(pgrep -f "$APP_EXECUTABLE" 2>/dev/null || true)" ]]; then
+      if [[ -n "$APP_EXECUTABLE" && -n "$(find_app_processes "$APP_EXECUTABLE" 2>/dev/null || true)" ]]; then
         break
       fi
       sleep 0.25
@@ -126,7 +142,7 @@ SPCTL_EXIT=0
 spctl -a -vv --type execute "$APP_BUNDLE" >"$SPCTL_OUT" 2>&1 || SPCTL_EXIT=$?
 
 if [[ -n "$APP_EXECUTABLE" ]]; then
-  ps -axo pid=,ppid=,rss=,command= | awk -v exe="$APP_EXECUTABLE" 'index($0, exe) > 0 { print }' > "$PROCESS_OUT" || true
+  find_app_processes "$APP_EXECUTABLE" > "$PROCESS_OUT" || true
 else
   : > "$PROCESS_OUT"
 fi
@@ -152,6 +168,7 @@ APP_BUNDLE="$APP_BUNDLE" \
 INFO_PLIST="$INFO_PLIST" \
 APP_EXECUTABLE="$APP_EXECUTABLE" \
 LAUNCHED_BY_SMOKE="$LAUNCHED_BY_SMOKE" \
+SHOULD_LAUNCH="$SHOULD_LAUNCH" \
 REQUIRE_NO_DEV_ORPHANS="$REQUIRE_NO_DEV_ORPHANS" \
 PLIST_JSON="$PLIST_JSON" \
 CODESIGN_OUT="$CODESIGN_OUT" \
@@ -216,6 +233,35 @@ const executablePath = process.env.APP_EXECUTABLE || "";
 const executableExists = executablePath ? fs.existsSync(executablePath) : false;
 const hasTCPListener = tcpListeners.length > 0;
 const hasDevOrphans = devOrphans.length > 0;
+const shouldLaunch = process.env.SHOULD_LAUNCH === "1";
+const runtimeAssetNames = ["arle_model.onnx", "arle_tokenizer.json"];
+const runtimeAssetsDir = path.join(appBundlePath, "Contents", "Resources", "assets");
+const runtimeAssetFiles = runtimeAssetNames.map((name) => {
+  const assetPath = path.join(runtimeAssetsDir, name);
+  let readable = false;
+  try {
+    fs.accessSync(assetPath, fs.constants.R_OK);
+    readable = true;
+  } catch {
+    readable = false;
+  }
+  let size = 0;
+  try {
+    size = fs.statSync(assetPath).size;
+  } catch {
+    size = 0;
+  }
+  return {
+    name,
+    path: assetPath,
+    exists: fs.existsSync(assetPath),
+    readable,
+    size,
+  };
+});
+const runtimeAssetsPassed = runtimeAssetFiles.every(
+  (file) => file.exists && file.readable && file.size > 0,
+);
 
 const report = {
   generatedAt: new Date().toISOString(),
@@ -260,6 +306,11 @@ const report = {
     webviewProcessHint:
       "Activity Monitor may show wails://localhost for the WebView renderer; this smoke checks real TCP listeners separately.",
   },
+  runtimeAssets: {
+    assetsDir: runtimeAssetsDir,
+    files: runtimeAssetFiles,
+    passed: runtimeAssetsPassed,
+  },
   network: {
     tcpListeners,
     hasArlecchinoOrWailsTCPListener: hasTCPListener,
@@ -282,9 +333,10 @@ report.passed =
   report.appBundle.name === report.appBundle.expectedName &&
   report.appBundle.executableExists &&
   report.codesign.passed &&
-  report.process.running &&
+  report.runtimeAssets.passed &&
+  (!shouldLaunch || report.process.running) &&
   !report.network.hasArlecchinoOrWailsTCPListener &&
-  report.mcpBridge.present &&
+  (!shouldLaunch || report.mcpBridge.present) &&
   (!requireNoDevOrphans || !report.devOrphans.present);
 
 fs.mkdirSync(path.dirname(process.env.REPORT_PATH), { recursive: true });
@@ -296,6 +348,7 @@ console.log(JSON.stringify({
   codesign: report.codesign.passed,
   gatekeeper: report.gatekeeper.status,
   running: report.process.running,
+  runtimeAssets: report.runtimeAssets.passed,
   tcpListeners: report.network.tcpListeners.length,
   mcpBridgeSockets: report.mcpBridge.sockets.length,
   devOrphans: report.devOrphans.count,

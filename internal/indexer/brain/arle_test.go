@@ -1,6 +1,8 @@
 package brain
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -25,6 +27,63 @@ func TestArleCreation(t *testing.T) {
 	arle.Close()
 }
 
+func TestResolveAssetsDirPrefersPackagedResourcesAssets(t *testing.T) {
+	root := t.TempDir()
+	appRoot := filepath.Join(root, "Arlecchino.app")
+	executable := filepath.Join(appRoot, "Contents", "MacOS", "Arlecchino")
+	resourcesAssets := filepath.Join(appRoot, "Contents", "Resources", "assets")
+	resourcesRoot := filepath.Join(appRoot, "Contents", "Resources")
+	writeArleAssetMarker(t, filepath.Join(resourcesAssets, "arle_model.onnx"))
+	writeArleAssetMarker(t, filepath.Join(resourcesRoot, "arle_tokenizer.json"))
+
+	got := resolveAssetsDir(assetsDirLookup{
+		exePath: executable,
+		cwd:     t.TempDir(),
+		homeDir: t.TempDir(),
+		goos:    "darwin",
+	}, nil)
+	if got != resourcesAssets {
+		t.Fatalf("assets dir = %q, want packaged Resources/assets %q", got, resourcesAssets)
+	}
+}
+
+func TestResolveAssetsDirUsesDevCwdAssets(t *testing.T) {
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets")
+	writeArleAssetMarker(t, filepath.Join(assetsDir, "arle_tokenizer.json"))
+
+	got := resolveAssetsDir(assetsDirLookup{
+		exePath: filepath.Join(t.TempDir(), "Arlecchino"),
+		cwd:     root,
+		homeDir: t.TempDir(),
+		goos:    "darwin",
+	}, nil)
+	if got != assetsDir {
+		t.Fatalf("assets dir = %q, want cwd assets %q", got, assetsDir)
+	}
+}
+
+func TestResolveAssetsDirCleanHomeDoesNotMaskMissingPackagedAssets(t *testing.T) {
+	root := t.TempDir()
+	appRoot := filepath.Join(root, "Arlecchino.app")
+	executable := filepath.Join(appRoot, "Contents", "MacOS", "Arlecchino")
+	home := t.TempDir()
+	want := filepath.Join(home, ".arlecchino", "models")
+
+	got := resolveAssetsDir(assetsDirLookup{
+		exePath: executable,
+		cwd:     t.TempDir(),
+		homeDir: home,
+		goos:    "darwin",
+	}, nil)
+	if got != want {
+		t.Fatalf("assets dir = %q, want clean-home fallback %q", got, want)
+	}
+	if hasArleModel(got) {
+		t.Fatalf("clean-home fallback unexpectedly has ARLE model markers: %s", got)
+	}
+}
+
 func TestArleTokenizer(t *testing.T) {
 	tokenizer, err := NewArleTokenizer("")
 	if err != nil {
@@ -43,6 +102,16 @@ func TestArleTokenizer(t *testing.T) {
 	text := tokenizer.Detokenize(tokens)
 	if text == "" {
 		t.Error("expected detokenized text")
+	}
+}
+
+func writeArleAssetMarker(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%s): %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte("asset\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s): %v", path, err)
 	}
 }
 

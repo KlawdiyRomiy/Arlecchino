@@ -121,6 +121,7 @@ MANIFEST_PATH="$TMP_DIR/arlecchino-update-manifest.json"
 ZIP_PATH="$TMP_DIR/arlecchino-macos-universal.zip"
 ZIP_LIST="$TMP_DIR/zip-list.txt"
 ZIP_APPLEDOUBLE="$TMP_DIR/zip-appledouble.txt"
+ZIP_RUNTIME_ASSETS="$TMP_DIR/zip-runtime-assets.tsv"
 
 if [[ -z "$TAG" ]]; then
   TAG="$(gh release list --repo "$OWNER/$REPO" --limit 20 --json tagName,isDraft,publishedAt \
@@ -148,6 +149,20 @@ gh release download "$TAG" --repo "$OWNER/$REPO" \
 
 unzip -Z1 "$ZIP_PATH" > "$ZIP_LIST"
 rg '(^__MACOSX/|(^|/)\._)' "$ZIP_LIST" > "$ZIP_APPLEDOUBLE" || true
+: > "$ZIP_RUNTIME_ASSETS"
+for entry in \
+  "Arlecchino.app/Contents/Resources/assets/arle_model.onnx" \
+  "Arlecchino.app/Contents/Resources/assets/arle_tokenizer.json"; do
+  asset_tmp="$TMP_DIR/$(basename "$entry")"
+  if unzip -p "$ZIP_PATH" "$entry" > "$asset_tmp" 2>/dev/null; then
+    size="$(wc -c < "$asset_tmp" | tr -d '[:space:]')"
+    sha="$(shasum -a 256 "$asset_tmp" | awk '{print $1}')"
+    printf '%s\t%s\t%s\n' "$entry" "$size" "$sha" >> "$ZIP_RUNTIME_ASSETS"
+  else
+    printf '%s\t0\t\n' "$entry" >> "$ZIP_RUNTIME_ASSETS"
+  fi
+  rm -f "$asset_tmp"
+done
 
 if [[ "$RUN_INSTALLED_SMOKE" == "1" ]]; then
   ./scripts/wails3-installed-app-smoke-macos.sh \
@@ -176,6 +191,7 @@ MANIFEST_PATH="$MANIFEST_PATH" \
 ZIP_PATH="$ZIP_PATH" \
 ZIP_LIST="$ZIP_LIST" \
 ZIP_APPLEDOUBLE="$ZIP_APPLEDOUBLE" \
+ZIP_RUNTIME_ASSETS="$ZIP_RUNTIME_ASSETS" \
 INSTALLED_SMOKE_REPORT="$INSTALLED_SMOKE_REPORT" \
 node <<'NODE'
 const fs = require("fs");
@@ -203,12 +219,23 @@ const lines = (file) =>
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+const runtimeAssetRows = (file) =>
+  lines(file).map((line) => {
+    const [entry, size, sha256] = line.split("\t");
+    return {
+      entry,
+      size: Number(size || 0),
+      sha256: sha256 || "",
+      present: Number(size || 0) > 0 && Boolean(sha256),
+    };
+  });
 
 const manifest = readJSON(process.env.MANIFEST_PATH);
 const release = readJSON(process.env.RELEASE_JSON);
 const installedSmoke = readJSON(process.env.INSTALLED_SMOKE_REPORT);
 const zipEntries = lines(process.env.ZIP_LIST);
 const appleDoubleEntries = lines(process.env.ZIP_APPLEDOUBLE);
+const zipRuntimeAssets = runtimeAssetRows(process.env.ZIP_RUNTIME_ASSETS);
 const artifact = Array.isArray(manifest.artifacts)
   ? manifest.artifacts.find((item) => item && item.kind === "zip")
   : undefined;
@@ -220,6 +247,10 @@ const appBuild = process.env.APP_BUILD || "";
 const zipSha256 = fs.existsSync(process.env.ZIP_PATH)
   ? fileSha256(process.env.ZIP_PATH)
   : "";
+const requiredRuntimeAssetEntries = [
+  "Arlecchino.app/Contents/Resources/assets/arle_model.onnx",
+  "Arlecchino.app/Contents/Resources/assets/arle_tokenizer.json",
+];
 const checks = {
   appBundleName: path.basename(process.env.APP_BUNDLE) === "Arlecchino.app",
   appVersionMatches:
@@ -232,6 +263,11 @@ const checks = {
     Boolean(artifact && artifact.sha256) || typeof manifest.sha256 === "string",
   zipContainsOnlyAppRoot: zipEntries.every((entry) => entry.startsWith("Arlecchino.app/")),
   zipHasNoAppleDoubleEntries: appleDoubleEntries.length === 0,
+  zipHasRuntimeAssets:
+    requiredRuntimeAssetEntries.every((entry) => zipEntries.includes(entry)) &&
+    requiredRuntimeAssetEntries.every((entry) =>
+      zipRuntimeAssets.some((asset) => asset.entry === entry && asset.present),
+    ),
   zipSha256MatchesManifest:
     !artifact || !artifact.sha256 || artifact.sha256.toLowerCase() === zipSha256,
   installedSmokePassed:
@@ -266,6 +302,8 @@ const report = {
     path: process.env.ZIP_PATH,
     sha256: zipSha256,
     entryCount: zipEntries.length,
+    requiredRuntimeAssetEntries,
+    runtimeAssets: zipRuntimeAssets,
     appleDoubleEntries,
   },
   installedSmokeReport:

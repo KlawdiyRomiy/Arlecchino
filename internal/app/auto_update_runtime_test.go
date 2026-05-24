@@ -89,6 +89,13 @@ func TestStageAutoUpdateZipRejectsMalformedOrMissingApp(t *testing.T) {
 	}
 }
 
+func TestStageAutoUpdateZipRejectsAppWithoutRuntimeAssets(t *testing.T) {
+	data := buildTestUpdateZipWithoutRuntimeAssets(t)
+	if _, err := stageAutoUpdateZip(data, t.TempDir(), nil); err == nil {
+		t.Fatal("stageAutoUpdateZip accepted ZIP without runtime assets")
+	}
+}
+
 func TestBuildAutoUpdateApplyHelperScriptUsesBackupRestoreAndRelaunch(t *testing.T) {
 	script := buildAutoUpdateApplyHelperScript(autoUpdateApplyPlan{
 		AppPID:         123,
@@ -155,12 +162,36 @@ func buildTestUpdateZip(t *testing.T, includeApp bool, extraEntries ...string) [
 </plist>
 `)
 		addZipFile(t, writer, "Arlecchino.app/Contents/MacOS/Arlecchino", 0o755, "#!/bin/zsh\nexit 0\n")
+		addZipFile(t, writer, "Arlecchino.app/Contents/Resources/assets/arle_model.onnx", 0o644, "model\n")
+		addZipFile(t, writer, "Arlecchino.app/Contents/Resources/assets/arle_tokenizer.json", 0o644, "{}\n")
 	} else {
 		addZipFile(t, writer, "README.txt", 0o644, "no app here\n")
 	}
 	for _, entry := range extraEntries {
 		addZipFile(t, writer, entry, 0o644, "appledouble metadata\n")
 	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
+}
+
+func buildTestUpdateZipWithoutRuntimeAssets(t *testing.T) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	addZipFile(t, writer, "Arlecchino.app/Contents/Info.plist", 0o644, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleShortVersionString</key>
+  <string>0.2.0</string>
+  <key>CFBundleVersion</key>
+  <string>2</string>
+</dict>
+</plist>
+`)
+	addZipFile(t, writer, "Arlecchino.app/Contents/MacOS/Arlecchino", 0o755, "#!/bin/zsh\nexit 0\n")
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}

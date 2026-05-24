@@ -115,6 +115,43 @@ if [[ -z "$APP_BUNDLE" || "$APP_BUNDLE" != *.app ]]; then
   exit 1
 fi
 
+copy_runtime_assets() {
+  local assets_dir="$RESOURCES_DIR/assets"
+  local asset source dest source_sha dest_sha
+  local runtime_assets=(arle_model.onnx arle_tokenizer.json)
+
+  mkdir -p "$assets_dir"
+  chmod 0755 "$assets_dir"
+
+  for asset in "${runtime_assets[@]}"; do
+    source="$ROOT_DIR/assets/$asset"
+    dest="$assets_dir/$asset"
+    if [[ ! -s "$source" ]]; then
+      echo "ERROR: required runtime asset is missing or empty: $source" >&2
+      exit 1
+    fi
+
+    cp -Xf "$source" "$dest"
+    chmod 0644 "$dest"
+    xattr -cr "$dest" >/dev/null 2>&1 || true
+
+    if [[ ! -r "$dest" || ! -s "$dest" ]]; then
+      echo "ERROR: packaged runtime asset is missing, unreadable, or empty: $dest" >&2
+      exit 1
+    fi
+    if ! cmp -s "$source" "$dest"; then
+      echo "ERROR: packaged runtime asset differs from source: $asset" >&2
+      exit 1
+    fi
+    source_sha="$(shasum -a 256 "$source" | awk '{print $1}')"
+    dest_sha="$(shasum -a 256 "$dest" | awk '{print $1}')"
+    if [[ "$source_sha" != "$dest_sha" ]]; then
+      echo "ERROR: packaged runtime asset checksum mismatch: $asset" >&2
+      exit 1
+    fi
+  done
+}
+
 if [[ "$SKIP_BUILD" != "1" ]]; then
   BUILD_ARGS=(--build-only --output "$OUTPUT")
   if [[ "$SKIP_FRONTEND" == "1" ]]; then
@@ -170,6 +207,7 @@ fi
 if [[ -f "$ROOT_DIR/build/darwin/appicon-dark.png" ]]; then
   cp -Xf "$ROOT_DIR/build/darwin/appicon-dark.png" "$RESOURCES_DIR/appicon-dark.png"
 fi
+copy_runtime_assets
 xattr -cr "$APP_BUNDLE" >/dev/null 2>&1 || true
 
 /usr/bin/plutil -lint "$APP_BUNDLE/Contents/Info.plist" >/dev/null
