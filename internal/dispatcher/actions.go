@@ -17,7 +17,7 @@ func NewActionRegistry() *ActionRegistry {
 
 func (r *ActionRegistry) registerDefaults() {
 	defaults := []IDEAction{
-		{Name: "Open Command Palette", Description: "Open the project command and search surface", Icon: "search", Handler: "panel.search", Keybinding: "cmd+f"},
+		{Name: "Open Command Palette", Description: "Open the project command and search surface", Icon: "search", Handler: "panel.search", Keybinding: "cmd+shift+f"},
 		{Name: "Open Settings", Description: "Open workspace settings", Icon: "settings", Handler: "app.settings", Keybinding: "cmd+,"},
 		{Name: "Toggle Zen Mode", Description: "Hide chrome and snapped panels until their edge is hovered", Icon: "focus", Handler: "shortcut.zenMode.toggle", Keybinding: "cmd+shift+."},
 		{Name: "Toggle Window Full Screen", Description: "Enter or exit macOS full screen", Icon: "maximize", Handler: "shortcut.window.toggleFullscreen", Keybinding: "fn+f"},
@@ -25,8 +25,8 @@ func (r *ActionRegistry) registerDefaults() {
 		{Name: "Open Project", Description: "Open another project folder", Icon: "folder-open", Handler: "shortcut.project.open", Keybinding: "cmd+o"},
 		{Name: "New Project", Description: "Create a new project", Icon: "file-plus", Handler: "shortcut.project.new", Keybinding: "cmd+n"},
 
-		{Name: "Run", Description: "Run the active project or file", Icon: "play", Handler: "panel.run"},
-		{Name: "Debug", Description: "Debug the active project or file", Icon: "bug", Handler: "panel.debug"},
+		{Name: "Open Run Dialog", Description: "Open run configuration without starting execution", Icon: "play", Handler: "panel.run"},
+		{Name: "Open Debug Dialog", Description: "Open debug configuration without starting execution", Icon: "bug", Handler: "panel.debug"},
 
 		{Name: "Open Explorer Panel", Description: "Show file explorer panel", Icon: "folder", Handler: "panel.explorer"},
 		{Name: "Toggle Explorer Panel", Description: "Open or close file explorer panel", Icon: "folder", Handler: "shortcut.explorer.toggle", Keybinding: "cmd+e"},

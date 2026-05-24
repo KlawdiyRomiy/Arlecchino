@@ -27,6 +27,18 @@ test.beforeEach(async ({ page }) => {
       {
         get: (_target, property: string) => {
           return async (...args: unknown[]) => {
+            const overrides = (
+              window as unknown as {
+                __appBridgeOverrides?: Record<
+                  string,
+                  (...args: unknown[]) => unknown
+                >;
+              }
+            ).__appBridgeOverrides;
+            const override = overrides?.[property];
+            if (override) {
+              return override(...args);
+            }
             switch (property) {
               case "GetCurrentProjectFramework":
                 return null;
@@ -295,6 +307,323 @@ test("smart quote activates grep mode in command dispatcher", async ({
   await expect(
     page.locator(".shell-pill").filter({ hasText: "Grep" }),
   ).toBeVisible();
+});
+
+test("command dispatcher hides risky git write actions", async ({ page }) => {
+  await mountProjectUI(page);
+  await page.evaluate(() => {
+    Object.assign(window as unknown as Record<string, unknown>, {
+      __appBridgeOverrides: {
+        GetDispatcherSuggestions: async () => [
+          {
+            id: "panel.git",
+            icon: "git-branch",
+            title: ">Open Git Panel",
+            subtitle: "Show Git panel",
+            action: "execute",
+          },
+          {
+            id: "shortcut.git.toggle",
+            icon: "git-branch",
+            title: ">Toggle Git Panel",
+            subtitle: "Open or close Git panel",
+            action: "execute",
+            actionLabel: "cmd+g",
+          },
+          {
+            id: "git.status",
+            icon: "git-branch",
+            title: ">Git Status",
+            subtitle: "Show Git status panel",
+            action: "execute",
+          },
+        ],
+      },
+    });
+  });
+
+  await page.getByTitle("Search").click();
+  const searchInput = page.locator('input[placeholder="Search..."]');
+  await searchInput.fill(">git");
+
+  await expect(page.getByText(">Git Status")).toBeVisible();
+  await expect(page.getByText(/Git Commit/)).toHaveCount(0);
+  await expect(page.getByText(/Git Pull/)).toHaveCount(0);
+  await expect(page.getByText(/Git Push/)).toHaveCount(0);
+});
+
+test("tag commands launch directly without command preview", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await page.evaluate(() => {
+    const terminalWrites: string[] = [];
+    Object.assign(window as unknown as Record<string, unknown>, {
+      __terminalWrites: terminalWrites,
+      __appBridgeOverrides: {
+        ExpandTag: async () => "php artisan migrate",
+        CreateTerminal: async () => true,
+        WriteTerminal: async (_id: string, data: string) => {
+          terminalWrites.push(atob(data));
+          return true;
+        },
+      },
+    });
+  });
+
+  await page.getByTitle("Search").click();
+  const searchInput = page.locator('input[placeholder="Search..."]');
+  await searchInput.fill("@artisan migrate");
+
+  await expect(page.getByText("Expanded command")).toHaveCount(0);
+  await expect(page.getByText("Execution preview")).toHaveCount(0);
+  await expect(page.getByText("Preview")).toHaveCount(0);
+
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            (window as unknown as { __terminalWrites?: string[] })
+              .__terminalWrites ?? []
+          ).at(-1) ?? "",
+      ),
+    )
+    .toBe("php artisan migrate\n");
+});
+
+test("run app action opens execution dialog instead of executing profile", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await page.evaluate(() => {
+    const terminalWrites: string[] = [];
+    Object.assign(window as unknown as Record<string, unknown>, {
+      __terminalWrites: terminalWrites,
+      __appBridgeOverrides: {
+        WriteTerminal: async (_id: string, data: string) => {
+          terminalWrites.push(atob(data));
+          return true;
+        },
+      },
+    });
+  });
+  await page.evaluate(async () => {
+    const { useEditorStore } = await import("/src/stores/editorStore.ts");
+    useEditorStore
+      .getState()
+      .syncActiveTab(
+        "pane-main",
+        "/workspace/main.go",
+        "main.go",
+        "package main\n\nfunc main() {}\n",
+        "go",
+        false,
+      );
+  });
+
+  await page.evaluate(() => window.runtime.EventsEmit("ide:app:run", "run"));
+
+  await expect(page.getByTestId("execution-dialog")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            (window as unknown as { __terminalWrites?: string[] })
+              .__terminalWrites ?? []
+          ).length,
+      ),
+    )
+    .toBe(0);
+});
+
+test("command dispatcher executes local AI palette action", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.getByTitle("Search").click();
+  const searchInput = page.locator('input[placeholder="Search..."]');
+  await searchInput.fill(">ai");
+
+  await expect(page.getByText("AI: Plan")).toBeVisible();
+  await page.getByText("AI: Plan").click();
+
+  await expect(page.getByTestId("ai-chat-panel")).toBeVisible();
+  await expect(searchInput).toHaveCount(0);
+});
+
+test("@ai prompt mode shows workflow suggestions and blocks unknown modes", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.getByTitle("Search").click();
+  const searchInput = page.locator('input[placeholder="Search..."]');
+  await searchInput.fill("@ai");
+
+  await expect(page.getByText("@ai /plan")).toBeVisible();
+  await searchInput.fill("@ai /ship it");
+
+  await expect(page.getByText("Unknown AI mode /ship")).toBeVisible();
+});
+
+test("@ai plan launcher preserves fullscreen and visible mode with partial action catalog", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+  await page.evaluate(() => {
+    const now = () => new Date().toISOString();
+    const provider = {
+      id: "palette-smoke",
+      name: "Palette Smoke",
+      kind: "ollama",
+      local: true,
+      manual: false,
+      frontier: false,
+      oauthSupported: false,
+      requiresAuth: false,
+      authConfigured: true,
+      capabilities: ["chat"],
+      models: [
+        { id: "palette-code", displayName: "palette-code", streaming: true },
+      ],
+      defaultModel: "palette-code",
+      status: "ready",
+      lastCheckedAt: now(),
+    };
+    const startRequests: Record<string, unknown>[] = [];
+    Object.assign(window as unknown as Record<string, unknown>, {
+      __aiStartRequests: startRequests,
+      __appBridgeOverrides: {
+        AIGetStatus: async () => ({
+          enabled: true,
+          mnemonicEnabled: false,
+          providers: [provider],
+          activeProviderId: provider.id,
+          activeModel: "palette-code",
+          settingsConfigured: true,
+        }),
+        AIGetConsentPolicy: async () => ({
+          localProvidersAccepted: true,
+          remoteProvidersAccepted: false,
+          frontierProvidersAccepted: false,
+          providerPolicies: [],
+          acceptedAt: now(),
+          updatedAt: now(),
+        }),
+        AIGetApprovalPolicy: async () => ({
+          mode: "ask_each_time",
+          scope: {},
+          allowedToolKinds: ["context_read"],
+          hardDenyCategories: [],
+        }),
+        AIGetEmbeddingStatus: async () => ({
+          status: "disabled",
+          reason: "",
+          providers: [],
+          updatedAt: now(),
+        }),
+        AIListProviderRuntimes: async () => [],
+        AIListChatActions: async () => [
+          {
+            id: "ask",
+            name: "Ask",
+            description: "Ask with project context",
+            builtIn: true,
+            mayProposeTools: false,
+            expectsToolProposals: false,
+            readOnlyIntent: true,
+          },
+        ],
+        AIListContextProviders: async () => [],
+        AIListEgressRecords: async () => [],
+        AIListAgentProfiles: async () => [],
+        AIListPromptWorkflows: async () => [],
+        AIListTools: async () => [],
+        AIListToolAudit: async () => [],
+        AIListModelCapabilities: async () => [],
+        AIListMnemonicEntries: async () => [],
+        AIListPendingApprovals: async () => [],
+        AIListChatRuns: async () => [],
+        AIGetContextPreview: async (request: Record<string, unknown>) => ({
+          id: "palette-preview",
+          capability: "chat",
+          prompt: request.prompt,
+          contextItems: [],
+          snippets: [],
+          dataCategories: ["user_prompt"],
+          redaction: {},
+          createdAt: now(),
+        }),
+        AIStartChatRun: async (request: Record<string, unknown>) => {
+          startRequests.push(request);
+          return {
+            id: "palette-run-1",
+            sessionId:
+              typeof request.sessionId === "string"
+                ? request.sessionId
+                : "default",
+            action: request.action,
+            status: "completed",
+            providerId: provider.id,
+            model: "palette-code",
+            userPrompt: request.prompt,
+            response: "planned",
+            createdAt: now(),
+            updatedAt: now(),
+            completedAt: now(),
+          };
+        },
+      },
+    });
+  });
+
+  await page.keyboard.press("Meta+Shift+R");
+  await expect(page.getByTestId("panel-aiChat")).toBeVisible();
+  const fullscreenFrame = await page.getByTestId("panel-aiChat").boundingBox();
+  expect(fullscreenFrame?.width ?? 0).toBeGreaterThan(900);
+
+  await page.keyboard.press("Meta+Shift+F");
+  const searchInput = page.locator('input[placeholder="Search..."]');
+  await searchInput.fill("@ai /plan expand command palette");
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByTestId("ai-chat-panel")).toBeVisible();
+  const preservedFrame = await page.getByTestId("panel-aiChat").boundingBox();
+  expect(preservedFrame?.width ?? 0).toBeGreaterThan(900);
+  await expect(page.getByTestId("ai-chat-mode-plan")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __aiStartRequests?: Record<string, unknown>[];
+            }
+          ).__aiStartRequests?.length ?? 0,
+      ),
+    )
+    .toBe(1);
+  const request = await page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __aiStartRequests?: Record<string, unknown>[];
+        }
+      ).__aiStartRequests?.[0],
+  );
+  expect(request).toMatchObject({
+    action: "plan",
+    workflowId: "slash-plan",
+    profileId: "plan-architect",
+    prompt: "expand command palette",
+    providerId: "palette-smoke",
+    model: "palette-code",
+  });
 });
 
 test("Cmd+Shift+F opens command dispatcher", async ({ page }) => {

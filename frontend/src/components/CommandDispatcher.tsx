@@ -1,4 +1,10 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+} from "react";
 import {
   Search,
   Terminal,
@@ -23,13 +29,19 @@ import {
   Database,
   Navigation,
 } from "lucide-react";
+import { useAIChatStore } from "../stores/aiChatStore";
+import {
+  AI_WORKFLOW_MODES,
+  parseAICommandInput,
+  type AICommandPaletteActionId,
+  type AICommandPalettePayload,
+} from "../utils/commandPaletteAI";
 import {
   SearchFiles,
   SearchContent,
   SearchSymbols,
   GetDispatcherSuggestions,
   ExpandTag,
-  GetTerminalPreview,
   PredictTerminalCommand,
   GetTerminalHistory,
 } from "../wails/app";
@@ -44,22 +56,20 @@ interface DispatcherItem {
   score?: number;
   filePath?: string;
   line?: number;
-}
-
-interface DispatcherResult {
-  success: boolean;
-  output: string;
-  error: string;
-  resultType: number;
-  items: DispatcherItem[];
-  preview: string;
-  shouldClose: boolean;
+  source?: "backend" | "local";
+  paletteActionId?: AICommandPaletteActionId;
+  palettePayload?: AICommandPalettePayload;
+  completion?: string;
 }
 
 interface CommandDispatcherProps {
   isOpen: boolean;
   onClose: () => void;
   onExecute: (input: string, type: string) => void;
+  onPaletteAction?: (
+    actionId: AICommandPaletteActionId,
+    payload?: AICommandPalettePayload,
+  ) => void;
   onOpenFile?: (path: string, line?: number) => void;
   onTerminalCommand?: (command: string) => void;
   pinnedItems?: string[];
@@ -83,12 +93,6 @@ const backendSearchAction = (action: string | undefined): string =>
   action === "error" ? "error" : "open";
 
 type InputMode = "default" | "ide" | "file" | "grep" | "symbol" | "ai" | "tag";
-
-interface AnsiSpan {
-  text: string;
-  color?: string;
-  bold?: boolean;
-}
 
 const GREP_QUOTE_CLOSERS: Record<string, string> = {
   '"': '"',
@@ -121,70 +125,12 @@ const stripGrepQuotePrefix = (input: string): string => {
     : query;
 };
 
-const parseAnsi = (text: string): AnsiSpan[] => {
-  const spans: AnsiSpan[] = [];
-  const regex = /\x1b\[([0-9;]*)m/g;
-  let lastIndex = 0;
-  let currentColor: string | undefined;
-  let currentBold = false;
-
-  const colorMap: Record<string, string> = {
-    "30": "#1a1a1a",
-    "31": "#888888",
-    "32": "#22c55e",
-    "33": "#eab308",
-    "34": "#3b82f6",
-    "35": "#a855f7",
-    "36": "#06b6d4",
-    "37": "#e5e5e5",
-    "90": "#737373",
-    "91": "#aaaaaa",
-    "92": "#4ade80",
-    "93": "#facc15",
-    "94": "#60a5fa",
-    "95": "#c084fc",
-    "96": "#22d3ee",
-    "97": "#ffffff",
-  };
-
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      const segment = text.slice(lastIndex, match.index);
-      if (segment)
-        spans.push({ text: segment, color: currentColor, bold: currentBold });
-    }
-    const codes = match[1].split(";");
-    for (const code of codes) {
-      if (code === "0" || code === "") {
-        currentColor = undefined;
-        currentBold = false;
-      } else if (code === "1") {
-        currentBold = true;
-      } else if (colorMap[code]) {
-        currentColor = colorMap[code];
-      }
-    }
-    lastIndex = regex.lastIndex;
-  }
-
-  if (lastIndex < text.length) {
-    spans.push({
-      text: text.slice(lastIndex),
-      color: currentColor,
-      bold: currentBold,
-    });
-  }
-
-  return spans.length ? spans : [{ text }];
-};
-
 const getModeFromInput = (input: string): InputMode => {
   if (input.startsWith(">>")) return "file";
   if (input.startsWith(">")) return "ide";
   if (getGrepQuotePrefix(input)) return "grep";
   if (input.startsWith("#")) return "symbol";
-  if (input.startsWith("@ai ")) return "ai";
+  if (/^@ai(?:\s|$)/i.test(input.trim())) return "ai";
   if (input.startsWith("@")) return "tag";
   return "default";
 };
@@ -212,24 +158,19 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
   isOpen,
   onClose,
   onExecute,
+  onPaletteAction,
   onOpenFile,
   onTerminalCommand,
   pinnedItems = [],
   recentItems = [],
   projectPath = "",
 }) => {
+  const aiPendingApprovals = useAIChatStore((state) => state.pendingApprovals);
+  const aiRuns = useAIChatStore((state) => state.runs);
   const [input, setInput] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [items, setItems] = useState<DispatcherItem[]>([]);
-  const [preview, setPreview] = useState("");
   const [ghostText, setGhostText] = useState("");
-  const [isExecuting, setIsExecuting] = useState(false);
-  const [executionResult, setExecutionResult] = useState<{
-    output: string;
-    error: string;
-    success: boolean;
-    command: string;
-  } | null>(null);
   const [historyList, setHistoryList] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [savedInput, setSavedInput] = useState("");
@@ -244,6 +185,143 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
   const terminalCommand = isTerminalMode
     ? input.replace(/^@t\s+/i, "").trim()
     : "";
+  const hasRunningAIRun = useMemo(
+    () =>
+      aiRuns.some((run) => run.status === "running" || run.status === "queued"),
+    [aiRuns],
+  );
+  const pendingApprovalCount = aiPendingApprovals.length;
+
+  const buildLocalAIActionItems = useCallback(
+    (query: string): DispatcherItem[] => {
+      const items: DispatcherItem[] = [
+        {
+          id: "ai-new-chat",
+          icon: <Sparkles size={16} />,
+          title: "AI: New Chat",
+          subtitle: "Open AI Chat and create a new session",
+          action: "palette",
+          source: "local",
+          paletteActionId: "ai.newChat",
+        },
+        ...AI_WORKFLOW_MODES.filter((mode) => mode.slash !== "/general").map(
+          (mode) => ({
+            id: `ai-select-${mode.action}`,
+            icon: <Sparkles size={16} />,
+            title: `AI: ${mode.label}`,
+            subtitle: mode.description,
+            action: "palette",
+            source: "local" as const,
+            paletteActionId: "ai.selectAction" as const,
+            palettePayload: { action: mode.action },
+          }),
+        ),
+        {
+          id: "ai-pending-approvals",
+          icon: <AlertCircle size={16} />,
+          title:
+            pendingApprovalCount > 0
+              ? `AI: Pending Approvals (${pendingApprovalCount})`
+              : "AI: Pending Approvals",
+          subtitle: "Open AI Chat approval and tool proposal review",
+          action: "palette",
+          source: "local",
+          paletteActionId: "ai.pendingApprovals",
+        },
+        {
+          id: "ai-runtime-status",
+          icon: <Sparkles size={16} />,
+          title: "AI: Runtime Status",
+          subtitle: "Open provider, egress, context, and activity status",
+          action: "palette",
+          source: "local",
+          paletteActionId: "ai.runtimeStatus",
+        },
+        {
+          id: "ai-approval-settings",
+          icon: <Settings size={16} />,
+          title: "AI: Approval Settings",
+          subtitle: "Open AI Chat approval settings",
+          action: "palette",
+          source: "local",
+          paletteActionId: "ai.approvalSettings",
+        },
+      ];
+
+      if (hasRunningAIRun) {
+        items.push({
+          id: "ai-cancel-active-run",
+          icon: <X size={16} />,
+          title: "AI: Cancel Active Run",
+          subtitle: "Stop the running or queued AI Chat run",
+          action: "palette",
+          source: "local",
+          paletteActionId: "ai.cancelActiveRun",
+        });
+      }
+
+      const needle = query.trim().toLowerCase();
+      if (!needle) return items;
+      return items.filter((item) =>
+        `${item.title} ${item.subtitle ?? ""}`.toLowerCase().includes(needle),
+      );
+    },
+    [hasRunningAIRun, pendingApprovalCount],
+  );
+
+  const buildAIInputItems = useCallback((value: string): DispatcherItem[] => {
+    const parsed = parseAICommandInput(value);
+    switch (parsed.kind) {
+      case "empty":
+        return AI_WORKFLOW_MODES.map((mode) => ({
+          id: `ai-complete-${mode.slash}`,
+          icon: <Sparkles size={16} />,
+          title: `@ai ${mode.slash}`,
+          subtitle: mode.description,
+          action: "complete",
+          completion: `@ai ${mode.slash} `,
+          source: "local",
+        }));
+      case "unknown-mode":
+        return [
+          {
+            id: "ai-unknown-mode",
+            icon: <AlertCircle size={16} />,
+            title: `Unknown AI mode ${parsed.mode}`,
+            subtitle: `Use ${AI_WORKFLOW_MODES.map((mode) => mode.slash).join(", ")}`,
+            action: "error",
+            source: "local",
+          },
+        ];
+      case "empty-prompt":
+        return [
+          {
+            id: `ai-empty-${parsed.mode.slash}`,
+            icon: <Sparkles size={16} />,
+            title: `@ai ${parsed.mode.slash}`,
+            subtitle: `Type a prompt to start ${parsed.mode.label}`,
+            action: "complete",
+            completion: `@ai ${parsed.mode.slash} `,
+            source: "local",
+          },
+        ];
+      case "start":
+        return [
+          {
+            id: `ai-start-${parsed.mode.slash}`,
+            icon: <Sparkles size={16} />,
+            title: `Start ${parsed.mode.label} in AI Chat`,
+            subtitle: parsed.prompt,
+            action: "palette",
+            source: "local",
+            paletteActionId: "ai.startFromInput",
+            palettePayload: { input: value },
+          },
+        ];
+      default:
+        return [];
+    }
+  }, []);
 
   useEffect(() => {
     if (isOpen && inputRef.current) {
@@ -252,8 +330,6 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
       setSelectedIndex(0);
       setItems([]);
       setGhostText("");
-      setIsExecuting(false);
-      setExecutionResult(null);
       setHistoryIndex(-1);
       setSavedInput("");
 
@@ -319,11 +395,10 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
     return () => clearTimeout(timer);
   }, [isTerminalMode, terminalCommand]);
 
-  // Clear items and preview when entering terminal mode
+  // Clear suggestion items when entering direct terminal mode.
   useEffect(() => {
     if (isTerminalMode) {
       setItems([]);
-      setPreview("");
     }
   }, [isTerminalMode]);
 
@@ -349,19 +424,25 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
               const ideActions = await GetDispatcherSuggestions(input);
               ideActions?.forEach((action, i) => {
                 newItems.push({
-                  id: `ide-${i}`,
+                  id: action.id || `ide-${i}`,
                   icon: getIconForBackendItem(action.icon || "terminal"),
                   title: action.title,
                   subtitle: action.subtitle,
                   action: "ide",
+                  actionLabel: action.actionLabel,
+                  source: "backend",
                 });
               });
+              newItems.push(...buildLocalAIActionItems(input.slice(1)));
             } catch (e) {
               console.error("[Dispatcher] GetDispatcherSuggestions error:", e);
               newItems.push(
                 dispatcherErrorItem("ide-error", "Command search failed", e),
               );
             }
+            break;
+          case "ai":
+            newItems.push(...buildAIInputItems(input));
             break;
           case "file":
             try {
@@ -470,49 +551,19 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
 
       setItems(newItems);
       setSelectedIndex(0);
-
-      if (mode === "tag" && input.startsWith("@")) {
-        try {
-          const expanded = await ExpandTag(input);
-          setPreview(expanded !== input ? expanded : "");
-        } catch {
-          setPreview("");
-        }
-      } else {
-        setPreview("");
-      }
     };
 
     loadItems();
-  }, [input, mode, pinnedItems, recentItems, isTerminalMode, historyIndex]);
-
-  const isTerminalCommand = (item: DispatcherItem) =>
-    item.action === "execute" && !item.filePath;
-
-  useEffect(() => {
-    const selectedItem = items[selectedIndex];
-    if (!selectedItem || mode === "tag" || isExecuting || executionResult)
-      return;
-
-    if (isTerminalCommand(selectedItem)) {
-      GetTerminalPreview(selectedItem.title)
-        .then((result) => setPreview(result?.output || ""))
-        .catch(() => setPreview(""));
-    }
-  }, [selectedIndex, items, mode, isExecuting, executionResult]);
-
-  useEffect(() => {
-    if (!executionResult) return;
-
-    const timer = setTimeout(() => {
-      if (onTerminalCommand) {
-        onTerminalCommand(executionResult.command);
-      }
-      onClose();
-    }, 2000);
-
-    return () => clearTimeout(timer);
-  }, [executionResult, onTerminalCommand, onClose]);
+  }, [
+    input,
+    mode,
+    pinnedItems,
+    recentItems,
+    isTerminalMode,
+    historyIndex,
+    buildAIInputItems,
+    buildLocalAIActionItems,
+  ]);
 
   const getSymbolIcon = (iconName: string): React.ReactNode => {
     switch (iconName) {
@@ -585,29 +636,39 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
     }
   };
 
-  const SAFE_COMMAND_PREFIXES = [
-    "git ",
-    "ls",
-    "pwd",
-    "echo ",
-    "cat ",
-    "which ",
-    "npm ",
-    "go ",
-    "cargo ",
-    "docker ",
-  ];
-
-  const isSafeCommand = (cmd: string): boolean => {
-    const trimmed = cmd.trim();
-    return SAFE_COMMAND_PREFIXES.some(
-      (prefix) => trimmed.startsWith(prefix) || trimmed === prefix.trim(),
-    );
-  };
+  const runExpandedTagCommand = useCallback(
+    async (value: string): Promise<boolean> => {
+      if (!onTerminalCommand) return false;
+      try {
+        const expanded = await ExpandTag(value);
+        const command = expanded.trim();
+        if (!command || command === value.trim()) {
+          return false;
+        }
+        onTerminalCommand(command);
+        onClose();
+        return true;
+      } catch (error) {
+        console.error("[Dispatcher] ExpandTag error:", error);
+        return false;
+      }
+    },
+    [onClose, onTerminalCommand],
+  );
 
   const executeItem = useCallback(
-    (item: DispatcherItem) => {
+    async (item: DispatcherItem) => {
       if (item.action === "error") {
+        return;
+      }
+      if (item.action === "complete" && item.completion) {
+        setInput(item.completion);
+        requestAnimationFrame(() => inputRef.current?.focus());
+        return;
+      }
+      if (item.source === "local" && item.paletteActionId) {
+        onPaletteAction?.(item.paletteActionId, item.palettePayload);
+        onClose();
         return;
       }
       if (item.filePath && onOpenFile) {
@@ -624,40 +685,11 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
         return;
       }
 
-      if (itemMode === "tag" && preview && onTerminalCommand) {
-        onTerminalCommand(preview);
-        onClose();
+      if (itemMode === "tag" && (await runExpandedTagCommand(item.title))) {
         return;
       }
 
       if (item.action === "execute" && onTerminalCommand) {
-        if (isSafeCommand(item.title)) {
-          setIsExecuting(true);
-          setExecutionResult(null);
-          setPreview(`${item.title}\nExecuting...`);
-
-          GetTerminalPreview(item.title)
-            .then((result) => {
-              setIsExecuting(false);
-              setExecutionResult({
-                output: result.output || "",
-                error: result.error || "",
-                success: result.exitCode === 0,
-                command: item.title,
-              });
-            })
-            .catch((err) => {
-              setIsExecuting(false);
-              setExecutionResult({
-                output: "",
-                error: String(err),
-                success: false,
-                command: item.title,
-              });
-            });
-          return;
-        }
-
         onTerminalCommand(item.title);
         onClose();
         return;
@@ -666,25 +698,19 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
       onExecute(item.title, mode);
       onClose();
     },
-    [mode, preview, onOpenFile, onTerminalCommand, onExecute, onClose],
+    [
+      mode,
+      onOpenFile,
+      onTerminalCommand,
+      onPaletteAction,
+      onExecute,
+      onClose,
+      runExpandedTagCommand,
+    ],
   );
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (executionResult) {
-        e.preventDefault();
-        if (onTerminalCommand) {
-          onTerminalCommand(executionResult.command);
-        }
-        onClose();
-        return;
-      }
-
-      if (isExecuting) {
-        e.preventDefault();
-        return;
-      }
-
+    async (e: React.KeyboardEvent) => {
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
@@ -762,7 +788,7 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
               "dispatcher_history",
               JSON.stringify(newHistory),
             );
-            executeItem(items[selectedIndex]);
+            void executeItem(items[selectedIndex]);
           } else if (input) {
             // Save raw input to history only when no item selected
             if (input.trim()) {
@@ -778,9 +804,20 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
                 JSON.stringify(newHistory),
               );
             }
-            if (mode === "default" && onTerminalCommand) {
+            if (mode === "ai") {
+              const parsed = parseAICommandInput(input);
+              if (parsed.kind === "start") {
+                onPaletteAction?.("ai.startFromInput", { input });
+                onClose();
+              } else {
+                setItems(buildAIInputItems(input));
+                setSelectedIndex(0);
+              }
+            } else if (mode === "default" && onTerminalCommand) {
               onTerminalCommand(input);
               onClose();
+            } else if (mode === "tag" && (await runExpandedTagCommand(input))) {
+              return;
             } else {
               onExecute(input, mode);
               onClose();
@@ -810,16 +847,17 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
       mode,
       executeItem,
       onTerminalCommand,
+      onPaletteAction,
       onExecute,
       onClose,
-      isExecuting,
-      executionResult,
+      buildAIInputItems,
       isTerminalMode,
       terminalCommand,
       ghostText,
       historyList,
       historyIndex,
       savedInput,
+      runExpandedTagCommand,
     ],
   );
 
@@ -840,72 +878,6 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
         className="absolute left-1/2 top-[43%] flex w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col items-center"
         onClick={(e) => e.stopPropagation()}
       >
-        {(preview || isExecuting || executionResult) && (
-          <div className="shell-overlay-card mb-3 w-full p-4">
-            <div className="mb-3 flex items-center justify-between border-b border-[var(--border-subtle)] pb-2 text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
-              <span>
-                {executionResult ? "Execution preview" : "Expanded command"}
-              </span>
-              <span>{executionResult ? "Any key to close" : "Preview"}</span>
-            </div>
-            <div className="max-h-[220px] overflow-y-auto font-mono text-[13px] leading-6 text-[var(--text-primary)] whitespace-pre-wrap break-words">
-              {isExecuting ? (
-                <div className="animate-pulse">
-                  <span className="mr-2 text-[var(--status-info)]">$</span>
-                  <span>{preview.split("\n")[0]}</span>
-                  <div className="mt-1 text-[var(--text-muted)]">
-                    Executing...
-                  </div>
-                </div>
-              ) : executionResult ? (
-                <>
-                  <div className="mb-2">
-                    <span className="mr-2 text-[var(--status-info)]">$</span>
-                    <span>{executionResult.command}</span>
-                  </div>
-                  {executionResult.success ? (
-                    parseAnsi(executionResult.output).map((span, i) => (
-                      <span
-                        key={i}
-                        style={{
-                          color: span.color,
-                          fontWeight: span.bold ? 600 : 400,
-                        }}
-                      >
-                        {span.text}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-[var(--status-error)]">
-                      {executionResult.error ||
-                        executionResult.output ||
-                        "Command failed"}
-                    </span>
-                  )}
-                  <div className="mt-3 border-t border-[var(--border-subtle)] pt-2 text-[11px] text-[var(--text-muted)]">
-                    Press any key to close
-                  </div>
-                </>
-              ) : (
-                <>
-                  <span className="mr-2 text-[var(--status-info)]">$</span>
-                  {parseAnsi(preview).map((span, i) => (
-                    <span
-                      key={i}
-                      style={{
-                        color: span.color,
-                        fontWeight: span.bold ? 600 : 400,
-                      }}
-                    >
-                      {span.text}
-                    </span>
-                  ))}
-                </>
-              )}
-            </div>
-          </div>
-        )}
-
         <div className="shell-overlay-card w-full overflow-hidden rounded-[30px] p-3">
           <div
             className={`flex items-center gap-3 px-2 ${
@@ -971,7 +943,7 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
               {items.map((item, index) => (
                 <div
                   key={item.id}
-                  onClick={() => executeItem(item)}
+                  onClick={() => void executeItem(item)}
                   onMouseEnter={() => setSelectedIndex(index)}
                   className={`mb-2 flex cursor-pointer items-center gap-3 rounded-[20px] border px-4 py-3 transition-colors ${
                     index === selectedIndex
@@ -999,6 +971,11 @@ export const CommandDispatcher: React.FC<CommandDispatcherProps> = ({
                         </div>
                       )}
                     </div>
+                    {item.actionLabel ? (
+                      <span className="shell-kbd shrink-0">
+                        {item.actionLabel}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               ))}

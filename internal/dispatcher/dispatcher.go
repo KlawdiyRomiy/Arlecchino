@@ -219,13 +219,7 @@ func (d *Dispatcher) dispatchAIQuery(parsed ParsedInput) DispatchResult {
 	return DispatchResult{
 		Success:    true,
 		ResultType: ResultTypeSymbolList,
-		Items: []ResultItem{{
-			ID:       "ai-unavailable",
-			Icon:     "sparkles",
-			Title:    "AI недоступен",
-			Subtitle: "AI-функции будут добавлены в будущих версиях",
-			Action:   "none",
-		}},
+		Items:      aiQuerySuggestions(parsed.Query),
 	}
 }
 
@@ -267,13 +261,7 @@ func (d *Dispatcher) GetSuggestions(input string) []ResultItem {
 		})
 
 	case InputTypeAIQuery:
-		items = append(items, ResultItem{
-			ID:       "ai-unavailable",
-			Icon:     "sparkles",
-			Title:    "AI недоступен",
-			Subtitle: "AI-функции будут добавлены в будущих версиях",
-			Action:   "none",
-		})
+		items = append(items, aiQuerySuggestions(parsed.Query)...)
 
 	default:
 		if input != "" && input[0] == '@' {
@@ -298,6 +286,38 @@ func (d *Dispatcher) GetSuggestions(input string) []ResultItem {
 		}
 	}
 
+	return items
+}
+
+func aiQuerySuggestions(query string) []ResultItem {
+	modes := []struct {
+		id       string
+		slash    string
+		title    string
+		subtitle string
+	}{
+		{id: "ai-ask", slash: "/ask", title: "@ai /ask", subtitle: "Ask with project context"},
+		{id: "ai-general", slash: "/general", title: "@ai /general", subtitle: "Ask without implicit project context"},
+		{id: "ai-plan", slash: "/plan", title: "@ai /plan", subtitle: "Create a read-only implementation plan"},
+		{id: "ai-debug", slash: "/debug", title: "@ai /debug", subtitle: "Investigate failures with evidence"},
+		{id: "ai-build", slash: "/build", title: "@ai /build", subtitle: "Draft approval-gated implementation work"},
+		{id: "ai-review", slash: "/review", title: "@ai /review", subtitle: "Review current changes without mutation"},
+	}
+
+	queryLower := toLower(query)
+	items := make([]ResultItem, 0, len(modes))
+	for _, mode := range modes {
+		if queryLower != "" && !containsSubstring(toLower(mode.title+" "+mode.subtitle), queryLower) {
+			continue
+		}
+		items = append(items, ResultItem{
+			ID:       mode.id,
+			Icon:     "sparkles",
+			Title:    mode.title,
+			Subtitle: mode.subtitle,
+			Action:   "complete",
+		})
+	}
 	return items
 }
 

@@ -14,12 +14,19 @@ import type {
   AIEmbeddingStatus,
   AIEgressRecord,
   AIMnemonicEntry,
+  AIPendingApproval,
   AIPromptWorkflowDescriptor,
   AIProviderDescriptor,
   AIStatus,
   AIToolAuditRecord,
   AIToolDescriptor,
 } from "../../bindings/arlecchino/internal/ai/models";
+import {
+  createAIChatCommandIntent,
+  type AIChatCommandIntent,
+  type AICommandPaletteActionId,
+  type AICommandPalettePayload,
+} from "../utils/commandPaletteAI";
 
 interface AIChatRuntimeState {
   status: AIStatus | null;
@@ -35,6 +42,8 @@ interface AIChatRuntimeState {
   streamingTextByRunId: Record<string, string>;
   egressRecords: AIEgressRecord[];
   mnemonicEntries: AIMnemonicEntry[];
+  pendingApprovals: AIPendingApproval[];
+  commandIntents: AIChatCommandIntent[];
   approvalPolicy: AIApprovalPolicy | null;
   consentPolicy: AIConsentPolicy | null;
   embeddingStatus: AIEmbeddingStatus | null;
@@ -66,6 +75,12 @@ interface AIChatRuntimeState {
   setEgressRecords: (records: AIEgressRecord[]) => void;
   upsertEgressRecord: (record: AIEgressRecord) => void;
   setMnemonicEntries: (entries: AIMnemonicEntry[]) => void;
+  setPendingApprovals: (approvals: AIPendingApproval[]) => void;
+  enqueueCommandIntent: (
+    actionId: AICommandPaletteActionId,
+    payload?: AICommandPalettePayload,
+  ) => void;
+  consumeCommandIntent: (id: string) => void;
   setApprovalPolicy: (policy: AIApprovalPolicy | null) => void;
   setConsentPolicy: (policy: AIConsentPolicy | null) => void;
   setEmbeddingStatus: (status: AIEmbeddingStatus | null) => void;
@@ -247,6 +262,8 @@ const initialRuntimeState = {
   streamingTextByRunId: {},
   egressRecords: [],
   mnemonicEntries: [],
+  pendingApprovals: [],
+  commandIntents: [],
   approvalPolicy: null,
   consentPolicy: null,
   embeddingStatus: null,
@@ -374,6 +391,18 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
       egressRecords: mergeEgressRecord(state.egressRecords, record),
     })),
   setMnemonicEntries: (mnemonicEntries) => set({ mnemonicEntries }),
+  setPendingApprovals: (pendingApprovals) => set({ pendingApprovals }),
+  enqueueCommandIntent: (actionId, payload = {}) =>
+    set((state) => ({
+      commandIntents: [
+        ...state.commandIntents,
+        createAIChatCommandIntent(actionId, payload),
+      ].slice(-8),
+    })),
+  consumeCommandIntent: (id) =>
+    set((state) => ({
+      commandIntents: state.commandIntents.filter((intent) => intent.id !== id),
+    })),
   setApprovalPolicy: (approvalPolicy) => set({ approvalPolicy }),
   setConsentPolicy: (consentPolicy) => set({ consentPolicy }),
   setEmbeddingStatus: (embeddingStatus) => set({ embeddingStatus }),

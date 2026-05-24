@@ -12,13 +12,14 @@ func TestActionRegistry_DefaultsIncludeModernIDEActions(t *testing.T) {
 		name    string
 		handler string
 	}{
-		{name: "Run", handler: "panel.run"},
-		{name: "Debug", handler: "panel.debug"},
+		{name: "Open Run Dialog", handler: "panel.run"},
+		{name: "Open Debug Dialog", handler: "panel.debug"},
 		{name: "Open Problems Panel", handler: "panel.problems"},
 		{name: "Toggle Browser Preview", handler: "shortcut.browser.preview"},
 		{name: "Toggle Window Full Screen", handler: "shortcut.window.toggleFullscreen"},
 		{name: "Move Left Panel to Right Side", handler: "panel.move.leftToRight"},
 		{name: "Move Browser Preview Top", handler: "preview.move.top"},
+		{name: "Git Status", handler: "git.status"},
 	}
 
 	for _, tt := range tests {
@@ -31,6 +32,52 @@ func TestActionRegistry_DefaultsIncludeModernIDEActions(t *testing.T) {
 				t.Fatalf("Handler = %q, want %q", action.Handler, tt.handler)
 			}
 		})
+	}
+}
+
+func TestActionRegistry_DefaultsExcludeMisleadingWriteActions(t *testing.T) {
+	registry := NewActionRegistry()
+	riskyActions := []string{
+		"Git Commit",
+		"Git Pull",
+		"Git Push",
+		"Save File",
+		"Save All Files",
+		"Format Document",
+		"Reload",
+	}
+
+	for _, name := range riskyActions {
+		if action := registry.Get(name); action != nil {
+			t.Fatalf("Get(%q) = %#v, want nil", name, action)
+		}
+	}
+}
+
+func TestActionRegistry_CommandPaletteShortcutIsCurrent(t *testing.T) {
+	registry := NewActionRegistry()
+	action := registry.Get("Open Command Palette")
+	if action == nil {
+		t.Fatal("Open Command Palette action missing")
+	}
+	if action.Keybinding != "cmd+shift+f" {
+		t.Fatalf("Keybinding = %q, want cmd+shift+f", action.Keybinding)
+	}
+}
+
+func TestDispatcher_AIQuerySuggestionsUseLiveLauncherModes(t *testing.T) {
+	dispatcher := New(DefaultConfig())
+	result := dispatcher.Dispatch("@ai")
+	if !result.Success {
+		t.Fatalf("Dispatch(@ai) success = false, error = %q", result.Error)
+	}
+	if len(result.Items) == 0 {
+		t.Fatal("Dispatch(@ai) returned no AI suggestions")
+	}
+	for _, item := range result.Items {
+		if item.ID == "ai-unavailable" || item.Title == "AI недоступен" {
+			t.Fatalf("stale unavailable AI suggestion returned: %#v", item)
+		}
 	}
 }
 

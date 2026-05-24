@@ -1191,8 +1191,17 @@ function fallbackActionDescriptors(): AIChatActionDescriptor[] {
 function sanitizeActionDescriptors(
   descriptors: AIChatActionDescriptor[],
 ): AIChatActionDescriptor[] {
-  const source =
-    descriptors.length > 0 ? descriptors : fallbackActionDescriptors();
+  const sourceById = new Map<AIChatAction, AIChatActionDescriptor>();
+  fallbackActionDescriptors().forEach((descriptor) => {
+    sourceById.set(descriptor.id, descriptor);
+  });
+  descriptors.forEach((descriptor) => {
+    sourceById.set(descriptor.id, {
+      ...(sourceById.get(descriptor.id) ?? {}),
+      ...descriptor,
+    } as AIChatActionDescriptor);
+  });
+  const source = Array.from(sourceById.values());
   return source.map((descriptor) =>
     descriptor.id === AIChatAction.AIChatActionBuild &&
     /non-executable|not executable/i.test(descriptor.description || "")
@@ -1279,6 +1288,7 @@ export function AIChatPanelContent({
     streamingTextByRunId,
     egressRecords,
     mnemonicEntries,
+    commandIntents,
     approvalPolicy,
     consentPolicy,
     embeddingStatus,
@@ -1307,6 +1317,8 @@ export function AIChatPanelContent({
     setEgressRecords,
     upsertEgressRecord,
     setMnemonicEntries,
+    setPendingApprovals: setStorePendingApprovals,
+    consumeCommandIntent,
     setApprovalPolicy,
     setConsentPolicy,
     setEmbeddingStatus,
@@ -1322,6 +1334,7 @@ export function AIChatPanelContent({
     initialChromeState,
   );
   const [loading, setLoading] = useState(false);
+  const [runtimeHydrated, setRuntimeHydrated] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [providerRuntimes, setProviderRuntimes] = useState<
     AIProviderRuntimeDescriptor[]
@@ -1870,6 +1883,7 @@ export function AIChatPanelContent({
 
   const refreshRuntime = useCallback(async () => {
     setLoading(true);
+    setRuntimeHydrated(false);
     setRuntimeError(null);
     try {
       const contextRequest = buildContextRequest(
@@ -1952,7 +1966,10 @@ export function AIChatPanelContent({
       setApprovalPolicy(safeApprovalPolicy);
       setMnemonicEntries(normalizeAIMnemonicEntries(nextMnemonicEntries));
       setProviderRuntimes(normalizeAIProviderRuntimes(nextProviderRuntimes));
-      setPendingApprovals(normalizeAIPendingApprovals(nextPendingApprovals));
+      const normalizedPendingApprovals =
+        normalizeAIPendingApprovals(nextPendingApprovals);
+      setPendingApprovals(normalizedPendingApprovals);
+      setStorePendingApprovals(normalizedPendingApprovals);
       setRuns(safeEnvelopes);
       setContextPreview(normalizeAIContextSnapshot(preview));
 
@@ -1984,6 +2001,7 @@ export function AIChatPanelContent({
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : String(error));
     } finally {
+      setRuntimeHydrated(true);
       setLoading(false);
     }
   }, [
@@ -2001,6 +2019,7 @@ export function AIChatPanelContent({
     setProviders,
     setPromptWorkflows,
     setRuns,
+    setStorePendingApprovals,
     setStatus,
     setActiveRunId,
     setTools,
@@ -2093,11 +2112,13 @@ export function AIChatPanelContent({
   const refreshPendingApprovals = useCallback(async () => {
     try {
       const approvals = await AIListPendingApprovals(50);
-      setPendingApprovals(normalizeAIPendingApprovals(approvals));
+      const normalizedApprovals = normalizeAIPendingApprovals(approvals);
+      setPendingApprovals(normalizedApprovals);
+      setStorePendingApprovals(normalizedApprovals);
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : String(error));
     }
-  }, [setRuntimeError]);
+  }, [setRuntimeError, setStorePendingApprovals]);
 
   const refreshModelCapabilities = useCallback(async () => {
     try {
@@ -2566,87 +2587,130 @@ export function AIChatPanelContent({
     }
   }, []);
 
-  const handleSend = useCallback(async () => {
-    if (!canSend || !selectedProvider) return;
-    setRuntimeError(null);
-    const latestActiveEditor = activeEditorContextFromStore(
-      useEditorStore.getState(),
-    );
-    const request: AIContextRequest = buildContextRequest(
+  const startChatRun = useCallback(
+    async (override?: {
+      action?: AIChatAction;
+      prompt?: string;
+      sessionId?: string;
+      profileId?: string;
+      workflowId?: string;
+      mentions?: AIChatMentionCandidate[];
+      resetComposer?: boolean;
+    }) => {
+      const prompt = (override?.prompt ?? state.input).trim();
+      const action = override?.action ?? state.selectedAction;
+      const sessionId = chatSessionKey(override?.sessionId ?? activeSessionId);
+      const profileId = override?.profileId ?? state.selectedProfileId;
+      const workflowId = override?.workflowId ?? state.selectedWorkflowId;
+      const mentions = override?.mentions ?? selectedMentionsForActiveSession;
+      if (!prompt) return false;
+      if (!selectedProvider || !selectedProviderReady) {
+        setRuntimeError(
+          providerDisabledReason || "AI provider is unavailable.",
+        );
+        return false;
+      }
+      const targetSessionRunning = runs.some(
+        (run) =>
+          sessionIdOf(run) === sessionId &&
+          (run.status === "running" || run.status === "queued"),
+      );
+      if (targetSessionRunning) {
+        setRuntimeError("Generation is already running in this session.");
+        return false;
+      }
+      setRuntimeError(null);
+      const latestActiveEditor = activeEditorContextFromStore(
+        useEditorStore.getState(),
+      );
+      const request: AIContextRequest = buildContextRequest(
+        state.context,
+        latestActiveEditor,
+        prompt,
+        mentions,
+        profileId,
+        activeTerminal,
+        action,
+        sessionId,
+        {
+          providerId: selectedProvider.id,
+          model: selectedModel,
+          runtimeFamily: selectedRuntimeFamily,
+          reasoningEffort: selectedReasoningEffort,
+          contextWindowHint: selectedContextWindowHint,
+        },
+      );
+      try {
+        const preview = normalizeAIContextSnapshot(
+          await AIGetContextPreview(request),
+        );
+        if (!preview) {
+          throw new Error(
+            "Context preview is unavailable; request was not sent.",
+          );
+        }
+        setContextPreview(preview);
+        const startRequest: AIChatRunRequest & { reasoningEffort?: string } = {
+          action,
+          sessionId,
+          profileId,
+          workflowId,
+          prompt,
+          runtimeFamily: selectedRuntimeFamily,
+          providerId: selectedProvider.id,
+          model: selectedModel,
+          includeMnemonic: request.includeMnemonic,
+          includeMCP: request.includeMCP,
+          includeSkills: request.includeSkills,
+          includeContinuity: request.includeContinuity,
+          context: request,
+          links: {},
+        };
+        if (selectedReasoningEffort) {
+          startRequest.reasoningEffort = selectedReasoningEffort;
+        }
+        const run = await AIStartChatRun(startRequest);
+        setHydratedRun(run);
+        upsertRunEnvelope(envelopeFromRun(run));
+        setActiveRunId(run.id);
+        dispatch({ type: "setActiveRun", runId: run.id });
+        if (override?.resetComposer !== false) {
+          dispatch({ type: "resetComposer" });
+        }
+        return true;
+      } catch (error) {
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+        return false;
+      }
+    },
+    [
+      activeTerminal,
+      activeSessionId,
+      providerDisabledReason,
+      runs,
+      selectedContextWindowHint,
+      selectedModel,
+      selectedReasoningEffort,
+      selectedProvider,
+      selectedProviderReady,
+      selectedRuntimeFamily,
+      setActiveRunId,
+      setContextPreview,
+      setHydratedRun,
       state.context,
-      latestActiveEditor,
-      state.input.trim(),
+      state.input,
+      state.selectedAction,
       selectedMentionsForActiveSession,
       state.selectedProfileId,
-      activeTerminal,
-      state.selectedAction,
-      activeSessionId,
-      {
-        providerId: selectedProvider.id,
-        model: selectedModel,
-        runtimeFamily: selectedRuntimeFamily,
-        reasoningEffort: selectedReasoningEffort,
-        contextWindowHint: selectedContextWindowHint,
-      },
-    );
-    try {
-      const preview = normalizeAIContextSnapshot(
-        await AIGetContextPreview(request),
-      );
-      if (!preview) {
-        throw new Error(
-          "Context preview is unavailable; request was not sent.",
-        );
-      }
-      setContextPreview(preview);
-      const startRequest: AIChatRunRequest & { reasoningEffort?: string } = {
-        action: state.selectedAction,
-        sessionId: activeSessionId,
-        profileId: state.selectedProfileId,
-        workflowId: state.selectedWorkflowId,
-        prompt: state.input.trim(),
-        runtimeFamily: selectedRuntimeFamily,
-        providerId: selectedProvider.id,
-        model: selectedModel,
-        includeMnemonic: request.includeMnemonic,
-        includeMCP: request.includeMCP,
-        includeSkills: request.includeSkills,
-        includeContinuity: request.includeContinuity,
-        context: request,
-        links: {},
-      };
-      if (selectedReasoningEffort) {
-        startRequest.reasoningEffort = selectedReasoningEffort;
-      }
-      const run = await AIStartChatRun(startRequest);
-      setHydratedRun(run);
-      upsertRunEnvelope(envelopeFromRun(run));
-      setActiveRunId(run.id);
-      dispatch({ type: "setActiveRun", runId: run.id });
-      dispatch({ type: "resetComposer" });
-    } catch (error) {
-      setRuntimeError(error instanceof Error ? error.message : String(error));
-    }
-  }, [
-    activeTerminal,
-    canSend,
-    selectedContextWindowHint,
-    selectedModel,
-    selectedReasoningEffort,
-    selectedProvider,
-    selectedRuntimeFamily,
-    setActiveRunId,
-    setContextPreview,
-    setHydratedRun,
-    activeSessionId,
-    state.context,
-    state.input,
-    state.selectedAction,
-    selectedMentionsForActiveSession,
-    state.selectedProfileId,
-    state.selectedWorkflowId,
-    upsertRunEnvelope,
-  ]);
+      state.selectedWorkflowId,
+      upsertRunEnvelope,
+    ],
+  );
+
+  const handleSend = useCallback(async () => {
+    if (!canSend || !selectedProvider) return;
+    await startChatRun();
+  }, [canSend, selectedProvider, startChatRun]);
 
   const handleStartAgentLogin = useCallback(
     async (provider: AIProviderDescriptor): Promise<AIChatRun | null> => {
@@ -2821,6 +2885,112 @@ export function AIChatPanelContent({
     });
     return () => offStopAgent?.();
   }, [handleCancel]);
+
+  const activeCommandIntent = commandIntents[0] ?? null;
+  const processingCommandIntentIdsRef = useRef(new Set<string>());
+
+  const processCommandIntent = useCallback(
+    async (intent: NonNullable<typeof activeCommandIntent>) => {
+      if (processingCommandIntentIdsRef.current.has(intent.id)) {
+        return;
+      }
+      processingCommandIntentIdsRef.current.add(intent.id);
+      try {
+        switch (intent.actionId) {
+          case "ai.newChat": {
+            const sessionId = createChatSessionId();
+            setActiveRunId(null);
+            dispatch({ type: "resetComposer" });
+            dispatch({ type: "setActiveSession", sessionId });
+            break;
+          }
+          case "ai.selectAction": {
+            if (intent.action) {
+              dispatch({ type: "setAction", action: intent.action });
+            }
+            dispatch({ type: "setInput", input: "" });
+            break;
+          }
+          case "ai.startFromInput": {
+            if (!intent.prompt || !intent.action) {
+              break;
+            }
+            const sessionId = createChatSessionId();
+            setActiveRunId(null);
+            dispatch({ type: "setActiveSession", sessionId });
+            dispatch({
+              type: "setAction",
+              action: intent.action,
+              profileId: intent.profileId,
+            });
+            if (intent.workflowId) {
+              dispatch({ type: "setWorkflow", workflowId: intent.workflowId });
+            }
+            dispatch({ type: "setInput", input: intent.prompt });
+            const started = await startChatRun({
+              action: intent.action,
+              prompt: intent.prompt,
+              sessionId,
+              profileId: intent.profileId,
+              workflowId: intent.workflowId,
+              mentions: [],
+              resetComposer: false,
+            });
+            if (started) {
+              dispatch({ type: "setInput", input: "" });
+            }
+            break;
+          }
+          case "ai.pendingApprovals":
+            dispatch({ type: "toggleActivityPopover", open: true });
+            await refreshPendingApprovals();
+            break;
+          case "ai.runtimeStatus":
+            dispatch({ type: "toggleActivityPopover", open: true });
+            break;
+          case "ai.approvalSettings":
+            dispatch({ type: "toggleSettingsPopover", open: true });
+            break;
+          case "ai.cancelActiveRun":
+            await handleCancel();
+            break;
+        }
+      } finally {
+        processingCommandIntentIdsRef.current.delete(intent.id);
+        consumeCommandIntent(intent.id);
+      }
+    },
+    [
+      consumeCommandIntent,
+      handleCancel,
+      refreshPendingApprovals,
+      setActiveRunId,
+      startChatRun,
+    ],
+  );
+
+  useEffect(() => {
+    if (!activeCommandIntent) return;
+    if (activeCommandIntent.actionId === "ai.startFromInput") {
+      if (!runtimeHydrated) return;
+      if (providers.length > 0 && !selectedProvider) return;
+      if (
+        selectedProvider &&
+        (selectedProvider.models?.length ?? 0) > 0 &&
+        !selectedModel
+      ) {
+        return;
+      }
+    }
+    void processCommandIntent(activeCommandIntent);
+  }, [
+    activeCommandIntent,
+    processCommandIntent,
+    providers.length,
+    runtimeHydrated,
+    selectedModel,
+    selectedProvider,
+  ]);
 
   const handleApplyPatchArtifact = useCallback(
     async (artifactId: string, runId?: string) => {

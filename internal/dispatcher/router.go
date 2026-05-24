@@ -60,7 +60,7 @@ func (r *Router) Parse(input string) ParsedInput {
 		return r.parseSymbolSearch(input)
 	}
 
-	if strings.HasPrefix(input, "@ai ") {
+	if strings.EqualFold(input, "@ai") || strings.HasPrefix(strings.ToLower(input), "@ai ") {
 		return r.parseAIQuery(input)
 	}
 
@@ -137,8 +137,7 @@ func (r *Router) parseSymbolSearch(input string) ParsedInput {
 }
 
 func (r *Router) parseAIQuery(input string) ParsedInput {
-	query := strings.TrimPrefix(input, "@ai ")
-	query = strings.TrimSpace(query)
+	query := strings.TrimSpace(input[len("@ai"):])
 	return ParsedInput{
 		Raw:    input,
 		Type:   InputTypeAIQuery,

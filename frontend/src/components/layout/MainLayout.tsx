@@ -45,6 +45,7 @@ import { zIndex } from "../../styles/colors";
 import { useEditorSettingsStore } from "../../stores/editorSettingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { usePerformanceStore } from "../../stores/performanceStore";
+import { useAIChatStore } from "../../stores/aiChatStore";
 import { usePluginModal } from "../../contexts/PluginModalContext";
 import {
   usePreviewWindowStore,
@@ -75,6 +76,10 @@ import {
 } from "../../shell/windowLeaseBridge";
 import { runAutoUpdateCheckWithNotification } from "../../shell/manualUpdateNotifications";
 import type { ShortcutActionId } from "../../utils/keyboard";
+import type {
+  AICommandPaletteActionId,
+  AICommandPalettePayload,
+} from "../../utils/commandPaletteAI";
 import { SNAPPED_PANEL_OUTER_GAP } from "../../utils/layoutHelpers";
 import {
   getLogicalViewportSize,
@@ -2211,16 +2216,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const openRunDialog = useCallback(() => {
-    const primaryProfile = executionProfiles.runProfiles.find(
-      (profile) => !hasMissingTools(profile),
-    );
-    if (primaryProfile) {
-      void executeExecutionProfile(primaryProfile);
-      return;
-    }
-
     setExecutionDialogMode("run");
-  }, [executeExecutionProfile, executionProfiles.runProfiles]);
+  }, []);
 
   const openDebugDialog = useCallback(() => {
     setExecutionDialogMode("debug");
@@ -4810,6 +4807,38 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     togglePanelFromExplicitAction(panel);
   };
 
+  const openAIChatFromPalette = useCallback(() => {
+    if (isZenHiddenSnappedPanel("aiChat")) {
+      pinZenPanelIfShortcutOpened("aiChat");
+      markActivePanel("aiChat");
+      return;
+    }
+
+    if (panelsRef.current.aiChat) {
+      markActivePanel("aiChat");
+      return;
+    }
+
+    applyPanelOpenState("aiChat", { panel: "aiChat" });
+    pinZenPanelIfShortcutOpened("aiChat");
+  }, [
+    applyPanelOpenState,
+    isZenHiddenSnappedPanel,
+    markActivePanel,
+    pinZenPanelIfShortcutOpened,
+  ]);
+
+  const handlePaletteAction = useCallback(
+    (actionId: AICommandPaletteActionId, payload?: AICommandPalettePayload) => {
+      if (!actionId.startsWith("ai.")) {
+        return;
+      }
+      openAIChatFromPalette();
+      useAIChatStore.getState().enqueueCommandIntent(actionId, payload);
+    },
+    [openAIChatFromPalette],
+  );
+
   const openProblemsFromStatusBar = () => {
     if (panelsRef.current.problems && !isZenHiddenSnappedPanel("problems")) {
       closePanelWithMotion("problems");
@@ -6168,6 +6197,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 dispatcher.close();
               }
             }}
+            onPaletteAction={handlePaletteAction}
             onOpenFile={(path, line) => openFileFromPath(path, line)}
             onTerminalCommand={(command) => {
               void submitTerminalCommand(command);

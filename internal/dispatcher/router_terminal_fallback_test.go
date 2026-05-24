@@ -27,6 +27,18 @@ func TestRouterParse_TagCommandStillWorks(t *testing.T) {
 	}
 }
 
+func TestRouterParse_AICommandWithoutPrompt(t *testing.T) {
+	router := NewRouter(DefaultConfig())
+	parsed := router.Parse(`@ai`)
+
+	if parsed.Type != InputTypeAIQuery {
+		t.Fatalf("Type = %v, want %v", parsed.Type, InputTypeAIQuery)
+	}
+	if parsed.Query != "" {
+		t.Fatalf("Query = %q, want empty", parsed.Query)
+	}
+}
+
 func TestRouterParse_GrepQuotePrefixes(t *testing.T) {
 	router := NewRouter(DefaultConfig())
 
