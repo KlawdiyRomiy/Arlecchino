@@ -75,7 +75,7 @@ func main() {
 			Handler: application.AssetFileServerFS(assets),
 		},
 		Mac: application.MacOptions{
-			ApplicationShouldTerminateAfterLastWindowClosed: true,
+			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
 		Windows: application.WindowsOptions{
 			DisableQuitOnLastWindowClosed: false,
@@ -86,7 +86,7 @@ func main() {
 	})
 	app.attachWailsApplication(wailsApp)
 	registerOpenIntentApplicationEvents(app, wailsApp)
-	registerApplicationLifecycleEvents(wailsApp)
+	registerApplicationLifecycleEvents(app, wailsApp)
 
 	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:                  "main",

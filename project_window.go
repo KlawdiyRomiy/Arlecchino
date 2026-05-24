@@ -102,6 +102,9 @@ func (a *App) OpenProjectWindow(path string) (ProjectWindowLaunchResult, error) 
 	window.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
 		a.closeProjectWindowSession(sessionID)
 	})
+	if roleWindow, ok := window.(application.Window); ok {
+		a.registerWindowRole(roleWindow, WindowRoleProject)
+	}
 	registerNativeFullscreenEvents(window)
 	window.Show()
 	window.Focus()
@@ -192,6 +195,7 @@ func (a *App) closeProjectWindowSession(sessionID string) {
 	if session == nil {
 		return
 	}
+	a.unregisterWindowRoleName(session.WindowName)
 	a.clearNativeWindowControlsStateForWindowName(session.WindowName)
 	_ = a.closeProjectInSession(session, true)
 }

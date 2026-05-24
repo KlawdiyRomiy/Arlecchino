@@ -515,6 +515,7 @@ func (a *App) runWindowLeaseDetach(actionID string, parsed parsedWindowLeaseActi
 	window.OnWindowEvent(events.Common.WindowClosing, func(event *application.WindowEvent) {
 		a.handleDetachedWindowClosing(parsed.surfaceID)
 	})
+	a.registerWindowRole(window, windowLeaseRoleToNativeRole(parsed.payload.Role))
 	window.Show()
 	window.Focus()
 
@@ -524,6 +525,15 @@ func (a *App) runWindowLeaseDetach(actionID string, parsed parsedWindowLeaseActi
 	result.Snapshot = a.GetWindowLeaseStatus()
 	result.Message = "Detached Wails window created."
 	return result, nil
+}
+
+func windowLeaseRoleToNativeRole(role WindowLeaseRole) WindowRole {
+	switch role {
+	case WindowLeaseRolePreview:
+		return WindowRolePreview
+	default:
+		return WindowRoleUtility
+	}
 }
 
 func buildDetachedWindowURL(record WindowLeaseRecord) (string, error) {
@@ -554,6 +564,7 @@ func (a *App) handleDetachedWindowClosing(surfaceID string) {
 	if !ok {
 		return
 	}
+	a.unregisterWindowRoleName(record.NativeWindowID)
 	a.emitWindowLeaseStatus()
 	if intent, ok := buildWindowLeaseReturnIntent(record); ok {
 		a.focusMainWindow()

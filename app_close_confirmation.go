@@ -1,6 +1,8 @@
 package main
 
 import (
+	"runtime"
+
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -40,7 +42,11 @@ func (a *App) CancelApplicationClose() bool {
 }
 
 func (a *App) shouldQuitApplication() bool {
-	return a.allowOrRequestApplicationClose("quit")
+	allowed := a.allowOrRequestApplicationClose("quit")
+	if allowed {
+		a.closeConfirmationAllowed.Store(true)
+	}
+	return allowed
 }
 
 func (a *App) registerMainWindowCloseConfirmation(window *application.WebviewWindow) {
@@ -48,10 +54,27 @@ func (a *App) registerMainWindowCloseConfirmation(window *application.WebviewWin
 		return
 	}
 	window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		if a.closeConfirmationAllowed.Load() {
+			return
+		}
+		if runtime.GOOS == "darwin" && a.hideMainWindowInsteadOfClosing() {
+			event.Cancel()
+			return
+		}
 		if !a.allowOrRequestApplicationClose("window") {
 			event.Cancel()
 		}
 	})
+}
+
+func (a *App) hideMainWindowInsteadOfClosing() bool {
+	if a == nil || a.mainWindow == nil {
+		return false
+	}
+	a.markWindowRoleActive(a.mainWindow)
+	a.mainWindow.Hide()
+	a.hideApplicationOnMain()
+	return true
 }
 
 func (a *App) allowOrRequestApplicationClose(source string) bool {
