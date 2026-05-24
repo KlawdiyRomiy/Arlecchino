@@ -76,7 +76,7 @@ const mountNotificationRail = async (page: Page): Promise<void> => {
       id: "auto-update",
       kind: "warning",
       source: "Updates",
-      tag: "alpha",
+      tag: "beta",
       title: "Manual update required",
       message:
         "Version unknown\nNo auto-update manifest is configured; use the manual DMG release flow.",
@@ -140,7 +140,7 @@ test("notification rail renders bottom-right and supports primary actions", asyn
   await expect(stack).toBeVisible();
   await expect(primary).toHaveAttribute("data-notification-state", "expanded");
   await expect(page.getByText("UPDATES")).toBeVisible();
-  await expect(page.getByText("alpha")).toBeVisible();
+  await expect(page.getByText("beta")).toBeVisible();
   await expect(page.getByText("Manual update required")).toBeVisible();
   await expect(page.getByText("Open GitHub Releases")).toBeVisible();
 

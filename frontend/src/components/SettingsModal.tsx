@@ -4518,7 +4518,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                   ["Version", buildInfo.version ?? "unknown"],
                                   ["Build", buildInfo.build ?? "unknown"],
                                   ["Commit", buildInfo.gitSha ?? "unknown"],
-                                  ["Channel", buildInfo.channel ?? "alpha"],
+                                  ["Channel", buildInfo.channel ?? "beta"],
                                   [
                                     "Package",
                                     buildInfo.packaged

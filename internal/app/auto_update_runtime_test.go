@@ -33,7 +33,7 @@ func TestRuntimeAutoUpdateVerifySuccessAndFailure(t *testing.T) {
 		Signature: base64.StdEncoding.EncodeToString(signature),
 	}
 
-	verification, err := verifyRuntimeAutoUpdateArtifact(data, "alpha", "0.2.0", artifact)
+	verification, err := verifyRuntimeAutoUpdateArtifact(data, "beta", "0.2.0", artifact)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestRuntimeAutoUpdateVerifySuccessAndFailure(t *testing.T) {
 	}
 
 	artifact.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, []byte("other")))
-	verification, err = verifyRuntimeAutoUpdateArtifact(data, "alpha", "0.2.0", artifact)
+	verification, err = verifyRuntimeAutoUpdateArtifact(data, "beta", "0.2.0", artifact)
 	if err == nil {
 		t.Fatal("verifyRuntimeAutoUpdateArtifact succeeded with wrong signature")
 	}
@@ -130,17 +130,17 @@ func TestCompareAutoUpdateVersions(t *testing.T) {
 }
 
 func TestCompareAutoUpdateTargetUsesBuildWhenVersionMatches(t *testing.T) {
-	current := BuildInfo{Version: "0.1.4-alpha", Build: "104"}
-	if compareAutoUpdateTarget(PackagedOSAutoUpdateManifest{Version: "0.1.4-alpha", Build: "105"}, current) <= 0 {
+	current := BuildInfo{Version: "0.2.0-beta", Build: "104"}
+	if compareAutoUpdateTarget(PackagedOSAutoUpdateManifest{Version: "0.2.0-beta", Build: "105"}, current) <= 0 {
 		t.Fatal("same version with newer build should be available")
 	}
-	if compareAutoUpdateTarget(PackagedOSAutoUpdateManifest{Version: "0.1.4-alpha", Build: "104"}, current) != 0 {
+	if compareAutoUpdateTarget(PackagedOSAutoUpdateManifest{Version: "0.2.0-beta", Build: "104"}, current) != 0 {
 		t.Fatal("same version and build should compare equal")
 	}
-	if compareAutoUpdateTarget(PackagedOSAutoUpdateManifest{Version: "0.1.4-alpha", Build: "103"}, current) >= 0 {
+	if compareAutoUpdateTarget(PackagedOSAutoUpdateManifest{Version: "0.2.0-beta", Build: "103"}, current) >= 0 {
 		t.Fatal("same version with older build should not be newer")
 	}
-	if compareAutoUpdateTarget(PackagedOSAutoUpdateManifest{Version: "0.1.5-alpha", Build: "1"}, current) <= 0 {
+	if compareAutoUpdateTarget(PackagedOSAutoUpdateManifest{Version: "0.2.1-beta", Build: "1"}, current) <= 0 {
 		t.Fatal("newer version should win regardless of build")
 	}
 }

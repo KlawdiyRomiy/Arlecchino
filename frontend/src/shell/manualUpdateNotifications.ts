@@ -77,7 +77,7 @@ const channelLabel = (status: AutoUpdateStatus): string =>
   status.channel ??
   status.manifest?.channel ??
   status.current.channel ??
-  "alpha";
+  "beta";
 
 const isVerboseDiagnosticReason = (reason: string): boolean =>
   reason.length > 220 ||

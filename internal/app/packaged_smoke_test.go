@@ -254,7 +254,7 @@ func TestWails3PackagedSmokeReport_AutoUpdateManifestGateStates(t *testing.T) {
 	validPath := filepath.Join(t.TempDir(), "valid-update.json")
 	if err := os.WriteFile(
 		validPath,
-		[]byte(`{"channel":"alpha","version":"0.1.0","artifacts":[{"platform":"darwin","arch":"arm64","url":"https://example.invalid/update.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","signature":"placeholder"}]}`),
+		[]byte(`{"channel":"beta","version":"0.2.0-beta","artifacts":[{"platform":"darwin","arch":"arm64","url":"https://example.invalid/update.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","signature":"placeholder"}]}`),
 		0o600,
 	); err != nil {
 		t.Fatalf("write valid manifest: %v", err)
@@ -269,8 +269,8 @@ func TestWails3PackagedSmokeReport_AutoUpdateManifestGateStates(t *testing.T) {
 	if validReport.AutoUpdate.ManifestStatus != "valid-manifest-read" {
 		t.Fatalf("ManifestStatus = %q, want valid-manifest-read", validReport.AutoUpdate.ManifestStatus)
 	}
-	if validReport.AutoUpdate.Manifest == nil || validReport.AutoUpdate.Manifest.Version != "0.1.0" {
-		t.Fatalf("Manifest = %#v, want version 0.1.0", validReport.AutoUpdate.Manifest)
+	if validReport.AutoUpdate.Manifest == nil || validReport.AutoUpdate.Manifest.Version != "0.2.0-beta" {
+		t.Fatalf("Manifest = %#v, want version 0.2.0-beta", validReport.AutoUpdate.Manifest)
 	}
 	if validReport.AutoUpdate.InstallEnabled {
 		t.Fatal("InstallEnabled = true, want false")
@@ -297,8 +297,8 @@ func TestWails3PackagedSmokeReport_AutoUpdateApplySmokeVerifiesArtifact(t *testi
 
 	manifestPath := filepath.Join(root, "update.json")
 	manifest := `{
-  "channel": "alpha",
-  "version": "0.1.0",
+  "channel": "beta",
+  "version": "0.2.0-beta",
   "releaseNotes": "Smoke update",
   "mandatory": false,
   "artifacts": [{

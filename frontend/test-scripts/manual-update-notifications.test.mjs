@@ -86,8 +86,8 @@ test("manual update check shows not-available feedback", async () => {
 
   const status = normalizeStatus(normalizeAutoUpdateStatusPayload, {
     state: "not-available",
-    channel: "alpha",
-    reason: "Current version 0.2.0 is up to date for channel alpha.",
+    channel: "beta",
+    reason: "Current version 0.2.0 is up to date for channel beta.",
     current: {
       packaged: true,
       version: "0.2.0",
@@ -103,7 +103,7 @@ test("manual update check shows not-available feedback", async () => {
   assert.ok(summary);
   assert.equal(summary.kind, "success");
   assert.equal(summary.action, null);
-  assert.equal(summary.tag, "alpha");
+  assert.equal(summary.tag, "beta");
   assert.match(summary.message, /up to date/);
 });
 
@@ -127,7 +127,7 @@ test("background update check stays silent unless an update is present", async (
   ]) {
     const status = normalizeStatus(normalizeAutoUpdateStatusPayload, {
       state,
-      channel: "alpha",
+      channel: "beta",
       reason: "Background checks should not interrupt the IDE.",
       current: {
         packaged: true,
@@ -149,7 +149,7 @@ test("background update check stays silent unless an update is present", async (
 
   const availableStatus = normalizeStatus(normalizeAutoUpdateStatusPayload, {
     state: "available",
-    channel: "alpha",
+    channel: "beta",
     targetVersion: "0.2.0",
     reason: "Version 0.2.0 is available.",
   });
@@ -167,7 +167,7 @@ test("update notification offers download for an available signed update", async
 
   const status = normalizeStatus(normalizeAutoUpdateStatusPayload, {
     state: "available",
-    channel: "alpha",
+    channel: "beta",
     targetVersion: "0.2.0",
     targetBuild: "42",
     releaseNotes: "ZIP is signed and ready.",
@@ -178,11 +178,11 @@ test("update notification offers download for an available signed update", async
   const summary = buildManualUpdateNotification(status);
 
   assert.ok(summary);
-  assert.equal(summary.key, "available:alpha:0.2.0 build 42");
+  assert.equal(summary.key, "available:beta:0.2.0 build 42");
   assert.equal(summary.kind, "warning");
   assert.equal(summary.sticky, true);
   assert.equal(summary.action, "download");
-  assert.equal(summary.tag, "alpha");
+  assert.equal(summary.tag, "beta");
   assert.match(summary.message, /Version 0\.2\.0 build 42/);
   assert.match(summary.message, /ZIP is signed and ready/);
   assert.match(summary.details, /ZIP is signed and ready/);
@@ -217,7 +217,7 @@ a21fc1d Route autocomplete sources through resolver
 
   const curatedStatus = normalizeStatus(normalizeAutoUpdateStatusPayload, {
     state: "available",
-    channel: "alpha",
+    channel: "beta",
     targetVersion: "0.2.0",
     releaseNotes: curatedNotes,
     reason: "Version 0.2.0 is available.",
@@ -233,7 +233,7 @@ a21fc1d Route autocomplete sources through resolver
 
   const rawStatus = normalizeStatus(normalizeAutoUpdateStatusPayload, {
     state: "available",
-    channel: "alpha",
+    channel: "beta",
     targetVersion: "0.2.0",
     releaseNotes: rawNotes,
     reason: "Version 0.2.0 is available.",
@@ -252,7 +252,7 @@ test("update failure notification keeps filesystem diagnostics out of the card b
 
   const status = normalizeStatus(normalizeAutoUpdateStatusPayload, {
     state: "failed",
-    channel: "alpha",
+    channel: "beta",
     targetVersion: "0.2.0",
     reason:
       "staged Arlecchino.app codesign verification failed: /Users/klawdiy/Library/Caches/Arlecchino/updates/staged/candidate/extract/Arlecchino.app: a sealed resource is missing or invalid\nfile added: /Users/klawdiy/Library/Caches/Arlecchino/updates/staged/candidate/extract/Arlecchino.app/Contents/._Info.plist",
@@ -275,7 +275,7 @@ test("update notification offers relaunch after staging", async () => {
 
   const status = normalizeStatus(normalizeAutoUpdateStatusPayload, {
     state: "staged",
-    channel: "alpha",
+    channel: "beta",
     targetVersion: "0.2.0",
     progress: 1,
     reason: "Update is verified and ready to install after confirmation.",
@@ -295,7 +295,7 @@ test("update notification falls back to release page when apply is unavailable",
 
   const status = normalizeStatus(normalizeAutoUpdateStatusPayload, {
     state: "manual-required",
-    channel: "alpha",
+    channel: "beta",
     targetVersion: "0.2.0",
     reason: "Current app bundle is not writable.",
   });
@@ -305,7 +305,7 @@ test("update notification falls back to release page when apply is unavailable",
   assert.ok(summary);
   assert.equal(summary.kind, "warning");
   assert.equal(summary.action, "manual");
-  assert.equal(summary.tag, "alpha");
+  assert.equal(summary.tag, "beta");
   assert.match(summary.message, /not writable/);
 });
 
@@ -322,7 +322,7 @@ test("manual update check refreshes an unchanged visible notification", async ()
 
   const unchangedStatus = normalizeStatus(normalizeAutoUpdateStatusPayload, {
     state: "manual-required",
-    channel: "alpha",
+    channel: "beta",
     targetVersion: "0.2.0",
     reason: "No auto-update manifest is configured.",
   });
@@ -337,7 +337,7 @@ test("manual update check refreshes an unchanged visible notification", async ()
   assert.equal(useAppNotificationStore.getState().notifications.length, 1);
   assert.equal(secondNotification.id, "auto-update");
   assert.equal(secondNotification.title, "Manual update required");
-  assert.equal(secondNotification.tag, "alpha");
+  assert.equal(secondNotification.tag, "beta");
   assert.ok(secondNotification.revision > firstNotification.revision);
 });
 
@@ -385,7 +385,7 @@ test("download action publishes progress immediately and ignores repeated clicks
   });
   const stagedStatus = normalizeStatus(normalizeAutoUpdateStatusPayload, {
     state: "staged",
-    channel: "alpha",
+    channel: "beta",
     targetVersion: "0.2.0",
     progress: 1,
   });
@@ -433,14 +433,14 @@ test("startup update check runs only for packaged apps with a manifest URL", asy
     state: "idle",
     current: {
       packaged: true,
-      updateManifestUrl: "file:///tmp/arlecchino-update-manifest.json",
+      updateManifestUrl: "file:///tmp/arlecchino-beta-update-manifest.json",
     },
   });
   const devStatus = normalizeStatus(normalizeAutoUpdateStatusPayload, {
     state: "idle",
     current: {
       packaged: false,
-      updateManifestUrl: "file:///tmp/arlecchino-update-manifest.json",
+      updateManifestUrl: "file:///tmp/arlecchino-beta-update-manifest.json",
     },
   });
   const missingManifestStatus = normalizeStatus(
@@ -484,7 +484,7 @@ test("private update auth status normalization does not expose token values", as
     Provider: "github-release",
     Repository: "KlawdiyRomiy/Arlecchino",
     ManifestSource:
-      "github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-update-manifest.json",
+      "github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-beta-update-manifest.json",
     Configured: true,
     Source: "keychain",
     EnvOverride: false,

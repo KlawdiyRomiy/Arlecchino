@@ -157,7 +157,7 @@ func selectAutoUpdateArtifact(manifest *PackagedOSAutoUpdateManifest, platform s
 func verifyAutoUpdateForSmoke(manifest *PackagedOSAutoUpdateManifest) PackagedOSAutoUpdateVerification {
 	channel := strings.TrimSpace(os.Getenv(packagedOSAutoUpdateChannelEnv))
 	if channel == "" {
-		channel = "alpha"
+		channel = "beta"
 	}
 	result := PackagedOSAutoUpdateVerification{
 		Status:   "no-manifest",

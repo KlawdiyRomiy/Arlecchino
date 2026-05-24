@@ -266,7 +266,7 @@ const runtimeAssetsPassed = runtimeAssetFiles.every(
 const report = {
   generatedAt: new Date().toISOString(),
   platform: "darwin",
-  runtime: "wails3-local-alpha",
+  runtime: "wails3-local-beta",
   appBundle: {
     path: appBundlePath,
     name: appBundleName,
@@ -294,10 +294,10 @@ const report = {
   },
   gatekeeper: {
     exitCode: gatekeeperExitCode,
-    status: gatekeeperExitCode === 0 ? "accepted" : "expected-rejected-for-adhoc-local-alpha",
+    status: gatekeeperExitCode === 0 ? "accepted" : "expected-rejected-for-adhoc-local-beta",
     output: gatekeeperOutput,
     note:
-      "Ad-hoc local alpha builds are expected to be rejected by spctl when they are not Developer ID signed and notarized.",
+      "Ad-hoc local beta builds are expected to be rejected by spctl when they are not Developer ID signed and notarized.",
   },
   process: {
     launchedBySmoke: process.env.LAUNCHED_BY_SMOKE === "1",

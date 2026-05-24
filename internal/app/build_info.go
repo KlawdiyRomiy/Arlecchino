@@ -13,7 +13,7 @@ var (
 	buildNumber       = "0"
 	buildCommit       = "dev"
 	buildTime         = ""
-	buildChannel      = "alpha"
+	buildChannel      = "beta"
 	buildManifestURL  = ""
 	buildUpdatePubKey = ""
 )
@@ -48,7 +48,7 @@ func currentBuildInfo() BuildInfo {
 		channel = strings.TrimSpace(buildChannel)
 	}
 	if channel == "" {
-		channel = "alpha"
+		channel = "beta"
 	}
 	manifestURL := strings.TrimSpace(os.Getenv(autoUpdateManifestURLEnv))
 	if manifestURL == "" {

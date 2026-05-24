@@ -41,17 +41,17 @@ test("app notification store adds, updates, and dismisses notifications", async 
   const id = store.addNotification({
     kind: "progress",
     title: "Checking for updates",
-    message: "alpha channel",
+    message: "beta channel",
     details: "Full release notes",
     detailsLabel: "Details",
-    tag: "alpha",
+    tag: "beta",
     progress: 1.4,
   });
 
   let notifications = useAppNotificationStore.getState().notifications;
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0].id, id);
-  assert.equal(notifications[0].tag, "alpha");
+  assert.equal(notifications[0].tag, "beta");
   assert.equal(notifications[0].details, "Full release notes");
   assert.equal(notifications[0].detailsLabel, "Details");
   assert.equal(notifications[0].sticky, true);
@@ -84,20 +84,20 @@ test("app notification store refreshes same-id notifications without duplicating
     id: "auto-update",
     kind: "progress",
     title: "Checking for Updates",
-    tag: "alpha",
+    tag: "beta",
   });
   store.addNotification({
     id: "auto-update",
     kind: "warning",
     title: "Manual update required",
-    tag: "alpha",
+    tag: "beta",
   });
 
   const notifications = useAppNotificationStore.getState().notifications;
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0].id, "auto-update");
   assert.equal(notifications[0].title, "Manual update required");
-  assert.equal(notifications[0].tag, "alpha");
+  assert.equal(notifications[0].tag, "beta");
   assert.equal(notifications[0].revision, 1);
 });
 

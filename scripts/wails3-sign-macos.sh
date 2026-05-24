@@ -31,7 +31,7 @@ Environment for developer-id mode:
   ARLE_WAILS3_NOTARY_KEYCHAIN_PROFILE
   ARLE_WAILS3_NOTARY_TEAM_ID
 
-Default mode is ad-hoc signing for local alpha smoke.
+Default mode is ad-hoc signing for local beta smoke.
 EOF
 }
 

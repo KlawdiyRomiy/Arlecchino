@@ -92,7 +92,7 @@ func main() {
 	}
 	sum := sha256.Sum256(data)
 	payload := manifest{
-		Channel:      "alpha",
+		Channel:      "beta",
 		Version:      "0.1.0",
 		ReleaseNotes: "Smoke update",
 		Artifacts: []artifact{{

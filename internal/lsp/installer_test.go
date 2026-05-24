@@ -95,7 +95,7 @@ func TestGetServerByID(t *testing.T) {
 	t.Logf("gopls installed: %v, version: %s", server.Installed, server.Version)
 }
 
-func TestPublicAlphaDoesNotExposeInstallableBinaryDownloads(t *testing.T) {
+func TestPublicBetaDoesNotExposeInstallableBinaryDownloads(t *testing.T) {
 	installer, err := NewInstaller(nil)
 	if err != nil {
 		t.Fatalf("NewInstaller failed: %v", err)
@@ -323,7 +323,7 @@ func TestFindBinaryPathDiscoversProjectComposerAndUserGemBins(t *testing.T) {
 	}
 }
 
-func TestMacAlphaUsesHomebrewForFormerBinaryDownloads(t *testing.T) {
+func TestMacBetaUsesHomebrewForFormerBinaryDownloads(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS Homebrew policy is only asserted on darwin")
 	}

@@ -39,19 +39,19 @@ func (s *fakeAutoUpdateTokenStore) ClearToken() error {
 }
 
 func TestParseGitHubReleaseSource(t *testing.T) {
-	source, err := parseGitHubReleaseSource("github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-update-manifest.json")
+	source, err := parseGitHubReleaseSource("github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-beta-update-manifest.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.Owner != "KlawdiyRomiy" || source.Repo != "Arlecchino" || source.Mode != "latest" || source.Asset != "arlecchino-update-manifest.json" {
+	if source.Owner != "KlawdiyRomiy" || source.Repo != "Arlecchino" || source.Mode != "latest" || source.Asset != "arlecchino-beta-update-manifest.json" {
 		t.Fatalf("source = %#v", source)
 	}
 
-	source, err = parseGitHubReleaseSource("github-release://KlawdiyRomiy/Arlecchino/tag/v0.2.0/arlecchino-update-manifest.json")
+	source, err = parseGitHubReleaseSource("github-release://KlawdiyRomiy/Arlecchino/tag/v0.2.0-beta.112/arlecchino-beta-update-manifest.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.Mode != "tag" || source.Tag != "v0.2.0" || source.Asset != "arlecchino-update-manifest.json" {
+	if source.Mode != "tag" || source.Tag != "v0.2.0-beta.112" || source.Asset != "arlecchino-beta-update-manifest.json" {
 		t.Fatalf("tag source = %#v", source)
 	}
 
@@ -70,7 +70,7 @@ func TestPrivateGitHubManifestMissingTokenIsManualRequired(t *testing.T) {
 	service := NewAutoUpdateService()
 	service.tokenStore = &fakeAutoUpdateTokenStore{}
 
-	_, err := service.readManifest("github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-update-manifest.json")
+	_, err := service.readManifest("github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-beta-update-manifest.json")
 	if err == nil {
 		t.Fatal("readManifest succeeded without private token")
 	}
@@ -97,7 +97,7 @@ func TestPrivateGitHubManifestUsesTokenAndAssetAPI(t *testing.T) {
 				Draft:      false,
 				Prerelease: true,
 				Assets: []githubReleaseAsset{{
-					Name: "arlecchino-update-manifest.json",
+					Name: "arlecchino-beta-update-manifest.json",
 					URL:  serverAssetURL(r, "/repos/KlawdiyRomiy/Arlecchino/releases/assets/1"),
 				}},
 			}})
@@ -105,7 +105,7 @@ func TestPrivateGitHubManifestUsesTokenAndAssetAPI(t *testing.T) {
 			manifestAuth = r.Header.Get("Authorization")
 			manifestAccept = r.Header.Get("Accept")
 			_, _ = w.Write([]byte(`{
-				"channel": "alpha",
+				"channel": "beta",
 				"version": "0.2.0",
 				"artifacts": [{
 					"platform": "darwin",
@@ -126,7 +126,7 @@ func TestPrivateGitHubManifestUsesTokenAndAssetAPI(t *testing.T) {
 	service.githubAPIBase = server.URL
 	service.tokenStore = &fakeAutoUpdateTokenStore{token: token}
 
-	manifest, err := service.readManifest("github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-update-manifest.json")
+	manifest, err := service.readManifest("github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-beta-update-manifest.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,41 +144,25 @@ func TestPrivateGitHubManifestUsesTokenAndAssetAPI(t *testing.T) {
 	}
 }
 
-func TestPrivateGitHubLatestSkipsDraftsAndReleasesWithoutManifest(t *testing.T) {
+func TestPrivateGitHubLegacyAlphaManifestCompatibility(t *testing.T) {
 	const token = "github_pat_test_secret"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/KlawdiyRomiy/Arlecchino/releases":
-			_ = json.NewEncoder(w).Encode([]githubReleaseResponse{
-				{
-					TagName: "v0.3.0-draft",
-					Draft:   true,
-					Assets: []githubReleaseAsset{{
-						Name: "arlecchino-update-manifest.json",
-						URL:  serverAssetURL(r, "/repos/KlawdiyRomiy/Arlecchino/releases/assets/draft"),
-					}},
-				},
-				{
-					TagName:    "v0.2.1-alpha.101",
-					Prerelease: true,
-					Assets: []githubReleaseAsset{{
-						Name: "release-evidence.json",
-						URL:  serverAssetURL(r, "/repos/KlawdiyRomiy/Arlecchino/releases/assets/evidence"),
-					}},
-				},
-				{
-					TagName:    "v0.2.0-alpha.100",
-					Prerelease: true,
-					Assets: []githubReleaseAsset{{
-						Name: "arlecchino-update-manifest.json",
-						URL:  serverAssetURL(r, "/repos/KlawdiyRomiy/Arlecchino/releases/assets/manifest"),
-					}},
-				},
-			})
-		case "/repos/KlawdiyRomiy/Arlecchino/releases/assets/manifest":
+			_ = json.NewEncoder(w).Encode([]githubReleaseResponse{{
+				TagName:    "v0.2.0-beta.112",
+				Draft:      false,
+				Prerelease: true,
+				Assets: []githubReleaseAsset{{
+					Name: "arlecchino-update-manifest.json",
+					URL:  serverAssetURL(r, "/repos/KlawdiyRomiy/Arlecchino/releases/assets/legacy-alpha-manifest"),
+				}},
+			}})
+		case "/repos/KlawdiyRomiy/Arlecchino/releases/assets/legacy-alpha-manifest":
 			_, _ = w.Write([]byte(`{
 				"channel": "alpha",
-				"version": "0.2.0-alpha",
+				"version": "0.2.0-beta",
+				"build": "112",
 				"artifacts": [{
 					"platform": "darwin",
 					"arch": "universal",
@@ -202,13 +186,79 @@ func TestPrivateGitHubLatestSkipsDraftsAndReleasesWithoutManifest(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Version != "0.2.0-alpha" {
+	if manifest.Channel != "alpha" || manifest.Version != "0.2.0-beta" || manifest.Build != "112" {
+		t.Fatalf("manifest = %#v, want legacy alpha channel bridge to beta build 112", manifest)
+	}
+	if len(manifest.Artifacts) != 1 || manifest.Artifacts[0].URL != "https://api.github.com/repos/KlawdiyRomiy/Arlecchino/releases/assets/2" {
+		t.Fatalf("artifacts = %#v", manifest.Artifacts)
+	}
+}
+
+func TestPrivateGitHubLatestSkipsDraftsAndReleasesWithoutManifest(t *testing.T) {
+	const token = "github_pat_test_secret"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/KlawdiyRomiy/Arlecchino/releases":
+			_ = json.NewEncoder(w).Encode([]githubReleaseResponse{
+				{
+					TagName: "v0.3.0-draft",
+					Draft:   true,
+					Assets: []githubReleaseAsset{{
+						Name: "arlecchino-beta-update-manifest.json",
+						URL:  serverAssetURL(r, "/repos/KlawdiyRomiy/Arlecchino/releases/assets/draft"),
+					}},
+				},
+				{
+					TagName:    "v0.2.1-beta.101",
+					Prerelease: true,
+					Assets: []githubReleaseAsset{{
+						Name: "release-evidence.json",
+						URL:  serverAssetURL(r, "/repos/KlawdiyRomiy/Arlecchino/releases/assets/evidence"),
+					}},
+				},
+				{
+					TagName:    "v0.2.0-beta.100",
+					Prerelease: true,
+					Assets: []githubReleaseAsset{{
+						Name: "arlecchino-beta-update-manifest.json",
+						URL:  serverAssetURL(r, "/repos/KlawdiyRomiy/Arlecchino/releases/assets/manifest"),
+					}},
+				},
+			})
+		case "/repos/KlawdiyRomiy/Arlecchino/releases/assets/manifest":
+			_, _ = w.Write([]byte(`{
+				"channel": "beta",
+				"version": "0.2.0-beta",
+				"artifacts": [{
+					"platform": "darwin",
+					"arch": "universal",
+					"kind": "zip",
+					"url": "https://api.github.com/repos/KlawdiyRomiy/Arlecchino/releases/assets/2",
+					"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					"signature": "bbbb"
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	service := NewAutoUpdateService()
+	service.githubAPIBase = server.URL
+	service.tokenStore = &fakeAutoUpdateTokenStore{token: token}
+
+	manifest, err := service.readManifest("github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-beta-update-manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != "0.2.0-beta" {
 		t.Fatalf("manifest version = %q", manifest.Version)
 	}
 }
 
 func TestPrivateUpdateAuthStatusAndTokenMutation(t *testing.T) {
-	t.Setenv(autoUpdateManifestURLEnv, "github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-update-manifest.json")
+	t.Setenv(autoUpdateManifestURLEnv, "github-release://KlawdiyRomiy/Arlecchino/latest/arlecchino-beta-update-manifest.json")
 	store := &fakeAutoUpdateTokenStore{}
 	service := NewAutoUpdateService()
 	service.tokenStore = store

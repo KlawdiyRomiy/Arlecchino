@@ -17,7 +17,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/wails3-private-updater-live-smoke-macos.sh [options]
 
-Captures local-alpha updater evidence for an installed Arlecchino.app and a
+Captures local-beta updater evidence for an installed Arlecchino.app and a
 private GitHub release. The script does not publish, mutate releases, or store
 tokens. It uses gh CLI auth to download release assets into a temp directory.
 

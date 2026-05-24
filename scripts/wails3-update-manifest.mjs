@@ -13,9 +13,9 @@ const usage = () => {
   console.log(`Usage: scripts/wails3-update-manifest.mjs --artifact <path> --private-key <pem> --out <path> [options]
 
 Options:
-  --version <version>       Release version. Default: 0.0.0-alpha
+  --version <version>       Release version. Default: 0.0.0-beta
   --build <build>           Release build number. Optional.
-  --channel <channel>       Update channel. Default: alpha
+  --channel <channel>       Update channel. Default: beta
   --platform <platform>     Artifact platform. Default: darwin
   --arch <arch>             arm64, amd64, universal, or empty. Default: universal
   --url <url>               Public artifact URL. Default: file:// artifact URL
@@ -51,9 +51,9 @@ if (!artifactPath || !privateKeyPath || !outPath) {
   throw new Error("--artifact, --private-key and --out are required");
 }
 
-const version = readOption("--version") || "0.0.0-alpha";
+const version = readOption("--version") || "0.0.0-beta";
 const build = readOption("--build");
-const channel = readOption("--channel") || "alpha";
+const channel = readOption("--channel") || "beta";
 const platform = readOption("--platform") || "darwin";
 const archInput = readOption("--arch") || "universal";
 const arch = archInput === "universal" ? "universal" : archInput;

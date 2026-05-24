@@ -10,13 +10,13 @@ EXPECTED_BRANCH="main"
 CURRENT_BRANCH="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || true)"
 
 if [[ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]]; then
-  echo "ERROR: scripts/wails3-local-alpha-release-macos.sh is only for $EXPECTED_BRANCH." >&2
+  echo "ERROR: scripts/wails3-local-release-macos.sh is only for $EXPECTED_BRANCH." >&2
   echo "Current branch: ${CURRENT_BRANCH:-unknown}" >&2
   exit 1
 fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "ERROR: local alpha release packaging is macOS-only." >&2
+  echo "ERROR: local release packaging is macOS-only." >&2
   exit 1
 fi
 
@@ -33,16 +33,16 @@ else
   BUILD_DIR="$ROOT_DIR/$BUILD_DIR_RAW"
 fi
 
-PROFILE="${ARLE_WAILS3_RELEASE_PROFILE:-local-alpha}"
-VERSION="${ARLE_WAILS3_APP_VERSION:-0.0.0-alpha}"
+PROFILE="${ARLE_WAILS3_RELEASE_PROFILE:-local-beta}"
+VERSION="${ARLE_WAILS3_APP_VERSION:-0.0.0-beta}"
 BUILD_NUMBER="${ARLE_WAILS3_APP_BUILD:-1}"
-BUNDLE_ID="${ARLE_WAILS3_BUNDLE_ID:-io.arlecchino.ide.local-alpha}"
+BUNDLE_ID="${ARLE_WAILS3_BUNDLE_ID:-io.arlecchino.ide.local-beta}"
 MIN_MACOS_VERSION="${ARLE_WAILS3_MIN_MACOS:-11.0}"
 ARCH_TARGET="${ARLE_WAILS3_RELEASE_ARCH:-universal}"
 SIGN_MODE="${ARLE_WAILS3_SIGN_MODE:-adhoc}"
 CREATE_DMG="${ARLE_WAILS3_RELEASE_CREATE_DMG:-0}"
 RUN_SMOKE="${ARLE_WAILS3_RELEASE_RUN_SMOKE:-1}"
-UPDATE_CHANNEL="${ARLE_WAILS3_UPDATE_CHANNEL:-${ARLECCHINO_AUTO_UPDATE_CHANNEL:-alpha}}"
+UPDATE_CHANNEL="${ARLE_WAILS3_UPDATE_CHANNEL:-${ARLECCHINO_AUTO_UPDATE_CHANNEL:-beta}}"
 UPDATE_MANIFEST_URL="${ARLE_WAILS3_UPDATE_MANIFEST_URL:-${ARLECCHINO_AUTO_UPDATE_MANIFEST_URL:-}}"
 UPDATE_PRIVATE_KEY="${ARLE_WAILS3_UPDATE_SIGNING_KEY:-}"
 UPDATE_MANIFEST_PATH="${ARLE_WAILS3_UPDATE_MANIFEST_OUT:-}"
@@ -51,19 +51,19 @@ UPDATE_PUBLIC_KEY="${ARLECCHINO_AUTO_UPDATE_PUBLIC_KEY:-}"
 UPDATE_PUBLIC_KEY_OUT="${ARLE_WAILS3_UPDATE_PUBLIC_KEY_OUT:-}"
 SKIP_FRONTEND="0"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
-OUTPUT_ROOT="${ARLE_WAILS3_RELEASE_OUTPUT:-$BUILD_DIR/releases/local-alpha}"
+OUTPUT_ROOT="${ARLE_WAILS3_RELEASE_OUTPUT:-$BUILD_DIR/releases/local-beta}"
 RELEASE_DIR=""
 REPORT_PATH=""
 
 derive_git_release_tag() {
   local exact_tag latest_tag
-  exact_tag="$(git -C "$ROOT_DIR" tag --points-at HEAD --list 'v*-alpha.*' --sort=-creatordate | head -1)"
+  exact_tag="$(git -C "$ROOT_DIR" tag --points-at HEAD --list 'v*-beta.*' --sort=-creatordate | head -1)"
   if [[ -n "$exact_tag" ]]; then
     echo "$exact_tag"
     return 0
   fi
 
-  latest_tag="$(git -C "$ROOT_DIR" describe --tags --match 'v*-alpha.*' --abbrev=0 2>/dev/null || true)"
+  latest_tag="$(git -C "$ROOT_DIR" describe --tags --match 'v*-beta.*' --abbrev=0 2>/dev/null || true)"
   if [[ -n "$latest_tag" ]]; then
     echo "$latest_tag"
   fi
@@ -73,11 +73,11 @@ apply_git_release_tag_defaults() {
   local release_tag="$1"
   local tag_body="${release_tag#v}"
 
-  if [[ ! "$tag_body" =~ '^(.+-alpha)\.([0-9]+)$' ]]; then
+  if [[ ! "$tag_body" =~ '^(.+-beta)\.([0-9]+)$' ]]; then
     return 0
   fi
 
-  if [[ "$VERSION" == "0.0.0-alpha" ]]; then
+  if [[ "$VERSION" == "0.0.0-beta" ]]; then
     VERSION="${match[1]}"
   fi
   if [[ "$BUILD_NUMBER" == "1" ]]; then
@@ -87,10 +87,10 @@ apply_git_release_tag_defaults() {
 
 usage() {
   cat <<'EOF'
-Usage: scripts/wails3-local-alpha-release-macos.sh [options]
+Usage: scripts/wails3-local-release-macos.sh [options]
 
 Options:
-  --profile <name>      Release profile. Only local-alpha is supported.
+  --profile <name>      Release profile. Only local-beta is supported.
   --output-dir <path>   Release output directory.
   --version <version>   CFBundleShortVersionString. Default: current git tag version.
   --build <number>      CFBundleVersion. Default: current git tag build.
@@ -109,14 +109,14 @@ Options:
                          Output manifest path. Default: artifacts/arlecchino-update-manifest.json.
   --update-artifact-url <url>
                          Public updater ZIP URL. Default: file:// URL for local candidate.
-  --update-channel <ch> Update channel. Default: alpha.
+  --update-channel <ch> Update channel. Default: beta.
   --update-public-key <base64>
                          Embed/configure the Ed25519 public key for the app verifier.
   --update-public-key-out <path>
                          Output derived public key path.
   --report <path>       JSON evidence report path.
 
-This profile is for local alpha smoke without Apple Developer ID trust.
+This profile is for local beta smoke without Apple Developer ID trust.
 EOF
 }
 
@@ -234,9 +234,9 @@ if [[ -n "$GIT_RELEASE_TAG" ]]; then
   apply_git_release_tag_defaults "$GIT_RELEASE_TAG"
 fi
 
-if [[ "$PROFILE" != "local-alpha" ]]; then
+if [[ "$PROFILE" != "local-beta" ]]; then
   echo "ERROR: unsupported release profile: $PROFILE" >&2
-  echo "Only local-alpha is available without Apple Developer ID." >&2
+  echo "Only local-beta is available without Apple Developer ID." >&2
   exit 1
 fi
 
@@ -653,7 +653,7 @@ const report = {
   trustModel: {
     appleDeveloperAvailable: false,
     publicTrustedDistribution: false,
-    localAlphaOnly: true,
+    localBetaOnly: true,
     developerId: {
       status: signMode === "developer-id" ? "configured" : "skipped-no-developer-id",
     },
@@ -771,4 +771,4 @@ if (report.smoke.requested && report.smoke.status !== "passed") {
 NODE
 
 cat "$REPORT_PATH"
-echo "Wails v3 local-alpha release artifacts: $RELEASE_DIR" >&2
+echo "Wails v3 local-beta release artifacts: $RELEASE_DIR" >&2

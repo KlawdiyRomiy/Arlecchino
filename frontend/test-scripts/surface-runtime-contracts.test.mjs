@@ -215,6 +215,7 @@ test("surface runtime builds stable sessions from current panel and preview stat
     active: false,
     pinned: false,
     panelId: "explorer",
+    payload: undefined,
     geometry: {
       position: "left",
       width: 280,
@@ -232,6 +233,7 @@ test("surface runtime builds stable sessions from current panel and preview stat
     active: true,
     pinned: false,
     panelId: "problems",
+    payload: undefined,
     geometry: {
       position: "bottom",
       width: 700,
@@ -1371,7 +1373,7 @@ test("packaged OS integration normalizes default-off adapters and background act
       },
     ],
     AutoUpdateManifest: {
-      Channel: "alpha",
+      Channel: "beta",
       Version: "0.1.0",
       URL: "https://example.invalid/arlecchino.zip",
     },

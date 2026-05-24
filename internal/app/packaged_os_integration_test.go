@@ -91,7 +91,7 @@ func TestReadAutoUpdateManifest_ReadsAndEnablesRuntimeUpdates(t *testing.T) {
 	manifestPath := filepath.Join(t.TempDir(), "update.json")
 	if err := os.WriteFile(
 		manifestPath,
-		[]byte(`{"channel":"alpha","version":"0.1.0","artifacts":[{"platform":"darwin","arch":"arm64","url":"https://example.invalid/arlecchino.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","signature":"placeholder"}]}`),
+		[]byte(`{"channel":"beta","version":"0.2.0-beta","artifacts":[{"platform":"darwin","arch":"arm64","url":"https://example.invalid/arlecchino.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","signature":"placeholder"}]}`),
 		0o600,
 	); err != nil {
 		t.Fatalf("write manifest: %v", err)
@@ -101,8 +101,8 @@ func TestReadAutoUpdateManifest_ReadsAndEnablesRuntimeUpdates(t *testing.T) {
 	if manifest == nil {
 		t.Fatalf("manifest = nil, reason = %q", reason)
 	}
-	if manifest.Channel != "alpha" || manifest.Version != "0.1.0" {
-		t.Fatalf("manifest = %#v, want alpha 0.1.0", manifest)
+	if manifest.Channel != "beta" || manifest.Version != "0.2.0-beta" {
+		t.Fatalf("manifest = %#v, want beta 0.2.0-beta", manifest)
 	}
 
 	snapshot := buildPackagedOSIntegrationSnapshot(
