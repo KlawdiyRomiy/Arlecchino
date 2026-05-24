@@ -1798,6 +1798,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             includeMnemonic: false,
             includeMCP: false,
             includeSkills: false,
+            includeContinuity: false,
             maxBytes: settings.maxPromptBytes,
             maxSnippets: 0,
             optInSource: "editor_prediction_background",

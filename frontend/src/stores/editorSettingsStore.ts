@@ -19,6 +19,7 @@ export interface AIChatDefaultContextPrefs {
   mnemonic: boolean;
   mcp: boolean;
   skills: boolean;
+  continuity: boolean;
 }
 
 export interface AIChatDisplayPreferences {
@@ -195,6 +196,7 @@ export const DEFAULT_AI_CHAT_DEFAULT_CONTEXT: AIChatDefaultContextPrefs = {
   mnemonic: true,
   mcp: false,
   skills: false,
+  continuity: true,
 };
 export const DEFAULT_AI_CHAT_WORKFLOW_PREFS: AIChatWorkflowPreferences = {
   autoReviewAfterBuild: true,
