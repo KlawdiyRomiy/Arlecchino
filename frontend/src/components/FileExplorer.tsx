@@ -2264,18 +2264,19 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
             )}
           </div>
 
-          <div
-            data-testid="file-explorer-scroll-region"
-            style={{
-              flex: 1,
-              minHeight: 0,
-              overflow: "auto",
-              padding: "4px 0",
-            }}
-          >
-            {files.map((node, index) =>
-              renderFileNode(node, 0, index === files.length - 1, []),
-            )}
+          <div className="file-explorer-scroll-fog-shell">
+            <div
+              data-testid="file-explorer-scroll-region"
+              style={{
+                height: "100%",
+                overflow: "auto",
+                padding: "4px 0",
+              }}
+            >
+              {files.map((node, index) =>
+                renderFileNode(node, 0, index === files.length - 1, []),
+              )}
+            </div>
           </div>
 
           {renderPerspectiveOverlays()}

@@ -798,6 +798,44 @@ body > [data-radix-portal] > * {
   transition: background-color 150ms ease-out;
 }
 
+.file-explorer-scroll-fog-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.file-explorer-scroll-fog-shell::before,
+.file-explorer-scroll-fog-shell::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 8px;
+  z-index: 2;
+  height: 20px;
+  pointer-events: none;
+}
+
+.file-explorer-scroll-fog-shell::before {
+  top: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-shell-soft) 62%, transparent),
+    color-mix(in srgb, var(--surface-shell) 22%, transparent) 58%,
+    transparent
+  );
+}
+
+.file-explorer-scroll-fog-shell::after {
+  bottom: 0;
+  background: linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--surface-shell-soft) 62%, transparent),
+    color-mix(in srgb, var(--surface-shell) 22%, transparent) 58%,
+    transparent
+  );
+}
+
 .file-explorer-node:hover {
   background-color: var(--file-explorer-hover-bg, transparent);
 }
