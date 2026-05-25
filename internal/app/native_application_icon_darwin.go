@@ -10,18 +10,26 @@ package app
 #include <stdbool.h>
 #include <stdlib.h>
 
+static NSSize arlecchinoApplicationIconTargetSize(void) {
+    NSArray *resourceNames = @[@"appicon", @"iconfile"];
+    NSBundle *bundle = [NSBundle mainBundle];
+    for (NSString *resourceName in resourceNames) {
+        NSImage *resourceIcon = [bundle imageForResource:resourceName];
+        if (resourceIcon != nil && [resourceIcon size].width > 0 && [resourceIcon size].height > 0) {
+            return [resourceIcon size];
+        }
+    }
+
+    NSImage *applicationIcon = [NSImage imageNamed:NSImageNameApplicationIcon];
+    if (applicationIcon != nil && [applicationIcon size].width > 0 && [applicationIcon size].height > 0) {
+        return [applicationIcon size];
+    }
+
+    return NSMakeSize(128, 128);
+}
+
 static void arlecchinoNormalizeApplicationIconSize(NSImage *icon) {
-    NSInteger pixelWidth = 0;
-    NSInteger pixelHeight = 0;
-    for (NSImageRep *representation in [icon representations]) {
-        pixelWidth = MAX(pixelWidth, [representation pixelsWide]);
-        pixelHeight = MAX(pixelHeight, [representation pixelsHigh]);
-    }
-    if (pixelWidth > 0 && pixelHeight > 0) {
-        [icon setSize:NSMakeSize(pixelWidth, pixelHeight)];
-        return;
-    }
-    [icon setSize:NSMakeSize(1024, 1024)];
+    [icon setSize:arlecchinoApplicationIconTargetSize()];
 }
 
 static NSImage* arlecchinoCopyApplicationIconResource(NSString *appearanceValue) {
