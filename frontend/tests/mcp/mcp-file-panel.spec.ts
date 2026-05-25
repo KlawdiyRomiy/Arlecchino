@@ -24,6 +24,14 @@ const installMCPFilePanelBridges = async (
       "/workspace/src/main.ts": "export const ready = true;\n",
     };
     const writeFileCalls: Array<{ path: unknown; content: unknown }> = [];
+    const notifyFileCalls: Array<{
+      method: string;
+      path: unknown;
+      language?: unknown;
+      version?: unknown;
+      content?: unknown;
+    }> = [];
+    const aiApplyPatchCalls: unknown[] = [];
     const createDirectoryCalls: unknown[] = [];
     const createdDirectories: string[] = [];
     const scrollFixtureFiles = Array.from({ length: 48 }, (_, index) => {
@@ -64,10 +72,39 @@ const installMCPFilePanelBridges = async (
               case "SendTerminalText":
               case "CloseTerminal":
               case "ResizeTerminal":
-              case "NotifyFileOpened":
-              case "NotifyFileChanged":
-              case "NotifyFileClosed":
                 return true;
+              case "NotifyFileOpened":
+                notifyFileCalls.push({
+                  method: property,
+                  path: args[0],
+                  language: args[1],
+                  content: args[2],
+                });
+                return true;
+              case "NotifyFileChanged":
+                notifyFileCalls.push({
+                  method: property,
+                  path: args[0],
+                  language: args[1],
+                  version: args[2],
+                  content: args[3],
+                });
+                return true;
+              case "NotifyFileClosed":
+                notifyFileCalls.push({
+                  method: property,
+                  path: args[0],
+                  language: args[1],
+                });
+                return true;
+              case "AIApplyPatchArtifact":
+                aiApplyPatchCalls.push(args[0]);
+                return {
+                  artifactId:
+                    (args[0] as { artifactId?: string } | undefined)
+                      ?.artifactId ?? "",
+                  status: "applied",
+                };
               case "WriteFile":
                 writeFileCalls.push({ path: args[0], content: args[1] });
                 if (
@@ -278,7 +315,10 @@ const installMCPFilePanelBridges = async (
       __mcpAcks: acks,
       __mcpFileContents: fileContents,
       __writeFileCalls: writeFileCalls,
+      __notifyFileCalls: notifyFileCalls,
+      __aiApplyPatchCalls: aiApplyPatchCalls,
       __createDirectoryCalls: createDirectoryCalls,
+      _wails: { environment: { OS: "darwin" } },
       go: { main: { App: appBridge } },
       runtime: runtimeBridge,
     });
@@ -416,6 +456,189 @@ test("MCP panel open event loads a file into the side code panel and acks", asyn
   });
 });
 
+test("Code panel shows AI inline patch controls from global artifact events", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(
+    ({ path, content }) => {
+      window.runtime.EventsEmit("ide:panel:open", {
+        panel: "code",
+        path,
+        content,
+        line: 1,
+        position: "right",
+        mode: "snapped",
+      });
+    },
+    { path: makefilePath, content: makefileContent },
+  );
+
+  await expect(page.getByText("Makefile (Code)")).toBeVisible();
+  await page.evaluate(async (path) => {
+    const { getCurrentProjectSessionId } =
+      await import("/src/shell/projectSessionRoute.ts");
+    window.runtime.EventsEmit("ai:chat:artifact-updated", {
+      id: "code-panel-patch-apply",
+      runId: "run-code-panel",
+      sessionId: "default",
+      projectSessionId: getCurrentProjectSessionId(),
+      kind: "patch_preview",
+      status: "ready",
+      title: "Update Makefile",
+      summary: "Update Makefile command",
+      payloadJson: JSON.stringify({
+        unifiedDiff: `diff --git a/Makefile b/Makefile\n--- a/Makefile\n+++ b/Makefile\n@@ -1,2 +1,3 @@\n dev-start:\n \tvite --host 127.0.0.1\n+\tgo test ./...\n`,
+        checkReady: true,
+        files: [{ path, status: "modify", exists: true }],
+      }),
+      createdAt: "2026-05-18T00:00:00Z",
+      updatedAt: "2026-05-18T00:00:00Z",
+    });
+  }, makefilePath);
+
+  await expect(page.getByTestId("ai-inline-patch-toolbar")).toBeVisible();
+  await page.getByTestId("ai-inline-patch-apply").click();
+  await expect
+    .poll(async () => page.evaluate(() => window.__aiApplyPatchCalls))
+    .toContainEqual({ artifactId: "code-panel-patch-apply" });
+
+  await page.evaluate(async (path) => {
+    const { getCurrentProjectSessionId } =
+      await import("/src/shell/projectSessionRoute.ts");
+    window.runtime.EventsEmit("ai:chat:artifact-updated", {
+      id: "code-panel-patch-reject",
+      runId: "run-code-panel",
+      sessionId: "default",
+      projectSessionId: getCurrentProjectSessionId(),
+      kind: "patch_preview",
+      status: "ready",
+      title: "Reject Makefile",
+      summary: "Reject Makefile command",
+      payloadJson: JSON.stringify({
+        unifiedDiff: `diff --git a/Makefile b/Makefile\n--- a/Makefile\n+++ b/Makefile\n@@ -1,2 +1,3 @@\n dev-start:\n \tvite --host 127.0.0.1\n+\tnpm test\n`,
+        checkReady: true,
+        files: [{ path, status: "modify", exists: true }],
+      }),
+      createdAt: "2026-05-18T00:00:00Z",
+      updatedAt: "2026-05-18T00:00:01Z",
+    });
+  }, makefilePath);
+
+  await expect(page.getByTestId("ai-inline-patch-toolbar")).toBeVisible();
+  await page.getByTestId("ai-inline-patch-reject").click();
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useAIInlinePatchStore } =
+          await import("/src/stores/aiInlinePatchStore.ts");
+        return Object.keys(useAIInlinePatchStore.getState().previews);
+      }),
+    )
+    .not.toContain("code-panel-patch-reject");
+
+  await page.evaluate(async (path) => {
+    const { getCurrentProjectSessionId } =
+      await import("/src/shell/projectSessionRoute.ts");
+    const projectSessionId = getCurrentProjectSessionId();
+    window.runtime.EventsEmit("ai:chat:artifact-updated", {
+      id: "code-panel-captured-direct-write",
+      runId: "run-code-panel",
+      sessionId: "default",
+      projectSessionId,
+      kind: "patch_preview",
+      status: "applied",
+      title: "Captured Makefile edit",
+      summary: "Review captured direct write",
+      payloadJson: JSON.stringify({
+        unifiedDiff: `diff --git a/Makefile b/Makefile\n--- a/Makefile\n+++ b/Makefile\n@@ -1,2 +1,3 @@\n dev-start:\n \tvite --host 127.0.0.1\n+\tcaptured\n`,
+        checkReady: false,
+        alreadyApplied: true,
+        source: "captured_direct_write",
+        files: [{ path, status: "modify", exists: true }],
+      }),
+      createdAt: "2026-05-18T00:00:02Z",
+      updatedAt: "2026-05-18T00:00:02Z",
+    });
+    window.runtime.EventsEmit("ai:patch:artifact-applied", {
+      artifactId: "code-panel-captured-direct-write",
+      projectSessionId,
+      source: "captured_direct_write",
+      files: [{ path }],
+    });
+  }, makefilePath);
+
+  await expect(page.getByTestId("ai-inline-patch-toolbar")).toBeVisible();
+  await expect(page.getByTestId("ai-inline-patch-reject")).toContainText(
+    "Rollback",
+  );
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const { useAIInlinePatchStore } =
+          await import("/src/stores/aiInlinePatchStore.ts");
+        return Object.keys(useAIInlinePatchStore.getState().previews);
+      }),
+    )
+    .toContain("code-panel-captured-direct-write");
+});
+
+test("Code panel blocks case-alias AI patch when the file is dirty", async ({
+  page,
+}) => {
+  await mountProjectUI(page);
+
+  await page.evaluate(
+    ({ path, content }) => {
+      window.runtime.EventsEmit("ide:panel:open", {
+        panel: "code",
+        path,
+        content,
+        line: 1,
+        position: "right",
+        mode: "snapped",
+      });
+    },
+    { path: makefilePath, content: makefileContent },
+  );
+
+  await expect(page.getByText("Makefile (Code)")).toBeVisible();
+  await page.evaluate(async (path) => {
+    const { makeEditorTabId, useEditorStore } =
+      await import("/src/stores/editorStore.ts");
+    const { getCurrentProjectSessionId } =
+      await import("/src/shell/projectSessionRoute.ts");
+    useEditorStore.getState().markTabDirty(makeEditorTabId(path), true);
+    window.runtime.EventsEmit("ai:chat:artifact-updated", {
+      id: "code-panel-case-dirty",
+      runId: "run-code-panel-case",
+      sessionId: "default",
+      projectSessionId: getCurrentProjectSessionId(),
+      kind: "patch_preview",
+      status: "ready",
+      title: "Update Makefile",
+      summary: "Update Makefile command",
+      payloadJson: JSON.stringify({
+        unifiedDiff: `diff --git a/makefile b/makefile\n--- a/makefile\n+++ b/makefile\n@@ -1,2 +1,3 @@\n dev-start:\n \tvite --host 127.0.0.1\n+\tgo test ./...\n`,
+        checkReady: true,
+        files: [
+          { path: "/workspace/makefile", status: "modify", exists: true },
+        ],
+      }),
+      createdAt: "2026-05-18T00:00:00Z",
+      updatedAt: "2026-05-18T00:00:00Z",
+    });
+  }, makefilePath);
+
+  await expect(page.getByTestId("ai-inline-patch-toolbar")).toBeVisible();
+  await page.getByTestId("ai-inline-patch-apply").click();
+  await expect(page.getByText("Save editor changes first")).toBeVisible();
+  await expect
+    .poll(async () => page.evaluate(() => window.__aiApplyPatchCalls.length))
+    .toBe(0);
+});
+
 test("TUI mode lays out side file panels beside the terminal center", async ({
   page,
 }) => {
@@ -431,6 +654,7 @@ test("TUI mode lays out side file panels beside the terminal center", async ({
       "Codex",
     );
     terminalStore.enterTUIMode(terminalId, "playwright");
+    window.runtime.EventsEmit("ide:tui:enter");
   });
 
   await expect(page.getByTestId("tui-center-terminal")).toBeVisible();
@@ -509,6 +733,7 @@ test("TUI code panel refreshes when an open file changes externally", async ({
       "Codex",
     );
     terminalStore.enterTUIMode(terminalId, "playwright");
+    window.runtime.EventsEmit("ide:tui:enter");
   });
 
   await page.evaluate(
@@ -531,10 +756,32 @@ test("TUI code panel refreshes when an open file changes externally", async ({
 
   await page.evaluate((path) => {
     window.__mcpFileContents[path] = "dev-start:\n\tgo test ./...\n";
-    window.runtime.EventsEmit("file:changed", path);
+    window.runtime.EventsEmit("file:changed", path.toLowerCase());
   }, makefilePath);
 
   await expect(codePanel.locator(".cm-content")).toContainText("go test ./...");
+  await expect
+    .poll(async () => page.evaluate(() => window.__notifyFileCalls))
+    .toContainEqual(
+      expect.objectContaining({
+        content: "dev-start:\n\tgo test ./...\n",
+        method: "NotifyFileChanged",
+        path: makefilePath,
+      }),
+    );
+
+  await page.evaluate(async (path) => {
+    const { getCurrentProjectSessionId } =
+      await import("/src/shell/projectSessionRoute.ts");
+    window.__mcpFileContents[path] = "dev-start:\n\tnpm run build\n";
+    window.runtime.EventsEmit("ai:patch:artifact-rolled-back", {
+      artifactId: "patch-refresh",
+      projectSessionId: getCurrentProjectSessionId(),
+      files: [{ path: path.toLowerCase() }],
+    });
+  }, makefilePath);
+
+  await expect(codePanel.locator(".cm-content")).toContainText("npm run build");
 });
 
 test("background created-entry events refresh Explorer without opening editor tabs", async ({
@@ -867,6 +1114,7 @@ test("code panel tab drops back into Explorer without creating another panel", a
       "Codex",
     );
     terminalStore.enterTUIMode(terminalId, "playwright");
+    window.runtime.EventsEmit("ide:tui:enter");
   });
 
   await page.evaluate(() => {
@@ -879,7 +1127,11 @@ test("code panel tab drops back into Explorer without creating another panel", a
 
   const explorerPanel = page.getByTestId("panel-explorer").last();
   await expect(explorerPanel).toBeVisible();
-  await explorerPanel.locator('[data-file-path="/workspace/Makefile"]').click();
+  const makefileNode = explorerPanel.locator(
+    '[data-file-path="/workspace/Makefile"]',
+  );
+  await makefileNode.click();
+  await expect(makefileNode).toHaveClass(/file-explorer-node-highlighted/);
 
   const codePanel = page.getByTestId("panel-code").last();
   await expect(codePanel).toBeVisible();
@@ -948,15 +1200,7 @@ test("code panel tab drops back into Explorer without creating another panel", a
       }),
     )
     .toBe(0);
-  await expect
-    .poll(async () =>
-      page.evaluate(async () => {
-        const { useExplorerSelectionStore } =
-          await import("/src/stores/explorerStore.ts");
-        return useExplorerSelectionStore.getState().highlightedPath;
-      }),
-    )
-    .toBe("/workspace/Makefile");
+  await expect(makefileNode).toHaveClass(/file-explorer-node-highlighted/);
   await expect(page.getByTestId("panel-code")).toHaveCount(0);
 });
 

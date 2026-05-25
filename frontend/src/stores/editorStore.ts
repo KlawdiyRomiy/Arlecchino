@@ -40,6 +40,7 @@ export interface StatusFileContext {
 
 interface EditorState {
   tabs: Map<string, EditorTab>;
+  backingTabRefs: Map<string, number>;
   panes: EditorPane[];
   activePaneId: string;
   splitDirection: SplitDirection;
@@ -48,6 +49,19 @@ interface EditorState {
 }
 
 interface EditorActions {
+  ensureTab: (
+    path: string,
+    name: string,
+    content: string,
+    language: string,
+  ) => void;
+  retainBackingTab: (
+    path: string,
+    name: string,
+    content: string,
+    language: string,
+  ) => void;
+  releaseBackingTab: (path: string) => void;
   openTab: (
     paneId: string,
     path: string,
@@ -166,6 +180,27 @@ const remapPaneTabIds = (
     };
   });
 
+const remapBackingTabRefs = (
+  backingTabRefs: Map<string, number>,
+  tabs: Map<string, EditorTab>,
+  oldPrefix: string,
+  newPrefix: string,
+): Map<string, number> => {
+  const nextRefs = new Map<string, number>();
+  backingTabRefs.forEach((count, tabId) => {
+    const tab = tabs.get(tabId);
+    const remappedPath = tab
+      ? remapProjectPathPrefix(tab.path, oldPrefix, newPrefix)
+      : null;
+    const nextId =
+      tab && remappedPath && remappedPath !== tab.path
+        ? makeEditorTabId(remappedPath)
+        : tabId;
+    nextRefs.set(nextId, (nextRefs.get(nextId) ?? 0) + count);
+  });
+  return nextRefs;
+};
+
 const recordEditorTabEvent = (
   type: string,
   title: string,
@@ -189,14 +224,117 @@ const recordEditorTabEvent = (
   });
 };
 
+const isTabUsedByPane = (panes: EditorPane[], tabId: string): boolean =>
+  panes.some((pane) => pane.tabIds.includes(tabId));
+
 export const useEditorStore = create<EditorState & EditorActions>(
   (set, get) => ({
     tabs: new Map(),
+    backingTabRefs: new Map(),
     panes: [{ id: "pane-main", tabIds: [], activeTabId: "" }],
     activePaneId: "pane-main",
     splitDirection: null,
     cursorPosition: { line: 1, col: 1 },
     statusFile: { path: null, name: null, language: null },
+
+    ensureTab: (path, name, content, language) => {
+      const id = makeEditorTabId(path);
+      const previous = get().tabs.get(id);
+      set((s) => {
+        const existing = s.tabs.get(id);
+        if (existing?.isDirty) {
+          return s;
+        }
+        if (
+          existing &&
+          existing.path === path &&
+          existing.name === name &&
+          existing.content === content &&
+          existing.language === language
+        ) {
+          return s;
+        }
+
+        const newTabs = new Map(s.tabs);
+        newTabs.set(id, {
+          id,
+          path,
+          name,
+          content,
+          isDirty: false,
+          language,
+        });
+        return { tabs: newTabs };
+      });
+
+      const tab = get().tabs.get(id);
+      if (!tab) {
+        return;
+      }
+      if (!previous) {
+        recordEditorTabEvent(
+          "file.backing_opened",
+          "Editor backing file opened",
+          tab,
+        );
+      } else if (previous.content !== tab.content) {
+        recordEditorTabEvent(
+          "file.content_replaced",
+          "Editor file content replaced",
+          tab,
+        );
+      }
+    },
+
+    retainBackingTab: (path, name, content, language) => {
+      const id = makeEditorTabId(path);
+      get().ensureTab(path, name, content, language);
+      set((state) => {
+        const nextRefs = new Map(state.backingTabRefs);
+        nextRefs.set(id, (nextRefs.get(id) ?? 0) + 1);
+        return { backingTabRefs: nextRefs };
+      });
+    },
+
+    releaseBackingTab: (path) => {
+      const id = makeEditorTabId(path);
+      const tab = get().tabs.get(id);
+      set((state) => {
+        const currentRefCount = state.backingTabRefs.get(id) ?? 0;
+        if (currentRefCount <= 0) {
+          return state;
+        }
+
+        const nextRefs = new Map(state.backingTabRefs);
+        if (currentRefCount > 1) {
+          nextRefs.set(id, currentRefCount - 1);
+          return { backingTabRefs: nextRefs };
+        }
+        nextRefs.delete(id);
+
+        if (isTabUsedByPane(state.panes, id)) {
+          return { backingTabRefs: nextRefs };
+        }
+
+        const nextTabs = new Map(state.tabs);
+        nextTabs.delete(id);
+        return {
+          tabs: nextTabs,
+          backingTabRefs: nextRefs,
+          statusFile:
+            state.statusFile.path === path
+              ? { path: null, name: null, language: null }
+              : state.statusFile,
+        };
+      });
+      if (tab) {
+        recordEditorTabEvent(
+          "file.backing_closed",
+          "Editor backing file closed",
+          tab,
+        );
+      }
+    },
 
     openTab: (paneId, path, name, content, language) => {
       const id = makeEditorTabId(path);
@@ -384,9 +522,10 @@ export const useEditorStore = create<EditorState & EditorActions>(
         const isUsedElsewhere = s.panes.some(
           (p) => p.id !== paneId && p.tabIds.includes(tabId),
         );
+        const isRetainedByBackingSurface = s.backingTabRefs.has(tabId);
 
         const newTabs = new Map(s.tabs);
-        if (!isUsedElsewhere) {
+        if (!isUsedElsewhere && !isRetainedByBackingSurface) {
           newTabs.delete(tabId);
         }
 
@@ -610,6 +749,12 @@ export const useEditorStore = create<EditorState & EditorActions>(
           oldPrefix,
           newPrefix,
         );
+        const nextBackingTabRefs = remapBackingTabRefs(
+          state.backingTabRefs,
+          state.tabs,
+          oldPrefix,
+          newPrefix,
+        );
         const nextStatusPath = remapProjectPathPrefix(
           state.statusFile.path,
           oldPrefix,
@@ -618,6 +763,7 @@ export const useEditorStore = create<EditorState & EditorActions>(
 
         return {
           tabs: nextTabs,
+          backingTabRefs: nextBackingTabRefs,
           panes: nextPanes,
           statusFile:
             nextStatusPath && nextStatusPath !== state.statusFile.path
@@ -646,6 +792,7 @@ export const useEditorStore = create<EditorState & EditorActions>(
       const removedTabs = Array.from(get().tabs.values()).filter(
         (tab) =>
           isSameOrChildPath(tab.path, pathPrefix) &&
+          !get().backingTabRefs.has(tab.id) &&
           !(options?.preserveDirty && tab.isDirty),
       );
       set((state) => {
@@ -655,6 +802,7 @@ export const useEditorStore = create<EditorState & EditorActions>(
         const removedTabIds = new Set(
           affectedTabs
             .filter((tab) => !(options?.preserveDirty && tab.isDirty))
+            .filter((tab) => !state.backingTabRefs.has(tab.id))
             .map((tab) => tab.id),
         );
 

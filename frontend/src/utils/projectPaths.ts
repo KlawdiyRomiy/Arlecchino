@@ -11,8 +11,70 @@ const trimTrailingSeparator = (value: string): string => {
 const escapeRegExp = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+interface RuntimePlatformWindow extends Window {
+  _wails?: {
+    environment?: {
+      OS?: unknown;
+    };
+  };
+}
+
+const getRuntimeOS = (): string => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const os = (window as RuntimePlatformWindow)._wails?.environment?.OS;
+  return typeof os === "string" ? os.trim().toLowerCase() : "";
+};
+
+const shouldFoldPathCaseForHost = (): boolean => {
+  const os = getRuntimeOS();
+  if (os) {
+    return os === "darwin" || os === "windows";
+  }
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  return /Mac|Win/i.test(navigator.platform);
+};
+
 export const normalizeProjectPath = (value: string): string =>
   trimTrailingSeparator(value.trim());
+
+export const normalizeProjectPathIdentity = (value: string): string => {
+  const normalized = normalizeProjectPath(value)
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/");
+  return shouldFoldPathCaseForHost() ? normalized.toLowerCase() : normalized;
+};
+
+export const projectPathsEqualByIdentity = (
+  left: string,
+  right: string,
+): boolean => {
+  const normalizedLeft = normalizeProjectPathIdentity(left);
+  const normalizedRight = normalizeProjectPathIdentity(right);
+  return (
+    Boolean(normalizedLeft && normalizedRight) &&
+    normalizedLeft === normalizedRight
+  );
+};
+
+export const isSameOrChildPathByIdentity = (
+  candidate: string,
+  prefix: string,
+): boolean => {
+  const normalizedCandidate = normalizeProjectPathIdentity(candidate);
+  const normalizedPrefix = normalizeProjectPathIdentity(prefix);
+
+  if (!normalizedCandidate || !normalizedPrefix) {
+    return false;
+  }
+  if (normalizedCandidate === normalizedPrefix) {
+    return true;
+  }
+  return normalizedCandidate.startsWith(`${normalizedPrefix}/`);
+};
 
 export const isSameOrChildPath = (
   candidate: string,

@@ -21,6 +21,7 @@ import {
   type PanelPosition,
 } from "../ui/FloatingPanel";
 import type { PreviewWindow } from "../../stores/previewWindowStore";
+import type { AIInlinePatchPreview } from "../../stores/aiInlinePatchStore";
 import type { PanelSnapDragCallbacks } from "../../utils/panelSnapDrag";
 import type {
   CodePanelTab,
@@ -77,6 +78,8 @@ interface MainLayoutPanelRendererProps {
   activeStatusFilePath: string | null;
   activeEditorTabPath: string | null;
   activeCodePanelTab: CodePanelTab | null;
+  activeCodePanelPatchPreview: AIInlinePatchPreview | null;
+  codePanelPatchBusyId: string | null;
   codePanelTabs: CodePanelTab[];
   markdownPreviewSource: MarkdownPreviewSource | null;
   tuiModeActive: boolean;
@@ -124,6 +127,8 @@ interface MainLayoutPanelRendererProps {
   ) => void;
   onCodePanelRevealInExplorer: (tab: CodePanelTab) => void;
   onCodePanelMoveToEditorTabs: (tab: CodePanelTab) => void;
+  onCodePanelAcceptAIInlinePatch: (preview: AIInlinePatchPreview) => void;
+  onCodePanelRejectAIInlinePatch: (preview: AIInlinePatchPreview) => void;
   onZenPinToggle: (panelId: PanelId) => void;
 }
 
@@ -149,6 +154,8 @@ export const MainLayoutPanelRenderer: React.FC<
   activeStatusFilePath,
   activeEditorTabPath,
   activeCodePanelTab,
+  activeCodePanelPatchPreview,
+  codePanelPatchBusyId,
   codePanelTabs,
   markdownPreviewSource,
   tuiModeActive,
@@ -182,6 +189,8 @@ export const MainLayoutPanelRenderer: React.FC<
   onCodePanelDetachToPanel,
   onCodePanelRevealInExplorer,
   onCodePanelMoveToEditorTabs,
+  onCodePanelAcceptAIInlinePatch,
+  onCodePanelRejectAIInlinePatch,
   onZenPinToggle,
 }) => {
   const isVisible = panels[panelId];
@@ -477,8 +486,15 @@ export const MainLayoutPanelRenderer: React.FC<
                   path={activeCodePanelTab.path}
                   name={activeCodePanelTab.name}
                   initialContent={activeCodePanelTab.content}
+                  projectPath={activeProjectPath}
                   language={activeCodePanelTab.language}
                   loadState={activeCodePanelTab.loadState}
+                  aiInlinePatchPreview={activeCodePanelPatchPreview}
+                  aiInlinePatchBusy={
+                    codePanelPatchBusyId === activeCodePanelPatchPreview?.id
+                  }
+                  onAcceptAIInlinePatch={onCodePanelAcceptAIInlinePatch}
+                  onRejectAIInlinePatch={onCodePanelRejectAIInlinePatch}
                 />
               </div>
             </div>

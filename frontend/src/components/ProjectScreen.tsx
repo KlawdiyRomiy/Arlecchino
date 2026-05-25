@@ -47,6 +47,14 @@ import {
   type EditorFileLoadState,
   type EditorFileOpenPayload,
 } from "../utils/editorFileLoader";
+import { replaceEditorDocumentFromDisk } from "../stores/editorDocumentObserver";
+import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
+import {
+  findBlockingAIInlinePatchCandidate,
+  formatAIInlinePatchCandidateName,
+  getAffectedAIInlinePatchCandidates,
+  isAIInlinePatchPreviewInScope,
+} from "../utils/aiInlinePatchApproval";
 import { usePerformanceStore } from "../stores/performanceStore";
 import type {
   MarkdownPreviewSource,
@@ -115,6 +123,7 @@ interface ProjectEntryDeletedEvent {
 
 interface AIPatchArtifactMutationEvent {
   artifactId?: string;
+  projectSessionId?: string;
   files?: Array<{
     path?: string;
     absolutePath?: string;
@@ -142,6 +151,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   onPanelSnapDragEnd,
 }) => {
   const editorBgColor = editorCanvasBackground;
+  const currentProjectSessionId = getCurrentProjectSessionId();
   const setStatusFile = useEditorStore((state) => state.setStatusFile);
   const activeEditorPaneId = useEditorStore((state) => state.activePaneId);
   const syncEditorStoreActiveTab = useEditorStore(
@@ -160,9 +170,17 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const clearAIInlinePatchPreview = useAIInlinePatchStore(
     (state) => state.clearPreview,
   );
+  const acknowledgeAIInlinePatchPreview = useAIInlinePatchStore(
+    (state) => state.acknowledgePreview,
+  );
   const dismissAIInlinePatchPreview = useAIInlinePatchStore(
     (state) => state.dismissPreview,
   );
+  const aiInlinePatchBusyIds = useAIInlinePatchStore((state) => state.busyIds);
+  const beginAIInlinePatchBusy = useAIInlinePatchStore(
+    (state) => state.beginBusy,
+  );
+  const endAIInlinePatchBusy = useAIInlinePatchStore((state) => state.endBusy);
   const resetActiveEditorBudget = usePerformanceStore(
     (state) => state.resetActiveEditorBudget,
   );
@@ -796,11 +814,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         ),
       );
       if (file.kind === "editable") {
-        replaceEditorStoreTabContent(
-          tab.id,
-          file.content,
-          getLanguageFromPath(tab.path),
-        );
+        const language = getLanguageFromPath(tab.path);
+        replaceEditorStoreTabContent(tab.id, file.content, language);
+        replaceEditorDocumentFromDisk(tab.path, language, file.content);
         if (isMarkdownPath(tab.path)) {
           onMarkdownPreviewSourceChange?.({
             path: tab.path,
@@ -818,24 +834,62 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     ],
   );
 
+  const getAIInlinePatchDirtyCandidates = useCallback(() => {
+    const mainEditorCandidates = tabsRef.current.map((tab) => ({
+      ...tab,
+      pending:
+        pendingContentStateRef.current[tab.id] !== undefined ||
+        autoSaveTimerRefs.current[tab.id] !== undefined,
+    }));
+    const mainEditorPaths = new Set(
+      mainEditorCandidates.map((candidate) => candidate.path),
+    );
+    const otherEditorCandidates = Array.from(
+      useEditorStore.getState().tabs.values(),
+    )
+      .filter((tab) => !mainEditorPaths.has(tab.path))
+      .map((tab) => ({
+        path: tab.path,
+        name: tab.name,
+        isDirty: tab.isDirty,
+      }));
+    return [...mainEditorCandidates, ...otherEditorCandidates];
+  }, []);
+
   const handleAcceptAIInlinePatch = useCallback(
     async (preview: AIInlinePatchPreview) => {
-      if (preview.alreadyApplied) {
-        clearAIInlinePatchPreview(preview.id);
+      if (aiInlinePatchBusyIds[preview.id]) {
         return;
       }
-      const affectedTabs = tabsRef.current.filter((tab) =>
-        preview.files.some((file) =>
-          aiInlinePatchPathMatches(tab.path, file.path),
-        ),
+      const patchScope = {
+        projectPath,
+        projectSessionId: currentProjectSessionId,
+      };
+      if (!isAIInlinePatchPreviewInScope(preview, patchScope)) {
+        dismissAIInlinePatchPreview(preview.id);
+        return;
+      }
+      if (preview.alreadyApplied) {
+        acknowledgeAIInlinePatchPreview(preview.id);
+        return;
+      }
+      const candidates = getAIInlinePatchDirtyCandidates();
+      const affectedTabs = getAffectedAIInlinePatchCandidates(
+        preview,
+        tabsRef.current,
+        patchScope,
       );
-      const dirtyTab = affectedTabs.find((tab) => tab.isDirty);
-      if (dirtyTab) {
+      const blockingTab = findBlockingAIInlinePatchCandidate(
+        preview,
+        candidates,
+        patchScope,
+      );
+      if (blockingTab) {
         useAppNotificationStore.getState().addNotification({
           id: `ai-inline-patch-dirty:${preview.id}`,
           kind: "warning",
           title: "Save editor changes first",
-          message: `${dirtyTab.label} has unsaved changes.`,
+          message: `${formatAIInlinePatchCandidateName(blockingTab)} has unsaved changes.`,
           source: "AI",
           sticky: false,
           timeoutMs: 6000,
@@ -843,6 +897,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         return;
       }
 
+      if (!beginAIInlinePatchBusy(preview.id)) {
+        return;
+      }
       try {
         await AppFunctions.AIApplyPatchArtifact({ artifactId: preview.id });
         clearAIInlinePatchPreview(preview.id);
@@ -859,33 +916,65 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           sticky: false,
           timeoutMs: 7000,
         });
+      } finally {
+        endAIInlinePatchBusy(preview.id);
       }
     },
-    [clearAIInlinePatchPreview, refreshAppliedPatchTab],
+    [
+      acknowledgeAIInlinePatchPreview,
+      aiInlinePatchBusyIds,
+      beginAIInlinePatchBusy,
+      clearAIInlinePatchPreview,
+      currentProjectSessionId,
+      dismissAIInlinePatchPreview,
+      endAIInlinePatchBusy,
+      getAIInlinePatchDirtyCandidates,
+      projectPath,
+      refreshAppliedPatchTab,
+    ],
   );
 
   const handleRejectAIInlinePatch = useCallback(
     async (preview: AIInlinePatchPreview) => {
+      if (aiInlinePatchBusyIds[preview.id]) {
+        return;
+      }
+      const patchScope = {
+        projectPath,
+        projectSessionId: currentProjectSessionId,
+      };
+      if (!isAIInlinePatchPreviewInScope(preview, patchScope)) {
+        dismissAIInlinePatchPreview(preview.id);
+        return;
+      }
       if (!preview.alreadyApplied) {
         dismissAIInlinePatchPreview(preview.id);
         return;
       }
-      const affectedTabs = tabsRef.current.filter((tab) =>
-        preview.files.some((file) =>
-          aiInlinePatchPathMatches(tab.path, file.path),
-        ),
+      const candidates = getAIInlinePatchDirtyCandidates();
+      const affectedTabs = getAffectedAIInlinePatchCandidates(
+        preview,
+        tabsRef.current,
+        patchScope,
       );
-      const dirtyTab = affectedTabs.find((tab) => tab.isDirty);
-      if (dirtyTab) {
+      const blockingTab = findBlockingAIInlinePatchCandidate(
+        preview,
+        candidates,
+        patchScope,
+      );
+      if (blockingTab) {
         useAppNotificationStore.getState().addNotification({
           id: `ai-inline-patch-rollback-dirty:${preview.id}`,
           kind: "warning",
           title: "Save editor changes first",
-          message: `${dirtyTab.label} has unsaved changes.`,
+          message: `${formatAIInlinePatchCandidateName(blockingTab)} has unsaved changes.`,
           source: "AI",
           sticky: false,
           timeoutMs: 6000,
         });
+        return;
+      }
+      if (!beginAIInlinePatchBusy(preview.id)) {
         return;
       }
       try {
@@ -907,11 +996,19 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           sticky: false,
           timeoutMs: 7000,
         });
+      } finally {
+        endAIInlinePatchBusy(preview.id);
       }
     },
     [
+      aiInlinePatchBusyIds,
+      beginAIInlinePatchBusy,
       clearAIInlinePatchPreview,
+      currentProjectSessionId,
       dismissAIInlinePatchPreview,
+      endAIInlinePatchBusy,
+      getAIInlinePatchDirtyCandidates,
+      projectPath,
       refreshAppliedPatchTab,
     ],
   );
@@ -1256,6 +1353,76 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     fileLoadStatesRef.current = fileLoadStates;
   }, [fileLoadStates]);
 
+  useEffect(() => {
+    const unsubscribe = useEditorStore.subscribe((state, previousState) => {
+      const localTabs = tabsRef.current;
+      if (localTabs.length === 0) {
+        return;
+      }
+
+      const contentUpdates: Record<string, string> = {};
+      const loadStateUpdates: Record<string, EditorFileLoadState> = {};
+      let hasContentUpdates = false;
+      let hasLoadStateUpdates = false;
+      let tabsChanged = false;
+
+      const nextTabs = localTabs.map((tab) => {
+        const sharedTab = state.tabs.get(tab.id);
+        const previousSharedTab = previousState.tabs.get(tab.id);
+        if (!sharedTab || sharedTab.path !== tab.path) {
+          return tab;
+        }
+        if (
+          previousSharedTab &&
+          previousSharedTab.content === sharedTab.content &&
+          previousSharedTab.isDirty === sharedTab.isDirty &&
+          previousSharedTab.language === sharedTab.language
+        ) {
+          return tab;
+        }
+
+        if (fileContentsRef.current[tab.id] !== sharedTab.content) {
+          fileContentsRef.current[tab.id] = sharedTab.content;
+          contentUpdates[tab.id] = sharedTab.content;
+          hasContentUpdates = true;
+        }
+
+        const loadState = fileLoadStatesRef.current[tab.id];
+        if (loadState?.kind === "editable") {
+          const nextLoadState: EditorFileLoadState = {
+            ...loadState,
+            content: sharedTab.content,
+          };
+          fileLoadStatesRef.current[tab.id] = nextLoadState;
+          loadStateUpdates[tab.id] = nextLoadState;
+          hasLoadStateUpdates = true;
+        }
+
+        if (tab.isDirty === sharedTab.isDirty) {
+          return tab;
+        }
+        tabsChanged = true;
+        return { ...tab, isDirty: sharedTab.isDirty };
+      });
+
+      if (hasContentUpdates) {
+        setFileContents((previous) => ({ ...previous, ...contentUpdates }));
+      }
+      if (hasLoadStateUpdates) {
+        setFileLoadStates((previous) => ({
+          ...previous,
+          ...loadStateUpdates,
+        }));
+      }
+      if (tabsChanged) {
+        tabsRef.current = nextTabs;
+        setTabs(nextTabs);
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
   const isTabReadOnlyByPolicy = useCallback((tabId: string): boolean => {
     return isEditorFilePolicyReadOnly(fileLoadStatesRef.current[tabId]);
   }, []);
@@ -1559,6 +1726,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
                 content: formatted,
               };
             }
+            const language = getLanguageFromPath(tab.path);
+            replaceEditorStoreTabContent(tab.id, formatted, language);
+            replaceEditorDocumentFromDisk(tab.path, language, formatted);
           }
         } catch (formatError) {
           // If formatting fails, continue with original content
@@ -1592,7 +1762,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         setIsSaving(false);
       }
     },
-    [confirmTabWriteAccess, isSaving],
+    [
+      confirmTabWriteAccess,
+      getLanguageFromPath,
+      isSaving,
+      replaceEditorStoreTabContent,
+    ],
   );
 
   const handleSaveFile = useCallback(async () => {
@@ -1855,6 +2030,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     );
 
     const handlePatchMutation = (event: AIPatchArtifactMutationEvent) => {
+      if (event?.projectSessionId !== currentProjectSessionId) {
+        return;
+      }
       const files = Array.isArray(event?.files) ? event.files : [];
       if (files.length === 0) {
         return;
@@ -1862,7 +2040,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       const affectedTabs = tabsRef.current.filter((tab) =>
         files.some((file) => {
           const path = file.absolutePath || file.path || "";
-          return path && aiInlinePatchPathMatches(tab.path, path);
+          return path && aiInlinePatchPathMatches(tab.path, path, projectPath);
         }),
       );
       affectedTabs.forEach((tab) => {
@@ -1889,14 +2067,47 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       "ai:patch:artifact-rolled-back",
       handlePatchMutation,
     );
+    const unsubscribeFileChanged = EventsOn("file:changed", (payload) => {
+      const changedPath =
+        typeof payload === "string"
+          ? payload
+          : payload &&
+              typeof payload === "object" &&
+              "path" in payload &&
+              typeof (payload as { path?: unknown }).path === "string"
+            ? (payload as { path: string }).path
+            : "";
+      const affectedTabs = tabsRef.current.filter(
+        (tab) =>
+          changedPath &&
+          aiInlinePatchPathMatches(tab.path, changedPath, projectPath),
+      );
+      affectedTabs.forEach((tab) => {
+        if (tab.isDirty) {
+          useAppNotificationStore.getState().addNotification({
+            id: `editor-disk-change:${tab.id}`,
+            kind: "warning",
+            title: "File changed on disk",
+            message: `${tab.label} has unsaved editor changes.`,
+            source: "Filesystem",
+            sticky: false,
+            timeoutMs: 6000,
+          });
+          return;
+        }
+        void refreshAppliedPatchTab(tab);
+      });
+    });
 
     return () => {
       unsubscribeRenamed();
       unsubscribeDeleted();
       unsubscribePatchApplied();
       unsubscribePatchRolledBack();
+      unsubscribeFileChanged();
     };
   }, [
+    currentProjectSessionId,
     applyDeletedProjectEntry,
     applyRenamedProjectEntry,
     projectPath,
@@ -2170,46 +2381,57 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setSplitReady(false);
   }, [splitDirection, secondaryTabData]);
 
-  const renderEditor = (tabData: Tab, content: string, isSecondary = false) => (
-    <CodeMirrorEditor
-      filePath={tabData.path}
-      content={content}
-      language={getLanguageFromPath(tabData.path)}
-      onChange={
-        isSecondary
-          ? (value) => handleContentChangeForTab(tabData.id, value)
-          : handleContentChange
-      }
-      onSave={
-        isSecondary ? () => handleSaveFileForTab(tabData.id) : handleSaveFile
-      }
-      onToggleProblems={onToggleProblems}
-      onOpenFile={handleOpenFileRequest}
-      onQuickLook={handleQuickLookRequest}
-      onPerspectiveOpen={onPerspectiveOpen}
-      onPerspectiveClose={onPerspectiveClose}
-      onTyping={recordTypingActivity}
-      onGhostShown={() => {
-        AppFunctions.RecordGhostShown().catch(() => {});
-      }}
-      onGhostRejected={() => {
-        AppFunctions.RecordGhostRejected().catch(() => {});
-      }}
-      onEditorViewReady={isSecondary ? undefined : handleEditorViewReady}
-      onHistoryAvailabilityChange={
-        isSecondary ? undefined : handleHistoryAvailabilityChange
-      }
-      highlightLine={isSecondary ? undefined : highlightLine}
-      aiInlinePatchPreview={selectAIInlinePatchPreviewForPath(
-        aiInlinePatchPreviews,
-        tabData.path,
-      )}
-      onAcceptAIInlinePatch={handleAcceptAIInlinePatch}
-      onRejectAIInlinePatch={handleRejectAIInlinePatch}
-      projectPath={projectPath}
-      readOnly={isTabReadOnlyByPolicy(tabData.id)}
-    />
-  );
+  const renderEditor = (tabData: Tab, content: string, isSecondary = false) => {
+    const inlinePatchPreview = selectAIInlinePatchPreviewForPath(
+      aiInlinePatchPreviews,
+      tabData.path,
+      {
+        projectPath,
+        projectSessionId: currentProjectSessionId,
+      },
+    );
+
+    return (
+      <CodeMirrorEditor
+        filePath={tabData.path}
+        content={content}
+        language={getLanguageFromPath(tabData.path)}
+        onChange={
+          isSecondary
+            ? (value) => handleContentChangeForTab(tabData.id, value)
+            : handleContentChange
+        }
+        onSave={
+          isSecondary ? () => handleSaveFileForTab(tabData.id) : handleSaveFile
+        }
+        onToggleProblems={onToggleProblems}
+        onOpenFile={handleOpenFileRequest}
+        onQuickLook={handleQuickLookRequest}
+        onPerspectiveOpen={onPerspectiveOpen}
+        onPerspectiveClose={onPerspectiveClose}
+        onTyping={recordTypingActivity}
+        onGhostShown={() => {
+          AppFunctions.RecordGhostShown().catch(() => {});
+        }}
+        onGhostRejected={() => {
+          AppFunctions.RecordGhostRejected().catch(() => {});
+        }}
+        onEditorViewReady={isSecondary ? undefined : handleEditorViewReady}
+        onHistoryAvailabilityChange={
+          isSecondary ? undefined : handleHistoryAvailabilityChange
+        }
+        highlightLine={isSecondary ? undefined : highlightLine}
+        aiInlinePatchPreview={inlinePatchPreview}
+        aiInlinePatchBusy={Boolean(
+          inlinePatchPreview && aiInlinePatchBusyIds[inlinePatchPreview.id],
+        )}
+        onAcceptAIInlinePatch={handleAcceptAIInlinePatch}
+        onRejectAIInlinePatch={handleRejectAIInlinePatch}
+        projectPath={projectPath}
+        readOnly={isTabReadOnlyByPolicy(tabData.id)}
+      />
+    );
+  };
 
   const renderEditorSurface = (tabData: Tab, isSecondary = false) => {
     const loadState = fileLoadStates[tabData.id];

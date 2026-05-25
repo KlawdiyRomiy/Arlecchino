@@ -88,12 +88,8 @@ import {
   AIGetEditorContinuation,
   AIGetPredictionStatus,
   LSPHover,
-  NotifyFileOpened,
-  NotifyFileClosed,
-  NotifyFileChanged,
   LSPSignatureHelp,
   RecordCompletionUsage,
-  RecordFileAccess,
   RevealProjectEntry,
   SearchClasses,
   type AIPredictionStatus,
@@ -138,6 +134,13 @@ import {
   getCodeMirrorLanguageExtension,
   isCodeMirrorColorToolTarget,
 } from "../utils/codeMirrorLanguageRegistry";
+import {
+  closeEditorDocument,
+  createEditorDocumentSurfaceId,
+  notifyEditorDocumentChanged,
+  openEditorDocument,
+  replaceEditorDocumentFromDisk,
+} from "../stores/editorDocumentObserver";
 import {
   createCodeMirrorColorToolExtension,
   createCodeMirrorFoldExtensions,
@@ -1126,6 +1129,7 @@ interface CodeMirrorEditorProps {
   readOnly?: boolean;
   highlightLine?: number;
   aiInlinePatchPreview?: AIInlinePatchPreview | null;
+  aiInlinePatchBusy?: boolean;
   onAcceptAIInlinePatch?: (preview: AIInlinePatchPreview) => void;
   onRejectAIInlinePatch?: (preview: AIInlinePatchPreview) => void;
   onEditorViewReady?: (view: EditorView | null) => void;
@@ -1157,6 +1161,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   readOnly = false,
   highlightLine,
   aiInlinePatchPreview,
+  aiInlinePatchBusy = false,
   onAcceptAIInlinePatch,
   onRejectAIInlinePatch,
   onEditorViewReady,
@@ -1329,9 +1334,11 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     useState<AIPredictionStatus | null>(null);
 
   const signatureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const notifyChangeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
+  const documentSurfaceIdRef = useRef(
+    createEditorDocumentSurfaceId("code-editor"),
   );
+  const lastContentPropRef = useRef(content);
+  const lastUserChangeContentRef = useRef<string | null>(null);
 
   useEffect(() => {
     updatePerformanceBudget({
@@ -1393,25 +1400,43 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     if (!filePath || !language) return;
 
     documentVersionRef.current = 1;
+    lastContentPropRef.current = content;
+    lastUserChangeContentRef.current = null;
     completionDismissedVersionRef.current = null;
     autoStartedCompletionVersionRef.current = null;
     completionCacheRef.current.invalidate();
     signatureRequestGuardRef.current.next();
-    if (!largeDocumentMode) {
-      NotifyFileOpened(filePath, language, content).catch(console.warn);
-    }
-    RecordFileAccess(filePath).catch(() => {});
+    openEditorDocument({
+      surfaceId: documentSurfaceIdRef.current,
+      path: filePath,
+      language,
+      content,
+      largeDocument: largeDocumentMode,
+    });
 
     return () => {
-      if (notifyChangeDebounceRef.current) {
-        clearTimeout(notifyChangeDebounceRef.current);
-        notifyChangeDebounceRef.current = null;
-      }
-      if (!largeDocumentMode) {
-        NotifyFileClosed(filePath, language).catch(console.warn);
-      }
+      closeEditorDocument(documentSurfaceIdRef.current);
     };
   }, [filePath, language, largeDocumentMode]);
+
+  useEffect(() => {
+    if (lastContentPropRef.current === content) {
+      return;
+    }
+    lastContentPropRef.current = content;
+    documentVersionRef.current += 1;
+    completionDismissedVersionRef.current = null;
+    autoStartedCompletionVersionRef.current = null;
+    completionCacheRef.current.invalidate();
+    signatureRequestGuardRef.current.next();
+    if (lastUserChangeContentRef.current === content) {
+      lastUserChangeContentRef.current = null;
+      return;
+    }
+    if (!largeDocumentMode) {
+      replaceEditorDocumentFromDisk(filePath, language, content);
+    }
+  }, [content, filePath, language, largeDocumentMode]);
 
   useEffect(() => {
     const view = editorRef.current?.view;
@@ -2374,25 +2399,24 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       }
 
       onChangeRef.current(value);
+      lastUserChangeContentRef.current = value;
 
       documentVersionRef.current += 1;
       completionDismissedVersionRef.current = null;
       autoStartedCompletionVersionRef.current = null;
       completionCacheRef.current.invalidate();
-      const version = documentVersionRef.current;
 
       if (largeDocumentMode) {
         return;
       }
 
-      if (notifyChangeDebounceRef.current) {
-        clearTimeout(notifyChangeDebounceRef.current);
-      }
-
-      notifyChangeDebounceRef.current = setTimeout(() => {
-        notifyChangeDebounceRef.current = null;
-        NotifyFileChanged(filePath, language, version, value).catch(() => {});
-      }, notifyChangeDelayRef.current);
+      notifyEditorDocumentChanged({
+        surfaceId: documentSurfaceIdRef.current,
+        path: filePath,
+        language,
+        content: value,
+        delayMs: notifyChangeDelayRef.current,
+      });
     },
     [filePath, language, largeDocumentMode, readOnly],
   );
@@ -3340,12 +3364,16 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       createAIInlinePatchExtension({
         preview: aiInlinePatchPreview,
         filePath,
+        projectPath,
+        busy: aiInlinePatchBusy,
         onAccept: onAcceptAIInlinePatch ?? (() => undefined),
         onReject: onRejectAIInlinePatch ?? (() => undefined),
       }),
     [
       aiInlinePatchPreview,
+      aiInlinePatchBusy,
       filePath,
+      projectPath,
       onAcceptAIInlinePatch,
       onRejectAIInlinePatch,
     ],

@@ -5,14 +5,17 @@ import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { Extension } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 
-import {
-  NotifyFileChanged,
-  NotifyFileClosed,
-  NotifyFileOpened,
-  WriteFile,
-} from "../wails/app";
+import { WriteFile } from "../wails/app";
+import { createAIInlinePatchExtension } from "../extensions/aiInlinePatchExtension";
 import { createDiagnosticsExtension } from "../extensions/diagnosticsExtension";
 import { createGitGutterExtension } from "../extensions/gitGutterExtension";
+import type { AIInlinePatchPreview } from "../stores/aiInlinePatchStore";
+import {
+  closeEditorDocument,
+  createEditorDocumentSurfaceId,
+  notifyEditorDocumentChanged,
+  openEditorDocument,
+} from "../stores/editorDocumentObserver";
 import { useEditorStore } from "../stores/editorStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { useCodeMirrorAdaptiveExtensions } from "../hooks/useCodeMirrorAdaptiveExtensions";
@@ -62,7 +65,12 @@ interface CodePanelSurfaceProps {
   name: string;
   language: string;
   initialContent: string;
+  projectPath?: string;
   loadState?: EditorFileLoadState;
+  aiInlinePatchPreview?: AIInlinePatchPreview | null;
+  aiInlinePatchBusy?: boolean;
+  onAcceptAIInlinePatch?: (preview: AIInlinePatchPreview) => void;
+  onRejectAIInlinePatch?: (preview: AIInlinePatchPreview) => void;
 }
 
 const autoSaveDelayMs = 500;
@@ -77,15 +85,20 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   name,
   language,
   initialContent,
+  projectPath,
   loadState,
+  aiInlinePatchPreview,
+  aiInlinePatchBusy = false,
+  onAcceptAIInlinePatch,
+  onRejectAIInlinePatch,
 }) => {
   const isReadOnlyByPolicy = isEditorFilePolicyReadOnly(loadState);
   const canDisplayEditor = !loadState || loadState.kind === "editable";
   const isEditable = canDisplayEditor && !isReadOnlyByPolicy;
-  const activePaneID = useEditorStore((state) => state.activePaneId);
-  const openTab = useEditorStore((state) => state.openTab);
+  const ensureTab = useEditorStore((state) => state.ensureTab);
   const updateTabContent = useEditorStore((state) => state.updateTabContent);
   const markTabDirty = useEditorStore((state) => state.markTabDirty);
+  const setStatusFile = useEditorStore((state) => state.setStatusFile);
   const tabID = useMemo(() => makeTabID(path), [path]);
   const tab = useEditorStore((state) => state.tabs.get(tabID));
   const content = canDisplayEditor ? (tab?.content ?? initialContent) : "";
@@ -135,9 +148,15 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   const refreshFileMarkers = useGitStore((state) => state.refreshFileMarkers);
   const clearFileMarkers = useGitStore((state) => state.clearFileMarkers);
   const saveTimeoutRef = useRef<number | null>(null);
-  const diagnosticsTimeoutRef = useRef<number | null>(null);
-  const diagnosticsVersionRef = useRef(1);
   const editorViewRef = useRef<EditorView | null>(null);
+  const latestContentRef = useRef(content);
+  const documentSurfaceIdRef = useRef(
+    createEditorDocumentSurfaceId("code-panel"),
+  );
+
+  useEffect(() => {
+    latestContentRef.current = content;
+  }, [content]);
 
   const gitGutterExtension = useMemo(
     () => createGitGutterExtension({ markers: gitMarkers }),
@@ -195,33 +214,42 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
 
   useEffect(() => {
     if (!isEditable) return;
-    openTab(activePaneID, path, name, initialContent, language);
-  }, [activePaneID, initialContent, isEditable, language, name, openTab, path]);
+    ensureTab(path, name, initialContent, language);
+  }, [ensureTab, initialContent, isEditable, language, name, path]);
 
   useEffect(() => {
     if (!isEditable) return;
-    diagnosticsVersionRef.current = 1;
-    void NotifyFileOpened(path, language, initialContent).catch(console.warn);
+    openEditorDocument({
+      surfaceId: documentSurfaceIdRef.current,
+      path,
+      language,
+      content: latestContentRef.current,
+      largeDocument: largeDocumentMode,
+    });
 
     return () => {
-      if (diagnosticsTimeoutRef.current !== null) {
-        window.clearTimeout(diagnosticsTimeoutRef.current);
-        diagnosticsTimeoutRef.current = null;
-      }
-      void NotifyFileClosed(path, language).catch(console.warn);
+      closeEditorDocument(documentSurfaceIdRef.current);
     };
-  }, [initialContent, isEditable, language, path]);
+  }, [isEditable, language, largeDocumentMode, path]);
 
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current !== null) {
         window.clearTimeout(saveTimeoutRef.current);
-      }
-      if (diagnosticsTimeoutRef.current !== null) {
-        window.clearTimeout(diagnosticsTimeoutRef.current);
+        saveTimeoutRef.current = null;
+        const contentToSave = latestContentRef.current;
+        void WriteFile(path, contentToSave)
+          .then(() => {
+            if (latestContentRef.current === contentToSave) {
+              markTabDirty(tabID, false);
+            }
+          })
+          .catch((error) => {
+            console.error("Code panel auto-save failed", error);
+          });
       }
     };
-  }, []);
+  }, [markTabDirty, path, tabID]);
 
   const languageExtension = useMemo(
     () => getCodeMirrorLanguageExtension(language),
@@ -291,12 +319,33 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     [bindEditorView],
   );
 
+  const aiInlinePatchExtension = useMemo<Extension>(
+    () =>
+      createAIInlinePatchExtension({
+        preview: aiInlinePatchPreview,
+        filePath: path,
+        projectPath,
+        busy: aiInlinePatchBusy,
+        onAccept: onAcceptAIInlinePatch ?? (() => undefined),
+        onReject: onRejectAIInlinePatch ?? (() => undefined),
+      }),
+    [
+      aiInlinePatchBusy,
+      aiInlinePatchPreview,
+      onAcceptAIInlinePatch,
+      onRejectAIInlinePatch,
+      path,
+      projectPath,
+    ],
+  );
+
   const extensions = useMemo(() => {
     const result: Extension[] = [
       codeEditorTheme,
       codeEditorStyles,
       closeBrackets(),
       codeMirrorFileSearchExtension,
+      aiInlinePatchExtension,
       keymap.of(searchKeymap),
       scrollGuardExtension,
       adaptiveCompartmentExtension,
@@ -310,6 +359,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     return result;
   }, [
     adaptiveCompartmentExtension,
+    aiInlinePatchExtension,
     editorFeatureBudget.layoutStableLineWrapping,
     languageExtension,
     scrollGuardExtension,
@@ -322,33 +372,25 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
       }
       updateTabContent(tabID, value);
 
-      if (diagnosticsTimeoutRef.current !== null) {
-        window.clearTimeout(diagnosticsTimeoutRef.current);
-      }
-
-      const diagnosticsVersion = diagnosticsVersionRef.current + 1;
-      diagnosticsVersionRef.current = diagnosticsVersion;
-      diagnosticsTimeoutRef.current = window.setTimeout(
-        () => {
-          void NotifyFileChanged(
-            path,
-            language,
-            diagnosticsVersion,
-            value,
-          ).catch(console.warn);
-          diagnosticsTimeoutRef.current = null;
-        },
-        Math.max(diagnosticsSyncDelayMs, notifyChangeDelayRef.current),
-      );
+      notifyEditorDocumentChanged({
+        surfaceId: documentSurfaceIdRef.current,
+        path,
+        language,
+        content: value,
+        delayMs: Math.max(diagnosticsSyncDelayMs, notifyChangeDelayRef.current),
+      });
 
       if (saveTimeoutRef.current !== null) {
         window.clearTimeout(saveTimeoutRef.current);
       }
 
       saveTimeoutRef.current = window.setTimeout(() => {
+        saveTimeoutRef.current = null;
         void WriteFile(path, value)
           .then(() => {
-            markTabDirty(tabID, false);
+            if (latestContentRef.current === value) {
+              markTabDirty(tabID, false);
+            }
           })
           .catch((error) => {
             console.error("Code panel auto-save failed", error);
@@ -422,6 +464,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     <div
       className="relative w-full h-full min-h-0 overflow-hidden"
       style={codeEditorChromeStyle}
+      onFocusCapture={() => setStatusFile(path, name, language)}
     >
       <CodeMirror
         value={content}

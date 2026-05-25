@@ -123,6 +123,7 @@ import {
 } from "../../stores/editorSettingsStore";
 import { useAIChatStore } from "../../stores/aiChatStore";
 import { useAIInlinePatchStore } from "../../stores/aiInlinePatchStore";
+import { getCurrentProjectSessionId } from "../../shell/projectSessionRoute";
 import { useAppNotificationStore } from "../../stores/appNotificationStore";
 import { usePerformanceStore } from "../../stores/performanceStore";
 import { useTerminalStore } from "../../stores/terminalStore";
@@ -1396,8 +1397,9 @@ export function AIChatPanelContent({
     [],
   );
   const [artifactsByRunId, setArtifactsByRunId] = useState<ArtifactMap>({});
-  const syncInlinePatchArtifacts = useAIInlinePatchStore(
-    (store) => store.syncArtifacts,
+  const currentProjectSessionId = getCurrentProjectSessionId();
+  const upsertInlinePatchArtifact = useAIInlinePatchStore(
+    (store) => store.upsertArtifact,
   );
   const [artifactBusyId, setArtifactBusyId] = useState<string | null>(null);
   const [providerRuntimeBusy, setProviderRuntimeBusy] = useState(false);
@@ -2317,8 +2319,12 @@ export function AIChatPanelContent({
   );
 
   useEffect(() => {
-    syncInlinePatchArtifacts(allKnownArtifacts);
-  }, [allKnownArtifacts, syncInlinePatchArtifacts]);
+    allKnownArtifacts.forEach((artifact) => {
+      upsertInlinePatchArtifact(artifact, {
+        projectSessionId: currentProjectSessionId,
+      });
+    });
+  }, [allKnownArtifacts, currentProjectSessionId, upsertInlinePatchArtifact]);
 
   useEffect(() => {
     if (!activeRunKey) return;

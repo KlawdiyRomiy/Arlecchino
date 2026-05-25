@@ -34,6 +34,14 @@ import { useExplorerStore } from "../../stores/explorerStore";
 import { useDiagnosticsStore } from "../../stores/diagnosticsStore";
 import { bindIDEContextLedger } from "../../stores/ideContextLedgerStore";
 import {
+  aiInlinePatchPathMatches,
+  selectAIInlinePatchPreviewForPath,
+  useAIInlinePatchStore,
+  type AIInlinePatchPreview,
+} from "../../stores/aiInlinePatchStore";
+import { replaceEditorDocumentFromDisk } from "../../stores/editorDocumentObserver";
+import { getCurrentProjectSessionId } from "../../shell/projectSessionRoute";
+import {
   FLOATING_PANEL_LAYOUT_TRANSITION,
   FLOATING_PANEL_LAYOUT_TRANSITION_MS,
   type PanelPosition,
@@ -87,6 +95,7 @@ import {
 } from "../../utils/logicalViewport";
 import {
   getProjectPathBasename,
+  normalizeProjectPathIdentity,
   normalizeProjectPath,
   remapProjectPathPrefix,
   isSameOrChildPath,
@@ -102,6 +111,8 @@ import {
   normalizeTUIAssistAnchor,
 } from "../../utils/terminalLayout";
 import {
+  AIApplyPatchArtifact,
+  AIRollbackPatchCheckpoint,
   GetLanguageForFile,
   IsNativeFullscreen,
   WriteTerminal,
@@ -164,6 +175,13 @@ import {
   commandWithWorkingDirectory,
   hasMissingTools,
 } from "./shellCommandUtils";
+import {
+  findBlockingAIInlinePatchCandidate,
+  formatAIInlinePatchCandidateName,
+  getAffectedAIInlinePatchCandidates,
+  isAIInlinePatchPreviewInScope,
+} from "../../utils/aiInlinePatchApproval";
+import type { AIChatRunArtifact } from "../../../bindings/arlecchino/internal/ai/models";
 import { useMainPanelWorkspaceModel } from "./useMainPanelWorkspaceModel";
 import { useMainLayoutProjectEntries } from "./useMainLayoutProjectEntries";
 import { useMainLayoutPreviewEvents } from "./useMainLayoutPreviewEvents";
@@ -234,6 +252,25 @@ interface FullscreenPanelTransitionTarget {
 interface NativeFullscreenChangedEvent {
   fullscreen?: boolean;
 }
+
+const eventProjectSessionId = (payload: unknown): string =>
+  payload &&
+  typeof payload === "object" &&
+  "projectSessionId" in payload &&
+  typeof (payload as { projectSessionId?: unknown }).projectSessionId ===
+    "string"
+    ? (payload as { projectSessionId: string }).projectSessionId.trim()
+    : "";
+
+const eventMatchesCurrentProjectSession = (payload: unknown): boolean => {
+  const incomingProjectSessionId = eventProjectSessionId(payload);
+  const currentProjectSessionId = getCurrentProjectSessionId();
+  return (
+    incomingProjectSessionId.length > 0 &&
+    currentProjectSessionId.length > 0 &&
+    incomingProjectSessionId === currentProjectSessionId
+  );
+};
 
 type ZenViewportPointerSnapshot = Pick<
   MouseEvent,
@@ -524,6 +561,67 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       .beginPanelMotionWindow(FLOATING_PANEL_LAYOUT_TRANSITION_MS + 160);
   }, [reducePanelMotion]);
   useEffect(() => bindIDEContextLedger(), []);
+  useEffect(() => {
+    const handleArtifactUpdated = (artifact: unknown) => {
+      if (!artifact || typeof artifact !== "object") {
+        return;
+      }
+      if (!eventMatchesCurrentProjectSession(artifact)) {
+        return;
+      }
+      useAIInlinePatchStore
+        .getState()
+        .upsertArtifact(artifact as AIChatRunArtifact, {
+          projectSessionId: getCurrentProjectSessionId(),
+        });
+    };
+    const handlePatchMutation = (payload: unknown) => {
+      if (!eventMatchesCurrentProjectSession(payload)) {
+        return;
+      }
+      const artifactId =
+        payload &&
+        typeof payload === "object" &&
+        "artifactId" in payload &&
+        typeof (payload as { artifactId?: unknown }).artifactId === "string"
+          ? (payload as { artifactId: string }).artifactId
+          : "";
+      const source =
+        payload &&
+        typeof payload === "object" &&
+        "source" in payload &&
+        typeof (payload as { source?: unknown }).source === "string"
+          ? (payload as { source: string }).source
+          : "";
+      if (source === "captured_direct_write") {
+        return;
+      }
+      if (artifactId) {
+        useAIInlinePatchStore.getState().removePreview(artifactId, {
+          projectSessionId: getCurrentProjectSessionId(),
+        });
+      }
+    };
+
+    const unsubscribeArtifactUpdated = EventsOn(
+      "ai:chat:artifact-updated",
+      handleArtifactUpdated,
+    );
+    const unsubscribePatchApplied = EventsOn(
+      "ai:patch:artifact-applied",
+      handlePatchMutation,
+    );
+    const unsubscribePatchRolledBack = EventsOn(
+      "ai:patch:artifact-rolled-back",
+      handlePatchMutation,
+    );
+
+    return () => {
+      unsubscribeArtifactUpdated();
+      unsubscribePatchApplied();
+      unsubscribePatchRolledBack();
+    };
+  }, []);
   const isPerspectiveOpenRef = useRef(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDependencyPolicyOpen, setIsDependencyPolicyOpen] = useState(false);
@@ -554,12 +652,36 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     return activeProject?.path ?? "";
   });
   const activeProjectPath = workspaceProjectPath;
+  const currentProjectSessionId = getCurrentProjectSessionId();
   const activeEditorTab = useEditorStore((state) =>
     state.getActiveTab(state.activePaneId),
   );
   const activeStatusFilePath = useEditorStore((state) => state.statusFile.path);
-  const activePaneId = useEditorStore((state) => state.activePaneId);
-  const openEditorTab = useEditorStore((state) => state.openTab);
+  const ensureEditorTab = useEditorStore((state) => state.ensureTab);
+  const retainEditorBackingTab = useEditorStore(
+    (state) => state.retainBackingTab,
+  );
+  const releaseEditorBackingTab = useEditorStore(
+    (state) => state.releaseBackingTab,
+  );
+  const setEditorStatusFile = useEditorStore((state) => state.setStatusFile);
+  const aiInlinePatchPreviews = useAIInlinePatchStore(
+    (state) => state.previews,
+  );
+  const aiInlinePatchBusyIds = useAIInlinePatchStore((state) => state.busyIds);
+  const beginAIInlinePatchBusy = useAIInlinePatchStore(
+    (state) => state.beginBusy,
+  );
+  const endAIInlinePatchBusy = useAIInlinePatchStore((state) => state.endBusy);
+  const clearAIInlinePatchPreview = useAIInlinePatchStore(
+    (state) => state.clearPreview,
+  );
+  const acknowledgeAIInlinePatchPreview = useAIInlinePatchStore(
+    (state) => state.acknowledgePreview,
+  );
+  const dismissAIInlinePatchPreview = useAIInlinePatchStore(
+    (state) => state.dismissPreview,
+  );
   const renameEditorTabPaths = useEditorStore(
     (state) => state.renamePathPrefix,
   );
@@ -707,6 +829,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const toggleCanonicalBrowserPreviewRef = React.useRef<() => void>(() => {});
   const executionProfilesRequestRef = React.useRef(0);
   const codePanelOpenRequestRef = React.useRef(0);
+  const codePanelRefreshRequestRef = React.useRef<Record<string, number>>({});
   const openFileFromPathRequestRef = React.useRef(0);
   const userCreatedFileOpenRef = React.useRef<(path: string) => void>(() => {});
   const editorFileOpenLoadingTimerRef = React.useRef<ReturnType<
@@ -1927,6 +2050,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const [activeCodePanelPath, setActiveCodePanelPath] = useState<string | null>(
     null,
   );
+  const codePanelTabsRef = useRef<CodePanelTab[]>([]);
+  useEffect(() => {
+    codePanelTabsRef.current = codePanelTabs;
+  }, [codePanelTabs]);
   const activeCodePanelTab = useMemo(
     () =>
       codePanelTabs.find((tab) => tab.path === activeCodePanelPath) ??
@@ -1934,6 +2061,30 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       null,
     [activeCodePanelPath, codePanelTabs],
   );
+  const activeCodePanelPatchPreview = useMemo(
+    () =>
+      activeCodePanelTab
+        ? selectAIInlinePatchPreviewForPath(
+            aiInlinePatchPreviews,
+            activeCodePanelTab.path,
+            {
+              projectPath: activeProjectPath,
+              projectSessionId: currentProjectSessionId,
+            },
+          )
+        : null,
+    [
+      activeCodePanelTab,
+      activeProjectPath,
+      aiInlinePatchPreviews,
+      currentProjectSessionId,
+    ],
+  );
+  const codePanelPatchBusyId =
+    activeCodePanelPatchPreview &&
+    aiInlinePatchBusyIds[activeCodePanelPatchPreview.id]
+      ? activeCodePanelPatchPreview.id
+      : null;
   const panelRuntimePayloads = useMemo(
     () => ({
       code: activeCodePanelTab
@@ -2020,9 +2171,22 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
 
       setActiveCodePanelPath(nextTab.path);
+      setEditorStatusFile(nextTab.path, nextTab.name, nextTab.language);
       return true;
     },
-    [activeCodePanelTab?.path, codePanelTabs],
+    [activeCodePanelTab?.path, codePanelTabs, setEditorStatusFile],
+  );
+  const activateCodePanelTab = useCallback(
+    (path: string) => {
+      const tab = codePanelTabsRef.current.find(
+        (candidate) => candidate.path === path,
+      );
+      setActiveCodePanelPath(path);
+      if (tab) {
+        setEditorStatusFile(tab.path, tab.name, tab.language);
+      }
+    },
+    [setEditorStatusFile],
   );
   const closeCodePanelTab = useCallback(
     (path: string) => {
@@ -2032,14 +2196,25 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
 
       const nextTabs = codePanelTabs.filter((tab) => tab.path !== path);
+      const nextActiveTab =
+        nextTabs[Math.min(tabIndex, nextTabs.length - 1)] ?? null;
       setCodePanelTabs(nextTabs);
       if (activeCodePanelPath === path) {
-        setActiveCodePanelPath(
-          nextTabs[Math.min(tabIndex, nextTabs.length - 1)]?.path ?? null,
+        setActiveCodePanelPath(nextActiveTab?.path ?? null);
+        setEditorStatusFile(
+          nextActiveTab?.path ?? null,
+          nextActiveTab?.name ?? null,
+          nextActiveTab?.language ?? null,
         );
       }
+      releaseEditorBackingTab(path);
     },
-    [activeCodePanelPath, codePanelTabs],
+    [
+      activeCodePanelPath,
+      codePanelTabs,
+      releaseEditorBackingTab,
+      setEditorStatusFile,
+    ],
   );
   const closeOtherCodePanelTabs = useCallback(
     (path: string) => {
@@ -2048,10 +2223,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return;
       }
 
+      codePanelTabs
+        .filter((candidate) => candidate.path !== path)
+        .forEach((candidate) => releaseEditorBackingTab(candidate.path));
       setCodePanelTabs([tab]);
       setActiveCodePanelPath(path);
+      setEditorStatusFile(tab.path, tab.name, tab.language);
     },
-    [codePanelTabs],
+    [codePanelTabs, releaseEditorBackingTab, setEditorStatusFile],
   );
   const showNotification = useCallback(
     (type: "success" | "error", message: string) => {
@@ -2857,6 +3036,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   const closePanelWithMotion = useCallback(
     (panelId: PanelId) => {
+      if (panelId === "code") {
+        setEditorStatusFile(null, null, null);
+      }
       const currentConfig = panelConfigsRef.current[panelId];
       const restoredSlotPresence =
         panelsRef.current[panelId] &&
@@ -2893,6 +3075,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       reducePanelMotion,
       restoreSnappedSlotPresence,
       schedulePanelCloseAfterPresenceRestore,
+      setEditorStatusFile,
       startPanelExitMotion,
       updatePanelsState,
     ],
@@ -4006,6 +4189,81 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     startPanelDropSettling,
   });
 
+  const refreshCodePanelPathFromDisk = useCallback(async (path: string) => {
+    const normalizedPath = normalizeProjectPath(path);
+    const pathIdentity = normalizeProjectPathIdentity(normalizedPath);
+    if (!normalizedPath) {
+      return false;
+    }
+    const currentTab = codePanelTabsRef.current.find(
+      (tab) => normalizeProjectPathIdentity(tab.path) === pathIdentity,
+    );
+    if (!currentTab) {
+      return false;
+    }
+    const refreshRequestId =
+      (codePanelRefreshRequestRef.current[pathIdentity] ?? 0) + 1;
+    codePanelRefreshRequestRef.current[pathIdentity] = refreshRequestId;
+
+    const editorTabId = makeEditorTabId(currentTab.path);
+    const editorStore = useEditorStore.getState();
+    if (editorStore.tabs.get(editorTabId)?.isDirty) {
+      return false;
+    }
+
+    const fileLoadState = await loadEditorFile(currentTab.path);
+    let language = currentTab.language || "text";
+    try {
+      const languageInfo = await GetLanguageForFile(currentTab.path);
+      if (languageInfo?.id) {
+        language = languageInfo.id;
+      }
+    } catch {
+      /* keep current language */
+    }
+
+    if (codePanelRefreshRequestRef.current[pathIdentity] !== refreshRequestId) {
+      return false;
+    }
+    const latestTab = codePanelTabsRef.current.find(
+      (tab) => normalizeProjectPathIdentity(tab.path) === pathIdentity,
+    );
+    if (!latestTab) {
+      return false;
+    }
+    const latestEditorTabId = makeEditorTabId(latestTab.path);
+    const latestEditorStore = useEditorStore.getState();
+    if (latestEditorStore.tabs.get(latestEditorTabId)?.isDirty) {
+      return false;
+    }
+
+    const content =
+      fileLoadState.kind === "editable" ? fileLoadState.content : "";
+    useEditorStore
+      .getState()
+      .replaceTabContent(latestEditorTabId, content, language);
+    if (
+      fileLoadState.kind === "editable" &&
+      !isEditorFilePolicyReadOnly(fileLoadState)
+    ) {
+      replaceEditorDocumentFromDisk(latestTab.path, language, content);
+    }
+    setCodePanelTabs((currentTabs) =>
+      currentTabs.map((tab) =>
+        normalizeProjectPathIdentity(tab.path) === pathIdentity
+          ? {
+              ...tab,
+              name: fileLoadState.name || getEditorFileName(tab.path),
+              content,
+              language,
+              loadState: fileLoadState,
+            }
+          : tab,
+      ),
+    );
+    return true;
+  }, []);
+
   const handleFileOpenInPanel = useCallback(
     async (
       path: string,
@@ -4085,6 +4343,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         line,
         loadState: fileLoadState,
       };
+      const alreadyOpenInCodePanel = codePanelTabsRef.current.some(
+        (tab) => tab.path === path,
+      );
       setCodePanelTabs((currentTabs) => {
         const existingIndex = currentTabs.findIndex((tab) => tab.path === path);
         if (existingIndex === -1) {
@@ -4096,12 +4357,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return updatedTabs;
       });
       setActiveCodePanelPath(path);
+      setEditorStatusFile(path, nextTab.name, language);
 
       if (
         fileLoadState.kind === "editable" &&
         !isEditorFilePolicyReadOnly(fileLoadState)
       ) {
-        openEditorTab(activePaneId, path, name, content, language);
+        if (alreadyOpenInCodePanel) {
+          ensureEditorTab(path, name, content, language);
+        } else {
+          retainEditorBackingTab(path, name, content, language);
+        }
       }
 
       const wasCodePanelVisible = panelsRef.current.code;
@@ -4160,7 +4426,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       return { handled: Boolean(nextPanels.code), panel: "code", path };
     },
     [
-      activePaneId,
       applyPanelConfigsState,
       applyPanelsState,
       applyRememberedSnappedPositionsState,
@@ -4168,7 +4433,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       ensureProjectEntryAccess,
       movePanelToPositionWithReflow,
       markActivePanel,
-      openEditorTab,
+      ensureEditorTab,
+      retainEditorBackingTab,
+      setEditorStatusFile,
       showNotification,
       startSnappedSlotEnter,
     ],
@@ -4186,67 +4453,22 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             ? (payload as { path: string }).path
             : "";
       const normalizedChangedPath = normalizeProjectPath(changedPath);
+      const changedPathIdentity = normalizeProjectPathIdentity(
+        normalizedChangedPath,
+      );
       if (
         !normalizedChangedPath ||
-        !codePanelTabs.some(
-          (tab) => normalizeProjectPath(tab.path) === normalizedChangedPath,
+        !codePanelTabsRef.current.some(
+          (tab) =>
+            normalizeProjectPathIdentity(tab.path) === changedPathIdentity,
         )
       ) {
         return;
       }
 
-      const editorStore = useEditorStore.getState();
-      const editorTabId = makeEditorTabId(normalizedChangedPath);
-      if (editorStore.tabs.get(editorTabId)?.isDirty) {
-        return;
-      }
-
-      const requestId = codePanelOpenRequestRef.current + 1;
-      codePanelOpenRequestRef.current = requestId;
-
-      void (async () => {
-        const fileLoadState = await loadEditorFile(normalizedChangedPath);
-        if (codePanelOpenRequestRef.current !== requestId) {
-          return;
-        }
-
-        let language =
-          codePanelTabs.find(
-            (tab) => normalizeProjectPath(tab.path) === normalizedChangedPath,
-          )?.language ?? "text";
-        try {
-          const languageInfo = await GetLanguageForFile(normalizedChangedPath);
-          if (languageInfo?.id) {
-            language = languageInfo.id;
-          }
-        } catch {
-          /* keep current language */
-        }
-        if (codePanelOpenRequestRef.current !== requestId) {
-          return;
-        }
-
-        const content =
-          fileLoadState.kind === "editable" ? fileLoadState.content : "";
-        useEditorStore
-          .getState()
-          .replaceTabContent(editorTabId, content, language);
-        setCodePanelTabs((currentTabs) =>
-          currentTabs.map((tab) =>
-            normalizeProjectPath(tab.path) === normalizedChangedPath
-              ? {
-                  ...tab,
-                  name: fileLoadState.name || getEditorFileName(tab.path),
-                  content,
-                  language,
-                  loadState: fileLoadState,
-                }
-              : tab,
-          ),
-        );
-      })();
+      void refreshCodePanelPathFromDisk(normalizedChangedPath);
     },
-    [codePanelTabs],
+    [refreshCodePanelPathFromDisk],
   );
 
   useEffect(() => {
@@ -4256,6 +4478,243 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     );
     return unsubscribe;
   }, [handleCodePanelExternalFileChange]);
+
+  useEffect(() => {
+    const handlePatchMutation = (event: unknown) => {
+      if (!eventMatchesCurrentProjectSession(event)) {
+        return;
+      }
+      const files =
+        event &&
+        typeof event === "object" &&
+        "files" in event &&
+        Array.isArray((event as { files?: unknown }).files)
+          ? (
+              event as {
+                files: Array<{ path?: unknown; absolutePath?: unknown }>;
+              }
+            ).files
+          : [];
+      if (files.length === 0) {
+        return;
+      }
+
+      const affectedTabs = codePanelTabsRef.current.filter((tab) =>
+        files.some((file) => {
+          const path =
+            typeof file.absolutePath === "string"
+              ? file.absolutePath
+              : typeof file.path === "string"
+                ? file.path
+                : "";
+          return (
+            path && aiInlinePatchPathMatches(tab.path, path, activeProjectPath)
+          );
+        }),
+      );
+      affectedTabs.forEach((tab) => {
+        const editorTab = useEditorStore
+          .getState()
+          .tabs.get(makeEditorTabId(tab.path));
+        if (editorTab?.isDirty) {
+          useAppNotificationStore.getState().addNotification({
+            id: `code-panel-ai-patch-disk-change:${tab.path}`,
+            kind: "warning",
+            title: "File changed on disk",
+            message: `${tab.name} has unsaved editor changes.`,
+            source: "AI",
+            sticky: false,
+            timeoutMs: 6000,
+          });
+          return;
+        }
+        void refreshCodePanelPathFromDisk(tab.path);
+      });
+    };
+
+    const unsubscribeApplied = EventsOn(
+      "ai:patch:artifact-applied",
+      handlePatchMutation,
+    );
+    const unsubscribeRolledBack = EventsOn(
+      "ai:patch:artifact-rolled-back",
+      handlePatchMutation,
+    );
+    return () => {
+      unsubscribeApplied();
+      unsubscribeRolledBack();
+    };
+  }, [activeProjectPath, refreshCodePanelPathFromDisk]);
+
+  const getAIInlinePatchDirtyCandidates = useCallback(
+    () =>
+      Array.from(useEditorStore.getState().tabs.values()).map((tab) => ({
+        path: tab.path,
+        name: tab.name,
+        isDirty: tab.isDirty,
+      })),
+    [],
+  );
+
+  const handleAcceptCodePanelAIInlinePatch = useCallback(
+    async (preview: AIInlinePatchPreview) => {
+      if (aiInlinePatchBusyIds[preview.id]) {
+        return;
+      }
+      const patchScope = {
+        projectPath: activeProjectPath,
+        projectSessionId: currentProjectSessionId,
+      };
+      if (!isAIInlinePatchPreviewInScope(preview, patchScope)) {
+        dismissAIInlinePatchPreview(preview.id);
+        return;
+      }
+      if (preview.alreadyApplied) {
+        acknowledgeAIInlinePatchPreview(preview.id);
+        return;
+      }
+
+      const candidates = getAIInlinePatchDirtyCandidates();
+      const blockingFile = findBlockingAIInlinePatchCandidate(
+        preview,
+        candidates,
+        patchScope,
+      );
+      if (blockingFile) {
+        useAppNotificationStore.getState().addNotification({
+          id: `code-panel-ai-inline-patch-dirty:${preview.id}`,
+          kind: "warning",
+          title: "Save editor changes first",
+          message: `${formatAIInlinePatchCandidateName(blockingFile)} has unsaved changes.`,
+          source: "AI",
+          sticky: false,
+          timeoutMs: 6000,
+        });
+        return;
+      }
+
+      const affectedTabs = getAffectedAIInlinePatchCandidates(
+        preview,
+        codePanelTabsRef.current,
+        patchScope,
+      );
+      if (!beginAIInlinePatchBusy(preview.id)) {
+        return;
+      }
+      try {
+        await AIApplyPatchArtifact({ artifactId: preview.id });
+        clearAIInlinePatchPreview(preview.id);
+        await Promise.all(
+          affectedTabs.map((tab) => refreshCodePanelPathFromDisk(tab.path)),
+        );
+      } catch (error) {
+        useAppNotificationStore.getState().addNotification({
+          id: `code-panel-ai-inline-patch-apply:${preview.id}`,
+          kind: "error",
+          title: "Failed to apply AI patch",
+          message: error instanceof Error ? error.message : String(error),
+          source: "AI",
+          sticky: false,
+          timeoutMs: 7000,
+        });
+      } finally {
+        endAIInlinePatchBusy(preview.id);
+      }
+    },
+    [
+      activeProjectPath,
+      acknowledgeAIInlinePatchPreview,
+      aiInlinePatchBusyIds,
+      beginAIInlinePatchBusy,
+      clearAIInlinePatchPreview,
+      currentProjectSessionId,
+      dismissAIInlinePatchPreview,
+      endAIInlinePatchBusy,
+      getAIInlinePatchDirtyCandidates,
+      refreshCodePanelPathFromDisk,
+    ],
+  );
+
+  const handleRejectCodePanelAIInlinePatch = useCallback(
+    async (preview: AIInlinePatchPreview) => {
+      if (aiInlinePatchBusyIds[preview.id]) {
+        return;
+      }
+      const patchScope = {
+        projectPath: activeProjectPath,
+        projectSessionId: currentProjectSessionId,
+      };
+      if (!isAIInlinePatchPreviewInScope(preview, patchScope)) {
+        dismissAIInlinePatchPreview(preview.id);
+        return;
+      }
+      if (!preview.alreadyApplied) {
+        dismissAIInlinePatchPreview(preview.id);
+        return;
+      }
+
+      const candidates = getAIInlinePatchDirtyCandidates();
+      const blockingFile = findBlockingAIInlinePatchCandidate(
+        preview,
+        candidates,
+        patchScope,
+      );
+      if (blockingFile) {
+        useAppNotificationStore.getState().addNotification({
+          id: `code-panel-ai-inline-patch-rollback-dirty:${preview.id}`,
+          kind: "warning",
+          title: "Save editor changes first",
+          message: `${formatAIInlinePatchCandidateName(blockingFile)} has unsaved changes.`,
+          source: "AI",
+          sticky: false,
+          timeoutMs: 6000,
+        });
+        return;
+      }
+
+      const affectedTabs = getAffectedAIInlinePatchCandidates(
+        preview,
+        codePanelTabsRef.current,
+        patchScope,
+      );
+      if (!beginAIInlinePatchBusy(preview.id)) {
+        return;
+      }
+      try {
+        await AIRollbackPatchCheckpoint({
+          artifactId: preview.id,
+          checkpointId: "",
+        });
+        clearAIInlinePatchPreview(preview.id);
+        await Promise.all(
+          affectedTabs.map((tab) => refreshCodePanelPathFromDisk(tab.path)),
+        );
+      } catch (error) {
+        useAppNotificationStore.getState().addNotification({
+          id: `code-panel-ai-inline-patch-rollback:${preview.id}`,
+          kind: "error",
+          title: "Failed to rollback AI edit",
+          message: error instanceof Error ? error.message : String(error),
+          source: "AI",
+          sticky: false,
+          timeoutMs: 7000,
+        });
+      } finally {
+        endAIInlinePatchBusy(preview.id);
+      }
+    },
+    [
+      activeProjectPath,
+      aiInlinePatchBusyIds,
+      beginAIInlinePatchBusy,
+      clearAIInlinePatchPreview,
+      currentProjectSessionId,
+      dismissAIInlinePatchPreview,
+      endAIInlinePatchBusy,
+      getAIInlinePatchDirtyCandidates,
+      refreshCodePanelPathFromDisk,
+    ],
+  );
 
   const handleFileOpen = useCallback(
     (
@@ -4457,6 +4916,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           );
         };
 
+        const removedCodePanelTabs = codePanelTabsRef.current.filter(
+          (tab) =>
+            isSameOrChildPath(tab.path, deletedPath) &&
+            !isDirtyCodePanelPath(tab.path),
+        );
+        removedCodePanelTabs.forEach((tab) =>
+          releaseEditorBackingTab(tab.path),
+        );
         setCodePanelTabs((currentTabs) =>
           currentTabs.filter(
             (tab) =>
@@ -4485,6 +4952,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     pruneExplorerPathPrefix,
     pruneProjectEntryDialogs,
     prunePathDiagnostics,
+    releaseEditorBackingTab,
     remapExplorerPathPrefix,
     remapProjectEntryDialogs,
     renameEditorTabPaths,
@@ -5161,6 +5629,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       activeStatusFilePath={activeStatusFilePath}
       activeEditorTabPath={activeEditorTab?.path ?? null}
       activeCodePanelTab={activeCodePanelTab}
+      activeCodePanelPatchPreview={activeCodePanelPatchPreview}
+      codePanelPatchBusyId={codePanelPatchBusyId}
       codePanelTabs={codePanelTabs}
       markdownPreviewSource={markdownPreviewSource}
       tuiModeActive={tuiModeActive}
@@ -5199,12 +5669,14 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onPerspectiveOpen={handlePerspectiveOpen}
       onPerspectiveClose={handlePerspectiveClose}
       onGitDiffFocusChange={handleGitDiffFocusChange}
-      onCodePanelActivate={setActiveCodePanelPath}
+      onCodePanelActivate={activateCodePanelTab}
       onCodePanelClose={closeCodePanelTab}
       onCodePanelCloseOthers={closeOtherCodePanelTabs}
       onCodePanelDetachToPanel={handleCodePanelTabDetachToPanel}
       onCodePanelRevealInExplorer={handleCodePanelTabRevealInExplorer}
       onCodePanelMoveToEditorTabs={handleCodePanelTabMoveToEditorTabs}
+      onCodePanelAcceptAIInlinePatch={handleAcceptCodePanelAIInlinePatch}
+      onCodePanelRejectAIInlinePatch={handleRejectCodePanelAIInlinePatch}
       onZenPinToggle={toggleZenPinnedPanel}
       fullscreenTransitionPanelIds={fullscreenTransitionPanelIds}
     />

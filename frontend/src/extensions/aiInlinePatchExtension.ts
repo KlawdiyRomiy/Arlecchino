@@ -81,12 +81,17 @@ const splitDiffFiles = (unifiedDiff: string): DiffFileBlock[] => {
 export const parseAIInlinePatchLines = (
   unifiedDiff: string,
   filePath: string,
+  projectPath?: string | null,
 ): AIInlinePatchLine[] => {
   const changes: AIInlinePatchLine[] = [];
   for (const file of splitDiffFiles(unifiedDiff)) {
     const patchPath =
       file.newPath === "/dev/null" ? file.oldPath : file.newPath;
-    if (!aiInlinePatchPathMatches(filePath, patchPath)) {
+    if (
+      !aiInlinePatchPathMatches(filePath, patchPath, projectPath, {
+        stripGitPrefix: true,
+      })
+    ) {
       continue;
     }
 
@@ -130,6 +135,52 @@ export const parseAIInlinePatchLines = (
   return changes;
 };
 
+const getPatchScopeLabel = (preview: AIInlinePatchPreview): string =>
+  preview.files.length > 1 ? `all ${preview.files.length} files` : "this file";
+
+const getPatchTitle = (preview: AIInlinePatchPreview): string => {
+  const baseTitle =
+    preview.summary ||
+    (preview.alreadyApplied
+      ? "Review applied AI edit"
+      : preview.title || "AI patch");
+  return preview.files.length > 1
+    ? `${baseTitle} (${preview.files.length} files)`
+    : baseTitle;
+};
+
+const getAcceptLabel = (
+  preview: AIInlinePatchPreview,
+  busy: boolean,
+): string => {
+  if (busy) {
+    return preview.alreadyApplied ? "Keeping..." : "Applying...";
+  }
+  if (preview.alreadyApplied) {
+    return preview.files.length > 1 ? "Keep artifact" : "Keep";
+  }
+  return preview.files.length > 1
+    ? `Apply ${preview.files.length} files`
+    : "Apply";
+};
+
+const getRejectLabel = (
+  preview: AIInlinePatchPreview,
+  busy: boolean,
+): string => {
+  if (busy) {
+    return preview.alreadyApplied ? "Rolling back..." : "Rejecting...";
+  }
+  if (preview.alreadyApplied) {
+    return preview.files.length > 1
+      ? `Rollback ${preview.files.length} files`
+      : "Rollback";
+  }
+  return preview.files.length > 1
+    ? `Reject ${preview.files.length} files`
+    : "Reject";
+};
+
 class AIInlinePatchLineWidget extends WidgetType {
   constructor(
     private readonly patchLine: AIInlinePatchLine,
@@ -137,6 +188,7 @@ class AIInlinePatchLineWidget extends WidgetType {
     private readonly onAccept: (preview: AIInlinePatchPreview) => void,
     private readonly onReject: (preview: AIInlinePatchPreview) => void,
     private readonly showActions: boolean,
+    private readonly busy: boolean,
   ) {
     super();
   }
@@ -148,7 +200,8 @@ class AIInlinePatchLineWidget extends WidgetType {
       other.patchLine.text === this.patchLine.text &&
       other.preview.id === this.preview.id &&
       other.preview.updatedAt === this.preview.updatedAt &&
-      other.showActions === this.showActions
+      other.showActions === this.showActions &&
+      other.busy === this.busy
     );
   }
 
@@ -172,6 +225,7 @@ class AIInlinePatchLineWidget extends WidgetType {
           this.preview,
           this.onAccept,
           this.onReject,
+          this.busy,
         ),
       );
     }
@@ -183,6 +237,7 @@ const createInlinePatchMiniActions = (
   preview: AIInlinePatchPreview,
   onAccept: (preview: AIInlinePatchPreview) => void,
   onReject: (preview: AIInlinePatchPreview) => void,
+  busy: boolean,
 ): HTMLElement => {
   const actions = document.createElement("span");
   actions.className = "cm-ai-inline-patch-mini-actions";
@@ -190,27 +245,35 @@ const createInlinePatchMiniActions = (
 
   const accept = document.createElement("button");
   accept.type = "button";
-  accept.textContent = preview.alreadyApplied ? "Keep" : "Apply";
+  accept.textContent = getAcceptLabel(preview, busy);
+  accept.disabled = busy;
   accept.title = preview.alreadyApplied
-    ? "Keep applied AI edit"
-    : "Apply AI patch";
+    ? `Keep applied AI edit for ${getPatchScopeLabel(preview)}`
+    : `Apply AI patch artifact to ${getPatchScopeLabel(preview)}`;
   accept.dataset.testid = "ai-inline-patch-mini-apply";
   accept.addEventListener("mousedown", stopEditorEvent);
   accept.addEventListener("click", (event) => {
     stopEditorEvent(event);
+    if (busy) {
+      return;
+    }
     onAccept(preview);
   });
 
   const reject = document.createElement("button");
   reject.type = "button";
-  reject.textContent = preview.alreadyApplied ? "Rollback" : "Reject";
+  reject.textContent = getRejectLabel(preview, busy);
+  reject.disabled = busy;
   reject.title = preview.alreadyApplied
-    ? "Rollback applied AI edit"
-    : "Reject AI patch";
+    ? `Rollback applied AI edit for ${getPatchScopeLabel(preview)}`
+    : `Reject AI patch artifact for ${getPatchScopeLabel(preview)}`;
   reject.dataset.testid = "ai-inline-patch-mini-reject";
   reject.addEventListener("mousedown", stopEditorEvent);
   reject.addEventListener("click", (event) => {
     stopEditorEvent(event);
+    if (busy) {
+      return;
+    }
     onReject(preview);
   });
 
@@ -223,6 +286,7 @@ class AIInlinePatchToolbarWidget extends WidgetType {
     private readonly preview: AIInlinePatchPreview,
     private readonly onAccept: (preview: AIInlinePatchPreview) => void,
     private readonly onReject: (preview: AIInlinePatchPreview) => void,
+    private readonly busy: boolean,
   ) {
     super();
   }
@@ -230,7 +294,8 @@ class AIInlinePatchToolbarWidget extends WidgetType {
   eq(other: AIInlinePatchToolbarWidget): boolean {
     return (
       other.preview.id === this.preview.id &&
-      other.preview.updatedAt === this.preview.updatedAt
+      other.preview.updatedAt === this.preview.updatedAt &&
+      other.busy === this.busy
     );
   }
 
@@ -241,32 +306,36 @@ class AIInlinePatchToolbarWidget extends WidgetType {
 
     const label = document.createElement("span");
     label.className = "cm-ai-inline-patch-title";
-    label.textContent =
-      this.preview.summary ||
-      (this.preview.alreadyApplied
-        ? "Review applied AI edit"
-        : this.preview.title || "AI patch");
+    label.textContent = getPatchTitle(this.preview);
 
     const actions = document.createElement("span");
     actions.className = "cm-ai-inline-patch-actions";
 
     const accept = document.createElement("button");
     accept.type = "button";
-    accept.textContent = this.preview.alreadyApplied ? "Keep" : "Apply";
+    accept.textContent = getAcceptLabel(this.preview, this.busy);
+    accept.disabled = this.busy;
     accept.dataset.testid = "ai-inline-patch-apply";
     accept.addEventListener("mousedown", stopEditorEvent);
     accept.addEventListener("click", (event) => {
       stopEditorEvent(event);
+      if (this.busy) {
+        return;
+      }
       this.onAccept(this.preview);
     });
 
     const reject = document.createElement("button");
     reject.type = "button";
-    reject.textContent = this.preview.alreadyApplied ? "Rollback" : "Reject";
+    reject.textContent = getRejectLabel(this.preview, this.busy);
+    reject.disabled = this.busy;
     reject.dataset.testid = "ai-inline-patch-reject";
     reject.addEventListener("mousedown", stopEditorEvent);
     reject.addEventListener("click", (event) => {
       stopEditorEvent(event);
+      if (this.busy) {
+        return;
+      }
       this.onReject(this.preview);
     });
 
@@ -296,10 +365,16 @@ const buildDecorations = (
   state: EditorState,
   preview: AIInlinePatchPreview,
   filePath: string,
+  projectPath: string | null | undefined,
   onAccept: (preview: AIInlinePatchPreview) => void,
   onReject: (preview: AIInlinePatchPreview) => void,
+  busy: boolean,
 ): DecorationSet => {
-  const changes = parseAIInlinePatchLines(preview.unifiedDiff, filePath);
+  const changes = parseAIInlinePatchLines(
+    preview.unifiedDiff,
+    filePath,
+    projectPath,
+  );
   if (changes.length === 0) {
     return Decoration.none;
   }
@@ -311,7 +386,7 @@ const buildDecorations = (
   );
   decorations.push(
     Decoration.widget({
-      widget: new AIInlinePatchToolbarWidget(preview, onAccept, onReject),
+      widget: new AIInlinePatchToolbarWidget(preview, onAccept, onReject, busy),
       block: true,
       side: -1,
     }).range(lineToPosition(state, firstLine)),
@@ -332,6 +407,7 @@ const buildDecorations = (
           onAccept,
           onReject,
           index === 0,
+          busy,
         ),
         block: true,
         side: change.kind === "add" ? -1 : 0,
@@ -348,10 +424,19 @@ const buildDecorations = (
 export const createAIInlinePatchExtension = (options: {
   preview: AIInlinePatchPreview | null | undefined;
   filePath: string;
+  projectPath?: string | null;
   onAccept: (preview: AIInlinePatchPreview) => void;
   onReject: (preview: AIInlinePatchPreview) => void;
+  busy?: boolean;
 }): Extension => {
-  const { preview, filePath, onAccept, onReject } = options;
+  const {
+    preview,
+    filePath,
+    projectPath,
+    onAccept,
+    onReject,
+    busy = false,
+  } = options;
   if (!preview) {
     return [];
   }
@@ -363,8 +448,10 @@ export const createAIInlinePatchExtension = (options: {
         state,
         activePreview,
         filePath,
+        projectPath,
         onAccept,
         onReject,
+        busy,
       );
     },
     update(value, transaction) {
@@ -375,8 +462,10 @@ export const createAIInlinePatchExtension = (options: {
         transaction.state,
         activePreview,
         filePath,
+        projectPath,
         onAccept,
         onReject,
+        busy,
       );
     },
     provide: (field) => EditorView.decorations.from(field),
@@ -433,6 +522,11 @@ export const createAIInlinePatchExtension = (options: {
         background: "color-mix(in srgb, #d73a49 10%, transparent)",
         color: "var(--danger, #b31d28)",
       },
+      ".cm-ai-inline-patch-actions button:disabled, .cm-ai-inline-patch-mini-actions button:disabled":
+        {
+          cursor: "wait",
+          opacity: "0.62",
+        },
       ".cm-ai-inline-patch-target-line": {
         background:
           "linear-gradient(90deg, color-mix(in srgb, var(--accent, #3aa76d) 12%, transparent), transparent 68%)",
