@@ -9,6 +9,7 @@ DARWIN_DIR="$ROOT_DIR/build/darwin"
 LEGACY_ICNS="$DARWIN_DIR/iconfile.icns"
 APPICON_LIGHT_PNG="$DARWIN_DIR/appicon-light.png"
 APPICON_DARK_PNG="$DARWIN_DIR/appicon-dark.png"
+MIN_MACOS_VERSION="11.0"
 BUILD_DIR_RAW="$(plutil -extract 'build:dir' raw -o - "$ROOT_DIR/wails.json")"
 APP_NAME="$(plutil -extract outputfilename raw -o - "$ROOT_DIR/wails.json")"
 if [[ "$BUILD_DIR_RAW" = /* ]]; then
@@ -18,7 +19,6 @@ else
 fi
 APP_BUNDLE="${1:-$BUILD_DIR/bin/$APP_NAME.app}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/arle-icon.XXXXXX")"
-MACOS_MAJOR_VERSION="$(sw_vers -productVersion | cut -d . -f 1)"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -88,20 +88,50 @@ ensure_composer_icon_pngs() {
   return 1
 }
 
+generate_legacy_icns() {
+  local source_png="$APPICON_LIGHT_PNG"
+  local iconset_dir="$TMP_DIR/iconfile.iconset"
+
+  if [[ ! -f "$source_png" ]]; then
+    echo "Missing legacy source icon: $source_png" >&2
+    return 1
+  fi
+
+  mkdir -p "$iconset_dir"
+  local point_size scale pixel_size suffix
+  for point_size in 16 32 128 256 512; do
+    for scale in 1 2; do
+      pixel_size=$((point_size * scale))
+      suffix=""
+      if [[ "$scale" -eq 2 ]]; then
+        suffix="@2x"
+      fi
+      sips -z "$pixel_size" "$pixel_size" "$source_png" --out "$iconset_dir/icon_${point_size}x${point_size}${suffix}.png" >/dev/null
+    done
+  done
+
+  iconutil -c icns "$iconset_dir" -o "$LEGACY_ICNS"
+  xattr -cr "$LEGACY_ICNS" >/dev/null 2>&1 || true
+}
+
+set_plist_string() {
+  local plist_path="$1"
+  local key="$2"
+  local value="$3"
+
+  /usr/libexec/PlistBuddy -c "Delete :$key" "$plist_path" >/dev/null 2>&1 || true
+  /usr/libexec/PlistBuddy -c "Add :$key string $value" "$plist_path" >/dev/null
+  /usr/libexec/PlistBuddy -c "Set :$key $value" "$plist_path" >/dev/null
+}
+
 set_icon_keys() {
   local plist_path="$1"
 
   [[ -f "$plist_path" ]] || return 0
 
-  /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$plist_path" >/dev/null 2>&1 || true
-  /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string appicon" "$plist_path" >/dev/null 2>&1 || true
-  /usr/libexec/PlistBuddy -c "Set :CFBundleIconName appicon" "$plist_path" >/dev/null 2>&1 || true
-
-  if [[ "$MACOS_MAJOR_VERSION" -ge 26 ]]; then
-    /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile appicon" "$plist_path" >/dev/null 2>&1 || true
-  else
-    /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile iconfile" "$plist_path" >/dev/null 2>&1 || true
-  fi
+  set_plist_string "$plist_path" CFBundleIconFile iconfile
+  set_plist_string "$plist_path" CFBundleIconName appicon
+  set_plist_string "$plist_path" LSMinimumSystemVersion "$MIN_MACOS_VERSION"
 }
 
 set_bundle_identifier() {
@@ -123,12 +153,13 @@ if [[ ! -f "$LEGACY_ICNS" ]]; then
 fi
 
 ensure_composer_icon_pngs
+generate_legacy_icns
 
 xcrun actool \
   --compile "$TMP_DIR" \
   --platform macosx \
   --target-device mac \
-  --minimum-deployment-target 10.13 \
+  --minimum-deployment-target "$MIN_MACOS_VERSION" \
   --app-icon appicon \
   --output-format human-readable-text \
   --warnings \
@@ -153,10 +184,10 @@ if [[ -d "$APP_BUNDLE" ]]; then
   xattr -cr "$APP_BUNDLE" >/dev/null 2>&1 || true
   cp -Xf "$DARWIN_DIR/Assets.car" "$RESOURCES_DIR/Assets.car"
   cp -Xf "$LEGACY_ICNS" "$RESOURCES_DIR/iconfile.icns"
-  cp -Xf "$TMP_DIR/appicon.icns" "$RESOURCES_DIR/appicon.icns"
   cp -Xf "$APPICON_LIGHT_PNG" "$RESOURCES_DIR/appicon-light.png"
   cp -Xf "$APPICON_DARK_PNG" "$RESOURCES_DIR/appicon-dark.png"
-  xattr -cr "$RESOURCES_DIR/Assets.car" "$RESOURCES_DIR/iconfile.icns" "$RESOURCES_DIR/appicon.icns" "$RESOURCES_DIR/appicon-light.png" "$RESOURCES_DIR/appicon-dark.png" >/dev/null 2>&1 || true
+  rm -f "$RESOURCES_DIR/appicon.icns"
+  xattr -cr "$RESOURCES_DIR/Assets.car" "$RESOURCES_DIR/iconfile.icns" "$RESOURCES_DIR/appicon-light.png" "$RESOURCES_DIR/appicon-dark.png" >/dev/null 2>&1 || true
 
   set_icon_keys "$INFO_PLIST"
   set_bundle_identifier "$INFO_PLIST"

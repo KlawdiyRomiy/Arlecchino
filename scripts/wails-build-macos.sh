@@ -21,12 +21,17 @@ SYNC_SCRIPT="$ROOT_DIR/scripts/macos-sync-icon-assets.sh"
 seed_wails_build_assets() {
   local source_build_dir="$ROOT_DIR/build"
   local target_build_dir="$BUILD_DIR"
+  local asset
 
   mkdir -p "$target_build_dir/darwin"
   cp -Xf "$source_build_dir/appicon.png" "$target_build_dir/appicon.png"
   cp -Xf "$source_build_dir/darwin/Info.dev.plist" "$target_build_dir/darwin/Info.dev.plist"
   cp -Xf "$source_build_dir/darwin/Info.plist" "$target_build_dir/darwin/Info.plist"
-  cp -Xf "$source_build_dir/darwin/iconfile.icns" "$target_build_dir/darwin/iconfile.icns"
+  for asset in iconfile.icns Assets.car appicon-light.png appicon-dark.png; do
+    if [[ -f "$source_build_dir/darwin/$asset" ]]; then
+      cp -Xf "$source_build_dir/darwin/$asset" "$target_build_dir/darwin/$asset"
+    fi
+  done
   xattr -cr "$target_build_dir/appicon.png" "$target_build_dir/darwin" >/dev/null 2>&1 || true
 }
 

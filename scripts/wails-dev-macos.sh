@@ -35,12 +35,17 @@ cleanup() {
 seed_wails_build_assets() {
   local source_build_dir="$ROOT_DIR/build"
   local target_build_dir="$BUILD_DIR"
+  local asset
 
   mkdir -p "$target_build_dir/darwin"
   cp -Xf "$source_build_dir/appicon.png" "$target_build_dir/appicon.png"
   cp -Xf "$source_build_dir/darwin/Info.dev.plist" "$target_build_dir/darwin/Info.dev.plist"
   cp -Xf "$source_build_dir/darwin/Info.plist" "$target_build_dir/darwin/Info.plist"
-  cp -Xf "$source_build_dir/darwin/iconfile.icns" "$target_build_dir/darwin/iconfile.icns"
+  for asset in iconfile.icns Assets.car appicon-light.png appicon-dark.png; do
+    if [[ -f "$source_build_dir/darwin/$asset" ]]; then
+      cp -Xf "$source_build_dir/darwin/$asset" "$target_build_dir/darwin/$asset"
+    fi
+  done
   xattr -cr "$target_build_dir/appicon.png" "$target_build_dir/darwin" >/dev/null 2>&1 || true
 }
 
@@ -57,6 +62,24 @@ sync_bundle() {
   fi
 }
 
+bundle_icon_assets_ready() {
+  local info_plist="$APP_BUNDLE/Contents/Info.plist"
+  local resources_dir="$APP_BUNDLE/Contents/Resources"
+  local icon_file icon_name
+
+  [[ -f "$info_plist" ]] || return 1
+  icon_file="$(plutil -extract CFBundleIconFile raw -o - "$info_plist" 2>/dev/null || echo "")"
+  icon_name="$(plutil -extract CFBundleIconName raw -o - "$info_plist" 2>/dev/null || echo "")"
+
+  [[ "$icon_file" == "iconfile" ]] || return 1
+  [[ "$icon_name" == "appicon" ]] || return 1
+  [[ -f "$resources_dir/Assets.car" ]] || return 1
+  [[ -f "$resources_dir/iconfile.icns" ]] || return 1
+  [[ -f "$resources_dir/appicon-light.png" ]] || return 1
+  [[ -f "$resources_dir/appicon-dark.png" ]] || return 1
+  [[ ! -f "$resources_dir/appicon.icns" ]] || return 1
+}
+
 watch_bundle() {
   local last_info_mtime=""
 
@@ -66,17 +89,9 @@ watch_bundle() {
       local info_mtime
       info_mtime="$(stat -f '%m' "$info_plist" 2>/dev/null || echo 0)"
 
-      if [[ "$info_mtime" != "$last_info_mtime" ]]; then
-        local icon_file
-        local icon_name
-        icon_file="$(plutil -extract CFBundleIconFile raw -o - "$info_plist" 2>/dev/null || echo "")"
-        icon_name="$(plutil -extract CFBundleIconName raw -o - "$info_plist" 2>/dev/null || echo "")"
-
-        if [[ "$icon_file" != "appicon" || "$icon_name" != "appicon" || ! -f "$APP_BUNDLE/Contents/Resources/Assets.car" || ! -f "$APP_BUNDLE/Contents/Resources/appicon.icns" || ! -f "$APP_BUNDLE/Contents/Resources/appicon-light.png" || ! -f "$APP_BUNDLE/Contents/Resources/appicon-dark.png" ]]; then
-          sync_bundle
-          info_mtime="$(stat -f '%m' "$info_plist" 2>/dev/null || echo "$info_mtime")"
-        fi
-
+      if [[ "$info_mtime" != "$last_info_mtime" ]] || ! bundle_icon_assets_ready; then
+        sync_bundle
+        info_mtime="$(stat -f '%m' "$info_plist" 2>/dev/null || echo "$info_mtime")"
         last_info_mtime="$info_mtime"
       fi
     fi

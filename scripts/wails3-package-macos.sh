@@ -152,6 +152,26 @@ copy_runtime_assets() {
   done
 }
 
+copy_icon_assets() {
+  local asset source dest
+  local icon_assets=(iconfile.icns Assets.car appicon-light.png appicon-dark.png)
+
+  for asset in "${icon_assets[@]}"; do
+    source="$ROOT_DIR/build/darwin/$asset"
+    dest="$RESOURCES_DIR/$asset"
+    if [[ ! -s "$source" ]]; then
+      echo "ERROR: required icon asset is missing or empty: $source" >&2
+      exit 1
+    fi
+
+    cp -Xf "$source" "$dest"
+    chmod 0644 "$dest"
+    xattr -cr "$dest" >/dev/null 2>&1 || true
+  done
+
+  rm -f "$RESOURCES_DIR/appicon.icns"
+}
+
 if [[ "$SKIP_BUILD" != "1" ]]; then
   BUILD_ARGS=(--build-only --output "$OUTPUT")
   if [[ "$SKIP_FRONTEND" == "1" ]]; then
@@ -197,16 +217,7 @@ s/__MIN_MACOS_VERSION__/$ENV{ARLE_TEMPLATE_MIN_MACOS_VERSION}/g;
 s/__COPYRIGHT_YEAR__/$ENV{ARLE_TEMPLATE_COPYRIGHT_YEAR}/g;
 ' "$APP_BUNDLE/Contents/Info.plist"
 
-cp -Xf "$ROOT_DIR/build/darwin/iconfile.icns" "$RESOURCES_DIR/iconfile.icns"
-if [[ -f "$ROOT_DIR/build/darwin/Assets.car" ]]; then
-  cp -Xf "$ROOT_DIR/build/darwin/Assets.car" "$RESOURCES_DIR/Assets.car"
-fi
-if [[ -f "$ROOT_DIR/build/darwin/appicon-light.png" ]]; then
-  cp -Xf "$ROOT_DIR/build/darwin/appicon-light.png" "$RESOURCES_DIR/appicon-light.png"
-fi
-if [[ -f "$ROOT_DIR/build/darwin/appicon-dark.png" ]]; then
-  cp -Xf "$ROOT_DIR/build/darwin/appicon-dark.png" "$RESOURCES_DIR/appicon-dark.png"
-fi
+copy_icon_assets
 copy_runtime_assets
 xattr -cr "$APP_BUNDLE" >/dev/null 2>&1 || true
 

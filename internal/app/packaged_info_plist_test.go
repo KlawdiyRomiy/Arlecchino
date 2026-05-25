@@ -33,6 +33,37 @@ func TestDarwinInfoPlistsAreRawLintable(t *testing.T) {
 	}
 }
 
+func TestDarwinInfoPlistsDeclareVersionedAppIconResources(t *testing.T) {
+	cases := map[string]string{
+		"Info.plist":        "<string>11.0</string>",
+		"Info.dev.plist":    "<string>11.0</string>",
+		"Info.wails3.plist": "<string>__MIN_MACOS_VERSION__</string>",
+	}
+
+	for plistName, minimumVersion := range cases {
+		t.Run(plistName, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("build", "darwin", plistName))
+			if err != nil {
+				t.Fatalf("ReadFile(%s) error = %v", plistName, err)
+			}
+			content := string(data)
+
+			for _, expected := range []string{
+				"<key>CFBundleIconFile</key>",
+				"<string>iconfile</string>",
+				"<key>CFBundleIconName</key>",
+				"<string>appicon</string>",
+				"<key>LSMinimumSystemVersion</key>",
+				minimumVersion,
+			} {
+				if !strings.Contains(content, expected) {
+					t.Fatalf("%s missing %s", plistName, expected)
+				}
+			}
+		})
+	}
+}
+
 func assertOpenFileDocumentTypes(t *testing.T, plistName string, content string) {
 	t.Helper()
 
