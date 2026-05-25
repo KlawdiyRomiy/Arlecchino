@@ -107,6 +107,10 @@ interface EditorSettingsState {
   maxFontSize: number;
   showInlineDiagnostics: boolean;
   showCompactDiagnostics: boolean;
+  showFoldGutter: boolean;
+  showDiagnosticGutter: boolean;
+  showIndentGuides: boolean;
+  showColorTools: boolean;
   showMinimap: boolean;
   showRainbowBrackets: boolean;
   showOperatorLigatures: boolean;
@@ -132,6 +136,10 @@ interface EditorSettingsState {
   setUiScale: (scale: number) => void;
   setShowInlineDiagnostics: (value: boolean) => void;
   setShowCompactDiagnostics: (value: boolean) => void;
+  setShowFoldGutter: (value: boolean) => void;
+  setShowDiagnosticGutter: (value: boolean) => void;
+  setShowIndentGuides: (value: boolean) => void;
+  setShowColorTools: (value: boolean) => void;
   setShowMinimap: (value: boolean) => void;
   setShowRainbowBrackets: (value: boolean) => void;
   setShowOperatorLigatures: (value: boolean) => void;
@@ -175,6 +183,10 @@ const MAX_CUSTOM_FONTS = 16;
 const MAX_CUSTOM_FONT_DATA_URL_LENGTH = 7_000_000;
 const DEFAULT_SHOW_INLINE_DIAGNOSTICS = true;
 const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
+const DEFAULT_SHOW_FOLD_GUTTER = false;
+const DEFAULT_SHOW_DIAGNOSTIC_GUTTER = false;
+const DEFAULT_SHOW_INDENT_GUIDES = true;
+const DEFAULT_SHOW_COLOR_TOOLS = true;
 const DEFAULT_SHOW_MINIMAP = true;
 const DEFAULT_SHOW_RAINBOW_BRACKETS = true;
 const DEFAULT_SHOW_OPERATOR_LIGATURES = true;
@@ -218,6 +230,10 @@ type PersistedEditorSettingsState = Partial<
     | "editorFontSize"
     | "showInlineDiagnostics"
     | "showCompactDiagnostics"
+    | "showFoldGutter"
+    | "showDiagnosticGutter"
+    | "showIndentGuides"
+    | "showColorTools"
     | "showMinimap"
     | "showRainbowBrackets"
     | "showOperatorLigatures"
@@ -399,6 +415,22 @@ const sanitizePersistedEditorSettings = (
     nextState.showCompactDiagnostics = persistedState.showCompactDiagnostics;
   }
 
+  if (typeof persistedState.showFoldGutter === "boolean") {
+    nextState.showFoldGutter = persistedState.showFoldGutter;
+  }
+
+  if (typeof persistedState.showDiagnosticGutter === "boolean") {
+    nextState.showDiagnosticGutter = persistedState.showDiagnosticGutter;
+  }
+
+  if (typeof persistedState.showIndentGuides === "boolean") {
+    nextState.showIndentGuides = persistedState.showIndentGuides;
+  }
+
+  if (typeof persistedState.showColorTools === "boolean") {
+    nextState.showColorTools = persistedState.showColorTools;
+  }
+
   if (typeof persistedState.showMinimap === "boolean") {
     nextState.showMinimap = persistedState.showMinimap;
   }
@@ -482,6 +514,10 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       maxFontSize: MAX_FONT_SIZE,
       showInlineDiagnostics: DEFAULT_SHOW_INLINE_DIAGNOSTICS,
       showCompactDiagnostics: DEFAULT_SHOW_COMPACT_DIAGNOSTICS,
+      showFoldGutter: DEFAULT_SHOW_FOLD_GUTTER,
+      showDiagnosticGutter: DEFAULT_SHOW_DIAGNOSTIC_GUTTER,
+      showIndentGuides: DEFAULT_SHOW_INDENT_GUIDES,
+      showColorTools: DEFAULT_SHOW_COLOR_TOOLS,
       showMinimap: DEFAULT_SHOW_MINIMAP,
       showRainbowBrackets: DEFAULT_SHOW_RAINBOW_BRACKETS,
       showOperatorLigatures: DEFAULT_SHOW_OPERATOR_LIGATURES,
@@ -572,6 +608,18 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setShowCompactDiagnostics: (value: boolean) =>
         set(() => ({ showCompactDiagnostics: value })),
+
+      setShowFoldGutter: (value: boolean) =>
+        set(() => ({ showFoldGutter: value })),
+
+      setShowDiagnosticGutter: (value: boolean) =>
+        set(() => ({ showDiagnosticGutter: value })),
+
+      setShowIndentGuides: (value: boolean) =>
+        set(() => ({ showIndentGuides: value })),
+
+      setShowColorTools: (value: boolean) =>
+        set(() => ({ showColorTools: value })),
 
       setShowMinimap: (value: boolean) => set(() => ({ showMinimap: value })),
 

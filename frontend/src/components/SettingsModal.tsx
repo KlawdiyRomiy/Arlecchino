@@ -866,6 +866,36 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
     keywords: ["ligatures", "arrows", "operators", "font"],
   },
   {
+    id: "indent-guides",
+    tab: "editor",
+    label: "Indent guides",
+    description: "Show low-noise indentation markers in normal editor mode.",
+    keywords: ["indent", "guides", "markers", "scope"],
+  },
+  {
+    id: "color-tools",
+    tab: "editor",
+    label: "Color tools",
+    description: "Show color swatches in stylesheets and theme files.",
+    keywords: ["color", "swatch", "css", "theme"],
+  },
+  {
+    id: "fold-gutter",
+    tab: "diagnostics",
+    label: "Fold gutter",
+    description:
+      "Opt into visible code folding controls in stable editor layouts.",
+    keywords: ["fold", "gutter", "collapse", "outline"],
+  },
+  {
+    id: "diagnostic-gutter",
+    tab: "diagnostics",
+    label: "Problem gutter",
+    description:
+      "Opt into gutter markers and navigation for editor diagnostics.",
+    keywords: ["lint", "diagnostics", "problems", "gutter"],
+  },
+  {
     id: "show-minimap",
     tab: "diagnostics",
     label: "Show minimap",
@@ -1341,6 +1371,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     maxFontSize,
     showInlineDiagnostics,
     showCompactDiagnostics,
+    showFoldGutter,
+    showDiagnosticGutter,
+    showIndentGuides,
+    showColorTools,
     showMinimap,
     showRainbowBrackets,
     showOperatorLigatures,
@@ -1363,6 +1397,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     resetZoom,
     setShowInlineDiagnostics,
     setShowCompactDiagnostics,
+    setShowFoldGutter,
+    setShowDiagnosticGutter,
+    setShowIndentGuides,
+    setShowColorTools,
     setShowMinimap,
     setShowRainbowBrackets,
     setShowOperatorLigatures,
@@ -4454,6 +4492,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                     "operator-ligatures"
                                   }
                                 />
+                                <SwitchRow
+                                  title="Indent guides"
+                                  description="Show indentation markers in normal editor mode for nested code."
+                                  checked={showIndentGuides}
+                                  onCheckedChange={setShowIndentGuides}
+                                  settingId="indent-guides"
+                                  highlighted={
+                                    highlightedSettingId === "indent-guides"
+                                  }
+                                />
+                                <SwitchRow
+                                  title="Color tools"
+                                  description="Show color swatches in CSS, Sass, Less, and theme files."
+                                  checked={showColorTools}
+                                  onCheckedChange={setShowColorTools}
+                                  settingId="color-tools"
+                                  highlighted={
+                                    highlightedSettingId === "color-tools"
+                                  }
+                                />
                               </div>
                             </div>
                           </div>
@@ -4469,6 +4527,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             />
 
                             <div className={settingsPanelClass}>
+                              <SwitchRow
+                                title="Fold gutter"
+                                description="Show code folding controls when the editor is in a stable layout budget."
+                                checked={showFoldGutter}
+                                onCheckedChange={setShowFoldGutter}
+                                settingId="fold-gutter"
+                                highlighted={
+                                  highlightedSettingId === "fold-gutter"
+                                }
+                              />
+                              <SwitchRow
+                                title="Problem gutter"
+                                description="Show lint markers in the gutter and enable problem navigation keys."
+                                checked={showDiagnosticGutter}
+                                onCheckedChange={setShowDiagnosticGutter}
+                                settingId="diagnostic-gutter"
+                                highlighted={
+                                  highlightedSettingId === "diagnostic-gutter"
+                                }
+                              />
                               <SwitchRow
                                 title="Show minimap"
                                 description="Display the code minimap in the editor gutter for supported file sizes."

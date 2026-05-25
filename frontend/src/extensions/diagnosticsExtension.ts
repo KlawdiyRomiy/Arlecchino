@@ -358,11 +358,16 @@ const isSnapshotVisible = (
 const buildInlineDiagnosticMarkers = (
   view: EditorView,
 ): readonly LayerMarker[] => {
-  if (!view.state.field(inlineDiagnosticsMessagesVisibleField)) {
+  const messagesVisible = view.state.field(
+    inlineDiagnosticsMessagesVisibleField,
+    false,
+  );
+  if (!messagesVisible) {
     return [];
   }
 
-  const diagnostics = view.state.field(inlineDiagnosticsField);
+  const diagnostics =
+    view.state.field(inlineDiagnosticsField, false) ?? EMPTY_INLINE_SNAPSHOT;
   if (diagnostics.length === 0) {
     return [];
   }
@@ -373,6 +378,9 @@ const buildInlineDiagnosticMarkers = (
     { lineNumber: number; snapshot: InlineDiagnosticsLine }
   >();
   const markers: LayerMarker[] = [];
+  const activeLineNumber = view.state.doc.lineAt(
+    clamp(view.state.selection.main.head, 0, view.state.doc.length),
+  ).number;
 
   for (const snapshot of diagnostics) {
     if (!isSnapshotVisible(view, snapshot)) {
@@ -454,7 +462,7 @@ const buildInlineDiagnosticMarkers = (
         left,
         top,
         maxWidth,
-        false,
+        lineNumber === activeLineNumber,
         lineNumber,
       ),
     );
@@ -467,15 +475,28 @@ const inlineDiagnosticsLayer = layer({
   above: true,
   class: "cm-diagnostic-overlay-layer",
   update(update): boolean {
+    const startMessagesVisible = update.startState.field(
+      inlineDiagnosticsMessagesVisibleField,
+      false,
+    );
+    const messagesVisible = update.state.field(
+      inlineDiagnosticsMessagesVisibleField,
+      false,
+    );
+    const startDiagnostics =
+      update.startState.field(inlineDiagnosticsField, false) ??
+      EMPTY_INLINE_SNAPSHOT;
+    const diagnostics =
+      update.state.field(inlineDiagnosticsField, false) ??
+      EMPTY_INLINE_SNAPSHOT;
+
     return (
       update.docChanged ||
       update.viewportChanged ||
       update.selectionSet ||
       update.geometryChanged ||
-      update.startState.field(inlineDiagnosticsMessagesVisibleField) !==
-        update.state.field(inlineDiagnosticsMessagesVisibleField) ||
-      update.startState.field(inlineDiagnosticsField) !==
-        update.state.field(inlineDiagnosticsField)
+      startMessagesVisible !== messagesVisible ||
+      startDiagnostics !== diagnostics
     );
   },
   markers: buildInlineDiagnosticMarkers,
@@ -625,10 +646,17 @@ class DiagnosticsBridge {
     this.filePath = options.filePath;
     this.language = options.language;
     this.showInlineMessages = options.showInlineMessages;
-    const hasCachedDiagnostics = useDiagnosticsStore
+    const cachedProblems = useDiagnosticsStore
       .getState()
-      .byFile.has(this.filePath);
+      .byFile.get(this.filePath)?.items;
+    const hasCachedDiagnostics = cachedProblems !== undefined;
     this.awaitingInitialPull = !hasCachedDiagnostics;
+
+    if (cachedProblems && cachedProblems.length > 0) {
+      this.pendingProblems = cachedProblems;
+      this.pendingSignature = this.getCurrentSignature(cachedProblems);
+      this.scheduleApply();
+    }
 
     if (this.awaitingInitialPull) {
       const preservedProblems = lastVisibleProblemsByView.get(this.view);
@@ -678,10 +706,10 @@ class DiagnosticsBridge {
       }
 
       const problems = this.pendingProblems;
-
-      const diagnostics = this.showInlineMessages
-        ? buildCodeMirrorDiagnostics(this.view.state.doc, problems)
-        : [];
+      const diagnostics = buildCodeMirrorDiagnostics(
+        this.view.state.doc,
+        problems,
+      );
       const inlineSnapshot = buildInlineDiagnosticsSnapshot(
         this.view.state.doc,
         problems,

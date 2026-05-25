@@ -55,50 +55,7 @@ import {
   Search as SearchIcon,
   Scissors,
 } from "lucide-react";
-import {
-  bracketMatching,
-  indentOnInput,
-  StreamLanguage,
-} from "@codemirror/language";
-import { ruby } from "@codemirror/legacy-modes/mode/ruby";
-import { swift } from "@codemirror/legacy-modes/mode/swift";
-import { shell } from "@codemirror/legacy-modes/mode/shell";
-import { perl } from "@codemirror/legacy-modes/mode/perl";
-import { lua } from "@codemirror/legacy-modes/mode/lua";
-import { r } from "@codemirror/legacy-modes/mode/r";
-import { haskell } from "@codemirror/legacy-modes/mode/haskell";
-import { clojure } from "@codemirror/legacy-modes/mode/clojure";
-import { erlang } from "@codemirror/legacy-modes/mode/erlang";
-import { groovy } from "@codemirror/legacy-modes/mode/groovy";
-import { diff } from "@codemirror/legacy-modes/mode/diff";
-import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
-import { toml } from "@codemirror/legacy-modes/mode/toml";
-import { nginx } from "@codemirror/legacy-modes/mode/nginx";
-import { protobuf } from "@codemirror/legacy-modes/mode/protobuf";
-import { powerShell } from "@codemirror/legacy-modes/mode/powershell";
-import { clike } from "@codemirror/legacy-modes/mode/clike";
-import { fortran } from "@codemirror/legacy-modes/mode/fortran";
-import { julia } from "@codemirror/legacy-modes/mode/julia";
-import { oCaml, fSharp } from "@codemirror/legacy-modes/mode/mllike";
-import { commonLisp } from "@codemirror/legacy-modes/mode/commonlisp";
-import { pascal } from "@codemirror/legacy-modes/mode/pascal";
-import { vb } from "@codemirror/legacy-modes/mode/vb";
-import { cobol } from "@codemirror/legacy-modes/mode/cobol";
-import { gas } from "@codemirror/legacy-modes/mode/gas";
-import { javascript } from "@codemirror/lang-javascript";
-import { php } from "@codemirror/lang-php";
-import { go } from "@codemirror/lang-go";
-import { python } from "@codemirror/lang-python";
-import { html } from "@codemirror/lang-html";
-import { css } from "@codemirror/lang-css";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import { rust } from "@codemirror/lang-rust";
-import { cpp } from "@codemirror/lang-cpp";
-import { java } from "@codemirror/lang-java";
-import { sql } from "@codemirror/lang-sql";
-import { xml } from "@codemirror/lang-xml";
-import { yaml } from "@codemirror/lang-yaml";
+import { bracketMatching, indentOnInput } from "@codemirror/language";
 import rainbowBrackets from "rainbowbrackets";
 import { showMinimap } from "@replit/codemirror-minimap";
 import { useEditorStore } from "../stores/editorStore";
@@ -178,6 +135,16 @@ import {
   codeEditorTheme,
 } from "../utils/codeMirrorTheme";
 import {
+  getCodeMirrorLanguageExtension,
+  isCodeMirrorColorToolTarget,
+} from "../utils/codeMirrorLanguageRegistry";
+import {
+  createCodeMirrorColorToolExtension,
+  createCodeMirrorFoldExtensions,
+  createCodeMirrorIndentGuideExtension,
+  createCodeMirrorLintExtensions,
+} from "../utils/codeMirrorWorkflowExtensions";
+import {
   EDITOR_FIND_IN_FILE_EVENT,
   codeMirrorFileSearchExtension,
   openEditorFileSearch,
@@ -241,9 +208,44 @@ function accessCompletionLabel(completion: Completion): string {
   return (completion.displayLabel || completion.label || "").toString();
 }
 
+function accessCompletionTypePriority(completion: Completion): number {
+  switch ((completion.type || "").toString()) {
+    case "function":
+    case "method":
+      return 4;
+    case "property":
+    case "field":
+      return 3;
+    case "module":
+    case "namespace":
+      return 2;
+    case "class":
+    case "interface":
+    case "type":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
 function sortAccessCompletionOptions(options: Completion[]): Completion[] {
-  return [...options]
-    .sort((left, right) => {
+  return options
+    .map((completion, index) => ({ completion, index }))
+    .sort((leftEntry, rightEntry) => {
+      const left = leftEntry.completion;
+      const right = rightEntry.completion;
+      const byBoost = (right.boost || 0) - (left.boost || 0);
+      if (byBoost !== 0) {
+        return byBoost;
+      }
+
+      const byTypePriority =
+        accessCompletionTypePriority(right) -
+        accessCompletionTypePriority(left);
+      if (byTypePriority !== 0) {
+        return byTypePriority;
+      }
+
       const byLabel = accessCompletionLabel(left).localeCompare(
         accessCompletionLabel(right),
         undefined,
@@ -261,11 +263,17 @@ function sortAccessCompletionOptions(options: Completion[]): Completion[] {
         return byType;
       }
 
-      return (left.detail || "").localeCompare(right.detail || "");
+      const byDetail = (left.detail || "").localeCompare(right.detail || "");
+      if (byDetail !== 0) {
+        return byDetail;
+      }
+
+      return leftEntry.index - rightEntry.index;
     })
-    .map((completion, index) => ({
+    .map(({ completion }, index) => ({
       ...completion,
-      boost: ACCESS_COMPLETION_BOOST_BASE - index / 1000,
+      boost:
+        (completion.boost || 0) + ACCESS_COMPLETION_BOOST_BASE - index / 1000,
     }));
 }
 
@@ -1100,101 +1108,6 @@ function formatDocumentation(doc: string): string {
     .replace(/@see\s+(\S+)/g, "See: `$1`");
 }
 
-function getLanguageExtension(language: string): Extension | null {
-  const officialLangs: Record<string, () => Extension> = {
-    javascript: () => javascript(),
-    typescript: () => javascript({ typescript: true }),
-    javascriptreact: () => javascript({ jsx: true }),
-    typescriptreact: () => javascript({ jsx: true, typescript: true }),
-    astro: () => javascript({ jsx: true, typescript: true }),
-    vue: () => html(),
-    svelte: () => html(),
-    blade: () => html(),
-    erb: () => html(),
-    php: () => php(),
-    go: () => go(),
-    python: () => python(),
-    html: () => html(),
-    css: () => css(),
-    scss: () => css(),
-    sass: () => css(),
-    less: () => css(),
-    json: () => json(),
-    markdown: () => markdown(),
-    rust: () => rust(),
-    cpp: () => cpp(),
-    c: () => cpp(),
-    java: () => java(),
-    sql: () => sql(),
-    xml: () => xml(),
-    yaml: () => yaml(),
-  };
-
-  const legacyLangs: Record<string, () => Extension> = {
-    ruby: () => StreamLanguage.define(ruby),
-    swift: () => StreamLanguage.define(swift),
-    bash: () => StreamLanguage.define(shell),
-    shell: () => StreamLanguage.define(shell),
-    sh: () => StreamLanguage.define(shell),
-    zsh: () => StreamLanguage.define(shell),
-    fish: () => StreamLanguage.define(shell),
-    perl: () => StreamLanguage.define(perl),
-    lua: () => StreamLanguage.define(lua),
-    r: () => StreamLanguage.define(r),
-    haskell: () => StreamLanguage.define(haskell),
-    clojure: () => StreamLanguage.define(clojure),
-    erlang: () => StreamLanguage.define(erlang),
-    groovy: () => StreamLanguage.define(groovy),
-    diff: () => StreamLanguage.define(diff),
-    dockerfile: () => StreamLanguage.define(dockerFile),
-    toml: () => StreamLanguage.define(toml),
-    ini: () => StreamLanguage.define(toml),
-    env: () => StreamLanguage.define(shell),
-    nginx: () => StreamLanguage.define(nginx),
-    protobuf: () => StreamLanguage.define(protobuf),
-    powershell: () => StreamLanguage.define(powerShell),
-    fortran: () => StreamLanguage.define(fortran),
-    julia: () => StreamLanguage.define(julia),
-    ocaml: () => StreamLanguage.define(oCaml),
-    fsharp: () => StreamLanguage.define(fSharp),
-    lisp: () => StreamLanguage.define(commonLisp),
-    delphi: () => StreamLanguage.define(pascal),
-    pascal: () => StreamLanguage.define(pascal),
-    vb: () => StreamLanguage.define(vb),
-    vba: () => StreamLanguage.define(vb),
-    cobol: () => StreamLanguage.define(cobol),
-    assembly: () => StreamLanguage.define(gas),
-    kotlin: () => StreamLanguage.define(clike({ name: "kotlin" })),
-    scala: () => StreamLanguage.define(clike({ name: "scala" })),
-    csharp: () => StreamLanguage.define(clike({ name: "csharp" })),
-    objectivec: () => StreamLanguage.define(clike({ name: "objectivec" })),
-    dart: () => StreamLanguage.define(clike({ name: "dart" })),
-    elixir: () => StreamLanguage.define(ruby),
-    zig: () => StreamLanguage.define(clike({ name: "clike" })),
-    ada: () => StreamLanguage.define(clike({ name: "clike" })),
-    prolog: () => StreamLanguage.define(clike({ name: "clike" })),
-    matlab: () => StreamLanguage.define(clike({ name: "clike" })),
-    gleam: () => StreamLanguage.define(clike({ name: "clike" })),
-    gdscript: () => python(),
-    graphql: () => StreamLanguage.define(clike({ name: "clike" })),
-    terraform: () => StreamLanguage.define(toml),
-    makefile: () => StreamLanguage.define(shell),
-    cmake: () => StreamLanguage.define(clike({ name: "clike" })),
-    latex: () => markdown(),
-    solidity: () => StreamLanguage.define(clike({ name: "clike" })),
-    wgsl: () => StreamLanguage.define(clike({ name: "clike" })),
-    glsl: () => StreamLanguage.define(clike({ name: "clike" })),
-  };
-
-  const officialFactory = officialLangs[language];
-  if (officialFactory) return officialFactory();
-
-  const legacyFactory = legacyLangs[language];
-  if (legacyFactory) return legacyFactory();
-
-  return null;
-}
-
 interface CodeMirrorEditorProps {
   filePath: string;
   content: string;
@@ -1289,6 +1202,18 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
   const showInlineDiagnostics = useEditorSettingsStore(
     (state) => state.showInlineDiagnostics,
+  );
+  const showFoldGutter = useEditorSettingsStore(
+    (state) => state.showFoldGutter,
+  );
+  const showDiagnosticGutter = useEditorSettingsStore(
+    (state) => state.showDiagnosticGutter,
+  );
+  const showIndentGuides = useEditorSettingsStore(
+    (state) => state.showIndentGuides,
+  );
+  const showColorTools = useEditorSettingsStore(
+    (state) => state.showColorTools,
   );
   const showMinimapSetting = useEditorSettingsStore(
     (state) => state.showMinimap,
@@ -3168,9 +3093,19 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   }, [requestSignatureHelp, clearSignatureHelp, editorFeatureBudget.hover]);
 
   const languageExtension = useMemo(
-    () => getLanguageExtension(language),
+    () => getCodeMirrorLanguageExtension(language),
     [language],
   );
+  const foldControlsEnabled =
+    showFoldGutter && editorFeatureBudget.layoutStableFoldGutter;
+  const diagnosticGutterEnabled =
+    showDiagnosticGutter && editorFeatureBudget.runtimeDiagnostics;
+  const indentGuidesEnabled =
+    showIndentGuides && editorFeatureBudget.runtimeRichEditorFeatures;
+  const colorToolsEnabled =
+    showColorTools &&
+    editorFeatureBudget.runtimeRichEditorFeatures &&
+    isCodeMirrorColorToolTarget(language, filePath);
 
   const rainbowBracketsExtension = useMemo<Extension>(
     () => (showRainbowBrackets && !largeDocumentMode ? rainbowBrackets() : []),
@@ -3183,6 +3118,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     if (editorFeatureBudget.layoutStableGitGutter) {
       nextExtensions.push(gitGutterExtension);
     }
+
+    nextExtensions.push(
+      ...createCodeMirrorFoldExtensions(
+        foldControlsEnabled,
+        foldControlsEnabled,
+      ),
+    );
 
     if (editorFeatureBudget.runtimeGhostText) {
       nextExtensions.push(
@@ -3198,9 +3140,17 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         indentOnInput(),
         bracketMatching(),
         highlightSelectionMatches(),
+        createCodeMirrorIndentGuideExtension(indentGuidesEnabled),
+        createCodeMirrorColorToolExtension(colorToolsEnabled),
       );
     }
 
+    nextExtensions.push(
+      ...createCodeMirrorLintExtensions(
+        diagnosticGutterEnabled,
+        diagnosticGutterEnabled,
+      ),
+    );
     nextExtensions.push(...diagnosticsExtension);
 
     if (editorFeatureBudget.runtimeCompletions) {
@@ -3335,9 +3285,14 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     editorFeatureBudget.layoutStableGitGutter,
     editorFeatureBudget.runtimeHover,
     editorFeatureBudget.runtimeRichEditorFeatures,
+    editorFeatureBudget.runtimeDiagnostics,
+    colorToolsEnabled,
+    diagnosticGutterEnabled,
+    foldControlsEnabled,
     ghost,
     gitGutterExtension,
     hoverExtension,
+    indentGuidesEnabled,
     metrics,
     orchestrator,
     signatureHelpExtension,
@@ -3349,8 +3304,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     editorFeatureBudget.runtimeDiagnostics,
     editorFeatureBudget.runtimeGhostText,
     editorFeatureBudget.layoutStableGitGutter,
+    editorFeatureBudget.layoutStableFoldGutter,
     editorFeatureBudget.runtimeHover,
     editorFeatureBudget.runtimeRichEditorFeatures,
+    editorFeatureBudget.runtimeDiagnostics,
+    colorToolsEnabled,
+    diagnosticGutterEnabled,
+    foldControlsEnabled,
     filePath,
     language,
     backendCompletionSource,
@@ -3359,6 +3319,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     ghost,
     gitGutterExtension,
     hoverExtension,
+    indentGuidesEnabled,
     metrics,
     orchestrator,
     signatureHelpExtension,
@@ -3454,7 +3415,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       lineNumbers: true,
       highlightActiveLineGutter: true,
       highlightActiveLine: true,
-      foldGutter: editorFeatureBudget.layoutStableFoldGutter,
+      foldGutter: false,
       dropCursor: true,
       allowMultipleSelections: true,
       indentOnInput: false,
@@ -3467,7 +3428,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       searchKeymap: false,
       tabSize: 4,
     }),
-    [editorFeatureBudget.layoutStableFoldGutter],
+    [],
   );
 
   useEffect(() => {

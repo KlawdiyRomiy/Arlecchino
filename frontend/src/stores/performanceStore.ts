@@ -213,7 +213,7 @@ export const resolveAdaptiveEditorFeatureBudget = (
     snapshot.mode === "critical" || snapshot.activeEditorLargeDocument;
   const layoutConstrained = snapshot.activeEditorLargeDocument;
   const layoutStableLineWrapping = !layoutConstrained;
-  const layoutStableFoldGutter = false;
+  const layoutStableFoldGutter = !constrained;
   const layoutStableGitGutter = !layoutConstrained;
   const layoutStableMinimap = !layoutConstrained;
   const runtimeRichEditorFeatures = !constrained;

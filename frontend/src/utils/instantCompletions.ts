@@ -766,17 +766,15 @@ function sortAccessItems(
   items: Array<{ item: InstantItem; index: number }>,
 ): Array<{ item: InstantItem; index: number }> {
   return [...items].sort((left, right) => {
-    const byLabel = left.item.label.localeCompare(right.item.label, undefined, {
-      numeric: true,
-      sensitivity: "base",
-    });
-    if (byLabel !== 0) {
-      return byLabel;
+    const byKindPriority =
+      accessKindPriority(right.item.kind) - accessKindPriority(left.item.kind);
+    if (byKindPriority !== 0) {
+      return byKindPriority;
     }
 
-    const byKind = left.item.kind.localeCompare(right.item.kind);
-    if (byKind !== 0) {
-      return byKind;
+    const byBoost = (right.item.boost || 0) - (left.item.boost || 0);
+    if (byBoost !== 0) {
+      return byBoost;
     }
 
     return left.index - right.index;

@@ -400,7 +400,7 @@ test("inline diagnostics render under constrained performance budget", async ({
   await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(1);
 });
 
-test("inline diagnostics stay hidden when the editor setting is disabled", async ({
+test("inline diagnostic messages stay hidden while wavy lint ranges remain visible when the editor setting is disabled", async ({
   page,
 }) => {
   const content = [
@@ -423,7 +423,7 @@ test("inline diagnostics stay hidden when the editor setting is disabled", async
   ]);
 
   await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(0);
-  await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(0);
+  await expect(page.locator(".cm-lintRange-error")).toHaveCount(1);
 });
 
 test("inline diagnostics stay compact until active and survive edits without inline artifacts", async ({
@@ -1023,7 +1023,9 @@ test("diagnostics status error shows unavailable problems state instead of false
   await expect(page.getByTestId("problems-panel")).toBeVisible();
   await expect(page.getByText("Diagnostics unavailable")).toBeVisible();
   await expect(
-    page.getByText("LSP didOpen failed for diagnostics.ts"),
+    page
+      .getByTestId("problems-panel")
+      .getByText("LSP didOpen failed for diagnostics.ts"),
   ).toBeVisible();
   await expect(page.getByText("No matching problems")).toHaveCount(0);
 });

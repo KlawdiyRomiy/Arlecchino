@@ -4,20 +4,6 @@ import { closeBrackets } from "@codemirror/autocomplete";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { Extension } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
-import { javascript } from "@codemirror/lang-javascript";
-import { php } from "@codemirror/lang-php";
-import { go } from "@codemirror/lang-go";
-import { python } from "@codemirror/lang-python";
-import { html } from "@codemirror/lang-html";
-import { css } from "@codemirror/lang-css";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import { rust } from "@codemirror/lang-rust";
-import { cpp } from "@codemirror/lang-cpp";
-import { java } from "@codemirror/lang-java";
-import { sql } from "@codemirror/lang-sql";
-import { xml } from "@codemirror/lang-xml";
-import { yaml } from "@codemirror/lang-yaml";
 
 import {
   NotifyFileChanged,
@@ -51,6 +37,16 @@ import {
   getCodeMirrorLineCount,
   shouldUseCodeMirrorLargeDocumentMode,
 } from "../utils/codeMirrorDisplay";
+import {
+  getCodeMirrorLanguageExtension,
+  isCodeMirrorColorToolTarget,
+} from "../utils/codeMirrorLanguageRegistry";
+import {
+  createCodeMirrorColorToolExtension,
+  createCodeMirrorFoldExtensions,
+  createCodeMirrorIndentGuideExtension,
+  createCodeMirrorLintExtensions,
+} from "../utils/codeMirrorWorkflowExtensions";
 import type { GitLineMarker } from "../utils/git";
 import {
   isEditorFilePolicyReadOnly,
@@ -75,52 +71,6 @@ const EMPTY_GIT_MARKERS: GitLineMarker[] = [];
 
 const makeTabID = (path: string): string =>
   `tab-${path.replace(/[^a-zA-Z0-9]/g, "-")}`;
-
-const resolveLanguageExtension = (language: string): Extension | null => {
-  const normalized = language.trim().toLowerCase();
-  switch (normalized) {
-    case "javascript":
-      return javascript();
-    case "typescript":
-      return javascript({ typescript: true });
-    case "javascriptreact":
-    case "jsx":
-      return javascript({ jsx: true });
-    case "typescriptreact":
-    case "tsx":
-      return javascript({ typescript: true, jsx: true });
-    case "php":
-      return php();
-    case "go":
-      return go();
-    case "python":
-      return python();
-    case "html":
-      return html();
-    case "css":
-      return css();
-    case "json":
-      return json();
-    case "markdown":
-      return markdown();
-    case "rust":
-      return rust();
-    case "c":
-    case "cpp":
-      return cpp();
-    case "java":
-      return java();
-    case "sql":
-      return sql();
-    case "xml":
-      return xml();
-    case "yaml":
-    case "yml":
-      return yaml();
-    default:
-      return null;
-  }
-};
 
 export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   path,
@@ -164,6 +114,18 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   const notifyChangeDelayRef = useRef(editorFeatureBudget.notifyChangeDelayMs);
   const showInlineDiagnostics = useEditorSettingsStore(
     (state) => state.showInlineDiagnostics,
+  );
+  const showFoldGutter = useEditorSettingsStore(
+    (state) => state.showFoldGutter,
+  );
+  const showDiagnosticGutter = useEditorSettingsStore(
+    (state) => state.showDiagnosticGutter,
+  );
+  const showIndentGuides = useEditorSettingsStore(
+    (state) => state.showIndentGuides,
+  );
+  const showColorTools = useEditorSettingsStore(
+    (state) => state.showColorTools,
   );
   const gitMarkers = useGitStore((state) =>
     editorFeatureBudget.layoutStableGitGutter
@@ -262,25 +224,56 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   }, []);
 
   const languageExtension = useMemo(
-    () => resolveLanguageExtension(language),
+    () => getCodeMirrorLanguageExtension(language),
     [language],
   );
+  const foldControlsEnabled =
+    showFoldGutter && editorFeatureBudget.layoutStableFoldGutter;
+  const diagnosticGutterEnabled =
+    showDiagnosticGutter && editorFeatureBudget.runtimeDiagnostics;
+  const indentGuidesEnabled =
+    showIndentGuides && editorFeatureBudget.runtimeRichEditorFeatures;
+  const colorToolsEnabled =
+    showColorTools &&
+    editorFeatureBudget.runtimeRichEditorFeatures &&
+    isCodeMirrorColorToolTarget(language, path);
 
   const adaptiveExtensions = useMemo(() => {
     const result: Extension[] = [];
+    result.push(
+      ...createCodeMirrorFoldExtensions(
+        foldControlsEnabled,
+        foldControlsEnabled,
+      ),
+    );
     if (editorFeatureBudget.runtimeRichEditorFeatures) {
-      result.push(highlightSelectionMatches());
+      result.push(
+        highlightSelectionMatches(),
+        createCodeMirrorIndentGuideExtension(indentGuidesEnabled),
+        createCodeMirrorColorToolExtension(colorToolsEnabled),
+      );
     }
     if (editorFeatureBudget.layoutStableGitGutter) {
       result.push(gitGutterExtension);
     }
+    result.push(
+      ...createCodeMirrorLintExtensions(
+        diagnosticGutterEnabled,
+        diagnosticGutterEnabled,
+      ),
+    );
     result.push(...diagnosticsExtension);
     return result;
   }, [
+    colorToolsEnabled,
+    diagnosticGutterEnabled,
     diagnosticsExtension,
     editorFeatureBudget.layoutStableGitGutter,
+    editorFeatureBudget.runtimeDiagnostics,
     editorFeatureBudget.runtimeRichEditorFeatures,
+    foldControlsEnabled,
     gitGutterExtension,
+    indentGuidesEnabled,
   ]);
 
   const {
@@ -392,7 +385,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
       lineNumbers: true,
       highlightActiveLineGutter: true,
       highlightActiveLine: true,
-      foldGutter: editorFeatureBudget.layoutStableFoldGutter,
+      foldGutter: false,
       dropCursor: true,
       allowMultipleSelections: true,
       indentOnInput: false,
@@ -405,7 +398,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
       searchKeymap: false,
       tabSize: 4,
     }),
-    [editorFeatureBudget.layoutStableFoldGutter],
+    [],
   );
 
   useEffect(() => {

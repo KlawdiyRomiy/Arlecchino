@@ -17,22 +17,10 @@ import {
   foldGutter,
   indentOnInput,
 } from "@codemirror/language";
-import { javascript } from "@codemirror/lang-javascript";
-import { php } from "@codemirror/lang-php";
-import { go } from "@codemirror/lang-go";
-import { python } from "@codemirror/lang-python";
-import { html } from "@codemirror/lang-html";
-import { css } from "@codemirror/lang-css";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import { rust } from "@codemirror/lang-rust";
-import { cpp } from "@codemirror/lang-cpp";
-import { java } from "@codemirror/lang-java";
-import { sql } from "@codemirror/lang-sql";
-import { xml } from "@codemirror/lang-xml";
-import { yaml } from "@codemirror/lang-yaml";
 import { tags as t } from "@lezer/highlight";
 import { createTheme } from "thememirror";
+import { getCodeMirrorLanguageExtension } from "../utils/codeMirrorLanguageRegistry";
+import { createCodeMirrorFoldExtensions } from "../utils/codeMirrorWorkflowExtensions";
 
 interface QuickLookModalProps {
   isOpen: boolean;
@@ -201,32 +189,6 @@ const highlightLineField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
-function getLanguageExtension(language: string): Extension | null {
-  const langMap: Record<string, () => Extension> = {
-    javascript: () => javascript(),
-    typescript: () => javascript({ typescript: true }),
-    javascriptreact: () => javascript({ jsx: true }),
-    typescriptreact: () => javascript({ jsx: true, typescript: true }),
-    php: () => php(),
-    go: () => go(),
-    python: () => python(),
-    html: () => html(),
-    css: () => css(),
-    json: () => json(),
-    markdown: () => markdown(),
-    rust: () => rust(),
-    cpp: () => cpp(),
-    c: () => cpp(),
-    java: () => java(),
-    sql: () => sql(),
-    xml: () => xml(),
-    yaml: () => yaml(),
-  };
-
-  const factory = langMap[language];
-  return factory ? factory() : null;
-}
-
 const QuickLookModal: React.FC<QuickLookModalProps> = ({
   isOpen,
   filePath,
@@ -336,11 +298,12 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
       indentOnInput(),
       bracketMatching(),
       foldGutter(),
+      ...createCodeMirrorFoldExtensions(false, true),
       search(),
       keymap.of([...defaultKeymap, ...searchKeymap, indentWithTab]),
     ];
 
-    const langExt = getLanguageExtension(language);
+    const langExt = getCodeMirrorLanguageExtension(language);
     if (langExt) exts.push(langExt);
 
     return exts;

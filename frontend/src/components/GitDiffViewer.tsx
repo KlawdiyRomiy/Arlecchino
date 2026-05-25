@@ -5,11 +5,24 @@ import React, {
   useRef,
   useState,
 } from "react";
+import CodeMirror from "@uiw/react-codemirror";
+import { EditorState, type Extension } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { unifiedMergeView } from "@codemirror/merge";
 import { Check, ChevronLeft, ChevronRight, Copy, X } from "lucide-react";
 
 import { useTheme } from "../hooks/useTheme";
 import { radius } from "../styles/colors";
 import { writeClipboardTextWithFallback } from "../utils/clipboard";
+import {
+  codeEditorStyles,
+  codeEditorSurfaceClassName,
+  codeEditorTheme,
+} from "../utils/codeMirrorTheme";
+import {
+  getCodeMirrorLanguageExtension,
+  inferCodeMirrorLanguageFromPath,
+} from "../utils/codeMirrorLanguageRegistry";
 
 interface DiffLine {
   type: "add" | "remove" | "context" | "header" | "hunk";
@@ -26,6 +39,12 @@ interface DiffHunk {
 interface SplitRow {
   left: DiffLine | null;
   right: DiffLine | null;
+}
+
+interface MergeReviewDocs {
+  original: string;
+  modified: string;
+  hasChanges: boolean;
 }
 
 interface GitDiffViewerProps {
@@ -149,6 +168,54 @@ const buildSplitRows = (hunks: DiffHunk[]): SplitRow[] => {
   return rows;
 };
 
+const buildMergeReviewDocs = (hunks: DiffHunk[]): MergeReviewDocs => {
+  const originalLines: string[] = [];
+  const modifiedLines: string[] = [];
+  let hasChanges = false;
+  let wroteHunk = false;
+
+  for (const hunk of hunks) {
+    const hasRenderableLines = hunk.lines.some(
+      (line) =>
+        line.type === "add" ||
+        line.type === "remove" ||
+        line.type === "context",
+    );
+    if (!hasRenderableLines) {
+      continue;
+    }
+
+    if (wroteHunk) {
+      originalLines.push("");
+      modifiedLines.push("");
+    }
+    wroteHunk = true;
+
+    for (const line of hunk.lines) {
+      if (line.type === "context") {
+        originalLines.push(line.content);
+        modifiedLines.push(line.content);
+        continue;
+      }
+      if (line.type === "remove") {
+        originalLines.push(line.content);
+        hasChanges = true;
+        continue;
+      }
+      if (line.type === "add") {
+        modifiedLines.push(line.content);
+        hasChanges = true;
+      }
+    }
+  }
+
+  return {
+    original: originalLines.join("\n"),
+    modified: modifiedLines.join("\n"),
+    hasChanges,
+  };
+};
+
 const lineAccent = (isDark: boolean, type: DiffLine["type"]): string => {
   switch (type) {
     case "add":
@@ -265,7 +332,9 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
 }) => {
   const { isDark } = useTheme();
   const [copied, setCopied] = useState(false);
-  const [viewMode, setViewMode] = useState<"unified" | "split">("unified");
+  const [viewMode, setViewMode] = useState<"unified" | "split" | "review">(
+    "unified",
+  );
   const copyTimerRef = useRef<number | null>(null);
 
   const theme = useMemo(
@@ -282,6 +351,54 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
 
   const hunks = useMemo(() => parseDiff(diff), [diff]);
   const splitRows = useMemo(() => buildSplitRows(hunks), [hunks]);
+  const mergeReviewDocs = useMemo(() => buildMergeReviewDocs(hunks), [hunks]);
+  const mergeLanguageExtension = useMemo(() => {
+    const inferredLanguage = inferCodeMirrorLanguageFromPath(fileName);
+    return inferredLanguage
+      ? getCodeMirrorLanguageExtension(inferredLanguage)
+      : null;
+  }, [fileName]);
+  const mergeReviewExtensions = useMemo<Extension[]>(() => {
+    const extensions: Extension[] = [
+      codeEditorTheme,
+      codeEditorStyles,
+      EditorState.readOnly.of(true),
+      EditorView.editable.of(false),
+    ];
+    if (mergeLanguageExtension) {
+      extensions.push(mergeLanguageExtension);
+    }
+    extensions.push(
+      unifiedMergeView({
+        original: mergeReviewDocs.original,
+        gutter: true,
+        highlightChanges: true,
+        mergeControls: false,
+        collapseUnchanged: { margin: 3, minSize: 6 },
+      }),
+    );
+    return extensions;
+  }, [mergeLanguageExtension, mergeReviewDocs.original]);
+  const mergeReviewBasicSetup = useMemo(
+    () => ({
+      lineNumbers: true,
+      highlightActiveLineGutter: false,
+      highlightActiveLine: false,
+      foldGutter: false,
+      dropCursor: false,
+      allowMultipleSelections: false,
+      indentOnInput: false,
+      bracketMatching: false,
+      closeBrackets: false,
+      autocompletion: false,
+      rectangularSelection: false,
+      crosshairCursor: false,
+      highlightSelectionMatches: false,
+      searchKeymap: false,
+      tabSize: 4,
+    }),
+    [],
+  );
 
   const stats = useMemo(() => {
     let additions = 0;
@@ -412,7 +529,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
           className="inline-flex rounded-[12px] border p-0.5"
           style={{ borderColor: theme.border, background: theme.bgTertiary }}
         >
-          {(["unified", "split"] as const).map((mode) => (
+          {(["unified", "split", "review"] as const).map((mode) => (
             <button
               key={mode}
               type="button"
@@ -459,6 +576,21 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
         {hunks.length === 0 ? (
           <div className="flex h-full items-center justify-center px-4 text-[12px] text-[var(--git-diff-muted)]">
             No changes in this diff.
+          </div>
+        ) : viewMode === "review" && mergeReviewDocs.hasChanges ? (
+          <div
+            className="h-full min-w-[720px] px-3 py-3"
+            data-testid="git-diff-review-view"
+          >
+            <CodeMirror
+              value={mergeReviewDocs.modified}
+              extensions={mergeReviewExtensions}
+              basicSetup={mergeReviewBasicSetup}
+              theme="none"
+              editable={false}
+              readOnly={true}
+              className={codeEditorSurfaceClassName}
+            />
           </div>
         ) : viewMode === "unified" ? (
           <div className="min-w-max px-3 py-3">
