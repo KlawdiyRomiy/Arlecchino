@@ -10,11 +10,6 @@ package app
 #include <stdbool.h>
 #include <stdlib.h>
 
-static bool arlecchinoIsTahoeOrNewer(void) {
-    NSOperatingSystemVersion version = [[NSProcessInfo processInfo] operatingSystemVersion];
-    return version.majorVersion >= 26;
-}
-
 static void arlecchinoNormalizeApplicationIconSize(NSImage *icon) {
     NSInteger pixelWidth = 0;
     NSInteger pixelHeight = 0;
@@ -72,12 +67,6 @@ static bool arlecchinoSetApplicationIconAppearance(const char *appearanceCString
         }
 
         if (![appearanceValue isEqualToString:@"light"] && ![appearanceValue isEqualToString:@"dark"]) {
-            return;
-        }
-
-        if (arlecchinoIsTahoeOrNewer()) {
-            [NSApp setApplicationIconImage:nil];
-            result = true;
             return;
         }
 
