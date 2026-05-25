@@ -54,6 +54,7 @@ import { useShellCapabilitiesBridge } from "./shell/shellCapabilities";
 import { useSystemNotifications } from "./shell/systemNotifications";
 import { useWindowLeaseBridge } from "./shell/windowLeaseBridge";
 import {
+  deferOpenIntent,
   registerOpenIntentDispatcher,
   routeOpenIntent,
 } from "./shell/openIntentRouter";
@@ -66,6 +67,7 @@ import { getCurrentProjectSessionId } from "./shell/projectSessionRoute";
 import { syncSurfaceRuntimeWindowLeaseBackendStatus } from "./surfaces/surfaceRuntimeStore";
 import {
   createEditorFileLoadingLoad,
+  loadEditorFile,
   type EditorFileOpenPayload,
 } from "./utils/editorFileLoader";
 import { createSystemFontSizeScaler } from "./utils/systemFontSizeScaling";
@@ -717,27 +719,39 @@ const App: React.FC = () => {
     }
 
     const unregister = registerOpenIntentDispatcher({
-      openProject: async (projectPath) => {
+      openProject: async (projectPath, intent) => {
+        if (
+          intent.requiresConfirmation &&
+          !window.confirm(`Open external project?\n\n${projectPath}`)
+        ) {
+          return;
+        }
         await handleProjectOpen(projectPath);
       },
-      openFile: async (path, line) => {
+      openFile: async (path, line, intent) => {
         const projectPath = parentDirectoryForFilePath(path);
         if (!projectPath) {
           throw new Error(`Cannot infer a project folder for file: ${path}`);
         }
 
+        setFileToOpen({
+          file: createEditorFileLoadingLoad(path, undefined, intent),
+          line,
+        });
         await handleProjectOpen(projectPath);
         if (!useWorkspaceStore.getState().activeId) {
           return;
         }
 
         setFileToOpen({
-          file: createEditorFileLoadingLoad(path),
+          file: await loadEditorFile(path, { policy: intent }),
           line,
         });
       },
       openPreview: async () => {},
-      focusSurface: async () => {},
+      focusSurface: async (intent) => {
+        deferOpenIntent(intent);
+      },
     });
 
     return unregister;

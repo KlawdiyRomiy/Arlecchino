@@ -41,6 +41,8 @@ import {
 import {
   createEditorFileLoadingLoad,
   createEditableEditorFileLoad,
+  grantEditorFileWriteAccess,
+  isEditorFilePolicyReadOnly,
   loadEditorFile,
   type EditorFileLoadState,
   type EditorFileOpenPayload,
@@ -439,6 +441,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     // Prevent duplicate opens for the same file
     const fileKey = `${fileToOpen.file.kind}:${fileToOpen.file.path}:${
       fileToOpen.line || 0
+    }:${fileToOpen.file.policy?.source ?? ""}:${
+      fileToOpen.file.policy?.readOnly ? "ro" : "rw"
     }`;
     if (lastFileToOpenRef.current === fileKey) return;
     lastFileToOpenRef.current = fileKey;
@@ -1073,7 +1077,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   }, []);
 
   const scheduleFileOpenLoading = useCallback(
-    (requestId: number, path: string, line?: number) => {
+    (
+      requestId: number,
+      path: string,
+      line?: number,
+      policy?: EditorFileLoadState["policy"],
+    ) => {
       clearFileOpenLoadingTimer();
       fileOpenLoadingTimerRef.current = setTimeout(() => {
         fileOpenLoadingTimerRef.current = null;
@@ -1082,7 +1091,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         }
 
         handleFileOpen({
-          file: createEditorFileLoadingLoad(path),
+          file: createEditorFileLoadingLoad(path, undefined, policy),
           line,
         });
       }, 140);
@@ -1247,40 +1256,92 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     fileLoadStatesRef.current = fileLoadStates;
   }, [fileLoadStates]);
 
-  const autoSaveFile = useCallback(async (tabId: string) => {
-    const tab = tabsRef.current.find((t) => t.id === tabId);
-    if (!tab || !tab.isDirty) {
-      console.log("Auto-save skipped:", tabId, "isDirty:", tab?.isDirty);
-      return;
-    }
-
-    const content = fileContentsRef.current[tabId];
-    if (content === undefined) {
-      console.log("Auto-save skipped: no content for", tabId);
-      return;
-    }
-
-    try {
-      await AppFunctions.WriteFile(tab.path, content);
-      tabsRef.current = tabsRef.current.map((item) =>
-        item.id === tabId ? { ...item, isDirty: false } : item,
-      );
-      setTabs((prevTabs) =>
-        prevTabs.map((t) => (t.id === tabId ? { ...t, isDirty: false } : t)),
-      );
-    } catch (error) {
-      console.error("Auto-save error:", error);
-      useAppNotificationStore.getState().addNotification({
-        id: `autosave-error:${tab.path}`,
-        kind: "error",
-        title: "Auto-save failed",
-        message: error instanceof Error ? error.message : String(error),
-        source: "Editor",
-        sticky: false,
-        timeoutMs: 7000,
-      });
-    }
+  const isTabReadOnlyByPolicy = useCallback((tabId: string): boolean => {
+    return isEditorFilePolicyReadOnly(fileLoadStatesRef.current[tabId]);
   }, []);
+
+  const notifyReadOnlyPolicyBlocked = useCallback((path: string) => {
+    useAppNotificationStore.getState().addNotification({
+      id: `readonly-policy:${path}`,
+      kind: "warning",
+      title: "File opened read-only",
+      message:
+        "This file came from an external macOS intent. Confirm write access before editing or saving.",
+      source: "Editor",
+      sticky: false,
+      timeoutMs: 7000,
+    });
+  }, []);
+
+  const confirmTabWriteAccess = useCallback(
+    (tab: Tab): boolean => {
+      const file = fileLoadStatesRef.current[tab.id];
+      if (!isEditorFilePolicyReadOnly(file)) {
+        return true;
+      }
+
+      if (
+        file?.policy?.requiresConfirmation &&
+        window.confirm(
+          `Allow editing and saving this external file?\n\n${tab.path}`,
+        )
+      ) {
+        grantEditorFileWriteAccess(tab.path);
+        setFileLoadStates((previous) => ({ ...previous }));
+        return true;
+      }
+
+      notifyReadOnlyPolicyBlocked(tab.path);
+      return false;
+    },
+    [notifyReadOnlyPolicyBlocked],
+  );
+
+  const autoSaveFile = useCallback(
+    async (tabId: string) => {
+      const tab = tabsRef.current.find((t) => t.id === tabId);
+      if (!tab || !tab.isDirty) {
+        console.log("Auto-save skipped:", tabId, "isDirty:", tab?.isDirty);
+        return;
+      }
+
+      if (isTabReadOnlyByPolicy(tabId)) {
+        console.log(
+          "Auto-save skipped for read-only external intent:",
+          tab.path,
+        );
+        return;
+      }
+
+      const content = fileContentsRef.current[tabId];
+      if (content === undefined) {
+        console.log("Auto-save skipped: no content for", tabId);
+        return;
+      }
+
+      try {
+        await AppFunctions.WriteFile(tab.path, content);
+        tabsRef.current = tabsRef.current.map((item) =>
+          item.id === tabId ? { ...item, isDirty: false } : item,
+        );
+        setTabs((prevTabs) =>
+          prevTabs.map((t) => (t.id === tabId ? { ...t, isDirty: false } : t)),
+        );
+      } catch (error) {
+        console.error("Auto-save error:", error);
+        useAppNotificationStore.getState().addNotification({
+          id: `autosave-error:${tab.path}`,
+          kind: "error",
+          title: "Auto-save failed",
+          message: error instanceof Error ? error.message : String(error),
+          source: "Editor",
+          sticky: false,
+          timeoutMs: 7000,
+        });
+      }
+    },
+    [isTabReadOnlyByPolicy],
+  );
 
   const scheduleAutoSave = useCallback(
     (tabId: string) => {
@@ -1313,6 +1374,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         if (file?.kind !== "editable") {
           return;
         }
+        if (isEditorFilePolicyReadOnly(file)) {
+          return;
+        }
         const updated: EditorFileLoadState = { ...file, content };
         next[tabId] = updated;
         fileLoadStatesRef.current[tabId] = updated;
@@ -1329,7 +1393,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     );
     autoSaveTimerRefs.current = {};
 
-    const dirtyTabs = tabsRef.current.filter((tab) => tab.isDirty);
+    const dirtyTabs = tabsRef.current.filter(
+      (tab) => tab.isDirty && !isTabReadOnlyByPolicy(tab.id),
+    );
     if (dirtyTabs.length === 0) {
       return;
     }
@@ -1351,7 +1417,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         dirtyIds.has(tab.id) ? { ...tab, isDirty: false } : tab,
       ),
     );
-  }, [flushPendingContentState]);
+  }, [flushPendingContentState, isTabReadOnlyByPolicy]);
 
   useEffect(() => {
     onDirtyEditorFlushReady?.(flushDirtyTabsForProjectMove);
@@ -1396,6 +1462,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     value: string | undefined,
   ) => {
     if (!tabId || value === undefined) return;
+    if (isTabReadOnlyByPolicy(tabId)) {
+      return;
+    }
 
     fileContentsRef.current[tabId] = value;
     const currentLoadState = fileLoadStatesRef.current[tabId];
@@ -1443,83 +1512,88 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }, 500);
   }, []);
 
-  const handleSaveFileForTab = useCallback(async (tabId: string) => {
-    if (!tabId || isSaving) return;
+  const handleSaveFileForTab = useCallback(
+    async (tabId: string) => {
+      if (!tabId || isSaving) return;
 
-    const tab = tabsRef.current.find((t) => t.id === tabId);
-    if (!tab) return;
+      const tab = tabsRef.current.find((t) => t.id === tabId);
+      if (!tab) return;
 
-    const pendingAutoSave = autoSaveTimerRefs.current[tabId];
-    if (pendingAutoSave) {
-      clearTimeout(pendingAutoSave);
-      delete autoSaveTimerRefs.current[tabId];
-    }
+      const pendingAutoSave = autoSaveTimerRefs.current[tabId];
+      if (pendingAutoSave) {
+        clearTimeout(pendingAutoSave);
+        delete autoSaveTimerRefs.current[tabId];
+      }
 
-    setIsSaving(true);
-
-    try {
-      let contentToSave = fileContentsRef.current[tabId];
-      if (contentToSave === undefined) {
+      if (!confirmTabWriteAccess(tab)) {
         return;
       }
 
-      // Try to format code before saving
+      setIsSaving(true);
+
       try {
-        const formatted = await AppFunctions.FormatCode(
-          tab.path,
-          contentToSave,
-        );
-        if (formatted && formatted !== contentToSave) {
-          console.log("File formatted successfully");
-          contentToSave = formatted;
-          fileContentsRef.current[tabId] = formatted;
-          // Update editor content with formatted version
-          setFileContents((prev) => ({
-            ...prev,
-            [tabId]: formatted,
-          }));
-          const currentLoadState = fileLoadStatesRef.current[tabId];
-          if (currentLoadState?.kind === "editable") {
-            fileLoadStatesRef.current[tabId] = {
-              ...currentLoadState,
-              content: formatted,
-            };
-          }
+        let contentToSave = fileContentsRef.current[tabId];
+        if (contentToSave === undefined) {
+          return;
         }
-      } catch (formatError) {
-        // If formatting fails, continue with original content
-        console.warn("Prettier formatting failed:", formatError);
+
+        // Try to format code before saving
+        try {
+          const formatted = await AppFunctions.FormatCode(
+            tab.path,
+            contentToSave,
+          );
+          if (formatted && formatted !== contentToSave) {
+            console.log("File formatted successfully");
+            contentToSave = formatted;
+            fileContentsRef.current[tabId] = formatted;
+            // Update editor content with formatted version
+            setFileContents((prev) => ({
+              ...prev,
+              [tabId]: formatted,
+            }));
+            const currentLoadState = fileLoadStatesRef.current[tabId];
+            if (currentLoadState?.kind === "editable") {
+              fileLoadStatesRef.current[tabId] = {
+                ...currentLoadState,
+                content: formatted,
+              };
+            }
+          }
+        } catch (formatError) {
+          // If formatting fails, continue with original content
+          console.warn("Prettier formatting failed:", formatError);
+        }
+
+        await AppFunctions.WriteFile(tab.path, contentToSave);
+        tabsRef.current = tabsRef.current.map((item) =>
+          item.id === tabId ? { ...item, isDirty: false } : item,
+        );
+        setTabs((prevTabs) =>
+          prevTabs.map((t) => (t.id === tabId ? { ...t, isDirty: false } : t)),
+        );
+        console.log("File write completed:", tab.path);
+
+        window.dispatchEvent(
+          new CustomEvent("file-saved", { detail: { path: tab.path } }),
+        );
+      } catch (error) {
+        console.error("Error saving file:", error);
+        useAppNotificationStore.getState().addNotification({
+          id: `save-error:${tab.path}`,
+          kind: "error",
+          title: "Failed to save file",
+          message: error instanceof Error ? error.message : String(error),
+          source: "Editor",
+          sticky: false,
+          timeoutMs: 7000,
+        });
+      } finally {
+        setIsSaving(false);
       }
-
-      await AppFunctions.WriteFile(tab.path, contentToSave);
-      tabsRef.current = tabsRef.current.map((item) =>
-        item.id === tabId ? { ...item, isDirty: false } : item,
-      );
-      setTabs((prevTabs) =>
-        prevTabs.map((t) =>
-          t.id === tabId ? { ...t, isDirty: false } : t,
-        ),
-      );
-      console.log("File write completed:", tab.path);
-
-      window.dispatchEvent(
-        new CustomEvent("file-saved", { detail: { path: tab.path } }),
-      );
-    } catch (error) {
-      console.error("Error saving file:", error);
-      useAppNotificationStore.getState().addNotification({
-        id: `save-error:${tab.path}`,
-        kind: "error",
-        title: "Failed to save file",
-        message: error instanceof Error ? error.message : String(error),
-        source: "Editor",
-        sticky: false,
-        timeoutMs: 7000,
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  }, [isSaving]);
+    },
+    [confirmTabWriteAccess, isSaving],
+  );
 
   const handleSaveFile = useCallback(async () => {
     if (!activeTab) return;
@@ -2107,9 +2181,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           : handleContentChange
       }
       onSave={
-        isSecondary
-          ? () => handleSaveFileForTab(tabData.id)
-          : handleSaveFile
+        isSecondary ? () => handleSaveFileForTab(tabData.id) : handleSaveFile
       }
       onToggleProblems={onToggleProblems}
       onOpenFile={handleOpenFileRequest}
@@ -2135,6 +2207,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       onAcceptAIInlinePatch={handleAcceptAIInlinePatch}
       onRejectAIInlinePatch={handleRejectAIInlinePatch}
       projectPath={projectPath}
+      readOnly={isTabReadOnlyByPolicy(tabData.id)}
     />
   );
 

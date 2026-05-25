@@ -43,9 +43,17 @@ func (a *App) dispatchWindowFileDropIntent(window windowFileDropIntentTarget, ta
 			})
 			continue
 		}
-		payload["source"] = openIntentSourceWindowFileDrop
-		traceOpenIntent("emitted", payload)
-		return window.EmitEvent(openIntentEventName, cloneOpenIntentPayload(payload))
+		prepared, allowed := a.prepareExternalOpenIntent(payload, openIntentSourceWindowFileDrop, workingDir)
+		if !allowed {
+			traceOpenIntent("rejected", map[string]any{
+				"source": openIntentSourceWindowFileDrop,
+				"target": target,
+				"reason": "external intent validation rejected payload",
+			})
+			continue
+		}
+		traceOpenIntent("emitted", prepared)
+		return window.EmitEvent(openIntentEventName, cloneOpenIntentPayload(prepared))
 	}
 	return false
 }

@@ -116,7 +116,9 @@ import {
   createEditorFileLoadingLoad,
   createEditableEditorFileLoad,
   getEditorFileName,
+  isEditorFilePolicyReadOnly,
   loadEditorFile,
+  type EditorFileAccessPolicy,
   type EditorFileLoadState,
 } from "../../utils/editorFileLoader";
 import type {
@@ -750,7 +752,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, []);
 
   const scheduleEditorFileOpenLoading = useCallback(
-    (requestId: number, path: string, name: string, line?: number) => {
+    (
+      requestId: number,
+      path: string,
+      name: string,
+      line?: number,
+      policy?: EditorFileAccessPolicy,
+    ) => {
       clearEditorFileOpenLoadingTimer();
       editorFileOpenLoadingTimerRef.current = setTimeout(() => {
         editorFileOpenLoadingTimerRef.current = null;
@@ -758,7 +766,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           return;
         }
 
-        openFileInMainEditor(createEditorFileLoadingLoad(path, name), line);
+        openFileInMainEditor(
+          createEditorFileLoadingLoad(path, name, policy),
+          line,
+        );
       }, 140);
     },
     [clearEditorFileOpenLoadingTimer, openFileInMainEditor],
@@ -4024,10 +4035,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       }
 
       let language = request?.language ?? fallbackLanguage;
+      const openIntentPolicy = request?.openIntentPolicy;
       const fileLoadState =
         typeof request?.content === "string"
-          ? createEditableEditorFileLoad(path, request.content)
-          : await loadEditorFile(path);
+          ? createEditableEditorFileLoad(
+              path,
+              request.content,
+              undefined,
+              openIntentPolicy,
+            )
+          : await loadEditorFile(path, { policy: openIntentPolicy });
       if (codePanelOpenRequestRef.current !== requestId) {
         return {
           handled: false,
@@ -4080,7 +4097,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       });
       setActiveCodePanelPath(path);
 
-      if (fileLoadState.kind === "editable") {
+      if (
+        fileLoadState.kind === "editable" &&
+        !isEditorFilePolicyReadOnly(fileLoadState)
+      ) {
         openEditorTab(activePaneId, path, name, content, language);
       }
 
@@ -4238,7 +4258,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   }, [handleCodePanelExternalFileChange]);
 
   const handleFileOpen = useCallback(
-    (path: string, content: string, name: string, line?: number) => {
+    (
+      path: string,
+      content: string,
+      name: string,
+      line?: number,
+      policy?: EditorFileAccessPolicy,
+    ) => {
       if (tuiModeActive) {
         const accessDecision = canAccessPath(path, "read");
         if (!accessDecision.allowed) {
@@ -4250,16 +4276,19 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           path,
           name,
           line,
-          content.length > 0 ? { content } : undefined,
+          content.length > 0
+            ? { content, openIntentPolicy: policy }
+            : { openIntentPolicy: policy },
         );
         return;
       }
 
       const requestId = openFileFromPathRequestRef.current + 1;
       openFileFromPathRequestRef.current = requestId;
-      scheduleEditorFileOpenLoading(requestId, path, name, line);
+      scheduleEditorFileOpenLoading(requestId, path, name, line, policy);
       void loadEditorFile(path, {
         knownContent: content.length > 0 ? content : undefined,
+        policy,
       })
         .then((file) => {
           if (openFileFromPathRequestRef.current !== requestId) {
@@ -4288,7 +4317,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const openFileFromPath = useCallback(
-    async (path: string, line?: number) => {
+    async (path: string, line?: number, policy?: EditorFileAccessPolicy) => {
       const requestId = openFileFromPathRequestRef.current + 1;
       openFileFromPathRequestRef.current = requestId;
 
@@ -4303,7 +4332,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       try {
         if (tuiModeActive) {
           const name = path.split("/").pop() || path;
-          await handleFileOpenInPanel(path, name, line);
+          await handleFileOpenInPanel(path, name, line, {
+            openIntentPolicy: policy,
+          });
           return;
         }
 
@@ -4312,8 +4343,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           path,
           path.split("/").pop() || path,
           line,
+          policy,
         );
-        const file = await loadEditorFile(path);
+        const file = await loadEditorFile(path, { policy });
         if (openFileFromPathRequestRef.current !== requestId) {
           return;
         }

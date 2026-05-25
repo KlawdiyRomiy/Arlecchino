@@ -16,14 +16,17 @@ func (a *App) prepareExternalOpenIntent(payload map[string]any, source string, w
 	if source != "" {
 		prepared["source"] = source
 	}
-	if routeSource != "" && routeSource != source {
+	if routeSource == "" {
+		routeSource = source
+	}
+	if routeSource != "" {
 		prepared["routeSource"] = routeSource
 	}
 
 	if !a.protocolIntentAllowed(routeSource, prepared) {
 		return nil, false
 	}
-	a.annotateExternalProtocolFileIntent(routeSource, prepared, workingDir)
+	a.annotateExternalOpenIntent(routeSource, prepared, workingDir)
 	return prepared, true
 }
 
@@ -70,23 +73,62 @@ func (a *App) protocolIntentAllowed(routeSource string, payload map[string]any) 
 	}
 }
 
-func (a *App) annotateExternalProtocolFileIntent(routeSource string, payload map[string]any, workingDir string) {
-	if !strings.HasPrefix(strings.TrimSpace(routeSource), "protocol-") {
+func (a *App) annotateExternalOpenIntent(routeSource string, payload map[string]any, workingDir string) {
+	routeSource = strings.TrimSpace(routeSource)
+	if routeSource == "" {
 		return
 	}
-	if strings.TrimSpace(stringMapValue(payload, "kind")) != "openFile" {
+	if !isExternalOpenIntentRouteSource(routeSource) {
 		return
 	}
-	path := strings.TrimSpace(stringMapValue(payload, "path"))
+	payload["external"] = true
+	payload["trust"] = externalOpenIntentTrust(routeSource)
+
+	kind := strings.TrimSpace(stringMapValue(payload, "kind"))
+	path := openIntentTargetPath(payload)
 	if path == "" {
 		return
 	}
 	if pathWithinTrustedOpenIntentRoot(path, workingDir) || pathWithinTrustedOpenIntentRoot(path, a.currentProjectPath()) {
 		return
 	}
-	payload["external"] = true
-	payload["readOnly"] = true
 	payload["requiresConfirmation"] = true
+	if kind == "openFile" {
+		payload["readOnly"] = true
+	}
+}
+
+func isExternalOpenIntentRouteSource(routeSource string) bool {
+	switch strings.TrimSpace(routeSource) {
+	case openIntentSourceOSURL,
+		openIntentSourceOSFile,
+		openIntentSourceWindowFileDrop,
+		"launch-args",
+		"single-instance":
+		return true
+	default:
+		return strings.HasPrefix(strings.TrimSpace(routeSource), "protocol-")
+	}
+}
+
+func externalOpenIntentTrust(routeSource string) string {
+	switch strings.TrimSpace(routeSource) {
+	case "protocol-agent-run", "protocol-mcp-approval", "protocol-oauth-callback", "notification":
+		return "trusted-backend-action"
+	default:
+		return "external-os"
+	}
+}
+
+func openIntentTargetPath(payload map[string]any) string {
+	switch strings.TrimSpace(stringMapValue(payload, "kind")) {
+	case "openFile":
+		return strings.TrimSpace(stringMapValue(payload, "path"))
+	case "openProject":
+		return strings.TrimSpace(stringMapValue(payload, "projectPath"))
+	default:
+		return ""
+	}
 }
 
 func pathWithinTrustedOpenIntentRoot(path string, root string) bool {

@@ -52,7 +52,10 @@ import {
   shouldUseCodeMirrorLargeDocumentMode,
 } from "../utils/codeMirrorDisplay";
 import type { GitLineMarker } from "../utils/git";
-import type { EditorFileLoadState } from "../utils/editorFileLoader";
+import {
+  isEditorFilePolicyReadOnly,
+  type EditorFileLoadState,
+} from "../utils/editorFileLoader";
 import { BinaryEditorPreview } from "./BinaryEditorPreview";
 import { EditorFileLoadingView } from "./EditorFileLoadingView";
 import { GuardedEditorPreview } from "./GuardedEditorPreview";
@@ -126,14 +129,16 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   initialContent,
   loadState,
 }) => {
-  const isEditable = !loadState || loadState.kind === "editable";
+  const isReadOnlyByPolicy = isEditorFilePolicyReadOnly(loadState);
+  const canDisplayEditor = !loadState || loadState.kind === "editable";
+  const isEditable = canDisplayEditor && !isReadOnlyByPolicy;
   const activePaneID = useEditorStore((state) => state.activePaneId);
   const openTab = useEditorStore((state) => state.openTab);
   const updateTabContent = useEditorStore((state) => state.updateTabContent);
   const markTabDirty = useEditorStore((state) => state.markTabDirty);
   const tabID = useMemo(() => makeTabID(path), [path]);
   const tab = useEditorStore((state) => state.tabs.get(tabID));
-  const content = isEditable ? (tab?.content ?? initialContent) : "";
+  const content = canDisplayEditor ? (tab?.content ?? initialContent) : "";
   const largeDocumentMode = useMemo(
     () => shouldUseCodeMirrorLargeDocumentMode(content),
     [content],
@@ -431,6 +436,8 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
         onChange={handleChange}
         basicSetup={basicSetup}
         theme="none"
+        editable={!isReadOnlyByPolicy}
+        readOnly={isReadOnlyByPolicy}
         className={codeEditorSurfaceClassName}
         onCreateEditor={handleCreateEditor}
       />

@@ -18,9 +18,17 @@ export type OpenIntentKind =
   | "openPreview"
   | "focusSurface";
 
-interface BaseOpenIntent {
-  id?: string;
+export interface OpenIntentPolicy {
   source?: string;
+  routeSource?: string;
+  trust?: string;
+  external?: boolean;
+  readOnly?: boolean;
+  requiresConfirmation?: boolean;
+}
+
+interface BaseOpenIntent extends OpenIntentPolicy {
+  id?: string;
 }
 
 export interface OpenProjectIntent extends BaseOpenIntent {
@@ -44,6 +52,15 @@ export interface FocusSurfaceIntent extends BaseOpenIntent {
   surfaceId?: string;
   previewWindowId?: string;
   panelId?: string;
+  runId?: string;
+  approvalId?: string;
+  nonce?: string;
+  providerId?: string;
+  oauthState?: string;
+  oauthStatus?: string;
+  externalAction?: string;
+  jobId?: string;
+  backgroundActionId?: string;
 }
 
 export type OpenIntent =
@@ -114,6 +131,86 @@ const getBoolean = (
   key: string,
 ): boolean | undefined =>
   typeof source[key] === "boolean" ? source[key] : undefined;
+
+const getPolicyString = (
+  source: Record<string, unknown>,
+  key: string,
+  fallbackKey?: string,
+): string | undefined =>
+  getString(source, key) ||
+  (fallbackKey ? getString(source, fallbackKey) : undefined);
+
+const getPolicyBoolean = (
+  source: Record<string, unknown>,
+  key: string,
+  fallbackKey?: string,
+): boolean | undefined =>
+  getBoolean(source, key) ??
+  (fallbackKey ? getBoolean(source, fallbackKey) : undefined);
+
+const readOpenIntentPolicy = (
+  source: Record<string, unknown>,
+): OpenIntentPolicy => {
+  const policy: OpenIntentPolicy = {};
+  const sourceValue = getString(source, "source");
+  const routeSource = getPolicyString(source, "routeSource", "route_source");
+  const trust = getString(source, "trust");
+  const external = getBoolean(source, "external");
+  const readOnly = getPolicyBoolean(source, "readOnly", "read_only");
+  const requiresConfirmation = getPolicyBoolean(
+    source,
+    "requiresConfirmation",
+    "requires_confirmation",
+  );
+
+  if (sourceValue) {
+    policy.source = sourceValue;
+  }
+  if (routeSource) {
+    policy.routeSource = routeSource;
+  }
+  if (trust) {
+    policy.trust = trust;
+  }
+  if (typeof external === "boolean") {
+    policy.external = external;
+  }
+  if (typeof readOnly === "boolean") {
+    policy.readOnly = readOnly;
+  }
+  if (typeof requiresConfirmation === "boolean") {
+    policy.requiresConfirmation = requiresConfirmation;
+  }
+  return policy;
+};
+
+const mergeNestedOpenIntentPolicy = (
+  wrapper: Record<string, unknown>,
+  nestedIntent: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> => {
+  const wrapperPolicy = readOpenIntentPolicy(wrapper);
+  return {
+    ...wrapperPolicy,
+    ...nestedIntent,
+    ...extra,
+    source: getString(nestedIntent, "source") ?? wrapperPolicy.source,
+    routeSource:
+      getPolicyString(nestedIntent, "routeSource", "route_source") ??
+      wrapperPolicy.routeSource,
+    trust: getString(nestedIntent, "trust") ?? wrapperPolicy.trust,
+    external: getBoolean(nestedIntent, "external") ?? wrapperPolicy.external,
+    readOnly:
+      getPolicyBoolean(nestedIntent, "readOnly", "read_only") ??
+      wrapperPolicy.readOnly,
+    requiresConfirmation:
+      getPolicyBoolean(
+        nestedIntent,
+        "requiresConfirmation",
+        "requires_confirmation",
+      ) ?? wrapperPolicy.requiresConfirmation,
+  };
+};
 
 const getKindCandidate = (source: Record<string, unknown>): unknown =>
   source.kind ?? source.type ?? source.action ?? source.intent ?? source.name;
@@ -351,18 +448,15 @@ export const parseOpenIntentPayload = (value: unknown): OpenIntent | null => {
   if (isRecord(normalizedValue) && isRecord(normalizedValue.intent)) {
     const nestedIntent = normalizedValue.intent;
     if (!getKindCandidate(nestedIntent)) {
-      return parseOpenIntentPayload({
-        ...nestedIntent,
-        kind: getKindCandidate(normalizedValue),
-        source: getString(normalizedValue, "source"),
-      });
+      return parseOpenIntentPayload(
+        mergeNestedOpenIntentPolicy(normalizedValue, nestedIntent, {
+          kind: getKindCandidate(normalizedValue),
+        }),
+      );
     }
-    return parseOpenIntentPayload({
-      ...nestedIntent,
-      source:
-        getString(nestedIntent, "source") ??
-        getString(normalizedValue, "source"),
-    });
+    return parseOpenIntentPayload(
+      mergeNestedOpenIntentPolicy(normalizedValue, nestedIntent),
+    );
   }
 
   if (!isRecord(normalizedValue)) {
@@ -377,6 +471,7 @@ export const parseOpenIntentPayload = (value: unknown): OpenIntent | null => {
   const base = {
     id: getString(normalizedValue, "id"),
     source: getString(normalizedValue, "source"),
+    ...readOpenIntentPolicy(normalizedValue),
   };
 
   switch (kind) {
@@ -417,7 +512,42 @@ export const parseOpenIntentPayload = (value: unknown): OpenIntent | null => {
       if (!surfaceId && !previewWindowId && !panelId) {
         return null;
       }
-      return { ...base, kind, surfaceId, previewWindowId, panelId };
+      type FocusSurfaceMetadataKey =
+        | "runId"
+        | "approvalId"
+        | "nonce"
+        | "providerId"
+        | "oauthState"
+        | "oauthStatus"
+        | "externalAction"
+        | "jobId"
+        | "backgroundActionId";
+      const metadata: Partial<
+        Pick<FocusSurfaceIntent, FocusSurfaceMetadataKey>
+      > = {};
+      const copyMetadata = (key: FocusSurfaceMetadataKey) => {
+        const value = getString(normalizedValue, key);
+        if (value) {
+          metadata[key] = value;
+        }
+      };
+      copyMetadata("runId");
+      copyMetadata("approvalId");
+      copyMetadata("nonce");
+      copyMetadata("providerId");
+      copyMetadata("oauthState");
+      copyMetadata("oauthStatus");
+      copyMetadata("externalAction");
+      copyMetadata("jobId");
+      copyMetadata("backgroundActionId");
+      return {
+        ...base,
+        kind,
+        surfaceId,
+        previewWindowId,
+        panelId,
+        ...metadata,
+      };
     }
   }
 };
@@ -548,6 +678,9 @@ export const routeOpenIntent = async (
     queueLength: pendingOpenIntents.length,
   };
 };
+
+export const deferOpenIntent = (intent: OpenIntent): OpenIntentRouteResult =>
+  queueOpenIntent(intent);
 
 export const getPendingOpenIntents = (): OpenIntent[] =>
   pendingOpenIntents.map((intent) => ({ ...intent }));

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/icons"
@@ -30,6 +31,8 @@ type PackagedOSNativeTrayModel struct {
 	AttentionCount int
 }
 
+const packagedOSNativeNotificationCooldownMs = int64((30 * time.Second) / time.Millisecond)
+
 type PackagedOSNativeDelivery struct {
 	mu sync.Mutex
 
@@ -45,7 +48,8 @@ type PackagedOSNativeDelivery struct {
 	notificationPermissionStatus    string
 	notificationDeliveryAttempted   bool
 	notificationDeliveryResult      string
-	sentNotificationKeys            map[string]struct{}
+	sentNotificationKeys            map[string]int64
+	pendingNotificationKeys         map[string]string
 	sentNotificationCount           int
 
 	dockService          *dock.DockService
@@ -61,9 +65,10 @@ type PackagedOSNativeDelivery struct {
 
 func NewPackagedOSNativeDelivery(options PackagedOSIntegrationOptions) *PackagedOSNativeDelivery {
 	return &PackagedOSNativeDelivery{
-		options:              options,
-		sentNotificationKeys: make(map[string]struct{}),
-		failures:             make(map[string]struct{}),
+		options:                 options,
+		sentNotificationKeys:    make(map[string]int64),
+		pendingNotificationKeys: make(map[string]string),
+		failures:                make(map[string]struct{}),
 	}
 }
 
@@ -133,13 +138,14 @@ func buildPackagedOSNativeTrayModel(snapshot BackgroundShellStatusSnapshot) Pack
 
 func selectPackagedOSNativeNotificationCandidates(
 	snapshot BackgroundShellStatusSnapshot,
-	sent map[string]struct{},
+	sent map[string]int64,
+	now int64,
 ) []BackgroundShellNotificationCandidate {
 	if len(snapshot.NotificationCandidates) == 0 {
 		return nil
 	}
 	if sent == nil {
-		sent = map[string]struct{}{}
+		sent = map[string]int64{}
 	}
 
 	result := make([]BackgroundShellNotificationCandidate, 0, len(snapshot.NotificationCandidates))
@@ -148,8 +154,10 @@ func selectPackagedOSNativeNotificationCandidates(
 		if key == "" {
 			continue
 		}
-		if _, ok := sent[key]; ok {
-			continue
+		if sentAt, ok := sent[key]; ok {
+			if now <= 0 || now-sentAt < packagedOSNativeNotificationCooldownMs {
+				continue
+			}
 		}
 		result = append(result, cloneBackgroundShellNotificationCandidate(candidate))
 	}
@@ -302,8 +310,9 @@ func (d *PackagedOSNativeDelivery) sendNotificationCandidates(
 	owner *App,
 	snapshot BackgroundShellStatusSnapshot,
 ) {
+	now := time.Now().UnixMilli()
 	d.mu.Lock()
-	candidates := selectPackagedOSNativeNotificationCandidates(snapshot, d.sentNotificationKeys)
+	candidates := selectPackagedOSNativeNotificationCandidates(snapshot, d.sentNotificationKeys, now)
 	d.mu.Unlock()
 	if len(candidates) == 0 {
 		return
@@ -327,6 +336,12 @@ func (d *PackagedOSNativeDelivery) sendNotificationCandidates(
 				d.setLastError(fmt.Sprintf("native notification failed: %v", err))
 				continue
 			}
+			d.mu.Lock()
+			d.sentNotificationKeys[key] = now
+			d.pendingNotificationKeys[candidate.ID] = key
+			d.notificationDeliveryResult = "pending"
+			d.mu.Unlock()
+			continue
 		} else if err := service.SendNotification(wailsNotificationOptions(candidate, key)); err != nil {
 			d.recordNotificationDeliveryAttempt("failed")
 			d.setLastError(fmt.Sprintf("native notification failed: %v", err))
@@ -334,7 +349,7 @@ func (d *PackagedOSNativeDelivery) sendNotificationCandidates(
 		}
 
 		d.mu.Lock()
-		d.sentNotificationKeys[key] = struct{}{}
+		d.sentNotificationKeys[key] = now
 		d.sentNotificationCount++
 		d.notificationDeliveryResult = "delivered"
 		d.mu.Unlock()
@@ -368,9 +383,6 @@ func nativeNotificationPayload(candidate BackgroundShellNotificationCandidate, k
 		data["backgroundActionId"] = candidate.Action.ID
 		data["surfaceId"] = candidate.Action.OwnerSurfaceID
 		data["actionIntent"] = candidate.Action.Intent
-		if intent := openIntentForBackgroundShellAction(*candidate.Action); len(intent) > 0 {
-			data["openIntent"] = intent
-		}
 	}
 	return map[string]any{
 		"id":    candidate.ID,
@@ -387,9 +399,8 @@ func (d *PackagedOSNativeDelivery) ensureNotificationService(
 	if nativeMacOSBridgeAvailable() {
 		d.mu.Lock()
 		d.notificationStartupAttempted = true
-		d.notificationReady = true
 		if d.notificationPermissionStatus == "" {
-			d.notificationPermissionStatus = "bridge"
+			d.notificationPermissionStatus = "bridge-pending"
 		}
 		d.mu.Unlock()
 		return nil, true
@@ -477,6 +488,52 @@ func (d *PackagedOSNativeDelivery) recordNotificationDeliveryAttempt(result stri
 	d.mu.Unlock()
 }
 
+func (d *PackagedOSNativeDelivery) recordNativeNotificationDelivered(id string) {
+	if d == nil {
+		return
+	}
+	id = strings.TrimSpace(id)
+	d.mu.Lock()
+	hadPending := false
+	if key := d.pendingNotificationKeys[id]; key != "" {
+		delete(d.pendingNotificationKeys, id)
+		hadPending = true
+	}
+	d.notificationReady = true
+	d.notificationPermissionStatus = "granted"
+	d.notificationDeliveryAttempted = true
+	d.notificationDeliveryResult = "delivered"
+	if hadPending {
+		d.sentNotificationCount++
+	}
+	d.mu.Unlock()
+}
+
+func (d *PackagedOSNativeDelivery) recordNativeNotificationFailure(id string, status string) {
+	if d == nil {
+		return
+	}
+	id = strings.TrimSpace(id)
+	status = strings.TrimSpace(status)
+	d.mu.Lock()
+	if key := d.pendingNotificationKeys[id]; key != "" {
+		delete(d.pendingNotificationKeys, id)
+		delete(d.sentNotificationKeys, key)
+	}
+	d.notificationDeliveryAttempted = true
+	d.notificationDeliveryResult = "failed"
+	if status != "" {
+		d.notificationPermissionStatus = status
+	}
+	d.mu.Unlock()
+	if status == "denied" {
+		d.recordNotificationPermission("denied", true)
+		d.recordFailureState("no-permission")
+		return
+	}
+	d.recordFailureState("delivery-failed")
+}
+
 func (d *PackagedOSNativeDelivery) handleNotificationResponse(
 	owner *App,
 	result notifications.NotificationResult,
@@ -519,13 +576,31 @@ func (a *App) handleNativeNotificationBridgeResponse(payload map[string]any) {
 		}()
 		return
 	}
-	if intent, ok := userInfo["openIntent"].(map[string]any); ok && len(intent) > 0 {
-		if a.dispatchTrustedNotificationOpenIntent(intent) {
-			return
-		}
-	}
 	if a.showLastActiveWindow() {
 		return
+	}
+}
+
+func (a *App) handleNativeNotificationBridgeDelivered(payload map[string]any) {
+	if a == nil || a.packagedOSNative == nil {
+		return
+	}
+	a.packagedOSNative.recordNativeNotificationDelivered(stringMapValue(payload, "id"))
+}
+
+func (a *App) handleNativeNotificationBridgeFailure(eventName string, payload map[string]any) {
+	if a == nil || a.packagedOSNative == nil {
+		return
+	}
+	status := "error"
+	if strings.TrimSpace(eventName) == "notification.denied" {
+		status = "denied"
+	}
+	a.packagedOSNative.recordNativeNotificationFailure(stringMapValue(payload, "id"), status)
+	if status == "error" {
+		if message := strings.TrimSpace(stringMapValue(payload, "error")); message != "" {
+			a.packagedOSNative.setLastError("native notification failed: " + message)
+		}
 	}
 }
 
@@ -539,37 +614,6 @@ func stringMapValue(values map[string]any, key string) string {
 	default:
 		return ""
 	}
-}
-
-func openIntentForBackgroundShellAction(action BackgroundShellAction) map[string]any {
-	switch strings.TrimSpace(action.Intent) {
-	case "focus-surface":
-		if strings.TrimSpace(action.OwnerSurfaceID) == "" {
-			return nil
-		}
-		return map[string]any{
-			"id":        "background-shell:" + strings.TrimSpace(action.ID),
-			"kind":      "focusSurface",
-			"source":    "notification",
-			"surfaceId": strings.TrimSpace(action.OwnerSurfaceID),
-			"jobId":     strings.TrimSpace(action.JobID),
-		}
-	default:
-		return nil
-	}
-}
-
-func (a *App) dispatchTrustedNotificationOpenIntent(intent map[string]any) bool {
-	if a == nil || len(intent) == 0 {
-		return false
-	}
-	if source := strings.TrimSpace(stringMapValue(intent, "source")); source == "" {
-		intent = cloneOpenIntentPayload(intent)
-		intent["source"] = "notification"
-	}
-	a.focusMainWindow()
-	a.dispatchOpenIntent(intent)
-	return true
 }
 
 func (d *PackagedOSNativeDelivery) updateDockBadge(ctx context.Context, snapshot BackgroundShellStatusSnapshot) {

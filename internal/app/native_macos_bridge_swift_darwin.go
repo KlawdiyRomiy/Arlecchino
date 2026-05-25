@@ -145,9 +145,9 @@ func (a *App) handleNativeMacOSBridgeEvent(eventName string, payload map[string]
 		}
 	case "notification.response":
 		a.handleNativeNotificationBridgeResponse(payload)
+	case "notification.delivered":
+		a.handleNativeNotificationBridgeDelivered(payload)
 	case "notification.error", "notification.denied":
-		if a.packagedOSNative != nil {
-			a.packagedOSNative.recordFailureState("notification-" + strings.TrimPrefix(eventName, "notification."))
-		}
+		a.handleNativeNotificationBridgeFailure(eventName, payload)
 	}
 }

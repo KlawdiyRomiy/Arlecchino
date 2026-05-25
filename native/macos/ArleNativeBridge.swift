@@ -393,7 +393,9 @@ private func sendNotification(_ payload: [String: Any]) -> UnsafeMutablePointer<
             center.add(request) { error in
                 if let error {
                     emitNativeCallback("notification.error", ["id": id, "error": error.localizedDescription])
+                    return
                 }
+                emitNativeCallback("notification.delivered", ["id": id])
             }
         }
 

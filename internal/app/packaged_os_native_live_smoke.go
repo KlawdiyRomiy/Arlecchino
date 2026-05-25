@@ -176,10 +176,11 @@ func packagedOSNativeDeliveryLiveStatus(
 	}
 
 	delivery.mu.Lock()
-	sentKeys := make(map[string]struct{}, len(delivery.sentNotificationKeys))
-	for key := range delivery.sentNotificationKeys {
-		sentKeys[key] = struct{}{}
+	sentKeys := make(map[string]int64, len(delivery.sentNotificationKeys))
+	for key, sentAt := range delivery.sentNotificationKeys {
+		sentKeys[key] = sentAt
 	}
+	sentNotificationKeyCount := len(sentKeys)
 	status.TrayReady = delivery.trayReady
 	status.NotificationStartupAttempted = delivery.notificationStartupAttempted
 	status.NotificationReady = delivery.notificationReady
@@ -199,8 +200,8 @@ func packagedOSNativeDeliveryLiveStatus(
 		status.TrayActionIDs = append(status.TrayActionIDs, action.ID)
 	}
 	status.NotificationDedupeSuppressed =
-		status.SentNotificationCount > 0 &&
-			len(selectPackagedOSNativeNotificationCandidates(snapshot, sentKeys)) < len(snapshot.NotificationCandidates)
+		sentNotificationKeyCount > 0 &&
+			len(selectPackagedOSNativeNotificationCandidates(snapshot, sentKeys, time.Now().UnixMilli())) < len(snapshot.NotificationCandidates)
 	status.DeliveryAttempted = status.TrayReady || status.NotificationStartupAttempted || status.DockStartupAttempted || status.DockReady
 	return status
 }

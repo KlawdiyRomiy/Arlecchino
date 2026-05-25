@@ -3,6 +3,7 @@ import type { ProjectEntryActionTarget } from "../../contexts/ProjectEntryAction
 import type { ShortcutActionId } from "../../utils/keyboard";
 import type { TUIAssistAnchor } from "../../utils/terminalLayout";
 import type {
+  EditorFileAccessPolicy,
   EditorFileLoadState,
   EditorFileOpenPayload,
 } from "../../utils/editorFileLoader";
@@ -114,6 +115,7 @@ export interface PanelOpenRequest {
   name?: string;
   language?: string;
   content?: string;
+  openIntentPolicy?: EditorFileAccessPolicy;
   line?: number;
   command?: string;
   terminalName?: string;

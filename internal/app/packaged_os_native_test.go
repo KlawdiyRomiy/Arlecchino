@@ -96,9 +96,10 @@ func TestSelectPackagedOSNativeNotificationCandidates_DedupesByDedupeKey(t *test
 		},
 	}
 
-	pending := selectPackagedOSNativeNotificationCandidates(snapshot, map[string]struct{}{
-		"indexer:failed": {},
-	})
+	now := int64(60_000)
+	pending := selectPackagedOSNativeNotificationCandidates(snapshot, map[string]int64{
+		"indexer:failed": now,
+	}, now)
 	if len(pending) != 1 {
 		t.Fatalf("pending = %d, want 1", len(pending))
 	}
@@ -106,13 +107,20 @@ func TestSelectPackagedOSNativeNotificationCandidates_DedupesByDedupeKey(t *test
 		t.Fatalf("pending[0].ID = %q", pending[0].ID)
 	}
 
-	pending = selectPackagedOSNativeNotificationCandidates(snapshot, map[string]struct{}{
-		"indexer:failed":       {},
-		"notification:lsp:1":   {},
-		"notification:missing": {},
-	})
+	pending = selectPackagedOSNativeNotificationCandidates(snapshot, map[string]int64{
+		"indexer:failed":       now,
+		"notification:lsp:1":   now,
+		"notification:missing": now,
+	}, now)
 	if len(pending) != 0 {
 		t.Fatalf("pending = %d, want 0", len(pending))
+	}
+
+	pending = selectPackagedOSNativeNotificationCandidates(snapshot, map[string]int64{
+		"indexer:failed": now - packagedOSNativeNotificationCooldownMs - 1,
+	}, now)
+	if len(pending) != 2 {
+		t.Fatalf("pending = %d, want 2 after TTL expiry", len(pending))
 	}
 }
 
@@ -125,7 +133,7 @@ func TestPackagedOSNativeDockBadgeLabel_UsesAttentionCount(t *testing.T) {
 	}
 }
 
-func TestNativeNotificationPayloadNestsRoutingData(t *testing.T) {
+func TestNativeNotificationPayloadCarriesActionTokenOnly(t *testing.T) {
 	payload := nativeNotificationPayload(BackgroundShellNotificationCandidate{
 		ID:       "notification:terminal:input",
 		JobID:    "terminal:input",
@@ -151,13 +159,76 @@ func TestNativeNotificationPayloadNestsRoutingData(t *testing.T) {
 	if data["backgroundActionId"] != "focus:panel:terminal" || data["surfaceId"] != "panel:terminal" {
 		t.Fatalf("routing data = %#v, want action and surface", data)
 	}
-	intent, ok := data["openIntent"].(map[string]any)
-	if !ok {
-		t.Fatalf("openIntent = %#v, want map", data["openIntent"])
+	if _, ok := data["openIntent"]; ok {
+		t.Fatalf("payload leaked nested openIntent: %#v", data["openIntent"])
 	}
-	if intent["kind"] != "focusSurface" || intent["source"] != "notification" || intent["surfaceId"] != "panel:terminal" {
-		t.Fatalf("openIntent = %#v, want notification focus intent", intent)
+}
+
+func TestPackagedOSNativeDeliveryRecordsSwiftNotificationCallbacks(t *testing.T) {
+	delivery := NewPackagedOSNativeDelivery(PackagedOSIntegrationOptions{})
+
+	delivery.mu.Lock()
+	delivery.sentNotificationKeys["indexer:failed"] = 100
+	delivery.pendingNotificationKeys["notification:indexer:1"] = "indexer:failed"
+	delivery.notificationDeliveryResult = "pending"
+	delivery.mu.Unlock()
+
+	delivery.recordNativeNotificationDelivered("notification:indexer:1")
+
+	delivery.mu.Lock()
+	if delivery.sentNotificationCount != 1 {
+		t.Fatalf("sentNotificationCount = %d, want 1", delivery.sentNotificationCount)
 	}
+	if delivery.notificationDeliveryResult != "delivered" || !delivery.notificationReady {
+		t.Fatalf("delivery state = %q/%v, want delivered ready", delivery.notificationDeliveryResult, delivery.notificationReady)
+	}
+	if delivery.notificationPermissionStatus != "granted" {
+		t.Fatalf("notificationPermissionStatus = %q, want granted", delivery.notificationPermissionStatus)
+	}
+	if _, ok := delivery.pendingNotificationKeys["notification:indexer:1"]; ok {
+		t.Fatalf("pending key was not cleared")
+	}
+	delivery.mu.Unlock()
+
+	delivery.recordNativeNotificationDelivered("notification:indexer:1")
+	delivery.mu.Lock()
+	if delivery.sentNotificationCount != 1 {
+		t.Fatalf("duplicate delivered callback changed sentNotificationCount = %d", delivery.sentNotificationCount)
+	}
+	delivery.mu.Unlock()
+}
+
+func TestPackagedOSNativeDeliveryRecordsSwiftNotificationDenied(t *testing.T) {
+	delivery := NewPackagedOSNativeDelivery(PackagedOSIntegrationOptions{})
+
+	delivery.mu.Lock()
+	delivery.sentNotificationKeys["indexer:failed"] = 100
+	delivery.pendingNotificationKeys["notification:indexer:1"] = "indexer:failed"
+	delivery.notificationDeliveryResult = "pending"
+	delivery.mu.Unlock()
+
+	delivery.recordNativeNotificationFailure("notification:indexer:1", "denied")
+
+	status := packagedOSNativeDeliveryLiveStatus(
+		delivery,
+		PackagedOSIntegrationOptions{
+			PackagedBuild:              true,
+			NativeNotificationsEnabled: true,
+		},
+		emptyBackgroundShellStatusSnapshot(),
+	)
+
+	if status.NotificationDeliveryResult != "failed" || status.NotificationPermissionStatus != "denied" {
+		t.Fatalf("status = %#v, want failed denied", status)
+	}
+	if !stringSliceContains(status.FailureStates, "no-permission") {
+		t.Fatalf("FailureStates = %#v, want no-permission", status.FailureStates)
+	}
+	delivery.mu.Lock()
+	if _, ok := delivery.sentNotificationKeys["indexer:failed"]; ok {
+		t.Fatalf("failed native notification kept dedupe key")
+	}
+	delivery.mu.Unlock()
 }
 
 func TestPackagedOSNativeDeliveryDecorate_ReportsActualNativeState(t *testing.T) {

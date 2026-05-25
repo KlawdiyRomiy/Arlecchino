@@ -5,6 +5,29 @@ import {
   ReadEditorVisualFile,
   ReadFile,
 } from "../wails/app";
+import type { OpenIntentPolicy } from "../shell/openIntentRouter";
+
+export type EditorFileAccessPolicy = OpenIntentPolicy;
+
+const confirmedWritablePaths = new Set<string>();
+
+const normalizedAccessPath = (path: string): string => path.trim();
+
+export const grantEditorFileWriteAccess = (path: string) => {
+  const normalizedPath = normalizedAccessPath(path);
+  if (normalizedPath) {
+    confirmedWritablePaths.add(normalizedPath);
+  }
+};
+
+export const isEditorFilePolicyReadOnly = (
+  file: EditorFileLoadState | null | undefined,
+): boolean => {
+  const path = normalizedAccessPath(file?.path ?? "");
+  return Boolean(
+    file?.policy?.readOnly && path && !confirmedWritablePaths.has(path),
+  );
+};
 
 export interface EditorFileInspection {
   path: string;
@@ -67,6 +90,7 @@ export type EditorFileLoadingState = {
   kind: "loading";
   path: string;
   name: string;
+  policy?: EditorFileAccessPolicy;
 };
 
 export type EditorFileLoadState =
@@ -77,6 +101,7 @@ export type EditorFileLoadState =
       name: string;
       content: string;
       inspection: EditorFileInspection;
+      policy?: EditorFileAccessPolicy;
     }
   | {
       kind: "guardedPreview";
@@ -84,12 +109,14 @@ export type EditorFileLoadState =
       name: string;
       preview: EditorFilePreview;
       inspection: EditorFileInspection;
+      policy?: EditorFileAccessPolicy;
     }
   | {
       kind: "visualPreview";
       path: string;
       name: string;
       visual: EditorVisualFile;
+      policy?: EditorFileAccessPolicy;
     }
   | {
       kind: "binaryPreview";
@@ -97,6 +124,7 @@ export type EditorFileLoadState =
       name: string;
       binary: EditorBinaryFile;
       inspection?: EditorFileInspection;
+      policy?: EditorFileAccessPolicy;
     }
   | {
       kind: "error";
@@ -104,6 +132,7 @@ export type EditorFileLoadState =
       name: string;
       message: string;
       inspection?: EditorFileInspection;
+      policy?: EditorFileAccessPolicy;
     };
 
 export interface EditorFileOpenPayload {
@@ -137,16 +166,19 @@ export const isEditorVisualFilePath = (path: string): boolean => {
 export const createEditorFileLoadingLoad = (
   path: string,
   name?: string,
+  policy?: EditorFileAccessPolicy,
 ): EditorFileLoadingState => ({
   kind: "loading",
   path,
   name: name || getEditorFileName(path),
+  policy,
 });
 
 export const createEditableEditorFileLoad = (
   path: string,
   content: string,
   inspection?: EditorFileInspection,
+  policy?: EditorFileAccessPolicy,
 ): EditorFileLoadState => ({
   kind: "editable",
   path,
@@ -169,11 +201,16 @@ export const createEditableEditorFileLoad = (
       lineLimit: 20_000,
       maxLineLengthLimit: 20_000,
     } satisfies EditorFileInspection),
+  policy,
 });
 
 export const loadEditorFile = async (
   path: string,
-  options: { knownContent?: string; previewBytes?: number } = {},
+  options: {
+    knownContent?: string;
+    previewBytes?: number;
+    policy?: EditorFileAccessPolicy;
+  } = {},
 ): Promise<EditorFileLoadState> => {
   try {
     if (
@@ -186,6 +223,7 @@ export const loadEditorFile = async (
         path,
         name: visual.name || getEditorFileName(path),
         visual,
+        policy: options.policy,
       };
     }
 
@@ -198,14 +236,24 @@ export const loadEditorFile = async (
         typeof options.knownContent === "string"
           ? options.knownContent
           : await ReadFile(path);
-      return createEditableEditorFileLoad(path, content);
+      return createEditableEditorFileLoad(
+        path,
+        content,
+        undefined,
+        options.policy,
+      );
     }
     if (inspection.safeForEditor) {
       const content =
         typeof options.knownContent === "string"
           ? options.knownContent
           : await ReadFile(path);
-      return createEditableEditorFileLoad(path, content, inspection);
+      return createEditableEditorFileLoad(
+        path,
+        content,
+        inspection,
+        options.policy,
+      );
     }
 
     if (inspection.isText) {
@@ -219,6 +267,7 @@ export const loadEditorFile = async (
         name: inspection.name || getEditorFileName(path),
         preview,
         inspection,
+        policy: options.policy,
       };
     }
 
@@ -230,6 +279,7 @@ export const loadEditorFile = async (
         name: binary.name || inspection.name || getEditorFileName(path),
         binary,
         inspection,
+        policy: options.policy,
       };
     }
 
@@ -239,6 +289,7 @@ export const loadEditorFile = async (
       name: inspection.name || getEditorFileName(path),
       message: inspection.reason || "File cannot be opened in the editor.",
       inspection,
+      policy: options.policy,
     };
   } catch (error) {
     return {
@@ -246,6 +297,7 @@ export const loadEditorFile = async (
       path,
       name: getEditorFileName(path),
       message: error instanceof Error ? error.message : String(error),
+      policy: options.policy,
     };
   }
 };

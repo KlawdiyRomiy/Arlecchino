@@ -62,6 +62,7 @@ async function loadRuntimeContracts() {
         } from "./src/shell/nativeContextMenu.ts";
         export {
           clearPendingOpenIntents,
+          deferOpenIntent,
           flushPendingOpenIntents,
           getPendingOpenIntents,
           OPEN_INTENT_EVENT,
@@ -738,6 +739,11 @@ test("open intent router normalizes typed project file preview and focus intents
       kind: "open_file",
       filePath: "/workspace/src/main.ts",
       line: 7,
+      routeSource: "os-file",
+      trust: "external-os",
+      external: true,
+      readOnly: true,
+      requiresConfirmation: true,
     }),
     {
       kind: "openFile",
@@ -745,6 +751,37 @@ test("open intent router normalizes typed project file preview and focus intents
       line: 7,
       id: undefined,
       source: undefined,
+      routeSource: "os-file",
+      trust: "external-os",
+      external: true,
+      readOnly: true,
+      requiresConfirmation: true,
+    },
+  );
+  assert.deepEqual(
+    parseOpenIntentPayload({
+      source: "os-url",
+      routeSource: "protocol-open",
+      trust: "external-os",
+      external: true,
+      readOnly: true,
+      requiresConfirmation: true,
+      intent: {
+        kind: "openFile",
+        path: "/workspace/external/main.ts",
+      },
+    }),
+    {
+      kind: "openFile",
+      path: "/workspace/external/main.ts",
+      line: undefined,
+      id: undefined,
+      source: "os-url",
+      routeSource: "protocol-open",
+      trust: "external-os",
+      external: true,
+      readOnly: true,
+      requiresConfirmation: true,
     },
   );
   assert.deepEqual(

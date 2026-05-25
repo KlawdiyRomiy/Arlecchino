@@ -10,6 +10,7 @@ import { useIDEEvents } from "../../hooks/useIDEEvents";
 import {
   registerOpenIntentDispatcher,
   type FocusSurfaceIntent,
+  type OpenIntentPolicy,
 } from "../../shell/openIntentRouter";
 import {
   getSurfaceRuntimeReadModel,
@@ -146,7 +147,11 @@ interface UseMainLayoutPanelEventsOptions {
   openCanonicalBrowserPreviewRef: MutableRefObject<() => boolean>;
   openCommandDispatcher: () => void;
   openDebugDialog: () => void;
-  openFileFromPath: (path: string, line?: number) => Promise<void> | void;
+  openFileFromPath: (
+    path: string,
+    line?: number,
+    policy?: OpenIntentPolicy,
+  ) => Promise<void> | void;
   onProjectOpen?: (projectPath: string) => Promise<void> | void;
   openRunDialog: () => void;
   openSettings: () => void;
@@ -644,14 +649,20 @@ export const useMainLayoutPanelEvents = ({
 
   useEffect(() => {
     const unregister = registerOpenIntentDispatcher({
-      openProject: async (projectPath) => {
+      openProject: async (projectPath, intent) => {
         if (!onProjectOpen) {
           throw new Error("Project open handler is unavailable.");
         }
+        if (
+          intent.requiresConfirmation &&
+          !window.confirm(`Open external project?\n\n${projectPath}`)
+        ) {
+          return;
+        }
         await onProjectOpen(projectPath);
       },
-      openFile: async (path, line) => {
-        await openFileFromPath(path, line);
+      openFile: async (path, line, intent) => {
+        await openFileFromPath(path, line, intent);
       },
       openPreview: async (input) => {
         await handlePreviewWindowOpenEvent(input);

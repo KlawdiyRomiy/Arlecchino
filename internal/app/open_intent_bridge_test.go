@@ -128,6 +128,58 @@ func TestPrepareExternalOpenIntentMarksProtocolFileOutsideProjectReadOnly(t *tes
 	}
 }
 
+func TestPrepareExternalOpenIntentPreservesPolicyForOSFileRoutes(t *testing.T) {
+	projectRoot := t.TempDir()
+	inProjectFile := filepath.Join(projectRoot, "inside.go")
+	if err := os.WriteFile(inProjectFile, []byte("package inside\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() inside error = %v", err)
+	}
+	externalRoot := t.TempDir()
+	externalFile := filepath.Join(externalRoot, "outside.go")
+	if err := os.WriteFile(externalFile, []byte("package outside\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() outside error = %v", err)
+	}
+
+	app := &App{}
+	app.setProjectPath(projectRoot)
+
+	prepared, allowed := app.prepareExternalOpenIntent(openFileIntent(inProjectFile, 0), openIntentSourceOSFile, projectRoot)
+	if !allowed {
+		t.Fatal("prepareExternalOpenIntent inside = false, want true")
+	}
+	if prepared["external"] != true || prepared["trust"] != "external-os" || prepared["routeSource"] != openIntentSourceOSFile {
+		t.Fatalf("prepared inside = %#v, want OS external policy metadata", prepared)
+	}
+	if prepared["readOnly"] == true || prepared["requiresConfirmation"] == true {
+		t.Fatalf("prepared inside = %#v, want writable trusted project file", prepared)
+	}
+
+	prepared, allowed = app.prepareExternalOpenIntent(openFileIntent(externalFile, 0), openIntentSourceOSFile, projectRoot)
+	if !allowed {
+		t.Fatal("prepareExternalOpenIntent outside = false, want true")
+	}
+	if prepared["external"] != true || prepared["trust"] != "external-os" || prepared["readOnly"] != true || prepared["requiresConfirmation"] != true {
+		t.Fatalf("prepared outside = %#v, want read-only external OS file", prepared)
+	}
+}
+
+func TestPrepareExternalOpenIntentMarksExternalProjectConfirmationOnly(t *testing.T) {
+	workingRoot := t.TempDir()
+	externalProject := t.TempDir()
+	app := &App{}
+
+	prepared, allowed := app.prepareExternalOpenIntent(map[string]any{
+		"kind":        "openProject",
+		"projectPath": externalProject,
+	}, openIntentSourceOSFile, workingRoot)
+	if !allowed {
+		t.Fatal("prepareExternalOpenIntent = false, want true")
+	}
+	if prepared["requiresConfirmation"] != true || prepared["readOnly"] == true {
+		t.Fatalf("prepared = %#v, want confirmation-only project intent", prepared)
+	}
+}
+
 func TestDispatchOpenIntentFromOSTargetQueuesFolderAsProject(t *testing.T) {
 	root := t.TempDir()
 	tracePath := filepath.Join(root, "trace.jsonl")

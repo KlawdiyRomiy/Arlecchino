@@ -1210,6 +1210,7 @@ interface CodeMirrorEditorProps {
   onGhostShown?: () => void;
   onGhostRejected?: () => void;
   projectPath?: string;
+  readOnly?: boolean;
   highlightLine?: number;
   aiInlinePatchPreview?: AIInlinePatchPreview | null;
   onAcceptAIInlinePatch?: (preview: AIInlinePatchPreview) => void;
@@ -1240,6 +1241,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   onGhostShown,
   onGhostRejected,
   projectPath,
+  readOnly = false,
   highlightLine,
   aiInlinePatchPreview,
   onAcceptAIInlinePatch,
@@ -2442,6 +2444,10 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   const handleChange = useCallback(
     (value: string) => {
+      if (readOnly) {
+        return;
+      }
+
       onChangeRef.current(value);
 
       documentVersionRef.current += 1;
@@ -2463,7 +2469,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         NotifyFileChanged(filePath, language, version, value).catch(() => {});
       }, notifyChangeDelayRef.current);
     },
-    [filePath, language, largeDocumentMode],
+    [filePath, language, largeDocumentMode, readOnly],
   );
 
   const formatDocumentAsync = useCallback(
@@ -3493,6 +3499,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           extensions={extensions}
           basicSetup={basicSetup}
           theme="none"
+          editable={!readOnly}
+          readOnly={readOnly}
           className={codeEditorSurfaceClassName}
           onCreateEditor={(view) => {
             bindEditorView(view);
