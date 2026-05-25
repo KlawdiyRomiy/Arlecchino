@@ -105,6 +105,8 @@ See [FEATURES.md](FEATURES.md) for the feature and demo-video map.
 - [PRIVACY.md](PRIVACY.md) - beta privacy and provider/runtime disclosure.
 - [MODEL_PROVENANCE.md](MODEL_PROVENANCE.md) - bundled autocomplete model
   notice.
+- [CUSTOM_THEMES.md](CUSTOM_THEMES.md) - if you want to create and add your
+  custom theme.
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) - third-party notices and
   release checklist caveats.
 - [build/README.md](build/README.md) - build asset and packaging template notes.
