@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"arlecchino/internal/dispatcher"
+	"arlecchino/internal/terminal"
 	"bytes"
 	"crypto/subtle"
 	"fmt"
@@ -376,6 +377,11 @@ func AllToolDefinitions() []ToolDefinition {
 		{
 			Name:        "ide_control.capabilities",
 			Description: "Get MCP capabilities, mode, policies, and tool list",
+			InputSchema: objectSchema(nil, map[string]any{}),
+		},
+		{
+			Name:        "ide_control.arlecchino_state_report",
+			Description: "Read-only report of project-local .arlecchino generated, runtime-owned, legacy, and cleanup-candidate state",
 			InputSchema: objectSchema(nil, map[string]any{}),
 		},
 		{
@@ -789,6 +795,8 @@ func (s *ToolService) callToolDispatch(name string, args map[string]any) (any, e
 		return s.FlightRecorder(limit), nil
 	case "ide_control.capabilities":
 		return s.Capabilities(), nil
+	case "ide_control.arlecchino_state_report":
+		return terminal.BuildArlecchinoStateReport(s.projectRoot)
 	case "change_journal.create_checkpoint":
 		path, err := requiredStringArg(args, "path")
 		if err != nil {

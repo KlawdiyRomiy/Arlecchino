@@ -17,6 +17,8 @@ const (
 	agentSkillsDirectory    = "skills"
 )
 
+const projectMemorySkillRelativePath = "skills/project-memory/SKILL.md"
+
 var defaultAgentGuideContent = strings.TrimSpace(`
 # Arlecchino Terminal Agent Skill Index
 
@@ -62,6 +64,7 @@ Tools:
 - ide_control.audit_logs
 - ide_control.flight_recorder
 - ide_control.capabilities
+- ide_control.arlecchino_state_report
 - change_journal.create_checkpoint
 - change_journal.list_checkpoints
 - change_journal.rollback_checkpoint
@@ -158,7 +161,7 @@ Rules:
 `) + "\n",
 	},
 	{
-		RelativePath: filepath.Join(agentSkillsDirectory, "project-memory", "SKILL.md"),
+		RelativePath: filepath.FromSlash(projectMemorySkillRelativePath),
 		Content: strings.TrimSpace(`
 ---
 name: arlecchino-project-memory
@@ -195,6 +198,33 @@ Rules:
 `) + "\n",
 	},
 }
+
+var legacyProjectMemorySkillContent = strings.TrimSpace(`
+---
+name: arlecchino-project-memory
+description: Project-local mnemonic memory for durable decisions, workflows, fixes, and handoffs.
+---
+
+# Arlecchino Project Memory
+
+Use this skill for mnemonic memory.
+
+Files:
+- .arlecchino/memory/session-memory.jsonl: append-only project-local memory entries.
+- .arlecchino/memory/CONTEXT.md: generated compact recall document.
+
+Tools:
+- agent_memory.context
+- agent_memory.list
+- agent_memory.search
+- agent_memory.save
+
+Rules:
+- Read agent_memory.context or search/list memory early when prior project context can change the answer.
+- Save durable decisions, bug fixes, workflow discoveries, and handoff summaries.
+- Use tags as an array of strings, not a comma-separated string.
+- Keep memory entries factual and project-local; do not store secrets or private credentials.
+`) + "\n"
 
 func shouldRefreshManagedAgentGuide(content string) bool {
 	trimmed := strings.TrimSpace(content)
@@ -247,6 +277,35 @@ func shouldRefreshManagedAgentGuide(content string) bool {
 	return false
 }
 
+func shouldRefreshManagedAgentSkill(relativePath, content string) bool {
+	if filepath.ToSlash(relativePath) != projectMemorySkillRelativePath {
+		return false
+	}
+	return normalizeManagedAgentContent(content) == normalizeManagedAgentContent(legacyProjectMemorySkillContent)
+}
+
+func staleProjectMemorySkillReason(content string) string {
+	normalized := normalizeManagedAgentContent(content)
+	if normalized == "" {
+		return "project memory skill is empty"
+	}
+	if strings.Contains(normalized, "session-memory.jsonl") {
+		return "project memory skill still points to legacy JSONL memory"
+	}
+	if !strings.Contains(normalized, ".arlecchino/ai/mnemonic.db") {
+		return "project memory skill does not describe the Mnemonic database"
+	}
+	if !strings.Contains(normalized, "agent_skills.context") {
+		return "project memory skill does not route agents through compact resident skill context"
+	}
+	return ""
+}
+
+func normalizeManagedAgentContent(content string) string {
+	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	return strings.TrimSpace(normalized)
+}
+
 func AgentGuidePath(projectRoot string) string {
 	return filepath.Join(projectRoot, agentGuideDirectoryName, agentGuideFileName)
 }
@@ -262,8 +321,13 @@ func ensureAgentSkillFiles(projectRoot string) error {
 			return err
 		}
 
-		_, err := os.Stat(path)
+		existingContent, err := os.ReadFile(path)
 		if err == nil {
+			if shouldRefreshManagedAgentSkill(skill.RelativePath, string(existingContent)) {
+				if err := os.WriteFile(path, []byte(skill.Content), 0o644); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if !errors.Is(err, os.ErrNotExist) {
