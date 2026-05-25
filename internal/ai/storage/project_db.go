@@ -188,6 +188,7 @@ func migrations() []migration {
 		{ID: "001_mnemonic_entries", Apply: migrateMnemonicEntries},
 		{ID: "002_skill_residency", Apply: migrateSkillResidency},
 		{ID: "003_context_continuity", Apply: migrateContextContinuity},
+		{ID: "004_context_continuity_invariants", Apply: migrateContextContinuityInvariants},
 	}
 }
 
@@ -398,8 +399,61 @@ func migrateContextContinuity(db *sql.DB, _ *sharedProjectDB) error {
 			return err
 		}
 	}
-	_, _ = db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ai_context_capsules_fts USING fts5(id UNINDEXED, summary, facts, retrieval_tags)`)
+	return ensureContextCapsuleFTSStorage(db)
+}
+
+func migrateContextContinuityInvariants(db *sql.DB, _ *sharedProjectDB) error {
+	now := utcNow()
+	if _, err := db.Exec(`WITH ranked AS (
+			SELECT id,
+				ROW_NUMBER() OVER (
+					PARTITION BY project_session_id, chat_session_id
+					ORDER BY created_at DESC, updated_at DESC, id DESC
+				) AS rn
+			FROM ai_context_capsules
+			WHERE kind = 'compaction' AND status = 'active'
+		)
+		UPDATE ai_context_capsules
+		SET status = 'superseded', updated_at = ?
+		WHERE id IN (SELECT id FROM ranked WHERE rn > 1)`, now); err != nil {
+		return err
+	}
+	if err := ensureContextCapsuleFTSStorage(db); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`DELETE FROM ai_context_capsules_fts
+		WHERE id IN (
+			SELECT id FROM ai_context_capsules
+			WHERE kind = 'compaction' AND status = 'superseded'
+		)`); err != nil {
+		return err
+	}
+	statements := []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_context_one_active_compaction
+		ON ai_context_capsules(project_session_id, chat_session_id)
+		WHERE kind = 'compaction' AND status = 'active'`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_context_active_turns
+		ON ai_context_capsules(project_session_id, chat_session_id, kind, status, created_at DESC)`,
+	}
+	for _, stmt := range statements {
+		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func ensureContextCapsuleFTSStorage(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ai_context_capsules_fts USING fts5(id UNINDEXED, summary, facts, retrieval_tags)`); err == nil {
+		return nil
+	}
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS ai_context_capsules_fts (
+		id TEXT PRIMARY KEY,
+		summary TEXT,
+		facts TEXT,
+		retrieval_tags TEXT
+	)`)
+	return err
 }
 
 func configureMnemonicFTS(db *sql.DB, shared *sharedProjectDB) error {

@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	defaultContextMaxBytes    = 24 * 1024
-	defaultContextMaxSnippets = 8
+	defaultContextMaxBytes           = 24 * 1024
+	defaultContextMaxSnippets        = 8
+	contextContinuityReserveMaxBytes = 4 * 1024
 )
 
 var (
@@ -77,18 +78,31 @@ func (privacyGate) SanitizeSnapshot(snapshot AIContextSnapshot, maxBytes int, ma
 	}
 	summary.OriginalBytes = totalBytes
 	if totalBytes > maxBytes {
-		remaining := maxBytes
+		continuityReserve := continuityBudgetReserve(snapshot, maxBytes)
+		remaining := maxBytes - continuityReserve
+		if remaining < 0 {
+			remaining = 0
+		}
 		snapshot.Prompt = consumeTextBudget(snapshot.Prompt, &remaining, &summary)
 		snapshot.TerminalInput = consumeTextBudget(snapshot.TerminalInput, &remaining, &summary)
 		for i := range snapshot.Snippets {
-			snapshot.Snippets[i].Content = consumeTextBudget(snapshot.Snippets[i].Content, &remaining, &summary)
+			if priorityContextSnippet(snapshot.Snippets[i]) {
+				snapshot.Snippets[i].Content = consumeTextBudget(snapshot.Snippets[i].Content, &remaining, &summary)
+			}
+		}
+		optionalRemaining := remaining
+		for i := range snapshot.Snippets {
+			if !priorityContextSnippet(snapshot.Snippets[i]) {
+				snapshot.Snippets[i].Content = consumeTextBudget(snapshot.Snippets[i].Content, &optionalRemaining, &summary)
+			}
 		}
 		for i := range snapshot.Mnemonic {
-			snapshot.Mnemonic[i].Content = consumeTextBudget(snapshot.Mnemonic[i].Content, &remaining, &summary)
+			snapshot.Mnemonic[i].Content = consumeTextBudget(snapshot.Mnemonic[i].Content, &optionalRemaining, &summary)
 		}
 		for i := range snapshot.Skills {
-			consumeSkillContextBudget(&snapshot.Skills[i], &remaining, &summary)
+			consumeSkillContextBudget(&snapshot.Skills[i], &optionalRemaining, &summary)
 		}
+		remaining = optionalRemaining + continuityReserve
 		for i := range snapshot.Continuity {
 			consumeContextCapsuleBudget(&snapshot.Continuity[i], &remaining, &summary)
 		}
@@ -97,6 +111,32 @@ func (privacyGate) SanitizeSnapshot(snapshot AIContextSnapshot, maxBytes int, ma
 	summary.SanitizedBytes = snapshot.ByteSize
 	snapshot.Redaction = summary
 	return snapshot
+}
+
+func priorityContextSnippet(snippet AIContextSnippet) bool {
+	switch strings.TrimSpace(snippet.Type) {
+	case "current_file", "selection":
+		return true
+	default:
+		return false
+	}
+}
+
+func continuityBudgetReserve(snapshot AIContextSnapshot, maxBytes int) int {
+	if len(snapshot.Continuity) == 0 || maxBytes <= 0 {
+		return 0
+	}
+	reserve := maxBytes / 5
+	if maxBytes >= 1024 && reserve < 512 {
+		reserve = 512
+	}
+	if reserve > contextContinuityReserveMaxBytes {
+		reserve = contextContinuityReserveMaxBytes
+	}
+	if reserve > maxBytes {
+		return maxBytes
+	}
+	return reserve
 }
 
 func sanitizeSkillContext(skill AISkillContext, summary *AIRedactionSummary) AISkillContext {
@@ -147,6 +187,8 @@ func consumeContextCapsuleBudget(capsule *AIContextCapsuleSummary, remaining *in
 	for i := range capsule.FactsCandidates {
 		capsule.FactsCandidates[i].Content = consumeTextBudget(capsule.FactsCandidates[i].Content, remaining, summary)
 	}
+	capsule.ByteSize = contextCapsuleByteSize(*capsule)
+	capsule.Redaction.SanitizedBytes = capsule.ByteSize
 }
 
 func consumeTextBudget(value string, remaining *int, summary *AIRedactionSummary) string {

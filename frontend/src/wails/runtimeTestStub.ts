@@ -419,6 +419,7 @@ const defaultRuntimeResult = (
     case "AIGetContextPreview":
       return {
         id: "web-only-context-preview",
+        projection: "preview",
         capability: "chat",
         snippets: [],
         contextItems: [],
@@ -430,6 +431,28 @@ const defaultRuntimeResult = (
         byteSize: 0,
         createdAt: new Date(0).toISOString(),
       };
+    case "AIGetContextContinuationPlan":
+      return {
+        sessionId: _args[0] ?? "",
+        included: [],
+        stale: [],
+        superseded: [],
+        canCompact: false,
+        canRevoke: false,
+        disabledReason:
+          "Context continuity is unavailable in the web-only shell.",
+        policyReason:
+          "Context continuity is unavailable in the web-only shell.",
+        createdAt: new Date(0).toISOString(),
+      };
+    case "AICompactChatSession":
+      throw new Error(
+        "Context continuity compaction is unavailable in the web-only shell.",
+      );
+    case "AIRevokeContextCapsule":
+      throw new Error(
+        "Context continuity revocation is unavailable in the web-only shell.",
+      );
     case "AIRefreshLocalProviders":
       return { providers: [], checkedAt: new Date(0).toISOString() };
     case "AISaveProviderSettings": {
@@ -521,6 +544,7 @@ const defaultRuntimeResult = (
     case "AIListChatRuns":
     case "AIListChatActions":
     case "AIListChatRunArtifacts":
+    case "AIListContextCapsules":
     case "AIListContextProviders":
     case "AIListEgressRecords":
     case "AIListMnemonicEntries":

@@ -36,28 +36,30 @@ type ServiceOptions struct {
 }
 
 type Service struct {
-	mu               sync.RWMutex
-	settings         Settings
-	settingsPath     string
-	secretStore      SecretStore
-	emit             EventEmitter
-	mcpContext       MCPContextProvider
-	diagnostics      DiagnosticsProvider
-	mcpExecutor      MCPToolExecutor
-	providers        map[string]providers.Provider
-	descriptors      map[string]providers.AIProviderDescriptor
-	projects         map[string]*ProjectSession
-	runs             map[string]*AIChatRun
-	runCancels       map[string]context.CancelFunc
-	runDone          map[string]chan struct{}
-	agentInputs      map[string]func([]byte) error
-	agentResizes     map[string]func(uint16, uint16) error
-	authSessions     map[string]*AIProviderAuthSession
-	toolApprovals    map[string]AIToolApprovalGrant
-	runtimes         *providerRuntimeManager
-	agents           *agents.Registry
-	predictionBudget *predictionBudgetLedger
-	started          bool
+	mu                sync.RWMutex
+	settings          Settings
+	settingsPath      string
+	secretStore       SecretStore
+	emit              EventEmitter
+	mcpContext        MCPContextProvider
+	diagnostics       DiagnosticsProvider
+	mcpExecutor       MCPToolExecutor
+	providers         map[string]providers.Provider
+	descriptors       map[string]providers.AIProviderDescriptor
+	projects          map[string]*ProjectSession
+	runs              map[string]*AIChatRun
+	runCancels        map[string]context.CancelFunc
+	runDone           map[string]chan struct{}
+	agentInputs       map[string]func([]byte) error
+	agentResizes      map[string]func(uint16, uint16) error
+	authSessions      map[string]*AIProviderAuthSession
+	toolApprovals     map[string]AIToolApprovalGrant
+	compactionLocksMu sync.Mutex
+	compactionLocks   map[string]*sync.Mutex
+	runtimes          *providerRuntimeManager
+	agents            *agents.Registry
+	predictionBudget  *predictionBudgetLedger
+	started           bool
 }
 
 type ProjectSession struct {
@@ -98,6 +100,7 @@ func NewService(options ServiceOptions) *Service {
 		agentResizes:     map[string]func(uint16, uint16) error{},
 		authSessions:     map[string]*AIProviderAuthSession{},
 		toolApprovals:    map[string]AIToolApprovalGrant{},
+		compactionLocks:  map[string]*sync.Mutex{},
 		runtimes:         newProviderRuntimeManager(),
 		agents:           agents.NewRegistry(),
 		predictionBudget: newPredictionBudgetLedger(),
@@ -607,7 +610,8 @@ func (s *Service) ContextPreview(projectID string, req AIContextRequest) (AICont
 	if project == nil {
 		return AIContextSnapshot{}, fmt.Errorf("AI project session is not open")
 	}
-	return s.buildContextSnapshot(project, req), nil
+	req.RecordRetrievalEvents = false
+	return projectContextSnapshotForPreview(s.buildContextSnapshot(project, req)), nil
 }
 
 func (s *Service) EditorContinuation(ctx context.Context, projectID string, req AIContextRequest, providerID string, model string) (AIContinuationResponse, error) {
@@ -920,12 +924,25 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 	}
 	if req.IncludeContinuity {
 		if project.Continuity != nil && project.Mnemonic != nil && project.Mnemonic.Enabled() {
-			capsules, _ := project.Continuity.ActiveForSession(project.ID, snapshot.SessionID, req.ContinuityCapsuleIDs, 4)
+			selection, selectErr := project.Continuity.SelectForSession(contextCapsuleSelectionRequest{
+				ProjectSessionID: project.ID,
+				SessionID:        snapshot.SessionID,
+				Prompt:           req.Prompt,
+				FilePath:         req.FilePath,
+				ExplicitIDs:      req.ContinuityCapsuleIDs,
+				QueryTags:        []string{string(req.Capability), string(req.Action)},
+				Limit:            contextContinuityDefaultLimit,
+			})
+			capsules := selection.Capsules
 			snapshot.Continuity = append(snapshot.Continuity, capsules...)
 			if len(capsules) > 0 {
 				snapshot.DataCategories = append(snapshot.DataCategories, "context_continuity")
 			}
-			addContextItemDisclosure(&snapshot, AIContextItemKindContinuity, "Context continuity", "", "continuity", true, len(capsules) > 0, continuityContextByteSize(capsules), continuityContextReason(capsules))
+			reason := firstNonEmpty(selection.PolicyReason, continuityContextReason(capsules))
+			if selectErr != nil {
+				reason = "degraded: " + sanitizedDisplayText(selectErr.Error())
+			}
+			addContextItemDisclosure(&snapshot, AIContextItemKindContinuity, "Context continuity", "", "continuity", true, len(capsules) > 0, continuityContextByteSize(capsules), reason)
 			if req.RecordRetrievalEvents {
 				_ = project.Continuity.RecordRetrieval(contextRetrievalEvent{
 					ProjectSessionID:   project.ID,
@@ -933,7 +950,7 @@ func (s *Service) buildContextSnapshot(project *ProjectSession, req AIContextReq
 					QueryText:          req.Prompt,
 					QueryTags:          []string{string(req.Capability)},
 					SelectedCapsuleIDs: contextCapsuleIDs(capsules),
-					PolicyReason:       "includeContinuity=true; session-scoped generated continuity only",
+					PolicyReason:       firstNonEmpty(selection.PolicyReason, "includeContinuity=true; session-scoped generated continuity only"),
 					ResultCount:        len(capsules),
 				})
 			}
@@ -1017,6 +1034,7 @@ func currentFileContextContent(projectRoot string, req AIContextRequest) (string
 func summarizeContextSnapshot(snapshot AIContextSnapshot) AIContextSummary {
 	return AIContextSummary{
 		ID:                     snapshot.ID,
+		Projection:             "summary",
 		RequestID:              snapshot.RequestID,
 		DocumentVersion:        snapshot.DocumentVersion,
 		SessionID:              snapshot.SessionID,
@@ -1030,7 +1048,7 @@ func summarizeContextSnapshot(snapshot AIContextSnapshot) AIContextSummary {
 		MCPIncluded:            snapshot.MCPContext != nil && snapshot.MCPContext.Available,
 		ContinuityCapsuleCount: len(snapshot.Continuity),
 		ContinuityIncluded:     len(snapshot.Continuity) > 0,
-		Continuity:             snapshot.Continuity,
+		Continuity:             previewContextCapsules(snapshot.Continuity),
 		MCPContext:             snapshot.MCPContext,
 		SnippetBreakdown:       snapshot.SnippetBreakdown,
 		ContextItems:           snapshot.ContextItems,
@@ -1041,6 +1059,37 @@ func summarizeContextSnapshot(snapshot AIContextSnapshot) AIContextSummary {
 		ByteSize:               snapshot.ByteSize,
 		CreatedAt:              snapshot.CreatedAt,
 	}
+}
+
+func projectContextSnapshotForPreview(snapshot AIContextSnapshot) AIContextSnapshot {
+	snapshot.Projection = "preview"
+	snapshot.Prompt = ""
+	snapshot.TerminalInput = ""
+	for i := range snapshot.Snippets {
+		snapshot.Snippets[i].Content = ""
+	}
+	snapshot.Mnemonic = nil
+	snapshot.Continuity = previewContextCapsules(snapshot.Continuity)
+	return snapshot
+}
+
+func previewContextCapsules(capsules []AIContextCapsuleSummary) []AIContextCapsuleSummary {
+	if len(capsules) == 0 {
+		return nil
+	}
+	projected := make([]AIContextCapsuleSummary, 0, len(capsules))
+	for _, capsule := range capsules {
+		capsule.Summary = ""
+		capsule.FactsCandidates = nil
+		capsule.SourceRefs = nil
+		capsule.RetrievalTags = nil
+		capsule.ContinuationHint = ""
+		capsule.Branch = ""
+		capsule.Head = ""
+		capsule.WorktreeHash = ""
+		projected = append(projected, capsule)
+	}
+	return projected
 }
 
 func addContextItemDisclosure(snapshot *AIContextSnapshot, kind AIContextItemKind, label string, path string, source string, requested bool, included bool, bytes int, reason string) {

@@ -396,12 +396,16 @@ type AIContextCapsuleSummary struct {
 }
 
 type AIContextContinuationPlan struct {
-	SessionID    string                    `json:"sessionId"`
-	Included     []AIContextCapsuleSummary `json:"included,omitempty"`
-	Superseded   []string                  `json:"superseded,omitempty"`
-	Stale        []AIContextCapsuleSummary `json:"stale,omitempty"`
-	PolicyReason string                    `json:"policyReason,omitempty"`
-	CreatedAt    string                    `json:"createdAt"`
+	SessionID      string                    `json:"sessionId"`
+	Included       []AIContextCapsuleSummary `json:"included,omitempty"`
+	Superseded     []string                  `json:"superseded,omitempty"`
+	Stale          []AIContextCapsuleSummary `json:"stale,omitempty"`
+	CanCompact     bool                      `json:"canCompact"`
+	CanRevoke      bool                      `json:"canRevoke"`
+	DisabledReason string                    `json:"disabledReason,omitempty"`
+	DegradedReason string                    `json:"degradedReason,omitempty"`
+	PolicyReason   string                    `json:"policyReason,omitempty"`
+	CreatedAt      string                    `json:"createdAt"`
 }
 
 type AIContextCompactionRequest struct {
@@ -480,6 +484,7 @@ type AIContextSnippet struct {
 
 type AIContextSnapshot struct {
 	ID                string                      `json:"id"`
+	Projection        string                      `json:"projection,omitempty"`
 	RequestID         string                      `json:"requestId,omitempty"`
 	DocumentVersion   string                      `json:"documentVersion,omitempty"`
 	SessionID         string                      `json:"sessionId,omitempty"`
@@ -513,6 +518,7 @@ type AIContextSnapshot struct {
 
 type AIContextSummary struct {
 	ID                     string                      `json:"id"`
+	Projection             string                      `json:"projection,omitempty"`
 	RequestID              string                      `json:"requestId,omitempty"`
 	DocumentVersion        string                      `json:"documentVersion,omitempty"`
 	SessionID              string                      `json:"sessionId,omitempty"`

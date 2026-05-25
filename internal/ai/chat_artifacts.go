@@ -242,7 +242,14 @@ func (s *Service) ListChatRunArtifacts(projectID string, runID string) ([]AIChat
 	if _, err := s.GetChatRun(project.ID, runID); err != nil {
 		return nil, err
 	}
-	return project.ChatArtifacts.ListByRun(runID)
+	artifacts, err := project.ChatArtifacts.ListByRun(runID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range artifacts {
+		artifacts[i] = projectChatArtifactForList(artifacts[i])
+	}
+	return artifacts, nil
 }
 
 func (s *Service) GetChatRunArtifact(projectID string, artifactID string) (AIChatRunArtifact, error) {
@@ -262,6 +269,26 @@ func (s *Service) GetChatRunArtifact(projectID string, artifactID string) (AICha
 		return AIChatRunArtifact{}, err
 	}
 	return artifact, nil
+}
+
+func projectChatArtifactForList(artifact AIChatRunArtifact) AIChatRunArtifact {
+	if sensitiveChatArtifactKind(artifact.Kind) {
+		artifact.PayloadJSON = ""
+	}
+	return artifact
+}
+
+func sensitiveChatArtifactKind(kind AIChatRunArtifactKind) bool {
+	switch kind {
+	case AIChatRunArtifactContext,
+		AIChatRunArtifactContextCompaction,
+		AIChatRunArtifactEgress,
+		AIChatRunArtifactTerminal,
+		AIChatRunArtifactAgentTerminal:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) recordChatRunArtifact(project *ProjectSession, runID string, kind AIChatRunArtifactKind, title string, summary string, payload any) {
@@ -314,7 +341,7 @@ func (s *Service) emitChatArtifactChanged(project *ProjectSession, artifact AICh
 		ArtifactID:       artifact.ID,
 		Summary:          firstNonEmpty(artifact.Title, string(artifact.Kind)) + ": " + artifact.Summary,
 	})
-	s.emitEvent("ai:chat:artifact-updated", artifact)
+	s.emitEvent("ai:chat:artifact-updated", projectChatArtifactForList(artifact))
 	if strings.TrimSpace(eventName) != "" {
 		s.emitEvent(eventName, artifact)
 	}

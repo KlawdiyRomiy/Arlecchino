@@ -26,12 +26,14 @@ import {
   AIApproveMnemonicEntryProposal,
   AICancelChatRun,
   AICancelProviderAuth,
+  AICompactChatSession,
   AIDeleteChatSession,
   AIExecuteToolCall,
   AIGetApprovalPolicy,
   AIGetChatRun,
   AIGetChatRunEnvelope,
   AIGetConsentPolicy,
+  AIGetContextContinuationPlan,
   AIGetContextPreview,
   AIGetEmbeddingStatus,
   AIGetStatus,
@@ -40,6 +42,7 @@ import {
   AIListChatActions,
   AIListChatRunArtifacts,
   AIListChatRuns,
+  AIListContextCapsules,
   AIListContextProviders,
   AIListEgressRecords,
   AIListMnemonicEntries,
@@ -50,6 +53,7 @@ import {
   AIListToolAudit,
   AIProbeModelCapability,
   AIRefreshLocalProviders,
+  AIRevokeContextCapsule,
   AIRequestPlanRevision,
   AIRollbackPatchCheckpoint,
   AISaveConsentPolicy,
@@ -84,6 +88,9 @@ import {
   type AIQuestionAnswerRequest,
   type AIContextRequest,
   type AIContextSnapshot,
+  type AIContextCapsuleSummary,
+  type AIContextCompactionRequest,
+  type AIContextContinuationPlan,
   type AIEgressRecord,
   type AIRunTimelineEvent,
   type AIModelCapabilityDescriptor,
@@ -1397,6 +1404,14 @@ export function AIChatPanelContent({
   const [providerRuntimeError, setProviderRuntimeError] = useState("");
   const [mnemonicBusy, setMnemonicBusy] = useState(false);
   const [mnemonicError, setMnemonicError] = useState("");
+  const [continuityInspectorOpen, setContinuityInspectorOpen] = useState(false);
+  const [continuityBusy, setContinuityBusy] = useState(false);
+  const [continuityError, setContinuityError] = useState("");
+  const [continuityPlan, setContinuityPlan] =
+    useState<AIContextContinuationPlan | null>(null);
+  const [continuityCapsules, setContinuityCapsules] = useState<
+    AIContextCapsuleSummary[]
+  >([]);
   const [drawerDrag, setDrawerDrag] = useState<{
     drawer: DrawerId;
     offsetX: number;
@@ -1414,6 +1429,7 @@ export function AIChatPanelContent({
   const hydrationFailureAttemptsRef = useRef<Record<string, number>>({});
   const hydrationRetryTimersRef = useRef<Record<string, number>>({});
   const hydrationMountedRef = useRef(true);
+  const continuityRequestSeqRef = useRef(0);
   const [hydratingRunIds, setHydratingRunIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -1860,6 +1876,10 @@ export function AIChatPanelContent({
 
   useEffect(() => {
     setContextPreview(null);
+    setContinuityPlan(null);
+    setContinuityCapsules([]);
+    setContinuityError("");
+    continuityRequestSeqRef.current += 1;
     dispatchChrome({
       type: "patch",
       value: { sessionSearch: "", sessionSearchOpen: false },
@@ -2057,7 +2077,6 @@ export function AIChatPanelContent({
         nextConsentPolicy,
         nextEmbeddingStatus,
         nextApprovalPolicy,
-        nextMnemonicEntries,
         nextProviderRuntimes,
         nextPendingApprovals,
       ] = await Promise.all([
@@ -2075,7 +2094,6 @@ export function AIChatPanelContent({
         AIGetConsentPolicy(),
         AIGetEmbeddingStatus(),
         AIGetApprovalPolicy(),
-        AIListMnemonicEntries(24),
         AIListProviderRuntimes(),
         AIListPendingApprovals(50),
       ]);
@@ -2106,7 +2124,6 @@ export function AIChatPanelContent({
       setConsentPolicy(safeConsentPolicy);
       setEmbeddingStatus(safeEmbeddingStatus);
       setApprovalPolicy(safeApprovalPolicy);
-      setMnemonicEntries(normalizeAIMnemonicEntries(nextMnemonicEntries));
       setProviderRuntimes(normalizeAIProviderRuntimes(nextProviderRuntimes));
       const normalizedPendingApprovals =
         normalizeAIPendingApprovals(nextPendingApprovals);
@@ -2708,9 +2725,120 @@ export function AIChatPanelContent({
     ],
   );
 
-  const handleRefreshContext = useCallback(() => {
-    void refreshContextPreview(false);
-  }, [refreshContextPreview]);
+  const refreshContinuityInspector = useCallback(async () => {
+    const sessionId = chatSessionKey(activeSessionId);
+    const requestSeq = ++continuityRequestSeqRef.current;
+    setContinuityBusy(true);
+    setContinuityError("");
+    try {
+      const [plan, capsules] = await Promise.all([
+        AIGetContextContinuationPlan(sessionId),
+        AIListContextCapsules(sessionId, 24),
+      ]);
+      if (
+        requestSeq !== continuityRequestSeqRef.current ||
+        sessionId !== chatSessionKey(state.activeSessionId)
+      ) {
+        return;
+      }
+      setContinuityPlan(plan ?? null);
+      setContinuityCapsules(Array.isArray(capsules) ? capsules : []);
+    } catch (error) {
+      if (requestSeq !== continuityRequestSeqRef.current) return;
+      setContinuityError(
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      if (requestSeq === continuityRequestSeqRef.current) {
+        setContinuityBusy(false);
+      }
+    }
+  }, [activeSessionId, state.activeSessionId]);
+
+  const handleToggleContinuityInspector = useCallback(() => {
+    setContinuityInspectorOpen((open) => {
+      const next = !open;
+      if (next) {
+        void refreshContinuityInspector();
+      }
+      return next;
+    });
+  }, [refreshContinuityInspector]);
+
+  const handleCompactContinuity = useCallback(async () => {
+    const sessionId = chatSessionKey(activeSessionId);
+    if (continuityPlan?.canCompact !== true) {
+      const reason =
+        continuityPlan?.disabledReason ||
+        continuityPlan?.degradedReason ||
+        "Context continuity compaction is unavailable.";
+      setContinuityError(reason);
+      return;
+    }
+    setContinuityBusy(true);
+    setContinuityError("");
+    try {
+      await AICompactChatSession({
+        sessionId,
+        reason: "manual:context-meter",
+        maxTurns: 24,
+        modelAssisted: false,
+      } as AIContextCompactionRequest);
+      await Promise.all([
+        refreshContinuityInspector(),
+        refreshContextPreview(false),
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setContinuityError(message);
+      setRuntimeError(message);
+    } finally {
+      setContinuityBusy(false);
+    }
+  }, [
+    activeSessionId,
+    continuityPlan?.canCompact,
+    continuityPlan?.degradedReason,
+    continuityPlan?.disabledReason,
+    refreshContextPreview,
+    refreshContinuityInspector,
+  ]);
+
+  const handleRevokeContinuityCapsule = useCallback(
+    async (capsuleId: string) => {
+      if (!capsuleId) return;
+      if (continuityPlan?.canRevoke !== true) {
+        setContinuityError(
+          continuityPlan?.disabledReason ||
+            continuityPlan?.degradedReason ||
+            "Context continuity revocation is unavailable.",
+        );
+        return;
+      }
+      setContinuityBusy(true);
+      setContinuityError("");
+      try {
+        await AIRevokeContextCapsule(capsuleId);
+        await Promise.all([
+          refreshContinuityInspector(),
+          refreshContextPreview(false),
+        ]);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setContinuityError(message);
+        setRuntimeError(message);
+      } finally {
+        setContinuityBusy(false);
+      }
+    },
+    [
+      continuityPlan?.canRevoke,
+      continuityPlan?.degradedReason,
+      continuityPlan?.disabledReason,
+      refreshContextPreview,
+      refreshContinuityInspector,
+    ],
+  );
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -3250,6 +3378,11 @@ export function AIChatPanelContent({
     },
     [setMnemonicEntries],
   );
+
+  useEffect(() => {
+    if (!state.settingsPopoverOpen) return;
+    void refreshMnemonicEntries();
+  }, [refreshMnemonicEntries, state.settingsPopoverOpen]);
 
   const handleMnemonicSave = useCallback(
     async (content: string) => {
@@ -4395,6 +4528,11 @@ export function AIChatPanelContent({
                 <ChatComposer
                   canSend={canSend}
                   actions={composerActions}
+                  continuityBusy={continuityBusy}
+                  continuityCapsules={continuityCapsules}
+                  continuityError={continuityError}
+                  continuityInspectorOpen={continuityInspectorOpen}
+                  continuityPlan={continuityPlan}
                   contextPreview={contextPreview}
                   disabledReason={disabledReason}
                   input={state.input}
@@ -4416,6 +4554,7 @@ export function AIChatPanelContent({
                     dispatch({ type: "setAction", action, profileId })
                   }
                   onCancel={handleCancel}
+                  onCompactContinuity={handleCompactContinuity}
                   onInputChange={(input) =>
                     dispatch({ type: "setInput", input })
                   }
@@ -4425,7 +4564,8 @@ export function AIChatPanelContent({
                   }
                   onMentionSelect={handleMentionSelect}
                   onProbeModelCapability={handleProbeModelCapability}
-                  onRefreshContext={handleRefreshContext}
+                  onRefreshContinuity={refreshContinuityInspector}
+                  onRevokeContinuityCapsule={handleRevokeContinuityCapsule}
                   onRefreshProviders={handleRefreshProviders}
                   onSend={handleSend}
                   onSelectModel={handleModelSelect}
@@ -4451,6 +4591,7 @@ export function AIChatPanelContent({
                   }
                   onStartProviderRuntime={handleStartProviderRuntime}
                   onStopProviderRuntime={handleStopProviderRuntime}
+                  onToggleContinuityInspector={handleToggleContinuityInspector}
                 />
               </div>
             </ContextActionMenu>

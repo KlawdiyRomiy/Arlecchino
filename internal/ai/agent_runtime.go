@@ -442,6 +442,23 @@ func (s *Service) runExternalAgentChat(ctx context.Context, project *ProjectSess
 		s.finishRunError(runID, fmt.Sprintf("agent runtime %s does not support %s mode", descriptor.Name, req.Action))
 		return
 	}
+	if err := s.revalidatePreparedContinuity(project, snapshot); err != nil {
+		s.recordRunTimeline(project, AIRunTimelineEvent{
+			RunID:            runID,
+			SessionID:        normalizeChatSessionID(req.SessionID),
+			ProjectSessionID: project.ID,
+			Source:           "context",
+			Type:             "context_budget",
+			Status:           "blocked",
+			Actor:            "system",
+			Capability:       providers.CapabilityChat,
+			DataCategories:   contextSummary.DataCategories,
+			Redaction:        contextSummary.Redaction,
+			Summary:          err.Error(),
+		})
+		s.finishRunError(runID, err.Error())
+		return
+	}
 	record := s.startAgentEgressRecord(project, runID, req, descriptor, snapshot)
 	if !normalizeConsentPolicy(s.currentSettings().ConsentPolicy).ExternalAgentCLIAccepted {
 		s.finishExternalAgentConsentBlocked(project, runID, record)

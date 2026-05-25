@@ -13,6 +13,8 @@ import {
   Slash,
   Sparkles,
   Square,
+  RefreshCw,
+  Trash2,
   X,
 } from "lucide-react";
 import { AnimatePresence, m, useReducedMotion } from "framer-motion";
@@ -20,6 +22,8 @@ import type {
   AIChatActionDescriptor,
   AIChatMentionCandidate,
   AIConsentPolicy,
+  AIContextCapsuleSummary,
+  AIContextContinuationPlan,
   AIContextSnapshot,
   AIModelCapabilityDescriptor,
 } from "../../../bindings/arlecchino/internal/ai/models";
@@ -63,6 +67,11 @@ interface ChatComposerProps {
   selectedModelCapability: AIModelCapabilityDescriptor | null;
   consentPolicy: AIConsentPolicy | null;
   contextPreview?: AIContextSnapshot | null;
+  continuityPlan?: AIContextContinuationPlan | null;
+  continuityCapsules?: AIContextCapsuleSummary[];
+  continuityInspectorOpen: boolean;
+  continuityBusy: boolean;
+  continuityError: string;
   onActionChange: (action: AIChatAction, profileId?: string) => void;
   onSelectProvider: (provider: AIProviderDescriptor) => void;
   onSelectModel: (modelId: string) => void;
@@ -93,7 +102,10 @@ interface ChatComposerProps {
   ) => Promise<AIChatMentionCandidate[]>;
   onMentionSelect: (candidate: AIChatMentionCandidate) => void;
   onMentionRemove: (id: string) => void;
-  onRefreshContext: () => void;
+  onToggleContinuityInspector: () => void;
+  onRefreshContinuity: () => void;
+  onCompactContinuity: () => void;
+  onRevokeContinuityCapsule: (capsuleId: string) => void;
   onSend: () => void;
   onCancel: () => void;
 }
@@ -287,6 +299,18 @@ const contextBudgetTooltip = (
   return `${input}/${windowSize} estimated input tokens from the ${source} (${percent} used). ${remainingWindow} to the model limit.`;
 };
 
+const capsuleTitle = (capsule: AIContextCapsuleSummary): string => {
+  const kind = capsule.kind || "capsule";
+  const status = capsule.status || "active";
+  return `${kind} · ${status}`;
+};
+
+const capsuleSummary = (capsule: AIContextCapsuleSummary): string =>
+  capsule.summary ||
+  capsule.continuationHint ||
+  capsule.sourceRefs?.[0]?.label ||
+  capsule.id;
+
 export function ChatComposer({
   selectedAction,
   selectedMentions,
@@ -307,6 +331,10 @@ export function ChatComposer({
   selectedModelCapability,
   consentPolicy,
   contextPreview,
+  continuityPlan,
+  continuityInspectorOpen,
+  continuityBusy,
+  continuityError,
   onActionChange,
   onSelectProvider,
   onSelectModel,
@@ -326,7 +354,10 @@ export function ChatComposer({
   onMentionQuery,
   onMentionSelect,
   onMentionRemove,
-  onRefreshContext,
+  onToggleContinuityInspector,
+  onRefreshContinuity,
+  onCompactContinuity,
+  onRevokeContinuityCapsule,
   onSend,
   onCancel,
 }: ChatComposerProps) {
@@ -398,6 +429,18 @@ export function ChatComposer({
     modeOptions[0];
   const contextBudget = contextPreview?.budget;
   const contextPercent = contextBudgetPercent(contextBudget);
+  const previewContinuity = contextPreview?.continuity ?? [];
+  const includedContinuity =
+    previewContinuity.length > 0 ? previewContinuity : (continuityPlan?.included ?? []);
+  const staleContinuity = continuityPlan?.stale ?? [];
+  const visibleContinuityCapsules = includedContinuity;
+  const continuityCountLabel = `${includedContinuity.length} included · ${staleContinuity.length} stale`;
+  const compactDisabledReason =
+    continuityPlan?.disabledReason ||
+    (running ? "A run is active." : continuityBusy ? "Continuity action is running." : "");
+  const compactDisabled =
+    continuityBusy || running || continuityPlan?.canCompact !== true;
+  const canRevokeContinuity = continuityPlan?.canRevoke === true;
   const contextMeterStyle = {
     "--context-meter": `${contextPercent}%`,
   } as React.CSSProperties;
@@ -919,35 +962,129 @@ export function ChatComposer({
           </div>
           <div className="ai-chat-composer__buttons">
             {contextBudget ? (
-              <button
-                className={contextMeterClassName}
-                style={contextMeterStyle}
-                type="button"
-                aria-label={contextMeterTooltip}
-                onClick={onRefreshContext}
-              >
-                <span className="ai-chat-composer__context-meter-ring">
-                  <span className="ai-chat-composer__context-meter-core" />
-                </span>
-                <span
-                  className="ai-chat-composer__context-meter-popover"
-                  role="tooltip"
+              <div className="ai-chat-composer__context-meter-wrap">
+                <button
+                  className={contextMeterClassName}
+                  style={contextMeterStyle}
+                  type="button"
+                  aria-expanded={continuityInspectorOpen}
+                  aria-label={contextMeterTooltip}
+                  onClick={onToggleContinuityInspector}
                 >
-                  <strong>
-                    {formatContextTokenCount(contextBudget.inputTokens)}
-                    {contextBudget.contextWindow
-                      ? ` / ${formatContextTokenCount(contextBudget.contextWindow)}`
-                      : ""}
-                  </strong>
-                  <span>
-                    {contextBudget.contextWindow
-                      ? contextBudget.autoCompactRecommended
-                        ? "Compact before the next large turn"
-                        : `${formatContextPercent(contextPercent)} used; ${formatContextTokenCount(contextBudget.remainingBeforeCompact)} before compaction`
-                      : "Context window unavailable"}
+                  <span className="ai-chat-composer__context-meter-ring">
+                    <span className="ai-chat-composer__context-meter-core" />
                   </span>
-                </span>
-              </button>
+                  <span
+                    className="ai-chat-composer__context-meter-popover"
+                    role="tooltip"
+                  >
+                    <strong>
+                      {formatContextTokenCount(contextBudget.inputTokens)}
+                      {contextBudget.contextWindow
+                        ? ` / ${formatContextTokenCount(contextBudget.contextWindow)}`
+                        : ""}
+                    </strong>
+                    <span>
+                      {contextBudget.contextWindow
+                        ? contextBudget.autoCompactRecommended
+                          ? "Compact before the next large turn"
+                          : `${formatContextPercent(contextPercent)} used; ${formatContextTokenCount(contextBudget.remainingBeforeCompact)} before compaction`
+                        : "Context window unavailable"}
+                    </span>
+                  </span>
+                </button>
+                {continuityInspectorOpen ? (
+                  <div
+                    className="ai-chat-composer__continuity-popover"
+                    data-testid="ai-chat-continuity-popover"
+                  >
+                    <div className="ai-chat-composer__continuity-head">
+                      <span>Continuity</span>
+                      <small>{continuityCountLabel}</small>
+                    </div>
+                    {continuityPlan?.policyReason ? (
+                      <p className="ai-chat-composer__continuity-policy">
+                        {continuityPlan.policyReason}
+                      </p>
+                    ) : null}
+                    {continuityPlan?.degradedReason ? (
+                      <p className="ai-chat-composer__continuity-error">
+                        {continuityPlan.degradedReason}
+                      </p>
+                    ) : null}
+                    {continuityError ? (
+                      <p className="ai-chat-composer__continuity-error">
+                        {continuityError}
+                      </p>
+                    ) : null}
+                    <div className="ai-chat-composer__continuity-actions">
+                      <button
+                        type="button"
+                        disabled={continuityBusy}
+                        onClick={onRefreshContinuity}
+                      >
+                        <RefreshCw size={13} />
+                        Refresh
+                      </button>
+                      <button
+                        type="button"
+                        disabled={compactDisabled}
+                        title={compactDisabledReason || "Compact continuity"}
+                        onClick={onCompactContinuity}
+                      >
+                        <RefreshCw size={13} />
+                        Compact now
+                      </button>
+                    </div>
+                    <div className="ai-chat-composer__continuity-list">
+                      {visibleContinuityCapsules.length > 0 ? (
+                        visibleContinuityCapsules.slice(0, 6).map((capsule) => (
+                          <div
+                            className="ai-chat-composer__continuity-row"
+                            key={capsule.id}
+                          >
+                            <div>
+                              <span>{capsuleTitle(capsule)}</span>
+                              <small>{capsuleSummary(capsule)}</small>
+                            </div>
+                            {capsule.status !== "revoked" ? (
+                              <button
+                                type="button"
+                                disabled={continuityBusy || !canRevokeContinuity}
+                                title={
+                                  canRevokeContinuity
+                                    ? "Revoke capsule"
+                                    : continuityPlan?.disabledReason ||
+                                      "Continuity revocation unavailable."
+                                }
+                                aria-label="Revoke capsule"
+                                onClick={() =>
+                                  onRevokeContinuityCapsule(capsule.id)
+                                }
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            ) : null}
+                          </div>
+                        ))
+                      ) : (
+                        <p className="ai-chat-composer__continuity-empty">
+                          No continuity capsules selected.
+                        </p>
+                      )}
+                      {staleContinuity.length > 0 ? (
+                        <div className="ai-chat-composer__continuity-stale">
+                          {staleContinuity.slice(0, 4).map((capsule) => (
+                            <span key={capsule.id}>
+                              Stale: {capsuleSummary(capsule)}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
             <button
               className={`ai-chat-attachment-button${

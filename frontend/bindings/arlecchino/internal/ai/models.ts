@@ -1308,6 +1308,10 @@ export class AIContextContinuationPlan {
     "included"?: AIContextCapsuleSummary[];
     "superseded"?: string[];
     "stale"?: AIContextCapsuleSummary[];
+    "canCompact": boolean;
+    "canRevoke": boolean;
+    "disabledReason"?: string;
+    "degradedReason"?: string;
     "policyReason"?: string;
     "createdAt": string;
 
@@ -1315,6 +1319,12 @@ export class AIContextContinuationPlan {
     constructor($$source: Partial<AIContextContinuationPlan> = {}) {
         if (!("sessionId" in $$source)) {
             this["sessionId"] = "";
+        }
+        if (!("canCompact" in $$source)) {
+            this["canCompact"] = false;
+        }
+        if (!("canRevoke" in $$source)) {
+            this["canRevoke"] = false;
         }
         if (!("createdAt" in $$source)) {
             this["createdAt"] = "";
@@ -1629,6 +1639,7 @@ export class AIContextRequest {
 
 export class AIContextSnapshot {
     "id": string;
+    "projection"?: string;
     "requestId"?: string;
     "documentVersion"?: string;
     "sessionId"?: string;
@@ -1702,62 +1713,62 @@ export class AIContextSnapshot {
      * Creates a new AIContextSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): AIContextSnapshot {
-        const $$createField14_0 = $$createType40;
-        const $$createField15_0 = $$createType42;
-        const $$createField16_0 = $$createType44;
-        const $$createField17_0 = $$createType46;
-        const $$createField18_0 = $$createType48;
-        const $$createField19_0 = $$createType50;
-        const $$createField20_0 = $$createType37;
-        const $$createField21_0 = $$createType4;
-        const $$createField22_0 = $$createType35;
-        const $$createField23_0 = $$createType18;
-        const $$createField24_0 = $$createType51;
-        const $$createField25_0 = $$createType21;
-        const $$createField26_0 = $$createType22;
-        const $$createField27_0 = $$createType52;
+        const $$createField15_0 = $$createType40;
+        const $$createField16_0 = $$createType42;
+        const $$createField17_0 = $$createType44;
+        const $$createField18_0 = $$createType46;
+        const $$createField19_0 = $$createType48;
+        const $$createField20_0 = $$createType50;
+        const $$createField21_0 = $$createType37;
+        const $$createField22_0 = $$createType4;
+        const $$createField23_0 = $$createType35;
+        const $$createField24_0 = $$createType18;
+        const $$createField25_0 = $$createType51;
+        const $$createField26_0 = $$createType21;
+        const $$createField27_0 = $$createType22;
+        const $$createField28_0 = $$createType52;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("snippets" in $$parsedSource) {
-            $$parsedSource["snippets"] = $$createField14_0($$parsedSource["snippets"]);
+            $$parsedSource["snippets"] = $$createField15_0($$parsedSource["snippets"]);
         }
         if ("snippetBreakdown" in $$parsedSource) {
-            $$parsedSource["snippetBreakdown"] = $$createField15_0($$parsedSource["snippetBreakdown"]);
+            $$parsedSource["snippetBreakdown"] = $$createField16_0($$parsedSource["snippetBreakdown"]);
         }
         if ("contextItems" in $$parsedSource) {
-            $$parsedSource["contextItems"] = $$createField16_0($$parsedSource["contextItems"]);
+            $$parsedSource["contextItems"] = $$createField17_0($$parsedSource["contextItems"]);
         }
         if ("mcpContext" in $$parsedSource) {
-            $$parsedSource["mcpContext"] = $$createField17_0($$parsedSource["mcpContext"]);
+            $$parsedSource["mcpContext"] = $$createField18_0($$parsedSource["mcpContext"]);
         }
         if ("mnemonic" in $$parsedSource) {
-            $$parsedSource["mnemonic"] = $$createField18_0($$parsedSource["mnemonic"]);
+            $$parsedSource["mnemonic"] = $$createField19_0($$parsedSource["mnemonic"]);
         }
         if ("skills" in $$parsedSource) {
-            $$parsedSource["skills"] = $$createField19_0($$parsedSource["skills"]);
+            $$parsedSource["skills"] = $$createField20_0($$parsedSource["skills"]);
         }
         if ("continuity" in $$parsedSource) {
-            $$parsedSource["continuity"] = $$createField20_0($$parsedSource["continuity"]);
+            $$parsedSource["continuity"] = $$createField21_0($$parsedSource["continuity"]);
         }
         if ("dataCategories" in $$parsedSource) {
-            $$parsedSource["dataCategories"] = $$createField21_0($$parsedSource["dataCategories"]);
+            $$parsedSource["dataCategories"] = $$createField22_0($$parsedSource["dataCategories"]);
         }
         if ("redaction" in $$parsedSource) {
-            $$parsedSource["redaction"] = $$createField22_0($$parsedSource["redaction"]);
+            $$parsedSource["redaction"] = $$createField23_0($$parsedSource["redaction"]);
         }
         if ("providerEnvelope" in $$parsedSource) {
-            $$parsedSource["providerEnvelope"] = $$createField23_0($$parsedSource["providerEnvelope"]);
+            $$parsedSource["providerEnvelope"] = $$createField24_0($$parsedSource["providerEnvelope"]);
         }
         if ("disclosure" in $$parsedSource) {
-            $$parsedSource["disclosure"] = $$createField24_0($$parsedSource["disclosure"]);
+            $$parsedSource["disclosure"] = $$createField25_0($$parsedSource["disclosure"]);
         }
         if ("disclosureSummary" in $$parsedSource) {
-            $$parsedSource["disclosureSummary"] = $$createField25_0($$parsedSource["disclosureSummary"]);
+            $$parsedSource["disclosureSummary"] = $$createField26_0($$parsedSource["disclosureSummary"]);
         }
         if ("approvalSummary" in $$parsedSource) {
-            $$parsedSource["approvalSummary"] = $$createField26_0($$parsedSource["approvalSummary"]);
+            $$parsedSource["approvalSummary"] = $$createField27_0($$parsedSource["approvalSummary"]);
         }
         if ("budget" in $$parsedSource) {
-            $$parsedSource["budget"] = $$createField27_0($$parsedSource["budget"]);
+            $$parsedSource["budget"] = $$createField28_0($$parsedSource["budget"]);
         }
         return new AIContextSnapshot($$parsedSource as Partial<AIContextSnapshot>);
     }
@@ -1821,6 +1832,7 @@ export class AIContextSnippetBreakdown {
 
 export class AIContextSummary {
     "id": string;
+    "projection"?: string;
     "requestId"?: string;
     "documentVersion"?: string;
     "sessionId"?: string;
@@ -1897,38 +1909,38 @@ export class AIContextSummary {
      * Creates a new AIContextSummary instance from a string or object.
      */
     static createFrom($$source: any = {}): AIContextSummary {
-        const $$createField14_0 = $$createType37;
-        const $$createField15_0 = $$createType46;
-        const $$createField16_0 = $$createType42;
-        const $$createField17_0 = $$createType44;
-        const $$createField18_0 = $$createType4;
-        const $$createField19_0 = $$createType35;
-        const $$createField20_0 = $$createType21;
-        const $$createField21_0 = $$createType52;
+        const $$createField15_0 = $$createType37;
+        const $$createField16_0 = $$createType46;
+        const $$createField17_0 = $$createType42;
+        const $$createField18_0 = $$createType44;
+        const $$createField19_0 = $$createType4;
+        const $$createField20_0 = $$createType35;
+        const $$createField21_0 = $$createType21;
+        const $$createField22_0 = $$createType52;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("continuity" in $$parsedSource) {
-            $$parsedSource["continuity"] = $$createField14_0($$parsedSource["continuity"]);
+            $$parsedSource["continuity"] = $$createField15_0($$parsedSource["continuity"]);
         }
         if ("mcpContext" in $$parsedSource) {
-            $$parsedSource["mcpContext"] = $$createField15_0($$parsedSource["mcpContext"]);
+            $$parsedSource["mcpContext"] = $$createField16_0($$parsedSource["mcpContext"]);
         }
         if ("snippetBreakdown" in $$parsedSource) {
-            $$parsedSource["snippetBreakdown"] = $$createField16_0($$parsedSource["snippetBreakdown"]);
+            $$parsedSource["snippetBreakdown"] = $$createField17_0($$parsedSource["snippetBreakdown"]);
         }
         if ("contextItems" in $$parsedSource) {
-            $$parsedSource["contextItems"] = $$createField17_0($$parsedSource["contextItems"]);
+            $$parsedSource["contextItems"] = $$createField18_0($$parsedSource["contextItems"]);
         }
         if ("dataCategories" in $$parsedSource) {
-            $$parsedSource["dataCategories"] = $$createField18_0($$parsedSource["dataCategories"]);
+            $$parsedSource["dataCategories"] = $$createField19_0($$parsedSource["dataCategories"]);
         }
         if ("redaction" in $$parsedSource) {
-            $$parsedSource["redaction"] = $$createField19_0($$parsedSource["redaction"]);
+            $$parsedSource["redaction"] = $$createField20_0($$parsedSource["redaction"]);
         }
         if ("disclosureSummary" in $$parsedSource) {
-            $$parsedSource["disclosureSummary"] = $$createField20_0($$parsedSource["disclosureSummary"]);
+            $$parsedSource["disclosureSummary"] = $$createField21_0($$parsedSource["disclosureSummary"]);
         }
         if ("budget" in $$parsedSource) {
-            $$parsedSource["budget"] = $$createField21_0($$parsedSource["budget"]);
+            $$parsedSource["budget"] = $$createField22_0($$parsedSource["budget"]);
         }
         return new AIContextSummary($$parsedSource as Partial<AIContextSummary>);
     }
