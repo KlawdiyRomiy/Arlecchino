@@ -24,6 +24,7 @@ import {
   type DiagnosticsEventItem,
   type DiagnosticsProblem,
 } from "../stores/diagnosticsStore";
+import { codeMirrorScrollActiveField } from "../utils/codeMirrorScrollGuard";
 
 type CodeMirrorDocLike = {
   line(number: number): { from: number; to: number; text: string };
@@ -358,6 +359,10 @@ const isSnapshotVisible = (
 const buildInlineDiagnosticMarkers = (
   view: EditorView,
 ): readonly LayerMarker[] => {
+  if (view.state.field(codeMirrorScrollActiveField, false)) {
+    return [];
+  }
+
   const messagesVisible = view.state.field(
     inlineDiagnosticsMessagesVisibleField,
     false,
@@ -489,6 +494,11 @@ const inlineDiagnosticsLayer = layer({
     const diagnostics =
       update.state.field(inlineDiagnosticsField, false) ??
       EMPTY_INLINE_SNAPSHOT;
+    const startScrollActive = update.startState.field(
+      codeMirrorScrollActiveField,
+      false,
+    );
+    const scrollActive = update.state.field(codeMirrorScrollActiveField, false);
 
     return (
       update.docChanged ||
@@ -496,7 +506,8 @@ const inlineDiagnosticsLayer = layer({
       update.selectionSet ||
       update.geometryChanged ||
       startMessagesVisible !== messagesVisible ||
-      startDiagnostics !== diagnostics
+      startDiagnostics !== diagnostics ||
+      startScrollActive !== scrollActive
     );
   },
   markers: buildInlineDiagnosticMarkers,

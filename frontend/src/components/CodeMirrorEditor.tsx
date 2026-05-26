@@ -1626,9 +1626,15 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const shouldShowMinimap = useMemo(
     () =>
       editorFeatureBudget.layoutStableMinimap &&
+      editorFeatureBudget.minimap &&
       showMinimapSetting &&
       shouldEnableCodeMirrorMinimap(content),
-    [content, editorFeatureBudget.layoutStableMinimap, showMinimapSetting],
+    [
+      content,
+      editorFeatureBudget.layoutStableMinimap,
+      editorFeatureBudget.minimap,
+      showMinimapSetting,
+    ],
   );
 
   const gitGutterExtension = useMemo(

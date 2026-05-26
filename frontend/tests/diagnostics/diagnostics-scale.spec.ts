@@ -400,6 +400,76 @@ test("inline diagnostics render under constrained performance budget", async ({
   await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(1);
 });
 
+test("inline diagnostic overlay hides only while scroll is active", async ({
+  page,
+}) => {
+  const content = Array.from({ length: 120 }, (_value, index) =>
+    index === 8
+      ? "const brokenValue = missingValue;"
+      : `const value${index} = ${index};`,
+  ).join("\n");
+
+  await mountEditorTab(page, content);
+  await setEditorDiagnostics(page, [
+    {
+      range: {
+        start: { line: 8, character: 20 },
+        end: { line: 8, character: 32 },
+      },
+      severity: 1,
+      message: "Cannot find name 'missingValue'.",
+      source: "tsserver",
+    },
+  ]);
+
+  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(1);
+  await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(1);
+
+  const wheelResult = await page.evaluate(async () => {
+    const scroller = document.querySelector<HTMLElement>(".cm-scroller");
+    if (!scroller) {
+      return {
+        canceled: false,
+        scrollActive: false,
+        scrollTop: 0,
+      };
+    }
+
+    const event = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      deltaMode: 0,
+      deltaY: 48,
+    });
+    const dispatchResult = scroller.dispatchEvent(event);
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+
+    return {
+      canceled: !dispatchResult && event.defaultPrevented,
+      scrollActive:
+        document.querySelector<HTMLElement>(".cm-editor")?.dataset
+          .scrollActive === "true",
+      scrollTop: scroller.scrollTop,
+    };
+  });
+
+  expect(wheelResult.canceled).toBe(true);
+  expect(wheelResult.scrollActive).toBe(true);
+  expect(wheelResult.scrollTop).toBeGreaterThan(0);
+  await expect(page.locator(".cm-diagnostic-overlay")).toHaveCount(0);
+  await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(1);
+  await expect(page.locator(".cm-lintRange-error")).toHaveCount(1);
+
+  await expect
+    .poll(async () => page.locator(".cm-diagnostic-overlay").count(), {
+      timeout: 1000,
+    })
+    .toBe(1);
+  await expect(page.locator(".cm-diagnostic-range-error")).toHaveCount(1);
+});
+
 test("inline diagnostic messages stay hidden while wavy lint ranges remain visible when the editor setting is disabled", async ({
   page,
 }) => {
