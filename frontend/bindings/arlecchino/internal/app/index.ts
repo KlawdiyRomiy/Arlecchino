@@ -89,6 +89,8 @@ export {
     Wails3SmokeNativeAdapterProbe,
     Wails3SmokeNativeDeliveryProbe,
     Wails3SmokeNativeDockBadgeProbe,
+    Wails3SmokeRuntimeAssetFileProbe,
+    Wails3SmokeRuntimeAssetsProbe,
     Wails3SmokeSecondInstanceProbe,
     Wails3SmokeWindowLeaseSnapshot,
     WindowLeaseActionResult,

@@ -2903,6 +2903,7 @@ export class Wails3PackagedSmokeReport {
     "secondInstance"?: Wails3SmokeSecondInstanceProbe;
     "windowLease": Wails3SmokeWindowLeaseSnapshot;
     "appBundle"?: Wails3SmokeAppBundleSnapshot;
+    "runtimeAssets": Wails3SmokeRuntimeAssetsProbe;
     "checks": Wails3SmokeCheck[];
 
     /** Creates a new Wails3PackagedSmokeReport instance. */
@@ -2946,6 +2947,9 @@ export class Wails3PackagedSmokeReport {
         if (!("windowLease" in $$source)) {
             this["windowLease"] = (new Wails3SmokeWindowLeaseSnapshot());
         }
+        if (!("runtimeAssets" in $$source)) {
+            this["runtimeAssets"] = (new Wails3SmokeRuntimeAssetsProbe());
+        }
         if (!("checks" in $$source)) {
             this["checks"] = [];
         }
@@ -2968,7 +2972,8 @@ export class Wails3PackagedSmokeReport {
         const $$createField15_0 = $$createType71;
         const $$createField16_0 = $$createType72;
         const $$createField17_0 = $$createType73;
-        const $$createField18_0 = $$createType75;
+        const $$createField18_0 = $$createType74;
+        const $$createField19_0 = $$createType76;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("launchArgs" in $$parsedSource) {
             $$parsedSource["launchArgs"] = $$createField6_0($$parsedSource["launchArgs"]);
@@ -3003,8 +3008,11 @@ export class Wails3PackagedSmokeReport {
         if ("appBundle" in $$parsedSource) {
             $$parsedSource["appBundle"] = $$createField17_0($$parsedSource["appBundle"]);
         }
+        if ("runtimeAssets" in $$parsedSource) {
+            $$parsedSource["runtimeAssets"] = $$createField18_0($$parsedSource["runtimeAssets"]);
+        }
         if ("checks" in $$parsedSource) {
-            $$parsedSource["checks"] = $$createField18_0($$parsedSource["checks"]);
+            $$parsedSource["checks"] = $$createField19_0($$parsedSource["checks"]);
         }
         return new Wails3PackagedSmokeReport($$parsedSource as Partial<Wails3PackagedSmokeReport>);
     }
@@ -3232,9 +3240,9 @@ export class Wails3SmokeNativeDeliveryProbe {
      */
     static createFrom($$source: any = {}): Wails3SmokeNativeDeliveryProbe {
         const $$createField2_0 = $$createType0;
-        const $$createField4_0 = $$createType76;
-        const $$createField5_0 = $$createType76;
-        const $$createField6_0 = $$createType77;
+        const $$createField4_0 = $$createType77;
+        const $$createField5_0 = $$createType77;
+        const $$createField6_0 = $$createType78;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("trackedFailureStates" in $$parsedSource) {
             $$parsedSource["trackedFailureStates"] = $$createField2_0($$parsedSource["trackedFailureStates"]);
@@ -3282,6 +3290,88 @@ export class Wails3SmokeNativeDockBadgeProbe {
     static createFrom($$source: any = {}): Wails3SmokeNativeDockBadgeProbe {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new Wails3SmokeNativeDockBadgeProbe($$parsedSource as Partial<Wails3SmokeNativeDockBadgeProbe>);
+    }
+}
+
+export class Wails3SmokeRuntimeAssetFileProbe {
+    "path": string;
+    "exists": boolean;
+    "readable": boolean;
+    "size": number;
+
+    /** Creates a new Wails3SmokeRuntimeAssetFileProbe instance. */
+    constructor($$source: Partial<Wails3SmokeRuntimeAssetFileProbe> = {}) {
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("exists" in $$source)) {
+            this["exists"] = false;
+        }
+        if (!("readable" in $$source)) {
+            this["readable"] = false;
+        }
+        if (!("size" in $$source)) {
+            this["size"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Wails3SmokeRuntimeAssetFileProbe instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Wails3SmokeRuntimeAssetFileProbe {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new Wails3SmokeRuntimeAssetFileProbe($$parsedSource as Partial<Wails3SmokeRuntimeAssetFileProbe>);
+    }
+}
+
+export class Wails3SmokeRuntimeAssetsProbe {
+    "assetsDir": string;
+    "model": Wails3SmokeRuntimeAssetFileProbe;
+    "tokenizer": Wails3SmokeRuntimeAssetFileProbe;
+    "usingAppBundleResources": boolean;
+    "status": ShellCapabilityStatus;
+    "reason": string;
+
+    /** Creates a new Wails3SmokeRuntimeAssetsProbe instance. */
+    constructor($$source: Partial<Wails3SmokeRuntimeAssetsProbe> = {}) {
+        if (!("assetsDir" in $$source)) {
+            this["assetsDir"] = "";
+        }
+        if (!("model" in $$source)) {
+            this["model"] = (new Wails3SmokeRuntimeAssetFileProbe());
+        }
+        if (!("tokenizer" in $$source)) {
+            this["tokenizer"] = (new Wails3SmokeRuntimeAssetFileProbe());
+        }
+        if (!("usingAppBundleResources" in $$source)) {
+            this["usingAppBundleResources"] = false;
+        }
+        if (!("status" in $$source)) {
+            this["status"] = ShellCapabilityStatus.$zero;
+        }
+        if (!("reason" in $$source)) {
+            this["reason"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new Wails3SmokeRuntimeAssetsProbe instance from a string or object.
+     */
+    static createFrom($$source: any = {}): Wails3SmokeRuntimeAssetsProbe {
+        const $$createField1_0 = $$createType79;
+        const $$createField2_0 = $$createType79;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("model" in $$parsedSource) {
+            $$parsedSource["model"] = $$createField1_0($$parsedSource["model"]);
+        }
+        if ("tokenizer" in $$parsedSource) {
+            $$parsedSource["tokenizer"] = $$createField2_0($$parsedSource["tokenizer"]);
+        }
+        return new Wails3SmokeRuntimeAssetsProbe($$parsedSource as Partial<Wails3SmokeRuntimeAssetsProbe>);
     }
 }
 
@@ -3393,8 +3483,8 @@ export class WindowLeaseActionResult {
      * Creates a new WindowLeaseActionResult instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseActionResult {
-        const $$createField4_0 = $$createType79;
-        const $$createField5_0 = $$createType80;
+        const $$createField4_0 = $$createType81;
+        const $$createField5_0 = $$createType82;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("record" in $$parsedSource) {
             $$parsedSource["record"] = $$createField4_0($$parsedSource["record"]);
@@ -3459,7 +3549,7 @@ export class WindowLeaseRecord {
      * Creates a new WindowLeaseRecord instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseRecord {
-        const $$createField8_0 = $$createType81;
+        const $$createField8_0 = $$createType83;
         const $$createField12_0 = $$createType49;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("returnTarget" in $$parsedSource) {
@@ -3549,10 +3639,10 @@ export class WindowLeaseSnapshot {
      * Creates a new WindowLeaseSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseSnapshot {
-        const $$createField5_0 = $$createType82;
+        const $$createField5_0 = $$createType84;
         const $$createField6_0 = $$createType0;
-        const $$createField7_0 = $$createType83;
-        const $$createField8_0 = $$createType84;
+        const $$createField7_0 = $$createType85;
+        const $$createField8_0 = $$createType86;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("supportedRoles" in $$parsedSource) {
             $$parsedSource["supportedRoles"] = $$createField5_0($$parsedSource["supportedRoles"]);
@@ -3657,14 +3747,16 @@ const $$createType70 = Wails3SmokeGateStatus.createFrom;
 const $$createType71 = Wails3SmokeSecondInstanceProbe.createFrom;
 const $$createType72 = Wails3SmokeWindowLeaseSnapshot.createFrom;
 const $$createType73 = Wails3SmokeAppBundleSnapshot.createFrom;
-const $$createType74 = Wails3SmokeCheck.createFrom;
-const $$createType75 = $Create.Array($$createType74);
-const $$createType76 = Wails3SmokeNativeAdapterProbe.createFrom;
-const $$createType77 = Wails3SmokeNativeDockBadgeProbe.createFrom;
-const $$createType78 = WindowLeaseRecord.createFrom;
-const $$createType79 = $Create.Nullable($$createType78);
-const $$createType80 = WindowLeaseSnapshot.createFrom;
-const $$createType81 = WindowLeaseReturnTarget.createFrom;
-const $$createType82 = $Create.Array($Create.Any);
-const $$createType83 = $Create.Array($$createType78);
-const $$createType84 = $Create.Map($Create.Any, $$createType78);
+const $$createType74 = Wails3SmokeRuntimeAssetsProbe.createFrom;
+const $$createType75 = Wails3SmokeCheck.createFrom;
+const $$createType76 = $Create.Array($$createType75);
+const $$createType77 = Wails3SmokeNativeAdapterProbe.createFrom;
+const $$createType78 = Wails3SmokeNativeDockBadgeProbe.createFrom;
+const $$createType79 = Wails3SmokeRuntimeAssetFileProbe.createFrom;
+const $$createType80 = WindowLeaseRecord.createFrom;
+const $$createType81 = $Create.Nullable($$createType80);
+const $$createType82 = WindowLeaseSnapshot.createFrom;
+const $$createType83 = WindowLeaseReturnTarget.createFrom;
+const $$createType84 = $Create.Array($Create.Any);
+const $$createType85 = $Create.Array($$createType80);
+const $$createType86 = $Create.Map($Create.Any, $$createType80);
