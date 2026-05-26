@@ -108,7 +108,6 @@ interface EditorSettingsState {
   showInlineDiagnostics: boolean;
   showCompactDiagnostics: boolean;
   showFoldGutter: boolean;
-  showDiagnosticGutter: boolean;
   showIndentGuides: boolean;
   showColorTools: boolean;
   showMinimap: boolean;
@@ -137,7 +136,6 @@ interface EditorSettingsState {
   setShowInlineDiagnostics: (value: boolean) => void;
   setShowCompactDiagnostics: (value: boolean) => void;
   setShowFoldGutter: (value: boolean) => void;
-  setShowDiagnosticGutter: (value: boolean) => void;
   setShowIndentGuides: (value: boolean) => void;
   setShowColorTools: (value: boolean) => void;
   setShowMinimap: (value: boolean) => void;
@@ -184,7 +182,6 @@ const MAX_CUSTOM_FONT_DATA_URL_LENGTH = 7_000_000;
 const DEFAULT_SHOW_INLINE_DIAGNOSTICS = true;
 const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
 const DEFAULT_SHOW_FOLD_GUTTER = false;
-const DEFAULT_SHOW_DIAGNOSTIC_GUTTER = false;
 const DEFAULT_SHOW_INDENT_GUIDES = true;
 const DEFAULT_SHOW_COLOR_TOOLS = true;
 const DEFAULT_SHOW_MINIMAP = true;
@@ -231,7 +228,6 @@ type PersistedEditorSettingsState = Partial<
     | "showInlineDiagnostics"
     | "showCompactDiagnostics"
     | "showFoldGutter"
-    | "showDiagnosticGutter"
     | "showIndentGuides"
     | "showColorTools"
     | "showMinimap"
@@ -419,10 +415,6 @@ const sanitizePersistedEditorSettings = (
     nextState.showFoldGutter = persistedState.showFoldGutter;
   }
 
-  if (typeof persistedState.showDiagnosticGutter === "boolean") {
-    nextState.showDiagnosticGutter = persistedState.showDiagnosticGutter;
-  }
-
   if (typeof persistedState.showIndentGuides === "boolean") {
     nextState.showIndentGuides = persistedState.showIndentGuides;
   }
@@ -515,7 +507,6 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       showInlineDiagnostics: DEFAULT_SHOW_INLINE_DIAGNOSTICS,
       showCompactDiagnostics: DEFAULT_SHOW_COMPACT_DIAGNOSTICS,
       showFoldGutter: DEFAULT_SHOW_FOLD_GUTTER,
-      showDiagnosticGutter: DEFAULT_SHOW_DIAGNOSTIC_GUTTER,
       showIndentGuides: DEFAULT_SHOW_INDENT_GUIDES,
       showColorTools: DEFAULT_SHOW_COLOR_TOOLS,
       showMinimap: DEFAULT_SHOW_MINIMAP,
@@ -611,9 +602,6 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
 
       setShowFoldGutter: (value: boolean) =>
         set(() => ({ showFoldGutter: value })),
-
-      setShowDiagnosticGutter: (value: boolean) =>
-        set(() => ({ showDiagnosticGutter: value })),
 
       setShowIndentGuides: (value: boolean) =>
         set(() => ({ showIndentGuides: value })),

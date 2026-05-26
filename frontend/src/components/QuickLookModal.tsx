@@ -419,6 +419,7 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
                   crosshairCursor: false,
                   highlightSelectionMatches: true,
                   searchKeymap: false,
+                  lintKeymap: false,
                   tabSize: 4,
                 }}
                 className="h-full"

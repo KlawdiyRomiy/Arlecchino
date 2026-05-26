@@ -48,7 +48,6 @@ import {
   createCodeMirrorColorToolExtension,
   createCodeMirrorFoldExtensions,
   createCodeMirrorIndentGuideExtension,
-  createCodeMirrorLintExtensions,
 } from "../utils/codeMirrorWorkflowExtensions";
 import type { GitLineMarker } from "../utils/git";
 import {
@@ -130,9 +129,6 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   );
   const showFoldGutter = useEditorSettingsStore(
     (state) => state.showFoldGutter,
-  );
-  const showDiagnosticGutter = useEditorSettingsStore(
-    (state) => state.showDiagnosticGutter,
   );
   const showIndentGuides = useEditorSettingsStore(
     (state) => state.showIndentGuides,
@@ -257,8 +253,6 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   );
   const foldControlsEnabled =
     showFoldGutter && editorFeatureBudget.layoutStableFoldGutter;
-  const diagnosticGutterEnabled =
-    showDiagnosticGutter && editorFeatureBudget.runtimeDiagnostics;
   const indentGuidesEnabled =
     showIndentGuides && editorFeatureBudget.runtimeRichEditorFeatures;
   const colorToolsEnabled =
@@ -284,17 +278,10 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     if (editorFeatureBudget.layoutStableGitGutter) {
       result.push(gitGutterExtension);
     }
-    result.push(
-      ...createCodeMirrorLintExtensions(
-        diagnosticGutterEnabled,
-        diagnosticGutterEnabled,
-      ),
-    );
     result.push(...diagnosticsExtension);
     return result;
   }, [
     colorToolsEnabled,
-    diagnosticGutterEnabled,
     diagnosticsExtension,
     editorFeatureBudget.layoutStableGitGutter,
     editorFeatureBudget.runtimeDiagnostics,
@@ -438,6 +425,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
       crosshairCursor: false,
       highlightSelectionMatches: false,
       searchKeymap: false,
+      lintKeymap: false,
       tabSize: 4,
     }),
     [],

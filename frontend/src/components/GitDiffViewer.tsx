@@ -395,6 +395,7 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
       crosshairCursor: false,
       highlightSelectionMatches: false,
       searchKeymap: false,
+      lintKeymap: false,
       tabSize: 4,
     }),
     [],

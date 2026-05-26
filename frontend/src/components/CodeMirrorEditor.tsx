@@ -145,7 +145,6 @@ import {
   createCodeMirrorColorToolExtension,
   createCodeMirrorFoldExtensions,
   createCodeMirrorIndentGuideExtension,
-  createCodeMirrorLintExtensions,
 } from "../utils/codeMirrorWorkflowExtensions";
 import {
   EDITOR_FIND_IN_FILE_EVENT,
@@ -1210,9 +1209,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
   const showFoldGutter = useEditorSettingsStore(
     (state) => state.showFoldGutter,
-  );
-  const showDiagnosticGutter = useEditorSettingsStore(
-    (state) => state.showDiagnosticGutter,
   );
   const showIndentGuides = useEditorSettingsStore(
     (state) => state.showIndentGuides,
@@ -3128,8 +3124,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   );
   const foldControlsEnabled =
     showFoldGutter && editorFeatureBudget.layoutStableFoldGutter;
-  const diagnosticGutterEnabled =
-    showDiagnosticGutter && editorFeatureBudget.runtimeDiagnostics;
   const indentGuidesEnabled =
     showIndentGuides && editorFeatureBudget.runtimeRichEditorFeatures;
   const colorToolsEnabled =
@@ -3175,12 +3169,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       );
     }
 
-    nextExtensions.push(
-      ...createCodeMirrorLintExtensions(
-        diagnosticGutterEnabled,
-        diagnosticGutterEnabled,
-      ),
-    );
     nextExtensions.push(...diagnosticsExtension);
 
     if (editorFeatureBudget.runtimeCompletions) {
@@ -3317,7 +3305,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     editorFeatureBudget.runtimeRichEditorFeatures,
     editorFeatureBudget.runtimeDiagnostics,
     colorToolsEnabled,
-    diagnosticGutterEnabled,
     foldControlsEnabled,
     ghost,
     gitGutterExtension,
@@ -3339,7 +3326,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     editorFeatureBudget.runtimeRichEditorFeatures,
     editorFeatureBudget.runtimeDiagnostics,
     colorToolsEnabled,
-    diagnosticGutterEnabled,
     foldControlsEnabled,
     filePath,
     language,
@@ -3460,6 +3446,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
       crosshairCursor: false,
       highlightSelectionMatches: false,
       searchKeymap: false,
+      lintKeymap: false,
       tabSize: 4,
     }),
     [],

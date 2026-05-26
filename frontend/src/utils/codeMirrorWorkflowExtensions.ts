@@ -1,6 +1,5 @@
 import type { Extension } from "@codemirror/state";
 import { foldGutter, foldKeymap } from "@codemirror/language";
-import { lintGutter, lintKeymap } from "@codemirror/lint";
 import { keymap } from "@codemirror/view";
 import { indentationMarkers } from "@replit/codemirror-indentation-markers";
 import { color } from "@uiw/codemirror-extensions-color";
@@ -16,22 +15,6 @@ export function createCodeMirrorFoldExtensions(
   }
   if (enableKeymap) {
     extensions.push(keymap.of(foldKeymap));
-  }
-
-  return extensions;
-}
-
-export function createCodeMirrorLintExtensions(
-  showGutter: boolean,
-  enableNavigation: boolean,
-): Extension[] {
-  const extensions: Extension[] = [];
-
-  if (showGutter) {
-    extensions.push(lintGutter());
-  }
-  if (enableNavigation) {
-    extensions.push(keymap.of(lintKeymap));
   }
 
   return extensions;

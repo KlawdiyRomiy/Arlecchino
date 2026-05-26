@@ -888,14 +888,6 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
     keywords: ["fold", "gutter", "collapse", "outline"],
   },
   {
-    id: "diagnostic-gutter",
-    tab: "diagnostics",
-    label: "Problem gutter",
-    description:
-      "Opt into gutter markers and navigation for editor diagnostics.",
-    keywords: ["lint", "diagnostics", "problems", "gutter"],
-  },
-  {
     id: "show-minimap",
     tab: "diagnostics",
     label: "Show minimap",
@@ -1372,7 +1364,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     showInlineDiagnostics,
     showCompactDiagnostics,
     showFoldGutter,
-    showDiagnosticGutter,
     showIndentGuides,
     showColorTools,
     showMinimap,
@@ -1398,7 +1389,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowInlineDiagnostics,
     setShowCompactDiagnostics,
     setShowFoldGutter,
-    setShowDiagnosticGutter,
     setShowIndentGuides,
     setShowColorTools,
     setShowMinimap,
@@ -4535,16 +4525,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 settingId="fold-gutter"
                                 highlighted={
                                   highlightedSettingId === "fold-gutter"
-                                }
-                              />
-                              <SwitchRow
-                                title="Problem gutter"
-                                description="Show lint markers in the gutter and enable problem navigation keys."
-                                checked={showDiagnosticGutter}
-                                onCheckedChange={setShowDiagnosticGutter}
-                                settingId="diagnostic-gutter"
-                                highlighted={
-                                  highlightedSettingId === "diagnostic-gutter"
                                 }
                               />
                               <SwitchRow

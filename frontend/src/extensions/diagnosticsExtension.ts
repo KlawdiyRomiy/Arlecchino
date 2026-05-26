@@ -6,10 +6,6 @@ import {
   type ChangeDesc,
 } from "@codemirror/state";
 import {
-  setDiagnostics,
-  type Diagnostic as CodeMirrorDiagnostic,
-} from "@codemirror/lint";
-import {
   Decoration,
   EditorView,
   layer,
@@ -32,8 +28,7 @@ type CodeMirrorDocLike = {
   length: number;
 };
 
-type CodeMirrorDiagnosticSeverity = CodeMirrorDiagnostic["severity"];
-type InlineDiagnosticSeverity = Exclude<CodeMirrorDiagnosticSeverity, "hint">;
+type InlineDiagnosticSeverity = "error" | "warning" | "info";
 
 export interface InlineDiagnosticsLine {
   from: number;
@@ -68,26 +63,14 @@ const inlineSeverityPriority: Record<InlineDiagnosticSeverity, number> = {
   info: 2,
 };
 
-const mapSeverity = (severity: number): CodeMirrorDiagnosticSeverity => {
+const mapSeverity = (severity: number): InlineDiagnosticSeverity => {
   if (severity === 1) {
     return "error";
   }
   if (severity === 2) {
     return "warning";
   }
-  if (severity === 4) {
-    return "hint";
-  }
   return "info";
-};
-
-const toInlineSeverity = (
-  severity: CodeMirrorDiagnosticSeverity,
-): InlineDiagnosticSeverity => {
-  if (severity === "hint") {
-    return "info";
-  }
-  return severity;
 };
 
 const clamp = (value: number, min: number, max: number): number => {
@@ -140,36 +123,18 @@ const getProblemsSignature = (
   problems: readonly DiagnosticsProblem[],
 ): string => problems.map((problem) => problem.id).join("\u0000");
 
-export const buildCodeMirrorDiagnostics = (
-  doc: CodeMirrorDocLike,
-  problems: readonly DiagnosticsProblem[],
-): CodeMirrorDiagnostic[] => {
-  return problems.map((problem) => {
-    const from = getOffset(doc, problem.range.start);
-    const to = Math.max(from, getOffset(doc, problem.range.end));
-    return {
-      from,
-      to,
-      severity: mapSeverity(problem.severity),
-      message: problem.message,
-      source: problem.source || undefined,
-    } satisfies CodeMirrorDiagnostic;
-  });
-};
-
 export const buildInlineDiagnosticsSnapshot = (
   doc: CodeMirrorDocLike,
   problems: readonly DiagnosticsProblem[],
 ): InlineDiagnosticsLine[] => {
   return problems
     .map((problem) => {
-      const severity = toInlineSeverity(mapSeverity(problem.severity));
       const from = getOffset(doc, problem.range.start);
       const to = Math.max(from, getOffset(doc, problem.range.end));
       return {
         from,
         to,
-        severity,
+        severity: mapSeverity(problem.severity),
         message: problem.message,
         source: problem.source,
         count: 1,
@@ -616,22 +581,13 @@ export const diagnosticsTheme = EditorView.theme({
   },
 });
 
-const mergeEffects = (
-  effects: StateEffect<unknown> | readonly StateEffect<unknown>[] | undefined,
+const buildInlineDiagnosticsEffects = (
   inlineSnapshot: readonly InlineDiagnosticsLine[],
   showInlineMessages: boolean,
-) => {
-  const normalized = Array.isArray(effects)
-    ? [...effects]
-    : effects
-      ? [effects]
-      : [];
-  normalized.push(setInlineDiagnosticsEffect.of(inlineSnapshot));
-  normalized.push(
-    setInlineDiagnosticsMessagesVisibleEffect.of(showInlineMessages),
-  );
-  return normalized;
-};
+): StateEffect<unknown>[] => [
+  setInlineDiagnosticsEffect.of(inlineSnapshot),
+  setInlineDiagnosticsMessagesVisibleEffect.of(showInlineMessages),
+];
 
 const selectProblemsForFile =
   (filePath: string) =>
@@ -717,15 +673,10 @@ class DiagnosticsBridge {
       }
 
       const problems = this.pendingProblems;
-      const diagnostics = buildCodeMirrorDiagnostics(
-        this.view.state.doc,
-        problems,
-      );
       const inlineSnapshot = buildInlineDiagnosticsSnapshot(
         this.view.state.doc,
         problems,
       );
-      const transaction = setDiagnostics(this.view.state, diagnostics);
       this.appliedSignature = this.pendingSignature;
       if (problems.length > 0) {
         lastVisibleProblemsByView.set(this.view, problems);
@@ -733,9 +684,7 @@ class DiagnosticsBridge {
         lastVisibleProblemsByView.delete(this.view);
       }
       this.view.dispatch({
-        ...transaction,
-        effects: mergeEffects(
-          transaction.effects,
+        effects: buildInlineDiagnosticsEffects(
           inlineSnapshot,
           this.showInlineMessages,
         ),
