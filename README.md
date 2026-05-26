@@ -45,6 +45,15 @@ will warn that macOS cannot verify the developer or check the app for malicious
 software. That warning is expected for this beta until signing and notarization
 exist.
 
+For owner/local-tester builds, release scripts also support
+`--sign local-identity`. This requires an explicitly created local code-signing
+certificate, defaults to the identity name `Arlecchino Local Code Signing`, and
+does not create or trust certificates automatically. It is intended to keep the
+same local signing identity across updates on that Mac so macOS folder
+permissions are less likely to reset after each app replacement. It is not
+public Gatekeeper trust and is not a substitute for future Developer ID signing
+and notarization.
+
 ## DMG Launch Path
 
 Use the macOS beta DMG from the release artifacts:
@@ -92,6 +101,9 @@ See [FEATURES.md](FEATURES.md) for the feature and demo-video map.
 - Builds do not have Developer ID signing or notarization; Gatekeeper will warn
   or block first launch until the user explicitly opens the trusted beta
   artifact.
+- Ad-hoc local builds may trigger macOS folder-access prompts again after app
+  updates. Use the documented `local-identity` signing mode only for explicit
+  owner/local-tester workflows on a Mac where the local certificate is trusted.
 - AI provider availability depends on provider accounts, BYOK/API-key or OAuth
   setup, configured external CLIs/runtimes, and model capability.
 - Background agent behavior is preview-only.

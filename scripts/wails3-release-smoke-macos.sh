@@ -40,7 +40,7 @@ Usage: scripts/wails3-release-smoke-macos.sh [options]
 
 Options:
   --report <path>   Write a JSON report for all smoke steps.
-  --sign <mode>     none, adhoc, or developer-id. Default: adhoc.
+  --sign <mode>     none, adhoc, local-identity, or developer-id. Default: adhoc.
 EOF
 }
 

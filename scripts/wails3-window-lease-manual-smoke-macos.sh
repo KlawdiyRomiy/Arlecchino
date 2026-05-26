@@ -54,7 +54,7 @@ Options:
   --app-bundle <path>  Temporary .app path.
   --report <path>      JSON manual report path.
   --bundle-id <id>     Temporary bundle id.
-  --sign <mode>        none, adhoc, or developer-id.
+  --sign <mode>        none, adhoc, local-identity, or developer-id.
 
 Manual focus: Terminal detached PTY/focus/session continuity.
 EOF

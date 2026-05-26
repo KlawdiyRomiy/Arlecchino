@@ -18,20 +18,25 @@ fi
 APP_BUNDLE=""
 MODE="${ARLE_WAILS3_SIGN_MODE:-adhoc}"
 IDENTITY="${ARLE_WAILS3_DEVELOPER_ID_IDENTITY:-}"
+LOCAL_IDENTITY="${ARLE_WAILS3_LOCAL_CODESIGN_IDENTITY:-Arlecchino Local Code Signing}"
 NOTARIZE="${ARLE_WAILS3_NOTARIZE:-0}"
 KEYCHAIN_PROFILE="${ARLE_WAILS3_NOTARY_KEYCHAIN_PROFILE:-}"
 TEAM_ID="${ARLE_WAILS3_NOTARY_TEAM_ID:-}"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/wails3-sign-macos.sh --app-bundle <path> [--mode adhoc|developer-id] [--notarize]
+Usage: scripts/wails3-sign-macos.sh --app-bundle <path> [--mode adhoc|local-identity|developer-id] [--notarize]
 
 Environment for developer-id mode:
   ARLE_WAILS3_DEVELOPER_ID_IDENTITY
   ARLE_WAILS3_NOTARY_KEYCHAIN_PROFILE
   ARLE_WAILS3_NOTARY_TEAM_ID
 
-Default mode is ad-hoc signing for local beta smoke.
+Environment for local-identity mode:
+  ARLE_WAILS3_LOCAL_CODESIGN_IDENTITY
+
+Default mode is ad-hoc signing for local beta smoke. local-identity uses an
+explicit local code-signing certificate and never creates or trusts one for you.
 EOF
 }
 
@@ -71,6 +76,18 @@ fi
 case "$MODE" in
   adhoc)
     SIGN_IDENTITY="-"
+    ;;
+  local-identity)
+    if [[ -z "$LOCAL_IDENTITY" ]]; then
+      echo "ERROR: local-identity mode requires ARLE_WAILS3_LOCAL_CODESIGN_IDENTITY." >&2
+      exit 1
+    fi
+    if ! /usr/bin/security find-identity -p codesigning -v 2>/dev/null | grep -F -- "$LOCAL_IDENTITY" >/dev/null; then
+      echo "ERROR: local-identity mode requires a valid local code-signing identity named or matching: $LOCAL_IDENTITY" >&2
+      echo "Create and trust that identity explicitly in Keychain Access, then rerun this script." >&2
+      exit 1
+    fi
+    SIGN_IDENTITY="$LOCAL_IDENTITY"
     ;;
   developer-id)
     if [[ -z "$IDENTITY" ]]; then

@@ -75,7 +75,7 @@ Options:
   --app-bundle <path>   Temporary .app path.
   --report <path>       JSON report path.
   --bundle-id <id>      Temporary bundle id.
-  --sign <mode>         none, adhoc, or developer-id.
+  --sign <mode>         none, adhoc, local-identity, or developer-id.
 EOF
       exit 0
       ;;

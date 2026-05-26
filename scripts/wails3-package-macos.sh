@@ -47,7 +47,7 @@ Options:
   --min-macos <version> LSMinimumSystemVersion.
   --skip-build          Reuse an existing --output binary.
   --skip-frontend       Pass --skip-frontend to the v3 build script.
-  --sign <mode>         none, adhoc, or developer-id.
+  --sign <mode>         none, adhoc, local-identity, or developer-id.
 
 Build artifacts are written outside the repository by default through wails.json build:dir.
 EOF

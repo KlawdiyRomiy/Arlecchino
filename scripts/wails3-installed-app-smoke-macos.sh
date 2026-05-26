@@ -8,6 +8,8 @@ APP_BUNDLE="/Applications/Arlecchino.app"
 REPORT_PATH=""
 SHOULD_LAUNCH=1
 REQUIRE_NO_DEV_ORPHANS="${ARLE_WAILS3_INSTALLED_SMOKE_REQUIRE_NO_DEV_ORPHANS:-1}"
+EXPECTED_BUNDLE_ID="${ARLE_WAILS3_INSTALLED_SMOKE_EXPECTED_BUNDLE_ID:-io.arlecchino.ide.local-beta}"
+EXPECTED_IDENTITY_KIND="${ARLE_WAILS3_INSTALLED_SMOKE_EXPECTED_IDENTITY_KIND:-any}"
 
 usage() {
   cat <<'EOF'
@@ -20,6 +22,10 @@ Options:
   --app-bundle <path>       App bundle to inspect. Defaults to /Applications/Arlecchino.app
   --report <path>           Write JSON report to this path. Defaults to a temp file.
   --no-launch               Do not launch the app if it is not already running.
+  --expected-bundle-id <id> Expected CFBundleIdentifier. Defaults to io.arlecchino.ide.local-beta.
+  --allow-any-bundle-id     Do not fail on CFBundleIdentifier mismatch.
+  --expected-identity-kind <kind>
+                            any, adhoc, local-certificate, developer-id, or unsigned.
   --allow-dev-orphans       Warn about stale dev mcp-server processes without failing.
   --require-no-dev-orphans  Fail when stale dev mcp-server processes are present. Default.
   --help                    Show this help.
@@ -39,6 +45,18 @@ while [[ $# -gt 0 ]]; do
     --no-launch)
       SHOULD_LAUNCH=0
       shift
+      ;;
+    --expected-bundle-id)
+      EXPECTED_BUNDLE_ID="${2:-}"
+      shift 2
+      ;;
+    --allow-any-bundle-id)
+      EXPECTED_BUNDLE_ID=""
+      shift
+      ;;
+    --expected-identity-kind)
+      EXPECTED_IDENTITY_KIND="${2:-}"
+      shift 2
       ;;
     --allow-dev-orphans)
       REQUIRE_NO_DEV_ORPHANS=0
@@ -73,6 +91,15 @@ fi
 if [[ -z "$REPORT_PATH" ]]; then
   REPORT_PATH="$(mktemp -t arlecchino-installed-app-smoke.XXXXXX.json)"
 fi
+
+case "$EXPECTED_IDENTITY_KIND" in
+  any|adhoc|local-certificate|developer-id|unsigned)
+    ;;
+  *)
+    echo "--expected-identity-kind must be any, adhoc, local-certificate, developer-id, or unsigned" >&2
+    exit 2
+    ;;
+esac
 
 if ! command -v node >/dev/null 2>&1; then
   echo "node is required to write the smoke report" >&2
@@ -123,6 +150,8 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 PLIST_JSON="$TMP_DIR/info-plist.json"
 CODESIGN_OUT="$TMP_DIR/codesign.txt"
+CODESIGN_DISPLAY_OUT="$TMP_DIR/codesign-display.txt"
+CODESIGN_REQUIREMENT_OUT="$TMP_DIR/codesign-requirement.txt"
 SPCTL_OUT="$TMP_DIR/spctl.txt"
 PROCESS_OUT="$TMP_DIR/processes.txt"
 TCP_OUT="$TMP_DIR/tcp-listeners.txt"
@@ -137,6 +166,10 @@ fi
 
 CODESIGN_EXIT=0
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE" >"$CODESIGN_OUT" 2>&1 || CODESIGN_EXIT=$?
+CODESIGN_DISPLAY_EXIT=0
+codesign -dv "$APP_BUNDLE" >"$CODESIGN_DISPLAY_OUT" 2>&1 || CODESIGN_DISPLAY_EXIT=$?
+CODESIGN_REQUIREMENT_EXIT=0
+codesign -d -r- "$APP_BUNDLE" >"$CODESIGN_REQUIREMENT_OUT" 2>&1 || CODESIGN_REQUIREMENT_EXIT=$?
 
 SPCTL_EXIT=0
 spctl -a -vv --type execute "$APP_BUNDLE" >"$SPCTL_OUT" 2>&1 || SPCTL_EXIT=$?
@@ -170,9 +203,15 @@ APP_EXECUTABLE="$APP_EXECUTABLE" \
 LAUNCHED_BY_SMOKE="$LAUNCHED_BY_SMOKE" \
 SHOULD_LAUNCH="$SHOULD_LAUNCH" \
 REQUIRE_NO_DEV_ORPHANS="$REQUIRE_NO_DEV_ORPHANS" \
+EXPECTED_BUNDLE_ID="$EXPECTED_BUNDLE_ID" \
+EXPECTED_IDENTITY_KIND="$EXPECTED_IDENTITY_KIND" \
 PLIST_JSON="$PLIST_JSON" \
 CODESIGN_OUT="$CODESIGN_OUT" \
 CODESIGN_EXIT="$CODESIGN_EXIT" \
+CODESIGN_DISPLAY_OUT="$CODESIGN_DISPLAY_OUT" \
+CODESIGN_DISPLAY_EXIT="$CODESIGN_DISPLAY_EXIT" \
+CODESIGN_REQUIREMENT_OUT="$CODESIGN_REQUIREMENT_OUT" \
+CODESIGN_REQUIREMENT_EXIT="$CODESIGN_REQUIREMENT_EXIT" \
 SPCTL_OUT="$SPCTL_OUT" \
 SPCTL_EXIT="$SPCTL_EXIT" \
 PROCESS_OUT="$PROCESS_OUT" \
@@ -210,6 +249,39 @@ const parseProcessLine = (line) => {
   };
 };
 
+const parseCodesignDisplay = (output) => {
+  const lineValue = (key) => {
+    const match = output.match(new RegExp(`^${key}=(.*)$`, "m"));
+    return match ? match[1].trim() : "";
+  };
+  return {
+    signature: lineValue("Signature"),
+    cdHash: lineValue("CDHash"),
+    teamIdentifier: lineValue("TeamIdentifier"),
+    authorities: [...output.matchAll(/^Authority=(.*)$/gm)].map((match) => match[1].trim()),
+    raw: output,
+  };
+};
+
+const inferIdentityKind = ({ codesignPassed, display, designatedRequirement }) => {
+  if (!codesignPassed) {
+    return "unsigned";
+  }
+  if (display.signature === "adhoc" || /^(?:#\s*)?designated\s*=>\s*cdhash\s+/m.test(designatedRequirement.trim())) {
+    return "adhoc";
+  }
+  if (display.authorities.some((authority) => authority.includes("Developer ID Application"))) {
+    return "developer-id";
+  }
+  return "local-certificate";
+};
+
+const permissionStabilityForIdentity = (identityKind) => {
+  if (identityKind === "developer-id") return "public-stable";
+  if (identityKind === "local-certificate") return "local-machine-stable";
+  return "unstable-after-update";
+};
+
 let infoPlist = {};
 try {
   infoPlist = JSON.parse(readText(process.env.PLIST_JSON));
@@ -222,10 +294,16 @@ const tcpListeners = readLines(process.env.TCP_OUT);
 const mcpSockets = readLines(process.env.MCP_SOCKETS_OUT);
 const devOrphans = readLines(process.env.DEV_ORPHANS_OUT).map(parseProcessLine);
 const codesignOutput = readText(process.env.CODESIGN_OUT).trim();
+const codesignDisplayOutput = readText(process.env.CODESIGN_DISPLAY_OUT).trim();
+const designatedRequirement = readText(process.env.CODESIGN_REQUIREMENT_OUT).trim();
 const gatekeeperOutput = readText(process.env.SPCTL_OUT).trim();
 const codesignExitCode = Number(process.env.CODESIGN_EXIT || "1");
+const codesignDisplayExitCode = Number(process.env.CODESIGN_DISPLAY_EXIT || "1");
+const codesignRequirementExitCode = Number(process.env.CODESIGN_REQUIREMENT_EXIT || "1");
 const gatekeeperExitCode = Number(process.env.SPCTL_EXIT || "1");
 const requireNoDevOrphans = process.env.REQUIRE_NO_DEV_ORPHANS === "1";
+const expectedBundleId = process.env.EXPECTED_BUNDLE_ID || "";
+const expectedIdentityKind = process.env.EXPECTED_IDENTITY_KIND || "any";
 const appBundlePath = process.env.APP_BUNDLE;
 const appBundleName = path.basename(appBundlePath);
 const appExists = fs.existsSync(appBundlePath);
@@ -262,6 +340,18 @@ const runtimeAssetFiles = runtimeAssetNames.map((name) => {
 const runtimeAssetsPassed = runtimeAssetFiles.every(
   (file) => file.exists && file.readable && file.size > 0,
 );
+const codesignDisplay = parseCodesignDisplay(codesignDisplayOutput);
+const designatedRequirementIsCdhashOnly = /^(?:#\s*)?designated\s*=>\s*cdhash\s+/m.test(designatedRequirement);
+const identityKind = inferIdentityKind({
+  codesignPassed: codesignExitCode === 0,
+  display: codesignDisplay,
+  designatedRequirement,
+});
+const permissionStability = permissionStabilityForIdentity(identityKind);
+const bundleIdMatches = !expectedBundleId || infoPlist.CFBundleIdentifier === expectedBundleId;
+const identityKindMatches = expectedIdentityKind === "any" || identityKind === expectedIdentityKind;
+const localIdentityStable = identityKind !== "local-certificate" || !designatedRequirementIsCdhashOnly;
+const gatekeeperExpectedWarning = identityKind !== "developer-id" && gatekeeperExitCode !== 0;
 
 const report = {
   generatedAt: new Date().toISOString(),
@@ -286,18 +376,49 @@ const report = {
       CFBundleURLTypes: infoPlist.CFBundleURLTypes || [],
       CFBundleDocumentTypes: infoPlist.CFBundleDocumentTypes || [],
     },
+    expectedBundleIdentifier: expectedBundleId || null,
+    bundleIdentifierMatches: bundleIdMatches,
   },
   codesign: {
     exitCode: codesignExitCode,
     passed: codesignExitCode === 0,
     output: codesignOutput,
+    identityKind,
+    expectedIdentityKind,
+    identityKindMatches,
+    permissionStability,
+    permissionWarning:
+      identityKind === "adhoc"
+        ? "Ad-hoc signatures are tied to the current code instance; macOS may ask for folder access again after updates."
+        : identityKind === "local-certificate"
+          ? "Local certificate identity is intended to keep macOS permissions stable on this Mac, but it is not public Developer ID trust."
+          : identityKind === "developer-id"
+            ? "Developer ID is the public outside-App-Store identity path when paired with notarization."
+            : "Unsigned apps have no stable macOS signing identity.",
+    codeIdentity: {
+      signature: codesignDisplay.signature || null,
+      cdHash: codesignDisplay.cdHash || null,
+      authorities: codesignDisplay.authorities,
+      teamIdentifier: codesignDisplay.teamIdentifier || null,
+      designatedRequirement,
+      designatedRequirementIsCdhashOnly,
+      localIdentityStable,
+      displayExitCode: codesignDisplayExitCode,
+      requirementExitCode: codesignRequirementExitCode,
+      displayOutput: codesignDisplay.raw,
+    },
   },
   gatekeeper: {
     exitCode: gatekeeperExitCode,
-    status: gatekeeperExitCode === 0 ? "accepted" : "expected-rejected-for-adhoc-local-beta",
+    status: gatekeeperExitCode === 0
+      ? "accepted"
+      : identityKind === "developer-id"
+        ? "rejected"
+        : "expected-rejected-for-no-developer-id-local-beta",
+    expectedWarning: gatekeeperExpectedWarning,
     output: gatekeeperOutput,
     note:
-      "Ad-hoc local beta builds are expected to be rejected by spctl when they are not Developer ID signed and notarized.",
+      "No-Developer-ID local beta builds are expected to be rejected by spctl even when locally code signed.",
   },
   process: {
     launchedBySmoke: process.env.LAUNCHED_BY_SMOKE === "1",
@@ -331,8 +452,11 @@ const report = {
 report.passed =
   report.appBundle.exists &&
   report.appBundle.name === report.appBundle.expectedName &&
+  report.appBundle.bundleIdentifierMatches &&
   report.appBundle.executableExists &&
   report.codesign.passed &&
+  report.codesign.identityKindMatches &&
+  report.codesign.codeIdentity.localIdentityStable &&
   report.runtimeAssets.passed &&
   (!shouldLaunch || report.process.running) &&
   !report.network.hasArlecchinoOrWailsTCPListener &&
@@ -346,6 +470,8 @@ console.log(JSON.stringify({
   passed: report.passed,
   appBundle: report.appBundle.path,
   codesign: report.codesign.passed,
+  identityKind: report.codesign.identityKind,
+  permissionStability: report.codesign.permissionStability,
   gatekeeper: report.gatekeeper.status,
   running: report.process.running,
   runtimeAssets: report.runtimeAssets.passed,

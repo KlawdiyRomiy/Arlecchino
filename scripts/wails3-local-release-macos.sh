@@ -97,7 +97,7 @@ Options:
   --bundle-id <id>      CFBundleIdentifier.
   --min-macos <version> Minimum macOS version. Default: 11.0.
   --arch <target>       arm64, amd64, or universal. Default: universal.
-  --sign <mode>         adhoc, developer-id, or none. Default: adhoc.
+  --sign <mode>         adhoc, local-identity, developer-id, or none. Default: adhoc.
   --create-dmg          Create arlecchino-macos-<arch>.dmg through create-dmg or npx create-dmg.
   --skip-dmg            Do not create a DMG.
   --run-smoke           Run the existing Wails v3 release smoke suite.
@@ -116,7 +116,9 @@ Options:
                          Output derived public key path.
   --report <path>       JSON evidence report path.
 
-This profile is for local beta smoke without Apple Developer ID trust.
+This profile is for local beta smoke without Apple Developer ID trust. Use
+local-identity only after explicitly creating and trusting a local code-signing
+certificate named by ARLE_WAILS3_LOCAL_CODESIGN_IDENTITY.
 EOF
 }
 
@@ -250,10 +252,10 @@ case "$ARCH_TARGET" in
 esac
 
 case "$SIGN_MODE" in
-  none|adhoc|developer-id)
+  none|adhoc|local-identity|developer-id)
     ;;
   *)
-    echo "ERROR: --sign must be none, adhoc, or developer-id." >&2
+    echo "ERROR: --sign must be none, adhoc, local-identity, or developer-id." >&2
     exit 1
     ;;
 esac
@@ -503,6 +505,10 @@ fi
 set +e
 CODESIGN_OUTPUT="$(/usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE" 2>&1)"
 CODESIGN_EXIT="$?"
+CODESIGN_DISPLAY="$(/usr/bin/codesign -dv "$APP_BUNDLE" 2>&1)"
+CODESIGN_DISPLAY_EXIT="$?"
+CODESIGN_REQUIREMENT="$(/usr/bin/codesign -d -r- "$APP_BUNDLE" 2>&1)"
+CODESIGN_REQUIREMENT_EXIT="$?"
 SPCTL_OUTPUT="$(/usr/sbin/spctl -a -vv --type execute "$APP_BUNDLE" 2>&1)"
 SPCTL_EXIT="$?"
 LIPO_INFO="$(lipo -info "$APP_BUNDLE/Contents/MacOS/$APP_NAME" 2>&1)"
@@ -518,6 +524,7 @@ export ARLE_RELEASE_MIN_MACOS="$MIN_MACOS_VERSION"
 export ARLE_RELEASE_ARCH_TARGET="$ARCH_TARGET"
 export ARLE_RELEASE_PUBLIC_ARCH_LABEL="$PUBLIC_ARCH_LABEL"
 export ARLE_RELEASE_SIGN_MODE="$SIGN_MODE"
+export ARLE_RELEASE_LOCAL_CODESIGN_IDENTITY="${ARLE_WAILS3_LOCAL_CODESIGN_IDENTITY:-Arlecchino Local Code Signing}"
 export ARLE_RELEASE_APP_BUNDLE_NAME="$APP_NAME.app"
 export ARLE_RELEASE_PUBLIC_ASSET_STEM="$PUBLIC_ASSET_STEM"
 export ARLE_RELEASE_PUBLIC_ZIP_NAME="$PUBLIC_ZIP_NAME"
@@ -540,6 +547,10 @@ export ARLE_RELEASE_SMOKE_LOG="$SMOKE_LOG"
 export ARLE_RELEASE_SMOKE_REPORT="$SMOKE_REPORT"
 export ARLE_RELEASE_CODESIGN_OUTPUT="$CODESIGN_OUTPUT"
 export ARLE_RELEASE_CODESIGN_EXIT="$CODESIGN_EXIT"
+export ARLE_RELEASE_CODESIGN_DISPLAY="$CODESIGN_DISPLAY"
+export ARLE_RELEASE_CODESIGN_DISPLAY_EXIT="$CODESIGN_DISPLAY_EXIT"
+export ARLE_RELEASE_CODESIGN_REQUIREMENT="$CODESIGN_REQUIREMENT"
+export ARLE_RELEASE_CODESIGN_REQUIREMENT_EXIT="$CODESIGN_REQUIREMENT_EXIT"
 export ARLE_RELEASE_SPCTL_OUTPUT="$SPCTL_OUTPUT"
 export ARLE_RELEASE_SPCTL_EXIT="$SPCTL_EXIT"
 export ARLE_RELEASE_LIPO_INFO="$LIPO_INFO"
@@ -624,13 +635,44 @@ const parseArchs = (lipoInfo) => {
   if (/arm64/.test(lipoInfo)) archs.add("arm64");
   return [...archs].sort();
 };
+const parseCodesignDisplay = (output) => {
+  const lineValue = (key) => {
+    const match = output.match(new RegExp(`^${key}=(.*)$`, "m"));
+    return match ? match[1].trim() : "";
+  };
+  return {
+    signature: lineValue("Signature"),
+    cdHash: lineValue("CDHash"),
+    teamIdentifier: lineValue("TeamIdentifier"),
+    authorities: [...output.matchAll(/^Authority=(.*)$/gm)].map((match) => match[1].trim()),
+    raw: output,
+  };
+};
+const identityKindForSignMode = (mode) => {
+  if (mode === "adhoc") return "adhoc";
+  if (mode === "local-identity") return "local-certificate";
+  if (mode === "developer-id") return "developer-id";
+  if (mode === "none") return "unsigned";
+  return "unknown";
+};
+const permissionStabilityForIdentity = (identityKind) => {
+  if (identityKind === "developer-id") return "public-stable";
+  if (identityKind === "local-certificate") return "local-machine-stable";
+  return "unstable-after-update";
+};
 const signMode = env.ARLE_RELEASE_SIGN_MODE;
+const codesignDisplay = parseCodesignDisplay(env.ARLE_RELEASE_CODESIGN_DISPLAY || "");
+const designatedRequirement = env.ARLE_RELEASE_CODESIGN_REQUIREMENT || "";
+const designatedRequirementIsCdhashOnly = /^(?:#\s*)?designated\s*=>\s*cdhash\s+/m.test(designatedRequirement.trim());
+const identityKind = identityKindForSignMode(signMode);
+const permissionStability = permissionStabilityForIdentity(identityKind);
 const spctlExit = Number(env.ARLE_RELEASE_SPCTL_EXIT || "0");
 const spctlStatus = spctlExit === 0
   ? "accepted"
-  : signMode === "adhoc"
-    ? "expected-rejected"
-    : "rejected";
+  : signMode === "developer-id"
+    ? "rejected"
+    : "expected-rejected";
+const gatekeeperExpectedWarning = signMode !== "developer-id" && spctlExit !== 0;
 const report = {
   runtime: "wails",
   platform: "darwin",
@@ -651,14 +693,29 @@ const report = {
     ].filter(Boolean).join(" ")),
   },
   trustModel: {
-    appleDeveloperAvailable: false,
-    publicTrustedDistribution: false,
-    localBetaOnly: true,
+    appleDeveloperAvailable: signMode === "developer-id",
+    publicTrustedDistribution: signMode === "developer-id" && spctlExit === 0,
+    localBetaOnly: signMode !== "developer-id" || spctlExit !== 0,
+    identityKind,
+    permissionStability,
+    permissionStabilityNote:
+      identityKind === "adhoc"
+        ? "Ad-hoc signatures are tied to one code instance; macOS folder permissions may be requested again after updates."
+        : identityKind === "local-certificate"
+          ? "A stable local certificate can reduce repeated macOS permission prompts on this Mac, but is not public Developer ID trust."
+          : identityKind === "developer-id"
+            ? "Developer ID plus notarization is the public outside-App-Store trust path."
+            : "Unsigned artifacts have no stable macOS signing identity.",
     developerId: {
       status: signMode === "developer-id" ? "configured" : "skipped-no-developer-id",
     },
+    localIdentity: {
+      status: signMode === "local-identity" ? "configured-local-certificate" : "skipped",
+      identity: signMode === "local-identity" ? env.ARLE_RELEASE_LOCAL_CODESIGN_IDENTITY : "",
+      publicTrustedDistribution: false,
+    },
     notarization: {
-      status: "skipped-no-developer-id",
+      status: signMode === "developer-id" ? "available-if-notary-env-configured" : "skipped-no-developer-id",
     },
   },
   target: {
@@ -682,6 +739,20 @@ const report = {
   },
   signing: {
     mode: signMode,
+    identityKind,
+    permissionStability,
+    localIdentityName: signMode === "local-identity" ? env.ARLE_RELEASE_LOCAL_CODESIGN_IDENTITY : "",
+    codeIdentity: {
+      signature: codesignDisplay.signature || null,
+      cdHash: codesignDisplay.cdHash || null,
+      authorities: codesignDisplay.authorities,
+      teamIdentifier: codesignDisplay.teamIdentifier || null,
+      designatedRequirement,
+      designatedRequirementIsCdhashOnly,
+      displayExitCode: Number(env.ARLE_RELEASE_CODESIGN_DISPLAY_EXIT || "0"),
+      requirementExitCode: Number(env.ARLE_RELEASE_CODESIGN_REQUIREMENT_EXIT || "0"),
+      displayOutput: codesignDisplay.raw,
+    },
     codesignVerify: {
       exitCode: Number(env.ARLE_RELEASE_CODESIGN_EXIT || "0"),
       passed: env.ARLE_RELEASE_CODESIGN_EXIT === "0",
@@ -690,7 +761,7 @@ const report = {
     gatekeeper: {
       exitCode: spctlExit,
       status: spctlStatus,
-      expectedWarning: signMode === "adhoc" && spctlExit !== 0,
+      expectedWarning: gatekeeperExpectedWarning,
       output: env.ARLE_RELEASE_SPCTL_OUTPUT || "",
     },
   },
@@ -767,6 +838,12 @@ if (report.artifacts.dmg.requested && report.artifacts.dmg.runtimeAssets.status 
 if (report.smoke.requested && report.smoke.status !== "passed") {
   console.error(JSON.stringify(report, null, 2));
   process.exit(1);
+}
+if (report.signing.mode === "local-identity") {
+  if (report.signing.codeIdentity.signature === "adhoc" || report.signing.codeIdentity.designatedRequirementIsCdhashOnly) {
+    console.error(JSON.stringify(report, null, 2));
+    process.exit(1);
+  }
 }
 NODE
 
