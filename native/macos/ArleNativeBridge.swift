@@ -48,8 +48,11 @@ private final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
 private final class MenuCoordinator: NSObject, NSMenuDelegate {
     static let shared = MenuCoordinator()
 
+    private let aiChatHistoryMenuTitle = "AI Chat History"
+    private let aiChatHistoryActionID = "ai.history"
     private var commandEnabledByTitle: [String: Bool] = [:]
     private var recentProjects: [[String: String]] = []
+    private var aiChatFullscreenActive = false
 
     func configure() {
         DispatchQueue.main.async {
@@ -79,6 +82,9 @@ private final class MenuCoordinator: NSObject, NSMenuDelegate {
                     }
                     return ["title": title, "path": path]
                 }
+            }
+            if let active = payload["aiChatFullscreenActive"] as? Bool {
+                self.aiChatFullscreenActive = active
             }
             self.configure()
         }
@@ -117,6 +123,11 @@ private final class MenuCoordinator: NSObject, NSMenuDelegate {
         emitNativeCallback("menu.openRecent", ["projectPath": path])
     }
 
+    @objc func emitMenuAction(_ sender: NSMenuItem) {
+        guard let actionID = sender.representedObject as? String else { return }
+        emitNativeCallback("menu.action", ["actionId": actionID])
+    }
+
     private func attachDelegates(menu: NSMenu) {
         menu.delegate = self
         for item in menu.items {
@@ -131,6 +142,7 @@ private final class MenuCoordinator: NSObject, NSMenuDelegate {
         updateStandardEditValidation(menu: mainMenu)
         updateCustomCommandValidation(menu: mainMenu)
         updateOpenRecent(menu: mainMenu)
+        updateAIChatFullscreenItems(menu: mainMenu)
     }
 
     private func updateStandardEditValidation(menu: NSMenu) {
@@ -174,6 +186,33 @@ private final class MenuCoordinator: NSObject, NSMenuDelegate {
             item.representedObject = path
             submenu.addItem(item)
         }
+    }
+
+    private func updateAIChatFullscreenItems(menu: NSMenu) {
+        guard
+            let aiMenuItem = menu.item(withTitle: "AI"),
+            let aiMenu = aiMenuItem.submenu
+        else {
+            return
+        }
+
+        for index in stride(from: aiMenu.items.count - 1, through: 0, by: -1) {
+            if aiMenu.items[index].title == aiChatHistoryMenuTitle {
+                aiMenu.removeItem(at: index)
+            }
+        }
+
+        guard aiChatFullscreenActive else { return }
+
+        let item = NSMenuItem(
+            title: aiChatHistoryMenuTitle,
+            action: #selector(emitMenuAction(_:)),
+            keyEquivalent: "d"
+        )
+        item.target = self
+        item.representedObject = aiChatHistoryActionID
+        item.keyEquivalentModifierMask = [.command]
+        aiMenu.addItem(item)
     }
 
     private func findItem(title: String, in menu: NSMenu) -> NSMenuItem? {

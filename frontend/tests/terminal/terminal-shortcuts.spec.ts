@@ -217,6 +217,13 @@ test("shortcut matching is exact for compact and fullscreen panel shortcuts", as
       bubbles: true,
       cancelable: true,
     });
+    const aiHistoryEvent = new KeyboardEvent("keydown", {
+      key: "d",
+      code: "KeyD",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
 
     return {
       fullscreenMatchesFullscreen:
@@ -238,6 +245,8 @@ test("shortcut matching is exact for compact and fullscreen panel shortcuts", as
       problemsFullscreenMatchesCompact: shortcuts.toggleProblems(
         problemsFullscreenEvent,
       ),
+      aiHistoryMatchesHistory: shortcuts.toggleAIHistory(aiHistoryEvent),
+      aiHistoryMatchesTerminal: shortcuts.toggleTerminal(aiHistoryEvent),
     };
   });
 
@@ -251,6 +260,8 @@ test("shortcut matching is exact for compact and fullscreen panel shortcuts", as
   expect(result.problemsCompactMatchesFullscreen).toBe(false);
   expect(result.problemsFullscreenMatchesFullscreen).toBe(true);
   expect(result.problemsFullscreenMatchesCompact).toBe(false);
+  expect(result.aiHistoryMatchesHistory).toBe(true);
+  expect(result.aiHistoryMatchesTerminal).toBe(false);
 });
 
 test("application menu payload exposes updated panel shortcuts", async ({
@@ -270,6 +281,7 @@ test("application menu payload exposes updated panel shortcuts", async ({
       browserPreview: byAction["browser.preview"],
       problems: byAction["problems.toggle"],
       problemsFullscreen: byAction["problems.fullscreen"],
+      aiHistory: byAction["ai.history"],
     };
   });
 
@@ -277,6 +289,7 @@ test("application menu payload exposes updated panel shortcuts", async ({
   expect(result.browserPreview).toEqual(["cmd+b"]);
   expect(result.problems).toEqual(["cmd+i"]);
   expect(result.problemsFullscreen).toEqual(["cmd+shift+i"]);
+  expect(result.aiHistory).toEqual(["cmd+d"]);
 });
 
 test("Fn+F is recognized as the window fullscreen shortcut", async ({

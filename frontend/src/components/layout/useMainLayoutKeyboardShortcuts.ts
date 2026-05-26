@@ -6,6 +6,10 @@ import { useTerminalStore } from "../../stores/terminalStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { isProjectSessionRoute } from "../../shell/projectSessionRoute";
 import type { ThemeId } from "../../styles/themes";
+import {
+  dispatchAIChatFullscreenCommand,
+  type AIChatFullscreenCommand,
+} from "../../utils/aiChatFullscreenCommands";
 import { shortcuts, type ShortcutActionId } from "../../utils/keyboard";
 import { measurePerf } from "../../utils/perf";
 import { isProjectSwitchBlocked } from "../../utils/priorityUI";
@@ -30,6 +34,34 @@ const isPhysicalMacProjectSwitchShortcut = (event: KeyboardEvent): boolean =>
   !event.ctrlKey &&
   !event.altKey &&
   event.code === "Backquote";
+
+const AI_CHAT_FULLSCREEN_COMMAND_SHORTCUT_ACTIONS: Record<
+  AIChatFullscreenCommand,
+  ShortcutActionId
+> = {
+  "history.toggle": "ai.history",
+  "sessionSearch.open": "editor.find",
+  "review.toggle": "git.toggle",
+  "review.expandToggle": "git.fullscreen",
+};
+
+const resolveAIChatFullscreenShortcut = (
+  event: KeyboardEvent,
+): AIChatFullscreenCommand | null => {
+  if (shortcuts.toggleAIHistory(event)) {
+    return "history.toggle";
+  }
+  if (shortcuts.findInFile(event)) {
+    return "sessionSearch.open";
+  }
+  if (shortcuts.toggleGitFullscreen(event)) {
+    return "review.expandToggle";
+  }
+  if (shortcuts.toggleGit(event)) {
+    return "review.toggle";
+  }
+  return null;
+};
 
 interface MainLayoutKeyboardDispatcher {
   close: () => void;
@@ -79,6 +111,7 @@ interface UseMainLayoutKeyboardShortcutsOptions {
   aiChatPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   gitPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
   handleHeldPanelShortcutMove: (event: KeyboardEvent) => boolean;
+  isAIChatTopmostFullscreen: () => boolean;
   isPerspectiveOpenRef: MutableRefObject<boolean>;
   isSettingsOpen: boolean;
   markShortcutActionHandled: (actionId: ShortcutActionId) => void;
@@ -125,6 +158,7 @@ export const useMainLayoutKeyboardShortcuts = ({
   aiChatPreFullscreenRef,
   gitPreFullscreenRef,
   handleHeldPanelShortcutMove,
+  isAIChatTopmostFullscreen,
   isPerspectiveOpenRef,
   isSettingsOpen,
   markShortcutActionHandled,
@@ -164,6 +198,27 @@ export const useMainLayoutKeyboardShortcuts = ({
       });
 
       if (shouldBypassGlobalFindShortcuts(e, activeElement)) {
+        return;
+      }
+
+      const aiChatFullscreenCommand = resolveAIChatFullscreenShortcut(e);
+      if (
+        aiChatFullscreenCommand &&
+        isAIChatTopmostFullscreen() &&
+        !isTerminalShortcutContext &&
+        !isTUIActive &&
+        activeModal === null &&
+        !dispatcher.isOpen &&
+        !isPerspectiveOpenRef.current &&
+        document.body.dataset.shortcutRecording !== "true" &&
+        document.body.dataset.shellModalOpen !== "true"
+      ) {
+        markShortcutActionHandled(
+          AI_CHAT_FULLSCREEN_COMMAND_SHORTCUT_ACTIONS[aiChatFullscreenCommand],
+        );
+        e.preventDefault();
+        e.stopPropagation();
+        dispatchAIChatFullscreenCommand(aiChatFullscreenCommand, "keyboard");
         return;
       }
 
@@ -685,6 +740,7 @@ export const useMainLayoutKeyboardShortcuts = ({
     aiChatPreFullscreenRef,
     gitPreFullscreenRef,
     handleHeldPanelShortcutMove,
+    isAIChatTopmostFullscreen,
     isPerspectiveOpenRef,
     isSettingsOpen,
     markShortcutActionHandled,

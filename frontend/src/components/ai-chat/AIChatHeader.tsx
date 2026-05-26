@@ -289,6 +289,7 @@ export function AIChatHeader({
                       <input
                         autoFocus
                         aria-label="Search current chat session"
+                        data-testid="ai-chat-session-search"
                         placeholder="Search this session..."
                         value={sessionSearch}
                         onChange={(event) =>

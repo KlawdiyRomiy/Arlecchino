@@ -143,6 +143,17 @@ func (a *App) handleNativeMacOSBridgeEvent(eventName string, payload map[string]
 			})
 			a.showLastActiveWindow()
 		}
+	case "menu.action":
+		actionID, _ := payload["actionId"].(string)
+		actionID = strings.TrimSpace(actionID)
+		if actionID == "" {
+			return
+		}
+		if window := a.currentNativeWindow(); window != nil {
+			window.EmitEvent(menuActionEventName, actionID)
+			return
+		}
+		a.emitEvent(menuActionEventName, actionID)
 	case "notification.response":
 		a.handleNativeNotificationBridgeResponse(payload)
 	case "notification.delivered":

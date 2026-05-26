@@ -36,6 +36,7 @@ interface WailsWindow {
 interface ShellMenuStatePayload {
   hasSelection: boolean;
   canCloseFullscreenPanel: boolean;
+  aiChatFullscreenActive: boolean;
   canStopAgent: boolean;
   canCommit: boolean;
   hasGitChanges: boolean;
@@ -43,6 +44,7 @@ interface ShellMenuStatePayload {
 
 interface ApplicationMenuStateDetail {
   canCloseFullscreenPanel?: boolean;
+  aiChatFullscreenActive?: boolean;
 }
 
 const parseMenuActionId = (payload: unknown): ShortcutActionId | null => {
@@ -73,6 +75,7 @@ export const useApplicationMenuBridge = (): void => {
   const unstagedFiles = useGitStore((state) => state.unstagedFiles);
   const conflictedFiles = useGitStore((state) => state.conflictedFiles);
   const [canCloseFullscreenPanel, setCanCloseFullscreenPanel] = useState(false);
+  const [aiChatFullscreenActive, setAIChatFullscreenActive] = useState(false);
   const menuShortcuts = useMemo(
     () => getApplicationMenuShortcutPayload(overrides),
     [overrides],
@@ -97,11 +100,18 @@ export const useApplicationMenuBridge = (): void => {
     () => ({
       hasSelection: false,
       canCloseFullscreenPanel,
+      aiChatFullscreenActive,
       canStopAgent,
       canCommit,
       hasGitChanges,
     }),
-    [canCloseFullscreenPanel, canCommit, canStopAgent, hasGitChanges],
+    [
+      aiChatFullscreenActive,
+      canCloseFullscreenPanel,
+      canCommit,
+      canStopAgent,
+      hasGitChanges,
+    ],
   );
 
   useEffect(() => {
@@ -138,6 +148,9 @@ export const useApplicationMenuBridge = (): void => {
       if (!detail) return;
       if (typeof detail.canCloseFullscreenPanel === "boolean") {
         setCanCloseFullscreenPanel(detail.canCloseFullscreenPanel);
+      }
+      if (typeof detail.aiChatFullscreenActive === "boolean") {
+        setAIChatFullscreenActive(detail.aiChatFullscreenActive);
       }
     };
 

@@ -114,6 +114,7 @@ export type ShortcutActionId =
   | "terminal.fullscreen"
   | "ai.toggle"
   | "ai.fullscreen"
+  | "ai.history"
   | "settings.toggle"
   | "zenMode.toggle"
   | "window.toggleFullscreen"
@@ -221,6 +222,14 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     group: "Panels",
     scope: "global",
     defaultShortcuts: ["cmd+shift+r", "ctrl+shift+r"],
+  },
+  {
+    id: "ai.history",
+    label: "AI history",
+    description: "Open or close AI Chat history in fullscreen mode.",
+    group: "Panels",
+    scope: "global",
+    defaultShortcuts: ["cmd+d"],
   },
   {
     id: "terminal.toggle",
@@ -772,6 +781,7 @@ export const shortcuts = {
   toggleAI: (e: KeyboardEvent) => matchesActionShortcut(e, "ai.toggle"),
   toggleAIFullscreen: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "ai.fullscreen"),
+  toggleAIHistory: (e: KeyboardEvent) => matchesActionShortcut(e, "ai.history"),
   toggleSettings: (e: KeyboardEvent) =>
     matchesActionShortcut(e, "settings.toggle"),
   toggleZenMode: (e: KeyboardEvent) =>

@@ -32,6 +32,15 @@ func TestMenuAcceleratorForActionKeepsCmdWReservedForWebView(t *testing.T) {
 	}
 }
 
+func TestMenuAcceleratorForActionKeepsAIHistoryContextual(t *testing.T) {
+	accelerator := menuAcceleratorForAction("ai.history", map[string][]string{
+		"ai.history": {"cmd+d"},
+	})
+	if accelerator != "" {
+		t.Fatalf("ai.history accelerator = %q, want contextual native item only", accelerator)
+	}
+}
+
 func TestMenuAcceleratorForActionUsesNativeShortcutWhenSupported(t *testing.T) {
 	accelerator := menuAcceleratorForAction("search.toggle", map[string][]string{
 		"search.toggle": {"cmd+f"},

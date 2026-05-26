@@ -127,6 +127,10 @@ import { getCurrentProjectSessionId } from "../../shell/projectSessionRoute";
 import { useAppNotificationStore } from "../../stores/appNotificationStore";
 import { usePerformanceStore } from "../../stores/performanceStore";
 import { useTerminalStore } from "../../stores/terminalStore";
+import {
+  AI_CHAT_FULLSCREEN_COMMAND_EVENT,
+  type AIChatFullscreenCommandDetail,
+} from "../../utils/aiChatFullscreenCommands";
 import { dispatchApplicationMenuAction } from "../../utils/applicationMenu";
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 import { AIChatHeader } from "./AIChatHeader";
@@ -1432,6 +1436,10 @@ export function AIChatPanelContent({
   const hydrationRetryTimersRef = useRef<Record<string, number>>({});
   const hydrationMountedRef = useRef(true);
   const continuityRequestSeqRef = useRef(0);
+  const lastFullscreenCommandRef = useRef<{
+    command: AIChatFullscreenCommandDetail["command"];
+    at: number;
+  } | null>(null);
   const [hydratingRunIds, setHydratingRunIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -3891,6 +3899,27 @@ export function AIChatPanelContent({
     });
   }, [beginChatMotionWindow, closeTransientPopovers, historyOpen]);
 
+  const focusSessionSearchInput = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      panelRef.current
+        ?.querySelector<HTMLInputElement>(
+          '[data-testid="ai-chat-session-search"]',
+        )
+        ?.focus();
+    });
+  }, []);
+
+  const handlePanelOpenSessionSearch = useCallback(() => {
+    dispatch({ type: "toggleProviderPopover", open: false });
+    dispatch({ type: "toggleSettingsPopover", open: false });
+    dispatch({ type: "toggleActivityPopover", open: false });
+    dispatchChrome({
+      type: "patch",
+      value: { sessionSearchOpen: true },
+    });
+    focusSessionSearchInput();
+  }, [focusSessionSearchInput]);
+
   const handlePanelToggleSessionSearch = useCallback(() => {
     const nextOpen = !sessionSearchOpen;
     dispatch({ type: "toggleProviderPopover", open: false });
@@ -3903,7 +3932,42 @@ export function AIChatPanelContent({
         sessionSearch: nextOpen ? sessionSearch : "",
       },
     });
-  }, [sessionSearch, sessionSearchOpen]);
+    if (nextOpen) {
+      focusSessionSearchInput();
+    }
+  }, [focusSessionSearchInput, sessionSearch, sessionSearchOpen]);
+
+  const handlePanelToggleReview = useCallback(() => {
+    beginChatMotionWindow();
+    closeTransientPopovers();
+    if (reviewExpanded) {
+      dispatchChrome({
+        type: "patch",
+        value: { reviewExpanded: false, reviewOpen: true },
+      });
+      return;
+    }
+    dispatchChrome({
+      type: reviewOpen ? "closeDrawer" : "openDrawer",
+      drawer: "review",
+    });
+  }, [
+    beginChatMotionWindow,
+    closeTransientPopovers,
+    reviewExpanded,
+    reviewOpen,
+  ]);
+
+  const handlePanelToggleReviewExpanded = useCallback(() => {
+    beginChatMotionWindow();
+    closeTransientPopovers();
+    dispatchChrome({
+      type: "patch",
+      value: reviewExpanded
+        ? { reviewExpanded: false, reviewOpen: true }
+        : { reviewExpanded: true, reviewOpen: false },
+    });
+  }, [beginChatMotionWindow, closeTransientPopovers, reviewExpanded]);
 
   const handlePanelToggleActivity = useCallback(() => {
     dispatch({ type: "toggleActivityPopover" });
@@ -3920,6 +3984,57 @@ export function AIChatPanelContent({
       value: { sessionSearchOpen: false },
     });
   }, []);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+
+    const handleFullscreenCommand = (event: Event) => {
+      const command = (event as CustomEvent<AIChatFullscreenCommandDetail>)
+        .detail?.command;
+      const now = performance.now();
+      const lastCommand = lastFullscreenCommandRef.current;
+      if (
+        command &&
+        lastCommand?.command === command &&
+        now - lastCommand.at < 120
+      ) {
+        return;
+      }
+      if (command) {
+        lastFullscreenCommandRef.current = { command, at: now };
+      }
+      switch (command) {
+        case "history.toggle":
+          handlePanelToggleHistory();
+          return;
+        case "sessionSearch.open":
+          handlePanelOpenSessionSearch();
+          return;
+        case "review.toggle":
+          handlePanelToggleReview();
+          return;
+        case "review.expandToggle":
+          handlePanelToggleReviewExpanded();
+          return;
+      }
+    };
+
+    window.addEventListener(
+      AI_CHAT_FULLSCREEN_COMMAND_EVENT,
+      handleFullscreenCommand,
+    );
+    return () =>
+      window.removeEventListener(
+        AI_CHAT_FULLSCREEN_COMMAND_EVENT,
+        handleFullscreenCommand,
+      );
+  }, [
+    fullscreen,
+    handlePanelOpenSessionSearch,
+    handlePanelToggleHistory,
+    handlePanelToggleReview,
+    handlePanelToggleReviewExpanded,
+  ]);
 
   const panelContextItems = useMemo<ContextActionMenuItem[]>(
     () => [
@@ -4293,6 +4408,7 @@ export function AIChatPanelContent({
                           <input
                             autoFocus
                             aria-label="Search current chat session"
+                            data-testid="ai-chat-session-search"
                             placeholder="Search this session..."
                             value={sessionSearch}
                             onChange={(event) =>

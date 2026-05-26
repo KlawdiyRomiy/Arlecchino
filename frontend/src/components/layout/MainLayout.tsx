@@ -249,6 +249,16 @@ interface FullscreenPanelTransitionTarget {
   position: PanelPosition;
 }
 
+const getTopmostFloatingPanelId = (
+  panels: PanelVisibility,
+  panelConfigs: PanelConfigs,
+): PanelId | null => {
+  const floatingPanelIds = (Object.keys(panelConfigs) as PanelId[]).filter(
+    (panelId) => panels[panelId] && panelConfigs[panelId].mode === "floating",
+  );
+  return floatingPanelIds.at(-1) ?? null;
+};
+
 interface NativeFullscreenChangedEvent {
   fullscreen?: boolean;
 }
@@ -1390,13 +1400,48 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     previewWindows,
   ]);
 
+  const aiChatFullscreenMenuActive = useMemo(() => {
+    const topmostFloatingPanelId = getTopmostFloatingPanelId(
+      panels,
+      panelConfigs,
+    );
+    const hasFloatingPreviewWindow = previewWindows.some(
+      (windowState) => windowState.mode === "floating",
+    );
+    return (
+      topmostFloatingPanelId === "aiChat" &&
+      panels.aiChat &&
+      isLogicalFullscreenPanel(panelConfigs.aiChat) &&
+      !hasFloatingPreviewWindow
+    );
+  }, [isLogicalFullscreenPanel, panelConfigs, panels, previewWindows]);
+
+  const isAIChatTopmostFullscreen = useCallback((): boolean => {
+    const topmostFloatingPanelId = getTopmostFloatingPanelId(
+      panelsRef.current,
+      panelConfigsRef.current,
+    );
+    const hasFloatingPreviewWindow = usePreviewWindowStore
+      .getState()
+      .windows.some((windowState) => windowState.mode === "floating");
+    return (
+      topmostFloatingPanelId === "aiChat" &&
+      panelsRef.current.aiChat &&
+      isLogicalFullscreenPanel(panelConfigsRef.current.aiChat) &&
+      !hasFloatingPreviewWindow
+    );
+  }, [isLogicalFullscreenPanel]);
+
   useEffect(() => {
     window.dispatchEvent(
       new CustomEvent("arlecchino:menu-state", {
-        detail: { canCloseFullscreenPanel: fullscreenSurfaceIds.length > 0 },
+        detail: {
+          canCloseFullscreenPanel: fullscreenSurfaceIds.length > 0,
+          aiChatFullscreenActive: aiChatFullscreenMenuActive,
+        },
       }),
     );
-  }, [fullscreenSurfaceIds.length]);
+  }, [aiChatFullscreenMenuActive, fullscreenSurfaceIds.length]);
 
   const startFullscreenPanelTransition = useCallback(
     (panelId: FullscreenPanelId, applyTransition: () => void) => {
@@ -5164,6 +5209,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       handlePreviewWindowOpenEvent,
       handlePreviewWindowUpdateEvent,
       handleSurfacePromoteEvent,
+      isAIChatTopmostFullscreen,
       isSettingsOpen,
       logicalViewport,
       moveBrowserPreviewToPosition,
@@ -5281,6 +5327,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     aiChatPreFullscreenRef,
     gitPreFullscreenRef,
     handleHeldPanelShortcutMove,
+    isAIChatTopmostFullscreen,
     terminalThemeId: resolvedThemeId,
     isPerspectiveOpenRef,
     isSettingsOpen,

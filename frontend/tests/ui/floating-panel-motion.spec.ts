@@ -874,6 +874,51 @@ test("AI Chat fullscreen shortcut keeps readable content clipped", async ({
   expectReadableFullscreenMotionSafe(motionSamples.samples);
 });
 
+test("AI Chat fullscreen shortcuts route to chat history search and review", async ({
+  page,
+}) => {
+  await mountProjectUI(page, {
+    panelLayoutState: {
+      panels: {
+        explorer: false,
+        terminal: false,
+        aiChat: false,
+        git: false,
+        problems: false,
+        code: false,
+        markdownPreview: false,
+      },
+    },
+  });
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent("arlecchino:application-menu-action", {
+        detail: { actionId: "ai.fullscreen" },
+      }),
+    );
+  });
+
+  await expect(
+    page.locator('[data-testid="panel-aiChat"]').last(),
+  ).toBeVisible();
+  await waitForPanelSettled(page, "panel-aiChat");
+
+  await page.keyboard.press("Meta+D");
+  await expect(page.getByTestId("ai-chat-history-drawer")).toBeVisible();
+
+  await page.keyboard.press("Meta+F");
+  await expect(page.getByTestId("ai-chat-session-search")).toBeFocused();
+
+  await page.keyboard.press("Meta+G");
+  await expect(page.getByTestId("ai-chat-review-drawer")).toBeVisible();
+  await expect(page.locator('[data-testid="panel-git"]')).toHaveCount(0);
+
+  await page.keyboard.press("Meta+Shift+G");
+  await expect(page.getByTestId("ai-chat-review-expanded")).toBeVisible();
+  await expect(page.locator('[data-testid="panel-git"]')).toHaveCount(0);
+});
+
 test("Git fullscreen restore keeps readable content filling the projected frame", async ({
   page,
 }) => {

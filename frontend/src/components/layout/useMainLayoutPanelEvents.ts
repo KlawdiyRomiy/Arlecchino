@@ -23,6 +23,10 @@ import {
   APPLICATION_MENU_ACTION_EVENT,
   type ApplicationMenuActionDetail,
 } from "../../utils/applicationMenu";
+import {
+  dispatchAIChatFullscreenCommand,
+  type AIChatFullscreenCommand,
+} from "../../utils/aiChatFullscreenCommands";
 import type { ShortcutActionId } from "../../utils/keyboard";
 import { measurePerf } from "../../utils/perf";
 import { getProjectPathBasename } from "../../utils/projectPaths";
@@ -95,6 +99,15 @@ const parseSurfaceRuntimeReadOptions = (
   };
 };
 
+const AI_CHAT_FULLSCREEN_MENU_ACTIONS: Partial<
+  Record<ShortcutActionId, AIChatFullscreenCommand>
+> = {
+  "ai.history": "history.toggle",
+  "editor.find": "sessionSearch.open",
+  "git.toggle": "review.toggle",
+  "git.fullscreen": "review.expandToggle",
+};
+
 interface MainLayoutPanelEventsDispatcher {
   close: () => void;
 }
@@ -137,6 +150,7 @@ interface UseMainLayoutPanelEventsOptions {
   handlePreviewWindowOpenEvent: UnknownEventHandler;
   handlePreviewWindowUpdateEvent: UnknownEventHandler;
   handleSurfacePromoteEvent: UnknownEventHandler;
+  isAIChatTopmostFullscreen: () => boolean;
   isSettingsOpen: boolean;
   logicalViewport: { width: number; height: number };
   moveBrowserPreviewToPosition: (position: PanelPosition) => boolean | void;
@@ -212,6 +226,7 @@ export const useMainLayoutPanelEvents = ({
   handlePreviewWindowOpenEvent,
   handlePreviewWindowUpdateEvent,
   handleSurfacePromoteEvent,
+  isAIChatTopmostFullscreen,
   isSettingsOpen,
   logicalViewport,
   moveBrowserPreviewToPosition,
@@ -710,6 +725,12 @@ export const useMainLayoutPanelEvents = ({
         return;
       }
 
+      const aiChatFullscreenCommand = AI_CHAT_FULLSCREEN_MENU_ACTIONS[actionId];
+      if (aiChatFullscreenCommand && isAIChatTopmostFullscreen()) {
+        dispatchAIChatFullscreenCommand(aiChatFullscreenCommand, "menu");
+        return;
+      }
+
       switch (actionId) {
         case "editor.find":
           if (
@@ -795,6 +816,7 @@ export const useMainLayoutPanelEvents = ({
       copyProjectPathFromShortcut,
       aiChatPreFullscreenRef,
       gitPreFullscreenRef,
+      isAIChatTopmostFullscreen,
       isSettingsOpen,
       openCommandDispatcher,
       openSettings,

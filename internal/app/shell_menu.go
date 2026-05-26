@@ -67,6 +67,7 @@ type ApplicationMenuShortcutPayload struct {
 type ShellMenuStatePayload struct {
 	HasSelection            bool `json:"hasSelection"`
 	CanCloseFullscreenPanel bool `json:"canCloseFullscreenPanel"`
+	AIChatFullscreenActive  bool `json:"aiChatFullscreenActive"`
 	CanStopAgent            bool `json:"canStopAgent"`
 	CanCommit               bool `json:"canCommit"`
 	HasGitChanges           bool `json:"hasGitChanges"`
@@ -327,7 +328,8 @@ func (a *App) syncNativeApplicationMenuState() {
 			{"title": "Stop Agent", "enabled": state.CanStopAgent},
 			{"title": "Commit...", "enabled": state.CanCommit || state.HasGitChanges},
 		},
-		"recentProjects": recent,
+		"aiChatFullscreenActive": state.AIChatFullscreenActive,
+		"recentProjects":         recent,
 	})
 }
 
