@@ -230,6 +230,7 @@ export const codeEditorStyles = EditorView.theme(
       borderLeftWidth: "1.5px",
     },
     ".cm-foldGutter": {
+      flex: "0 0 12px",
       width: "12px",
     },
     ".cm-foldPlaceholder": {
