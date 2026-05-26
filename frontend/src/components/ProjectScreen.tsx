@@ -30,6 +30,7 @@ import {
 } from "../stores/aiInlinePatchStore";
 import { useAppNotificationStore } from "../stores/appNotificationStore";
 import { editorCanvasBackground } from "../utils/codeMirrorTheme";
+import { openEditorFileSearch } from "../utils/codeMirrorFileSearch";
 import { type ContextActionMenuItem } from "./ui/ContextActionMenu";
 import { GuardedEditorPreview } from "./GuardedEditorPreview";
 import {
@@ -277,6 +278,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   >(null);
   const [editorHistoryAvailability, setEditorHistoryAvailability] =
     useState<EditorHistoryAvailability>(EMPTY_EDITOR_HISTORY_AVAILABILITY);
+  const [activeEditorViewAvailable, setActiveEditorViewAvailable] =
+    useState(false);
 
   const setTabSwitcherSelection = useCallback((tabId: string | null) => {
     tabSwitcherSelectionRef.current = tabId;
@@ -285,6 +288,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   const handleEditorViewReady = useCallback((view: EditorView | null) => {
     activeEditorViewRef.current = view;
+    setActiveEditorViewAvailable(Boolean(view));
     if (!view) {
       setEditorHistoryAvailability(EMPTY_EDITOR_HISTORY_AVAILABILITY);
     }
@@ -319,6 +323,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     if (redo(view)) {
       view.focus();
     }
+  }, []);
+
+  const handleFindInFile = useCallback(() => {
+    const view = activeEditorViewRef.current;
+    if (!view) {
+      return;
+    }
+    openEditorFileSearch(view);
   }, []);
 
   const storeFileLoadState = useCallback(
@@ -2364,6 +2376,16 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const secondaryTabData = secondaryActiveTab
     ? tabs.find((tab) => tab.id === secondaryActiveTab)
     : null;
+  const activeTabLoadState = activeTabData
+    ? fileLoadStates[activeTabData.id]
+    : undefined;
+  const activeTabRendersCodeMirror = Boolean(
+    activeTabData &&
+    (activeTabLoadState?.kind === "editable" ||
+      (!activeTabLoadState && fileContents[activeTabData.id] !== undefined)),
+  );
+  const canFindInActiveEditor =
+    activeEditorViewAvailable && activeTabRendersCodeMirror;
 
   // Track if split is animating in
   const [splitReady, setSplitReady] = useState(false);
@@ -2480,6 +2502,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           onRedo={handleEditorRedo}
           canUndo={editorHistoryAvailability.canUndo}
           canRedo={editorHistoryAvailability.canRedo}
+          onFindInFile={handleFindInFile}
+          canFindInFile={canFindInActiveEditor}
           onSplitHorizontal={() => handleSplit("vertical")}
           onSplitVertical={() => handleSplit("horizontal")}
           markdownPreviewAvailable={activeMarkdownPreviewSource !== null}

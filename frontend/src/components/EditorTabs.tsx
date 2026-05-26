@@ -1,6 +1,6 @@
 import React from "react";
 import { Reorder } from "framer-motion";
-import { X, Eye, Columns, Rows, Undo2, Redo2 } from "lucide-react";
+import { X, Eye, Columns, Rows, Undo2, Redo2, Search } from "lucide-react";
 import {
   ContextActionMenu,
   type ContextActionMenuItem,
@@ -38,6 +38,8 @@ interface EditorTabsProps extends PanelSnapDragCallbacks {
   onRedo?: () => void;
   canUndo?: boolean;
   canRedo?: boolean;
+  onFindInFile?: () => void;
+  canFindInFile?: boolean;
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
   markdownPreviewAvailable?: boolean;
@@ -61,6 +63,8 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
   onRedo,
   canUndo = false,
   canRedo = false,
+  onFindInFile,
+  canFindInFile = false,
   onSplitHorizontal,
   onSplitVertical,
   markdownPreviewAvailable = false,
@@ -453,6 +457,22 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
               borderTopRightRadius: "calc(var(--radius-lg) - 1px)",
             }}
           >
+            <button
+              type="button"
+              onClick={onFindInFile}
+              onMouseDown={(event) => event.preventDefault()}
+              disabled={!onFindInFile || !canFindInFile}
+              data-testid="editor-tabs-find-in-file"
+              className="shell-control h-10 w-10 min-w-10 px-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:pointer-events-none disabled:opacity-35"
+              aria-label="Find in file"
+              title="Find in file (Cmd+F)"
+            >
+              <Search
+                className="h-[13px] w-[13px] min-w-[13px] shrink-0"
+                size={13}
+                strokeWidth={2.2}
+              />
+            </button>
             {markdownPreviewAvailable && (
               <button
                 type="button"
