@@ -253,6 +253,7 @@ private final class MenuCoordinator: NSObject, NSMenuDelegate {
 
 private var originalButtonsSuperviewFrameKey: UInt8 = 0
 private var originalButtonsSuperviewKey: UInt8 = 0
+private var windowButtonEventForwarderKey: UInt8 = 0
 
 @_cdecl("ArleNativeSetCallback")
 public func ArleNativeSetCallback(_ callback: ArleNativeCallback?) {
@@ -602,6 +603,46 @@ private func refreshWindowButtons(_ close: NSButton?, _ minimise: NSButton?, _ m
     }
 }
 
+private func windowButtonCanReceiveForwardedEvent(_ button: NSButton?) -> Bool {
+    guard let button else { return false }
+    return button.isEnabled && !button.isHiddenOrHasHiddenAncestor && button.superview != nil && button.window != nil
+}
+
+private func windowButton(_ button: NSButton?, contains event: NSEvent) -> Bool {
+    guard windowButtonCanReceiveForwardedEvent(button), let button, let superview = button.superview else {
+        return false
+    }
+
+    let frameInWindow = superview.convert(button.frame, to: nil)
+    return frameInWindow.contains(event.locationInWindow)
+}
+
+private func windowButton(for event: NSEvent, in window: NSWindow) -> NSButton? {
+    guard event.window === window else { return nil }
+    let buttons = [
+        window.standardWindowButton(.closeButton),
+        window.standardWindowButton(.miniaturizeButton),
+        window.standardWindowButton(.zoomButton)
+    ]
+    return buttons.first { windowButton($0, contains: event) } ?? nil
+}
+
+private func installWindowButtonEventForwarder(_ window: NSWindow) {
+    if objc_getAssociatedObject(window, &windowButtonEventForwarderKey) != nil {
+        return
+    }
+
+    let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak window] event in
+        guard let window, let button = windowButton(for: event, in: window) else {
+            return event
+        }
+
+        button.mouseDown(with: event)
+        return nil
+    }
+    objc_setAssociatedObject(window, &windowButtonEventForwarderKey, monitor, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+}
+
 private func rememberButtonsSuperviewFrame(_ buttonSuperview: NSView?) {
     guard let buttonSuperview else { return }
     if objc_getAssociatedObject(buttonSuperview, &originalButtonsSuperviewFrameKey) == nil {
@@ -722,6 +763,7 @@ private func positionNativeWindowControlsOnMainThread(
     let close = window.standardWindowButton(.closeButton)
     let minimise = window.standardWindowButton(.miniaturizeButton)
     let maximise = window.standardWindowButton(.zoomButton)
+    installWindowButtonEventForwarder(window)
 
     if window.styleMask.contains(.fullScreen) {
         return restoreButtonsSuperview(close, minimise, maximise)

@@ -11,6 +11,7 @@ package app
 
 static char arlecchinoOriginalButtonsSuperviewFrameKey;
 static char arlecchinoOriginalButtonsSuperviewKey;
+static char arlecchinoWindowButtonEventForwarderKey;
 
 static NSWindow* arlecchinoControlsWindow(void *preferredWindow) {
     if (preferredWindow != nil) {
@@ -98,6 +99,73 @@ static void arlecchinoRefreshWindowButtons(
     for (NSView *view = buttonSuperview; view != nil; view = [view superview]) {
         arlecchinoRefreshNativeControlView(view, window);
     }
+    if (window != nil) {
+        [window recalculateKeyViewLoop];
+    }
+}
+
+static bool arlecchinoWindowButtonCanReceiveForwardedEvent(NSButton *button) {
+    if (button == nil || ![button isEnabled] || [button isHiddenOrHasHiddenAncestor]) {
+        return false;
+    }
+    if ([button superview] == nil || [button window] == nil) {
+        return false;
+    }
+    return true;
+}
+
+static bool arlecchinoWindowButtonContainsEvent(NSButton *button, NSEvent *event) {
+    if (!arlecchinoWindowButtonCanReceiveForwardedEvent(button) || event == nil) {
+        return false;
+    }
+
+    NSView *superview = [button superview];
+    NSRect frameInWindow = [superview convertRect:[button frame] toView:nil];
+    return NSPointInRect([event locationInWindow], frameInWindow);
+}
+
+static NSButton* arlecchinoWindowButtonForEvent(NSWindow *window, NSEvent *event) {
+    if (window == nil || event == nil || [event window] != window) {
+        return nil;
+    }
+
+    NSButton *buttons[] = {
+        [window standardWindowButton:NSWindowCloseButton],
+        [window standardWindowButton:NSWindowMiniaturizeButton],
+        [window standardWindowButton:NSWindowZoomButton],
+    };
+    for (NSUInteger index = 0; index < 3; index++) {
+        NSButton *button = buttons[index];
+        if (arlecchinoWindowButtonContainsEvent(button, event)) {
+            return button;
+        }
+    }
+    return nil;
+}
+
+static void arlecchinoInstallWindowButtonEventForwarder(NSWindow *window) {
+    if (window == nil) {
+        return;
+    }
+    if (objc_getAssociatedObject(window, &arlecchinoWindowButtonEventForwarderKey) != nil) {
+        return;
+    }
+
+    id monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^NSEvent *(NSEvent *event) {
+        NSButton *button = arlecchinoWindowButtonForEvent(window, event);
+        if (button == nil) {
+            return event;
+        }
+
+        [button mouseDown:event];
+        return nil;
+    }];
+    objc_setAssociatedObject(
+        window,
+        &arlecchinoWindowButtonEventForwarderKey,
+        monitor,
+        OBJC_ASSOCIATION_RETAIN_NONATOMIC
+    );
 }
 
 static void arlecchinoRememberWindowButtonsSuperviewFrame(NSView *buttonSuperview) {
@@ -160,7 +228,14 @@ static bool arlecchinoAttachButtonsSuperviewToParent(NSView *buttonSuperview, NS
 
     [buttonSuperview setHidden:NO];
     [buttonSuperview setNeedsDisplay:YES];
+    [buttonSuperview updateTrackingAreas];
     [parentView setNeedsDisplay:YES];
+    [parentView updateTrackingAreas];
+    NSWindow *window = [parentView window];
+    if (window != nil) {
+        [window invalidateCursorRectsForView:buttonSuperview];
+        [window recalculateKeyViewLoop];
+    }
     return true;
 }
 
@@ -264,6 +339,7 @@ static bool arlecchinoPositionNativeWindowControlsOnMainThread(
     NSButton *closeButton = [window standardWindowButton:NSWindowCloseButton];
     NSButton *minimiseButton = [window standardWindowButton:NSWindowMiniaturizeButton];
     NSButton *maximiseButton = [window standardWindowButton:NSWindowZoomButton];
+    arlecchinoInstallWindowButtonEventForwarder(window);
 
     if (arlecchinoWindowIsFullscreen(window)) {
         return arlecchinoRestoreWindowButtonsSuperview(closeButton, minimiseButton, maximiseButton);
