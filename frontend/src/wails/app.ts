@@ -61,6 +61,18 @@ interface ProjectEntryMoveBridge {
     path: string,
     targetDirectory: string,
   ) => Promise<unknown> | unknown;
+  CreateProjectEntry?: (
+    request: ProjectEntryCreateRequest,
+  ) => Promise<unknown> | unknown;
+  RenameProjectEntryWithHistory?: (
+    request: ProjectEntryRenameRequest,
+  ) => Promise<unknown> | unknown;
+  TrashProjectEntries?: (
+    request: ProjectEntryTrashRequest,
+  ) => Promise<unknown> | unknown;
+  UndoProjectEntryOperation?: () => Promise<unknown> | unknown;
+  RedoProjectEntryOperation?: () => Promise<unknown> | unknown;
+  GetProjectEntryUndoState?: () => Promise<unknown> | unknown;
 }
 
 interface FileDialogBridge {
@@ -213,6 +225,43 @@ export interface ProjectEntryMoveResult {
   rewrittenImports?: number;
 }
 
+export interface ProjectEntryCreateRequest {
+  type: "file" | "folder";
+  directoryPath: string;
+  name: string;
+}
+
+export interface ProjectEntryCreateResult {
+  path: string;
+  isDirectory: boolean;
+}
+
+export interface ProjectEntryRenameRequest {
+  path: string;
+  newName: string;
+}
+
+export interface ProjectEntryTrashTarget {
+  path: string;
+  isDirectory: boolean;
+  displayName?: string;
+}
+
+export interface ProjectEntryTrashRequest {
+  entries: ProjectEntryTrashTarget[];
+}
+
+export interface ProjectEntryTrashResult {
+  count: number;
+}
+
+export interface ProjectEntryUndoState {
+  canUndo: boolean;
+  canRedo: boolean;
+  undoLabel?: string;
+  redoLabel?: string;
+}
+
 const nativeWindowControlsMethodNames = [
   "arlecchino/internal/app.App.SetNativeWindowControlsVisible",
   "main.App.SetNativeWindowControlsVisible",
@@ -283,6 +332,42 @@ const projectEntryMoveMethodNames = [
   "arlecchino/internal/app.App.MoveProjectEntry",
   "main.App.MoveProjectEntry",
   "arlecchino.App.MoveProjectEntry",
+] as const;
+
+const createProjectEntryMethodNames = [
+  "arlecchino/internal/app.App.CreateProjectEntry",
+  "main.App.CreateProjectEntry",
+  "arlecchino.App.CreateProjectEntry",
+] as const;
+
+const renameProjectEntryWithHistoryMethodNames = [
+  "arlecchino/internal/app.App.RenameProjectEntryWithHistory",
+  "main.App.RenameProjectEntryWithHistory",
+  "arlecchino.App.RenameProjectEntryWithHistory",
+] as const;
+
+const trashProjectEntriesMethodNames = [
+  "arlecchino/internal/app.App.TrashProjectEntries",
+  "main.App.TrashProjectEntries",
+  "arlecchino.App.TrashProjectEntries",
+] as const;
+
+const undoProjectEntryOperationMethodNames = [
+  "arlecchino/internal/app.App.UndoProjectEntryOperation",
+  "main.App.UndoProjectEntryOperation",
+  "arlecchino.App.UndoProjectEntryOperation",
+] as const;
+
+const redoProjectEntryOperationMethodNames = [
+  "arlecchino/internal/app.App.RedoProjectEntryOperation",
+  "main.App.RedoProjectEntryOperation",
+  "arlecchino.App.RedoProjectEntryOperation",
+] as const;
+
+const getProjectEntryUndoStateMethodNames = [
+  "arlecchino/internal/app.App.GetProjectEntryUndoState",
+  "main.App.GetProjectEntryUndoState",
+  "arlecchino.App.GetProjectEntryUndoState",
 ] as const;
 
 const selectOpenTargetMethodNames = [
@@ -380,6 +465,24 @@ let currentProjectWindowSessionMethodName:
   | undefined;
 let projectEntryMoveMethodName:
   | (typeof projectEntryMoveMethodNames)[number]
+  | undefined;
+let createProjectEntryMethodName:
+  | (typeof createProjectEntryMethodNames)[number]
+  | undefined;
+let renameProjectEntryWithHistoryMethodName:
+  | (typeof renameProjectEntryWithHistoryMethodNames)[number]
+  | undefined;
+let trashProjectEntriesMethodName:
+  | (typeof trashProjectEntriesMethodNames)[number]
+  | undefined;
+let undoProjectEntryOperationMethodName:
+  | (typeof undoProjectEntryOperationMethodNames)[number]
+  | undefined;
+let redoProjectEntryOperationMethodName:
+  | (typeof redoProjectEntryOperationMethodNames)[number]
+  | undefined;
+let getProjectEntryUndoStateMethodName:
+  | (typeof getProjectEntryUndoStateMethodNames)[number]
   | undefined;
 let selectOpenTargetMethodName:
   | (typeof selectOpenTargetMethodNames)[number]
@@ -1125,6 +1228,147 @@ export async function MoveProjectEntry(
   }
 
   throw new Error("Project entry move bridge is unavailable.");
+}
+
+export async function CreateProjectEntry(
+  request: ProjectEntryCreateRequest,
+): Promise<ProjectEntryCreateResult> {
+  const bridge = getProjectEntryMoveBridge();
+  if (bridge?.CreateProjectEntry) {
+    try {
+      return (await Promise.resolve(
+        bridge.CreateProjectEntry(request),
+      )) as ProjectEntryCreateResult;
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  return callRuntimeBridgeMethod<ProjectEntryCreateResult>(
+    createProjectEntryMethodName,
+    (methodName) => {
+      createProjectEntryMethodName =
+        methodName as (typeof createProjectEntryMethodNames)[number];
+    },
+    createProjectEntryMethodNames,
+    [request],
+  );
+}
+
+export async function RenameProjectEntryWithHistory(
+  request: ProjectEntryRenameRequest,
+): Promise<{ newPath: string; isDirectory: boolean }> {
+  const bridge = getProjectEntryMoveBridge();
+  if (bridge?.RenameProjectEntryWithHistory) {
+    try {
+      return (await Promise.resolve(
+        bridge.RenameProjectEntryWithHistory(request),
+      )) as { newPath: string; isDirectory: boolean };
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  return callRuntimeBridgeMethod<{ newPath: string; isDirectory: boolean }>(
+    renameProjectEntryWithHistoryMethodName,
+    (methodName) => {
+      renameProjectEntryWithHistoryMethodName =
+        methodName as (typeof renameProjectEntryWithHistoryMethodNames)[number];
+    },
+    renameProjectEntryWithHistoryMethodNames,
+    [request],
+  );
+}
+
+export async function TrashProjectEntries(
+  request: ProjectEntryTrashRequest,
+): Promise<ProjectEntryTrashResult> {
+  const bridge = getProjectEntryMoveBridge();
+  if (bridge?.TrashProjectEntries) {
+    try {
+      return (await Promise.resolve(
+        bridge.TrashProjectEntries(request),
+      )) as ProjectEntryTrashResult;
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  return callRuntimeBridgeMethod<ProjectEntryTrashResult>(
+    trashProjectEntriesMethodName,
+    (methodName) => {
+      trashProjectEntriesMethodName =
+        methodName as (typeof trashProjectEntriesMethodNames)[number];
+    },
+    trashProjectEntriesMethodNames,
+    [request],
+  );
+}
+
+export async function UndoProjectEntryOperation(): Promise<ProjectEntryUndoState> {
+  const bridge = getProjectEntryMoveBridge();
+  if (bridge?.UndoProjectEntryOperation) {
+    try {
+      return (await Promise.resolve(
+        bridge.UndoProjectEntryOperation(),
+      )) as ProjectEntryUndoState;
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  return callRuntimeBridgeMethod<ProjectEntryUndoState>(
+    undoProjectEntryOperationMethodName,
+    (methodName) => {
+      undoProjectEntryOperationMethodName =
+        methodName as (typeof undoProjectEntryOperationMethodNames)[number];
+    },
+    undoProjectEntryOperationMethodNames,
+  );
+}
+
+export async function RedoProjectEntryOperation(): Promise<ProjectEntryUndoState> {
+  const bridge = getProjectEntryMoveBridge();
+  if (bridge?.RedoProjectEntryOperation) {
+    try {
+      return (await Promise.resolve(
+        bridge.RedoProjectEntryOperation(),
+      )) as ProjectEntryUndoState;
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  return callRuntimeBridgeMethod<ProjectEntryUndoState>(
+    redoProjectEntryOperationMethodName,
+    (methodName) => {
+      redoProjectEntryOperationMethodName =
+        methodName as (typeof redoProjectEntryOperationMethodNames)[number];
+    },
+    redoProjectEntryOperationMethodNames,
+  );
+}
+
+export async function GetProjectEntryUndoState(): Promise<ProjectEntryUndoState> {
+  const bridge = getProjectEntryMoveBridge();
+  if (bridge?.GetProjectEntryUndoState) {
+    try {
+      return (await Promise.resolve(
+        bridge.GetProjectEntryUndoState(),
+      )) as ProjectEntryUndoState;
+    } catch {
+      // Fall back to Wails v3 runtime name lookup.
+    }
+  }
+
+  return callRuntimeBridgeMethod<ProjectEntryUndoState>(
+    getProjectEntryUndoStateMethodName,
+    (methodName) => {
+      getProjectEntryUndoStateMethodName =
+        methodName as (typeof getProjectEntryUndoStateMethodNames)[number];
+    },
+    getProjectEntryUndoStateMethodNames,
+  );
 }
 
 export async function AIListProviderRuntimes(): Promise<

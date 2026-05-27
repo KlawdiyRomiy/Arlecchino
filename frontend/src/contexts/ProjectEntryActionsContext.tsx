@@ -9,6 +9,11 @@ export interface ProjectEntryTrashRequest extends ProjectEntryActionTarget {
   displayName?: string;
 }
 
+export interface ProjectEntryTrashBatchRequest {
+  entries: ProjectEntryTrashRequest[];
+  displayName?: string;
+}
+
 export interface ProjectEntryMoveRequest extends ProjectEntryActionTarget {
   targetDirectory: string;
 }
@@ -25,6 +30,9 @@ export interface ProjectEntryActionsContextValue {
   requestMoveEntry: (entry: ProjectEntryMoveRequest) => Promise<boolean>;
   requestRenameEntry: (entry: ProjectEntryActionTarget) => void;
   requestTrashEntry: (entry: ProjectEntryTrashRequest) => void;
+  requestTrashEntries: (request: ProjectEntryTrashBatchRequest) => void;
+  undoProjectEntryOperation: () => Promise<boolean>;
+  redoProjectEntryOperation: () => Promise<boolean>;
 }
 
 const ProjectEntryActionsContext =

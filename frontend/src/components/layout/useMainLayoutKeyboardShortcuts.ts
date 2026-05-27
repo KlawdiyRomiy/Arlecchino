@@ -35,6 +35,50 @@ const isPhysicalMacProjectSwitchShortcut = (event: KeyboardEvent): boolean =>
   !event.altKey &&
   event.code === "Backquote";
 
+const isProjectEntryUndoShortcut = (event: KeyboardEvent): boolean =>
+  event.code === "KeyZ" &&
+  !event.shiftKey &&
+  !event.altKey &&
+  (event.metaKey || event.ctrlKey);
+
+const isProjectEntryRedoShortcut = (event: KeyboardEvent): boolean =>
+  event.code === "KeyZ" &&
+  event.shiftKey &&
+  !event.altKey &&
+  (event.metaKey || event.ctrlKey);
+
+const shouldBypassProjectEntryHistoryShortcut = (
+  activeElement: HTMLElement | null,
+): boolean => {
+  if (!activeElement) {
+    return false;
+  }
+  if (
+    activeElement instanceof HTMLInputElement ||
+    activeElement instanceof HTMLTextAreaElement ||
+    activeElement instanceof HTMLSelectElement
+  ) {
+    return true;
+  }
+  if (activeElement.isContentEditable) {
+    return true;
+  }
+  return Boolean(
+    activeElement.closest(
+      ".cm-editor, .cm-content, .xterm, [data-shell-menu-content], [data-radix-popper-content-wrapper]",
+    ),
+  );
+};
+
+const isProjectEntryHistoryShortcutContext = (
+  activeElement: HTMLElement | null,
+): boolean => {
+  const scope = activeElement?.closest<HTMLElement>(
+    "[data-explorer-keyboard-scope='true']",
+  );
+  return Boolean(scope?.isConnected && scope.getClientRects().length > 0);
+};
+
 const AI_CHAT_FULLSCREEN_COMMAND_SHORTCUT_ACTIONS: Record<
   AIChatFullscreenCommand,
   ShortcutActionId
@@ -117,6 +161,7 @@ interface UseMainLayoutKeyboardShortcutsOptions {
   markShortcutActionHandled: (actionId: ShortcutActionId) => void;
   onSwitchProject?: (projectId: string, direction?: number) => void;
   openSettings: () => void;
+  redoProjectEntryOperation: () => Promise<boolean>;
   panelsRef: MutableRefObject<PanelVisibility>;
   pressedShortcutCodesRef: MutableRefObject<Set<string>>;
   problemsPreFullscreenRef: MutableRefObject<PanelFullscreenSnapshot | null>;
@@ -133,6 +178,7 @@ interface UseMainLayoutKeyboardShortcutsOptions {
     panelId: "terminal" | "git" | "problems" | "aiChat",
     snapshotRef: MutableRefObject<PanelFullscreenSnapshot | null>,
   ) => void;
+  undoProjectEntryOperation: () => Promise<boolean>;
 }
 
 export const useMainLayoutKeyboardShortcuts = ({
@@ -164,6 +210,7 @@ export const useMainLayoutKeyboardShortcuts = ({
   markShortcutActionHandled,
   onSwitchProject,
   openSettings,
+  redoProjectEntryOperation,
   panelsRef,
   pressedShortcutCodesRef,
   problemsPreFullscreenRef,
@@ -174,7 +221,35 @@ export const useMainLayoutKeyboardShortcuts = ({
   terminalThemeId,
   togglePanelCompactFromShortcut,
   togglePanelFullscreenFromShortcut,
+  undoProjectEntryOperation,
 }: UseMainLayoutKeyboardShortcutsOptions) => {
+  useEffect(() => {
+    const clearStaleExplorerFocus = (event: PointerEvent) => {
+      const activeElement = document.activeElement as HTMLElement | null;
+      const explorerScope = activeElement?.closest<HTMLElement>(
+        "[data-explorer-keyboard-scope='true']",
+      );
+      if (!explorerScope) {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.closest(
+          "[data-explorer-keyboard-scope='true'], [data-shell-menu-content], [data-radix-popper-content-wrapper]",
+        )
+      ) {
+        return;
+      }
+
+      activeElement?.blur();
+    };
+
+    window.addEventListener("pointerdown", clearStaleExplorerFocus, true);
+    return () =>
+      window.removeEventListener("pointerdown", clearStaleExplorerFocus, true);
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const eventCode = getShortcutEventCode(e);
@@ -198,6 +273,30 @@ export const useMainLayoutKeyboardShortcuts = ({
       });
 
       if (shouldBypassGlobalFindShortcuts(e, activeElement)) {
+        return;
+      }
+
+      if (
+        (isProjectEntryUndoShortcut(e) || isProjectEntryRedoShortcut(e)) &&
+        !isTerminalShortcutContext &&
+        !isTUIActive &&
+        activeModal === null &&
+        !dispatcher.isOpen &&
+        !isSettingsOpen &&
+        !isPerspectiveOpenRef.current &&
+        document.body.dataset.shortcutRecording !== "true" &&
+        document.body.dataset.shellModalOpen !== "true" &&
+        !document.querySelector("[data-shell-menu-content]") &&
+        isProjectEntryHistoryShortcutContext(activeElement) &&
+        !shouldBypassProjectEntryHistoryShortcut(activeElement)
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (isProjectEntryRedoShortcut(e)) {
+          void redoProjectEntryOperation();
+        } else {
+          void undoProjectEntryOperation();
+        }
         return;
       }
 
@@ -746,6 +845,7 @@ export const useMainLayoutKeyboardShortcuts = ({
     markShortcutActionHandled,
     onSwitchProject,
     openSettings,
+    redoProjectEntryOperation,
     panelsRef,
     pressedShortcutCodesRef,
     problemsPreFullscreenRef,
@@ -756,5 +856,6 @@ export const useMainLayoutKeyboardShortcuts = ({
     terminalThemeId,
     togglePanelCompactFromShortcut,
     togglePanelFullscreenFromShortcut,
+    undoProjectEntryOperation,
   ]);
 };

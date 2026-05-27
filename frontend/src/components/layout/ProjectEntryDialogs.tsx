@@ -1,6 +1,6 @@
 import React from "react";
 import { AnimatePresence } from "framer-motion";
-import type { ProjectEntryTrashRequest } from "../../contexts/ProjectEntryActionsContext";
+import type { ProjectEntryTrashBatchRequest } from "../../contexts/ProjectEntryActionsContext";
 import { getProjectPathBasename } from "../../utils/projectPaths";
 import { MotionShellDialogFrame } from "../ui/MotionShellDialogFrame";
 import type {
@@ -25,9 +25,11 @@ interface ProjectEntryDialogsProps {
   onRenameEntryNameChange: (name: string) => void;
   onRenameEntrySubmit: DialogSubmitHandler;
   onRenameEntryClose: () => void;
-  trashEntryDialog: ProjectEntryTrashRequest | null;
+  trashEntryDialog: ProjectEntryTrashBatchRequest | null;
   trashEntryBusy: boolean;
+  trashEntryNativeFallbackReason: string | null;
   onTrashEntrySubmit: DialogSubmitHandler;
+  onTrashEntryNativeFallbackSubmit: DialogSubmitHandler;
   onTrashEntryClose: () => void;
   getRelativePath: (path: string) => string;
 }
@@ -48,7 +50,9 @@ export const ProjectEntryDialogs: React.FC<ProjectEntryDialogsProps> = ({
   onRenameEntryClose,
   trashEntryDialog,
   trashEntryBusy,
+  trashEntryNativeFallbackReason,
   onTrashEntrySubmit,
+  onTrashEntryNativeFallbackSubmit,
   onTrashEntryClose,
   getRelativePath,
 }) => (
@@ -191,16 +195,39 @@ export const ProjectEntryDialogs: React.FC<ProjectEntryDialogsProps> = ({
           <div className="mt-3 text-[13px] text-[var(--text-secondary)]">
             Move{" "}
             <span className="font-medium text-[var(--text-primary)]">
-              {trashEntryDialog.displayName ||
-                getProjectPathBasename(trashEntryDialog.path)}
+              {trashEntryDialog.entries.length === 1
+                ? trashEntryDialog.displayName ||
+                  trashEntryDialog.entries[0]?.displayName ||
+                  getProjectPathBasename(
+                    trashEntryDialog.entries[0]?.path ?? "",
+                  )
+                : `${trashEntryDialog.entries.length} selected entries`}
             </span>{" "}
             to Trash?
           </div>
           <div className="mt-2 text-[12px] text-[var(--text-muted)]">
             Unsaved changes in open editors may be lost.
           </div>
-          <div className="mt-3 break-all text-[11px] text-[var(--text-muted)]">
-            {getRelativePath(trashEntryDialog.path)}
+          {trashEntryNativeFallbackReason ? (
+            <div className="mt-3 rounded-[12px] border border-red-500/30 bg-red-500/10 p-3 text-[12px] text-[var(--text-secondary)]">
+              <div className="font-medium text-[var(--text-primary)]">
+                Undo is unavailable for this selection.
+              </div>
+              <div className="mt-1 break-words">
+                {trashEntryNativeFallbackReason}
+              </div>
+            </div>
+          ) : null}
+          <div className="mt-3 whitespace-pre-line break-all text-[11px] text-[var(--text-muted)]">
+            {trashEntryDialog.entries.length === 1
+              ? getRelativePath(trashEntryDialog.entries[0]?.path ?? "")
+              : trashEntryDialog.entries
+                  .slice(0, 6)
+                  .map((entry) => getRelativePath(entry.path))
+                  .join("\n")}
+            {trashEntryDialog.entries.length > 6
+              ? `\n...and ${trashEntryDialog.entries.length - 6} more`
+              : ""}
           </div>
 
           <div className="mt-5 flex items-center justify-end gap-3">
@@ -212,6 +239,16 @@ export const ProjectEntryDialogs: React.FC<ProjectEntryDialogsProps> = ({
             >
               Cancel
             </button>
+            {trashEntryNativeFallbackReason ? (
+              <button
+                type="button"
+                onClick={() => void onTrashEntryNativeFallbackSubmit()}
+                disabled={trashEntryBusy}
+                className="rounded-[12px] border border-red-500/40 px-4 py-2 text-[13px] font-medium text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {trashEntryBusy ? "Moving..." : "Move Without Undo"}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => void onTrashEntrySubmit()}

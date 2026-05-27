@@ -3,6 +3,7 @@ import type {
   ProjectEntryActionsContextValue,
   ProjectEntryActionTarget,
   ProjectEntryMoveRequest,
+  ProjectEntryTrashBatchRequest,
   ProjectEntryTrashRequest,
 } from "../../contexts/ProjectEntryActionsContext";
 import { writeClipboardTextWithFallback } from "../../utils/clipboard";
@@ -14,12 +15,15 @@ import {
   remapProjectPathPrefix,
 } from "../../utils/projectPaths";
 import {
-  CreateDirectory,
+  CreateProjectEntry,
+  GetProjectEntryUndoState,
+  RedoProjectEntryOperation,
   MoveProjectEntry,
-  RenameProjectEntry,
+  RenameProjectEntryWithHistory,
   RevealProjectEntry,
   TrashProjectEntry,
-  WriteFile,
+  TrashProjectEntries,
+  UndoProjectEntryOperation,
 } from "../../wails/app";
 import type {
   ProjectEntryCreateDialogState,
@@ -32,6 +36,27 @@ type ProjectEntryAccessMode = "read" | "write";
 type ProjectEntryAccessDecision = {
   allowed: boolean;
   reason: string;
+};
+
+const undoableTrashFallbackReasonFragments = [
+  "sensitive paths cannot be retained for undo",
+  "cache or dependency directories cannot be retained for undo",
+  "macos package directories cannot be retained for undo",
+  "symlink entries cannot be retained for undo",
+  "symlink entries are not supported",
+  "symlink path components are not supported",
+  "hardlinked files cannot be retained for undo",
+  "entry tree is too large to retain for undo",
+  "undoable trash requires same-volume rename",
+  "cannot create undo stash on the same filesystem",
+  "cannot create undo stash through symlink path",
+];
+
+const isUndoableTrashFallbackEligible = (message: string): boolean => {
+  const normalized = message.toLowerCase();
+  return undoableTrashFallbackReasonFragments.some((fragment) =>
+    normalized.includes(fragment),
+  );
 };
 
 interface UseMainLayoutProjectEntriesOptions {
@@ -68,8 +93,10 @@ export const useMainLayoutProjectEntries = ({
   const [renameEntryName, setRenameEntryName] = useState("");
   const [renameEntryBusy, setRenameEntryBusy] = useState(false);
   const [trashEntryDialog, setTrashEntryDialog] =
-    useState<ProjectEntryTrashRequest | null>(null);
+    useState<ProjectEntryTrashBatchRequest | null>(null);
   const [trashEntryBusy, setTrashEntryBusy] = useState(false);
+  const [trashEntryNativeFallbackReason, setTrashEntryNativeFallbackReason] =
+    useState<string | null>(null);
 
   const ensureProjectEntryAccess = useCallback(
     (
@@ -129,6 +156,7 @@ export const useMainLayoutProjectEntries = ({
     }
 
     setTrashEntryDialog(null);
+    setTrashEntryNativeFallbackReason(null);
   }, [trashEntryBusy]);
 
   const copyText = useCallback(
@@ -304,15 +332,33 @@ export const useMainLayoutProjectEntries = ({
     [ensureProjectEntryAccess],
   );
 
-  const requestTrashEntry = useCallback(
-    (entry: ProjectEntryTrashRequest) => {
-      if (!ensureProjectEntryAccess(entry.path, "write")) {
+  const requestTrashEntries = useCallback(
+    (request: ProjectEntryTrashBatchRequest) => {
+      const entries = request.entries.filter((entry) => entry.path);
+      if (entries.length === 0) {
+        showNotification("error", "[Files] No entries selected");
         return;
       }
+      for (const entry of entries) {
+        if (!ensureProjectEntryAccess(entry.path, "write")) {
+          return;
+        }
+      }
 
-      setTrashEntryDialog(entry);
+      setTrashEntryDialog({
+        ...request,
+        entries,
+      });
+      setTrashEntryNativeFallbackReason(null);
     },
-    [ensureProjectEntryAccess],
+    [ensureProjectEntryAccess, showNotification],
+  );
+
+  const requestTrashEntry = useCallback(
+    (entry: ProjectEntryTrashRequest) => {
+      requestTrashEntries({ entries: [entry], displayName: entry.displayName });
+    },
+    [requestTrashEntries],
   );
 
   const requestMoveEntry = useCallback(
@@ -386,13 +432,12 @@ export const useMainLayoutProjectEntries = ({
 
     setCreateEntryBusy(true);
     try {
-      if (createEntryDialog.type === "file") {
-        await WriteFile(targetPath, "");
-        onUserCreatedEntry?.(targetPath, false);
-      } else {
-        await CreateDirectory(targetPath);
-        onUserCreatedEntry?.(targetPath, true);
-      }
+      const result = await CreateProjectEntry({
+        type: createEntryDialog.type,
+        directoryPath: createEntryDialog.directoryPath,
+        name: entryName,
+      });
+      onUserCreatedEntry?.(result.path, result.isDirectory);
 
       showNotification(
         "success",
@@ -433,7 +478,10 @@ export const useMainLayoutProjectEntries = ({
 
     setRenameEntryBusy(true);
     try {
-      await RenameProjectEntry(renameEntryDialog.path, nextName);
+      await RenameProjectEntryWithHistory({
+        path: renameEntryDialog.path,
+        newName: nextName,
+      });
       showNotification("success", "Entry renamed");
       setRenameEntryDialog(null);
       setRenameEntryName("");
@@ -457,15 +505,66 @@ export const useMainLayoutProjectEntries = ({
       return;
     }
 
-    if (!ensureProjectEntryAccess(trashEntryDialog.path, "write")) {
-      return;
+    for (const entry of trashEntryDialog.entries) {
+      if (!ensureProjectEntryAccess(entry.path, "write")) {
+        return;
+      }
     }
 
     setTrashEntryBusy(true);
     try {
-      await TrashProjectEntry(trashEntryDialog.path);
-      showNotification("success", "Moved to trash");
+      const result = await TrashProjectEntries({
+        entries: trashEntryDialog.entries.map((entry) => ({
+          path: entry.path,
+          isDirectory: entry.isDirectory,
+          displayName: entry.displayName,
+        })),
+      });
+      showNotification(
+        "success",
+        result.count === 1
+          ? "Moved to trash"
+          : `${result.count} entries moved to trash`,
+      );
       setTrashEntryDialog(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isUndoableTrashFallbackEligible(message)) {
+        setTrashEntryNativeFallbackReason(message);
+        showNotification("error", `[Files] Undoable trash blocked: ${message}`);
+      } else {
+        setTrashEntryNativeFallbackReason(null);
+        showNotification("error", `[Files] ${message}`);
+      }
+    } finally {
+      setTrashEntryBusy(false);
+    }
+  }, [ensureProjectEntryAccess, showNotification, trashEntryDialog]);
+
+  const handleTrashEntryNativeFallbackSubmit = useCallback(async () => {
+    if (!trashEntryDialog) {
+      return;
+    }
+
+    for (const entry of trashEntryDialog.entries) {
+      if (!ensureProjectEntryAccess(entry.path, "write")) {
+        return;
+      }
+    }
+
+    setTrashEntryBusy(true);
+    try {
+      for (const entry of trashEntryDialog.entries) {
+        await TrashProjectEntry(entry.path);
+      }
+      showNotification(
+        "success",
+        trashEntryDialog.entries.length === 1
+          ? "Moved to trash without undo"
+          : `${trashEntryDialog.entries.length} entries moved to trash without undo`,
+      );
+      setTrashEntryDialog(null);
+      setTrashEntryNativeFallbackReason(null);
     } catch (error) {
       showNotification(
         "error",
@@ -475,6 +574,42 @@ export const useMainLayoutProjectEntries = ({
       setTrashEntryBusy(false);
     }
   }, [ensureProjectEntryAccess, showNotification, trashEntryDialog]);
+
+  const undoProjectEntryOperation = useCallback(async () => {
+    try {
+      const before = await GetProjectEntryUndoState();
+      if (!before.canUndo) {
+        return false;
+      }
+      await UndoProjectEntryOperation();
+      showNotification("success", "Explorer action undone");
+      return true;
+    } catch (error) {
+      showNotification(
+        "error",
+        `[Files] ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return false;
+    }
+  }, [showNotification]);
+
+  const redoProjectEntryOperation = useCallback(async () => {
+    try {
+      const before = await GetProjectEntryUndoState();
+      if (!before.canRedo) {
+        return false;
+      }
+      await RedoProjectEntryOperation();
+      showNotification("success", "Explorer action redone");
+      return true;
+    } catch (error) {
+      showNotification(
+        "error",
+        `[Files] ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return false;
+    }
+  }, [showNotification]);
 
   const remapProjectEntryDialogs = useCallback(
     (oldPath: string, newPath: string) => {
@@ -526,20 +661,24 @@ export const useMainLayoutProjectEntries = ({
           return current;
         }
 
-        const remappedPath = remapProjectPathPrefix(
-          current.path,
-          oldPath,
-          newPath,
-        );
-        if (!remappedPath || remappedPath === current.path) {
-          return current;
-        }
-
-        return {
-          ...current,
-          path: remappedPath,
-          displayName: getProjectPathBasename(remappedPath),
-        };
+        let changed = false;
+        const entries = current.entries.map((entry) => {
+          const remappedPath = remapProjectPathPrefix(
+            entry.path,
+            oldPath,
+            newPath,
+          );
+          if (!remappedPath || remappedPath === entry.path) {
+            return entry;
+          }
+          changed = true;
+          return {
+            ...entry,
+            path: remappedPath,
+            displayName: getProjectPathBasename(remappedPath),
+          };
+        });
+        return changed ? { ...current, entries } : current;
       });
     },
     [],
@@ -554,9 +693,15 @@ export const useMainLayoutProjectEntries = ({
     setRenameEntryDialog((current) =>
       current && isSameOrChildPath(current.path, deletedPath) ? null : current,
     );
-    setTrashEntryDialog((current) =>
-      current && isSameOrChildPath(current.path, deletedPath) ? null : current,
-    );
+    setTrashEntryDialog((current) => {
+      if (!current) {
+        return current;
+      }
+      const entries = current.entries.filter(
+        (entry) => !isSameOrChildPath(entry.path, deletedPath),
+      );
+      return entries.length === 0 ? null : { ...current, entries };
+    });
   }, []);
 
   const projectEntryActions: ProjectEntryActionsContextValue = useMemo(
@@ -572,6 +717,9 @@ export const useMainLayoutProjectEntries = ({
       requestMoveEntry,
       requestRenameEntry,
       requestTrashEntry,
+      requestTrashEntries,
+      undoProjectEntryOperation,
+      redoProjectEntryOperation,
     }),
     [
       activeProjectPath,
@@ -584,7 +732,10 @@ export const useMainLayoutProjectEntries = ({
       requestMoveEntry,
       requestRenameEntry,
       requestTrashEntry,
+      requestTrashEntries,
       revealEntry,
+      undoProjectEntryOperation,
+      redoProjectEntryOperation,
     ],
   );
 
@@ -604,7 +755,9 @@ export const useMainLayoutProjectEntries = ({
     onRenameEntryClose: closeRenameEntryDialog,
     trashEntryDialog,
     trashEntryBusy,
+    trashEntryNativeFallbackReason,
     onTrashEntrySubmit: handleTrashEntrySubmit,
+    onTrashEntryNativeFallbackSubmit: handleTrashEntryNativeFallbackSubmit,
     onTrashEntryClose: closeTrashEntryDialog,
     getRelativePath,
   };
@@ -617,6 +770,8 @@ export const useMainLayoutProjectEntries = ({
     projectEntryActions,
     projectEntryDialogProps,
     pruneProjectEntryDialogs,
+    redoProjectEntryOperation,
     remapProjectEntryDialogs,
+    undoProjectEntryOperation,
   };
 };

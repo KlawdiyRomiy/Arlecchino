@@ -57,6 +57,8 @@ type ProjectRuntimeSession struct {
 	diagnosticsPreloadMu     sync.Mutex
 	diagnosticsPreloadCancel context.CancelFunc
 	diagnosticsPreloadSeq    uint64
+
+	projectEntryHistory projectEntryHistory
 }
 
 type ProjectSessionRegistry struct {

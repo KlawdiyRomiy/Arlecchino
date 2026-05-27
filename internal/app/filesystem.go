@@ -755,23 +755,26 @@ func (a *App) RenameProjectEntry(path string, newName string) (ProjectEntryRenam
 }
 
 func (a *App) TrashProjectEntry(path string) error {
-	entryPath, _, err := a.resolveProjectEntryPath(path)
+	session := a.activeProjectSession()
+	root, err := resolveProjectEntryRoot(session)
 	if err != nil {
 		return err
 	}
-
-	info, err := os.Stat(entryPath)
+	entry, err := resolveProjectEntryPathInRoot(root, path, true)
 	if err != nil {
 		return err
 	}
+	if entry.Path == root.Abs || entry.Resolved == root.Resolved {
+		return fmt.Errorf("cannot move project root to trash")
+	}
 
-	if err := trashProjectEntry(entryPath, info.IsDir()); err != nil {
+	if err := trashProjectEntry(entry.Path, entry.IsDirectory); err != nil {
 		return err
 	}
 
 	a.emitEvent("project:entry:deleted", projectEntryDeletedEvent{
-		Path:        entryPath,
-		IsDirectory: info.IsDir(),
+		Path:        entry.Path,
+		IsDirectory: entry.IsDirectory,
 	})
 	return nil
 }

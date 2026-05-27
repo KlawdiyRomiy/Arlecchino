@@ -28,7 +28,7 @@ export interface ContextActionMenuItem {
 
 interface ContextActionMenuProps {
   children: React.ReactNode;
-  items: ContextActionMenuItem[];
+  items: ContextActionMenuItem[] | (() => ContextActionMenuItem[]);
   nativeScope?: string;
   nativeContext?: Record<string, unknown>;
   nativeSurfaceId?: string;
@@ -57,6 +57,25 @@ const formatShortcutLabel = (shortcut: string): string =>
     .replace(/\s+/g, " ")
     .trim();
 
+const filterVisibleContextItems = (items: ContextActionMenuItem[]) =>
+  items.filter((item, index, array) => {
+    if (item.hidden) {
+      return false;
+    }
+
+    if (!item.separator) {
+      return true;
+    }
+
+    const previousVisibleAction = array
+      .slice(0, index)
+      .some((entry) => !entry.hidden && !entry.separator);
+    const nextVisibleAction = array
+      .slice(index + 1)
+      .some((entry) => !entry.hidden && !entry.separator);
+    return previousVisibleAction && nextVisibleAction;
+  });
+
 export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   children,
   items,
@@ -69,6 +88,13 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   onContextMenuCapture,
 }) => {
   const [open, setOpen] = React.useState(false);
+  const resolveItems = React.useCallback(
+    () => (typeof items === "function" ? items() : items),
+    [items],
+  );
+  const [resolvedItems, setResolvedItems] = React.useState<
+    ContextActionMenuItem[]
+  >(() => resolveItems());
   const uiScale = useEditorSettingsStore((state) => state.uiScale);
   const menuInstanceIdRef = React.useRef(
     `context-menu-${Math.random().toString(36).slice(2, 10)}`,
@@ -98,6 +124,12 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
 
     setOpen(nextOpen);
   }, []);
+
+  React.useEffect(() => {
+    if (typeof items !== "function") {
+      setResolvedItems(items);
+    }
+  }, [items]);
 
   React.useEffect(() => {
     if (!open) {
@@ -153,25 +185,8 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
   }, [open]);
 
   const visibleItems = React.useMemo(
-    () =>
-      items.filter((item, index, array) => {
-        if (item.hidden) {
-          return false;
-        }
-
-        if (!item.separator) {
-          return true;
-        }
-
-        const previousVisibleAction = array
-          .slice(0, index)
-          .some((entry) => !entry.hidden && !entry.separator);
-        const nextVisibleAction = array
-          .slice(index + 1)
-          .some((entry) => !entry.hidden && !entry.separator);
-        return previousVisibleAction && nextVisibleAction;
-      }),
-    [items],
+    () => filterVisibleContextItems(resolvedItems),
+    [resolvedItems],
   );
 
   React.useEffect(() => {
@@ -192,7 +207,7 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
     );
   }, [closeAndRun]);
 
-  if (visibleItems.length === 0) {
+  if (visibleItems.length === 0 && typeof items !== "function") {
     return <>{children}</>;
   }
 
@@ -210,12 +225,16 @@ export const ContextActionMenu: React.FC<ContextActionMenuProps> = ({
     }
 
     if (!preferNative || !canUseShellCapability("contextMenu")) {
+      setResolvedItems(resolveItems());
       return;
     }
 
-    const nativeItems = buildNativeContextMenuItems(visibleItems);
+    const nextItems = resolveItems();
+    setResolvedItems(nextItems);
+    const nextVisibleItems = filterVisibleContextItems(nextItems);
+    const nativeItems = buildNativeContextMenuItems(nextVisibleItems);
     const actionRegistry = new Map<string, () => void>();
-    visibleItems.forEach((item, index) => {
+    nextVisibleItems.forEach((item, index) => {
       if (item.separator || item.disabled || !item.onSelect) {
         return;
       }

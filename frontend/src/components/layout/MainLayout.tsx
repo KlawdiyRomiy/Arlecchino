@@ -2300,7 +2300,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     projectEntryActions,
     projectEntryDialogProps,
     pruneProjectEntryDialogs,
+    redoProjectEntryOperation,
     remapProjectEntryDialogs,
+    undoProjectEntryOperation,
   } = useMainLayoutProjectEntries({
     activeProjectPath,
     tuiModeActive,
@@ -5333,6 +5335,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     markShortcutActionHandled,
     onSwitchProject,
     openSettings,
+    redoProjectEntryOperation,
     panelsRef,
     pressedShortcutCodesRef,
     problemsPreFullscreenRef,
@@ -5342,6 +5345,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     toggleCommandDispatcher,
     togglePanelCompactFromShortcut,
     togglePanelFullscreenFromShortcut,
+    undoProjectEntryOperation,
   });
 
   const togglePanel = (panel: keyof PanelVisibility) => {

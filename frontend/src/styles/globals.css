@@ -848,8 +848,21 @@ body > [data-radix-portal] > * {
   background-color: var(--file-explorer-highlight-bg, transparent);
 }
 
+.file-explorer-node-selected {
+  background-color: var(--file-explorer-highlight-bg, transparent);
+}
+
 .file-explorer-node-flash {
   animation: fileExplorerFlash 0.6s ease-out;
+}
+
+.file-explorer-marquee {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 72%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-primary) 16%, transparent);
 }
 
 .arle-drag-ghost {

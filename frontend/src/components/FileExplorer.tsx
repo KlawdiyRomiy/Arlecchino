@@ -99,6 +99,8 @@ interface DeletedEntryEvent {
 
 const FILE_EXPLORER_NODE_RIGHT_INSET = 8;
 const FOLDER_CREATE_BUTTON_SIZE = 22;
+const isMacPlatform = (): boolean =>
+  typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
 
 export interface FileExplorerProps extends PanelSnapDragCallbacks {
   onFileOpen?: (
@@ -134,6 +136,8 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const theme = getThemeColors(isDark);
   const {
     projectPath: contextProjectPath,
+    getRelativePath,
+    copyText,
     copyAbsolutePath,
     copyRelativePath,
     copyProjectPath,
@@ -142,6 +146,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     requestMoveEntry,
     requestRenameEntry,
     requestTrashEntry,
+    requestTrashEntries,
   } = useProjectEntryActions();
   const {
     expandedPaths,
@@ -160,8 +165,26 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       setProjectPath: state.setProjectPath,
     })),
   );
-  const setStoreHighlightedPath = useExplorerSelectionStore(
-    (state) => state.setHighlightedPath,
+  const {
+    selectedPaths,
+    focusedPath,
+    anchorPath,
+    setStoreHighlightedPath,
+    selectSinglePath,
+    setSelectedPaths,
+    toggleSelectedPath,
+    clearSelection,
+  } = useExplorerSelectionStore(
+    useShallow((state) => ({
+      selectedPaths: state.selectedPaths,
+      focusedPath: state.focusedPath,
+      anchorPath: state.anchorPath,
+      setStoreHighlightedPath: state.setHighlightedPath,
+      selectSinglePath: state.selectSinglePath,
+      setSelectedPaths: state.setSelectedPaths,
+      toggleSelectedPath: state.toggleSelectedPath,
+      clearSelection: state.clearSelection,
+    })),
   );
   const [projectPath, setProjectPath] = useState<string>("");
   const [files, setFiles] = useState<FileNode[]>([]);
@@ -178,6 +201,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const [treeOpen, setTreeOpen] = useState(false);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [dragGhost, setDragGhost] = useState<DragGhostState | null>(null);
+  const [marqueeSelection, setMarqueeSelection] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const explorerRef = useRef<HTMLDivElement>(null);
   const filesRef = useRef<FileNode[]>([]);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -188,6 +217,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const onFileOpenRef = useRef(onFileOpen);
   const onFileOpenInPanelRef = useRef(onFileOpenInPanel);
   const highlightedPathRef = useRef<string | null>(null);
+  const selectedPathsRef = useRef(selectedPaths);
+  const focusedPathRef = useRef(focusedPath);
+  const anchorPathRef = useRef(anchorPath);
   const latestFileOpenRequestRef = useRef(0);
   const latestProjectLoadRef = useRef(0);
   const suppressNodeClickRef = useRef(false);
@@ -197,6 +229,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   projectPathRef.current = projectPath;
   onFileOpenRef.current = onFileOpen;
   onFileOpenInPanelRef.current = onFileOpenInPanel;
+  selectedPathsRef.current = selectedPaths;
+  focusedPathRef.current = focusedPath;
+  anchorPathRef.current = anchorPath;
 
   const findNodeElement = useCallback((path: string): HTMLElement | null => {
     const root = explorerRef.current;
@@ -221,6 +256,10 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     }
 
     return null;
+  }, []);
+
+  const activateExplorerKeyboardScope = useCallback(() => {
+    explorerRef.current?.focus({ preventScroll: true });
   }, []);
 
   const setHighlightedPath = useCallback(
@@ -331,6 +370,19 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       )}
     </>
   );
+
+  const renderMarqueeSelection = () =>
+    marqueeSelection ? (
+      <div
+        className="file-explorer-marquee"
+        style={{
+          left: `${marqueeSelection.left}px`,
+          top: `${marqueeSelection.top}px`,
+          width: `${marqueeSelection.width}px`,
+          height: `${marqueeSelection.height}px`,
+        }}
+      />
+    ) : null;
 
   useEffect(() => {
     return () => {
@@ -1291,6 +1343,99 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     );
   }, []);
 
+  const getSelectedNodesInTreeOrder = useCallback((): FileNode[] => {
+    const selected = selectedPathsRef.current;
+    const selectedNodes: FileNode[] = [];
+    const walk = (nodes: FileNode[]) => {
+      nodes.forEach((node) => {
+        if (selected.has(node.path)) {
+          selectedNodes.push(node);
+        }
+        if (node.children) {
+          walk(node.children);
+        }
+      });
+    };
+    walk(filesRef.current);
+    return selectedNodes;
+  }, []);
+
+  const dedupeAncestorSelectedNodes = useCallback((nodes: FileNode[]) => {
+    return nodes.filter(
+      (node) =>
+        !nodes.some(
+          (candidateParent) =>
+            candidateParent.path !== node.path &&
+            isSameOrChildPath(node.path, candidateParent.path),
+        ),
+    );
+  }, []);
+
+  const pruneCollapsedDescendantSelection = useCallback(
+    (collapsedPath: string) => {
+      const selected = selectedPathsRef.current;
+      let changed = false;
+      const nextSelectedPaths = new Set<string>();
+      selected.forEach((path) => {
+        if (path !== collapsedPath && isSameOrChildPath(path, collapsedPath)) {
+          changed = true;
+          return;
+        }
+        nextSelectedPaths.add(path);
+      });
+      if (!changed) {
+        return;
+      }
+
+      const nextFocusedPath = nextSelectedPaths.has(
+        focusedPathRef.current ?? "",
+      )
+        ? focusedPathRef.current
+        : nextSelectedPaths.has(collapsedPath)
+          ? collapsedPath
+          : (Array.from(nextSelectedPaths).at(-1) ?? null);
+      const nextAnchorPath = nextSelectedPaths.has(anchorPathRef.current ?? "")
+        ? anchorPathRef.current
+        : (nextFocusedPath ?? Array.from(nextSelectedPaths)[0] ?? null);
+      setSelectedPaths(nextSelectedPaths, {
+        focusedPath: nextFocusedPath,
+        anchorPath: nextAnchorPath,
+      });
+    },
+    [setSelectedPaths],
+  );
+
+  const selectNodesIntersectingViewportRect = useCallback(
+    (rect: DOMRect) => {
+      const root = explorerRef.current;
+      if (!root) {
+        return;
+      }
+      const selected: string[] = [];
+      const nodes = root.querySelectorAll<HTMLElement>(".file-explorer-node");
+      nodes.forEach((element) => {
+        const path = element.dataset.filePath;
+        if (!path) {
+          return;
+        }
+        const nodeRect = element.getBoundingClientRect();
+        const intersects =
+          rect.left <= nodeRect.right &&
+          rect.right >= nodeRect.left &&
+          rect.top <= nodeRect.bottom &&
+          rect.bottom >= nodeRect.top;
+        if (intersects) {
+          selected.push(path);
+        }
+      });
+      setSelectedPaths(selected, {
+        focusedPath: selected[selected.length - 1] ?? null,
+        anchorPath: selected[0] ?? null,
+      });
+    },
+    [setSelectedPaths],
+  );
+
   const getExplorerDropDirectory = useCallback(
     (clientX: number, clientY: number, draggedNode: FileNode) => {
       const root = explorerRef.current;
@@ -1343,6 +1488,117 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       }
     },
     [getExplorerScrollElement],
+  );
+
+  const handleExplorerMarqueePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      if (
+        event.button !== 0 ||
+        event.altKey ||
+        event.metaKey ||
+        event.ctrlKey
+      ) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.closest(
+          ".file-explorer-node, button, [data-shell-menu-content], [data-radix-popper-content-wrapper]",
+        )
+      ) {
+        return;
+      }
+
+      const scrollElement = getExplorerScrollElement();
+      if (!scrollElement) {
+        return;
+      }
+
+      const pointerId = event.pointerId;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startScrollLeft = scrollElement.scrollLeft;
+      const startScrollTop = scrollElement.scrollTop;
+      let active = false;
+      let releaseSelectionLock: (() => void) | null = null;
+
+      const updateMarquee = (clientX: number, clientY: number) => {
+        const rect = scrollElement.getBoundingClientRect();
+        const currentX = clientX - rect.left + scrollElement.scrollLeft;
+        const currentY = clientY - rect.top + scrollElement.scrollTop;
+        const originX = startX - rect.left + startScrollLeft;
+        const originY = startY - rect.top + startScrollTop;
+        setMarqueeSelection({
+          left: Math.min(originX, currentX),
+          top: Math.min(originY, currentY),
+          width: Math.abs(currentX - originX),
+          height: Math.abs(currentY - originY),
+        });
+        selectNodesIntersectingViewportRect(
+          new DOMRect(
+            Math.min(startX, clientX),
+            Math.min(startY, clientY),
+            Math.abs(clientX - startX),
+            Math.abs(clientY - startY),
+          ),
+        );
+      };
+
+      const cleanup = () => {
+        window.removeEventListener("pointermove", handlePointerMove, true);
+        window.removeEventListener("pointerup", handlePointerUp, true);
+        window.removeEventListener("pointercancel", handlePointerCancel, true);
+        releaseSelectionLock?.();
+        releaseSelectionLock = null;
+      };
+
+      const handlePointerMove = (pointerEvent: PointerEvent) => {
+        if (pointerEvent.pointerId !== pointerId) {
+          return;
+        }
+        const dx = pointerEvent.clientX - startX;
+        const dy = pointerEvent.clientY - startY;
+        if (!active && Math.hypot(dx, dy) > 5) {
+          active = true;
+          releaseSelectionLock = beginDragSelectionLock();
+        }
+        if (!active) {
+          return;
+        }
+        pointerEvent.preventDefault();
+        autoScrollExplorerForDrag(pointerEvent.clientY);
+        updateMarquee(pointerEvent.clientX, pointerEvent.clientY);
+      };
+
+      const handlePointerUp = (pointerEvent: PointerEvent) => {
+        if (pointerEvent.pointerId !== pointerId) {
+          return;
+        }
+        cleanup();
+        setMarqueeSelection(null);
+        if (!active) {
+          clearSelection();
+        }
+      };
+
+      const handlePointerCancel = (pointerEvent: PointerEvent) => {
+        if (pointerEvent.pointerId !== pointerId) {
+          return;
+        }
+        cleanup();
+        setMarqueeSelection(null);
+      };
+
+      window.addEventListener("pointermove", handlePointerMove, true);
+      window.addEventListener("pointerup", handlePointerUp, true);
+      window.addEventListener("pointercancel", handlePointerCancel, true);
+    },
+    [
+      autoScrollExplorerForDrag,
+      clearSelection,
+      getExplorerScrollElement,
+      selectNodesIntersectingViewportRect,
+    ],
   );
 
   const handleNodePointerDown = (
@@ -1555,6 +1811,27 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       return;
     }
 
+    if (e?.shiftKey && !e.metaKey && !e.altKey && !e.ctrlKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleSelectedPath(node.path, { preserveAnchor: true });
+      setHighlightedPath(node.path, false);
+      return;
+    }
+
+    const isMultiSelectToggle =
+      e &&
+      !e.shiftKey &&
+      !e.altKey &&
+      (e.metaKey || (!isMacPlatform() && e.ctrlKey));
+    if (isMultiSelectToggle) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleSelectedPath(node.path, { preserveAnchor: true });
+      setHighlightedPath(node.path, false);
+      return;
+    }
+
     if (e && !node.isDirectory) {
       if (e.altKey && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
@@ -1570,7 +1847,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         });
         return;
       }
-      if (e.metaKey && !e.altKey && !e.ctrlKey) {
+      if (e.metaKey && e.altKey && !e.ctrlKey) {
         e.preventDefault();
         e.stopPropagation();
 
@@ -1591,6 +1868,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         clearTimeout(highlightTimerRef.current);
         highlightTimerRef.current = null;
       }
+      selectSinglePath(node.path);
       setHighlightedPath(node.path);
 
       try {
@@ -1607,6 +1885,8 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     }
 
     latestFileOpenRequestRef.current += 1;
+    selectSinglePath(node.path);
+    setHighlightedPath(node.path, false);
     await toggleDirectory(node);
   };
 
@@ -1731,6 +2011,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     } else {
       // Toggle expanded state in store
       toggleExpanded(node.path);
+      if (isCurrentlyExpanded) {
+        pruneCollapsedDescendantSelection(node.path);
+      }
 
       const updateNode = (nodes: FileNode[]): FileNode[] => {
         return nodes.map((n) => {
@@ -1752,21 +2035,92 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     }
   };
 
+  const getContextSelectionForNode = useCallback(
+    (node: FileNode): FileNode[] => {
+      if (!selectedPathsRef.current.has(node.path)) {
+        return [node];
+      }
+      const selectedNodes = getSelectedNodesInTreeOrder();
+      return selectedNodes.length > 0 ? selectedNodes : [node];
+    },
+    [getSelectedNodesInTreeOrder],
+  );
+
+  const openContextSelection = useCallback(
+    async (nodes: FileNode[]) => {
+      const maxBatchOpen = 20;
+      let openedFiles = 0;
+      for (const selectedNode of nodes) {
+        if (selectedNode.isDirectory) {
+          await toggleDirectory(selectedNode);
+          continue;
+        }
+        if (openedFiles >= maxBatchOpen) {
+          break;
+        }
+        openedFiles += 1;
+        onFileOpenRef.current?.(selectedNode.path, "", selectedNode.name);
+      }
+    },
+    [toggleDirectory],
+  );
+
+  const handleNodeContextMenuCapture = useCallback(
+    (node: FileNode) => {
+      if (selectedPathsRef.current.has(node.path)) {
+        return;
+      }
+      selectSinglePath(node.path);
+      setHighlightedPath(node.path, false);
+    },
+    [selectSinglePath, setHighlightedPath],
+  );
+
+  const handleRootContextMenuCapture = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".file-explorer-node")) {
+        return;
+      }
+      clearSelection();
+    },
+    [clearSelection],
+  );
+
   const buildNodeContextActions = (node: FileNode): ContextActionMenuItem[] => {
-    const target: ProjectEntryActionTarget = {
+    const selectedNodes = getContextSelectionForNode(node);
+    const entryActionNodes = dedupeAncestorSelectedNodes(selectedNodes);
+    const isBatch = selectedNodes.length > 1;
+    const singleTarget: ProjectEntryActionTarget = {
       path: node.path,
       isDirectory: node.isDirectory,
     };
+    const selectedFiles = selectedNodes.filter((entry) => !entry.isDirectory);
+    const selectedFolders = selectedNodes.filter((entry) => entry.isDirectory);
+    const selectedLabel = isBatch
+      ? `${selectedNodes.length} Selected`
+      : node.isDirectory
+        ? "Open / Expand"
+        : "Open";
 
     return [
       {
-        label: node.isDirectory ? "Open / Expand" : "Open",
-        icon: node.isDirectory ? <FolderOpen size={14} /> : <File size={14} />,
+        label: selectedLabel,
+        icon:
+          selectedFolders.length > 0 && selectedFiles.length === 0 ? (
+            <FolderOpen size={14} />
+          ) : (
+            <File size={14} />
+          ),
         onSelect: () => {
-          void handleNodeClick(node);
+          if (isBatch) {
+            void openContextSelection(entryActionNodes);
+          } else {
+            void handleNodeClick(node);
+          }
         },
       },
-      !node.isDirectory
+      !node.isDirectory && !isBatch
         ? {
             label: "Open in Panel",
             icon: <PanelRightOpen size={14} />,
@@ -1775,14 +2129,14 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
             },
           }
         : { hidden: true },
-      node.isDirectory
+      node.isDirectory && !isBatch
         ? {
             label: "New File",
             icon: <FilePlus size={14} />,
             onSelect: () => requestCreateEntry("file", node.path),
           }
         : { hidden: true },
-      node.isDirectory
+      node.isDirectory && !isBatch
         ? {
             label: "New Folder",
             icon: <FolderPlus size={14} />,
@@ -1792,40 +2146,70 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       {
         label: "Rename",
         icon: <Edit3 size={14} />,
-        onSelect: () => requestRenameEntry(target),
+        hidden: isBatch,
+        onSelect: () => requestRenameEntry(singleTarget),
       },
       { separator: true },
       {
-        label: "Copy Relative Path",
+        label: isBatch ? "Copy Relative Paths" : "Copy Relative Path",
         icon: <Copy size={14} />,
         onSelect: () => {
-          void copyRelativePath(node.path);
+          if (isBatch) {
+            void copyText(
+              selectedNodes
+                .map((entry) => getRelativePath(entry.path))
+                .join("\n"),
+              "Relative paths copied",
+            );
+          } else {
+            void copyRelativePath(node.path);
+          }
         },
       },
       {
-        label: "Copy Absolute Path",
+        label: isBatch ? "Copy Absolute Paths" : "Copy Absolute Path",
         icon: <Copy size={14} />,
         onSelect: () => {
-          void copyAbsolutePath(node.path);
+          if (isBatch) {
+            void copyText(
+              selectedNodes.map((entry) => entry.path).join("\n"),
+              "Absolute paths copied",
+            );
+          } else {
+            void copyAbsolutePath(node.path);
+          }
         },
       },
       {
         label: "Reveal in File Manager",
         icon: <ExternalLink size={14} />,
+        hidden: isBatch,
         onSelect: () => {
           void revealEntry(node.path);
         },
       },
       { separator: true },
       {
-        label: "Move to Trash",
+        label: isBatch ? "Move Selected to Trash" : "Move to Trash",
         icon: <Trash2 size={14} />,
         danger: true,
-        onSelect: () =>
+        onSelect: () => {
+          if (isBatch) {
+            requestTrashEntries({
+              entries: entryActionNodes.map((entry) => ({
+                path: entry.path,
+                isDirectory: entry.isDirectory,
+                displayName: entry.name,
+              })),
+              displayName: `${entryActionNodes.length} selected entries`,
+            });
+            return;
+          }
           requestTrashEntry({
-            ...target,
+            ...singleTarget,
             displayName: node.name,
-          }),
+          });
+        },
       },
     ];
   };
@@ -1935,7 +2319,9 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     isLast: boolean = false,
     parentGuides: boolean[] = [],
   ) => {
-    const isHighlighted = highlightedPathRef.current === node.path;
+    const isSelected = selectedPaths.has(node.path);
+    const isHighlighted =
+      isSelected || highlightedPathRef.current === node.path;
     const isNodeExpanded = getIsExpanded(node.path);
     const guideColor = isDark ? "var(--border-subtle)" : "rgba(0,0,0,0.15)";
     const highlightBackground = isDark ? "var(--bg-hover)" : "rgba(0,0,0,0.06)";
@@ -2015,12 +2401,15 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
 
     return (
       <div key={node.path}>
-        <ContextActionMenu items={buildNodeContextActions(node)}>
+        <ContextActionMenu
+          items={() => buildNodeContextActions(node)}
+          onContextMenuCapture={() => handleNodeContextMenuCapture(node)}
+        >
           <div
             style={nodeStyle}
             className={`file-explorer-node${
               isHighlighted
-                ? " file-explorer-node-highlighted file-explorer-node-flash"
+                ? ` file-explorer-node-highlighted${isSelected ? " file-explorer-node-selected" : " file-explorer-node-flash"}`
                 : ""
             }`}
             data-file-path={node.path}
@@ -2131,13 +2520,20 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       <ContextActionMenu
         items={rootContextActions}
         ignoredTargetSelector=".file-explorer-node"
+        onContextMenuCapture={handleRootContextMenuCapture}
       >
         <div
           ref={explorerRef}
           data-testid="file-explorer-scroll-region"
+          data-explorer-keyboard-scope="true"
+          tabIndex={-1}
+          onPointerDownCapture={activateExplorerKeyboardScope}
+          onPointerDown={handleExplorerMarqueePointerDown}
           style={{
             height: "100%",
             overflow: "auto",
+            position: "relative",
+            outline: "none",
           }}
         >
           <div style={headerStyle}>
@@ -2149,6 +2545,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
               renderFileNode(node, 0, index === files.length - 1, []),
             )}
           </div>
+          {renderMarqueeSelection()}
 
           {renderPerspectiveOverlays()}
           <DragGhost ghost={dragGhost} />
@@ -2217,15 +2614,20 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       <ContextActionMenu
         items={rootContextActions}
         ignoredTargetSelector=".file-explorer-node"
+        onContextMenuCapture={handleRootContextMenuCapture}
       >
         <div
           ref={explorerRef}
+          data-explorer-keyboard-scope="true"
+          tabIndex={-1}
+          onPointerDownCapture={activateExplorerKeyboardScope}
           style={{
             display: "flex",
             flexDirection: "column",
             height: "100%",
             minHeight: 0,
             overflow: "hidden",
+            outline: "none",
           }}
         >
           <div
@@ -2267,15 +2669,18 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
           <div className="file-explorer-scroll-fog-shell">
             <div
               data-testid="file-explorer-scroll-region"
+              onPointerDown={handleExplorerMarqueePointerDown}
               style={{
                 height: "100%",
                 overflow: "auto",
                 padding: "4px 0",
+                position: "relative",
               }}
             >
               {files.map((node, index) =>
                 renderFileNode(node, 0, index === files.length - 1, []),
               )}
+              {renderMarqueeSelection()}
             </div>
           </div>
 

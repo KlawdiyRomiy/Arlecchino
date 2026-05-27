@@ -181,6 +181,7 @@ func (a *App) ServiceShutdown() error {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.cleanupStaleProjectEntryUndoStashes()
 	a.startOpenIntentBridge()
 	if a.aiService == nil {
 		a.aiService = ai.NewService(ai.ServiceOptions{
@@ -596,6 +597,7 @@ func (a *App) closeProjectInSession(session *ProjectRuntimeSession, closeTermina
 
 func (a *App) closeProjectInSessionLocked(session *ProjectRuntimeSession, closeTerminals bool) error {
 	projectPath := session.currentProjectPath()
+	a.finalizeProjectEntryHistory(session)
 	if session.projectCancel != nil {
 		session.projectCancel()
 	}
