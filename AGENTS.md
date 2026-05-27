@@ -53,59 +53,13 @@ For non-trivial Arlecchino changes, especially in high-sensitivity areas, identi
 - For Arlecchino runtime behavior, prefer live IDE/runtime capability discovery when available, and distinguish accepted bridge events from confirmed frontend handling.
 - Do not require a specific Codex plugin, MCP server, browser runner, or third-party integration for contributors who do not have that tool installed.
 
-## Commands
+## Verification And Commands
 
-### Setup And App Run
-
-Use these only when needed for the task. Ask first before broad install/build/dev-server flows unless the user explicitly requested them.
-
-```bash
-./scripts/bootstrap-dev-macos.sh
-./scripts/wails-dev-macos.sh
-./scripts/wails-build-macos.sh
-```
-
-### Go: Prefer Narrow Package Checks
-
-```bash
-gofmt -w path/to/file.go
-go test -run TestName ./path/to/package
-go test ./path/to/package
-go vet ./path/to/package
-```
-
-Examples:
-
-```bash
-go test -run TestName ./internal/app
-go test ./internal/indexer/brain
-go test ./internal/indexer/lsp
-go test ./internal/terminal
-```
-
-### Frontend: Run From `frontend/`
-
-The frontend uses `npm` and `package-lock.json`. Do not switch package managers without explicit approval.
-
-```bash
-cd frontend && npm run typecheck
-cd frontend && npx prettier --check src/path/to/file.tsx
-cd frontend && npx prettier --write src/path/to/file.tsx
-cd frontend && node test-scripts/surface-runtime-contracts.test.mjs
-```
-
-For visible UI changes, first check `frontend/package.json` and run the closest available checked-in UI/spec/smoke command for the touched surface when practical.
-
-### Broad Checks: Ask First
-
-```bash
-go test ./...
-go vet ./...
-go fmt ./...
-cd frontend && npm run build
-cd frontend && npm run test:smoke
-cd frontend && npx prettier --check "**/*.{js,ts,tsx,md}"
-```
+- Discover project commands from checked-in scripts, package manifests, and nearby docs.
+- Use the package manager implied by the checked-in lockfile; do not switch package managers without explicit approval.
+- Prefer focused package, file, or surface checks over broad suites.
+- Use broad installs, builds, full test suites, or long-running dev servers only when explicitly requested or genuinely required.
+- Keep personal or tool-specific command playbooks out of this tracked file; agents may keep those in their own private instruction layer.
 
 ## Ask First
 
@@ -131,8 +85,7 @@ cd frontend && npx prettier --check "**/*.{js,ts,tsx,md}"
 ## Generated Artifacts
 
 - Do not hand-edit `frontend/bindings/**` or `frontend/wailsjs/**` when a regeneration flow exists.
-- For Wails v3 generated bindings, use `./scripts/wails3-generate-bindings.sh`.
-- Only write Wails v3 bindings with `./scripts/wails3-generate-bindings.sh --write` after user approval.
+- Regenerate generated bindings only through the checked-in generation flow after explicit user approval.
 - Treat generated binding diffs as separate review surface; inspect churn before mixing them with hand-written code changes.
 
 ## Workspace Cleanliness
