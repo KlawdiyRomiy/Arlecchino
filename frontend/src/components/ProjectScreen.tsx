@@ -2096,15 +2096,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       );
       affectedTabs.forEach((tab) => {
         if (tab.isDirty) {
-          useAppNotificationStore.getState().addNotification({
-            id: `editor-disk-change:${tab.id}`,
-            kind: "warning",
-            title: "File changed on disk",
-            message: `${tab.label} has unsaved editor changes.`,
-            source: "Filesystem",
-            sticky: false,
-            timeoutMs: 6000,
-          });
           return;
         }
         void refreshAppliedPatchTab(tab);
