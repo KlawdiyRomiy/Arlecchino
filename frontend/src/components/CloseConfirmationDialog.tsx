@@ -1,6 +1,8 @@
 import React, { useEffect } from "react";
+import { AnimatePresence } from "framer-motion";
 import { AlertCircle } from "lucide-react";
 import { createPortal } from "react-dom";
+import { MotionShellDialogFrame } from "./ui/MotionShellDialogFrame";
 
 export type CloseConfirmationKind = "project" | "application";
 
@@ -81,14 +83,13 @@ export const CloseConfirmationDialog: React.FC<
   }
 
   return createPortal(
-    request ? (
-      <div
-        className="pointer-events-auto fixed inset-0 flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm"
-        style={{ zIndex: 2147483647 }}
-      >
-        <div
-          className="pointer-events-auto max-h-[calc(100vh-32px)] w-[42em] max-w-[calc(100vw-32px)] overflow-y-auto rounded-[1.5em] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-[2em] text-[calc(16px*var(--ui-scale,1))] shadow-2xl"
-          data-testid="close-confirmation-dialog"
+    <AnimatePresence>
+      {request ? (
+        <MotionShellDialogFrame
+          key={`close-confirmation-${request.kind}`}
+          overlayClassName="pointer-events-auto fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm"
+          panelClassName="pointer-events-auto max-h-[calc(100vh-32px)] w-[42em] max-w-[calc(100vw-32px)] overflow-y-auto rounded-[1.5em] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-[2em] text-[calc(16px*var(--ui-scale,1))] shadow-2xl"
+          panelTestId="close-confirmation-dialog"
         >
           {(() => {
             const copy = copyForRequest(request);
@@ -130,9 +131,9 @@ export const CloseConfirmationDialog: React.FC<
               </>
             );
           })()}
-        </div>
-      </div>
-    ) : null,
+        </MotionShellDialogFrame>
+      ) : null}
+    </AnimatePresence>,
     document.body,
   );
 };
