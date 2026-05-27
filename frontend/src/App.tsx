@@ -1,10 +1,4 @@
-import React, {
-  startTransition,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import WelcomeScreen from "./components/WelcomeScreen";
 import {
   CloseConfirmationDialog,
@@ -34,6 +28,7 @@ import {
   startAdaptivePerformanceMonitor,
   usePerformanceStore,
 } from "./stores/performanceStore";
+import { useAppNotificationStore } from "./stores/appNotificationStore";
 import { useTheme } from "./hooks/useTheme";
 import { clampUiScale } from "./utils/uiScale";
 import {
@@ -70,7 +65,6 @@ import {
 } from "./utils/editorFileLoader";
 import { createSystemFontSizeScaler } from "./utils/systemFontSizeScaling";
 
-const PROJECT_SWITCH_VISUAL_SETTLE_MS = 180;
 const OPEN_TARGET_EVENT = "arlecchino:open";
 const APP_CLOSE_REQUESTED_EVENT = "app:close-requested";
 const APP_CLOSE_REQUEST_EVENT = "arlecchino:request-close";
@@ -88,12 +82,8 @@ interface ApplicationCloseRequestPayload {
   sessionId?: string;
 }
 
-const waitForProjectSwitchVisualSettle = () =>
-  new Promise<void>((resolve) => {
-    window.setTimeout(() => {
-      window.requestAnimationFrame(() => resolve());
-    }, PROJECT_SWITCH_VISUAL_SETTLE_MS);
-  });
+const toErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 
 const buildScaledSurfaceStyle = (uiScale: number): React.CSSProperties => ({
   position: "absolute",
@@ -164,9 +154,10 @@ const App: React.FC = () => {
   );
   const [closeConfirmation, setCloseConfirmation] =
     useState<PendingCloseConfirmation | null>(null);
-  const [closeConfirmationBusy, setCloseConfirmationBusy] = useState(false);
   const confirmBeforeCloseRef = useRef(confirmBeforeClose);
   const closeConfirmationRef = useRef<PendingCloseConfirmation | null>(null);
+  const projectBackendSerialRef = useRef<Promise<void>>(Promise.resolve());
+  const projectBackendOperationIdRef = useRef(0);
   const effectiveUiScale = clampUiScale(uiScale);
   const isDetachedHost = isDetachedAppletHostRoute();
 
@@ -244,13 +235,102 @@ const App: React.FC = () => {
     useWorkspaceStore.getState().setActiveFramework(framework || null);
   };
 
+  const showWorkspaceError = useCallback((title: string, error: unknown) => {
+    useAppNotificationStore.getState().addNotification({
+      kind: "error",
+      title,
+      message: toErrorMessage(error),
+      source: "Workspace",
+    });
+  }, []);
+
+  const finishProjectSwitchNow = useCallback(
+    (projectId: string, projectPath: string | null) => {
+      const workspace = useWorkspaceStore.getState();
+      workspace.confirmProjectSwitch(projectId);
+      workspace.completeProjectSwitch(projectId);
+      useTerminalStore.getState().setActiveProject(projectPath);
+      setFileToOpen(null);
+    },
+    [],
+  );
+
+  const restoreProjectSelection = useCallback(
+    (projectId: string | null, projectPath: string | null) => {
+      if (projectId) {
+        const workspace = useWorkspaceStore.getState();
+        workspace.beginProjectSwitch(projectId, 0);
+        workspace.confirmProjectSwitch(projectId);
+        workspace.completeProjectSwitch(projectId);
+      } else {
+        useWorkspaceStore.getState().clearActiveProject();
+      }
+      activateProjectScope(projectPath);
+      useTerminalStore.getState().setActiveProject(projectPath);
+      setFileToOpen(null);
+    },
+    [],
+  );
+
+  const beginProjectBackendOperation = useCallback(() => {
+    projectBackendOperationIdRef.current += 1;
+    return projectBackendOperationIdRef.current;
+  }, []);
+
+  const isProjectBackendOperationCurrent = useCallback(
+    (operationId: number) =>
+      projectBackendOperationIdRef.current === operationId,
+    [],
+  );
+
+  const runLatestProjectBackendOperation = useCallback(
+    (operationId: number, run: () => Promise<unknown>) => {
+      const previousOperation = projectBackendSerialRef.current.catch(
+        () => undefined,
+      );
+      const operation = previousOperation.then(async () => {
+        if (!isProjectBackendOperationCurrent(operationId)) {
+          return false;
+        }
+        await run();
+        return isProjectBackendOperationCurrent(operationId);
+      });
+
+      projectBackendSerialRef.current = operation.then(
+        () => undefined,
+        () => undefined,
+      );
+      return operation;
+    },
+    [isProjectBackendOperationCurrent],
+  );
+
+  const runLatestProjectOpen = useCallback(
+    (projectPath: string, operationId: number) =>
+      runLatestProjectBackendOperation(operationId, () =>
+        AppFunctions.OpenProject(projectPath),
+      ),
+    [runLatestProjectBackendOperation],
+  );
+
+  const runLatestProjectClose = useCallback(
+    (operationId: number) =>
+      runLatestProjectBackendOperation(operationId, () =>
+        AppFunctions.CloseProject(),
+      ),
+    [runLatestProjectBackendOperation],
+  );
+
   const requestCloseConfirmation = useCallback(
     (
       request: CloseConfirmationRequest,
       onConfirm: () => Promise<void> | void,
     ) => {
       if (!confirmBeforeCloseRef.current) {
-        void Promise.resolve(onConfirm());
+        void Promise.resolve(onConfirm()).catch((error) => {
+          console.error("Error while closing:", error);
+          showWorkspaceError("Close failed", error);
+        });
         return;
       }
 
@@ -260,9 +340,8 @@ const App: React.FC = () => {
       };
       closeConfirmationRef.current = pendingConfirmation;
       setCloseConfirmation(pendingConfirmation);
-      setCloseConfirmationBusy(false);
     },
-    [],
+    [showWorkspaceError],
   );
 
   const handleCloseConfirmationCancel = useCallback(() => {
@@ -270,7 +349,6 @@ const App: React.FC = () => {
       closeConfirmationRef.current?.kind === "application";
     closeConfirmationRef.current = null;
     setCloseConfirmation(null);
-    setCloseConfirmationBusy(false);
     if (shouldCancelApplicationClose) {
       void AppFunctions.CancelApplicationClose().catch(() => undefined);
     }
@@ -282,7 +360,10 @@ const App: React.FC = () => {
     };
 
     if (!confirmBeforeCloseRef.current) {
-      void confirmApplicationClose();
+      void confirmApplicationClose().catch((error) => {
+        console.error("Error while closing application:", error);
+        showWorkspaceError("Close failed", error);
+      });
       return;
     }
 
@@ -296,31 +377,21 @@ const App: React.FC = () => {
     };
     closeConfirmationRef.current = pendingConfirmation;
     setCloseConfirmation(pendingConfirmation);
-    setCloseConfirmationBusy(false);
-  }, []);
+  }, [showWorkspaceError]);
 
   const handleCloseConfirmationConfirm = useCallback(() => {
     const pending = closeConfirmationRef.current;
-    if (!pending || closeConfirmationBusy) {
+    if (!pending) {
       return;
     }
 
-    setCloseConfirmationBusy(true);
-    void Promise.resolve(pending.onConfirm())
-      .then(() => {
-        closeConfirmationRef.current = null;
-        setCloseConfirmation(null);
-      })
-      .catch((error) => {
-        console.error("Error while closing:", error);
-        closeConfirmationRef.current = null;
-        setCloseConfirmation(null);
-        alert(`Error while closing: ${error}`);
-      })
-      .finally(() => {
-        setCloseConfirmationBusy(false);
-      });
-  }, [closeConfirmationBusy]);
+    closeConfirmationRef.current = null;
+    setCloseConfirmation(null);
+    void Promise.resolve(pending.onConfirm()).catch((error) => {
+      console.error("Error while closing:", error);
+      showWorkspaceError("Close failed", error);
+    });
+  }, [showWorkspaceError]);
 
   useEffect(() => {
     if (isDetachedHost) {
@@ -411,22 +482,21 @@ const App: React.FC = () => {
         setFileToOpen(null);
       } catch (error) {
         console.error("Error opening project window:", error);
-        alert(`Error while opening project window: ${error}`);
+        showWorkspaceError("Open project window failed", error);
       }
       return;
     }
 
+    const outgoingProjectId = state.activeId;
     const outgoingProjectPath =
-      useWorkspaceStore
-        .getState()
-        .projects.find(
-          (project) => project.id === useWorkspaceStore.getState().activeId,
-        )?.path ?? null;
+      state.projects.find((project) => project.id === outgoingProjectId)
+        ?.path ?? null;
     const hadActiveProject = Boolean(state.activeId);
     usePerformanceStore.getState().resetTransientBudget();
     const openedProjectId = useWorkspaceStore
       .getState()
       .beginProjectOpen(projectPath, 1);
+    const operationId = beginProjectBackendOperation();
     setFileToOpen(null);
 
     try {
@@ -434,30 +504,31 @@ const App: React.FC = () => {
         resetProjectBoundStores();
       }
       activateProjectScope(projectPath);
-      const openProjectPromise = AppFunctions.OpenProject(projectPath);
-      const workspace = useWorkspaceStore.getState();
-      workspace.confirmProjectSwitch(openedProjectId);
-      await Promise.all([
-        openProjectPromise,
-        waitForProjectSwitchVisualSettle(),
-      ]);
-      useTerminalStore.getState().setActiveProject(projectPath);
+      const openProjectPromise = runLatestProjectOpen(projectPath, operationId);
+      finishProjectSwitchNow(openedProjectId, projectPath);
+      useWorkspaceStore.getState().setActiveFramework(null);
+      const isCurrentOperation = await openProjectPromise;
+      if (!isCurrentOperation) {
+        return;
+      }
       await syncCurrentFramework();
-      startTransition(() => {
-        useWorkspaceStore.getState().completeProjectSwitch(openedProjectId);
-        setFileToOpen(null);
-      });
+      if (!isProjectBackendOperationCurrent(operationId)) {
+        return;
+      }
       window.requestAnimationFrame(() => {
         void preloadProjectDiagnostics(projectPath);
       });
     } catch (error) {
-      activateProjectScope(outgoingProjectPath);
-      useTerminalStore.getState().setActiveProject(outgoingProjectPath);
-      useWorkspaceStore.getState().cancelProjectSwitch(openedProjectId);
+      if (!isProjectBackendOperationCurrent(operationId)) {
+        return;
+      }
+      restoreProjectSelection(outgoingProjectId, outgoingProjectPath);
       useWorkspaceStore.getState().removeProject(openedProjectId);
-      resetProjectBoundStores();
+      if (!hadActiveProject) {
+        resetProjectBoundStores();
+      }
       console.error("Error opening project:", error);
-      alert(`Error while opening project: ${error}`);
+      showWorkspaceError("Open project failed", error);
     }
   };
 
@@ -472,36 +543,41 @@ const App: React.FC = () => {
       return;
     }
 
+    const outgoingProjectId = state.activeId;
     const outgoingProjectPath =
-      state.projects.find((item) => item.id === state.activeId)?.path ?? null;
+      state.projects.find((item) => item.id === outgoingProjectId)?.path ??
+      null;
     usePerformanceStore.getState().resetTransientBudget();
     state.beginProjectSwitch(id, direction);
+    const operationId = beginProjectBackendOperation();
     setFileToOpen(null);
 
     try {
       activateProjectScope(project.path);
-      const openProjectPromise = AppFunctions.OpenProject(project.path);
-      const workspace = useWorkspaceStore.getState();
-      workspace.confirmProjectSwitch(id);
-      await Promise.all([
-        openProjectPromise,
-        waitForProjectSwitchVisualSettle(),
-      ]);
-      useTerminalStore.getState().setActiveProject(project.path);
+      const openProjectPromise = runLatestProjectOpen(
+        project.path,
+        operationId,
+      );
+      finishProjectSwitchNow(id, project.path);
+      useWorkspaceStore.getState().setActiveFramework(null);
+      const isCurrentOperation = await openProjectPromise;
+      if (!isCurrentOperation) {
+        return;
+      }
       await syncCurrentFramework();
-      startTransition(() => {
-        useWorkspaceStore.getState().completeProjectSwitch(id);
-        setFileToOpen(null);
-      });
+      if (!isProjectBackendOperationCurrent(operationId)) {
+        return;
+      }
       window.requestAnimationFrame(() => {
         void preloadProjectDiagnostics(project.path);
       });
     } catch (error) {
-      activateProjectScope(outgoingProjectPath);
-      useTerminalStore.getState().setActiveProject(outgoingProjectPath);
-      useWorkspaceStore.getState().cancelProjectSwitch(id);
+      if (!isProjectBackendOperationCurrent(operationId)) {
+        return;
+      }
+      restoreProjectSelection(outgoingProjectId, outgoingProjectPath);
       console.error("Error switching project:", error);
-      alert(`Error while switching project: ${error}`);
+      showWorkspaceError("Switch project failed", error);
     }
   };
 
@@ -531,7 +607,7 @@ const App: React.FC = () => {
           });
         } catch (error) {
           console.error("Error opening target:", error);
-          alert(error instanceof Error ? error.message : String(error));
+          showWorkspaceError("Open target failed", error);
         }
       })();
     };
@@ -540,15 +616,19 @@ const App: React.FC = () => {
     return () => {
       window.removeEventListener(OPEN_TARGET_EVENT, handleOpenTargetEvent);
     };
-  }, [isDetachedHost]);
+  }, [isDetachedHost, showWorkspaceError]);
 
   const performBackToWelcome = async (currentId: string) => {
     if (!currentId) {
       return;
     }
 
+    const operationId = beginProjectBackendOperation();
     try {
-      await AppFunctions.CloseProject();
+      const isCurrentOperation = await runLatestProjectClose(operationId);
+      if (!isCurrentOperation) {
+        return;
+      }
       resetProjectBoundStores();
       forgetProjectWindowRestorePath(currentId);
       useWorkspaceStore.getState().removeProject(currentId);
@@ -556,8 +636,11 @@ const App: React.FC = () => {
       useTerminalStore.getState().setActiveProject(null);
       setFileToOpen(null);
     } catch (error) {
+      if (!isProjectBackendOperationCurrent(operationId)) {
+        return;
+      }
       console.error("Error returning to welcome:", error);
-      alert(`Error while closing project: ${error}`);
+      showWorkspaceError("Close project failed", error);
     }
   };
 
@@ -599,8 +682,12 @@ const App: React.FC = () => {
 
     const nextProject = getAdjacentProject(state.projects, id);
     if (!nextProject) {
+      const operationId = beginProjectBackendOperation();
       try {
-        await AppFunctions.CloseProject();
+        const isCurrentOperation = await runLatestProjectClose(operationId);
+        if (!isCurrentOperation) {
+          return;
+        }
         resetProjectBoundStores();
         if (shouldForgetProjectWindowRestore) {
           forgetProjectWindowRestorePath(id);
@@ -610,8 +697,11 @@ const App: React.FC = () => {
         useTerminalStore.getState().setActiveProject(null);
         setFileToOpen(null);
       } catch (error) {
+        if (!isProjectBackendOperationCurrent(operationId)) {
+          return;
+        }
         console.error("Error closing last project:", error);
-        alert(`Error while closing project: ${error}`);
+        showWorkspaceError("Close project failed", error);
       }
       return;
     }
@@ -621,42 +711,46 @@ const App: React.FC = () => {
       id,
       nextProject.id,
     );
+    const outgoingProjectId = state.activeId;
     const outgoingProjectPath =
-      state.projects.find((project) => project.id === state.activeId)?.path ??
-      null;
+      state.projects.find((project) => project.id === outgoingProjectId)
+        ?.path ?? null;
     usePerformanceStore.getState().resetTransientBudget();
     state.beginProjectSwitch(nextProject.id, direction);
+    const operationId = beginProjectBackendOperation();
     setFileToOpen(null);
 
     try {
       activateProjectScope(nextProject.path);
-      const openProjectPromise = AppFunctions.OpenProject(nextProject.path);
-      const workspace = useWorkspaceStore.getState();
-      workspace.confirmProjectSwitch(nextProject.id);
-      await Promise.all([
-        openProjectPromise,
-        waitForProjectSwitchVisualSettle(),
-      ]);
-      useTerminalStore.getState().setActiveProject(nextProject.path);
+      const openProjectPromise = runLatestProjectOpen(
+        nextProject.path,
+        operationId,
+      );
+      finishProjectSwitchNow(nextProject.id, nextProject.path);
+      useWorkspaceStore.getState().setActiveFramework(null);
+      const isCurrentOperation = await openProjectPromise;
+      if (!isCurrentOperation) {
+        return;
+      }
       await syncCurrentFramework();
-      startTransition(() => {
-        const latestWorkspace = useWorkspaceStore.getState();
-        latestWorkspace.completeProjectSwitch(nextProject.id);
-        if (shouldForgetProjectWindowRestore) {
-          forgetProjectWindowRestorePath(id);
-        }
-        latestWorkspace.removeProject(id);
-        setFileToOpen(null);
-      });
+      if (!isProjectBackendOperationCurrent(operationId)) {
+        return;
+      }
+      if (shouldForgetProjectWindowRestore) {
+        forgetProjectWindowRestorePath(id);
+      }
+      useWorkspaceStore.getState().removeProject(id);
+      setFileToOpen(null);
       window.requestAnimationFrame(() => {
         void preloadProjectDiagnostics(nextProject.path);
       });
     } catch (error) {
-      activateProjectScope(outgoingProjectPath);
-      useTerminalStore.getState().setActiveProject(outgoingProjectPath);
-      useWorkspaceStore.getState().cancelProjectSwitch(nextProject.id);
+      if (!isProjectBackendOperationCurrent(operationId)) {
+        return;
+      }
+      restoreProjectSelection(outgoingProjectId, outgoingProjectPath);
       console.error("Error switching after close:", error);
-      alert(`Error while switching project: ${error}`);
+      showWorkspaceError("Switch after close failed", error);
     }
   };
 
@@ -703,7 +797,7 @@ const App: React.FC = () => {
       });
     } catch (error) {
       console.error("Error detaching project:", error);
-      alert(`Error while opening project window: ${error}`);
+      showWorkspaceError("Detach project failed", error);
     }
   };
 
@@ -758,7 +852,6 @@ const App: React.FC = () => {
   const closeConfirmationDialog = isDetachedHost ? null : (
     <CloseConfirmationDialog
       request={closeConfirmation}
-      busy={closeConfirmationBusy}
       onCancel={handleCloseConfirmationCancel}
       onConfirm={handleCloseConfirmationConfirm}
     />

@@ -11,7 +11,6 @@ export interface CloseConfirmationRequest {
 
 interface CloseConfirmationDialogProps {
   request: CloseConfirmationRequest | null;
-  busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -38,7 +37,7 @@ const copyForRequest = (request: CloseConfirmationRequest) => {
 
 export const CloseConfirmationDialog: React.FC<
   CloseConfirmationDialogProps
-> = ({ request, busy, onCancel, onConfirm }) => {
+> = ({ request, onCancel, onConfirm }) => {
   useEffect(() => {
     if (!request || typeof document === "undefined") {
       return;
@@ -51,7 +50,7 @@ export const CloseConfirmationDialog: React.FC<
   }, [request]);
 
   useEffect(() => {
-    if (!request || busy) {
+    if (!request) {
       return;
     }
 
@@ -75,7 +74,7 @@ export const CloseConfirmationDialog: React.FC<
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [busy, onCancel, onConfirm, request]);
+  }, [onCancel, onConfirm, request]);
 
   if (typeof document === "undefined") {
     return null;
@@ -116,18 +115,16 @@ export const CloseConfirmationDialog: React.FC<
                   <button
                     type="button"
                     onClick={onCancel}
-                    disabled={busy}
-                    className="min-h-[2.9em] rounded-[0.95em] border border-[var(--border-subtle)] px-[1.45em] py-[0.65em] text-[0.95em] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-h-[2.9em] rounded-[0.95em] border border-[var(--border-subtle)] px-[1.45em] py-[0.65em] text-[0.95em] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)]"
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
                     onClick={onConfirm}
-                    disabled={busy}
-                    className="min-h-[2.9em] rounded-[0.95em] bg-red-500 px-[1.45em] py-[0.65em] text-[0.95em] font-medium text-white transition-colors hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-h-[2.9em] rounded-[0.95em] bg-red-500 px-[1.45em] py-[0.65em] text-[0.95em] font-medium text-white transition-colors hover:bg-red-400"
                   >
-                    {busy ? "Closing..." : copy.confirmLabel}
+                    {copy.confirmLabel}
                   </button>
                 </div>
               </>

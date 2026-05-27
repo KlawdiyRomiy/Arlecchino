@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { EventsOn } from "../wails/runtime";
+import { useAppNotificationStore } from "../stores/appNotificationStore";
 import { usePerformanceStore } from "../stores/performanceStore";
 import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
 
@@ -19,10 +20,9 @@ interface IndexerEventPayload {
   projectFileCount?: number;
   sessionId?: string;
   terminal?: boolean;
+  error?: string;
 }
 
-const MIN_INDEXING_MS = 800;
-const COMPLETE_DISPLAY_MS = 1000;
 const FAILSAFE_MS = 2000;
 
 // --- Module-level state (subscribes before React renders) ---
@@ -88,41 +88,40 @@ const recordIndexerBudget = (data?: IndexerEventPayload) => {
 
 // --- Timers ---
 
-let revealTimer: ReturnType<typeof setTimeout> | null = null;
 let failsafeTimer: ReturnType<typeof setTimeout> | null = null;
-let minTimer: ReturnType<typeof setTimeout> | null = null;
-let indexingStartedAt = 0;
 
 function clearTimer(timer: ReturnType<typeof setTimeout> | null) {
   if (timer) clearTimeout(timer);
 }
 
 function clearAllTimers() {
-  clearTimer(revealTimer);
   clearTimer(failsafeTimer);
-  clearTimer(minTimer);
-  revealTimer = null;
   failsafeTimer = null;
-  minTimer = null;
 }
 
 function transitionToComplete() {
-  clearTimer(minTimer);
-  minTimer = null;
-
   emit((prev) => ({
-    phase: "complete",
+    phase: "revealed",
     current: prev.total || prev.current,
     total: prev.total,
     percentage: 100,
   }));
-
-  clearTimer(revealTimer);
-  revealTimer = setTimeout(() => {
-    emit((prev) => ({ ...prev, phase: "revealed" }));
-    revealTimer = null;
-  }, COMPLETE_DISPLAY_MS);
 }
+
+const notifyIndexingError = (data?: IndexerEventPayload) => {
+  const message =
+    typeof data?.error === "string" && data.error.trim().length > 0
+      ? data.error.trim()
+      : "Project indexing reported an error.";
+
+  useAppNotificationStore.getState().addNotification({
+    id: "indexer-error",
+    kind: "error",
+    title: "Indexing failed",
+    message,
+    source: "Indexer",
+  });
+};
 
 // --- Event handlers (module-level, no stale closures) ---
 
@@ -131,7 +130,6 @@ EventsOn("indexer:started", (data: IndexerEventPayload) => {
     return;
   }
   clearAllTimers();
-  indexingStartedAt = Date.now();
   recordIndexerBudget(data);
 
   const total = data.total ?? 0;
@@ -159,6 +157,7 @@ EventsOn("indexer:error", (data?: IndexerEventPayload) => {
   if (!matchesCurrentProjectSession(data)) {
     return;
   }
+  notifyIndexingError(data);
   if (data?.terminal !== true) {
     recordIndexerBudget(data);
     return;
@@ -166,7 +165,6 @@ EventsOn("indexer:error", (data?: IndexerEventPayload) => {
 
   recordIndexerBudget({ ...(data ?? {}), queueDepth: 0 });
   clearAllTimers();
-  indexingStartedAt = 0;
   emit({ phase: "revealed", current: 0, total: 0, percentage: 0 });
 });
 
@@ -177,23 +175,6 @@ EventsOn("indexer:completed", (data?: IndexerEventPayload) => {
   recordIndexerBudget({ ...(data ?? {}), queueDepth: 0 });
   clearTimer(failsafeTimer);
   failsafeTimer = null;
-  clearTimer(minTimer);
-  minTimer = null;
-
-  const elapsed =
-    indexingStartedAt === 0 ? MIN_INDEXING_MS : Date.now() - indexingStartedAt;
-  const remaining = Math.max(0, MIN_INDEXING_MS - elapsed);
-
-  emit((prev) => ({
-    ...prev,
-    current: prev.total || prev.current,
-    percentage: 100,
-  }));
-
-  if (remaining > 0) {
-    minTimer = setTimeout(transitionToComplete, remaining);
-    return;
-  }
 
   transitionToComplete();
 });
