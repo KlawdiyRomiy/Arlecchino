@@ -10,13 +10,13 @@ import {
 } from "lucide-react";
 import type { ContextToggles } from "./types";
 
-export interface ContextToggleRowDescriptor {
+interface ContextToggleRowDescriptor {
   key: keyof ContextToggles;
   label: string;
   Icon: LucideIcon;
 }
 
-export const contextToggleRows: ContextToggleRowDescriptor[] = [
+const contextToggleRows: ContextToggleRowDescriptor[] = [
   { key: "workspace", label: "Workspace", Icon: Database },
   { key: "currentFile", label: "Current file", Icon: FileText },
   { key: "terminalLogs", label: "Terminal logs", Icon: Monitor },

@@ -41,12 +41,11 @@ import {
 } from "../../stores/aiInlinePatchStore";
 import { replaceEditorDocumentFromDisk } from "../../stores/editorDocumentObserver";
 import { getCurrentProjectSessionId } from "../../shell/projectSessionRoute";
+import { type PanelPosition, type PanelSize } from "../ui/FloatingPanel";
 import {
   FLOATING_PANEL_LAYOUT_TRANSITION,
   FLOATING_PANEL_LAYOUT_TRANSITION_MS,
-  type PanelPosition,
-  type PanelSize,
-} from "../ui/FloatingPanel";
+} from "../ui/floatingPanelMotion";
 import { ShellContextMenuFallback } from "../ui/ShellContextMenuFallback";
 
 import { zIndex } from "../../styles/colors";

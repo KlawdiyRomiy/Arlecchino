@@ -33,6 +33,10 @@ import {
   type ContextActionMenuItem,
 } from "./ContextActionMenu";
 import { PANEL_FULLSCREEN_MOTION_TRANSITION } from "./motionContracts";
+import {
+  FLOATING_PANEL_LAYOUT_TRANSITION,
+  FLOATING_PANEL_LAYOUT_TRANSITION_MS,
+} from "./floatingPanelMotion";
 
 export type PanelPosition = "left" | "right" | "bottom" | "top";
 
@@ -48,16 +52,6 @@ interface PanelBounds {
   height: number;
 }
 
-export const FLOATING_PANEL_LAYOUT_TRANSITION = {
-  type: "spring",
-  stiffness: 520,
-  damping: 46,
-  mass: 0.7,
-  restDelta: 0.4,
-  restSpeed: 0.4,
-} as const;
-
-export const FLOATING_PANEL_LAYOUT_TRANSITION_MS = 300;
 const FLOATING_PANEL_FLOATING_SLIDE_OFFSET = 32;
 const FLOATING_PANEL_NO_MOTION_TRANSITION = { duration: 0 } as const;
 const FLOATING_PANEL_DROP_PREVIEW_WIDTH = 150;

@@ -134,11 +134,11 @@ import {
 import { dispatchApplicationMenuAction } from "../../utils/applicationMenu";
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 import { AIChatHeader } from "./AIChatHeader";
+import { ActivityStatusPopover } from "./ActivityTimeline";
 import {
-  ActivityStatusPopover,
   buildActivityStatusItems,
   summarizeActivityStatus,
-} from "./ActivityTimeline";
+} from "./activityStatus";
 import { AgentConsole } from "./AgentConsole";
 import { ChatGitReview } from "./ChatGitReview";
 import { ChatHistoryRail } from "./ChatHistoryRail";
@@ -234,7 +234,7 @@ const noContext: ContextToggles = {
   continuity: false,
 };
 
-export const defaultChatContext: ContextToggles = {
+const defaultChatContext: ContextToggles = {
   ...noContext,
   currentFile: true,
   mnemonic: true,
@@ -276,7 +276,7 @@ type ReasoningModelDescriptor = {
 
 type ArtifactMap = Record<string, AIChatRunArtifact[]>;
 
-export function activeEditorContextFromStore(
+function activeEditorContextFromStore(
   store: ReturnType<typeof useEditorStore.getState>,
 ): ActiveEditorContext {
   const activeTab = store.getActiveTab(store.activePaneId);
@@ -952,7 +952,7 @@ function profileIdForChatRequest(
     : minimalGeneralProfileId;
 }
 
-export function buildContextRequest(
+function buildContextRequest(
   context: ContextToggles,
   activeEditor: ActiveEditorContext,
   prompt = "",
@@ -3500,7 +3500,7 @@ export function AIChatPanelContent({
         }
         await Promise.all([
           refreshRunArtifacts(runId),
-          refreshPendingApprovalsEvent(),
+          refreshPendingApprovals(),
         ]);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
@@ -3508,7 +3508,7 @@ export function AIChatPanelContent({
         setArtifactBusyId(null);
       }
     },
-    [refreshPendingApprovalsEvent, refreshRunArtifacts, upsertToolAudit],
+    [refreshPendingApprovals, refreshRunArtifacts, upsertToolAudit],
   );
 
   const handleDenyToolProposal = useCallback(
@@ -3531,7 +3531,7 @@ export function AIChatPanelContent({
         }
         await Promise.all([
           refreshRunArtifacts(runId),
-          refreshPendingApprovalsEvent(),
+          refreshPendingApprovals(),
         ]);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
@@ -3539,7 +3539,7 @@ export function AIChatPanelContent({
         setArtifactBusyId(null);
       }
     },
-    [refreshPendingApprovalsEvent, refreshRunArtifacts, upsertToolAudit],
+    [refreshPendingApprovals, refreshRunArtifacts, upsertToolAudit],
   );
 
   const handleApproveToolProposal = useCallback(
@@ -3571,7 +3571,7 @@ export function AIChatPanelContent({
         }
         await Promise.all([
           refreshRunArtifacts(runId),
-          refreshPendingApprovalsEvent(),
+          refreshPendingApprovals(),
         ]);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
@@ -3579,7 +3579,7 @@ export function AIChatPanelContent({
         setArtifactBusyId(null);
       }
     },
-    [refreshPendingApprovalsEvent, refreshRunArtifacts, upsertToolAudit],
+    [refreshPendingApprovals, refreshRunArtifacts, upsertToolAudit],
   );
 
   const handleApprovePendingApproval = useCallback(
@@ -3604,7 +3604,7 @@ export function AIChatPanelContent({
         }
         await Promise.all([
           refreshRunArtifacts(approval.runId),
-          refreshPendingApprovalsEvent(),
+          refreshPendingApprovals(),
         ]);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
@@ -3612,7 +3612,7 @@ export function AIChatPanelContent({
         setArtifactBusyId(null);
       }
     },
-    [refreshPendingApprovalsEvent, refreshRunArtifacts, upsertToolAudit],
+    [refreshPendingApprovals, refreshRunArtifacts, upsertToolAudit],
   );
 
   const handleDenyPendingApproval = useCallback(
@@ -3633,7 +3633,7 @@ export function AIChatPanelContent({
         }
         await Promise.all([
           refreshRunArtifacts(approval.runId),
-          refreshPendingApprovalsEvent(),
+          refreshPendingApprovals(),
         ]);
       } catch (error) {
         setRuntimeError(error instanceof Error ? error.message : String(error));
@@ -3641,7 +3641,7 @@ export function AIChatPanelContent({
         setArtifactBusyId(null);
       }
     },
-    [refreshPendingApprovalsEvent, refreshRunArtifacts, upsertToolAudit],
+    [refreshPendingApprovals, refreshRunArtifacts, upsertToolAudit],
   );
 
   const handleAcceptLocalProviderConsent = useCallback(async () => {

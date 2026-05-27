@@ -12,10 +12,8 @@ import {
 } from "./components/CloseConfirmationDialog";
 import { AppNotificationStack } from "./components/layout/AppNotificationStack";
 import { MCPApprovalDialog } from "./components/MCPApprovalDialog";
-import {
-  DetachedAppletHost,
-  isDetachedAppletHostRoute,
-} from "./components/DetachedAppletHost";
+import { DetachedAppletHost } from "./components/DetachedAppletHost";
+import { isDetachedAppletHostRoute } from "./components/detachedAppletHostRoute";
 import { MainLayout } from "./components/layout/MainLayout";
 import { ProjectSwitchTransition } from "./components/layout/ProjectSwitchTransition";
 import ProjectScreen from "./components/ProjectScreen";

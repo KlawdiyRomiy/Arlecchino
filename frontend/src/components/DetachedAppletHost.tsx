@@ -258,10 +258,6 @@ const DetachedHelperApplet: React.FC<{
   );
 };
 
-export const isDetachedAppletHostRoute = (): boolean =>
-  typeof window !== "undefined" &&
-  new URLSearchParams(window.location.search).has("arleDetachedHost");
-
 export const DetachedAppletHost: React.FC<{
   currentTheme: Theme;
   currentUiScale: number;

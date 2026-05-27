@@ -41,10 +41,8 @@ import {
   normalizeTUIAssistAnchor,
 } from "../../utils/terminalLayout";
 import { toggleWindowFullscreen } from "../../utils/windowFullscreen";
-import {
-  FLOATING_PANEL_LAYOUT_TRANSITION_MS,
-  type PanelPosition,
-} from "../ui/FloatingPanel";
+import { type PanelPosition } from "../ui/FloatingPanel";
+import { FLOATING_PANEL_LAYOUT_TRANSITION_MS } from "../ui/floatingPanelMotion";
 import type {
   AppSurfaceAction,
   PanelConfigs,

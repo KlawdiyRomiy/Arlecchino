@@ -7,7 +7,7 @@ interface EmptyStateProps {
   sessionId?: string;
 }
 
-export const emptyStateCaptions = [
+const emptyStateCaptions = [
   "Want to build something?",
   "What are we making today?",
   "Ready when you are.",
