@@ -12,6 +12,7 @@ import {
   useMotionValue,
   useReducedMotion,
 } from "framer-motion";
+import { flushSync } from "react-dom";
 import {
   ArrowDown,
   ArrowLeft,
@@ -52,6 +53,14 @@ interface PanelBounds {
   height: number;
 }
 
+interface PanelDragSession {
+  captureTarget: HTMLElement | null;
+  handlePointerCancel: (event: PointerEvent) => void;
+  handlePointerMove: (event: PointerEvent) => void;
+  handlePointerUp: (event: PointerEvent) => void;
+  pointerId: number;
+}
+
 const FLOATING_PANEL_FLOATING_SLIDE_OFFSET = 32;
 const FLOATING_PANEL_NO_MOTION_TRANSITION = { duration: 0 } as const;
 const FLOATING_PANEL_DROP_PREVIEW_WIDTH = 150;
@@ -65,6 +74,8 @@ const WAILS_NO_DRAG_STYLE = {
   "--wails-draggable": "no-drag",
   WebkitAppRegion: "no-drag",
 } as React.CSSProperties;
+const PANEL_HEADER_NO_DRAG_SELECTOR =
+  'button,input,textarea,select,[data-panel-controls="true"],[data-panel-no-drag="true"],[data-panel-resize-handle="true"]';
 const warmedPanelContentIds = new Set<string>();
 const PROJECTED_READABLE_SCALE_MIN = 0.05;
 const PROJECTED_READABLE_SCALE_MAX = 12;
@@ -300,9 +311,10 @@ export const FloatingPanel = React.forwardRef<
     const latestDragTargetRef = useRef<PanelPosition | null>(null);
     const pendingDragTargetRef = useRef<{ x: number; y: number } | null>(null);
     const dragMoveFrameRef = useRef<number | null>(null);
+    const dragSessionRef = useRef<PanelDragSession | null>(null);
     const dragSelectionReleaseRef = useRef<(() => void) | null>(null);
-    const zenHeaderPointerPinHandledRef = useRef(false);
     const metaKeyPressedRef = useRef(false);
+    const isResizingRef = useRef(isResizing);
     const resizeFrameRef = useRef<number | null>(null);
     const pendingResizeRef = useRef<{
       width: number;
@@ -313,6 +325,9 @@ export const FloatingPanel = React.forwardRef<
     const onResizeRef = useRef(onResize);
     const onResizeStartRef = useRef(onResizeStart);
     const onResizeEndRef = useRef(onResizeEnd);
+    const onDragStartRef = useRef(onDragStart);
+    const onDragMoveRef = useRef(onDragMove);
+    const onDragEndRef = useRef(onDragEnd);
     const dragX = useMotionValue(0);
     const dragY = useMotionValue(0);
     const startRef = useRef({
@@ -371,10 +386,24 @@ export const FloatingPanel = React.forwardRef<
     }, [hasEntered, id, isPresent, mode, reduceMotion]);
 
     useEffect(() => {
+      isResizingRef.current = isResizing;
+    }, [isResizing]);
+
+    useEffect(() => {
       onResizeRef.current = onResize;
       onResizeStartRef.current = onResizeStart;
       onResizeEndRef.current = onResizeEnd;
-    }, [onResize, onResizeEnd, onResizeStart]);
+      onDragStartRef.current = onDragStart;
+      onDragMoveRef.current = onDragMove;
+      onDragEndRef.current = onDragEnd;
+    }, [
+      onDragEnd,
+      onDragMove,
+      onDragStart,
+      onResize,
+      onResizeEnd,
+      onResizeStart,
+    ]);
 
     useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
@@ -711,98 +740,6 @@ export const FloatingPanel = React.forwardRef<
       };
     }, [isResizing, handleResizeMove, handleResizeEnd, resizeEdge]);
 
-    const handleHeaderPointerDown = useCallback(
-      (e: React.PointerEvent) => {
-        if (
-          zenModeEnabled &&
-          mode === "snapped" &&
-          e.button === 0 &&
-          (e.metaKey || metaKeyPressedRef.current) &&
-          onZenPinToggle
-        ) {
-          e.preventDefault();
-          e.stopPropagation();
-          zenHeaderPointerPinHandledRef.current = true;
-          onZenPinToggle(id);
-        }
-      },
-      [id, mode, onZenPinToggle, zenModeEnabled],
-    );
-
-    const handleDragStartInternal = useCallback(
-      (e: React.MouseEvent) => {
-        if (e.button !== 0) {
-          return;
-        }
-
-        if (zenHeaderPointerPinHandledRef.current) {
-          zenHeaderPointerPinHandledRef.current = false;
-          e.preventDefault();
-          e.stopPropagation();
-          return;
-        }
-
-        if (
-          zenModeEnabled &&
-          mode === "snapped" &&
-          e.button === 0 &&
-          (e.metaKey || metaKeyPressedRef.current) &&
-          onZenPinToggle
-        ) {
-          e.preventDefault();
-          e.stopPropagation();
-          onZenPinToggle(id);
-          return;
-        }
-
-        e.preventDefault();
-        e.stopPropagation();
-        const rect = panelRef.current?.getBoundingClientRect();
-        startRef.current = {
-          ...startRef.current,
-          x: e.clientX,
-          y: e.clientY,
-          panelX: rect ? screenToLogicalPixels(rect.left, effectiveUiScale) : x,
-          panelY: rect ? screenToLogicalPixels(rect.top, effectiveUiScale) : y,
-          width: rect
-            ? screenToLogicalPixels(rect.width, effectiveUiScale)
-            : size.width,
-          height: rect
-            ? screenToLogicalPixels(rect.height, effectiveUiScale)
-            : size.height,
-        };
-        setIsDragging(true);
-        latestDragOffsetRef.current = { x: 0, y: 0 };
-        latestDragTargetRef.current = null;
-        pendingDragTargetRef.current = null;
-        dragSelectionReleaseRef.current?.();
-        dragSelectionReleaseRef.current = beginDragSelectionLock();
-        if (dragMoveFrameRef.current !== null) {
-          window.cancelAnimationFrame(dragMoveFrameRef.current);
-          dragMoveFrameRef.current = null;
-        }
-        dragX.set(0);
-        dragY.set(0);
-        // Tell global snap zones that a panel drag started
-        window.dispatchEvent(new CustomEvent("panel-drag-start"));
-        onDragStart?.(id);
-      },
-      [
-        dragX,
-        dragY,
-        effectiveUiScale,
-        id,
-        mode,
-        onDragStart,
-        onZenPinToggle,
-        size.height,
-        size.width,
-        x,
-        y,
-        zenModeEnabled,
-      ],
-    );
-
     const detectDropZone = useCallback(
       (x: number, y: number): PanelPosition | null => {
         const horizontalThreshold = logicalToScreenPixels(
@@ -864,10 +801,10 @@ export const FloatingPanel = React.forwardRef<
           }
 
           latestDragTargetRef.current = nextTarget;
-          onDragMove?.(id, nextTarget);
+          onDragMoveRef.current?.(id, nextTarget);
         });
       },
-      [detectDropZone, id, onDragMove],
+      [detectDropZone, id],
     );
 
     const cancelDragTargetUpdate = useCallback(() => {
@@ -881,34 +818,61 @@ export const FloatingPanel = React.forwardRef<
       dragMoveFrameRef.current = null;
     }, []);
 
-    const handleDragMove = useCallback(
-      (e: MouseEvent) => {
-        if (!isDragging) return;
-        const dx = screenToLogicalPixels(
-          e.clientX - startRef.current.x,
-          effectiveUiScale,
-        );
-        const dy = screenToLogicalPixels(
-          e.clientY - startRef.current.y,
-          effectiveUiScale,
-        );
-        latestDragOffsetRef.current = { x: dx, y: dy };
-        dragX.set(dx);
-        dragY.set(dy);
-        scheduleDragTargetUpdate(e.clientX, e.clientY);
+    const releasePointerCapture = useCallback(
+      (target: HTMLElement | null, pointerId: number) => {
+        try {
+          if (target?.hasPointerCapture?.(pointerId)) {
+            target.releasePointerCapture(pointerId);
+          }
+        } catch {
+          // Synthetic pointer events used in tests may not create a browser
+          // capture target; window-level listeners remain the fallback.
+        }
       },
-      [dragX, dragY, effectiveUiScale, isDragging, scheduleDragTargetUpdate],
+      [],
     );
 
-    const handleDragEndInternal = useCallback(
-      (e: MouseEvent) => {
-        if (isDragging) {
-          cancelDragTargetUpdate();
-          const targetZone = detectDropZone(e.clientX, e.clientY);
-          const dropX = startRef.current.panelX + latestDragOffsetRef.current.x;
-          const dropY = startRef.current.panelY + latestDragOffsetRef.current.y;
+    const finishActiveDragSession = useCallback(
+      (options: { event?: PointerEvent; commitDrop: boolean }) => {
+        const session = dragSessionRef.current;
+        if (!session) {
+          return;
+        }
 
-          onDragEnd?.(
+        dragSessionRef.current = null;
+        window.removeEventListener(
+          "pointermove",
+          session.handlePointerMove,
+          true,
+        );
+        window.removeEventListener("pointerup", session.handlePointerUp, true);
+        window.removeEventListener(
+          "pointercancel",
+          session.handlePointerCancel,
+          true,
+        );
+        releasePointerCapture(session.captureTarget, session.pointerId);
+        cancelDragTargetUpdate();
+
+        if (options.commitDrop && options.event) {
+          const event = options.event;
+          const dx = screenToLogicalPixels(
+            event.clientX - startRef.current.x,
+            effectiveUiScale,
+          );
+          const dy = screenToLogicalPixels(
+            event.clientY - startRef.current.y,
+            effectiveUiScale,
+          );
+          latestDragOffsetRef.current = { x: dx, y: dy };
+          dragX.set(dx);
+          dragY.set(dy);
+
+          const targetZone = detectDropZone(event.clientX, event.clientY);
+          const dropX = startRef.current.panelX + dx;
+          const dropY = startRef.current.panelY + dy;
+
+          onDragEndRef.current?.(
             id,
             targetZone,
             dropX,
@@ -916,54 +880,188 @@ export const FloatingPanel = React.forwardRef<
             startRef.current.width,
             startRef.current.height,
           );
-
-          latestDragOffsetRef.current = { x: 0, y: 0 };
-          dragX.set(0);
-          dragY.set(0);
-          setIsDragging(false);
-          dragSelectionReleaseRef.current?.();
-          dragSelectionReleaseRef.current = null;
-          // Notify snap zones that dragging finished after the final drop state
-          // has been calculated, avoiding a one-frame snap-back.
-          window.dispatchEvent(new CustomEvent("panel-drag-end"));
+        } else {
+          onDragEndRef.current?.(id, null);
         }
+
+        latestDragOffsetRef.current = { x: 0, y: 0 };
+        dragX.set(0);
+        dragY.set(0);
+        setIsDragging(false);
+        dragSelectionReleaseRef.current?.();
+        dragSelectionReleaseRef.current = null;
+        if (!isResizingRef.current) {
+          document.body.style.cursor = "";
+        }
+        document.body.style.userSelect = "";
+        // Notify snap zones after final drop or cancellation state has been
+        // calculated, avoiding a one-frame snap-back.
+        window.dispatchEvent(new CustomEvent("panel-drag-end"));
       },
       [
         cancelDragTargetUpdate,
         detectDropZone,
         dragX,
         dragY,
+        effectiveUiScale,
         id,
-        isDragging,
-        onDragEnd,
+        releasePointerCapture,
+      ],
+    );
+
+    const handleHeaderPointerDown = useCallback(
+      (e: React.PointerEvent<HTMLDivElement>) => {
+        if (e.button !== 0 || !e.isPrimary) {
+          return;
+        }
+
+        const targetElement = e.target instanceof Element ? e.target : null;
+        if (targetElement?.closest(PANEL_HEADER_NO_DRAG_SELECTOR)) {
+          return;
+        }
+
+        if (
+          zenModeEnabled &&
+          mode === "snapped" &&
+          (e.metaKey || metaKeyPressedRef.current) &&
+          onZenPinToggle
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          onZenPinToggle(id);
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (dragSessionRef.current) {
+          finishActiveDragSession({ commitDrop: false });
+        }
+
+        const rect = panelRef.current?.getBoundingClientRect();
+        startRef.current = {
+          ...startRef.current,
+          x: e.clientX,
+          y: e.clientY,
+          panelX: rect ? screenToLogicalPixels(rect.left, effectiveUiScale) : x,
+          panelY: rect ? screenToLogicalPixels(rect.top, effectiveUiScale) : y,
+          width: rect
+            ? screenToLogicalPixels(rect.width, effectiveUiScale)
+            : size.width,
+          height: rect
+            ? screenToLogicalPixels(rect.height, effectiveUiScale)
+            : size.height,
+        };
+        latestDragOffsetRef.current = { x: 0, y: 0 };
+        latestDragTargetRef.current = null;
+        pendingDragTargetRef.current = null;
+        dragSelectionReleaseRef.current?.();
+        dragSelectionReleaseRef.current = beginDragSelectionLock();
+        if (dragMoveFrameRef.current !== null) {
+          window.cancelAnimationFrame(dragMoveFrameRef.current);
+          dragMoveFrameRef.current = null;
+        }
+        dragX.set(0);
+        dragY.set(0);
+
+        const pointerId = e.pointerId;
+        const captureTarget = e.currentTarget;
+
+        try {
+          captureTarget.setPointerCapture(pointerId);
+        } catch {
+          // Window listeners below still keep rapid drags connected.
+        }
+
+        const handlePointerMove = (event: PointerEvent) => {
+          if (event.pointerId !== pointerId) {
+            return;
+          }
+
+          event.preventDefault();
+          document.getSelection()?.removeAllRanges();
+
+          const dx = screenToLogicalPixels(
+            event.clientX - startRef.current.x,
+            effectiveUiScale,
+          );
+          const dy = screenToLogicalPixels(
+            event.clientY - startRef.current.y,
+            effectiveUiScale,
+          );
+          latestDragOffsetRef.current = { x: dx, y: dy };
+          dragX.set(dx);
+          dragY.set(dy);
+          scheduleDragTargetUpdate(event.clientX, event.clientY);
+        };
+
+        const handlePointerUp = (event: PointerEvent) => {
+          if (event.pointerId !== pointerId) {
+            return;
+          }
+          finishActiveDragSession({ event, commitDrop: true });
+        };
+
+        const handlePointerCancel = (event: PointerEvent) => {
+          if (event.pointerId !== pointerId) {
+            return;
+          }
+          finishActiveDragSession({ event, commitDrop: false });
+        };
+
+        dragSessionRef.current = {
+          captureTarget,
+          handlePointerCancel,
+          handlePointerMove,
+          handlePointerUp,
+          pointerId,
+        };
+
+        window.addEventListener("pointermove", handlePointerMove, true);
+        window.addEventListener("pointerup", handlePointerUp, true);
+        window.addEventListener("pointercancel", handlePointerCancel, true);
+        document.body.style.cursor = "grabbing";
+        document.body.style.userSelect = "none";
+
+        // Tell global snap zones that a panel drag started.
+        window.dispatchEvent(new CustomEvent("panel-drag-start"));
+        flushSync(() => {
+          setIsDragging(true);
+          onDragStartRef.current?.(id);
+        });
+      },
+      [
+        dragX,
+        dragY,
+        effectiveUiScale,
+        finishActiveDragSession,
+        id,
+        mode,
+        onZenPinToggle,
+        scheduleDragTargetUpdate,
+        size.height,
+        size.width,
+        x,
+        y,
+        zenModeEnabled,
       ],
     );
 
     useEffect(() => {
-      if (isDragging) {
-        document.addEventListener("mousemove", handleDragMove);
-        document.addEventListener("mouseup", handleDragEndInternal);
-        document.body.style.cursor = "grabbing";
-        document.body.style.userSelect = "none";
-      }
       return () => {
-        document.removeEventListener("mousemove", handleDragMove);
-        document.removeEventListener("mouseup", handleDragEndInternal);
-        cancelDragTargetUpdate();
-        if (!isResizing) {
-          document.body.style.cursor = "";
+        if (dragSessionRef.current) {
+          finishActiveDragSession({ commitDrop: false });
         }
-        document.body.style.userSelect = "";
-        dragSelectionReleaseRef.current?.();
-        dragSelectionReleaseRef.current = null;
       };
-    }, [
-      isDragging,
-      handleDragMove,
-      handleDragEndInternal,
-      cancelDragTargetUpdate,
-      isResizing,
-    ]);
+    }, [finishActiveDragSession]);
+
+    const handleHeaderControlPointerDown = useCallback(
+      (e: React.PointerEvent) => {
+        e.stopPropagation();
+      },
+      [],
+    );
 
     const getTopChromeAvoidanceOffset = (): number => {
       const avoidanceTop = Math.max(0, zenTopChromeAvoidanceTop);
@@ -1507,6 +1605,7 @@ export const FloatingPanel = React.forwardRef<
       position: "relative",
       cursor: isDragging ? "grabbing" : "grab",
       boxShadow: "inset 0 1px 0 var(--shell-inner-highlight)",
+      touchAction: "none",
       ...WAILS_NO_DRAG_STYLE,
       ...(immersiveFrameActive
         ? {
@@ -1706,7 +1805,6 @@ export const FloatingPanel = React.forwardRef<
         aria-label={`${title} panel header`}
         style={headerStyle}
         onPointerDown={handleHeaderPointerDown}
-        onMouseDown={handleDragStartInternal}
         data-testid={`panel-${id}-drag-handle`}
         data-panel-drag-handle="true"
       >
@@ -1719,6 +1817,8 @@ export const FloatingPanel = React.forwardRef<
           style={controlsStyle}
           data-panel-controls="true"
           data-panel-controls-variant="bubble"
+          data-panel-no-drag="true"
+          onPointerDown={handleHeaderControlPointerDown}
         >
           {headerExtra}
 
