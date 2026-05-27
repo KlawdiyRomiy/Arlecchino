@@ -152,9 +152,10 @@ import {
   openEditorFileSearch,
   shouldHandleEditorFindInFile,
 } from "../utils/codeMirrorFileSearch";
-import type { GitLineMarker } from "../utils/git";
+import { normalizePathForGit, type GitLineMarker } from "../utils/git";
 import { createLatestRequestGuard } from "../utils/latestRequestGuard";
 import { relativeProjectPath } from "../utils/projectPaths";
+import { useIndexingPhase } from "../hooks/useIndexingProgress";
 
 const GHOST_DEBOUNCE_MS = 50;
 const GHOST_IDLE_DELAY_MS = 900;
@@ -1204,9 +1205,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const editorFontFamily = useEditorSettingsStore(
     (state) => state.editorFontFamily,
   );
-  const showInlineDiagnostics = useEditorSettingsStore(
-    (state) => state.showInlineDiagnostics,
-  );
   const showFoldGutter = useEditorSettingsStore(
     (state) => state.showFoldGutter,
   );
@@ -1290,13 +1288,21 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     ],
   );
   const notifyChangeDelayRef = useRef(editorFeatureBudget.notifyChangeDelayMs);
+  const gitProjectPath = useGitStore((state) => state.projectPath);
+  const gitMarkerKey = useMemo(
+    () =>
+      gitProjectPath ? normalizePathForGit(gitProjectPath, filePath) : filePath,
+    [filePath, gitProjectPath],
+  );
   const gitMarkers = useGitStore((state) =>
-    !editorFeatureBudget.layoutStableGitGutter
-      ? EMPTY_GIT_MARKERS
-      : (state.fileMarkers[filePath] ?? EMPTY_GIT_MARKERS),
+    editorFeatureBudget.layoutStableGitGutter
+      ? (state.fileMarkers[filePath] ??
+        state.fileMarkers[gitMarkerKey] ??
+        EMPTY_GIT_MARKERS)
+      : EMPTY_GIT_MARKERS,
   );
   const refreshFileMarkers = useGitStore((state) => state.refreshFileMarkers);
-  const clearFileMarkers = useGitStore((state) => state.clearFileMarkers);
+  const indexingPhase = useIndexingPhase();
   const setCursorPosition = useEditorStore((state) => state.setCursorPosition);
   const diagnosticsExtension = useMemo(
     () =>
@@ -1305,14 +1311,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         : createDiagnosticsExtension({
             filePath,
             language,
-            showInlineMessages: showInlineDiagnostics,
           }),
-    [
-      editorFeatureBudget.runtimeDiagnostics,
-      filePath,
-      language,
-      showInlineDiagnostics,
-    ],
+    [editorFeatureBudget.runtimeDiagnostics, filePath, language],
   );
 
   const [definitionMenu, setDefinitionMenu] = useState<DefinitionMenuState>({
@@ -1640,25 +1640,20 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
 
   useEffect(() => {
     if (!filePath) return;
-    if (!editorFeatureBudget.runtimeGitGutter) return;
+    if (!gitProjectPath) return;
+    if (!editorFeatureBudget.layoutStableGitGutter) return;
 
-    const timer = window.setTimeout(() => {
-      void refreshFileMarkers(filePath);
-    }, 320);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [editorFeatureBudget.runtimeGitGutter, filePath, refreshFileMarkers]);
-
-  useEffect(
-    () => () => {
-      if (filePath) {
-        clearFileMarkers(filePath);
-      }
-    },
-    [clearFileMarkers, filePath],
-  );
+    void refreshFileMarkers(
+      filePath,
+      indexingPhase === "complete" || indexingPhase === "revealed",
+    );
+  }, [
+    editorFeatureBudget.layoutStableGitGutter,
+    filePath,
+    gitProjectPath,
+    indexingPhase,
+    refreshFileMarkers,
+  ]);
 
   const syncCursorPosition = useCallback(
     (state: EditorState) => {
@@ -3303,7 +3298,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     editorFeatureBudget.layoutStableGitGutter,
     editorFeatureBudget.runtimeHover,
     editorFeatureBudget.runtimeRichEditorFeatures,
-    editorFeatureBudget.runtimeDiagnostics,
     colorToolsEnabled,
     foldControlsEnabled,
     ghost,

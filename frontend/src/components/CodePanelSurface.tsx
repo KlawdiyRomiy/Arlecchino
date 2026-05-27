@@ -49,11 +49,12 @@ import {
   createCodeMirrorFoldExtensions,
   createCodeMirrorIndentGuideExtension,
 } from "../utils/codeMirrorWorkflowExtensions";
-import type { GitLineMarker } from "../utils/git";
+import { normalizePathForGit, type GitLineMarker } from "../utils/git";
 import {
   isEditorFilePolicyReadOnly,
   type EditorFileLoadState,
 } from "../utils/editorFileLoader";
+import { useIndexingPhase } from "../hooks/useIndexingProgress";
 import { BinaryEditorPreview } from "./BinaryEditorPreview";
 import { EditorFileLoadingView } from "./EditorFileLoadingView";
 import { GuardedEditorPreview } from "./GuardedEditorPreview";
@@ -124,9 +125,6 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     [content.length, contentLineCount, largeDocumentMode, performanceSnapshot],
   );
   const notifyChangeDelayRef = useRef(editorFeatureBudget.notifyChangeDelayMs);
-  const showInlineDiagnostics = useEditorSettingsStore(
-    (state) => state.showInlineDiagnostics,
-  );
   const showFoldGutter = useEditorSettingsStore(
     (state) => state.showFoldGutter,
   );
@@ -136,13 +134,20 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   const showColorTools = useEditorSettingsStore(
     (state) => state.showColorTools,
   );
+  const gitProjectPath = useGitStore((state) => state.projectPath);
+  const gitMarkerKey = useMemo(
+    () => (gitProjectPath ? normalizePathForGit(gitProjectPath, path) : path),
+    [gitProjectPath, path],
+  );
   const gitMarkers = useGitStore((state) =>
     editorFeatureBudget.layoutStableGitGutter
-      ? (state.fileMarkers[path] ?? EMPTY_GIT_MARKERS)
+      ? (state.fileMarkers[path] ??
+        state.fileMarkers[gitMarkerKey] ??
+        EMPTY_GIT_MARKERS)
       : EMPTY_GIT_MARKERS,
   );
   const refreshFileMarkers = useGitStore((state) => state.refreshFileMarkers);
-  const clearFileMarkers = useGitStore((state) => state.clearFileMarkers);
+  const indexingPhase = useIndexingPhase();
   const saveTimeoutRef = useRef<number | null>(null);
   const editorViewRef = useRef<EditorView | null>(null);
   const latestContentRef = useRef(content);
@@ -165,14 +170,8 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
         : createDiagnosticsExtension({
             filePath: path,
             language,
-            showInlineMessages: showInlineDiagnostics,
           }),
-    [
-      editorFeatureBudget.runtimeDiagnostics,
-      language,
-      path,
-      showInlineDiagnostics,
-    ],
+    [editorFeatureBudget.runtimeDiagnostics, language, path],
   );
 
   useEffect(() => {
@@ -284,7 +283,6 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     colorToolsEnabled,
     diagnosticsExtension,
     editorFeatureBudget.layoutStableGitGutter,
-    editorFeatureBudget.runtimeDiagnostics,
     editorFeatureBudget.runtimeRichEditorFeatures,
     foldControlsEnabled,
     gitGutterExtension,
@@ -389,25 +387,20 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
 
   useEffect(() => {
     if (!path) return;
-    if (!editorFeatureBudget.runtimeGitGutter) return;
+    if (!gitProjectPath) return;
+    if (!editorFeatureBudget.layoutStableGitGutter) return;
 
-    const timer = window.setTimeout(() => {
-      void refreshFileMarkers(path);
-    }, 320);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [editorFeatureBudget.runtimeGitGutter, path, refreshFileMarkers]);
-
-  useEffect(
-    () => () => {
-      if (path) {
-        clearFileMarkers(path);
-      }
-    },
-    [clearFileMarkers, path],
-  );
+    void refreshFileMarkers(
+      path,
+      indexingPhase === "complete" || indexingPhase === "revealed",
+    );
+  }, [
+    editorFeatureBudget.layoutStableGitGutter,
+    gitProjectPath,
+    indexingPhase,
+    path,
+    refreshFileMarkers,
+  ]);
 
   const basicSetup = useMemo(
     () => ({

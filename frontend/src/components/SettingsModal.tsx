@@ -895,15 +895,6 @@ const settingsSearchEntries: SettingsSearchEntry[] = [
     keywords: ["minimap", "editor", "gutter"],
   },
   {
-    id: "inline-diagnostics",
-    tab: "diagnostics",
-    label: "Show inline diagnostic messages",
-    description:
-      "Render inline problem messages. Wavy underlines stay visible.",
-    keywords: ["errors", "warnings", "messages", "problems"],
-    suggested: true,
-  },
-  {
     id: "compact-diagnostics",
     tab: "diagnostics",
     label: "Show compact diagnostics",
@@ -1361,7 +1352,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     editorFontSize,
     minFontSize,
     maxFontSize,
-    showInlineDiagnostics,
     showCompactDiagnostics,
     showFoldGutter,
     showIndentGuides,
@@ -1386,7 +1376,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     resetEditorFontFamily,
     setEditorFontSize,
     resetZoom,
-    setShowInlineDiagnostics,
     setShowCompactDiagnostics,
     setShowFoldGutter,
     setShowIndentGuides,
@@ -4535,16 +4524,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 settingId="show-minimap"
                                 highlighted={
                                   highlightedSettingId === "show-minimap"
-                                }
-                              />
-                              <SwitchRow
-                                title="Show inline diagnostic messages"
-                                description="Render inline problem messages inside the editor. Wavy underlines stay visible."
-                                checked={showInlineDiagnostics}
-                                onCheckedChange={setShowInlineDiagnostics}
-                                settingId="inline-diagnostics"
-                                highlighted={
-                                  highlightedSettingId === "inline-diagnostics"
                                 }
                               />
                               <SwitchRow

@@ -1,77 +1,34 @@
-import {
-  RangeSetBuilder,
-  StateEffect,
-  StateField,
-  type Extension,
-  type ChangeDesc,
-} from "@codemirror/state";
-import {
-  Decoration,
-  EditorView,
-  layer,
-  ViewPlugin,
-  type DecorationSet,
-  type LayerMarker,
-  type ViewUpdate,
-} from "@codemirror/view";
+import { type Extension } from "@codemirror/state";
+import { linter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
+import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { LSPGetDiagnostics } from "../wails/app";
 import {
   useDiagnosticsStore,
   type DiagnosticsEventItem,
   type DiagnosticsProblem,
 } from "../stores/diagnosticsStore";
-import { codeMirrorScrollActiveField } from "../utils/codeMirrorScrollGuard";
 
 type CodeMirrorDocLike = {
   line(number: number): { from: number; to: number; text: string };
   lines: number;
   length: number;
+  sliceString(from: number, to?: number): string;
 };
-
-type InlineDiagnosticSeverity = "error" | "warning" | "info";
-
-export interface InlineDiagnosticsLine {
-  from: number;
-  to: number;
-  severity: InlineDiagnosticSeverity;
-  message: string;
-  source: string;
-  count: number;
-}
 
 interface DiagnosticsExtensionOptions {
   filePath: string;
   language: string;
-  showInlineMessages: boolean;
 }
 
 const EMPTY_PROBLEMS: readonly DiagnosticsProblem[] = Object.freeze([]);
-const EMPTY_INLINE_SNAPSHOT: readonly InlineDiagnosticsLine[] = Object.freeze(
-  [],
-);
-const INLINE_DIAGNOSTIC_MARKER_HEIGHT = 25;
-const INLINE_DIAGNOSTIC_VIEWPORT_PADDING = 16;
-const INLINE_DIAGNOSTIC_MIN_READABLE_WIDTH = 420;
+const TRANSIENT_EMPTY_DIAGNOSTICS_GRACE_MS = 850;
+const RECENT_EDIT_EMPTY_DIAGNOSTICS_GRACE_MS = 180;
+const RECENT_EDIT_WINDOW_MS = 1200;
+
 const lastVisibleProblemsByView = new WeakMap<
   EditorView,
   readonly DiagnosticsProblem[]
 >();
-
-const inlineSeverityPriority: Record<InlineDiagnosticSeverity, number> = {
-  error: 0,
-  warning: 1,
-  info: 2,
-};
-
-const mapSeverity = (severity: number): InlineDiagnosticSeverity => {
-  if (severity === 1) {
-    return "error";
-  }
-  if (severity === 2) {
-    return "warning";
-  }
-  return "info";
-};
 
 const clamp = (value: number, min: number, max: number): number => {
   if (value < min) {
@@ -97,497 +54,119 @@ const getOffset = (
   return clamp(line.from + column, line.from, line.to);
 };
 
-const buildExpandedMessageText = (snapshot: InlineDiagnosticsLine): string => {
-  const parts = [snapshot.message];
-  if (snapshot.count > 1) {
-    parts.push(`+${snapshot.count - 1} more`);
+const mapSeverity = (severity: number): Diagnostic["severity"] => {
+  if (severity === 1) {
+    return "error";
   }
-  if (snapshot.source) {
-    parts.push(snapshot.source);
+  if (severity === 2) {
+    return "warning";
   }
-  return parts.join(" - ");
+  return "info";
 };
 
-const buildFullMessageText = (snapshot: InlineDiagnosticsLine): string => {
-  const parts = [snapshot.message];
-  if (snapshot.count > 1) {
-    parts.push(`+${snapshot.count - 1} more`);
+const hasVisibleText = (doc: CodeMirrorDocLike, from: number, to: number) =>
+  doc.sliceString(from, to).replace(/[\r\n]/g, "").length > 0;
+
+const findNearestVisibleRange = (
+  doc: CodeMirrorDocLike,
+  anchor: number,
+  preferredLineNumber: number,
+): { from: number; to: number } | null => {
+  if (doc.length <= 0) {
+    return null;
   }
-  if (snapshot.source) {
-    parts.push(snapshot.source);
+
+  const tryLine = (lineNumber: number): { from: number; to: number } | null => {
+    if (lineNumber < 1 || lineNumber > doc.lines) {
+      return null;
+    }
+
+    const line = doc.line(lineNumber);
+    if (line.from >= line.to) {
+      return null;
+    }
+
+    const from = clamp(anchor, line.from, line.to - 1);
+    const to = Math.min(from + 1, line.to);
+    return hasVisibleText(doc, from, to) ? { from, to } : null;
+  };
+
+  const currentLineRange = tryLine(preferredLineNumber);
+  if (currentLineRange) {
+    return currentLineRange;
   }
-  return parts.join(" - ");
+
+  for (let offset = 1; offset < doc.lines; offset += 1) {
+    const nextLineRange = tryLine(preferredLineNumber + offset);
+    if (nextLineRange) {
+      return nextLineRange;
+    }
+
+    const previousLineRange = tryLine(preferredLineNumber - offset);
+    if (previousLineRange) {
+      return previousLineRange;
+    }
+  }
+
+  return null;
 };
+
+const normalizeDiagnosticRange = (
+  doc: CodeMirrorDocLike,
+  problem: DiagnosticsProblem,
+): { from: number; to: number } | null => {
+  const from = getOffset(doc, problem.range.start);
+  const to = clamp(getOffset(doc, problem.range.end), from, doc.length);
+
+  if (to > from && hasVisibleText(doc, from, to)) {
+    return { from, to };
+  }
+
+  return findNearestVisibleRange(doc, from, problem.range.start.line + 1);
+};
+
+const buildCodeMirrorDiagnostics = (
+  doc: CodeMirrorDocLike,
+  problems: readonly DiagnosticsProblem[],
+): Diagnostic[] =>
+  problems
+    .map((problem): Diagnostic | null => {
+      const range = normalizeDiagnosticRange(doc, problem);
+      if (!range) {
+        return null;
+      }
+
+      const sourceParts = [problem.source, problem.code].filter(Boolean);
+      return {
+        from: range.from,
+        to: range.to,
+        severity: mapSeverity(problem.severity),
+        source: sourceParts.join(" "),
+        message: problem.message,
+      };
+    })
+    .filter((diagnostic): diagnostic is Diagnostic => diagnostic !== null);
+
+const getProblemSignature = (problem: DiagnosticsProblem): string =>
+  [
+    problem.filePath,
+    problem.language,
+    problem.range.start.line,
+    problem.range.start.character,
+    problem.range.end.line,
+    problem.range.end.character,
+    problem.severity,
+    problem.source,
+    problem.code,
+    problem.message,
+  ].join("\u0001");
 
 const getProblemsSignature = (
   problems: readonly DiagnosticsProblem[],
-): string => problems.map((problem) => problem.id).join("\u0000");
-
-export const buildInlineDiagnosticsSnapshot = (
-  doc: CodeMirrorDocLike,
-  problems: readonly DiagnosticsProblem[],
-): InlineDiagnosticsLine[] => {
-  return problems
-    .map((problem) => {
-      const from = getOffset(doc, problem.range.start);
-      const to = Math.max(from, getOffset(doc, problem.range.end));
-      return {
-        from,
-        to,
-        severity: mapSeverity(problem.severity),
-        message: problem.message,
-        source: problem.source,
-        count: 1,
-      } satisfies InlineDiagnosticsLine;
-    })
-    .sort((left, right) => left.from - right.from);
-};
-
-const setInlineDiagnosticsEffect =
-  StateEffect.define<readonly InlineDiagnosticsLine[]>();
-const setInlineDiagnosticsMessagesVisibleEffect = StateEffect.define<boolean>();
-
-const mapInlineDiagnostics = (
-  diagnostics: readonly InlineDiagnosticsLine[],
-  changes: ChangeDesc,
-): readonly InlineDiagnosticsLine[] =>
-  diagnostics.map((snapshot) => {
-    const from = changes.mapPos(snapshot.from, -1);
-    const to = Math.max(from, changes.mapPos(snapshot.to, 1));
-    return {
-      ...snapshot,
-      from,
-      to,
-    };
-  });
-
-const buildInlineDiagnosticMarks = (
-  diagnostics: readonly InlineDiagnosticsLine[],
-): DecorationSet => {
-  if (diagnostics.length === 0) {
-    return Decoration.none;
-  }
-
-  const builder = new RangeSetBuilder<Decoration>();
-  for (const snapshot of diagnostics) {
-    if (snapshot.to <= snapshot.from) {
-      continue;
-    }
-    builder.add(
-      snapshot.from,
-      snapshot.to,
-      Decoration.mark({
-        class: `cm-diagnostic-range cm-diagnostic-range-${snapshot.severity}`,
-      }),
-    );
-  }
-
-  return builder.finish();
-};
-
-const inlineDiagnosticsField = StateField.define<
-  readonly InlineDiagnosticsLine[]
->({
-  create() {
-    return EMPTY_INLINE_SNAPSHOT;
-  },
-  update(value, transaction) {
-    let next = transaction.docChanged
-      ? mapInlineDiagnostics(value, transaction.changes)
-      : value;
-
-    for (const effect of transaction.effects) {
-      if (effect.is(setInlineDiagnosticsEffect)) {
-        next = effect.value;
-      }
-    }
-
-    return next;
-  },
-  provide: (field) =>
-    EditorView.decorations.from(field, buildInlineDiagnosticMarks),
-});
-
-const inlineDiagnosticsMessagesVisibleField = StateField.define<boolean>({
-  create() {
-    return true;
-  },
-  update(value, transaction) {
-    for (const effect of transaction.effects) {
-      if (effect.is(setInlineDiagnosticsMessagesVisibleEffect)) {
-        return effect.value;
-      }
-    }
-
-    return value;
-  },
-});
-
-class DiagnosticsOverlayMarker implements LayerMarker {
-  constructor(
-    private readonly snapshot: InlineDiagnosticsLine,
-    private readonly left: number,
-    private readonly top: number,
-    private readonly maxWidth: number,
-    private readonly expanded: boolean,
-    private readonly lineNumber: number,
-  ) {}
-
-  eq(other: LayerMarker): boolean {
-    return (
-      other instanceof DiagnosticsOverlayMarker &&
-      this.left === other.left &&
-      this.top === other.top &&
-      this.maxWidth === other.maxWidth &&
-      this.expanded === other.expanded &&
-      this.lineNumber === other.lineNumber &&
-      this.snapshot.from === other.snapshot.from &&
-      this.snapshot.to === other.snapshot.to &&
-      this.snapshot.severity === other.snapshot.severity &&
-      this.snapshot.message === other.snapshot.message &&
-      this.snapshot.source === other.snapshot.source &&
-      this.snapshot.count === other.snapshot.count
-    );
-  }
-
-  draw(): HTMLElement {
-    const dom = document.createElement("div");
-    this.updateDOM(dom);
-    return dom;
-  }
-
-  update(dom: HTMLElement, previous: LayerMarker): boolean {
-    if (!(previous instanceof DiagnosticsOverlayMarker)) {
-      return false;
-    }
-    this.updateDOM(dom);
-    return true;
-  }
-
-  private updateDOM(dom: HTMLElement): void {
-    dom.className = `cm-diagnostic-overlay cm-diagnostic-overlay-${this.snapshot.severity}`;
-    dom.style.left = `${this.left}px`;
-    dom.style.top = `${this.top}px`;
-    dom.style.maxWidth = `${this.maxWidth}px`;
-    dom.style.setProperty(
-      "--cm-diagnostic-overlay-readable-width",
-      `${this.maxWidth}px`,
-    );
-    dom.dataset.diagnosticExpanded = this.expanded ? "true" : "false";
-    dom.dataset.diagnosticLine = String(this.lineNumber);
-    dom.title = buildFullMessageText(this.snapshot);
-    dom.replaceChildren(
-      this.createDot(),
-      this.createCount(),
-      this.createMessageText(),
-    );
-  }
-
-  private createDot(): HTMLElement {
-    const dot = document.createElement("span");
-    dot.className = "cm-diagnostic-overlay-dot";
-    return dot;
-  }
-
-  private createCount(): HTMLElement {
-    const count = document.createElement("span");
-    count.className = "cm-diagnostic-overlay-count";
-    count.textContent =
-      this.snapshot.count > 1 ? String(this.snapshot.count) : "";
-    return count;
-  }
-
-  private createMessageText(): HTMLElement {
-    const text = document.createElement("span");
-    text.className = "cm-diagnostic-overlay-text";
-    text.textContent = buildExpandedMessageText(this.snapshot);
-    return text;
-  }
-}
-
-const getLayerBase = (view: EditorView): { left: number; top: number } => {
-  const rect = view.scrollDOM.getBoundingClientRect();
-  return {
-    left: rect.left - view.scrollDOM.scrollLeft * view.scaleX,
-    top: rect.top - view.scrollDOM.scrollTop * view.scaleY,
-  };
-};
-
-const isSnapshotVisible = (
-  view: EditorView,
-  snapshot: InlineDiagnosticsLine,
-): boolean =>
-  view.visibleRanges.some(
-    (range) => snapshot.to >= range.from && snapshot.from <= range.to,
-  );
-
-const buildInlineDiagnosticMarkers = (
-  view: EditorView,
-): readonly LayerMarker[] => {
-  if (view.state.field(codeMirrorScrollActiveField, false)) {
-    return [];
-  }
-
-  const messagesVisible = view.state.field(
-    inlineDiagnosticsMessagesVisibleField,
-    false,
-  );
-  if (!messagesVisible) {
-    return [];
-  }
-
-  const diagnostics =
-    view.state.field(inlineDiagnosticsField, false) ?? EMPTY_INLINE_SNAPSHOT;
-  if (diagnostics.length === 0) {
-    return [];
-  }
-
-  const base = getLayerBase(view);
-  const grouped = new Map<
-    number,
-    { lineNumber: number; snapshot: InlineDiagnosticsLine }
-  >();
-  const markers: LayerMarker[] = [];
-  const activeLineNumber = view.state.doc.lineAt(
-    clamp(view.state.selection.main.head, 0, view.state.doc.length),
-  ).number;
-
-  for (const snapshot of diagnostics) {
-    if (!isSnapshotVisible(view, snapshot)) {
-      continue;
-    }
-
-    const line = view.state.doc.lineAt(
-      clamp(snapshot.from, 0, view.state.doc.length),
-    );
-    const existing = grouped.get(line.number);
-    if (!existing) {
-      grouped.set(line.number, {
-        lineNumber: line.number,
-        snapshot: { ...snapshot },
-      });
-      continue;
-    }
-
-    const count = existing.snapshot.count + snapshot.count;
-    if (
-      inlineSeverityPriority[snapshot.severity] <
-      inlineSeverityPriority[existing.snapshot.severity]
-    ) {
-      grouped.set(line.number, {
-        lineNumber: line.number,
-        snapshot: { ...snapshot, count },
-      });
-    } else {
-      existing.snapshot = { ...existing.snapshot, count };
-    }
-  }
-
-  for (const { lineNumber, snapshot } of grouped.values()) {
-    const line = view.state.doc.lineAt(
-      clamp(snapshot.from, 0, view.state.doc.length),
-    );
-    const coords =
-      view.coordsAtPos(line.to, -1) ??
-      view.coordsAtPos(snapshot.to, 1) ??
-      view.coordsAtPos(snapshot.from, 1);
-    if (!coords) {
-      continue;
-    }
-
-    const lineHeight = Math.max(coords.bottom - coords.top, 1);
-    const preferredLeft = coords.right - base.left + 10;
-    const visiblePreferredLeft = preferredLeft - view.scrollDOM.scrollLeft;
-    const maxViewportWidth = Math.max(
-      44,
-      view.scrollDOM.clientWidth - INLINE_DIAGNOSTIC_VIEWPORT_PADDING * 2,
-    );
-    const readableWidth = Math.min(
-      INLINE_DIAGNOSTIC_MIN_READABLE_WIDTH,
-      maxViewportWidth,
-    );
-    const hasReadableRightSpace =
-      view.scrollDOM.clientWidth -
-        visiblePreferredLeft -
-        INLINE_DIAGNOSTIC_VIEWPORT_PADDING >=
-      readableWidth;
-    const visibleLeft = hasReadableRightSpace
-      ? Math.max(INLINE_DIAGNOSTIC_VIEWPORT_PADDING, visiblePreferredLeft)
-      : INLINE_DIAGNOSTIC_VIEWPORT_PADDING;
-    const left = view.scrollDOM.scrollLeft + visibleLeft;
-    const top =
-      coords.top -
-      base.top +
-      Math.max((lineHeight - INLINE_DIAGNOSTIC_MARKER_HEIGHT) / 2, 0);
-    const maxWidth = Math.max(
-      44,
-      view.scrollDOM.clientWidth -
-        visibleLeft -
-        INLINE_DIAGNOSTIC_VIEWPORT_PADDING,
-    );
-
-    markers.push(
-      new DiagnosticsOverlayMarker(
-        snapshot,
-        left,
-        top,
-        maxWidth,
-        lineNumber === activeLineNumber,
-        lineNumber,
-      ),
-    );
-  }
-
-  return markers;
-};
-
-const inlineDiagnosticsLayer = layer({
-  above: true,
-  class: "cm-diagnostic-overlay-layer",
-  update(update): boolean {
-    const startMessagesVisible = update.startState.field(
-      inlineDiagnosticsMessagesVisibleField,
-      false,
-    );
-    const messagesVisible = update.state.field(
-      inlineDiagnosticsMessagesVisibleField,
-      false,
-    );
-    const startDiagnostics =
-      update.startState.field(inlineDiagnosticsField, false) ??
-      EMPTY_INLINE_SNAPSHOT;
-    const diagnostics =
-      update.state.field(inlineDiagnosticsField, false) ??
-      EMPTY_INLINE_SNAPSHOT;
-    const startScrollActive = update.startState.field(
-      codeMirrorScrollActiveField,
-      false,
-    );
-    const scrollActive = update.state.field(codeMirrorScrollActiveField, false);
-
-    return (
-      update.docChanged ||
-      update.viewportChanged ||
-      update.selectionSet ||
-      update.geometryChanged ||
-      startMessagesVisible !== messagesVisible ||
-      startDiagnostics !== diagnostics ||
-      startScrollActive !== scrollActive
-    );
-  },
-  markers: buildInlineDiagnosticMarkers,
-});
-
-export const diagnosticsTheme = EditorView.theme({
-  ".cm-diagnostic-range": {
-    textDecorationLine: "underline",
-    textDecorationStyle: "wavy",
-    textDecorationThickness: "1.5px",
-    textUnderlineOffset: "3px",
-  },
-  ".cm-diagnostic-range-error": {
-    textDecorationColor: "#f87171",
-  },
-  ".cm-diagnostic-range-warning": {
-    textDecorationColor: "#fbbf24",
-  },
-  ".cm-diagnostic-range-info": {
-    textDecorationColor: "#60a5fa",
-  },
-  ".cm-diagnostic-overlay-layer": {
-    pointerEvents: "none",
-    zIndex: "4",
-  },
-  ".cm-diagnostic-overlay": {
-    display: "inline-flex",
-    alignItems: "flex-start",
-    gap: "8px",
-    minWidth: "22px",
-    minHeight: `${INLINE_DIAGNOSTIC_MARKER_HEIGHT}px`,
-    padding: "0 10px",
-    borderRadius: "999px",
-    fontSize: "18px",
-    letterSpacing: "0",
-    lineHeight: "21px",
-    whiteSpace: "normal",
-    overflow: "visible",
-    textOverflow: "clip",
-    pointerEvents: "auto",
-    userSelect: "none",
-    border: "1px solid transparent",
-    boxSizing: "border-box",
-    opacity: "0.92",
-    transform: "translateY(1px)",
-  },
-  ".cm-diagnostic-overlay:hover, .cm-diagnostic-overlay[data-diagnostic-expanded='true']":
-    {
-      width: "var(--cm-diagnostic-overlay-readable-width)",
-      borderRadius: "14px",
-    },
-  ".cm-diagnostic-overlay-dot": {
-    width: "8px",
-    height: "8px",
-    flex: "0 0 auto",
-    borderRadius: "999px",
-    marginTop: "8px",
-  },
-  ".cm-diagnostic-overlay-count": {
-    display: "none",
-    minWidth: "18px",
-    fontSize: "16px",
-    fontWeight: "700",
-    textAlign: "center",
-    lineHeight: "21px",
-  },
-  ".cm-diagnostic-overlay-count:not(:empty)": {
-    display: "inline-block",
-  },
-  ".cm-diagnostic-overlay-text": {
-    display: "none",
-    flex: "1 1 auto",
-    minWidth: "0",
-    overflow: "visible",
-    overflowWrap: "break-word",
-    textOverflow: "clip",
-    wordBreak: "normal",
-  },
-  ".cm-diagnostic-overlay:hover .cm-diagnostic-overlay-text, .cm-diagnostic-overlay[data-diagnostic-expanded='true'] .cm-diagnostic-overlay-text":
-    {
-      display: "inline-block",
-    },
-  ".cm-diagnostic-overlay-error": {
-    color: "#fecaca",
-    backgroundColor: "rgba(127, 29, 29, 0.86)",
-    borderColor: "rgba(248, 113, 113, 0.48)",
-  },
-  ".cm-diagnostic-overlay-warning": {
-    color: "#fde68a",
-    backgroundColor: "rgba(120, 53, 15, 0.82)",
-    borderColor: "rgba(251, 191, 36, 0.44)",
-  },
-  ".cm-diagnostic-overlay-info": {
-    color: "#bfdbfe",
-    backgroundColor: "rgba(30, 58, 138, 0.78)",
-    borderColor: "rgba(96, 165, 250, 0.38)",
-  },
-  ".cm-diagnostic-overlay-error .cm-diagnostic-overlay-dot": {
-    backgroundColor: "#f87171",
-  },
-  ".cm-diagnostic-overlay-warning .cm-diagnostic-overlay-dot": {
-    backgroundColor: "#fbbf24",
-  },
-  ".cm-diagnostic-overlay-info .cm-diagnostic-overlay-dot": {
-    backgroundColor: "#60a5fa",
-  },
-});
-
-const buildInlineDiagnosticsEffects = (
-  inlineSnapshot: readonly InlineDiagnosticsLine[],
-  showInlineMessages: boolean,
-): StateEffect<unknown>[] => [
-  setInlineDiagnosticsEffect.of(inlineSnapshot),
-  setInlineDiagnosticsMessagesVisibleEffect.of(showInlineMessages),
-];
+): string =>
+  problems.length === 0
+    ? "empty"
+    : problems.map(getProblemSignature).join("\u0000");
 
 const selectProblemsForFile =
   (filePath: string) =>
@@ -598,13 +177,15 @@ class DiagnosticsBridge {
   private readonly unsubscribe: () => void;
   private readonly filePath: string;
   private readonly language: string;
-  private readonly showInlineMessages: boolean;
   private pendingProblems: readonly DiagnosticsProblem[] = EMPTY_PROBLEMS;
-  private pendingSignature = "";
+  private pendingSignature = "empty";
   private appliedSignature = "";
   private scheduled = false;
   private destroyed = false;
   private awaitingInitialPull = false;
+  private emptyClearTimer: number | null = null;
+  private hasVisibleDiagnostics = false;
+  private lastDocChangedAt = 0;
 
   constructor(
     private readonly view: EditorView,
@@ -612,7 +193,6 @@ class DiagnosticsBridge {
   ) {
     this.filePath = options.filePath;
     this.language = options.language;
-    this.showInlineMessages = options.showInlineMessages;
     const cachedProblems = useDiagnosticsStore
       .getState()
       .byFile.get(this.filePath)?.items;
@@ -620,9 +200,7 @@ class DiagnosticsBridge {
     this.awaitingInitialPull = !hasCachedDiagnostics;
 
     if (cachedProblems && cachedProblems.length > 0) {
-      this.pendingProblems = cachedProblems;
-      this.pendingSignature = this.getCurrentSignature(cachedProblems);
-      this.scheduleApply();
+      this.acceptProblems(cachedProblems);
     }
 
     if (this.awaitingInitialPull) {
@@ -637,9 +215,7 @@ class DiagnosticsBridge {
     this.unsubscribe = useDiagnosticsStore.subscribe(
       selectProblemsForFile(this.filePath),
       (problems) => {
-        this.pendingProblems = problems;
-        this.pendingSignature = this.getCurrentSignature(problems);
-        this.scheduleApply();
+        this.acceptProblems(problems);
       },
       { fireImmediately: !this.awaitingInitialPull },
     );
@@ -649,11 +225,35 @@ class DiagnosticsBridge {
     }
   }
 
-  update(_update: ViewUpdate): void {}
+  update(update: ViewUpdate): void {
+    if (update.docChanged) {
+      this.lastDocChangedAt = Date.now();
+    }
+  }
 
   destroy(): void {
     this.destroyed = true;
     this.unsubscribe();
+    this.clearEmptyTimer();
+  }
+
+  private acceptProblems(problems: readonly DiagnosticsProblem[]): void {
+    this.pendingProblems = problems;
+    this.pendingSignature = this.getCurrentSignature(problems);
+
+    if (problems.length > 0) {
+      this.clearEmptyTimer();
+      this.scheduleApply();
+      return;
+    }
+
+    if (!this.hasVisibleDiagnostics) {
+      this.clearEmptyTimer();
+      this.scheduleApply();
+      return;
+    }
+
+    this.scheduleEmptyClear();
   }
 
   private scheduleApply(): void {
@@ -673,38 +273,63 @@ class DiagnosticsBridge {
       }
 
       const problems = this.pendingProblems;
-      const inlineSnapshot = buildInlineDiagnosticsSnapshot(
+      const diagnostics = buildCodeMirrorDiagnostics(
         this.view.state.doc,
         problems,
       );
       this.appliedSignature = this.pendingSignature;
+      this.hasVisibleDiagnostics = diagnostics.length > 0;
+
       if (problems.length > 0) {
         lastVisibleProblemsByView.set(this.view, problems);
       } else {
         lastVisibleProblemsByView.delete(this.view);
       }
-      this.view.dispatch({
-        effects: buildInlineDiagnosticsEffects(
-          inlineSnapshot,
-          this.showInlineMessages,
-        ),
-      });
+
+      this.view.dispatch(setDiagnostics(this.view.state, diagnostics));
     });
+  }
+
+  private scheduleEmptyClear(): void {
+    this.clearEmptyTimer();
+    const recentlyEdited =
+      Date.now() - this.lastDocChangedAt <= RECENT_EDIT_WINDOW_MS;
+    const delay = recentlyEdited
+      ? RECENT_EDIT_EMPTY_DIAGNOSTICS_GRACE_MS
+      : TRANSIENT_EMPTY_DIAGNOSTICS_GRACE_MS;
+
+    this.emptyClearTimer = window.setTimeout(() => {
+      this.emptyClearTimer = null;
+      if (this.destroyed || this.pendingProblems.length > 0) {
+        return;
+      }
+      this.scheduleApply();
+    }, delay);
+  }
+
+  private clearEmptyTimer(): void {
+    if (this.emptyClearTimer === null) {
+      return;
+    }
+    window.clearTimeout(this.emptyClearTimer);
+    this.emptyClearTimer = null;
   }
 
   private async pullInitialDiagnostics(): Promise<void> {
     try {
-      const diagnostics = (await LSPGetDiagnostics(
-        this.filePath,
-      )) as DiagnosticsEventItem[];
+      const diagnostics = (await LSPGetDiagnostics(this.filePath)) as unknown;
       if (this.destroyed) {
         return;
       }
 
-      if (diagnostics.length > 0) {
+      if (Array.isArray(diagnostics) && diagnostics.length > 0) {
         useDiagnosticsStore
           .getState()
-          .setFileDiagnostics(this.filePath, this.language, diagnostics);
+          .setFileDiagnostics(
+            this.filePath,
+            this.language,
+            diagnostics as DiagnosticsEventItem[],
+          );
       }
     } catch (error) {
       console.debug("[diagnostics] initial pull failed", error);
@@ -715,25 +340,85 @@ class DiagnosticsBridge {
       }
 
       if (!useDiagnosticsStore.getState().byFile.has(this.filePath)) {
-        this.pendingProblems = EMPTY_PROBLEMS;
-        this.pendingSignature = this.getCurrentSignature(EMPTY_PROBLEMS);
-        this.scheduleApply();
+        this.acceptProblems(EMPTY_PROBLEMS);
       }
     }
   }
 
   private getCurrentSignature(problems: readonly DiagnosticsProblem[]): string {
-    return `${this.showInlineMessages ? "messages:on" : "messages:off"}:${getProblemsSignature(problems)}`;
+    return getProblemsSignature(problems);
   }
 }
+
+export const diagnosticsTheme = EditorView.theme({
+  ".cm-lintRange, .cm-lintRange-error, .cm-lintRange-warning, .cm-lintRange-info, .cm-lintRange-hint":
+    {
+      textDecorationLine: "underline",
+      textDecorationStyle: "wavy",
+      textDecorationThickness: "1.5px",
+      textUnderlineOffset: "3px",
+      backgroundImage: "none",
+    },
+  ".cm-lintRange-error, .cm-lintRange-hint": {
+    textDecorationColor: "#f87171",
+  },
+  ".cm-lintRange-warning": {
+    textDecorationColor: "#fbbf24",
+  },
+  ".cm-lintRange-info": {
+    textDecorationColor: "#60a5fa",
+  },
+  ".cm-lintRange-active": {
+    backgroundColor: "rgba(248, 113, 113, 0.12)",
+  },
+  ".cm-tooltip-lint": {
+    padding: "0",
+    margin: "0",
+    maxWidth: "min(520px, calc(100vw - 32px))",
+    border: "1px solid var(--editor-border-strong)",
+    borderRadius: "8px",
+    backgroundColor: "var(--editor-tooltip-bg)",
+    color: "var(--editor-text)",
+    boxShadow: "var(--editor-tooltip-shadow)",
+    fontFamily:
+      'var(--editor-font-family, "Arlecchino Fira Code", "JetBrains Mono", "SF Mono", "Fira Code", monospace)',
+    overflow: "hidden",
+  },
+  ".cm-tooltip-lint .cm-diagnostic": {
+    padding: "12px 14px 12px 16px",
+    margin: "0",
+    whiteSpace: "pre-wrap",
+    borderLeftWidth: "3px",
+    borderLeftStyle: "solid",
+    backgroundColor: "transparent",
+  },
+  ".cm-tooltip-lint .cm-diagnostic-error": {
+    borderLeftColor: "#f87171",
+  },
+  ".cm-tooltip-lint .cm-diagnostic-warning": {
+    borderLeftColor: "#fbbf24",
+  },
+  ".cm-tooltip-lint .cm-diagnostic-info": {
+    borderLeftColor: "#60a5fa",
+  },
+  ".cm-tooltip-lint .cm-diagnosticText": {
+    fontSize: "18px",
+    lineHeight: "27px",
+  },
+  ".cm-tooltip-lint .cm-diagnosticSource": {
+    marginTop: "6px",
+    fontSize: "16px",
+    lineHeight: "22px",
+    color: "var(--editor-text-soft)",
+    opacity: "1",
+  },
+});
 
 export const createDiagnosticsExtension = (
   options: DiagnosticsExtensionOptions,
 ): Extension[] => [
   diagnosticsTheme,
-  inlineDiagnosticsField,
-  inlineDiagnosticsMessagesVisibleField,
-  inlineDiagnosticsLayer,
+  linter(null, { delay: 0 }),
   ViewPlugin.fromClass(
     class extends DiagnosticsBridge {
       constructor(view: EditorView) {

@@ -105,7 +105,6 @@ interface EditorSettingsState {
   editorFontSize: number;
   minFontSize: number;
   maxFontSize: number;
-  showInlineDiagnostics: boolean;
   showCompactDiagnostics: boolean;
   showFoldGutter: boolean;
   showIndentGuides: boolean;
@@ -133,7 +132,6 @@ interface EditorSettingsState {
   resetEditorFontFamily: () => void;
   setEditorFontSize: (size: number) => void;
   setUiScale: (scale: number) => void;
-  setShowInlineDiagnostics: (value: boolean) => void;
   setShowCompactDiagnostics: (value: boolean) => void;
   setShowFoldGutter: (value: boolean) => void;
   setShowIndentGuides: (value: boolean) => void;
@@ -179,7 +177,6 @@ const MAX_FONT_SIZE = 48;
 const MAX_EDITOR_FONT_FAMILY_LENGTH = 240;
 const MAX_CUSTOM_FONTS = 16;
 const MAX_CUSTOM_FONT_DATA_URL_LENGTH = 7_000_000;
-const DEFAULT_SHOW_INLINE_DIAGNOSTICS = true;
 const DEFAULT_SHOW_COMPACT_DIAGNOSTICS = true;
 const DEFAULT_SHOW_FOLD_GUTTER = false;
 const DEFAULT_SHOW_INDENT_GUIDES = true;
@@ -225,7 +222,6 @@ type PersistedEditorSettingsState = Partial<
     | "customFonts"
     | "editorFontFamily"
     | "editorFontSize"
-    | "showInlineDiagnostics"
     | "showCompactDiagnostics"
     | "showFoldGutter"
     | "showIndentGuides"
@@ -403,10 +399,6 @@ const sanitizePersistedEditorSettings = (
     );
   }
 
-  if (typeof persistedState.showInlineDiagnostics === "boolean") {
-    nextState.showInlineDiagnostics = persistedState.showInlineDiagnostics;
-  }
-
   if (typeof persistedState.showCompactDiagnostics === "boolean") {
     nextState.showCompactDiagnostics = persistedState.showCompactDiagnostics;
   }
@@ -504,7 +496,6 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
       editorFontSize: DEFAULT_EDITOR_FONT_SIZE,
       minFontSize: MIN_FONT_SIZE,
       maxFontSize: MAX_FONT_SIZE,
-      showInlineDiagnostics: DEFAULT_SHOW_INLINE_DIAGNOSTICS,
       showCompactDiagnostics: DEFAULT_SHOW_COMPACT_DIAGNOSTICS,
       showFoldGutter: DEFAULT_SHOW_FOLD_GUTTER,
       showIndentGuides: DEFAULT_SHOW_INDENT_GUIDES,
@@ -593,9 +584,6 @@ export const useEditorSettingsStore = create<EditorSettingsState>()(
         set(() => ({
           uiScale: clampUiScale(scale),
         })),
-
-      setShowInlineDiagnostics: (value: boolean) =>
-        set(() => ({ showInlineDiagnostics: value })),
 
       setShowCompactDiagnostics: (value: boolean) =>
         set(() => ({ showCompactDiagnostics: value })),

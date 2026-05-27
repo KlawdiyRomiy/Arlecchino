@@ -6,6 +6,7 @@ import {
   useDiagnosticsStore,
 } from "../stores/diagnosticsStore";
 import { usePerformanceStore } from "../stores/performanceStore";
+import { useGitStore } from "../stores/gitStore";
 import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
 
 type ProjectAppBridge = {
@@ -359,6 +360,7 @@ export const resetProjectBoundStores = () => {
   currentProjectScope = { generation: 0, projectPath: null };
   setDiagnosticsPreloadState(preloadStateIdle);
   useDiagnosticsStore.getState().reset();
+  useGitStore.getState().setProjectPath("");
   usePerformanceStore.getState().resetTransientBudget();
 };
 
@@ -371,6 +373,7 @@ export const activateProjectScope = (projectPath: string | null) => {
         : 0,
   };
   syncProjectScopeToDiagnosticsStore();
+  useGitStore.getState().setProjectPath(projectPath ?? "");
   setDiagnosticsPreloadState({
     active:
       diagnosticsPreloadState.active &&

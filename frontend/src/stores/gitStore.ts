@@ -172,11 +172,7 @@ const scheduleFileMarkerRefresh = (
   }
 
   const mode = usePerformanceStore.getState().mode;
-  if (mode === "critical") {
-    return;
-  }
-
-  const delay = mode === "constrained" ? 1400 : 500;
+  const delay = mode === "normal" ? 500 : 700;
   const existingTimer = markerRefreshTimers.get(filePath);
   if (existingTimer !== undefined) {
     window.clearTimeout(existingTimer);
@@ -809,6 +805,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     const { projectPath, markerUpdatedAt, markerLoading } = get();
     if (!projectPath || !filePath) return;
 
+    const requestedProjectPath = projectPath;
     const relativePath = normalizePathForGit(projectPath, filePath);
     const markerKey = relativePath || filePath;
     const now = Date.now();
@@ -841,6 +838,10 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
       const merged = mergeLineMarkers(stagedMarkers, unstagedMarkers);
 
       set((state) => {
+        if (state.projectPath !== requestedProjectPath) {
+          return state;
+        }
+
         const nextMarkers = { ...state.fileMarkers };
         const nextUpdatedAt = { ...state.markerUpdatedAt };
         const nextLoading = { ...state.markerLoading };
@@ -862,14 +863,20 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
         };
       });
     } catch (error) {
-      set((state) => ({
-        error: toErrorMessage(error),
-        markerLoading: {
-          ...state.markerLoading,
-          [markerKey]: false,
-          ...(filePath !== markerKey ? { [filePath]: false } : {}),
-        },
-      }));
+      set((state) => {
+        if (state.projectPath !== requestedProjectPath) {
+          return state;
+        }
+
+        return {
+          error: toErrorMessage(error),
+          markerLoading: {
+            ...state.markerLoading,
+            [markerKey]: false,
+            ...(filePath !== markerKey ? { [filePath]: false } : {}),
+          },
+        };
+      });
     }
   },
 
