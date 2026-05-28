@@ -1825,6 +1825,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         );
         return retained.size === previous.size ? previous : retained;
       });
+      setAutocompleteInstallEvents((previous) => {
+        const next = { ...previous };
+        let changed = false;
+        const capabilitiesByServer = new Map(
+          nextCapabilities
+            .map((capability) => [capability.lspServerId, capability] as const)
+            .filter(([serverId]) => Boolean(serverId)),
+        );
+
+        for (const [serverId, event] of Object.entries(previous)) {
+          const capability = capabilitiesByServer.get(serverId);
+          const backendClean =
+            capability &&
+            (capability.lspInstalled ||
+              (!capability.lspInstalling &&
+                !capability.lspInstallError &&
+                !capability.lspLastError));
+          if (!event.running && backendClean) {
+            delete next[serverId];
+            changed = true;
+          }
+        }
+
+        return changed ? next : previous;
+      });
       return nextCapabilities;
     } catch (error) {
       setAutocompleteError(
@@ -2489,6 +2514,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             installEvent?.stage || capability.lspInstallStage || "";
           const installPercent =
             installEvent?.percent ?? capability.lspInstallPercent;
+          const installType = capability.lspInstallType || "";
+          const installTypeLabel =
+            installType === "brew"
+              ? "Homebrew"
+              : installType
+                ? installType.toUpperCase()
+                : "";
+          const installDependencies = capability.lspInstallDependencies ?? [];
+          const installUnavailableReason =
+            !lspInstalled && !capability.lspCanInstall
+              ? capability.lspInstallUnavailableReason
+              : "";
+          const showInstallMetadata =
+            capability.sources.lspDeclared &&
+            (installTypeLabel ||
+              capability.lspInstallCommand ||
+              installDependencies.length > 0 ||
+              installUnavailableReason);
           const installDetail = lspInstalling
             ? [
                 installMessage || installStage || "Installing",
@@ -2528,6 +2571,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {capability.lspServerId ? (
                     <span className="font-mono">{capability.lspServerId}</span>
                   ) : null}
+                  {installTypeLabel ? <span>{installTypeLabel}</span> : null}
                   {capability.lspBinaryPath ? (
                     <span
                       className="max-w-full break-all font-mono lg:max-w-[520px]"
@@ -2573,6 +2617,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                 ) : null}
               </div>
+
+              {showInstallMetadata ? (
+                <div className="min-w-0 space-y-1 rounded-[14px] border border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--surface-2)_72%,transparent)] px-3 py-2 lg:col-span-2">
+                  {capability.lspInstallCommand ? (
+                    <div className="break-all font-mono text-[11px] leading-5 text-[var(--text-secondary)]">
+                      {capability.lspInstallCommand}
+                    </div>
+                  ) : null}
+                  {installDependencies.length > 0 ? (
+                    <div className="text-[11px] leading-5 text-[var(--text-muted)]">
+                      Requires {installDependencies.join(", ")}
+                    </div>
+                  ) : null}
+                  {installUnavailableReason ? (
+                    <div className="text-[11px] leading-5 text-[var(--text-muted)]">
+                      {installUnavailableReason}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               {(installDetail || lspError) && (
                 <div className="min-w-0 space-y-1 lg:col-span-2">

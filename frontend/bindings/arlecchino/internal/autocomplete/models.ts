@@ -89,6 +89,10 @@ export class LanguageCapability {
     "lspConfigured": boolean;
     "lspRunning": boolean;
     "lspBinaryPath": string;
+    "lspInstallType": string;
+    "lspInstallCommand": string;
+    "lspInstallDependencies": string[];
+    "lspInstallUnavailableReason": string;
     "lspInstallStage": string;
     "lspInstallPercent": number;
     "lspInstallMessage": string;
@@ -137,6 +141,18 @@ export class LanguageCapability {
         if (!("lspBinaryPath" in $$source)) {
             this["lspBinaryPath"] = "";
         }
+        if (!("lspInstallType" in $$source)) {
+            this["lspInstallType"] = "";
+        }
+        if (!("lspInstallCommand" in $$source)) {
+            this["lspInstallCommand"] = "";
+        }
+        if (!("lspInstallDependencies" in $$source)) {
+            this["lspInstallDependencies"] = [];
+        }
+        if (!("lspInstallUnavailableReason" in $$source)) {
+            this["lspInstallUnavailableReason"] = "";
+        }
         if (!("lspInstallStage" in $$source)) {
             this["lspInstallStage"] = "";
         }
@@ -165,7 +181,8 @@ export class LanguageCapability {
     static createFrom($$source: any = {}): LanguageCapability {
         const $$createField2_0 = $$createType0;
         const $$createField5_0 = $$createType1;
-        const $$createField18_0 = $$createType0;
+        const $$createField15_0 = $$createType0;
+        const $$createField22_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("extensions" in $$parsedSource) {
             $$parsedSource["extensions"] = $$createField2_0($$parsedSource["extensions"]);
@@ -173,8 +190,11 @@ export class LanguageCapability {
         if ("sources" in $$parsedSource) {
             $$parsedSource["sources"] = $$createField5_0($$parsedSource["sources"]);
         }
+        if ("lspInstallDependencies" in $$parsedSource) {
+            $$parsedSource["lspInstallDependencies"] = $$createField15_0($$parsedSource["lspInstallDependencies"]);
+        }
         if ("notes" in $$parsedSource) {
-            $$parsedSource["notes"] = $$createField18_0($$parsedSource["notes"]);
+            $$parsedSource["notes"] = $$createField22_0($$parsedSource["notes"]);
         }
         return new LanguageCapability($$parsedSource as Partial<LanguageCapability>);
     }

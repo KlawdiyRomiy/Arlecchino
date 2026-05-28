@@ -776,14 +776,17 @@ func runeColumnToByteOffset(text string, column int) (int, error) {
 }
 
 type LSPServerInfo struct {
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Languages  []string `json:"languages"`
-	Extensions []string `json:"extensions"`
-	Installed  bool     `json:"installed"`
-	Version    string   `json:"version"`
-	CanInstall bool     `json:"canInstall"`
-	InstallCmd string   `json:"installCmd"`
+	ID                       string   `json:"id"`
+	Name                     string   `json:"name"`
+	Languages                []string `json:"languages"`
+	Extensions               []string `json:"extensions"`
+	Installed                bool     `json:"installed"`
+	Version                  string   `json:"version"`
+	CanInstall               bool     `json:"canInstall"`
+	InstallCmd               string   `json:"installCmd"`
+	InstallType              string   `json:"installType"`
+	Dependencies             []string `json:"dependencies"`
+	InstallUnavailableReason string   `json:"installUnavailableReason"`
 }
 
 type LanguageInfoResult struct {
@@ -805,14 +808,17 @@ func (a *App) GetAllLSPServers() []LSPServerInfo {
 
 	for _, s := range servers {
 		result = append(result, LSPServerInfo{
-			ID:         s.ID,
-			Name:       s.Name,
-			Languages:  s.Languages,
-			Extensions: s.Extensions,
-			Installed:  s.Installed,
-			Version:    s.Version,
-			CanInstall: s.CanInstall,
-			InstallCmd: s.InstallCmd,
+			ID:                       s.ID,
+			Name:                     s.Name,
+			Languages:                s.Languages,
+			Extensions:               s.Extensions,
+			Installed:                s.Installed,
+			Version:                  s.Version,
+			CanInstall:               s.CanInstall,
+			InstallCmd:               s.InstallCmd,
+			InstallType:              s.InstallType,
+			Dependencies:             append([]string(nil), s.Dependencies...),
+			InstallUnavailableReason: lspInstallUnavailableReason(s),
 		})
 	}
 
@@ -833,16 +839,21 @@ func (a *App) GetLSPForFile(filePath string) *LSPServerInfo {
 	if server == nil {
 		return nil
 	}
+	rootPath := a.currentProjectPath()
+	binaryPath := a.lspInstaller.GetBinaryPathForRoot(server.ID, rootPath)
 
 	return &LSPServerInfo{
-		ID:         server.ID,
-		Name:       server.Name,
-		Languages:  server.Languages,
-		Extensions: server.Extensions,
-		Installed:  server.Installed,
-		Version:    server.Version,
-		CanInstall: server.CanInstall,
-		InstallCmd: server.InstallCmd,
+		ID:                       server.ID,
+		Name:                     server.Name,
+		Languages:                server.Languages,
+		Extensions:               server.Extensions,
+		Installed:                binaryPath != "",
+		Version:                  server.Version,
+		CanInstall:               server.CanInstall,
+		InstallCmd:               server.InstallCmd,
+		InstallType:              server.InstallType,
+		Dependencies:             append([]string(nil), server.Dependencies...),
+		InstallUnavailableReason: lspInstallUnavailableReason(server),
 	}
 }
 
@@ -866,7 +877,7 @@ func (a *App) GetLanguageForFile(filePath string) *LanguageInfoResult {
 	if a.lspInstaller != nil && lang.LSPServerID != "" {
 		server := a.lspInstaller.GetServerByID(lang.LSPServerID)
 		if server != nil {
-			result.LSPInstalled = server.Installed
+			result.LSPInstalled = a.lspInstaller.GetBinaryPathForRoot(lang.LSPServerID, a.currentProjectPath()) != ""
 			result.CanInstallLSP = server.CanInstall
 		}
 	}
@@ -925,9 +936,7 @@ func (a *App) refreshLSPConfigsFromInstallerForSession(session *ProjectRuntimeSe
 	if manager == nil {
 		manager = a.initProjectLSPManagerForSession(session, projectPath, generation, a.lspInstaller)
 	}
-	for _, cfg := range indexerlsp.ConfigsFromInstaller(projectPath, a.lspInstaller) {
-		manager.RegisterServer(cfg)
-	}
+	manager.ReplaceInstallerConfigs(indexerlsp.ConfigsFromInstaller(projectPath, a.lspInstaller))
 	if session != nil {
 		session.lspManager = manager
 		if session.brain != nil {

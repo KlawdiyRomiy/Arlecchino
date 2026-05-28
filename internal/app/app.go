@@ -320,9 +320,10 @@ func (a *App) initProjectLSPManagerForSession(session *ProjectRuntimeSession, pa
 
 	defaultConfigs := lsp.DefaultConfigs(path)
 	installerConfigs := lsp.ConfigsFromInstaller(path, installer)
-	for _, cfg := range lsp.MergeConfigs(defaultConfigs, installerConfigs) {
+	for _, cfg := range defaultConfigs {
 		manager.RegisterServer(cfg)
 	}
+	manager.ReplaceInstallerConfigs(installerConfigs)
 
 	if session != nil {
 		session.lspManager = manager
@@ -763,20 +764,4 @@ func (a *App) GetDevToolsStatus() []welcome.ToolStatus {
 		return nil
 	}
 	return a.welcomeScreen.GetToolsStatus()
-}
-
-// GetLSPInstallStatus returns installation status of LSP servers
-func (a *App) GetLSPInstallStatus() []welcome.ToolStatus {
-	if a.welcomeScreen == nil {
-		return nil
-	}
-	return a.welcomeScreen.GetLSPStatus()
-}
-
-// InstallDevTool installs a development tool or LSP server
-func (a *App) InstallDevTool(toolName string) (string, error) {
-	if a.welcomeScreen == nil {
-		return "", fmt.Errorf("welcome screen not initialized")
-	}
-	return a.welcomeScreen.InstallTool(toolName)
 }

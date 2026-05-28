@@ -63,6 +63,10 @@ func (a *App) GetAutocompleteLanguageCapabilities() []AutocompleteLanguageCapabi
 		server := a.lspInstaller.GetServerByID(serverID)
 		if server != nil {
 			capabilities[i].LSPCanInstall = server.CanInstall
+			capabilities[i].LSPInstallType = server.InstallType
+			capabilities[i].LSPInstallCommand = server.InstallCmd
+			capabilities[i].LSPInstallDependencies = append([]string(nil), server.Dependencies...)
+			capabilities[i].LSPInstallUnavailableReason = lspInstallUnavailableReason(server)
 		}
 		binaryPath := a.lspInstaller.GetBinaryPathForRoot(serverID, projectPath)
 		capabilities[i].LSPBinaryPath = binaryPath
@@ -77,6 +81,31 @@ func (a *App) GetAutocompleteLanguageCapabilities() []AutocompleteLanguageCapabi
 		capabilities[i].LSPInstallError = installState.Error
 	}
 	return capabilities
+}
+
+func lspInstallUnavailableReason(server *lspregistry.LSPInfo) string {
+	if server == nil || server.CanInstall {
+		return ""
+	}
+	switch strings.TrimSpace(server.InstallType) {
+	case "system":
+		if strings.TrimSpace(server.InstallCmd) != "" {
+			return server.InstallCmd
+		}
+		return "Install this language server with the system toolchain."
+	case "binary":
+		if strings.TrimSpace(server.InstallCmd) != "" {
+			return server.InstallCmd
+		}
+		return "Manual binary installation is required."
+	case "":
+		return "No installer is registered for this language server."
+	default:
+		if strings.TrimSpace(server.InstallCmd) != "" {
+			return server.InstallCmd
+		}
+		return "This install method is not automated yet."
+	}
 }
 
 func lspServerIDForLanguage(language string) string {

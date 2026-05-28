@@ -1551,6 +1551,9 @@ export class LSPServerInfo {
     "version": string;
     "canInstall": boolean;
     "installCmd": string;
+    "installType": string;
+    "dependencies": string[];
+    "installUnavailableReason": string;
 
     /** Creates a new LSPServerInfo instance. */
     constructor($$source: Partial<LSPServerInfo> = {}) {
@@ -1578,6 +1581,15 @@ export class LSPServerInfo {
         if (!("installCmd" in $$source)) {
             this["installCmd"] = "";
         }
+        if (!("installType" in $$source)) {
+            this["installType"] = "";
+        }
+        if (!("dependencies" in $$source)) {
+            this["dependencies"] = [];
+        }
+        if (!("installUnavailableReason" in $$source)) {
+            this["installUnavailableReason"] = "";
+        }
 
         Object.assign(this, $$source);
     }
@@ -1588,12 +1600,16 @@ export class LSPServerInfo {
     static createFrom($$source: any = {}): LSPServerInfo {
         const $$createField2_0 = $$createType0;
         const $$createField3_0 = $$createType0;
+        const $$createField9_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("languages" in $$parsedSource) {
             $$parsedSource["languages"] = $$createField2_0($$parsedSource["languages"]);
         }
         if ("extensions" in $$parsedSource) {
             $$parsedSource["extensions"] = $$createField3_0($$parsedSource["extensions"]);
+        }
+        if ("dependencies" in $$parsedSource) {
+            $$parsedSource["dependencies"] = $$createField9_0($$parsedSource["dependencies"]);
         }
         return new LSPServerInfo($$parsedSource as Partial<LSPServerInfo>);
     }
@@ -2334,6 +2350,60 @@ export class ProjectAccessInspection {
     }
 }
 
+export class ProjectEntryCreateRequest {
+    "type": string;
+    "directoryPath": string;
+    "name": string;
+
+    /** Creates a new ProjectEntryCreateRequest instance. */
+    constructor($$source: Partial<ProjectEntryCreateRequest> = {}) {
+        if (!("type" in $$source)) {
+            this["type"] = "";
+        }
+        if (!("directoryPath" in $$source)) {
+            this["directoryPath"] = "";
+        }
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProjectEntryCreateRequest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProjectEntryCreateRequest {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProjectEntryCreateRequest($$parsedSource as Partial<ProjectEntryCreateRequest>);
+    }
+}
+
+export class ProjectEntryCreateResult {
+    "path": string;
+    "isDirectory": boolean;
+
+    /** Creates a new ProjectEntryCreateResult instance. */
+    constructor($$source: Partial<ProjectEntryCreateResult> = {}) {
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("isDirectory" in $$source)) {
+            this["isDirectory"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProjectEntryCreateResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProjectEntryCreateResult {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProjectEntryCreateResult($$parsedSource as Partial<ProjectEntryCreateResult>);
+    }
+}
+
 export class ProjectEntryMoveResult {
     "oldPath": string;
     "newPath": string;
@@ -2375,6 +2445,31 @@ export class ProjectEntryMoveResult {
     }
 }
 
+export class ProjectEntryRenameRequest {
+    "path": string;
+    "newName": string;
+
+    /** Creates a new ProjectEntryRenameRequest instance. */
+    constructor($$source: Partial<ProjectEntryRenameRequest> = {}) {
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("newName" in $$source)) {
+            this["newName"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProjectEntryRenameRequest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProjectEntryRenameRequest {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProjectEntryRenameRequest($$parsedSource as Partial<ProjectEntryRenameRequest>);
+    }
+}
+
 export class ProjectEntryRenameResult {
     "newPath": string;
     "isDirectory": boolean;
@@ -2397,6 +2492,105 @@ export class ProjectEntryRenameResult {
     static createFrom($$source: any = {}): ProjectEntryRenameResult {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new ProjectEntryRenameResult($$parsedSource as Partial<ProjectEntryRenameResult>);
+    }
+}
+
+export class ProjectEntryTrashRequest {
+    "entries": ProjectEntryTrashTarget[];
+
+    /** Creates a new ProjectEntryTrashRequest instance. */
+    constructor($$source: Partial<ProjectEntryTrashRequest> = {}) {
+        if (!("entries" in $$source)) {
+            this["entries"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProjectEntryTrashRequest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProjectEntryTrashRequest {
+        const $$createField0_0 = $$createType59;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("entries" in $$parsedSource) {
+            $$parsedSource["entries"] = $$createField0_0($$parsedSource["entries"]);
+        }
+        return new ProjectEntryTrashRequest($$parsedSource as Partial<ProjectEntryTrashRequest>);
+    }
+}
+
+export class ProjectEntryTrashResult {
+    "count": number;
+
+    /** Creates a new ProjectEntryTrashResult instance. */
+    constructor($$source: Partial<ProjectEntryTrashResult> = {}) {
+        if (!("count" in $$source)) {
+            this["count"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProjectEntryTrashResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProjectEntryTrashResult {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProjectEntryTrashResult($$parsedSource as Partial<ProjectEntryTrashResult>);
+    }
+}
+
+export class ProjectEntryTrashTarget {
+    "path": string;
+    "isDirectory": boolean;
+    "displayName"?: string;
+
+    /** Creates a new ProjectEntryTrashTarget instance. */
+    constructor($$source: Partial<ProjectEntryTrashTarget> = {}) {
+        if (!("path" in $$source)) {
+            this["path"] = "";
+        }
+        if (!("isDirectory" in $$source)) {
+            this["isDirectory"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProjectEntryTrashTarget instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProjectEntryTrashTarget {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProjectEntryTrashTarget($$parsedSource as Partial<ProjectEntryTrashTarget>);
+    }
+}
+
+export class ProjectEntryUndoState {
+    "canUndo": boolean;
+    "canRedo": boolean;
+    "undoLabel"?: string;
+    "redoLabel"?: string;
+
+    /** Creates a new ProjectEntryUndoState instance. */
+    constructor($$source: Partial<ProjectEntryUndoState> = {}) {
+        if (!("canUndo" in $$source)) {
+            this["canUndo"] = false;
+        }
+        if (!("canRedo" in $$source)) {
+            this["canRedo"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ProjectEntryUndoState instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ProjectEntryUndoState {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ProjectEntryUndoState($$parsedSource as Partial<ProjectEntryUndoState>);
     }
 }
 
@@ -2595,7 +2789,7 @@ export class ShellCapabilitiesSnapshot {
      * Creates a new ShellCapabilitiesSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): ShellCapabilitiesSnapshot {
-        const $$createField0_0 = $$createType59;
+        const $$createField0_0 = $$createType61;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("capabilities" in $$parsedSource) {
             $$parsedSource["capabilities"] = $$createField0_0($$parsedSource["capabilities"]);
@@ -2650,6 +2844,7 @@ export enum ShellCapabilityStatus {
 export class ShellMenuStatePayload {
     "hasSelection": boolean;
     "canCloseFullscreenPanel": boolean;
+    "aiChatFullscreenActive": boolean;
     "canStopAgent": boolean;
     "canCommit": boolean;
     "hasGitChanges": boolean;
@@ -2661,6 +2856,9 @@ export class ShellMenuStatePayload {
         }
         if (!("canCloseFullscreenPanel" in $$source)) {
             this["canCloseFullscreenPanel"] = false;
+        }
+        if (!("aiChatFullscreenActive" in $$source)) {
+            this["aiChatFullscreenActive"] = false;
         }
         if (!("canStopAgent" in $$source)) {
             this["canStopAgent"] = false;
@@ -2711,7 +2909,7 @@ export class SignatureHelpResult {
      * Creates a new SignatureHelpResult instance from a string or object.
      */
     static createFrom($$source: any = {}): SignatureHelpResult {
-        const $$createField0_0 = $$createType61;
+        const $$createField0_0 = $$createType63;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("signatures" in $$parsedSource) {
             $$parsedSource["signatures"] = $$createField0_0($$parsedSource["signatures"]);
@@ -2747,7 +2945,7 @@ export class SignatureInfo {
      * Creates a new SignatureInfo instance from a string or object.
      */
     static createFrom($$source: any = {}): SignatureInfo {
-        const $$createField2_0 = $$createType63;
+        const $$createField2_0 = $$createType65;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("parameters" in $$parsedSource) {
             $$parsedSource["parameters"] = $$createField2_0($$parsedSource["parameters"]);
@@ -2801,7 +2999,7 @@ export class TerminalPredictionResponse {
      * Creates a new TerminalPredictionResponse instance from a string or object.
      */
     static createFrom($$source: any = {}): TerminalPredictionResponse {
-        const $$createField0_0 = $$createType65;
+        const $$createField0_0 = $$createType67;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("predictions" in $$parsedSource) {
             $$parsedSource["predictions"] = $$createField0_0($$parsedSource["predictions"]);
@@ -2963,17 +3161,17 @@ export class Wails3PackagedSmokeReport {
     static createFrom($$source: any = {}): Wails3PackagedSmokeReport {
         const $$createField6_0 = $$createType0;
         const $$createField7_0 = $$createType49;
-        const $$createField9_0 = $$createType66;
-        const $$createField10_0 = $$createType67;
+        const $$createField9_0 = $$createType68;
+        const $$createField10_0 = $$createType69;
         const $$createField11_0 = $$createType8;
-        const $$createField12_0 = $$createType68;
-        const $$createField13_0 = $$createType69;
-        const $$createField14_0 = $$createType70;
-        const $$createField15_0 = $$createType71;
-        const $$createField16_0 = $$createType72;
-        const $$createField17_0 = $$createType73;
-        const $$createField18_0 = $$createType74;
-        const $$createField19_0 = $$createType76;
+        const $$createField12_0 = $$createType70;
+        const $$createField13_0 = $$createType71;
+        const $$createField14_0 = $$createType72;
+        const $$createField15_0 = $$createType73;
+        const $$createField16_0 = $$createType74;
+        const $$createField17_0 = $$createType75;
+        const $$createField18_0 = $$createType76;
+        const $$createField19_0 = $$createType78;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("launchArgs" in $$parsedSource) {
             $$parsedSource["launchArgs"] = $$createField6_0($$parsedSource["launchArgs"]);
@@ -3240,9 +3438,9 @@ export class Wails3SmokeNativeDeliveryProbe {
      */
     static createFrom($$source: any = {}): Wails3SmokeNativeDeliveryProbe {
         const $$createField2_0 = $$createType0;
-        const $$createField4_0 = $$createType77;
-        const $$createField5_0 = $$createType77;
-        const $$createField6_0 = $$createType78;
+        const $$createField4_0 = $$createType79;
+        const $$createField5_0 = $$createType79;
+        const $$createField6_0 = $$createType80;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("trackedFailureStates" in $$parsedSource) {
             $$parsedSource["trackedFailureStates"] = $$createField2_0($$parsedSource["trackedFailureStates"]);
@@ -3362,8 +3560,8 @@ export class Wails3SmokeRuntimeAssetsProbe {
      * Creates a new Wails3SmokeRuntimeAssetsProbe instance from a string or object.
      */
     static createFrom($$source: any = {}): Wails3SmokeRuntimeAssetsProbe {
-        const $$createField1_0 = $$createType79;
-        const $$createField2_0 = $$createType79;
+        const $$createField1_0 = $$createType81;
+        const $$createField2_0 = $$createType81;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("model" in $$parsedSource) {
             $$parsedSource["model"] = $$createField1_0($$parsedSource["model"]);
@@ -3483,8 +3681,8 @@ export class WindowLeaseActionResult {
      * Creates a new WindowLeaseActionResult instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseActionResult {
-        const $$createField4_0 = $$createType81;
-        const $$createField5_0 = $$createType82;
+        const $$createField4_0 = $$createType83;
+        const $$createField5_0 = $$createType84;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("record" in $$parsedSource) {
             $$parsedSource["record"] = $$createField4_0($$parsedSource["record"]);
@@ -3549,7 +3747,7 @@ export class WindowLeaseRecord {
      * Creates a new WindowLeaseRecord instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseRecord {
-        const $$createField8_0 = $$createType83;
+        const $$createField8_0 = $$createType85;
         const $$createField12_0 = $$createType49;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("returnTarget" in $$parsedSource) {
@@ -3639,10 +3837,10 @@ export class WindowLeaseSnapshot {
      * Creates a new WindowLeaseSnapshot instance from a string or object.
      */
     static createFrom($$source: any = {}): WindowLeaseSnapshot {
-        const $$createField5_0 = $$createType84;
+        const $$createField5_0 = $$createType86;
         const $$createField6_0 = $$createType0;
-        const $$createField7_0 = $$createType85;
-        const $$createField8_0 = $$createType86;
+        const $$createField7_0 = $$createType87;
+        const $$createField8_0 = $$createType88;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("supportedRoles" in $$parsedSource) {
             $$parsedSource["supportedRoles"] = $$createField5_0($$parsedSource["supportedRoles"]);
@@ -3731,32 +3929,34 @@ const $$createType54 = PackagedOSAdapter.createFrom;
 const $$createType55 = $Create.Map($Create.Any, $$createType54);
 const $$createType56 = FlagDefJS.createFrom;
 const $$createType57 = $Create.Array($$createType56);
-const $$createType58 = ShellCapabilityDescriptor.createFrom;
-const $$createType59 = $Create.Map($Create.Any, $$createType58);
-const $$createType60 = SignatureInfo.createFrom;
-const $$createType61 = $Create.Array($$createType60);
-const $$createType62 = ParameterInfo.createFrom;
+const $$createType58 = ProjectEntryTrashTarget.createFrom;
+const $$createType59 = $Create.Array($$createType58);
+const $$createType60 = ShellCapabilityDescriptor.createFrom;
+const $$createType61 = $Create.Map($Create.Any, $$createType60);
+const $$createType62 = SignatureInfo.createFrom;
 const $$createType63 = $Create.Array($$createType62);
-const $$createType64 = terminal$0.PredictionResult.createFrom;
+const $$createType64 = ParameterInfo.createFrom;
 const $$createType65 = $Create.Array($$createType64);
-const $$createType66 = ShellCapabilitiesSnapshot.createFrom;
-const $$createType67 = PackagedOSIntegrationSnapshot.createFrom;
-const $$createType68 = Wails3SmokeNativeDeliveryProbe.createFrom;
-const $$createType69 = Wails3SmokeAutoUpdateProbe.createFrom;
-const $$createType70 = Wails3SmokeGateStatus.createFrom;
-const $$createType71 = Wails3SmokeSecondInstanceProbe.createFrom;
-const $$createType72 = Wails3SmokeWindowLeaseSnapshot.createFrom;
-const $$createType73 = Wails3SmokeAppBundleSnapshot.createFrom;
-const $$createType74 = Wails3SmokeRuntimeAssetsProbe.createFrom;
-const $$createType75 = Wails3SmokeCheck.createFrom;
-const $$createType76 = $Create.Array($$createType75);
-const $$createType77 = Wails3SmokeNativeAdapterProbe.createFrom;
-const $$createType78 = Wails3SmokeNativeDockBadgeProbe.createFrom;
-const $$createType79 = Wails3SmokeRuntimeAssetFileProbe.createFrom;
-const $$createType80 = WindowLeaseRecord.createFrom;
-const $$createType81 = $Create.Nullable($$createType80);
-const $$createType82 = WindowLeaseSnapshot.createFrom;
-const $$createType83 = WindowLeaseReturnTarget.createFrom;
-const $$createType84 = $Create.Array($Create.Any);
-const $$createType85 = $Create.Array($$createType80);
-const $$createType86 = $Create.Map($Create.Any, $$createType80);
+const $$createType66 = terminal$0.PredictionResult.createFrom;
+const $$createType67 = $Create.Array($$createType66);
+const $$createType68 = ShellCapabilitiesSnapshot.createFrom;
+const $$createType69 = PackagedOSIntegrationSnapshot.createFrom;
+const $$createType70 = Wails3SmokeNativeDeliveryProbe.createFrom;
+const $$createType71 = Wails3SmokeAutoUpdateProbe.createFrom;
+const $$createType72 = Wails3SmokeGateStatus.createFrom;
+const $$createType73 = Wails3SmokeSecondInstanceProbe.createFrom;
+const $$createType74 = Wails3SmokeWindowLeaseSnapshot.createFrom;
+const $$createType75 = Wails3SmokeAppBundleSnapshot.createFrom;
+const $$createType76 = Wails3SmokeRuntimeAssetsProbe.createFrom;
+const $$createType77 = Wails3SmokeCheck.createFrom;
+const $$createType78 = $Create.Array($$createType77);
+const $$createType79 = Wails3SmokeNativeAdapterProbe.createFrom;
+const $$createType80 = Wails3SmokeNativeDockBadgeProbe.createFrom;
+const $$createType81 = Wails3SmokeRuntimeAssetFileProbe.createFrom;
+const $$createType82 = WindowLeaseRecord.createFrom;
+const $$createType83 = $Create.Nullable($$createType82);
+const $$createType84 = WindowLeaseSnapshot.createFrom;
+const $$createType85 = WindowLeaseReturnTarget.createFrom;
+const $$createType86 = $Create.Array($Create.Any);
+const $$createType87 = $Create.Array($$createType82);
+const $$createType88 = $Create.Map($Create.Any, $$createType82);

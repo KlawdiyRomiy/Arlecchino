@@ -82,7 +82,7 @@ var Languages = map[string]*LanguageInfo{
 	"vba":      {ID: "vba", Name: "VBA", Extensions: []string{".bas", ".cls", ".frm"}, LSPServerID: "", CodeMirrorID: "vb", TreeSitterID: "vba", ARLESupported: true},
 	"matlab":   {ID: "matlab", Name: "MATLAB", Extensions: []string{".mat"}, LSPServerID: "", CodeMirrorID: "octave", TreeSitterID: "matlab", ARLESupported: true},
 	"perl":     {ID: "perl", Name: "Perl", Extensions: []string{".pl", ".pm", ".pod", ".t"}, LSPServerID: "perlnavigator", CodeMirrorID: "perl", TreeSitterID: "perl", ARLESupported: true},
-	"gdscript": {ID: "gdscript", Name: "GDScript", Extensions: []string{".gd"}, LSPServerID: "godot-lsp", CodeMirrorID: "gdscript", TreeSitterID: "gdscript", ARLESupported: true},
+	"gdscript": {ID: "gdscript", Name: "GDScript", Extensions: []string{".gd"}, LSPServerID: "", CodeMirrorID: "gdscript", TreeSitterID: "gdscript", ARLESupported: true},
 
 	// TIER 3: 17 languages (1-5% developers)
 	"elixir":     {ID: "elixir", Name: "Elixir", Extensions: []string{".ex", ".exs"}, LSPServerID: "elixir-ls", CodeMirrorID: "elixir", TreeSitterID: "elixir", ARLESupported: true},
@@ -95,9 +95,9 @@ var Languages = map[string]*LanguageInfo{
 	"ada":        {ID: "ada", Name: "Ada", Extensions: []string{".adb", ".ads"}, LSPServerID: "ada-language-server", CodeMirrorID: "ada", TreeSitterID: "ada", ARLESupported: true},
 	"fsharp":     {ID: "fsharp", Name: "F#", Extensions: []string{".fs", ".fsi", ".fsx"}, LSPServerID: "fsautocomplete", CodeMirrorID: "fsharp", TreeSitterID: "fsharp", ARLESupported: true},
 	"ocaml":      {ID: "ocaml", Name: "OCaml", Extensions: []string{".ml", ".mli"}, LSPServerID: "ocamllsp", CodeMirrorID: "ocaml", TreeSitterID: "ocaml", ARLESupported: true},
-	"gleam":      {ID: "gleam", Name: "Gleam", Extensions: []string{".gleam"}, LSPServerID: "gleam-lsp", CodeMirrorID: "gleam", TreeSitterID: "gleam", ARLESupported: true},
+	"gleam":      {ID: "gleam", Name: "Gleam", Extensions: []string{".gleam"}, LSPServerID: "", CodeMirrorID: "gleam", TreeSitterID: "gleam", ARLESupported: true},
 	"prolog":     {ID: "prolog", Name: "Prolog", Extensions: []string{".pl", ".pro", ".P"}, LSPServerID: "", CodeMirrorID: "prolog", TreeSitterID: "prolog", ARLESupported: true},
-	"cobol":      {ID: "cobol", Name: "COBOL", Extensions: []string{".cob", ".cbl", ".cpy"}, LSPServerID: "cobol-language-support", CodeMirrorID: "cobol", TreeSitterID: "cobol", ARLESupported: true},
+	"cobol":      {ID: "cobol", Name: "COBOL", Extensions: []string{".cob", ".cbl", ".cpy"}, LSPServerID: "", CodeMirrorID: "cobol", TreeSitterID: "cobol", ARLESupported: true},
 	"haskell":    {ID: "haskell", Name: "Haskell", Extensions: []string{".hs", ".lhs"}, LSPServerID: "haskell-language-server", CodeMirrorID: "haskell", TreeSitterID: "haskell", ARLESupported: true},
 	"julia":      {ID: "julia", Name: "Julia", Extensions: []string{".jl"}, LSPServerID: "julia-lsp", CodeMirrorID: "julia", TreeSitterID: "julia", ARLESupported: true},
 	"clojure":    {ID: "clojure", Name: "Clojure", Extensions: []string{".clj", ".cljs", ".cljc", ".edn"}, LSPServerID: "clojure-lsp", CodeMirrorID: "clojure", TreeSitterID: "clojure", ARLESupported: true},

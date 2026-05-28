@@ -42,25 +42,29 @@ type CapabilitySources struct {
 }
 
 type LanguageCapability struct {
-	ID                string            `json:"id"`
-	Name              string            `json:"name"`
-	Extensions        []string          `json:"extensions"`
-	CanonicalID       string            `json:"canonicalId"`
-	Tier              CapabilityTier    `json:"tier"`
-	Sources           CapabilitySources `json:"sources"`
-	LSPServerID       string            `json:"lspServerId"`
-	LSPInstalled      bool              `json:"lspInstalled"`
-	LSPCanInstall     bool              `json:"lspCanInstall"`
-	LSPInstalling     bool              `json:"lspInstalling"`
-	LSPConfigured     bool              `json:"lspConfigured"`
-	LSPRunning        bool              `json:"lspRunning"`
-	LSPBinaryPath     string            `json:"lspBinaryPath"`
-	LSPInstallStage   string            `json:"lspInstallStage"`
-	LSPInstallPercent float64           `json:"lspInstallPercent"`
-	LSPInstallMessage string            `json:"lspInstallMessage"`
-	LSPInstallError   string            `json:"lspInstallError"`
-	LSPLastError      string            `json:"lspLastError"`
-	Notes             []string          `json:"notes"`
+	ID                          string            `json:"id"`
+	Name                        string            `json:"name"`
+	Extensions                  []string          `json:"extensions"`
+	CanonicalID                 string            `json:"canonicalId"`
+	Tier                        CapabilityTier    `json:"tier"`
+	Sources                     CapabilitySources `json:"sources"`
+	LSPServerID                 string            `json:"lspServerId"`
+	LSPInstalled                bool              `json:"lspInstalled"`
+	LSPCanInstall               bool              `json:"lspCanInstall"`
+	LSPInstalling               bool              `json:"lspInstalling"`
+	LSPConfigured               bool              `json:"lspConfigured"`
+	LSPRunning                  bool              `json:"lspRunning"`
+	LSPBinaryPath               string            `json:"lspBinaryPath"`
+	LSPInstallType              string            `json:"lspInstallType"`
+	LSPInstallCommand           string            `json:"lspInstallCommand"`
+	LSPInstallDependencies      []string          `json:"lspInstallDependencies"`
+	LSPInstallUnavailableReason string            `json:"lspInstallUnavailableReason"`
+	LSPInstallStage             string            `json:"lspInstallStage"`
+	LSPInstallPercent           float64           `json:"lspInstallPercent"`
+	LSPInstallMessage           string            `json:"lspInstallMessage"`
+	LSPInstallError             string            `json:"lspInstallError"`
+	LSPLastError                string            `json:"lspLastError"`
+	Notes                       []string          `json:"notes"`
 }
 
 type LSPAvailabilityFunc func(language string) bool

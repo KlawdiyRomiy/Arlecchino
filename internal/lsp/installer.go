@@ -20,18 +20,19 @@ import (
 )
 
 type LSPInfo struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Languages    []string `json:"languages"`
-	Extensions   []string `json:"extensions"`
-	Installed    bool     `json:"installed"`
-	Version      string   `json:"version"`
-	CanInstall   bool     `json:"canInstall"`
-	InstallCmd   string   `json:"installCmd"`
-	DownloadURL  string   `json:"-"`
-	InstallType  string   `json:"-"`
-	BinaryName   string   `json:"-"`
-	Dependencies []string `json:"-"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Languages      []string `json:"languages"`
+	Extensions     []string `json:"extensions"`
+	Installed      bool     `json:"installed"`
+	Version        string   `json:"version"`
+	CanInstall     bool     `json:"canInstall"`
+	InstallCmd     string   `json:"installCmd"`
+	InstallCommand []string `json:"-"`
+	DownloadURL    string   `json:"-"`
+	InstallType    string   `json:"-"`
+	BinaryName     string   `json:"-"`
+	Dependencies   []string `json:"-"`
 }
 
 var serverBinaryAliases = map[string][]string{
@@ -165,18 +166,22 @@ func (i *Installer) registerServers() {
 	}
 
 	for _, s := range servers {
+		if len(s.InstallCommand) == 0 {
+			s.InstallCommand = registryInstallCommand(s.ID)
+		}
 		i.servers[s.ID] = s
 	}
 }
 
 func brewInstallableServer(id, name string, languages, extensions []string, formula, binaryName string) *LSPInfo {
 	info := &LSPInfo{
-		ID:         id,
-		Name:       name,
-		Languages:  languages,
-		Extensions: extensions,
-		InstallCmd: "brew install " + formula,
-		BinaryName: binaryName,
+		ID:             id,
+		Name:           name,
+		Languages:      languages,
+		Extensions:     extensions,
+		InstallCmd:     "brew install " + formula,
+		InstallCommand: []string{"brew", "install", formula},
+		BinaryName:     binaryName,
 	}
 
 	if runtime.GOOS == "darwin" {
@@ -189,6 +194,61 @@ func brewInstallableServer(id, name string, languages, extensions []string, form
 	info.InstallType = "system"
 	info.CanInstall = false
 	return info
+}
+
+func registryInstallCommand(id string) []string {
+	switch id {
+	case "gopls":
+		return []string{"go", "install", "golang.org/x/tools/gopls@latest"}
+	case "typescript-language-server":
+		return []string{"npm", "install", "-g", "typescript-language-server", "typescript"}
+	case "pyright":
+		return []string{"npm", "install", "-g", "pyright"}
+	case "rust-analyzer":
+		return []string{"rustup", "component", "add", "rust-analyzer"}
+	case "vscode-css-language-server", "vscode-html-language-server", "vscode-json-language-server":
+		return []string{"npm", "install", "-g", "vscode-langservers-extracted"}
+	case "vue-language-server":
+		return []string{"npm", "install", "-g", "@vue/language-server"}
+	case "svelte-language-server":
+		return []string{"npm", "install", "-g", "svelte-language-server"}
+	case "astro-ls":
+		return []string{"npm", "install", "-g", "@astrojs/language-server"}
+	case "yaml-language-server":
+		return []string{"npm", "install", "-g", "yaml-language-server"}
+	case "taplo":
+		return []string{"cargo", "install", "taplo-cli", "--locked"}
+	case "bash-language-server":
+		return []string{"npm", "install", "-g", "bash-language-server"}
+	case "dockerfile-language-server":
+		return []string{"npm", "install", "-g", "dockerfile-language-server-nodejs"}
+	case "solargraph":
+		return []string{"gem", "install", "solargraph"}
+	case "graphql-lsp":
+		return []string{"npm", "install", "-g", "graphql-language-service-cli"}
+	case "sql-language-server":
+		return []string{"npm", "install", "-g", "sql-language-server"}
+	case "texlab":
+		return []string{"cargo", "install", "texlab"}
+	case "cmake-language-server":
+		return []string{"pip", "install", "cmake-language-server"}
+	case "fortls":
+		return []string{"pip", "install", "fortran-language-server"}
+	case "solidity-ls":
+		return []string{"npm", "install", "-g", "@nomicfoundation/solidity-language-server"}
+	case "wgsl-analyzer":
+		return []string{"cargo", "install", "wgsl-analyzer"}
+	case "glsl-analyzer":
+		return []string{"cargo", "install", "glsl-analyzer"}
+	case "bufls":
+		return []string{"go", "install", "github.com/bufbuild/buf-language-server/cmd/bufls@latest"}
+	case "perlnavigator":
+		return []string{"npm", "install", "-g", "perlnavigator-server"}
+	case "move-analyzer":
+		return []string{"cargo", "install", "move-analyzer"}
+	default:
+		return nil
+	}
 }
 
 func (i *Installer) GetLSPDir() string {
@@ -488,6 +548,10 @@ func (i *Installer) beginInstall(id string) (*LSPInfo, bool, error) {
 		i.mu.Unlock()
 		return nil, false, fmt.Errorf("unknown LSP server: %s", id)
 	}
+	if !server.CanInstall {
+		i.mu.Unlock()
+		return nil, false, fmt.Errorf("LSP server %s is not installable by Arlecchino", id)
+	}
 	if i.installing[id] {
 		i.mu.Unlock()
 		return nil, true, nil
@@ -520,35 +584,33 @@ func (i *Installer) runInstall(ctx context.Context, server *LSPInfo) error {
 
 	id := server.ID
 
-	for _, dep := range server.Dependencies {
-		if _, err := exec.LookPath(dep); err != nil {
-			i.emitProgress(id, "error", 0, "", fmt.Sprintf("missing dependency: %s", dep))
-			return fmt.Errorf("missing dependency %s: install it first", dep)
-		}
+	execution, err := i.prepareInstallExecution(server)
+	if err != nil {
+		i.emitProgress(id, "error", 0, "", err.Error())
+		return err
 	}
 
 	i.emitProgress(id, "installing", 0, "Starting installation...", "")
 
-	var err error
 	switch server.InstallType {
 	case "npm":
-		err = i.installNPM(ctx, server)
+		err = i.installNPM(ctx, server, execution)
 	case "go":
-		err = i.installGo(ctx, server)
+		err = i.installGo(ctx, server, execution)
 	case "pip":
-		err = i.installPip(ctx, server)
+		err = i.installPip(ctx, server, execution)
 	case "composer":
-		err = i.installComposer(ctx, server)
+		err = i.installComposer(ctx, server, execution)
 	case "phar":
-		err = i.installPHAR(ctx, server)
+		err = i.installPHAR(ctx, server, execution)
 	case "cargo":
-		err = i.installCargo(ctx, server)
+		err = i.installCargo(ctx, server, execution)
 	case "rustup":
-		err = i.installRustup(ctx, server)
+		err = i.installRustup(ctx, server, execution)
 	case "gem":
-		err = i.installGem(ctx, server)
+		err = i.installGem(ctx, server, execution)
 	case "brew":
-		err = i.installBrew(ctx, server)
+		err = i.installBrew(ctx, server, execution)
 	case "binary":
 		err = i.installBinary(ctx, server)
 	default:
@@ -570,15 +632,169 @@ func (i *Installer) runInstall(ctx context.Context, server *LSPInfo) error {
 	return nil
 }
 
-func (i *Installer) installNPM(ctx context.Context, server *LSPInfo) error {
+type installExecution struct {
+	parts []string
+	env   []string
+	tools map[string]string
+}
+
+func commandBasedInstallType(installType string) bool {
+	switch installType {
+	case "npm", "go", "pip", "composer", "cargo", "rustup", "gem", "brew":
+		return true
+	default:
+		return false
+	}
+}
+
+func (i *Installer) prepareInstallExecution(server *LSPInfo) (installExecution, error) {
+	execution := installExecution{tools: make(map[string]string)}
+	var pathDirs []string
+	for _, dep := range server.Dependencies {
+		toolName, toolPath := i.findInstallTool(dep)
+		if toolPath == "" {
+			return execution, fmt.Errorf("missing dependency %s: install it first", dep)
+		}
+		execution.tools[dep] = toolPath
+		execution.tools[toolName] = toolPath
+		pathDirs = append(pathDirs, filepath.Dir(toolPath))
+	}
+
+	if commandBasedInstallType(server.InstallType) {
+		parts := installCommandForServer(server)
+		if len(parts) == 0 {
+			return execution, fmt.Errorf("missing structured install command for %s", server.ID)
+		}
+		toolName, toolPath := i.findInstallTool(parts[0])
+		if toolPath == "" {
+			return execution, fmt.Errorf("missing dependency %s: install it first", parts[0])
+		}
+		parts[0] = toolPath
+		execution.tools[toolName] = toolPath
+		execution.tools[filepath.Base(toolName)] = toolPath
+		pathDirs = append(pathDirs, filepath.Dir(toolPath))
+		execution.parts = parts
+	}
+
+	execution.env = installCommandEnv(pathDirs)
+	return execution, nil
+}
+
+func installCommandForServer(server *LSPInfo) []string {
+	if server == nil {
+		return nil
+	}
+	if len(server.InstallCommand) > 0 {
+		return append([]string(nil), server.InstallCommand...)
+	}
+	legacyCommand := strings.TrimSpace(server.InstallCmd)
+	if legacyCommand == "" || strings.ContainsAny(legacyCommand, " \t\r\n") {
+		return nil
+	}
+	return []string{legacyCommand}
+}
+
+func (i *Installer) findInstallTool(name string) (string, string) {
+	for _, candidate := range installToolNames(name) {
+		if toolPath := i.findInstallToolPath(candidate); toolPath != "" {
+			return candidate, toolPath
+		}
+	}
+	return "", ""
+}
+
+func installToolNames(name string) []string {
+	name = strings.TrimSpace(name)
+	switch name {
+	case "pip":
+		return []string{"pip3", "pip"}
+	default:
+		if name == "" {
+			return nil
+		}
+		return []string{name}
+	}
+}
+
+func (i *Installer) findInstallToolPath(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if filepath.Base(name) != name {
+		if executableFileExists(name) {
+			return name
+		}
+		return ""
+	}
+	if toolPath, err := exec.LookPath(name); err == nil && executableFileExists(toolPath) {
+		return toolPath
+	}
+	for _, dir := range RuntimeToolchainDirs() {
+		candidate := filepath.Join(dir, name)
+		if executableFileExists(candidate) {
+			return candidate
+		}
+	}
+	for _, candidate := range localLSPToolCandidates(i.lspDir, name) {
+		if executableFileExists(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func localLSPToolCandidates(lspDir, name string) []string {
+	if strings.TrimSpace(lspDir) == "" {
+		return nil
+	}
+	candidates := []string{
+		filepath.Join(lspDir, name),
+		filepath.Join(lspDir, "bin", name),
+		filepath.Join(lspDir, "tools", name),
+	}
+	matches, _ := filepath.Glob(filepath.Join(lspDir, "*", name))
+	for i := len(matches) - 1; i >= 0; i-- {
+		candidates = append(candidates, matches[i])
+	}
+	return uniqueStrings(candidates)
+}
+
+func installCommandEnv(extraPathDirs []string) []string {
+	pathDirs := append([]string(nil), extraPathDirs...)
+	pathDirs = append(pathDirs, RuntimeToolchainDirs()...)
+	pathDirs = uniqueStrings(pathDirs)
+	if len(pathDirs) == 0 {
+		return os.Environ()
+	}
+
+	env := os.Environ()
+	pathValue := strings.Join(pathDirs, string(os.PathListSeparator))
+	if existing := os.Getenv("PATH"); existing != "" {
+		pathValue += string(os.PathListSeparator) + existing
+	}
+	hasPath := false
+	for idx, value := range env {
+		if strings.HasPrefix(value, "PATH=") {
+			env[idx] = "PATH=" + pathValue
+			hasPath = true
+			break
+		}
+	}
+	if !hasPath {
+		env = append(env, "PATH="+pathValue)
+	}
+	return env
+}
+
+func (i *Installer) installNPM(ctx context.Context, server *LSPInfo, execution installExecution) error {
 	i.emitProgress(server.ID, "installing", 20, "Running npm install...", "")
 
-	parts := strings.Fields(server.InstallCmd)
-	if len(parts) < 3 {
+	if len(execution.parts) < 3 {
 		return fmt.Errorf("invalid npm install command")
 	}
 
-	if err := runInstallCommand(ctx, "npm install failed", parts); err != nil {
+	if err := runInstallCommand(ctx, "npm install failed", execution.parts, execution.env); err != nil {
 		return err
 	}
 
@@ -586,11 +802,10 @@ func (i *Installer) installNPM(ctx context.Context, server *LSPInfo) error {
 	return nil
 }
 
-func (i *Installer) installGo(ctx context.Context, server *LSPInfo) error {
+func (i *Installer) installGo(ctx context.Context, server *LSPInfo, execution installExecution) error {
 	i.emitProgress(server.ID, "installing", 20, "Running go install...", "")
 
-	parts := strings.Fields(server.InstallCmd)
-	if err := runInstallCommand(ctx, "go install failed", parts); err != nil {
+	if err := runInstallCommand(ctx, "go install failed", execution.parts, execution.env); err != nil {
 		return err
 	}
 
@@ -598,17 +813,10 @@ func (i *Installer) installGo(ctx context.Context, server *LSPInfo) error {
 	return nil
 }
 
-func (i *Installer) installPip(ctx context.Context, server *LSPInfo) error {
+func (i *Installer) installPip(ctx context.Context, server *LSPInfo, execution installExecution) error {
 	i.emitProgress(server.ID, "installing", 20, "Running pip install...", "")
 
-	pipCmd := "pip3"
-	if _, err := exec.LookPath("pip3"); err != nil {
-		pipCmd = "pip"
-	}
-
-	parts := strings.Fields(server.InstallCmd)
-	parts[0] = pipCmd
-	if err := runInstallCommand(ctx, "pip install failed", parts); err != nil {
+	if err := runInstallCommand(ctx, "pip install failed", execution.parts, execution.env); err != nil {
 		return err
 	}
 
@@ -616,11 +824,10 @@ func (i *Installer) installPip(ctx context.Context, server *LSPInfo) error {
 	return nil
 }
 
-func (i *Installer) installComposer(ctx context.Context, server *LSPInfo) error {
+func (i *Installer) installComposer(ctx context.Context, server *LSPInfo, execution installExecution) error {
 	i.emitProgress(server.ID, "installing", 20, "Running composer global require...", "")
 
-	parts := strings.Fields(server.InstallCmd)
-	if err := runInstallCommand(ctx, "composer install failed", parts); err != nil {
+	if err := runInstallCommand(ctx, "composer install failed", execution.parts, execution.env); err != nil {
 		return err
 	}
 
@@ -628,9 +835,9 @@ func (i *Installer) installComposer(ctx context.Context, server *LSPInfo) error 
 	return nil
 }
 
-func (i *Installer) installPHAR(ctx context.Context, server *LSPInfo) error {
+func (i *Installer) installPHAR(ctx context.Context, server *LSPInfo, execution installExecution) error {
 	if server.ID == "phpactor" {
-		if err := ensurePHPActorRuntime(ctx); err != nil {
+		if err := ensurePHPActorRuntime(ctx, execution.tools["php"], execution.env); err != nil {
 			return err
 		}
 		i.emitProgress(server.ID, "downloading", 10, "Downloading standalone PHPactor PHAR...", "")
@@ -638,11 +845,10 @@ func (i *Installer) installPHAR(ctx context.Context, server *LSPInfo) error {
 	return i.installBinary(ctx, server)
 }
 
-func (i *Installer) installCargo(ctx context.Context, server *LSPInfo) error {
+func (i *Installer) installCargo(ctx context.Context, server *LSPInfo, execution installExecution) error {
 	i.emitProgress(server.ID, "installing", 20, "Running cargo install...", "")
 
-	parts := strings.Fields(server.InstallCmd)
-	if err := runInstallCommand(ctx, "cargo install failed", parts); err != nil {
+	if err := runInstallCommand(ctx, "cargo install failed", execution.parts, execution.env); err != nil {
 		return err
 	}
 
@@ -650,11 +856,10 @@ func (i *Installer) installCargo(ctx context.Context, server *LSPInfo) error {
 	return nil
 }
 
-func (i *Installer) installRustup(ctx context.Context, server *LSPInfo) error {
+func (i *Installer) installRustup(ctx context.Context, server *LSPInfo, execution installExecution) error {
 	i.emitProgress(server.ID, "installing", 20, "Running rustup component add...", "")
 
-	parts := strings.Fields(server.InstallCmd)
-	if err := runInstallCommand(ctx, "rustup failed", parts); err != nil {
+	if err := runInstallCommand(ctx, "rustup failed", execution.parts, execution.env); err != nil {
 		return err
 	}
 
@@ -662,11 +867,11 @@ func (i *Installer) installRustup(ctx context.Context, server *LSPInfo) error {
 	return nil
 }
 
-func (i *Installer) installGem(ctx context.Context, server *LSPInfo) error {
-	parts := strings.Fields(server.InstallCmd)
+func (i *Installer) installGem(ctx context.Context, server *LSPInfo, execution installExecution) error {
+	parts := append([]string(nil), execution.parts...)
 	message := "Running gem install..."
 	if server.ID == "solargraph" {
-		rubyVersion, err := currentRubyVersion(ctx)
+		rubyVersion, err := currentRubyVersion(ctx, execution.tools["ruby"], execution.env)
 		if err != nil {
 			return err
 		}
@@ -677,7 +882,7 @@ func (i *Installer) installGem(ctx context.Context, server *LSPInfo) error {
 	if !hasCommandArg(parts, "--user-install") && !hasCommandArg(parts, "-n") {
 		parts = append(parts, "--user-install")
 	}
-	if err := runInstallCommand(ctx, "gem install failed", parts); err != nil {
+	if err := runInstallCommand(ctx, "gem install failed", parts, execution.env); err != nil {
 		return err
 	}
 
@@ -703,15 +908,14 @@ func hasCommandArg(parts []string, arg string) bool {
 	return false
 }
 
-func (i *Installer) installBrew(ctx context.Context, server *LSPInfo) error {
+func (i *Installer) installBrew(ctx context.Context, server *LSPInfo, execution installExecution) error {
 	i.emitProgress(server.ID, "installing", 20, "Running brew install...", "")
 
-	parts := strings.Fields(server.InstallCmd)
-	if len(parts) < 3 || parts[0] != "brew" || parts[1] != "install" {
+	if len(execution.parts) < 3 || filepath.Base(execution.parts[0]) != "brew" || execution.parts[1] != "install" {
 		return fmt.Errorf("invalid brew install command")
 	}
 
-	if err := runInstallCommand(ctx, "brew install failed", parts); err != nil {
+	if err := runInstallCommand(ctx, "brew install failed", execution.parts, execution.env); err != nil {
 		return err
 	}
 
@@ -719,11 +923,14 @@ func (i *Installer) installBrew(ctx context.Context, server *LSPInfo) error {
 	return nil
 }
 
-func runInstallCommand(ctx context.Context, label string, parts []string) error {
+func runInstallCommand(ctx context.Context, label string, parts []string, env []string) error {
 	if len(parts) == 0 {
 		return fmt.Errorf("%s: empty command", label)
 	}
 	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	if len(env) > 0 {
+		cmd.Env = env
+	}
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		return nil
@@ -741,15 +948,15 @@ func runInstallCommand(ctx context.Context, label string, parts []string) error 
 	return fmt.Errorf("%s: %w", label, err)
 }
 
-func ensurePHPActorRuntime(ctx context.Context) error {
-	version, err := currentPHPVersion(ctx)
+func ensurePHPActorRuntime(ctx context.Context, phpPath string, env []string) error {
+	version, err := currentPHPVersion(ctx, phpPath, env)
 	if err != nil {
 		return err
 	}
 	if !versionAtLeast(version, 8, 1) {
 		return fmt.Errorf("phpactor requires PHP >= 8.1; current PHP is %s", version)
 	}
-	ok, err := phpExtensionAvailable(ctx, "mbstring")
+	ok, err := phpExtensionAvailable(ctx, phpPath, env, "mbstring")
 	if err != nil {
 		return err
 	}
@@ -759,11 +966,17 @@ func ensurePHPActorRuntime(ctx context.Context) error {
 	return nil
 }
 
-func currentPHPVersion(ctx context.Context) (string, error) {
+func currentPHPVersion(ctx context.Context, phpPath string, env []string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cmd := exec.CommandContext(ctx, "php", "-r", "echo PHP_VERSION;")
+	if strings.TrimSpace(phpPath) == "" {
+		phpPath = "php"
+	}
+	cmd := exec.CommandContext(ctx, phpPath, "-r", "echo PHP_VERSION;")
+	if len(env) > 0 {
+		cmd.Env = env
+	}
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("php version check failed: %w", err)
@@ -775,11 +988,17 @@ func currentPHPVersion(ctx context.Context) (string, error) {
 	return version, nil
 }
 
-func phpExtensionAvailable(ctx context.Context, extension string) (bool, error) {
+func phpExtensionAvailable(ctx context.Context, phpPath string, env []string, extension string) (bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cmd := exec.CommandContext(ctx, "php", "-m")
+	if strings.TrimSpace(phpPath) == "" {
+		phpPath = "php"
+	}
+	cmd := exec.CommandContext(ctx, phpPath, "-m")
+	if len(env) > 0 {
+		cmd.Env = env
+	}
 	output, err := cmd.Output()
 	if err != nil {
 		return false, fmt.Errorf("php extension check failed: %w", err)
@@ -793,11 +1012,17 @@ func phpExtensionAvailable(ctx context.Context, extension string) (bool, error) 
 	return false, nil
 }
 
-func currentRubyVersion(ctx context.Context) (string, error) {
+func currentRubyVersion(ctx context.Context, rubyPath string, env []string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cmd := exec.CommandContext(ctx, "ruby", "-e", "print RUBY_VERSION")
+	if strings.TrimSpace(rubyPath) == "" {
+		rubyPath = "ruby"
+	}
+	cmd := exec.CommandContext(ctx, rubyPath, "-e", "print RUBY_VERSION")
+	if len(env) > 0 {
+		cmd.Env = env
+	}
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("ruby version check failed: %w", err)

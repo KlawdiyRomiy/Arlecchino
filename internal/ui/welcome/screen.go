@@ -1,7 +1,6 @@
 package welcome
 
 import (
-	"fmt"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -53,55 +52,6 @@ func (ws *WelcomeScreen) GetToolsStatus() []ToolStatus {
 	return tools
 }
 
-func (ws *WelcomeScreen) GetLSPStatus() []ToolStatus {
-	lspServers := []ToolStatus{
-		{Name: "gopls", InstallCmd: "go install golang.org/x/tools/gopls@latest"},
-		{Name: "typescript-language-server", InstallCmd: "npm install -g typescript-language-server typescript"},
-		{Name: "pylsp", InstallCmd: "pip install python-lsp-server"},
-		{Name: "phpactor", InstallCmd: "composer global require phpactor/phpactor"},
-		{Name: "rust-analyzer", InstallCmd: "rustup component add rust-analyzer"},
-		{Name: "clangd", InstallCmd: getInstallCmd("clangd")},
-	}
-
-	for i := range lspServers {
-		lspServers[i].Available, lspServers[i].Version = checkLSP(lspServers[i].Name)
-	}
-
-	return lspServers
-}
-
-func (ws *WelcomeScreen) InstallTool(toolName string) (string, error) {
-	var cmd *exec.Cmd
-
-	switch strings.ToLower(toolName) {
-	case "gopls":
-		cmd = exec.Command("go", "install", "golang.org/x/tools/gopls@latest")
-	case "typescript-language-server":
-		cmd = exec.Command("npm", "install", "-g", "typescript-language-server", "typescript")
-	case "pylsp":
-		cmd = exec.Command("pip", "install", "python-lsp-server")
-	case "phpactor":
-		cmd = exec.Command("composer", "global", "require", "phpactor/phpactor")
-	case "rust-analyzer":
-		cmd = exec.Command("rustup", "component", "add", "rust-analyzer")
-	case "clangd":
-		if runtime.GOOS == "darwin" {
-			cmd = exec.Command("brew", "install", "llvm")
-		} else {
-			cmd = exec.Command("apt", "install", "-y", "clangd")
-		}
-	default:
-		return "", fmt.Errorf("unknown tool: %s", toolName)
-	}
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(output), fmt.Errorf("install failed: %w - %s", err, string(output))
-	}
-
-	return string(output), nil
-}
-
 func checkTool(name string) (bool, string) {
 	var cmd *exec.Cmd
 
@@ -128,40 +78,6 @@ func checkTool(name string) (bool, string) {
 	output, err := cmd.Output()
 	if err != nil {
 		return false, ""
-	}
-
-	version := strings.TrimSpace(string(output))
-	if idx := strings.Index(version, "\n"); idx > 0 {
-		version = version[:idx]
-	}
-
-	return true, version
-}
-
-func checkLSP(name string) (bool, string) {
-	var cmd *exec.Cmd
-
-	switch name {
-	case "gopls":
-		cmd = exec.Command("gopls", "version")
-	case "typescript-language-server":
-		cmd = exec.Command("typescript-language-server", "--version")
-	case "pylsp":
-		cmd = exec.Command("pylsp", "--version")
-	case "phpactor":
-		cmd = exec.Command("phpactor", "--version")
-	case "rust-analyzer":
-		cmd = exec.Command("rust-analyzer", "--version")
-	case "clangd":
-		cmd = exec.Command("clangd", "--version")
-	default:
-		return false, ""
-	}
-
-	output, err := cmd.Output()
-	if err != nil {
-		_, lookErr := exec.LookPath(name)
-		return lookErr == nil, ""
 	}
 
 	version := strings.TrimSpace(string(output))

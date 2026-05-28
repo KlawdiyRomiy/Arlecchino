@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -23,30 +24,32 @@ import (
 )
 
 type Manager struct {
-	mu              sync.RWMutex
-	startMu         sync.Mutex
-	servers         map[string]*Server
-	configs         map[string]ServerConfig
-	starting        map[string]chan struct{}
-	startFailures   map[string]startFailure
-	startBackoff    time.Duration
-	startTimeoutGap time.Duration
-	noConfigLogged  map[string]bool
-	openDocsByLang  map[string]map[string]int
-	idleTimers      map[string]*time.Timer
-	idleTimeout     time.Duration
-	completionMu    sync.Mutex
-	completionInFly map[string]chan completionResult
-	completionCache map[string]completionResult
-	completionTTL   time.Duration
-	completionMax   int
-	completionWait  time.Duration
-	diagnosticsMu   sync.RWMutex
-	diagnostics     map[string]map[string][]Diagnostic
-	diagnosticSeq   uint64
-	diagnosticSeen  map[string]uint64
-	onDiagnostics   func(language, filePath string, diagnostics []Diagnostic)
-	rootPath        string
+	mu                   sync.RWMutex
+	startMu              sync.Mutex
+	servers              map[string]*Server
+	configs              map[string]ServerConfig
+	installerConfigs     map[string]bool
+	installerBaseConfigs map[string]ServerConfig
+	starting             map[string]chan struct{}
+	startFailures        map[string]startFailure
+	startBackoff         time.Duration
+	startTimeoutGap      time.Duration
+	noConfigLogged       map[string]bool
+	openDocsByLang       map[string]map[string]int
+	idleTimers           map[string]*time.Timer
+	idleTimeout          time.Duration
+	completionMu         sync.Mutex
+	completionInFly      map[string]chan completionResult
+	completionCache      map[string]completionResult
+	completionTTL        time.Duration
+	completionMax        int
+	completionWait       time.Duration
+	diagnosticsMu        sync.RWMutex
+	diagnostics          map[string]map[string][]Diagnostic
+	diagnosticSeq        uint64
+	diagnosticSeen       map[string]uint64
+	onDiagnostics        func(language, filePath string, diagnostics []Diagnostic)
+	rootPath             string
 }
 
 func configLanguageCandidates(language string) []string {
@@ -230,24 +233,26 @@ type CodeAction struct {
 
 func NewManager(rootPath string) *Manager {
 	return &Manager{
-		servers:         make(map[string]*Server),
-		configs:         make(map[string]ServerConfig),
-		starting:        make(map[string]chan struct{}),
-		startFailures:   make(map[string]startFailure),
-		startBackoff:    30 * time.Second,
-		startTimeoutGap: 2 * time.Second,
-		noConfigLogged:  make(map[string]bool),
-		openDocsByLang:  make(map[string]map[string]int),
-		idleTimers:      make(map[string]*time.Timer),
-		idleTimeout:     2 * time.Minute,
-		completionInFly: make(map[string]chan completionResult),
-		completionCache: make(map[string]completionResult),
-		completionTTL:   250 * time.Millisecond,
-		completionMax:   200,
-		completionWait:  500 * time.Millisecond,
-		diagnostics:     make(map[string]map[string][]Diagnostic),
-		diagnosticSeen:  make(map[string]uint64),
-		rootPath:        rootPath,
+		servers:              make(map[string]*Server),
+		configs:              make(map[string]ServerConfig),
+		installerConfigs:     make(map[string]bool),
+		installerBaseConfigs: make(map[string]ServerConfig),
+		starting:             make(map[string]chan struct{}),
+		startFailures:        make(map[string]startFailure),
+		startBackoff:         30 * time.Second,
+		startTimeoutGap:      2 * time.Second,
+		noConfigLogged:       make(map[string]bool),
+		openDocsByLang:       make(map[string]map[string]int),
+		idleTimers:           make(map[string]*time.Timer),
+		idleTimeout:          2 * time.Minute,
+		completionInFly:      make(map[string]chan completionResult),
+		completionCache:      make(map[string]completionResult),
+		completionTTL:        250 * time.Millisecond,
+		completionMax:        200,
+		completionWait:       500 * time.Millisecond,
+		diagnostics:          make(map[string]map[string][]Diagnostic),
+		diagnosticSeen:       make(map[string]uint64),
+		rootPath:             rootPath,
 	}
 }
 
@@ -381,6 +386,8 @@ func (m *Manager) RegisterServer(cfg ServerConfig) {
 	}
 	m.mu.Lock()
 	m.configs[cfg.Language] = cfg
+	delete(m.installerConfigs, cfg.Language)
+	delete(m.installerBaseConfigs, cfg.Language)
 	m.mu.Unlock()
 
 	m.startMu.Lock()
@@ -389,6 +396,95 @@ func (m *Manager) RegisterServer(cfg ServerConfig) {
 	m.startMu.Unlock()
 
 	log.Printf("[LSP-MGR] Registered server for lang=%s cmd=%s", cfg.Language, cfg.Command)
+}
+
+func (m *Manager) ReplaceInstallerConfigs(configs []ServerConfig) {
+	next := make(map[string]ServerConfig, len(configs))
+	for _, cfg := range configs {
+		cfg.Language = lspregistry.NormalizeLanguageToken(cfg.Language)
+		if cfg.Language == "" {
+			continue
+		}
+		next[cfg.Language] = cfg
+	}
+
+	var removed []string
+	var added []string
+	var serversToStop []*Server
+
+	m.mu.Lock()
+	if m.installerConfigs == nil {
+		m.installerConfigs = make(map[string]bool)
+	}
+	if m.installerBaseConfigs == nil {
+		m.installerBaseConfigs = make(map[string]ServerConfig)
+	}
+	for language := range m.installerConfigs {
+		if _, ok := next[language]; ok {
+			continue
+		}
+		removed = append(removed, language)
+		delete(m.installerConfigs, language)
+		if baseCfg, ok := m.installerBaseConfigs[language]; ok {
+			m.configs[language] = baseCfg
+			delete(m.installerBaseConfigs, language)
+		} else {
+			delete(m.configs, language)
+			delete(m.openDocsByLang, language)
+		}
+		if timer, ok := m.idleTimers[language]; ok {
+			timer.Stop()
+			delete(m.idleTimers, language)
+		}
+		if server, ok := m.servers[language]; ok {
+			serversToStop = append(serversToStop, server)
+			delete(m.servers, language)
+		}
+	}
+	for language, cfg := range next {
+		if !m.installerConfigs[language] {
+			if current, ok := m.configs[language]; ok {
+				m.installerBaseConfigs[language] = current
+			}
+		}
+		if current, ok := m.configs[language]; ok && !reflect.DeepEqual(current, cfg) {
+			added = append(added, language)
+			if server, ok := m.servers[language]; ok {
+				serversToStop = append(serversToStop, server)
+				delete(m.servers, language)
+			}
+			if timer, ok := m.idleTimers[language]; ok {
+				timer.Stop()
+				delete(m.idleTimers, language)
+			}
+		}
+		if !m.installerConfigs[language] {
+			added = append(added, language)
+		}
+		m.configs[language] = cfg
+		m.installerConfigs[language] = true
+	}
+	m.mu.Unlock()
+
+	if len(removed) > 0 || len(added) > 0 {
+		m.startMu.Lock()
+		for _, language := range removed {
+			delete(m.noConfigLogged, language)
+			delete(m.startFailures, language)
+		}
+		for _, language := range added {
+			delete(m.noConfigLogged, language)
+			delete(m.startFailures, language)
+		}
+		m.startMu.Unlock()
+	}
+
+	m.clearDiagnosticsForLanguages(removed)
+	for _, server := range serversToStop {
+		if err := server.shutdown(); err != nil {
+			log.Printf("[LSP-MGR] installer config shutdown failed err=%v", err)
+		}
+	}
 }
 
 func (m *Manager) ensureStarted(language string) (*Server, error) {
@@ -1156,6 +1252,46 @@ func (m *Manager) clearDiagnostics(language, filePath string) {
 
 	if callback != nil {
 		callback(language, filePath, nil)
+	}
+}
+
+func (m *Manager) clearDiagnosticsForLanguages(languages []string) {
+	if len(languages) == 0 {
+		return
+	}
+	type clearedDiagnostic struct {
+		language string
+		filePath string
+	}
+	languageSet := make(map[string]bool, len(languages))
+	for _, language := range languages {
+		language = lspregistry.NormalizeLanguageToken(language)
+		if language != "" {
+			languageSet[language] = true
+		}
+	}
+	if len(languageSet) == 0 {
+		return
+	}
+
+	var cleared []clearedDiagnostic
+	m.diagnosticsMu.Lock()
+	callback := m.onDiagnostics
+	for language := range languageSet {
+		langDiagnostics := m.diagnostics[language]
+		for filePath := range langDiagnostics {
+			m.diagnosticSeq++
+			m.diagnosticSeen[filePath] = m.diagnosticSeq
+			cleared = append(cleared, clearedDiagnostic{language: language, filePath: filePath})
+		}
+		delete(m.diagnostics, language)
+	}
+	m.diagnosticsMu.Unlock()
+
+	if callback != nil {
+		for _, item := range cleared {
+			callback(item.language, item.filePath, nil)
+		}
 	}
 }
 
