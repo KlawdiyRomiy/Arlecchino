@@ -43,6 +43,7 @@ export const AddProjectMenu: React.FC<AddProjectMenuProps> = ({
       <DropdownMenu.Root onOpenChange={onMenuOpenChange}>
         <DropdownMenu.Trigger asChild>
           <button
+            type="button"
             className="shell-control h-12 w-12 px-0 text-[var(--text-secondary)]"
             title="Add project"
           >

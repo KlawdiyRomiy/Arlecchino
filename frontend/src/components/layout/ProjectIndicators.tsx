@@ -284,6 +284,7 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
                 className="flex items-center justify-center w-2.5 h-2.5"
               >
                 <button
+                  type="button"
                   onClick={() => {
                     onSwitch(p.id);
                     resetTimer();
@@ -317,6 +318,7 @@ export const ProjectIndicators: React.FC<ProjectIndicatorsProps> = ({
           >
             {projects.map((p) => (
               <button
+                type="button"
                 key={p.id}
                 data-project-id={p.id}
                 onPointerDown={(event) => handleProjectPointerDown(p.id, event)}

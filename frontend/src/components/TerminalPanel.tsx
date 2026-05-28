@@ -1448,6 +1448,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     const terminalActionButtons = (
       <>
         <button
+          type="button"
           style={addTabBtnStyle}
           onClick={() => createTerminal(pane.id, resolvedThemeId)}
           title="New Terminal"
@@ -1457,6 +1458,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
         {panesForRender.length === 1 && (
           <>
             <button
+              type="button"
               style={actionBtnStyle}
               onClick={() => handleSplitPane("horizontal")}
               title="Split Horizontally"
@@ -1464,6 +1466,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
               <SplitSquareVertical size={14} />
             </button>
             <button
+              type="button"
               style={actionBtnStyle}
               onClick={() => handleSplitPane("vertical")}
               title="Split Vertically"
@@ -1526,6 +1529,7 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
                 >
                   <span>{session.name}</span>
                   <button
+                    type="button"
                     style={closeTabBtnStyle}
                     onClick={(e) => {
                       e.stopPropagation();

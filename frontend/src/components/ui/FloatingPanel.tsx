@@ -1824,6 +1824,7 @@ export const FloatingPanel = React.forwardRef<
 
           {onFullscreen && (
             <button
+              type="button"
               style={closeButtonStyle}
               className="panel-control-button topbar-control-button"
               onClick={(e) => {
@@ -1839,6 +1840,7 @@ export const FloatingPanel = React.forwardRef<
 
           {onPin && (
             <button
+              type="button"
               style={{
                 ...closeButtonStyle,
                 transform: isPinned ? "rotate(45deg)" : undefined,
@@ -1859,6 +1861,7 @@ export const FloatingPanel = React.forwardRef<
 
           {onClose && (
             <button
+              type="button"
               style={closeButtonStyle}
               className="panel-control-button panel-control-button-danger topbar-control-button"
               onClick={(e) => {

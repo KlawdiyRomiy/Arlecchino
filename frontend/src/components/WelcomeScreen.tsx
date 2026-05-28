@@ -158,6 +158,7 @@ const WelcomeScreen: React.FC<{
           <div className="px-6 py-6">
             <div className="grid gap-3 sm:grid-cols-3">
               <button
+                type="button"
                 onClick={handleOpenTarget}
                 className="flex items-center gap-3 rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-4 text-left transition-colors hover:border-[var(--border-default)] hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
               >
@@ -178,6 +179,7 @@ const WelcomeScreen: React.FC<{
               </button>
 
               <button
+                type="button"
                 onClick={() => setShowCreateDialog(true)}
                 className="flex items-center gap-3 rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-4 text-left transition-colors hover:border-[var(--border-default)] hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
               >
@@ -198,6 +200,7 @@ const WelcomeScreen: React.FC<{
               </button>
 
               <button
+                type="button"
                 onClick={() => setShowCloneDialog(true)}
                 className="flex items-center gap-3 rounded-[16px] border border-[var(--border-subtle)] bg-[var(--surface-1)] px-4 py-4 text-left transition-colors hover:border-[var(--border-default)] hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_4px_var(--focus-ring-strong)]"
               >
@@ -226,6 +229,7 @@ const WelcomeScreen: React.FC<{
                 {recentProjects.length > 0 ? (
                   recentProjects.map((project) => (
                     <button
+                      type="button"
                       key={project.id}
                       onClick={() => onProjectOpen(project.path)}
                       className="flex w-full items-center gap-3 border-b border-[var(--border-subtle)] px-4 py-3 text-left transition-colors hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:shadow-[inset_0_0_0_1px_var(--focus-ring)] last:border-b-0"

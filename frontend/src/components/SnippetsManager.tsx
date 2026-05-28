@@ -190,6 +190,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
             Custom Snippets
           </h2>
           <button
+            type="button"
             onClick={onClose}
             style={{
               background: "none",
@@ -216,6 +217,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
           {!showForm ? (
             <>
               <button
+                type="button"
                 onClick={handleCreateSnippet}
                 style={{
                   marginBottom: "16px",
@@ -358,6 +360,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                           }}
                         >
                           <button
+                            type="button"
                             onClick={() => handleEditSnippet(snippet)}
                             style={{
                               padding: "4px 12px",
@@ -382,6 +385,7 @@ export const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                             Edit
                           </button>
                           <button
+                            type="button"
                             onClick={() => handleDeleteSnippet(snippet.id)}
                             style={{
                               padding: "4px 12px",

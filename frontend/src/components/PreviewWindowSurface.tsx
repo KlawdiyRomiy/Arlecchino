@@ -323,6 +323,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
           flicker.
         </div>
         <button
+          type="button"
           style={{ ...terminalPreviewButtonStyle, color: palette.textPrimary }}
           onClick={focusActiveTerminal}
         >
@@ -398,6 +399,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
 
         <div style={appearanceButtonRowStyle}>
           <button
+            type="button"
             style={{
               border: "1px solid var(--border-subtle)",
               background: "var(--bg-secondary)",
@@ -411,6 +413,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
             Cancel
           </button>
           <button
+            type="button"
             style={{
               border: "1px solid var(--border-subtle)",
               background: "var(--color-primary)",

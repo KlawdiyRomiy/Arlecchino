@@ -414,6 +414,7 @@ export const ArtisanFormModal: React.FC<ArtisanFormModalProps> = ({
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
           >

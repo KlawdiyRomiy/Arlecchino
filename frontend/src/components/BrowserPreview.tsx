@@ -256,6 +256,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
         }}
       >
         <button
+          type="button"
           onClick={goBack}
           disabled={historyIndex <= 0}
           style={{
@@ -272,6 +273,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
         </button>
 
         <button
+          type="button"
           onClick={goForward}
           disabled={historyIndex >= history.length - 1}
           style={{
@@ -289,6 +291,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
         </button>
 
         <button
+          type="button"
           onClick={refresh}
           style={{
             background: "transparent",
@@ -309,6 +312,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
         </button>
 
         <button
+          type="button"
           onClick={goHome}
           style={{
             background: "transparent",
@@ -362,6 +366,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
         )}
 
         <button
+          type="button"
           onClick={() => setAutoRefresh(!autoRefresh)}
           style={{
             background: autoRefresh
@@ -385,6 +390,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
         </button>
 
         <button
+          type="button"
           onClick={openExternal}
           disabled={inlineDocument !== null}
           style={{
@@ -407,6 +413,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
 
         {onClose && (
           <button
+            type="button"
             onClick={onClose}
             style={{
               background: "transparent",
@@ -460,7 +467,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
         <iframe
           key={lastRefresh}
           ref={iframeRef}
-          tabIndex={0}
+          title="Browser preview"
           src={inlineDocument ? undefined : url}
           srcDoc={inlineDocument ?? undefined}
           style={{
@@ -474,7 +481,7 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
           onPointerEnter={focusPreviewFrame}
           onWheel={focusPreviewFrame}
           onLoad={() => setIsLoading(false)}
-          sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+          sandbox="allow-scripts allow-forms allow-popups"
         />
       </div>
 

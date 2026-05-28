@@ -216,6 +216,16 @@ const buildMergeReviewDocs = (hunks: DiffHunk[]): MergeReviewDocs => {
   };
 };
 
+const splitRowKey = (row: SplitRow): string => {
+  const left = row.left
+    ? `${row.left.type}:${row.left.oldLineNum ?? ""}:${row.left.newLineNum ?? ""}:${row.left.content}`
+    : "empty";
+  const right = row.right
+    ? `${row.right.type}:${row.right.oldLineNum ?? ""}:${row.right.newLineNum ?? ""}:${row.right.content}`
+    : "empty";
+  return `${left}::${right}`;
+};
+
 const lineAccent = (isDark: boolean, type: DiffLine["type"]): string => {
   switch (type) {
     case "add":
@@ -681,11 +691,8 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
                 </div>
                 <div className="px-3 py-2">Modified</div>
               </div>
-              {splitRows.map((row, index) => (
-                <div
-                  key={`${index}:${row.left?.content ?? ""}:${row.right?.content ?? ""}`}
-                  className="grid grid-cols-2"
-                >
+              {splitRows.map((row) => (
+                <div key={splitRowKey(row)} className="grid grid-cols-2">
                   <div
                     className="border-r"
                     style={{ borderColor: theme.border }}

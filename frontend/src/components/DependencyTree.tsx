@@ -321,6 +321,7 @@ export const DependencyTree: React.FC<DependencyTreeProps> = ({
         </ReactFlow>
 
         <button
+          type="button"
           onClick={onClose}
           style={{
             position: "absolute",

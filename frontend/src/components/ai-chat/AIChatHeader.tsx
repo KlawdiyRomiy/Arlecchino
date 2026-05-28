@@ -34,7 +34,8 @@ import type {
   AIToolDescriptor,
 } from "../../../bindings/arlecchino/internal/ai/models";
 import type { AIChatDisplayPrefs, ContextToggles } from "./types";
-import { ActivityIcon, ActivityStatusPopover } from "./ActivityTimeline";
+import { ActivityIcon } from "./ActivityIcon";
+import { ActivityStatusPopover } from "./ActivityStatusPopover";
 import {
   buildActivityStatusItems,
   summarizeActivityStatus,

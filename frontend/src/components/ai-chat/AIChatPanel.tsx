@@ -134,7 +134,7 @@ import {
 import { dispatchApplicationMenuAction } from "../../utils/applicationMenu";
 import { beginDragSelectionLock } from "../../utils/dragSelectionLock";
 import { AIChatHeader } from "./AIChatHeader";
-import { ActivityStatusPopover } from "./ActivityTimeline";
+import { ActivityStatusPopover } from "./ActivityStatusPopover";
 import {
   buildActivityStatusItems,
   summarizeActivityStatus,

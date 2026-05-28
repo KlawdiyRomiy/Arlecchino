@@ -166,12 +166,11 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
                   className={`${inputClass} min-w-0 flex-1`}
                 />
                 <button
+                  type="button"
                   onClick={handleSelectDirectory}
                   disabled={creating || !dialogsAvailable}
                   className={`${secondaryButtonClass} shrink-0`}
-                  title={
-                    dialogsAvailable ? "Browse" : dialogsUnavailableReason
-                  }
+                  title={dialogsAvailable ? "Browse" : dialogsUnavailableReason}
                 >
                   Browse
                 </button>
@@ -198,6 +197,7 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
             <button
+              type="button"
               onClick={handleCreateProject}
               disabled={!projectName.trim() || !selectedDir || creating}
               className="min-h-12 rounded-[18px] bg-white px-8 text-[16px] font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-2"
@@ -205,6 +205,7 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
               {creating ? "Creating..." : "Create Project"}
             </button>
             <button
+              type="button"
               onClick={close}
               disabled={creating}
               className={`${secondaryButtonClass} shrink-0 sm:order-1`}

@@ -381,6 +381,7 @@ export const ResizablePanel: React.FC<ResizablePanelProps> = ({
 
           {onClose && (
             <button
+              type="button"
               style={closeButtonStyle}
               onClick={onClose}
               title="Close panel"

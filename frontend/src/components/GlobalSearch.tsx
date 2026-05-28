@@ -224,6 +224,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
               }}
             />
             <button
+              type="button"
               onClick={handleClose}
               style={{
                 background: "none",

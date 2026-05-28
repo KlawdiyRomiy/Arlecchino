@@ -709,6 +709,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   const renderExplorerButton = () => (
     <button
+      type="button"
       onClick={onToggleExplorer}
       className={`${topBarButtonClass} ${
         panels.explorer
@@ -815,6 +816,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     <DropdownMenu.Root open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
       <DropdownMenu.Trigger asChild>
         <button
+          type="button"
           className={`${topBarActionClass} outline-none`}
           title="More"
           data-testid="topbar-more-button"
@@ -902,6 +904,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       case "search":
         return (
           <button
+            type="button"
             onClick={onOpenSearch}
             className={`${topBarButtonClass} text-[var(--text-secondary)]`}
             title="Search"
@@ -912,6 +915,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       case "settings":
         return (
           <button
+            type="button"
             onClick={onOpenSettings}
             className={`${topBarButtonClass} text-[var(--text-secondary)]`}
             title="Settings"
@@ -950,6 +954,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       case "debug":
         return (
           <button
+            type="button"
             onClick={onOpenDebug}
             className={topBarActionClass}
             title="Debug"
@@ -959,13 +964,19 @@ export const TopBar: React.FC<TopBarProps> = ({
         );
       case "run":
         return (
-          <button onClick={onRun} className={topBarActionClass} title="Run">
+          <button
+            type="button"
+            onClick={onRun}
+            className={topBarActionClass}
+            title="Run"
+          >
             <Play size={topBarIconSize} />
           </button>
         );
       case "preview":
         return (
           <button
+            type="button"
             onClick={onOpenPreview}
             className={`${topBarButtonClass} ${
               previewActive
@@ -984,6 +995,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       case "aiChat":
         return (
           <button
+            type="button"
             onClick={onToggleAIChat}
             className={getPanelActionClass(panels.aiChat)}
             title="AI Chat"
@@ -996,6 +1008,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       case "terminal":
         return (
           <button
+            type="button"
             onClick={onToggleTerminal}
             className={getPanelActionClass(panels.terminal)}
             title="Terminal"
@@ -1008,6 +1021,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       case "git":
         return (
           <button
+            type="button"
             onClick={onToggleGit}
             className={getPanelActionClass(panels.git)}
             title="Git"
@@ -1020,6 +1034,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       case "syncDependencies":
         return (
           <button
+            type="button"
             onClick={onOpenDependencyPolicy}
             className={topBarActionClass}
             title="Sync dependencies..."
@@ -1031,6 +1046,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       case "checkUpdates":
         return (
           <button
+            type="button"
             onClick={onCheckForUpdates}
             className={topBarActionClass}
             title="Check for Updates"
