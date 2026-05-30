@@ -998,224 +998,261 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     babelrc: "#F9DC3E",
   };
 
-  // Get extension label (uppercase)
-  const getExtLabel = (fileName: string): string => {
-    const lowerName = fileName.toLowerCase();
+  const imageFileExtensions = new Set([
+    "png",
+    "jpg",
+    "jpeg",
+    "jpe",
+    "jfif",
+    "gif",
+    "webp",
+    "ico",
+    "bmp",
+    "avif",
+  ]);
 
-    // Special cases
-    if (lowerName.endsWith(".blade.php")) return "BLADE";
-    if (lowerName === "dockerfile" || lowerName.startsWith("dockerfile."))
-      return "DOCKER";
-    if (lowerName === "makefile") return "MAKE";
-    if (lowerName === ".gitignore") return "GIT";
-    if (lowerName === ".dockerignore") return "DOCKER";
-    if (lowerName === ".env" || lowerName.startsWith(".env.")) return "ENV";
-    if (lowerName === ".editorconfig") return "CFG";
-    if (lowerName.includes(".prettierrc")) return "FMT";
-    if (lowerName.includes(".eslintrc")) return "LINT";
-    if (lowerName.includes(".babelrc")) return "BABEL";
-
-    const ext = fileName.split(".").pop()?.toLowerCase();
-    if (!ext) return "";
-
-    // Map extensions to display labels
-    const labelMap: Record<string, string> = {
-      ts: "TS",
-      tsx: "TSX",
-      js: "JS",
-      jsx: "JSX",
-      go: "GO",
-      mod: "MOD",
-      sum: "SUM",
-      rs: "RS",
-      py: "PY",
-      rb: "RB",
-      php: "PHP",
-      vue: "VUE",
-      svelte: "SVLT",
-      css: "CSS",
-      scss: "SCSS",
-      sass: "SASS",
-      less: "LESS",
-      html: "HTML",
-      htm: "HTML",
-      json: "JSON",
-      yaml: "YML",
-      yml: "YML",
-      toml: "TOML",
-      sql: "SQL",
-      md: "MD",
-      mdx: "MD",
-      txt: "TXT",
-      java: "JAVA",
-      kt: "KT",
-      scala: "SCALA",
-      cs: "C#",
-      cpp: "C++",
-      cc: "C++",
-      cxx: "C++",
-      c: "C",
-      h: "H",
-      hpp: "H++",
-      swift: "SWIFT",
-      dart: "DART",
-      lua: "LUA",
-      pl: "PERL",
-      r: "R",
-      R: "R",
-      hs: "HS",
-      clj: "CLJ",
-      erl: "ERL",
-      ex: "EX",
-      sh: "SH",
-      bash: "SH",
-      zsh: "SH",
-      fish: "SH",
-      ps1: "PS",
-      proto: "PROTO",
-      xml: "XML",
-      svg: "SVG",
-      graphql: "GQL",
-      gql: "GQL",
-      prisma: "PRISMA",
-      tf: "TF",
-      hcl: "TF",
-      zig: "ZIG",
-      nim: "NIM",
-      v: "V",
-      lock: "LOCK",
-      env: "ENV",
-      png: "IMG",
-      jpg: "IMG",
-      jpeg: "IMG",
-      jpe: "IMG",
-      jfif: "IMG",
-      gif: "IMG",
-      webp: "IMG",
-      bmp: "IMG",
-      avif: "IMG",
-      ico: "ICO",
-    };
-
-    return labelMap[ext] || ext.toUpperCase();
+  const extensionLabelMap: Record<string, string> = {
+    ts: "TS",
+    tsx: "TSX",
+    js: "JS",
+    jsx: "JSX",
+    go: "GO",
+    mod: "MOD",
+    sum: "SUM",
+    rs: "RS",
+    py: "PY",
+    rb: "RB",
+    php: "PHP",
+    vue: "VUE",
+    svelte: "SVLT",
+    css: "CSS",
+    scss: "SCSS",
+    sass: "SASS",
+    less: "LESS",
+    html: "HTML",
+    htm: "HTML",
+    json: "JSON",
+    yaml: "YML",
+    yml: "YML",
+    toml: "TOML",
+    sql: "SQL",
+    md: "MD",
+    mdx: "MD",
+    txt: "TXT",
+    java: "JAVA",
+    kt: "KT",
+    scala: "SCALA",
+    cs: "C#",
+    cpp: "C++",
+    cc: "C++",
+    cxx: "C++",
+    c: "C",
+    h: "H",
+    hpp: "H++",
+    swift: "SWIFT",
+    dart: "DART",
+    lua: "LUA",
+    pl: "PERL",
+    r: "R",
+    hs: "HS",
+    clj: "CLJ",
+    erl: "ERL",
+    ex: "EX",
+    sh: "SH",
+    bash: "SH",
+    zsh: "SH",
+    fish: "SH",
+    ps1: "PS",
+    proto: "PROTO",
+    xml: "XML",
+    svg: "SVG",
+    graphql: "GQL",
+    gql: "GQL",
+    prisma: "PRISMA",
+    tf: "TF",
+    hcl: "TF",
+    zig: "ZIG",
+    nim: "NIM",
+    v: "V",
+    lock: "LOCK",
+    env: "ENV",
+    png: "IMG",
+    jpg: "IMG",
+    jpeg: "IMG",
+    jpe: "IMG",
+    jfif: "IMG",
+    gif: "IMG",
+    webp: "IMG",
+    bmp: "IMG",
+    avif: "IMG",
+    ico: "ICO",
   };
 
-  // Get extension color
-  const getExtColor = (fileName: string): string => {
-    const lowerName = fileName.toLowerCase();
+  type FileNameDisplayParts = {
+    baseName: string;
+    suffixLabel: string;
+    suffixColor: string;
+  };
 
-    // Special cases
-    if (lowerName.endsWith(".blade.php")) return colors.fileType.blade;
-    if (lowerName === "dockerfile" || lowerName.startsWith("dockerfile."))
-      return colors.fileType.dockerfile;
-    if (lowerName === "makefile") return "#6B7280";
-    if (lowerName === ".gitignore") return "#F05032";
-    if (lowerName === ".dockerignore") return colors.fileType.dockerfile;
-    if (lowerName === ".env" || lowerName.startsWith(".env."))
-      return colors.fileType.env;
+  const getKnownExtension = (fileName: string): string | null => {
+    const dotIndex = fileName.lastIndexOf(".");
+    if (dotIndex <= 0 || dotIndex === fileName.length - 1) {
+      return null;
+    }
 
-    const ext = fileName.split(".").pop()?.toLowerCase();
-    if (!ext) return theme.textMuted;
+    const extension = fileName.slice(dotIndex + 1).toLowerCase();
+    return extension in extColorMap || imageFileExtensions.has(extension)
+      ? extension
+      : null;
+  };
 
-    // Images
-    if (
-      [
-        "png",
-        "jpg",
-        "jpeg",
-        "jpe",
-        "jfif",
-        "gif",
-        "webp",
-        "ico",
-        "bmp",
-        "avif",
-      ].includes(ext)
-    ) {
+  const getExtensionColor = (extension: string): string => {
+    if (imageFileExtensions.has(extension)) {
       return colors.fileType.image;
     }
 
-    return extColorMap[ext] || theme.textMuted;
+    return extColorMap[extension] || theme.textMuted;
   };
 
-  // Get base name without extension for display
-  const getFileBaseName = (fileName: string): string => {
-    const lowerName = fileName.toLowerCase();
-
-    // Files without extension or special files - show as is
-    if (lowerName === "dockerfile" || lowerName === "makefile") return fileName;
-    if (lowerName.startsWith("dockerfile.")) return fileName.split(".")[0];
-    if (lowerName.startsWith(".")) {
-      // Dotfiles: .gitignore -> show empty basename (just .EXT)
-      const parts = fileName.split(".");
-      if (parts.length === 2) return ""; // .gitignore -> ""
-      return parts.slice(1, -1).join("."); // .env.local -> env
+  const getSpecialConfigBaseName = (
+    fileName: string,
+    lowerName: string,
+    marker: string,
+  ): string => {
+    if (fileName.startsWith(".")) {
+      return fileName.split(".").slice(1, -1).join(".");
     }
 
-    // Blade files: welcome.blade.php -> welcome
+    const markerIndex = lowerName.indexOf(marker);
+    return markerIndex > 0 ? fileName.slice(0, markerIndex) : "";
+  };
+
+  const getFileNameDisplayParts = (
+    fileName: string,
+  ): FileNameDisplayParts | null => {
+    const lowerName = fileName.toLowerCase();
+
     if (lowerName.endsWith(".blade.php")) {
-      return fileName.replace(/\.blade\.php$/i, "");
+      return {
+        baseName: fileName.replace(/\.blade\.php$/i, ""),
+        suffixLabel: "BLADE",
+        suffixColor: colors.fileType.blade,
+      };
     }
 
-    // Normal files: main.go -> main
-    const lastDotIndex = fileName.lastIndexOf(".");
-    if (lastDotIndex === -1) return fileName;
-    return fileName.substring(0, lastDotIndex);
+    if (lowerName === "dockerfile" || lowerName.startsWith("dockerfile.")) {
+      return {
+        baseName: fileName.split(".")[0] || fileName,
+        suffixLabel: "DOCKER",
+        suffixColor: colors.fileType.dockerfile,
+      };
+    }
+
+    if (lowerName === "makefile") {
+      return {
+        baseName: fileName,
+        suffixLabel: "MAKE",
+        suffixColor: "#6B7280",
+      };
+    }
+
+    if (lowerName === ".gitignore") {
+      return { baseName: "", suffixLabel: "GIT", suffixColor: "#F05032" };
+    }
+
+    if (lowerName === ".dockerignore") {
+      return {
+        baseName: "",
+        suffixLabel: "DOCKER",
+        suffixColor: colors.fileType.dockerfile,
+      };
+    }
+
+    if (lowerName === ".env" || lowerName.startsWith(".env.")) {
+      const parts = fileName.split(".");
+      return {
+        baseName: parts.length === 2 ? "" : parts.slice(1, -1).join("."),
+        suffixLabel: "ENV",
+        suffixColor: colors.fileType.env,
+      };
+    }
+
+    if (lowerName === ".editorconfig") {
+      return { baseName: "", suffixLabel: "CFG", suffixColor: "#FEFEFE" };
+    }
+
+    if (lowerName.includes(".prettierrc")) {
+      return {
+        baseName: getSpecialConfigBaseName(fileName, lowerName, ".prettierrc"),
+        suffixLabel: "FMT",
+        suffixColor: "#F7B93E",
+      };
+    }
+
+    if (lowerName.includes(".eslintrc")) {
+      return {
+        baseName: getSpecialConfigBaseName(fileName, lowerName, ".eslintrc"),
+        suffixLabel: "LINT",
+        suffixColor: "#4B32C3",
+      };
+    }
+
+    if (lowerName.includes(".babelrc")) {
+      return {
+        baseName: getSpecialConfigBaseName(fileName, lowerName, ".babelrc"),
+        suffixLabel: "BABEL",
+        suffixColor: "#F9DC3E",
+      };
+    }
+
+    const extension = getKnownExtension(fileName);
+    if (!extension) {
+      return null;
+    }
+
+    return {
+      baseName: fileName.slice(0, fileName.lastIndexOf(".")),
+      suffixLabel: extensionLabelMap[extension] || extension.toUpperCase(),
+      suffixColor: getExtensionColor(extension),
+    };
   };
 
-  // Check if file has a recognizable extension
-  const hasKnownExtension = (fileName: string): boolean => {
-    const lowerName = fileName.toLowerCase();
-    if (lowerName === "dockerfile" || lowerName === "makefile") return true;
-    if (lowerName.startsWith(".")) return true; // dotfiles
-    const ext = fileName.split(".").pop()?.toLowerCase();
-    return ext
-      ? ext in extColorMap ||
-          [
-            "png",
-            "jpg",
-            "jpeg",
-            "jpe",
-            "jfif",
-            "gif",
-            "webp",
-            "ico",
-            "bmp",
-            "avif",
-          ].includes(ext)
-      : false;
-  };
+  const renderFileNameLabel = (fileName: string) => {
+    const displayParts = getFileNameDisplayParts(fileName);
 
-  const renderFileNameLabel = (fileName: string) => (
-    <span
-      style={{
-        fontSize: "13px",
-        color: "var(--text-secondary)",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {getFileBaseName(fileName)}
-      {hasKnownExtension(fileName) && (
-        <>
-          <span style={{ color: "var(--text-muted)" }}>.</span>
-          <span
-            style={{
-              color: getExtColor(fileName),
-              fontWeight: 700,
-              fontSize: "11px",
-              letterSpacing: "0.3px",
-              fontFamily: "'SF Mono', 'JetBrains Mono', 'Fira Code', monospace",
-            }}
-          >
-            {getExtLabel(fileName)}
-          </span>
-        </>
-      )}
-      {!hasKnownExtension(fileName) && fileName}
-    </span>
-  );
+    return (
+      <span
+        style={{
+          fontSize: "13px",
+          color: "var(--text-secondary)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {displayParts ? (
+          <>
+            {displayParts.baseName}
+            <span style={{ color: "var(--text-muted)" }}>.</span>
+            <span
+              style={{
+                color: displayParts.suffixColor,
+                fontWeight: 700,
+                fontSize: "11px",
+                letterSpacing: "0.3px",
+                fontFamily:
+                  "'SF Mono', 'JetBrains Mono', 'Fira Code', monospace",
+              }}
+            >
+              {displayParts.suffixLabel}
+            </span>
+          </>
+        ) : (
+          fileName
+        )}
+      </span>
+    );
+  };
 
   const renderExplorerTreeGuides = (
     level: number,
