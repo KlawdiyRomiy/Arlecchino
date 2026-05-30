@@ -6,6 +6,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { assertReleaseNotesPolicy } from "./wails3-release-notes-policy.mjs";
+import {
+  inspectZippedAppCodeIdentity,
+  isPermissionStableIdentity,
+  manifestSafeCodeIdentity,
+} from "./macos-code-identity.mjs";
 
 const args = process.argv.slice(2);
 
@@ -23,6 +28,9 @@ Options:
   --release-notes <text>    Release notes text.
   --release-notes-file <p>  Release notes file.
   --mandatory               Mark update as mandatory.
+  --allow-permission-unstable
+                            Allow a macOS ZIP whose code identity will reset folder permissions.
+                            Intended only for internal smoke artifacts.
   --public-key-out <path>   Write raw Ed25519 public key as base64 for app verifier env.
 
 The private key must be an external Ed25519 PEM file and is never written to the manifest.`);
@@ -54,10 +62,10 @@ if (!artifactPath || !privateKeyPath || !outPath) {
 const version = readOption("--version") || "0.0.0-beta";
 const build = readOption("--build");
 const channel = readOption("--channel") || "beta";
-const platform = readOption("--platform") || "darwin";
+const platform = (readOption("--platform") || "darwin").toLowerCase();
 const archInput = readOption("--arch") || "universal";
 const arch = archInput === "universal" ? "universal" : archInput;
-const kind = readOption("--kind") || "zip";
+const kind = (readOption("--kind") || "zip").toLowerCase();
 const url =
   readOption("--url") || pathToFileURL(path.resolve(artifactPath)).href;
 const notesFile = readOption("--release-notes-file");
@@ -66,9 +74,30 @@ const releaseNotes = notesFile
   : (readOption("--release-notes") || "").trim();
 assertReleaseNotesPolicy(releaseNotes, notesFile || "--release-notes");
 const mandatory = args.includes("--mandatory");
+const allowPermissionUnstable =
+  args.includes("--allow-permission-unstable") ||
+  process.env.ARLE_WAILS3_ALLOW_PERMISSION_UNSTABLE_UPDATES === "1";
 const publicKeyOut = readOption("--public-key-out");
 
 const artifact = fs.readFileSync(artifactPath);
+let macOSCodeIdentity = null;
+if (platform === "darwin" && kind === "zip") {
+  macOSCodeIdentity = inspectZippedAppCodeIdentity(artifactPath);
+  if (
+    !allowPermissionUnstable &&
+    !isPermissionStableIdentity(macOSCodeIdentity)
+  ) {
+    throw new Error(
+      [
+        "macOS updater ZIP is not permission-stable.",
+        `identityKind=${macOSCodeIdentity.identityKind}`,
+        `permissionStability=${macOSCodeIdentity.permissionStability}`,
+        `cdhashOnly=${macOSCodeIdentity.designatedRequirementIsCdhashOnly}`,
+        "Sign with ARLE_WAILS3_SIGN_MODE=local-identity or developer-id before publishing an updater manifest.",
+      ].join(" "),
+    );
+  }
+}
 const privateKey = crypto.createPrivateKey(fs.readFileSync(privateKeyPath));
 if (privateKey.asymmetricKeyType !== "ed25519") {
   throw new Error(
@@ -86,6 +115,13 @@ const manifest = {
   ...(build ? { build } : {}),
   releaseNotes,
   mandatory,
+  ...(macOSCodeIdentity
+    ? {
+        metadata: {
+          macOSCodeIdentity: manifestSafeCodeIdentity(macOSCodeIdentity),
+        },
+      }
+    : {}),
   artifacts: [
     {
       platform,
@@ -122,6 +158,9 @@ console.log(
       kind,
       size: artifact.length,
       sha256,
+      ...(macOSCodeIdentity
+        ? { macOSCodeIdentity: manifestSafeCodeIdentity(macOSCodeIdentity) }
+        : {}),
     },
     null,
     2,

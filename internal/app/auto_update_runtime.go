@@ -69,12 +69,12 @@ type AutoUpdateStatus struct {
 }
 
 type AutoUpdateService struct {
-	mu             sync.Mutex
-	status         AutoUpdateStatus
-	client         *http.Client
-	verifyCodesign func(string) error
-	githubAPIBase  string
-	tokenStore     autoUpdateTokenStore
+	mu                  sync.Mutex
+	status              AutoUpdateStatus
+	client              *http.Client
+	inspectCodeIdentity macOSCodeIdentityInspector
+	githubAPIBase       string
+	tokenStore          autoUpdateTokenStore
 }
 
 type autoUpdateStageResult struct {
@@ -83,11 +83,13 @@ type autoUpdateStageResult struct {
 }
 
 type autoUpdateApplyPlan struct {
-	AppPID         int
-	CurrentAppPath string
-	StagedAppPath  string
-	BackupAppPath  string
-	ReportPath     string
+	AppPID                         int
+	CurrentAppPath                 string
+	StagedAppPath                  string
+	BackupAppPath                  string
+	ReportPath                     string
+	ExpectedBundleID               string
+	ExpectedRequirementFingerprint string
 }
 
 func NewAutoUpdateService() *AutoUpdateService {
@@ -95,11 +97,11 @@ func NewAutoUpdateService() *AutoUpdateService {
 	status.State = AutoUpdateStateIdle
 	status.Reason = "Auto-update is idle."
 	return &AutoUpdateService{
-		status:         status,
-		client:         &http.Client{Timeout: 45 * time.Second},
-		verifyCodesign: verifyAppCodesign,
-		githubAPIBase:  autoUpdateGitHubAPIBaseURL,
-		tokenStore:     defaultAutoUpdateTokenStore(),
+		status:              status,
+		client:              &http.Client{Timeout: 45 * time.Second},
+		inspectCodeIdentity: inspectMacOSAppCodeIdentity,
+		githubAPIBase:       autoUpdateGitHubAPIBaseURL,
+		tokenStore:          defaultAutoUpdateTokenStore(),
 	}
 }
 
@@ -330,7 +332,7 @@ func (s *AutoUpdateService) downloadAndStage() AutoUpdateStatus {
 		status.Reason = fmt.Sprintf("Auto-update staging directory could not be created: %v", err)
 		return s.setStatus(status)
 	}
-	stage, err := stageAutoUpdateZip(data, stageRoot, s.verifyCodesign)
+	stage, err := stageAutoUpdateZip(data, stageRoot, s.verifyPermissionStableStagedApp)
 	if err != nil {
 		_ = os.RemoveAll(stageRoot)
 		status.StagingDir = ""
@@ -341,16 +343,38 @@ func (s *AutoUpdateService) downloadAndStage() AutoUpdateStatus {
 		return s.setStatus(status)
 	}
 
+	transitionNote := ""
+	currentBundle := currentAppBundlePath()
+	if runtime.GOOS == "darwin" && currentBundle != "" {
+		if _, note, err := validateAutoUpdateCodeIdentityTransition(currentBundle, stage.StagedAppPath, s.inspectCodeIdentity); err != nil {
+			_ = os.RemoveAll(stageRoot)
+			status.StagingDir = ""
+			status.StagedAppPath = ""
+			status.ApplyAvailable = false
+			status.State = AutoUpdateStateFailed
+			status.Reason = err.Error()
+			return s.setStatus(status)
+		} else {
+			transitionNote = note
+		}
+	}
+
 	status.StagingDir = stage.StagingDir
 	status.StagedAppPath = stage.StagedAppPath
 	status.Progress = 1
-	status.ApplyAvailable = currentAppBundlePath() != "" && isPathWritable(filepath.Dir(currentAppBundlePath()))
+	status.ApplyAvailable = currentBundle != "" && isPathWritable(filepath.Dir(currentBundle))
 	if status.ApplyAvailable {
 		status.State = AutoUpdateStateStaged
 		status.Reason = "Update is verified and ready to install after confirmation."
+		if transitionNote != "" {
+			status.Reason += " " + transitionNote
+		}
 	} else {
 		status.State = AutoUpdateStateManualRequired
 		status.Reason = "Update is verified, but the current app bundle is not writable. Use the DMG replacement flow."
+		if transitionNote != "" {
+			status.Reason += " " + transitionNote
+		}
 	}
 	return s.setStatus(status)
 }
@@ -380,6 +404,13 @@ func (s *AutoUpdateService) apply(owner *App) AutoUpdateStatus {
 		return s.setStatus(status)
 	}
 
+	stagedIdentity, transitionNote, err := validateAutoUpdateCodeIdentityTransition(currentBundle, status.StagedAppPath, s.inspectCodeIdentity)
+	if err != nil {
+		status.State = AutoUpdateStateFailed
+		status.Reason = err.Error()
+		return s.setStatus(status)
+	}
+
 	cacheDir, err := autoUpdateCacheDir()
 	if err != nil {
 		status.State = AutoUpdateStateFailed
@@ -394,11 +425,13 @@ func (s *AutoUpdateService) apply(owner *App) AutoUpdateStatus {
 	}
 
 	plan := autoUpdateApplyPlan{
-		AppPID:         os.Getpid(),
-		CurrentAppPath: currentBundle,
-		StagedAppPath:  status.StagedAppPath,
-		BackupAppPath:  filepath.Join(helperDir, "Arlecchino.app.backup"),
-		ReportPath:     filepath.Join(helperDir, "apply-report.json"),
+		AppPID:                         os.Getpid(),
+		CurrentAppPath:                 currentBundle,
+		StagedAppPath:                  status.StagedAppPath,
+		BackupAppPath:                  filepath.Join(helperDir, "Arlecchino.app.backup"),
+		ReportPath:                     filepath.Join(helperDir, "apply-report.json"),
+		ExpectedBundleID:               stagedIdentity.BundleID,
+		ExpectedRequirementFingerprint: stagedIdentity.StableRequirementFingerprint,
 	}
 	helperPath := filepath.Join(helperDir, "apply-update.zsh")
 	if err := os.WriteFile(helperPath, []byte(buildAutoUpdateApplyHelperScript(plan)), 0o700); err != nil {
@@ -416,6 +449,9 @@ func (s *AutoUpdateService) apply(owner *App) AutoUpdateStatus {
 	status.State = AutoUpdateStateApplying
 	status.ReportPath = plan.ReportPath
 	status.Reason = "Arlecchino will quit, replace the app bundle, and relaunch."
+	if transitionNote != "" {
+		status.Reason += " " + transitionNote
+	}
 	status = s.setStatus(status)
 
 	go func() {
@@ -579,7 +615,7 @@ func verifyRuntimeAutoUpdateArtifact(data []byte, channel string, version string
 	return result, nil
 }
 
-func stageAutoUpdateZip(data []byte, stageRoot string, verifyCodesign func(string) error) (autoUpdateStageResult, error) {
+func stageAutoUpdateZip(data []byte, stageRoot string, verifyStagedApp func(string) error) (autoUpdateStageResult, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return autoUpdateStageResult{}, fmt.Errorf("auto-update artifact is not a valid ZIP: %w", err)
@@ -603,7 +639,7 @@ func stageAutoUpdateZip(data []byte, stageRoot string, verifyCodesign func(strin
 	}
 
 	appPath := filepath.Join(extractDir, "Arlecchino.app")
-	if err := validateStagedAppBundle(appPath, verifyCodesign); err != nil {
+	if err := validateStagedAppBundle(appPath, verifyStagedApp); err != nil {
 		return autoUpdateStageResult{}, err
 	}
 	return autoUpdateStageResult{StagingDir: stagingDir, StagedAppPath: appPath}, nil
@@ -656,7 +692,7 @@ func extractZipFile(file *zip.File, destinationRoot string) error {
 	return err
 }
 
-func validateStagedAppBundle(appPath string, verifyCodesign func(string) error) error {
+func validateStagedAppBundle(appPath string, verifyStagedApp func(string) error) error {
 	info, err := os.Stat(appPath)
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("auto-update ZIP must contain Arlecchino.app")
@@ -680,10 +716,17 @@ func validateStagedAppBundle(appPath string, verifyCodesign func(string) error) 
 	if build := readPlistRaw(infoPlist, "CFBundleVersion"); strings.TrimSpace(build) == "" {
 		return fmt.Errorf("staged Arlecchino.app has no CFBundleVersion")
 	}
-	if verifyCodesign != nil {
-		if err := verifyCodesign(appPath); err != nil {
-			return fmt.Errorf("staged Arlecchino.app codesign verification failed: %w", err)
+	if verifyStagedApp != nil {
+		if err := verifyStagedApp(appPath); err != nil {
+			return fmt.Errorf("staged Arlecchino.app verification failed: %w", err)
 		}
+	}
+	return nil
+}
+
+func (s *AutoUpdateService) verifyPermissionStableStagedApp(appPath string) error {
+	if _, err := verifyPermissionStableMacOSUpdateCandidate(appPath, s.inspectCodeIdentity); err != nil {
+		return fmt.Errorf("macOS code identity is not permission-stable: %w", err)
 	}
 	return nil
 }
@@ -741,17 +784,6 @@ func readPlistRawFallback(infoPlist string, key string) string {
 	return strings.TrimSpace(remainder[start+len("<string>") : end])
 }
 
-func verifyAppCodesign(appPath string) error {
-	if runtime.GOOS != "darwin" {
-		return nil
-	}
-	output, err := exec.Command("/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=2", appPath).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return nil
-}
-
 func autoUpdateCacheDir() (string, error) {
 	if value := strings.TrimSpace(os.Getenv(autoUpdateCacheDirEnv)); value != "" {
 		return value, nil
@@ -795,6 +827,8 @@ func buildAutoUpdateApplyHelperScript(plan autoUpdateApplyPlan) string {
 	staged := shellQuote(plan.StagedAppPath)
 	backup := shellQuote(plan.BackupAppPath)
 	report := shellQuote(plan.ReportPath)
+	expectedBundleID := shellQuote(plan.ExpectedBundleID)
+	expectedRequirementFingerprint := shellQuote(plan.ExpectedRequirementFingerprint)
 	pid := strconv.Itoa(plan.AppPID)
 	return `#!/bin/zsh
 set -euo pipefail
@@ -804,6 +838,8 @@ CURRENT_APP=` + current + `
 STAGED_APP=` + staged + `
 BACKUP_APP=` + backup + `
 REPORT_PATH=` + report + `
+EXPECTED_BUNDLE_ID=` + expectedBundleID + `
+EXPECTED_REQUIREMENT_SHA=` + expectedRequirementFingerprint + `
 
 write_report() {
   local status="$1"
@@ -818,6 +854,13 @@ write_report() {
     "$escaped_status" \
     "$escaped_reason" \
     "$(/bin/date +%s)" > "$REPORT_PATH"
+}
+
+restore_backup() {
+  /bin/rm -rf "$CURRENT_APP"
+  if [[ -d "$BACKUP_APP" ]]; then
+    /usr/bin/ditto "$BACKUP_APP" "$CURRENT_APP"
+  fi
 }
 
 while /bin/kill -0 "$APP_PID" >/dev/null 2>&1; do
@@ -835,21 +878,38 @@ if ! /bin/rm -rf "$CURRENT_APP"; then
 fi
 
 if ! /usr/bin/ditto "$STAGED_APP" "$CURRENT_APP"; then
-  /bin/rm -rf "$CURRENT_APP"
-  if [[ -d "$BACKUP_APP" ]]; then
-    /usr/bin/ditto "$BACKUP_APP" "$CURRENT_APP"
-  fi
+  restore_backup
   write_report failed "Could not copy staged app bundle."
   exit 1
 fi
 
 if ! /usr/bin/codesign --verify --deep --strict --verbose=2 "$CURRENT_APP" >/tmp/arlecchino-update-codesign.log 2>&1; then
-  /bin/rm -rf "$CURRENT_APP"
-  if [[ -d "$BACKUP_APP" ]]; then
-    /usr/bin/ditto "$BACKUP_APP" "$CURRENT_APP"
-  fi
+  restore_backup
   write_report failed "$(/bin/cat /tmp/arlecchino-update-codesign.log)"
   exit 1
+fi
+
+if [[ -n "$EXPECTED_BUNDLE_ID" ]]; then
+  ACTUAL_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CURRENT_APP/Contents/Info.plist" 2>/dev/null || true)"
+  if [[ "$ACTUAL_BUNDLE_ID" != "$EXPECTED_BUNDLE_ID" ]]; then
+    restore_backup
+    write_report failed "Installed app bundle id did not match the verified update candidate."
+    exit 1
+  fi
+fi
+
+if [[ -n "$EXPECTED_REQUIREMENT_SHA" ]]; then
+  if ! REQUIREMENT_LINE="$(/usr/bin/codesign -d -r- "$CURRENT_APP" 2>&1 | /usr/bin/awk '/designated =>/ { sub(/^[[:space:]]*/, "", $0); print; found=1 } END { exit found ? 0 : 1 }')"; then
+    restore_backup
+    write_report failed "Installed app designated requirement could not be read."
+    exit 1
+  fi
+  ACTUAL_REQUIREMENT_SHA="$(/usr/bin/printf '%s' "$REQUIREMENT_LINE" | /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')"
+  if [[ "$ACTUAL_REQUIREMENT_SHA" != "$EXPECTED_REQUIREMENT_SHA" ]]; then
+    restore_backup
+    write_report failed "Installed app macOS signing identity did not match the verified update candidate."
+    exit 1
+  fi
 fi
 
 /usr/bin/open "$CURRENT_APP"

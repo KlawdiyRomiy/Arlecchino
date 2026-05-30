@@ -30,6 +30,12 @@
   <true/>
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © __COPYRIGHT_YEAR__ Klawdiy Klowerson. All rights reserved.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Arlecchino needs access to open, index, edit, and manage projects you choose in Documents.</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>Arlecchino needs access to open, index, edit, and manage projects you choose on Desktop.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Arlecchino needs access to open, index, edit, and manage projects you choose in Downloads.</string>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>

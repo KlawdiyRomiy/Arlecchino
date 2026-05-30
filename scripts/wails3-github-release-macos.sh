@@ -286,6 +286,7 @@ const report = {
     "HEAD equals origin/main",
     "remote tag exists",
     "remote tag points at HEAD",
+    "macOS updater ZIP must have permission-stable code identity before manifest upload",
     "gh release create uses --verify-tag",
   ],
   tokenPolicy: "runtime token is stored in macOS Keychain; publishing uses gh CLI only",
