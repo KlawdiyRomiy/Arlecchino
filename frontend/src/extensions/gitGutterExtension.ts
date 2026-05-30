@@ -123,8 +123,10 @@ export const createGitGutterExtension = ({
       },
     }),
     EditorView.baseTheme({
-      ".cm-git-gutter": {
-        width: "12px",
+      ".cm-gutter.cm-git-gutter": {
+        width: "16px",
+        minWidth: "16px",
+        overflow: "visible",
       },
       ".cm-git-gutter .cm-gutterElement": {
         overflow: "visible",
@@ -132,7 +134,7 @@ export const createGitGutterExtension = ({
       ".cm-git-marker": {
         position: "relative",
         display: "flex",
-        width: "10px",
+        width: "14px",
         height: "100%",
         minHeight: "100%",
         alignItems: "stretch",
@@ -169,7 +171,7 @@ export const createGitGutterExtension = ({
       ".cm-git-marker-delete-notch": {
         position: "absolute",
         top: "-2px",
-        left: "1px",
+        left: "3px",
         width: "8px",
         height: "2px",
         borderRadius: "2px",
@@ -179,9 +181,10 @@ export const createGitGutterExtension = ({
       ".cm-git-marker-delete-count": {
         position: "absolute",
         top: "-7px",
-        left: "7px",
+        right: "0",
         minWidth: "10px",
         height: "10px",
+        boxSizing: "border-box",
         border: "1px solid rgba(239, 68, 68, 0.55)",
         borderRadius: "999px",
         backgroundColor: "rgba(127, 29, 29, 0.92)",
