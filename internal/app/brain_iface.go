@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+
 	"arlecchino/internal/indexer/brain"
 	"arlecchino/internal/indexer/lsp"
 	"arlecchino/internal/predictive"
@@ -9,6 +11,7 @@ import (
 type completionBrain interface {
 	ExtractPrefix(filePath string, content []byte, line, column int) predictive.PrefixInfo
 	Complete(ctx brain.CompletionContext) []brain.Suggestion
+	ResolveCompletionItem(ctx context.Context, token string) (brain.ResolvedCompletion, error)
 	LastCompletionTrace() brain.CompletionTrace
 	SelectGhostTextWithContext(ctx brain.CompletionContext, suggestions []brain.Suggestion, prefix, accessChain string) brain.GhostTextResult
 	HasARLELanguageSupport(language string) bool

@@ -63,6 +63,10 @@ func (f *fakeBrain) Complete(ctx brain.CompletionContext) []brain.Suggestion {
 	return []brain.Suggestion{{Text: "foo", InsertText: "foo"}}
 }
 
+func (f *fakeBrain) ResolveCompletionItem(ctx context.Context, token string) (brain.ResolvedCompletion, error) {
+	return brain.ResolvedCompletion{}, nil
+}
+
 func (f *fakeBrain) LastCompletionTrace() brain.CompletionTrace {
 	return brain.CompletionTrace{}
 }

@@ -893,6 +893,7 @@ export class EditorCompletion {
     "highlightPositions"?: number[];
     "matchType"?: string;
     "additionalTextEdits"?: TextEditJSON[];
+    "resolveToken"?: string;
 
     /** Creates a new EditorCompletion instance. */
     constructor($$source: Partial<EditorCompletion> = {}) {
@@ -1012,6 +1013,30 @@ export class EditorCompletionContext {
             $$parsedSource["imports"] = $$createField11_0($$parsedSource["imports"]);
         }
         return new EditorCompletionContext($$parsedSource as Partial<EditorCompletionContext>);
+    }
+}
+
+export class EditorCompletionResolveResult {
+    "insertText"?: string;
+    "isSnippet"?: boolean;
+    "additionalTextEdits"?: TextEditJSON[];
+
+    /** Creates a new EditorCompletionResolveResult instance. */
+    constructor($$source: Partial<EditorCompletionResolveResult> = {}) {
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new EditorCompletionResolveResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): EditorCompletionResolveResult {
+        const $$createField2_0 = $$createType28;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("additionalTextEdits" in $$parsedSource) {
+            $$parsedSource["additionalTextEdits"] = $$createField2_0($$parsedSource["additionalTextEdits"]);
+        }
+        return new EditorCompletionResolveResult($$parsedSource as Partial<EditorCompletionResolveResult>);
     }
 }
 

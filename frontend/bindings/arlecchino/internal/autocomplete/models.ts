@@ -5,6 +5,10 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "/wails/runtime.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as importcaps$0 from "./importcaps/models.js";
+
 export class CapabilitySources {
     "syntax": boolean;
     "lspDeclared": boolean;
@@ -13,6 +17,11 @@ export class CapabilitySources {
     "local": boolean;
     "predictive": boolean;
     "imports": boolean;
+    "importContext": boolean;
+    "dependencyImports": boolean;
+    "nativeAutoImport": boolean;
+    "lspAutoImportEdits": boolean;
+    "importEditNormalization": boolean;
     "stubs": boolean;
     "keywords": boolean;
     "fillAll": boolean;
@@ -39,6 +48,21 @@ export class CapabilitySources {
         }
         if (!("imports" in $$source)) {
             this["imports"] = false;
+        }
+        if (!("importContext" in $$source)) {
+            this["importContext"] = false;
+        }
+        if (!("dependencyImports" in $$source)) {
+            this["dependencyImports"] = false;
+        }
+        if (!("nativeAutoImport" in $$source)) {
+            this["nativeAutoImport"] = false;
+        }
+        if (!("lspAutoImportEdits" in $$source)) {
+            this["lspAutoImportEdits"] = false;
+        }
+        if (!("importEditNormalization" in $$source)) {
+            this["importEditNormalization"] = false;
         }
         if (!("stubs" in $$source)) {
             this["stubs"] = false;
@@ -81,6 +105,7 @@ export class LanguageCapability {
     "extensions": string[];
     "canonicalId": string;
     "tier": CapabilityTier;
+    "autoImportLevel": importcaps$0.AutoImportLevel;
     "sources": CapabilitySources;
     "lspServerId": string;
     "lspInstalled": boolean;
@@ -116,6 +141,9 @@ export class LanguageCapability {
         }
         if (!("tier" in $$source)) {
             this["tier"] = CapabilityTier.$zero;
+        }
+        if (!("autoImportLevel" in $$source)) {
+            this["autoImportLevel"] = importcaps$0.AutoImportLevel.$zero;
         }
         if (!("sources" in $$source)) {
             this["sources"] = (new CapabilitySources());
@@ -180,21 +208,21 @@ export class LanguageCapability {
      */
     static createFrom($$source: any = {}): LanguageCapability {
         const $$createField2_0 = $$createType0;
-        const $$createField5_0 = $$createType1;
-        const $$createField15_0 = $$createType0;
-        const $$createField22_0 = $$createType0;
+        const $$createField6_0 = $$createType1;
+        const $$createField16_0 = $$createType0;
+        const $$createField23_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("extensions" in $$parsedSource) {
             $$parsedSource["extensions"] = $$createField2_0($$parsedSource["extensions"]);
         }
         if ("sources" in $$parsedSource) {
-            $$parsedSource["sources"] = $$createField5_0($$parsedSource["sources"]);
+            $$parsedSource["sources"] = $$createField6_0($$parsedSource["sources"]);
         }
         if ("lspInstallDependencies" in $$parsedSource) {
-            $$parsedSource["lspInstallDependencies"] = $$createField15_0($$parsedSource["lspInstallDependencies"]);
+            $$parsedSource["lspInstallDependencies"] = $$createField16_0($$parsedSource["lspInstallDependencies"]);
         }
         if ("notes" in $$parsedSource) {
-            $$parsedSource["notes"] = $$createField22_0($$parsedSource["notes"]);
+            $$parsedSource["notes"] = $$createField23_0($$parsedSource["notes"]);
         }
         return new LanguageCapability($$parsedSource as Partial<LanguageCapability>);
     }

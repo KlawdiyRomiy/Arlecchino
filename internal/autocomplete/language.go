@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"arlecchino/internal/autocomplete/importcaps"
 	lspregistry "arlecchino/internal/lsp"
 )
 
@@ -29,42 +30,48 @@ const (
 )
 
 type CapabilitySources struct {
-	Syntax       bool `json:"syntax"`
-	LSPDeclared  bool `json:"lspDeclared"`
-	LSPAvailable bool `json:"lspAvailable"`
-	Index        bool `json:"index"`
-	Local        bool `json:"local"`
-	Predictive   bool `json:"predictive"`
-	Imports      bool `json:"imports"`
-	Stubs        bool `json:"stubs"`
-	Keywords     bool `json:"keywords"`
-	FillAll      bool `json:"fillAll"`
+	Syntax                  bool `json:"syntax"`
+	LSPDeclared             bool `json:"lspDeclared"`
+	LSPAvailable            bool `json:"lspAvailable"`
+	Index                   bool `json:"index"`
+	Local                   bool `json:"local"`
+	Predictive              bool `json:"predictive"`
+	Imports                 bool `json:"imports"`
+	ImportContext           bool `json:"importContext"`
+	DependencyImports       bool `json:"dependencyImports"`
+	NativeAutoImport        bool `json:"nativeAutoImport"`
+	LSPAutoImportEdits      bool `json:"lspAutoImportEdits"`
+	ImportEditNormalization bool `json:"importEditNormalization"`
+	Stubs                   bool `json:"stubs"`
+	Keywords                bool `json:"keywords"`
+	FillAll                 bool `json:"fillAll"`
 }
 
 type LanguageCapability struct {
-	ID                          string            `json:"id"`
-	Name                        string            `json:"name"`
-	Extensions                  []string          `json:"extensions"`
-	CanonicalID                 string            `json:"canonicalId"`
-	Tier                        CapabilityTier    `json:"tier"`
-	Sources                     CapabilitySources `json:"sources"`
-	LSPServerID                 string            `json:"lspServerId"`
-	LSPInstalled                bool              `json:"lspInstalled"`
-	LSPCanInstall               bool              `json:"lspCanInstall"`
-	LSPInstalling               bool              `json:"lspInstalling"`
-	LSPConfigured               bool              `json:"lspConfigured"`
-	LSPRunning                  bool              `json:"lspRunning"`
-	LSPBinaryPath               string            `json:"lspBinaryPath"`
-	LSPInstallType              string            `json:"lspInstallType"`
-	LSPInstallCommand           string            `json:"lspInstallCommand"`
-	LSPInstallDependencies      []string          `json:"lspInstallDependencies"`
-	LSPInstallUnavailableReason string            `json:"lspInstallUnavailableReason"`
-	LSPInstallStage             string            `json:"lspInstallStage"`
-	LSPInstallPercent           float64           `json:"lspInstallPercent"`
-	LSPInstallMessage           string            `json:"lspInstallMessage"`
-	LSPInstallError             string            `json:"lspInstallError"`
-	LSPLastError                string            `json:"lspLastError"`
-	Notes                       []string          `json:"notes"`
+	ID                          string                     `json:"id"`
+	Name                        string                     `json:"name"`
+	Extensions                  []string                   `json:"extensions"`
+	CanonicalID                 string                     `json:"canonicalId"`
+	Tier                        CapabilityTier             `json:"tier"`
+	AutoImportLevel             importcaps.AutoImportLevel `json:"autoImportLevel"`
+	Sources                     CapabilitySources          `json:"sources"`
+	LSPServerID                 string                     `json:"lspServerId"`
+	LSPInstalled                bool                       `json:"lspInstalled"`
+	LSPCanInstall               bool                       `json:"lspCanInstall"`
+	LSPInstalling               bool                       `json:"lspInstalling"`
+	LSPConfigured               bool                       `json:"lspConfigured"`
+	LSPRunning                  bool                       `json:"lspRunning"`
+	LSPBinaryPath               string                     `json:"lspBinaryPath"`
+	LSPInstallType              string                     `json:"lspInstallType"`
+	LSPInstallCommand           string                     `json:"lspInstallCommand"`
+	LSPInstallDependencies      []string                   `json:"lspInstallDependencies"`
+	LSPInstallUnavailableReason string                     `json:"lspInstallUnavailableReason"`
+	LSPInstallStage             string                     `json:"lspInstallStage"`
+	LSPInstallPercent           float64                    `json:"lspInstallPercent"`
+	LSPInstallMessage           string                     `json:"lspInstallMessage"`
+	LSPInstallError             string                     `json:"lspInstallError"`
+	LSPLastError                string                     `json:"lspLastError"`
+	Notes                       []string                   `json:"notes"`
 }
 
 type LSPAvailabilityFunc func(language string) bool
@@ -128,37 +135,48 @@ func CapabilityForLanguage(language, filePath string, lspAvailable LSPAvailabili
 	name := resolution.CanonicalID
 	var extensions []string
 	lspServerID := ""
+	lspDeclared := false
 	if info != nil {
 		id = info.ID
 		name = info.Name
 		extensions = append([]string(nil), info.Extensions...)
 		lspServerID = info.LSPServerID
+		lspDeclared = info.LSPServerID != ""
 	}
+	autoImportLevel := importcaps.AutoImportLevelFor(resolution.CanonicalID, lspDeclared)
+	importContext := importcaps.SupportsImportContext(resolution.CanonicalID)
+	dependencyImports := importcaps.SupportsDependencyImports(resolution.CanonicalID)
 
 	sources := CapabilitySources{
-		Syntax:      info != nil && info.CodeMirrorID != "",
-		LSPDeclared: info != nil && info.LSPServerID != "",
-		Index:       supportsIndex(resolution.IndexID),
-		Local:       supportsLocal(resolution.LocalID()),
-		Predictive:  supportsPredictive(resolution.PredictiveID),
-		Imports:     supportsImports(resolution.CanonicalID),
-		Stubs:       supportsStubs(resolution.StubID()),
-		Keywords:    supportsKeywords(resolution.KeywordID),
-		FillAll:     supportsFill(resolution.FillID),
+		Syntax:                  info != nil && info.CodeMirrorID != "",
+		LSPDeclared:             lspDeclared,
+		Index:                   supportsIndex(resolution.IndexID),
+		Local:                   supportsLocal(resolution.LocalID()),
+		Predictive:              supportsPredictive(resolution.PredictiveID),
+		Imports:                 importContext || dependencyImports,
+		ImportContext:           importContext,
+		DependencyImports:       dependencyImports,
+		NativeAutoImport:        autoImportLevel == importcaps.AutoImportNative || autoImportLevel == importcaps.AutoImportPartialNative,
+		LSPAutoImportEdits:      importcaps.SupportsLSPAutoImportEdits(resolution.CanonicalID, lspDeclared),
+		ImportEditNormalization: importcaps.SupportsImportEditNormalization(resolution.CanonicalID),
+		Stubs:                   supportsStubs(resolution.StubID()),
+		Keywords:                supportsKeywords(resolution.KeywordID),
+		FillAll:                 supportsFill(resolution.FillID),
 	}
 	if sources.LSPDeclared && lspAvailable != nil {
 		sources.LSPAvailable = lspAvailable(resolution.LSPID)
 	}
 
 	capability := LanguageCapability{
-		ID:          id,
-		Name:        name,
-		Extensions:  extensions,
-		CanonicalID: resolution.CanonicalID,
-		Tier:        capabilityTier(sources),
-		Sources:     sources,
-		LSPServerID: lspServerID,
-		Notes:       capabilityNotes(resolution, sources),
+		ID:              id,
+		Name:            name,
+		Extensions:      extensions,
+		CanonicalID:     resolution.CanonicalID,
+		Tier:            capabilityTier(sources),
+		AutoImportLevel: autoImportLevel,
+		Sources:         sources,
+		LSPServerID:     lspServerID,
+		Notes:           capabilityNotes(resolution, sources),
 	}
 	return capability
 }
@@ -326,16 +344,7 @@ func supportsPredictive(language string) bool {
 }
 
 func supportsImports(canonical string) bool {
-	switch canonical {
-	case "go", "javascript", "typescript", "javascriptreact", "typescriptreact", "vue", "svelte", "astro", "css", "scss", "sass", "less",
-		"python", "php", "rust", "ruby", "java", "kotlin", "groovy", "scala", "dart", "swift", "csharp", "fsharp", "terraform",
-		"html", "blade", "xml", "markdown", "json", "yaml", "toml", "ini", "nginx", "cmake", "makefile", "dockerfile", "latex",
-		"c", "cpp", "objectivec", "lua", "perl", "elixir", "erlang", "haskell", "julia", "clojure", "ocaml", "zig", "solidity",
-		"gdscript", "protobuf", "bash", "powershell", "r", "matlab", "ada", "fortran", "cobol", "delphi", "lisp", "prolog":
-		return true
-	default:
-		return false
-	}
+	return importcaps.SupportsImportContext(canonical) || importcaps.SupportsDependencyImports(canonical)
 }
 
 func supportsStubs(language string) bool {

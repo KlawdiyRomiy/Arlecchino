@@ -865,13 +865,32 @@ func (m *Manager) CompleteWithContext(ctx context.Context, language, filePath st
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return nil, nil
 	}
-	items = m.resolveCompletionItems(ctx, server, items)
 	result := completionResult{items: items, err: err, createdAt: time.Now()}
 	m.setCompletionCache(cacheKey, result)
 	if err != nil {
 		log.Printf("[LSP-MGR] Complete error for lang=%s: %v", language, err)
 	}
 	return items, err
+}
+
+func (m *Manager) ResolveCompletionItemWithContext(ctx context.Context, language string, item CompletionItem) (CompletionItem, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
+		m.logNoConfig(language)
+		return item, nil
+	}
+	server, err := m.ensureStartedWithContext(ctx, resolvedLanguage)
+	if err != nil {
+		return item, err
+	}
+	resolved, err := server.resolveCompletionItemWithContext(ctx, item)
+	if err != nil {
+		return item, err
+	}
+	return normalizeCompletionItem(mergeCompletionItem(item, resolved)), nil
 }
 
 func (m *Manager) resolveCompletionItems(ctx context.Context, server *Server, items []CompletionItem) []CompletionItem {

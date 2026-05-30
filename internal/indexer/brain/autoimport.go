@@ -47,6 +47,26 @@ var (
 		"clog":          "iostream",
 		"endl":          "iostream",
 	}
+	importDescriptorIdentifierRe      = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
+	importDescriptorESPathRe          = regexp.MustCompile(`^[@A-Za-z0-9_./:-]+$`)
+	importDescriptorDottedPathRe      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$`)
+	importDescriptorDartPathRe        = regexp.MustCompile(`^(?:dart:[A-Za-z0-9_./-]+|package:[A-Za-z0-9_./-]+)$`)
+	importDescriptorSwiftModuleRe     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	importDescriptorESNamedStmtRe     = regexp.MustCompile(`^import\s+(?:type\s+)?\{\s*[A-Za-z_$][A-Za-z0-9_$]*(?:\s*,\s*[A-Za-z_$][A-Za-z0-9_$]*)*\s*\}\s+from\s+['"][^'"\r\n]+['"];?$`)
+	importDescriptorESDefaultStmtRe   = regexp.MustCompile(`^import\s+[A-Za-z_$][A-Za-z0-9_$]*\s+from\s+['"][^'"\r\n]+['"];?$`)
+	importDescriptorESNamespaceStmtRe = regexp.MustCompile(`^import\s+\*\s+as\s+[A-Za-z_$][A-Za-z0-9_$]*\s+from\s+['"][^'"\r\n]+['"];?$`)
+	importDescriptorESSideEffectRe    = regexp.MustCompile(`^import\s+['"][^'"\r\n]+['"];?$`)
+	importDescriptorJavaStmtRe        = regexp.MustCompile(`^import\s+[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*;$`)
+	importDescriptorScalaStmtRe       = regexp.MustCompile(`^import\s+[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\.\{[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*\})?$`)
+	importDescriptorDartStmtRe        = regexp.MustCompile(`^import\s+['"](?:dart:[A-Za-z0-9_./-]+|package:[A-Za-z0-9_./-]+)['"](?:\s+as\s+[A-Za-z_][A-Za-z0-9_]*)?;?$`)
+	importDescriptorCSharpStmtRe      = regexp.MustCompile(`^using\s+[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*;$`)
+	importDescriptorSwiftStmtRe       = regexp.MustCompile(`^import\s+[A-Za-z_][A-Za-z0-9_]*$`)
+	importDescriptorGoStmtRe          = regexp.MustCompile(`^import\s+"[^"\r\n]+"$`)
+	importDescriptorPHPStmtRe         = regexp.MustCompile(`^use\s+[A-Za-z_\\][A-Za-z0-9_\\]*(?:\s+as\s+[A-Za-z_][A-Za-z0-9_]*)?;$`)
+	importDescriptorPythonStmtRe      = regexp.MustCompile(`^(?:import\s+[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*|from\s+[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\s+import\s+[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*)$`)
+	importDescriptorRustStmtRe        = regexp.MustCompile(`^use\s+[A-Za-z_][A-Za-z0-9_:]*(?:\:\:\{[A-Za-z0-9_,\s]+\})?;$`)
+	importDescriptorRubyStmtRe        = regexp.MustCompile(`^require(?:_relative)?\s+['"][A-Za-z0-9_./-]+['"]$`)
+	importDescriptorCIncludeStmtRe    = regexp.MustCompile(`^#include\s+[<"][A-Za-z0-9_./-]+[>"]$`)
 )
 
 func NewAutoImporter() *AutoImporter {
@@ -63,26 +83,45 @@ func NewAutoImporter() *AutoImporter {
 }
 
 func (ai *AutoImporter) GenerateImportEdit(symbol *core.Symbol, ctx CompletionContext) *core.TextEdit {
-	namespace := symbol.Namespace
+	return ai.GenerateImportEditWithDescriptor(symbol, ctx, nil)
+}
 
-	if namespace == "" {
+func (ai *AutoImporter) GenerateImportEditWithDescriptor(symbol *core.Symbol, ctx CompletionContext, descriptor *ImportDescriptor) *core.TextEdit {
+	if symbol == nil {
+		return nil
+	}
+	namespace := symbol.Namespace
+	importStmt := ""
+	descriptorBacked := descriptor != nil && !descriptor.Empty()
+
+	if descriptorBacked {
+		namespace = strings.TrimSpace(descriptor.Path)
+		importStmt = ai.importStatementFromDescriptor(symbol, descriptor, ctx.Language)
+		if importStmt == "" {
+			return nil
+		}
+	} else if namespace == "" {
 		namespace = ai.extractNamespaceFromName(symbol.Name, ctx.Language)
 	}
 
-	namespace = ai.normalizeImportNamespace(symbol, namespace, ctx)
-	if namespace == "" {
+	if importStmt == "" {
+		namespace = ai.normalizeImportNamespace(symbol, namespace, ctx)
+	}
+	if namespace == "" && importStmt == "" {
 		return nil
 	}
 
-	importStmt := ai.generateImportStatement(symbol, namespace, ctx.Language, ctx)
 	if importStmt == "" {
+		importStmt = ai.generateImportStatement(symbol, namespace, ctx.Language, ctx)
+	}
+	if strings.TrimSpace(importStmt) == "" {
 		return nil
 	}
 
 	content := importEditContent(ctx)
 
 	currentNS := ai.extractCurrentNamespace(content, ctx.Language)
-	if namespace == currentNS {
+	if namespace != "" && namespace == currentNS {
 		return nil
 	}
 
@@ -113,8 +152,183 @@ func (ai *AutoImporter) GenerateImportEdit(symbol *core.Symbol, ctx CompletionCo
 	}
 }
 
+func (ai *AutoImporter) GenerateImportEditForSuggestion(s Suggestion, ctx CompletionContext) *core.TextEdit {
+	sym := &core.Symbol{
+		Name:      s.Text,
+		Kind:      s.Kind,
+		Language:  ctx.Language,
+		Namespace: s.Namespace,
+	}
+	return ai.GenerateImportEditWithDescriptor(sym, ctx, s.Import)
+}
+
+func (ai *AutoImporter) importStatementFromDescriptor(symbol *core.Symbol, descriptor *ImportDescriptor, language string) string {
+	if descriptor == nil || descriptor.Empty() {
+		return ""
+	}
+	if statement := strings.TrimSpace(descriptor.Statement); statement != "" {
+		if stmt, ok := safeDescriptorImportStatement(language, statement); ok {
+			return stmt
+		}
+		return ""
+	}
+
+	path, ok := safeDescriptorImportPath(language, descriptor.Path)
+	if !ok {
+		return ""
+	}
+	mode := strings.ToLower(strings.TrimSpace(descriptor.Mode))
+	importSymbol := strings.TrimSpace(descriptor.Symbol)
+	if importSymbol == "" && symbol != nil {
+		importSymbol = strings.TrimSpace(symbol.Name)
+	}
+
+	switch normalizeImportLanguage(language) {
+	case "javascript", "typescript", "javascriptreact", "typescriptreact", "vue", "svelte", "astro", "solidity":
+		if mode != "side-effect" {
+			var symbolOK bool
+			importSymbol, symbolOK = safeDescriptorImportSymbol(importSymbol)
+			if !symbolOK {
+				return ""
+			}
+		}
+		switch mode {
+		case "default":
+			return safeGeneratedDescriptorStatement(language, "import "+importSymbol+" from '"+path+"';")
+		case "namespace":
+			return safeGeneratedDescriptorStatement(language, "import * as "+importSymbol+" from '"+path+"';")
+		case "side-effect":
+			return safeGeneratedDescriptorStatement(language, "import '"+path+"';")
+		default:
+			return safeGeneratedDescriptorStatement(language, "import { "+importSymbol+" } from '"+path+"';")
+		}
+	case "java", "kotlin", "groovy":
+		return safeGeneratedDescriptorStatement(language, "import "+path+";")
+	case "scala":
+		return safeGeneratedDescriptorStatement(language, "import "+path)
+	case "dart":
+		return safeGeneratedDescriptorStatement(language, "import '"+path+"';")
+	case "csharp":
+		return safeGeneratedDescriptorStatement(language, "using "+path+";")
+	case "swift":
+		return safeGeneratedDescriptorStatement(language, "import "+path)
+	}
+
+	return ""
+}
+
+func safeGeneratedDescriptorStatement(language, statement string) string {
+	if stmt, ok := safeDescriptorImportStatement(language, statement); ok {
+		return stmt
+	}
+	return ""
+}
+
+func safeDescriptorImportStatement(language, statement string) (string, bool) {
+	stmt, ok := cleanImportStatement(statement)
+	if !ok || !safeDescriptorScalar(stmt) {
+		return "", false
+	}
+
+	switch normalizeImportLanguage(language) {
+	case "javascript", "typescript", "javascriptreact", "typescriptreact", "vue", "svelte", "astro", "solidity":
+		if importDescriptorESNamedStmtRe.MatchString(stmt) ||
+			importDescriptorESDefaultStmtRe.MatchString(stmt) ||
+			importDescriptorESNamespaceStmtRe.MatchString(stmt) ||
+			importDescriptorESSideEffectRe.MatchString(stmt) {
+			return stmt, true
+		}
+	case "java", "kotlin", "groovy":
+		if importDescriptorJavaStmtRe.MatchString(stmt) {
+			return stmt, true
+		}
+	case "scala":
+		if importDescriptorScalaStmtRe.MatchString(stmt) {
+			return stmt, true
+		}
+	case "dart":
+		if importDescriptorDartStmtRe.MatchString(stmt) {
+			return stmt, true
+		}
+	case "csharp":
+		if importDescriptorCSharpStmtRe.MatchString(stmt) {
+			return stmt, true
+		}
+	case "swift":
+		if importDescriptorSwiftStmtRe.MatchString(stmt) {
+			return stmt, true
+		}
+	case "go":
+		if importDescriptorGoStmtRe.MatchString(stmt) {
+			return stmt, true
+		}
+	case "php", "php-laravel":
+		if importDescriptorPHPStmtRe.MatchString(stmt) {
+			return stmt, true
+		}
+	case "python":
+		if importDescriptorPythonStmtRe.MatchString(stmt) {
+			return stmt, true
+		}
+	case "rust":
+		if importDescriptorRustStmtRe.MatchString(stmt) {
+			return stmt, true
+		}
+	case "ruby":
+		if importDescriptorRubyStmtRe.MatchString(stmt) {
+			return stmt, true
+		}
+	case "c", "cpp":
+		if importDescriptorCIncludeStmtRe.MatchString(stmt) {
+			return stmt, true
+		}
+	}
+
+	return "", false
+}
+
+func safeDescriptorImportPath(language, path string) (string, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" || !safeDescriptorScalar(path) {
+		return "", false
+	}
+
+	switch normalizeImportLanguage(language) {
+	case "javascript", "typescript", "javascriptreact", "typescriptreact", "vue", "svelte", "astro", "solidity":
+		return path, importDescriptorESPathRe.MatchString(path)
+	case "java", "kotlin", "groovy", "scala", "csharp":
+		return path, importDescriptorDottedPathRe.MatchString(path)
+	case "dart":
+		return path, importDescriptorDartPathRe.MatchString(path)
+	case "swift":
+		return path, importDescriptorSwiftModuleRe.MatchString(path)
+	default:
+		return "", false
+	}
+}
+
+func safeDescriptorImportSymbol(symbol string) (string, bool) {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" || !safeDescriptorScalar(symbol) {
+		return "", false
+	}
+	return symbol, importDescriptorIdentifierRe.MatchString(symbol)
+}
+
+func safeDescriptorScalar(value string) bool {
+	if strings.ContainsAny(value, "\r\n\x00") {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 func (ai *AutoImporter) extractNamespaceFromName(name, language string) string {
-	switch language {
+	switch normalizeImportLanguage(language) {
 	case "go":
 		if idx := strings.Index(name, "."); idx > 0 {
 			return name[:idx]
@@ -131,7 +345,7 @@ func (ai *AutoImporter) extractNamespaceFromName(name, language string) string {
 		if idx := strings.LastIndex(name, "::"); idx > 0 {
 			return name[:idx]
 		}
-	case "typescript", "javascript", "typescriptreact", "javascriptreact":
+	case "typescript", "javascript", "typescriptreact", "javascriptreact", "vue", "svelte", "astro", "solidity":
 		if idx := strings.Index(name, "."); idx > 0 {
 			return name[:idx]
 		}
@@ -140,17 +354,18 @@ func (ai *AutoImporter) extractNamespaceFromName(name, language string) string {
 }
 
 func (ai *AutoImporter) normalizeImportNamespace(symbol *core.Symbol, namespace string, ctx CompletionContext) string {
-	if ctx.Language != "c" && ctx.Language != "cpp" {
+	language := normalizeImportLanguage(ctx.Language)
+	if language != "c" && language != "cpp" {
 		return namespace
 	}
 
-	return ai.headerForSymbol(symbol, namespace, ctx.Language)
+	return ai.headerForSymbol(symbol, namespace, language)
 }
 
 func (ai *AutoImporter) extractCurrentNamespace(content []byte, language string) string {
 	lines := strings.Split(string(content), "\n")
 
-	switch language {
+	switch normalizeImportLanguage(language) {
 	case "php", "php-laravel":
 		for _, line := range lines {
 			if strings.HasPrefix(strings.TrimSpace(line), "namespace ") {
@@ -181,7 +396,7 @@ func (ai *AutoImporter) hasImport(content []byte, language, namespace, name, imp
 		}
 	}
 
-	switch language {
+	switch normalizeImportLanguage(language) {
 	case "php", "php-laravel":
 		fullImport := qualifyImportPath(namespace, name, "\\")
 		for _, line := range lines {
@@ -197,7 +412,7 @@ func (ai *AutoImporter) hasImport(content []byte, language, namespace, name, imp
 				return true
 			}
 		}
-	case "typescript", "javascript", "typescriptreact", "javascriptreact":
+	case "typescript", "javascript", "typescriptreact", "javascriptreact", "vue", "svelte", "astro", "solidity":
 		for _, line := range lines {
 			if strings.Contains(line, "from '"+namespace+"'") ||
 				strings.Contains(line, `from "`+namespace+`"`) {
@@ -255,7 +470,7 @@ func isCommentOnlyLine(trimmed, language string) bool {
 	if trimmed == "" {
 		return false
 	}
-	switch language {
+	switch normalizeImportLanguage(language) {
 	case "python", "ruby", "bash", "shell":
 		return strings.HasPrefix(trimmed, "#")
 	case "html", "xml":
@@ -273,7 +488,7 @@ func (ai *AutoImporter) findImportInsertLine(content []byte, language string) in
 	lastImportLine := 0
 	inImportBlock := false
 
-	switch language {
+	switch normalizeImportLanguage(language) {
 	case "php", "php-laravel":
 		for i, line := range lines {
 			trimmed := strings.TrimSpace(line)
@@ -316,7 +531,7 @@ func (ai *AutoImporter) findImportInsertLine(content []byte, language string) in
 			}
 		}
 
-	case "typescript", "javascript", "typescriptreact", "javascriptreact":
+	case "typescript", "javascript", "typescriptreact", "javascriptreact", "vue", "svelte", "astro", "solidity":
 		for i, line := range lines {
 			if ai.tsImportRegex.MatchString(line) {
 				lastImportLine = i + 2
@@ -370,6 +585,31 @@ func (ai *AutoImporter) findImportInsertLine(content []byte, language string) in
 		if lastImportLine == 0 {
 			lastImportLine = 1
 		}
+
+	case "java", "kotlin", "groovy", "scala":
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "package ") && lastImportLine == 0 {
+				lastImportLine = i + 2
+			}
+			if strings.HasPrefix(trimmed, "import ") {
+				lastImportLine = i + 2
+			}
+		}
+
+	case "csharp":
+		for i, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "using ") {
+				lastImportLine = i + 2
+			}
+		}
+
+	case "swift", "dart":
+		for i, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "import ") {
+				lastImportLine = i + 2
+			}
+		}
 	}
 
 	if lastImportLine == 0 {
@@ -380,7 +620,7 @@ func (ai *AutoImporter) findImportInsertLine(content []byte, language string) in
 
 func (ai *AutoImporter) generateImportStatement(symbol *core.Symbol, namespace, language string, ctx CompletionContext) string {
 	name := symbol.Name
-	switch language {
+	switch normalizeImportLanguage(language) {
 	case "php", "php-laravel":
 		if ai.shouldUseOwnerImport(ctx, namespace) {
 			return "use " + namespace + ";"
@@ -388,7 +628,7 @@ func (ai *AutoImporter) generateImportStatement(symbol *core.Symbol, namespace, 
 		return "use " + qualifyImportPath(namespace, name, "\\") + ";"
 	case "go":
 		return `import "` + namespace + `"`
-	case "typescript", "javascript", "typescriptreact", "javascriptreact":
+	case "typescript", "javascript", "typescriptreact", "javascriptreact", "vue", "svelte", "astro", "solidity":
 		if isJSImportModuleSuggestion(symbol, namespace) {
 			return "import " + name + " from '" + namespace + "';"
 		}
@@ -422,6 +662,22 @@ func (ai *AutoImporter) ShouldAutoImport(symbol *core.Symbol, ctx CompletionCont
 		return false
 	}
 
+	if ai.ShouldAutoImportWithDescriptor(symbol, ctx, nil) {
+		return true
+	}
+
+	return false
+}
+
+func (ai *AutoImporter) ShouldAutoImportWithDescriptor(symbol *core.Symbol, ctx CompletionContext, descriptor *ImportDescriptor) bool {
+	if ctx.InImport || symbol == nil {
+		return false
+	}
+
+	if descriptor != nil && !descriptor.Empty() {
+		return ai.importStatementFromDescriptor(symbol, descriptor, ctx.Language) != ""
+	}
+
 	if symbol.Namespace != "" {
 		return true
 	}
@@ -434,6 +690,11 @@ func (ai *AutoImporter) ShouldAutoImport(symbol *core.Symbol, ctx CompletionCont
 		return true
 	}
 
+	language := normalizeImportLanguage(ctx.Language)
+	if (language == "c" || language == "cpp") && ai.headerForSymbol(symbol, "", language) != "" {
+		return true
+	}
+
 	return false
 }
 
@@ -442,6 +703,16 @@ func qualifyImportPath(namespace, name, sep string) string {
 		return namespace
 	}
 	return namespace + sep + name
+}
+
+func normalizeImportLanguage(language string) string {
+	language = strings.ToLower(strings.TrimSpace(language))
+	switch language {
+	case "php-laravel":
+		return "php"
+	default:
+		return language
+	}
 }
 
 func isJSImportModuleSuggestion(symbol *core.Symbol, namespace string) bool {

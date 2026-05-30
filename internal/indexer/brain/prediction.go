@@ -347,6 +347,8 @@ type PredictionBrain struct {
 	ghostFilter       *GhostTextFilter
 	userBehavior      *UserBehavior
 	providerManager   *ProviderManager
+	resolveMu         sync.Mutex
+	resolveEntries    map[string]completionResolveEntry
 	lastTrace         atomic.Value
 }
 
@@ -378,7 +380,9 @@ type Suggestion struct {
 	IsSnippet           bool
 	Snippet             string
 	Extra               map[string]string
+	Import              *ImportDescriptor
 	AdditionalTextEdits []core.TextEdit
+	ResolveToken        string
 	MatchResult         *predictive.MatchResult
 }
 
@@ -570,7 +574,7 @@ func shouldOfferFillAll(ctx CompletionContext) bool {
 }
 
 func suggestionAddsUsefulCompletion(s Suggestion, prefix string) bool {
-	if len(s.AdditionalTextEdits) > 0 {
+	if len(s.AdditionalTextEdits) > 0 || s.ResolveToken != "" {
 		return true
 	}
 
@@ -698,6 +702,7 @@ func NewPredictionBrain(engine *core.Engine, config BrainConfig) *PredictionBrai
 		ghostFilter:       ghostFilter,
 		userBehavior:      userBehavior,
 		providerManager:   providerManager,
+		resolveEntries:    make(map[string]completionResolveEntry),
 	}
 }
 
@@ -1307,7 +1312,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	mergeStatuses(trace.SourceStatuses, externalGroup.statuses)
 	mergeCounts(counts, externalGroup.counts)
 	if ctx.InImport {
-		externalGroup.suggestions = stripAdditionalTextEdits(externalGroup.suggestions)
+		externalGroup.suggestions = stripSideEffectEdits(externalGroup.suggestions)
 	}
 	suggestions = append(suggestions, externalGroup.suggestions...)
 	trace.SourceCounts = cloneCounts(counts)
@@ -1344,7 +1349,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 		}
 	}
 
-	if b.completionCache != nil && len(suggestions) > 0 {
+	if b.completionCache != nil && len(suggestions) > 0 && !hasResolveTokens(suggestions) {
 		b.completionCache.Set(ctx, suggestions)
 	}
 	if importCompletions != nil && importCompletions.catalog != nil {
@@ -1412,7 +1417,7 @@ func withSourceLanguage(ctx CompletionContext, language string) CompletionContex
 	return ctx
 }
 
-func stripAdditionalTextEdits(suggestions []Suggestion) []Suggestion {
+func stripSideEffectEdits(suggestions []Suggestion) []Suggestion {
 	if len(suggestions) == 0 {
 		return suggestions
 	}
@@ -1420,8 +1425,18 @@ func stripAdditionalTextEdits(suggestions []Suggestion) []Suggestion {
 		if len(suggestions[i].AdditionalTextEdits) > 0 {
 			suggestions[i].AdditionalTextEdits = nil
 		}
+		suggestions[i].ResolveToken = ""
 	}
 	return suggestions
+}
+
+func hasResolveTokens(suggestions []Suggestion) bool {
+	for _, suggestion := range suggestions {
+		if strings.TrimSpace(suggestion.ResolveToken) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *PredictionBrain) LastCompletionTrace() CompletionTrace {
@@ -1852,6 +1867,43 @@ func lspTextEditsToCore(edits []lsp.TextEdit) []core.TextEdit {
 	return result
 }
 
+func (b *PredictionBrain) normalizeLSPAdditionalTextEdits(ctx CompletionContext, edits []core.TextEdit) []core.TextEdit {
+	if len(edits) == 0 {
+		return nil
+	}
+
+	normalized := make([]core.TextEdit, 0, len(edits))
+	for _, edit := range edits {
+		stmt, ok := cleanImportStatement(edit.Text)
+		if !ok || !looksLikeImportStatement(ctx.Language, stmt) {
+			continue
+		}
+		importEdit := core.TextEdit{
+			StartLine:   edit.StartLine,
+			StartColumn: edit.StartColumn,
+			EndLine:     edit.EndLine,
+			EndColumn:   edit.EndColumn,
+			Text:        stmt,
+		}
+		if b != nil && b.autoImporter != nil && b.autoImporter.planner != nil {
+			if planned, changed := b.autoImporter.planner.PlanImportEdit(ctx, stmt, edit.StartLine); changed && planned != nil {
+				normalized = append(normalized, *planned)
+				continue
+			}
+			if fallback := b.autoImporter.planner.FallbackInsertEdit(stmt, edit.StartLine); fallback != nil {
+				normalized = append(normalized, *fallback)
+				continue
+			}
+		}
+		importEdit.Text = stmt + "\n"
+		normalized = append(normalized, importEdit)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
 // abs returns absolute value of int
 func abs(x int) int {
 	if x < 0 {
@@ -2051,8 +2103,8 @@ func (b *PredictionBrain) fromIndex(ctx CompletionContext) []Suggestion {
 			Extra:         sym.Extra,
 		}
 
-		if b.autoImporter != nil && b.autoImporter.ShouldAutoImport(&sym, ctx) {
-			if edit := b.autoImporter.GenerateImportEdit(&sym, ctx); edit != nil {
+		if b.autoImporter != nil && b.autoImporter.ShouldAutoImportWithDescriptor(&sym, ctx, suggestion.Import) {
+			if edit := b.autoImporter.GenerateImportEditForSuggestion(suggestion, ctx); edit != nil {
 				suggestion.AdditionalTextEdits = []core.TextEdit{*edit}
 			}
 		}
@@ -2232,16 +2284,23 @@ func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion
 		if insertText == "" {
 			insertText = item.Label
 		}
-		insertText = sanitizeInsertText(insertText)
-		if insertText == "" {
-			insertText = item.Label
+		isSnippet := item.InsertTextFormat == 2 || hasSnippetPlaceholder(insertText)
+		if !isSnippet {
+			insertText = sanitizeInsertText(insertText)
+			if insertText == "" {
+				insertText = item.Label
+			}
 		}
 
 		documentation := formatLSPDocumentation(item.Documentation)
 
 		additionalEdits := lspTextEditsToCore(item.AdditionalTextEdits)
-		if b.autoImporter != nil && b.autoImporter.planner != nil {
-			additionalEdits = b.autoImporter.planner.NormalizeTextEdits(ctx, additionalEdits)
+		additionalEdits = b.normalizeLSPAdditionalTextEdits(ctx, additionalEdits)
+		resolveToken := ""
+		if !ctx.InImport && len(additionalEdits) == 0 && item.Data != nil {
+			resolveCtx := ctx
+			resolveCtx.Language = lspLanguage
+			resolveToken = b.rememberLSPCompletionResolve(resolveCtx, item)
 		}
 		suggestions = append(suggestions, Suggestion{
 			Text:                item.Label,
@@ -2252,8 +2311,9 @@ func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion
 			Detail:              item.Detail,
 			Documentation:       documentation,
 			InsertText:          insertText,
-			IsSnippet:           false,
+			IsSnippet:           isSnippet,
 			AdditionalTextEdits: additionalEdits,
+			ResolveToken:        resolveToken,
 		})
 	}
 
@@ -2371,10 +2431,10 @@ func (b *PredictionBrain) enrichAutoImports(ctx CompletionContext, suggestions [
 			Language:  ctx.Language,
 			Namespace: enriched[i].Namespace,
 		}
-		if !b.autoImporter.ShouldAutoImport(&sym, ctx) {
+		if !b.autoImporter.ShouldAutoImportWithDescriptor(&sym, ctx, enriched[i].Import) {
 			continue
 		}
-		if edit := b.autoImporter.GenerateImportEdit(&sym, ctx); edit != nil {
+		if edit := b.autoImporter.GenerateImportEditForSuggestion(enriched[i], ctx); edit != nil {
 			enriched[i].AdditionalTextEdits = []core.TextEdit{*edit}
 		}
 	}
@@ -2851,6 +2911,12 @@ func mergeSuggestionMetadata(preferred Suggestion, other Suggestion) Suggestion 
 	}
 
 	preferred.AdditionalTextEdits = mergeTextEdits(preferred.AdditionalTextEdits, other.AdditionalTextEdits)
+	if preferred.ResolveToken == "" && other.ResolveToken != "" && len(preferred.AdditionalTextEdits) == 0 {
+		preferred.ResolveToken = other.ResolveToken
+	}
+	if preferred.Import == nil && other.Import != nil {
+		preferred.Import = cloneImportDescriptor(other.Import)
+	}
 
 	if preferred.Extra == nil && other.Extra != nil {
 		preferred.Extra = make(map[string]string, len(other.Extra))
@@ -3652,7 +3718,7 @@ func filterSafeGhostSuggestions(suggestions []Suggestion) []Suggestion {
 
 func isSafeGhostSuggestion(s Suggestion) bool {
 	// Ghost (особенно word-by-word accept) не умеет применять side-effect edits.
-	if len(s.AdditionalTextEdits) > 0 {
+	if len(s.AdditionalTextEdits) > 0 || s.ResolveToken != "" {
 		return false
 	}
 	if s.IsSnippet {

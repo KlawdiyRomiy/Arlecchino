@@ -555,9 +555,10 @@ func TestCompletionSourceLanguageResolution(t *testing.T) {
 			ctx:  CompletionContext{Language: "unknown", FilePath: "/tmp/file.unknown"},
 		},
 		{
-			name: "blade keeps blade lsp id",
-			ctx:  CompletionContext{Language: "blade", FilePath: "/tmp/welcome.blade.php"},
-			lsp:  "blade",
+			name:  "blade keeps blade lsp id",
+			ctx:   CompletionContext{Language: "blade", FilePath: "/tmp/welcome.blade.php"},
+			index: "blade",
+			lsp:   "blade",
 		},
 	}
 

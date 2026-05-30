@@ -121,15 +121,15 @@ func builtInPackageStubs() []builtInStubSpec {
 			"println": {Signature: "println(String value)", Kind: "method"},
 			"printf":  {Signature: "printf(String format, Object... args)", Kind: "method"},
 		}}},
-		{language: "java", packageName: "com.fasterxml.jackson.databind.ObjectMapper", stub: PackageStub{Aliases: []string{"ObjectMapper"}, Exports: map[string]StubExport{
+		{language: "java", packageName: "com.fasterxml.jackson.databind.ObjectMapper", stub: PackageStub{Aliases: []string{"ObjectMapper"}, Import: &ImportDescriptor{Statement: "import com.fasterxml.jackson.databind.ObjectMapper;"}, Exports: map[string]StubExport{
 			"readValue":          {Signature: "readValue(String content, Class<T> valueType)", Kind: "method"},
 			"writeValueAsString": {Signature: "writeValueAsString(Object value)", Kind: "method"},
 		}}},
-		{language: "csharp", packageName: "Newtonsoft.Json.JsonConvert", stub: PackageStub{Aliases: []string{"JsonConvert"}, Exports: map[string]StubExport{
+		{language: "csharp", packageName: "Newtonsoft.Json.JsonConvert", stub: PackageStub{Aliases: []string{"JsonConvert"}, Import: &ImportDescriptor{Statement: "using Newtonsoft.Json;"}, Exports: map[string]StubExport{
 			"SerializeObject":   {Signature: "SerializeObject(object value)", Kind: "method"},
 			"DeserializeObject": {Signature: "DeserializeObject<T>(string value)", Kind: "method"},
 		}}},
-		{language: "swift", packageName: "Alamofire", stub: PackageStub{Aliases: []string{"AF"}, Exports: map[string]StubExport{
+		{language: "swift", packageName: "Alamofire", stub: PackageStub{Aliases: []string{"AF"}, Import: &ImportDescriptor{Statement: "import Alamofire"}, Exports: map[string]StubExport{
 			"request":  {Signature: "request(_ convertible: URLConvertible)", Kind: "method"},
 			"upload":   {Signature: "upload(_ data: Data, to: URLConvertible)", Kind: "method"},
 			"download": {Signature: "download(_ convertible: URLConvertible)", Kind: "method"},
@@ -145,18 +145,18 @@ func builtInPackageStubs() []builtInStubSpec {
 			"put":    {Signature: "put(url: String)", Kind: "method"},
 			"delete": {Signature: "delete(url: String)", Kind: "method"},
 		}}},
-		{language: "scala", packageName: "akka.actor.ActorSystem", stub: PackageStub{Aliases: []string{"ActorSystem"}, Exports: map[string]StubExport{
+		{language: "scala", packageName: "akka.actor.ActorSystem", stub: PackageStub{Aliases: []string{"ActorSystem"}, Import: &ImportDescriptor{Statement: "import akka.actor.ActorSystem"}, Exports: map[string]StubExport{
 			"apply":     {Signature: "apply(name: String): ActorSystem", Kind: "method"},
 			"create":    {Signature: "create(name: String): ActorSystem", Kind: "method"},
 			"terminate": {Signature: "terminate(): Future[Terminated]", Kind: "method"},
 		}}},
-		{language: "dart", packageName: "dio", stub: PackageStub{Aliases: []string{"Dio"}, Exports: map[string]StubExport{
+		{language: "dart", packageName: "dio", stub: PackageStub{Aliases: []string{"Dio"}, Import: &ImportDescriptor{Statement: "import 'package:dio/dio.dart';"}, Exports: map[string]StubExport{
 			"get":    {Signature: "get(String path)", Kind: "method"},
 			"post":   {Signature: "post(String path)", Kind: "method"},
 			"put":    {Signature: "put(String path)", Kind: "method"},
 			"delete": {Signature: "delete(String path)", Kind: "method"},
 		}}},
-		{language: "dart", packageName: "http", stub: PackageStub{Aliases: []string{"http"}, Exports: map[string]StubExport{
+		{language: "dart", packageName: "http", stub: PackageStub{Aliases: []string{"http"}, Import: &ImportDescriptor{Statement: "import 'package:http/http.dart' as http;"}, Exports: map[string]StubExport{
 			"get":    {Signature: "Future<Response> get(Uri url)", Kind: "function"},
 			"post":   {Signature: "Future<Response> post(Uri url)", Kind: "function"},
 			"Client": {Signature: "class Client", Kind: "class"},

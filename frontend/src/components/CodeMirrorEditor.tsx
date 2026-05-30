@@ -80,11 +80,13 @@ import {
   type ContextActionMenuItem,
 } from "./ui/ContextActionMenu";
 import type {
+  EditorCompletionResolveResult,
   EditorCompletionResult,
   TextEditJSON,
 } from "../../bindings/arlecchino/internal/app/models";
 import {
   GetEditorCompletions,
+  ResolveEditorCompletion,
   AIGetEditorContinuation,
   AIGetPredictionStatus,
   LSPHover,
@@ -286,6 +288,7 @@ type CompletionPayload = {
   insertText?: string;
   isSnippet?: boolean;
   additionalTextEdits?: TextEditJSON[];
+  resolveToken?: string;
 };
 type CompletionTextEditChange = {
   from: number;
@@ -294,6 +297,7 @@ type CompletionTextEditChange = {
 };
 const SIGNATURE_HIDE_MS = 2400;
 const COMPLETION_CACHE_TTL_MS = 2000;
+const COMPLETION_RESOLVE_TIMEOUT_MS = 150;
 const MINIMAP_GUTTER_SELECTOR = ":scope > .cm-minimap-gutter";
 const MINIMAP_DOCK_OFFSET_PROPERTY = "--cm-minimap-dock-offset";
 const editorCanvasStyle = {
@@ -829,9 +833,30 @@ function toCodeMirrorSnippetTemplate(snippetText: string): string {
 function textEditToChange(
   state: EditorState,
   edit: TextEditJSON,
-): CompletionTextEditChange {
+): CompletionTextEditChange | null {
+  if (
+    edit.startLine < 1 ||
+    edit.endLine < edit.startLine ||
+    edit.startLine > state.doc.lines ||
+    edit.endLine > state.doc.lines ||
+    edit.startColumn < 1 ||
+    edit.endColumn < 1
+  ) {
+    return null;
+  }
+
   const startLine = state.doc.line(edit.startLine);
   const endLine = state.doc.line(edit.endLine);
+  const startColumnLimit = startLine.length + 1;
+  const endColumnLimit = endLine.length + 1;
+  if (
+    edit.startColumn > startColumnLimit ||
+    edit.endColumn > endColumnLimit ||
+    (edit.startLine === edit.endLine && edit.endColumn < edit.startColumn)
+  ) {
+    return null;
+  }
+
   return {
     from: startLine.from + edit.startColumn - 1,
     to: endLine.from + edit.endColumn - 1,
@@ -839,8 +864,97 @@ function textEditToChange(
   };
 }
 
+function normalizeCompletionLanguage(language: string): string {
+  const value = language.trim().toLowerCase();
+  if (value === "tsx") return "typescriptreact";
+  if (value === "jsx") return "javascriptreact";
+  return value;
+}
+
+function isImportLikeText(language: string, text: string): boolean {
+  const first = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!first) return false;
+
+  switch (normalizeCompletionLanguage(language)) {
+    case "go":
+    case "java":
+    case "kotlin":
+    case "groovy":
+    case "scala":
+    case "dart":
+    case "swift":
+    case "javascript":
+    case "typescript":
+    case "javascriptreact":
+    case "typescriptreact":
+    case "vue":
+    case "svelte":
+    case "astro":
+    case "solidity":
+      return first.startsWith("import ");
+    case "python":
+      return first.startsWith("import ") || first.startsWith("from ");
+    case "php":
+      return first.startsWith("use ");
+    case "rust":
+      return first.startsWith("use ");
+    case "ruby":
+      return (
+        first.startsWith("require ") || first.startsWith("require_relative ")
+      );
+    case "csharp":
+    case "fsharp":
+      return first.startsWith("using ") || first.startsWith("open ");
+    case "c":
+    case "cpp":
+    case "objectivec":
+      return first.startsWith("#include ");
+    default:
+      return false;
+  }
+}
+
+function isPlausibleImportEditLocation(
+  state: EditorState,
+  edit: TextEditJSON,
+): boolean {
+  if (edit.startLine <= Math.min(state.doc.lines, 120)) {
+    return true;
+  }
+  const existingLine = state.doc.line(edit.startLine).text.trim();
+  return (
+    existingLine.startsWith("import ") ||
+    existingLine.startsWith("from ") ||
+    existingLine.startsWith("use ") ||
+    existingLine.startsWith("using ") ||
+    existingLine.startsWith("open ") ||
+    existingLine.startsWith("require ") ||
+    existingLine.startsWith("require_relative ") ||
+    existingLine.startsWith("#include ")
+  );
+}
+
+function filterAdditionalTextEdit(
+  state: EditorState,
+  language: string,
+  edit: TextEditJSON,
+): CompletionTextEditChange | null {
+  if (!isImportLikeText(language, edit.text)) {
+    return null;
+  }
+  const change = textEditToChange(state, edit);
+  if (!change || !isPlausibleImportEditLocation(state, edit)) {
+    return null;
+  }
+  return change;
+}
+
 function applyAdditionalTextEdits(
   view: EditorView,
+  language: string,
   edits?: TextEditJSON[],
 ): { from: (position: number, assoc?: number) => number } | null {
   if (!edits?.length) {
@@ -848,8 +962,12 @@ function applyAdditionalTextEdits(
   }
 
   const changes = edits
-    .map((edit) => textEditToChange(view.state, edit))
+    .map((edit) => filterAdditionalTextEdit(view.state, language, edit))
+    .filter((change): change is CompletionTextEditChange => change !== null)
     .sort((a, b) => a.from - b.from);
+  if (changes.length === 0) {
+    return null;
+  }
   const changeSet = view.state.changes(changes);
   view.dispatch({
     changes: changeSet,
@@ -864,6 +982,7 @@ function applyAdditionalTextEdits(
 function applyBackendCompletion(
   view: EditorView,
   completionToApply: Completion,
+  language: string,
   from: number,
   to: number,
   insertText: string,
@@ -871,7 +990,7 @@ function applyBackendCompletion(
   isSnippet: boolean,
   additionalTextEdits?: TextEditJSON[],
 ) {
-  const mapper = applyAdditionalTextEdits(view, additionalTextEdits);
+  const mapper = applyAdditionalTextEdits(view, language, additionalTextEdits);
   const mappedFrom = mapper ? mapper.from(from, 1) : from;
   const mappedTo = mapper ? mapper.from(to, -1) : to;
 
@@ -900,12 +1019,38 @@ function applyBackendCompletion(
   });
 }
 
+function resolveWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(() => resolve(null), timeoutMs);
+    promise
+      .then((value) => resolve(value))
+      .catch(() => resolve(null))
+      .finally(() => window.clearTimeout(timeout));
+  });
+}
+
+async function resolveEditorCompletionWithBudget(
+  resolveToken: string,
+): Promise<EditorCompletionResolveResult | null> {
+  if (!resolveToken) {
+    return null;
+  }
+  return resolveWithTimeout(
+    ResolveEditorCompletion(resolveToken),
+    COMPLETION_RESOLVE_TIMEOUT_MS,
+  );
+}
+
 function completionAddsUsefulText(
   prefix: string,
   insertText: string,
   additionalTextEdits?: TextEditJSON[],
+  resolveToken?: string,
 ): boolean {
-  if (additionalTextEdits && additionalTextEdits.length > 0) {
+  if ((additionalTextEdits && additionalTextEdits.length > 0) || resolveToken) {
     return true;
   }
   if (!prefix) {
@@ -939,6 +1084,7 @@ function isExactSelfEchoCompletion(
     prefix,
     insertText,
     item.additionalTextEdits,
+    item.resolveToken,
   );
 }
 
@@ -2165,17 +2311,56 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
               from: number,
               to: number,
             ) => {
-              applyBackendCompletion(
-                view,
-                completionToApply,
-                from,
-                to,
-                insertText,
-                resolvedInsertText,
-                isSnippet,
-                item.additionalTextEdits,
-              );
-              metrics.recordCompletionAccepted(completionToApply);
+              const versionAtApply = documentVersionRef.current;
+              const applyResolved = (
+                finalInsertText: string,
+                finalIsSnippet: boolean,
+                finalAdditionalTextEdits?: TextEditJSON[],
+              ) => {
+                const finalPlainText =
+                  snippetToPlainText(finalInsertText) || finalInsertText;
+                applyBackendCompletion(
+                  view,
+                  completionToApply,
+                  language,
+                  from,
+                  to,
+                  finalInsertText,
+                  finalPlainText,
+                  finalIsSnippet,
+                  finalAdditionalTextEdits,
+                );
+                metrics.recordCompletionAccepted(completionToApply);
+              };
+
+              const hasReadyAdditionalTextEdits =
+                (item.additionalTextEdits?.length || 0) > 0;
+              if (item.resolveToken && !hasReadyAdditionalTextEdits) {
+                void (async () => {
+                  const resolved = await resolveEditorCompletionWithBudget(
+                    item.resolveToken || "",
+                  );
+                  if (versionAtApply !== documentVersionRef.current) return;
+                  if (resolved) {
+                    applyResolved(
+                      resolved.insertText || insertText,
+                      resolved.isSnippet === true || isSnippet,
+                      resolved.additionalTextEdits?.length
+                        ? resolved.additionalTextEdits
+                        : item.additionalTextEdits,
+                    );
+                    return;
+                  }
+                  applyResolved(
+                    insertText,
+                    isSnippet,
+                    item.additionalTextEdits,
+                  );
+                })();
+                return;
+              }
+
+              applyResolved(insertText, isSnippet, item.additionalTextEdits);
             };
 
             const hasAdditionalTextEdits =
@@ -2183,7 +2368,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             const backendPriority = item.priority || 0;
             const stableIndexTiebreak = -itemIndex / 100000;
             const richCompletionBoost =
-              isSnippet || hasAdditionalTextEdits ? 1.5 : 0;
+              isSnippet || hasAdditionalTextEdits || item.resolveToken
+                ? 1.5
+                : 0;
 
             const completion: CompletionWithInsertText = {
               label: item.label || "",
@@ -2196,7 +2383,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
                 backendPriority / 1000 +
                 stableIndexTiebreak,
               __insertText: resolvedInsertText,
-              __hasAdditionalTextEdits: hasAdditionalTextEdits,
+              __hasAdditionalTextEdits:
+                hasAdditionalTextEdits || Boolean(item.resolveToken),
             };
             (completion as unknown as Record<string, unknown>).__source =
               sourceLabel;

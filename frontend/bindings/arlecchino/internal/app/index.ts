@@ -31,6 +31,7 @@ export {
     EditorBinarySection,
     EditorCompletion,
     EditorCompletionContext,
+    EditorCompletionResolveResult,
     EditorCompletionResult,
     EditorFileInspection,
     EditorFilePreview,

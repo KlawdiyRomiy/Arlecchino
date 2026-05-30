@@ -29,19 +29,21 @@ type PackageStub struct {
 	Language      string                `json:"language"`
 	Version       string                `json:"version,omitempty"`
 	Aliases       []string              `json:"aliases,omitempty"`
+	Import        *ImportDescriptor     `json:"import,omitempty"`
 	Exports       map[string]StubExport `json:"exports"`
 	Patterns      []StubPattern         `json:"patterns,omitempty"`
 	RuntimeSource core.SymbolSource     `json:"-"`
 }
 
 type StubExport struct {
-	Signature   string   `json:"signature"`
-	Returns     string   `json:"returns,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Popularity  int      `json:"popularity,omitempty"`
-	Scaffold    string   `json:"scaffold,omitempty"`
-	Kind        string   `json:"kind,omitempty"`
-	Parameters  []string `json:"parameters,omitempty"`
+	Signature   string            `json:"signature"`
+	Returns     string            `json:"returns,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Popularity  int               `json:"popularity,omitempty"`
+	Scaffold    string            `json:"scaffold,omitempty"`
+	Kind        string            `json:"kind,omitempty"`
+	Parameters  []string          `json:"parameters,omitempty"`
+	Import      *ImportDescriptor `json:"import,omitempty"`
 }
 
 type StubPattern struct {
@@ -357,6 +359,11 @@ func buildStubSuggestions(stub *PackageStub, prefix string) []Suggestion {
 			}
 		}
 
+		importDescriptor := stub.Import
+		if export.Import != nil {
+			importDescriptor = export.Import
+		}
+
 		suggestions = append(suggestions, Suggestion{
 			Text:          name,
 			DisplayText:   name,
@@ -367,6 +374,7 @@ func buildStubSuggestions(stub *PackageStub, prefix string) []Suggestion {
 			Documentation: export.Description,
 			InsertText:    insertText,
 			Namespace:     stub.Package,
+			Import:        cloneImportDescriptor(importDescriptor),
 		})
 	}
 

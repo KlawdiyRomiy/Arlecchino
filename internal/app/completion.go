@@ -22,6 +22,7 @@ import (
 const (
 	editorCompletionTimeout            = 325 * time.Millisecond
 	editorAccessChainCompletionTimeout = 650 * time.Millisecond
+	editorCompletionResolveTimeout     = 150 * time.Millisecond
 )
 
 // CommandSuggestion represents a terminal command suggestion
@@ -82,6 +83,7 @@ type EditorCompletion struct {
 	HighlightPositions  []int          `json:"highlightPositions,omitempty"`
 	MatchType           string         `json:"matchType,omitempty"`
 	AdditionalTextEdits []TextEditJSON `json:"additionalTextEdits,omitempty"`
+	ResolveToken        string         `json:"resolveToken,omitempty"`
 }
 
 // EditorCompletionResult represents completion response
@@ -93,6 +95,12 @@ type EditorCompletionResult struct {
 	ShowGhost       bool               `json:"showGhost"`
 	RequestID       string             `json:"requestId,omitempty"`
 	Stale           bool               `json:"stale,omitempty"`
+}
+
+type EditorCompletionResolveResult struct {
+	InsertText          string         `json:"insertText,omitempty"`
+	IsSnippet           bool           `json:"isSnippet,omitempty"`
+	AdditionalTextEdits []TextEditJSON `json:"additionalTextEdits,omitempty"`
 }
 
 func (a *App) SuggestCommand(input string) []CommandSuggestion {
@@ -272,6 +280,7 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 			InsertText:    s.InsertText,
 			IsSnippet:     s.IsSnippet,
 			Priority:      int(s.Score * 100),
+			ResolveToken:  s.ResolveToken,
 		}
 		if s.MatchResult != nil {
 			item.HighlightPositions = s.MatchResult.Positions
@@ -312,6 +321,35 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		ShowGhost:       ghostResult.ShouldShow,
 		RequestID:       requestID,
 	}
+}
+
+func (a *App) ResolveEditorCompletion(resolveToken string) (EditorCompletionResolveResult, error) {
+	completionBrain := a.activeCompletionBrain()
+	if completionBrain == nil {
+		return EditorCompletionResolveResult{}, fmt.Errorf("completion brain is not initialized")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), editorCompletionResolveTimeout)
+	defer cancel()
+
+	resolved, err := completionBrain.ResolveCompletionItem(ctx, resolveToken)
+	if err != nil {
+		return EditorCompletionResolveResult{}, err
+	}
+
+	result := EditorCompletionResolveResult{
+		InsertText: resolved.InsertText,
+		IsSnippet:  resolved.IsSnippet,
+	}
+	for _, edit := range resolved.AdditionalTextEdits {
+		result.AdditionalTextEdits = append(result.AdditionalTextEdits, TextEditJSON{
+			StartLine:   edit.StartLine,
+			StartColumn: edit.StartColumn,
+			EndLine:     edit.EndLine,
+			EndColumn:   edit.EndColumn,
+			Text:        edit.Text,
+		})
+	}
+	return result, nil
 }
 
 func extractContextLines(fullContent string, cursorLine, radius int) (string, int) {

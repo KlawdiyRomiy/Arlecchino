@@ -156,6 +156,13 @@ const autocompleteTierLabels: Record<string, string> = {
   unknown: "Unknown",
 };
 
+const autocompleteImportLevelLabels: Record<string, string> = {
+  native: "Auto-import: Native",
+  "partial-native": "Auto-import: Partial",
+  "lsp-only": "Auto-import: LSP",
+  none: "Auto-import: None",
+};
+
 const autocompleteSourceLabels: Array<
   [keyof AutocompleteLanguageCapability["sources"], string]
 > = [
@@ -172,6 +179,16 @@ const autocompleteBadgeClass = (active: boolean) =>
       ? "border-[color-mix(in_srgb,var(--status-success)_45%,var(--border-subtle))] text-[var(--status-success)]"
       : "opacity-45"
   }`;
+
+const autocompleteImportLevelKey = (
+  level: AutocompleteLanguageCapability["autoImportLevel"],
+) => String(level || "none");
+
+const autocompleteImportLevelLabel = (
+  level: AutocompleteLanguageCapability["autoImportLevel"],
+) =>
+  autocompleteImportLevelLabels[autocompleteImportLevelKey(level)] ||
+  "Auto-import: None";
 
 type LSPInstallEvent = {
   id?: string;
@@ -2589,6 +2606,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                <span
+                  className={autocompleteBadgeClass(
+                    autocompleteImportLevelKey(capability.autoImportLevel) !==
+                      "none",
+                  )}
+                >
+                  {autocompleteImportLevelLabel(capability.autoImportLevel)}
+                </span>
                 {autocompleteSourceLabels.map(([source, label]) => (
                   <span
                     key={String(source)}
