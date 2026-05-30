@@ -480,6 +480,7 @@ export const PreviewWindowSurface: React.FC<PreviewWindowSurfaceProps> = ({
         name={filePath.split("/").pop() || filePath}
         language={codeLanguage}
         initialContent={previewCode}
+        completionProviderMode="full"
       />
     );
   }

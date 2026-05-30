@@ -32,22 +32,20 @@ type completionResolveEntry struct {
 type ResolvedCompletion struct {
 	InsertText          string
 	IsSnippet           bool
+	PrimaryTextEdit     *CompletionPrimaryTextEdit
 	AdditionalTextEdits []core.TextEdit
+	Command             *lsp.Command
+	Data                any
 }
 
 func (b *PredictionBrain) rememberLSPCompletionResolve(ctx CompletionContext, item lsp.CompletionItem) string {
-	if b == nil || item.Data == nil || len(item.AdditionalTextEdits) > 0 {
+	if b == nil || len(item.AdditionalTextEdits) > 0 {
 		return ""
 	}
 	token := newCompletionResolveToken()
 	if token == "" {
 		return ""
 	}
-
-	storedCtx := ctx
-	storedCtx.Ctx = nil
-	storedCtx.Content = append([]byte(nil), ctx.Content...)
-	storedCtx.FullContent = append([]byte(nil), ctx.FullContent...)
 
 	b.resolveMu.Lock()
 	defer b.resolveMu.Unlock()
@@ -71,7 +69,7 @@ func (b *PredictionBrain) rememberLSPCompletionResolve(ctx CompletionContext, it
 	b.resolveEntries[token] = completionResolveEntry{
 		language:  strings.TrimSpace(ctx.Language),
 		item:      item,
-		context:   storedCtx,
+		context:   CompletionContext{Language: strings.TrimSpace(ctx.Language)},
 		expiresAt: now.Add(completionResolveTokenTTL),
 	}
 	return token
@@ -121,12 +119,13 @@ func (b *PredictionBrain) resolvedCompletionFromLSPItem(entry completionResolveE
 		}
 	}
 
-	additionalEdits := lspTextEditsToCore(item.AdditionalTextEdits)
-	additionalEdits = b.normalizeLSPAdditionalTextEdits(entry.context, additionalEdits)
 	return ResolvedCompletion{
 		InsertText:          insertText,
 		IsSnippet:           isSnippet,
-		AdditionalTextEdits: additionalEdits,
+		PrimaryTextEdit:     lspPrimaryTextEditToCompletion(item.TextEdit),
+		AdditionalTextEdits: lspTextEditsToCore(item.AdditionalTextEdits),
+		Command:             item.Command,
+		Data:                item.Data,
 	}
 }
 

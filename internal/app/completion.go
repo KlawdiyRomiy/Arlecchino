@@ -12,6 +12,7 @@ import (
 	"arlecchino/internal/autocomplete"
 	"arlecchino/internal/indexer"
 	"arlecchino/internal/indexer/brain"
+	indexerlsp "arlecchino/internal/indexer/lsp"
 	"arlecchino/internal/predictive"
 
 	"github.com/google/uuid"
@@ -69,21 +70,51 @@ type TextEditJSON struct {
 	Text        string `json:"text"`
 }
 
+type CompletionRangeJSON struct {
+	StartLine   int `json:"startLine"`
+	StartColumn int `json:"startColumn"`
+	EndLine     int `json:"endLine"`
+	EndColumn   int `json:"endColumn"`
+}
+
+type PrimaryTextEditJSON struct {
+	NewText string               `json:"newText"`
+	Range   *CompletionRangeJSON `json:"range,omitempty"`
+	Insert  *CompletionRangeJSON `json:"insert,omitempty"`
+	Replace *CompletionRangeJSON `json:"replace,omitempty"`
+}
+
+type LSPCommandJSON struct {
+	Title     string `json:"title,omitempty"`
+	Command   string `json:"command"`
+	Arguments []any  `json:"arguments,omitempty"`
+}
+
 type EditorCompletion struct {
-	Label               string         `json:"label"`
-	Text                string         `json:"text"`
-	Detail              string         `json:"detail"`
-	Documentation       string         `json:"documentation,omitempty"`
-	TypeInfo            string         `json:"typeInfo,omitempty"`
-	Kind                string         `json:"kind"`
-	Source              string         `json:"source"`
-	InsertText          string         `json:"insertText"`
-	IsSnippet           bool           `json:"isSnippet"`
-	Priority            int            `json:"priority"`
-	HighlightPositions  []int          `json:"highlightPositions,omitempty"`
-	MatchType           string         `json:"matchType,omitempty"`
-	AdditionalTextEdits []TextEditJSON `json:"additionalTextEdits,omitempty"`
-	ResolveToken        string         `json:"resolveToken,omitempty"`
+	Label               string               `json:"label"`
+	Text                string               `json:"text"`
+	Detail              string               `json:"detail"`
+	Documentation       string               `json:"documentation,omitempty"`
+	TypeInfo            string               `json:"typeInfo,omitempty"`
+	Kind                string               `json:"kind"`
+	Source              string               `json:"source"`
+	InsertText          string               `json:"insertText"`
+	IsSnippet           bool                 `json:"isSnippet"`
+	Priority            int                  `json:"priority"`
+	HighlightPositions  []int                `json:"highlightPositions,omitempty"`
+	MatchType           string               `json:"matchType,omitempty"`
+	PrimaryTextEdit     *PrimaryTextEditJSON `json:"primaryTextEdit,omitempty"`
+	AdditionalTextEdits []TextEditJSON       `json:"additionalTextEdits,omitempty"`
+	Command             *LSPCommandJSON      `json:"command,omitempty"`
+	Data                any                  `json:"data,omitempty"`
+	ResolveToken        string               `json:"resolveToken,omitempty"`
+	CompletionID        string               `json:"completionId,omitempty"`
+	StableKey           string               `json:"stableKey,omitempty"`
+	Provenance          string               `json:"provenance,omitempty"`
+	ProofKind           string               `json:"proofKind,omitempty"`
+	AutoImportAllowed   bool                 `json:"autoImportAllowed"`
+	Primary             bool                 `json:"primary"`
+	RequiresResolve     bool                 `json:"requiresResolveBeforeApply"`
 }
 
 // EditorCompletionResult represents completion response
@@ -98,9 +129,13 @@ type EditorCompletionResult struct {
 }
 
 type EditorCompletionResolveResult struct {
-	InsertText          string         `json:"insertText,omitempty"`
-	IsSnippet           bool           `json:"isSnippet,omitempty"`
-	AdditionalTextEdits []TextEditJSON `json:"additionalTextEdits,omitempty"`
+	InsertText            string               `json:"insertText,omitempty"`
+	IsSnippet             bool                 `json:"isSnippet,omitempty"`
+	PrimaryTextEdit       *PrimaryTextEditJSON `json:"primaryTextEdit,omitempty"`
+	AdditionalTextEdits   []TextEditJSON       `json:"additionalTextEdits,omitempty"`
+	Command               *LSPCommandJSON      `json:"command,omitempty"`
+	Data                  any                  `json:"data,omitempty"`
+	ResolvedWorkspaceEdit *LSPWorkspaceEdit    `json:"resolvedWorkspaceEdit,omitempty"`
 }
 
 func (a *App) SuggestCommand(input string) []CommandSuggestion {
@@ -268,19 +303,31 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 	}
 
 	var items []EditorCompletion
-	for _, s := range suggestions {
+	for i, s := range suggestions {
+		stableKey := editorCompletionStableKey(s)
+		proofKind := editorCompletionProofKind(s)
+		autoImportAllowed := editorCompletionAutoImportAllowed(s, proofKind)
 		item := EditorCompletion{
-			Label:         s.DisplayText,
-			Text:          s.Text,
-			Detail:        s.Detail,
-			Documentation: s.Documentation,
-			TypeInfo:      s.TypeInfo,
-			Kind:          string(s.Kind),
-			Source:        string(s.Source),
-			InsertText:    s.InsertText,
-			IsSnippet:     s.IsSnippet,
-			Priority:      int(s.Score * 100),
-			ResolveToken:  s.ResolveToken,
+			Label:             s.DisplayText,
+			Text:              s.Text,
+			Detail:            s.Detail,
+			Documentation:     s.Documentation,
+			TypeInfo:          s.TypeInfo,
+			Kind:              string(s.Kind),
+			Source:            string(s.Source),
+			InsertText:        s.InsertText,
+			IsSnippet:         s.IsSnippet,
+			Priority:          int(s.Score * 100),
+			ResolveToken:      s.ResolveToken,
+			CompletionID:      editorCompletionID(requestID, i, stableKey),
+			StableKey:         stableKey,
+			Provenance:        string(s.Source),
+			ProofKind:         proofKind,
+			AutoImportAllowed: autoImportAllowed,
+			RequiresResolve:   s.ResolveToken != "",
+			PrimaryTextEdit:   editorPrimaryTextEditJSON(s.PrimaryTextEdit),
+			Command:           editorLSPCommandJSON(s.Command),
+			Data:              s.Data,
 		}
 		if s.MatchResult != nil {
 			item.HighlightPositions = s.MatchResult.Positions
@@ -302,6 +349,7 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 
 	var primary *EditorCompletion
 	if len(items) > 0 {
+		items[0].Primary = true
 		primary = &items[0]
 	}
 
@@ -337,8 +385,11 @@ func (a *App) ResolveEditorCompletion(resolveToken string) (EditorCompletionReso
 	}
 
 	result := EditorCompletionResolveResult{
-		InsertText: resolved.InsertText,
-		IsSnippet:  resolved.IsSnippet,
+		InsertText:      resolved.InsertText,
+		IsSnippet:       resolved.IsSnippet,
+		PrimaryTextEdit: editorPrimaryTextEditJSON(resolved.PrimaryTextEdit),
+		Command:         editorLSPCommandJSON(resolved.Command),
+		Data:            resolved.Data,
 	}
 	for _, edit := range resolved.AdditionalTextEdits {
 		result.AdditionalTextEdits = append(result.AdditionalTextEdits, TextEditJSON{
@@ -350,6 +401,125 @@ func (a *App) ResolveEditorCompletion(resolveToken string) (EditorCompletionReso
 		})
 	}
 	return result, nil
+}
+
+func editorCompletionStableKey(s brain.Suggestion) string {
+	parts := []string{
+		string(s.Source),
+		string(s.Kind),
+		strings.TrimSpace(s.Text),
+		strings.TrimSpace(s.DisplayText),
+		strings.TrimSpace(s.Namespace),
+		strings.TrimSpace(s.InsertText),
+		strings.TrimSpace(s.FilePath),
+		fmt.Sprintf("%d", s.Line),
+		editorPrimaryTextEditIdentity(s.PrimaryTextEdit),
+	}
+	if s.Import != nil {
+		parts = append(parts,
+			strings.TrimSpace(s.Import.Path),
+			strings.TrimSpace(s.Import.Statement),
+			strings.TrimSpace(s.Import.Symbol),
+			strings.TrimSpace(s.Import.Mode),
+		)
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func editorPrimaryTextEditIdentity(edit *brain.CompletionPrimaryTextEdit) string {
+	if edit == nil {
+		return ""
+	}
+	parts := []string{
+		edit.NewText,
+		editorCompletionRangeIdentity(edit.Range),
+		editorCompletionRangeIdentity(edit.Insert),
+		editorCompletionRangeIdentity(edit.Replace),
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func editorCompletionRangeIdentity(r *brain.CompletionTextRange) string {
+	if r == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d:%d:%d", r.StartLine, r.StartColumn, r.EndLine, r.EndColumn)
+}
+
+func editorPrimaryTextEditJSON(edit *brain.CompletionPrimaryTextEdit) *PrimaryTextEditJSON {
+	if edit == nil {
+		return nil
+	}
+	return &PrimaryTextEditJSON{
+		NewText: edit.NewText,
+		Range:   editorCompletionRangeJSON(edit.Range),
+		Insert:  editorCompletionRangeJSON(edit.Insert),
+		Replace: editorCompletionRangeJSON(edit.Replace),
+	}
+}
+
+func editorCompletionRangeJSON(r *brain.CompletionTextRange) *CompletionRangeJSON {
+	if r == nil {
+		return nil
+	}
+	return &CompletionRangeJSON{
+		StartLine:   r.StartLine,
+		StartColumn: r.StartColumn,
+		EndLine:     r.EndLine,
+		EndColumn:   r.EndColumn,
+	}
+}
+
+func editorLSPCommandJSON(command *indexerlsp.Command) *LSPCommandJSON {
+	if command == nil {
+		return nil
+	}
+	return &LSPCommandJSON{
+		Title:     command.Title,
+		Command:   command.Command,
+		Arguments: command.Arguments,
+	}
+}
+
+func editorCompletionID(requestID string, index int, stableKey string) string {
+	hasher := sha1.New()
+	hasher.Write([]byte(requestID))
+	hasher.Write([]byte{0})
+	hasher.Write([]byte(fmt.Sprintf("%d", index)))
+	hasher.Write([]byte{0})
+	hasher.Write([]byte(stableKey))
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func editorCompletionProofKind(s brain.Suggestion) string {
+	if strings.TrimSpace(s.ProofKind) != "" {
+		return s.ProofKind
+	}
+	switch s.Source {
+	case "lsp":
+		if len(s.AdditionalTextEdits) > 0 {
+			return "lsp-completion-edit"
+		}
+		if s.ResolveToken != "" {
+			return "lsp-resolve-edit"
+		}
+		return "project-symbol"
+	case "index", "ast", "local":
+		return "project-symbol"
+	case "library":
+		return "dependency-declared"
+	default:
+		return "none"
+	}
+}
+
+func editorCompletionAutoImportAllowed(s brain.Suggestion, proofKind string) bool {
+	switch proofKind {
+	case "existing-import", "project-symbol", "stdlib-platform", "lsp-completion-edit", "lsp-resolve-edit", "lsp-code-action":
+		return s.AutoImportAllowed || len(s.AdditionalTextEdits) > 0
+	default:
+		return false
+	}
 }
 
 func extractContextLines(fullContent string, cursorLine, radius int) (string, int) {

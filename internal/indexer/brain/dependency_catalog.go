@@ -115,43 +115,6 @@ func (c *dependencyCatalog) ResolveLibraryByOwner(language, owner string) string
 		}
 	}
 
-	var ownerMatches []dependencyEntry
-	for _, entry := range entries {
-		if entry.Internal {
-			continue
-		}
-		name := strings.TrimSpace(entry.Name)
-		if name == "" {
-			continue
-		}
-		if dependencyEntryOwner(entry, language) == owner {
-			ownerMatches = append(ownerMatches, entry)
-		}
-	}
-	if len(ownerMatches) == 1 {
-		return ownerMatches[0].Name
-	}
-	if len(ownerMatches) > 1 {
-		return ""
-	}
-
-	var suffixMatches []dependencyEntry
-	for _, entry := range entries {
-		if entry.Internal {
-			continue
-		}
-		name := strings.TrimSpace(entry.Name)
-		if name == "" {
-			continue
-		}
-		if dependencyEntryBaseName(name) == owner {
-			suffixMatches = append(suffixMatches, entry)
-		}
-	}
-	if len(suffixMatches) == 1 {
-		return suffixMatches[0].Name
-	}
-
 	return ""
 }
 

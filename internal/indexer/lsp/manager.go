@@ -133,6 +133,7 @@ type CompletionItem struct {
 	InsertTextFormat    int             `json:"insertTextFormat,omitempty"` // 1 = PlainText, 2 = Snippet
 	TextEdit            json.RawMessage `json:"textEdit,omitempty"`
 	AdditionalTextEdits []TextEdit      `json:"additionalTextEdits,omitempty"`
+	Command             *Command        `json:"command,omitempty"`
 	Data                any             `json:"data,omitempty"`
 }
 
@@ -1767,10 +1768,14 @@ func (s *Server) initializeWithContext(ctx context.Context) error {
 			},
 			"textDocument": map[string]any{
 				"completion": map[string]any{
+					"completionItemKind": map[string]any{
+						"valueSet": []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25},
+					},
 					"completionItem": map[string]any{
-						"snippetSupport": false,
+						"snippetSupport":       true,
+						"insertReplaceSupport": true,
 						"resolveSupport": map[string]any{
-							"properties": []string{"additionalTextEdits", "detail", "documentation"},
+							"properties": []string{"textEdit", "additionalTextEdits", "command", "data", "detail", "documentation"},
 						},
 					},
 				},
@@ -1910,6 +1915,9 @@ func (s *Server) completeWithContext(ctx context.Context, filePath string, line,
 			"line":      line,
 			"character": column,
 		},
+		"context": map[string]any{
+			"triggerKind": 1,
+		},
 	}
 
 	resp, err := s.requestWithContext(ctx, "textDocument/completion", params)
@@ -1994,6 +2002,9 @@ func mergeCompletionItem(base, resolved CompletionItem) CompletionItem {
 	}
 	if len(resolved.AdditionalTextEdits) == 0 {
 		resolved.AdditionalTextEdits = base.AdditionalTextEdits
+	}
+	if resolved.Command == nil {
+		resolved.Command = base.Command
 	}
 	if resolved.Data == nil {
 		resolved.Data = base.Data

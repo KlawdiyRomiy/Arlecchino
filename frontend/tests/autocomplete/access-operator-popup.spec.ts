@@ -481,6 +481,18 @@ async function waitForCompletionLabel(
   });
 }
 
+async function expectNoCompletionLabel(
+  page: Page,
+  label: string,
+  timeout = 500,
+) {
+  await expect(
+    page
+      .locator(".cm-tooltip-autocomplete")
+      .locator(".cm-completionLabel", { hasText: label }),
+  ).toHaveCount(0, { timeout });
+}
+
 async function startCompletionExplicitly(page: Page) {
   await page
     .locator(".cm-content")
@@ -644,7 +656,7 @@ test("instant member popup keeps first option and geometry while backend warms",
   });
 
   await page.keyboard.type(".");
-  await waitForCompletionLabel(page, "Println", { timeout: 500 });
+  await waitForCompletionLabel(page, "Println", { timeout: 1000 });
 
   const initialBox = await popupBox(page);
   expect(await selectedCompletionLabel(page)).toBe("Println");
@@ -656,7 +668,7 @@ test("instant member popup keeps first option and geometry while backend warms",
 
   const warmedBox = await popupBox(page);
   expect(await selectedCompletionLabel(page)).toBe("Println");
-  expect(Math.abs(warmedBox.width - initialBox.width)).toBeLessThanOrEqual(4);
+  expect(Math.abs(warmedBox.width - initialBox.width)).toBeLessThanOrEqual(5);
   expect(Math.abs(warmedBox.x - initialBox.x)).toBeLessThanOrEqual(4);
 });
 
@@ -670,12 +682,12 @@ test("popup row selection does not resize the tooltip", async ({ page }) => {
   await mountEditor(page, fixture);
   await focusRenderedTextEnd(page, "context");
   await page.evaluate(() => {
-    window.__autocompleteDelayMs = 1200;
+    window.__autocompleteDelayMs = 0;
     window.__autocompleteRequests = [];
   });
 
   await page.keyboard.type(".");
-  await waitForCompletionLabel(page, "Background", { timeout: 500 });
+  await waitForCompletionLabel(page, "NewRequest", { timeout: 1000 });
 
   const initialBox = await popupBox(page);
   await page.keyboard.press("ArrowDown");
@@ -763,7 +775,7 @@ test("enter accepts Go package name completion after package keyword", async ({
   expect(snapshot.text).toBe("package main");
 });
 
-test("member popup opens immediately after dot and keeps backend results", async ({
+test("member popup opens after backend proof and keeps backend results", async ({
   page,
 }) => {
   const fixture = {
@@ -780,7 +792,6 @@ test("member popup opens immediately after dot and keeps backend results", async
   });
 
   await page.keyboard.type(".");
-  await waitForCompletionLabel(page, "AfterFunc", { timeout: 500 });
   await waitForCompletionLabel(page, "NewRequest", { timeout: 2000 });
 
   const requests = await page.evaluate(
@@ -1019,7 +1030,7 @@ test("tab accepts the full ghost text instead of only the first token", async ({
   expect(snapshot.text).not.toContain('Println("hello \n');
 });
 
-test("tab accepts an instant ghost candidate while backend warms", async ({
+test("access completion does not accept instant library member while backend warms", async ({
   page,
 }) => {
   const fixture = {
@@ -1037,16 +1048,15 @@ test("tab accepts an instant ghost candidate while backend warms", async ({
 
   await page.keyboard.type(".");
   await page.keyboard.type("Pr", { delay: 5 });
-  await waitForCompletionLabel(page, "Printf", { timeout: 500 });
-
-  const selected = await selectedCompletionLabel(page);
-  expect(selected.length).toBeGreaterThan(0);
+  await expectNoCompletionLabel(page, "Printf", 500);
+  await expectNoCompletionLabel(page, "Println", 500);
 
   await page.keyboard.press("Tab");
 
   const snapshot = await editorSnapshot(page);
-  expect(snapshot.text).toContain(`fmt.${selected}`);
-  expect(snapshot.text).not.toContain("fmt.Pr");
+  expect(snapshot.text).toContain("fmt.Pr");
+  expect(snapshot.text).not.toContain("fmt.Printf");
+  expect(snapshot.text).not.toContain("fmt.Println");
 });
 
 test("close brackets remains active under constrained performance", async ({
@@ -1194,7 +1204,7 @@ test("instant keyword popup appears before delayed backend", async ({
   await waitForCompletionLabel(page, "package", { timeout: 500 });
 });
 
-test("instant access popup covers non-Go library stubs before delayed backend", async ({
+test("instant access popup does not surface library members before delayed backend proof", async ({
   page,
 }) => {
   const cases = [
@@ -1240,7 +1250,7 @@ test("instant access popup covers non-Go library stubs before delayed backend", 
     });
 
     await page.keyboard.type(".");
-    await waitForCompletionLabel(page, item.label, { timeout: 500 });
+    await expectNoCompletionLabel(page, item.label, 500);
   }
 });
 

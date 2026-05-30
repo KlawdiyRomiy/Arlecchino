@@ -6,7 +6,7 @@ import (
 	"arlecchino/internal/indexer/core"
 )
 
-func TestDeduplicate_MergesMetadata(t *testing.T) {
+func TestDeduplicate_DoesNotMergeCrossProofImportEdits(t *testing.T) {
 	b := &PredictionBrain{}
 
 	lspEdits := []core.TextEdit{{
@@ -51,7 +51,7 @@ func TestDeduplicate_MergesMetadata(t *testing.T) {
 	if got[0].Detail != "from lsp" {
 		t.Fatalf("expected merged detail, got %q", got[0].Detail)
 	}
-	if len(got[0].AdditionalTextEdits) != 1 {
-		t.Fatalf("expected merged additionalTextEdits, got %d", len(got[0].AdditionalTextEdits))
+	if len(got[0].AdditionalTextEdits) != 0 {
+		t.Fatalf("expected cross-source import edits to stay quarantined, got %d", len(got[0].AdditionalTextEdits))
 	}
 }

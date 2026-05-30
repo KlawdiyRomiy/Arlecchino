@@ -381,7 +381,6 @@ func (r *SmartRanker) kindScore(kind core.SymbolKind, ctx RankingContext) float6
 func (r *SmartRanker) sourceBoost(source core.SymbolSource, ctx RankingContext) float64 {
 	boosts := map[core.SymbolSource]float64{
 		core.SourceLSP:        1.2,
-		core.SourceLibrary:    1.15,
 		core.SourceFillAll:    1.15,
 		core.SourceLocal:      1.1,
 		core.SourceKeywords:   1.05,
@@ -389,6 +388,7 @@ func (r *SmartRanker) sourceBoost(source core.SymbolSource, ctx RankingContext) 
 		core.SourcePredictive: 0.95,
 		core.SourceIndex:      0.9,
 		core.SourceVirtual:    0.85,
+		core.SourceLibrary:    0.75,
 	}
 
 	boost, ok := boosts[source]
@@ -400,13 +400,9 @@ func (r *SmartRanker) sourceBoost(source core.SymbolSource, ctx RankingContext) 
 		if ctx.ResolvedNamespace != "" {
 			if source == core.SourceLSP {
 				boost = 1.0
-			} else if source == core.SourceLibrary {
-				boost = 1.1
 			}
 		} else if source == core.SourceLSP {
 			boost = 1.15
-		} else if source == core.SourceLibrary {
-			boost = 1.1
 		}
 	}
 

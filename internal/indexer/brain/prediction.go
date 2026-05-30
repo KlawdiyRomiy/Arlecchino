@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -342,7 +343,6 @@ type PredictionBrain struct {
 	recentSymbols     []string
 	arle              *Arle
 	docEnricher       *DocEnricher
-	stubProvider      *StubProvider
 	completionCache   *CompletionCache
 	ghostFilter       *GhostTextFilter
 	userBehavior      *UserBehavior
@@ -381,9 +381,29 @@ type Suggestion struct {
 	Snippet             string
 	Extra               map[string]string
 	Import              *ImportDescriptor
+	PrimaryTextEdit     *CompletionPrimaryTextEdit
 	AdditionalTextEdits []core.TextEdit
+	Command             *lsp.Command
+	Data                any
 	ResolveToken        string
+	ProofKind           string
+	AutoImportAllowed   bool
+	Primary             bool
 	MatchResult         *predictive.MatchResult
+}
+
+type CompletionTextRange struct {
+	StartLine   int
+	StartColumn int
+	EndLine     int
+	EndColumn   int
+}
+
+type CompletionPrimaryTextEdit struct {
+	NewText string
+	Range   *CompletionTextRange
+	Insert  *CompletionTextRange
+	Replace *CompletionTextRange
 }
 
 // HighlightPositions returns byte positions for UI highlighting
@@ -661,15 +681,6 @@ func NewPredictionBrain(engine *core.Engine, config BrainConfig) *PredictionBrai
 
 	importCompletions := NewImportCompletionProvider(engine)
 
-	stubProvider := NewStubProviderWithBuiltins()
-	if engine != nil {
-		stubProvider.SetProjectRoot(engine.ProjectRoot())
-	}
-	if importCompletions != nil && importCompletions.catalog != nil {
-		stubProvider.SetPackageResolver(importCompletions.catalog.ResolveLibraryByOwner)
-	}
-	stubProvider.LoadStubs()
-
 	completionCache := NewCompletionCache(1000, 5*time.Minute)
 	ghostFilter := NewGhostTextFilter()
 	ghostFilter.SetIdleTimeout(900 * time.Millisecond)
@@ -697,7 +708,6 @@ func NewPredictionBrain(engine *core.Engine, config BrainConfig) *PredictionBrai
 		recentSymbols:     make([]string, 0, 10),
 		arle:              arle,
 		docEnricher:       docEnricher,
-		stubProvider:      stubProvider,
 		completionCache:   completionCache,
 		ghostFilter:       ghostFilter,
 		userBehavior:      userBehavior,
@@ -967,7 +977,6 @@ func (b *PredictionBrain) collectPatternGroup(
 	result = providerGroupResult{
 		counts: map[string]int{
 			"predictive": 0,
-			"stubs":      0,
 		},
 		durations: map[string]int64{},
 		statuses:  map[string]string{},
@@ -985,19 +994,8 @@ func (b *PredictionBrain) collectPatternGroup(
 
 	if reason := heavySourceSkipReason(ctx); reason != "" && !ctx.InString && !ctx.InImport {
 		result.counts["predictive"] = -4
-		result.counts["stubs"] = -4
 		result.statuses["patternGroup"] = reason
 		return result
-	}
-
-	if isAccessCompletionRequest(ctx) {
-		stubSuggestions := b.fromStubs(ctx)
-		result.suggestions = append(result.suggestions, stubSuggestions...)
-		result.counts["stubs"] = len(stubSuggestions)
-		if len(stubSuggestions) > 0 {
-			result.statuses["predictive"] = "skipped-library-fast-path"
-			return result
-		}
 	}
 
 	if predictiveEngine != nil {
@@ -1011,11 +1009,6 @@ func (b *PredictionBrain) collectPatternGroup(
 
 	if isCanceled(ctx) {
 		return result
-	}
-	if !isAccessCompletionRequest(ctx) {
-		stubSuggestions := b.fromStubs(ctx)
-		result.suggestions = append(result.suggestions, stubSuggestions...)
-		result.counts["stubs"] = len(stubSuggestions)
 	}
 
 	return result
@@ -1251,7 +1244,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 			ctx,
 			"patternGroup",
 			sourceWaitBudget(ctx, fallbackCount),
-			map[string]int{"predictive": -3, "stubs": -3},
+			map[string]int{"predictive": -3},
 			func(groupCtx CompletionContext) providerGroupResult {
 				return b.collectPatternGroup(groupCtx, predictiveEngine)
 			},
@@ -1317,10 +1310,10 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	suggestions = append(suggestions, externalGroup.suggestions...)
 	trace.SourceCounts = cloneCounts(counts)
 
-	debugLogf("[Complete] SOURCES: import=%d fillAll=%d local=%d predictive=%d index=%d crossFile=%d facade=%d lsp=%d virtual=%d spec=%d stubs=%d kw=%d",
+	debugLogf("[Complete] SOURCES: import=%d fillAll=%d local=%d predictive=%d index=%d crossFile=%d facade=%d lsp=%d virtual=%d spec=%d kw=%d",
 		counts["import"], counts["fillAll"], counts["local"], counts["predictive"], counts["index"],
 		counts["crossFile"], counts["facade"], counts["lsp"], counts["virtual"],
-		counts["speculative"], counts["stubs"], counts["keywords"])
+		counts["speculative"], counts["keywords"])
 
 	beforeFilter := len(suggestions)
 	suggestions = b.filterByPrefix(ctx.Prefix, ctx.Language, suggestions)
@@ -1867,41 +1860,44 @@ func lspTextEditsToCore(edits []lsp.TextEdit) []core.TextEdit {
 	return result
 }
 
-func (b *PredictionBrain) normalizeLSPAdditionalTextEdits(ctx CompletionContext, edits []core.TextEdit) []core.TextEdit {
-	if len(edits) == 0 {
+func lspPrimaryTextEditToCompletion(raw json.RawMessage) *CompletionPrimaryTextEdit {
+	if len(raw) == 0 {
 		return nil
 	}
+	var payload struct {
+		Range   *lsp.Range `json:"range"`
+		Insert  *lsp.Range `json:"insert"`
+		Replace *lsp.Range `json:"replace"`
+		NewText string     `json:"newText"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+	if payload.Range == nil && payload.Insert == nil && payload.Replace == nil {
+		return nil
+	}
+	edit := &CompletionPrimaryTextEdit{
+		NewText: payload.NewText,
+	}
+	if payload.Range != nil {
+		edit.Range = completionTextRangeFromLSP(*payload.Range)
+	}
+	if payload.Insert != nil {
+		edit.Insert = completionTextRangeFromLSP(*payload.Insert)
+	}
+	if payload.Replace != nil {
+		edit.Replace = completionTextRangeFromLSP(*payload.Replace)
+	}
+	return edit
+}
 
-	normalized := make([]core.TextEdit, 0, len(edits))
-	for _, edit := range edits {
-		stmt, ok := cleanImportStatement(edit.Text)
-		if !ok || !looksLikeImportStatement(ctx.Language, stmt) {
-			continue
-		}
-		importEdit := core.TextEdit{
-			StartLine:   edit.StartLine,
-			StartColumn: edit.StartColumn,
-			EndLine:     edit.EndLine,
-			EndColumn:   edit.EndColumn,
-			Text:        stmt,
-		}
-		if b != nil && b.autoImporter != nil && b.autoImporter.planner != nil {
-			if planned, changed := b.autoImporter.planner.PlanImportEdit(ctx, stmt, edit.StartLine); changed && planned != nil {
-				normalized = append(normalized, *planned)
-				continue
-			}
-			if fallback := b.autoImporter.planner.FallbackInsertEdit(stmt, edit.StartLine); fallback != nil {
-				normalized = append(normalized, *fallback)
-				continue
-			}
-		}
-		importEdit.Text = stmt + "\n"
-		normalized = append(normalized, importEdit)
+func completionTextRangeFromLSP(r lsp.Range) *CompletionTextRange {
+	return &CompletionTextRange{
+		StartLine:   r.Start.Line + 1,
+		StartColumn: r.Start.Character + 1,
+		EndLine:     r.End.Line + 1,
+		EndColumn:   r.End.Character + 1,
 	}
-	if len(normalized) == 0 {
-		return nil
-	}
-	return normalized
 }
 
 // abs returns absolute value of int
@@ -1962,21 +1958,6 @@ func (b *PredictionBrain) ResolveAccessChain(ctx *CompletionContext) {
 	}
 	if b.importResolver != nil {
 		resolved = b.importResolver.ResolveClassName(ctx.FilePath, resolveContent, reference, resolution.CanonicalID)
-	}
-	if resolved == "" && b.stubProvider != nil {
-		stubLanguage := resolution.StubID()
-		if stubLanguage != "" {
-			resolved = b.stubProvider.ResolvePackage(reference, stubLanguage)
-			if resolved == "" {
-				resolved = b.stubProvider.resolvePackageFromCatalog(stubLanguage, reference)
-				if resolved != "" {
-					b.stubProvider.RememberPackage(stubLanguage, reference, resolved)
-				}
-			}
-		}
-	}
-	if resolved == "" && b.importCompletions != nil && b.importCompletions.catalog != nil {
-		resolved = b.importCompletions.catalog.ResolveLibraryByOwner(resolution.CanonicalID, reference)
 	}
 	if resolved != "" {
 		ctx.ResolvedNamespace = resolved
@@ -2103,9 +2084,12 @@ func (b *PredictionBrain) fromIndex(ctx CompletionContext) []Suggestion {
 			Extra:         sym.Extra,
 		}
 
-		if b.autoImporter != nil && b.autoImporter.ShouldAutoImportWithDescriptor(&sym, ctx, suggestion.Import) {
+		if b.autoImporter != nil &&
+			suggestionAllowsGeneratedAutoImport(suggestion) &&
+			b.autoImporter.ShouldAutoImportWithDescriptor(&sym, ctx, suggestion.Import) {
 			if edit := b.autoImporter.GenerateImportEditForSuggestion(suggestion, ctx); edit != nil {
 				suggestion.AdditionalTextEdits = []core.TextEdit{*edit}
+				suggestion.AutoImportAllowed = true
 			}
 		}
 
@@ -2295,9 +2279,8 @@ func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion
 		documentation := formatLSPDocumentation(item.Documentation)
 
 		additionalEdits := lspTextEditsToCore(item.AdditionalTextEdits)
-		additionalEdits = b.normalizeLSPAdditionalTextEdits(ctx, additionalEdits)
 		resolveToken := ""
-		if !ctx.InImport && len(additionalEdits) == 0 && item.Data != nil {
+		if !ctx.InImport && len(additionalEdits) == 0 {
 			resolveCtx := ctx
 			resolveCtx.Language = lspLanguage
 			resolveToken = b.rememberLSPCompletionResolve(resolveCtx, item)
@@ -2312,8 +2295,13 @@ func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion
 			Documentation:       documentation,
 			InsertText:          insertText,
 			IsSnippet:           isSnippet,
+			PrimaryTextEdit:     lspPrimaryTextEditToCompletion(item.TextEdit),
 			AdditionalTextEdits: additionalEdits,
+			Command:             item.Command,
+			Data:                item.Data,
 			ResolveToken:        resolveToken,
+			ProofKind:           lspCompletionProofKind(additionalEdits, resolveToken),
+			AutoImportAllowed:   len(additionalEdits) > 0,
 		})
 	}
 
@@ -2379,39 +2367,34 @@ func (b *PredictionBrain) mapLSPKind(kind int) core.SymbolKind {
 	return core.SymbolKindVariable
 }
 
-func (b *PredictionBrain) fromStubs(ctx CompletionContext) []Suggestion {
-	if b.stubProvider == nil {
-		return nil
+func lspCompletionProofKind(additionalEdits []core.TextEdit, resolveToken string) string {
+	if len(additionalEdits) > 0 {
+		return "lsp-completion-edit"
 	}
-	stubCtx := ctx
-	stubCtx.LanguageResolution = completionLanguageResolution(ctx)
-	stubCtx.Language = stubCtx.LanguageResolution.StubID()
-	if stubCtx.Language == "" {
-		return nil
+	if resolveToken != "" {
+		return "lsp-resolve-edit"
 	}
-	if suggestions := b.stubProvider.GetContextCompletions(stubCtx); len(suggestions) > 0 {
-		return b.enrichAutoImports(stubCtx, suggestions)
-	}
-
-	if packageName := b.detectPackageName(stubCtx); packageName != "" {
-		if suggestions := b.stubProvider.GetCompletions(packageName, stubCtx.Prefix, stubCtx.Language); len(suggestions) > 0 {
-			return b.enrichAutoImports(stubCtx, suggestions)
-		}
-	}
-
-	return b.enrichAutoImports(stubCtx, b.stubPackageSuggestions(stubCtx))
+	return "project-symbol"
 }
 
-func (b *PredictionBrain) detectPackageName(ctx CompletionContext) string {
-	if reference := extractPackageReference(ctx.AccessChain); reference != "" {
-		return reference
+func extractPackageReference(accessChain string) string {
+	chain := strings.TrimSpace(accessChain)
+	if chain == "" {
+		return ""
 	}
+	chain = strings.TrimSuffix(chain, ".")
+	chain = strings.TrimSuffix(chain, "::")
+	chain = strings.TrimSuffix(chain, "->")
+	return strings.TrimSpace(strings.TrimSuffix(chain, "()"))
+}
 
-	if ctx.ParentClass != "" {
-		return ctx.ParentClass
+func suggestionAllowsGeneratedAutoImport(suggestion Suggestion) bool {
+	switch suggestion.Source {
+	case core.SourceLibrary, core.SourceKeywords:
+		return false
+	default:
+		return true
 	}
-
-	return ""
 }
 
 func (b *PredictionBrain) enrichAutoImports(ctx CompletionContext, suggestions []Suggestion) []Suggestion {
@@ -2422,6 +2405,13 @@ func (b *PredictionBrain) enrichAutoImports(ctx CompletionContext, suggestions [
 	enriched := make([]Suggestion, len(suggestions))
 	copy(enriched, suggestions)
 	for i := range enriched {
+		if !suggestionAllowsGeneratedAutoImport(enriched[i]) {
+			enriched[i].AdditionalTextEdits = nil
+			enriched[i].ResolveToken = ""
+			enriched[i].Import = nil
+			enriched[i].AutoImportAllowed = false
+			continue
+		}
 		if len(enriched[i].AdditionalTextEdits) > 0 {
 			continue
 		}
@@ -2440,69 +2430,6 @@ func (b *PredictionBrain) enrichAutoImports(ctx CompletionContext, suggestions [
 	}
 
 	return enriched
-}
-
-func (b *PredictionBrain) stubPackageSuggestions(ctx CompletionContext) []Suggestion {
-	if b.stubProvider == nil || ctx.AccessChain != "" || ctx.ParentClass != "" {
-		return nil
-	}
-	if strings.TrimSpace(ctx.Prefix) == "" {
-		return nil
-	}
-
-	packages := b.stubProvider.ListPackages(ctx.Language)
-	if len(packages) == 0 {
-		return nil
-	}
-
-	prefixLower := strings.ToLower(ctx.Prefix)
-	seen := make(map[string]struct{}, len(packages))
-	suggestions := make([]Suggestion, 0, len(packages))
-	for _, pkg := range packages {
-		identifier := packageSuggestionIdentifier(pkg, ctx.Language)
-		if identifier == "" {
-			continue
-		}
-		identifierLower := strings.ToLower(identifier)
-		pkgLower := strings.ToLower(pkg)
-		if !strings.HasPrefix(identifierLower, prefixLower) && !strings.HasPrefix(pkgLower, prefixLower) {
-			continue
-		}
-		if _, exists := seen[identifierLower]; exists {
-			continue
-		}
-		seen[identifierLower] = struct{}{}
-
-		kind := core.SymbolKindPackage
-		switch ctx.Language {
-		case "javascript", "typescript":
-			kind = core.SymbolKindModule
-		}
-
-		suggestions = append(suggestions, Suggestion{
-			Text:        identifier,
-			DisplayText: identifier,
-			Kind:        kind,
-			Source:      core.SourceLibrary,
-			Score:       0.88,
-			Detail:      pkg,
-			InsertText:  identifier,
-			Namespace:   pkg,
-		})
-	}
-
-	if len(suggestions) == 0 {
-		return nil
-	}
-
-	sort.SliceStable(suggestions, func(i, j int) bool {
-		if suggestions[i].Score == suggestions[j].Score {
-			return suggestions[i].Text < suggestions[j].Text
-		}
-		return suggestions[i].Score > suggestions[j].Score
-	})
-
-	return suggestions
 }
 
 func packageSuggestionIdentifier(pkg, language string) string {
@@ -2622,18 +2549,6 @@ func (b *PredictionBrain) fromKeywords(ctx CompletionContext) []Suggestion {
 			Detail:      kw.Kind,
 			InsertText:  insertText,
 			IsSnippet:   isSnippet,
-		}
-
-		if b.autoImporter != nil && strings.Contains(kw.Name, ".") {
-			packageName := kw.Name[:strings.Index(kw.Name, ".")]
-			sym := &core.Symbol{
-				Name:      kw.Name,
-				Kind:      kind,
-				Namespace: packageName,
-			}
-			if edit := b.autoImporter.GenerateImportEdit(sym, ctx); edit != nil {
-				s.AdditionalTextEdits = []core.TextEdit{*edit}
-			}
 		}
 
 		suggestions = append(suggestions, s)
@@ -2910,12 +2825,14 @@ func mergeSuggestionMetadata(preferred Suggestion, other Suggestion) Suggestion 
 		preferred.Namespace = other.Namespace
 	}
 
-	preferred.AdditionalTextEdits = mergeTextEdits(preferred.AdditionalTextEdits, other.AdditionalTextEdits)
-	if preferred.ResolveToken == "" && other.ResolveToken != "" && len(preferred.AdditionalTextEdits) == 0 {
-		preferred.ResolveToken = other.ResolveToken
-	}
-	if preferred.Import == nil && other.Import != nil {
-		preferred.Import = cloneImportDescriptor(other.Import)
+	if sameImportSideEffectIdentity(preferred, other) {
+		preferred.AdditionalTextEdits = mergeTextEdits(preferred.AdditionalTextEdits, other.AdditionalTextEdits)
+		if preferred.ResolveToken == "" && other.ResolveToken != "" && len(preferred.AdditionalTextEdits) == 0 {
+			preferred.ResolveToken = other.ResolveToken
+		}
+		if preferred.Import == nil && other.Import != nil {
+			preferred.Import = cloneImportDescriptor(other.Import)
+		}
 	}
 
 	if preferred.Extra == nil && other.Extra != nil {
@@ -2936,6 +2853,33 @@ func mergeSuggestionMetadata(preferred Suggestion, other Suggestion) Suggestion 
 	}
 
 	return preferred
+}
+
+func sameImportSideEffectIdentity(a, b Suggestion) bool {
+	if a.Source != b.Source {
+		return false
+	}
+	namespace := strings.TrimSpace(a.Namespace)
+	if namespace != strings.TrimSpace(b.Namespace) {
+		return false
+	}
+	importIdentity := importDescriptorIdentity(a.Import)
+	if importIdentity != importDescriptorIdentity(b.Import) {
+		return false
+	}
+	return namespace != "" || importIdentity != ""
+}
+
+func importDescriptorIdentity(descriptor *ImportDescriptor) string {
+	if descriptor == nil || descriptor.Empty() {
+		return ""
+	}
+	return strings.Join([]string{
+		strings.TrimSpace(descriptor.Path),
+		strings.TrimSpace(descriptor.Statement),
+		strings.TrimSpace(descriptor.Symbol),
+		strings.TrimSpace(descriptor.Mode),
+	}, "\x00")
 }
 
 func mergeTextEdits(preferred []core.TextEdit, other []core.TextEdit) []core.TextEdit {
@@ -3147,13 +3091,13 @@ func isCallableKind(kind core.SymbolKind) bool {
 func sourceRank(source core.SymbolSource) int {
 	ranks := map[core.SymbolSource]int{
 		core.SourceLSP:        7,
-		core.SourceLibrary:    6,
 		core.SourceFillAll:    6,
 		core.SourceKeywords:   5,
 		core.SourceLocal:      4,
 		core.SourceAST:        3,
 		core.SourcePredictive: 2,
 		core.SourceIndex:      1,
+		core.SourceLibrary:    1,
 		core.SourceVirtual:    0,
 	}
 	if rank, ok := ranks[source]; ok {
@@ -3286,13 +3230,13 @@ func (b *PredictionBrain) contextMatchScore(ctx CompletionContext, s *Suggestion
 func (b *PredictionBrain) sourceBonus(source core.SymbolSource, ctx CompletionContext) float64 {
 	baseBonus := map[core.SymbolSource]float64{
 		core.SourceLSP:        1.0,
-		core.SourceLibrary:    0.9,
 		core.SourceFillAll:    0.95,
 		core.SourceKeywords:   0.85,
 		core.SourceLocal:      0.8,
 		core.SourceAST:        0.7,
 		core.SourcePredictive: 0.5,
 		core.SourceIndex:      0.4,
+		core.SourceLibrary:    0.2,
 		core.SourceVirtual:    0.3,
 	}
 
@@ -3305,14 +3249,10 @@ func (b *PredictionBrain) sourceBonus(source core.SymbolSource, ctx CompletionCo
 		if ctx.ResolvedNamespace != "" {
 			if source == core.SourceLSP {
 				bonus = 0.85
-			} else if source == core.SourceLibrary {
-				bonus = 1.0
 			}
 		} else if ctx.AccessChain != "" {
 			if source == core.SourceLSP {
 				bonus = 0.75
-			} else if source == core.SourceLibrary {
-				bonus = 1.0
 			}
 		} else if source == core.SourceLSP {
 			bonus = 1.05

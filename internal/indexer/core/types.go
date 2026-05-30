@@ -47,7 +47,6 @@ const (
 	SourceLocal      SymbolSource = "local"
 	SourceFillAll    SymbolSource = "fill_all"
 	SourceKeywords   SymbolSource = "keywords"
-	SourceStubs      SymbolSource = "stubs"
 )
 
 type FileKind string

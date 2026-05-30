@@ -682,19 +682,6 @@ func (ai *AutoImporter) ShouldAutoImportWithDescriptor(symbol *core.Symbol, ctx 
 		return true
 	}
 
-	if symbol.Kind == core.SymbolKindModule || symbol.Kind == core.SymbolKindPackage {
-		return symbol.Name != ""
-	}
-
-	if strings.Contains(symbol.Name, ".") || strings.Contains(symbol.Name, "\\") || strings.Contains(symbol.Name, "::") {
-		return true
-	}
-
-	language := normalizeImportLanguage(ctx.Language)
-	if (language == "c" || language == "cpp") && ai.headerForSymbol(symbol, "", language) != "" {
-		return true
-	}
-
 	return false
 }
 

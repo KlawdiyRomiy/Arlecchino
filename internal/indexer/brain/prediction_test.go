@@ -276,7 +276,7 @@ func TestPredictionBrainUnknownLanguageSkipsHeavySources(t *testing.T) {
 	})
 
 	trace := brain.LastCompletionTrace()
-	for _, source := range []string{"predictive", "stubs", "index", "crossFile", "facade", "lsp"} {
+	for _, source := range []string{"predictive", "index", "crossFile", "facade", "lsp"} {
 		if trace.SourceCounts[source] != -4 {
 			t.Fatalf("expected %s to be skipped for unknown language, got counts=%#v statuses=%#v", source, trace.SourceCounts, trace.SourceStatuses)
 		}
@@ -575,25 +575,23 @@ func TestCompletionSourceLanguageResolution(t *testing.T) {
 
 func TestPredictionBrain_LastCompletionTrace(t *testing.T) {
 	brain := NewPredictionBrain(nil, BrainConfig{MaxSuggestions: 10, MinConfidence: 0.1, EnablePredictive: false, EnableLSP: false})
-	brain.stubProvider = NewStubProvider()
-	brain.stubProvider.runner = func(name string, args ...string) ([]byte, error) {
-		return []byte("func Encode(w any, event any) error\nfunc Decode(data []byte) (Event, error)\n"), nil
-	}
-	brain.stubProvider.SetPackageResolver(func(language, reference string) string {
-		if language == "go" && reference == "sse" {
-			return "github.com/gin-contrib/sse"
-		}
-		return ""
-	})
+	content := []byte(`package main
+
+import sse "github.com/gin-contrib/sse"
+
+func main() {
+	sse.fu
+}
+`)
 
 	suggestions := brain.Complete(CompletionContext{
-		RequestID:    "trace-1",
-		FilePath:     "main.go",
-		Language:     "go",
-		Content:      []byte("package main\n\nfunc main() {\n\tsse.\n}\n"),
-		FullContent:  []byte("package main\n\nfunc main() {\n\tsse.\n}\n"),
-		AccessChain:  "sse.",
-		IsMethodCall: true,
+		RequestID:   "trace-1",
+		FilePath:    "main.go",
+		Language:    "go",
+		Content:     content,
+		FullContent: content,
+		Prefix:      "fu",
+		AccessChain: "sse.",
 	})
 	if len(suggestions) == 0 {
 		t.Fatalf("expected suggestions")

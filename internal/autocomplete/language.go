@@ -42,9 +42,13 @@ type CapabilitySources struct {
 	NativeAutoImport        bool `json:"nativeAutoImport"`
 	LSPAutoImportEdits      bool `json:"lspAutoImportEdits"`
 	ImportEditNormalization bool `json:"importEditNormalization"`
-	Stubs                   bool `json:"stubs"`
 	Keywords                bool `json:"keywords"`
 	FillAll                 bool `json:"fillAll"`
+	LSPCompletionEdits      bool `json:"lspCompletionEdits"`
+	LSPResolveEdits         bool `json:"lspResolveEdits"`
+	LSPCodeActions          bool `json:"lspCodeActions"`
+	DependencyProof         bool `json:"dependencyProof"`
+	ProjectIndexProof       bool `json:"projectIndexProof"`
 }
 
 type LanguageCapability struct {
@@ -54,6 +58,7 @@ type LanguageCapability struct {
 	CanonicalID                 string                     `json:"canonicalId"`
 	Tier                        CapabilityTier             `json:"tier"`
 	AutoImportLevel             importcaps.AutoImportLevel `json:"autoImportLevel"`
+	AutoImportStatus            string                     `json:"autoImportStatus"`
 	Sources                     CapabilitySources          `json:"sources"`
 	LSPServerID                 string                     `json:"lspServerId"`
 	LSPInstalled                bool                       `json:"lspInstalled"`
@@ -104,10 +109,6 @@ func (r LanguageResolution) LocalID() string {
 	return localLanguage(r.CanonicalID)
 }
 
-func (r LanguageResolution) StubID() string {
-	return stubLanguage(r.CanonicalID)
-}
-
 func BuildLanguageCapabilities(lspAvailable LSPAvailabilityFunc) []LanguageCapability {
 	languages := lspregistry.GetAllLanguages()
 	result := make([]LanguageCapability, 0, len(languages))
@@ -143,7 +144,7 @@ func CapabilityForLanguage(language, filePath string, lspAvailable LSPAvailabili
 		lspServerID = info.LSPServerID
 		lspDeclared = info.LSPServerID != ""
 	}
-	autoImportLevel := importcaps.AutoImportLevelFor(resolution.CanonicalID, lspDeclared)
+	autoImportLevel := importcaps.AutoImportNone
 	importContext := importcaps.SupportsImportContext(resolution.CanonicalID)
 	dependencyImports := importcaps.SupportsDependencyImports(resolution.CanonicalID)
 
@@ -156,27 +157,42 @@ func CapabilityForLanguage(language, filePath string, lspAvailable LSPAvailabili
 		Imports:                 importContext || dependencyImports,
 		ImportContext:           importContext,
 		DependencyImports:       dependencyImports,
-		NativeAutoImport:        autoImportLevel == importcaps.AutoImportNative || autoImportLevel == importcaps.AutoImportPartialNative,
-		LSPAutoImportEdits:      importcaps.SupportsLSPAutoImportEdits(resolution.CanonicalID, lspDeclared),
+		NativeAutoImport:        false,
+		LSPAutoImportEdits:      false,
 		ImportEditNormalization: importcaps.SupportsImportEditNormalization(resolution.CanonicalID),
-		Stubs:                   supportsStubs(resolution.StubID()),
 		Keywords:                supportsKeywords(resolution.KeywordID),
 		FillAll:                 supportsFill(resolution.FillID),
+		LSPCompletionEdits:      false,
+		LSPResolveEdits:         false,
+		LSPCodeActions:          false,
+		DependencyProof:         dependencyImports,
+		ProjectIndexProof:       supportsIndex(resolution.IndexID),
 	}
 	if sources.LSPDeclared && lspAvailable != nil {
 		sources.LSPAvailable = lspAvailable(resolution.LSPID)
 	}
+	if sources.LSPAvailable {
+		sources.LSPCompletionEdits = importcaps.SupportsLSPAutoImportEdits(resolution.CanonicalID, true)
+		sources.LSPResolveEdits = sources.LSPCompletionEdits
+		sources.LSPCodeActions = false
+	}
+	autoImportStatus := "disabled"
+	if sources.LSPCompletionEdits || sources.LSPResolveEdits || sources.ProjectIndexProof {
+		autoImportStatus = "partial"
+		autoImportLevel = importcaps.AutoImportLSPOnly
+	}
 
 	capability := LanguageCapability{
-		ID:              id,
-		Name:            name,
-		Extensions:      extensions,
-		CanonicalID:     resolution.CanonicalID,
-		Tier:            capabilityTier(sources),
-		AutoImportLevel: autoImportLevel,
-		Sources:         sources,
-		LSPServerID:     lspServerID,
-		Notes:           capabilityNotes(resolution, sources),
+		ID:               id,
+		Name:             name,
+		Extensions:       extensions,
+		CanonicalID:      resolution.CanonicalID,
+		Tier:             capabilityTier(sources),
+		AutoImportLevel:  autoImportLevel,
+		AutoImportStatus: autoImportStatus,
+		Sources:          sources,
+		LSPServerID:      lspServerID,
+		Notes:            capabilityNotes(resolution, sources),
 	}
 	return capability
 }
@@ -309,17 +325,6 @@ func localLanguage(canonical string) string {
 	return fillLanguage(canonical)
 }
 
-func stubLanguage(canonical string) string {
-	switch canonical {
-	case "typescriptreact", "astro":
-		return "typescript"
-	case "javascriptreact", "vue", "svelte":
-		return "javascript"
-	default:
-		return canonical
-	}
-}
-
 func supportsIndex(language string) bool {
 	info := lspregistry.GetLanguageByID(language)
 	return info != nil && info.ARLESupported
@@ -337,19 +342,6 @@ func supportsLocal(language string) bool {
 func supportsPredictive(language string) bool {
 	switch language {
 	case "php", "go", "typescript", "python", "ruby", "vue":
-		return true
-	default:
-		return false
-	}
-}
-
-func supportsImports(canonical string) bool {
-	return importcaps.SupportsImportContext(canonical) || importcaps.SupportsDependencyImports(canonical)
-}
-
-func supportsStubs(language string) bool {
-	switch language {
-	case "javascript", "typescript", "python", "php", "go", "ruby", "rust", "java", "csharp", "swift", "kotlin", "scala", "dart", "cpp", "c":
 		return true
 	default:
 		return false
