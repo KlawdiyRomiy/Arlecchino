@@ -489,6 +489,7 @@ export const MainLayoutPanelRenderer: React.FC<
                   projectPath={activeProjectPath}
                   language={activeCodePanelTab.language}
                   loadState={activeCodePanelTab.loadState}
+                  completionProviderMode="full"
                   aiInlinePatchPreview={activeCodePanelPatchPreview}
                   aiInlinePatchBusy={
                     codePanelPatchBusyId === activeCodePanelPatchPreview?.id

@@ -55,6 +55,8 @@ import {
   type EditorFileLoadState,
 } from "../utils/editorFileLoader";
 import { useIndexingPhase } from "../hooks/useIndexingProgress";
+import { useCodeMirrorCompletionProvider } from "../hooks/useCodeMirrorCompletionProvider";
+import { useStableReferenceKey } from "../hooks/useStableReferenceKey";
 import { BinaryEditorPreview } from "./BinaryEditorPreview";
 import { EditorFileLoadingView } from "./EditorFileLoadingView";
 import { GuardedEditorPreview } from "./GuardedEditorPreview";
@@ -71,6 +73,7 @@ interface CodePanelSurfaceProps {
   aiInlinePatchBusy?: boolean;
   onAcceptAIInlinePatch?: (preview: AIInlinePatchPreview) => void;
   onRejectAIInlinePatch?: (preview: AIInlinePatchPreview) => void;
+  completionProviderMode?: "full" | "off";
 }
 
 const autoSaveDelayMs = 500;
@@ -91,6 +94,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
   aiInlinePatchBusy = false,
   onAcceptAIInlinePatch,
   onRejectAIInlinePatch,
+  completionProviderMode = "off",
 }) => {
   const isReadOnlyByPolicy = isEditorFilePolicyReadOnly(loadState);
   const canDisplayEditor = !loadState || loadState.kind === "editable";
@@ -258,9 +262,24 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     showColorTools &&
     editorFeatureBudget.runtimeRichEditorFeatures &&
     isCodeMirrorColorToolTarget(language, path);
+  const completionProviderEnabled =
+    completionProviderMode === "full" && isEditable;
+  const {
+    extensions: completionProviderExtensions,
+    extensionsKey: completionProviderExtensionsKey,
+    recordDocumentChange,
+  } = useCodeMirrorCompletionProvider({
+    enabled: completionProviderEnabled,
+    filePath: path,
+    language,
+    content,
+    editorFeatureBudget,
+    getEditorView: () => editorViewRef.current,
+  });
 
   const adaptiveExtensions = useMemo(() => {
     const result: Extension[] = [];
+    result.push(...completionProviderExtensions);
     result.push(
       ...createCodeMirrorFoldExtensions(
         foldControlsEnabled,
@@ -281,6 +300,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     return result;
   }, [
     colorToolsEnabled,
+    completionProviderExtensions,
     diagnosticsExtension,
     editorFeatureBudget.layoutStableGitGutter,
     editorFeatureBudget.runtimeRichEditorFeatures,
@@ -289,12 +309,30 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     indentGuidesEnabled,
   ]);
 
+  const adaptiveExtensionsKey = useStableReferenceKey([
+    "code-panel-adaptive",
+    completionProviderExtensionsKey,
+    colorToolsEnabled,
+    diagnosticsExtension,
+    editorFeatureBudget.layoutStableGitGutter,
+    editorFeatureBudget.layoutStableFoldGutter,
+    editorFeatureBudget.runtimeRichEditorFeatures,
+    foldControlsEnabled,
+    gitGutterExtension,
+    indentGuidesEnabled,
+    language,
+    path,
+  ]);
+
   const {
     adaptiveCompartmentExtension,
     bindEditorView,
     reapplyAdaptiveExtensions,
     scrollGuardExtension,
-  } = useCodeMirrorAdaptiveExtensions(adaptiveExtensions);
+  } = useCodeMirrorAdaptiveExtensions(
+    adaptiveExtensions,
+    adaptiveExtensionsKey,
+  );
 
   const handleCreateEditor = useCallback(
     (view: EditorView) => {
@@ -355,6 +393,7 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
       if (!isEditable) {
         return;
       }
+      recordDocumentChange(value);
       updateTabContent(tabID, value);
 
       notifyEditorDocumentChanged({
@@ -382,7 +421,15 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
           });
       }, autoSaveDelayMs);
     },
-    [isEditable, language, markTabDirty, path, tabID, updateTabContent],
+    [
+      isEditable,
+      language,
+      markTabDirty,
+      path,
+      recordDocumentChange,
+      tabID,
+      updateTabContent,
+    ],
   );
 
   useEffect(() => {
