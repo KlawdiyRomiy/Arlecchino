@@ -923,17 +923,17 @@ func shellQuote(value string) string {
 }
 
 func compareAutoUpdateVersions(left string, right string) int {
-	leftParts := parseAutoUpdateVersionParts(left)
-	rightParts := parseAutoUpdateVersionParts(right)
+	leftVersion := parseAutoUpdateVersion(left)
+	rightVersion := parseAutoUpdateVersion(right)
 	for i := 0; i < 3; i++ {
-		if leftParts[i] > rightParts[i] {
+		if leftVersion.Core[i] > rightVersion.Core[i] {
 			return 1
 		}
-		if leftParts[i] < rightParts[i] {
+		if leftVersion.Core[i] < rightVersion.Core[i] {
 			return -1
 		}
 	}
-	return strings.Compare(strings.TrimSpace(left), strings.TrimSpace(right))
+	return compareAutoUpdatePrerelease(leftVersion.Prerelease, rightVersion.Prerelease)
 }
 
 func compareAutoUpdateTarget(manifest PackagedOSAutoUpdateManifest, current BuildInfo) int {
@@ -981,17 +981,94 @@ func autoUpdateBuildLabel(version string, build string) string {
 	return fmt.Sprintf("%s build %s", version, build)
 }
 
-func parseAutoUpdateVersionParts(version string) [3]int {
+type autoUpdateVersion struct {
+	Core       [3]int
+	Prerelease []string
+}
+
+func parseAutoUpdateVersion(version string) autoUpdateVersion {
 	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
-	version = strings.SplitN(version, "-", 2)[0]
 	version = strings.SplitN(version, "+", 2)[0]
-	parts := strings.Split(version, ".")
-	var parsed [3]int
+	coreText := version
+	prereleaseText := ""
+	if before, after, ok := strings.Cut(version, "-"); ok {
+		coreText = before
+		prereleaseText = after
+	}
+
+	parts := strings.Split(coreText, ".")
+	parsed := autoUpdateVersion{}
 	for i := 0; i < len(parts) && i < 3; i++ {
 		value, _ := strconv.Atoi(parts[i])
-		parsed[i] = value
+		parsed.Core[i] = value
+	}
+	if prereleaseText != "" {
+		parsed.Prerelease = strings.Split(prereleaseText, ".")
 	}
 	return parsed
+}
+
+func compareAutoUpdatePrerelease(left []string, right []string) int {
+	if len(left) == 0 && len(right) == 0 {
+		return 0
+	}
+	if len(left) == 0 {
+		return 1
+	}
+	if len(right) == 0 {
+		return -1
+	}
+
+	limit := len(left)
+	if len(right) < limit {
+		limit = len(right)
+	}
+	for i := 0; i < limit; i++ {
+		compare := compareAutoUpdatePrereleaseIdentifier(left[i], right[i])
+		if compare != 0 {
+			return compare
+		}
+	}
+	if len(left) > len(right) {
+		return 1
+	}
+	if len(left) < len(right) {
+		return -1
+	}
+	return 0
+}
+
+func compareAutoUpdatePrereleaseIdentifier(left string, right string) int {
+	leftNumber, leftNumeric := parseAutoUpdatePrereleaseNumber(left)
+	rightNumber, rightNumeric := parseAutoUpdatePrereleaseNumber(right)
+	switch {
+	case leftNumeric && rightNumeric:
+		if leftNumber > rightNumber {
+			return 1
+		}
+		if leftNumber < rightNumber {
+			return -1
+		}
+		return 0
+	case leftNumeric:
+		return -1
+	case rightNumeric:
+		return 1
+	default:
+		return strings.Compare(left, right)
+	}
+}
+
+func parseAutoUpdatePrereleaseNumber(value string) (int, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, false
+	}
+	return parsed, true
 }
 
 func cloneAutoUpdateStatus(status AutoUpdateStatus) AutoUpdateStatus {

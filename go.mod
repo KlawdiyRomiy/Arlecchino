@@ -17,7 +17,7 @@ require (
 	github.com/sahilm/fuzzy v0.1.1
 	github.com/scip-code/scip/bindings/go/scip v0.7.1
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
-	github.com/wailsapp/wails/v3 v3.0.0-alpha.95
+	github.com/wailsapp/wails/v3 v3.0.0-alpha.96
 	github.com/yalue/onnxruntime_go v1.25.0
 	go.lsp.dev/jsonrpc2 v0.10.0
 	go.lsp.dev/protocol v0.12.0

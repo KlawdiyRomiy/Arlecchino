@@ -31,7 +31,7 @@ OUTPUT_DIR="${ARLE_WAILS3_RELEASE_OUTPUT:-}"
 CREATE_DMG="${ARLE_WAILS3_RELEASE_CREATE_DMG:-1}"
 PUBLISH="0"
 DRAFT="0"
-PRERELEASE="1"
+PRERELEASE="0"
 NOTES_FILE="${ARLE_WAILS3_GITHUB_RELEASE_NOTES:-}"
 RELEASE_DIR=""
 RELEASE_REPORT=""
@@ -63,7 +63,8 @@ Options:
   --create-dmg              Create and upload DMG. Default.
   --skip-dmg                Upload ZIP/update assets only.
   --draft                   Create release as draft.
-  --final                   Mark release as non-prerelease.
+  --prerelease              Mark GitHub release as prerelease.
+  --final                   Mark release as non-prerelease. Default.
   --notes-file <path>       Required release notes file for GitHub release and manifest.
   --dry-run-report <path>   Optional JSON plan output for dry-run.
 
@@ -154,6 +155,10 @@ while [[ $# -gt 0 ]]; do
       DRAFT="1"
       shift
       ;;
+    --prerelease)
+      PRERELEASE="1"
+      shift
+      ;;
     --final)
       PRERELEASE="0"
       shift
@@ -216,8 +221,20 @@ if [[ "$PRIMARY_MANIFEST_ASSET" == "$LEGACY_MANIFEST_ASSET" && "$LEGACY_MANIFEST
   echo "ERROR: primary and legacy manifest assets must be distinct." >&2
   exit 1
 fi
+format_release_title() {
+  local version="$1"
+  if [[ "$version" == *-beta ]]; then
+    echo "Arlecchino ${version%-beta} Beta"
+    return 0
+  fi
+  if [[ "$version" == *-alpha ]]; then
+    echo "Arlecchino ${version%-alpha} Alpha"
+    return 0
+  fi
+  echo "Arlecchino $version"
+}
 if [[ -z "$TITLE" ]]; then
-  TITLE="Arlecchino $TAG"
+  TITLE="$(format_release_title "$VERSION")"
 fi
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 MANIFEST_SOURCE="github-release://$OWNER/$REPO/latest/$PRIMARY_MANIFEST_ASSET"
@@ -229,7 +246,7 @@ node "$ROOT_DIR/scripts/wails3-release-notes-policy.mjs" --validate "$NOTES_FILE
 
 write_dry_run_report() {
   local out="$1"
-  node - "$out" "$OWNER" "$REPO" "$TAG" "$TITLE" "$VERSION" "$BUILD_NUMBER" "$CHANNEL" "$MANIFEST_SOURCE" "$CREATE_DMG" "$PUBLISH" "$PRIMARY_MANIFEST_ASSET" "$LEGACY_MANIFEST_ENABLED" "$LEGACY_MANIFEST_ASSET" "$LEGACY_MANIFEST_CHANNEL" <<'NODE'
+  node - "$out" "$OWNER" "$REPO" "$TAG" "$TITLE" "$VERSION" "$BUILD_NUMBER" "$CHANNEL" "$MANIFEST_SOURCE" "$CREATE_DMG" "$PUBLISH" "$DRAFT" "$PRERELEASE" "$PRIMARY_MANIFEST_ASSET" "$LEGACY_MANIFEST_ENABLED" "$LEGACY_MANIFEST_ASSET" "$LEGACY_MANIFEST_CHANNEL" <<'NODE'
 const fs = require("fs");
 const path = require("path");
 const [
@@ -244,6 +261,8 @@ const [
   manifestSource,
   createDmg,
   publish,
+  draft,
+  prerelease,
   primaryManifestAsset,
   legacyManifestEnabled,
   legacyManifestAsset,
@@ -263,6 +282,10 @@ const report = {
   build,
   channel,
   manifestSource,
+  githubRelease: {
+    draft: draft === "1",
+    prerelease: prerelease === "1",
+  },
   primaryManifest: {
     asset: primaryManifestAsset,
     channel,
