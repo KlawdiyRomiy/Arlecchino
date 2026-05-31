@@ -492,7 +492,11 @@ fi
 
 if [[ "$RUN_SMOKE" == "1" ]]; then
   set +e
-  ARLE_WAILS3_RELEASE_SMOKE_SIGN_MODE="$SIGN_MODE" "$ROOT_DIR/scripts/wails3-release-smoke-macos.sh" --report "$SMOKE_REPORT" >"$SMOKE_LOG" 2>&1
+  SMOKE_SIGN_MODE="$SIGN_MODE"
+  if [[ "$SIGN_MODE" == "local-identity" ]]; then
+    SMOKE_SIGN_MODE="adhoc"
+  fi
+  ARLE_WAILS3_RELEASE_SMOKE_SIGN_MODE="$SMOKE_SIGN_MODE" "$ROOT_DIR/scripts/wails3-release-smoke-macos.sh" --report "$SMOKE_REPORT" >"$SMOKE_LOG" 2>&1
   SMOKE_EXIT="$?"
   set -e
   if [[ "$SMOKE_EXIT" == "0" ]]; then
