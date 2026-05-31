@@ -42,6 +42,7 @@ type Manager struct {
 	completionMu         sync.Mutex
 	completionInFly      map[string]chan completionResult
 	completionCache      map[string]completionResult
+	completionEpoch      uint64
 	completionTTL        time.Duration
 	completionMax        int
 	completionWait       time.Duration
@@ -71,6 +72,33 @@ type completionResult struct {
 	items     []CompletionItem
 	err       error
 	createdAt time.Time
+}
+
+type CompletionTrigger struct {
+	TriggerKind      int
+	TriggerCharacter string
+}
+
+const (
+	completionTriggerInvoked    = 1
+	completionTriggerCharacter  = 2
+	completionTriggerIncomplete = 3
+)
+
+func (t CompletionTrigger) normalized() CompletionTrigger {
+	switch t.TriggerKind {
+	case completionTriggerCharacter:
+		if strings.TrimSpace(t.TriggerCharacter) == "" {
+			t.TriggerKind = completionTriggerInvoked
+			t.TriggerCharacter = ""
+		}
+	case completionTriggerIncomplete:
+		t.TriggerCharacter = ""
+	default:
+		t.TriggerKind = completionTriggerInvoked
+		t.TriggerCharacter = ""
+	}
+	return t
 }
 
 type startFailure struct {
@@ -657,6 +685,7 @@ func (m *Manager) Stop(language string) error {
 	m.mu.Unlock()
 	m.forceMarkLanguageClosed(language)
 	m.clearDiagnosticsForLanguages([]string{language})
+	m.clearCompletionCacheForLanguage(language)
 
 	return server.shutdown()
 }
@@ -678,6 +707,7 @@ func (m *Manager) cleanupServer(language string, server *Server) {
 	if shouldShutdown {
 		m.forceMarkLanguageClosed(closeLang)
 		m.clearDiagnosticsForLanguages([]string{closeLang})
+		m.clearCompletionCacheForLanguage(closeLang)
 		if err := server.shutdown(); err != nil {
 			log.Printf("[LSP-MGR] shutdown failed lang=%s err=%v", closeLang, err)
 		}
@@ -700,6 +730,7 @@ func (m *Manager) StopAll() {
 	m.idleTimers = make(map[string]*time.Timer)
 	m.openDocsByLang = make(map[string]map[string]*openDocState)
 	m.mu.Unlock()
+	m.clearCompletionCache()
 
 	m.diagnosticsMu.Lock()
 	m.diagnostics = make(map[string]map[string][]Diagnostic)
@@ -848,9 +879,14 @@ func (m *Manager) Complete(language, filePath string, line, column int) ([]Compl
 }
 
 func (m *Manager) CompleteWithContext(ctx context.Context, language, filePath string, line, column int) ([]CompletionItem, error) {
+	return m.CompleteWithTrigger(ctx, language, filePath, line, column, CompletionTrigger{})
+}
+
+func (m *Manager) CompleteWithTrigger(ctx context.Context, language, filePath string, line, column int, trigger CompletionTrigger) ([]CompletionItem, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	trigger = trigger.normalized()
 
 	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
 	if !ok {
@@ -865,7 +901,8 @@ func (m *Manager) CompleteWithContext(ctx context.Context, language, filePath st
 	}
 
 	version := m.docVersion(language, filePath)
-	cacheKey := fmt.Sprintf("%s|%s|%d|%d|%d", language, filePath, line, column, version)
+	epoch := m.completionCacheEpoch()
+	cacheKey := fmt.Sprintf("%d|%s|%s|%d|%d|%d|%d|%s", epoch, language, filePath, line, column, version, trigger.TriggerKind, trigger.TriggerCharacter)
 	if result, ok := m.getCompletionCache(cacheKey); ok {
 		return result.items, result.err
 	}
@@ -895,12 +932,14 @@ func (m *Manager) CompleteWithContext(ctx context.Context, language, filePath st
 	if positionColumn < 0 {
 		positionColumn = 0
 	}
-	items, err := server.completeWithContext(ctx, filePath, positionLine, positionColumn)
+	items, err := server.completeWithContext(ctx, filePath, positionLine, positionColumn, trigger)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return nil, nil
 	}
 	result := completionResult{items: items, err: err, createdAt: time.Now()}
-	m.setCompletionCache(cacheKey, result)
+	if m.completionCacheEpoch() == epoch {
+		m.setCompletionCache(cacheKey, result)
+	}
 	if err != nil {
 		log.Printf("[LSP-MGR] Complete error for lang=%s: %v", language, err)
 	}
@@ -1030,16 +1069,15 @@ func (m *Manager) DidOpenWithContext(ctx context.Context, language, filePath, co
 				return err
 			}
 			m.markDocUserOpen(language, filePath, 1)
+			m.clearCompletionCacheForFile(language, filePath)
 			return nil
 		}
-		version := state.version + 1
+		version := state.version
 		if version <= 0 {
 			version = 1
 		}
-		if err := server.DidChange(filePath, version, content); err != nil {
-			return err
-		}
 		m.markDocUserOpen(language, filePath, version)
+		m.clearCompletionCacheForFile(language, filePath)
 		return nil
 	}
 
@@ -1054,6 +1092,7 @@ func (m *Manager) DidOpenWithContext(ctx context.Context, language, filePath, co
 		return err
 	}
 	m.markDocUserOpen(language, filePath, 1)
+	m.clearCompletionCacheForFile(language, filePath)
 	return nil
 }
 
@@ -1183,6 +1222,7 @@ func (m *Manager) DidChangeWithContext(ctx context.Context, language, filePath s
 		return err
 	}
 	m.markDocUserOpen(language, filePath, version)
+	m.clearCompletionCacheForFile(language, filePath)
 	return nil
 }
 
@@ -1205,17 +1245,20 @@ func (m *Manager) DidClose(language, filePath string) error {
 	if !ok {
 		m.clearDiagnosticsForLanguages([]string{language})
 		m.forceMarkLanguageClosed(language)
+		m.clearCompletionCacheForFile(language, filePath)
 		return nil
 	}
 
 	if !server.running || !server.isProcessAlive() {
 		m.cleanupServer(language, server)
+		m.clearCompletionCacheForFile(language, filePath)
 		return nil
 	}
 
 	decision := m.prepareDocUserClose(language, filePath)
 	if !decision.known {
 		m.clearDiagnostics(language, filePath)
+		m.clearCompletionCacheForFile(language, filePath)
 		return nil
 	}
 	if !decision.shouldClose {
@@ -1228,6 +1271,7 @@ func (m *Manager) DidClose(language, filePath string) error {
 	}
 	m.commitDocUserClose(language, filePath)
 	m.clearDiagnostics(language, filePath)
+	m.clearCompletionCacheForFile(language, filePath)
 	m.scheduleIdleStop(language)
 	return nil
 }
@@ -1257,10 +1301,12 @@ func (m *Manager) DidCloseTransient(language, filePath string) error {
 	if !ok {
 		m.clearDiagnosticsForLanguages([]string{language})
 		m.forceMarkLanguageClosed(language)
+		m.clearCompletionCacheForFile(language, filePath)
 		return nil
 	}
 	if !server.running || !server.isProcessAlive() {
 		m.cleanupServer(language, server)
+		m.clearCompletionCacheForFile(language, filePath)
 		return nil
 	}
 	if err := server.DidClose(filePath); err != nil {
@@ -1269,6 +1315,7 @@ func (m *Manager) DidCloseTransient(language, filePath string) error {
 	}
 	m.commitDocTransientClose(language, filePath)
 	m.clearDiagnostics(language, filePath)
+	m.clearCompletionCacheForFile(language, filePath)
 	m.scheduleIdleStop(language)
 	return nil
 }
@@ -1882,6 +1929,53 @@ func (m *Manager) getCompletionCache(key string) (completionResult, bool) {
 	return completionResult{}, false
 }
 
+func (m *Manager) completionCacheEpoch() uint64 {
+	m.completionMu.Lock()
+	epoch := m.completionEpoch
+	m.completionMu.Unlock()
+	return epoch
+}
+
+func (m *Manager) clearCompletionCache() {
+	m.completionMu.Lock()
+	m.completionEpoch++
+	m.completionCache = make(map[string]completionResult)
+	m.completionMu.Unlock()
+}
+
+func (m *Manager) clearCompletionCacheForLanguage(language string) {
+	language = strings.TrimSpace(language)
+	if language == "" {
+		return
+	}
+	m.completionMu.Lock()
+	m.completionEpoch++
+	for key := range m.completionCache {
+		parts := strings.SplitN(key, "|", 3)
+		if len(parts) >= 2 && parts[1] == language {
+			delete(m.completionCache, key)
+		}
+	}
+	m.completionMu.Unlock()
+}
+
+func (m *Manager) clearCompletionCacheForFile(language, filePath string) {
+	language = strings.TrimSpace(language)
+	filePath = strings.TrimSpace(filePath)
+	if language == "" || filePath == "" {
+		return
+	}
+	m.completionMu.Lock()
+	m.completionEpoch++
+	for key := range m.completionCache {
+		parts := strings.SplitN(key, "|", 4)
+		if len(parts) >= 3 && parts[1] == language && parts[2] == filePath {
+			delete(m.completionCache, key)
+		}
+	}
+	m.completionMu.Unlock()
+}
+
 func (m *Manager) setCompletionCache(key string, result completionResult) {
 	m.completionMu.Lock()
 	m.completionCache[key] = result
@@ -2244,12 +2338,20 @@ func (s *Server) isProcessAlive() bool {
 }
 
 func (s *Server) complete(filePath string, line, column int) ([]CompletionItem, error) {
-	return s.completeWithContext(context.Background(), filePath, line, column)
+	return s.completeWithContext(context.Background(), filePath, line, column, CompletionTrigger{})
 }
 
-func (s *Server) completeWithContext(ctx context.Context, filePath string, line, column int) ([]CompletionItem, error) {
+func (s *Server) completeWithContext(ctx context.Context, filePath string, line, column int, trigger CompletionTrigger) ([]CompletionItem, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	trigger = trigger.normalized()
+
+	completionContext := map[string]any{
+		"triggerKind": trigger.TriggerKind,
+	}
+	if trigger.TriggerKind == completionTriggerCharacter {
+		completionContext["triggerCharacter"] = trigger.TriggerCharacter
 	}
 
 	params := map[string]any{
@@ -2260,9 +2362,7 @@ func (s *Server) completeWithContext(ctx context.Context, filePath string, line,
 			"line":      line,
 			"character": column,
 		},
-		"context": map[string]any{
-			"triggerKind": 1,
-		},
+		"context": completionContext,
 	}
 
 	resp, err := s.requestWithContext(ctx, "textDocument/completion", params)

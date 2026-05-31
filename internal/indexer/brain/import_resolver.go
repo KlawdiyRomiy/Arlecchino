@@ -15,13 +15,16 @@ type ImportChainResolver struct {
 	maxEntries int
 	cacheTTL   time.Duration
 
-	phpUsePattern   *regexp.Regexp
-	phpAliasPattern *regexp.Regexp
-	tsImportPattern *regexp.Regexp
-	pyImportPattern *regexp.Regexp
-	pyFromPattern   *regexp.Regexp
-	goImportPattern *regexp.Regexp
-	rustUsePattern  *regexp.Regexp
+	phpUsePattern            *regexp.Regexp
+	phpAliasPattern          *regexp.Regexp
+	tsImportPattern          *regexp.Regexp
+	pyImportPattern          *regexp.Regexp
+	pyFromPattern            *regexp.Regexp
+	goImportPattern          *regexp.Regexp
+	rustUsePattern           *regexp.Regexp
+	dartImportPattern        *regexp.Regexp
+	csUsingAliasPattern      *regexp.Regexp
+	cppNamespaceAliasPattern *regexp.Regexp
 }
 
 type importCache struct {
@@ -37,16 +40,19 @@ func importContentKey(content []byte) string {
 
 func NewImportChainResolver() *ImportChainResolver {
 	return &ImportChainResolver{
-		cache:           make(map[string]*importCache),
-		maxEntries:      200,
-		cacheTTL:        2 * time.Minute,
-		phpUsePattern:   regexp.MustCompile(`^\s*use\s+([^\s;]+?)(?:\s+as\s+(\w+))?\s*;`),
-		phpAliasPattern: regexp.MustCompile(`^\s*use\s+([^\s{;]+)\s*\{([^}]+)\}`),
-		tsImportPattern: regexp.MustCompile(`^\s*import\s+(?:\{([^}]+)\}|\*\s+as\s+(\w+)|(\w+))\s+from\s+['"]([^'"]+)['"]`),
-		pyImportPattern: regexp.MustCompile(`^\s*import\s+(\S+)(?:\s+as\s+(\w+))?`),
-		pyFromPattern:   regexp.MustCompile(`^\s*from\s+(\S+)\s+import\s+(.+)`),
-		goImportPattern: regexp.MustCompile(`^\s*(?:import\s+)?(?:(\w+)\s+)?["']([^"']+)["']`),
-		rustUsePattern:  regexp.MustCompile(`^\s*use\s+([^;]+);`),
+		cache:                    make(map[string]*importCache),
+		maxEntries:               200,
+		cacheTTL:                 2 * time.Minute,
+		phpUsePattern:            regexp.MustCompile(`^\s*use\s+([^\s;]+?)(?:\s+as\s+(\w+))?\s*;`),
+		phpAliasPattern:          regexp.MustCompile(`^\s*use\s+([^\s{;]+)\s*\{([^}]+)\}`),
+		tsImportPattern:          regexp.MustCompile(`(?s)\bimport\s+(?:type\s+)?(?:\{([^}]+)\}|\*\s+as\s+(\w+)|(\w+)(?:\s*,\s*\{([^}]+)\})?)\s+from\s+['"]([^'"]+)['"]`),
+		pyImportPattern:          regexp.MustCompile(`^\s*import\s+(\S+)(?:\s+as\s+(\w+))?`),
+		pyFromPattern:            regexp.MustCompile(`^\s*from\s+(\S+)\s+import\s+(.+)`),
+		goImportPattern:          regexp.MustCompile(`^\s*(?:import\s+)?(?:(\w+)\s+)?["']([^"']+)["']`),
+		rustUsePattern:           regexp.MustCompile(`^\s*use\s+([^;]+);`),
+		dartImportPattern:        regexp.MustCompile(`^\s*import\s+['"]([^'"]+)['"](?:\s+as\s+(\w+))?`),
+		csUsingAliasPattern:      regexp.MustCompile(`^\s*using\s+(\w+)\s*=\s*([^;]+);`),
+		cppNamespaceAliasPattern: regexp.MustCompile(`^\s*namespace\s+(\w+)\s*=\s*([^;]+);`),
 	}
 }
 
@@ -95,6 +101,12 @@ func (r *ImportChainResolver) parseImportsForLanguage(content, language string) 
 		return r.parseGoImports(content)
 	case "rust":
 		return r.parseRustImports(content)
+	case "dart":
+		return r.parseDartImports(content)
+	case "csharp", "cs":
+		return r.parseCSharpImports(content)
+	case "cpp", "c++", "c":
+		return r.parseCppImports(content)
 	default:
 		return make(map[string]string)
 	}
@@ -149,31 +161,47 @@ func (r *ImportChainResolver) parsePHPImports(content string) map[string]string 
 
 func (r *ImportChainResolver) parseTSImports(content string) map[string]string {
 	imports := make(map[string]string)
-	lines := strings.Split(content, "\n")
 
-	for _, line := range lines {
-		if matches := r.tsImportPattern.FindStringSubmatch(line); len(matches) >= 5 {
-			modulePath := matches[4]
-			if matches[1] != "" {
-				for _, name := range strings.Split(matches[1], ",") {
-					name = strings.TrimSpace(name)
-					parts := strings.Split(name, " as ")
-					originalName := strings.TrimSpace(parts[0])
-					shortName := originalName
-					if len(parts) > 1 {
-						shortName = strings.TrimSpace(parts[1])
-					}
-					imports[shortName] = modulePath
-				}
-			} else if matches[2] != "" {
-				imports[matches[2]] = modulePath
-			} else if matches[3] != "" {
-				imports[matches[3]] = modulePath
-			}
+	for _, matches := range r.tsImportPattern.FindAllStringSubmatch(content, -1) {
+		if len(matches) < 6 {
+			continue
+		}
+		modulePath := matches[5]
+		if matches[1] != "" {
+			addTSNamedImports(imports, matches[1], modulePath)
+			continue
+		}
+		if matches[2] != "" {
+			imports[matches[2]] = modulePath
+			continue
+		}
+		if matches[3] != "" {
+			imports[matches[3]] = modulePath
+		}
+		if len(matches) > 4 && matches[4] != "" {
+			addTSNamedImports(imports, matches[4], modulePath)
 		}
 	}
 
 	return imports
+}
+
+func addTSNamedImports(imports map[string]string, names, modulePath string) {
+	for _, name := range strings.Split(names, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		parts := strings.Split(name, " as ")
+		originalName := strings.TrimSpace(parts[0])
+		shortName := originalName
+		if len(parts) > 1 {
+			shortName = strings.TrimSpace(parts[1])
+		}
+		if shortName != "" {
+			imports[shortName] = modulePath
+		}
+	}
 }
 
 func (r *ImportChainResolver) parsePythonImports(content string) map[string]string {
@@ -234,8 +262,7 @@ func (r *ImportChainResolver) parseGoImports(content string) map[string]string {
 			if matches := r.goImportPattern.FindStringSubmatch(line); len(matches) >= 3 {
 				pkgPath := matches[2]
 				alias := matches[1]
-				parts := strings.Split(pkgPath, "/")
-				pkgName := parts[len(parts)-1]
+				pkgName := inferGoImportPackageName(pkgPath)
 				if alias != "" {
 					imports[alias] = pkgPath
 				} else {
@@ -246,6 +273,21 @@ func (r *ImportChainResolver) parseGoImports(content string) map[string]string {
 	}
 
 	return imports
+}
+
+func inferGoImportPackageName(pkgPath string) string {
+	parts := strings.Split(strings.Trim(pkgPath, "/"), "/")
+	if len(parts) == 0 {
+		return pkgPath
+	}
+	name := parts[len(parts)-1]
+	if regexp.MustCompile(`^v\d+$`).MatchString(name) && len(parts) > 1 {
+		return parts[len(parts)-2]
+	}
+	if matches := regexp.MustCompile(`^(.+)\.v\d+$`).FindStringSubmatch(name); len(matches) == 2 {
+		return matches[1]
+	}
+	return name
 }
 
 func (r *ImportChainResolver) parseRustImports(content string) map[string]string {
@@ -272,6 +314,59 @@ func (r *ImportChainResolver) parseRustImports(content string) map[string]string
 		}
 	}
 
+	return imports
+}
+
+func (r *ImportChainResolver) parseDartImports(content string) map[string]string {
+	imports := make(map[string]string)
+	for _, line := range strings.Split(content, "\n") {
+		matches := r.dartImportPattern.FindStringSubmatch(line)
+		if len(matches) < 2 {
+			continue
+		}
+		path := strings.TrimSpace(matches[1])
+		alias := ""
+		if len(matches) > 2 {
+			alias = strings.TrimSpace(matches[2])
+		}
+		if alias != "" {
+			imports[alias] = path
+			continue
+		}
+		if base := dartImportBaseName(path); base != "" {
+			imports[base] = path
+		}
+	}
+	return imports
+}
+
+func dartImportBaseName(path string) string {
+	path = strings.TrimSuffix(strings.TrimSpace(path), ".dart")
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		path = path[idx+1:]
+	}
+	return strings.TrimSpace(path)
+}
+
+func (r *ImportChainResolver) parseCSharpImports(content string) map[string]string {
+	imports := make(map[string]string)
+	for _, line := range strings.Split(content, "\n") {
+		matches := r.csUsingAliasPattern.FindStringSubmatch(line)
+		if len(matches) == 3 {
+			imports[strings.TrimSpace(matches[1])] = strings.TrimSpace(matches[2])
+		}
+	}
+	return imports
+}
+
+func (r *ImportChainResolver) parseCppImports(content string) map[string]string {
+	imports := make(map[string]string)
+	for _, line := range strings.Split(content, "\n") {
+		matches := r.cppNamespaceAliasPattern.FindStringSubmatch(line)
+		if len(matches) == 3 {
+			imports[strings.TrimSpace(matches[1])] = strings.TrimSpace(matches[2])
+		}
+	}
 	return imports
 }
 

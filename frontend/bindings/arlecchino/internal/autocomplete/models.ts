@@ -22,9 +22,13 @@ export class CapabilitySources {
     "nativeAutoImport": boolean;
     "lspAutoImportEdits": boolean;
     "importEditNormalization": boolean;
-    "stubs": boolean;
     "keywords": boolean;
     "fillAll": boolean;
+    "lspCompletionEdits": boolean;
+    "lspResolveEdits": boolean;
+    "lspCodeActions": boolean;
+    "dependencyProof": boolean;
+    "projectIndexProof": boolean;
 
     /** Creates a new CapabilitySources instance. */
     constructor($$source: Partial<CapabilitySources> = {}) {
@@ -64,14 +68,26 @@ export class CapabilitySources {
         if (!("importEditNormalization" in $$source)) {
             this["importEditNormalization"] = false;
         }
-        if (!("stubs" in $$source)) {
-            this["stubs"] = false;
-        }
         if (!("keywords" in $$source)) {
             this["keywords"] = false;
         }
         if (!("fillAll" in $$source)) {
             this["fillAll"] = false;
+        }
+        if (!("lspCompletionEdits" in $$source)) {
+            this["lspCompletionEdits"] = false;
+        }
+        if (!("lspResolveEdits" in $$source)) {
+            this["lspResolveEdits"] = false;
+        }
+        if (!("lspCodeActions" in $$source)) {
+            this["lspCodeActions"] = false;
+        }
+        if (!("dependencyProof" in $$source)) {
+            this["dependencyProof"] = false;
+        }
+        if (!("projectIndexProof" in $$source)) {
+            this["projectIndexProof"] = false;
         }
 
         Object.assign(this, $$source);
@@ -106,6 +122,7 @@ export class LanguageCapability {
     "canonicalId": string;
     "tier": CapabilityTier;
     "autoImportLevel": importcaps$0.AutoImportLevel;
+    "autoImportStatus": string;
     "sources": CapabilitySources;
     "lspServerId": string;
     "lspInstalled": boolean;
@@ -144,6 +161,9 @@ export class LanguageCapability {
         }
         if (!("autoImportLevel" in $$source)) {
             this["autoImportLevel"] = importcaps$0.AutoImportLevel.$zero;
+        }
+        if (!("autoImportStatus" in $$source)) {
+            this["autoImportStatus"] = "";
         }
         if (!("sources" in $$source)) {
             this["sources"] = (new CapabilitySources());
@@ -208,21 +228,21 @@ export class LanguageCapability {
      */
     static createFrom($$source: any = {}): LanguageCapability {
         const $$createField2_0 = $$createType0;
-        const $$createField6_0 = $$createType1;
-        const $$createField16_0 = $$createType0;
-        const $$createField23_0 = $$createType0;
+        const $$createField7_0 = $$createType1;
+        const $$createField17_0 = $$createType0;
+        const $$createField24_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("extensions" in $$parsedSource) {
             $$parsedSource["extensions"] = $$createField2_0($$parsedSource["extensions"]);
         }
         if ("sources" in $$parsedSource) {
-            $$parsedSource["sources"] = $$createField6_0($$parsedSource["sources"]);
+            $$parsedSource["sources"] = $$createField7_0($$parsedSource["sources"]);
         }
         if ("lspInstallDependencies" in $$parsedSource) {
-            $$parsedSource["lspInstallDependencies"] = $$createField16_0($$parsedSource["lspInstallDependencies"]);
+            $$parsedSource["lspInstallDependencies"] = $$createField17_0($$parsedSource["lspInstallDependencies"]);
         }
         if ("notes" in $$parsedSource) {
-            $$parsedSource["notes"] = $$createField23_0($$parsedSource["notes"]);
+            $$parsedSource["notes"] = $$createField24_0($$parsedSource["notes"]);
         }
         return new LanguageCapability($$parsedSource as Partial<LanguageCapability>);
     }

@@ -58,6 +58,35 @@ type PolicyPlan struct {
 	Actions     []Action `json:"actions"`
 }
 
+type PolicyPlanRequest struct {
+	Policy Policy `json:"policy"`
+}
+
+type AvailabilityState string
+
+const (
+	AvailabilityRunnable    AvailabilityState = "runnable"
+	AvailabilityUnavailable AvailabilityState = "unavailable"
+)
+
+type ActionDescriptor struct {
+	Action             Action            `json:"action"`
+	ManifestDir        string            `json:"manifestDir"`
+	AvailabilityState  AvailabilityState `json:"availabilityState"`
+	AvailabilityReason string            `json:"availabilityReason,omitempty"`
+	RequiresConsent    bool              `json:"requiresConsent"`
+	ApprovalEligible   bool              `json:"approvalEligible"`
+}
+
+type PolicyPlanV2 struct {
+	ProjectPath         string             `json:"projectPath"`
+	Policy              Policy             `json:"policy"`
+	RunnableActions     []ActionDescriptor `json:"runnableActions"`
+	UnavailableActions  []ActionDescriptor `json:"unavailableActions"`
+	DiscoveryWarnings   []string           `json:"discoveryWarnings,omitempty"`
+	DiscoveryIncomplete bool               `json:"discoveryIncomplete"`
+}
+
 type ExecuteRequest struct {
 	Policy            Policy   `json:"policy"`
 	ApprovedActionIDs []string `json:"approvedActionIds"`
@@ -68,6 +97,27 @@ type ExecuteRequest struct {
 type ExecuteResult struct {
 	Results map[string]string `json:"results"`
 	Blocked map[string]string `json:"blocked"`
+}
+
+type OutcomeStatus string
+
+const (
+	OutcomeCompleted   OutcomeStatus = "completed"
+	OutcomeFailed      OutcomeStatus = "failed"
+	OutcomeBlocked     OutcomeStatus = "blocked"
+	OutcomeUnavailable OutcomeStatus = "unavailable"
+	OutcomePlanned     OutcomeStatus = "planned"
+)
+
+type ActionOutcome struct {
+	ActionID string        `json:"actionId"`
+	Action   Action        `json:"action"`
+	Status   OutcomeStatus `json:"status"`
+	Message  string        `json:"message"`
+}
+
+type ExecuteResultV2 struct {
+	Outcomes []ActionOutcome `json:"outcomes"`
 }
 
 type consentState struct {
@@ -105,6 +155,77 @@ func (e *Executor) BuildPolicyPlan(projectPath string, policy Policy) (PolicyPla
 		actions[i].RequiresConsent = actionRequiresConsent(actions[i], policy)
 	}
 	return PolicyPlan{ProjectPath: projectPath, Policy: policy, Actions: actions}, nil
+}
+
+func (e *Executor) BuildPolicyPlanV2(projectPath string, req PolicyPlanRequest) (PolicyPlanV2, error) {
+	if strings.TrimSpace(projectPath) == "" {
+		return PolicyPlanV2{}, fmt.Errorf("project path is required")
+	}
+	policy := normalizePolicy(req.Policy)
+	managers, discovery, err := detectManagersWithReport(projectPath, ModeManual)
+	if err != nil {
+		return PolicyPlanV2{}, err
+	}
+	actions := flattenActions(managers)
+
+	plan := PolicyPlanV2{
+		ProjectPath:         projectPath,
+		Policy:              policy,
+		DiscoveryWarnings:   append([]string(nil), discovery.Warnings...),
+		DiscoveryIncomplete: discovery.Incomplete,
+	}
+
+	for _, action := range actions {
+		descriptor := e.actionDescriptor(projectPath, action, policy)
+		if descriptor.AvailabilityState == AvailabilityRunnable {
+			plan.RunnableActions = append(plan.RunnableActions, descriptor)
+		} else {
+			plan.UnavailableActions = append(plan.UnavailableActions, descriptor)
+		}
+	}
+
+	return plan, nil
+}
+
+func (e *Executor) actionDescriptor(projectPath string, action Action, policy Policy) ActionDescriptor {
+	action.RequiresConsent = actionRequiresConsent(action, policy)
+	descriptor := ActionDescriptor{
+		Action:            action,
+		AvailabilityState: AvailabilityRunnable,
+		RequiresConsent:   action.RequiresConsent,
+		ApprovalEligible:  action.RequiresConsent,
+	}
+
+	workDir, err := manifestWorkDir(projectPath, action.Manifest)
+	if err != nil {
+		descriptor.AvailabilityState = AvailabilityUnavailable
+		descriptor.AvailabilityReason = err.Error()
+		descriptor.ApprovalEligible = false
+		return descriptor
+	}
+	if rel, relErr := filepath.Rel(filepath.Clean(projectPath), workDir); relErr == nil {
+		rel = filepath.ToSlash(filepath.Clean(rel))
+		if rel == "." {
+			descriptor.ManifestDir = "."
+		} else {
+			descriptor.ManifestDir = rel
+		}
+	}
+	if descriptor.ManifestDir == "" {
+		descriptor.ManifestDir = filepath.ToSlash(filepath.Dir(filepath.FromSlash(action.Manifest)))
+		if descriptor.ManifestDir == "." || descriptor.ManifestDir == "" {
+			descriptor.ManifestDir = "."
+		}
+	}
+
+	if reason := commandAvailability(projectPath, workDir, action.Executable); reason != "" {
+		descriptor.AvailabilityState = AvailabilityUnavailable
+		descriptor.AvailabilityReason = reason
+		descriptor.ApprovalEligible = false
+		return descriptor
+	}
+
+	return descriptor
 }
 
 func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (ExecuteResult, error) {
@@ -195,6 +316,123 @@ func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (Ex
 	return result, nil
 }
 
+func (e *Executor) ExecuteWithPolicyV2(projectPath string, req ExecuteRequest) (ExecuteResultV2, error) {
+	if strings.TrimSpace(projectPath) == "" {
+		return ExecuteResultV2{}, fmt.Errorf("project path is required")
+	}
+	policy := normalizePolicy(req.Policy)
+	plan, err := e.BuildPolicyPlanV2(projectPath, PolicyPlanRequest{Policy: policy})
+	if err != nil {
+		return ExecuteResultV2{}, err
+	}
+
+	validRunnableIDs := make(map[string]bool, len(plan.RunnableActions))
+	for _, descriptor := range plan.RunnableActions {
+		if id := strings.TrimSpace(descriptor.Action.ID); id != "" {
+			validRunnableIDs[id] = true
+		}
+	}
+
+	approved := make(map[string]bool, len(req.ApprovedActionIDs))
+	for _, id := range req.ApprovedActionIDs {
+		if trimmed := strings.TrimSpace(id); trimmed != "" && validRunnableIDs[trimmed] {
+			approved[trimmed] = true
+		}
+	}
+
+	if policy.ConsentMode == ConsentModeConfirmOncePerProject {
+		persisted, loadErr := loadConsentState(projectPath)
+		if loadErr == nil {
+			for id := range persisted.Approved {
+				if validRunnableIDs[id] {
+					approved[id] = true
+				}
+			}
+		}
+	}
+
+	result := ExecuteResultV2{
+		Outcomes: make([]ActionOutcome, 0, len(plan.RunnableActions)+len(plan.UnavailableActions)),
+	}
+
+	for _, descriptor := range plan.RunnableActions {
+		action := descriptor.Action
+		outcome := ActionOutcome{ActionID: action.ID, Action: action}
+		if !canRunAction(action, policy, approved) {
+			outcome.Status = OutcomeBlocked
+			outcome.Message = "consent required"
+			result.Outcomes = append(result.Outcomes, outcome)
+			continue
+		}
+
+		if req.DryRun {
+			outcome.Status = OutcomePlanned
+			outcome.Message = "planned"
+			result.Outcomes = append(result.Outcomes, outcome)
+			continue
+		}
+
+		workDir, workDirErr := manifestWorkDir(projectPath, action.Manifest)
+		if workDirErr != nil {
+			outcome.Status = OutcomeUnavailable
+			outcome.Message = workDirErr.Error()
+			result.Outcomes = append(result.Outcomes, outcome)
+			continue
+		}
+		if reason := commandAvailability(projectPath, workDir, action.Executable); reason != "" {
+			outcome.Status = OutcomeUnavailable
+			outcome.Message = reason
+			result.Outcomes = append(result.Outcomes, outcome)
+			continue
+		}
+
+		out, runErr := e.runner(workDir, action.Executable, splitArgs(action.Args)...)
+		message := strings.TrimSpace(string(out))
+		if runErr != nil {
+			outcome.Status = OutcomeFailed
+			outcome.Message = fmt.Sprintf("failed: %v", runErr)
+			if message != "" {
+				outcome.Message += "\n" + message
+			}
+			result.Outcomes = append(result.Outcomes, outcome)
+			continue
+		}
+		outcome.Status = OutcomeCompleted
+		if message == "" {
+			message = "completed"
+		}
+		outcome.Message = message
+		result.Outcomes = append(result.Outcomes, outcome)
+	}
+
+	for _, descriptor := range plan.UnavailableActions {
+		result.Outcomes = append(result.Outcomes, ActionOutcome{
+			ActionID: descriptor.Action.ID,
+			Action:   descriptor.Action,
+			Status:   OutcomeUnavailable,
+			Message:  descriptor.AvailabilityReason,
+		})
+	}
+
+	if req.PersistApprovals && policy.ConsentMode == ConsentModeConfirmOncePerProject && len(approved) > 0 {
+		state := consentState{Approved: make(map[string]bool, len(approved))}
+		for id := range approved {
+			if validRunnableIDs[id] {
+				state.Approved[id] = true
+			}
+		}
+		if saveErr := saveConsentState(projectPath, state); saveErr != nil {
+			result.Outcomes = append(result.Outcomes, ActionOutcome{
+				ActionID: "consent:persist",
+				Status:   OutcomeBlocked,
+				Message:  saveErr.Error(),
+			})
+		}
+	}
+
+	return result, nil
+}
+
 func (e *Executor) ListApprovedActions(projectPath string) ([]string, error) {
 	state, err := loadConsentState(projectPath)
 	if err != nil {
@@ -232,6 +470,8 @@ func flattenActions(managers []Manager) []Action {
 			if capability == "" || risk == "" {
 				capability, risk = inferActionMetadata(manager.Ecosystem, cmd)
 			}
+			cmd.Capability = capability
+			cmd.MutationRisk = risk
 			id := buildActionID(manager, cmd)
 			actions = append(actions, Action{
 				ID:           id,

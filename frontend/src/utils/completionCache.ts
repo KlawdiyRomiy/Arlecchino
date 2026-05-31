@@ -71,7 +71,12 @@ export class CompletionCache {
     this.cache.set(key, entry);
 
     return entry.items.filter((item) => {
-      const filterText = (item.label || "").toLowerCase();
+      const metadata = item as Completion & { __filterText?: string };
+      const filterText = (
+        metadata.__filterText ||
+        item.label ||
+        ""
+      ).toLowerCase();
       return filterText.startsWith(newPrefix);
     });
   }

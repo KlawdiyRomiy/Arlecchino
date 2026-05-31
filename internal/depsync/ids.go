@@ -16,6 +16,8 @@ func buildActionID(manager Manager, cmd Command) string {
 		strings.TrimSpace(cmd.Label),
 		strings.TrimSpace(cmd.Executable),
 		strings.TrimSpace(cmd.Args),
+		strings.TrimSpace(string(cmd.Capability)),
+		strings.TrimSpace(string(cmd.MutationRisk)),
 	}
 	encoded, _ := json.Marshal(parts)
 	sum := sha256.Sum256(encoded)

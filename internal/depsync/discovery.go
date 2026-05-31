@@ -20,11 +20,26 @@ type manifestDir struct {
 	Depth int
 }
 
+type manifestDiscoveryReport struct {
+	Dirs       []manifestDir
+	Warnings   []string
+	Incomplete bool
+}
+
 func discoverManifestDirs(root string, r registry) ([]manifestDir, error) {
 	return discoverManifestDirsWithLimit(root, r, depsyncDiscoveryMaxEntries)
 }
 
 func discoverManifestDirsWithLimit(root string, r registry, maxEntries int) ([]manifestDir, error) {
+	report, err := discoverManifestDirsWithReport(root, r, maxEntries)
+	return report.Dirs, err
+}
+
+func discoverManifestDirsReport(root string, r registry) (manifestDiscoveryReport, error) {
+	return discoverManifestDirsWithReport(root, r, depsyncDiscoveryMaxEntries)
+}
+
+func discoverManifestDirsWithReport(root string, r registry, maxEntries int) (manifestDiscoveryReport, error) {
 	names := manifestNameSet(r)
 	scanner, err := workspace.NewScanner(root, workspace.ScannerOptions{
 		MaxEntries:        maxEntries,
@@ -43,7 +58,7 @@ func discoverManifestDirsWithLimit(root string, r registry, maxEntries int) ([]m
 		},
 	})
 	if err != nil {
-		return nil, err
+		return manifestDiscoveryReport{}, err
 	}
 
 	dirsByRel := make(map[string]manifestDir)
@@ -67,7 +82,7 @@ func discoverManifestDirsWithLimit(root string, r registry, maxEntries int) ([]m
 	for _, name := range sortedManifestNames(names) {
 		if rel, ok := canonicalManifestRelPath(root, filepath.Join(root, name)); ok {
 			if err := addManifest(rel); err != nil {
-				return nil, err
+				return manifestDiscoveryReport{}, err
 			}
 		}
 	}
@@ -85,8 +100,13 @@ func discoverManifestDirsWithLimit(root string, r registry, maxEntries int) ([]m
 		}
 		return addManifest(rel)
 	})
-	if err != nil && !errors.Is(err, workspace.ErrScanBudgetExceeded) {
-		return nil, err
+	report := manifestDiscoveryReport{}
+	if err != nil {
+		if !errors.Is(err, workspace.ErrScanBudgetExceeded) {
+			return manifestDiscoveryReport{}, err
+		}
+		report.Incomplete = true
+		report.Warnings = append(report.Warnings, fmt.Sprintf("Dependency manifest discovery stopped after %d entries; some nested manifests may be missing.", maxEntries))
 	}
 
 	dirs := make([]manifestDir, 0, len(dirsByRel))
@@ -99,7 +119,8 @@ func discoverManifestDirsWithLimit(root string, r registry, maxEntries int) ([]m
 		}
 		return dirs[i].Rel < dirs[j].Rel
 	})
-	return dirs, nil
+	report.Dirs = dirs
+	return report, nil
 }
 
 func manifestNameSet(r registry) map[string]struct{} {

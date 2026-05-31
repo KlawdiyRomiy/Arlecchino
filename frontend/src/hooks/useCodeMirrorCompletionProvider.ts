@@ -99,6 +99,7 @@ const SOURCE_LABELS: Record<string, string> = {
 
 type CompletionWithInsertText = Completion & {
   __insertText: string;
+  __filterText?: string;
   __hasAdditionalTextEdits: boolean;
   __completionId?: string;
   __stableKey?: string;
@@ -109,6 +110,7 @@ type CompletionWithInsertText = Completion & {
 type CompletionPayload = {
   label?: string;
   text?: string;
+  filterText?: string;
   insertText?: string;
   isSnippet?: boolean;
   primaryTextEdit?: PrimaryTextEditJSON;
@@ -1488,7 +1490,9 @@ export const useCodeMirrorCompletionProvider = ({
         if (result && "stale" in result && result.stale) return null;
         if (!result?.items?.length) return null;
 
-        const pendingItems = await fetchPendingClassCompletions(context);
+        const pendingItems = accessInfo
+          ? []
+          : await fetchPendingClassCompletions(context);
         if (context.aborted || orchestrator.isStale(requestId)) return null;
         if (versionAtRequest !== documentVersionRef.current) return null;
         if (isDismissedForVersion(versionAtRequest)) return null;
@@ -1602,9 +1606,15 @@ export const useCodeMirrorCompletionProvider = ({
               item.resolveToken
                 ? 1.5
                 : 0;
+            const displayLabel = item.label || item.text || "";
+            const filterLabel = item.filterText || displayLabel;
 
             const completion: CompletionWithInsertText = {
-              label: item.label || "",
+              label: filterLabel,
+              displayLabel:
+                displayLabel && displayLabel !== filterLabel
+                  ? displayLabel
+                  : undefined,
               detail: item.detail || kind,
               info: item.documentation || undefined,
               type: mapCompletionKindString(kind),
@@ -1614,6 +1624,7 @@ export const useCodeMirrorCompletionProvider = ({
                 backendPriority / 1000 +
                 stableIndexTiebreak,
               __insertText: resolvedInsertText,
+              __filterText: filterLabel,
               __hasAdditionalTextEdits:
                 hasPrimaryTextEdit ||
                 hasAdditionalTextEdits ||

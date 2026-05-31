@@ -267,22 +267,27 @@ func defaultRegistry() registry {
 }
 
 func (r registry) Detect(projectPath string, mode Mode) ([]Manager, error) {
+	managers, _, err := r.DetectWithReport(projectPath, mode)
+	return managers, err
+}
+
+func (r registry) DetectWithReport(projectPath string, mode Mode) ([]Manager, manifestDiscoveryReport, error) {
 	if strings.TrimSpace(projectPath) == "" {
-		return nil, nil
+		return nil, manifestDiscoveryReport{}, nil
 	}
 
 	root, err := filepath.Abs(filepath.Clean(strings.TrimSpace(projectPath)))
 	if err != nil {
-		return nil, err
+		return nil, manifestDiscoveryReport{}, err
 	}
 
-	dirs, err := discoverManifestDirs(root, r)
+	report, err := discoverManifestDirsReport(root, r)
 	if err != nil {
-		return nil, err
+		return nil, manifestDiscoveryReport{}, err
 	}
 
 	managers := make([]Manager, 0, len(r))
-	for _, dir := range dirs {
+	for _, dir := range report.Dirs {
 		selected := make(map[string]managerSelection)
 		for index, spec := range r {
 			manager, ok := managerForSpec(root, dir, spec, mode)
@@ -311,7 +316,7 @@ func (r registry) Detect(projectPath string, mode Mode) ([]Manager, error) {
 		}
 	}
 
-	return managers, nil
+	return managers, report, nil
 }
 
 type managerSelection struct {

@@ -93,6 +93,7 @@ type LSPCommandJSON struct {
 type EditorCompletion struct {
 	Label               string               `json:"label"`
 	Text                string               `json:"text"`
+	FilterText          string               `json:"filterText,omitempty"`
 	Detail              string               `json:"detail"`
 	Documentation       string               `json:"documentation,omitempty"`
 	TypeInfo            string               `json:"typeInfo,omitempty"`
@@ -310,6 +311,7 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		item := EditorCompletion{
 			Label:             s.DisplayText,
 			Text:              s.Text,
+			FilterText:        s.MatchText,
 			Detail:            s.Detail,
 			Documentation:     s.Documentation,
 			TypeInfo:          s.TypeInfo,

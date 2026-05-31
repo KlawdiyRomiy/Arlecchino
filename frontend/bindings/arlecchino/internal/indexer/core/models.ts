@@ -56,5 +56,4 @@ export enum SymbolSource {
     SourceLocal = "local",
     SourceFillAll = "fill_all",
     SourceKeywords = "keywords",
-    SourceStubs = "stubs",
 };

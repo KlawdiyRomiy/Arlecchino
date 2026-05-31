@@ -150,6 +150,7 @@ const callIDToMethod = new Map<number, string>([
   [2525994829, "GetCurrentWorkDir"],
   [2362147149, "GetDependencyGraph"],
   [2830371102, "GetDependencyPolicyPlan"],
+  [3537124062, "GetDependencyPolicyPlanV2"],
   [2210020427, "GetDependencySyncPlan"],
   [2497445234, "GetDevToolsStatus"],
   [3370448653, "GetDispatcherPinned"],
@@ -267,6 +268,7 @@ const callIDToMethod = new Map<number, string>([
   [3088116603, "RouteCache"],
   [2676301637, "RunBackgroundShellAction"],
   [4132946231, "RunDependencyPolicySync"],
+  [2464693267, "RunDependencyPolicySyncV2"],
   [400581002, "RunGitCommand"],
   [3041314932, "RunMigrate"],
   [1943779455, "RunPackagedOSIntegrationAction"],
@@ -574,6 +576,22 @@ const defaultRuntimeResult = (
       };
     case "AIStartChatRun":
       throw new Error("AI chat run is unavailable in the web-only shell.");
+    case "GetDependencyPolicyPlanV2":
+      return {
+        projectPath: "",
+        policy: (_args[0] as { policy?: unknown } | undefined)?.policy ?? {
+          consentMode: "confirm-once-per-project",
+          autoApproveLowRisk: true,
+        },
+        runnableActions: [],
+        unavailableActions: [],
+        discoveryWarnings: [],
+        discoveryIncomplete: false,
+      };
+    case "RunDependencyPolicySyncV2":
+      return {
+        outcomes: [],
+      };
     case "AIExecuteToolCall":
       throw new Error(
         "AI tool execution is unavailable in the web-only shell.",

@@ -3,15 +3,22 @@
 
 export {
     Action,
+    ActionDescriptor,
+    ActionOutcome,
+    AvailabilityState,
     Command,
     ConsentMode,
     DependencyCapability,
     ExecuteRequest,
     ExecuteResult,
+    ExecuteResultV2,
     Manager,
     Mode,
     MutationRisk,
+    OutcomeStatus,
     Plan,
     Policy,
-    PolicyPlan
+    PolicyPlan,
+    PolicyPlanRequest,
+    PolicyPlanV2
 } from "./models.js";

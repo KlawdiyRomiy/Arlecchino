@@ -366,6 +366,7 @@ type BrainConfig struct {
 type Suggestion struct {
 	Text                string
 	DisplayText         string
+	MatchText           string
 	Kind                core.SymbolKind
 	Source              core.SymbolSource
 	Score               float64
@@ -1316,6 +1317,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 		counts["speculative"], counts["keywords"])
 
 	beforeFilter := len(suggestions)
+	suggestions = b.prepareCompletionMatchKeys(ctx, suggestions)
 	suggestions = b.filterByPrefix(ctx.Prefix, ctx.Language, suggestions)
 	afterPrefixFilter := len(suggestions)
 	suggestions = b.filterByContext(ctx, suggestions)
@@ -2246,7 +2248,14 @@ func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion
 			return nil, contextStatus(lspCtx.Err())
 		}
 	}
-	items, err := b.lspManager.CompleteWithContext(lspCtx, lspLanguage, ctx.FilePath, ctx.Line, ctx.Column)
+	items, err := b.lspManager.CompleteWithTrigger(
+		lspCtx,
+		lspLanguage,
+		ctx.FilePath,
+		ctx.Line,
+		ctx.Column,
+		lspCompletionTrigger(ctx),
+	)
 	if err != nil {
 		log.Printf("[LSP] ERROR: %v", err)
 		return nil, "error"
@@ -2306,6 +2315,26 @@ func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion
 	}
 
 	return suggestions, "ok"
+}
+
+func lspCompletionTrigger(ctx CompletionContext) lsp.CompletionTrigger {
+	triggerChar := strings.TrimSpace(ctx.TriggerChar)
+	if isAccessCompletionRequest(ctx) && isLSPCompletionTriggerCharacter(triggerChar) {
+		return lsp.CompletionTrigger{
+			TriggerKind:      2,
+			TriggerCharacter: triggerChar,
+		}
+	}
+	return lsp.CompletionTrigger{TriggerKind: 1}
+}
+
+func isLSPCompletionTriggerCharacter(triggerChar string) bool {
+	switch triggerChar {
+	case ".", ":", ">":
+		return true
+	default:
+		return false
+	}
 }
 
 func formatLSPDocumentation(doc any) string {
@@ -2767,7 +2796,7 @@ func (b *PredictionBrain) deduplicate(suggestions []Suggestion) []Suggestion {
 	result := make([]Suggestion, 0, len(suggestions))
 
 	for _, s := range suggestions {
-		textLower := strings.ToLower(s.Text)
+		textLower := strings.ToLower(suggestionDedupText(s))
 		keyTextKind := textLower + "|" + string(s.Kind)
 
 		if idx, exists := seenByTextKind[keyTextKind]; exists {
@@ -2799,11 +2828,46 @@ func (b *PredictionBrain) deduplicate(suggestions []Suggestion) []Suggestion {
 	return result
 }
 
+func suggestionDedupText(s Suggestion) string {
+	text := strings.TrimSpace(s.MatchText)
+	if text == "" {
+		text = strings.TrimSpace(s.DisplayText)
+	}
+	if text == "" {
+		text = strings.TrimSpace(s.Text)
+	}
+	return text
+}
+
 func mergeSuggestionMetadata(preferred Suggestion, other Suggestion) Suggestion {
+	if preferred.MatchText == "" && other.MatchText != "" {
+		preferred.MatchText = other.MatchText
+	}
+	if preferred.DisplayText == "" && other.DisplayText != "" {
+		preferred.DisplayText = other.DisplayText
+	}
 	if preferred.InsertText == "" && other.InsertText != "" {
 		preferred.InsertText = other.InsertText
 		preferred.IsSnippet = other.IsSnippet
 		preferred.Snippet = other.Snippet
+	}
+	if preferred.PrimaryTextEdit == nil && other.PrimaryTextEdit != nil {
+		preferred.PrimaryTextEdit = other.PrimaryTextEdit
+	}
+	if len(preferred.AdditionalTextEdits) == 0 && len(other.AdditionalTextEdits) > 0 {
+		preferred.AdditionalTextEdits = append([]core.TextEdit(nil), other.AdditionalTextEdits...)
+	}
+	if preferred.Command == nil && other.Command != nil {
+		preferred.Command = other.Command
+	}
+	if preferred.Data == nil && other.Data != nil {
+		preferred.Data = other.Data
+	}
+	if preferred.ResolveToken == "" && other.ResolveToken != "" {
+		preferred.ResolveToken = other.ResolveToken
+	}
+	if preferred.ProofKind == "" && other.ProofKind != "" {
+		preferred.ProofKind = other.ProofKind
 	}
 
 	if preferred.Documentation == "" && other.Documentation != "" {
@@ -2906,6 +2970,191 @@ func mergeTextEdits(preferred []core.TextEdit, other []core.TextEdit) []core.Tex
 	return preferred
 }
 
+func (b *PredictionBrain) prepareCompletionMatchKeys(ctx CompletionContext, suggestions []Suggestion) []Suggestion {
+	if len(suggestions) == 0 || ctx.InImport {
+		return suggestions
+	}
+
+	accessContext := isAccessCompletionRequest(ctx)
+	result := make([]Suggestion, 0, len(suggestions))
+	for _, suggestion := range suggestions {
+		suggestion.MatchText = strings.TrimSpace(suggestion.MatchText)
+		if suggestion.MatchText == "" {
+			suggestion.MatchText = suggestionMatchText(suggestion)
+		}
+
+		if accessContext {
+			normalized, ok := normalizeAccessCompletionSuggestion(ctx, suggestion)
+			if !ok {
+				continue
+			}
+			result = append(result, normalized)
+			continue
+		}
+
+		if isBareOwnerQualifiedMemberCandidate(suggestion) {
+			continue
+		}
+		result = append(result, suggestion)
+	}
+	return result
+}
+
+func normalizeAccessCompletionSuggestion(ctx CompletionContext, suggestion Suggestion) (Suggestion, bool) {
+	owner := strings.TrimSpace(extractPackageReference(ctx.AccessChain))
+	if owner == "" {
+		return suggestion, true
+	}
+
+	memberText := ""
+	effectiveInsert := effectiveCompletionInsertText(suggestion)
+	insertMember, insertQualified := stripAccessOwnerPrefix(effectiveInsert, owner)
+	labelMember, labelQualified := stripAccessOwnerPrefix(suggestionMatchText(suggestion), owner)
+	textMember, textQualified := stripAccessOwnerPrefix(suggestion.Text, owner)
+	displayMember, displayQualified := stripAccessOwnerPrefix(suggestion.DisplayText, owner)
+
+	switch {
+	case strings.TrimSpace(effectiveInsert) != "" && !insertQualified:
+		memberText = strings.TrimSpace(sanitizeInsertText(effectiveInsert))
+	case insertQualified:
+		memberText = insertMember
+	case labelQualified:
+		memberText = labelMember
+	case textQualified:
+		memberText = textMember
+	case displayQualified:
+		memberText = displayMember
+	default:
+		memberText = suggestionMatchText(suggestion)
+	}
+
+	if memberText == "" {
+		return Suggestion{}, false
+	}
+
+	if insertQualified && suggestion.PrimaryTextEdit == nil {
+		return Suggestion{}, false
+	}
+	if hasMismatchedQualifiedOwner(suggestion, owner) {
+		return Suggestion{}, false
+	}
+
+	suggestion.MatchText = memberText
+	if labelQualified || displayQualified {
+		suggestion.DisplayText = memberText
+	}
+	return suggestion, true
+}
+
+func effectiveCompletionInsertText(s Suggestion) string {
+	if s.PrimaryTextEdit != nil && strings.TrimSpace(s.PrimaryTextEdit.NewText) != "" {
+		return s.PrimaryTextEdit.NewText
+	}
+	if strings.TrimSpace(s.InsertText) != "" {
+		return s.InsertText
+	}
+	return s.Text
+}
+
+func stripAccessOwnerPrefix(text, owner string) (string, bool) {
+	text = strings.TrimSpace(sanitizeInsertText(text))
+	owner = strings.Trim(strings.TrimSpace(owner), "\\")
+	if text == "" || owner == "" {
+		return "", false
+	}
+
+	candidates := []string{
+		owner + ".",
+		owner + "::",
+		owner + "->",
+		owner + "\\",
+		owner + "#",
+	}
+	for _, prefix := range candidates {
+		if strings.HasPrefix(text, prefix) && len(text) > len(prefix) {
+			return strings.TrimSpace(text[len(prefix):]), true
+		}
+	}
+
+	textLower := strings.ToLower(text)
+	for _, prefix := range candidates {
+		prefixLower := strings.ToLower(prefix)
+		if strings.HasPrefix(textLower, prefixLower) && len(text) > len(prefix) {
+			return strings.TrimSpace(text[len(prefix):]), true
+		}
+	}
+
+	return "", false
+}
+
+func hasMismatchedQualifiedOwner(s Suggestion, owner string) bool {
+	for _, text := range []string{s.Text, s.DisplayText, s.MatchText} {
+		if text == "" {
+			continue
+		}
+		qualifiedOwner, ok := qualifiedMemberOwner(text)
+		if !ok {
+			continue
+		}
+		if !sameAccessOwner(qualifiedOwner, owner) {
+			return true
+		}
+	}
+	return false
+}
+
+func isBareOwnerQualifiedMemberCandidate(s Suggestion) bool {
+	if !isMemberLikeCompletionKind(s.Kind) {
+		return false
+	}
+	for _, text := range []string{s.Text, s.DisplayText, s.MatchText, s.InsertText} {
+		if _, ok := qualifiedMemberOwner(text); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func isMemberLikeCompletionKind(kind core.SymbolKind) bool {
+	switch kind {
+	case core.SymbolKindFunction, core.SymbolKindMethod, core.SymbolKindProperty, core.SymbolKindField, core.SymbolKindConstant, core.SymbolKindEnumCase:
+		return true
+	default:
+		return false
+	}
+}
+
+func qualifiedMemberOwner(text string) (string, bool) {
+	text = strings.TrimSpace(sanitizeInsertText(text))
+	if text == "" {
+		return "", false
+	}
+	separators := []string{"->", "::", ".", "#", "\\"}
+	bestIndex := -1
+	bestSeparator := ""
+	for _, separator := range separators {
+		if idx := strings.LastIndex(text, separator); idx > bestIndex {
+			bestIndex = idx
+			bestSeparator = separator
+		}
+	}
+	if bestIndex <= 0 || bestIndex+len(bestSeparator) >= len(text) {
+		return "", false
+	}
+	owner := strings.TrimSpace(text[:bestIndex])
+	member := strings.TrimSpace(text[bestIndex+len(bestSeparator):])
+	if owner == "" || member == "" || strings.ContainsAny(member, " \t\n\r") {
+		return "", false
+	}
+	return owner, true
+}
+
+func sameAccessOwner(left, right string) bool {
+	left = strings.ToLower(strings.Trim(strings.TrimSpace(left), "\\"))
+	right = strings.ToLower(strings.Trim(strings.TrimSpace(right), "\\"))
+	return left == right || namespaceHasTokenSuffix(left, right) || namespaceHasTokenSuffix(right, left)
+}
+
 func (b *PredictionBrain) filterByPrefix(prefix, language string, suggestions []Suggestion) []Suggestion {
 	normalizedPrefix := normalizePrefixForLanguage(prefix, language)
 	limitToVariables := false
@@ -2936,10 +3185,14 @@ func (b *PredictionBrain) filterByPrefix(prefix, language string, suggestions []
 		if limitToVariables && !isVariableLikeKind(s.Kind) {
 			continue
 		}
-		matchResult := b.matcher.Match(normalizedPrefix, s.Text)
+		matchText := suggestionMatchText(*s)
+		matchResult := b.matcher.Match(normalizedPrefix, matchText)
 
 		if !matchResult.Matched && s.DisplayText != "" && s.DisplayText != s.Text {
 			matchResult = b.matcher.Match(normalizedPrefix, s.DisplayText)
+		}
+		if !matchResult.Matched && s.Text != "" && s.Text != matchText {
+			matchResult = b.matcher.Match(normalizedPrefix, s.Text)
 		}
 
 		if matchResult.Matched {
@@ -2952,6 +3205,16 @@ func (b *PredictionBrain) filterByPrefix(prefix, language string, suggestions []
 	}
 
 	return result
+}
+
+func suggestionMatchText(s Suggestion) string {
+	if matchText := strings.TrimSpace(s.MatchText); matchText != "" {
+		return matchText
+	}
+	if displayText := strings.TrimSpace(s.DisplayText); displayText != "" {
+		return displayText
+	}
+	return strings.TrimSpace(s.Text)
 }
 
 func normalizePrefixForLanguage(prefix, language string) string {
@@ -3003,30 +3266,6 @@ func (b *PredictionBrain) filterByContext(ctx CompletionContext, suggestions []S
 		}
 
 		filtered = append(filtered, s)
-	}
-
-	if len(filtered) > 1 && (resolvedNSLower != "" || accessRefLower != "") {
-		hasNamespaceAwareMatch := false
-		for _, s := range filtered {
-			if strings.TrimSpace(s.Namespace) == "" {
-				continue
-			}
-			if matchesSuggestionAccessContext(ctx, s, accessRefLower, resolvedNSLower) {
-				hasNamespaceAwareMatch = true
-				break
-			}
-		}
-
-		if hasNamespaceAwareMatch {
-			trimmed := filtered[:0]
-			for _, s := range filtered {
-				if s.Source == core.SourceLSP && strings.TrimSpace(s.Namespace) == "" {
-					continue
-				}
-				trimmed = append(trimmed, s)
-			}
-			filtered = trimmed
-		}
 	}
 
 	return filtered

@@ -66,6 +66,95 @@ export class Action {
     }
 }
 
+export class ActionDescriptor {
+    "action": Action;
+    "manifestDir": string;
+    "availabilityState": AvailabilityState;
+    "availabilityReason"?: string;
+    "requiresConsent": boolean;
+    "approvalEligible": boolean;
+
+    /** Creates a new ActionDescriptor instance. */
+    constructor($$source: Partial<ActionDescriptor> = {}) {
+        if (!("action" in $$source)) {
+            this["action"] = (new Action());
+        }
+        if (!("manifestDir" in $$source)) {
+            this["manifestDir"] = "";
+        }
+        if (!("availabilityState" in $$source)) {
+            this["availabilityState"] = AvailabilityState.$zero;
+        }
+        if (!("requiresConsent" in $$source)) {
+            this["requiresConsent"] = false;
+        }
+        if (!("approvalEligible" in $$source)) {
+            this["approvalEligible"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ActionDescriptor instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ActionDescriptor {
+        const $$createField0_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("action" in $$parsedSource) {
+            $$parsedSource["action"] = $$createField0_0($$parsedSource["action"]);
+        }
+        return new ActionDescriptor($$parsedSource as Partial<ActionDescriptor>);
+    }
+}
+
+export class ActionOutcome {
+    "actionId": string;
+    "action": Action;
+    "status": OutcomeStatus;
+    "message": string;
+
+    /** Creates a new ActionOutcome instance. */
+    constructor($$source: Partial<ActionOutcome> = {}) {
+        if (!("actionId" in $$source)) {
+            this["actionId"] = "";
+        }
+        if (!("action" in $$source)) {
+            this["action"] = (new Action());
+        }
+        if (!("status" in $$source)) {
+            this["status"] = OutcomeStatus.$zero;
+        }
+        if (!("message" in $$source)) {
+            this["message"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ActionOutcome instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ActionOutcome {
+        const $$createField1_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("action" in $$parsedSource) {
+            $$parsedSource["action"] = $$createField1_0($$parsedSource["action"]);
+        }
+        return new ActionOutcome($$parsedSource as Partial<ActionOutcome>);
+    }
+}
+
+export enum AvailabilityState {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    AvailabilityRunnable = "runnable",
+    AvailabilityUnavailable = "unavailable",
+};
+
 export class Command {
     "label": string;
     "executable": string;
@@ -152,8 +241,8 @@ export class ExecuteRequest {
      * Creates a new ExecuteRequest instance from a string or object.
      */
     static createFrom($$source: any = {}): ExecuteRequest {
-        const $$createField0_0 = $$createType0;
-        const $$createField1_0 = $$createType1;
+        const $$createField0_0 = $$createType1;
+        const $$createField1_0 = $$createType2;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("policy" in $$parsedSource) {
             $$parsedSource["policy"] = $$createField0_0($$parsedSource["policy"]);
@@ -185,8 +274,8 @@ export class ExecuteResult {
      * Creates a new ExecuteResult instance from a string or object.
      */
     static createFrom($$source: any = {}): ExecuteResult {
-        const $$createField0_0 = $$createType2;
-        const $$createField1_0 = $$createType2;
+        const $$createField0_0 = $$createType3;
+        const $$createField1_0 = $$createType3;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("results" in $$parsedSource) {
             $$parsedSource["results"] = $$createField0_0($$parsedSource["results"]);
@@ -195,6 +284,31 @@ export class ExecuteResult {
             $$parsedSource["blocked"] = $$createField1_0($$parsedSource["blocked"]);
         }
         return new ExecuteResult($$parsedSource as Partial<ExecuteResult>);
+    }
+}
+
+export class ExecuteResultV2 {
+    "outcomes": ActionOutcome[];
+
+    /** Creates a new ExecuteResultV2 instance. */
+    constructor($$source: Partial<ExecuteResultV2> = {}) {
+        if (!("outcomes" in $$source)) {
+            this["outcomes"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ExecuteResultV2 instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ExecuteResultV2 {
+        const $$createField0_0 = $$createType5;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("outcomes" in $$parsedSource) {
+            $$parsedSource["outcomes"] = $$createField0_0($$parsedSource["outcomes"]);
+        }
+        return new ExecuteResultV2($$parsedSource as Partial<ExecuteResultV2>);
     }
 }
 
@@ -226,7 +340,7 @@ export class Manager {
      * Creates a new Manager instance from a string or object.
      */
     static createFrom($$source: any = {}): Manager {
-        const $$createField3_0 = $$createType4;
+        const $$createField3_0 = $$createType7;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("commands" in $$parsedSource) {
             $$parsedSource["commands"] = $$createField3_0($$parsedSource["commands"]);
@@ -257,6 +371,19 @@ export enum MutationRisk {
     RiskHigh = "high",
 };
 
+export enum OutcomeStatus {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    OutcomeCompleted = "completed",
+    OutcomeFailed = "failed",
+    OutcomeBlocked = "blocked",
+    OutcomeUnavailable = "unavailable",
+    OutcomePlanned = "planned",
+};
+
 export class Plan {
     "projectPath": string;
     "mode": Mode;
@@ -281,7 +408,7 @@ export class Plan {
      * Creates a new Plan instance from a string or object.
      */
     static createFrom($$source: any = {}): Plan {
-        const $$createField2_0 = $$createType6;
+        const $$createField2_0 = $$createType9;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("managers" in $$parsedSource) {
             $$parsedSource["managers"] = $$createField2_0($$parsedSource["managers"]);
@@ -339,8 +466,8 @@ export class PolicyPlan {
      * Creates a new PolicyPlan instance from a string or object.
      */
     static createFrom($$source: any = {}): PolicyPlan {
-        const $$createField1_0 = $$createType0;
-        const $$createField2_0 = $$createType8;
+        const $$createField1_0 = $$createType1;
+        const $$createField2_0 = $$createType10;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("policy" in $$parsedSource) {
             $$parsedSource["policy"] = $$createField1_0($$parsedSource["policy"]);
@@ -352,13 +479,96 @@ export class PolicyPlan {
     }
 }
 
+export class PolicyPlanRequest {
+    "policy": Policy;
+
+    /** Creates a new PolicyPlanRequest instance. */
+    constructor($$source: Partial<PolicyPlanRequest> = {}) {
+        if (!("policy" in $$source)) {
+            this["policy"] = (new Policy());
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PolicyPlanRequest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): PolicyPlanRequest {
+        const $$createField0_0 = $$createType1;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("policy" in $$parsedSource) {
+            $$parsedSource["policy"] = $$createField0_0($$parsedSource["policy"]);
+        }
+        return new PolicyPlanRequest($$parsedSource as Partial<PolicyPlanRequest>);
+    }
+}
+
+export class PolicyPlanV2 {
+    "projectPath": string;
+    "policy": Policy;
+    "runnableActions": ActionDescriptor[];
+    "unavailableActions": ActionDescriptor[];
+    "discoveryWarnings"?: string[];
+    "discoveryIncomplete": boolean;
+
+    /** Creates a new PolicyPlanV2 instance. */
+    constructor($$source: Partial<PolicyPlanV2> = {}) {
+        if (!("projectPath" in $$source)) {
+            this["projectPath"] = "";
+        }
+        if (!("policy" in $$source)) {
+            this["policy"] = (new Policy());
+        }
+        if (!("runnableActions" in $$source)) {
+            this["runnableActions"] = [];
+        }
+        if (!("unavailableActions" in $$source)) {
+            this["unavailableActions"] = [];
+        }
+        if (!("discoveryIncomplete" in $$source)) {
+            this["discoveryIncomplete"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PolicyPlanV2 instance from a string or object.
+     */
+    static createFrom($$source: any = {}): PolicyPlanV2 {
+        const $$createField1_0 = $$createType1;
+        const $$createField2_0 = $$createType12;
+        const $$createField3_0 = $$createType12;
+        const $$createField4_0 = $$createType2;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("policy" in $$parsedSource) {
+            $$parsedSource["policy"] = $$createField1_0($$parsedSource["policy"]);
+        }
+        if ("runnableActions" in $$parsedSource) {
+            $$parsedSource["runnableActions"] = $$createField2_0($$parsedSource["runnableActions"]);
+        }
+        if ("unavailableActions" in $$parsedSource) {
+            $$parsedSource["unavailableActions"] = $$createField3_0($$parsedSource["unavailableActions"]);
+        }
+        if ("discoveryWarnings" in $$parsedSource) {
+            $$parsedSource["discoveryWarnings"] = $$createField4_0($$parsedSource["discoveryWarnings"]);
+        }
+        return new PolicyPlanV2($$parsedSource as Partial<PolicyPlanV2>);
+    }
+}
+
 // Private type creation functions
-const $$createType0 = Policy.createFrom;
-const $$createType1 = $Create.Array($Create.Any);
-const $$createType2 = $Create.Map($Create.Any, $Create.Any);
-const $$createType3 = Command.createFrom;
-const $$createType4 = $Create.Array($$createType3);
-const $$createType5 = Manager.createFrom;
-const $$createType6 = $Create.Array($$createType5);
-const $$createType7 = Action.createFrom;
-const $$createType8 = $Create.Array($$createType7);
+const $$createType0 = Action.createFrom;
+const $$createType1 = Policy.createFrom;
+const $$createType2 = $Create.Array($Create.Any);
+const $$createType3 = $Create.Map($Create.Any, $Create.Any);
+const $$createType4 = ActionOutcome.createFrom;
+const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = Command.createFrom;
+const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = Manager.createFrom;
+const $$createType9 = $Create.Array($$createType8);
+const $$createType10 = $Create.Array($$createType0);
+const $$createType11 = ActionDescriptor.createFrom;
+const $$createType12 = $Create.Array($$createType11);

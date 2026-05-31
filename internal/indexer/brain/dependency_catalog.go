@@ -199,29 +199,92 @@ func (c *dependencyCatalog) manifestFiles(language string) []string {
 
 	switch normalizeDependencyLanguage(language) {
 	case "go":
-		return []string{filepath.Join(c.root, "go.mod"), filepath.Join(c.root, "go.sum")}
+		return c.findCatalogFiles("go.mod", "go.sum")
 	case "node":
-		return []string{filepath.Join(c.root, "package.json"), filepath.Join(c.root, "package-lock.json"), filepath.Join(c.root, "pnpm-lock.yaml"), filepath.Join(c.root, "yarn.lock"), filepath.Join(c.root, "bun.lockb")}
+		return c.findCatalogFiles("package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb")
 	case "python":
-		return []string{filepath.Join(c.root, "requirements.txt"), filepath.Join(c.root, "pyproject.toml"), filepath.Join(c.root, "poetry.lock"), filepath.Join(c.root, "Pipfile.lock"), filepath.Join(c.root, "uv.lock")}
+		return c.findCatalogFiles("requirements.txt", "pyproject.toml", "poetry.lock", "Pipfile.lock", "uv.lock")
 	case "php":
-		return []string{filepath.Join(c.root, "composer.json"), filepath.Join(c.root, "composer.lock")}
+		return c.findCatalogFiles("composer.json", "composer.lock")
 	case "rust":
-		return []string{filepath.Join(c.root, "Cargo.toml"), filepath.Join(c.root, "Cargo.lock")}
+		return c.findCatalogFiles("Cargo.toml", "Cargo.lock")
 	case "ruby":
-		return []string{filepath.Join(c.root, "Gemfile"), filepath.Join(c.root, "Gemfile.lock")}
+		return c.findCatalogFiles("Gemfile", "Gemfile.lock")
 	case "jvm":
-		return []string{filepath.Join(c.root, "pom.xml"), filepath.Join(c.root, "build.gradle"), filepath.Join(c.root, "build.gradle.kts"), filepath.Join(c.root, "gradle.lockfile"), filepath.Join(c.root, "gradle", "libs.versions.toml")}
+		return c.findCatalogFiles("pom.xml", "build.gradle", "build.gradle.kts", "gradle.lockfile", "libs.versions.toml")
 	case "dotnet":
-		return []string{filepath.Join(c.root, "packages.config"), filepath.Join(c.root, "packages.lock.json")}
+		return c.findCatalogFiles("packages.config", "packages.lock.json")
 	case "dart":
-		return []string{filepath.Join(c.root, "pubspec.yaml"), filepath.Join(c.root, "pubspec.lock")}
+		return c.findCatalogFiles("pubspec.yaml", "pubspec.lock")
 	case "swift":
-		return []string{filepath.Join(c.root, "Package.swift"), filepath.Join(c.root, "Package.resolved")}
+		return c.findCatalogFiles("Package.swift", "Package.resolved")
 	case "terraform":
-		return []string{filepath.Join(c.root, ".terraform.lock.hcl")}
+		return c.findCatalogFiles(".terraform.lock.hcl")
 	default:
 		return nil
+	}
+}
+
+func (c *dependencyCatalog) findCatalogFiles(names ...string) []string {
+	if c.root == "" || len(names) == 0 {
+		return nil
+	}
+	nameSet := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			nameSet[trimmed] = struct{}{}
+		}
+	}
+	if len(nameSet) == 0 {
+		return nil
+	}
+
+	files := make([]string, 0, len(nameSet))
+	seen := make(map[string]struct{})
+	addFile := func(path string) {
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		files = append(files, path)
+	}
+
+	for name := range nameSet {
+		path := filepath.Join(c.root, name)
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+			addFile(path)
+		}
+	}
+
+	_ = filepath.WalkDir(c.root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if path != c.root && shouldSkipDependencyCatalogDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if _, ok := nameSet[d.Name()]; !ok {
+			return nil
+		}
+		if info, statErr := d.Info(); statErr == nil && info.Mode().IsRegular() {
+			addFile(path)
+		}
+		return nil
+	})
+
+	sort.Strings(files)
+	return files
+}
+
+func shouldSkipDependencyCatalogDir(name string) bool {
+	switch name {
+	case ".git", ".dart_tool", ".gradle", ".swiftpm", ".terraform", ".venv", "dist", "node_modules", "out", "target", "vendor", "venv":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1029,34 +1092,34 @@ func lockPackageNameFromPath(raw string) string {
 }
 
 func (c *dependencyCatalog) loadGoManifestEntries() []dependencyEntry {
-	goModPath := filepath.Join(c.root, "go.mod")
-	data, err := os.ReadFile(goModPath)
-	if err != nil {
-		return c.loadGoStdlibEntries()
-	}
-
 	entries := c.loadGoStdlibEntries()
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	inRequireBlock := false
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "//") {
+	for _, goModPath := range c.findCatalogFiles("go.mod") {
+		data, err := os.ReadFile(goModPath)
+		if err != nil {
 			continue
 		}
-		if strings.HasPrefix(line, "require (") {
-			inRequireBlock = true
-			continue
-		}
-		if inRequireBlock {
-			if line == ")" {
-				inRequireBlock = false
+		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		inRequireBlock := false
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "//") {
 				continue
 			}
-			entries = append(entries, goDependencyEntry(line))
-			continue
-		}
-		if strings.HasPrefix(line, "require ") {
-			entries = append(entries, goDependencyEntry(strings.TrimSpace(strings.TrimPrefix(line, "require "))))
+			if strings.HasPrefix(line, "require (") {
+				inRequireBlock = true
+				continue
+			}
+			if inRequireBlock {
+				if line == ")" {
+					inRequireBlock = false
+					continue
+				}
+				entries = append(entries, goDependencyEntry(line))
+				continue
+			}
+			if strings.HasPrefix(line, "require ") {
+				entries = append(entries, goDependencyEntry(strings.TrimSpace(strings.TrimPrefix(line, "require "))))
+			}
 		}
 	}
 
@@ -1097,27 +1160,26 @@ func (c *dependencyCatalog) loadGoStdlibEntries() []dependencyEntry {
 }
 
 func (c *dependencyCatalog) loadNodeManifestEntries() []dependencyEntry {
-	packageJSONPath := filepath.Join(c.root, "package.json")
-	data, err := os.ReadFile(packageJSONPath)
-	if err != nil {
-		return nil
+	entries := make([]dependencyEntry, 0, 16)
+	for _, packageJSONPath := range c.findCatalogFiles("package.json") {
+		data, err := os.ReadFile(packageJSONPath)
+		if err != nil {
+			continue
+		}
+		var manifest struct {
+			Dependencies         map[string]string `json:"dependencies"`
+			DevDependencies      map[string]string `json:"devDependencies"`
+			PeerDependencies     map[string]string `json:"peerDependencies"`
+			OptionalDependencies map[string]string `json:"optionalDependencies"`
+		}
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			continue
+		}
+		entries = append(entries, packageJSONEntries(manifest.Dependencies, "dependency")...)
+		entries = append(entries, packageJSONEntries(manifest.DevDependencies, "devDependency")...)
+		entries = append(entries, packageJSONEntries(manifest.PeerDependencies, "peerDependency")...)
+		entries = append(entries, packageJSONEntries(manifest.OptionalDependencies, "optionalDependency")...)
 	}
-
-	var manifest struct {
-		Dependencies         map[string]string `json:"dependencies"`
-		DevDependencies      map[string]string `json:"devDependencies"`
-		PeerDependencies     map[string]string `json:"peerDependencies"`
-		OptionalDependencies map[string]string `json:"optionalDependencies"`
-	}
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return nil
-	}
-
-	entries := make([]dependencyEntry, 0, len(manifest.Dependencies)+len(manifest.DevDependencies)+len(manifest.PeerDependencies)+len(manifest.OptionalDependencies))
-	entries = append(entries, packageJSONEntries(manifest.Dependencies, "dependency")...)
-	entries = append(entries, packageJSONEntries(manifest.DevDependencies, "devDependency")...)
-	entries = append(entries, packageJSONEntries(manifest.PeerDependencies, "peerDependency")...)
-	entries = append(entries, packageJSONEntries(manifest.OptionalDependencies, "optionalDependency")...)
 	return dedupeDependencyEntries(entries)
 }
 
@@ -1145,13 +1207,15 @@ func packageJSONEntries(deps map[string]string, detailPrefix string) []dependenc
 
 func (c *dependencyCatalog) loadPythonManifestEntries() []dependencyEntry {
 	entries := make([]dependencyEntry, 0, 16)
-	requirementsPath := filepath.Join(c.root, "requirements.txt")
-	if data, err := os.ReadFile(requirementsPath); err == nil {
-		entries = append(entries, parseRequirementsEntries(string(data))...)
+	for _, requirementsPath := range c.findCatalogFiles("requirements.txt") {
+		if data, err := os.ReadFile(requirementsPath); err == nil {
+			entries = append(entries, parseRequirementsEntries(string(data))...)
+		}
 	}
-	pyprojectPath := filepath.Join(c.root, "pyproject.toml")
-	if data, err := os.ReadFile(pyprojectPath); err == nil {
-		entries = append(entries, parsePyProjectEntries(string(data))...)
+	for _, pyprojectPath := range c.findCatalogFiles("pyproject.toml") {
+		if data, err := os.ReadFile(pyprojectPath); err == nil {
+			entries = append(entries, parsePyProjectEntries(string(data))...)
+		}
 	}
 	return dedupeDependencyEntries(entries)
 }
@@ -1250,95 +1314,94 @@ func parsePyProjectEntries(data string) []dependencyEntry {
 }
 
 func (c *dependencyCatalog) loadComposerManifestEntries() []dependencyEntry {
-	composerPath := filepath.Join(c.root, "composer.json")
-	data, err := os.ReadFile(composerPath)
-	if err != nil {
-		return nil
-	}
-
-	var manifest struct {
-		Require    map[string]string `json:"require"`
-		RequireDev map[string]string `json:"require-dev"`
-	}
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return nil
-	}
-
-	entries := make([]dependencyEntry, 0, len(manifest.Require)+len(manifest.RequireDev))
-	for name, version := range manifest.Require {
-		if name == "php" {
+	entries := make([]dependencyEntry, 0, 16)
+	for _, composerPath := range c.findCatalogFiles("composer.json") {
+		data, err := os.ReadFile(composerPath)
+		if err != nil {
 			continue
 		}
-		entries = append(entries, dependencyEntry{Name: name, Version: version, Detail: versionDetail("composer", version), Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: name})
+		var manifest struct {
+			Require    map[string]string `json:"require"`
+			RequireDev map[string]string `json:"require-dev"`
+		}
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			continue
+		}
+		for name, version := range manifest.Require {
+			if name == "php" {
+				continue
+			}
+			entries = append(entries, dependencyEntry{Name: name, Version: version, Detail: versionDetail("composer", version), Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: name})
+		}
+		for name, version := range manifest.RequireDev {
+			entries = append(entries, dependencyEntry{Name: name, Version: version, Detail: versionDetail("composer-dev", version), Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: name})
+		}
 	}
-	for name, version := range manifest.RequireDev {
-		entries = append(entries, dependencyEntry{Name: name, Version: version, Detail: versionDetail("composer-dev", version), Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: name})
-	}
-	return entries
+	return dedupeDependencyEntries(entries)
 }
 
 func (c *dependencyCatalog) loadCargoManifestEntries() []dependencyEntry {
-	cargoPath := filepath.Join(c.root, "Cargo.toml")
-	data, err := os.ReadFile(cargoPath)
-	if err != nil {
-		return nil
-	}
-
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	inDependencies := false
 	entries := make([]dependencyEntry, 0, 16)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			inDependencies = line == "[dependencies]" || line == "[workspace.dependencies]"
+	for _, cargoPath := range c.findCatalogFiles("Cargo.toml") {
+		data, err := os.ReadFile(cargoPath)
+		if err != nil {
 			continue
 		}
-		if !inDependencies || line == "" || strings.HasPrefix(line, "#") {
-			continue
+		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		inDependencies := false
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+				inDependencies = line == "[dependencies]" || line == "[workspace.dependencies]"
+				continue
+			}
+			if !inDependencies || line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			name, value, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			depName := strings.TrimSpace(name)
+			version := strings.TrimSpace(value)
+			version = strings.Trim(version, `"{ }`)
+			entries = append(entries, dependencyEntry{
+				Name:    depName,
+				Version: version,
+				Detail:  versionDetail("crate", version),
+				Kind:    core.SymbolKindModule,
+				Source:  core.SourceLibrary,
+				Insert:  depName,
+			})
 		}
-		name, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		depName := strings.TrimSpace(name)
-		version := strings.TrimSpace(value)
-		version = strings.Trim(version, `"{ }`)
-		entries = append(entries, dependencyEntry{
-			Name:    depName,
-			Version: version,
-			Detail:  versionDetail("crate", version),
-			Kind:    core.SymbolKindModule,
-			Source:  core.SourceLibrary,
-			Insert:  depName,
-		})
 	}
-	return entries
+	return dedupeDependencyEntries(entries)
 }
 
 func (c *dependencyCatalog) loadGemfileEntries() []dependencyEntry {
-	gemfilePath := filepath.Join(c.root, "Gemfile")
-	data, err := os.ReadFile(gemfilePath)
-	if err != nil {
-		return nil
-	}
-
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	entries := make([]dependencyEntry, 0, 8)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "gem ") {
+	for _, gemfilePath := range c.findCatalogFiles("Gemfile") {
+		data, err := os.ReadFile(gemfilePath)
+		if err != nil {
 			continue
 		}
-		line = strings.TrimPrefix(line, "gem ")
-		parts := strings.Split(line, ",")
-		name := strings.Trim(parts[0], `"' `)
-		version := ""
-		if len(parts) > 1 {
-			version = strings.Trim(parts[1], `"' `)
+		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if !strings.HasPrefix(line, "gem ") {
+				continue
+			}
+			line = strings.TrimPrefix(line, "gem ")
+			parts := strings.Split(line, ",")
+			name := strings.Trim(parts[0], `"' `)
+			version := ""
+			if len(parts) > 1 {
+				version = strings.Trim(parts[1], `"' `)
+			}
+			entries = append(entries, dependencyEntry{Name: name, Version: version, Detail: versionDetail("gem", version), Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: name})
 		}
-		entries = append(entries, dependencyEntry{Name: name, Version: version, Detail: versionDetail("gem", version), Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: name})
 	}
-	return entries
+	return dedupeDependencyEntries(entries)
 }
 
 type pomProject struct {
@@ -1350,11 +1413,14 @@ type pomProject struct {
 }
 
 func (c *dependencyCatalog) loadJVMEntries() []dependencyEntry {
-	pomPath := filepath.Join(c.root, "pom.xml")
-	if data, err := os.ReadFile(pomPath); err == nil {
+	entries := make([]dependencyEntry, 0, 16)
+	for _, pomPath := range c.findCatalogFiles("pom.xml") {
+		data, err := os.ReadFile(pomPath)
+		if err != nil {
+			continue
+		}
 		var project pomProject
 		if xml.Unmarshal(data, &project) == nil {
-			entries := make([]dependencyEntry, 0, len(project.Dependencies))
 			for _, dep := range project.Dependencies {
 				name := strings.TrimSpace(dep.GroupID)
 				if dep.ArtifactID != "" {
@@ -1368,19 +1434,17 @@ func (c *dependencyCatalog) loadJVMEntries() []dependencyEntry {
 				}
 				entries = append(entries, dependencyEntry{Name: name, Version: strings.TrimSpace(dep.Version), Detail: versionDetail("maven", strings.TrimSpace(dep.Version)), Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: name})
 			}
-			return entries
 		}
 	}
 
-	for _, name := range []string{"build.gradle", "build.gradle.kts"} {
-		path := filepath.Join(c.root, name)
+	for _, path := range c.findCatalogFiles("build.gradle", "build.gradle.kts") {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
-		return parseGradleEntries(string(data))
+		entries = append(entries, parseGradleEntries(string(data))...)
 	}
-	return nil
+	return dedupeDependencyEntries(entries)
 }
 
 func parseGradleEntries(data string) []dependencyEntry {
@@ -1402,102 +1466,101 @@ func parseGradleEntries(data string) []dependencyEntry {
 }
 
 func (c *dependencyCatalog) loadDotNetEntries() []dependencyEntry {
-	packagesPath := filepath.Join(c.root, "packages.config")
-	data, err := os.ReadFile(packagesPath)
-	if err != nil {
-		return nil
+	entries := make([]dependencyEntry, 0, 8)
+	for _, packagesPath := range c.findCatalogFiles("packages.config") {
+		data, err := os.ReadFile(packagesPath)
+		if err != nil {
+			continue
+		}
+		var manifest struct {
+			Packages []struct {
+				ID      string `xml:"id,attr"`
+				Version string `xml:"version,attr"`
+			} `xml:"package"`
+		}
+		if err := xml.Unmarshal(data, &manifest); err != nil {
+			continue
+		}
+		for _, pkg := range manifest.Packages {
+			entries = append(entries, dependencyEntry{Name: pkg.ID, Version: pkg.Version, Detail: versionDetail("nuget", pkg.Version), Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: pkg.ID})
+		}
 	}
-
-	var manifest struct {
-		Packages []struct {
-			ID      string `xml:"id,attr"`
-			Version string `xml:"version,attr"`
-		} `xml:"package"`
-	}
-	if err := xml.Unmarshal(data, &manifest); err != nil {
-		return nil
-	}
-
-	entries := make([]dependencyEntry, 0, len(manifest.Packages))
-	for _, pkg := range manifest.Packages {
-		entries = append(entries, dependencyEntry{Name: pkg.ID, Version: pkg.Version, Detail: versionDetail("nuget", pkg.Version), Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: pkg.ID})
-	}
-	return entries
+	return dedupeDependencyEntries(entries)
 }
 
 func (c *dependencyCatalog) loadPubspecEntries() []dependencyEntry {
-	pubspecPath := filepath.Join(c.root, "pubspec.yaml")
-	data, err := os.ReadFile(pubspecPath)
-	if err != nil {
-		return nil
-	}
-
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	entries := make([]dependencyEntry, 0, 8)
-	inDependencies := false
-	for scanner.Scan() {
-		line := strings.TrimRight(scanner.Text(), " \t")
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "dependencies:" || trimmed == "dev_dependencies:" {
-			inDependencies = true
+	for _, pubspecPath := range c.findCatalogFiles("pubspec.yaml") {
+		data, err := os.ReadFile(pubspecPath)
+		if err != nil {
 			continue
 		}
-		if strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "-") && trimmed != "dependencies:" && trimmed != "dev_dependencies:" {
-			inDependencies = false
+		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		inDependencies := false
+		for scanner.Scan() {
+			line := strings.TrimRight(scanner.Text(), " \t")
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "dependencies:" || trimmed == "dev_dependencies:" {
+				inDependencies = true
+				continue
+			}
+			if strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "-") && trimmed != "dependencies:" && trimmed != "dev_dependencies:" {
+				inDependencies = false
+			}
+			if !inDependencies || trimmed == "" || strings.HasPrefix(trimmed, "#") || !strings.Contains(trimmed, ":") {
+				continue
+			}
+			name, value, _ := strings.Cut(trimmed, ":")
+			depName := strings.TrimSpace(name)
+			version := strings.TrimSpace(value)
+			entries = append(entries, dependencyEntry{Name: depName, Version: version, Detail: versionDetail("pub", version), Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: depName})
 		}
-		if !inDependencies || trimmed == "" || strings.HasPrefix(trimmed, "#") || !strings.Contains(trimmed, ":") {
-			continue
-		}
-		name, value, _ := strings.Cut(trimmed, ":")
-		depName := strings.TrimSpace(name)
-		version := strings.TrimSpace(value)
-		entries = append(entries, dependencyEntry{Name: depName, Version: version, Detail: versionDetail("pub", version), Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: depName})
 	}
-	return entries
+	return dedupeDependencyEntries(entries)
 }
 
 func (c *dependencyCatalog) loadSwiftPackageEntries() []dependencyEntry {
-	packagePath := filepath.Join(c.root, "Package.swift")
-	data, err := os.ReadFile(packagePath)
-	if err != nil {
-		return nil
-	}
-
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	entries := make([]dependencyEntry, 0, 8)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.Contains(line, ".package(") {
+	for _, packagePath := range c.findCatalogFiles("Package.swift") {
+		data, err := os.ReadFile(packagePath)
+		if err != nil {
 			continue
 		}
-		url := firstQuotedValue(line)
-		if url == "" {
-			continue
+		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if !strings.Contains(line, ".package(") {
+				continue
+			}
+			url := firstQuotedValue(line)
+			if url == "" {
+				continue
+			}
+			name := strings.TrimSuffix(filepath.Base(url), ".git")
+			entries = append(entries, dependencyEntry{Name: name, Detail: url, Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: name})
 		}
-		name := strings.TrimSuffix(filepath.Base(url), ".git")
-		entries = append(entries, dependencyEntry{Name: name, Detail: url, Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: name})
 	}
-	return entries
+	return dedupeDependencyEntries(entries)
 }
 
 func (c *dependencyCatalog) loadTerraformEntries() []dependencyEntry {
-	lockPath := filepath.Join(c.root, ".terraform.lock.hcl")
-	data, err := os.ReadFile(lockPath)
-	if err != nil {
-		return nil
-	}
-
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	entries := make([]dependencyEntry, 0, 8)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "provider ") {
+	for _, lockPath := range c.findCatalogFiles(".terraform.lock.hcl") {
+		data, err := os.ReadFile(lockPath)
+		if err != nil {
 			continue
 		}
-		name := strings.Trim(strings.TrimPrefix(line, "provider "), `"{ `)
-		entries = append(entries, dependencyEntry{Name: name, Detail: "terraform provider", Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: name})
+		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if !strings.HasPrefix(line, "provider ") {
+				continue
+			}
+			name := strings.Trim(strings.TrimPrefix(line, "provider "), `"{ `)
+			entries = append(entries, dependencyEntry{Name: name, Detail: "terraform provider", Kind: core.SymbolKindModule, Source: core.SourceLibrary, Insert: name})
+		}
 	}
-	return entries
+	return dedupeDependencyEntries(entries)
 }
 
 func normalizeDependencyLanguage(language string) string {
