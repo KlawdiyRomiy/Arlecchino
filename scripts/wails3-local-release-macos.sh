@@ -505,7 +505,7 @@ fi
 set +e
 CODESIGN_OUTPUT="$(/usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE" 2>&1)"
 CODESIGN_EXIT="$?"
-CODESIGN_DISPLAY="$(/usr/bin/codesign -dv "$APP_BUNDLE" 2>&1)"
+CODESIGN_DISPLAY="$(/usr/bin/codesign -dv --verbose=4 "$APP_BUNDLE" 2>&1)"
 CODESIGN_DISPLAY_EXIT="$?"
 CODESIGN_REQUIREMENT="$(/usr/bin/codesign -d -r- "$APP_BUNDLE" 2>&1)"
 CODESIGN_REQUIREMENT_EXIT="$?"

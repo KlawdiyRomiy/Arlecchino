@@ -134,7 +134,11 @@ export const inspectAppBundleCodeIdentity = (appBundle) => {
     "--verbose=2",
     appBundle,
   ]);
-  const displayResult = runCommand("/usr/bin/codesign", ["-dv", appBundle]);
+  const displayResult = runCommand("/usr/bin/codesign", [
+    "-dv",
+    "--verbose=4",
+    appBundle,
+  ]);
   const requirementResult = runCommand("/usr/bin/codesign", [
     "-d",
     "-r-",

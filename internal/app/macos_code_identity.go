@@ -62,7 +62,7 @@ func inspectMacOSAppCodeIdentity(appPath string) (macOSCodeIdentity, error) {
 
 	bundleID := readPlistRaw(filepath.Join(appPath, "Contents", "Info.plist"), "CFBundleIdentifier")
 	verifyOutput, verifyErr := exec.Command("/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=2", appPath).CombinedOutput()
-	displayOutput, displayErr := exec.Command("/usr/bin/codesign", "-dv", appPath).CombinedOutput()
+	displayOutput, displayErr := exec.Command("/usr/bin/codesign", "-dv", "--verbose=4", appPath).CombinedOutput()
 	requirementOutput, requirementErr := exec.Command("/usr/bin/codesign", "-d", "-r-", appPath).CombinedOutput()
 
 	identity := parseMacOSCodeIdentity(
