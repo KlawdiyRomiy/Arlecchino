@@ -77,7 +77,8 @@ func TestExecute_SkipsMissingExecutables(t *testing.T) {
 	if called {
 		t.Fatalf("missing executable should be skipped before runner invocation")
 	}
-	if got := results["rust:fetch"]; got == "" || !strings.Contains(got, "skipped: missing executable") {
+	if got := resultForReadableAction(t, results, ":rust:cargo:Cargo.toml:fetch"); got == "" ||
+		!strings.Contains(got, "skipped: missing executable") {
 		t.Fatalf("expected skipped result for missing cargo, got %q", got)
 	}
 }
@@ -97,10 +98,10 @@ func TestExecute_ContinuesAfterCommandFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute should not fail whole run, got: %v", err)
 	}
-	if got := results["go:tidy"]; !strings.Contains(got, "failed: boom") {
+	if got := resultForReadableAction(t, results, ":go:go:go.mod:tidy"); !strings.Contains(got, "failed: boom") {
 		t.Fatalf("expected failed marker for go:tidy, got %q", got)
 	}
-	if _, ok := results["go:update"]; !ok {
+	if got := resultForReadableAction(t, results, ":go:go:go.mod:update"); got == "" {
 		t.Fatalf("expected subsequent command result to be preserved")
 	}
 }
@@ -141,4 +142,15 @@ func assertHasManager(t *testing.T, plan Plan, ecosystem, tool string) {
 		}
 	}
 	t.Fatalf("expected manager %s/%s in %#v", ecosystem, tool, plan.Managers)
+}
+
+func resultForReadableAction(t *testing.T, results map[string]string, suffix string) string {
+	t.Helper()
+	for id, result := range results {
+		if strings.HasSuffix(id, suffix) {
+			return result
+		}
+	}
+	t.Fatalf("expected action id suffix %q in %#v", suffix, results)
+	return ""
 }
