@@ -78,7 +78,7 @@ func TestCollectDiagnosticsPreloadCandidatesReturnsAllSmallProjects(t *testing.T
 	}
 }
 
-func TestCollectDiagnosticsPreloadCandidatesSpreadAcrossLargePolyglotProjects(t *testing.T) {
+func TestCollectDiagnosticsPreloadCandidatesHonorsDominantLanguageCap(t *testing.T) {
 	root := t.TempDir()
 	for i := 0; i < 5; i++ {
 		writeTestFile(t, filepath.Join(root, "go", fmt.Sprintf("file%d.go", i)), 64)
@@ -115,13 +115,8 @@ func TestCollectDiagnosticsPreloadCandidatesSpreadAcrossLargePolyglotProjects(t 
 		counts[candidate.Language]++
 	}
 
-	if counts["go"] != 2 || counts["typescript"] != 1 || counts["python"] != 1 {
-		t.Fatalf("expected breadth-first language spread, got %#v", counts)
-	}
-	for language, count := range counts {
-		if count == 0 {
-			t.Fatalf("expected %s to be represented in bounded selection", language)
-		}
+	if counts["go"] != 4 || counts["typescript"] != 0 || counts["python"] != 0 {
+		t.Fatalf("expected dominant language cap to select only go candidates, got %#v", counts)
 	}
 }
 
@@ -157,19 +152,24 @@ func TestCollectDiagnosticsPreloadPlanLimitsLanguagesAndPerLanguage(t *testing.T
 	if plan.TotalLanguages != 3 {
 		t.Fatalf("expected 3 total languages, got %d", plan.TotalLanguages)
 	}
-	if plan.SelectedLanguages != 3 {
-		t.Fatalf("expected 3 selected languages, got %d", plan.SelectedLanguages)
+	if plan.SelectedLanguages != 2 {
+		t.Fatalf("expected 2 selected languages, got %d", plan.SelectedLanguages)
 	}
-	if len(plan.Candidates) != 9 {
-		t.Fatalf("expected 9 capped candidates, got %d", len(plan.Candidates))
+	if len(plan.Candidates) != 6 {
+		t.Fatalf("expected 6 capped candidates, got %d", len(plan.Candidates))
 	}
 
 	counts := map[string]int{}
 	for _, candidate := range plan.Candidates {
 		counts[candidate.Language]++
 	}
-	if counts["go"] != 3 || counts["typescript"] != 3 || counts["python"] != 3 {
-		t.Fatalf("expected per-language cap of 3 with broad language coverage, got %#v", counts)
+	if len(counts) != 2 {
+		t.Fatalf("expected dominant language cap to select 2 languages, got %#v", counts)
+	}
+	for language, count := range counts {
+		if count != 3 {
+			t.Fatalf("expected per-language cap of 3 for %s, got %#v", language, counts)
+		}
 	}
 }
 
