@@ -2851,25 +2851,6 @@ func mergeSuggestionMetadata(preferred Suggestion, other Suggestion) Suggestion 
 		preferred.IsSnippet = other.IsSnippet
 		preferred.Snippet = other.Snippet
 	}
-	if preferred.PrimaryTextEdit == nil && other.PrimaryTextEdit != nil {
-		preferred.PrimaryTextEdit = other.PrimaryTextEdit
-	}
-	if len(preferred.AdditionalTextEdits) == 0 && len(other.AdditionalTextEdits) > 0 {
-		preferred.AdditionalTextEdits = append([]core.TextEdit(nil), other.AdditionalTextEdits...)
-	}
-	if preferred.Command == nil && other.Command != nil {
-		preferred.Command = other.Command
-	}
-	if preferred.Data == nil && other.Data != nil {
-		preferred.Data = other.Data
-	}
-	if preferred.ResolveToken == "" && other.ResolveToken != "" {
-		preferred.ResolveToken = other.ResolveToken
-	}
-	if preferred.ProofKind == "" && other.ProofKind != "" {
-		preferred.ProofKind = other.ProofKind
-	}
-
 	if preferred.Documentation == "" && other.Documentation != "" {
 		preferred.Documentation = other.Documentation
 	} else if other.Source == core.SourceLSP && other.Documentation != "" && preferred.Source != core.SourceLSP {
@@ -2889,10 +2870,22 @@ func mergeSuggestionMetadata(preferred Suggestion, other Suggestion) Suggestion 
 		preferred.Namespace = other.Namespace
 	}
 
-	if sameImportSideEffectIdentity(preferred, other) {
+	if canMergeCompletionSideEffects(preferred, other) {
+		if preferred.PrimaryTextEdit == nil && other.PrimaryTextEdit != nil {
+			preferred.PrimaryTextEdit = other.PrimaryTextEdit
+		}
 		preferred.AdditionalTextEdits = mergeTextEdits(preferred.AdditionalTextEdits, other.AdditionalTextEdits)
-		if preferred.ResolveToken == "" && other.ResolveToken != "" && len(preferred.AdditionalTextEdits) == 0 {
+		if preferred.Command == nil && other.Command != nil {
+			preferred.Command = other.Command
+		}
+		if preferred.Data == nil && other.Data != nil {
+			preferred.Data = other.Data
+		}
+		if preferred.ResolveToken == "" && other.ResolveToken != "" {
 			preferred.ResolveToken = other.ResolveToken
+		}
+		if preferred.ProofKind == "" && other.ProofKind != "" {
+			preferred.ProofKind = other.ProofKind
 		}
 		if preferred.Import == nil && other.Import != nil {
 			preferred.Import = cloneImportDescriptor(other.Import)
@@ -2917,6 +2910,13 @@ func mergeSuggestionMetadata(preferred Suggestion, other Suggestion) Suggestion 
 	}
 
 	return preferred
+}
+
+func canMergeCompletionSideEffects(a, b Suggestion) bool {
+	if sameImportSideEffectIdentity(a, b) {
+		return true
+	}
+	return a.Source == core.SourceLSP && b.Source == core.SourceLSP
 }
 
 func sameImportSideEffectIdentity(a, b Suggestion) bool {

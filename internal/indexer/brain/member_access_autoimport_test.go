@@ -501,7 +501,7 @@ func TestSmartRanker_ContextScore_UsesResolvedNamespace(t *testing.T) {
 	}
 }
 
-func TestFilterByContext_ResolvedNamespace_DropsEmptyNamespaceLSPNoise(t *testing.T) {
+func TestFilterByContext_ResolvedNamespace_KeepsLSPProofAndDropsMismatchedLibrary(t *testing.T) {
 	brain := &PredictionBrain{}
 	tests := []struct {
 		name              string
@@ -509,9 +509,11 @@ func TestFilterByContext_ResolvedNamespace_DropsEmptyNamespaceLSPNoise(t *testin
 		accessChain       string
 		resolvedNamespace string
 		want              string
+		noiseNamespace    string
+		noise             string
 	}{
-		{name: "typescript zod", language: "typescript", accessChain: "z.", resolvedNamespace: "zod", want: "string"},
-		{name: "python requests", language: "python", accessChain: "requests.", resolvedNamespace: "requests", want: "get"},
+		{name: "typescript zod", language: "typescript", accessChain: "z.", resolvedNamespace: "zod", want: "string", noiseNamespace: "axios", noise: "create"},
+		{name: "python requests", language: "python", accessChain: "requests.", resolvedNamespace: "requests", want: "get", noiseNamespace: "json", noise: "dumps"},
 	}
 
 	for _, tt := range tests {
@@ -525,17 +527,19 @@ func TestFilterByContext_ResolvedNamespace_DropsEmptyNamespaceLSPNoise(t *testin
 
 			suggestions := []Suggestion{
 				{Text: tt.want, Kind: core.SymbolKindFunction, Source: core.SourceLibrary, Namespace: tt.resolvedNamespace},
+				{Text: tt.noise, Kind: core.SymbolKindFunction, Source: core.SourceLibrary, Namespace: tt.noiseNamespace},
 				{Text: "label", Kind: core.SymbolKindFunction, Source: core.SourceLSP},
 				{Text: "library", Kind: core.SymbolKindFunction, Source: core.SourceLSP},
 			}
 
 			filtered := brain.filterByContext(ctx, suggestions)
-			if len(filtered) != 1 {
-				t.Fatalf("expected only namespace-aware suggestion, got %#v", filtered)
+			if len(filtered) != 3 {
+				t.Fatalf("expected namespace-aware library suggestion plus LSP proof, got %#v", filtered)
 			}
-			if filtered[0].Text != tt.want {
-				t.Fatalf("expected %q, got %q", tt.want, filtered[0].Text)
-			}
+			assertHasSuggestion(t, filtered, tt.want, core.SourceLibrary)
+			assertHasSuggestion(t, filtered, "label", core.SourceLSP)
+			assertHasSuggestion(t, filtered, "library", core.SourceLSP)
+			assertNoSuggestionFromSource(t, filtered, tt.noise, core.SourceLibrary)
 		})
 	}
 }
