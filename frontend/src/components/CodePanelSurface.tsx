@@ -114,19 +114,29 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     () => getCodeMirrorLineCount(content),
     [content],
   );
-  const performanceSnapshot = usePerformanceStore((state) => state.snapshot);
+  const adaptivePerformanceMode = usePerformanceStore((state) => state.mode);
   const updatePerformanceBudget = usePerformanceStore(
     (state) => state.updateBudget,
   );
   const editorFeatureBudget = useMemo(
     () =>
       resolveAdaptiveEditorFeatureBudget({
-        ...performanceSnapshot,
+        mode: adaptivePerformanceMode,
+        frameGapMs: 0,
+        eventPressure: 0,
         activeEditorCharCount: content.length,
         activeEditorLineCount: contentLineCount,
         activeEditorLargeDocument: largeDocumentMode,
+        indexerQueueDepth: 0,
+        projectFileCount: 0,
+        updatedAtMs: 0,
       }),
-    [content.length, contentLineCount, largeDocumentMode, performanceSnapshot],
+    [
+      adaptivePerformanceMode,
+      content.length,
+      contentLineCount,
+      largeDocumentMode,
+    ],
   );
   const notifyChangeDelayRef = useRef(editorFeatureBudget.notifyChangeDelayMs);
   const showFoldGutter = useEditorSettingsStore(

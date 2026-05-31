@@ -63,21 +63,25 @@ const isTextScaleCandidate = (element: Element): element is HTMLElement => {
   );
 };
 
-const getFontScaleRoots = (): HTMLElement[] => {
-  return [document.body];
-};
+const getFontScaleRoots = (): HTMLElement[] =>
+  document.body ? [document.body] : [];
 
-const collectFontScaleCandidates = (): HTMLElement[] => {
-  const candidates: HTMLElement[] = [];
-  getFontScaleRoots().forEach((root) => {
+const collectFontScaleCandidates = (
+  roots: readonly HTMLElement[],
+): HTMLElement[] => {
+  const candidates = new Set<HTMLElement>();
+  roots.forEach((root) => {
+    if (isTextScaleCandidate(root)) {
+      candidates.add(root);
+    }
     root.querySelectorAll("*").forEach((element) => {
       if (isTextScaleCandidate(element)) {
-        candidates.push(element);
+        candidates.add(element);
       }
     });
   });
 
-  return candidates;
+  return [...candidates];
 };
 
 const isExcludedMutation = (mutation: MutationRecord): boolean => {
@@ -113,9 +117,9 @@ export const createSystemFontSizeScaler = (
   defaultUiFontSize: number,
 ): (() => void) => {
   const scaledElements = new Set<HTMLElement>();
+  const pendingScaleRoots = new Set<HTMLElement>();
   let cancelled = false;
   let scheduled = false;
-  let applying = false;
   const scale =
     defaultUiFontSize > 0 ? Math.max(uiFontSize / defaultUiFontSize, 0) : 1;
 
@@ -164,9 +168,7 @@ export const createSystemFontSizeScaler = (
     const originalTransition = element.style.transition;
     element.style.transition = "none";
     try {
-      const result = callback();
-      void element.offsetWidth;
-      return result;
+      return callback();
     } finally {
       if (originalTransition) {
         element.style.transition = originalTransition;
@@ -215,74 +217,111 @@ export const createSystemFontSizeScaler = (
     scaledElements.clear();
   };
 
-  const applyScale = () => {
+  const restoreScaledElementsInRoots = (
+    roots: readonly HTMLElement[],
+  ): void => {
+    roots.forEach((root) => {
+      restoreScaledElement(root);
+      root
+        .querySelectorAll<HTMLElement>(`[${SCALED_INLINE_FONT_SIZE_ATTRIBUTE}]`)
+        .forEach(restoreScaledElement);
+    });
+  };
+
+  const scaleElement = (element: HTMLElement): void => {
+    restoreScaledElement(element);
+
+    const originalInlineFontSize = element.style.fontSize;
+    const scaledInlineFontSize = withTransitionSuppressed(element, () => {
+      const fontSize = Number.parseFloat(getComputedStyle(element).fontSize);
+      if (!Number.isFinite(fontSize) || fontSize <= 0) {
+        return null;
+      }
+
+      const scaled = formatFontSize(fontSize * scale);
+      element.style.fontSize = scaled;
+      return scaled;
+    });
+    if (scaledInlineFontSize === null) {
+      return;
+    }
+
+    scaledFontElementState.set(element, {
+      originalInlineFontSize,
+      scaledInlineFontSize,
+    });
+    element.setAttribute(
+      ORIGINAL_INLINE_FONT_SIZE_ATTRIBUTE,
+      originalInlineFontSize,
+    );
+    element.setAttribute(
+      SCALED_INLINE_FONT_SIZE_ATTRIBUTE,
+      scaledInlineFontSize,
+    );
+    scaledElements.add(element);
+  };
+
+  const applyScale = (roots: readonly HTMLElement[]) => {
     if (cancelled) {
       return;
     }
 
-    applying = true;
-    restoreScaledElements(false);
-
-    collectFontScaleCandidates().forEach((element) => {
-      restoreScaledElement(element);
-
-      const originalInlineFontSize = element.style.fontSize;
-      const scaledInlineFontSize = withTransitionSuppressed(element, () => {
-        const fontSize = Number.parseFloat(getComputedStyle(element).fontSize);
-        if (!Number.isFinite(fontSize) || fontSize <= 0) {
-          return null;
-        }
-
-        const scaled = formatFontSize(fontSize * scale);
-        element.style.fontSize = scaled;
-        return scaled;
-      });
-      if (scaledInlineFontSize === null) {
-        return;
-      }
-
-      scaledFontElementState.set(element, {
-        originalInlineFontSize,
-        scaledInlineFontSize,
-      });
-      element.setAttribute(
-        ORIGINAL_INLINE_FONT_SIZE_ATTRIBUTE,
-        originalInlineFontSize,
-      );
-      element.setAttribute(
-        SCALED_INLINE_FONT_SIZE_ATTRIBUTE,
-        scaledInlineFontSize,
-      );
-      scaledElements.add(element);
-    });
-
-    applying = false;
+    restoreScaledElementsInRoots(roots);
+    collectFontScaleCandidates(roots).forEach(scaleElement);
   };
 
-  const scheduleApplyScale = () => {
-    if (cancelled || applying || scheduled) {
+  const scheduleApplyScale = (roots: readonly HTMLElement[]) => {
+    if (cancelled) {
+      return;
+    }
+
+    roots.forEach((root) => pendingScaleRoots.add(root));
+    if (scheduled) {
       return;
     }
 
     scheduled = true;
     window.requestAnimationFrame(() => {
       scheduled = false;
-      applyScale();
+      const rootsToScale = [...pendingScaleRoots];
+      pendingScaleRoots.clear();
+      applyScale(rootsToScale);
     });
   };
 
+  const collectMutationScaleRoots = (
+    mutations: readonly MutationRecord[],
+  ): HTMLElement[] => {
+    const roots = new Set<HTMLElement>();
+    mutations.forEach((mutation) => {
+      if (isExcludedMutation(mutation)) {
+        return;
+      }
+
+      mutation.addedNodes.forEach((node) => {
+        if (node instanceof HTMLElement) {
+          roots.add(node);
+        } else if (node.parentElement) {
+          roots.add(node.parentElement);
+        }
+      });
+    });
+    return [...roots];
+  };
+
   const observer = new MutationObserver((mutations) => {
-    if (mutations.every(isExcludedMutation)) {
+    const roots = collectMutationScaleRoots(mutations);
+    if (roots.length === 0) {
       return;
     }
-    scheduleApplyScale();
+    scheduleApplyScale(roots);
   });
   observer.observe(document.body, {
     childList: true,
     subtree: true,
   });
 
-  scheduleApplyScale();
+  scheduleApplyScale(getFontScaleRoots());
 
   return () => {
     cancelled = true;

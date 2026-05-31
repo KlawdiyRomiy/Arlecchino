@@ -103,6 +103,48 @@ const clampPressure = (value: number) => Math.max(0, Math.min(160, value));
 const defaultPanelMotionWindowMs = 420;
 let panelMotionTimer: ReturnType<typeof setTimeout> | null = null;
 
+const performanceBudgetChanged = (
+  current: PerformanceBudgetSnapshot,
+  next: PerformanceBudgetSnapshot,
+): boolean =>
+  current.mode !== next.mode ||
+  current.frameGapMs !== next.frameGapMs ||
+  current.eventPressure !== next.eventPressure ||
+  current.activeEditorCharCount !== next.activeEditorCharCount ||
+  current.activeEditorLineCount !== next.activeEditorLineCount ||
+  current.activeEditorLargeDocument !== next.activeEditorLargeDocument ||
+  current.indexerQueueDepth !== next.indexerQueueDepth ||
+  current.projectFileCount !== next.projectFileCount;
+
+const buildBudgetState = (
+  state: PerformanceState,
+  patch: Partial<PerformanceBudgetSnapshot>,
+): Partial<PerformanceState> | PerformanceState => {
+  const candidateSnapshot: PerformanceBudgetSnapshot = {
+    ...state.snapshot,
+    ...patch,
+  };
+  const nextMode = state.panelMotionActive
+    ? state.mode
+    : resolveMode(candidateSnapshot);
+  candidateSnapshot.mode = nextMode;
+
+  if (
+    state.mode === nextMode &&
+    !performanceBudgetChanged(state.snapshot, candidateSnapshot)
+  ) {
+    return state;
+  }
+
+  return {
+    mode: nextMode,
+    snapshot: {
+      ...candidateSnapshot,
+      updatedAtMs: nowPerf(),
+    },
+  };
+};
+
 export const usePerformanceStore = create<PerformanceState>((set, get) => ({
   mode: "normal",
   snapshot: defaultSnapshot(),
@@ -113,20 +155,34 @@ export const usePerformanceStore = create<PerformanceState>((set, get) => ({
       clearTimeout(panelMotionTimer);
     }
 
-    set({ panelMotionActive: true });
+    set((state) =>
+      state.panelMotionActive ? state : { panelMotionActive: true },
+    );
     panelMotionTimer = setTimeout(
       () => {
         panelMotionTimer = null;
         set((state) => {
           const nextMode = resolveMode(state.snapshot);
+          const snapshot =
+            state.snapshot.mode === nextMode
+              ? state.snapshot
+              : {
+                  ...state.snapshot,
+                  mode: nextMode,
+                  updatedAtMs: nowPerf(),
+                };
+          if (
+            !state.panelMotionActive &&
+            state.mode === nextMode &&
+            snapshot === state.snapshot
+          ) {
+            return state;
+          }
+
           return {
             panelMotionActive: false,
             mode: nextMode,
-            snapshot: {
-              ...state.snapshot,
-              mode: nextMode,
-              updatedAtMs: nowPerf(),
-            },
+            snapshot,
           };
         });
       },
@@ -135,18 +191,7 @@ export const usePerformanceStore = create<PerformanceState>((set, get) => ({
   },
 
   updateBudget: (patch) => {
-    set((state) => {
-      const nextSnapshot: PerformanceBudgetSnapshot = {
-        ...state.snapshot,
-        ...patch,
-        updatedAtMs: nowPerf(),
-      };
-      const nextMode = state.panelMotionActive
-        ? state.mode
-        : resolveMode(nextSnapshot);
-      nextSnapshot.mode = nextMode;
-      return { mode: nextMode, snapshot: nextSnapshot };
-    });
+    set((state) => buildBudgetState(state, patch));
   },
 
   recordEventPressure: (_scope, units = 1) => {
@@ -172,35 +217,25 @@ export const usePerformanceStore = create<PerformanceState>((set, get) => ({
   },
 
   resetTransientBudget: () => {
-    set((state) => {
-      const nextSnapshot: PerformanceBudgetSnapshot = {
-        ...state.snapshot,
+    set((state) =>
+      buildBudgetState(state, {
         frameGapMs: 0,
         eventPressure: 0,
         activeEditorCharCount: 0,
         activeEditorLineCount: 0,
         activeEditorLargeDocument: false,
-        updatedAtMs: nowPerf(),
-      };
-      const nextMode = resolveMode(nextSnapshot);
-      nextSnapshot.mode = nextMode;
-      return { mode: nextMode, snapshot: nextSnapshot };
-    });
+      }),
+    );
   },
 
   resetActiveEditorBudget: () => {
-    set((state) => {
-      const nextSnapshot: PerformanceBudgetSnapshot = {
-        ...state.snapshot,
+    set((state) =>
+      buildBudgetState(state, {
         activeEditorCharCount: 0,
         activeEditorLineCount: 0,
         activeEditorLargeDocument: false,
-        updatedAtMs: nowPerf(),
-      };
-      const nextMode = resolveMode(nextSnapshot);
-      nextSnapshot.mode = nextMode;
-      return { mode: nextMode, snapshot: nextSnapshot };
-    });
+      }),
+    );
   },
 }));
 

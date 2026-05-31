@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useCallback, useState } from "react";
 import ReactDOM from "react-dom";
+import { useShallow } from "zustand/react/shallow";
 import {
   ClipboardPaste,
   Copy,
@@ -141,7 +142,28 @@ export const TerminalPanelContent: React.FC<TerminalPanelProps> = ({
     tuiActiveSessionId,
     isArlePaused,
     sessionSemanticEntries,
-  } = useTerminalStore();
+  } = useTerminalStore(
+    useShallow((state) => ({
+      sessions: state.sessions,
+      panes: state.panes,
+      activePaneId: state.activePaneId,
+      splitDirection: state.splitDirection,
+      isInitialized: state.isInitialized,
+      initialize: state.initialize,
+      createTerminal: state.createTerminal,
+      closeTerminal: state.closeTerminal,
+      reopenLastClosedTab: state.reopenLastClosedTab,
+      setActiveTab: state.setActiveTab,
+      setActivePane: state.setActivePane,
+      splitPane: state.splitPane,
+      getSession: state.getSession,
+      updateTheme: state.updateTheme,
+      tuiModeActive: state.tuiModeActive,
+      tuiActiveSessionId: state.tuiActiveSessionId,
+      isArlePaused: state.isArlePaused,
+      sessionSemanticEntries: state.sessionSemanticEntries,
+    })),
+  );
 
   const activePane = panes.find((p) => p.id === activePaneId);
   const activeTabId = activePane?.activeTabId || "";

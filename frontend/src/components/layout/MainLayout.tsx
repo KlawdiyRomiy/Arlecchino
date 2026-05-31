@@ -7,6 +7,7 @@ import React, {
   useRef,
 } from "react";
 import { useReducedMotion } from "framer-motion";
+import { useShallow } from "zustand/react/shallow";
 import { TopBar } from "./TopBar";
 import { StatusBar } from "./StatusBar";
 import { MainLayoutPanelRenderer } from "./MainLayoutPanelRenderer";
@@ -719,7 +720,18 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     enterTUIMode,
     exitTUIMode,
     isDispatcherPaused,
-  } = useTerminalStore();
+  } = useTerminalStore(
+    useShallow((state) => ({
+      tuiModeActive: state.tuiModeActive,
+      tuiActiveSessionId: state.tuiActiveSessionId,
+      setTUIAssist: state.setTUIAssist,
+      setPowerProfile: state.setPowerProfile,
+      canAccessPath: state.canAccessPath,
+      enterTUIMode: state.enterTUIMode,
+      exitTUIMode: state.exitTUIMode,
+      isDispatcherPaused: state.isDispatcherPaused,
+    })),
+  );
   const previewWindows = usePreviewWindowStore((state) => state.windows);
   const activePreviewWindowId = usePreviewWindowStore(
     (state) => state.activeWindowId,
