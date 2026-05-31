@@ -153,7 +153,7 @@ export const CloneRepositoryDialog: React.FC<CloneRepositoryDialogProps> = ({
   const inputClass =
     "min-h-12 w-full rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 text-[16px] text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-muted)] hover:border-[var(--border-default)] focus:border-[var(--border-strong)] disabled:cursor-wait disabled:opacity-70";
   const secondaryButtonClass =
-    "inline-flex min-h-12 items-center justify-center gap-2 rounded-[18px] border border-[var(--border-subtle)] bg-transparent px-6 text-[16px] font-medium text-[var(--text-primary)] transition-colors hover:border-[var(--border-default)] hover:bg-[var(--bg-hover)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50";
+    "shell-dialog-action shell-dialog-action-secondary";
   const iconButtonClass =
     "inline-flex h-12 w-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-transparent text-[var(--text-secondary)] transition-colors hover:border-[var(--border-default)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50";
   const cloneDisabled =
@@ -276,7 +276,7 @@ export const CloneRepositoryDialog: React.FC<CloneRepositoryDialogProps> = ({
               <button
                 type="submit"
                 disabled={cloneDisabled}
-                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-[18px] bg-white px-8 text-[16px] font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-2"
+                className="shell-dialog-action shell-dialog-action-primary shell-dialog-action-wide sm:order-2"
               >
                 {cloning ? (
                   <Loader2 size={18} className="animate-spin" />

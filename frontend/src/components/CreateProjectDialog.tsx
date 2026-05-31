@@ -123,7 +123,7 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
   const inputClass =
     "min-h-12 w-full rounded-[18px] border border-[var(--border-subtle)] bg-[var(--bg-tertiary)] px-4 text-[16px] text-[var(--text-primary)] outline-none transition-colors placeholder:text-[var(--text-muted)] hover:border-[var(--border-default)] focus:border-[var(--border-strong)]";
   const secondaryButtonClass =
-    "inline-flex min-h-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-transparent px-6 text-[16px] font-medium text-[var(--text-primary)] transition-colors hover:border-[var(--border-default)] hover:bg-[var(--bg-hover)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50";
+    "shell-dialog-action shell-dialog-action-secondary";
 
   return createPortal(
     <AnimatePresence>
@@ -200,7 +200,7 @@ export const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
               type="button"
               onClick={handleCreateProject}
               disabled={!projectName.trim() || !selectedDir || creating}
-              className="min-h-12 rounded-[18px] bg-white px-8 text-[16px] font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-2"
+              className="shell-dialog-action shell-dialog-action-primary shell-dialog-action-wide sm:order-2"
             >
               {creating ? "Creating..." : "Create Project"}
             </button>

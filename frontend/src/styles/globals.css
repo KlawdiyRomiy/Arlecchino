@@ -48,6 +48,15 @@
   --border-strong: #4a4a4a;
   --grid-line: rgba(255, 255, 255, 0.04);
   --grid-dot: rgba(255, 255, 255, 0.06);
+  --button-primary-bg: var(--text-primary);
+  --button-primary-bg-hover: color-mix(
+    in srgb,
+    var(--text-primary) 88%,
+    var(--surface-3)
+  );
+  --button-primary-text: var(--surface-canvas);
+  --button-primary-border: var(--text-primary);
+  --button-primary-border-hover: var(--button-primary-bg-hover);
   --accent-primary: #f4f4f4;
   --accent-primary-soft: rgba(255, 255, 255, 0.1);
   --accent-brand: #f26b5e;
@@ -313,6 +322,74 @@ body > [data-radix-portal] > * {
   box-shadow:
     0 0 0 1px var(--focus-ring),
     0 0 0 3px var(--focus-ring-strong);
+}
+
+.shell-dialog-action {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 18px;
+  padding: 0 24px;
+  font-size: 16px;
+  font-weight: 500;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease,
+    transform 120ms ease;
+}
+
+.shell-dialog-action-sm {
+  min-height: 36px;
+  border-radius: 12px;
+  padding: 0 16px;
+  font-size: 13px;
+}
+
+.shell-dialog-action-wide {
+  padding-inline: 32px;
+}
+
+.shell-dialog-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.shell-dialog-action:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.shell-dialog-action:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 1px var(--focus-ring),
+    0 0 0 3px var(--focus-ring-strong);
+}
+
+.shell-dialog-action-primary {
+  border-color: var(--button-primary-border);
+  background: var(--button-primary-bg);
+  color: var(--button-primary-text);
+}
+
+.shell-dialog-action-primary:hover:not(:disabled) {
+  border-color: var(--button-primary-border-hover);
+  background: var(--button-primary-bg-hover);
+}
+
+.shell-dialog-action-secondary {
+  border-color: var(--border-subtle);
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.shell-dialog-action-secondary:hover:not(:disabled) {
+  border-color: var(--border-default);
+  background: var(--bg-hover);
 }
 
 .shell-pill {

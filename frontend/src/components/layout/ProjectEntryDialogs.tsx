@@ -110,14 +110,14 @@ export const ProjectEntryDialogs: React.FC<ProjectEntryDialogsProps> = ({
                 type="button"
                 onClick={onCreateEntryClose}
                 disabled={createEntryBusy}
-                className="inline-flex min-h-12 items-center justify-center rounded-[18px] border border-[var(--border-subtle)] bg-transparent px-6 text-[16px] font-medium text-[var(--text-primary)] transition-colors hover:border-[var(--border-default)] hover:bg-[var(--bg-hover)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-1"
+                className="shell-dialog-action shell-dialog-action-secondary sm:order-1"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={!createEntryName.trim() || createEntryBusy}
-                className="min-h-12 rounded-[18px] bg-white px-8 text-[16px] font-medium text-black transition-colors hover:bg-gray-200 focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)] disabled:cursor-not-allowed disabled:opacity-50 sm:order-2"
+                className="shell-dialog-action shell-dialog-action-primary shell-dialog-action-wide sm:order-2"
               >
                 {createEntryBusy
                   ? "Creating..."
@@ -164,7 +164,7 @@ export const ProjectEntryDialogs: React.FC<ProjectEntryDialogsProps> = ({
               type="button"
               onClick={onRenameEntryClose}
               disabled={renameEntryBusy}
-              className="rounded-[12px] border border-[var(--border-subtle)] px-4 py-2 text-[13px] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="shell-dialog-action shell-dialog-action-secondary shell-dialog-action-sm"
             >
               Cancel
             </button>
@@ -172,7 +172,7 @@ export const ProjectEntryDialogs: React.FC<ProjectEntryDialogsProps> = ({
               type="button"
               onClick={() => void onRenameEntrySubmit()}
               disabled={!renameEntryName.trim() || renameEntryBusy}
-              className="rounded-[12px] bg-white px-4 py-2 text-[13px] font-medium text-black transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+              className="shell-dialog-action shell-dialog-action-primary shell-dialog-action-sm"
             >
               {renameEntryBusy ? "Renaming..." : "Rename"}
             </button>
