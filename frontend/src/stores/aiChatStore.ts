@@ -89,6 +89,11 @@ interface AIChatRuntimeState {
   clearRuntime: () => void;
 }
 
+const AI_CHAT_MAX_RUNS = 80;
+const AI_CHAT_MAX_HYDRATED_RUNS = 20;
+const AI_CHAT_MAX_STREAMING_TEXT_CHARS = 96_000;
+const AI_CHAT_MAX_HYDRATED_RESPONSE_CHARS = 96_000;
+
 const sortRuns = (runs: AIChatRunEnvelope[]): AIChatRunEnvelope[] =>
   [...runs].sort((a, b) => {
     const left = Date.parse(b.updatedAt || b.createdAt || "");
@@ -101,8 +106,24 @@ const sortRuns = (runs: AIChatRunEnvelope[]): AIChatRunEnvelope[] =>
 const isTerminalRunStatus = (status?: string): boolean =>
   status === "completed" || status === "error" || status === "canceled";
 
-const sessionIdOf = (run: Pick<AIChatRunEnvelope, "sessionId">): string =>
+const sessionIdOf = (run: { sessionId?: string | null }): string =>
   run.sessionId?.trim() || "default";
+
+const trimAIChatText = (text: string, maxChars: number): string =>
+  text.length > maxChars ? text.slice(-maxChars) : text;
+
+const trimHydratedRunPayload = (run: AIChatRun): AIChatRun => {
+  if (
+    typeof run.response !== "string" ||
+    run.response.length <= AI_CHAT_MAX_HYDRATED_RESPONSE_CHARS
+  ) {
+    return run;
+  }
+  return {
+    ...run,
+    response: trimAIChatText(run.response, AI_CHAT_MAX_HYDRATED_RESPONSE_CHARS),
+  };
+};
 
 const mergeToolProposals = (
   existing: AIChatRunEnvelope,
@@ -216,7 +237,7 @@ const mergeRunEnvelope = (
     : run;
   const next = runs.filter((candidate) => candidate.id !== run.id);
   next.unshift(merged as AIChatRunEnvelope);
-  return sortRuns(next);
+  return sortRuns(next).slice(0, AI_CHAT_MAX_RUNS);
 };
 
 const mergeEgressRecord = (
@@ -242,10 +263,91 @@ const mergeHydratedRunState = (
       isTerminalRunStatus(run.status) || response.length > existingStream.length
         ? response
         : existingStream;
-    hydratedRuns[run.id] = run;
-    streamingTextByRunId[run.id] = streamingText;
+    hydratedRuns[run.id] = trimHydratedRunPayload(run);
+    streamingTextByRunId[run.id] = trimAIChatText(
+      streamingText,
+      AI_CHAT_MAX_STREAMING_TEXT_CHARS,
+    );
   }
   return { hydratedRuns, streamingTextByRunId };
+};
+
+type AIChatRetentionState = Pick<
+  AIChatRuntimeState,
+  "activeRunId" | "hydratedRuns" | "runs" | "streamingTextByRunId"
+>;
+
+const pruneAIChatRetention = <State extends AIChatRetentionState>(
+  state: State,
+): State => {
+  const runs = sortRuns(state.runs).slice(0, AI_CHAT_MAX_RUNS);
+  const retainedRunIds = new Set(runs.map((run) => run.id));
+  const activeRunHasPayload = Boolean(
+    state.activeRunId &&
+    (state.hydratedRuns[state.activeRunId] ||
+      state.streamingTextByRunId[state.activeRunId]),
+  );
+  if (state.activeRunId && activeRunHasPayload) {
+    retainedRunIds.add(state.activeRunId);
+  }
+
+  const runPriority = new Map<string, number>();
+  runs.forEach((run, index) => {
+    runPriority.set(run.id, index);
+  });
+  if (state.activeRunId) {
+    runPriority.set(state.activeRunId, -1);
+  }
+
+  const hydratedRunIds = Object.keys(state.hydratedRuns)
+    .sort((left, right) => {
+      const priority =
+        (runPriority.get(left) ?? Number.MAX_SAFE_INTEGER) -
+        (runPriority.get(right) ?? Number.MAX_SAFE_INTEGER);
+      if (priority !== 0) return priority;
+      const leftRun = state.hydratedRuns[left];
+      const rightRun = state.hydratedRuns[right];
+      const leftTime = Date.parse(
+        leftRun?.updatedAt || leftRun?.createdAt || "",
+      );
+      const rightTime = Date.parse(
+        rightRun?.updatedAt || rightRun?.createdAt || "",
+      );
+      return (
+        (Number.isFinite(rightTime) ? rightTime : 0) -
+        (Number.isFinite(leftTime) ? leftTime : 0)
+      );
+    })
+    .slice(0, AI_CHAT_MAX_HYDRATED_RUNS);
+
+  const hydratedRunSet = new Set(hydratedRunIds);
+  const hydratedRuns: Record<string, AIChatRun> = {};
+  for (const runId of hydratedRunIds) {
+    hydratedRuns[runId] = trimHydratedRunPayload(state.hydratedRuns[runId]);
+  }
+
+  const streamingTextByRunId: Record<string, string> = {};
+  for (const [runId, text] of Object.entries(state.streamingTextByRunId)) {
+    if (!retainedRunIds.has(runId) && !hydratedRunSet.has(runId)) {
+      continue;
+    }
+    streamingTextByRunId[runId] = trimAIChatText(
+      text,
+      AI_CHAT_MAX_STREAMING_TEXT_CHARS,
+    );
+  }
+
+  return {
+    ...state,
+    runs,
+    hydratedRuns,
+    streamingTextByRunId,
+    activeRunId:
+      state.activeRunId &&
+      (runs.some((run) => run.id === state.activeRunId) || activeRunHasPayload)
+        ? state.activeRunId
+        : (runs[0]?.id ?? null),
+  };
 };
 
 const initialRuntimeState = {
@@ -276,11 +378,13 @@ const initialRuntimeState = {
 export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
   ...initialRuntimeState,
   setInitialData: (data) =>
-    set((state) => ({
-      ...state,
-      ...data,
-      runs: data.runs ? sortRuns(data.runs) : state.runs,
-    })),
+    set((state) =>
+      pruneAIChatRetention({
+        ...state,
+        ...data,
+        runs: data.runs ? sortRuns(data.runs) : state.runs,
+      }),
+    ),
   setStatus: (status) => set({ status }),
   setProviders: (providers) => set({ providers }),
   upsertProvider: (provider) =>
@@ -304,12 +408,16 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
       ].slice(0, 50),
     })),
   setContextProviders: (contextProviders) => set({ contextProviders }),
-  setRuns: (runs) => set({ runs: sortRuns(runs) }),
+  setRuns: (runs) =>
+    set((state) => pruneAIChatRetention({ ...state, runs: sortRuns(runs) })),
   upsertRunEnvelope: (run) =>
-    set((state) => ({
-      runs: mergeRunEnvelope(state.runs, run),
-      activeRunId: state.activeRunId ?? run.id,
-    })),
+    set((state) =>
+      pruneAIChatRetention({
+        ...state,
+        runs: mergeRunEnvelope(state.runs, run),
+        activeRunId: state.activeRunId ?? run.id,
+      }),
+    ),
   appendRunTimelineEvent: (event) =>
     set((state) => {
       const runId = event?.runId?.trim();
@@ -323,16 +431,36 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
           timeline: mergeTimelineEvents(run.timeline ?? [], [event]),
         };
       });
-      return changed ? { runs } : state;
+      return changed ? pruneAIChatRetention({ ...state, runs }) : state;
     }),
   deleteSessionRuns: (sessionId) =>
     set((state) => {
       const normalizedSessionId = sessionId.trim() || "default";
-      const removedRunIds = new Set(
-        state.runs
-          .filter((run) => sessionIdOf(run) === normalizedSessionId)
-          .map((run) => run.id),
-      );
+      const removedRunIds = new Set<string>();
+      for (const run of state.runs) {
+        if (sessionIdOf(run) === normalizedSessionId) {
+          removedRunIds.add(run.id);
+        }
+      }
+      for (const [runId, run] of Object.entries(state.hydratedRuns)) {
+        if (sessionIdOf(run) === normalizedSessionId) {
+          removedRunIds.add(runId);
+        }
+      }
+      if (state.activeRunId) {
+        const activeEnvelope = state.runs.find(
+          (run) => run.id === state.activeRunId,
+        );
+        const activeHydrated = state.hydratedRuns[state.activeRunId];
+        if (
+          (activeEnvelope &&
+            sessionIdOf(activeEnvelope) === normalizedSessionId) ||
+          (activeHydrated &&
+            sessionIdOf(activeHydrated) === normalizedSessionId)
+        ) {
+          removedRunIds.add(state.activeRunId);
+        }
+      }
       if (removedRunIds.size === 0) {
         return state;
       }
@@ -342,7 +470,8 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
         delete hydratedRuns[runId];
         delete streamingTextByRunId[runId];
       }
-      return {
+      return pruneAIChatRetention({
+        ...state,
         runs: state.runs.filter(
           (run) => sessionIdOf(run) !== normalizedSessionId,
         ),
@@ -352,20 +481,31 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
           state.activeRunId && removedRunIds.has(state.activeRunId)
             ? null
             : state.activeRunId,
-      };
+      });
     }),
   setHydratedRun: (run) =>
     set((state) => {
       const merged = mergeHydratedRunState(state, [run]);
-      return {
+      return pruneAIChatRetention({
+        ...state,
         ...merged,
         activeRunId: state.activeRunId ?? run.id,
-      };
+      });
     }),
   upsertHydratedRun: (run) =>
-    set((state) => mergeHydratedRunState(state, [run])),
+    set((state) =>
+      pruneAIChatRetention({
+        ...state,
+        ...mergeHydratedRunState(state, [run]),
+      }),
+    ),
   upsertHydratedRuns: (runs) =>
-    set((state) => mergeHydratedRunState(state, runs)),
+    set((state) =>
+      pruneAIChatRetention({
+        ...state,
+        ...mergeHydratedRunState(state, runs),
+      }),
+    ),
   appendRunToken: (runId, token) =>
     set((state) => {
       const envelope = state.runs.find((run) => run.id === runId);
@@ -376,14 +516,36 @@ export const useAIChatStore = create<AIChatRuntimeState>()((set) => ({
       ) {
         return state;
       }
-      return {
+      return pruneAIChatRetention({
+        ...state,
         streamingTextByRunId: {
           ...state.streamingTextByRunId,
-          [runId]: `${state.streamingTextByRunId[runId] ?? ""}${token}`,
+          [runId]: trimAIChatText(
+            `${state.streamingTextByRunId[runId] ?? ""}${token}`,
+            AI_CHAT_MAX_STREAMING_TEXT_CHARS,
+          ),
         },
-      };
+      });
     }),
-  setActiveRunId: (activeRunId) => set({ activeRunId }),
+  setActiveRunId: (activeRunId) =>
+    set((state) => {
+      if (!state.activeRunId || state.activeRunId === activeRunId) {
+        return pruneAIChatRetention({ ...state, activeRunId });
+      }
+      if (state.runs.some((run) => run.id === state.activeRunId)) {
+        return pruneAIChatRetention({ ...state, activeRunId });
+      }
+      const hydratedRuns = { ...state.hydratedRuns };
+      const streamingTextByRunId = { ...state.streamingTextByRunId };
+      delete hydratedRuns[state.activeRunId];
+      delete streamingTextByRunId[state.activeRunId];
+      return pruneAIChatRetention({
+        ...state,
+        activeRunId,
+        hydratedRuns,
+        streamingTextByRunId,
+      });
+    }),
   setContextPreview: (contextPreview) => set({ contextPreview }),
   setEgressRecords: (egressRecords) => set({ egressRecords }),
   upsertEgressRecord: (record) =>

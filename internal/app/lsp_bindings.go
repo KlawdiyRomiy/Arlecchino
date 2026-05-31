@@ -240,7 +240,23 @@ func (a *App) emitLSPDiagnosticsStatus(language, filePath, state, message string
 
 func shouldSkipPreloadDir(name string) bool {
 	switch name {
-	case "vendor", "node_modules", ".git", "storage":
+	case "vendor",
+		"node_modules",
+		".git",
+		"storage",
+		".build",
+		".swiftpm",
+		"DerivedData",
+		".venv",
+		".pytest_cache",
+		".mypy_cache",
+		"target",
+		".gradle",
+		"dist",
+		"build",
+		"coverage",
+		".next",
+		".nuxt":
 		return true
 	default:
 		return false

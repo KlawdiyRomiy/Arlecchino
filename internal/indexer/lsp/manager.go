@@ -26,6 +26,7 @@ import (
 type Manager struct {
 	mu                   sync.RWMutex
 	startMu              sync.Mutex
+	documentMu           sync.Mutex
 	servers              map[string]*Server
 	configs              map[string]ServerConfig
 	installerConfigs     map[string]bool
@@ -35,7 +36,7 @@ type Manager struct {
 	startBackoff         time.Duration
 	startTimeoutGap      time.Duration
 	noConfigLogged       map[string]bool
-	openDocsByLang       map[string]map[string]int
+	openDocsByLang       map[string]map[string]*openDocState
 	idleTimers           map[string]*time.Timer
 	idleTimeout          time.Duration
 	completionMu         sync.Mutex
@@ -50,6 +51,12 @@ type Manager struct {
 	diagnosticSeen       map[string]uint64
 	onDiagnostics        func(language, filePath string, diagnostics []Diagnostic)
 	rootPath             string
+}
+
+type openDocState struct {
+	version       int
+	userOpen      bool
+	transientRefs int
 }
 
 func configLanguageCandidates(language string) []string {
@@ -243,7 +250,7 @@ func NewManager(rootPath string) *Manager {
 		startBackoff:         30 * time.Second,
 		startTimeoutGap:      2 * time.Second,
 		noConfigLogged:       make(map[string]bool),
-		openDocsByLang:       make(map[string]map[string]int),
+		openDocsByLang:       make(map[string]map[string]*openDocState),
 		idleTimers:           make(map[string]*time.Timer),
 		idleTimeout:          2 * time.Minute,
 		completionInFly:      make(map[string]chan completionResult),
@@ -412,6 +419,7 @@ func (m *Manager) ReplaceInstallerConfigs(configs []ServerConfig) {
 	var removed []string
 	var added []string
 	var serversToStop []*Server
+	resetLanguages := make(map[string]struct{})
 
 	m.mu.Lock()
 	if m.installerConfigs == nil {
@@ -425,6 +433,7 @@ func (m *Manager) ReplaceInstallerConfigs(configs []ServerConfig) {
 			continue
 		}
 		removed = append(removed, language)
+		resetLanguages[language] = struct{}{}
 		delete(m.installerConfigs, language)
 		if baseCfg, ok := m.installerBaseConfigs[language]; ok {
 			m.configs[language] = baseCfg
@@ -450,6 +459,7 @@ func (m *Manager) ReplaceInstallerConfigs(configs []ServerConfig) {
 		}
 		if current, ok := m.configs[language]; ok && !reflect.DeepEqual(current, cfg) {
 			added = append(added, language)
+			resetLanguages[language] = struct{}{}
 			if server, ok := m.servers[language]; ok {
 				serversToStop = append(serversToStop, server)
 				delete(m.servers, language)
@@ -464,6 +474,11 @@ func (m *Manager) ReplaceInstallerConfigs(configs []ServerConfig) {
 		}
 		m.configs[language] = cfg
 		m.installerConfigs[language] = true
+	}
+	resetDiagnosticsLanguages := make([]string, 0, len(resetLanguages))
+	for language := range resetLanguages {
+		delete(m.openDocsByLang, language)
+		resetDiagnosticsLanguages = append(resetDiagnosticsLanguages, language)
 	}
 	m.mu.Unlock()
 
@@ -480,7 +495,7 @@ func (m *Manager) ReplaceInstallerConfigs(configs []ServerConfig) {
 		m.startMu.Unlock()
 	}
 
-	m.clearDiagnosticsForLanguages(removed)
+	m.clearDiagnosticsForLanguages(resetDiagnosticsLanguages)
 	for _, server := range serversToStop {
 		if err := server.shutdown(); err != nil {
 			log.Printf("[LSP-MGR] installer config shutdown failed err=%v", err)
@@ -625,6 +640,9 @@ func (m *Manager) Stop(language string) error {
 		language = lspregistry.NormalizeLanguageToken(language)
 	}
 
+	m.documentMu.Lock()
+	defer m.documentMu.Unlock()
+
 	m.mu.Lock()
 	if timer, ok := m.idleTimers[language]; ok {
 		timer.Stop()
@@ -637,6 +655,8 @@ func (m *Manager) Stop(language string) error {
 	}
 	delete(m.servers, language)
 	m.mu.Unlock()
+	m.forceMarkLanguageClosed(language)
+	m.clearDiagnosticsForLanguages([]string{language})
 
 	return server.shutdown()
 }
@@ -656,6 +676,8 @@ func (m *Manager) cleanupServer(language string, server *Server) {
 	}
 	m.mu.Unlock()
 	if shouldShutdown {
+		m.forceMarkLanguageClosed(closeLang)
+		m.clearDiagnosticsForLanguages([]string{closeLang})
 		if err := server.shutdown(); err != nil {
 			log.Printf("[LSP-MGR] shutdown failed lang=%s err=%v", closeLang, err)
 		}
@@ -663,6 +685,9 @@ func (m *Manager) cleanupServer(language string, server *Server) {
 }
 
 func (m *Manager) StopAll() {
+	m.documentMu.Lock()
+	defer m.documentMu.Unlock()
+
 	m.mu.Lock()
 	servers := make([]*Server, 0, len(m.servers))
 	for _, s := range m.servers {
@@ -673,7 +698,7 @@ func (m *Manager) StopAll() {
 	}
 	m.servers = make(map[string]*Server)
 	m.idleTimers = make(map[string]*time.Timer)
-	m.openDocsByLang = make(map[string]map[string]int)
+	m.openDocsByLang = make(map[string]map[string]*openDocState)
 	m.mu.Unlock()
 
 	m.diagnosticsMu.Lock()
@@ -978,7 +1003,35 @@ func (m *Manager) DidOpenWithContext(ctx context.Context, language, filePath, co
 		return ctx.Err()
 	default:
 	}
-	if m.isDocOpen(language, filePath) {
+
+	m.documentMu.Lock()
+	defer m.documentMu.Unlock()
+
+	if state, ok := m.docState(language, filePath); ok {
+		if state.userOpen {
+			return nil
+		}
+		server, err := m.ensureStartedWithContext(ctx, language)
+		if err != nil {
+			log.Printf("[LSP-MGR] DidOpen: start failed lang=%s err=%v", language, err)
+			return err
+		}
+		if !m.isDocOpen(language, filePath) {
+			langID := normalizeLanguageID(language)
+			if err := server.DidOpen(filePath, langID, content); err != nil {
+				return err
+			}
+			m.markDocUserOpen(language, filePath, 1)
+			return nil
+		}
+		version := state.version + 1
+		if version <= 0 {
+			version = 1
+		}
+		if err := server.DidChange(filePath, version, content); err != nil {
+			return err
+		}
+		m.markDocUserOpen(language, filePath, version)
 		return nil
 	}
 
@@ -992,8 +1045,65 @@ func (m *Manager) DidOpenWithContext(ctx context.Context, language, filePath, co
 	if err := server.DidOpen(filePath, langID, content); err != nil {
 		return err
 	}
-	m.markDocOpen(language, filePath, 1)
+	m.markDocUserOpen(language, filePath, 1)
 	return nil
+}
+
+// DidOpenTransientWithContext opens a document for short-lived background work
+// such as diagnostics preload. The document remains open until the matching
+// DidCloseTransient call, unless a user-owned open takes over first.
+func (m *Manager) DidOpenTransientWithContext(ctx context.Context, language, filePath, content string) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
+		m.logNoConfig(language)
+		return false, nil
+	}
+	language = resolvedLanguage
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	default:
+	}
+
+	m.documentMu.Lock()
+	defer m.documentMu.Unlock()
+
+	if state, ok := m.docState(language, filePath); ok {
+		if state.userOpen {
+			return false, nil
+		}
+		server, err := m.ensureStartedWithContext(ctx, language)
+		if err != nil {
+			log.Printf("[LSP-MGR] DidOpenTransient: start failed lang=%s err=%v", language, err)
+			return false, err
+		}
+		if !m.isDocOpen(language, filePath) {
+			langID := normalizeLanguageID(language)
+			if err := server.DidOpen(filePath, langID, content); err != nil {
+				return false, err
+			}
+			m.markDocTransientOpen(language, filePath, 1)
+			return true, nil
+		}
+		m.retainDocTransient(language, filePath)
+		return true, nil
+	}
+
+	server, err := m.ensureStartedWithContext(ctx, language)
+	if err != nil {
+		log.Printf("[LSP-MGR] DidOpenTransient: start failed lang=%s err=%v", language, err)
+		return false, err
+	}
+
+	langID := normalizeLanguageID(language)
+	if err := server.DidOpen(filePath, langID, content); err != nil {
+		return false, err
+	}
+	m.markDocTransientOpen(language, filePath, 1)
+	return true, nil
 }
 
 // DidChange notifies the LSP server that a file has been modified
@@ -1016,6 +1126,10 @@ func (m *Manager) DidChangeWithContext(ctx context.Context, language, filePath s
 		return ctx.Err()
 	default:
 	}
+
+	m.documentMu.Lock()
+	defer m.documentMu.Unlock()
+
 	if version <= 0 {
 		version = m.docVersion(language, filePath) + 1
 		if version <= 0 {
@@ -1023,9 +1137,16 @@ func (m *Manager) DidChangeWithContext(ctx context.Context, language, filePath s
 		}
 	}
 	if !m.isDocOpen(language, filePath) {
-		if err := m.DidOpenWithContext(ctx, language, filePath, content); err != nil {
+		server, err := m.ensureStartedWithContext(ctx, language)
+		if err != nil {
+			log.Printf("[LSP-MGR] DidChange: start failed lang=%s err=%v", language, err)
 			return err
 		}
+		langID := normalizeLanguageID(language)
+		if err := server.DidOpen(filePath, langID, content); err != nil {
+			return err
+		}
+		m.markDocUserOpen(language, filePath, 1)
 		if version <= 1 {
 			return nil
 		}
@@ -1039,11 +1160,21 @@ func (m *Manager) DidChangeWithContext(ctx context.Context, language, filePath s
 		log.Printf("[LSP-MGR] DidChange: start failed lang=%s err=%v", language, err)
 		return err
 	}
+	if !m.isDocOpen(language, filePath) {
+		langID := normalizeLanguageID(language)
+		if err := server.DidOpen(filePath, langID, content); err != nil {
+			return err
+		}
+		m.markDocUserOpen(language, filePath, 1)
+		if version <= 1 {
+			return nil
+		}
+	}
 
 	if err := server.DidChange(filePath, version, content); err != nil {
 		return err
 	}
-	m.markDocOpen(language, filePath, version)
+	m.markDocUserOpen(language, filePath, version)
 	return nil
 }
 
@@ -1055,36 +1186,82 @@ func (m *Manager) DidClose(language, filePath string) error {
 		return nil
 	}
 	language = resolvedLanguage
+
+	m.documentMu.Lock()
+	defer m.documentMu.Unlock()
+
 	m.mu.RLock()
 	server, ok := m.servers[language]
 	m.mu.RUnlock()
 
 	if !ok {
-		m.clearDiagnostics(language, filePath)
-		m.markDocClosed(language, filePath)
+		m.clearDiagnosticsForLanguages([]string{language})
+		m.forceMarkLanguageClosed(language)
 		return nil
 	}
 
 	if !server.running || !server.isProcessAlive() {
 		m.cleanupServer(language, server)
+		return nil
+	}
+
+	decision := m.prepareDocUserClose(language, filePath)
+	if !decision.known {
 		m.clearDiagnostics(language, filePath)
-		m.markDocClosed(language, filePath)
+		return nil
+	}
+	if !decision.shouldClose {
 		return nil
 	}
 
 	if err := server.DidClose(filePath); err != nil {
-		if isClosedPipeError(err) {
-			m.cleanupServer(language, server)
-			m.clearDiagnostics(language, filePath)
-			m.markDocClosed(language, filePath)
-			return nil
-		}
+		m.cleanupServer(language, server)
 		return err
 	}
+	m.commitDocUserClose(language, filePath)
 	m.clearDiagnostics(language, filePath)
-	if m.markDocClosed(language, filePath) {
-		m.scheduleIdleStop(language)
+	m.scheduleIdleStop(language)
+	return nil
+}
+
+// DidCloseTransient releases a background-only document open. If the user has
+// opened the document while the transient owner was active, this does not send
+// textDocument/didClose to the server.
+func (m *Manager) DidCloseTransient(language, filePath string) error {
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
+		return nil
 	}
+	language = resolvedLanguage
+
+	m.documentMu.Lock()
+	defer m.documentMu.Unlock()
+
+	decision := m.prepareDocTransientClose(language, filePath)
+	if !decision.known || !decision.shouldClose {
+		return nil
+	}
+
+	m.mu.RLock()
+	server, ok := m.servers[language]
+	m.mu.RUnlock()
+
+	if !ok {
+		m.clearDiagnosticsForLanguages([]string{language})
+		m.forceMarkLanguageClosed(language)
+		return nil
+	}
+	if !server.running || !server.isProcessAlive() {
+		m.cleanupServer(language, server)
+		return nil
+	}
+	if err := server.DidClose(filePath); err != nil {
+		m.cleanupServer(language, server)
+		return err
+	}
+	m.commitDocTransientClose(language, filePath)
+	m.clearDiagnostics(language, filePath)
+	m.scheduleIdleStop(language)
 	return nil
 }
 
@@ -1429,19 +1606,79 @@ func (m *Manager) isDocOpen(language, filePath string) bool {
 	return ok
 }
 
-func (m *Manager) markDocOpen(language, filePath string, version int) {
-	m.mu.Lock()
+func (m *Manager) isDocUserOpen(language, filePath string) bool {
+	m.mu.RLock()
+	openDocs := m.openDocsByLang[language]
+	state := openDocs[filePath]
+	open := state != nil && state.userOpen
+	m.mu.RUnlock()
+	return open
+}
+
+func (m *Manager) docState(language, filePath string) (openDocState, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	openDocs := m.openDocsByLang[language]
+	state := openDocs[filePath]
+	if state == nil {
+		return openDocState{}, false
+	}
+	return *state, true
+}
+
+func (m *Manager) ensureOpenDocStateLocked(language, filePath string) *openDocState {
 	openDocs := m.openDocsByLang[language]
 	if openDocs == nil {
-		openDocs = make(map[string]int)
+		openDocs = make(map[string]*openDocState)
 		m.openDocsByLang[language] = openDocs
 	}
-	openDocs[filePath] = version
+	state := openDocs[filePath]
+	if state == nil {
+		state = &openDocState{}
+		openDocs[filePath] = state
+	}
+	return state
+}
+
+func (m *Manager) stopIdleTimerLocked(language string) {
 	if timer, ok := m.idleTimers[language]; ok {
 		timer.Stop()
 		delete(m.idleTimers, language)
 	}
+}
+
+func (m *Manager) markDocUserOpen(language, filePath string, version int) {
+	m.mu.Lock()
+	state := m.ensureOpenDocStateLocked(language, filePath)
+	if version > state.version {
+		state.version = version
+	}
+	state.userOpen = true
+	m.stopIdleTimerLocked(language)
 	m.mu.Unlock()
+}
+
+func (m *Manager) markDocTransientOpen(language, filePath string, version int) {
+	m.mu.Lock()
+	state := m.ensureOpenDocStateLocked(language, filePath)
+	if version > state.version {
+		state.version = version
+	}
+	state.transientRefs++
+	m.stopIdleTimerLocked(language)
+	m.mu.Unlock()
+}
+
+func (m *Manager) retainDocTransient(language, filePath string) {
+	m.mu.Lock()
+	state := m.ensureOpenDocStateLocked(language, filePath)
+	state.transientRefs++
+	m.stopIdleTimerLocked(language)
+	m.mu.Unlock()
+}
+
+func (m *Manager) markDocOpen(language, filePath string, version int) {
+	m.markDocUserOpen(language, filePath, version)
 }
 
 func (m *Manager) docVersion(language, filePath string) int {
@@ -1451,24 +1688,123 @@ func (m *Manager) docVersion(language, filePath string) int {
 	if openDocs == nil {
 		return 0
 	}
-	return openDocs[filePath]
+	state := openDocs[filePath]
+	if state == nil {
+		return 0
+	}
+	return state.version
 }
 
-func (m *Manager) markDocClosed(language, filePath string) bool {
+type docCloseDecision struct {
+	known       bool
+	shouldClose bool
+}
+
+func (m *Manager) prepareDocUserClose(language, filePath string) docCloseDecision {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	openDocs := m.openDocsByLang[language]
 	if openDocs == nil {
-		m.mu.Unlock()
+		return docCloseDecision{}
+	}
+	state := openDocs[filePath]
+	if state == nil || !state.userOpen {
+		return docCloseDecision{known: state != nil}
+	}
+	if state.transientRefs > 0 {
+		state.userOpen = false
+		return docCloseDecision{known: true}
+	}
+	return docCloseDecision{known: true, shouldClose: true}
+}
+
+func (m *Manager) prepareDocTransientClose(language, filePath string) docCloseDecision {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	openDocs := m.openDocsByLang[language]
+	if openDocs == nil {
+		return docCloseDecision{}
+	}
+	state := openDocs[filePath]
+	if state == nil || state.transientRefs <= 0 {
+		return docCloseDecision{known: state != nil}
+	}
+	if state.transientRefs > 1 || state.userOpen {
+		state.transientRefs--
+		return docCloseDecision{known: true}
+	}
+	return docCloseDecision{known: true, shouldClose: true}
+}
+
+func (m *Manager) commitDocUserClose(language, filePath string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	openDocs := m.openDocsByLang[language]
+	if openDocs == nil {
+		return true
+	}
+	state := openDocs[filePath]
+	if state == nil {
+		return true
+	}
+	state.userOpen = false
+	if state.transientRefs > 0 {
+		return false
+	}
+	return deleteOpenDocLocked(m.openDocsByLang, language, filePath)
+}
+
+func (m *Manager) commitDocTransientClose(language, filePath string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	openDocs := m.openDocsByLang[language]
+	if openDocs == nil {
+		return true
+	}
+	state := openDocs[filePath]
+	if state == nil {
+		return true
+	}
+	if state.transientRefs > 0 {
+		state.transientRefs--
+	}
+	if state.transientRefs > 0 || state.userOpen {
+		return false
+	}
+	return deleteOpenDocLocked(m.openDocsByLang, language, filePath)
+}
+
+func deleteOpenDocLocked(openDocsByLang map[string]map[string]*openDocState, language, filePath string) bool {
+	openDocs := openDocsByLang[language]
+	if openDocs == nil {
+		return true
+	}
+	delete(openDocs, filePath)
+	if len(openDocs) == 0 {
+		delete(openDocsByLang, language)
+	}
+	return true
+}
+
+func (m *Manager) forceMarkDocClosed(language, filePath string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	openDocs := m.openDocsByLang[language]
+	if openDocs == nil {
 		return true
 	}
 	delete(openDocs, filePath)
 	if len(openDocs) == 0 {
 		delete(m.openDocsByLang, language)
-		m.mu.Unlock()
 		return true
 	}
-	m.mu.Unlock()
 	return false
+}
+
+func (m *Manager) forceMarkLanguageClosed(language string) {
+	m.mu.Lock()
+	delete(m.openDocsByLang, language)
+	m.mu.Unlock()
 }
 
 func (m *Manager) hasOpenDocs(language string) bool {
@@ -1670,6 +2006,7 @@ func (m *Manager) SignatureHelpWithContext(ctx context.Context, language, filePa
 func (m *Manager) startServer(cfg ServerConfig) (*Server, error) {
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Env = lspProcessEnv(cfg.Command)
+	configureLSPProcessGroup(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -1756,7 +2093,7 @@ func (s *Server) initializeWithContext(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	params := map[string]any{
-		"processId": nil,
+		"processId": os.Getpid(),
 		"rootUri":   s.config.RootURI,
 		"capabilities": map[string]any{
 			"workspace": map[string]any{
@@ -1855,7 +2192,7 @@ func (s *Server) shutdown() error {
 
 	select {
 	case <-ctx.Done():
-		s.cmd.Process.Kill()
+		terminateLSPProcess(s.cmd.Process, 500*time.Millisecond)
 		return ctx.Err()
 	case err := <-done:
 		return err
@@ -1873,7 +2210,7 @@ func (s *Server) abortStartup() error {
 	if s.stdout != nil {
 		_ = s.stdout.Close()
 	}
-	_ = s.cmd.Process.Kill()
+	terminateLSPProcess(s.cmd.Process, 25*time.Millisecond)
 
 	done := make(chan error, 1)
 	go func() { done <- s.cmd.Wait() }()

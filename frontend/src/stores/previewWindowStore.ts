@@ -181,9 +181,18 @@ const getDefaultPosition = (
   };
 };
 
-const cloneWindow = (windowState: PreviewWindow): PreviewWindow => ({
+const stripHeavyPreviewPayload = (
+  payload: PreviewWindowPayload,
+): PreviewWindowPayload => {
+  const { content: _content, htmlContent: _htmlContent, ...rest } = payload;
+  return rest;
+};
+
+const stripHeavyPreviewWindow = (
+  windowState: PreviewWindow,
+): PreviewWindow => ({
   ...windowState,
-  payload: { ...windowState.payload },
+  payload: stripHeavyPreviewPayload(windowState.payload),
 });
 
 const getNextZIndex = (windows: PreviewWindow[]): number => {
@@ -442,7 +451,7 @@ export const usePreviewWindowStore = create<PreviewWindowStoreState>()(
         const checkpoint: PreviewLayoutCheckpoint = {
           id,
           label,
-          windows: get().windows.map(cloneWindow),
+          windows: get().windows.map(stripHeavyPreviewWindow),
           activeWindowId: get().activeWindowId,
           createdAt: Date.now(),
         };
@@ -461,7 +470,7 @@ export const usePreviewWindowStore = create<PreviewWindowStoreState>()(
           return false;
         }
         set({
-          windows: checkpoint.windows.map(cloneWindow),
+          windows: checkpoint.windows.map(stripHeavyPreviewWindow),
           activeWindowId: checkpoint.activeWindowId,
         });
         return true;
@@ -536,7 +545,9 @@ export const usePreviewWindowStore = create<PreviewWindowStoreState>()(
     {
       name: PREVIEW_STORAGE_KEY,
       partialize: (state) => ({
-        windows: state.windows.filter((w) => w.surface !== "browser"),
+        windows: state.windows
+          .filter((w) => w.surface !== "browser")
+          .map(stripHeavyPreviewWindow),
         activeWindowId: state.activeWindowId,
         maxWindows: state.maxWindows,
       }),
@@ -545,7 +556,9 @@ export const usePreviewWindowStore = create<PreviewWindowStoreState>()(
         return {
           ...current,
           ...p,
-          windows: (p?.windows ?? []).filter((w) => w.surface !== "browser"),
+          windows: (p?.windows ?? [])
+            .filter((w) => w.surface !== "browser")
+            .map(stripHeavyPreviewWindow),
         };
       },
     },

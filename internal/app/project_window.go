@@ -50,7 +50,7 @@ func (a *App) OpenProjectWindow(path string) (ProjectWindowLaunchResult, error) 
 	}
 
 	registry := a.ensureProjectSessions()
-	if existing := registry.findProjectWindowByPath(path); existing != nil {
+	if existing := registry.findSessionByPath(path); existing != nil {
 		a.focusProjectSessionWindow(existing)
 		return ProjectWindowLaunchResult{
 			Handled:     true,

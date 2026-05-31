@@ -165,6 +165,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     (state) => state.replaceTabContent,
   );
   const closeEditorStoreTabPath = useEditorStore((state) => state.closePath);
+  const pruneEditorStorePathPrefix = useEditorStore(
+    (state) => state.closePathPrefix,
+  );
   const aiInlinePatchPreviews = useAIInlinePatchStore(
     (state) => state.previews,
   );
@@ -352,6 +355,46 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     [],
   );
 
+  const ensureTabFileLoaded = useCallback(
+    (tab: Tab | undefined) => {
+      if (!tab) return;
+      if (
+        fileLoadStatesRef.current[tab.id] ||
+        fileContentsRef.current[tab.id] !== undefined
+      ) {
+        return;
+      }
+
+      fileLoadStatesRef.current[tab.id] = createEditorFileLoadingLoad(
+        tab.path,
+        tab.label,
+      );
+      setFileLoadStates((previous) => ({
+        ...previous,
+        [tab.id]: fileLoadStatesRef.current[tab.id],
+      }));
+
+      loadEditorFile(tab.path)
+        .then((file) => {
+          const currentTab = tabsRef.current.find(
+            (candidate) => candidate.id === tab.id,
+          );
+          if (!currentTab || currentTab.path !== tab.path) {
+            return;
+          }
+          storeFileLoadState(tab.id, file);
+        })
+        .catch(() => {
+          delete fileLoadStatesRef.current[tab.id];
+          setFileLoadStates((previous) => {
+            const { [tab.id]: _removed, ...remaining } = previous;
+            return remaining;
+          });
+        });
+    },
+    [storeFileLoadState],
+  );
+
   const closeTabSwitcher = useCallback(() => {
     setIsTabSwitcherOpen(false);
     setTabSwitcherSelection(null);
@@ -401,46 +444,26 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   useEffect(() => {
     if (tabs.length === 0) return;
 
-    const restoredTabs = [...tabs];
-    let cancelled = false;
+    const visibleTabIds = new Set(
+      [activeTab, secondaryActiveTab, activeTab ?? tabs[0]?.id].filter(Boolean),
+    );
+    tabs
+      .filter((tab) => visibleTabIds.has(tab.id))
+      .forEach((tab) => ensureTabFileLoaded(tab));
+  }, [activeTab, ensureTabFileLoaded, secondaryActiveTab, tabs]);
 
-    Promise.allSettled(
-      restoredTabs.map((tab) => loadEditorFile(tab.path)),
-    ).then((results) => {
-      if (cancelled) return;
-
-      const currentTabIds = new Set(tabsRef.current.map((tab) => tab.id));
-      const loaded: Record<string, string> = {};
-      const nextLoadStates: Record<string, EditorFileLoadState> = {};
-
-      restoredTabs.forEach((tab, i) => {
-        if (!currentTabIds.has(tab.id)) {
-          return;
-        }
-        if (results[i].status === "fulfilled") {
-          const file = (
-            results[i] as PromiseFulfilledResult<EditorFileLoadState>
-          ).value;
-          nextLoadStates[tab.id] = file;
-          if (file.kind === "editable") {
-            loaded[tab.id] = file.content;
-          }
-        }
-      });
-
-      fileContentsRef.current = { ...fileContentsRef.current, ...loaded };
-      fileLoadStatesRef.current = {
-        ...fileLoadStatesRef.current,
-        ...nextLoadStates,
-      };
-      setFileContents((prev) => ({ ...prev, ...loaded }));
-      setFileLoadStates((prev) => ({ ...prev, ...nextLoadStates }));
+  useEffect(() => {
+    if (tabs.length === 0) return;
+    const visibleTabIds = new Set(
+      [activeTab, secondaryActiveTab, activeTab ?? tabs[0]?.id].filter(Boolean),
+    );
+    tabs.forEach((tab) => {
+      if (visibleTabIds.has(tab.id) || tab.isDirty) {
+        return;
+      }
+      pruneEditorStorePathPrefix(tab.path, { preserveDirty: true });
     });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }, [activeTab, pruneEditorStorePathPrefix, secondaryActiveTab, tabs]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {

@@ -34,6 +34,11 @@ type diagnosticsPreloadCandidate struct {
 	HasSymbols bool
 }
 
+type diagnosticsPreloadOpen struct {
+	Language string
+	Path     string
+}
+
 type diagnosticsPreloadPlan struct {
 	Candidates         []diagnosticsPreloadCandidate
 	Bounded            bool
@@ -298,6 +303,9 @@ func selectDiagnosticsPreloadCandidates(
 	budget diagnosticsPreloadBudget,
 ) []diagnosticsPreloadCandidate {
 	languages := rankedDiagnosticsPreloadLanguages(grouped)
+	if budget.MaxDominantLanguages > 0 && len(languages) > budget.MaxDominantLanguages {
+		languages = languages[:budget.MaxDominantLanguages]
+	}
 	queues := cloneDiagnosticsPreloadGroups(grouped)
 	selected := make([]diagnosticsPreloadCandidate, 0, minInt(countDiagnosticsPreloadCandidates(grouped), budget.MaxFiles))
 	perLanguageCount := make(map[string]int, len(languages))
@@ -760,7 +768,16 @@ func (a *App) lspPreloadProjectDiagnosticsForSession(
 	}
 	event := newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, plan)
 	a.emitEvent("lsp:diagnostics:preload:start", event)
+	openedDocs := make([]diagnosticsPreloadOpen, 0, len(plan.Candidates))
 	openedPaths := make([]string, 0, len(plan.Candidates))
+	defer func() {
+		for index := len(openedDocs) - 1; index >= 0; index-- {
+			doc := openedDocs[index]
+			if err := mgr.DidCloseTransient(doc.Language, doc.Path); err != nil {
+				a.logWarning("[DiagnosticsPreload] failed to close transient doc " + doc.Path + ": " + err.Error())
+			}
+		}
+	}()
 
 preloadLoop:
 	for _, candidate := range plan.Candidates {
@@ -783,7 +800,7 @@ preloadLoop:
 			continue
 		}
 
-		opened, openErr := ensureDocOpen(mgr, candidate.Language, candidate.Path, string(content))
+		opened, openErr := mgr.DidOpenTransientWithContext(timedCtx, candidate.Language, candidate.Path, string(content))
 		if openErr != nil {
 			message := "LSP diagnostics preload failed for " + candidate.Path + ": " + openErr.Error()
 			a.emitLSPDiagnosticsStatusForSession(session.ID, root, generation, candidate.Language, candidate.Path, "error", message)
@@ -791,6 +808,7 @@ preloadLoop:
 			continue
 		}
 		if opened {
+			openedDocs = append(openedDocs, diagnosticsPreloadOpen{Language: candidate.Language, Path: candidate.Path})
 			openedPaths = append(openedPaths, candidate.Path)
 		}
 	}

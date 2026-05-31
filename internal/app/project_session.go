@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -143,6 +144,21 @@ func (s *ProjectRuntimeSession) projectWindowProjectPath() string {
 	return filepath.Clean(strings.TrimSpace(s.launchProjectPath))
 }
 
+func canonicalProjectSessionPath(path string) string {
+	clean := filepath.Clean(strings.TrimSpace(path))
+	if clean == "." || clean == "" {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err == nil && strings.TrimSpace(resolved) != "" {
+		return filepath.Clean(resolved)
+	}
+	if os.IsNotExist(err) {
+		return clean
+	}
+	return clean
+}
+
 func (s *ProjectRuntimeSession) setProjectPath(path string) {
 	if s == nil {
 		return
@@ -206,18 +222,36 @@ func (r *ProjectSessionRegistry) getByWindow(window application.Window) *Project
 	return r.sessions[r.windowIndex[window.Name()]]
 }
 
-func (r *ProjectSessionRegistry) findProjectWindowByPath(path string) *ProjectRuntimeSession {
+func (r *ProjectSessionRegistry) list() []*ProjectRuntimeSession {
 	if r == nil {
 		return nil
 	}
-	clean := filepath.Clean(strings.TrimSpace(path))
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	sessions := make([]*ProjectRuntimeSession, 0, len(r.sessions))
+	for _, session := range r.sessions {
+		if session != nil {
+			sessions = append(sessions, session)
+		}
+	}
+	return sessions
+}
+
+func (r *ProjectSessionRegistry) findSessionByPath(path string) *ProjectRuntimeSession {
+	if r == nil {
+		return nil
+	}
+	canonical := canonicalProjectSessionPath(path)
+	if canonical == "" {
+		return nil
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, session := range r.sessions {
-		if session == nil || session.IsDefault {
+		if session == nil {
 			continue
 		}
-		if session.projectWindowProjectPath() == clean {
+		if canonicalProjectSessionPath(session.projectWindowProjectPath()) == canonical {
 			return session
 		}
 	}

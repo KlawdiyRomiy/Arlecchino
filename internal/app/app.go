@@ -216,7 +216,7 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(_ context.Context) {
 	a.stopMCPBridge()
-	_ = a.CloseProject(context.Background())
+	_ = a.closeAllProjectSessions(true)
 	if a.aiService != nil {
 		_ = a.aiService.Close()
 	}
@@ -584,6 +584,24 @@ func (a *App) CloseProject(ctx context.Context) error {
 
 func (a *App) closeProject(closeTerminals bool) error {
 	return a.closeProjectInSession(a.activeProjectSession(), closeTerminals)
+}
+
+func (a *App) closeAllProjectSessions(closeTerminals bool) error {
+	if a == nil {
+		return nil
+	}
+	registry := a.ensureProjectSessions()
+	sessions := registry.list()
+	if len(sessions) == 0 {
+		return a.closeProjectInSession(nil, closeTerminals)
+	}
+	var firstErr error
+	for _, session := range sessions {
+		if err := a.closeProjectInSession(session, closeTerminals); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (a *App) closeProjectInSession(session *ProjectRuntimeSession, closeTerminals bool) error {
