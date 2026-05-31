@@ -615,11 +615,11 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
                                   <PackageCheck size={22} />
                                 </div>
                                 <div className="mt-5 text-[22px] font-semibold text-[var(--text-primary)]">
-                                  Plan is clear
+                                  No supported manifests found
                                 </div>
                                 <div className="mt-2 text-[14px] leading-6 text-[var(--text-secondary)]">
-                                  No dependency actions are available for this
-                                  project.
+                                  Sync dependencies did not find supported
+                                  dependency manifests in this workspace.
                                 </div>
                                 <div className="mt-5 flex flex-wrap items-center gap-2">
                                   <span className={dependencyPillClass}>

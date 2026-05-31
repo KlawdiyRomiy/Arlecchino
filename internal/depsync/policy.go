@@ -96,7 +96,10 @@ func (e *Executor) BuildPolicyPlan(projectPath string, policy Policy) (PolicyPla
 		return PolicyPlan{}, fmt.Errorf("project path is required")
 	}
 	policy = normalizePolicy(policy)
-	managers := detectManagers(projectPath, ModeManual)
+	managers, err := detectManagers(projectPath, ModeManual)
+	if err != nil {
+		return PolicyPlan{}, err
+	}
 	actions := flattenActions(managers)
 	for i := range actions {
 		actions[i].RequiresConsent = actionRequiresConsent(actions[i], policy)
@@ -114,9 +117,16 @@ func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (Ex
 		return ExecuteResult{}, err
 	}
 
+	validActionIDs := make(map[string]bool, len(plan.Actions))
+	for _, action := range plan.Actions {
+		if id := strings.TrimSpace(action.ID); id != "" {
+			validActionIDs[id] = true
+		}
+	}
+
 	approved := make(map[string]bool, len(req.ApprovedActionIDs))
 	for _, id := range req.ApprovedActionIDs {
-		if trimmed := strings.TrimSpace(id); trimmed != "" {
+		if trimmed := strings.TrimSpace(id); trimmed != "" && validActionIDs[trimmed] {
 			approved[trimmed] = true
 		}
 	}
@@ -125,7 +135,9 @@ func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (Ex
 		persisted, loadErr := loadConsentState(projectPath)
 		if loadErr == nil {
 			for id := range persisted.Approved {
-				approved[id] = true
+				if validActionIDs[id] {
+					approved[id] = true
+				}
 			}
 		}
 	}
@@ -136,6 +148,7 @@ func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (Ex
 	}
 
 	for _, action := range plan.Actions {
+		workDir, workDirErr := manifestWorkDir(projectPath, action.Manifest)
 		if !canRunAction(action, policy, approved) {
 			result.Blocked[action.ID] = "consent required"
 			continue
@@ -146,12 +159,17 @@ func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (Ex
 			continue
 		}
 
-		if !commandAvailable(projectPath, action.Executable) {
+		if workDirErr != nil {
+			result.Results[action.ID] = fmt.Sprintf("skipped: %v", workDirErr)
+			continue
+		}
+
+		if !commandAvailable(projectPath, workDir, action.Executable) {
 			result.Results[action.ID] = fmt.Sprintf("skipped: missing executable %s", action.Executable)
 			continue
 		}
 
-		out, runErr := e.runner(projectPath, action.Executable, splitArgs(action.Args)...)
+		out, runErr := e.runner(workDir, action.Executable, splitArgs(action.Args)...)
 		result.Results[action.ID] = strings.TrimSpace(string(out))
 		if runErr != nil {
 			message := fmt.Sprintf("failed: %v", runErr)
@@ -163,7 +181,13 @@ func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (Ex
 	}
 
 	if req.PersistApprovals && policy.ConsentMode == ConsentModeConfirmOncePerProject && len(approved) > 0 {
-		if saveErr := saveConsentState(projectPath, consentState{Approved: approved}); saveErr != nil {
+		state := consentState{Approved: make(map[string]bool, len(approved))}
+		for id := range approved {
+			if validActionIDs[id] {
+				state.Approved[id] = true
+			}
+		}
+		if saveErr := saveConsentState(projectPath, state); saveErr != nil {
 			result.Blocked["consent:persist"] = saveErr.Error()
 		}
 	}

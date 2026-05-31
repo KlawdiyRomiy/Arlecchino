@@ -56,7 +56,10 @@ func (e *Executor) BuildPlan(projectPath string, mode Mode) (Plan, error) {
 	if strings.TrimSpace(projectPath) == "" {
 		return Plan{}, fmt.Errorf("project path is required")
 	}
-	managers := detectManagers(projectPath, mode)
+	managers, err := detectManagers(projectPath, mode)
+	if err != nil {
+		return Plan{}, err
+	}
 	return Plan{ProjectPath: projectPath, Mode: mode, Managers: managers}, nil
 }
 
@@ -67,6 +70,7 @@ func (e *Executor) Execute(projectPath string, mode Mode) (map[string]string, er
 	}
 	results := make(map[string]string, len(plan.Managers))
 	for _, manager := range plan.Managers {
+		workDir, workDirErr := manifestWorkDir(projectPath, manager.Manifest)
 		for _, cmd := range manager.Commands {
 			if mode == ModeManual {
 				continue
@@ -74,13 +78,17 @@ func (e *Executor) Execute(projectPath string, mode Mode) (map[string]string, er
 			if mode == ModeSafeAuto && !cmd.Safe {
 				continue
 			}
-			key := manager.Ecosystem + ":" + cmd.Label
-			if !commandAvailable(projectPath, cmd.Executable) {
+			key := buildActionID(manager, cmd)
+			if workDirErr != nil {
+				results[key] = fmt.Sprintf("skipped: %v", workDirErr)
+				continue
+			}
+			if !commandAvailable(projectPath, workDir, cmd.Executable) {
 				results[key] = fmt.Sprintf("skipped: missing executable %s", cmd.Executable)
 				continue
 			}
 			args := splitArgs(cmd.Args)
-			out, runErr := e.runner(projectPath, cmd.Executable, args...)
+			out, runErr := e.runner(workDir, cmd.Executable, args...)
 			results[key] = strings.TrimSpace(string(out))
 			if runErr != nil {
 				message := fmt.Sprintf("failed: %v", runErr)
@@ -163,19 +171,36 @@ func splitArgs(args string) []string {
 	return parts
 }
 
-func commandAvailable(projectPath, executable string) bool {
-	if strings.TrimSpace(executable) == "" {
+func commandAvailable(projectPath, workDir, executable string) bool {
+	executable = strings.TrimSpace(executable)
+	if executable == "" {
 		return false
 	}
 	if strings.HasPrefix(executable, "./") || strings.HasPrefix(executable, "../") {
-		_, err := os.Stat(filepath.Join(projectPath, executable))
-		return err == nil
+		return relativeCommandAvailable(projectPath, workDir, executable)
 	}
 	_, err := exec.LookPath(executable)
 	return err == nil
 }
 
-func detectManagers(projectPath string, mode Mode) []Manager {
+func relativeCommandAvailable(projectPath, workDir, executable string) bool {
+	rootAbs, err := filepath.Abs(filepath.Clean(strings.TrimSpace(projectPath)))
+	if err != nil || rootAbs == "" {
+		return false
+	}
+	workAbs, err := filepath.Abs(filepath.Clean(strings.TrimSpace(workDir)))
+	if err != nil || workAbs == "" || !pathWithinRoot(rootAbs, workAbs) {
+		return false
+	}
+	candidate := filepath.Clean(filepath.Join(workAbs, filepath.FromSlash(executable)))
+	if !pathWithinRoot(rootAbs, candidate) || !resolvedPathWithinRoot(rootAbs, candidate) {
+		return false
+	}
+	info, err := os.Stat(candidate)
+	return err == nil && !info.IsDir()
+}
+
+func detectManagers(projectPath string, mode Mode) ([]Manager, error) {
 	return defaultRegistry().Detect(projectPath, mode)
 }
 

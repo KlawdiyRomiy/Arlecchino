@@ -266,48 +266,145 @@ func defaultRegistry() registry {
 	}
 }
 
-func (r registry) Detect(projectPath string, mode Mode) []Manager {
+func (r registry) Detect(projectPath string, mode Mode) ([]Manager, error) {
 	if strings.TrimSpace(projectPath) == "" {
-		return nil
+		return nil, nil
+	}
+
+	root, err := filepath.Abs(filepath.Clean(strings.TrimSpace(projectPath)))
+	if err != nil {
+		return nil, err
+	}
+
+	dirs, err := discoverManifestDirs(root, r)
+	if err != nil {
+		return nil, err
 	}
 
 	managers := make([]Manager, 0, len(r))
-	for _, spec := range r {
-		manifest := firstExisting(projectPath, spec.ManifestAnyOf)
-		if manifest == "" {
-			continue
-		}
-
-		variant := pickVariant(projectPath, spec.Variants)
-		if variant == nil {
-			continue
-		}
-
-		commands := make([]Command, 0, len(variant.Commands))
-		for _, cmdSpec := range variant.Commands {
-			execName := strings.TrimSpace(cmdSpec.Executable)
-			if execName == "" {
-				execName = variant.Tool
+	for _, dir := range dirs {
+		selected := make(map[string]managerSelection)
+		for index, spec := range r {
+			manager, ok := managerForSpec(root, dir, spec, mode)
+			if !ok {
+				continue
 			}
-			commands = append(commands, Command{
-				Label:        cmdSpec.Label,
-				Executable:   execName,
-				Args:         cmdSpec.Args,
-				Safe:         cmdSpec.Safe,
-				Capability:   cmdSpec.Capability,
-				MutationRisk: cmdSpec.MutationRisk,
-			})
+			selection := managerSelection{
+				manager:  manager,
+				priority: managerSpecPriority(spec),
+				index:    index,
+			}
+			current, exists := selected[manager.Ecosystem]
+			if !exists || selection.priority < current.priority {
+				selected[manager.Ecosystem] = selection
+			}
 		}
 
-		managers = append(managers, Manager{
-			Ecosystem: spec.Ecosystem,
-			Tool:      variant.Tool,
-			Manifest:  manifest,
-			Commands:  commandsForMode(commands, mode),
+		emitted := make(map[string]bool, len(selected))
+		for index, spec := range r {
+			selection, ok := selected[spec.Ecosystem]
+			if !ok || emitted[spec.Ecosystem] || selection.index != index {
+				continue
+			}
+			managers = append(managers, selection.manager)
+			emitted[spec.Ecosystem] = true
+		}
+	}
+
+	return managers, nil
+}
+
+type managerSelection struct {
+	manager  Manager
+	priority int
+	index    int
+}
+
+func managerForSpec(root string, dir manifestDir, spec managerSpec, mode Mode) (Manager, bool) {
+	manifest := firstExisting(dir.Abs, spec.ManifestAnyOf)
+	if manifest == "" {
+		return Manager{}, false
+	}
+	if spec.Ecosystem == "python" && manifest == "pyproject.toml" && !pyprojectHasDependencySurface(dir.Abs) {
+		return Manager{}, false
+	}
+
+	variant := pickVariant(dir.Abs, spec.Variants)
+	if variant == nil {
+		return Manager{}, false
+	}
+	if spec.Ecosystem == "node" && variantIsFallback(*variant) && dir.Rel != "." && hasAncestorNodeManager(root, dir.Rel) {
+		return Manager{}, false
+	}
+
+	commands := make([]Command, 0, len(variant.Commands))
+	for _, cmdSpec := range variant.Commands {
+		execName := strings.TrimSpace(cmdSpec.Executable)
+		if execName == "" {
+			execName = variant.Tool
+		}
+		commands = append(commands, Command{
+			Label:        cmdSpec.Label,
+			Executable:   execName,
+			Args:         cmdSpec.Args,
+			Safe:         cmdSpec.Safe,
+			Capability:   cmdSpec.Capability,
+			MutationRisk: cmdSpec.MutationRisk,
 		})
 	}
 
-	return managers
+	return Manager{
+		Ecosystem: spec.Ecosystem,
+		Tool:      variant.Tool,
+		Manifest:  joinManifestRel(dir.Rel, manifest),
+		Commands:  commandsForMode(commands, mode),
+	}, true
+}
+
+func variantIsFallback(variant variantSpec) bool {
+	return len(variant.When.AnyFiles) == 0 &&
+		len(variant.When.AllFiles) == 0 &&
+		len(variant.When.FileContains) == 0
+}
+
+func pyprojectHasDependencySurface(root string) bool {
+	if fileExists(filepath.Join(root, "uv.lock")) || fileExists(filepath.Join(root, "poetry.lock")) {
+		return true
+	}
+	data, err := os.ReadFile(filepath.Join(root, "pyproject.toml"))
+	if err != nil {
+		return false
+	}
+	content := string(data)
+	for _, marker := range []string{
+		"[project]",
+		"[tool.poetry]",
+		"[dependency-groups]",
+		"dependencies =",
+		"optional-dependencies",
+	} {
+		if strings.Contains(content, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func managerSpecPriority(spec managerSpec) int {
+	switch spec.Ecosystem {
+	case "python":
+		if stringSliceContains(spec.ManifestAnyOf, "pyproject.toml") {
+			return 10
+		}
+		return 20
+	case "jvm":
+		if stringSliceContains(spec.ManifestAnyOf, "build.gradle") || stringSliceContains(spec.ManifestAnyOf, "build.gradle.kts") {
+			return 10
+		}
+		return 20
+	default:
+		return 10
+	}
 }
 
 func firstExisting(root string, names []string) string {
@@ -315,7 +412,7 @@ func firstExisting(root string, names []string) string {
 		if strings.TrimSpace(name) == "" {
 			continue
 		}
-		if fileExists(filepath.Join(root, name)) {
+		if manifestFileExists(filepath.Join(root, name)) {
 			return name
 		}
 	}
@@ -375,4 +472,12 @@ func matchVariant(root string, spec matchSpec) bool {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func manifestFileExists(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	return info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0
 }
