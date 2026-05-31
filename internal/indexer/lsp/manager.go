@@ -708,9 +708,17 @@ func (m *Manager) StopAll() {
 	m.onDiagnostics = nil
 	m.diagnosticsMu.Unlock()
 
+	var wg sync.WaitGroup
 	for _, s := range servers {
-		s.shutdown()
+		wg.Add(1)
+		go func(server *Server) {
+			defer wg.Done()
+			if err := server.shutdown(); err != nil {
+				log.Printf("[LSP-MGR] shutdown failed err=%v", err)
+			}
+		}(s)
 	}
+	wg.Wait()
 }
 
 // StartAll starts all registered language servers

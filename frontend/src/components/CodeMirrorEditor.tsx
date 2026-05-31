@@ -69,6 +69,7 @@ import { createGitGutterExtension } from "../extensions/gitGutterExtension";
 import { createOperatorLigaturesExtension } from "../extensions/operatorLigaturesExtension";
 import { useGitStore } from "../stores/gitStore";
 import { useCodeMirrorCompletionProvider } from "../hooks/useCodeMirrorCompletionProvider";
+import { useCodeMirrorLanguageExtension } from "../hooks/useCodeMirrorLanguageExtension";
 import { useStableReferenceKey } from "../hooks/useStableReferenceKey";
 import {
   readClipboardTextWithFallback,
@@ -85,10 +86,7 @@ import {
   codeEditorSurfaceClassName,
   codeEditorTheme,
 } from "../utils/codeMirrorTheme";
-import {
-  getCodeMirrorLanguageExtension,
-  isCodeMirrorColorToolTarget,
-} from "../utils/codeMirrorLanguageRegistry";
+import { isCodeMirrorColorToolTarget } from "../utils/codeMirrorLanguageRegistry";
 import {
   closeEditorDocument,
   createEditorDocumentSurfaceId,
@@ -1719,10 +1717,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     ];
   }, [requestSignatureHelp, clearSignatureHelp, editorFeatureBudget.hover]);
 
-  const languageExtension = useMemo(
-    () => getCodeMirrorLanguageExtension(language),
-    [language],
-  );
+  const languageExtension = useCodeMirrorLanguageExtension(language);
   const foldControlsEnabled =
     showFoldGutter && editorFeatureBudget.layoutStableFoldGutter;
   const indentGuidesEnabled =

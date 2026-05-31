@@ -90,6 +90,15 @@ const preloadStateIdle: DiagnosticsPreloadState = {
   selectedLanguages: 0,
 };
 
+const preloadStateIdleForProject = (
+  projectPath: string,
+): DiagnosticsPreloadState => ({
+  ...preloadStateIdle,
+  projectPath,
+});
+
+const isProjectDiagnosticsPreloadEnabled = () => false;
+
 const normalizeGeneration = (generation?: number) => {
   if (typeof generation !== "number" || !Number.isFinite(generation)) {
     return 0;
@@ -413,12 +422,18 @@ export const getProjectDiagnosticsPreloadSnapshot = () =>
   getDiagnosticsPreloadSnapshot();
 
 export const preloadProjectDiagnostics = async (projectPath: string) => {
+  if (!projectPath) {
+    emitDiagnosticsPreloadState(preloadStateIdle);
+    return false;
+  }
+
+  if (!isProjectDiagnosticsPreloadEnabled()) {
+    emitDiagnosticsPreloadState(preloadStateIdleForProject(projectPath));
+    return false;
+  }
+
   const bridge = getProjectAppBridge();
-  if (
-    !projectPath ||
-    !bridge ||
-    typeof bridge.LSPPreloadProjectDiagnostics !== "function"
-  ) {
+  if (!bridge || typeof bridge.LSPPreloadProjectDiagnostics !== "function") {
     return false;
   }
 

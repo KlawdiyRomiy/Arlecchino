@@ -18,14 +18,15 @@ func (a *App) ensureComposerManager() (*composer.ComposerManager, error) {
 	if a == nil {
 		return nil, fmt.Errorf("no project opened")
 	}
+	a.managerMu.Lock()
+	defer a.managerMu.Unlock()
+
 	session := a.activeProjectSession()
 	projectPath := a.currentProjectPath()
 	if projectPath == "" {
 		return nil, fmt.Errorf("no project opened")
 	}
 
-	a.managerMu.Lock()
-	defer a.managerMu.Unlock()
 	if session != nil {
 		if session.cmp != nil {
 			return session.cmp, nil
@@ -51,14 +52,15 @@ func (a *App) ensureSystemManager() (*system.SystemManager, error) {
 	if a == nil {
 		return nil, fmt.Errorf("no project opened")
 	}
+	a.managerMu.Lock()
+	defer a.managerMu.Unlock()
+
 	session := a.activeProjectSession()
 	projectPath := a.currentProjectPath()
 	if projectPath == "" {
 		return nil, fmt.Errorf("no project opened")
 	}
 
-	a.managerMu.Lock()
-	defer a.managerMu.Unlock()
 	if session != nil {
 		if session.sys != nil {
 			return session.sys, nil

@@ -19,7 +19,7 @@ import {
 } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import { createTheme } from "thememirror";
-import { getCodeMirrorLanguageExtension } from "../utils/codeMirrorLanguageRegistry";
+import { useCodeMirrorLanguageExtension } from "../hooks/useCodeMirrorLanguageExtension";
 import { createCodeMirrorFoldExtensions } from "../utils/codeMirrorWorkflowExtensions";
 
 interface QuickLookModalProps {
@@ -287,6 +287,10 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
     }
   };
 
+  const languageExtension = useCodeMirrorLanguageExtension(
+    isOpen ? language : "",
+  );
+
   const extensions = useMemo(() => {
     const exts: Extension[] = [
       blackprintTheme,
@@ -303,11 +307,10 @@ const QuickLookModal: React.FC<QuickLookModalProps> = ({
       keymap.of([...defaultKeymap, ...searchKeymap, indentWithTab]),
     ];
 
-    const langExt = getCodeMirrorLanguageExtension(language);
-    if (langExt) exts.push(langExt);
+    if (languageExtension) exts.push(languageExtension);
 
     return exts;
-  }, [language]);
+  }, [languageExtension]);
 
   return (
     <AnimatePresence>

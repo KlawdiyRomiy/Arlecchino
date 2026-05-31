@@ -12,6 +12,7 @@ import { unifiedMergeView } from "@codemirror/merge";
 import { Check, ChevronLeft, ChevronRight, Copy, X } from "lucide-react";
 
 import { useTheme } from "../hooks/useTheme";
+import { useCodeMirrorLanguageExtension } from "../hooks/useCodeMirrorLanguageExtension";
 import { radius } from "../styles/colors";
 import { writeClipboardTextWithFallback } from "../utils/clipboard";
 import {
@@ -19,10 +20,7 @@ import {
   codeEditorSurfaceClassName,
   codeEditorTheme,
 } from "../utils/codeMirrorTheme";
-import {
-  getCodeMirrorLanguageExtension,
-  inferCodeMirrorLanguageFromPath,
-} from "../utils/codeMirrorLanguageRegistry";
+import { inferCodeMirrorLanguageFromPath } from "../utils/codeMirrorLanguageRegistry";
 
 interface DiffLine {
   type: "add" | "remove" | "context" | "header" | "hunk";
@@ -362,12 +360,14 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({
   const hunks = useMemo(() => parseDiff(diff), [diff]);
   const splitRows = useMemo(() => buildSplitRows(hunks), [hunks]);
   const mergeReviewDocs = useMemo(() => buildMergeReviewDocs(hunks), [hunks]);
-  const mergeLanguageExtension = useMemo(() => {
-    const inferredLanguage = inferCodeMirrorLanguageFromPath(fileName);
-    return inferredLanguage
-      ? getCodeMirrorLanguageExtension(inferredLanguage)
-      : null;
-  }, [fileName]);
+  const mergeLanguage = useMemo(
+    () => inferCodeMirrorLanguageFromPath(fileName),
+    [fileName],
+  );
+  const activeMergeLanguage =
+    viewMode === "review" && mergeReviewDocs.hasChanges ? mergeLanguage : "";
+  const mergeLanguageExtension =
+    useCodeMirrorLanguageExtension(activeMergeLanguage);
   const mergeReviewExtensions = useMemo<Extension[]>(() => {
     const extensions: Extension[] = [
       codeEditorTheme,

@@ -3,11 +3,13 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"arlecchino/internal/ai"
 	"arlecchino/internal/composer"
@@ -215,11 +217,27 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(_ context.Context) {
+	started := time.Now()
 	a.stopMCPBridge()
 	_ = a.closeAllProjectSessions(true)
 	if a.aiService != nil {
+		stageStarted := time.Now()
 		_ = a.aiService.Close()
+		logShutdownStage("aiService.close", stageStarted, "")
 	}
+	logShutdownStage("application.total", started, "")
+}
+
+func logShutdownStage(stage string, started time.Time, details string) {
+	elapsed := time.Since(started).Truncate(time.Millisecond)
+	if elapsed <= 0 {
+		elapsed = time.Since(started)
+	}
+	if details == "" {
+		log.Printf("[shutdown] stage=%s duration=%s", stage, elapsed)
+		return
+	}
+	log.Printf("[shutdown] stage=%s duration=%s %s", stage, elapsed, details)
 }
 
 func (a *App) ensureMCPConfigs() {
@@ -495,23 +513,6 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 				return pluginRegistry.InitAll(path)
 			},
 		},
-		projectWarmupStep{
-			name: "diagnostics preload",
-			run: func(ctx context.Context) error {
-				if lspManager == nil {
-					return nil
-				}
-
-				select {
-				case <-ctx.Done():
-					return nil
-				default:
-				}
-
-				a.lspPreloadProjectDiagnosticsForSession(session, path, projectGeneration)
-				return nil
-			},
-		},
 	)
 
 	if lspManager != nil {
@@ -590,10 +591,13 @@ func (a *App) closeAllProjectSessions(closeTerminals bool) error {
 	if a == nil {
 		return nil
 	}
+	started := time.Now()
 	registry := a.ensureProjectSessions()
 	sessions := registry.list()
 	if len(sessions) == 0 {
-		return a.closeProjectInSession(nil, closeTerminals)
+		err := a.closeProjectInSession(nil, closeTerminals)
+		logShutdownStage("projectSessions.closeAll", started, "sessions=0")
+		return err
 	}
 	var firstErr error
 	for _, session := range sessions {
@@ -601,6 +605,11 @@ func (a *App) closeAllProjectSessions(closeTerminals bool) error {
 			firstErr = err
 		}
 	}
+	logShutdownStage(
+		"projectSessions.closeAll",
+		started,
+		fmt.Sprintf("sessions=%d closeTerminals=%t", len(sessions), closeTerminals),
+	)
 	return firstErr
 }
 
@@ -615,6 +624,7 @@ func (a *App) closeProjectInSession(session *ProjectRuntimeSession, closeTermina
 }
 
 func (a *App) closeProjectInSessionLocked(session *ProjectRuntimeSession, closeTerminals bool) error {
+	started := time.Now()
 	projectPath := session.currentProjectPath()
 	a.finalizeProjectEntryHistory(session)
 	if session.projectCancel != nil {
@@ -622,7 +632,9 @@ func (a *App) closeProjectInSessionLocked(session *ProjectRuntimeSession, closeT
 	}
 	a.cancelDiagnosticsPreloadForSession(session)
 
+	stageStarted := time.Now()
 	session.wg.Wait()
+	logShutdownStage("projectSession.waitBackground", stageStarted, "session="+session.ID)
 
 	if snapshot, changed := a.backgroundShell.CancelJobsForProject(projectPath, "Project closed."); changed {
 		a.emitBackgroundShellStatusSnapshot(snapshot)
@@ -638,7 +650,9 @@ func (a *App) closeProjectInSessionLocked(session *ProjectRuntimeSession, closeT
 	}
 
 	if closeTerminals && session.termManager != nil {
+		stageStarted = time.Now()
 		session.termManager.CloseAll()
+		logShutdownStage("terminal.closeAll", stageStarted, "session="+session.ID)
 	}
 
 	if session.plugins != nil {
@@ -651,12 +665,16 @@ func (a *App) closeProjectInSessionLocked(session *ProjectRuntimeSession, closeT
 	}
 
 	if session.lspManager != nil {
+		stageStarted = time.Now()
 		session.lspManager.StopAll()
+		logShutdownStage("lsp.stopAll", stageStarted, "session="+session.ID)
 		session.lspManager = nil
 	}
 
 	if session.coreEngine != nil {
+		stageStarted = time.Now()
 		session.coreEngine.Stop()
+		logShutdownStage("coreEngine.stop", stageStarted, "session="+session.ID)
 		session.coreEngine = nil
 	}
 
@@ -669,11 +687,13 @@ func (a *App) closeProjectInSessionLocked(session *ProjectRuntimeSession, closeT
 	a.syncDefaultProjectSession(session)
 	a.managerMu.Unlock()
 
+	var err error
 	if session.projectManager != nil {
-		return session.projectManager.CloseProject()
+		err = session.projectManager.CloseProject()
 	}
 
-	return nil
+	logShutdownStage("projectSession.total", started, "session="+session.ID)
+	return err
 }
 
 func (a *App) GetCurrentProjectID() string {

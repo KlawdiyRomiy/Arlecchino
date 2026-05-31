@@ -1,148 +1,252 @@
 import type { Extension } from "@codemirror/state";
 import { StreamLanguage } from "@codemirror/language";
-import { javascript } from "@codemirror/lang-javascript";
-import { php } from "@codemirror/lang-php";
-import { go } from "@codemirror/lang-go";
-import { python } from "@codemirror/lang-python";
-import { html } from "@codemirror/lang-html";
-import { css } from "@codemirror/lang-css";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import { rust } from "@codemirror/lang-rust";
-import { cpp } from "@codemirror/lang-cpp";
-import { java } from "@codemirror/lang-java";
-import { sql } from "@codemirror/lang-sql";
-import { xml } from "@codemirror/lang-xml";
-import { yaml } from "@codemirror/lang-yaml";
-import { less } from "@codemirror/lang-less";
-import { sass } from "@codemirror/lang-sass";
-import { vue } from "@codemirror/lang-vue";
-import { ruby } from "@codemirror/legacy-modes/mode/ruby";
-import { swift } from "@codemirror/legacy-modes/mode/swift";
-import { shell } from "@codemirror/legacy-modes/mode/shell";
-import { perl } from "@codemirror/legacy-modes/mode/perl";
-import { lua } from "@codemirror/legacy-modes/mode/lua";
-import { r } from "@codemirror/legacy-modes/mode/r";
-import { haskell } from "@codemirror/legacy-modes/mode/haskell";
-import { clojure } from "@codemirror/legacy-modes/mode/clojure";
-import { erlang } from "@codemirror/legacy-modes/mode/erlang";
-import { groovy } from "@codemirror/legacy-modes/mode/groovy";
-import { diff } from "@codemirror/legacy-modes/mode/diff";
-import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
-import { toml } from "@codemirror/legacy-modes/mode/toml";
-import { nginx } from "@codemirror/legacy-modes/mode/nginx";
-import { protobuf } from "@codemirror/legacy-modes/mode/protobuf";
-import { powerShell } from "@codemirror/legacy-modes/mode/powershell";
-import { clike } from "@codemirror/legacy-modes/mode/clike";
-import { fortran } from "@codemirror/legacy-modes/mode/fortran";
-import { julia } from "@codemirror/legacy-modes/mode/julia";
-import { oCaml, fSharp } from "@codemirror/legacy-modes/mode/mllike";
-import { commonLisp } from "@codemirror/legacy-modes/mode/commonlisp";
-import { pascal } from "@codemirror/legacy-modes/mode/pascal";
-import { vb } from "@codemirror/legacy-modes/mode/vb";
-import { cobol } from "@codemirror/legacy-modes/mode/cobol";
-import { gas } from "@codemirror/legacy-modes/mode/gas";
 
-type LanguageExtensionFactory = () => Extension;
+type LanguageExtensionFactory = () => Promise<Extension | null>;
+type LegacyStreamParser = Parameters<typeof StreamLanguage.define>[0];
 
 const normalizeCodeMirrorLanguage = (language: string): string =>
   language.trim().toLowerCase();
 
+const extensionCache = new Map<string, Extension | null>();
+const extensionPromiseCache = new Map<string, Promise<Extension | null>>();
+
+const createLegacyLanguage = async <TModule>(
+  loadModule: () => Promise<TModule>,
+  selectMode: (module: TModule) => LegacyStreamParser,
+): Promise<Extension> => {
+  const module = await loadModule();
+  return StreamLanguage.define(selectMode(module));
+};
+
+const createClikeLanguage = (name: string): Promise<Extension> =>
+  createLegacyLanguage(
+    () => import("@codemirror/legacy-modes/mode/clike"),
+    (module) => module.clike({ name }),
+  );
+
 const officialLanguageFactories: Record<string, LanguageExtensionFactory> = {
-  javascript: () => javascript(),
-  js: () => javascript(),
-  typescript: () => javascript({ typescript: true }),
-  ts: () => javascript({ typescript: true }),
-  javascriptreact: () => javascript({ jsx: true }),
-  jsx: () => javascript({ jsx: true }),
-  typescriptreact: () => javascript({ jsx: true, typescript: true }),
-  tsx: () => javascript({ jsx: true, typescript: true }),
-  astro: () => javascript({ jsx: true, typescript: true }),
-  vue: () => vue({ base: html() }),
-  svelte: () => html(),
-  blade: () => html(),
-  erb: () => html(),
-  php: () => php(),
-  go: () => go(),
-  python: () => python(),
-  py: () => python(),
-  html: () => html(),
-  css: () => css(),
-  scss: () => sass(),
-  sass: () => sass({ indented: true }),
-  less: () => less(),
-  json: () => json(),
-  markdown: () => markdown(),
-  md: () => markdown(),
-  rust: () => rust(),
-  rs: () => rust(),
-  cpp: () => cpp(),
-  c: () => cpp(),
-  java: () => java(),
-  sql: () => sql(),
-  xml: () => xml(),
-  yaml: () => yaml(),
-  yml: () => yaml(),
+  javascript: async () =>
+    (await import("@codemirror/lang-javascript")).javascript(),
+  js: async () => (await import("@codemirror/lang-javascript")).javascript(),
+  typescript: async () =>
+    (await import("@codemirror/lang-javascript")).javascript({
+      typescript: true,
+    }),
+  ts: async () =>
+    (await import("@codemirror/lang-javascript")).javascript({
+      typescript: true,
+    }),
+  javascriptreact: async () =>
+    (await import("@codemirror/lang-javascript")).javascript({ jsx: true }),
+  jsx: async () =>
+    (await import("@codemirror/lang-javascript")).javascript({ jsx: true }),
+  typescriptreact: async () =>
+    (await import("@codemirror/lang-javascript")).javascript({
+      jsx: true,
+      typescript: true,
+    }),
+  tsx: async () =>
+    (await import("@codemirror/lang-javascript")).javascript({
+      jsx: true,
+      typescript: true,
+    }),
+  astro: async () =>
+    (await import("@codemirror/lang-javascript")).javascript({
+      jsx: true,
+      typescript: true,
+    }),
+  vue: async () => {
+    const [vueModule, htmlModule] = await Promise.all([
+      import("@codemirror/lang-vue"),
+      import("@codemirror/lang-html"),
+    ]);
+    return vueModule.vue({ base: htmlModule.html() });
+  },
+  svelte: async () => (await import("@codemirror/lang-html")).html(),
+  blade: async () => (await import("@codemirror/lang-html")).html(),
+  erb: async () => (await import("@codemirror/lang-html")).html(),
+  php: async () => (await import("@codemirror/lang-php")).php(),
+  go: async () => (await import("@codemirror/lang-go")).go(),
+  python: async () => (await import("@codemirror/lang-python")).python(),
+  py: async () => (await import("@codemirror/lang-python")).python(),
+  html: async () => (await import("@codemirror/lang-html")).html(),
+  css: async () => (await import("@codemirror/lang-css")).css(),
+  scss: async () => (await import("@codemirror/lang-sass")).sass(),
+  sass: async () =>
+    (await import("@codemirror/lang-sass")).sass({ indented: true }),
+  less: async () => (await import("@codemirror/lang-less")).less(),
+  json: async () => (await import("@codemirror/lang-json")).json(),
+  markdown: async () => (await import("@codemirror/lang-markdown")).markdown(),
+  md: async () => (await import("@codemirror/lang-markdown")).markdown(),
+  rust: async () => (await import("@codemirror/lang-rust")).rust(),
+  rs: async () => (await import("@codemirror/lang-rust")).rust(),
+  cpp: async () => (await import("@codemirror/lang-cpp")).cpp(),
+  c: async () => (await import("@codemirror/lang-cpp")).cpp(),
+  java: async () => (await import("@codemirror/lang-java")).java(),
+  sql: async () => (await import("@codemirror/lang-sql")).sql(),
+  xml: async () => (await import("@codemirror/lang-xml")).xml(),
+  yaml: async () => (await import("@codemirror/lang-yaml")).yaml(),
+  yml: async () => (await import("@codemirror/lang-yaml")).yaml(),
 };
 
 const legacyLanguageFactories: Record<string, LanguageExtensionFactory> = {
-  ruby: () => StreamLanguage.define(ruby),
-  rb: () => StreamLanguage.define(ruby),
-  swift: () => StreamLanguage.define(swift),
-  bash: () => StreamLanguage.define(shell),
-  shell: () => StreamLanguage.define(shell),
-  sh: () => StreamLanguage.define(shell),
-  zsh: () => StreamLanguage.define(shell),
-  fish: () => StreamLanguage.define(shell),
-  perl: () => StreamLanguage.define(perl),
-  lua: () => StreamLanguage.define(lua),
-  r: () => StreamLanguage.define(r),
-  haskell: () => StreamLanguage.define(haskell),
-  clojure: () => StreamLanguage.define(clojure),
-  erlang: () => StreamLanguage.define(erlang),
-  groovy: () => StreamLanguage.define(groovy),
-  diff: () => StreamLanguage.define(diff),
-  patch: () => StreamLanguage.define(diff),
-  dockerfile: () => StreamLanguage.define(dockerFile),
-  toml: () => StreamLanguage.define(toml),
-  ini: () => StreamLanguage.define(toml),
-  env: () => StreamLanguage.define(shell),
-  nginx: () => StreamLanguage.define(nginx),
-  protobuf: () => StreamLanguage.define(protobuf),
-  powershell: () => StreamLanguage.define(powerShell),
-  ps1: () => StreamLanguage.define(powerShell),
-  fortran: () => StreamLanguage.define(fortran),
-  julia: () => StreamLanguage.define(julia),
-  ocaml: () => StreamLanguage.define(oCaml),
-  fsharp: () => StreamLanguage.define(fSharp),
-  lisp: () => StreamLanguage.define(commonLisp),
-  delphi: () => StreamLanguage.define(pascal),
-  pascal: () => StreamLanguage.define(pascal),
-  vb: () => StreamLanguage.define(vb),
-  vba: () => StreamLanguage.define(vb),
-  cobol: () => StreamLanguage.define(cobol),
-  assembly: () => StreamLanguage.define(gas),
-  asm: () => StreamLanguage.define(gas),
-  kotlin: () => StreamLanguage.define(clike({ name: "kotlin" })),
-  scala: () => StreamLanguage.define(clike({ name: "scala" })),
-  csharp: () => StreamLanguage.define(clike({ name: "csharp" })),
-  objectivec: () => StreamLanguage.define(clike({ name: "objectivec" })),
-  dart: () => StreamLanguage.define(clike({ name: "dart" })),
-  elixir: () => StreamLanguage.define(ruby),
-  zig: () => StreamLanguage.define(clike({ name: "clike" })),
-  ada: () => StreamLanguage.define(clike({ name: "clike" })),
-  prolog: () => StreamLanguage.define(clike({ name: "clike" })),
-  matlab: () => StreamLanguage.define(clike({ name: "clike" })),
-  gleam: () => StreamLanguage.define(clike({ name: "clike" })),
-  gdscript: () => python(),
-  graphql: () => StreamLanguage.define(clike({ name: "clike" })),
-  terraform: () => StreamLanguage.define(toml),
-  makefile: () => StreamLanguage.define(shell),
-  cmake: () => StreamLanguage.define(clike({ name: "clike" })),
-  latex: () => markdown(),
-  solidity: () => StreamLanguage.define(clike({ name: "clike" })),
-  wgsl: () => StreamLanguage.define(clike({ name: "clike" })),
-  glsl: () => StreamLanguage.define(clike({ name: "clike" })),
+  ruby: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/ruby"),
+      (module) => module.ruby,
+    ),
+  rb: () => legacyLanguageFactories.ruby(),
+  swift: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/swift"),
+      (module) => module.swift,
+    ),
+  bash: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/shell"),
+      (module) => module.shell,
+    ),
+  shell: () => legacyLanguageFactories.bash(),
+  sh: () => legacyLanguageFactories.bash(),
+  zsh: () => legacyLanguageFactories.bash(),
+  fish: () => legacyLanguageFactories.bash(),
+  perl: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/perl"),
+      (module) => module.perl,
+    ),
+  lua: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/lua"),
+      (module) => module.lua,
+    ),
+  r: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/r"),
+      (module) => module.r,
+    ),
+  haskell: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/haskell"),
+      (module) => module.haskell,
+    ),
+  clojure: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/clojure"),
+      (module) => module.clojure,
+    ),
+  erlang: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/erlang"),
+      (module) => module.erlang,
+    ),
+  groovy: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/groovy"),
+      (module) => module.groovy,
+    ),
+  diff: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/diff"),
+      (module) => module.diff,
+    ),
+  patch: () => legacyLanguageFactories.diff(),
+  dockerfile: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/dockerfile"),
+      (module) => module.dockerFile,
+    ),
+  toml: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/toml"),
+      (module) => module.toml,
+    ),
+  ini: () => legacyLanguageFactories.toml(),
+  env: () => legacyLanguageFactories.bash(),
+  nginx: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/nginx"),
+      (module) => module.nginx,
+    ),
+  protobuf: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/protobuf"),
+      (module) => module.protobuf,
+    ),
+  powershell: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/powershell"),
+      (module) => module.powerShell,
+    ),
+  ps1: () => legacyLanguageFactories.powershell(),
+  fortran: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/fortran"),
+      (module) => module.fortran,
+    ),
+  julia: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/julia"),
+      (module) => module.julia,
+    ),
+  ocaml: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/mllike"),
+      (module) => module.oCaml,
+    ),
+  fsharp: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/mllike"),
+      (module) => module.fSharp,
+    ),
+  lisp: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/commonlisp"),
+      (module) => module.commonLisp,
+    ),
+  delphi: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/pascal"),
+      (module) => module.pascal,
+    ),
+  pascal: () => legacyLanguageFactories.delphi(),
+  vb: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/vb"),
+      (module) => module.vb,
+    ),
+  vba: () => legacyLanguageFactories.vb(),
+  cobol: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/cobol"),
+      (module) => module.cobol,
+    ),
+  assembly: () =>
+    createLegacyLanguage(
+      () => import("@codemirror/legacy-modes/mode/gas"),
+      (module) => module.gas,
+    ),
+  asm: () => legacyLanguageFactories.assembly(),
+  kotlin: () => createClikeLanguage("kotlin"),
+  scala: () => createClikeLanguage("scala"),
+  csharp: () => createClikeLanguage("csharp"),
+  objectivec: () => createClikeLanguage("objectivec"),
+  dart: () => createClikeLanguage("dart"),
+  elixir: () => legacyLanguageFactories.ruby(),
+  zig: () => createClikeLanguage("clike"),
+  ada: () => createClikeLanguage("clike"),
+  prolog: () => createClikeLanguage("clike"),
+  matlab: () => createClikeLanguage("clike"),
+  gleam: () => createClikeLanguage("clike"),
+  gdscript: () => officialLanguageFactories.python(),
+  graphql: () => createClikeLanguage("clike"),
+  terraform: () => legacyLanguageFactories.toml(),
+  makefile: () => legacyLanguageFactories.bash(),
+  cmake: () => createClikeLanguage("clike"),
+  latex: () => officialLanguageFactories.markdown(),
+  solidity: () => createClikeLanguage("clike"),
+  wgsl: () => createClikeLanguage("clike"),
+  glsl: () => createClikeLanguage("clike"),
 };
 
 const extensionLanguageMap: Record<string, string> = {
@@ -244,17 +348,58 @@ export function getCodeMirrorLanguageExtension(
   language: string,
 ): Extension | null {
   const normalized = normalizeCodeMirrorLanguage(language);
-  const officialFactory = officialLanguageFactories[normalized];
-  if (officialFactory) {
-    return officialFactory();
+  return extensionCache.get(normalized) ?? null;
+}
+
+export function getLoadedCodeMirrorLanguageExtension(
+  language: string,
+): Extension | null {
+  return getCodeMirrorLanguageExtension(language);
+}
+
+export function loadCodeMirrorLanguageExtension(
+  language: string,
+): Promise<Extension | null> {
+  const normalized = normalizeCodeMirrorLanguage(language);
+  if (!normalized) {
+    return Promise.resolve(null);
   }
 
-  const legacyFactory = legacyLanguageFactories[normalized];
-  if (legacyFactory) {
-    return legacyFactory();
+  if (extensionCache.has(normalized)) {
+    return Promise.resolve(extensionCache.get(normalized) ?? null);
   }
 
-  return null;
+  const pending = extensionPromiseCache.get(normalized);
+  if (pending) {
+    return pending;
+  }
+
+  const factory =
+    officialLanguageFactories[normalized] ??
+    legacyLanguageFactories[normalized];
+  if (!factory) {
+    extensionCache.set(normalized, null);
+    return Promise.resolve(null);
+  }
+
+  const promise = factory()
+    .then((extension) => {
+      extensionCache.set(normalized, extension);
+      return extension;
+    })
+    .catch((error) => {
+      console.warn(
+        `Failed to load CodeMirror language extension: ${normalized}`,
+        error,
+      );
+      return null;
+    })
+    .finally(() => {
+      extensionPromiseCache.delete(normalized);
+    });
+
+  extensionPromiseCache.set(normalized, promise);
+  return promise;
 }
 
 export function inferCodeMirrorLanguageFromPath(filePath: string): string {

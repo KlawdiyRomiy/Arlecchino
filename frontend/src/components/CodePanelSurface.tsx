@@ -19,6 +19,7 @@ import {
 import { useEditorStore } from "../stores/editorStore";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { useCodeMirrorAdaptiveExtensions } from "../hooks/useCodeMirrorAdaptiveExtensions";
+import { useCodeMirrorLanguageExtension } from "../hooks/useCodeMirrorLanguageExtension";
 import {
   resolveAdaptiveEditorFeatureBudget,
   usePerformanceStore,
@@ -40,10 +41,7 @@ import {
   getCodeMirrorLineCount,
   shouldUseCodeMirrorLargeDocumentMode,
 } from "../utils/codeMirrorDisplay";
-import {
-  getCodeMirrorLanguageExtension,
-  isCodeMirrorColorToolTarget,
-} from "../utils/codeMirrorLanguageRegistry";
+import { isCodeMirrorColorToolTarget } from "../utils/codeMirrorLanguageRegistry";
 import {
   createCodeMirrorColorToolExtension,
   createCodeMirrorFoldExtensions,
@@ -260,9 +258,8 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     };
   }, [markTabDirty, path, tabID]);
 
-  const languageExtension = useMemo(
-    () => getCodeMirrorLanguageExtension(language),
-    [language],
+  const languageExtension = useCodeMirrorLanguageExtension(
+    canDisplayEditor ? language : "",
   );
   const foldControlsEnabled =
     showFoldGutter && editorFeatureBudget.layoutStableFoldGutter;
