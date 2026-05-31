@@ -51,6 +51,7 @@ import {
   isSameOrChildPath,
 } from "../utils/projectPaths";
 import { beginDragSelectionLock } from "../utils/dragSelectionLock";
+import { resolveExplorerNodeClickIntent } from "../utils/fileExplorerClickIntent";
 import {
   detectPanelSnapDropTarget,
   type PanelSnapDragCallbacks,
@@ -99,8 +100,6 @@ interface DeletedEntryEvent {
 
 const FILE_EXPLORER_NODE_RIGHT_INSET = 8;
 const FOLDER_CREATE_BUTTON_SIZE = 22;
-const isMacPlatform = (): boolean =>
-  typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
 
 export interface FileExplorerProps extends PanelSnapDragCallbacks {
   onFileOpen?: (
@@ -1848,20 +1847,19 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       return;
     }
 
-    if (e?.shiftKey && !e.metaKey && !e.altKey && !e.ctrlKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleSelectedPath(node.path, { preserveAnchor: true });
-      setHighlightedPath(node.path, false);
-      return;
-    }
+    const clickIntent = e
+      ? resolveExplorerNodeClickIntent(
+          {
+            shiftKey: e.shiftKey,
+            metaKey: e.metaKey,
+            ctrlKey: e.ctrlKey,
+            altKey: e.altKey,
+          },
+          node.isDirectory,
+        )
+      : "default";
 
-    const isMultiSelectToggle =
-      e &&
-      !e.shiftKey &&
-      !e.altKey &&
-      (e.metaKey || (!isMacPlatform() && e.ctrlKey));
-    if (isMultiSelectToggle) {
+    if (e && clickIntent === "toggleSelection") {
       e.preventDefault();
       e.stopPropagation();
       toggleSelectedPath(node.path, { preserveAnchor: true });
@@ -1870,7 +1868,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     }
 
     if (e && !node.isDirectory) {
-      if (e.altKey && !e.metaKey && !e.ctrlKey) {
+      if (clickIntent === "openQuickRelations") {
         e.preventDefault();
         e.stopPropagation();
         const clickX = e.clientX;
@@ -1884,7 +1882,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         });
         return;
       }
-      if (e.metaKey && e.altKey && !e.ctrlKey) {
+      if (clickIntent === "openDependencyTree") {
         e.preventDefault();
         e.stopPropagation();
 
