@@ -58,7 +58,7 @@ func (a *TypeScriptAdapter) Language() string {
 }
 
 func (a *TypeScriptAdapter) Extensions() []string {
-	return []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
+	return []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"}
 }
 
 func (a *TypeScriptAdapter) ParseFile(path string) ([]core.Symbol, []core.Edge, error) {

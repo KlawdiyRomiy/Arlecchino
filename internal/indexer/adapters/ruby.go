@@ -45,7 +45,7 @@ func (a *RubyAdapter) Language() string {
 }
 
 func (a *RubyAdapter) Extensions() []string {
-	return []string{".rb", ".rake", ".gemspec"}
+	return []string{".rb", ".rake", ".gemspec", ".ru", ".erb"}
 }
 
 func (a *RubyAdapter) extractNamespace(filePath string) string {

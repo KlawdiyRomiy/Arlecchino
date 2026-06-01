@@ -43,7 +43,7 @@ func (a *PythonAdapter) Language() string {
 }
 
 func (a *PythonAdapter) Extensions() []string {
-	return []string{".py", ".pyi"}
+	return []string{".py", ".pyi", ".pyw", ".pyx"}
 }
 
 func (a *PythonAdapter) extractNamespace(filePath string) string {

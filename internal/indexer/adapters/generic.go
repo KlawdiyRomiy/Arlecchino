@@ -79,36 +79,49 @@ type genericDependencyRef struct {
 }
 
 var (
-	cIncludePattern       = regexp.MustCompile(`^\s*#\s*include\s+["<]([^">]+)[">]`)
+	cIncludePattern       = regexp.MustCompile(`^\s*#\s*(?:include|import)\s+["<]([^">]+)[">]`)
+	assemblyInclude       = regexp.MustCompile(`(?i)^\s*(?:%include|include|\.include|\.incbin|incbin)\s+["<]?([^"'>\s]+)`)
 	jvmImportPattern      = regexp.MustCompile(`^\s*import\s+(?:static\s+)?([A-Za-z_][\w.*]*(?:\.[A-Za-z_][\w*]*)*)\s*;?`)
 	csharpUsingPattern    = regexp.MustCompile(`^\s*using\s+(?:static\s+)?([A-Za-z_][\w.]*)\s*;?`)
+	fsharpOpenPattern     = regexp.MustCompile(`^\s*open\s+([A-Z][\w.]*)`)
 	rustUsePattern        = regexp.MustCompile(`^\s*(?:pub\s+)?use\s+([^;]+);`)
 	rustModPattern        = regexp.MustCompile(`^\s*(?:pub\s+)?mod\s+([A-Za-z_]\w*)\s*;`)
 	quotedImportPattern   = regexp.MustCompile(`^\s*(?:import|export)\s+(?:[^"']+\s+from\s+)?["']([^"']+)["']`)
+	phpUsePattern         = regexp.MustCompile(`^\s*use\s+([^;]+)`)
 	swiftImportPattern    = regexp.MustCompile(`^\s*import\s+([A-Za-z_]\w*)`)
 	luaRequirePattern     = regexp.MustCompile(`\brequire\s*(?:\(\s*)?["']([^"']+)["']`)
 	perlImportPattern     = regexp.MustCompile(`^\s*(?:use|require)\s+(?:["']([^"']+)["']|([A-Za-z_][\w:]*))`)
 	elixirImportPattern   = regexp.MustCompile(`^\s*(?:alias|import|require|use)\s+([A-Z][\w.]+)`)
+	gleamImportPattern    = regexp.MustCompile(`^\s*import\s+([a-z][\w./]*)(?:\s+as\s+\w+)?`)
 	erlangIncludePattern  = regexp.MustCompile(`^-include(?:_lib)?\s*\(\s*["']([^"']+)["']\s*\)`)
 	haskellImportPattern  = regexp.MustCompile(`^\s*import\s+(?:qualified\s+)?([A-Z][\w.']*)`)
 	juliaImportPattern    = regexp.MustCompile(`^\s*(?:using|import)\s+([A-Za-z_][\w.]*)`)
 	clojureRequirePattern = regexp.MustCompile(`\(:require\s+\[([^\s\]]+)`)
 	ocamlOpenPattern      = regexp.MustCompile(`^\s*open\s+([A-Z]\w*)`)
+	vbImportPattern       = regexp.MustCompile(`(?i)^\s*Imports\s+([A-Za-z_][\w.]*)`)
+	vbExternalSource      = regexp.MustCompile(`(?i)^\s*#ExternalSource\s*\(\s*"([^"]+)"`)
 	zigImportPattern      = regexp.MustCompile(`@import\s*\(\s*"([^"]+)"\s*\)`)
 	gdscriptPathPattern   = regexp.MustCompile(`^\s*(?:extends|class_name)?\s*["']([^"']+)["']|(?:preload|load)\s*\(\s*["']([^"']+)["']\s*\)`)
+	shaderIncludePattern  = regexp.MustCompile(`^\s*#\s*(?:include|import)\s+["<]([^">]+)[">]`)
 	cssImportPattern      = regexp.MustCompile(`@import\s+(?:url\(\s*)?["']?([^"')\s]+)`)
 	cssURLPattern         = regexp.MustCompile(`url\(\s*["']?([^"')]+)["']?\s*\)`)
 	htmlAttrPattern       = regexp.MustCompile(`\b(?:src|href|poster|action|data|xlink:href)=["']([^"']+)["']`)
 	mdLinkPattern         = regexp.MustCompile(`!?\[[^\]]*\]\(([^)]+)\)`)
 	refPattern            = regexp.MustCompile(`["']?\$ref["']?\s*[:=]\s*["']([^"']+)["']`)
+	configPathPattern     = regexp.MustCompile(`(?i)^\s*["']?[A-Za-z0-9_.-]*(?:file|path|schema|config|include|source)[A-Za-z0-9_.-]*["']?\s*[:=]\s*["']?([^"',\]\s]+)`)
 	terraformSource       = regexp.MustCompile(`\bsource\s*=\s*"([^"]+)"`)
+	nginxIncludePattern   = regexp.MustCompile(`^\s*include\s+([^;]+);`)
 	cmakeIncludePattern   = regexp.MustCompile(`^\s*(?:include|add_subdirectory)\s*\(\s*([^\s)]+)`)
 	makeIncludePattern    = regexp.MustCompile(`^\s*(?:-?include|sinclude)\s+(.+)`)
 	dockerPathPattern     = regexp.MustCompile(`^\s*(?:COPY|ADD)\s+(?:--[^\s]+\s+)*([^\s]+)`)
 	latexInputPattern     = regexp.MustCompile(`\\(?:input|include)\{([^}]+)\}`)
+	latexResourcePattern  = regexp.MustCompile(`\\(?:includegraphics|addbibresource|bibliography|usepackage)(?:\[[^\]]*\])?\{([^}]+)\}`)
 	shellSourcePattern    = regexp.MustCompile(`^\s*(?:source|\.)\s+([^\s]+)`)
 	powershellImport      = regexp.MustCompile(`^\s*(?:\.|Import-Module)\s+([^\s]+)`)
 	protobufImportPattern = regexp.MustCompile(`^\s*import\s+(?:(?:public|weak)\s+)?["']([^"']+)["']`)
+	graphqlImportPattern  = regexp.MustCompile(`^\s*#\s*import\s+["']([^"']+)["']`)
+	sqlIncludePattern     = regexp.MustCompile(`(?i)^\s*(?:\\i|\\include|source|read)\s+["']?([^"';\s]+)`)
+	sqlAtPattern          = regexp.MustCompile(`^\s*@@?\s*["']?([^"';\s]+)`)
 	adaWithPattern        = regexp.MustCompile(`^\s*with\s+([A-Za-z_][\w.]*)\s*;`)
 	fortranIncludePattern = regexp.MustCompile(`^\s*include\s+["']([^"']+)["']`)
 	cobolCopyPattern      = regexp.MustCompile(`(?i)^\s*COPY\s+["']?([^"'.\s]+)["']?`)
@@ -117,16 +130,18 @@ var (
 	prologConsultPattern  = regexp.MustCompile(`^\s*:-\s*(?:consult|ensure_loaded)\(\s*['"]([^'"]+)['"]\s*\)`)
 	rSourcePattern        = regexp.MustCompile(`\bsource\s*\(\s*["']([^"']+)["']`)
 	matlabRunPattern      = regexp.MustCompile(`\b(?:run|addpath)\s*\(\s*["']([^"']+)["']`)
+	diffGitPattern        = regexp.MustCompile(`^diff\s+--git\s+a/(\S+)\s+b/(\S+)`)
+	diffPathPattern       = regexp.MustCompile(`^(?:---|\+\+\+)\s+[ab]/(.+)$`)
 )
 
 func genericDependencyRefs(language string, line string) []genericDependencyRef {
 	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || isGenericCommentLine(trimmed) {
+	if trimmed == "" {
 		return nil
 	}
 
 	add := func(refs []genericDependencyRef, target string, kind core.EdgeKind) []genericDependencyRef {
-		target = strings.TrimSpace(strings.Trim(target, `"'`))
+		target = cleanGenericDependencyTarget(target)
 		if target == "" || target == "." || target == ".." {
 			return refs
 		}
@@ -134,17 +149,32 @@ func genericDependencyRefs(language string, line string) []genericDependencyRef 
 	}
 
 	var refs []genericDependencyRef
+	if language == "graphql" {
+		refs = appendRegexRefs(refs, line, graphqlImportPattern, core.EdgeKindReferences, add)
+	}
+	if isGenericCommentLine(trimmed) {
+		return refs
+	}
+
 	switch language {
 	case "c", "cpp", "objectivec":
 		if m := cIncludePattern.FindStringSubmatch(line); m != nil {
+			refs = add(refs, m[1], core.EdgeKindImports)
+		}
+	case "assembly":
+		if m := assemblyInclude.FindStringSubmatch(line); m != nil {
 			refs = add(refs, m[1], core.EdgeKindImports)
 		}
 	case "java", "kotlin", "groovy", "scala":
 		if m := jvmImportPattern.FindStringSubmatch(line); m != nil {
 			refs = add(refs, strings.TrimSuffix(m[1], ".*"), core.EdgeKindImports)
 		}
-	case "csharp", "fsharp":
+	case "csharp":
 		if m := csharpUsingPattern.FindStringSubmatch(line); m != nil {
+			refs = add(refs, m[1], core.EdgeKindImports)
+		}
+	case "fsharp":
+		if m := fsharpOpenPattern.FindStringSubmatch(line); m != nil {
 			refs = add(refs, m[1], core.EdgeKindImports)
 		}
 	case "rust":
@@ -157,6 +187,12 @@ func genericDependencyRefs(language string, line string) []genericDependencyRef 
 	case "dart", "solidity", "svelte", "astro":
 		if m := quotedImportPattern.FindStringSubmatch(line); m != nil {
 			refs = add(refs, m[1], core.EdgeKindImports)
+		}
+	case "php":
+		if m := phpUsePattern.FindStringSubmatch(line); m != nil {
+			for _, part := range phpUseTargets(m[1]) {
+				refs = add(refs, part, core.EdgeKindImports)
+			}
 		}
 	case "protobuf":
 		if m := protobufImportPattern.FindStringSubmatch(line); m != nil {
@@ -178,6 +214,10 @@ func genericDependencyRefs(language string, line string) []genericDependencyRef 
 		if m := elixirImportPattern.FindStringSubmatch(line); m != nil {
 			refs = add(refs, m[1], core.EdgeKindImports)
 		}
+	case "gleam":
+		if m := gleamImportPattern.FindStringSubmatch(line); m != nil {
+			refs = add(refs, m[1], core.EdgeKindImports)
+		}
 	case "erlang":
 		if m := erlangIncludePattern.FindStringSubmatch(line); m != nil {
 			refs = add(refs, m[1], core.EdgeKindImports)
@@ -197,6 +237,13 @@ func genericDependencyRefs(language string, line string) []genericDependencyRef 
 	case "ocaml":
 		if m := ocamlOpenPattern.FindStringSubmatch(line); m != nil {
 			refs = add(refs, m[1], core.EdgeKindImports)
+		}
+	case "vb", "vba":
+		if m := vbImportPattern.FindStringSubmatch(line); m != nil {
+			refs = add(refs, m[1], core.EdgeKindImports)
+		}
+		if m := vbExternalSource.FindStringSubmatch(line); m != nil {
+			refs = add(refs, m[1], core.EdgeKindReferences)
 		}
 	case "ada":
 		if m := adaWithPattern.FindStringSubmatch(line); m != nil {
@@ -228,6 +275,10 @@ func genericDependencyRefs(language string, line string) []genericDependencyRef 
 		if m := zigImportPattern.FindStringSubmatch(line); m != nil {
 			refs = add(refs, m[1], core.EdgeKindImports)
 		}
+	case "wgsl", "glsl":
+		if m := shaderIncludePattern.FindStringSubmatch(line); m != nil {
+			refs = add(refs, m[1], core.EdgeKindImports)
+		}
 	case "gdscript":
 		if m := gdscriptPathPattern.FindStringSubmatch(line); m != nil {
 			refs = add(refs, firstNonEmpty(m[1], m[2]), core.EdgeKindImports)
@@ -243,6 +294,10 @@ func genericDependencyRefs(language string, line string) []genericDependencyRef 
 		refs = appendRegexRefs(refs, line, mdLinkPattern, core.EdgeKindReferences, add)
 	case "json", "yaml", "toml", "ini", "env", "nginx":
 		refs = appendRegexRefs(refs, line, refPattern, core.EdgeKindReferences, add)
+		refs = appendRegexRefs(refs, line, configPathPattern, core.EdgeKindReferences, add)
+		if language == "nginx" {
+			refs = appendRegexRefs(refs, line, nginxIncludePattern, core.EdgeKindReferences, add)
+		}
 	case "terraform":
 		refs = appendRegexRefs(refs, line, terraformSource, core.EdgeKindReferences, add)
 	case "cmake":
@@ -261,6 +316,7 @@ func genericDependencyRefs(language string, line string) []genericDependencyRef 
 		}
 	case "latex":
 		refs = appendRegexRefs(refs, line, latexInputPattern, core.EdgeKindReferences, add)
+		refs = appendRegexRefs(refs, line, latexResourcePattern, core.EdgeKindReferences, add)
 	case "bash":
 		if m := shellSourcePattern.FindStringSubmatch(line); m != nil {
 			refs = add(refs, m[1], core.EdgeKindImports)
@@ -269,6 +325,12 @@ func genericDependencyRefs(language string, line string) []genericDependencyRef 
 		if m := powershellImport.FindStringSubmatch(line); m != nil {
 			refs = add(refs, m[1], core.EdgeKindImports)
 		}
+	case "sql":
+		refs = appendRegexRefs(refs, line, sqlIncludePattern, core.EdgeKindReferences, add)
+		refs = appendRegexRefs(refs, line, sqlAtPattern, core.EdgeKindReferences, add)
+	case "graphql":
+		// GraphQL imports are encoded as comments, so they are handled before
+		// generic comment filtering.
 	case "r":
 		if m := rSourcePattern.FindStringSubmatch(line); m != nil {
 			refs = add(refs, m[1], core.EdgeKindImports)
@@ -276,6 +338,14 @@ func genericDependencyRefs(language string, line string) []genericDependencyRef 
 	case "matlab":
 		if m := matlabRunPattern.FindStringSubmatch(line); m != nil {
 			refs = add(refs, m[1], core.EdgeKindImports)
+		}
+	case "diff":
+		if m := diffGitPattern.FindStringSubmatch(line); m != nil {
+			refs = add(refs, m[1], core.EdgeKindReferences)
+			refs = add(refs, m[2], core.EdgeKindReferences)
+		}
+		if m := diffPathPattern.FindStringSubmatch(line); m != nil {
+			refs = add(refs, m[1], core.EdgeKindReferences)
 		}
 	}
 	return refs
@@ -295,6 +365,13 @@ func appendRegexRefs(refs []genericDependencyRef, line string, pattern *regexp.R
 		}
 	}
 	return refs
+}
+
+func cleanGenericDependencyTarget(target string) string {
+	target = strings.TrimSpace(target)
+	target = strings.Trim(target, `"'<>`)
+	target = strings.TrimRight(target, ",;")
+	return strings.TrimSpace(target)
 }
 
 func isGenericCommentLine(line string) bool {

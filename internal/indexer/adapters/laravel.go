@@ -48,7 +48,7 @@ func (a *LaravelAdapter) Language() string {
 }
 
 func (a *LaravelAdapter) Extensions() []string {
-	return []string{".php", ".blade.php"}
+	return []string{".php", ".phtml", ".php3", ".php4", ".php5", ".phps", ".blade.php"}
 }
 
 func (a *LaravelAdapter) ParseFile(path string) ([]core.Symbol, []core.Edge, error) {

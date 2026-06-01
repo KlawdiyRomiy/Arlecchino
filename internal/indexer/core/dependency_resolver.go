@@ -117,12 +117,29 @@ func (r *DependencyTargetResolver) ResolveEdge(fromPath string, edge Edge) (stri
 
 func (r *DependencyTargetResolver) dependencyCandidates(fromPath string, target string) []string {
 	candidates := make([]string, 0, 12)
+	seen := make(map[string]struct{}, 12)
 	add := func(path string) {
 		path = strings.TrimSpace(path)
 		if path == "" {
 			return
 		}
+		path = filepath.Clean(path)
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
 		candidates = append(candidates, path)
+	}
+	addProjectRelative := func(rel string) {
+		rel = strings.TrimSpace(rel)
+		if rel == "" {
+			return
+		}
+		rel = filepath.FromSlash(strings.TrimPrefix(strings.ReplaceAll(rel, "\\", "/"), "/"))
+		add(filepath.Join(r.projectRoot, rel))
+		for _, sourceRoot := range dependencySourceRoots() {
+			add(filepath.Join(r.projectRoot, sourceRoot, rel))
+		}
 	}
 
 	fromDir := filepath.Dir(filepath.Clean(fromPath))
@@ -159,8 +176,12 @@ func (r *DependencyTargetResolver) dependencyCandidates(fromPath string, target 
 				}
 			}
 		default:
-			add(filepath.Join(r.projectRoot, normalizedTarget))
-			if strings.Contains(target, "/") {
+			if dependencyTargetLooksPathLike(target) || strings.Contains(target, ".") || strings.Contains(target, `\`) || bareDependencyTargetMayBeLocal(fromPath, target) {
+				addProjectRelative(normalizedTarget)
+			} else {
+				add(filepath.Join(r.projectRoot, normalizedTarget))
+			}
+			if dependencyTargetLooksPathLike(target) || bareDependencyTargetMayBeLocal(fromPath, target) {
 				add(filepath.Join(fromDir, normalizedTarget))
 			}
 		}
@@ -179,7 +200,7 @@ func (r *DependencyTargetResolver) dependencyCandidates(fromPath string, target 
 	}
 
 	if strings.HasPrefix(target, "crate::") {
-		add(filepath.Join(r.projectRoot, strings.ReplaceAll(strings.TrimPrefix(target, "crate::"), "::", "/")))
+		addProjectRelative(strings.ReplaceAll(strings.TrimPrefix(target, "crate::"), "::", "/"))
 	}
 	if strings.HasPrefix(target, "self::") {
 		add(filepath.Join(fromDir, strings.ReplaceAll(strings.TrimPrefix(target, "self::"), "::", "/")))
@@ -189,13 +210,93 @@ func (r *DependencyTargetResolver) dependencyCandidates(fromPath string, target 
 	}
 
 	if strings.Contains(target, ".") && !strings.Contains(target, "/") {
-		add(filepath.Join(r.projectRoot, strings.ReplaceAll(target, ".", "/")))
+		dotted := strings.ReplaceAll(target, ".", "/")
+		addProjectRelative(dotted)
+		if snake := dependencySnakePath(dotted); snake != dotted {
+			addProjectRelative(snake)
+		}
 	}
 	if strings.Contains(target, "::") {
-		add(filepath.Join(r.projectRoot, strings.ReplaceAll(target, "::", "/")))
+		namespacePath := strings.ReplaceAll(target, "::", "/")
+		addProjectRelative(namespacePath)
+		if snake := dependencySnakePath(namespacePath); snake != namespacePath {
+			addProjectRelative(snake)
+		}
 	}
 
 	return candidates
+}
+
+func dependencySourceRoots() []string {
+	return []string{
+		"src",
+		"lib",
+		"app",
+		"pkg",
+		"source",
+		"sources",
+		"Sources",
+		"src/main/java",
+		"src/main/kotlin",
+		"src/main/scala",
+		"src/main/groovy",
+		"src/main/resources",
+		"src/test/java",
+		"src/test/kotlin",
+		"src/test/scala",
+	}
+}
+
+func dependencyTargetLooksPathLike(target string) bool {
+	target = strings.ReplaceAll(target, "\\", "/")
+	return strings.Contains(target, "/") || filepath.Ext(target) != ""
+}
+
+func bareDependencyTargetMayBeLocal(fromPath string, target string) bool {
+	if target == "" || dependencyTargetLooksPathLike(target) || strings.ContainsAny(target, ".:") {
+		return false
+	}
+	switch strings.ToLower(filepath.Ext(fromPath)) {
+	case ".rs", ".zig", ".gleam", ".ml", ".mli", ".ex", ".exs", ".erl", ".hrl",
+		".fs", ".fsi", ".fsx", ".pas", ".pp", ".inc", ".lisp", ".lsp", ".cl",
+		".el", ".jl", ".lua", ".gd", ".swift":
+		return true
+	default:
+		return false
+	}
+}
+
+func dependencySnakePath(path string) string {
+	path = strings.ReplaceAll(path, "\\", "/")
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		parts[i] = dependencyCamelToSnake(part)
+	}
+	return strings.Join(parts, "/")
+}
+
+func dependencyCamelToSnake(value string) string {
+	if value == "" {
+		return value
+	}
+	var b strings.Builder
+	b.Grow(len(value) + 4)
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if ch >= 'A' && ch <= 'Z' {
+			if i > 0 {
+				prev := value[i-1]
+				nextLower := i+1 < len(value) && value[i+1] >= 'a' && value[i+1] <= 'z'
+				prevWord := (prev >= 'a' && prev <= 'z') || (prev >= '0' && prev <= '9') || (prev >= 'A' && prev <= 'Z' && nextLower)
+				if prevWord && prev != '_' && prev != '-' {
+					b.WriteByte('_')
+				}
+			}
+			ch += 'a' - 'A'
+		}
+		b.WriteByte(ch)
+	}
+	return b.String()
 }
 
 func (r *DependencyTargetResolver) resolveCandidatePath(candidate string) (string, bool) {

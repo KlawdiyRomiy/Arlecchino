@@ -41,7 +41,7 @@ func (a *PHPAdapter) Language() string {
 }
 
 func (a *PHPAdapter) Extensions() []string {
-	return []string{".php"}
+	return []string{".php", ".phtml", ".php3", ".php4", ".php5", ".phps"}
 }
 
 func (a *PHPAdapter) ParseFile(path string) ([]core.Symbol, []core.Edge, error) {

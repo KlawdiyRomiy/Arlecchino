@@ -43,7 +43,7 @@ func (a *GoAdapter) Language() string {
 }
 
 func (a *GoAdapter) Extensions() []string {
-	return []string{".go"}
+	return []string{".go", ".mod", ".sum", ".work"}
 }
 
 func (a *GoAdapter) ParseFile(path string) ([]core.Symbol, []core.Edge, error) {

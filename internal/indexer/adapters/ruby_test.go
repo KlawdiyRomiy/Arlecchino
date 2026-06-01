@@ -135,7 +135,7 @@ func TestRubyAdapter_Extensions(t *testing.T) {
 	adapter := NewRubyAdapter()
 	exts := adapter.Extensions()
 
-	expected := []string{".rb", ".rake", ".gemspec"}
+	expected := []string{".rb", ".rake", ".gemspec", ".ru", ".erb"}
 	if len(exts) != len(expected) {
 		t.Errorf("got %d extensions, want %d", len(exts), len(expected))
 	}
