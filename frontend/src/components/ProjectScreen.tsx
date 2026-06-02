@@ -1,20 +1,27 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { redo, undo } from "@codemirror/commands";
 import type { EditorView } from "@codemirror/view";
-import { Copy, ExternalLink, X } from "lucide-react";
+import { ArrowLeftRight, Copy, ExternalLink, X } from "lucide-react";
 import {
   CodeMirrorEditor,
   type EditorHistoryAvailability,
 } from "./CodeMirrorEditor";
 import { EditorFileLoadingView } from "./EditorFileLoadingView";
-import { EditorTabs, Tab } from "./EditorTabs";
+import {
+  EditorTabs,
+  Tab,
+  type EditorSplitDropSide,
+  type EditorSplitDropTarget,
+} from "./EditorTabs";
 import { TabSwitcherOverlay } from "./TabSwitcherOverlay";
 import QuickLookModal from "./QuickLookModal";
 import { BinaryEditorPreview } from "./BinaryEditorPreview";
 import { ImageEditorPreview } from "./ImageEditorPreview";
+import { DragGhost, type DragGhostState } from "./ui/DragGhost";
 import * as AppFunctions from "../wails/app";
 import { EventsOn } from "../wails/runtime";
 import { useProjectEntryActions } from "../contexts/ProjectEntryActionsContext";
+import { radius, transitions } from "../styles/colors";
 import { shortcuts } from "../utils/keyboard";
 import {
   PROJECT_SWITCH_BLOCKERS,
@@ -62,8 +69,10 @@ import type {
   PanelOpenRequest,
 } from "./layout/MainLayout.types";
 import type { PanelSnapDragCallbacks } from "../utils/panelSnapDrag";
+import { beginDragSelectionLock } from "../utils/dragSelectionLock";
 
 type SplitDirection = "horizontal" | "vertical" | null;
+type EditorSplitSlots = { leftTabId: string; rightTabId: string } | null;
 
 type EditorFileOpenHandler = (payload: EditorFileOpenPayload) => void;
 
@@ -98,6 +107,64 @@ const EMPTY_EDITOR_HISTORY_AVAILABILITY: EditorHistoryAvailability = {
 
 const isMarkdownPath = (path: string): boolean =>
   /\.(md|mdx|markdown|mdown|mkdn)$/i.test(path);
+
+const editorSplitDropSides: EditorSplitDropSide[] = ["left", "right"];
+
+const EditorSplitDropZone: React.FC<{
+  side: EditorSplitDropSide;
+  isActive: boolean;
+}> = ({ side, isActive }) => {
+  const activeBorder = "var(--shell-border-strong)";
+  const inactiveBorder = "rgba(255,255,255,0.1)";
+  const style: React.CSSProperties = {
+    position: "absolute",
+    top: 8,
+    bottom: 8,
+    left: side === "left" ? 8 : "calc(50% + 4px)",
+    right: side === "right" ? 8 : "calc(50% + 4px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.lg,
+    border: `1px solid ${isActive ? activeBorder : inactiveBorder}`,
+    background: isActive ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.025)",
+    boxShadow: isActive
+      ? "inset 0 0 0 1px var(--shell-border-strong), var(--shell-shadow)"
+      : "none",
+    opacity: isActive ? 1 : 0.52,
+    transform: isActive ? "scale(1)" : "scale(0.985)",
+    transition: `opacity ${transitions.fast}, transform ${transitions.fast}, background ${transitions.fast}, border-color ${transitions.fast}, box-shadow ${transitions.fast}`,
+    pointerEvents: "none",
+  };
+
+  return (
+    <div
+      data-testid={`editor-split-drop-zone-${side}`}
+      data-drop-active={isActive ? "true" : "false"}
+      aria-label={`Editor split ${side}`}
+      style={style}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 34,
+          height: 34,
+          borderRadius: 9999,
+          border: "1px solid var(--shell-border-strong)",
+          backgroundColor:
+            "color-mix(in srgb, var(--surface-shell-strong) 92%, transparent)",
+          color: "var(--text-secondary)",
+          opacity: isActive ? 1 : 0.64,
+          boxShadow: isActive ? "var(--shadow-overlay)" : "none",
+        }}
+      >
+        <ArrowLeftRight size={16} strokeWidth={2.2} />
+      </div>
+    </div>
+  );
+};
 
 const getWrappedTabIndex = (
   currentIndex: number,
@@ -233,6 +300,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const [secondaryActiveTab, setSecondaryActiveTab] = useState<string | null>(
     null,
   );
+  const [editorSplitSlots, setEditorSplitSlots] =
+    useState<EditorSplitSlots>(null);
+  const [activeEditorSplitDropSide, setActiveEditorSplitDropSide] =
+    useState<EditorSplitDropSide | null>(null);
+  const [splitTabDragGhost, setSplitTabDragGhost] =
+    useState<DragGhostState | null>(null);
   const [quickLook, setQuickLook] = useState<{
     isOpen: boolean;
     filePath: string;
@@ -265,9 +338,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const tabsRef = useRef<Tab[]>([]);
   const fileContentsRef = useRef<Record<string, string>>({});
   const fileLoadStatesRef = useRef<Record<string, EditorFileLoadState>>({});
+  const editorSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const splitTabReturnTargetRef = useRef<HTMLElement | null>(null);
   const activeTabRef = useRef<string | null>(activeTab);
   const activeEditorViewRef = useRef<EditorView | null>(null);
   const secondaryActiveTabRef = useRef<string | null>(secondaryActiveTab);
+  const editorSplitSlotsRef = useRef<EditorSplitSlots>(editorSplitSlots);
   const openFileRequestRef = useRef(0);
   const fileOpenLoadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -578,11 +654,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         if (splitDirection) {
           setSplitDirection(null);
           setSecondaryActiveTab(null);
+          setEditorSplitSlots(null);
         } else if (activeTab && tabs.length > 1) {
+          setEditorSplitSlots(null);
           setSplitDirection("horizontal");
           const otherTab = tabs.find((t) => t.id !== activeTab);
           setSecondaryActiveTab(otherTab?.id || null);
         } else if (activeTab) {
+          setEditorSplitSlots(null);
           setSplitDirection("horizontal");
           setSecondaryActiveTab(activeTab);
         }
@@ -595,11 +674,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         if (splitDirection) {
           setSplitDirection(null);
           setSecondaryActiveTab(null);
+          setEditorSplitSlots(null);
         } else if (activeTab && tabs.length > 1) {
+          setEditorSplitSlots(null);
           setSplitDirection("vertical");
           const otherTab = tabs.find((t) => t.id !== activeTab);
           setSecondaryActiveTab(otherTab?.id || null);
         } else if (activeTab) {
+          setEditorSplitSlots(null);
           setSplitDirection("vertical");
           setSecondaryActiveTab(activeTab);
         }
@@ -1169,6 +1251,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         if (file.kind !== "loading") {
           storeFileLoadState(existingTab.id, file);
         }
+        setEditorSplitSlots(null);
+        setSplitDirection(null);
+        setSecondaryActiveTab(null);
         setActiveTab(existingTab.id);
         if (line) {
           setHighlightLine(line);
@@ -1190,6 +1275,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           ? prevTabs
           : [...prevTabs, newTab],
       );
+      setEditorSplitSlots(null);
+      setSplitDirection(null);
+      setSecondaryActiveTab(null);
       setActiveTab(tabId);
       if (line) {
         setHighlightLine(line);
@@ -1283,6 +1371,16 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         resetActiveEditorBudget();
       }
     }
+
+    if (
+      editorSplitSlotsRef.current &&
+      (editorSplitSlotsRef.current.leftTabId === tabId ||
+        editorSplitSlotsRef.current.rightTabId === tabId)
+    ) {
+      setSplitDirection(null);
+      setSecondaryActiveTab(null);
+      setEditorSplitSlots(null);
+    }
   };
 
   const handleCloseOtherTabs = useCallback((tabId: string) => {
@@ -1301,6 +1399,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setActiveTab(tabId);
     setSecondaryActiveTab(null);
     setSplitDirection(null);
+    setEditorSplitSlots(null);
   }, []);
 
   const handleCloseAllTabs = useCallback(() => {
@@ -1314,6 +1413,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setActiveTab(null);
     setSecondaryActiveTab(null);
     setSplitDirection(null);
+    setEditorSplitSlots(null);
     resetActiveEditorBudget();
   }, [closeEditorStoreTabPath, resetActiveEditorBudget]);
 
@@ -1350,6 +1450,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   useEffect(() => {
     secondaryActiveTabRef.current = secondaryActiveTab;
   }, [secondaryActiveTab]);
+
+  useEffect(() => {
+    editorSplitSlotsRef.current = editorSplitSlots;
+  }, [editorSplitSlots]);
 
   useEffect(() => {
     if (!isTabSwitcherOpen) {
@@ -1895,6 +1999,15 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       setSecondaryActiveTab((previous) =>
         previous ? (tabIdMap.get(previous) ?? previous) : previous,
       );
+      setEditorSplitSlots((previous) =>
+        previous
+          ? {
+              leftTabId: tabIdMap.get(previous.leftTabId) ?? previous.leftTabId,
+              rightTabId:
+                tabIdMap.get(previous.rightTabId) ?? previous.rightTabId,
+            }
+          : previous,
+      );
       setClosedTabs((previous) =>
         previous.map((tab) => {
           const remappedPath = remapProjectPathPrefix(
@@ -1997,6 +2110,23 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       previous.filter((tab) => !isSameOrChildPath(tab.path, deletedPath)),
     );
     setActiveTab(nextPrimaryTabId);
+    if (
+      editorSplitSlotsRef.current &&
+      (removedTabIds.has(editorSplitSlotsRef.current.leftTabId) ||
+        removedTabIds.has(editorSplitSlotsRef.current.rightTabId))
+    ) {
+      setSplitDirection(null);
+      setSecondaryActiveTab(null);
+    }
+    setEditorSplitSlots((previous) => {
+      if (!previous) {
+        return previous;
+      }
+      return removedTabIds.has(previous.leftTabId) ||
+        removedTabIds.has(previous.rightTabId)
+        ? null
+        : previous;
+    });
 
     if (nextTabs.length <= 1) {
       setSecondaryActiveTab(null);
@@ -2140,10 +2270,137 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     refreshAppliedPatchTab,
   ]);
 
-  const handleTabsReorder = useCallback((nextTabs: Tab[]) => {
-    tabsRef.current = nextTabs;
-    setTabs(nextTabs);
+  const notifyEditorSplitTransition = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("arlecchino:editor-split-transition"));
   }, []);
+
+  const handleTabsReorder = useCallback((nextTabs: Tab[]) => {
+    const splitSlots = editorSplitSlotsRef.current;
+    if (!splitSlots) {
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
+      return;
+    }
+
+    const splitTabIds = new Set([splitSlots.leftTabId, splitSlots.rightTabId]);
+    const visibleQueue = [...nextTabs];
+    const nextAllTabs = tabsRef.current
+      .map((tab) => {
+        if (splitTabIds.has(tab.id)) {
+          return tab;
+        }
+        return visibleQueue.shift() ?? tab;
+      })
+      .filter((tab): tab is Tab => Boolean(tab));
+    if (visibleQueue.length > 0) {
+      nextAllTabs.push(...visibleQueue);
+    }
+
+    tabsRef.current = nextAllTabs;
+    setTabs(nextAllTabs);
+  }, []);
+
+  const getEditorSplitDropTarget = useCallback(
+    (point: { x: number; y: number }): EditorSplitDropTarget | null => {
+      const rect = editorSurfaceRef.current?.getBoundingClientRect();
+      if (
+        !rect ||
+        point.x < rect.left ||
+        point.x > rect.right ||
+        point.y < rect.top ||
+        point.y > rect.bottom
+      ) {
+        return null;
+      }
+
+      return {
+        side: point.x < rect.left + rect.width / 2 ? "left" : "right",
+      };
+    },
+    [],
+  );
+
+  const handleEditorSplitDragMove = useCallback(
+    (side: EditorSplitDropSide | null) => {
+      setActiveEditorSplitDropSide(side);
+    },
+    [],
+  );
+
+  const handleTabDropToEditorSplit = useCallback(
+    (tab: Tab, side: EditorSplitDropSide) => {
+      const allTabs = tabsRef.current;
+      if (!allTabs.some((candidate) => candidate.id === tab.id)) {
+        return;
+      }
+
+      const counterpartTabId =
+        (activeTabRef.current && activeTabRef.current !== tab.id
+          ? activeTabRef.current
+          : allTabs.find((candidate) => candidate.id !== tab.id)?.id) ?? tab.id;
+      const leftTabId = side === "left" ? tab.id : counterpartTabId;
+      const rightTabId = side === "right" ? tab.id : counterpartTabId;
+
+      notifyEditorSplitTransition();
+      setEditorSplitSlots({ leftTabId, rightTabId });
+      setSplitDirection("horizontal");
+      setActiveTab(leftTabId);
+      setSecondaryActiveTab(rightTabId);
+      setActiveEditorSplitDropSide(null);
+      ensureTabFileLoaded(
+        allTabs.find((candidate) => candidate.id === leftTabId),
+      );
+      ensureTabFileLoaded(
+        allTabs.find((candidate) => candidate.id === rightTabId),
+      );
+    },
+    [ensureTabFileLoaded, notifyEditorSplitTransition],
+  );
+
+  const handleEditorTabClick = useCallback(
+    (tabId: string) => {
+      if (editorSplitSlotsRef.current) {
+        notifyEditorSplitTransition();
+        setEditorSplitSlots(null);
+        setSplitDirection(null);
+        setSecondaryActiveTab(null);
+      }
+      setActiveTab(tabId);
+    },
+    [notifyEditorSplitTransition],
+  );
+
+  const getEditorTabsDropTarget = useCallback(
+    (clientX: number, clientY: number) => {
+      const element = document.elementFromPoint(clientX, clientY);
+      return (
+        element?.closest<HTMLElement>('[data-testid="editor-tabs-bar"]') ?? null
+      );
+    },
+    [],
+  );
+
+  const clearSplitTabReturnTarget = useCallback(() => {
+    splitTabReturnTargetRef.current?.classList.remove(
+      "editor-tabs-code-drop-target",
+    );
+    splitTabReturnTargetRef.current = null;
+  }, []);
+
+  const handleSplitTabReturnToTabs = useCallback(
+    (tabId: string) => {
+      if (!editorSplitSlotsRef.current) {
+        return;
+      }
+
+      notifyEditorSplitTransition();
+      setEditorSplitSlots(null);
+      setSplitDirection(null);
+      setSecondaryActiveTab(null);
+      setActiveTab(tabId);
+    },
+    [notifyEditorSplitTransition],
+  );
 
   const handleTabDetachToPanel = useCallback(
     async (
@@ -2289,10 +2546,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
   };
 
-  const notifyEditorSplitTransition = useCallback(() => {
-    window.dispatchEvent(new CustomEvent("arlecchino:editor-split-transition"));
-  }, []);
-
   const handleSplit = useCallback(
     (direction: "horizontal" | "vertical") => {
       notifyEditorSplitTransition();
@@ -2301,13 +2554,16 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         // Close split
         setSplitDirection(null);
         setSecondaryActiveTab(null);
+        setEditorSplitSlots(null);
       } else if (activeTab && tabs.length > 1) {
         // Open split with second-to-last tab
+        setEditorSplitSlots(null);
         setSplitDirection(direction);
         const otherTab = tabs.find((t) => t.id !== activeTab);
         setSecondaryActiveTab(otherTab?.id || null);
       } else if (activeTab) {
         // Only one tab - open split with same file
+        setEditorSplitSlots(null);
         setSplitDirection(direction);
         setSecondaryActiveTab(activeTab);
       }
@@ -2333,6 +2589,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       }
 
       notifyEditorSplitTransition();
+      setEditorSplitSlots(null);
       setSplitDirection(direction);
       if (tabs.length > 1) {
         const otherTab = tabs.find((tab) => tab.id !== activeTab);
@@ -2363,6 +2620,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const handleCloseSplit = () => {
     setSplitDirection(null);
     setSecondaryActiveTab(null);
+    setEditorSplitSlots(null);
+    setActiveEditorSplitDropSide(null);
   };
 
   useEffect(() => {
@@ -2385,11 +2644,35 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     };
   }, []);
 
+  const editorSplitTabIds = React.useMemo(
+    () =>
+      editorSplitSlots
+        ? new Set([editorSplitSlots.leftTabId, editorSplitSlots.rightTabId])
+        : new Set<string>(),
+    [editorSplitSlots],
+  );
+  const tabBarTabs = React.useMemo(
+    () => tabs.filter((tab) => !editorSplitTabIds.has(tab.id)),
+    [editorSplitTabIds, tabs],
+  );
+  const tabBarActiveTab =
+    activeTab && tabBarTabs.some((tab) => tab.id === activeTab)
+      ? activeTab
+      : null;
   const activeTabData = tabs.find((tab) => tab.id === activeTab);
   const activeMarkdownPreviewSource = buildMarkdownPreviewSource(activeTab);
   const secondaryTabData = secondaryActiveTab
     ? tabs.find((tab) => tab.id === secondaryActiveTab)
     : null;
+  const editorSplitLeftTabData = editorSplitSlots
+    ? tabs.find((tab) => tab.id === editorSplitSlots.leftTabId)
+    : null;
+  const editorSplitRightTabData = editorSplitSlots
+    ? tabs.find((tab) => tab.id === editorSplitSlots.rightTabId)
+    : null;
+  const editorSplitReady = Boolean(
+    editorSplitSlots && editorSplitLeftTabData && editorSplitRightTabData,
+  );
   const activeTabLoadState = activeTabData
     ? fileLoadStates[activeTabData.id]
     : undefined;
@@ -2416,6 +2699,148 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
     setSplitReady(false);
   }, [splitDirection, secondaryTabData]);
+
+  const renderSplitTabHandle = useCallback(
+    (tab: Tab, side: EditorSplitDropSide) => {
+      const renderGhostContent = () => (
+        <div
+          className="arle-editor-split-tab-drag-copy flex h-full w-full max-w-none items-center gap-2 rounded-md border border-[var(--shell-border-strong)] bg-[var(--surface-hover)] px-3 text-left text-xs font-medium text-[var(--text-primary)]"
+          data-drag-ghost-source="editor-split-tab"
+        >
+          <span className="truncate">{tab.label}</span>
+          {tab.isDirty && (
+            <span className="text-[14px] leading-none text-[var(--text-primary)]">
+              ●
+            </span>
+          )}
+        </div>
+      );
+
+      const handlePointerDown = (
+        event: React.PointerEvent<HTMLButtonElement>,
+      ) => {
+        if (event.button !== 0) {
+          return;
+        }
+
+        event.preventDefault();
+        const releaseSelectionLock = beginDragSelectionLock();
+        const pointerId = event.pointerId;
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const sourceRect = event.currentTarget.getBoundingClientRect();
+        const offsetX = startX - sourceRect.left;
+        const offsetY = startY - sourceRect.top;
+        let activeDrag = false;
+
+        const handlePointerMove = (pointerEvent: PointerEvent) => {
+          if (pointerEvent.pointerId !== pointerId) {
+            return;
+          }
+
+          const dx = pointerEvent.clientX - startX;
+          const dy = pointerEvent.clientY - startY;
+          if (!activeDrag && Math.hypot(dx, dy) > 7) {
+            activeDrag = true;
+          }
+          if (!activeDrag) {
+            return;
+          }
+
+          pointerEvent.preventDefault();
+          document.getSelection()?.removeAllRanges();
+          const editorTabsTarget = getEditorTabsDropTarget(
+            pointerEvent.clientX,
+            pointerEvent.clientY,
+          );
+          if (splitTabReturnTargetRef.current !== editorTabsTarget) {
+            clearSplitTabReturnTarget();
+            if (editorTabsTarget) {
+              editorTabsTarget.classList.add("editor-tabs-code-drop-target");
+              splitTabReturnTargetRef.current = editorTabsTarget;
+            }
+          }
+
+          setSplitTabDragGhost({
+            x: pointerEvent.clientX,
+            y: pointerEvent.clientY,
+            label: tab.label,
+            variant: "layout",
+            layout: "editor-tab",
+            content: renderGhostContent(),
+            width: sourceRect.width,
+            height: sourceRect.height,
+            offsetX,
+            offsetY,
+          });
+        };
+
+        const cleanup = () => {
+          window.removeEventListener("pointermove", handlePointerMove, true);
+          window.removeEventListener("pointerup", handlePointerUp, true);
+          window.removeEventListener(
+            "pointercancel",
+            handlePointerCancel,
+            true,
+          );
+          clearSplitTabReturnTarget();
+          setSplitTabDragGhost(null);
+          releaseSelectionLock();
+        };
+
+        const handlePointerCancel = (pointerEvent: PointerEvent) => {
+          if (pointerEvent.pointerId !== pointerId) {
+            return;
+          }
+          cleanup();
+        };
+
+        const handlePointerUp = (pointerEvent: PointerEvent) => {
+          if (pointerEvent.pointerId !== pointerId) {
+            return;
+          }
+          const editorTabsTarget = getEditorTabsDropTarget(
+            pointerEvent.clientX,
+            pointerEvent.clientY,
+          );
+          cleanup();
+          if (activeDrag && editorTabsTarget) {
+            handleSplitTabReturnToTabs(tab.id);
+          }
+        };
+
+        window.addEventListener("pointermove", handlePointerMove, true);
+        window.addEventListener("pointerup", handlePointerUp, true);
+        window.addEventListener("pointercancel", handlePointerCancel, true);
+      };
+
+      return (
+        <button
+          type="button"
+          key={`${side}:${tab.id}`}
+          data-testid={`editor-split-tab-${side}`}
+          className="absolute left-3 top-3 z-10 flex h-8 max-w-[min(220px,calc(100%-5rem))] cursor-grab items-center gap-2 rounded-md border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-strong)_94%,transparent)] px-3 text-left text-xs font-medium text-[var(--text-secondary)] shadow-[var(--shell-shadow)] backdrop-blur-xl transition-[background-color,border-color,color,box-shadow] hover:border-[var(--shell-border-strong)] hover:bg-[color-mix(in_srgb,var(--surface-active)_78%,transparent)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
+          title={`${tab.label} - drag to tabs`}
+          onPointerDown={handlePointerDown}
+          onClick={() => {
+            setActiveTab(tab.id);
+          }}
+        >
+          <span className="truncate">{tab.label}</span>
+          {tab.isDirty && (
+            <span className="text-[14px] leading-none text-[var(--text-primary)]">
+              ●
+            </span>
+          )}
+        </button>
+      );
+    },
+    [
+      clearSplitTabReturnTarget,
+      getEditorTabsDropTarget,
+      handleSplitTabReturnToTabs,
+    ],
+  );
 
   const renderEditor = (tabData: Tab, content: string, isSecondary = false) => {
     const inlinePatchPreview = selectAIInlinePatchPreviewForPath(
@@ -2503,12 +2928,15 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
       {tabs.length > 0 && (
         <EditorTabs
-          tabs={tabs}
-          activeTab={activeTab}
-          onTabClick={setActiveTab}
+          tabs={tabBarTabs}
+          activeTab={tabBarActiveTab}
+          onTabClick={handleEditorTabClick}
           onTabClose={handleTabClose}
           onTabsReorder={handleTabsReorder}
           onTabDetachToPanel={handleTabDetachToPanel}
+          getEditorSplitDropTarget={getEditorSplitDropTarget}
+          onEditorSplitDragMove={handleEditorSplitDragMove}
+          onTabDropToEditorSplit={handleTabDropToEditorSplit}
           onPanelSnapDragStart={onPanelSnapDragStart}
           onPanelSnapDragMove={onPanelSnapDragMove}
           onPanelSnapDragEnd={onPanelSnapDragEnd}
@@ -2530,10 +2958,69 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       )}
 
       <div
-        className="flex-1 min-h-0 overflow-hidden"
+        ref={editorSurfaceRef}
+        data-testid="editor-surface"
+        className="relative flex-1 min-h-0 overflow-hidden"
         style={{ background: activeTabData ? editorBgColor : "transparent" }}
       >
-        {activeTabData && activeTab ? (
+        {activeEditorSplitDropSide && (
+          <div
+            data-testid="editor-split-drop-overlay"
+            className="pointer-events-none absolute inset-0 z-30"
+            aria-hidden="true"
+          >
+            {editorSplitDropSides.map((side) => (
+              <EditorSplitDropZone
+                key={side}
+                side={side}
+                isActive={activeEditorSplitDropSide === side}
+              />
+            ))}
+          </div>
+        )}
+
+        {editorSplitReady &&
+        editorSplitLeftTabData &&
+        editorSplitRightTabData ? (
+          <div
+            className="flex h-full flex-row"
+            data-testid="editor-split-surface"
+            style={{ background: editorBgColor }}
+          >
+            <div
+              className="relative w-1/2 border-r border-[var(--editor-border)]"
+              data-testid="editor-split-pane-left"
+            >
+              {renderSplitTabHandle(editorSplitLeftTabData, "left")}
+              {renderEditorSurface(editorSplitLeftTabData)}
+            </div>
+            <div
+              className="relative w-1/2"
+              data-testid="editor-split-pane-right"
+              style={{
+                visibility: splitReady ? "visible" : "hidden",
+                background: editorBgColor,
+              }}
+            >
+              {renderSplitTabHandle(editorSplitRightTabData, "right")}
+              <button
+                type="button"
+                onClick={handleCloseSplit}
+                onMouseDown={(event) => event.preventDefault()}
+                aria-label="Close split"
+                title="Close split"
+                className="absolute right-3 top-3 z-10 inline-flex h-10 w-10 min-w-10 items-center justify-center rounded-[18px] border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-strong)_94%,transparent)] p-0 text-[var(--text-secondary)] shadow-[var(--shell-shadow)] backdrop-blur-xl transition-[background-color,border-color,color,box-shadow,transform] hover:border-[var(--shell-border-strong)] hover:bg-[color-mix(in_srgb,var(--surface-active)_78%,transparent)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
+              >
+                <X
+                  className="h-4 w-4 min-w-4 shrink-0"
+                  size={16}
+                  strokeWidth={2.35}
+                />
+              </button>
+              {renderEditorSurface(editorSplitRightTabData, true)}
+            </div>
+          </div>
+        ) : activeTabData && activeTab ? (
           splitDirection && secondaryTabData ? (
             <div
               className={`flex h-full ${splitDirection === "horizontal" ? "flex-row" : "flex-col"}`}
@@ -2584,6 +3071,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           projectPath={projectPath}
         />
       ) : null}
+
+      <DragGhost ghost={splitTabDragGhost} />
 
       <QuickLookModal
         isOpen={quickLook.isOpen}

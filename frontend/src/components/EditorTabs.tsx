@@ -19,6 +19,12 @@ export interface Tab {
   isDirty?: boolean;
 }
 
+export type EditorSplitDropSide = "left" | "right";
+
+export interface EditorSplitDropTarget {
+  side: EditorSplitDropSide;
+}
+
 interface EditorTabDetachOptions {
   snapPosition?: ReturnType<typeof detectPanelSnapDropTarget>;
 }
@@ -34,6 +40,12 @@ interface EditorTabsProps extends PanelSnapDragCallbacks {
     point: { x: number; y: number },
     options?: EditorTabDetachOptions,
   ) => void | Promise<void>;
+  getEditorSplitDropTarget?: (point: {
+    x: number;
+    y: number;
+  }) => EditorSplitDropTarget | null;
+  onEditorSplitDragMove?: (side: EditorSplitDropSide | null) => void;
+  onTabDropToEditorSplit?: (tab: Tab, side: EditorSplitDropSide) => void;
   onUndo?: () => void;
   onRedo?: () => void;
   canUndo?: boolean;
@@ -56,6 +68,9 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
   onTabClose,
   onTabsReorder,
   onTabDetachToPanel,
+  getEditorSplitDropTarget,
+  onEditorSplitDragMove,
+  onTabDropToEditorSplit,
   onPanelSnapDragStart,
   onPanelSnapDragMove,
   onPanelSnapDragEnd,
@@ -171,7 +186,10 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
       return;
     }
 
-    if (!onTabDetachToPanel || event.button !== 0) {
+    if (
+      (!onTabDetachToPanel && !onTabDropToEditorSplit) ||
+      event.button !== 0
+    ) {
       return;
     }
 
@@ -184,6 +202,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
     const offsetY = startY - sourceRect.top;
     let moved = false;
     let latestSnapTarget: ReturnType<typeof detectPanelSnapDropTarget> = null;
+    let latestEditorSplitTarget: EditorSplitDropTarget | null = null;
     let snapDragStarted = false;
 
     const updatePanelSnapDrag = (nextSnapTarget: typeof latestSnapTarget) => {
@@ -195,6 +214,15 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         onPanelSnapDragMove?.(nextSnapTarget);
       }
       latestSnapTarget = nextSnapTarget;
+    };
+
+    const updateEditorSplitDrag = (
+      nextSplitTarget: EditorSplitDropTarget | null,
+    ) => {
+      if (latestEditorSplitTarget?.side !== nextSplitTarget?.side) {
+        onEditorSplitDragMove?.(nextSplitTarget?.side ?? null);
+      }
+      latestEditorSplitTarget = nextSplitTarget;
     };
 
     const handlePointerMove = (pointerEvent: PointerEvent) => {
@@ -217,14 +245,29 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
           pointerEvent.clientY >= rect.top &&
           pointerEvent.clientY <= rect.bottom,
         );
-        const snapTarget = !insideTabs
-          ? detectPanelSnapDropTarget(
-              pointerEvent.clientX,
-              pointerEvent.clientY,
-            )
-          : null;
+        const editorSplitTarget =
+          !insideTabs && getEditorSplitDropTarget
+            ? getEditorSplitDropTarget({
+                x: pointerEvent.clientX,
+                y: pointerEvent.clientY,
+              })
+            : null;
+        const snapTarget =
+          !insideTabs && !editorSplitTarget
+            ? detectPanelSnapDropTarget(
+                pointerEvent.clientX,
+                pointerEvent.clientY,
+              )
+            : null;
         setDraggedOutSourceTab(insideTabs ? null : tab.id);
-        updatePanelSnapDrag(snapTarget);
+        updateEditorSplitDrag(editorSplitTarget);
+        if (editorSplitTarget) {
+          if (snapDragStarted) {
+            updatePanelSnapDrag(null);
+          }
+        } else {
+          updatePanelSnapDrag(snapTarget);
+        }
         setDragGhost({
           x: pointerEvent.clientX,
           y: pointerEvent.clientY,
@@ -264,6 +307,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
       if (snapDragStarted) {
         onPanelSnapDragEnd?.();
       }
+      updateEditorSplitDrag(null);
       releaseSelectionLock();
       setDragGhost(null);
     };
@@ -297,6 +341,21 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         pointerEvent.clientY >= rect.top &&
         pointerEvent.clientY <= rect.bottom;
       if (!inside) {
+        const editorSplitTarget = getEditorSplitDropTarget?.({
+          x: pointerEvent.clientX,
+          y: pointerEvent.clientY,
+        });
+        if (editorSplitTarget) {
+          onTabDropToEditorSplit?.(tab, editorSplitTarget.side);
+          restoreDraggedSource();
+          return;
+        }
+
+        if (!onTabDetachToPanel) {
+          restoreDraggedSource();
+          return;
+        }
+
         const detachResult = onTabDetachToPanel(
           tab,
           {
