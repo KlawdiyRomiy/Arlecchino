@@ -56,6 +56,7 @@ import {
   detectPanelSnapDropTarget,
   type PanelSnapDragCallbacks,
 } from "../utils/panelSnapDrag";
+import type { EditorSplitDropSide } from "./EditorTabs";
 
 interface FileEntry {
   name: string;
@@ -100,6 +101,8 @@ interface DeletedEntryEvent {
 
 const FILE_EXPLORER_NODE_RIGHT_INSET = 8;
 const FOLDER_CREATE_BUTTON_SIZE = 22;
+const EDITOR_FILE_SPLIT_DRAG_EVENT = "arlecchino:editor-file-split-drag";
+const EDITOR_FILE_SPLIT_DROP_EVENT = "arlecchino:editor-file-split-drop";
 
 export interface FileExplorerProps extends PanelSnapDragCallbacks {
   onFileOpen?: (
@@ -215,6 +218,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
   const projectPathRef = useRef(projectPath);
   const onFileOpenRef = useRef(onFileOpen);
   const onFileOpenInPanelRef = useRef(onFileOpenInPanel);
+  const highlightedEditorTabsRef = useRef<HTMLElement | null>(null);
   const highlightedPathRef = useRef<string | null>(null);
   const selectedPathsRef = useRef(selectedPaths);
   const focusedPathRef = useRef(focusedPath);
@@ -1510,6 +1514,70 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     [findNodeByPath],
   );
 
+  const getEditorTabsDropTarget = useCallback(
+    (clientX: number, clientY: number) => {
+      const element = document.elementFromPoint(clientX, clientY);
+      return (
+        element?.closest<HTMLElement>('[data-testid="editor-tabs-bar"]') ?? null
+      );
+    },
+    [],
+  );
+
+  const getEditorSplitDropTarget = useCallback(
+    (clientX: number, clientY: number): EditorSplitDropSide | null => {
+      const editorSurface = document.querySelector<HTMLElement>(
+        '[data-testid="editor-surface"]',
+      );
+      const rect = editorSurface?.getBoundingClientRect();
+      if (
+        !rect ||
+        clientX < rect.left ||
+        clientX > rect.right ||
+        clientY < rect.top ||
+        clientY > rect.bottom
+      ) {
+        return null;
+      }
+
+      return clientX < rect.left + rect.width / 2 ? "left" : "right";
+    },
+    [],
+  );
+
+  const clearEditorTabsDropHighlight = useCallback(() => {
+    highlightedEditorTabsRef.current?.classList.remove(
+      "editor-tabs-code-drop-target",
+    );
+    highlightedEditorTabsRef.current = null;
+  }, []);
+
+  const emitEditorSplitDrag = useCallback(
+    (side: EditorSplitDropSide | null) => {
+      window.dispatchEvent(
+        new CustomEvent(EDITOR_FILE_SPLIT_DRAG_EVENT, {
+          detail: { side },
+        }),
+      );
+    },
+    [],
+  );
+
+  const emitEditorSplitDrop = useCallback(
+    (node: FileNode, side: EditorSplitDropSide) => {
+      window.dispatchEvent(
+        new CustomEvent(EDITOR_FILE_SPLIT_DROP_EVENT, {
+          detail: {
+            path: node.path,
+            name: node.name,
+            side,
+          },
+        }),
+      );
+    },
+    [],
+  );
+
   const autoScrollExplorerForDrag = useCallback(
     (clientY: number) => {
       const scrollElement = getExplorerScrollElement();
@@ -1659,6 +1727,7 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     let activeDrag = false;
     let latestDropTarget: string | null = null;
     let latestSnapTarget: ReturnType<typeof detectPanelSnapDropTarget> = null;
+    let latestEditorSplitTarget: EditorSplitDropSide | null = null;
     let snapDragStarted = false;
 
     const updatePanelSnapDrag = (nextSnapTarget: typeof latestSnapTarget) => {
@@ -1670,6 +1739,16 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         onPanelSnapDragMove?.(nextSnapTarget);
       }
       latestSnapTarget = nextSnapTarget;
+    };
+
+    const updateEditorSplitDrag = (
+      nextSplitTarget: EditorSplitDropSide | null,
+    ) => {
+      if (latestEditorSplitTarget === nextSplitTarget) {
+        return;
+      }
+      latestEditorSplitTarget = nextSplitTarget;
+      emitEditorSplitDrag(nextSplitTarget);
     };
 
     const handlePointerMove = (pointerEvent: PointerEvent) => {
@@ -1699,14 +1778,39 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
         pointerEvent.clientY >= rect.top &&
         pointerEvent.clientY <= rect.bottom,
       );
-      const snapTarget =
+      const editorTabsTarget =
         !insideExplorer && !node.isDirectory
+          ? getEditorTabsDropTarget(pointerEvent.clientX, pointerEvent.clientY)
+          : null;
+      if (highlightedEditorTabsRef.current !== editorTabsTarget) {
+        clearEditorTabsDropHighlight();
+        if (editorTabsTarget) {
+          editorTabsTarget.classList.add("editor-tabs-code-drop-target");
+          highlightedEditorTabsRef.current = editorTabsTarget;
+        }
+      }
+      const editorSplitTarget =
+        !insideExplorer && !node.isDirectory && !editorTabsTarget
+          ? getEditorSplitDropTarget(pointerEvent.clientX, pointerEvent.clientY)
+          : null;
+      const snapTarget =
+        !insideExplorer &&
+        !node.isDirectory &&
+        !editorTabsTarget &&
+        !editorSplitTarget
           ? detectPanelSnapDropTarget(
               pointerEvent.clientX,
               pointerEvent.clientY,
             )
           : null;
-      updatePanelSnapDrag(snapTarget);
+      updateEditorSplitDrag(editorSplitTarget);
+      if (editorSplitTarget || editorTabsTarget) {
+        if (snapDragStarted) {
+          updatePanelSnapDrag(null);
+        }
+      } else {
+        updatePanelSnapDrag(snapTarget);
+      }
       latestDropTarget = getExplorerDropDirectory(
         pointerEvent.clientX,
         pointerEvent.clientY,
@@ -1751,6 +1855,8 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
       if (snapDragStarted) {
         onPanelSnapDragEnd?.();
       }
+      clearEditorTabsDropHighlight();
+      updateEditorSplitDrag(null);
       releaseSelectionLock();
     };
 
@@ -1796,6 +1902,24 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
 
       if (!insideExplorer) {
         if (!node.isDirectory) {
+          const editorTabsTarget = getEditorTabsDropTarget(
+            pointerEvent.clientX,
+            pointerEvent.clientY,
+          );
+          if (editorTabsTarget) {
+            onFileOpenRef.current?.(node.path, "", node.name);
+            return;
+          }
+
+          const editorSplitTarget = getEditorSplitDropTarget(
+            pointerEvent.clientX,
+            pointerEvent.clientY,
+          );
+          if (editorSplitTarget) {
+            emitEditorSplitDrop(node, editorSplitTarget);
+            return;
+          }
+
           void handleFileOpenInPanel(
             node.path,
             node.name,

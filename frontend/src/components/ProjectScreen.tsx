@@ -109,6 +109,15 @@ const isMarkdownPath = (path: string): boolean =>
   /\.(md|mdx|markdown|mdown|mkdn)$/i.test(path);
 
 const editorSplitDropSides: EditorSplitDropSide[] = ["left", "right"];
+const EDITOR_FILE_SPLIT_DRAG_EVENT = "arlecchino:editor-file-split-drag";
+const EDITOR_FILE_SPLIT_DROP_EVENT = "arlecchino:editor-file-split-drop";
+
+interface EditorFileSplitDropEventDetail {
+  path?: string;
+  name?: string;
+  side?: EditorSplitDropSide;
+  line?: number;
+}
 
 const EditorSplitDropZone: React.FC<{
   side: EditorSplitDropSide;
@@ -2327,19 +2336,19 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     [],
   );
 
-  const handleTabDropToEditorSplit = useCallback(
-    (tab: Tab, side: EditorSplitDropSide) => {
+  const applyEditorSplitForTab = useCallback(
+    (tabId: string, side: EditorSplitDropSide) => {
       const allTabs = tabsRef.current;
-      if (!allTabs.some((candidate) => candidate.id === tab.id)) {
-        return;
+      if (!allTabs.some((candidate) => candidate.id === tabId)) {
+        return false;
       }
 
       const counterpartTabId =
-        (activeTabRef.current && activeTabRef.current !== tab.id
+        (activeTabRef.current && activeTabRef.current !== tabId
           ? activeTabRef.current
-          : allTabs.find((candidate) => candidate.id !== tab.id)?.id) ?? tab.id;
-      const leftTabId = side === "left" ? tab.id : counterpartTabId;
-      const rightTabId = side === "right" ? tab.id : counterpartTabId;
+          : allTabs.find((candidate) => candidate.id !== tabId)?.id) ?? tabId;
+      const leftTabId = side === "left" ? tabId : counterpartTabId;
+      const rightTabId = side === "right" ? tabId : counterpartTabId;
 
       notifyEditorSplitTransition();
       setEditorSplitSlots({ leftTabId, rightTabId });
@@ -2353,8 +2362,80 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       ensureTabFileLoaded(
         allTabs.find((candidate) => candidate.id === rightTabId),
       );
+      return true;
     },
     [ensureTabFileLoaded, notifyEditorSplitTransition],
+  );
+
+  const handleTabDropToEditorSplit = useCallback(
+    (tab: Tab, side: EditorSplitDropSide) => {
+      void applyEditorSplitForTab(tab.id, side);
+    },
+    [applyEditorSplitForTab],
+  );
+
+  const handleExternalFileDropToEditorSplit = useCallback(
+    async (detail: EditorFileSplitDropEventDetail) => {
+      const path = typeof detail.path === "string" ? detail.path.trim() : "";
+      const side = detail.side;
+      if (!path || (side !== "left" && side !== "right")) {
+        return;
+      }
+
+      const tabId = makeEditorTabId(path);
+      const existingTab = tabsRef.current.find(
+        (candidate) => candidate.id === tabId || candidate.path === path,
+      );
+      const tab: Tab = existingTab ?? {
+        id: tabId,
+        label: detail.name || getProjectPathBasename(path),
+        path,
+        isDirty: false,
+      };
+
+      if (!existingTab) {
+        tabsRef.current = [...tabsRef.current, tab];
+        setTabs((previous) =>
+          previous.some((candidate) => candidate.id === tab.id)
+            ? previous
+            : [...previous, tab],
+        );
+      }
+
+      const currentLoadState = fileLoadStatesRef.current[tab.id];
+      if (!currentLoadState) {
+        storeFileLoadState(
+          tab.id,
+          createEditorFileLoadingLoad(tab.path, tab.label),
+        );
+      }
+
+      applyEditorSplitForTab(tab.id, side);
+      setActiveEditorSplitDropSide(null);
+      if (detail.line) {
+        setHighlightLine(detail.line);
+        window.setTimeout(() => setHighlightLine(undefined), 3000);
+      }
+
+      if (currentLoadState && currentLoadState.kind !== "loading") {
+        return;
+      }
+
+      try {
+        const file = await loadEditorFile(tab.path);
+        storeFileLoadState(tab.id, file);
+      } catch (error) {
+        useAppNotificationStore.getState().addNotification({
+          id: `editor-split-drop:${tab.path}`,
+          kind: "error",
+          title: "Failed to open split file",
+          message: error instanceof Error ? error.message : String(error),
+          source: "Explorer",
+          timeoutMs: 7000,
+        });
+      }
+    },
+    [applyEditorSplitForTab, storeFileLoadState],
   );
 
   const handleEditorTabClick = useCallback(
@@ -2616,6 +2697,43 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     splitDirection,
     tabs,
   ]);
+
+  useEffect(() => {
+    const handleExternalFileSplitDrag = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ side?: EditorSplitDropSide | null }>
+      ).detail;
+      const side = detail?.side;
+      setActiveEditorSplitDropSide(
+        side === "left" || side === "right" ? side : null,
+      );
+    };
+
+    const handleExternalFileSplitDrop = (event: Event) => {
+      const detail = (event as CustomEvent<EditorFileSplitDropEventDetail>)
+        .detail;
+      void handleExternalFileDropToEditorSplit(detail ?? {});
+    };
+
+    window.addEventListener(
+      EDITOR_FILE_SPLIT_DRAG_EVENT,
+      handleExternalFileSplitDrag as EventListener,
+    );
+    window.addEventListener(
+      EDITOR_FILE_SPLIT_DROP_EVENT,
+      handleExternalFileSplitDrop as EventListener,
+    );
+    return () => {
+      window.removeEventListener(
+        EDITOR_FILE_SPLIT_DRAG_EVENT,
+        handleExternalFileSplitDrag as EventListener,
+      );
+      window.removeEventListener(
+        EDITOR_FILE_SPLIT_DROP_EVENT,
+        handleExternalFileSplitDrop as EventListener,
+      );
+    };
+  }, [handleExternalFileDropToEditorSplit]);
 
   const handleCloseSplit = () => {
     setSplitDirection(null);
