@@ -134,7 +134,7 @@ const pushEntry = (
   });
 };
 
-export const parseGitStatusPorcelainV2 = (output: string): ParsedGitStatus => {
+export const parseGitPorcelainStatus = (output: string): ParsedGitStatus => {
   const branch = makeEmptyBranchInfo();
   const staged: GitFileEntry[] = [];
   const unstaged: GitFileEntry[] = [];
@@ -248,7 +248,7 @@ export const parseGitStatusPorcelainV2 = (output: string): ParsedGitStatus => {
   };
 };
 
-export const parseGitStatusFallbackV1 = (output: string): ParsedGitStatus => {
+export const parseGitFallbackStatus = (output: string): ParsedGitStatus => {
   const branch = makeEmptyBranchInfo();
   const staged: GitFileEntry[] = [];
   const unstaged: GitFileEntry[] = [];

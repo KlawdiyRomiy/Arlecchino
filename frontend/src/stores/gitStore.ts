@@ -17,8 +17,8 @@ import {
   mergeLineMarkers,
   normalizeGitHubRemoteToWeb,
   normalizePathForGit,
-  parseGitStatusFallbackV1,
-  parseGitStatusPorcelainV2,
+  parseGitFallbackStatus,
+  parseGitPorcelainStatus,
   parseRemoteNameList,
   parseUnifiedDiffLineMarkers,
 } from "../utils/git";
@@ -384,11 +384,11 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     set({ loading: true, error: null });
 
     try {
-      let statusV2 = "";
+      let porcelainStatus = "";
       let statusError: unknown = null;
 
       try {
-        statusV2 = await readStatus();
+        porcelainStatus = await readStatus();
       } catch (error) {
         statusError = error;
       }
@@ -417,9 +417,9 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
         throw statusError;
       }
 
-      const parsed = statusV2.trim()
-        ? parseGitStatusPorcelainV2(statusV2)
-        : parseGitStatusFallbackV1(fallbackStatus);
+      const parsed = porcelainStatus.trim()
+        ? parseGitPorcelainStatus(porcelainStatus)
+        : parseGitFallbackStatus(fallbackStatus);
 
       if (!parsed.branch.current && branchCurrent) {
         parsed.branch.current = branchCurrent;
@@ -802,8 +802,10 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   },
 
   refreshFileMarkers: async (filePath, force = false) => {
-    const { projectPath, markerUpdatedAt, markerLoading } = get();
+    const { projectPath, markerUpdatedAt, markerLoading, isRepositoryMissing } =
+      get();
     if (!projectPath || !filePath) return;
+    if (isRepositoryMissing) return;
 
     const requestedProjectPath = projectPath;
     const relativePath = normalizePathForGit(projectPath, filePath);
@@ -863,6 +865,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
         };
       });
     } catch (error) {
+      const repositoryMissing = isMissingRepositoryError(error);
       set((state) => {
         if (state.projectPath !== requestedProjectPath) {
           return state;
@@ -870,6 +873,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
 
         return {
           error: toErrorMessage(error),
+          isRepositoryMissing: repositoryMissing || state.isRepositoryMissing,
           markerLoading: {
             ...state.markerLoading,
             [markerKey]: false,
