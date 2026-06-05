@@ -32,6 +32,7 @@ interface EditorTabDetachOptions {
 interface EditorTabsProps extends PanelSnapDragCallbacks {
   tabs: Tab[];
   activeTab: string | null;
+  activeIndicatorTab?: string | null;
   onTabClick: (tabId: string) => void;
   onTabClose: (tabId: string) => void;
   onTabsReorder?: (tabs: Tab[]) => void;
@@ -57,13 +58,16 @@ interface EditorTabsProps extends PanelSnapDragCallbacks {
   markdownPreviewAvailable?: boolean;
   markdownPreviewActive?: boolean;
   onToggleMarkdownPreview?: () => void;
+  showHistoryControls?: boolean;
   showSplitButtons?: boolean;
+  endControls?: React.ReactNode;
   getTabContextMenuItems?: (tab: Tab) => ContextActionMenuItem[];
 }
 
 export const EditorTabs: React.FC<EditorTabsProps> = ({
   tabs,
   activeTab,
+  activeIndicatorTab,
   onTabClick,
   onTabClose,
   onTabsReorder,
@@ -85,7 +89,9 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
   markdownPreviewAvailable = false,
   markdownPreviewActive = false,
   onToggleMarkdownPreview,
+  showHistoryControls = true,
   showSplitButtons = true,
+  endControls,
   getTabContextMenuItems,
 }) => {
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
@@ -94,6 +100,8 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
     null,
   );
   const draggedOutTabIdRef = React.useRef<string | null>(null);
+  const visibleActiveIndicatorTab =
+    activeIndicatorTab === undefined ? activeTab : activeIndicatorTab;
 
   const setDraggedOutSourceTab = React.useCallback((tabId: string | null) => {
     if (draggedOutTabIdRef.current === tabId) {
@@ -143,12 +151,6 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         >
           <X size={14} />
         </button>
-      )}
-      {activeTab === tab.id && (
-        <div
-          data-testid="active-tab-indicator"
-          className="absolute bottom-0 left-0 right-0 h-[2px] bg-[var(--text-primary)]"
-        />
       )}
     </>
   );
@@ -229,8 +231,6 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
       if (pointerEvent.pointerId !== pointerId) {
         return;
       }
-      pointerEvent.preventDefault();
-      document.getSelection()?.removeAllRanges();
 
       const dx = pointerEvent.clientX - startX;
       const dy = pointerEvent.clientY - startY;
@@ -245,21 +245,30 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
           pointerEvent.clientY >= rect.top &&
           pointerEvent.clientY <= rect.bottom,
         );
-        const editorSplitTarget =
-          !insideTabs && getEditorSplitDropTarget
-            ? getEditorSplitDropTarget({
-                x: pointerEvent.clientX,
-                y: pointerEvent.clientY,
-              })
-            : null;
-        const snapTarget =
-          !insideTabs && !editorSplitTarget
-            ? detectPanelSnapDropTarget(
-                pointerEvent.clientX,
-                pointerEvent.clientY,
-              )
-            : null;
-        setDraggedOutSourceTab(insideTabs ? null : tab.id);
+        if (insideTabs) {
+          setDraggedOutSourceTab(null);
+          updateEditorSplitDrag(null);
+          if (snapDragStarted) {
+            updatePanelSnapDrag(null);
+          }
+          setDragGhost(null);
+          return;
+        }
+        pointerEvent.preventDefault();
+        document.getSelection()?.removeAllRanges();
+        const editorSplitTarget = getEditorSplitDropTarget
+          ? getEditorSplitDropTarget({
+              x: pointerEvent.clientX,
+              y: pointerEvent.clientY,
+            })
+          : null;
+        const snapTarget = !editorSplitTarget
+          ? detectPanelSnapDropTarget(
+              pointerEvent.clientX,
+              pointerEvent.clientY,
+            )
+          : null;
+        setDraggedOutSourceTab(tab.id);
         updateEditorSplitDrag(editorSplitTarget);
         if (editorSplitTarget) {
           if (snapDragStarted) {
@@ -392,6 +401,10 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
     const sourceHidden = draggedOutTabId === tab.id;
     const tabStyle: React.CSSProperties = {
       borderRadius: activeTab === tab.id ? "8px 8px 0 0" : "0",
+      boxShadow:
+        visibleActiveIndicatorTab === tab.id
+          ? "inset 0 -3px 0 var(--editor-tab-active-indicator, var(--text-primary))"
+          : undefined,
       visibility: sourceHidden ? "hidden" : undefined,
       pointerEvents: sourceHidden ? "none" : undefined,
     };
@@ -449,7 +462,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         maxHeight: 40,
       }}
     >
-      {tabs.length > 0 && (
+      {showHistoryControls && tabs.length > 0 && (
         <div
           data-testid="editor-tabs-history-controls"
           className="relative z-10 flex h-full max-h-full items-center gap-1 border-r border-[var(--shell-inline-divider)] bg-[var(--editor-surface-elevated)] px-1.5 py-0"
@@ -578,6 +591,11 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
               />
             </button>
           </div>
+        </div>
+      )}
+      {endControls && (
+        <div className="relative z-10 flex h-full items-stretch">
+          {endControls}
         </div>
       )}
       <DragGhost ghost={dragGhost} />

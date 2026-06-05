@@ -1524,6 +1524,16 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
     [],
   );
 
+  const getEditorTabsSplitSide = useCallback(
+    (editorTabsTarget: HTMLElement | null): EditorSplitDropSide | null => {
+      const side =
+        editorTabsTarget?.closest<HTMLElement>("[data-editor-split-side]")
+          ?.dataset.editorSplitSide ?? null;
+      return side === "left" || side === "right" ? side : null;
+    },
+    [],
+  );
+
   const getEditorSplitDropTarget = useCallback(
     (clientX: number, clientY: number): EditorSplitDropSide | null => {
       const editorSurface = document.querySelector<HTMLElement>(
@@ -1907,6 +1917,12 @@ const FileExplorerComponent: React.FC<FileExplorerProps> = ({
             pointerEvent.clientY,
           );
           if (editorTabsTarget) {
+            const editorTabsSplitSide =
+              getEditorTabsSplitSide(editorTabsTarget);
+            if (editorTabsSplitSide) {
+              emitEditorSplitDrop(node, editorTabsSplitSide);
+              return;
+            }
             onFileOpenRef.current?.(node.path, "", node.name);
             return;
           }

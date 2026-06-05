@@ -109,6 +109,7 @@
   --editor-ghost-text: rgba(200, 200, 200, 0.34);
   --editor-highlight: rgba(125, 211, 252, 0.14);
   --editor-accent: #ffffff;
+  --editor-tab-active-indicator: var(--text-primary);
   --syntax-comment: #5f6b7a;
   --syntax-string: #a8d6a2;
   --syntax-number: #f2b47e;

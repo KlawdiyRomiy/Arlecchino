@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { redo, undo } from "@codemirror/commands";
 import type { EditorView } from "@codemirror/view";
-import { ArrowLeftRight, Copy, ExternalLink, X } from "lucide-react";
+import { ArrowLeftRight, Copy, ExternalLink, Search, X } from "lucide-react";
 import {
   CodeMirrorEditor,
   type EditorHistoryAvailability,
@@ -17,7 +17,6 @@ import { TabSwitcherOverlay } from "./TabSwitcherOverlay";
 import QuickLookModal from "./QuickLookModal";
 import { BinaryEditorPreview } from "./BinaryEditorPreview";
 import { ImageEditorPreview } from "./ImageEditorPreview";
-import { DragGhost, type DragGhostState } from "./ui/DragGhost";
 import * as AppFunctions from "../wails/app";
 import { EventsOn } from "../wails/runtime";
 import { useProjectEntryActions } from "../contexts/ProjectEntryActionsContext";
@@ -69,10 +68,14 @@ import type {
   PanelOpenRequest,
 } from "./layout/MainLayout.types";
 import type { PanelSnapDragCallbacks } from "../utils/panelSnapDrag";
-import { beginDragSelectionLock } from "../utils/dragSelectionLock";
 
 type SplitDirection = "horizontal" | "vertical" | null;
-type EditorSplitSlots = { leftTabId: string; rightTabId: string } | null;
+type EditorSplitSlots = {
+  leftTabIds: string[];
+  rightTabIds: string[];
+  leftActiveTabId: string;
+  rightActiveTabId: string;
+} | null;
 
 type EditorFileOpenHandler = (payload: EditorFileOpenPayload) => void;
 
@@ -118,6 +121,179 @@ interface EditorFileSplitDropEventDetail {
   side?: EditorSplitDropSide;
   line?: number;
 }
+
+const normalizeEditorTabs = (inputTabs: Tab[]): Tab[] => {
+  const normalized: Tab[] = [];
+  const pathIndex = new Map<string, number>();
+
+  inputTabs.forEach((tab) => {
+    const path = tab.path.trim();
+    if (!path) {
+      return;
+    }
+
+    const nextTab: Tab = {
+      ...tab,
+      id: makeEditorTabId(path),
+      label: tab.label.trim() || getProjectPathBasename(path),
+      path,
+    };
+    const existingIndex = pathIndex.get(path);
+    if (existingIndex === undefined) {
+      pathIndex.set(path, normalized.length);
+      normalized.push(nextTab);
+      return;
+    }
+
+    if (nextTab.isDirty && !normalized[existingIndex].isDirty) {
+      normalized[existingIndex] = {
+        ...normalized[existingIndex],
+        isDirty: true,
+      };
+    }
+  });
+
+  return normalized;
+};
+
+const uniqueEditorTabIds = (tabIds: string[]): string[] => {
+  const seen = new Set<string>();
+  const uniqueIds: string[] = [];
+  tabIds.forEach((tabId) => {
+    if (!tabId || seen.has(tabId)) {
+      return;
+    }
+    seen.add(tabId);
+    uniqueIds.push(tabId);
+  });
+  return uniqueIds;
+};
+
+const getEditorSplitTabIds = (
+  slots: NonNullable<EditorSplitSlots>,
+  side: EditorSplitDropSide,
+): string[] => (side === "left" ? slots.leftTabIds : slots.rightTabIds);
+
+const getEditorSplitActiveTabId = (
+  slots: NonNullable<EditorSplitSlots>,
+  side: EditorSplitDropSide,
+): string => (side === "left" ? slots.leftActiveTabId : slots.rightActiveTabId);
+
+const getEditorSplitSideForTabId = (
+  slots: EditorSplitSlots,
+  tabId: string | null,
+): EditorSplitDropSide | null => {
+  if (!slots || !tabId) {
+    return null;
+  }
+  if (slots.leftTabIds.includes(tabId)) {
+    return "left";
+  }
+  if (slots.rightTabIds.includes(tabId)) {
+    return "right";
+  }
+  return null;
+};
+
+const normalizeEditorSplitSlots = (
+  slots: EditorSplitSlots,
+  tabs: Tab[],
+): EditorSplitSlots => {
+  if (!slots) {
+    return null;
+  }
+
+  const validTabIds = new Set(tabs.map((tab) => tab.id));
+  const leftTabIds = uniqueEditorTabIds(slots.leftTabIds).filter((tabId) =>
+    validTabIds.has(tabId),
+  );
+  const rightTabIds = uniqueEditorTabIds(slots.rightTabIds).filter((tabId) =>
+    validTabIds.has(tabId),
+  );
+
+  if (leftTabIds.length === 0 || rightTabIds.length === 0) {
+    return null;
+  }
+
+  return {
+    leftTabIds,
+    rightTabIds,
+    leftActiveTabId: leftTabIds.includes(slots.leftActiveTabId)
+      ? slots.leftActiveTabId
+      : leftTabIds[0],
+    rightActiveTabId: rightTabIds.includes(slots.rightActiveTabId)
+      ? slots.rightActiveTabId
+      : rightTabIds[0],
+  };
+};
+
+const getTabsByIds = (tabs: Tab[], tabIds: string[]): Tab[] => {
+  const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
+  return tabIds.flatMap((tabId) => {
+    const tab = tabsById.get(tabId);
+    return tab ? [tab] : [];
+  });
+};
+
+const getOtherEditorTabIds = (tabs: Tab[], tabId: string): string[] => {
+  const tabIds: string[] = [];
+  tabs.forEach((tab) => {
+    if (tab.id !== tabId) {
+      tabIds.push(tab.id);
+    }
+  });
+  return tabIds;
+};
+
+const readStoredEditorTabs = (storageKey: string): Tab[] => {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { tabs?: unknown };
+    if (!Array.isArray(parsed.tabs)) {
+      return [];
+    }
+
+    return normalizeEditorTabs(
+      parsed.tabs.flatMap((entry): Tab[] => {
+        if (!entry || typeof entry !== "object") {
+          return [];
+        }
+        const candidate = entry as { path?: unknown; label?: unknown };
+        if (typeof candidate.path !== "string") {
+          return [];
+        }
+
+        const path = candidate.path;
+        const label =
+          typeof candidate.label === "string"
+            ? candidate.label
+            : getProjectPathBasename(path);
+        return [
+          {
+            id: makeEditorTabId(path),
+            label,
+            path,
+            isDirty: false,
+          },
+        ];
+      }),
+    );
+  } catch {
+    return [];
+  }
+};
+
+const readStoredActiveEditorTabId = (storageKey: string): string | null => {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { activeTabId?: unknown };
+    return typeof parsed.activeTabId === "string" ? parsed.activeTabId : null;
+  } catch {
+    return null;
+  }
+};
 
 const EditorSplitDropZone: React.FC<{
   side: EditorSplitDropSide;
@@ -268,33 +444,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   const tabStorageKey = `editorTabs:${projectPath}`;
 
-  const [tabs, setTabs] = useState<Tab[]>(() => {
-    try {
-      const raw = localStorage.getItem(`editorTabs:${projectPath}`);
-      if (!raw) return [];
-      const { tabs: saved } = JSON.parse(raw);
-      return Array.isArray(saved)
-        ? saved.map((t: { path: string; label: string }) => ({
-            id: makeEditorTabId(t.path),
-            label: t.label,
-            path: t.path,
-            isDirty: false,
-          }))
-        : [];
-    } catch {
-      return [];
-    }
-  });
+  const [tabs, setTabs] = useState<Tab[]>(() =>
+    readStoredEditorTabs(tabStorageKey),
+  );
 
-  const [activeTab, setActiveTab] = useState<string | null>(() => {
-    try {
-      const raw = localStorage.getItem(`editorTabs:${projectPath}`);
-      if (!raw) return null;
-      return JSON.parse(raw).activeTabId ?? null;
-    } catch {
-      return null;
-    }
-  });
+  const [activeTab, setActiveTab] = useState<string | null>(() =>
+    readStoredActiveEditorTabId(tabStorageKey),
+  );
 
   const [fileContents, setFileContents] = useState<Record<string, string>>({});
   const [fileLoadStates, setFileLoadStates] = useState<
@@ -311,10 +467,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   );
   const [editorSplitSlots, setEditorSplitSlots] =
     useState<EditorSplitSlots>(null);
+  const [focusedEditorSplitSide, setFocusedEditorSplitSide] =
+    useState<EditorSplitDropSide>("left");
   const [activeEditorSplitDropSide, setActiveEditorSplitDropSide] =
     useState<EditorSplitDropSide | null>(null);
-  const [splitTabDragGhost, setSplitTabDragGhost] =
-    useState<DragGhostState | null>(null);
   const [quickLook, setQuickLook] = useState<{
     isOpen: boolean;
     filePath: string;
@@ -348,11 +504,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const fileContentsRef = useRef<Record<string, string>>({});
   const fileLoadStatesRef = useRef<Record<string, EditorFileLoadState>>({});
   const editorSurfaceRef = useRef<HTMLDivElement | null>(null);
-  const splitTabReturnTargetRef = useRef<HTMLElement | null>(null);
   const activeTabRef = useRef<string | null>(activeTab);
   const activeEditorViewRef = useRef<EditorView | null>(null);
+  const editorViewRefs = useRef<Record<string, EditorView | null>>({});
   const secondaryActiveTabRef = useRef<string | null>(secondaryActiveTab);
   const editorSplitSlotsRef = useRef<EditorSplitSlots>(editorSplitSlots);
+  const focusedEditorSplitSideRef = useRef<EditorSplitDropSide>(
+    focusedEditorSplitSide,
+  );
   const openFileRequestRef = useRef(0);
   const fileOpenLoadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -374,13 +533,51 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setTabSwitcherSelectionState(tabId);
   }, []);
 
-  const handleEditorViewReady = useCallback((view: EditorView | null) => {
+  const updateActiveEditorView = useCallback((view: EditorView | null) => {
     activeEditorViewRef.current = view;
     setActiveEditorViewAvailable(Boolean(view));
     if (!view) {
       setEditorHistoryAvailability(EMPTY_EDITOR_HISTORY_AVAILABILITY);
     }
   }, []);
+
+  const handleEditorViewReadyForTab = useCallback(
+    (tabId: string, view: EditorView | null) => {
+      if (view) {
+        editorViewRefs.current[tabId] = view;
+      } else {
+        delete editorViewRefs.current[tabId];
+      }
+
+      const splitSlots = editorSplitSlotsRef.current;
+      const focusedTabId = splitSlots
+        ? getEditorSplitActiveTabId(
+            splitSlots,
+            focusedEditorSplitSideRef.current,
+          )
+        : activeTabRef.current;
+      if (focusedTabId === tabId) {
+        updateActiveEditorView(view);
+      }
+    },
+    [updateActiveEditorView],
+  );
+
+  const focusEditorSplitSide = useCallback(
+    (side: EditorSplitDropSide) => {
+      focusedEditorSplitSideRef.current = side;
+      setFocusedEditorSplitSide(side);
+
+      const splitSlots = editorSplitSlotsRef.current;
+      const focusedTabId = splitSlots
+        ? getEditorSplitActiveTabId(splitSlots, side)
+        : activeTabRef.current;
+      updateActiveEditorView(
+        focusedTabId ? (editorViewRefs.current[focusedTabId] ?? null) : null,
+      );
+    },
+    [updateActiveEditorView],
+  );
 
   const handleHistoryAvailabilityChange = useCallback(
     (next: EditorHistoryAvailability) => {
@@ -557,10 +754,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         return;
       }
 
+      const normalizedTabs = normalizeEditorTabs(tabs);
       localStorage.setItem(
         tabStorageKey,
         JSON.stringify({
-          tabs: tabs.map((t) => ({ path: t.path, label: t.label })),
+          tabs: normalizedTabs.map((t) => ({ path: t.path, label: t.label })),
           activeTabId: activeTab,
         }),
       );
@@ -649,8 +847,22 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       // Cmd+W (Close Tab)
       if (shortcuts.closeTab(e)) {
         e.preventDefault();
-        if (activeTab) {
-          handleTabClose(activeTab);
+        const splitSlots = editorSplitSlotsRef.current;
+        const tabIdToClose = splitSlots
+          ? getEditorSplitActiveTabId(
+              splitSlots,
+              focusedEditorSplitSideRef.current,
+            )
+          : activeTab;
+        if (tabIdToClose) {
+          const splitSide = splitSlots
+            ? focusedEditorSplitSideRef.current
+            : null;
+          if (splitSide) {
+            handleSplitTabClose(splitSide, tabIdToClose);
+          } else {
+            handleTabClose(tabIdToClose);
+          }
         } else if (tabs.length === 0) {
           onRequestProjectClose?.();
         }
@@ -661,18 +873,17 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
         e.preventDefault();
         if (splitDirection) {
+          editorSplitSlotsRef.current = null;
           setSplitDirection(null);
           setSecondaryActiveTab(null);
           setEditorSplitSlots(null);
-        } else if (activeTab && tabs.length > 1) {
-          setEditorSplitSlots(null);
-          setSplitDirection("horizontal");
-          const otherTab = tabs.find((t) => t.id !== activeTab);
-          setSecondaryActiveTab(otherTab?.id || null);
+          focusEditorSplitSide("left");
         } else if (activeTab) {
-          setEditorSplitSlots(null);
-          setSplitDirection("horizontal");
-          setSecondaryActiveTab(activeTab);
+          window.dispatchEvent(
+            new CustomEvent("arlecchino:editor-split", {
+              detail: { direction: "horizontal" },
+            }),
+          );
         }
         return;
       }
@@ -681,18 +892,17 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "|") {
         e.preventDefault();
         if (splitDirection) {
+          editorSplitSlotsRef.current = null;
           setSplitDirection(null);
           setSecondaryActiveTab(null);
           setEditorSplitSlots(null);
-        } else if (activeTab && tabs.length > 1) {
-          setEditorSplitSlots(null);
-          setSplitDirection("vertical");
-          const otherTab = tabs.find((t) => t.id !== activeTab);
-          setSecondaryActiveTab(otherTab?.id || null);
+          focusEditorSplitSide("left");
         } else if (activeTab) {
-          setEditorSplitSlots(null);
-          setSplitDirection("vertical");
-          setSecondaryActiveTab(activeTab);
+          window.dispatchEvent(
+            new CustomEvent("arlecchino:editor-split", {
+              detail: { direction: "vertical" },
+            }),
+          );
         }
         return;
       }
@@ -706,6 +916,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     closedTabs,
     commitTabSwitcher,
     cycleTabSwitcher,
+    focusEditorSplitSide,
     quickLook.isOpen,
     onRequestProjectClose,
     splitDirection,
@@ -1180,7 +1391,14 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     const primaryActiveTab = tabs.find((tab) => tab.id === activeTab) ?? null;
     const secondaryTab =
       tabs.find((tab) => tab.id === secondaryActiveTab) ?? null;
-    const statusTab = primaryActiveTab ?? secondaryTab;
+    const splitActiveTab = editorSplitSlots
+      ? (tabs.find(
+          (tab) =>
+            tab.id ===
+            getEditorSplitActiveTabId(editorSplitSlots, focusedEditorSplitSide),
+        ) ?? null)
+      : null;
+    const statusTab = splitActiveTab ?? primaryActiveTab ?? secondaryTab;
 
     if (!statusTab) {
       setStatusFile(null, null, null);
@@ -1206,8 +1424,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   }, [
     activeEditorPaneId,
     activeTab,
+    editorSplitSlots,
     fileContents,
     fileLoadStates,
+    focusedEditorSplitSide,
     getLanguageFromPath,
     secondaryActiveTab,
     setStatusFile,
@@ -1250,6 +1470,56 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     );
   }, []);
 
+  const commitEditorSplitSlots = useCallback((nextSlots: EditorSplitSlots) => {
+    const normalizedSlots = normalizeEditorSplitSlots(
+      nextSlots,
+      tabsRef.current,
+    );
+    editorSplitSlotsRef.current = normalizedSlots;
+    setEditorSplitSlots(normalizedSlots);
+    if (!normalizedSlots) {
+      setSplitDirection(null);
+      setSecondaryActiveTab(null);
+      return false;
+    }
+
+    setSplitDirection("horizontal");
+    setActiveTab(normalizedSlots.leftActiveTabId);
+    setSecondaryActiveTab(normalizedSlots.rightActiveTabId);
+    return true;
+  }, []);
+
+  const addTabToEditorSplitSide = useCallback(
+    (tabId: string, side: EditorSplitDropSide): boolean => {
+      const currentSlots = editorSplitSlotsRef.current;
+      if (!currentSlots) {
+        return false;
+      }
+
+      const nextSlots: NonNullable<EditorSplitSlots> = {
+        leftTabIds:
+          side === "left"
+            ? uniqueEditorTabIds([...currentSlots.leftTabIds, tabId])
+            : currentSlots.leftTabIds,
+        rightTabIds:
+          side === "right"
+            ? uniqueEditorTabIds([...currentSlots.rightTabIds, tabId])
+            : currentSlots.rightTabIds,
+        leftActiveTabId: side === "left" ? tabId : currentSlots.leftActiveTabId,
+        rightActiveTabId:
+          side === "right" ? tabId : currentSlots.rightActiveTabId,
+      };
+
+      if (!commitEditorSplitSlots(nextSlots)) {
+        return false;
+      }
+
+      focusEditorSplitSide(side);
+      return true;
+    },
+    [commitEditorSplitSlots, focusEditorSplitSide],
+  );
+
   const handleFileOpen = useCallback(
     ({ file, line }: EditorFileOpenPayload) => {
       const filePath = file.path;
@@ -1260,9 +1530,18 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         if (file.kind !== "loading") {
           storeFileLoadState(existingTab.id, file);
         }
-        setEditorSplitSlots(null);
-        setSplitDirection(null);
-        setSecondaryActiveTab(null);
+        const splitSide =
+          getEditorSplitSideForTabId(
+            editorSplitSlotsRef.current,
+            existingTab.id,
+          ) ?? focusedEditorSplitSideRef.current;
+        if (addTabToEditorSplitSide(existingTab.id, splitSide)) {
+          if (line) {
+            setHighlightLine(line);
+            window.setTimeout(() => setHighlightLine(undefined), 3000);
+          }
+          return;
+        }
         setActiveTab(existingTab.id);
         if (line) {
           setHighlightLine(line);
@@ -1279,21 +1558,25 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       };
 
       storeFileLoadState(tabId, file);
-      setTabs((prevTabs) =>
-        prevTabs.some((tab) => tab.path === filePath)
-          ? prevTabs
-          : [...prevTabs, newTab],
-      );
-      setEditorSplitSlots(null);
-      setSplitDirection(null);
-      setSecondaryActiveTab(null);
+      const nextTabs = normalizeEditorTabs([...tabsRef.current, newTab]);
+      tabsRef.current = nextTabs;
+      setTabs(nextTabs);
+      if (
+        addTabToEditorSplitSide(newTab.id, focusedEditorSplitSideRef.current)
+      ) {
+        if (line) {
+          setHighlightLine(line);
+          window.setTimeout(() => setHighlightLine(undefined), 3000);
+        }
+        return;
+      }
       setActiveTab(tabId);
       if (line) {
         setHighlightLine(line);
         window.setTimeout(() => setHighlightLine(undefined), 3000);
       }
     },
-    [removeStaleLoadingTabs, storeFileLoadState],
+    [addTabToEditorSplitSide, removeStaleLoadingTabs, storeFileLoadState],
   );
 
   const clearFileOpenLoadingTimer = useCallback(() => {
@@ -1361,6 +1644,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     }
 
     const updatedTabs = tabs.filter((tab) => tab.id !== tabId);
+    tabsRef.current = updatedTabs;
     setTabs(updatedTabs);
 
     const { [tabId]: _, ...remainingContents } = fileContents;
@@ -1381,35 +1665,94 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       }
     }
 
-    if (
-      editorSplitSlotsRef.current &&
-      (editorSplitSlotsRef.current.leftTabId === tabId ||
-        editorSplitSlotsRef.current.rightTabId === tabId)
-    ) {
-      setSplitDirection(null);
-      setSecondaryActiveTab(null);
-      setEditorSplitSlots(null);
+    const currentSplitSlots = editorSplitSlotsRef.current;
+    if (currentSplitSlots) {
+      const nextSplitSlots = normalizeEditorSplitSlots(
+        {
+          leftTabIds: currentSplitSlots.leftTabIds.filter((id) => id !== tabId),
+          rightTabIds: currentSplitSlots.rightTabIds.filter(
+            (id) => id !== tabId,
+          ),
+          leftActiveTabId: currentSplitSlots.leftActiveTabId,
+          rightActiveTabId: currentSplitSlots.rightActiveTabId,
+        },
+        updatedTabs,
+      );
+      editorSplitSlotsRef.current = nextSplitSlots;
+      setEditorSplitSlots(nextSplitSlots);
+      if (nextSplitSlots) {
+        setActiveTab(nextSplitSlots.leftActiveTabId);
+        setSecondaryActiveTab(nextSplitSlots.rightActiveTabId);
+      } else {
+        setSplitDirection(null);
+        setSecondaryActiveTab(null);
+      }
     }
   };
 
-  const handleCloseOtherTabs = useCallback((tabId: string) => {
-    const retainedTab = tabsRef.current.find((tab) => tab.id === tabId);
-    if (!retainedTab) {
+  const handleSplitTabClose = (side: EditorSplitDropSide, tabId: string) => {
+    const currentSplitSlots = editorSplitSlotsRef.current;
+    if (!currentSplitSlots) {
+      handleTabClose(tabId);
       return;
     }
 
-    setTabs([retainedTab]);
-    setFileContents((previous) =>
-      previous[tabId] !== undefined ? { [tabId]: previous[tabId] } : {},
+    const nextSideIds = getEditorSplitTabIds(currentSplitSlots, side).filter(
+      (id) => id !== tabId,
     );
-    setFileLoadStates((previous) =>
-      previous[tabId] !== undefined ? { [tabId]: previous[tabId] } : {},
-    );
-    setActiveTab(tabId);
-    setSecondaryActiveTab(null);
-    setSplitDirection(null);
-    setEditorSplitSlots(null);
-  }, []);
+    const otherSide = side === "left" ? "right" : "left";
+    const tabStillOpenOnOtherSide = getEditorSplitTabIds(
+      currentSplitSlots,
+      otherSide,
+    ).includes(tabId);
+
+    if (tabStillOpenOnOtherSide && nextSideIds.length > 0) {
+      const nextSplitSlots: NonNullable<EditorSplitSlots> = {
+        leftTabIds:
+          side === "left" ? nextSideIds : currentSplitSlots.leftTabIds,
+        rightTabIds:
+          side === "right" ? nextSideIds : currentSplitSlots.rightTabIds,
+        leftActiveTabId:
+          side === "left" && currentSplitSlots.leftActiveTabId === tabId
+            ? nextSideIds[0]
+            : currentSplitSlots.leftActiveTabId,
+        rightActiveTabId:
+          side === "right" && currentSplitSlots.rightActiveTabId === tabId
+            ? nextSideIds[0]
+            : currentSplitSlots.rightActiveTabId,
+      };
+      void commitEditorSplitSlots(nextSplitSlots);
+      return;
+    }
+
+    handleTabClose(tabId);
+  };
+
+  const handleCloseOtherTabs = useCallback(
+    (tabId: string) => {
+      const retainedTab = tabsRef.current.find((tab) => tab.id === tabId);
+      if (!retainedTab) {
+        return;
+      }
+
+      tabsRef.current = [retainedTab];
+      setTabs([retainedTab]);
+      setFileContents((previous) =>
+        previous[tabId] !== undefined ? { [tabId]: previous[tabId] } : {},
+      );
+      setFileLoadStates((previous) =>
+        previous[tabId] !== undefined ? { [tabId]: previous[tabId] } : {},
+      );
+      activeTabRef.current = tabId;
+      setActiveTab(tabId);
+      setSecondaryActiveTab(null);
+      setSplitDirection(null);
+      editorSplitSlotsRef.current = null;
+      setEditorSplitSlots(null);
+      focusEditorSplitSide("left");
+    },
+    [focusEditorSplitSide],
+  );
 
   const handleCloseAllTabs = useCallback(() => {
     openFileRequestRef.current += 1;
@@ -1419,12 +1762,15 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setFileLoadStates({});
     fileContentsRef.current = {};
     fileLoadStatesRef.current = {};
+    activeTabRef.current = null;
     setActiveTab(null);
     setSecondaryActiveTab(null);
     setSplitDirection(null);
+    editorSplitSlotsRef.current = null;
     setEditorSplitSlots(null);
+    focusEditorSplitSide("left");
     resetActiveEditorBudget();
-  }, [closeEditorStoreTabPath, resetActiveEditorBudget]);
+  }, [closeEditorStoreTabPath, focusEditorSplitSide, resetActiveEditorBudget]);
 
   const handleReopenClosedTab = async () => {
     if (closedTabs.length === 0) return;
@@ -1463,6 +1809,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   useEffect(() => {
     editorSplitSlotsRef.current = editorSplitSlots;
   }, [editorSplitSlots]);
+
+  useEffect(() => {
+    focusedEditorSplitSideRef.current = focusedEditorSplitSide;
+  }, [focusedEditorSplitSide]);
 
   useEffect(() => {
     if (!isTabSwitcherOpen) {
@@ -1919,9 +2269,17 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   );
 
   const handleSaveFile = useCallback(async () => {
-    if (!activeTab) return;
-    await handleSaveFileForTab(activeTab);
-  }, [activeTab, handleSaveFileForTab]);
+    const tabId = editorSplitSlots
+      ? getEditorSplitActiveTabId(editorSplitSlots, focusedEditorSplitSide)
+      : activeTab;
+    if (!tabId) return;
+    await handleSaveFileForTab(tabId);
+  }, [
+    activeTab,
+    editorSplitSlots,
+    focusedEditorSplitSide,
+    handleSaveFileForTab,
+  ]);
 
   const handleOpenFileRequest = async (path: string, line?: number) => {
     const requestId = openFileRequestRef.current + 1;
@@ -2008,15 +2366,29 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       setSecondaryActiveTab((previous) =>
         previous ? (tabIdMap.get(previous) ?? previous) : previous,
       );
-      setEditorSplitSlots((previous) =>
-        previous
-          ? {
-              leftTabId: tabIdMap.get(previous.leftTabId) ?? previous.leftTabId,
-              rightTabId:
-                tabIdMap.get(previous.rightTabId) ?? previous.rightTabId,
-            }
-          : previous,
-      );
+      setEditorSplitSlots((previous) => {
+        const nextSplitSlots = normalizeEditorSplitSlots(
+          previous
+            ? {
+                leftTabIds: previous.leftTabIds.map(
+                  (tabId) => tabIdMap.get(tabId) ?? tabId,
+                ),
+                rightTabIds: previous.rightTabIds.map(
+                  (tabId) => tabIdMap.get(tabId) ?? tabId,
+                ),
+                leftActiveTabId:
+                  tabIdMap.get(previous.leftActiveTabId) ??
+                  previous.leftActiveTabId,
+                rightActiveTabId:
+                  tabIdMap.get(previous.rightActiveTabId) ??
+                  previous.rightActiveTabId,
+              }
+            : previous,
+          nextTabs,
+        );
+        editorSplitSlotsRef.current = nextSplitSlots;
+        return nextSplitSlots;
+      });
       setClosedTabs((previous) =>
         previous.map((tab) => {
           const remappedPath = remapProjectPathPrefix(
@@ -2118,26 +2490,34 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     setClosedTabs((previous) =>
       previous.filter((tab) => !isSameOrChildPath(tab.path, deletedPath)),
     );
-    setActiveTab(nextPrimaryTabId);
-    if (
-      editorSplitSlotsRef.current &&
-      (removedTabIds.has(editorSplitSlotsRef.current.leftTabId) ||
-        removedTabIds.has(editorSplitSlotsRef.current.rightTabId))
-    ) {
-      setSplitDirection(null);
-      setSecondaryActiveTab(null);
-    }
-    setEditorSplitSlots((previous) => {
-      if (!previous) {
-        return previous;
-      }
-      return removedTabIds.has(previous.leftTabId) ||
-        removedTabIds.has(previous.rightTabId)
-        ? null
-        : previous;
-    });
+    const nextSplitSlots = normalizeEditorSplitSlots(
+      editorSplitSlotsRef.current
+        ? {
+            leftTabIds: editorSplitSlotsRef.current.leftTabIds.filter(
+              (tabId) => !removedTabIds.has(tabId),
+            ),
+            rightTabIds: editorSplitSlotsRef.current.rightTabIds.filter(
+              (tabId) => !removedTabIds.has(tabId),
+            ),
+            leftActiveTabId: editorSplitSlotsRef.current.leftActiveTabId,
+            rightActiveTabId: editorSplitSlotsRef.current.rightActiveTabId,
+          }
+        : null,
+      nextTabs,
+    );
+    editorSplitSlotsRef.current = nextSplitSlots;
+    setEditorSplitSlots(nextSplitSlots);
 
-    if (nextTabs.length <= 1) {
+    if (nextSplitSlots) {
+      setActiveTab(nextSplitSlots.leftActiveTabId);
+      setSecondaryActiveTab(nextSplitSlots.rightActiveTabId);
+    } else {
+      setActiveTab(nextPrimaryTabId);
+    }
+
+    if (nextSplitSlots) {
+      setSplitDirection("horizontal");
+    } else if (nextTabs.length <= 1) {
       setSecondaryActiveTab(null);
       setSplitDirection(null);
     } else {
@@ -2284,33 +2664,45 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   }, []);
 
   const handleTabsReorder = useCallback((nextTabs: Tab[]) => {
-    const splitSlots = editorSplitSlotsRef.current;
-    if (!splitSlots) {
-      tabsRef.current = nextTabs;
-      setTabs(nextTabs);
-      return;
-    }
-
-    const splitTabIds = new Set([splitSlots.leftTabId, splitSlots.rightTabId]);
-    const visibleQueue = [...nextTabs];
-    const nextAllTabs = tabsRef.current
-      .map((tab) => {
-        if (splitTabIds.has(tab.id)) {
-          return tab;
-        }
-        return visibleQueue.shift() ?? tab;
-      })
-      .filter((tab): tab is Tab => Boolean(tab));
-    if (visibleQueue.length > 0) {
-      nextAllTabs.push(...visibleQueue);
-    }
-
-    tabsRef.current = nextAllTabs;
-    setTabs(nextAllTabs);
+    const normalizedTabs = normalizeEditorTabs(nextTabs);
+    tabsRef.current = normalizedTabs;
+    setTabs(normalizedTabs);
   }, []);
+
+  const handleSplitTabsReorder = useCallback(
+    (side: EditorSplitDropSide, nextTabs: Tab[]) => {
+      const currentSlots = editorSplitSlotsRef.current;
+      if (!currentSlots) {
+        return;
+      }
+
+      const nextTabIds = nextTabs.map((tab) => tab.id);
+      const nextSlots: NonNullable<EditorSplitSlots> = {
+        ...currentSlots,
+        leftTabIds:
+          side === "left"
+            ? uniqueEditorTabIds(nextTabIds)
+            : currentSlots.leftTabIds,
+        rightTabIds:
+          side === "right"
+            ? uniqueEditorTabIds(nextTabIds)
+            : currentSlots.rightTabIds,
+      };
+      void commitEditorSplitSlots(nextSlots);
+    },
+    [commitEditorSplitSlots],
+  );
 
   const getEditorSplitDropTarget = useCallback(
     (point: { x: number; y: number }): EditorSplitDropTarget | null => {
+      const element = document.elementFromPoint(point.x, point.y);
+      const splitTabsSide =
+        element?.closest<HTMLElement>("[data-editor-split-side]")?.dataset
+          .editorSplitSide ?? null;
+      if (splitTabsSide === "left" || splitTabsSide === "right") {
+        return { side: splitTabsSide };
+      }
+
       const rect = editorSurfaceRef.current?.getBoundingClientRect();
       if (
         !rect ||
@@ -2343,28 +2735,88 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         return false;
       }
 
-      const counterpartTabId =
-        (activeTabRef.current && activeTabRef.current !== tabId
-          ? activeTabRef.current
-          : allTabs.find((candidate) => candidate.id !== tabId)?.id) ?? tabId;
-      const leftTabId = side === "left" ? tabId : counterpartTabId;
-      const rightTabId = side === "right" ? tabId : counterpartTabId;
+      const currentSplitSlots = editorSplitSlotsRef.current;
+      const fallbackCounterpartTabIds =
+        allTabs.length > 1 ? getOtherEditorTabIds(allTabs, tabId) : [tabId];
+      const sourceSplitSide = getEditorSplitSideForTabId(
+        currentSplitSlots,
+        tabId,
+      );
+      const shouldMoveFromSourceSide = Boolean(
+        currentSplitSlots &&
+        sourceSplitSide &&
+        sourceSplitSide !== side &&
+        getEditorSplitTabIds(currentSplitSlots, sourceSplitSide).length > 1,
+      );
+      const currentLeftTabIds =
+        currentSplitSlots &&
+        shouldMoveFromSourceSide &&
+        sourceSplitSide === "left"
+          ? currentSplitSlots.leftTabIds.filter((id) => id !== tabId)
+          : currentSplitSlots?.leftTabIds;
+      const currentRightTabIds =
+        currentSplitSlots &&
+        shouldMoveFromSourceSide &&
+        sourceSplitSide === "right"
+          ? currentSplitSlots.rightTabIds.filter((id) => id !== tabId)
+          : currentSplitSlots?.rightTabIds;
+      const nextSplitSlots: NonNullable<EditorSplitSlots> = currentSplitSlots
+        ? {
+            leftTabIds:
+              side === "left"
+                ? uniqueEditorTabIds([...(currentLeftTabIds ?? []), tabId])
+                : (currentLeftTabIds ?? currentSplitSlots.leftTabIds),
+            rightTabIds:
+              side === "right"
+                ? uniqueEditorTabIds([...(currentRightTabIds ?? []), tabId])
+                : (currentRightTabIds ?? currentSplitSlots.rightTabIds),
+            leftActiveTabId:
+              side === "left" ? tabId : currentSplitSlots.leftActiveTabId,
+            rightActiveTabId:
+              side === "right" ? tabId : currentSplitSlots.rightActiveTabId,
+          }
+        : side === "left"
+          ? {
+              leftTabIds: [tabId],
+              rightTabIds: fallbackCounterpartTabIds,
+              leftActiveTabId: tabId,
+              rightActiveTabId:
+                fallbackCounterpartTabIds.find(
+                  (candidate) => candidate === activeTabRef.current,
+                ) ?? fallbackCounterpartTabIds[0],
+            }
+          : {
+              leftTabIds: fallbackCounterpartTabIds,
+              rightTabIds: [tabId],
+              leftActiveTabId:
+                fallbackCounterpartTabIds.find(
+                  (candidate) => candidate === activeTabRef.current,
+                ) ?? fallbackCounterpartTabIds[0],
+              rightActiveTabId: tabId,
+            };
+      const normalizedSplitSlots = normalizeEditorSplitSlots(
+        nextSplitSlots,
+        allTabs,
+      );
+      if (!normalizedSplitSlots) {
+        return false;
+      }
 
       notifyEditorSplitTransition();
-      setEditorSplitSlots({ leftTabId, rightTabId });
+      editorSplitSlotsRef.current = normalizedSplitSlots;
+      setEditorSplitSlots(normalizedSplitSlots);
       setSplitDirection("horizontal");
-      setActiveTab(leftTabId);
-      setSecondaryActiveTab(rightTabId);
+      setActiveTab(normalizedSplitSlots.leftActiveTabId);
+      setSecondaryActiveTab(normalizedSplitSlots.rightActiveTabId);
+      focusEditorSplitSide(side);
       setActiveEditorSplitDropSide(null);
-      ensureTabFileLoaded(
-        allTabs.find((candidate) => candidate.id === leftTabId),
-      );
-      ensureTabFileLoaded(
-        allTabs.find((candidate) => candidate.id === rightTabId),
-      );
+      getTabsByIds(allTabs, [
+        normalizedSplitSlots.leftActiveTabId,
+        normalizedSplitSlots.rightActiveTabId,
+      ]).forEach((tab) => ensureTabFileLoaded(tab));
       return true;
     },
-    [ensureTabFileLoaded, notifyEditorSplitTransition],
+    [ensureTabFileLoaded, focusEditorSplitSide, notifyEditorSplitTransition],
   );
 
   const handleTabDropToEditorSplit = useCallback(
@@ -2394,12 +2846,9 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       };
 
       if (!existingTab) {
-        tabsRef.current = [...tabsRef.current, tab];
-        setTabs((previous) =>
-          previous.some((candidate) => candidate.id === tab.id)
-            ? previous
-            : [...previous, tab],
-        );
+        const nextTabs = normalizeEditorTabs([...tabsRef.current, tab]);
+        tabsRef.current = nextTabs;
+        setTabs(nextTabs);
       }
 
       const currentLoadState = fileLoadStatesRef.current[tab.id];
@@ -2440,47 +2889,26 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
   const handleEditorTabClick = useCallback(
     (tabId: string) => {
-      if (editorSplitSlotsRef.current) {
-        notifyEditorSplitTransition();
-        setEditorSplitSlots(null);
-        setSplitDirection(null);
-        setSecondaryActiveTab(null);
-      }
-      setActiveTab(tabId);
-    },
-    [notifyEditorSplitTransition],
-  );
-
-  const getEditorTabsDropTarget = useCallback(
-    (clientX: number, clientY: number) => {
-      const element = document.elementFromPoint(clientX, clientY);
-      return (
-        element?.closest<HTMLElement>('[data-testid="editor-tabs-bar"]') ?? null
-      );
-    },
-    [],
-  );
-
-  const clearSplitTabReturnTarget = useCallback(() => {
-    splitTabReturnTargetRef.current?.classList.remove(
-      "editor-tabs-code-drop-target",
-    );
-    splitTabReturnTargetRef.current = null;
-  }, []);
-
-  const handleSplitTabReturnToTabs = useCallback(
-    (tabId: string) => {
-      if (!editorSplitSlotsRef.current) {
+      const currentSlots = editorSplitSlotsRef.current;
+      const splitSide = getEditorSplitSideForTabId(currentSlots, tabId);
+      if (currentSlots && splitSide) {
+        const nextSlots: NonNullable<EditorSplitSlots> = {
+          ...currentSlots,
+          leftActiveTabId:
+            splitSide === "left" ? tabId : currentSlots.leftActiveTabId,
+          rightActiveTabId:
+            splitSide === "right" ? tabId : currentSlots.rightActiveTabId,
+        };
+        if (commitEditorSplitSlots(nextSlots)) {
+          focusEditorSplitSide(splitSide);
+        }
         return;
       }
-
-      notifyEditorSplitTransition();
-      setEditorSplitSlots(null);
-      setSplitDirection(null);
-      setSecondaryActiveTab(null);
+      activeTabRef.current = tabId;
       setActiveTab(tabId);
+      updateActiveEditorView(editorViewRefs.current[tabId] ?? null);
     },
-    [notifyEditorSplitTransition],
+    [commitEditorSplitSlots, focusEditorSplitSide, updateActiveEditorView],
   );
 
   const handleTabDetachToPanel = useCallback(
@@ -2633,23 +3061,33 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
       if (splitDirection) {
         // Close split
+        editorSplitSlotsRef.current = null;
         setSplitDirection(null);
         setSecondaryActiveTab(null);
         setEditorSplitSlots(null);
-      } else if (activeTab && tabs.length > 1) {
-        // Open split with second-to-last tab
-        setEditorSplitSlots(null);
-        setSplitDirection(direction);
-        const otherTab = tabs.find((t) => t.id !== activeTab);
-        setSecondaryActiveTab(otherTab?.id || null);
+        focusEditorSplitSide("left");
       } else if (activeTab) {
-        // Only one tab - open split with same file
-        setEditorSplitSlots(null);
-        setSplitDirection(direction);
-        setSecondaryActiveTab(activeTab);
+        const rightTabIds = getOtherEditorTabIds(tabs, activeTab);
+        const nextSplitSlots: NonNullable<EditorSplitSlots> = {
+          leftTabIds: [activeTab],
+          rightTabIds: rightTabIds.length > 0 ? rightTabIds : [activeTab],
+          leftActiveTabId: activeTab,
+          rightActiveTabId: rightTabIds[0] ?? activeTab,
+        };
+        if (commitEditorSplitSlots(nextSplitSlots)) {
+          setSplitDirection(direction);
+          focusEditorSplitSide("left");
+        }
       }
     },
-    [activeTab, notifyEditorSplitTransition, splitDirection, tabs],
+    [
+      activeTab,
+      commitEditorSplitSlots,
+      focusEditorSplitSide,
+      notifyEditorSplitTransition,
+      splitDirection,
+      tabs,
+    ],
   );
 
   useEffect(() => {
@@ -2670,15 +3108,17 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       }
 
       notifyEditorSplitTransition();
-      setEditorSplitSlots(null);
-      setSplitDirection(direction);
-      if (tabs.length > 1) {
-        const otherTab = tabs.find((tab) => tab.id !== activeTab);
-        setSecondaryActiveTab(otherTab?.id || activeTab);
-        return;
+      const rightTabIds = getOtherEditorTabIds(tabs, activeTab);
+      const nextSplitSlots: NonNullable<EditorSplitSlots> = {
+        leftTabIds: [activeTab],
+        rightTabIds: rightTabIds.length > 0 ? rightTabIds : [activeTab],
+        leftActiveTabId: activeTab,
+        rightActiveTabId: rightTabIds[0] ?? activeTab,
+      };
+      if (commitEditorSplitSlots(nextSplitSlots)) {
+        setSplitDirection(direction);
+        focusEditorSplitSide("left");
       }
-
-      setSecondaryActiveTab(activeTab);
     };
 
     window.addEventListener(
@@ -2692,6 +3132,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       );
   }, [
     activeTab,
+    commitEditorSplitSlots,
+    focusEditorSplitSide,
     notifyEditorSplitTransition,
     secondaryActiveTab,
     splitDirection,
@@ -2736,10 +3178,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   }, [handleExternalFileDropToEditorSplit]);
 
   const handleCloseSplit = () => {
+    editorSplitSlotsRef.current = null;
     setSplitDirection(null);
     setSecondaryActiveTab(null);
     setEditorSplitSlots(null);
     setActiveEditorSplitDropSide(null);
+    focusEditorSplitSide("left");
   };
 
   useEffect(() => {
@@ -2762,42 +3206,48 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     };
   }, []);
 
-  const editorSplitTabIds = React.useMemo(
-    () =>
-      editorSplitSlots
-        ? new Set([editorSplitSlots.leftTabId, editorSplitSlots.rightTabId])
-        : new Set<string>(),
-    [editorSplitSlots],
+  const focusedEditorTabId = editorSplitSlots
+    ? getEditorSplitActiveTabId(editorSplitSlots, focusedEditorSplitSide)
+    : activeTab;
+  const activeTabData = tabs.find((tab) => tab.id === activeTab);
+  const focusedTabData = focusedEditorTabId
+    ? tabs.find((tab) => tab.id === focusedEditorTabId)
+    : null;
+  const activeMarkdownPreviewSource =
+    buildMarkdownPreviewSource(focusedEditorTabId);
+  const secondaryTabData = secondaryActiveTab
+    ? tabs.find((tab) => tab.id === secondaryActiveTab)
+    : null;
+  const editorSplitLeftTabs = editorSplitSlots
+    ? getTabsByIds(tabs, editorSplitSlots.leftTabIds)
+    : [];
+  const editorSplitRightTabs = editorSplitSlots
+    ? getTabsByIds(tabs, editorSplitSlots.rightTabIds)
+    : [];
+  const editorSplitLeftTabData = editorSplitSlots
+    ? tabs.find((tab) => tab.id === editorSplitSlots.leftActiveTabId)
+    : null;
+  const editorSplitRightTabData = editorSplitSlots
+    ? tabs.find((tab) => tab.id === editorSplitSlots.rightActiveTabId)
+    : null;
+  const editorSplitReady = Boolean(
+    editorSplitSlots && editorSplitLeftTabData && editorSplitRightTabData,
   );
   const tabBarTabs = React.useMemo(
-    () => tabs.filter((tab) => !editorSplitTabIds.has(tab.id)),
-    [editorSplitTabIds, tabs],
+    () => (editorSplitReady ? [] : tabs),
+    [editorSplitReady, tabs],
   );
   const tabBarActiveTab =
     activeTab && tabBarTabs.some((tab) => tab.id === activeTab)
       ? activeTab
       : null;
-  const activeTabData = tabs.find((tab) => tab.id === activeTab);
-  const activeMarkdownPreviewSource = buildMarkdownPreviewSource(activeTab);
-  const secondaryTabData = secondaryActiveTab
-    ? tabs.find((tab) => tab.id === secondaryActiveTab)
-    : null;
-  const editorSplitLeftTabData = editorSplitSlots
-    ? tabs.find((tab) => tab.id === editorSplitSlots.leftTabId)
-    : null;
-  const editorSplitRightTabData = editorSplitSlots
-    ? tabs.find((tab) => tab.id === editorSplitSlots.rightTabId)
-    : null;
-  const editorSplitReady = Boolean(
-    editorSplitSlots && editorSplitLeftTabData && editorSplitRightTabData,
-  );
-  const activeTabLoadState = activeTabData
-    ? fileLoadStates[activeTabData.id]
+  const activeTabLoadState = focusedTabData
+    ? fileLoadStates[focusedTabData.id]
     : undefined;
   const activeTabRendersCodeMirror = Boolean(
-    activeTabData &&
+    focusedTabData &&
     (activeTabLoadState?.kind === "editable" ||
-      (!activeTabLoadState && fileContents[activeTabData.id] !== undefined)),
+      (!activeTabLoadState && fileContents[focusedTabData.id] !== undefined)),
   );
   const canFindInActiveEditor =
     activeEditorViewAvailable && activeTabRendersCodeMirror;
@@ -2817,148 +3267,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
     setSplitReady(false);
   }, [splitDirection, secondaryTabData]);
-
-  const renderSplitTabHandle = useCallback(
-    (tab: Tab, side: EditorSplitDropSide) => {
-      const renderGhostContent = () => (
-        <div
-          className="arle-editor-split-tab-drag-copy flex h-full w-full max-w-none items-center gap-2 rounded-md border border-[var(--shell-border-strong)] bg-[var(--surface-hover)] px-3 text-left text-xs font-medium text-[var(--text-primary)]"
-          data-drag-ghost-source="editor-split-tab"
-        >
-          <span className="truncate">{tab.label}</span>
-          {tab.isDirty && (
-            <span className="text-[14px] leading-none text-[var(--text-primary)]">
-              ●
-            </span>
-          )}
-        </div>
-      );
-
-      const handlePointerDown = (
-        event: React.PointerEvent<HTMLButtonElement>,
-      ) => {
-        if (event.button !== 0) {
-          return;
-        }
-
-        event.preventDefault();
-        const releaseSelectionLock = beginDragSelectionLock();
-        const pointerId = event.pointerId;
-        const startX = event.clientX;
-        const startY = event.clientY;
-        const sourceRect = event.currentTarget.getBoundingClientRect();
-        const offsetX = startX - sourceRect.left;
-        const offsetY = startY - sourceRect.top;
-        let activeDrag = false;
-
-        const handlePointerMove = (pointerEvent: PointerEvent) => {
-          if (pointerEvent.pointerId !== pointerId) {
-            return;
-          }
-
-          const dx = pointerEvent.clientX - startX;
-          const dy = pointerEvent.clientY - startY;
-          if (!activeDrag && Math.hypot(dx, dy) > 7) {
-            activeDrag = true;
-          }
-          if (!activeDrag) {
-            return;
-          }
-
-          pointerEvent.preventDefault();
-          document.getSelection()?.removeAllRanges();
-          const editorTabsTarget = getEditorTabsDropTarget(
-            pointerEvent.clientX,
-            pointerEvent.clientY,
-          );
-          if (splitTabReturnTargetRef.current !== editorTabsTarget) {
-            clearSplitTabReturnTarget();
-            if (editorTabsTarget) {
-              editorTabsTarget.classList.add("editor-tabs-code-drop-target");
-              splitTabReturnTargetRef.current = editorTabsTarget;
-            }
-          }
-
-          setSplitTabDragGhost({
-            x: pointerEvent.clientX,
-            y: pointerEvent.clientY,
-            label: tab.label,
-            variant: "layout",
-            layout: "editor-tab",
-            content: renderGhostContent(),
-            width: sourceRect.width,
-            height: sourceRect.height,
-            offsetX,
-            offsetY,
-          });
-        };
-
-        const cleanup = () => {
-          window.removeEventListener("pointermove", handlePointerMove, true);
-          window.removeEventListener("pointerup", handlePointerUp, true);
-          window.removeEventListener(
-            "pointercancel",
-            handlePointerCancel,
-            true,
-          );
-          clearSplitTabReturnTarget();
-          setSplitTabDragGhost(null);
-          releaseSelectionLock();
-        };
-
-        const handlePointerCancel = (pointerEvent: PointerEvent) => {
-          if (pointerEvent.pointerId !== pointerId) {
-            return;
-          }
-          cleanup();
-        };
-
-        const handlePointerUp = (pointerEvent: PointerEvent) => {
-          if (pointerEvent.pointerId !== pointerId) {
-            return;
-          }
-          const editorTabsTarget = getEditorTabsDropTarget(
-            pointerEvent.clientX,
-            pointerEvent.clientY,
-          );
-          cleanup();
-          if (activeDrag && editorTabsTarget) {
-            handleSplitTabReturnToTabs(tab.id);
-          }
-        };
-
-        window.addEventListener("pointermove", handlePointerMove, true);
-        window.addEventListener("pointerup", handlePointerUp, true);
-        window.addEventListener("pointercancel", handlePointerCancel, true);
-      };
-
-      return (
-        <button
-          type="button"
-          key={`${side}:${tab.id}`}
-          data-testid={`editor-split-tab-${side}`}
-          className="absolute left-3 top-3 z-10 flex h-8 max-w-[min(220px,calc(100%-5rem))] cursor-grab items-center gap-2 rounded-md border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-strong)_94%,transparent)] px-3 text-left text-xs font-medium text-[var(--text-secondary)] shadow-[var(--shell-shadow)] backdrop-blur-xl transition-[background-color,border-color,color,box-shadow] hover:border-[var(--shell-border-strong)] hover:bg-[color-mix(in_srgb,var(--surface-active)_78%,transparent)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
-          title={`${tab.label} - drag to tabs`}
-          onPointerDown={handlePointerDown}
-          onClick={() => {
-            setActiveTab(tab.id);
-          }}
-        >
-          <span className="truncate">{tab.label}</span>
-          {tab.isDirty && (
-            <span className="text-[14px] leading-none text-[var(--text-primary)]">
-              ●
-            </span>
-          )}
-        </button>
-      );
-    },
-    [
-      clearSplitTabReturnTarget,
-      getEditorTabsDropTarget,
-      handleSplitTabReturnToTabs,
-    ],
-  );
 
   const renderEditor = (tabData: Tab, content: string, isSecondary = false) => {
     const inlinePatchPreview = selectAIInlinePatchPreviewForPath(
@@ -2995,9 +3303,13 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         onGhostRejected={() => {
           AppFunctions.RecordGhostRejected().catch(() => {});
         }}
-        onEditorViewReady={isSecondary ? undefined : handleEditorViewReady}
+        onEditorViewReady={(view) =>
+          handleEditorViewReadyForTab(tabData.id, view)
+        }
         onHistoryAvailabilityChange={
-          isSecondary ? undefined : handleHistoryAvailabilityChange
+          tabData.id === focusedEditorTabId
+            ? handleHistoryAvailabilityChange
+            : undefined
         }
         highlightLine={isSecondary ? undefined : highlightLine}
         aiInlinePatchPreview={inlinePatchPreview}
@@ -3042,9 +3354,47 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     );
   };
 
+  const splitTabsEndControls = (
+    <div
+      data-testid="editor-tabs-split-close-controls"
+      className="flex h-full max-h-full items-center border-l border-[var(--shell-inline-divider)] bg-[var(--editor-surface-elevated)] px-1.5 py-0"
+    >
+      <button
+        type="button"
+        onClick={handleFindInFile}
+        onMouseDown={(event) => event.preventDefault()}
+        disabled={!canFindInActiveEditor}
+        data-testid="editor-tabs-split-find-in-file"
+        aria-label="Find in file"
+        title="Find in file (Cmd+F)"
+        className="shell-control size-10 min-w-10 px-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:pointer-events-none disabled:opacity-35"
+      >
+        <Search
+          className="size-[13px] min-w-[13px] shrink-0"
+          size={13}
+          strokeWidth={2.2}
+        />
+      </button>
+      <button
+        type="button"
+        onClick={handleCloseSplit}
+        onMouseDown={(event) => event.preventDefault()}
+        aria-label="Close split"
+        title="Close split"
+        className="shell-control size-10 min-w-10 px-0 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+      >
+        <X
+          className="size-[13px] min-w-[13px] shrink-0"
+          size={13}
+          strokeWidth={2.2}
+        />
+      </button>
+    </div>
+  );
+
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
-      {tabs.length > 0 && (
+      {tabs.length > 0 && !editorSplitReady && (
         <EditorTabs
           tabs={tabBarTabs}
           activeTab={tabBarActiveTab}
@@ -3073,6 +3423,62 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           onToggleMarkdownPreview={onToggleMarkdownPreview}
           getTabContextMenuItems={buildTabContextMenuItems}
         />
+      )}
+
+      {editorSplitReady && editorSplitSlots && (
+        <div className="flex h-10 min-h-10 w-full overflow-hidden">
+          <div
+            data-editor-split-side="left"
+            className="min-w-0 w-1/2 border-r border-[var(--editor-border)]"
+          >
+            <EditorTabs
+              tabs={editorSplitLeftTabs}
+              activeTab={editorSplitSlots.leftActiveTabId}
+              activeIndicatorTab={editorSplitSlots.leftActiveTabId}
+              onTabClick={handleEditorTabClick}
+              onTabClose={(tabId) => handleSplitTabClose("left", tabId)}
+              onTabsReorder={(nextTabs) =>
+                handleSplitTabsReorder("left", nextTabs)
+              }
+              onTabDetachToPanel={handleTabDetachToPanel}
+              getEditorSplitDropTarget={getEditorSplitDropTarget}
+              onEditorSplitDragMove={handleEditorSplitDragMove}
+              onTabDropToEditorSplit={handleTabDropToEditorSplit}
+              onPanelSnapDragStart={onPanelSnapDragStart}
+              onPanelSnapDragMove={onPanelSnapDragMove}
+              onPanelSnapDragEnd={onPanelSnapDragEnd}
+              onUndo={handleEditorUndo}
+              onRedo={handleEditorRedo}
+              canUndo={editorHistoryAvailability.canUndo}
+              canRedo={editorHistoryAvailability.canRedo}
+              showSplitButtons={false}
+              getTabContextMenuItems={buildTabContextMenuItems}
+            />
+          </div>
+          <div data-editor-split-side="right" className="min-w-0 w-1/2">
+            <EditorTabs
+              tabs={editorSplitRightTabs}
+              activeTab={editorSplitSlots.rightActiveTabId}
+              activeIndicatorTab={editorSplitSlots.rightActiveTabId}
+              onTabClick={handleEditorTabClick}
+              onTabClose={(tabId) => handleSplitTabClose("right", tabId)}
+              onTabsReorder={(nextTabs) =>
+                handleSplitTabsReorder("right", nextTabs)
+              }
+              onTabDetachToPanel={handleTabDetachToPanel}
+              getEditorSplitDropTarget={getEditorSplitDropTarget}
+              onEditorSplitDragMove={handleEditorSplitDragMove}
+              onTabDropToEditorSplit={handleTabDropToEditorSplit}
+              onPanelSnapDragStart={onPanelSnapDragStart}
+              onPanelSnapDragMove={onPanelSnapDragMove}
+              onPanelSnapDragEnd={onPanelSnapDragEnd}
+              showHistoryControls={false}
+              showSplitButtons={false}
+              endControls={splitTabsEndControls}
+              getTabContextMenuItems={buildTabContextMenuItems}
+            />
+          </div>
+        </div>
       )}
 
       <div
@@ -3105,38 +3511,26 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
             data-testid="editor-split-surface"
             style={{ background: editorBgColor }}
           >
-            <div
-              className="relative w-1/2 border-r border-[var(--editor-border)]"
+            <section
+              className="min-h-0 w-1/2 min-w-0 overflow-hidden border-r border-[var(--editor-border)]"
               data-testid="editor-split-pane-left"
+              aria-label="Left editor split pane"
+              onFocusCapture={() => focusEditorSplitSide("left")}
             >
-              {renderSplitTabHandle(editorSplitLeftTabData, "left")}
               {renderEditorSurface(editorSplitLeftTabData)}
-            </div>
-            <div
-              className="relative w-1/2"
+            </section>
+            <section
+              className="min-h-0 w-1/2 min-w-0 overflow-hidden"
               data-testid="editor-split-pane-right"
+              aria-label="Right editor split pane"
+              onFocusCapture={() => focusEditorSplitSide("right")}
               style={{
                 visibility: splitReady ? "visible" : "hidden",
                 background: editorBgColor,
               }}
             >
-              {renderSplitTabHandle(editorSplitRightTabData, "right")}
-              <button
-                type="button"
-                onClick={handleCloseSplit}
-                onMouseDown={(event) => event.preventDefault()}
-                aria-label="Close split"
-                title="Close split"
-                className="absolute right-3 top-3 z-10 inline-flex h-10 w-10 min-w-10 items-center justify-center rounded-[18px] border border-[var(--shell-border)] bg-[color-mix(in_srgb,var(--surface-shell-strong)_94%,transparent)] p-0 text-[var(--text-secondary)] shadow-[var(--shell-shadow)] backdrop-blur-xl transition-[background-color,border-color,color,box-shadow,transform] hover:border-[var(--shell-border-strong)] hover:bg-[color-mix(in_srgb,var(--surface-active)_78%,transparent)] hover:text-[var(--text-primary)] focus:outline-none focus-visible:shadow-[0_0_0_1px_var(--focus-ring),0_0_0_3px_var(--focus-ring-strong)]"
-              >
-                <X
-                  className="h-4 w-4 min-w-4 shrink-0"
-                  size={16}
-                  strokeWidth={2.35}
-                />
-              </button>
               {renderEditorSurface(editorSplitRightTabData, true)}
-            </div>
+            </section>
           </div>
         ) : activeTabData && activeTab ? (
           splitDirection && secondaryTabData ? (
@@ -3189,8 +3583,6 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
           projectPath={projectPath}
         />
       ) : null}
-
-      <DragGhost ghost={splitTabDragGhost} />
 
       <QuickLookModal
         isOpen={quickLook.isOpen}

@@ -421,6 +421,7 @@ const createThemeCssVariables = (
   "--editor-ghost-text": editor.ghostText,
   "--editor-highlight": editor.highlight,
   "--editor-accent": editor.accent,
+  "--editor-tab-active-indicator": colors.textPrimary,
   "--syntax-comment": editor.comment,
   "--syntax-string": editor.string,
   "--syntax-number": editor.number,
