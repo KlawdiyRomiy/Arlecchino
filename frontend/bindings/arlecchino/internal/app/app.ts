@@ -1374,8 +1374,8 @@ export function ResizeTerminal(id: string, rows: number, cols: number): $Cancell
     return $Call.ByID(2378749434, id, rows, cols);
 }
 
-export function ResolveEditorCompletion(resolveToken: string): $CancellablePromise<$models.EditorCompletionResolveResult> {
-    return $Call.ByID(3420650961, resolveToken).then(($result: any) => {
+export function ResolveEditorCompletion(req: $models.EditorCompletionResolveRequest): $CancellablePromise<$models.EditorCompletionResolveResult> {
+    return $Call.ByID(3420650961, req).then(($result: any) => {
         return $$createType126($result);
     });
 }

@@ -922,6 +922,8 @@ export class EditorCompletion {
     "kind": string;
     "source": string;
     "insertText": string;
+    "sortText"?: string;
+    "commitCharacters"?: string[];
     "isSnippet": boolean;
     "priority": number;
     "highlightPositions"?: number[];
@@ -982,22 +984,26 @@ export class EditorCompletion {
      * Creates a new EditorCompletion instance from a string or object.
      */
     static createFrom($$source: any = {}): EditorCompletion {
-        const $$createField11_0 = $$createType26;
-        const $$createField13_0 = $$createType28;
-        const $$createField14_0 = $$createType30;
-        const $$createField15_0 = $$createType32;
+        const $$createField10_0 = $$createType0;
+        const $$createField13_0 = $$createType26;
+        const $$createField15_0 = $$createType28;
+        const $$createField16_0 = $$createType30;
+        const $$createField17_0 = $$createType32;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("commitCharacters" in $$parsedSource) {
+            $$parsedSource["commitCharacters"] = $$createField10_0($$parsedSource["commitCharacters"]);
+        }
         if ("highlightPositions" in $$parsedSource) {
-            $$parsedSource["highlightPositions"] = $$createField11_0($$parsedSource["highlightPositions"]);
+            $$parsedSource["highlightPositions"] = $$createField13_0($$parsedSource["highlightPositions"]);
         }
         if ("primaryTextEdit" in $$parsedSource) {
-            $$parsedSource["primaryTextEdit"] = $$createField13_0($$parsedSource["primaryTextEdit"]);
+            $$parsedSource["primaryTextEdit"] = $$createField15_0($$parsedSource["primaryTextEdit"]);
         }
         if ("additionalTextEdits" in $$parsedSource) {
-            $$parsedSource["additionalTextEdits"] = $$createField14_0($$parsedSource["additionalTextEdits"]);
+            $$parsedSource["additionalTextEdits"] = $$createField16_0($$parsedSource["additionalTextEdits"]);
         }
         if ("command" in $$parsedSource) {
-            $$parsedSource["command"] = $$createField15_0($$parsedSource["command"]);
+            $$parsedSource["command"] = $$createField17_0($$parsedSource["command"]);
         }
         return new EditorCompletion($$parsedSource as Partial<EditorCompletion>);
     }
@@ -1020,6 +1026,9 @@ export class EditorCompletionContext {
     "currentMethod": string;
     "imports": string[];
     "triggerChar": string;
+    "completionTriggerKind"?: number;
+    "sessionId"?: string;
+    "surfaceId"?: string;
     "requestId"?: string;
 
     /** Creates a new EditorCompletionContext instance. */
@@ -1077,6 +1086,32 @@ export class EditorCompletionContext {
     }
 }
 
+export class EditorCompletionResolveRequest {
+    "resolveToken": string;
+    "completionId"?: string;
+    "stableKey"?: string;
+    "documentVersion"?: number;
+    "sessionId"?: string;
+    "surfaceId"?: string;
+
+    /** Creates a new EditorCompletionResolveRequest instance. */
+    constructor($$source: Partial<EditorCompletionResolveRequest> = {}) {
+        if (!("resolveToken" in $$source)) {
+            this["resolveToken"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new EditorCompletionResolveRequest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): EditorCompletionResolveRequest {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new EditorCompletionResolveRequest($$parsedSource as Partial<EditorCompletionResolveRequest>);
+    }
+}
+
 export class EditorCompletionResolveResult {
     "insertText"?: string;
     "isSnippet"?: boolean;
@@ -1123,6 +1158,10 @@ export class EditorCompletionResolveResult {
 export class EditorCompletionResult {
     "primary": EditorCompletion | null;
     "items": EditorCompletion[];
+    "isIncomplete"?: boolean;
+    "lspTriggerCharacters"?: string[];
+    "lspResolveProvider"?: boolean;
+    "lspCompletionAvailable"?: boolean;
     "ghostText"?: string;
     "ghostConfidence"?: number;
     "showGhost": boolean;
@@ -1150,12 +1189,16 @@ export class EditorCompletionResult {
     static createFrom($$source: any = {}): EditorCompletionResult {
         const $$createField0_0 = $$createType36;
         const $$createField1_0 = $$createType37;
+        const $$createField3_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("primary" in $$parsedSource) {
             $$parsedSource["primary"] = $$createField0_0($$parsedSource["primary"]);
         }
         if ("items" in $$parsedSource) {
             $$parsedSource["items"] = $$createField1_0($$parsedSource["items"]);
+        }
+        if ("lspTriggerCharacters" in $$parsedSource) {
+            $$parsedSource["lspTriggerCharacters"] = $$createField3_0($$parsedSource["lspTriggerCharacters"]);
         }
         return new EditorCompletionResult($$parsedSource as Partial<EditorCompletionResult>);
     }

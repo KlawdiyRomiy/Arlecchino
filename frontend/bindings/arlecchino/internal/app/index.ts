@@ -32,6 +32,7 @@ export {
     EditorBinarySection,
     EditorCompletion,
     EditorCompletionContext,
+    EditorCompletionResolveRequest,
     EditorCompletionResolveResult,
     EditorCompletionResult,
     EditorFileInspection,

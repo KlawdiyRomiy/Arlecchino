@@ -24,6 +24,7 @@ export class CompletionTrace {
     "cacheStatus": { [_ in string]?: string };
     "staleDropped": number;
     "lspStatus": string;
+    "lspListIncomplete": boolean;
     "cacheHit": boolean;
     "beforeFilter": number;
     "afterPrefixFilter": number;
@@ -77,6 +78,9 @@ export class CompletionTrace {
         if (!("lspStatus" in $$source)) {
             this["lspStatus"] = "";
         }
+        if (!("lspListIncomplete" in $$source)) {
+            this["lspListIncomplete"] = false;
+        }
         if (!("cacheHit" in $$source)) {
             this["cacheHit"] = false;
         }
@@ -112,8 +116,8 @@ export class CompletionTrace {
         const $$createField9_0 = $$createType0;
         const $$createField10_0 = $$createType1;
         const $$createField11_0 = $$createType1;
-        const $$createField20_0 = $$createType2;
-        const $$createField21_0 = $$createType4;
+        const $$createField21_0 = $$createType2;
+        const $$createField22_0 = $$createType4;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("sourceDurationsMs" in $$parsedSource) {
             $$parsedSource["sourceDurationsMs"] = $$createField9_0($$parsedSource["sourceDurationsMs"]);
@@ -125,10 +129,10 @@ export class CompletionTrace {
             $$parsedSource["cacheStatus"] = $$createField11_0($$parsedSource["cacheStatus"]);
         }
         if ("sourceCounts" in $$parsedSource) {
-            $$parsedSource["sourceCounts"] = $$createField20_0($$parsedSource["sourceCounts"]);
+            $$parsedSource["sourceCounts"] = $$createField21_0($$parsedSource["sourceCounts"]);
         }
         if ("topSuggestions" in $$parsedSource) {
-            $$parsedSource["topSuggestions"] = $$createField21_0($$parsedSource["topSuggestions"]);
+            $$parsedSource["topSuggestions"] = $$createField22_0($$parsedSource["topSuggestions"]);
         }
         return new CompletionTrace($$parsedSource as Partial<CompletionTrace>);
     }
