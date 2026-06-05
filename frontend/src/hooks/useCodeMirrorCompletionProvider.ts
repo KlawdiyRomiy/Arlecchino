@@ -167,6 +167,7 @@ type CompletionPayload = {
   completionId?: string;
   stableKey?: string;
   proofKind?: string;
+  accessMemberAuthoritative?: boolean;
   autoImportAllowed?: boolean;
   primary?: boolean;
   requiresResolveBeforeApply?: boolean;
@@ -1339,6 +1340,10 @@ function completionSessionMatches(
   );
 }
 
+function accessIncompleteSessionKey(filePath: string, semanticKey: string) {
+  return `${filePath}\u0000${semanticKey}`;
+}
+
 function nextCompletionSessionId(seqRef: MutableRefObject<number>) {
   seqRef.current += 1;
   return `completion-${seqRef.current}`;
@@ -1359,8 +1364,9 @@ function completionTriggerKindForRequest(
   session: CompletionSessionRecord | null,
   triggerCharacters: Map<string, Set<string>>,
   forceTriggerCharacter: boolean,
+  rememberedIncomplete: boolean,
 ) {
-  if (session?.isIncomplete) {
+  if (session?.isIncomplete || rememberedIncomplete) {
     return 3;
   }
   if (forceTriggerCharacter && triggerChar) {
@@ -1505,17 +1511,11 @@ function mapCompletionKindString(kind: string): string {
 }
 
 function completionPayloadAllowedInAccessContext(item: CompletionPayload) {
+  if (typeof item.accessMemberAuthoritative === "boolean") {
+    return item.accessMemberAuthoritative;
+  }
   const source = (item as CompletionPayload & { source?: string }).source || "";
-  if (source === "lsp") {
-    return true;
-  }
-  switch (item.proofKind) {
-    case "receiver-member":
-    case "self-static-member":
-      return true;
-    default:
-      return false;
-  }
+  return source === "lsp";
 }
 
 function completeFromStaticList(
@@ -1560,6 +1560,7 @@ export const useCodeMirrorCompletionProvider = ({
     createCompletionSessionController(),
   );
   const accessTransientRetryCountsRef = useRef<Map<string, number>>(new Map());
+  const accessIncompleteSessionsRef = useRef<Map<string, boolean>>(new Map());
   const lspTriggerCharactersRef = useRef<Map<string, Set<string>>>(new Map());
   const fallbackSurfaceIdRef = useRef(
     `cm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
@@ -1600,6 +1601,7 @@ export const useCodeMirrorCompletionProvider = ({
       completionDismissedVersionRef.current = null;
       autoStartedCompletionVersionRef.current = null;
       accessTransientRetryCountsRef.current.clear();
+      accessIncompleteSessionsRef.current.clear();
       if (!options.preserveSession) {
         completionSessionControllerRef.current.clear();
       }
@@ -2275,6 +2277,15 @@ export const useCodeMirrorCompletionProvider = ({
         sessionId: string,
       ): Promise<CompletionBuildOutcome> => {
         const transientRetryKey = `${requestKey}@${versionAtRequest}`;
+        const incompleteSessionKey = accessIncompleteSessionKey(
+          filePath,
+          sessionKey,
+        );
+        const clearRememberedAccessIncomplete = () => {
+          if (isAccessCompletion) {
+            accessIncompleteSessionsRef.current.delete(incompleteSessionKey);
+          }
+        };
         const retryTransientAccess = (): CompletionBuildOutcome => {
           const attempts =
             accessTransientRetryCountsRef.current.get(transientRetryKey) ?? 0;
@@ -2310,12 +2321,19 @@ export const useCodeMirrorCompletionProvider = ({
             versionAtRequest,
           );
         const matchingSession = exactMatchingSession;
+        const rememberedIncomplete =
+          isAccessCompletion &&
+          (accessInfo?.prefix.length || 0) > 0 &&
+          accessIncompleteSessionsRef.current.get(
+            accessIncompleteSessionKey(filePath, sessionKey),
+          ) === true;
         const completionTriggerKind = completionTriggerKindForRequest(
           triggerChar,
           language,
           matchingSession,
           lspTriggerCharactersRef.current,
           accessTrigger,
+          rememberedIncomplete,
         );
         const requestPayload = {
           filePath,
@@ -2399,6 +2417,7 @@ export const useCodeMirrorCompletionProvider = ({
           const emptyClassification = classifyAccessNoItemsResult(result);
           if (emptyClassification === "empty") {
             accessTransientRetryCountsRef.current.delete(transientRetryKey);
+            clearRememberedAccessIncomplete();
             return emptyOutcome();
           }
           if (isRetryableAccessNoItemsResult(result)) {
@@ -2406,6 +2425,7 @@ export const useCodeMirrorCompletionProvider = ({
           }
           if (emptyClassification === "error") {
             accessTransientRetryCountsRef.current.delete(transientRetryKey);
+            clearRememberedAccessIncomplete();
             return {
               kind: "error",
               result: accessErrorResult(),
@@ -2641,12 +2661,14 @@ export const useCodeMirrorCompletionProvider = ({
           }
           if (classifyAccessNoItemsResult(result) === "empty") {
             accessTransientRetryCountsRef.current.delete(transientRetryKey);
+            clearRememberedAccessIncomplete();
             return emptyOutcome();
           }
           if (isRetryableAccessNoItemsResult(result)) {
             return retryTransientAccess();
           }
           accessTransientRetryCountsRef.current.delete(transientRetryKey);
+          clearRememberedAccessIncomplete();
           return {
             kind: "error",
             result: accessErrorResult(),
@@ -2659,6 +2681,9 @@ export const useCodeMirrorCompletionProvider = ({
         accessTransientRetryCountsRef.current.delete(transientRetryKey);
 
         if (resultIsIncomplete) {
+          if (isAccessCompletion) {
+            accessIncompleteSessionsRef.current.set(incompleteSessionKey, true);
+          }
           return {
             kind: "result",
             isIncomplete: true,
@@ -2669,6 +2694,7 @@ export const useCodeMirrorCompletionProvider = ({
           };
         }
 
+        clearRememberedAccessIncomplete();
         return {
           kind: "result",
           isIncomplete: false,

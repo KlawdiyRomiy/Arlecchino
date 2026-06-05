@@ -760,6 +760,7 @@ type providerGroupResult struct {
 type lspCompletionOutcome struct {
 	suggestions     []Suggestion
 	status          string
+	triggerAttempt  string
 	incomplete      bool
 	rawCount        int
 	normalizedCount int
@@ -1142,8 +1143,18 @@ func (b *PredictionBrain) collectExternalGroup(
 		result.counts["lsp"] = len(outcome.suggestions)
 		result.counts["lspRaw"] = outcome.rawCount
 		result.counts["lspNormalized"] = outcome.normalizedCount
-		if lspCompletionTrigger(ctx).RetryInvokedOnEmpty {
-			result.statuses["lspTriggerAttempt"] = "trigger-character-retry-invoked-on-empty"
+		trigger := lspCompletionTrigger(ctx)
+		result.statuses["lspTriggerKind"] = fmt.Sprintf("%d", trigger.TriggerKind)
+		if trigger.TriggerCharacter != "" {
+			result.statuses["lspTriggerCharacter"] = trigger.TriggerCharacter
+		}
+		if trigger.AccessMemberIntent {
+			result.statuses["lspTriggerIntent"] = "access-member"
+		}
+		if outcome.triggerAttempt != "" {
+			result.statuses["lspTriggerAttempt"] = outcome.triggerAttempt
+		} else if trigger.RetryInvokedOnEmpty {
+			result.statuses["lspTriggerAttempt"] = "trigger-character"
 		}
 		result.lspStatus = outcome.status
 		result.lspIncomplete = outcome.incomplete
@@ -1464,7 +1475,7 @@ func limitCompletionSuggestions(ctx CompletionContext, suggestions []Suggestion,
 	if maxSuggestions <= 0 || len(suggestions) <= maxSuggestions {
 		return suggestions, false
 	}
-	if !isAccessCompletionRequest(ctx) {
+	if !isBareAccessCompletionRequest(ctx) {
 		return suggestions[:maxSuggestions], true
 	}
 
@@ -2259,6 +2270,9 @@ func (b *PredictionBrain) fromIndex(ctx CompletionContext) []Suggestion {
 			InsertText:    b.buildInsertText(sym, ctx),
 			Extra:         sym.Extra,
 		}
+		if proofKind := indexAccessProofKind(ctx, sym, accessClassLower, resolvedNS); proofKind != "" {
+			suggestion.ProofKind = proofKind
+		}
 
 		if b.autoImporter != nil &&
 			suggestionAllowsGeneratedAutoImport(suggestion) &&
@@ -2272,6 +2286,30 @@ func (b *PredictionBrain) fromIndex(ctx CompletionContext) []Suggestion {
 	}
 
 	return suggestions
+}
+
+func indexAccessProofKind(ctx CompletionContext, sym core.Symbol, accessClassLower, resolvedNSLower string) string {
+	if !isAccessCompletionRequest(ctx) || strings.TrimSpace(sym.Namespace) == "" {
+		return ""
+	}
+	switch sym.Source {
+	case core.SourceIndex:
+	default:
+		return ""
+	}
+	if ctx.IsStaticCall && accessClassLower != "" {
+		namespaceLower := strings.ToLower(strings.TrimSpace(sym.Namespace))
+		if resolvedNSLower != "" {
+			if namespaceMatches(namespaceLower, resolvedNSLower) || namespaceHasTokenSuffix(namespaceLower, accessClassLower) {
+				return "self-static-member"
+			}
+			return ""
+		}
+		if matchesClassName(sym.Namespace, sym.FilePath, accessClassLower) {
+			return "self-static-member"
+		}
+	}
+	return ""
 }
 
 func matchesClassName(namespace, filePath, classNameLower string) bool {
@@ -2450,6 +2488,9 @@ func (b *PredictionBrain) fromLSPWithOutcome(ctx CompletionContext) lspCompletio
 	if lspCtx.Err() != nil {
 		return lspCompletionOutcome{status: contextStatus(lspCtx.Err()), incomplete: result.IsIncomplete, rawCount: len(items)}
 	}
+	if fallbackOutcome, ok := accessInvokedFallbackOutcome(ctx, result); ok {
+		return fallbackOutcome
+	}
 	if len(items) == 0 {
 		debugLogf("[LSP] no items returned for lang=%s", lspLanguage)
 		return lspCompletionOutcome{status: "empty", incomplete: result.IsIncomplete}
@@ -2523,6 +2564,22 @@ func (b *PredictionBrain) fromLSPWithOutcome(ctx CompletionContext) lspCompletio
 	}
 }
 
+func accessInvokedFallbackOutcome(ctx CompletionContext, result lsp.CompletionResponse) (lspCompletionOutcome, bool) {
+	if !result.UsedInvokedFallback || !isAccessCompletionRequest(ctx) {
+		return lspCompletionOutcome{}, false
+	}
+	status := "empty"
+	if strings.TrimSpace(result.InvokedFallbackReason) == "error" {
+		status = "error"
+	}
+	return lspCompletionOutcome{
+		status:         status,
+		triggerAttempt: "invoked-fallback-discarded",
+		incomplete:     result.IsIncomplete,
+		rawCount:       len(result.Items),
+	}, true
+}
+
 func lspSuggestionsIncomplete(suggestions []Suggestion) bool {
 	for _, suggestion := range suggestions {
 		if suggestion.LSPListIncomplete {
@@ -2539,6 +2596,7 @@ func lspCompletionTrigger(ctx CompletionContext) lsp.CompletionTrigger {
 			TriggerKind:         2,
 			TriggerCharacter:    triggerChar,
 			RetryInvokedOnEmpty: true,
+			AccessMemberIntent:  true,
 		}
 	}
 	switch ctx.CompletionTriggerKind {

@@ -132,33 +132,34 @@ type LSPCommandJSON struct {
 }
 
 type EditorCompletion struct {
-	Label               string               `json:"label"`
-	Text                string               `json:"text"`
-	FilterText          string               `json:"filterText,omitempty"`
-	Detail              string               `json:"detail"`
-	Documentation       string               `json:"documentation,omitempty"`
-	TypeInfo            string               `json:"typeInfo,omitempty"`
-	Kind                string               `json:"kind"`
-	Source              string               `json:"source"`
-	InsertText          string               `json:"insertText"`
-	SortText            string               `json:"sortText,omitempty"`
-	CommitCharacters    []string             `json:"commitCharacters,omitempty"`
-	IsSnippet           bool                 `json:"isSnippet"`
-	Priority            int                  `json:"priority"`
-	HighlightPositions  []int                `json:"highlightPositions,omitempty"`
-	MatchType           string               `json:"matchType,omitempty"`
-	PrimaryTextEdit     *PrimaryTextEditJSON `json:"primaryTextEdit,omitempty"`
-	AdditionalTextEdits []TextEditJSON       `json:"additionalTextEdits,omitempty"`
-	Command             *LSPCommandJSON      `json:"command,omitempty"`
-	Data                any                  `json:"data,omitempty"`
-	ResolveToken        string               `json:"resolveToken,omitempty"`
-	CompletionID        string               `json:"completionId,omitempty"`
-	StableKey           string               `json:"stableKey,omitempty"`
-	Provenance          string               `json:"provenance,omitempty"`
-	ProofKind           string               `json:"proofKind,omitempty"`
-	AutoImportAllowed   bool                 `json:"autoImportAllowed"`
-	Primary             bool                 `json:"primary"`
-	RequiresResolve     bool                 `json:"requiresResolveBeforeApply"`
+	Label                     string               `json:"label"`
+	Text                      string               `json:"text"`
+	FilterText                string               `json:"filterText,omitempty"`
+	Detail                    string               `json:"detail"`
+	Documentation             string               `json:"documentation,omitempty"`
+	TypeInfo                  string               `json:"typeInfo,omitempty"`
+	Kind                      string               `json:"kind"`
+	Source                    string               `json:"source"`
+	InsertText                string               `json:"insertText"`
+	SortText                  string               `json:"sortText,omitempty"`
+	CommitCharacters          []string             `json:"commitCharacters,omitempty"`
+	IsSnippet                 bool                 `json:"isSnippet"`
+	Priority                  int                  `json:"priority"`
+	HighlightPositions        []int                `json:"highlightPositions,omitempty"`
+	MatchType                 string               `json:"matchType,omitempty"`
+	PrimaryTextEdit           *PrimaryTextEditJSON `json:"primaryTextEdit,omitempty"`
+	AdditionalTextEdits       []TextEditJSON       `json:"additionalTextEdits,omitempty"`
+	Command                   *LSPCommandJSON      `json:"command,omitempty"`
+	Data                      any                  `json:"data,omitempty"`
+	ResolveToken              string               `json:"resolveToken,omitempty"`
+	CompletionID              string               `json:"completionId,omitempty"`
+	StableKey                 string               `json:"stableKey,omitempty"`
+	Provenance                string               `json:"provenance,omitempty"`
+	ProofKind                 string               `json:"proofKind,omitempty"`
+	AccessMemberAuthoritative bool                 `json:"accessMemberAuthoritative"`
+	AutoImportAllowed         bool                 `json:"autoImportAllowed"`
+	Primary                   bool                 `json:"primary"`
+	RequiresResolve           bool                 `json:"requiresResolveBeforeApply"`
 }
 
 // EditorCompletionResult represents completion response
@@ -434,29 +435,30 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		proofKind := editorCompletionProofKind(s)
 		autoImportAllowed := editorCompletionAutoImportAllowed(s, proofKind)
 		item := EditorCompletion{
-			Label:             s.DisplayText,
-			Text:              s.Text,
-			FilterText:        s.MatchText,
-			Detail:            s.Detail,
-			Documentation:     s.Documentation,
-			TypeInfo:          s.TypeInfo,
-			Kind:              string(s.Kind),
-			Source:            string(s.Source),
-			InsertText:        s.InsertText,
-			SortText:          s.SortText,
-			CommitCharacters:  append([]string(nil), s.CommitCharacters...),
-			IsSnippet:         s.IsSnippet,
-			Priority:          int(s.Score * 100),
-			ResolveToken:      s.ResolveToken,
-			CompletionID:      editorCompletionID(requestID, i, stableKey),
-			StableKey:         stableKey,
-			Provenance:        string(s.Source),
-			ProofKind:         proofKind,
-			AutoImportAllowed: autoImportAllowed,
-			RequiresResolve:   s.ResolveToken != "",
-			PrimaryTextEdit:   editorPrimaryTextEditJSON(s.PrimaryTextEdit),
-			Command:           editorLSPCommandJSON(s.Command),
-			Data:              s.Data,
+			Label:                     s.DisplayText,
+			Text:                      s.Text,
+			FilterText:                s.MatchText,
+			Detail:                    s.Detail,
+			Documentation:             s.Documentation,
+			TypeInfo:                  s.TypeInfo,
+			Kind:                      string(s.Kind),
+			Source:                    string(s.Source),
+			InsertText:                s.InsertText,
+			SortText:                  s.SortText,
+			CommitCharacters:          append([]string(nil), s.CommitCharacters...),
+			IsSnippet:                 s.IsSnippet,
+			Priority:                  int(s.Score * 100),
+			ResolveToken:              s.ResolveToken,
+			CompletionID:              editorCompletionID(requestID, i, stableKey),
+			StableKey:                 stableKey,
+			Provenance:                string(s.Source),
+			ProofKind:                 proofKind,
+			AccessMemberAuthoritative: editorCompletionAccessMemberAuthoritative(s, proofKind),
+			AutoImportAllowed:         autoImportAllowed,
+			RequiresResolve:           s.ResolveToken != "",
+			PrimaryTextEdit:           editorPrimaryTextEditJSON(s.PrimaryTextEdit),
+			Command:                   editorLSPCommandJSON(s.Command),
+			Data:                      s.Data,
 		}
 		if s.MatchResult != nil {
 			item.HighlightPositions = s.MatchResult.Positions
@@ -502,12 +504,12 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		ghostResult.ShouldShow, ghostResult.Text, ghostResult.Confidence)
 
 	lspCapabilities := indexerlsp.CompletionCapabilities{}
-	if a.lspManager != nil {
+	if lspManager := a.activeLSPManager(); lspManager != nil {
 		lspLanguage := autocomplete.Resolve(ctx.Language, ctx.FilePath).LSPID
 		if lspLanguage == "" {
 			lspLanguage = ctx.Language
 		}
-		lspCapabilities = a.lspManager.CompletionCapabilities(lspLanguage)
+		lspCapabilities = lspManager.CompletionCapabilities(lspLanguage)
 	}
 
 	return EditorCompletionResult{
@@ -757,6 +759,18 @@ func editorCompletionProofKind(s brain.Suggestion) string {
 		return "dependency-declared"
 	default:
 		return "none"
+	}
+}
+
+func editorCompletionAccessMemberAuthoritative(s brain.Suggestion, proofKind string) bool {
+	if s.Source == core.SourceLSP {
+		return true
+	}
+	switch strings.TrimSpace(proofKind) {
+	case "receiver-member", "self-static-member":
+		return strings.TrimSpace(s.Namespace) != ""
+	default:
+		return false
 	}
 }
 

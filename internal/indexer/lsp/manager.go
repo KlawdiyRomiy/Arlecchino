@@ -84,6 +84,7 @@ type CompletionTrigger struct {
 	TriggerKind         int
 	TriggerCharacter    string
 	RetryInvokedOnEmpty bool
+	AccessMemberIntent  bool
 }
 
 const (
@@ -100,12 +101,14 @@ func (t CompletionTrigger) normalized() CompletionTrigger {
 		if strings.TrimSpace(t.TriggerCharacter) == "" {
 			t.TriggerKind = completionTriggerInvoked
 			t.TriggerCharacter = ""
+			t.AccessMemberIntent = false
 		}
 	case completionTriggerIncomplete:
 		t.TriggerCharacter = ""
 	default:
 		t.TriggerKind = completionTriggerInvoked
 		t.TriggerCharacter = ""
+		t.AccessMemberIntent = false
 	}
 	return t
 }
@@ -222,8 +225,10 @@ type CompletionItemDefaults struct {
 }
 
 type CompletionResponse struct {
-	Items        []CompletionItem
-	IsIncomplete bool
+	Items                 []CompletionItem
+	IsIncomplete          bool
+	UsedInvokedFallback   bool
+	InvokedFallbackReason string
 }
 
 type CompletionProviderCapability struct {
@@ -1039,7 +1044,7 @@ func (m *Manager) CompleteWithTriggerResult(ctx context.Context, language, fileP
 
 	version := m.docVersion(language, filePath)
 	epoch := m.completionCacheEpoch()
-	cacheKey := fmt.Sprintf("%d|%s|%s|%d|%d|%d|%d|%s|%t", epoch, language, filePath, line, column, version, trigger.TriggerKind, trigger.TriggerCharacter, trigger.RetryInvokedOnEmpty)
+	cacheKey := fmt.Sprintf("%d|%s|%s|%d|%d|%d|%d|%s|%t|%t", epoch, language, filePath, line, column, version, trigger.TriggerKind, trigger.TriggerCharacter, trigger.RetryInvokedOnEmpty, trigger.AccessMemberIntent)
 	if result, ok := m.getCompletionCache(cacheKey); ok {
 		return result.response, result.err
 	}
@@ -1087,6 +1092,9 @@ func (m *Manager) CompleteWithTriggerResult(ctx context.Context, language, fileP
 
 func shouldCacheCompletionResult(response CompletionResponse, err error, trigger CompletionTrigger) bool {
 	if err != nil {
+		return false
+	}
+	if response.UsedInvokedFallback {
 		return false
 	}
 	if trigger.RetryInvokedOnEmpty && len(response.Items) == 0 {
@@ -2572,7 +2580,7 @@ func (s *Server) completeWithContext(ctx context.Context, filePath string, line,
 	}
 	trigger = trigger.normalized()
 	originalTrigger := trigger
-	if trigger.TriggerKind == completionTriggerCharacter && !s.supportsCompletionTrigger(trigger.TriggerCharacter) {
+	if trigger.TriggerKind == completionTriggerCharacter && !trigger.AccessMemberIntent && !s.supportsCompletionTrigger(trigger.TriggerCharacter) {
 		trigger = CompletionTrigger{TriggerKind: completionTriggerInvoked}
 	}
 
@@ -2580,6 +2588,8 @@ func (s *Server) completeWithContext(ctx context.Context, filePath string, line,
 	if err != nil && originalTrigger.RetryInvokedOnEmpty && trigger.TriggerKind == completionTriggerCharacter && ctx.Err() == nil {
 		retryResponse, retryErr := s.completeOnceWithContext(ctx, filePath, line, column, CompletionTrigger{TriggerKind: completionTriggerInvoked})
 		if retryErr == nil {
+			retryResponse.UsedInvokedFallback = true
+			retryResponse.InvokedFallbackReason = "error"
 			return retryResponse, nil
 		}
 	}
@@ -2589,7 +2599,12 @@ func (s *Server) completeWithContext(ctx context.Context, filePath string, line,
 	if ctx.Err() != nil {
 		return response, ctx.Err()
 	}
-	return s.completeOnceWithContext(ctx, filePath, line, column, CompletionTrigger{TriggerKind: completionTriggerInvoked})
+	retryResponse, retryErr := s.completeOnceWithContext(ctx, filePath, line, column, CompletionTrigger{TriggerKind: completionTriggerInvoked})
+	if retryErr == nil {
+		retryResponse.UsedInvokedFallback = true
+		retryResponse.InvokedFallbackReason = "empty"
+	}
+	return retryResponse, retryErr
 }
 
 func (s *Server) completeOnceWithContext(ctx context.Context, filePath string, line, column int, trigger CompletionTrigger) (CompletionResponse, error) {
