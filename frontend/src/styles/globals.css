@@ -1033,6 +1033,18 @@ body > [data-radix-portal] > * {
     color-mix(in srgb, var(--accent-primary) 72%, transparent);
 }
 
+[data-editor-tab-active-indicator="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  height: 3px;
+  pointer-events: none;
+  background: var(--editor-tab-active-indicator, var(--text-primary, #000000));
+}
+
 .file-explorer-code-drop-target {
   background: color-mix(
     in srgb,

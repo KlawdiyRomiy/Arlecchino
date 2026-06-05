@@ -2663,6 +2663,28 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     window.dispatchEvent(new CustomEvent("arlecchino:editor-split-transition"));
   }, []);
 
+  const collapseEditorSplitToTab = useCallback(
+    (tabId: string) => {
+      const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+      if (!tab) {
+        return false;
+      }
+
+      notifyEditorSplitTransition();
+      editorSplitSlotsRef.current = null;
+      setEditorSplitSlots(null);
+      setSplitDirection(null);
+      setSecondaryActiveTab(null);
+      activeTabRef.current = tabId;
+      setActiveTab(tabId);
+      updateActiveEditorView(editorViewRefs.current[tabId] ?? null);
+      setActiveEditorSplitDropSide(null);
+      ensureTabFileLoaded(tab);
+      return true;
+    },
+    [ensureTabFileLoaded, notifyEditorSplitTransition, updateActiveEditorView],
+  );
+
   const handleTabsReorder = useCallback((nextTabs: Tab[]) => {
     const normalizedTabs = normalizeEditorTabs(nextTabs);
     tabsRef.current = normalizedTabs;
@@ -2742,6 +2764,15 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         currentSplitSlots,
         tabId,
       );
+      if (
+        currentSplitSlots &&
+        sourceSplitSide &&
+        sourceSplitSide !== side &&
+        getEditorSplitTabIds(currentSplitSlots, sourceSplitSide).length === 1
+      ) {
+        return collapseEditorSplitToTab(tabId);
+      }
+
       const shouldMoveFromSourceSide = Boolean(
         currentSplitSlots &&
         sourceSplitSide &&
@@ -2816,7 +2847,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       ]).forEach((tab) => ensureTabFileLoaded(tab));
       return true;
     },
-    [ensureTabFileLoaded, focusEditorSplitSide, notifyEditorSplitTransition],
+    [
+      collapseEditorSplitToTab,
+      ensureTabFileLoaded,
+      focusEditorSplitSide,
+      notifyEditorSplitTransition,
+    ],
   );
 
   const handleTabDropToEditorSplit = useCallback(
@@ -3426,15 +3462,21 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       )}
 
       {editorSplitReady && editorSplitSlots && (
-        <div className="flex h-10 min-h-10 w-full overflow-hidden">
+        <div className="flex h-10 min-h-10 w-full overflow-visible">
           <div
             data-editor-split-side="left"
-            className="min-w-0 w-1/2 border-r border-[var(--editor-border)]"
+            className="relative min-w-0 w-1/2 border-r border-[var(--editor-border)]"
+            onFocusCapture={() => focusEditorSplitSide("left")}
+            onPointerDownCapture={() => focusEditorSplitSide("left")}
           >
             <EditorTabs
               tabs={editorSplitLeftTabs}
               activeTab={editorSplitSlots.leftActiveTabId}
-              activeIndicatorTab={editorSplitSlots.leftActiveTabId}
+              activeIndicatorTab={
+                focusedEditorSplitSide === "left"
+                  ? editorSplitSlots.leftActiveTabId
+                  : null
+              }
               onTabClick={handleEditorTabClick}
               onTabClose={(tabId) => handleSplitTabClose("left", tabId)}
               onTabsReorder={(nextTabs) =>
@@ -3455,11 +3497,20 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
               getTabContextMenuItems={buildTabContextMenuItems}
             />
           </div>
-          <div data-editor-split-side="right" className="min-w-0 w-1/2">
+          <div
+            data-editor-split-side="right"
+            className="relative min-w-0 w-1/2"
+            onFocusCapture={() => focusEditorSplitSide("right")}
+            onPointerDownCapture={() => focusEditorSplitSide("right")}
+          >
             <EditorTabs
               tabs={editorSplitRightTabs}
               activeTab={editorSplitSlots.rightActiveTabId}
-              activeIndicatorTab={editorSplitSlots.rightActiveTabId}
+              activeIndicatorTab={
+                focusedEditorSplitSide === "right"
+                  ? editorSplitSlots.rightActiveTabId
+                  : null
+              }
               onTabClick={handleEditorTabClick}
               onTabClose={(tabId) => handleSplitTabClose("right", tabId)}
               onTabsReorder={(nextTabs) =>
@@ -3516,6 +3567,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
               data-testid="editor-split-pane-left"
               aria-label="Left editor split pane"
               onFocusCapture={() => focusEditorSplitSide("left")}
+              onPointerDownCapture={() => focusEditorSplitSide("left")}
             >
               {renderEditorSurface(editorSplitLeftTabData)}
             </section>
@@ -3524,6 +3576,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
               data-testid="editor-split-pane-right"
               aria-label="Right editor split pane"
               onFocusCapture={() => focusEditorSplitSide("right")}
+              onPointerDownCapture={() => focusEditorSplitSide("right")}
               style={{
                 visibility: splitReady ? "visible" : "hidden",
                 background: editorBgColor,

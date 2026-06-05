@@ -401,10 +401,6 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
     const sourceHidden = draggedOutTabId === tab.id;
     const tabStyle: React.CSSProperties = {
       borderRadius: activeTab === tab.id ? "8px 8px 0 0" : "0",
-      boxShadow:
-        visibleActiveIndicatorTab === tab.id
-          ? "inset 0 -3px 0 var(--editor-tab-active-indicator, var(--text-primary))"
-          : undefined,
       visibility: sourceHidden ? "hidden" : undefined,
       pointerEvents: sourceHidden ? "none" : undefined,
     };
@@ -416,6 +412,9 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         onPointerDown={(event) => handleTabPointerDown(tab, event)}
         onAuxClick={(event) => handleTabAuxClick(tab, event)}
         data-tab-id={tab.id}
+        data-editor-tab-active-indicator={
+          visibleActiveIndicatorTab === tab.id ? "true" : undefined
+        }
         data-drag-source-hidden={sourceHidden ? "true" : undefined}
         className={`${tabClassName(tab)} cursor-grab`}
         style={tabStyle}
@@ -429,6 +428,9 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({
         onPointerDown={(event) => handleTabPointerDown(tab, event)}
         onAuxClick={(event) => handleTabAuxClick(tab, event)}
         data-tab-id={tab.id}
+        data-editor-tab-active-indicator={
+          visibleActiveIndicatorTab === tab.id ? "true" : undefined
+        }
         data-drag-source-hidden={sourceHidden ? "true" : undefined}
         className={`${tabClassName(tab)} cursor-pointer`}
         style={tabStyle}
