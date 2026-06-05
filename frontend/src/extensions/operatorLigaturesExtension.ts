@@ -18,6 +18,11 @@ const enabledOperatorLigatureTheme = EditorView.theme({
     fontVariantLigatures: "common-ligatures contextual !important",
     fontFeatureSettings: '"liga" 1, "calt" 1 !important',
   },
+  ".cm-lintRange, .cm-lintRange-error, .cm-lintRange-warning, .cm-lintRange-info, .cm-lintRange-hint":
+    {
+      fontVariantLigatures: "common-ligatures contextual !important",
+      fontFeatureSettings: '"liga" 1, "calt" 1 !important',
+    },
 });
 
 const disabledOperatorLigatureTheme = EditorView.theme({
@@ -37,6 +42,11 @@ const disabledOperatorLigatureTheme = EditorView.theme({
     fontVariantLigatures: "none !important",
     fontFeatureSettings: '"liga" 0, "calt" 0 !important',
   },
+  ".cm-lintRange, .cm-lintRange-error, .cm-lintRange-warning, .cm-lintRange-info, .cm-lintRange-hint":
+    {
+      fontVariantLigatures: "none !important",
+      fontFeatureSettings: '"liga" 0, "calt" 0 !important',
+    },
 });
 
 export const createOperatorLigaturesExtension = (
