@@ -738,20 +738,20 @@ export function GetCurrentWorkDir(): $CancellablePromise<string> {
     return $Call.ByID(2525994829);
 }
 
-export function GetDependencyGraph(filePath: string, depth: number): $CancellablePromise<indexer$0.DependencyGraph | null> {
-    return $Call.ByID(2362147149, filePath, depth).then(($result: any) => {
-        return $$createType69($result);
+export function GetDependencyFlatPolicyPlan(consentMode: string): $CancellablePromise<depsync$0.FlatPolicyPlan> {
+    return $Call.ByID(449041705, consentMode).then(($result: any) => {
+        return $$createType68($result);
     });
 }
 
-export function GetDependencyPolicyPlan(consentMode: string): $CancellablePromise<depsync$0.PolicyPlan> {
-    return $Call.ByID(2830371102, consentMode).then(($result: any) => {
+export function GetDependencyGraph(filePath: string, depth: number): $CancellablePromise<indexer$0.DependencyGraph | null> {
+    return $Call.ByID(2362147149, filePath, depth).then(($result: any) => {
         return $$createType70($result);
     });
 }
 
-export function GetDependencyPolicyPlanV2(req: depsync$0.PolicyPlanRequest): $CancellablePromise<depsync$0.PolicyPlanV2> {
-    return $Call.ByID(3537124062, req).then(($result: any) => {
+export function GetDependencyPolicyPlan(req: depsync$0.PolicyPlanRequest): $CancellablePromise<depsync$0.PolicyPlan> {
+    return $Call.ByID(2830371102, req).then(($result: any) => {
         return $$createType71($result);
     });
 }
@@ -1401,14 +1401,14 @@ export function RunBackgroundShellAction(actionID: string): $CancellablePromise<
     });
 }
 
-export function RunDependencyPolicySync(req: depsync$0.ExecuteRequest): $CancellablePromise<depsync$0.ExecuteResult> {
-    return $Call.ByID(4132946231, req).then(($result: any) => {
+export function RunDependencyFlatPolicySync(req: depsync$0.ExecuteRequest): $CancellablePromise<depsync$0.FlatExecuteResult> {
+    return $Call.ByID(2063425320, req).then(($result: any) => {
         return $$createType128($result);
     });
 }
 
-export function RunDependencyPolicySyncV2(req: depsync$0.ExecuteRequest): $CancellablePromise<depsync$0.ExecuteResultV2> {
-    return $Call.ByID(2464693267, req).then(($result: any) => {
+export function RunDependencyPolicySync(req: depsync$0.ExecuteRequest): $CancellablePromise<depsync$0.ExecuteResult> {
+    return $Call.ByID(4132946231, req).then(($result: any) => {
         return $$createType129($result);
     });
 }
@@ -1673,10 +1673,10 @@ const $$createType64 = $Create.Array($$createType63);
 const $$createType65 = $models.BackgroundShellStatusSnapshot.createFrom;
 const $$createType66 = $models.BuildInfo.createFrom;
 const $$createType67 = $models.ProjectWindowSessionPayload.createFrom;
-const $$createType68 = indexer$0.DependencyGraph.createFrom;
-const $$createType69 = $Create.Nullable($$createType68);
-const $$createType70 = depsync$0.PolicyPlan.createFrom;
-const $$createType71 = depsync$0.PolicyPlanV2.createFrom;
+const $$createType68 = depsync$0.FlatPolicyPlan.createFrom;
+const $$createType69 = indexer$0.DependencyGraph.createFrom;
+const $$createType70 = $Create.Nullable($$createType69);
+const $$createType71 = depsync$0.PolicyPlan.createFrom;
 const $$createType72 = depsync$0.Plan.createFrom;
 const $$createType73 = welcome$0.ToolStatus.createFrom;
 const $$createType74 = $Create.Array($$createType73);
@@ -1733,8 +1733,8 @@ const $$createType124 = $models.EditorVisualFile.createFrom;
 const $$createType125 = $models.ProjectEntryRenameResult.createFrom;
 const $$createType126 = $models.EditorCompletionResolveResult.createFrom;
 const $$createType127 = $models.BackgroundShellActionResult.createFrom;
-const $$createType128 = depsync$0.ExecuteResult.createFrom;
-const $$createType129 = depsync$0.ExecuteResultV2.createFrom;
+const $$createType128 = depsync$0.FlatExecuteResult.createFrom;
+const $$createType129 = depsync$0.ExecuteResult.createFrom;
 const $$createType130 = $models.PackagedOSActionResult.createFrom;
 const $$createType131 = $models.WindowLeaseActionResult.createFrom;
 const $$createType132 = $Create.Array($$createType117);

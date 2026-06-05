@@ -94,7 +94,8 @@ func defaultRegistry() registry {
 				Tool: "go",
 				Commands: []commandSpec{
 					{Label: "tidy", Args: "mod tidy", Safe: true, Capability: CapabilityResolveOnly, MutationRisk: RiskLow},
-					{Label: "update", Executable: "sh", Args: "-c \"go get -u ./... && go mod tidy\"", Safe: false, Capability: CapabilityDeclareAndLock, MutationRisk: RiskHigh},
+					{Label: "update", Args: "get -u ./...", Safe: false, Capability: CapabilityDeclareAndLock, MutationRisk: RiskHigh},
+					{Label: "tidy-after-update", Args: "mod tidy", Safe: false, Capability: CapabilityDeclareAndLock, MutationRisk: RiskHigh},
 				},
 			}},
 		},

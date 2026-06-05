@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"arlecchino/internal/toolchain"
 )
 
 type Mode string
@@ -40,16 +42,26 @@ type Plan struct {
 }
 
 type Executor struct {
-	runner func(dir, name string, args ...string) ([]byte, error)
+	runner func(command resolvedCommand) ([]byte, error)
 }
 
 func NewExecutor() *Executor {
 	return &Executor{runner: defaultRunner}
 }
 
-func defaultRunner(dir, name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
+type resolvedCommand struct {
+	dir        string
+	executable string
+	args       []string
+	env        []string
+}
+
+func defaultRunner(command resolvedCommand) ([]byte, error) {
+	cmd := exec.Command(command.executable, command.args...)
+	cmd.Dir = command.dir
+	if len(command.env) > 0 {
+		cmd.Env = command.env
+	}
 	return cmd.CombinedOutput()
 }
 
@@ -70,6 +82,7 @@ func (e *Executor) Execute(projectPath string, mode Mode) (map[string]string, er
 		return nil, err
 	}
 	results := make(map[string]string, len(plan.Managers))
+	failedUpdateGroups := make(map[string]bool)
 	for _, manager := range plan.Managers {
 		workDir, workDirErr := manifestWorkDir(projectPath, manager.Manifest)
 		for _, cmd := range manager.Commands {
@@ -80,16 +93,27 @@ func (e *Executor) Execute(projectPath string, mode Mode) (map[string]string, er
 				continue
 			}
 			key := buildActionID(manager, cmd)
+			groupKey := followUpActionGroup(manager.Ecosystem, manager.Manifest, cmd.Executable)
+			if shouldSkipAfterFailedUpdate(manager.Ecosystem, cmd.Label, failedUpdateGroups[groupKey]) {
+				results[key] = "skipped: previous update failed"
+				continue
+			}
 			if workDirErr != nil {
 				results[key] = fmt.Sprintf("skipped: %v", workDirErr)
 				continue
 			}
-			if !commandAvailable(projectPath, workDir, cmd.Executable) {
-				results[key] = fmt.Sprintf("skipped: missing executable %s", cmd.Executable)
+			resolution := commandResolution(projectPath, workDir, cmd.Executable)
+			if !resolution.Available() {
+				results[key] = "skipped: " + resolution.Reason
 				continue
 			}
 			args := splitArgs(cmd.Args)
-			out, runErr := e.runner(workDir, cmd.Executable, args...)
+			out, runErr := e.runner(resolvedCommand{
+				dir:        workDir,
+				executable: resolution.Path,
+				args:       args,
+				env:        toolchain.CommandEnv(resolution),
+			})
 			results[key] = strings.TrimSpace(string(out))
 			if runErr != nil {
 				message := fmt.Sprintf("failed: %v", runErr)
@@ -97,6 +121,9 @@ func (e *Executor) Execute(projectPath string, mode Mode) (map[string]string, er
 					message += "\n" + trimmed
 				}
 				results[key] = message
+				if isUpdatePrerequisiteAction(manager.Ecosystem, cmd.Label) {
+					failedUpdateGroups[groupKey] = true
+				}
 				continue
 			}
 		}
@@ -177,18 +204,27 @@ func commandAvailable(projectPath, workDir, executable string) bool {
 }
 
 func commandAvailability(projectPath, workDir, executable string) string {
-	executable = strings.TrimSpace(executable)
-	if executable == "" {
-		return "missing executable"
-	}
-	if strings.HasPrefix(executable, "./") || strings.HasPrefix(executable, "../") {
-		return relativeCommandAvailability(projectPath, workDir, executable)
-	}
-	_, err := exec.LookPath(executable)
-	if err != nil {
-		return fmt.Sprintf("missing executable %s", executable)
-	}
-	return ""
+	return commandResolution(projectPath, workDir, executable).Reason
+}
+
+func commandResolution(projectPath, workDir, executable string) toolchain.Resolution {
+	return toolchain.ResolveExecutable(projectPath, workDir, executable)
+}
+
+func followUpActionGroup(ecosystem, manifest, executable string) string {
+	return strings.Join([]string{
+		strings.TrimSpace(ecosystem),
+		strings.TrimSpace(manifest),
+		strings.TrimSpace(executable),
+	}, "\x00")
+}
+
+func isUpdatePrerequisiteAction(ecosystem, label string) bool {
+	return strings.TrimSpace(ecosystem) == "go" && strings.TrimSpace(label) == "update"
+}
+
+func shouldSkipAfterFailedUpdate(ecosystem, label string, previousFailed bool) bool {
+	return previousFailed && strings.TrimSpace(ecosystem) == "go" && strings.TrimSpace(label) == "tidy-after-update"
 }
 
 func relativeCommandAvailable(projectPath, workDir, executable string) bool {

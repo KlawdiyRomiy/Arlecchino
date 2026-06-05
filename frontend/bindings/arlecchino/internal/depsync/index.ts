@@ -11,7 +11,8 @@ export {
     DependencyCapability,
     ExecuteRequest,
     ExecuteResult,
-    ExecuteResultV2,
+    FlatExecuteResult,
+    FlatPolicyPlan,
     Manager,
     Mode,
     MutationRisk,
@@ -19,6 +20,5 @@ export {
     Plan,
     Policy,
     PolicyPlan,
-    PolicyPlanRequest,
-    PolicyPlanV2
+    PolicyPlanRequest
 } from "./models.js";

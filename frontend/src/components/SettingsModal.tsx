@@ -1982,11 +1982,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         void refreshAutocompleteCapabilities();
       },
     );
+    const offRuntimeRefreshed = EventsOn<[unknown]>(
+      "depsync:runtime-refreshed",
+      () => {
+        void refreshAutocompleteCapabilities();
+      },
+    );
 
     return () => {
       offProgress();
       offComplete();
       offError();
+      offRuntimeRefreshed();
     };
   }, [recordAutocompleteInstallEvent, refreshAutocompleteCapabilities]);
 

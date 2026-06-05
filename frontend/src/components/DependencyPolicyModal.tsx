@@ -16,9 +16,9 @@ import {
   type ActionDescriptor,
   ConsentMode,
   ExecuteRequest,
-  type ExecuteResultV2,
+  type ExecuteResult,
   PolicyPlanRequest,
-  type PolicyPlanV2,
+  type PolicyPlan,
 } from "../../bindings/arlecchino/internal/depsync/models";
 import { useEditorSettingsStore } from "../stores/editorSettingsStore";
 import { isAppNotificationInteractionEvent } from "../utils/appNotificationTargets";
@@ -160,10 +160,10 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
   );
   const [autoApproveLowRisk, setAutoApproveLowRisk] = useState(true);
   const [persistApprovals, setPersistApprovals] = useState(true);
-  const [plan, setPlan] = useState<PolicyPlanV2 | null>(null);
+  const [plan, setPlan] = useState<PolicyPlan | null>(null);
   const [approvedActionIds, setApprovedActionIds] = useState<string[]>([]);
   const [rememberedActionIds, setRememberedActionIds] = useState<string[]>([]);
-  const [result, setResult] = useState<ExecuteResultV2 | null>(null);
+  const [result, setResult] = useState<ExecuteResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -187,7 +187,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
     setExpandedActionId(null);
     try {
       const [nextPlan, rememberedRaw] = await Promise.all([
-        App.GetDependencyPolicyPlanV2(
+        App.GetDependencyPolicyPlan(
           new PolicyPlanRequest({
             policy: {
               consentMode,
@@ -295,7 +295,7 @@ export const DependencyPolicyModal: React.FC<DependencyPolicyModalProps> = ({
       const runnableIds = new Set(
         actionEntries.map((entry) => entry.action.id).filter(Boolean),
       );
-      const response = await App.RunDependencyPolicySyncV2(
+      const response = await App.RunDependencyPolicySync(
         new ExecuteRequest({
           policy: {
             consentMode,

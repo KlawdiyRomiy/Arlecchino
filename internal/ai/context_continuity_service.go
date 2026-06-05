@@ -89,7 +89,7 @@ func (s *Service) AICompactChatSession(projectID string, req AIContextCompaction
 		return AIContextCompactionResult{}, fmt.Errorf("Mnemonic is disabled, so shared AI memory context is disabled")
 	}
 	if req.ModelAssisted {
-		return AIContextCompactionResult{}, fmt.Errorf("model-assisted context compaction is not implemented in V1; deterministic local compaction avoids hidden provider egress")
+		return AIContextCompactionResult{}, fmt.Errorf("model-assisted context compaction is not implemented in the current local compaction path; deterministic local compaction avoids hidden provider egress")
 	}
 	sessionID := normalizeChatSessionID(req.SessionID)
 	req.SessionID = sessionID

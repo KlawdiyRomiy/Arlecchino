@@ -9,7 +9,7 @@ import (
 )
 
 const AgentGuideAckMarker = "IDE_GUIDE_LOADED"
-const agentGuideManagedMarker = "<!-- ARLECCHINO_MANAGED_GUIDE_V2 -->"
+const agentGuideManagedMarker = "<!-- ARLECCHINO_MANAGED_GUIDE -->"
 
 const (
 	agentGuideDirectoryName = ".arlecchino"

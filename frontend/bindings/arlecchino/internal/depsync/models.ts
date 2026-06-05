@@ -255,11 +255,36 @@ export class ExecuteRequest {
 }
 
 export class ExecuteResult {
-    "results": { [_ in string]?: string };
-    "blocked": { [_ in string]?: string };
+    "outcomes": ActionOutcome[];
 
     /** Creates a new ExecuteResult instance. */
     constructor($$source: Partial<ExecuteResult> = {}) {
+        if (!("outcomes" in $$source)) {
+            this["outcomes"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ExecuteResult instance from a string or object.
+     */
+    static createFrom($$source: any = {}): ExecuteResult {
+        const $$createField0_0 = $$createType4;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("outcomes" in $$parsedSource) {
+            $$parsedSource["outcomes"] = $$createField0_0($$parsedSource["outcomes"]);
+        }
+        return new ExecuteResult($$parsedSource as Partial<ExecuteResult>);
+    }
+}
+
+export class FlatExecuteResult {
+    "results": { [_ in string]?: string };
+    "blocked": { [_ in string]?: string };
+
+    /** Creates a new FlatExecuteResult instance. */
+    constructor($$source: Partial<FlatExecuteResult> = {}) {
         if (!("results" in $$source)) {
             this["results"] = {};
         }
@@ -271,11 +296,11 @@ export class ExecuteResult {
     }
 
     /**
-     * Creates a new ExecuteResult instance from a string or object.
+     * Creates a new FlatExecuteResult instance from a string or object.
      */
-    static createFrom($$source: any = {}): ExecuteResult {
-        const $$createField0_0 = $$createType3;
-        const $$createField1_0 = $$createType3;
+    static createFrom($$source: any = {}): FlatExecuteResult {
+        const $$createField0_0 = $$createType5;
+        const $$createField1_0 = $$createType5;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("results" in $$parsedSource) {
             $$parsedSource["results"] = $$createField0_0($$parsedSource["results"]);
@@ -283,32 +308,44 @@ export class ExecuteResult {
         if ("blocked" in $$parsedSource) {
             $$parsedSource["blocked"] = $$createField1_0($$parsedSource["blocked"]);
         }
-        return new ExecuteResult($$parsedSource as Partial<ExecuteResult>);
+        return new FlatExecuteResult($$parsedSource as Partial<FlatExecuteResult>);
     }
 }
 
-export class ExecuteResultV2 {
-    "outcomes": ActionOutcome[];
+export class FlatPolicyPlan {
+    "projectPath": string;
+    "policy": Policy;
+    "actions": Action[];
 
-    /** Creates a new ExecuteResultV2 instance. */
-    constructor($$source: Partial<ExecuteResultV2> = {}) {
-        if (!("outcomes" in $$source)) {
-            this["outcomes"] = [];
+    /** Creates a new FlatPolicyPlan instance. */
+    constructor($$source: Partial<FlatPolicyPlan> = {}) {
+        if (!("projectPath" in $$source)) {
+            this["projectPath"] = "";
+        }
+        if (!("policy" in $$source)) {
+            this["policy"] = (new Policy());
+        }
+        if (!("actions" in $$source)) {
+            this["actions"] = [];
         }
 
         Object.assign(this, $$source);
     }
 
     /**
-     * Creates a new ExecuteResultV2 instance from a string or object.
+     * Creates a new FlatPolicyPlan instance from a string or object.
      */
-    static createFrom($$source: any = {}): ExecuteResultV2 {
-        const $$createField0_0 = $$createType5;
+    static createFrom($$source: any = {}): FlatPolicyPlan {
+        const $$createField1_0 = $$createType1;
+        const $$createField2_0 = $$createType6;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("outcomes" in $$parsedSource) {
-            $$parsedSource["outcomes"] = $$createField0_0($$parsedSource["outcomes"]);
+        if ("policy" in $$parsedSource) {
+            $$parsedSource["policy"] = $$createField1_0($$parsedSource["policy"]);
         }
-        return new ExecuteResultV2($$parsedSource as Partial<ExecuteResultV2>);
+        if ("actions" in $$parsedSource) {
+            $$parsedSource["actions"] = $$createField2_0($$parsedSource["actions"]);
+        }
+        return new FlatPolicyPlan($$parsedSource as Partial<FlatPolicyPlan>);
     }
 }
 
@@ -340,7 +377,7 @@ export class Manager {
      * Creates a new Manager instance from a string or object.
      */
     static createFrom($$source: any = {}): Manager {
-        const $$createField3_0 = $$createType7;
+        const $$createField3_0 = $$createType8;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("commands" in $$parsedSource) {
             $$parsedSource["commands"] = $$createField3_0($$parsedSource["commands"]);
@@ -408,7 +445,7 @@ export class Plan {
      * Creates a new Plan instance from a string or object.
      */
     static createFrom($$source: any = {}): Plan {
-        const $$createField2_0 = $$createType9;
+        const $$createField2_0 = $$createType10;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("managers" in $$parsedSource) {
             $$parsedSource["managers"] = $$createField2_0($$parsedSource["managers"]);
@@ -445,7 +482,10 @@ export class Policy {
 export class PolicyPlan {
     "projectPath": string;
     "policy": Policy;
-    "actions": Action[];
+    "runnableActions": ActionDescriptor[];
+    "unavailableActions": ActionDescriptor[];
+    "discoveryWarnings"?: string[];
+    "discoveryIncomplete": boolean;
 
     /** Creates a new PolicyPlan instance. */
     constructor($$source: Partial<PolicyPlan> = {}) {
@@ -455,8 +495,14 @@ export class PolicyPlan {
         if (!("policy" in $$source)) {
             this["policy"] = (new Policy());
         }
-        if (!("actions" in $$source)) {
-            this["actions"] = [];
+        if (!("runnableActions" in $$source)) {
+            this["runnableActions"] = [];
+        }
+        if (!("unavailableActions" in $$source)) {
+            this["unavailableActions"] = [];
+        }
+        if (!("discoveryIncomplete" in $$source)) {
+            this["discoveryIncomplete"] = false;
         }
 
         Object.assign(this, $$source);
@@ -467,13 +513,21 @@ export class PolicyPlan {
      */
     static createFrom($$source: any = {}): PolicyPlan {
         const $$createField1_0 = $$createType1;
-        const $$createField2_0 = $$createType10;
+        const $$createField2_0 = $$createType12;
+        const $$createField3_0 = $$createType12;
+        const $$createField4_0 = $$createType2;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("policy" in $$parsedSource) {
             $$parsedSource["policy"] = $$createField1_0($$parsedSource["policy"]);
         }
-        if ("actions" in $$parsedSource) {
-            $$parsedSource["actions"] = $$createField2_0($$parsedSource["actions"]);
+        if ("runnableActions" in $$parsedSource) {
+            $$parsedSource["runnableActions"] = $$createField2_0($$parsedSource["runnableActions"]);
+        }
+        if ("unavailableActions" in $$parsedSource) {
+            $$parsedSource["unavailableActions"] = $$createField3_0($$parsedSource["unavailableActions"]);
+        }
+        if ("discoveryWarnings" in $$parsedSource) {
+            $$parsedSource["discoveryWarnings"] = $$createField4_0($$parsedSource["discoveryWarnings"]);
         }
         return new PolicyPlan($$parsedSource as Partial<PolicyPlan>);
     }
@@ -504,71 +558,17 @@ export class PolicyPlanRequest {
     }
 }
 
-export class PolicyPlanV2 {
-    "projectPath": string;
-    "policy": Policy;
-    "runnableActions": ActionDescriptor[];
-    "unavailableActions": ActionDescriptor[];
-    "discoveryWarnings"?: string[];
-    "discoveryIncomplete": boolean;
-
-    /** Creates a new PolicyPlanV2 instance. */
-    constructor($$source: Partial<PolicyPlanV2> = {}) {
-        if (!("projectPath" in $$source)) {
-            this["projectPath"] = "";
-        }
-        if (!("policy" in $$source)) {
-            this["policy"] = (new Policy());
-        }
-        if (!("runnableActions" in $$source)) {
-            this["runnableActions"] = [];
-        }
-        if (!("unavailableActions" in $$source)) {
-            this["unavailableActions"] = [];
-        }
-        if (!("discoveryIncomplete" in $$source)) {
-            this["discoveryIncomplete"] = false;
-        }
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new PolicyPlanV2 instance from a string or object.
-     */
-    static createFrom($$source: any = {}): PolicyPlanV2 {
-        const $$createField1_0 = $$createType1;
-        const $$createField2_0 = $$createType12;
-        const $$createField3_0 = $$createType12;
-        const $$createField4_0 = $$createType2;
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        if ("policy" in $$parsedSource) {
-            $$parsedSource["policy"] = $$createField1_0($$parsedSource["policy"]);
-        }
-        if ("runnableActions" in $$parsedSource) {
-            $$parsedSource["runnableActions"] = $$createField2_0($$parsedSource["runnableActions"]);
-        }
-        if ("unavailableActions" in $$parsedSource) {
-            $$parsedSource["unavailableActions"] = $$createField3_0($$parsedSource["unavailableActions"]);
-        }
-        if ("discoveryWarnings" in $$parsedSource) {
-            $$parsedSource["discoveryWarnings"] = $$createField4_0($$parsedSource["discoveryWarnings"]);
-        }
-        return new PolicyPlanV2($$parsedSource as Partial<PolicyPlanV2>);
-    }
-}
-
 // Private type creation functions
 const $$createType0 = Action.createFrom;
 const $$createType1 = Policy.createFrom;
 const $$createType2 = $Create.Array($Create.Any);
-const $$createType3 = $Create.Map($Create.Any, $Create.Any);
-const $$createType4 = ActionOutcome.createFrom;
-const $$createType5 = $Create.Array($$createType4);
-const $$createType6 = Command.createFrom;
-const $$createType7 = $Create.Array($$createType6);
-const $$createType8 = Manager.createFrom;
-const $$createType9 = $Create.Array($$createType8);
-const $$createType10 = $Create.Array($$createType0);
+const $$createType3 = ActionOutcome.createFrom;
+const $$createType4 = $Create.Array($$createType3);
+const $$createType5 = $Create.Map($Create.Any, $Create.Any);
+const $$createType6 = $Create.Array($$createType0);
+const $$createType7 = Command.createFrom;
+const $$createType8 = $Create.Array($$createType7);
+const $$createType9 = Manager.createFrom;
+const $$createType10 = $Create.Array($$createType9);
 const $$createType11 = ActionDescriptor.createFrom;
 const $$createType12 = $Create.Array($$createType11);

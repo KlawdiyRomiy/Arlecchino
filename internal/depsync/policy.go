@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"arlecchino/internal/toolchain"
 )
 
 type ConsentMode string
@@ -52,7 +54,7 @@ type Action struct {
 	RequiresConsent bool                 `json:"requiresConsent"`
 }
 
-type PolicyPlan struct {
+type FlatPolicyPlan struct {
 	ProjectPath string   `json:"projectPath"`
 	Policy      Policy   `json:"policy"`
 	Actions     []Action `json:"actions"`
@@ -78,7 +80,7 @@ type ActionDescriptor struct {
 	ApprovalEligible   bool              `json:"approvalEligible"`
 }
 
-type PolicyPlanV2 struct {
+type PolicyPlan struct {
 	ProjectPath         string             `json:"projectPath"`
 	Policy              Policy             `json:"policy"`
 	RunnableActions     []ActionDescriptor `json:"runnableActions"`
@@ -94,7 +96,7 @@ type ExecuteRequest struct {
 	DryRun            bool     `json:"dryRun"`
 }
 
-type ExecuteResult struct {
+type FlatExecuteResult struct {
 	Results map[string]string `json:"results"`
 	Blocked map[string]string `json:"blocked"`
 }
@@ -116,7 +118,7 @@ type ActionOutcome struct {
 	Message  string        `json:"message"`
 }
 
-type ExecuteResultV2 struct {
+type ExecuteResult struct {
 	Outcomes []ActionOutcome `json:"outcomes"`
 }
 
@@ -141,34 +143,34 @@ func normalizePolicy(policy Policy) Policy {
 	return policy
 }
 
-func (e *Executor) BuildPolicyPlan(projectPath string, policy Policy) (PolicyPlan, error) {
+func (e *Executor) BuildFlatPolicyPlan(projectPath string, policy Policy) (FlatPolicyPlan, error) {
 	if strings.TrimSpace(projectPath) == "" {
-		return PolicyPlan{}, fmt.Errorf("project path is required")
+		return FlatPolicyPlan{}, fmt.Errorf("project path is required")
 	}
 	policy = normalizePolicy(policy)
 	managers, err := detectManagers(projectPath, ModeManual)
 	if err != nil {
-		return PolicyPlan{}, err
+		return FlatPolicyPlan{}, err
 	}
 	actions := flattenActions(managers)
 	for i := range actions {
 		actions[i].RequiresConsent = actionRequiresConsent(actions[i], policy)
 	}
-	return PolicyPlan{ProjectPath: projectPath, Policy: policy, Actions: actions}, nil
+	return FlatPolicyPlan{ProjectPath: projectPath, Policy: policy, Actions: actions}, nil
 }
 
-func (e *Executor) BuildPolicyPlanV2(projectPath string, req PolicyPlanRequest) (PolicyPlanV2, error) {
+func (e *Executor) BuildPolicyPlan(projectPath string, req PolicyPlanRequest) (PolicyPlan, error) {
 	if strings.TrimSpace(projectPath) == "" {
-		return PolicyPlanV2{}, fmt.Errorf("project path is required")
+		return PolicyPlan{}, fmt.Errorf("project path is required")
 	}
 	policy := normalizePolicy(req.Policy)
 	managers, discovery, err := detectManagersWithReport(projectPath, ModeManual)
 	if err != nil {
-		return PolicyPlanV2{}, err
+		return PolicyPlan{}, err
 	}
 	actions := flattenActions(managers)
 
-	plan := PolicyPlanV2{
+	plan := PolicyPlan{
 		ProjectPath:         projectPath,
 		Policy:              policy,
 		DiscoveryWarnings:   append([]string(nil), discovery.Warnings...),
@@ -228,14 +230,14 @@ func (e *Executor) actionDescriptor(projectPath string, action Action, policy Po
 	return descriptor
 }
 
-func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (ExecuteResult, error) {
+func (e *Executor) ExecuteWithFlatPolicy(projectPath string, req ExecuteRequest) (FlatExecuteResult, error) {
 	if strings.TrimSpace(projectPath) == "" {
-		return ExecuteResult{}, fmt.Errorf("project path is required")
+		return FlatExecuteResult{}, fmt.Errorf("project path is required")
 	}
 	policy := normalizePolicy(req.Policy)
-	plan, err := e.BuildPolicyPlan(projectPath, policy)
+	plan, err := e.BuildFlatPolicyPlan(projectPath, policy)
 	if err != nil {
-		return ExecuteResult{}, err
+		return FlatExecuteResult{}, err
 	}
 
 	validActionIDs := make(map[string]bool, len(plan.Actions))
@@ -263,13 +265,19 @@ func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (Ex
 		}
 	}
 
-	result := ExecuteResult{
+	result := FlatExecuteResult{
 		Results: make(map[string]string, len(plan.Actions)),
 		Blocked: make(map[string]string),
 	}
+	failedUpdateGroups := make(map[string]bool)
 
 	for _, action := range plan.Actions {
 		workDir, workDirErr := manifestWorkDir(projectPath, action.Manifest)
+		groupKey := followUpActionGroup(action.Ecosystem, action.Manifest, action.Executable)
+		if shouldSkipAfterFailedUpdate(action.Ecosystem, action.Label, failedUpdateGroups[groupKey]) {
+			result.Results[action.ID] = "skipped: previous update failed"
+			continue
+		}
 		if !canRunAction(action, policy, approved) {
 			result.Blocked[action.ID] = "consent required"
 			continue
@@ -285,12 +293,18 @@ func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (Ex
 			continue
 		}
 
-		if !commandAvailable(projectPath, workDir, action.Executable) {
-			result.Results[action.ID] = fmt.Sprintf("skipped: missing executable %s", action.Executable)
+		resolution := commandResolution(projectPath, workDir, action.Executable)
+		if !resolution.Available() {
+			result.Results[action.ID] = "skipped: " + resolution.Reason
 			continue
 		}
 
-		out, runErr := e.runner(workDir, action.Executable, splitArgs(action.Args)...)
+		out, runErr := e.runner(resolvedCommand{
+			dir:        workDir,
+			executable: resolution.Path,
+			args:       splitArgs(action.Args),
+			env:        toolchain.CommandEnv(resolution),
+		})
 		result.Results[action.ID] = strings.TrimSpace(string(out))
 		if runErr != nil {
 			message := fmt.Sprintf("failed: %v", runErr)
@@ -298,6 +312,9 @@ func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (Ex
 				message += "\n" + trimmed
 			}
 			result.Results[action.ID] = message
+			if isUpdatePrerequisiteAction(action.Ecosystem, action.Label) {
+				failedUpdateGroups[groupKey] = true
+			}
 		}
 	}
 
@@ -316,14 +333,14 @@ func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (Ex
 	return result, nil
 }
 
-func (e *Executor) ExecuteWithPolicyV2(projectPath string, req ExecuteRequest) (ExecuteResultV2, error) {
+func (e *Executor) ExecuteWithPolicy(projectPath string, req ExecuteRequest) (ExecuteResult, error) {
 	if strings.TrimSpace(projectPath) == "" {
-		return ExecuteResultV2{}, fmt.Errorf("project path is required")
+		return ExecuteResult{}, fmt.Errorf("project path is required")
 	}
 	policy := normalizePolicy(req.Policy)
-	plan, err := e.BuildPolicyPlanV2(projectPath, PolicyPlanRequest{Policy: policy})
+	plan, err := e.BuildPolicyPlan(projectPath, PolicyPlanRequest{Policy: policy})
 	if err != nil {
-		return ExecuteResultV2{}, err
+		return ExecuteResult{}, err
 	}
 
 	validRunnableIDs := make(map[string]bool, len(plan.RunnableActions))
@@ -351,13 +368,21 @@ func (e *Executor) ExecuteWithPolicyV2(projectPath string, req ExecuteRequest) (
 		}
 	}
 
-	result := ExecuteResultV2{
+	result := ExecuteResult{
 		Outcomes: make([]ActionOutcome, 0, len(plan.RunnableActions)+len(plan.UnavailableActions)),
 	}
+	failedUpdateGroups := make(map[string]bool)
 
 	for _, descriptor := range plan.RunnableActions {
 		action := descriptor.Action
 		outcome := ActionOutcome{ActionID: action.ID, Action: action}
+		groupKey := followUpActionGroup(action.Ecosystem, action.Manifest, action.Executable)
+		if shouldSkipAfterFailedUpdate(action.Ecosystem, action.Label, failedUpdateGroups[groupKey]) {
+			outcome.Status = OutcomeBlocked
+			outcome.Message = "skipped: previous update failed"
+			result.Outcomes = append(result.Outcomes, outcome)
+			continue
+		}
 		if !canRunAction(action, policy, approved) {
 			outcome.Status = OutcomeBlocked
 			outcome.Message = "consent required"
@@ -379,14 +404,20 @@ func (e *Executor) ExecuteWithPolicyV2(projectPath string, req ExecuteRequest) (
 			result.Outcomes = append(result.Outcomes, outcome)
 			continue
 		}
-		if reason := commandAvailability(projectPath, workDir, action.Executable); reason != "" {
+		resolution := commandResolution(projectPath, workDir, action.Executable)
+		if reason := resolution.Reason; reason != "" {
 			outcome.Status = OutcomeUnavailable
 			outcome.Message = reason
 			result.Outcomes = append(result.Outcomes, outcome)
 			continue
 		}
 
-		out, runErr := e.runner(workDir, action.Executable, splitArgs(action.Args)...)
+		out, runErr := e.runner(resolvedCommand{
+			dir:        workDir,
+			executable: resolution.Path,
+			args:       splitArgs(action.Args),
+			env:        toolchain.CommandEnv(resolution),
+		})
 		message := strings.TrimSpace(string(out))
 		if runErr != nil {
 			outcome.Status = OutcomeFailed
@@ -395,6 +426,9 @@ func (e *Executor) ExecuteWithPolicyV2(projectPath string, req ExecuteRequest) (
 				outcome.Message += "\n" + message
 			}
 			result.Outcomes = append(result.Outcomes, outcome)
+			if isUpdatePrerequisiteAction(action.Ecosystem, action.Label) {
+				failedUpdateGroups[groupKey] = true
+			}
 			continue
 		}
 		outcome.Status = OutcomeCompleted

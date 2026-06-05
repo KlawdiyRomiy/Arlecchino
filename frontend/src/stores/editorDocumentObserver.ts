@@ -4,7 +4,9 @@ import {
   NotifyFileOpened,
   RecordFileAccess,
 } from "../wails/app";
+import { EventsOn } from "../wails/runtime";
 import {
+  isSameOrChildPathByIdentity,
   normalizeProjectPath,
   normalizeProjectPathIdentity,
   projectPathsEqualByIdentity,
@@ -44,6 +46,14 @@ interface EditorDocumentChangeInput {
   delayMs?: number;
 }
 
+export interface RuntimeRefreshedEvent {
+  sessionId?: string;
+  projectPath?: string;
+  languages?: string[];
+  restarted?: string[];
+  workDirs?: string[];
+}
+
 let nextSurfaceSequence = 0;
 const documents = new Map<string, EditorDocumentRecord>();
 const surfaces = new Map<string, EditorDocumentSurfaceRecord>();
@@ -51,7 +61,8 @@ const surfaces = new Map<string, EditorDocumentSurfaceRecord>();
 const normalizePath = (path: string): string =>
   normalizeProjectPath(path).replace(/\\/g, "/").replace(/\/+/g, "/");
 
-const normalizeLanguage = (language: string): string => language.trim();
+const normalizeLanguage = (language: string): string =>
+  language.trim().toLowerCase();
 
 const documentKey = (path: string, language: string): string =>
   `${normalizeProjectPathIdentity(path)}\0${normalizeLanguage(language)}`;
@@ -134,6 +145,62 @@ const closeBackendDocumentIfUnused = (record: EditorDocumentRecord): void => {
   record.opened = false;
   void NotifyFileClosed(record.path, record.language).catch(console.warn);
 };
+
+export const resyncOpenEditorDocuments = (
+  event?: RuntimeRefreshedEvent,
+): void => {
+  const languages = new Set(
+    (event?.languages ?? [])
+      .map((language) => normalizeLanguage(language))
+      .filter(Boolean),
+  );
+  const projectPathIdentity = normalizeProjectPathIdentity(
+    event?.projectPath ?? "",
+  );
+  const records = Array.from(documents.values()).filter(
+    (record) =>
+      record.notifyingSurfaceIds.size > 0 &&
+      (languages.size === 0 ||
+        languages.has(normalizeLanguage(record.language))) &&
+      (!projectPathIdentity ||
+        isSameOrChildPathByIdentity(record.path, projectPathIdentity)),
+  );
+  for (const record of records) {
+    clearPendingChange(record);
+    record.opened = false;
+    record.version = Math.max(1, record.version);
+    record.pendingVersion = record.version;
+    record.pendingContent = record.content;
+
+    void (async () => {
+      try {
+        await NotifyFileOpened(record.path, record.language, record.content);
+        await NotifyFileChanged(
+          record.path,
+          record.language,
+          record.version,
+          record.content,
+        );
+        record.opened = true;
+      } catch (error) {
+        console.warn(error);
+      }
+    })();
+  }
+};
+
+const runtimeRefreshUnsubscribe = EventsOn<[RuntimeRefreshedEvent]>(
+  "depsync:runtime-refreshed",
+  (event) => {
+    resyncOpenEditorDocuments(event);
+  },
+);
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    runtimeRefreshUnsubscribe();
+  });
+}
 
 export const createEditorDocumentSurfaceId = (prefix: string): string => {
   nextSurfaceSequence += 1;
