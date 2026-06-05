@@ -12,6 +12,7 @@ import (
 	"arlecchino/internal/autocomplete"
 	"arlecchino/internal/indexer"
 	"arlecchino/internal/indexer/brain"
+	"arlecchino/internal/indexer/core"
 	indexerlsp "arlecchino/internal/indexer/lsp"
 	"arlecchino/internal/predictive"
 
@@ -22,9 +23,45 @@ import (
 
 const (
 	editorCompletionTimeout            = 325 * time.Millisecond
-	editorAccessChainCompletionTimeout = 650 * time.Millisecond
+	editorAccessChainCompletionTimeout = 2400 * time.Millisecond
 	editorCompletionResolveTimeout     = 150 * time.Millisecond
 )
+
+var editorAccessOperators = []string{"?->", "->", "::", "?.", "&.", ".", ":"}
+
+func editorAccessOperatorFromChain(accessChain string) string {
+	chain := strings.TrimSpace(accessChain)
+	for _, operator := range editorAccessOperators {
+		if strings.HasSuffix(chain, operator) {
+			return operator
+		}
+	}
+	return ""
+}
+
+func editorAccessChainIsStaticCall(accessChain string) bool {
+	return editorAccessOperatorFromChain(accessChain) == "::"
+}
+
+func editorAccessChainIsMethodCall(accessChain string) bool {
+	operator := editorAccessOperatorFromChain(accessChain)
+	return operator != "" && operator != "::"
+}
+
+type editorCompletionRequest struct {
+	requestID string
+	cancel    context.CancelFunc
+}
+
+type editorCompletionResolveRef struct {
+	completionID    string
+	stableKey       string
+	requestID       string
+	documentVersion int
+	sessionID       string
+	surfaceID       string
+	createdAt       time.Time
+}
 
 // CommandSuggestion represents a terminal command suggestion
 type CommandSuggestion struct {
@@ -46,20 +83,24 @@ type ClassResult struct {
 
 // EditorCompletionContext represents completion request context
 type EditorCompletionContext struct {
-	FilePath      string   `json:"filePath"`
-	Language      string   `json:"language"`
-	Line          int      `json:"line"`
-	Column        int      `json:"column"`
-	Version       int      `json:"version,omitempty"`
-	LineText      string   `json:"lineText"`
-	TextBefore    string   `json:"textBefore"`
-	TextAfter     string   `json:"textAfter"`
-	FullText      string   `json:"fullText"`
-	CurrentClass  string   `json:"currentClass"`
-	CurrentMethod string   `json:"currentMethod"`
-	Imports       []string `json:"imports"`
-	TriggerChar   string   `json:"triggerChar"`
-	RequestID     string   `json:"requestId,omitempty"`
+	FilePath              string   `json:"filePath"`
+	Language              string   `json:"language"`
+	Line                  int      `json:"line"`
+	Column                int      `json:"column"`
+	Version               int      `json:"version,omitempty"`
+	LineText              string   `json:"lineText"`
+	TextBefore            string   `json:"textBefore"`
+	TextAfter             string   `json:"textAfter"`
+	FullText              string   `json:"fullText"`
+	CurrentClass          string   `json:"currentClass"`
+	CurrentMethod         string   `json:"currentMethod"`
+	Imports               []string `json:"imports"`
+	TriggerChar           string   `json:"triggerChar"`
+	AccessOperator        string   `json:"accessOperator,omitempty"`
+	CompletionTriggerKind int      `json:"completionTriggerKind,omitempty"`
+	SessionID             string   `json:"sessionId,omitempty"`
+	SurfaceID             string   `json:"surfaceId,omitempty"`
+	RequestID             string   `json:"requestId,omitempty"`
 }
 
 type TextEditJSON struct {
@@ -100,6 +141,8 @@ type EditorCompletion struct {
 	Kind                string               `json:"kind"`
 	Source              string               `json:"source"`
 	InsertText          string               `json:"insertText"`
+	SortText            string               `json:"sortText,omitempty"`
+	CommitCharacters    []string             `json:"commitCharacters,omitempty"`
 	IsSnippet           bool                 `json:"isSnippet"`
 	Priority            int                  `json:"priority"`
 	HighlightPositions  []int                `json:"highlightPositions,omitempty"`
@@ -120,13 +163,19 @@ type EditorCompletion struct {
 
 // EditorCompletionResult represents completion response
 type EditorCompletionResult struct {
-	Primary         *EditorCompletion  `json:"primary"`
-	Items           []EditorCompletion `json:"items"`
-	GhostText       string             `json:"ghostText,omitempty"`
-	GhostConfidence float64            `json:"ghostConfidence,omitempty"`
-	ShowGhost       bool               `json:"showGhost"`
-	RequestID       string             `json:"requestId,omitempty"`
-	Stale           bool               `json:"stale,omitempty"`
+	Primary                *EditorCompletion  `json:"primary"`
+	Items                  []EditorCompletion `json:"items"`
+	IsIncomplete           bool               `json:"isIncomplete,omitempty"`
+	LSPTriggerCharacters   []string           `json:"lspTriggerCharacters,omitempty"`
+	LSPResolveProvider     bool               `json:"lspResolveProvider,omitempty"`
+	LSPCompletionAvailable bool               `json:"lspCompletionAvailable,omitempty"`
+	LSPStatus              string             `json:"lspStatus,omitempty"`
+	SourceStatuses         map[string]string  `json:"sourceStatuses,omitempty"`
+	GhostText              string             `json:"ghostText,omitempty"`
+	GhostConfidence        float64            `json:"ghostConfidence,omitempty"`
+	ShowGhost              bool               `json:"showGhost"`
+	RequestID              string             `json:"requestId,omitempty"`
+	Stale                  bool               `json:"stale,omitempty"`
 }
 
 type EditorCompletionResolveResult struct {
@@ -137,6 +186,15 @@ type EditorCompletionResolveResult struct {
 	Command               *LSPCommandJSON      `json:"command,omitempty"`
 	Data                  any                  `json:"data,omitempty"`
 	ResolvedWorkspaceEdit *LSPWorkspaceEdit    `json:"resolvedWorkspaceEdit,omitempty"`
+}
+
+type EditorCompletionResolveRequest struct {
+	ResolveToken    string `json:"resolveToken"`
+	CompletionID    string `json:"completionId,omitempty"`
+	StableKey       string `json:"stableKey,omitempty"`
+	DocumentVersion int    `json:"documentVersion,omitempty"`
+	SessionID       string `json:"sessionId,omitempty"`
+	SurfaceID       string `json:"surfaceId,omitempty"`
 }
 
 func (a *App) SuggestCommand(input string) []CommandSuggestion {
@@ -202,22 +260,74 @@ func (a *App) ConfirmPrediction(input string) {
 	}
 }
 
+func (a *App) beginEditorCompletionRequest(ctx EditorCompletionContext) (string, string, context.Context, context.CancelFunc) {
+	requestID := uuid.New().String()
+	scope := editorCompletionRequestScope(ctx)
+	requestCtx, cancel := context.WithCancel(context.Background())
+
+	a.completionRequestsMu.Lock()
+	if a.completionRequests == nil {
+		a.completionRequests = make(map[string]editorCompletionRequest)
+	}
+	if previous, ok := a.completionRequests[scope]; ok && previous.cancel != nil {
+		previous.cancel()
+	}
+	a.completionRequests[scope] = editorCompletionRequest{
+		requestID: requestID,
+		cancel:    cancel,
+	}
+	a.completionRequestsMu.Unlock()
+
+	return requestID, scope, requestCtx, cancel
+}
+
+func (a *App) finishEditorCompletionRequest(scope, requestID string) {
+	a.completionRequestsMu.Lock()
+	if current, ok := a.completionRequests[scope]; ok && current.requestID == requestID {
+		delete(a.completionRequests, scope)
+	}
+	a.completionRequestsMu.Unlock()
+}
+
+func (a *App) isCurrentEditorCompletionRequest(scope, requestID string) bool {
+	a.completionRequestsMu.Lock()
+	defer a.completionRequestsMu.Unlock()
+	current, ok := a.completionRequests[scope]
+	return ok && current.requestID == requestID
+}
+
+func editorCompletionRequestScope(ctx EditorCompletionContext) string {
+	session := strings.TrimSpace(ctx.SessionID)
+	if session == "" {
+		session = "default"
+	}
+	surface := strings.TrimSpace(ctx.SurfaceID)
+	if surface == "" {
+		surface = strings.TrimSpace(ctx.FilePath)
+	}
+	if surface == "" {
+		surface = "editor"
+	}
+	return session + "\x00" + surface
+}
+
 func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletionResult {
 	completionBrain := a.activeCompletionBrain()
 	if completionBrain == nil {
-		a.logWarning("[AutocompleteV2][Backend] brain is nil - not initialized")
+		a.logWarning("[Autocomplete][Backend] brain is nil - not initialized")
 		return EditorCompletionResult{}
 	}
 
-	requestID := uuid.New().String()
+	requestID, requestScope, baseRequestCtx, baseCancel := a.beginEditorCompletionRequest(ctx)
+	defer baseCancel()
+	defer a.finishEditorCompletionRequest(requestScope, requestID)
 	ctx.RequestID = requestID
-	a.lastRequestID.Store(requestID)
 
 	textBeforeShort := ctx.TextBefore
 	if len(textBeforeShort) > 30 {
 		textBeforeShort = textBeforeShort[len(textBeforeShort)-30:]
 	}
-	a.logDebugf("[AutocompleteV2][Backend] request file=%s lang=%s line=%d col=%d textBefore='%s'",
+	a.logDebugf("[Autocomplete][Backend] request file=%s lang=%s line=%d col=%d textBefore='%s'",
 		ctx.FilePath, ctx.Language, ctx.Line, ctx.Column, textBeforeShort)
 
 	prefixInfo := completionBrain.ExtractPrefix(ctx.FilePath, []byte(ctx.FullText), ctx.Line, ctx.Column)
@@ -231,11 +341,11 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 	}
 
 	timeout := editorCompletionTimeout
-	if prefixInfo.AccessChain != "" && prefix == "" {
+	if prefixInfo.AccessChain != "" {
 		timeout = editorAccessChainCompletionTimeout
 	}
 
-	requestCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	requestCtx, cancel := context.WithTimeout(baseRequestCtx, timeout)
 	defer cancel()
 
 	if !prefixInfo.InString && ctx.TextBefore != "" {
@@ -250,61 +360,76 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		}
 	}
 
-	isMethodCall := strings.Contains(prefixInfo.AccessChain, "->") || strings.Contains(prefixInfo.AccessChain, ".")
-	isStaticCall := strings.Contains(prefixInfo.AccessChain, "::")
+	isStaticCall := editorAccessChainIsStaticCall(prefixInfo.AccessChain)
+	isMethodCall := editorAccessChainIsMethodCall(prefixInfo.AccessChain)
 
-	a.logDebugf("[AutocompleteV2][Backend] prefix='%s' chain='%s' static=%v method=%v inString=%v",
+	a.logDebugf("[Autocomplete][Backend] prefix='%s' chain='%s' static=%v method=%v inString=%v",
 		prefix, prefixInfo.AccessChain, isStaticCall, isMethodCall, prefixInfo.InString)
 
 	contentWindow, contentStartLine := extractContextLines(ctx.FullText, ctx.Line, 50)
 	importsHash := computeCompletionImportsHash(ctx.FullText, ctx.Language, ctx.Imports)
 
 	brainCtx := brain.CompletionContext{
-		FilePath:          ctx.FilePath,
-		Content:           []byte(contentWindow),
-		FullContent:       []byte(ctx.FullText),
-		Line:              ctx.Line,
-		Column:            ctx.Column,
-		DocumentVersion:   ctx.Version,
-		Prefix:            prefix,
-		Language:          ctx.Language,
-		ImportsHash:       importsHash,
-		TriggerChar:       ctx.TriggerChar,
-		Scope:             ctx.CurrentMethod,
-		ParentClass:       ctx.CurrentClass,
-		InString:          prefixInfo.InString,
-		InComment:         prefixInfo.InComment,
-		InImport:          prefixInfo.InImport,
-		StringValue:       prefixInfo.StringValue,
-		StringContextType: prefixInfo.StringContextType,
-		AccessChain:       prefixInfo.AccessChain,
-		IsMethodCall:      isMethodCall,
-		IsStaticCall:      isStaticCall,
-		ContentStartLine:  contentStartLine,
-		RequestID:         requestID,
-		Ctx:               requestCtx,
+		FilePath:              ctx.FilePath,
+		Content:               []byte(contentWindow),
+		FullContent:           []byte(ctx.FullText),
+		Line:                  ctx.Line,
+		Column:                ctx.Column,
+		DocumentVersion:       ctx.Version,
+		Prefix:                prefix,
+		Language:              ctx.Language,
+		ImportsHash:           importsHash,
+		TriggerChar:           ctx.TriggerChar,
+		AccessOperator:        ctx.AccessOperator,
+		CompletionTriggerKind: ctx.CompletionTriggerKind,
+		Scope:                 ctx.CurrentMethod,
+		ParentClass:           ctx.CurrentClass,
+		InString:              prefixInfo.InString,
+		InComment:             prefixInfo.InComment,
+		InImport:              prefixInfo.InImport,
+		StringValue:           prefixInfo.StringValue,
+		StringContextType:     prefixInfo.StringContextType,
+		AccessChain:           prefixInfo.AccessChain,
+		IsMethodCall:          isMethodCall,
+		IsStaticCall:          isStaticCall,
+		ContentStartLine:      contentStartLine,
+		RequestID:             requestID,
+		SessionID:             ctx.SessionID,
+		SurfaceID:             ctx.SurfaceID,
+		Ctx:                   requestCtx,
 	}
 
 	suggestions := completionBrain.Complete(brainCtx)
 
-	if last := a.lastRequestID.Load(); last != nil && last.(string) != requestID {
+	if !a.isCurrentEditorCompletionRequest(requestScope, requestID) {
 		return EditorCompletionResult{
 			RequestID: requestID,
 			Stale:     true,
 		}
 	}
 
-	a.logDebugf("[AutocompleteV2][Backend] suggestions=%d", len(suggestions))
+	a.logDebugf("[Autocomplete][Backend] suggestions=%d", len(suggestions))
 	for i, s := range suggestions {
 		if i >= 3 {
 			break
 		}
-		a.logDebugf("[AutocompleteV2][Backend] top%d text='%s' score=%.2f source=%s kind=%s",
+		a.logDebugf("[Autocomplete][Backend] top%d text='%s' score=%.2f source=%s kind=%s",
 			i+1, s.Text, s.Score, s.Source, s.Kind)
 	}
 
 	var items []EditorCompletion
+	trace, ok := completionBrain.CompletionTraceForRequest(requestID)
+	if !ok {
+		trace = completionBrain.LastCompletionTrace()
+		if trace.RequestID != requestID {
+			trace = brain.CompletionTrace{RequestID: requestID}
+		}
+	}
+	isIncomplete := trace.LSPListIncomplete
 	for i, s := range suggestions {
+		if s.LSPListIncomplete {
+			isIncomplete = true
+		}
 		stableKey := editorCompletionStableKey(s)
 		proofKind := editorCompletionProofKind(s)
 		autoImportAllowed := editorCompletionAutoImportAllowed(s, proofKind)
@@ -318,6 +443,8 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 			Kind:              string(s.Kind),
 			Source:            string(s.Source),
 			InsertText:        s.InsertText,
+			SortText:          s.SortText,
+			CommitCharacters:  append([]string(nil), s.CommitCharacters...),
 			IsSnippet:         s.IsSnippet,
 			Priority:          int(s.Score * 100),
 			ResolveToken:      s.ResolveToken,
@@ -346,6 +473,17 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 				})
 			}
 		}
+		if item.ResolveToken != "" {
+			a.rememberEditorCompletionResolveRef(item.ResolveToken, editorCompletionResolveRef{
+				completionID:    item.CompletionID,
+				stableKey:       item.StableKey,
+				requestID:       requestID,
+				documentVersion: ctx.Version,
+				sessionID:       strings.TrimSpace(ctx.SessionID),
+				surfaceID:       strings.TrimSpace(ctx.SurfaceID),
+				createdAt:       time.Now(),
+			})
+		}
 		items = append(items, item)
 	}
 
@@ -360,31 +498,61 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		completionBrain.RecordCompletionShown()
 	}
 
-	a.logDebugf("[AutocompleteV2][Backend] ghost show=%v text='%s' confidence=%.2f",
+	a.logDebugf("[Autocomplete][Backend] ghost show=%v text='%s' confidence=%.2f",
 		ghostResult.ShouldShow, ghostResult.Text, ghostResult.Confidence)
 
+	lspCapabilities := indexerlsp.CompletionCapabilities{}
+	if a.lspManager != nil {
+		lspLanguage := autocomplete.Resolve(ctx.Language, ctx.FilePath).LSPID
+		if lspLanguage == "" {
+			lspLanguage = ctx.Language
+		}
+		lspCapabilities = a.lspManager.CompletionCapabilities(lspLanguage)
+	}
+
 	return EditorCompletionResult{
-		Primary:         primary,
-		Items:           items,
-		GhostText:       ghostResult.Text,
-		GhostConfidence: ghostResult.Confidence,
-		ShowGhost:       ghostResult.ShouldShow,
-		RequestID:       requestID,
+		Primary:                primary,
+		Items:                  items,
+		IsIncomplete:           isIncomplete,
+		LSPTriggerCharacters:   lspCapabilities.TriggerCharacters,
+		LSPResolveProvider:     lspCapabilities.ResolveProvider,
+		LSPCompletionAvailable: lspCapabilities.Available,
+		LSPStatus:              trace.LSPStatus,
+		SourceStatuses:         trace.SourceStatuses,
+		GhostText:              ghostResult.Text,
+		GhostConfidence:        ghostResult.Confidence,
+		ShowGhost:              ghostResult.ShouldShow,
+		RequestID:              requestID,
 	}
 }
 
-func (a *App) ResolveEditorCompletion(resolveToken string) (EditorCompletionResolveResult, error) {
+func (a *App) ResolveEditorCompletion(req EditorCompletionResolveRequest) (EditorCompletionResolveResult, error) {
 	completionBrain := a.activeCompletionBrain()
 	if completionBrain == nil {
 		return EditorCompletionResolveResult{}, fmt.Errorf("completion brain is not initialized")
 	}
+	resolveToken := strings.TrimSpace(req.ResolveToken)
+	if resolveToken == "" {
+		return EditorCompletionResolveResult{}, fmt.Errorf("completion resolve token is required")
+	}
+	ref, ok := a.lookupEditorCompletionResolveRef(resolveToken, req)
+	if !ok {
+		return EditorCompletionResolveResult{}, fmt.Errorf("completion resolve token expired")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), editorCompletionResolveTimeout)
 	defer cancel()
 
-	resolved, err := completionBrain.ResolveCompletionItem(ctx, resolveToken)
+	resolved, err := completionBrain.ResolveCompletionItem(ctx, brain.CompletionResolveRequest{
+		ResolveToken:    resolveToken,
+		DocumentVersion: req.DocumentVersion,
+		RequestID:       ref.requestID,
+		SessionID:       req.SessionID,
+		SurfaceID:       req.SurfaceID,
+	})
 	if err != nil {
 		return EditorCompletionResolveResult{}, err
 	}
+	a.forgetEditorCompletionResolveRef(resolveToken)
 
 	result := EditorCompletionResolveResult{
 		InsertText:      resolved.InsertText,
@@ -405,6 +573,68 @@ func (a *App) ResolveEditorCompletion(resolveToken string) (EditorCompletionReso
 	return result, nil
 }
 
+func (a *App) rememberEditorCompletionResolveRef(token string, ref editorCompletionResolveRef) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return
+	}
+	a.completionResolveRefsMu.Lock()
+	defer a.completionResolveRefsMu.Unlock()
+	if a.completionResolveRefs == nil {
+		a.completionResolveRefs = make(map[string]editorCompletionResolveRef)
+	}
+	now := time.Now()
+	for key, existing := range a.completionResolveRefs {
+		if now.Sub(existing.createdAt) > 30*time.Second {
+			delete(a.completionResolveRefs, key)
+		}
+	}
+	a.completionResolveRefs[token] = ref
+}
+
+func (a *App) lookupEditorCompletionResolveRef(token string, req EditorCompletionResolveRequest) (editorCompletionResolveRef, bool) {
+	token = strings.TrimSpace(token)
+	a.completionResolveRefsMu.Lock()
+	defer a.completionResolveRefsMu.Unlock()
+	ref, ok := a.completionResolveRefs[token]
+	if !ok {
+		return editorCompletionResolveRef{}, false
+	}
+	if !editorCompletionResolveRefMatches(ref, req) {
+		return editorCompletionResolveRef{}, false
+	}
+	return ref, true
+}
+
+func (a *App) forgetEditorCompletionResolveRef(token string) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return
+	}
+	a.completionResolveRefsMu.Lock()
+	defer a.completionResolveRefsMu.Unlock()
+	delete(a.completionResolveRefs, token)
+}
+
+func editorCompletionResolveRefMatches(ref editorCompletionResolveRef, req EditorCompletionResolveRequest) bool {
+	if ref.completionID != "" && req.CompletionID != ref.completionID {
+		return false
+	}
+	if ref.stableKey != "" && req.StableKey != ref.stableKey {
+		return false
+	}
+	if ref.documentVersion > 0 && req.DocumentVersion != ref.documentVersion {
+		return false
+	}
+	if ref.sessionID != "" && req.SessionID != ref.sessionID {
+		return false
+	}
+	if ref.surfaceID != "" && req.SurfaceID != ref.surfaceID {
+		return false
+	}
+	return true
+}
+
 func editorCompletionStableKey(s brain.Suggestion) string {
 	parts := []string{
 		string(s.Source),
@@ -413,9 +643,13 @@ func editorCompletionStableKey(s brain.Suggestion) string {
 		strings.TrimSpace(s.DisplayText),
 		strings.TrimSpace(s.Namespace),
 		strings.TrimSpace(s.InsertText),
+		strings.TrimSpace(s.SortText),
 		strings.TrimSpace(s.FilePath),
 		fmt.Sprintf("%d", s.Line),
 		editorPrimaryTextEditIdentity(s.PrimaryTextEdit),
+		editorAdditionalTextEditsIdentity(s.AdditionalTextEdits),
+		strings.TrimSpace(s.ResolveToken),
+		strings.TrimSpace(s.ProofKind),
 	}
 	if s.Import != nil {
 		parts = append(parts,
@@ -424,6 +658,17 @@ func editorCompletionStableKey(s brain.Suggestion) string {
 			strings.TrimSpace(s.Import.Symbol),
 			strings.TrimSpace(s.Import.Mode),
 		)
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func editorAdditionalTextEditsIdentity(edits []core.TextEdit) string {
+	if len(edits) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(edits))
+	for _, edit := range edits {
+		parts = append(parts, fmt.Sprintf("%d:%d:%d:%d:%s", edit.StartLine, edit.StartColumn, edit.EndLine, edit.EndColumn, edit.Text))
 	}
 	return strings.Join(parts, "\x00")
 }

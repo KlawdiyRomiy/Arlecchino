@@ -271,9 +271,6 @@ func indexLanguage(canonical string) string {
 	case "php", "go", "python", "ruby", "vue":
 		return canonical
 	default:
-		if info := lspregistry.GetLanguageByID(canonical); info != nil && info.ARLESupported {
-			return canonical
-		}
 		return ""
 	}
 }
@@ -326,8 +323,12 @@ func localLanguage(canonical string) string {
 }
 
 func supportsIndex(language string) bool {
-	info := lspregistry.GetLanguageByID(language)
-	return info != nil && info.ARLESupported
+	switch language {
+	case "typescript", "php", "go", "python", "ruby", "vue":
+		return true
+	default:
+		return false
+	}
 }
 
 func supportsLocal(language string) bool {

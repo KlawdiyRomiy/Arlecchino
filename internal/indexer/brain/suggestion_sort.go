@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"arlecchino/internal/indexer/core"
 	"arlecchino/internal/predictive"
 )
 
@@ -31,6 +32,22 @@ func suggestionLess(a Suggestion, b Suggestion) bool {
 	bm := matchTypeRank(b.MatchType())
 	if am != bm {
 		return am > bm
+	}
+
+	if a.Source == core.SourceLSP && b.Source == core.SourceLSP {
+		as := strings.ToLower(strings.TrimSpace(a.SortText))
+		bs := strings.ToLower(strings.TrimSpace(b.SortText))
+		if as != "" || bs != "" {
+			if as == "" {
+				as = strings.ToLower(a.Text)
+			}
+			if bs == "" {
+				bs = strings.ToLower(b.Text)
+			}
+			if as != bs {
+				return as < bs
+			}
+		}
 	}
 
 	if a.Confidence != b.Confidence {

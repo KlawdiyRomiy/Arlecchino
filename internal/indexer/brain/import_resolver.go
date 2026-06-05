@@ -192,6 +192,7 @@ func addTSNamedImports(imports map[string]string, names, modulePath string) {
 		if name == "" {
 			continue
 		}
+		name = strings.TrimSpace(strings.TrimPrefix(name, "type "))
 		parts := strings.Split(name, " as ")
 		originalName := strings.TrimSpace(parts[0])
 		shortName := originalName
@@ -304,17 +305,45 @@ func (r *ImportChainResolver) parseRustImports(content string) map[string]string
 					basePath := strings.Join(parts[:len(parts)-1], "::")
 					shortName = strings.Trim(shortName, "{}")
 					for _, name := range strings.Split(shortName, ",") {
-						name = strings.TrimSpace(name)
-						imports[name] = basePath + "::" + name
+						originalName, alias := parseRustUseName(name)
+						if originalName == "" {
+							continue
+						}
+						imports[alias] = basePath + "::" + originalName
 					}
 				} else {
-					imports[shortName] = usePath
+					originalName, alias := parseRustUseName(shortName)
+					if originalName == "" {
+						continue
+					}
+					if alias != originalName {
+						imports[alias] = strings.Join(append(parts[:len(parts)-1], originalName), "::")
+					} else {
+						imports[alias] = usePath
+					}
 				}
 			}
 		}
 	}
 
 	return imports
+}
+
+func parseRustUseName(name string) (string, string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", ""
+	}
+	parts := strings.Split(name, " as ")
+	originalName := strings.TrimSpace(parts[0])
+	alias := originalName
+	if len(parts) > 1 {
+		alias = strings.TrimSpace(parts[1])
+	}
+	if originalName == "" || alias == "" {
+		return "", ""
+	}
+	return originalName, alias
 }
 
 func (r *ImportChainResolver) parseDartImports(content string) map[string]string {
@@ -351,9 +380,9 @@ func dartImportBaseName(path string) string {
 func (r *ImportChainResolver) parseCSharpImports(content string) map[string]string {
 	imports := make(map[string]string)
 	for _, line := range strings.Split(content, "\n") {
-		matches := r.csUsingAliasPattern.FindStringSubmatch(line)
-		if len(matches) == 3 {
+		if matches := r.csUsingAliasPattern.FindStringSubmatch(line); len(matches) == 3 {
 			imports[strings.TrimSpace(matches[1])] = strings.TrimSpace(matches[2])
+			continue
 		}
 	}
 	return imports

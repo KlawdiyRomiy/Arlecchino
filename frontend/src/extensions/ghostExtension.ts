@@ -14,6 +14,7 @@ import {
   Completion,
   currentCompletions,
   selectedCompletion,
+  setSelectedCompletion,
 } from "@codemirror/autocomplete";
 
 type GhostCompletionItem = {
@@ -39,6 +40,13 @@ type GhostAIPredictionResult = {
   providerId?: string;
   model?: string;
 };
+
+function isCompletionStatusOnly(completion: Completion | null): boolean {
+  return Boolean(
+    completion &&
+    (completion as Completion & { __statusKind?: string }).__statusKind,
+  );
+}
 
 type CompletionContextPayload = {
   filePath: string;
@@ -189,6 +197,9 @@ const getCompletionInsertText = (completion: Completion): string => {
 const completionHasAdditionalTextEdits = (completion: Completion): boolean =>
   (completion as GhostCompletionMetadata).__hasAdditionalTextEdits === true;
 
+const editorScrollActive = (view: EditorView): boolean =>
+  view.dom.dataset.scrollActive === "true";
+
 export type GhostExtensionHandle = {
   extension: Extension;
   keymap: Extension;
@@ -216,8 +227,43 @@ export function ghostExtension(
 
   let lastPopupGhostKey = "";
   let popupGhostStableCount = 0;
+  let lastCompletionStatus: ReturnType<typeof completionStatus> = null;
 
   const { helpers } = options;
+
+  const retryGhostSoon = (view: EditorView) => {
+    if (ghostDebounce) {
+      clearTimeout(ghostDebounce);
+    }
+    ghostDebounce = setTimeout(() => {
+      fetchGhostCompletions(view, false);
+    }, options.ghostDebounceMs);
+  };
+
+  const recordPopupGhostCandidate = (completion: Completion | null): void => {
+    if (isCompletionStatusOnly(completion)) {
+      lastPopupGhostKey = "";
+      popupGhostStableCount = 0;
+      return;
+    }
+    const label = completion ? getCompletionLabel(completion) : "";
+    const insertText = completion ? getCompletionInsertText(completion) : "";
+    const hasAdditionalTextEdits = completion
+      ? completionHasAdditionalTextEdits(completion)
+      : false;
+    if (label && insertText) {
+      const key = `${label}\n${insertText}\nae:${hasAdditionalTextEdits ? "1" : "0"}`;
+      if (key === lastPopupGhostKey) {
+        popupGhostStableCount += 1;
+      } else {
+        lastPopupGhostKey = key;
+        popupGhostStableCount = 1;
+      }
+      return;
+    }
+    lastPopupGhostKey = "";
+    popupGhostStableCount = 0;
+  };
 
   const resolveGhostContext = (view: EditorView, allowEmptyPrefix = false) => {
     const cursorPos = view.state.selection.main.head;
@@ -375,40 +421,58 @@ export function ghostExtension(
       return false;
     }
 
-    const selected =
-      selectedCompletion(view.state) || currentCompletions(view.state)[0];
-    if (!selected || completionHasAdditionalTextEdits(selected)) {
-      return false;
-    }
+    const selected = selectedCompletion(view.state);
+    const candidates = [
+      ...(selected ? [selected] : []),
+      ...currentCompletions(view.state).filter(
+        (completion) => completion !== selected,
+      ),
+    ];
 
-    const label = getCompletionLabel(selected);
-    const rawInsertText = getCompletionInsertText(selected);
-    if (!label || !rawInsertText) {
-      return false;
+    let candidate: {
+      label: string;
+      fullInsertText: string;
+      displayText: string;
+    } | null = null;
+    for (const completion of candidates) {
+      if (
+        !completion ||
+        isCompletionStatusOnly(completion) ||
+        completionHasAdditionalTextEdits(completion)
+      ) {
+        continue;
+      }
+      const label = getCompletionLabel(completion);
+      const rawInsertText = getCompletionInsertText(completion);
+      if (!label || !rawInsertText) {
+        continue;
+      }
+      const fullInsertText = helpers.snippetToPlainText(rawInsertText);
+      if (!fullInsertText) {
+        continue;
+      }
+      const lcp = longestCommonPrefix(context.effectivePrefix, fullInsertText);
+      if (lcp.length < context.effectivePrefix.length) {
+        continue;
+      }
+      const displayText = fullInsertText.slice(lcp.length);
+      if (!displayText) {
+        continue;
+      }
+      candidate = { label, fullInsertText, displayText };
+      break;
     }
-
-    const fullInsertText = helpers.snippetToPlainText(rawInsertText);
-    if (!fullInsertText) {
-      return false;
-    }
-
-    const lcp = longestCommonPrefix(context.effectivePrefix, fullInsertText);
-    if (lcp.length < context.effectivePrefix.length) {
-      return false;
-    }
-
-    const displayText = fullInsertText.slice(lcp.length);
-    if (!displayText) {
+    if (!candidate) {
       return false;
     }
 
     setGhostText(
       view,
       context.to,
-      displayText,
-      fullInsertText,
+      candidate.displayText,
+      candidate.fullInsertText,
       false,
-      label,
+      candidate.label,
       context.from,
       context.to,
     );
@@ -433,10 +497,17 @@ export function ghostExtension(
       clearGhostText(view, false);
       return;
     }
+    if (editorScrollActive(view)) {
+      clearGhostText(view, false);
+      return;
+    }
 
     const status = completionStatus(view.state);
     if (status === "pending") {
       clearGhostText(view, false);
+      if (!forceIdle) {
+        retryGhostSoon(view);
+      }
       return;
     }
 
@@ -447,13 +518,14 @@ export function ghostExtension(
         clearGhostText(view, false);
         return;
       }
-      if (!forceIdle && popupGhostStableCount < 1) {
+      const selected =
+        selectedCompletion(view.state) || currentCompletions(view.state)[0];
+      recordPopupGhostCandidate(selected || null);
+      if (!forceIdle && popupGhostStableCount < 2) {
+        retryGhostSoon(view);
         clearGhostText(view, false);
         return;
       }
-
-      const selected =
-        selectedCompletion(view.state) || currentCompletions(view.state)[0];
       if (!selected) {
         clearGhostText(view, false);
         return;
@@ -687,6 +759,11 @@ export function ghostExtension(
     if (ghostDebounce) {
       clearTimeout(ghostDebounce);
     }
+    if (editorScrollActive(view)) {
+      clearGhostText(view, false);
+      ghostDebounce = null;
+      return;
+    }
     ghostDebounce = setTimeout(() => {
       fetchGhostCompletions(view, false);
     }, options.ghostDebounceMs);
@@ -695,6 +772,10 @@ export function ghostExtension(
   const scheduleIdleGhost = (view: EditorView) => {
     if (ghostIdleTimer) {
       clearTimeout(ghostIdleTimer);
+    }
+    if (editorScrollActive(view) || completionStatus(view.state) === "active") {
+      ghostIdleTimer = null;
+      return;
     }
     ghostIdleTimer = setTimeout(() => {
       fetchGhostCompletions(view, true);
@@ -713,7 +794,15 @@ export function ghostExtension(
   };
 
   const extension = EditorView.updateListener.of((update) => {
-    if (!update.docChanged && !update.selectionSet && !update.focusChanged) {
+    const status = completionStatus(update.state);
+    const statusChanged = status !== lastCompletionStatus;
+    lastCompletionStatus = status;
+    if (
+      !update.docChanged &&
+      !update.selectionSet &&
+      !update.focusChanged &&
+      !statusChanged
+    ) {
       return;
     }
     lastView = update.view;
@@ -727,7 +816,6 @@ export function ghostExtension(
       return;
     }
 
-    const status = completionStatus(update.state);
     if (
       status !== "active" ||
       update.view.composing ||
@@ -738,23 +826,7 @@ export function ghostExtension(
     } else {
       const selected =
         selectedCompletion(update.state) || currentCompletions(update.state)[0];
-      const label = selected ? getCompletionLabel(selected) : "";
-      const insertText = selected ? getCompletionInsertText(selected) : "";
-      const hasAdditionalTextEdits = selected
-        ? completionHasAdditionalTextEdits(selected)
-        : false;
-      if (label && insertText) {
-        const key = `${label}\n${insertText}\nae:${hasAdditionalTextEdits ? "1" : "0"}`;
-        if (key === lastPopupGhostKey) {
-          popupGhostStableCount += 1;
-        } else {
-          lastPopupGhostKey = key;
-          popupGhostStableCount = 1;
-        }
-      } else {
-        lastPopupGhostKey = "";
-        popupGhostStableCount = 0;
-      }
+      recordPopupGhostCandidate(selected || null);
     }
 
     scheduleGhostCompletions(update.view);
@@ -798,6 +870,19 @@ export function ghostExtension(
       key: "Enter",
       run: (view) => {
         if (completionStatus(view.state) === "active") {
+          const selected = selectedCompletion(view.state);
+          if (isCompletionStatusOnly(selected)) {
+            return true;
+          }
+          if (!selected) {
+            const first = currentCompletions(view.state)[0];
+            if (isCompletionStatusOnly(first || null)) {
+              return true;
+            }
+            if (first) {
+              view.dispatch({ effects: setSelectedCompletion(0) });
+            }
+          }
           if (acceptCompletion(view)) {
             clearGhostText(view, false);
             return true;

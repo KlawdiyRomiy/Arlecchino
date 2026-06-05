@@ -318,6 +318,14 @@ export function getInstantKeywordCompletions(
     .map((item) => completionFromItem(item, "keyword", -0.15));
 }
 
+export function getInstantKeywordCompletionOptions(
+  language: string,
+): Completion[] {
+  const normalized = normalizeLanguage(language);
+  const items = KEYWORDS[normalized] || [];
+  return items.map((item) => completionFromItem(item, "keyword", -0.15));
+}
+
 export function getInstantDocumentCompletions(
   fullText: string,
   prefix: string,

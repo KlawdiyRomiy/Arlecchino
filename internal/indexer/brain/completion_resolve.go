@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -23,10 +25,23 @@ var (
 )
 
 type completionResolveEntry struct {
-	language  string
-	item      lsp.CompletionItem
-	context   CompletionContext
-	expiresAt time.Time
+	language        string
+	item            lsp.CompletionItem
+	context         CompletionContext
+	itemIdentity    string
+	documentVersion int
+	requestID       string
+	sessionID       string
+	surfaceID       string
+	expiresAt       time.Time
+}
+
+type CompletionResolveRequest struct {
+	ResolveToken    string
+	DocumentVersion int
+	RequestID       string
+	SessionID       string
+	SurfaceID       string
 }
 
 type ResolvedCompletion struct {
@@ -39,7 +54,7 @@ type ResolvedCompletion struct {
 }
 
 func (b *PredictionBrain) rememberLSPCompletionResolve(ctx CompletionContext, item lsp.CompletionItem) string {
-	if b == nil || len(item.AdditionalTextEdits) > 0 {
+	if b == nil {
 		return ""
 	}
 	token := newCompletionResolveToken()
@@ -67,32 +82,41 @@ func (b *PredictionBrain) rememberLSPCompletionResolve(ctx CompletionContext, it
 		}
 	}
 	b.resolveEntries[token] = completionResolveEntry{
-		language:  strings.TrimSpace(ctx.Language),
-		item:      item,
-		context:   CompletionContext{Language: strings.TrimSpace(ctx.Language)},
-		expiresAt: now.Add(completionResolveTokenTTL),
+		language:        strings.TrimSpace(ctx.Language),
+		item:            item,
+		context:         CompletionContext{Language: strings.TrimSpace(ctx.Language), FilePath: strings.TrimSpace(ctx.FilePath), AccessChain: strings.TrimSpace(ctx.AccessChain), SessionID: strings.TrimSpace(ctx.SessionID), SurfaceID: strings.TrimSpace(ctx.SurfaceID)},
+		itemIdentity:    lspCompletionItemIdentity(item),
+		documentVersion: ctx.DocumentVersion,
+		requestID:       strings.TrimSpace(ctx.RequestID),
+		sessionID:       strings.TrimSpace(ctx.SessionID),
+		surfaceID:       strings.TrimSpace(ctx.SurfaceID),
+		expiresAt:       now.Add(completionResolveTokenTTL),
 	}
 	return token
 }
 
-func (b *PredictionBrain) ResolveCompletionItem(ctx context.Context, token string) (ResolvedCompletion, error) {
+func (b *PredictionBrain) ResolveCompletionItem(ctx context.Context, req CompletionResolveRequest) (ResolvedCompletion, error) {
 	var empty ResolvedCompletion
-	token = strings.TrimSpace(token)
+	token := strings.TrimSpace(req.ResolveToken)
 	if b == nil || token == "" {
 		return empty, ErrCompletionResolveUnavailable
 	}
 
 	b.resolveMu.Lock()
 	entry, ok := b.resolveEntries[token]
-	if ok {
+	if ok && time.Now().After(entry.expiresAt) {
 		delete(b.resolveEntries, token)
+		ok = false
 	}
 	b.resolveMu.Unlock()
-	if !ok || time.Now().After(entry.expiresAt) {
+	if !ok {
 		return empty, ErrCompletionResolveTokenExpired
 	}
 	if b.lspManager == nil {
 		return empty, ErrCompletionResolveUnavailable
+	}
+	if !completionResolveRequestMatches(entry, req) {
+		return empty, ErrCompletionResolveTokenExpired
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -102,8 +126,29 @@ func (b *PredictionBrain) ResolveCompletionItem(ctx context.Context, token strin
 	if err != nil {
 		return empty, err
 	}
+	b.resolveMu.Lock()
+	if current, ok := b.resolveEntries[token]; ok && current.itemIdentity == entry.itemIdentity {
+		delete(b.resolveEntries, token)
+	}
+	b.resolveMu.Unlock()
 
 	return b.resolvedCompletionFromLSPItem(entry, item), nil
+}
+
+func completionResolveRequestMatches(entry completionResolveEntry, req CompletionResolveRequest) bool {
+	if entry.documentVersion > 0 && req.DocumentVersion != entry.documentVersion {
+		return false
+	}
+	if entry.requestID != "" && strings.TrimSpace(req.RequestID) != entry.requestID {
+		return false
+	}
+	if entry.sessionID != "" && strings.TrimSpace(req.SessionID) != entry.sessionID {
+		return false
+	}
+	if entry.surfaceID != "" && strings.TrimSpace(req.SurfaceID) != entry.surfaceID {
+		return false
+	}
+	return true
 }
 
 func (b *PredictionBrain) resolvedCompletionFromLSPItem(entry completionResolveEntry, item lsp.CompletionItem) ResolvedCompletion {
@@ -135,4 +180,50 @@ func newCompletionResolveToken() string {
 		return ""
 	}
 	return hex.EncodeToString(buf[:])
+}
+
+func lspCompletionItemIdentity(item lsp.CompletionItem) string {
+	parts := []string{
+		strings.TrimSpace(item.Label),
+		strings.TrimSpace(item.Detail),
+		fmt.Sprintf("%d", item.Kind),
+		strings.TrimSpace(item.InsertText),
+		strings.TrimSpace(item.TextEditText),
+		strings.TrimSpace(item.FilterText),
+		strings.TrimSpace(item.SortText),
+		string(item.TextEdit),
+		lspAdditionalTextEditsIdentity(item.AdditionalTextEdits),
+		lspCommandIdentity(item.Command),
+		lspAnyIdentity(item.Data),
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func lspAdditionalTextEditsIdentity(edits []lsp.TextEdit) string {
+	if len(edits) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(edits))
+	for _, edit := range edits {
+		parts = append(parts, fmt.Sprintf("%d:%d-%d:%d:%s", edit.Range.Start.Line, edit.Range.Start.Character, edit.Range.End.Line, edit.Range.End.Character, edit.NewText))
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func lspCommandIdentity(command *lsp.Command) string {
+	if command == nil {
+		return ""
+	}
+	return strings.Join([]string{strings.TrimSpace(command.Title), strings.TrimSpace(command.Command), lspAnyIdentity(command.Arguments)}, "\x00")
+}
+
+func lspAnyIdentity(value any) string {
+	if value == nil {
+		return ""
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprintf("%v", value)
+	}
+	return string(data)
 }

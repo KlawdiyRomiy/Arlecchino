@@ -147,6 +147,16 @@ export const recordEditorDocumentAccess = (path: string): void => {
   void RecordFileAccess(path).catch(() => {});
 };
 
+export const getEditorDocumentVersion = (
+  path: string,
+  language: string,
+): number | null => {
+  if (!path || !language) {
+    return null;
+  }
+  return documents.get(documentKey(path, language))?.version ?? null;
+};
+
 export const openEditorDocument = ({
   surfaceId,
   path,

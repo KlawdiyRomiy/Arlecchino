@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"arlecchino/internal/toolchain"
 )
 
 type LSPInfo struct {
@@ -374,71 +376,11 @@ func binaryPathCandidates(rootPath, lspDir, serverID string, binaryNames []strin
 }
 
 func RuntimeToolchainDirs() []string {
-	var candidates []string
-	add := func(parts ...string) {
-		path := filepath.Join(parts...)
-		if strings.TrimSpace(path) != "" {
-			candidates = append(candidates, path)
-		}
-	}
-	addRaw := func(path string) {
-		if strings.TrimSpace(path) != "" {
-			candidates = append(candidates, path)
-		}
-	}
-	addGlob := func(pattern string) {
-		matches, _ := filepath.Glob(pattern)
-		for i := len(matches) - 1; i >= 0; i-- {
-			addRaw(matches[i])
-		}
-	}
-
-	if npmPrefix := strings.TrimSpace(os.Getenv("NPM_CONFIG_PREFIX")); npmPrefix != "" {
-		add(npmPrefix, "bin")
-	}
-	if home, _ := os.UserHomeDir(); home != "" {
-		add(home, ".local", "bin")
-		add(home, "go", "bin")
-		add(home, ".cargo", "bin")
-		add(home, ".npm-global", "bin")
-		add(home, ".volta", "bin")
-		add(home, ".asdf", "shims")
-		add(home, ".pyenv", "shims")
-		add(home, ".rbenv", "shims")
-		add(home, ".bun", "bin")
-		add(home, ".dotnet", "tools")
-		add(home, ".opam", "default", "bin")
-		add(home, ".cabal", "bin")
-		add(home, ".ghcup", "bin")
-		add(home, ".local", "share", "mise", "shims")
-		add(home, ".config", "mise", "shims")
-		add(home, "Library", "pnpm")
-		add(home, ".local", "share", "pnpm")
-		add(home, "Library", "Application Support", "Coursier", "bin")
-		add(home, ".local", "share", "coursier", "bin")
-		addGlob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin"))
-		addGlob(filepath.Join(home, ".sdkman", "candidates", "*", "current", "bin"))
-	}
-	addRaw("/opt/homebrew/bin")
-	addRaw("/opt/homebrew/sbin")
-	addRaw("/usr/local/bin")
-	addRaw("/usr/local/sbin")
-	addRaw("/usr/bin")
-	addRaw("/bin")
-	addRaw("/usr/sbin")
-	addRaw("/sbin")
-	return uniqueStrings(candidates)
+	return toolchain.RuntimeDirs()
 }
 
 func executableFileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		return true
-	}
-	return info.Mode()&0111 != 0
+	return toolchain.ExecutableFileExists(path)
 }
 
 func uniqueStrings(values []string) []string {
@@ -727,14 +669,8 @@ func (i *Installer) findInstallToolPath(name string) string {
 		}
 		return ""
 	}
-	if toolPath, err := exec.LookPath(name); err == nil && executableFileExists(toolPath) {
-		return toolPath
-	}
-	for _, dir := range RuntimeToolchainDirs() {
-		candidate := filepath.Join(dir, name)
-		if executableFileExists(candidate) {
-			return candidate
-		}
+	if resolution := toolchain.ResolveExecutable("", "", name); resolution.Available() {
+		return resolution.Path
 	}
 	for _, candidate := range localLSPToolCandidates(i.lspDir, name) {
 		if executableFileExists(candidate) {
@@ -1311,6 +1247,19 @@ func (i *Installer) GetBinaryPathForRoot(id, rootPath string) string {
 		return ""
 	}
 	return i.findBinaryPath(server, rootPath)
+}
+
+func (i *Installer) GetBinaryPathForRoots(id string, rootPaths []string) string {
+	server := i.GetServerByID(id)
+	if server == nil {
+		return ""
+	}
+	for _, rootPath := range uniqueStrings(rootPaths) {
+		if path := i.findBinaryPath(server, rootPath); path != "" {
+			return path
+		}
+	}
+	return i.findBinaryPath(server, "")
 }
 
 func (i *Installer) findBinaryPath(server *LSPInfo, rootPath string) string {

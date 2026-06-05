@@ -53,6 +53,10 @@ type App struct {
 	pathMu                   sync.RWMutex
 	projectGeneration        atomic.Uint64
 	lastRequestID            atomic.Value
+	completionRequestsMu     sync.Mutex
+	completionRequests       map[string]editorCompletionRequest
+	completionResolveRefsMu  sync.Mutex
+	completionResolveRefs    map[string]editorCompletionResolveRef
 	mcpBridgeServer          *mcp.IDEBridgeServer
 	mcpBridgeMu              sync.Mutex
 	backgroundShell          *BackgroundShellStatusService
@@ -469,6 +473,8 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 			EnableLSP:         true,
 			EnableVirtual:     true,
 			EnableSpeculative: true,
+			EnablePredictive:  false,
+			EnableFacades:     false,
 		})
 		session.brain.SetLSPManager(lspManager)
 		a.syncDefaultProjectSession(session)

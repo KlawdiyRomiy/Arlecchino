@@ -263,6 +263,10 @@ func DefaultConfigs(rootPath string) []ServerConfig {
 }
 
 func ConfigsFromInstaller(rootPath string, installer *lspregistry.Installer) []ServerConfig {
+	return ConfigsFromInstallerWithWorkDirs(rootPath, nil, installer)
+}
+
+func ConfigsFromInstallerWithWorkDirs(rootPath string, workDirs []string, installer *lspregistry.Installer) []ServerConfig {
 	if installer == nil {
 		return nil
 	}
@@ -270,12 +274,13 @@ func ConfigsFromInstaller(rootPath string, installer *lspregistry.Installer) []S
 	rootURI := "file://" + rootPath
 	languages := lspregistry.GetAllLanguages()
 	configs := make([]ServerConfig, 0, len(languages))
+	roots := append([]string{rootPath}, workDirs...)
 
 	for _, lang := range languages {
 		if lang == nil || lang.LSPServerID == "" {
 			continue
 		}
-		cmd := installer.GetBinaryPathForRoot(lang.LSPServerID, rootPath)
+		cmd := installer.GetBinaryPathForRoots(lang.LSPServerID, roots)
 		if cmd == "" {
 			continue
 		}

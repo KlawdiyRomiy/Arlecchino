@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,7 +41,7 @@ type Manager struct {
 	idleTimers           map[string]*time.Timer
 	idleTimeout          time.Duration
 	completionMu         sync.Mutex
-	completionInFly      map[string]chan completionResult
+	completionInFly      map[string]*completionFlight
 	completionCache      map[string]completionResult
 	completionEpoch      uint64
 	completionTTL        time.Duration
@@ -69,14 +70,20 @@ func normalizeLanguageID(language string) string {
 }
 
 type completionResult struct {
-	items     []CompletionItem
+	response  CompletionResponse
 	err       error
 	createdAt time.Time
 }
 
+type completionFlight struct {
+	done   chan struct{}
+	result completionResult
+}
+
 type CompletionTrigger struct {
-	TriggerKind      int
-	TriggerCharacter string
+	TriggerKind         int
+	TriggerCharacter    string
+	RetryInvokedOnEmpty bool
 }
 
 const (
@@ -84,6 +91,8 @@ const (
 	completionTriggerCharacter  = 2
 	completionTriggerIncomplete = 3
 )
+
+var ErrNoConfig = errors.New("lsp server config not found")
 
 func (t CompletionTrigger) normalized() CompletionTrigger {
 	switch t.TriggerKind {
@@ -126,18 +135,19 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	config    ServerConfig
-	cmd       *exec.Cmd
-	stdin     io.WriteCloser
-	stdout    io.ReadCloser
-	running   bool
-	id        int
-	mu        sync.Mutex
-	writeMu   sync.Mutex
-	pending   map[int]chan *Response
-	onNotify  func(method string, params json.RawMessage)
-	restarts  int
-	lastError string
+	config       ServerConfig
+	cmd          *exec.Cmd
+	stdin        io.WriteCloser
+	stdout       io.ReadCloser
+	running      bool
+	id           int
+	mu           sync.Mutex
+	writeMu      sync.Mutex
+	pending      map[int]chan *Response
+	onNotify     func(method string, params json.RawMessage)
+	restarts     int
+	lastError    string
+	capabilities ServerCapabilities
 }
 
 type Request struct {
@@ -161,15 +171,29 @@ type ResponseError struct {
 
 type CompletionItem struct {
 	Label               string          `json:"label"`
+	LabelDetails        *LabelDetails   `json:"labelDetails,omitempty"`
 	Kind                int             `json:"kind"`
 	Detail              string          `json:"detail,omitempty"`
 	Documentation       any             `json:"documentation,omitempty"`
+	Deprecated          bool            `json:"deprecated,omitempty"`
+	Preselect           bool            `json:"preselect,omitempty"`
+	SortText            string          `json:"sortText,omitempty"`
+	FilterText          string          `json:"filterText,omitempty"`
 	InsertText          string          `json:"insertText,omitempty"`
 	InsertTextFormat    int             `json:"insertTextFormat,omitempty"` // 1 = PlainText, 2 = Snippet
+	InsertTextMode      int             `json:"insertTextMode,omitempty"`
+	TextEditText        string          `json:"textEditText,omitempty"`
 	TextEdit            json.RawMessage `json:"textEdit,omitempty"`
 	AdditionalTextEdits []TextEdit      `json:"additionalTextEdits,omitempty"`
+	CommitCharacters    []string        `json:"commitCharacters,omitempty"`
 	Command             *Command        `json:"command,omitempty"`
 	Data                any             `json:"data,omitempty"`
+	Tags                []int           `json:"tags,omitempty"`
+}
+
+type LabelDetails struct {
+	Detail      string `json:"detail,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 type TextEdit struct {
@@ -184,8 +208,44 @@ type InsertReplaceEdit struct {
 }
 
 type CompletionList struct {
-	IsIncomplete bool             `json:"isIncomplete"`
-	Items        []CompletionItem `json:"items"`
+	IsIncomplete bool                    `json:"isIncomplete"`
+	ItemDefaults *CompletionItemDefaults `json:"itemDefaults,omitempty"`
+	Items        []CompletionItem        `json:"items"`
+}
+
+type CompletionItemDefaults struct {
+	CommitCharacters []string        `json:"commitCharacters,omitempty"`
+	EditRange        json.RawMessage `json:"editRange,omitempty"`
+	InsertTextFormat int             `json:"insertTextFormat,omitempty"`
+	InsertTextMode   int             `json:"insertTextMode,omitempty"`
+	Data             any             `json:"data,omitempty"`
+}
+
+type CompletionResponse struct {
+	Items        []CompletionItem
+	IsIncomplete bool
+}
+
+type CompletionProviderCapability struct {
+	TriggerCharacters   []string `json:"triggerCharacters,omitempty"`
+	AllCommitCharacters []string `json:"allCommitCharacters,omitempty"`
+	ResolveProvider     bool     `json:"resolveProvider,omitempty"`
+}
+
+type CompletionCapabilities struct {
+	Available         bool
+	ResolveProvider   bool
+	TriggerCharacters []string
+	TextDocumentSync  any
+}
+
+type ServerCapabilities struct {
+	TextDocumentSync   any                           `json:"textDocumentSync,omitempty"`
+	CompletionProvider *CompletionProviderCapability `json:"completionProvider,omitempty"`
+}
+
+type InitializeResult struct {
+	Capabilities ServerCapabilities `json:"capabilities"`
 }
 
 // Location represents a location in a file (for GoToDefinition)
@@ -281,7 +341,7 @@ func NewManager(rootPath string) *Manager {
 		openDocsByLang:       make(map[string]map[string]*openDocState),
 		idleTimers:           make(map[string]*time.Timer),
 		idleTimeout:          2 * time.Minute,
-		completionInFly:      make(map[string]chan completionResult),
+		completionInFly:      make(map[string]*completionFlight),
 		completionCache:      make(map[string]completionResult),
 		completionTTL:        250 * time.Millisecond,
 		completionMax:        200,
@@ -524,11 +584,80 @@ func (m *Manager) ReplaceInstallerConfigs(configs []ServerConfig) {
 	}
 
 	m.clearDiagnosticsForLanguages(resetDiagnosticsLanguages)
+	for _, language := range resetDiagnosticsLanguages {
+		m.clearCompletionCacheForLanguage(language)
+	}
 	for _, server := range serversToStop {
 		if err := server.shutdown(); err != nil {
 			log.Printf("[LSP-MGR] installer config shutdown failed err=%v", err)
 		}
 	}
+}
+
+func (m *Manager) ResetRuntimeState(languages []string, forgetOpenDocs bool) []string {
+	if m == nil {
+		return nil
+	}
+	resolved := make([]string, 0, len(languages))
+	seen := make(map[string]bool, len(languages))
+	for _, language := range languages {
+		normalized, ok := m.resolveConfiguredLanguage(language)
+		if !ok {
+			normalized = lspregistry.NormalizeLanguageToken(language)
+		}
+		if normalized == "" || seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		resolved = append(resolved, normalized)
+	}
+	if len(resolved) == 0 {
+		resolved = m.configuredLanguages()
+		m.clearCompletionCache()
+		m.startMu.Lock()
+		m.startFailures = make(map[string]startFailure)
+		m.noConfigLogged = make(map[string]bool)
+		m.startMu.Unlock()
+		if forgetOpenDocs {
+			m.documentMu.Lock()
+			m.mu.Lock()
+			m.openDocsByLang = make(map[string]map[string]*openDocState)
+			m.mu.Unlock()
+			m.documentMu.Unlock()
+		}
+		return resolved
+	}
+	m.startMu.Lock()
+	for _, language := range resolved {
+		delete(m.startFailures, language)
+		delete(m.noConfigLogged, language)
+	}
+	m.startMu.Unlock()
+	for _, language := range resolved {
+		m.clearCompletionCacheForLanguage(language)
+		m.clearDiagnosticsForLanguages([]string{language})
+		if forgetOpenDocs {
+			m.forceMarkLanguageClosed(language)
+		}
+	}
+	return resolved
+}
+
+func (m *Manager) configuredLanguages() []string {
+	if m == nil {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	languages := make([]string, 0, len(m.configs))
+	for language := range m.configs {
+		if strings.TrimSpace(language) == "" {
+			continue
+		}
+		languages = append(languages, language)
+	}
+	sort.Strings(languages)
+	return languages
 }
 
 func (m *Manager) ensureStarted(language string) (*Server, error) {
@@ -821,6 +950,8 @@ func (m *Manager) restartServer(language string, force bool) (bool, error) {
 	if !hasConfig {
 		return false, fmt.Errorf("no config for language: %s", language)
 	}
+	m.clearStartFailure(language)
+	m.clearCompletionCacheForLanguage(language)
 
 	// Server not started, process died, or explicit force restart.
 	needsRestart := force || !hasServer || (hasServer && !server.isProcessAlive())
@@ -833,6 +964,7 @@ func (m *Manager) restartServer(language string, force bool) (bool, error) {
 	if hasServer {
 		restartCount = server.restarts + 1
 		server.shutdown()
+		m.forceMarkLanguageClosed(language)
 	}
 
 	// Start new server
@@ -883,6 +1015,11 @@ func (m *Manager) CompleteWithContext(ctx context.Context, language, filePath st
 }
 
 func (m *Manager) CompleteWithTrigger(ctx context.Context, language, filePath string, line, column int, trigger CompletionTrigger) ([]CompletionItem, error) {
+	result, err := m.CompleteWithTriggerResult(ctx, language, filePath, line, column, trigger)
+	return result.Items, err
+}
+
+func (m *Manager) CompleteWithTriggerResult(ctx context.Context, language, filePath string, line, column int, trigger CompletionTrigger) (CompletionResponse, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -891,39 +1028,74 @@ func (m *Manager) CompleteWithTrigger(ctx context.Context, language, filePath st
 	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
 	if !ok {
 		m.logNoConfig(language)
-		return nil, nil
+		return CompletionResponse{}, fmt.Errorf("%w: %s", ErrNoConfig, language)
 	}
 	language = resolvedLanguage
 	select {
 	case <-ctx.Done():
-		return nil, nil
+		return CompletionResponse{}, ctx.Err()
 	default:
 	}
 
 	version := m.docVersion(language, filePath)
 	epoch := m.completionCacheEpoch()
-	cacheKey := fmt.Sprintf("%d|%s|%s|%d|%d|%d|%d|%s", epoch, language, filePath, line, column, version, trigger.TriggerKind, trigger.TriggerCharacter)
+	cacheKey := fmt.Sprintf("%d|%s|%s|%d|%d|%d|%d|%s|%t", epoch, language, filePath, line, column, version, trigger.TriggerKind, trigger.TriggerCharacter, trigger.RetryInvokedOnEmpty)
 	if result, ok := m.getCompletionCache(cacheKey); ok {
-		return result.items, result.err
+		return result.response, result.err
 	}
-	if ch, wait := m.beginCompletion(cacheKey); wait {
+	if flight, wait := m.beginCompletion(cacheKey); wait {
 		select {
-		case result := <-ch:
-			return result.items, result.err
+		case <-flight.done:
+			result := flight.result
+			return result.response, result.err
 		case <-ctx.Done():
-			return nil, nil
+			return CompletionResponse{}, ctx.Err()
 		case <-time.After(m.completionWait):
-			return nil, nil
+			return CompletionResponse{}, context.DeadlineExceeded
 		}
 	}
-	defer m.endCompletion(cacheKey)
+	finish := func(result completionResult) {
+		if result.createdAt.IsZero() {
+			result.createdAt = time.Now()
+		}
+		m.endCompletion(cacheKey, result)
+	}
 
 	server, err := m.ensureStartedWithContext(ctx, language)
 	if err != nil {
 		log.Printf("[LSP-MGR] Complete: start failed lang=%s err=%v", language, err)
-		return nil, err
+		finish(completionResult{err: err})
+		return CompletionResponse{}, err
 	}
 
+	positionLine, positionColumn := editorPositionToLSPPosition(line, column)
+	response, err := server.completeWithContext(ctx, filePath, positionLine, positionColumn, trigger)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		finish(completionResult{err: err})
+		return CompletionResponse{}, err
+	}
+	result := completionResult{response: response, err: err, createdAt: time.Now()}
+	if shouldCacheCompletionResult(response, err, trigger) && m.completionCacheEpoch() == epoch {
+		m.setCompletionCache(cacheKey, result)
+	}
+	finish(result)
+	if err != nil {
+		log.Printf("[LSP-MGR] Complete error for lang=%s: %v", language, err)
+	}
+	return response, err
+}
+
+func shouldCacheCompletionResult(response CompletionResponse, err error, trigger CompletionTrigger) bool {
+	if err != nil {
+		return false
+	}
+	if trigger.RetryInvokedOnEmpty && len(response.Items) == 0 {
+		return false
+	}
+	return true
+}
+
+func editorPositionToLSPPosition(line, column int) (int, int) {
 	positionLine := line - 1
 	positionColumn := column - 1
 	if positionLine < 0 {
@@ -932,18 +1104,25 @@ func (m *Manager) CompleteWithTrigger(ctx context.Context, language, filePath st
 	if positionColumn < 0 {
 		positionColumn = 0
 	}
-	items, err := server.completeWithContext(ctx, filePath, positionLine, positionColumn, trigger)
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return nil, nil
+	return positionLine, positionColumn
+}
+
+func (m *Manager) CompletionCapabilities(language string) CompletionCapabilities {
+	var empty CompletionCapabilities
+	if m == nil {
+		return empty
 	}
-	result := completionResult{items: items, err: err, createdAt: time.Now()}
-	if m.completionCacheEpoch() == epoch {
-		m.setCompletionCache(cacheKey, result)
+	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
+	if !ok {
+		return empty
 	}
-	if err != nil {
-		log.Printf("[LSP-MGR] Complete error for lang=%s: %v", language, err)
+	m.mu.RLock()
+	server := m.servers[resolvedLanguage]
+	m.mu.RUnlock()
+	if server == nil {
+		return empty
 	}
-	return items, err
+	return server.completionCapabilities()
 }
 
 func (m *Manager) ResolveCompletionItemWithContext(ctx context.Context, language string, item CompletionItem) (CompletionItem, error) {
@@ -1889,29 +2068,28 @@ func (m *Manager) scheduleIdleStop(language string) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) beginCompletion(key string) (chan completionResult, bool) {
+func (m *Manager) beginCompletion(key string) (*completionFlight, bool) {
 	m.completionMu.Lock()
-	if ch, ok := m.completionInFly[key]; ok {
+	if flight, ok := m.completionInFly[key]; ok {
 		m.completionMu.Unlock()
-		return ch, true
+		return flight, true
 	}
-	ch := make(chan completionResult, 1)
-	m.completionInFly[key] = ch
+	flight := &completionFlight{done: make(chan struct{})}
+	m.completionInFly[key] = flight
 	m.completionMu.Unlock()
-	return ch, false
+	return flight, false
 }
 
-func (m *Manager) endCompletion(key string) {
+func (m *Manager) endCompletion(key string, result completionResult) {
 	m.completionMu.Lock()
-	ch := m.completionInFly[key]
-	result, ok := m.completionCache[key]
+	flight := m.completionInFly[key]
+	if flight != nil {
+		flight.result = result
+	}
 	delete(m.completionInFly, key)
 	m.completionMu.Unlock()
-	if ch != nil {
-		if ok {
-			ch <- result
-		}
-		close(ch)
+	if flight != nil {
+		close(flight.done)
 	}
 }
 
@@ -2206,18 +2384,7 @@ func (s *Server) initializeWithContext(ctx context.Context) error {
 				},
 			},
 			"textDocument": map[string]any{
-				"completion": map[string]any{
-					"completionItemKind": map[string]any{
-						"valueSet": []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25},
-					},
-					"completionItem": map[string]any{
-						"snippetSupport":       true,
-						"insertReplaceSupport": true,
-						"resolveSupport": map[string]any{
-							"properties": []string{"textEdit", "additionalTextEdits", "command", "data", "detail", "documentation"},
-						},
-					},
-				},
+				"completion": completionClientCapabilities(),
 				"definition": map[string]any{
 					"dynamicRegistration": true,
 					"linkSupport":         true,
@@ -2258,8 +2425,65 @@ func (s *Server) initializeWithContext(ctx context.Context) error {
 	if resp.Error != nil {
 		return fmt.Errorf("initialize error: %s", resp.Error.Message)
 	}
+	var initialized InitializeResult
+	if len(resp.Result) > 0 {
+		if err := json.Unmarshal(resp.Result, &initialized); err == nil {
+			s.mu.Lock()
+			s.capabilities = initialized.Capabilities
+			s.mu.Unlock()
+		}
+	}
 
 	return s.notify("initialized", struct{}{})
+}
+
+func completionClientCapabilities() map[string]any {
+	return map[string]any{
+		"contextSupport": true,
+		"completionList": map[string]any{
+			"itemDefaults": []string{
+				"commitCharacters",
+				"editRange",
+				"insertTextFormat",
+				"insertTextMode",
+				"data",
+			},
+		},
+		"completionItemKind": map[string]any{
+			"valueSet": []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25},
+		},
+		"completionItem": map[string]any{
+			"snippetSupport":          true,
+			"commitCharactersSupport": true,
+			"deprecatedSupport":       true,
+			"preselectSupport":        true,
+			"insertReplaceSupport":    true,
+			"labelDetailsSupport":     true,
+			"documentationFormat":     []string{"markdown", "plaintext"},
+			"insertTextModeSupport":   map[string]any{"valueSet": []int{1, 2}},
+			"tagSupport":              map[string]any{"valueSet": []int{1}},
+			"resolveSupport":          map[string]any{"properties": []string{"textEdit", "textEditText", "additionalTextEdits", "command", "data", "detail", "documentation", "sortText", "filterText", "insertText"}},
+		},
+	}
+}
+
+func (s *Server) completionCapabilities() CompletionCapabilities {
+	if s == nil {
+		return CompletionCapabilities{}
+	}
+	s.mu.Lock()
+	capabilities := s.capabilities
+	s.mu.Unlock()
+	provider := capabilities.CompletionProvider
+	if provider == nil {
+		return CompletionCapabilities{TextDocumentSync: capabilities.TextDocumentSync}
+	}
+	return CompletionCapabilities{
+		Available:         true,
+		ResolveProvider:   provider.ResolveProvider,
+		TriggerCharacters: append([]string(nil), provider.TriggerCharacters...),
+		TextDocumentSync:  capabilities.TextDocumentSync,
+	}
 }
 
 func (s *Server) shutdown() error {
@@ -2338,15 +2562,37 @@ func (s *Server) isProcessAlive() bool {
 }
 
 func (s *Server) complete(filePath string, line, column int) ([]CompletionItem, error) {
-	return s.completeWithContext(context.Background(), filePath, line, column, CompletionTrigger{})
+	response, err := s.completeWithContext(context.Background(), filePath, line, column, CompletionTrigger{})
+	return response.Items, err
 }
 
-func (s *Server) completeWithContext(ctx context.Context, filePath string, line, column int, trigger CompletionTrigger) ([]CompletionItem, error) {
+func (s *Server) completeWithContext(ctx context.Context, filePath string, line, column int, trigger CompletionTrigger) (CompletionResponse, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	trigger = trigger.normalized()
+	originalTrigger := trigger
+	if trigger.TriggerKind == completionTriggerCharacter && !s.supportsCompletionTrigger(trigger.TriggerCharacter) {
+		trigger = CompletionTrigger{TriggerKind: completionTriggerInvoked}
+	}
 
+	response, err := s.completeOnceWithContext(ctx, filePath, line, column, trigger)
+	if err != nil && originalTrigger.RetryInvokedOnEmpty && trigger.TriggerKind == completionTriggerCharacter && ctx.Err() == nil {
+		retryResponse, retryErr := s.completeOnceWithContext(ctx, filePath, line, column, CompletionTrigger{TriggerKind: completionTriggerInvoked})
+		if retryErr == nil {
+			return retryResponse, nil
+		}
+	}
+	if err != nil || len(response.Items) > 0 || !originalTrigger.RetryInvokedOnEmpty || trigger.TriggerKind != completionTriggerCharacter {
+		return response, err
+	}
+	if ctx.Err() != nil {
+		return response, ctx.Err()
+	}
+	return s.completeOnceWithContext(ctx, filePath, line, column, CompletionTrigger{TriggerKind: completionTriggerInvoked})
+}
+
+func (s *Server) completeOnceWithContext(ctx context.Context, filePath string, line, column int, trigger CompletionTrigger) (CompletionResponse, error) {
 	completionContext := map[string]any{
 		"triggerKind": trigger.TriggerKind,
 	}
@@ -2367,22 +2613,40 @@ func (s *Server) completeWithContext(ctx context.Context, filePath string, line,
 
 	resp, err := s.requestWithContext(ctx, "textDocument/completion", params)
 	if err != nil {
-		return nil, err
+		return CompletionResponse{}, err
 	}
 	if resp.Error != nil {
-		return nil, fmt.Errorf("completion error: %s", resp.Error.Message)
+		return CompletionResponse{}, fmt.Errorf("completion error: %s", resp.Error.Message)
 	}
 
 	var list CompletionList
 	if err := json.Unmarshal(resp.Result, &list); err != nil {
 		var items []CompletionItem
 		if err := json.Unmarshal(resp.Result, &items); err != nil {
-			return nil, err
+			return CompletionResponse{}, err
 		}
-		return normalizeCompletionItems(items), nil
+		return CompletionResponse{Items: normalizeCompletionItems(items)}, nil
 	}
 
-	return normalizeCompletionItems(list.Items), nil
+	items := applyCompletionItemDefaults(list.Items, list.ItemDefaults)
+	return CompletionResponse{
+		Items:        normalizeCompletionItems(items),
+		IsIncomplete: list.IsIncomplete,
+	}, nil
+}
+
+func (s *Server) supportsCompletionTrigger(triggerChar string) bool {
+	triggerChar = strings.TrimSpace(triggerChar)
+	if triggerChar == "" {
+		return false
+	}
+	capabilities := s.completionCapabilities()
+	for _, supported := range capabilities.TriggerCharacters {
+		if supported == triggerChar {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) resolveCompletionItem(item CompletionItem) (CompletionItem, error) {
@@ -2416,6 +2680,74 @@ func normalizeCompletionItems(items []CompletionItem) []CompletionItem {
 	return items
 }
 
+func applyCompletionItemDefaults(items []CompletionItem, defaults *CompletionItemDefaults) []CompletionItem {
+	if defaults == nil || len(items) == 0 {
+		return items
+	}
+	for i := range items {
+		if len(items[i].CommitCharacters) == 0 && len(defaults.CommitCharacters) > 0 {
+			items[i].CommitCharacters = append([]string(nil), defaults.CommitCharacters...)
+		}
+		if items[i].InsertTextFormat == 0 && defaults.InsertTextFormat != 0 {
+			items[i].InsertTextFormat = defaults.InsertTextFormat
+		}
+		if items[i].InsertTextMode == 0 && defaults.InsertTextMode != 0 {
+			items[i].InsertTextMode = defaults.InsertTextMode
+		}
+		if items[i].Data == nil && defaults.Data != nil {
+			items[i].Data = defaults.Data
+		}
+		if len(items[i].TextEdit) == 0 && len(defaults.EditRange) > 0 {
+			newText := items[i].TextEditText
+			if newText == "" {
+				newText = items[i].InsertText
+			}
+			if newText == "" {
+				newText = items[i].Label
+			}
+			items[i].TextEdit = completionDefaultTextEdit(defaults.EditRange, newText)
+		}
+	}
+	return items
+}
+
+func completionDefaultTextEdit(rawRange json.RawMessage, newText string) json.RawMessage {
+	if len(rawRange) == 0 {
+		return nil
+	}
+	var insertReplace struct {
+		Insert  Range `json:"insert"`
+		Replace Range `json:"replace"`
+	}
+	if rawObjectHasKeys(rawRange, "insert", "replace") && json.Unmarshal(rawRange, &insertReplace) == nil {
+		raw, _ := json.Marshal(InsertReplaceEdit{
+			Insert:  insertReplace.Insert,
+			Replace: insertReplace.Replace,
+			NewText: newText,
+		})
+		return raw
+	}
+	var editRange Range
+	if rawObjectHasKeys(rawRange, "start", "end") && json.Unmarshal(rawRange, &editRange) == nil {
+		raw, _ := json.Marshal(TextEdit{Range: editRange, NewText: newText})
+		return raw
+	}
+	return nil
+}
+
+func rawObjectHasKeys(raw json.RawMessage, keys ...string) bool {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return false
+	}
+	for _, key := range keys {
+		if _, ok := object[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func normalizeCompletionItem(item CompletionItem) CompletionItem {
 	if item.InsertText == "" && len(item.TextEdit) > 0 {
 		item.InsertText = extractTextEditText(item.TextEdit)
@@ -2427,6 +2759,9 @@ func mergeCompletionItem(base, resolved CompletionItem) CompletionItem {
 	if resolved.Label == "" {
 		resolved.Label = base.Label
 	}
+	if resolved.LabelDetails == nil {
+		resolved.LabelDetails = base.LabelDetails
+	}
 	if resolved.Kind == 0 {
 		resolved.Kind = base.Kind
 	}
@@ -2436,11 +2771,29 @@ func mergeCompletionItem(base, resolved CompletionItem) CompletionItem {
 	if resolved.Documentation == nil {
 		resolved.Documentation = base.Documentation
 	}
+	if !resolved.Deprecated {
+		resolved.Deprecated = base.Deprecated
+	}
+	if !resolved.Preselect {
+		resolved.Preselect = base.Preselect
+	}
+	if resolved.SortText == "" {
+		resolved.SortText = base.SortText
+	}
+	if resolved.FilterText == "" {
+		resolved.FilterText = base.FilterText
+	}
 	if resolved.InsertText == "" {
 		resolved.InsertText = base.InsertText
 	}
 	if resolved.InsertTextFormat == 0 {
 		resolved.InsertTextFormat = base.InsertTextFormat
+	}
+	if resolved.InsertTextMode == 0 {
+		resolved.InsertTextMode = base.InsertTextMode
+	}
+	if resolved.TextEditText == "" {
+		resolved.TextEditText = base.TextEditText
 	}
 	if len(resolved.TextEdit) == 0 {
 		resolved.TextEdit = base.TextEdit
@@ -2448,11 +2801,17 @@ func mergeCompletionItem(base, resolved CompletionItem) CompletionItem {
 	if len(resolved.AdditionalTextEdits) == 0 {
 		resolved.AdditionalTextEdits = base.AdditionalTextEdits
 	}
+	if len(resolved.CommitCharacters) == 0 {
+		resolved.CommitCharacters = base.CommitCharacters
+	}
 	if resolved.Command == nil {
 		resolved.Command = base.Command
 	}
 	if resolved.Data == nil {
 		resolved.Data = base.Data
+	}
+	if len(resolved.Tags) == 0 {
+		resolved.Tags = base.Tags
 	}
 	return resolved
 }

@@ -280,6 +280,8 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
     filePath: path,
     language,
     content,
+    sessionId: path,
+    surfaceId: documentSurfaceIdRef.current,
     editorFeatureBudget,
     getEditorView: () => editorViewRef.current,
   });

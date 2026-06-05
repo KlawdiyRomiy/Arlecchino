@@ -127,14 +127,31 @@ var debugLoggingEnabled = strings.EqualFold(os.Getenv("ARLE_DEBUG"), "1") ||
 	strings.EqualFold(os.Getenv("ARLE_DEBUG"), "true")
 
 const (
-	lspCompletionTimeout     = 500 * time.Millisecond
-	lspFallbackFastWait      = 120 * time.Millisecond
-	lspNoFallbackGenericWait = 250 * time.Millisecond
-	lspNoFallbackFocusedWait = lspCompletionTimeout
-	fastFallbackSourceWait   = 45 * time.Millisecond
-	genericSourceWait        = 120 * time.Millisecond
-	focusedSourceWait        = 220 * time.Millisecond
+	lspCompletionTimeout       = 500 * time.Millisecond
+	lspAccessCompletionTimeout = 1800 * time.Millisecond
+	lspFallbackFastWait        = 120 * time.Millisecond
+	lspNoFallbackGenericWait   = 250 * time.Millisecond
+	lspNoFallbackFocusedWait   = lspAccessCompletionTimeout
+	fastFallbackSourceWait     = 45 * time.Millisecond
+	genericSourceWait          = 120 * time.Millisecond
+	focusedSourceWait          = 220 * time.Millisecond
+	accessCompletionMaxItems   = 300
 )
+
+type accessOperatorSpec struct {
+	operator         string
+	triggerCharacter string
+}
+
+var accessOperatorSpecs = []accessOperatorSpec{
+	{operator: "?->", triggerCharacter: ">"},
+	{operator: "->", triggerCharacter: ">"},
+	{operator: "::", triggerCharacter: ":"},
+	{operator: "?.", triggerCharacter: "."},
+	{operator: "&.", triggerCharacter: "."},
+	{operator: ".", triggerCharacter: "."},
+	{operator: ":", triggerCharacter: ":"},
+}
 
 func debugLogf(format string, args ...any) {
 	if !debugLoggingEnabled {
@@ -160,10 +177,11 @@ type CompletionCache struct {
 }
 
 type cacheEntry struct {
-	key        string
-	filePath   string
-	result     []Suggestion
-	expiration time.Time
+	key               string
+	filePath          string
+	result            []Suggestion
+	lspListIncomplete bool
+	expiration        time.Time
 }
 
 func NewCompletionCache(capacity int, ttl time.Duration) *CompletionCache {
@@ -181,7 +199,7 @@ func (c *CompletionCache) cacheKey(ctx CompletionContext) string {
 	// Note: Column removed from key intentionally - same line/prefix should hit cache
 	// regardless of exact cursor position within the same token
 	h.Write([]byte(fmt.Sprintf(
-		"%s:%d:%d:%s:%s:%s:%t:%t:%s:%t:%t:%s:%s",
+		"%s:%d:%d:%s:%s:%s:%t:%t:%s:%t:%t:%s:%s:%s",
 		ctx.FilePath,
 		ctx.Line,
 		ctx.DocumentVersion,
@@ -194,19 +212,20 @@ func (c *CompletionCache) cacheKey(ctx CompletionContext) string {
 		ctx.IsMethodCall,
 		ctx.IsStaticCall,
 		ctx.TriggerChar,
+		ctx.AccessOperator,
 		ctx.ImportsHash,
 	)))
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func (c *CompletionCache) Get(ctx CompletionContext) ([]Suggestion, bool) {
+func (c *CompletionCache) Get(ctx CompletionContext) ([]Suggestion, bool, bool) {
 	c.mu.RLock()
 	key := c.cacheKey(ctx)
 	entry, ok := c.cache[key]
 	c.mu.RUnlock()
 
 	if !ok {
-		return nil, false
+		return nil, false, false
 	}
 
 	if time.Now().After(entry.expiration) {
@@ -217,7 +236,7 @@ func (c *CompletionCache) Get(ctx CompletionContext) ([]Suggestion, bool) {
 			delete(c.keyToEl, key)
 		}
 		c.mu.Unlock()
-		return nil, false
+		return nil, false, false
 	}
 
 	c.mu.Lock()
@@ -226,10 +245,10 @@ func (c *CompletionCache) Get(ctx CompletionContext) ([]Suggestion, bool) {
 	}
 	c.mu.Unlock()
 
-	return entry.result, true
+	return entry.result, entry.lspListIncomplete, true
 }
 
-func (c *CompletionCache) Set(ctx CompletionContext, result []Suggestion) {
+func (c *CompletionCache) Set(ctx CompletionContext, result []Suggestion, lspListIncomplete bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -237,6 +256,7 @@ func (c *CompletionCache) Set(ctx CompletionContext, result []Suggestion) {
 
 	if entry, ok := c.cache[key]; ok {
 		entry.result = result
+		entry.lspListIncomplete = lspListIncomplete
 		entry.expiration = time.Now().Add(c.ttl)
 		if el, exists := c.keyToEl[key]; exists {
 			c.order.MoveToFront(el)
@@ -256,10 +276,11 @@ func (c *CompletionCache) Set(ctx CompletionContext, result []Suggestion) {
 	}
 
 	entry := &cacheEntry{
-		key:        key,
-		filePath:   ctx.FilePath,
-		result:     result,
-		expiration: time.Now().Add(c.ttl),
+		key:               key,
+		filePath:          ctx.FilePath,
+		result:            result,
+		lspListIncomplete: lspListIncomplete,
+		expiration:        time.Now().Add(c.ttl),
 	}
 	c.cache[key] = entry
 	el := c.order.PushFront(key)
@@ -321,35 +342,36 @@ func (c *CompletionCache) Stats() (size int) {
 }
 
 type PredictionBrain struct {
-	mu                sync.RWMutex
-	engine            *core.Engine
-	usage             *UsageTracker
-	enhancedUsage     *EnhancedUsageTracker
-	persistentUsage   *PersistentUsageTracker
-	lspManager        *lsp.Manager
-	virtualStore      *VirtualStore
-	predictive        *predictive.Engine
-	local             *predictive.LocalCompletions
-	fillAll           *predictive.FillAllFields
-	config            BrainConfig
-	matcher           *predictive.SmartMatcher
-	smartRanker       *SmartRanker
-	langDetector      *LangDetector
-	autoImporter      *AutoImporter
-	stringCompletions *StringCompletionProvider
-	importCompletions *ImportCompletionProvider
-	crossFile         *CrossFileProvider
-	importResolver    *ImportChainResolver
-	recentSymbols     []string
-	arle              *Arle
-	docEnricher       *DocEnricher
-	completionCache   *CompletionCache
-	ghostFilter       *GhostTextFilter
-	userBehavior      *UserBehavior
-	providerManager   *ProviderManager
-	resolveMu         sync.Mutex
-	resolveEntries    map[string]completionResolveEntry
-	lastTrace         atomic.Value
+	mu                 sync.RWMutex
+	engine             *core.Engine
+	usage              *UsageTracker
+	enhancedUsage      *EnhancedUsageTracker
+	persistentUsage    *PersistentUsageTracker
+	lspManager         *lsp.Manager
+	virtualStore       *VirtualStore
+	predictive         *predictive.Engine
+	local              *predictive.LocalCompletions
+	fillAll            *predictive.FillAllFields
+	config             BrainConfig
+	matcher            *predictive.SmartMatcher
+	smartRanker        *SmartRanker
+	langDetector       *LangDetector
+	autoImporter       *AutoImporter
+	stringCompletions  *StringCompletionProvider
+	importCompletions  *ImportCompletionProvider
+	crossFile          *CrossFileProvider
+	importResolver     *ImportChainResolver
+	recentSymbols      []string
+	arle               *Arle
+	docEnricher        *DocEnricher
+	completionCache    *CompletionCache
+	ghostFilter        *GhostTextFilter
+	userBehavior       *UserBehavior
+	providerManager    *ProviderManager
+	resolveMu          sync.Mutex
+	resolveEntries     map[string]completionResolveEntry
+	lastTrace          atomic.Value
+	lastTraceByRequest sync.Map
 }
 
 type BrainConfig struct {
@@ -359,6 +381,7 @@ type BrainConfig struct {
 	EnableSpeculative bool
 	EnableVirtual     bool
 	EnablePredictive  bool
+	EnableFacades     bool
 	VirtualTTL        time.Duration
 	DebounceMs        int
 }
@@ -378,6 +401,8 @@ type Suggestion struct {
 	Line                int
 	Namespace           string
 	InsertText          string
+	SortText            string
+	CommitCharacters    []string
 	IsSnippet           bool
 	Snippet             string
 	Extra               map[string]string
@@ -389,6 +414,7 @@ type Suggestion struct {
 	ResolveToken        string
 	ProofKind           string
 	AutoImportAllowed   bool
+	LSPListIncomplete   bool
 	Primary             bool
 	MatchResult         *predictive.MatchResult
 }
@@ -424,22 +450,26 @@ func (s *Suggestion) MatchType() predictive.MatchType {
 }
 
 type CompletionContext struct {
-	FilePath           string
-	Content            []byte
-	FullContent        []byte
-	Line               int
-	Column             int
-	DocumentVersion    int
-	Prefix             string
-	Language           string
-	LanguageResolution autocomplete.LanguageResolution
-	ImportsHash        string
-	TriggerChar        string
-	Scope              string
-	ParentClass        string
-	ContentStartLine   int
-	RequestID          string
-	Ctx                context.Context
+	FilePath              string
+	Content               []byte
+	FullContent           []byte
+	Line                  int
+	Column                int
+	DocumentVersion       int
+	Prefix                string
+	Language              string
+	LanguageResolution    autocomplete.LanguageResolution
+	ImportsHash           string
+	TriggerChar           string
+	AccessOperator        string
+	CompletionTriggerKind int
+	Scope                 string
+	ParentClass           string
+	ContentStartLine      int
+	RequestID             string
+	SessionID             string
+	SurfaceID             string
+	Ctx                   context.Context
 
 	InString          bool
 	InComment         bool
@@ -467,6 +497,7 @@ type CompletionTrace struct {
 	CacheStatus        map[string]string `json:"cacheStatus"`
 	StaleDropped       int               `json:"staleDropped"`
 	LSPStatus          string            `json:"lspStatus"`
+	LSPListIncomplete  bool              `json:"lspListIncomplete"`
 	CacheHit           bool              `json:"cacheHit"`
 	BeforeFilter       int               `json:"beforeFilter"`
 	AfterPrefixFilter  int               `json:"afterPrefixFilter"`
@@ -718,11 +749,20 @@ func NewPredictionBrain(engine *core.Engine, config BrainConfig) *PredictionBrai
 }
 
 type providerGroupResult struct {
-	suggestions []Suggestion
-	counts      map[string]int
-	durations   map[string]int64
-	statuses    map[string]string
-	lspStatus   string
+	suggestions   []Suggestion
+	counts        map[string]int
+	durations     map[string]int64
+	statuses      map[string]string
+	lspStatus     string
+	lspIncomplete bool
+}
+
+type lspCompletionOutcome struct {
+	suggestions     []Suggestion
+	status          string
+	incomplete      bool
+	rawCount        int
+	normalizedCount int
 }
 
 func mergeCounts(dst, src map[string]int) {
@@ -761,6 +801,10 @@ func sourceWaitBudget(ctx CompletionContext, fallbackCount int) time.Duration {
 
 func isAccessCompletionRequest(ctx CompletionContext) bool {
 	return ctx.AccessChain != "" || ctx.IsMethodCall || ctx.IsStaticCall
+}
+
+func isBareAccessCompletionRequest(ctx CompletionContext) bool {
+	return isAccessCompletionRequest(ctx) && strings.TrimSpace(ctx.Prefix) == ""
 }
 
 func runProviderGroupWithBudget(
@@ -822,13 +866,20 @@ func runProviderGroupWithBudget(
 }
 
 func lspWaitBudget(ctx CompletionContext, fallbackCount int) time.Duration {
+	if ctx.InImport || isAccessCompletionRequest(ctx) {
+		return lspNoFallbackFocusedWait
+	}
 	if fallbackCount > 0 {
 		return lspFallbackFastWait
 	}
-	if ctx.InImport || ctx.AccessChain != "" || ctx.IsMethodCall || ctx.IsStaticCall {
-		return lspNoFallbackFocusedWait
-	}
 	return lspNoFallbackGenericWait
+}
+
+func lspCompletionTimeoutForContext(ctx CompletionContext) time.Duration {
+	if ctx.InImport || isAccessCompletionRequest(ctx) {
+		return lspAccessCompletionTimeout
+	}
+	return lspCompletionTimeout
 }
 
 func contextStatus(err error) string {
@@ -920,7 +971,7 @@ func (b *PredictionBrain) collectLocalGroup(
 	return result
 }
 
-func (b *PredictionBrain) collectIndexGroup(ctx CompletionContext) (result providerGroupResult) {
+func (b *PredictionBrain) collectIndexGroup(ctx CompletionContext, config BrainConfig) (result providerGroupResult) {
 	startedAt := time.Now()
 	result = providerGroupResult{
 		counts: map[string]int{
@@ -963,15 +1014,20 @@ func (b *PredictionBrain) collectIndexGroup(ctx CompletionContext) (result provi
 	if isCanceled(ctx) {
 		return result
 	}
-	facadeSuggestions := b.fromFacadeMethods(ctx)
-	result.suggestions = append(result.suggestions, facadeSuggestions...)
-	result.counts["facade"] = len(facadeSuggestions)
+	if config.EnableFacades {
+		facadeSuggestions := b.fromFacadeMethods(ctx)
+		result.suggestions = append(result.suggestions, facadeSuggestions...)
+		result.counts["facade"] = len(facadeSuggestions)
+	} else {
+		result.counts["facade"] = -1
+	}
 
 	return result
 }
 
 func (b *PredictionBrain) collectPatternGroup(
 	ctx CompletionContext,
+	config BrainConfig,
 	predictiveEngine *predictive.Engine,
 ) (result providerGroupResult) {
 	startedAt := time.Now()
@@ -996,6 +1052,12 @@ func (b *PredictionBrain) collectPatternGroup(
 	if reason := heavySourceSkipReason(ctx); reason != "" && !ctx.InString && !ctx.InImport {
 		result.counts["predictive"] = -4
 		result.statuses["patternGroup"] = reason
+		return result
+	}
+
+	if !config.EnablePredictive {
+		result.counts["predictive"] = -1
+		result.statuses["patternGroup"] = "disabled"
 		return result
 	}
 
@@ -1075,10 +1137,16 @@ func (b *PredictionBrain) collectExternalGroup(
 			result.lspStatus = reason
 			return result
 		}
-		lspSuggestions, status := b.fromLSPWithReason(ctx)
-		result.suggestions = append(result.suggestions, lspSuggestions...)
-		result.counts["lsp"] = len(lspSuggestions)
-		result.lspStatus = status
+		outcome := b.fromLSPWithOutcome(ctx)
+		result.suggestions = append(result.suggestions, outcome.suggestions...)
+		result.counts["lsp"] = len(outcome.suggestions)
+		result.counts["lspRaw"] = outcome.rawCount
+		result.counts["lspNormalized"] = outcome.normalizedCount
+		if lspCompletionTrigger(ctx).RetryInvokedOnEmpty {
+			result.statuses["lspTriggerAttempt"] = "trigger-character-retry-invoked-on-empty"
+		}
+		result.lspStatus = outcome.status
+		result.lspIncomplete = outcome.incomplete
 	} else if !config.EnableLSP {
 		result.counts["lsp"] = -1
 		result.lspStatus = "disabled"
@@ -1109,6 +1177,9 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	defer func() {
 		trace.DurationMs = elapsedMs(startedAt)
 		b.lastTrace.Store(trace)
+		if trace.RequestID != "" {
+			b.lastTraceByRequest.Store(trace.RequestID, trace)
+		}
 	}()
 
 	debugLogf("[Complete] START lang=%s prefix='%s' line=%d col=%d chain='%s'",
@@ -1125,10 +1196,11 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	}
 
 	if b.completionCache != nil {
-		if cached, ok := b.completionCache.Get(ctx); ok {
+		if cached, cachedLSPIncomplete, ok := b.completionCache.Get(ctx); ok {
 			trace.CacheHit = true
 			trace.CacheStatus["completion"] = "hit"
 			trace.ResultCount = len(cached)
+			trace.LSPListIncomplete = cachedLSPIncomplete
 			trace.TopSuggestions = buildTraceSuggestions(cached)
 			debugLogf("[Complete] CACHE HIT: %d items", len(cached))
 			return cached
@@ -1210,7 +1282,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	if lspBaseCtx == nil {
 		lspBaseCtx = context.Background()
 	}
-	lspCtx, lspCancel := context.WithTimeout(lspBaseCtx, lspCompletionTimeout)
+	lspCtx, lspCancel := context.WithTimeout(lspBaseCtx, lspCompletionTimeoutForContext(ctx))
 	defer lspCancel()
 
 	externalCh := make(chan providerGroupResult, 1)
@@ -1247,7 +1319,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 			sourceWaitBudget(ctx, fallbackCount),
 			map[string]int{"predictive": -3},
 			func(groupCtx CompletionContext) providerGroupResult {
-				return b.collectPatternGroup(groupCtx, predictiveEngine)
+				return b.collectPatternGroup(groupCtx, config, predictiveEngine)
 			},
 		)
 		mergeCounts(counts, patternGroup.counts)
@@ -1261,7 +1333,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 			sourceWaitBudget(ctx, len(suggestions)),
 			map[string]int{"index": -3, "crossFile": -3, "facade": -3},
 			func(groupCtx CompletionContext) providerGroupResult {
-				return b.collectIndexGroup(groupCtx)
+				return b.collectIndexGroup(groupCtx, config)
 			},
 		)
 		mergeCounts(counts, indexGroup.counts)
@@ -1302,6 +1374,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 		externalGroup.statuses["lsp"] = externalGroup.lspStatus
 	}
 	trace.LSPStatus = externalGroup.lspStatus
+	trace.LSPListIncomplete = externalGroup.lspIncomplete
 	mergeDurations(trace.SourceDurationsMs, externalGroup.durations)
 	mergeStatuses(trace.SourceStatuses, externalGroup.statuses)
 	mergeCounts(counts, externalGroup.counts)
@@ -1330,12 +1403,32 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	trace.AfterPrefixFilter = afterPrefixFilter
 	trace.AfterContextFilter = afterContextFilter
 	trace.AfterDedup = afterDedup
+	if isAccessCompletionRequest(ctx) {
+		if trace.SourceCounts == nil {
+			trace.SourceCounts = map[string]int{}
+		}
+		trace.SourceCounts["accessDropped"] = beforeFilter - afterContextFilter
+	}
 
 	debugLogf("[Complete] FILTER: before=%d afterPrefix=%d afterContext=%d afterDedup=%d",
 		beforeFilter, afterPrefixFilter, afterContextFilter, afterDedup)
 
-	if len(suggestions) > config.MaxSuggestions {
-		suggestions = suggestions[:config.MaxSuggestions]
+	maxSuggestions := completionMaxSuggestions(ctx, config.MaxSuggestions)
+	if len(suggestions) > maxSuggestions {
+		var clipped bool
+		suggestions, clipped = limitCompletionSuggestions(ctx, suggestions, maxSuggestions)
+		if isAccessCompletionRequest(ctx) {
+			if trace.SourceStatuses == nil {
+				trace.SourceStatuses = map[string]string{}
+			}
+			if trace.SourceCounts == nil {
+				trace.SourceCounts = map[string]int{}
+			}
+			if clipped {
+				trace.SourceStatuses["accessClipped"] = "true"
+			}
+			trace.SourceCounts["accessCap"] = maxSuggestions
+		}
 	}
 
 	if b.docEnricher != nil {
@@ -1345,7 +1438,7 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 	}
 
 	if b.completionCache != nil && len(suggestions) > 0 && !hasResolveTokens(suggestions) {
-		b.completionCache.Set(ctx, suggestions)
+		b.completionCache.Set(ctx, suggestions, trace.LSPListIncomplete)
 	}
 	if importCompletions != nil && importCompletions.catalog != nil {
 		catalogLanguage := completionLanguageResolution(ctx).CanonicalID
@@ -1358,6 +1451,46 @@ func (b *PredictionBrain) Complete(ctx CompletionContext) []Suggestion {
 
 	debugLogf("[Complete] RESULT: %d suggestions for lang=%s", len(suggestions), ctx.Language)
 	return suggestions
+}
+
+func completionMaxSuggestions(ctx CompletionContext, configured int) int {
+	if isBareAccessCompletionRequest(ctx) && configured < accessCompletionMaxItems {
+		return accessCompletionMaxItems
+	}
+	return configured
+}
+
+func limitCompletionSuggestions(ctx CompletionContext, suggestions []Suggestion, maxSuggestions int) ([]Suggestion, bool) {
+	if maxSuggestions <= 0 || len(suggestions) <= maxSuggestions {
+		return suggestions, false
+	}
+	if !isAccessCompletionRequest(ctx) {
+		return suggestions[:maxSuggestions], true
+	}
+
+	lspCount := 0
+	for _, suggestion := range suggestions {
+		if suggestion.Source == core.SourceLSP {
+			lspCount++
+		}
+	}
+	nonLSPBudget := maxSuggestions - lspCount
+	if nonLSPBudget < 0 {
+		nonLSPBudget = 0
+	}
+
+	result := make([]Suggestion, 0, maxSuggestions)
+	for _, suggestion := range suggestions {
+		if suggestion.Source == core.SourceLSP {
+			result = append(result, suggestion)
+			continue
+		}
+		if nonLSPBudget > 0 {
+			result = append(result, suggestion)
+			nonLSPBudget--
+		}
+	}
+	return result, len(result) < len(suggestions)
 }
 
 func buildTraceSuggestions(suggestions []Suggestion) []TraceSuggestion {
@@ -1441,6 +1574,22 @@ func (b *PredictionBrain) LastCompletionTrace() CompletionTrace {
 		}
 	}
 	return CompletionTrace{}
+}
+
+func (b *PredictionBrain) CompletionTraceForRequest(requestID string) (CompletionTrace, bool) {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return CompletionTrace{}, false
+	}
+	value, ok := b.lastTraceByRequest.LoadAndDelete(requestID)
+	if !ok {
+		return CompletionTrace{}, false
+	}
+	trace, ok := value.(CompletionTrace)
+	if !ok {
+		return CompletionTrace{}, false
+	}
+	return trace, true
 }
 
 // fromPredictive generates suggestions from the Predictive AST engine
@@ -1561,7 +1710,6 @@ func (b *PredictionBrain) fromLocal(ctx CompletionContext) []Suggestion {
 		if sym.Signature != "" {
 			displayText = sym.Name + sym.Signature
 		}
-
 		suggestions = append(suggestions, Suggestion{
 			Text:        sym.Name,
 			DisplayText: displayText,
@@ -1572,6 +1720,7 @@ func (b *PredictionBrain) fromLocal(ctx CompletionContext) []Suggestion {
 			FilePath:    ctx.FilePath,
 			Line:        sym.Line,
 			InsertText:  b.buildLocalInsertText(sym),
+			ProofKind:   localCompletionProofKind(ctx),
 		})
 	}
 
@@ -1817,12 +1966,37 @@ func (b *PredictionBrain) buildLocalInsertText(sym predictive.LocalSymbol) strin
 	switch sym.Kind {
 	case "function", "method":
 		if sym.Signature != "" {
-			return sym.Name + sym.Signature
+			return sym.Name + localCallableInsertSuffix(sym.Signature)
 		}
 		return sym.Name + "()"
 	default:
 		return sym.Name
 	}
+}
+
+func localCompletionProofKind(ctx CompletionContext) string {
+	return ""
+}
+
+func localCallableInsertSuffix(signature string) string {
+	signature = strings.TrimSpace(signature)
+	open := strings.Index(signature, "(")
+	if open < 0 {
+		return "()"
+	}
+	depth := 0
+	for idx := open; idx < len(signature); idx++ {
+		switch signature[idx] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return signature[open : idx+1]
+			}
+		}
+	}
+	return "()"
 }
 
 func sanitizeInsertText(text string) string {
@@ -2094,7 +2268,6 @@ func (b *PredictionBrain) fromIndex(ctx CompletionContext) []Suggestion {
 				suggestion.AutoImportAllowed = true
 			}
 		}
-
 		suggestions = append(suggestions, suggestion)
 	}
 
@@ -2120,14 +2293,14 @@ func matchesClassName(namespace, filePath, classNameLower string) bool {
 }
 
 func extractClassFromAccessChain(chain string) string {
-	chain = strings.TrimSpace(chain)
+	chain, operator := stripAccessOperatorSuffix(chain)
 	if chain == "" {
 		return ""
 	}
 
 	// Check for static access (::)
-	if strings.HasSuffix(chain, "::") {
-		className := strings.TrimSuffix(chain, "::")
+	if operator == "::" {
+		className := chain
 		// Remove any namespace prefix, get just the class name
 		if idx := strings.LastIndex(className, "\\"); idx != -1 {
 			className = className[idx+1:]
@@ -2136,15 +2309,15 @@ func extractClassFromAccessChain(chain string) string {
 	}
 
 	// Check for instance access (->)
-	if strings.HasSuffix(chain, "->") {
+	if operator == "->" || operator == "?->" {
 		// For instance access like $this-> or $user->, we can't determine class easily
 		// Return empty - LSP should handle this better
 		return ""
 	}
 
-	if strings.HasSuffix(chain, ".") {
-		objectName := strings.TrimSuffix(chain, ".")
-		return objectName
+	switch operator {
+	case ".", "?.", "&.", ":":
+		return chain
 	}
 
 	return ""
@@ -2209,24 +2382,29 @@ func (b *PredictionBrain) fromCrossFile(ctx CompletionContext) []Suggestion {
 }
 
 func (b *PredictionBrain) fromLSP(ctx CompletionContext) []Suggestion {
-	suggestions, _ := b.fromLSPWithReason(ctx)
+	suggestions, _, _ := b.fromLSPWithReason(ctx)
 	return suggestions
 }
 
-func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion, string) {
+func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion, string, bool) {
+	outcome := b.fromLSPWithOutcome(ctx)
+	return outcome.suggestions, outcome.status, outcome.incomplete
+}
+
+func (b *PredictionBrain) fromLSPWithOutcome(ctx CompletionContext) lspCompletionOutcome {
 	if b.lspManager == nil {
 		debugLogf("[LSP] manager is nil")
-		return nil, "missing-manager"
+		return lspCompletionOutcome{status: "missing-manager"}
 	}
 	if isCanceled(ctx) {
-		return nil, "canceled"
+		return lspCompletionOutcome{status: "canceled"}
 	}
 	lspLanguage := completionLanguageResolution(ctx).LSPID
 	if lspLanguage == "" {
-		return nil, "no-language"
+		return lspCompletionOutcome{status: "no-language"}
 	}
 	if !b.lspManager.HasConfig(lspLanguage) {
-		return nil, "no-config"
+		return lspCompletionOutcome{status: "no-config"}
 	}
 
 	debugLogf("[LSP] requesting completions for lang=%s original=%s file=%s line=%d col=%d",
@@ -2236,19 +2414,21 @@ func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion
 	if lspCtx == nil {
 		lspCtx = context.Background()
 	}
-	if len(ctx.FullContent) > 0 && ctx.DocumentVersion > 0 {
+	if len(ctx.FullContent) > 0 {
 		if err := b.lspManager.DidChangeWithContext(lspCtx, lspLanguage, ctx.FilePath, ctx.DocumentVersion, string(ctx.FullContent)); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, contextStatus(err)
+				return lspCompletionOutcome{status: contextStatus(err)}
 			}
 			log.Printf("[LSP] document sync failed lang=%s file=%s: %v", lspLanguage, filepath.Base(ctx.FilePath), err)
-			return nil, "sync-error"
+			return lspCompletionOutcome{status: "sync-error"}
 		}
 		if lspCtx.Err() != nil {
-			return nil, contextStatus(lspCtx.Err())
+			return lspCompletionOutcome{status: contextStatus(lspCtx.Err())}
 		}
+	} else if isAccessCompletionRequest(ctx) {
+		return lspCompletionOutcome{status: "sync-error"}
 	}
-	items, err := b.lspManager.CompleteWithTrigger(
+	result, err := b.lspManager.CompleteWithTriggerResult(
 		lspCtx,
 		lspLanguage,
 		ctx.FilePath,
@@ -2257,15 +2437,22 @@ func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion
 		lspCompletionTrigger(ctx),
 	)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return lspCompletionOutcome{status: contextStatus(err)}
+		}
+		if errors.Is(err, lsp.ErrNoConfig) {
+			return lspCompletionOutcome{status: "no-config"}
+		}
 		log.Printf("[LSP] ERROR: %v", err)
-		return nil, "error"
+		return lspCompletionOutcome{status: "error"}
 	}
+	items := result.Items
 	if lspCtx.Err() != nil {
-		return nil, contextStatus(lspCtx.Err())
+		return lspCompletionOutcome{status: contextStatus(lspCtx.Err()), incomplete: result.IsIncomplete, rawCount: len(items)}
 	}
 	if len(items) == 0 {
 		debugLogf("[LSP] no items returned for lang=%s", lspLanguage)
-		return nil, "empty"
+		return lspCompletionOutcome{status: "empty", incomplete: result.IsIncomplete}
 	}
 
 	debugLogf("[LSP] got %d items for lang=%s", len(items), lspLanguage)
@@ -2286,13 +2473,22 @@ func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion
 		}
 
 		documentation := formatLSPDocumentation(item.Documentation)
+		detail := item.Detail
+		if detail == "" && item.LabelDetails != nil {
+			detail = strings.TrimSpace(strings.TrimSpace(item.LabelDetails.Detail) + " " + strings.TrimSpace(item.LabelDetails.Description))
+		}
 
 		additionalEdits := lspTextEditsToCore(item.AdditionalTextEdits)
 		resolveToken := ""
-		if !ctx.InImport && len(additionalEdits) == 0 {
+		capabilities := b.lspManager.CompletionCapabilities(lspLanguage)
+		if !ctx.InImport && capabilities.ResolveProvider {
 			resolveCtx := ctx
 			resolveCtx.Language = lspLanguage
 			resolveToken = b.rememberLSPCompletionResolve(resolveCtx, item)
+		}
+		matchText := strings.TrimSpace(item.FilterText)
+		if matchText == "" {
+			matchText = item.Label
 		}
 		suggestions = append(suggestions, Suggestion{
 			Text:                item.Label,
@@ -2300,9 +2496,12 @@ func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion
 			Kind:                kind,
 			Source:              core.SourceLSP,
 			Score:               0.8,
-			Detail:              item.Detail,
+			Detail:              detail,
 			Documentation:       documentation,
+			MatchText:           matchText,
 			InsertText:          insertText,
+			SortText:            item.SortText,
+			CommitCharacters:    append([]string(nil), item.CommitCharacters...),
 			IsSnippet:           isSnippet,
 			PrimaryTextEdit:     lspPrimaryTextEditToCompletion(item.TextEdit),
 			AdditionalTextEdits: additionalEdits,
@@ -2311,30 +2510,110 @@ func (b *PredictionBrain) fromLSPWithReason(ctx CompletionContext) ([]Suggestion
 			ResolveToken:        resolveToken,
 			ProofKind:           lspCompletionProofKind(additionalEdits, resolveToken),
 			AutoImportAllowed:   len(additionalEdits) > 0,
+			LSPListIncomplete:   result.IsIncomplete,
 		})
 	}
 
-	return suggestions, "ok"
+	return lspCompletionOutcome{
+		suggestions:     suggestions,
+		status:          "ok",
+		incomplete:      result.IsIncomplete,
+		rawCount:        len(items),
+		normalizedCount: len(suggestions),
+	}
+}
+
+func lspSuggestionsIncomplete(suggestions []Suggestion) bool {
+	for _, suggestion := range suggestions {
+		if suggestion.LSPListIncomplete {
+			return true
+		}
+	}
+	return false
 }
 
 func lspCompletionTrigger(ctx CompletionContext) lsp.CompletionTrigger {
 	triggerChar := strings.TrimSpace(ctx.TriggerChar)
-	if isAccessCompletionRequest(ctx) && isLSPCompletionTriggerCharacter(triggerChar) {
+	if triggerChar, ok := accessCompletionTriggerCharacter(ctx, triggerChar); ok {
 		return lsp.CompletionTrigger{
-			TriggerKind:      2,
-			TriggerCharacter: triggerChar,
+			TriggerKind:         2,
+			TriggerCharacter:    triggerChar,
+			RetryInvokedOnEmpty: true,
 		}
+	}
+	switch ctx.CompletionTriggerKind {
+	case 2:
+		if triggerChar != "" {
+			return lsp.CompletionTrigger{
+				TriggerKind:      2,
+				TriggerCharacter: triggerChar,
+			}
+		}
+	case 3:
+		return lsp.CompletionTrigger{TriggerKind: 3}
 	}
 	return lsp.CompletionTrigger{TriggerKind: 1}
 }
 
-func isLSPCompletionTriggerCharacter(triggerChar string) bool {
+func accessCompletionTriggerCharacter(ctx CompletionContext, triggerChar string) (string, bool) {
+	if !isAccessCompletionRequest(ctx) || strings.TrimSpace(ctx.Prefix) != "" {
+		return "", false
+	}
+	if operatorTrigger := lspTriggerCharacterForAccessOperator(accessOperatorForContext(ctx)); operatorTrigger != "" {
+		return operatorTrigger, true
+	}
 	switch triggerChar {
 	case ".", ":", ">":
-		return true
+		return triggerChar, true
 	default:
-		return false
+		return "", false
 	}
+}
+
+func accessOperatorForContext(ctx CompletionContext) string {
+	if operator := accessOperatorFromChain(ctx.AccessChain); operator != "" {
+		return operator
+	}
+	return strings.TrimSpace(ctx.AccessOperator)
+}
+
+func accessOperatorFromChain(chain string) string {
+	chain = strings.TrimSpace(chain)
+	for _, spec := range accessOperatorSpecs {
+		if strings.HasSuffix(chain, spec.operator) {
+			return spec.operator
+		}
+	}
+	return ""
+}
+
+func stripAccessOperatorSuffix(chain string) (string, string) {
+	chain = strings.TrimSpace(chain)
+	for _, spec := range accessOperatorSpecs {
+		if strings.HasSuffix(chain, spec.operator) {
+			return strings.TrimSpace(strings.TrimSuffix(chain, spec.operator)), spec.operator
+		}
+	}
+	return chain, ""
+}
+
+func lspTriggerCharacterForAccessOperator(operator string) string {
+	operator = strings.TrimSpace(operator)
+	for _, spec := range accessOperatorSpecs {
+		if operator == spec.operator {
+			return spec.triggerCharacter
+		}
+	}
+	return ""
+}
+
+func accessChainIsStaticCall(accessChain string) bool {
+	return accessOperatorFromChain(accessChain) == "::"
+}
+
+func accessChainIsMethodCall(accessChain string) bool {
+	operator := accessOperatorFromChain(accessChain)
+	return operator != "" && operator != "::"
 }
 
 func formatLSPDocumentation(doc any) string {
@@ -2407,13 +2686,10 @@ func lspCompletionProofKind(additionalEdits []core.TextEdit, resolveToken string
 }
 
 func extractPackageReference(accessChain string) string {
-	chain := strings.TrimSpace(accessChain)
+	chain, _ := stripAccessOperatorSuffix(accessChain)
 	if chain == "" {
 		return ""
 	}
-	chain = strings.TrimSuffix(chain, ".")
-	chain = strings.TrimSuffix(chain, "::")
-	chain = strings.TrimSuffix(chain, "->")
 	return strings.TrimSpace(strings.TrimSuffix(chain, "()"))
 }
 
@@ -2801,7 +3077,7 @@ func (b *PredictionBrain) deduplicate(suggestions []Suggestion) []Suggestion {
 
 		if idx, exists := seenByTextKind[keyTextKind]; exists {
 			existing := result[idx]
-			if s.Score > existing.Score || (s.Score == existing.Score && sourceRank(s.Source) > sourceRank(existing.Source)) {
+			if preferCompletionSuggestion(s, existing) {
 				result[idx] = mergeSuggestionMetadata(s, existing)
 			} else {
 				result[idx] = mergeSuggestionMetadata(existing, s)
@@ -2811,7 +3087,7 @@ func (b *PredictionBrain) deduplicate(suggestions []Suggestion) []Suggestion {
 
 		if idx, exists := seenByText[textLower]; exists {
 			existing := result[idx]
-			if s.Score > existing.Score+0.5 {
+			if preferCompletionSuggestion(s, existing) {
 				result[idx] = mergeSuggestionMetadata(s, existing)
 				seenByTextKind[keyTextKind] = idx
 			} else {
@@ -2826,6 +3102,55 @@ func (b *PredictionBrain) deduplicate(suggestions []Suggestion) []Suggestion {
 	}
 
 	return result
+}
+
+func preferCompletionSuggestion(candidate Suggestion, existing Suggestion) bool {
+	candidateTier := completionProofTier(candidate)
+	existingTier := completionProofTier(existing)
+	if candidateTier != existingTier {
+		return candidateTier > existingTier
+	}
+	if candidate.Score != existing.Score {
+		return candidate.Score > existing.Score
+	}
+	return sourceRank(candidate.Source) > sourceRank(existing.Source)
+}
+
+func completionProofTier(s Suggestion) int {
+	switch strings.TrimSpace(s.ProofKind) {
+	case "lsp-completion-edit":
+		return 100
+	case "lsp-resolve-edit":
+		return 95
+	case "existing-import":
+		return 90
+	case "receiver-member", "self-static-member":
+		return 85
+	case "stdlib-platform":
+		return 80
+	case "project-symbol":
+		return 70
+	case "dependency-declared":
+		return 45
+	}
+	if len(s.AdditionalTextEdits) > 0 || s.PrimaryTextEdit != nil || s.Command != nil || s.ResolveToken != "" {
+		if s.Source == core.SourceLSP {
+			return 92
+		}
+		return 65
+	}
+	switch s.Source {
+	case core.SourceLSP:
+		return 60
+	case core.SourceIndex, core.SourceLocal, core.SourceVirtual:
+		return 50
+	case core.SourceLibrary:
+		return 35
+	case core.SourcePredictive:
+		return 20
+	default:
+		return 10
+	}
 }
 
 func suggestionDedupText(s Suggestion) string {
@@ -2916,7 +3241,61 @@ func canMergeCompletionSideEffects(a, b Suggestion) bool {
 	if sameImportSideEffectIdentity(a, b) {
 		return true
 	}
-	return a.Source == core.SourceLSP && b.Source == core.SourceLSP
+	return a.Source == core.SourceLSP && b.Source == core.SourceLSP && sameLSPSideEffectIdentity(a, b)
+}
+
+func sameLSPSideEffectIdentity(a, b Suggestion) bool {
+	aIdentity := lspSideEffectIdentity(a)
+	bIdentity := lspSideEffectIdentity(b)
+	return aIdentity != "" && aIdentity == bIdentity
+}
+
+func lspSideEffectIdentity(s Suggestion) string {
+	parts := []string{
+		strings.TrimSpace(s.Text),
+		string(s.Kind),
+		strings.TrimSpace(s.Namespace),
+		strings.TrimSpace(s.Detail),
+		strings.TrimSpace(effectiveCompletionInsertText(s)),
+		editorTextEditIdentityForBrain(s.PrimaryTextEdit),
+		additionalTextEditsIdentityForBrain(s.AdditionalTextEdits),
+		strings.TrimSpace(s.ResolveToken),
+	}
+	identity := strings.Join(parts, "\x00")
+	if strings.Trim(identity, "\x00") == "" {
+		return ""
+	}
+	return identity
+}
+
+func editorTextEditIdentityForBrain(edit *CompletionPrimaryTextEdit) string {
+	if edit == nil {
+		return ""
+	}
+	return strings.Join([]string{
+		edit.NewText,
+		completionTextRangeIdentityForBrain(edit.Range),
+		completionTextRangeIdentityForBrain(edit.Insert),
+		completionTextRangeIdentityForBrain(edit.Replace),
+	}, "\x00")
+}
+
+func completionTextRangeIdentityForBrain(r *CompletionTextRange) string {
+	if r == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d-%d:%d", r.StartLine, r.StartColumn, r.EndLine, r.EndColumn)
+}
+
+func additionalTextEditsIdentityForBrain(edits []core.TextEdit) string {
+	if len(edits) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(edits))
+	for _, edit := range edits {
+		parts = append(parts, fmt.Sprintf("%d:%d-%d:%d:%s", edit.StartLine, edit.StartColumn, edit.EndLine, edit.EndColumn, edit.Text))
+	}
+	return strings.Join(parts, "\x00")
 }
 
 func sameImportSideEffectIdentity(a, b Suggestion) bool {
@@ -3033,14 +3412,19 @@ func normalizeAccessCompletionSuggestion(ctx CompletionContext, suggestion Sugge
 	}
 
 	if insertQualified && suggestion.PrimaryTextEdit == nil {
-		return Suggestion{}, false
+		if suggestion.Source != core.SourceLSP {
+			return Suggestion{}, false
+		}
+		suggestion.InsertText = memberText
+		suggestion.IsSnippet = false
 	}
 	if hasMismatchedQualifiedOwner(suggestion, owner) {
 		return Suggestion{}, false
 	}
 
 	suggestion.MatchText = memberText
-	if labelQualified || displayQualified {
+	if textQualified || labelQualified || displayQualified || insertQualified {
+		suggestion.Text = memberText
 		suggestion.DisplayText = memberText
 	}
 	return suggestion, true
@@ -3063,13 +3447,11 @@ func stripAccessOwnerPrefix(text, owner string) (string, bool) {
 		return "", false
 	}
 
-	candidates := []string{
-		owner + ".",
-		owner + "::",
-		owner + "->",
-		owner + "\\",
-		owner + "#",
+	candidates := make([]string, 0, len(accessOperatorSpecs)+2)
+	for _, spec := range accessOperatorSpecs {
+		candidates = append(candidates, owner+spec.operator)
 	}
+	candidates = append(candidates, owner+"\\", owner+"#")
 	for _, prefix := range candidates {
 		if strings.HasPrefix(text, prefix) && len(text) > len(prefix) {
 			return strings.TrimSpace(text[len(prefix):]), true
@@ -3129,11 +3511,19 @@ func qualifiedMemberOwner(text string) (string, bool) {
 	if text == "" {
 		return "", false
 	}
-	separators := []string{"->", "::", ".", "#", "\\"}
+	separators := make([]string, 0, len(accessOperatorSpecs)+2)
+	for _, spec := range accessOperatorSpecs {
+		separators = append(separators, spec.operator)
+	}
+	separators = append(separators, "#", "\\")
 	bestIndex := -1
 	bestSeparator := ""
 	for _, separator := range separators {
-		if idx := strings.LastIndex(text, separator); idx > bestIndex {
+		idx := strings.LastIndex(text, separator)
+		for separator == "." && idx > 0 && (text[idx-1] == '?' || text[idx-1] == '&') {
+			idx = strings.LastIndex(text[:idx-1], separator)
+		}
+		if idx > bestIndex {
 			bestIndex = idx
 			bestSeparator = separator
 		}
@@ -3237,7 +3627,7 @@ func (b *PredictionBrain) filterByContext(ctx CompletionContext, suggestions []S
 	if ctx.TriggerChar == "<" && isHTMLLikeLanguage(ctx.Language) {
 		return suggestions
 	}
-	if !ctx.IsStaticCall && !ctx.IsMethodCall {
+	if !isAccessCompletionRequest(ctx) {
 		return suggestions
 	}
 
@@ -3257,6 +3647,10 @@ func (b *PredictionBrain) filterByContext(ctx CompletionContext, suggestions []S
 			continue
 		}
 
+		if !suggestionAllowedInSemanticAccessContext(s) {
+			continue
+		}
+
 		if s.Source != core.SourceLSP && !isCallableKind(s.Kind) {
 			continue
 		}
@@ -3271,11 +3665,21 @@ func (b *PredictionBrain) filterByContext(ctx CompletionContext, suggestions []S
 	return filtered
 }
 
+func suggestionAllowedInSemanticAccessContext(s Suggestion) bool {
+	if s.Source == core.SourceLSP {
+		return true
+	}
+	if suggestionHasProjectAccessProof(s) {
+		return true
+	}
+	return false
+}
+
 func matchesSuggestionAccessContext(ctx CompletionContext, suggestion Suggestion, accessRefLower, resolvedNSLower string) bool {
 	namespaceLower := strings.ToLower(strings.TrimSpace(suggestion.Namespace))
 	if resolvedNSLower != "" {
 		if namespaceLower == "" {
-			return suggestion.Source == core.SourceLSP
+			return suggestion.Source == core.SourceLSP || suggestionHasProjectAccessProof(suggestion)
 		}
 		if namespaceMatches(namespaceLower, resolvedNSLower) {
 			return true
@@ -3290,16 +3694,22 @@ func matchesSuggestionAccessContext(ctx CompletionContext, suggestion Suggestion
 		return true
 	}
 	if namespaceLower == "" {
-		return suggestion.Source == core.SourceLSP
+		return suggestion.Source == core.SourceLSP || suggestionHasProjectAccessProof(suggestion)
 	}
 
 	if ctx.IsStaticCall {
 		return matchesClassName(suggestion.Namespace, suggestion.FilePath, accessRefLower) || namespaceHasTokenSuffix(namespaceLower, accessRefLower)
 	}
-	if suggestion.Source == core.SourceLibrary {
-		return namespaceLower == accessRefLower
-	}
 	return matchesClassName(suggestion.Namespace, suggestion.FilePath, accessRefLower) || namespaceHasTokenSuffix(namespaceLower, accessRefLower)
+}
+
+func suggestionHasProjectAccessProof(suggestion Suggestion) bool {
+	switch strings.TrimSpace(suggestion.ProofKind) {
+	case "receiver-member", "self-static-member":
+		return strings.TrimSpace(suggestion.Namespace) != ""
+	default:
+		return false
+	}
 }
 
 func namespaceMatches(namespaceLower, resolvedNSLower string) bool {
@@ -3517,6 +3927,9 @@ func suggestionAccessContextScore(isMethodCall, isStaticCall bool, accessChain, 
 		IsStaticCall:      isStaticCall,
 		AccessChain:       accessChain,
 		ResolvedNamespace: resolvedNamespace,
+	}
+	if !suggestionAllowedInSemanticAccessContext(suggestion) {
+		return 0.05
 	}
 	if !matchesSuggestionAccessContext(ctx, suggestion, accessRefLower, resolvedNSLower) {
 		return 0.05
@@ -4010,8 +4423,8 @@ func (b *PredictionBrain) SelectGhostTextWithContext(ctx CompletionContext, sugg
 			Prefix:       prefix,
 			Language:     ctx.Language,
 			Suggestions:  suggestions,
-			IsMethodCall: strings.Contains(accessChain, "->") || strings.Contains(accessChain, "."),
-			IsStaticCall: strings.Contains(accessChain, "::"),
+			IsMethodCall: accessChainIsMethodCall(accessChain),
+			IsStaticCall: accessChainIsStaticCall(accessChain),
 			AccessChain:  accessChain,
 			UserBehavior: b.userBehavior,
 			Now:          now,

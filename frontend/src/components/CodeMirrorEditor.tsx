@@ -909,6 +909,8 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     filePath,
     language,
     content,
+    sessionId: filePath,
+    surfaceId: documentSurfaceIdRef.current,
     editorFeatureBudget,
     getEditorView: () => editorRef.current?.view ?? null,
     onTyping,

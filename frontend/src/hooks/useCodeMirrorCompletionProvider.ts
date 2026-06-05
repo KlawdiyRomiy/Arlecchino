@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
 import {
   acceptCompletion,
   autocompletion,
@@ -8,13 +15,17 @@ import {
   Completion,
   CompletionContext,
   CompletionResult,
+  completeFromList,
+  currentCompletions,
   insertCompletionText,
   pickedCompletion,
+  selectedCompletion,
+  setSelectedCompletion,
   snippet,
   startCompletion,
 } from "@codemirror/autocomplete";
 import { EditorState, Extension, Prec, Transaction } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, keymap, tooltips, type Rect } from "@codemirror/view";
 
 import type {
   EditorCompletionResolveResult,
@@ -40,11 +51,19 @@ import {
   metricsExtension,
   type MetricsHandle,
 } from "../extensions/metricsExtension";
+import { getEditorDocumentVersion } from "../stores/editorDocumentObserver";
 import type { AdaptiveEditorFeatureBudget } from "../stores/performanceStore";
-import { createCompletionCache } from "../utils/completionCache";
+import {
+  createCompletionSessionController,
+  lspCommitCharacters,
+  stableCompletionResult,
+  stableStatusCompletionResult,
+  type CompletionSessionRecord,
+  type CompletionSemanticKeyReader,
+} from "../utils/codeMirrorCompletionSession";
 import {
   getInstantDocumentCompletions,
-  getInstantKeywordCompletions,
+  getInstantKeywordCompletionOptions,
   mergeInstantCompletions,
 } from "../utils/instantCompletions";
 import { useStableReferenceKey } from "./useStableReferenceKey";
@@ -52,12 +71,36 @@ import { useStableReferenceKey } from "./useStableReferenceKey";
 const GHOST_DEBOUNCE_MS = 50;
 const GHOST_IDLE_DELAY_MS = 900;
 const COMPLETION_FAST_BACKEND_GRACE_MS = 32;
-const COMPLETION_CACHE_TTL_MS = 2000;
 const COMPLETION_RESOLVE_TIMEOUT_MS = 150;
 const MAX_COMPLETION_TEXT_EDITS = 32;
+const MAX_COMPLETION_INSERT_TEXT_LENGTH = 64_000;
 const MAX_COMPLETION_EDIT_TEXT_LENGTH = 64_000;
+const MAX_COMPLETION_REPLACED_TEXT_LENGTH = 2048;
+const MAX_PRIMARY_COMPLETION_REPLACED_TEXT_LENGTH = 512;
 const ACCESS_COMPLETION_BOOST_BASE = 0.45;
+const ACCESS_TRANSIENT_RETRY_LIMIT = 1;
+const COMPLETION_MAX_RENDERED_OPTIONS = 1000;
+const ACCESS_PENDING_COMPLETION_LABEL = "Loading members...";
+const ACCESS_EMPTY_COMPLETION_LABEL = "No LSP members";
+const ACCESS_ERROR_COMPLETION_LABEL = "Completion unavailable";
+const COMPLETION_TOOLTIP_MARGIN_PX = 8;
 const EMPTY_EXTENSION: Extension = [];
+
+type AccessOperatorSpec = {
+  operator: string;
+  triggerCharacter: string;
+  languages?: readonly string[];
+};
+
+const ACCESS_OPERATOR_SPECS: readonly AccessOperatorSpec[] = [
+  { operator: "?->", triggerCharacter: ">" },
+  { operator: "->", triggerCharacter: ">" },
+  { operator: "::", triggerCharacter: ":" },
+  { operator: "?.", triggerCharacter: "." },
+  { operator: "&.", triggerCharacter: "." },
+  { operator: ".", triggerCharacter: "." },
+  { operator: ":", triggerCharacter: ":", languages: ["lua", "luau"] },
+];
 
 const NOOP_METRICS: MetricsHandle = {
   extension: EMPTY_EXTENSION,
@@ -100,17 +143,22 @@ const SOURCE_LABELS: Record<string, string> = {
 type CompletionWithInsertText = Completion & {
   __insertText: string;
   __filterText?: string;
+  __sortText?: string;
   __hasAdditionalTextEdits: boolean;
   __completionId?: string;
   __stableKey?: string;
   __autoImportAllowed?: boolean;
   __requiresResolveBeforeApply?: boolean;
+  __sourceKind?: string;
+  __statusKind?: "pending" | "empty" | "error";
 };
 
 type CompletionPayload = {
   label?: string;
   text?: string;
   filterText?: string;
+  sortText?: string;
+  commitCharacters?: string[];
   insertText?: string;
   isSnippet?: boolean;
   primaryTextEdit?: PrimaryTextEditJSON;
@@ -122,6 +170,7 @@ type CompletionPayload = {
   autoImportAllowed?: boolean;
   primary?: boolean;
   requiresResolveBeforeApply?: boolean;
+  source?: string;
 };
 
 type CompletionRangeJSON = {
@@ -142,6 +191,41 @@ type CompletionResolvePayload = EditorCompletionResolveResult & {
   primaryTextEdit?: PrimaryTextEditJSON | null;
 };
 
+type EditorCompletionResolveRequestPayload = {
+  resolveToken: string;
+  completionId?: string;
+  stableKey?: string;
+  documentVersion?: number;
+  sessionId?: string;
+  surfaceId?: string;
+};
+
+type EditorCompletionResultPayload = EditorCompletionResult & {
+  isIncomplete?: boolean;
+  lspTriggerCharacters?: string[];
+  lspResolveProvider?: boolean;
+  lspCompletionAvailable?: boolean;
+  lspStatus?: string;
+  sourceStatuses?: Record<string, string>;
+};
+
+type EditorCompletionRequestPayload = Parameters<
+  typeof GetEditorCompletions
+>[0] & {
+  accessOperator?: string;
+  completionTriggerKind?: number;
+  sessionId?: string;
+  surfaceId?: string;
+};
+
+type CompletionBuildOutcome =
+  | { kind: "result"; result: CompletionResult; isIncomplete: boolean }
+  | { kind: "empty"; result: CompletionResult }
+  | { kind: "error"; result: CompletionResult }
+  | { kind: "retry" | "stale" | "canceled" };
+
+type AccessEmptyClassification = "empty" | "error" | "canceled";
+
 type CompletionTextEditChange = {
   from: number;
   to: number;
@@ -153,6 +237,8 @@ export interface CodeMirrorCompletionProviderOptions {
   filePath: string;
   language: string;
   content: string;
+  sessionId?: string;
+  surfaceId?: string;
   editorFeatureBudget: AdaptiveEditorFeatureBudget;
   getEditorView: () => EditorView | null;
   onTyping?: (chars: number) => void;
@@ -168,8 +254,26 @@ export interface CodeMirrorCompletionProviderHandle {
 }
 
 function acceptVisibleCompletion(view: EditorView): boolean {
-  if (completionStatus(view.state) !== "active") {
+  const status = completionStatus(view.state);
+  if (status !== "active") {
     return false;
+  }
+  const selected = selectedCompletion(
+    view.state,
+  ) as CompletionWithInsertText | null;
+  if (selected?.__statusKind) {
+    return true;
+  }
+  if (!selected) {
+    const first = currentCompletions(view.state)[0] as
+      | CompletionWithInsertText
+      | undefined;
+    if (first?.__statusKind) {
+      return true;
+    }
+    if (first) {
+      view.dispatch({ effects: setSelectedCompletion(0) });
+    }
   }
   if (acceptCompletion(view)) {
     return true;
@@ -181,6 +285,84 @@ function acceptVisibleCompletion(view: EditorView): boolean {
     }
   }, COMPLETION_FAST_BACKEND_GRACE_MS);
   return true;
+}
+
+function completionRuntimeSessionIsOpen(
+  status: ReturnType<typeof completionStatus>,
+): boolean {
+  return status === "active" || status === "pending";
+}
+
+function completionTooltipSpace(view: EditorView): Rect {
+  const docElement = view.dom.ownerDocument.documentElement;
+  const viewportWidth =
+    docElement.clientWidth ||
+    view.dom.ownerDocument.defaultView?.innerWidth ||
+    0;
+  const viewportHeight =
+    docElement.clientHeight ||
+    view.dom.ownerDocument.defaultView?.innerHeight ||
+    0;
+  const viewportSpace = {
+    top: COMPLETION_TOOLTIP_MARGIN_PX,
+    left: COMPLETION_TOOLTIP_MARGIN_PX,
+    bottom: Math.max(
+      COMPLETION_TOOLTIP_MARGIN_PX,
+      viewportHeight - COMPLETION_TOOLTIP_MARGIN_PX,
+    ),
+    right: Math.max(
+      COMPLETION_TOOLTIP_MARGIN_PX,
+      viewportWidth - COMPLETION_TOOLTIP_MARGIN_PX,
+    ),
+  };
+  const editorRect = view.scrollDOM.getBoundingClientRect();
+  const top = Math.max(viewportSpace.top, editorRect.top);
+  const left = Math.max(viewportSpace.left, editorRect.left);
+  const bottom = Math.min(viewportSpace.bottom, editorRect.bottom);
+  const right = Math.min(viewportSpace.right, editorRect.right);
+
+  if (bottom - top < 48 || right - left < 160) {
+    return viewportSpace;
+  }
+  return { top, left, bottom, right };
+}
+
+function completionOutcomeResult(
+  outcome: CompletionBuildOutcome,
+): CompletionResult | null {
+  return outcome.kind === "result" ||
+    outcome.kind === "empty" ||
+    outcome.kind === "error"
+    ? outcome.result
+    : null;
+}
+
+function accessCompletionLSPStatus(
+  result: EditorCompletionResultPayload | null,
+): string {
+  return (result?.lspStatus || result?.sourceStatuses?.lsp || "")
+    .toString()
+    .trim()
+    .toLowerCase();
+}
+
+function isRetryableAccessNoItemsResult(
+  result: EditorCompletionResultPayload | null,
+): boolean {
+  return accessCompletionLSPStatus(result) === "timeout";
+}
+
+function classifyAccessNoItemsResult(
+  result: EditorCompletionResultPayload | null,
+): AccessEmptyClassification {
+  const lspStatus = accessCompletionLSPStatus(result);
+  if (lspStatus === "canceled" || lspStatus === "stale") {
+    return "canceled";
+  }
+  if (lspStatus === "empty") {
+    return "empty";
+  }
+  return "error";
 }
 
 function accessCompletionLabel(completion: Completion): string {
@@ -213,14 +395,6 @@ function sortAccessCompletionOptions(options: Completion[]): Completion[] {
     .sort((leftEntry, rightEntry) => {
       const left = leftEntry.completion;
       const right = rightEntry.completion;
-      const byBoost = (right.boost || 0) - (left.boost || 0);
-      if (byBoost !== 0) return byBoost;
-
-      const byTypePriority =
-        accessCompletionTypePriority(right) -
-        accessCompletionTypePriority(left);
-      if (byTypePriority !== 0) return byTypePriority;
-
       const byLabel = accessCompletionLabel(left).localeCompare(
         accessCompletionLabel(right),
         undefined,
@@ -231,18 +405,32 @@ function sortAccessCompletionOptions(options: Completion[]): Completion[] {
       );
       if (byLabel !== 0) return byLabel;
 
+      const byTypePriority =
+        accessCompletionTypePriority(right) -
+        accessCompletionTypePriority(left);
+      if (byTypePriority !== 0) return byTypePriority;
+
       const byType = (left.type || "").localeCompare(right.type || "");
       if (byType !== 0) return byType;
 
       const byDetail = (left.detail || "").localeCompare(right.detail || "");
       if (byDetail !== 0) return byDetail;
 
+      const leftSort = (left as CompletionWithInsertText).__sortText || "";
+      const rightSort = (right as CompletionWithInsertText).__sortText || "";
+      if (leftSort || rightSort) {
+        const bySort = leftSort.localeCompare(rightSort, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+        if (bySort !== 0) return bySort;
+      }
+
       return leftEntry.index - rightEntry.index;
     })
-    .map(({ completion }, index) => ({
+    .map(({ completion }, index, sortedEntries) => ({
       ...completion,
-      boost:
-        (completion.boost || 0) + ACCESS_COMPLETION_BOOST_BASE - index / 1000,
+      boost: ACCESS_COMPLETION_BOOST_BASE + sortedEntries.length - index,
     }));
 }
 
@@ -254,45 +442,48 @@ const trimToTokenLimit = (text: string, limit: number): string => {
   return text.startsWith(" ") ? ` ${slice}` : slice;
 };
 
-function extractAccessPrefix(textBefore: string): {
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizedAccessLanguage(language?: string): string {
+  return (language || "").trim().toLowerCase();
+}
+
+function accessOperatorSpecsForLanguage(language?: string) {
+  const normalized = normalizedAccessLanguage(language);
+  return ACCESS_OPERATOR_SPECS.filter(
+    (spec) => !spec.languages || spec.languages.includes(normalized),
+  );
+}
+
+function accessOperatorAlternation(language?: string): string {
+  return accessOperatorSpecsForLanguage(language)
+    .map((spec) => escapeRegExp(spec.operator))
+    .join("|");
+}
+
+function extractAccessPrefix(
+  textBefore: string,
+  language?: string,
+): {
   prefix: string;
   accessChain: string;
 } | null {
   if (!textBefore) return null;
+  const operatorPattern = accessOperatorAlternation(language);
+  if (!operatorPattern) return null;
 
   const generalAccessMatch = textBefore.match(
-    /((?:\$?[A-Za-z_][\w$]*|\\?[A-Za-z_][\w$]*)(?:(?:\\|\.|::|->)[A-Za-z_][\w$]*)*(?:->|::|\.))([A-Za-z_$][\w$]*)?$/,
+    new RegExp(
+      `((?:\\$?[A-Za-z_][\\w$]*|\\\\?[A-Za-z_][\\w$]*)(?:(?:\\\\|${operatorPattern})[A-Za-z_][\\w$]*)*(?:${operatorPattern}))([A-Za-z_$][\\w$]*)?$`,
+    ),
   );
   if (generalAccessMatch) {
     return {
       accessChain: generalAccessMatch[1],
       prefix: generalAccessMatch[2] || "",
     };
-  }
-
-  const accessPatterns = [
-    /(\$\w+)->(\w*)$/,
-    /(\$this)->(\w*)$/,
-    /(self)::(\w*)$/,
-    /(static)::(\w*)$/,
-    /([A-Z]\w*)::(\w*)$/,
-    /(\w+)\.(\w*)$/,
-  ];
-
-  for (const pattern of accessPatterns) {
-    const match = textBefore.match(pattern);
-    if (match) {
-      return {
-        accessChain:
-          match[1] +
-          (textBefore.includes("::")
-            ? "::"
-            : textBefore.includes("->")
-              ? "->"
-              : "."),
-        prefix: match[2] || "",
-      };
-    }
   }
   return null;
 }
@@ -505,6 +696,35 @@ function primaryTextEditToChange(
   );
 }
 
+function primaryTextEditIsSafeForCompletionSpan(
+  state: EditorState,
+  change: CompletionTextEditChange | null,
+  from: number,
+  to: number,
+): boolean {
+  if (!change) {
+    return true;
+  }
+  const spanFrom = Math.min(from, to);
+  const spanTo = Math.max(from, to);
+  const replacedLength = change.to - change.from;
+  if (replacedLength > MAX_PRIMARY_COMPLETION_REPLACED_TEXT_LENGTH) {
+    return false;
+  }
+  const editStartLine = state.doc.lineAt(change.from).number;
+  const editEndLine = state.doc.lineAt(change.to).number;
+  const spanStartLine = state.doc.lineAt(spanFrom).number;
+  const spanEndLine = state.doc.lineAt(spanTo).number;
+  if (
+    editStartLine !== editEndLine ||
+    spanStartLine !== spanEndLine ||
+    editStartLine !== spanStartLine
+  ) {
+    return false;
+  }
+  return change.from === spanFrom && change.to === spanTo;
+}
+
 function additionalTextEditsToChanges(
   state: EditorState,
   edits?: TextEditJSON[],
@@ -550,6 +770,7 @@ function applyAdditionalTextEdits(
 
 function applyBackendCompletion(
   view: EditorView,
+  language: string,
   completionToApply: Completion,
   from: number,
   to: number,
@@ -558,22 +779,40 @@ function applyBackendCompletion(
   isSnippet: boolean,
   primaryTextEdit?: PrimaryTextEditJSON | null,
   additionalTextEdits?: TextEditJSON[],
-) {
+): boolean {
+  if (!completionInsertPayloadIsBounded(insertText, plainText)) {
+    return false;
+  }
   const additionalChanges = additionalTextEditsToChanges(
     view.state,
     additionalTextEdits,
   );
   if (!additionalChanges) {
-    return;
+    return false;
   }
   const primaryChange = primaryTextEdit
     ? primaryTextEditToChange(view.state, primaryTextEdit)
     : null;
   if (primaryTextEdit && !primaryChange) {
-    return;
+    return false;
+  }
+  if (
+    !primaryTextEditIsSafeForCompletionSpan(view.state, primaryChange, from, to)
+  ) {
+    return false;
   }
   if (!completionChangesAreBounded(additionalChanges, primaryChange)) {
-    return;
+    return false;
+  }
+  if (
+    !completionAdditionalEditsAreSourceSafe(
+      view.state,
+      language,
+      additionalTextEdits,
+      additionalChanges,
+    )
+  ) {
+    return false;
   }
 
   if (isSnippet && hasSnippetPlaceholder(insertText)) {
@@ -601,7 +840,7 @@ function applyBackendCompletion(
       snippetFrom,
       snippetTo,
     );
-    return;
+    return true;
   }
 
   if (additionalChanges.length > 0 || primaryChange) {
@@ -616,7 +855,7 @@ function applyBackendCompletion(
         Transaction.userEvent.of("input.complete"),
       ],
     });
-    return;
+    return true;
   }
 
   const completionTransaction = insertCompletionText(
@@ -632,6 +871,203 @@ function applyBackendCompletion(
       Transaction.userEvent.of("input.complete"),
     ],
   });
+  return true;
+}
+
+function completionAdditionalEditsAreSourceSafe(
+  state: EditorState,
+  language: string,
+  edits?: TextEditJSON[],
+  changes?: CompletionTextEditChange[],
+): boolean {
+  if (!edits?.length) {
+    return true;
+  }
+  return edits.every((edit, index) => {
+    const change = changes?.[index];
+    return (
+      additionalEditRangeIsSourceSafe(state, language, edit, change) &&
+      looksLikeImportEdit(language, edit.text)
+    );
+  });
+}
+
+function looksLikeImportEdit(language: string, text: string): boolean {
+  const normalized = language.toLowerCase();
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0 || lines.length > 32) {
+    return false;
+  }
+  if (normalized === "go") return lines.every(isGoImportEditLine);
+  if (normalized === "c" || normalized === "cpp" || normalized === "c++") {
+    return lines.every((line) =>
+      /^#include\s+(<[^>\n]+>|"[^"\n]+")$/.test(line),
+    );
+  }
+  if (normalized === "php" || normalized === "php-laravel") {
+    return lines.every((line) => /^use\s+[^;\n]+;$/.test(line));
+  }
+  if (
+    [
+      "javascript",
+      "typescript",
+      "javascriptreact",
+      "typescriptreact",
+      "vue",
+      "svelte",
+      "astro",
+      "solidity",
+    ].includes(normalized)
+  ) {
+    return lines.every((line) =>
+      /^import(?:\s+type)?\s+.+(?:\s+from\s+["'][^"']+["'];?|["'][^"']+["'];?)$/.test(
+        line,
+      ),
+    );
+  }
+  if (normalized === "python") {
+    return lines.every((line) =>
+      /^(import\s+[\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*|from\s+[\w.]+\s+import\s+[\w*.,\s()]+)$/.test(
+        line,
+      ),
+    );
+  }
+  if (normalized === "rust") {
+    return lines.every((line) => /^use\s+[^;\n]+;$/.test(line));
+  }
+  if (
+    [
+      "java",
+      "kotlin",
+      "groovy",
+      "scala",
+      "dart",
+      "haskell",
+      "matlab",
+      "swift",
+    ].includes(normalized)
+  ) {
+    return lines.every((line) => /^import\s+[^;\n]+;?$/.test(line));
+  }
+  if (normalized === "csharp") {
+    return lines.every((line) => /^using\s+[^;\n]+;?$/.test(line));
+  }
+  if (normalized === "julia") {
+    return lines.every((line) => /^(using|import)\s+[\w.:, ]+$/.test(line));
+  }
+  if (normalized === "clojure") {
+    return lines.every((line) =>
+      /^(:import|:require|\(:import|\(:require)\s+.+\)?$/.test(line),
+    );
+  }
+  if (normalized === "erlang") {
+    return lines.every((line) => /^-import\([^)]+\)\.$/.test(line));
+  }
+  if (normalized === "fortran") {
+    return lines.every((line) =>
+      /^use\s+[\w_]+(?:\s*,\s*only\s*:\s*[\w_,\s]+)?$/i.test(line),
+    );
+  }
+  if (normalized === "ada") {
+    return lines.every((line) => /^with\s+[\w.]+;?$/.test(line));
+  }
+  if (normalized === "delphi" || normalized === "pascal") {
+    return lines.every((line) => /^uses\s+[\w.,\s]+;?$/.test(line));
+  }
+  if (normalized === "latex") {
+    return lines.every((line) =>
+      /^\\usepackage(?:\[[^\]]+\])?\{[^}]+\}$/.test(line),
+    );
+  }
+  if (normalized === "perl") {
+    return lines.every((line) =>
+      /^use\s+[\w:]+(?:\s+qw\([^)]*\))?;?$/.test(line),
+    );
+  }
+  return false;
+}
+
+function isGoImportEditLine(line: string): boolean {
+  return (
+    /^import\s+(\(\s*)?$/.test(line) ||
+    /^import\s+(?:[._]\s+|\w+\s+)?"[^"\n]+"$/.test(line) ||
+    /^\)$/.test(line) ||
+    /^(?:[._]\s+|\w+\s+)?"[^"\n]+"$/.test(line)
+  );
+}
+
+function completionInsertTextIsBounded(insertText: string): boolean {
+  return insertText.length <= MAX_COMPLETION_INSERT_TEXT_LENGTH;
+}
+
+function completionInsertPayloadIsBounded(
+  insertText: string,
+  plainText: string,
+): boolean {
+  return (
+    completionInsertTextIsBounded(insertText) &&
+    plainText.length <= MAX_COMPLETION_INSERT_TEXT_LENGTH
+  );
+}
+
+function additionalEditRangeIsSourceSafe(
+  state: EditorState,
+  language: string,
+  edit: TextEditJSON,
+  change?: CompletionTextEditChange,
+): boolean {
+  if (!change) {
+    return false;
+  }
+  const replacementLength = change.to - change.from;
+  if (replacementLength > MAX_COMPLETION_REPLACED_TEXT_LENGTH) {
+    return false;
+  }
+  const headerLimit = importHeaderLimitLine(state, language);
+  return edit.startLine <= headerLimit && edit.endLine <= headerLimit;
+}
+
+function importHeaderLimitLine(state: EditorState, language: string): number {
+  const normalized = language.toLowerCase();
+  const lines = state.doc.toString().split(/\r?\n/);
+  let limit = Math.min(lines.length, 80);
+  for (let index = 0; index < lines.length; index += 1) {
+    const lineNumber = index + 1;
+    const trimmed = lines[index].trim();
+    if (trimmed === "" || isHeaderCommentLine(trimmed, normalized)) {
+      continue;
+    }
+    if (isLanguageHeaderLine(trimmed, normalized)) {
+      continue;
+    }
+    limit = lineNumber;
+    break;
+  }
+  return Math.min(limit, 80);
+}
+
+function isHeaderCommentLine(line: string, language: string): boolean {
+  if (line.startsWith("//") || line.startsWith("#")) return true;
+  if (line.startsWith("/*") || line.startsWith("*")) return true;
+  if (language === "python" && line.startsWith('"""')) return true;
+  return false;
+}
+
+function isLanguageHeaderLine(line: string, language: string): boolean {
+  if (language === "go") {
+    return line.startsWith("package ") || looksLikeImportEdit("go", line);
+  }
+  if (language === "php" || language === "php-laravel") {
+    return (
+      line === "<?php" ||
+      line.startsWith("namespace ") ||
+      looksLikeImportEdit(language, line)
+    );
+  }
+  return looksLikeImportEdit(language, line);
 }
 
 function completionChangesAreBounded(
@@ -648,13 +1084,18 @@ function completionChangesAreBounded(
   }
 
   let insertedTextLength = 0;
+  let replacedTextLength = 0;
   let previousEnd = -1;
   for (const change of changes) {
     if (change.from < previousEnd) {
       return false;
     }
     insertedTextLength += change.insert.length;
+    replacedTextLength += Math.max(0, change.to - change.from);
     if (insertedTextLength > MAX_COMPLETION_EDIT_TEXT_LENGTH) {
+      return false;
+    }
+    if (replacedTextLength > MAX_COMPLETION_REPLACED_TEXT_LENGTH) {
       return false;
     }
     previousEnd = Math.max(previousEnd, change.to);
@@ -677,13 +1118,13 @@ function resolveWithTimeout<T>(
 }
 
 async function resolveEditorCompletionWithBudget(
-  resolveToken: string,
+  request: EditorCompletionResolveRequestPayload,
 ): Promise<CompletionResolvePayload | null> {
-  if (!resolveToken) {
+  if (!request.resolveToken) {
     return null;
   }
   return resolveWithTimeout(
-    ResolveEditorCompletion(resolveToken),
+    ResolveEditorCompletion(request),
     COMPLETION_RESOLVE_TIMEOUT_MS,
   );
 }
@@ -783,19 +1224,202 @@ function buildCompletionContext(fullText: string, lineNumber: number) {
 function buildCompletionCacheKey(
   lineNumber: number,
   accessChain: string | null,
+  accessStage: string,
   inStringContext: boolean,
   inBraceContext: boolean,
 ) {
   return [
     lineNumber,
     accessChain || "-",
+    accessStage || "-",
     inStringContext ? "string" : "plain",
     inBraceContext ? "brace" : "flow",
   ].join("|");
 }
 
-function endsWithAccessTrigger(text: string) {
-  return text.endsWith(".") || text.endsWith("->") || text.endsWith("::");
+function buildAccessSessionKey(
+  lineNumber: number,
+  accessChain: string,
+  inStringContext: boolean,
+  inBraceContext: boolean,
+) {
+  return buildCompletionCacheKey(
+    lineNumber,
+    accessChain,
+    "access",
+    inStringContext,
+    inBraceContext,
+  );
+}
+
+function accessRequestStage(
+  accessInfo: { prefix: string; accessChain: string } | null,
+): string {
+  if (!accessInfo) return "-";
+  if (accessInfo.prefix.length === 0) return "bare";
+  return `typed:${accessInfo.prefix}`;
+}
+
+function completionSemanticKeyAt(
+  context: CompletionContext,
+  language: string,
+): string | null {
+  const pos = context.pos;
+  const line = context.state.doc.lineAt(pos);
+  const column = pos - line.from + 1;
+  const textBeforeLine = line.text.slice(0, column - 1);
+  const accessInfo = extractAccessPrefix(textBeforeLine, language);
+  const stringPrefix = extractStringPrefix(textBeforeLine);
+  const braceCharClass = getPrefixCharClass(language);
+  const inBraceContext = new RegExp(
+    `\\{[^\\S\\r\\n]*([${braceCharClass}]*)$`,
+  ).test(textBeforeLine);
+
+  if (accessInfo) {
+    return buildAccessSessionKey(
+      line.number,
+      accessInfo.accessChain,
+      stringPrefix !== null,
+      inBraceContext,
+    );
+  }
+
+  return buildCompletionCacheKey(
+    line.number,
+    null,
+    "-",
+    stringPrefix !== null,
+    inBraceContext,
+  );
+}
+
+function completionRequestKeyAt(
+  context: CompletionContext,
+  language: string,
+): string | null {
+  const pos = context.pos;
+  const line = context.state.doc.lineAt(pos);
+  const column = pos - line.from + 1;
+  const textBeforeLine = line.text.slice(0, column - 1);
+  const accessInfo = extractAccessPrefix(textBeforeLine, language);
+  const stringPrefix = extractStringPrefix(textBeforeLine);
+  const braceCharClass = getPrefixCharClass(language);
+  const inBraceContext = new RegExp(
+    `\\{[^\\S\\r\\n]*([${braceCharClass}]*)$`,
+  ).test(textBeforeLine);
+
+  return buildCompletionCacheKey(
+    line.number,
+    accessInfo?.accessChain ?? null,
+    accessRequestStage(accessInfo),
+    stringPrefix !== null,
+    inBraceContext,
+  );
+}
+
+function completionSessionMatches(
+  session: CompletionSessionRecord | null,
+  filePath: string,
+  semanticKey: string,
+  version: number,
+) {
+  return (
+    session?.filePath === filePath &&
+    session.semanticKey === semanticKey &&
+    (session.isAccess
+      ? version >= session.version &&
+        !(
+          (session.status === "pending" ||
+            session.status === "empty" ||
+            session.status === "error" ||
+            session.status === "dismissed") &&
+          session.version !== version
+        )
+      : version === session.version)
+  );
+}
+
+function nextCompletionSessionId(seqRef: MutableRefObject<number>) {
+  seqRef.current += 1;
+  return `completion-${seqRef.current}`;
+}
+
+function updateLSPTriggerCharacters(
+  ref: MutableRefObject<Map<string, Set<string>>>,
+  language: string,
+  result: EditorCompletionResultPayload | null,
+) {
+  if (!result?.lspTriggerCharacters?.length) return;
+  ref.current.set(language, new Set(result.lspTriggerCharacters));
+}
+
+function completionTriggerKindForRequest(
+  triggerChar: string,
+  language: string,
+  session: CompletionSessionRecord | null,
+  triggerCharacters: Map<string, Set<string>>,
+  forceTriggerCharacter: boolean,
+) {
+  if (session?.isIncomplete) {
+    return 3;
+  }
+  if (forceTriggerCharacter && triggerChar) {
+    return 2;
+  }
+  if (triggerChar && triggerCharacters.get(language)?.has(triggerChar)) {
+    return 2;
+  }
+  return 1;
+}
+
+function endsWithAccessTrigger(text: string, language?: string) {
+  return accessOperatorFromText(text, language) !== "";
+}
+
+function accessOperatorFromText(text: string, language?: string): string {
+  const trimmed = text.replace(/\s+$/, "");
+  for (const spec of accessOperatorSpecsForLanguage(language)) {
+    if (trimmed.endsWith(spec.operator)) return spec.operator;
+  }
+  return "";
+}
+
+function lspTriggerCharacterForAccessOperator(operator: string): string {
+  return (
+    ACCESS_OPERATOR_SPECS.find((spec) => spec.operator === operator)
+      ?.triggerCharacter || ""
+  );
+}
+
+function accessStatusCompletion(
+  label: string,
+  statusKind: NonNullable<CompletionWithInsertText["__statusKind"]>,
+): Completion {
+  const completion: CompletionWithInsertText = {
+    label,
+    detail: "LSP",
+    type: "text",
+    apply: () => undefined,
+    boost: ACCESS_COMPLETION_BOOST_BASE,
+    __insertText: "",
+    __hasAdditionalTextEdits: false,
+    __sourceKind: statusKind,
+    __statusKind: statusKind,
+  };
+  (completion as unknown as Record<string, unknown>).__source = "LSP";
+  return completion;
+}
+
+function accessPendingCompletion(): Completion {
+  return accessStatusCompletion(ACCESS_PENDING_COMPLETION_LABEL, "pending");
+}
+
+function accessEmptyCompletion(): Completion {
+  return accessStatusCompletion(ACCESS_EMPTY_COMPLETION_LABEL, "empty");
+}
+
+function accessErrorCompletion(): Completion {
+  return accessStatusCompletion(ACCESS_ERROR_COMPLETION_LABEL, "error");
 }
 
 function isProbablyLineComment(textBeforeLine: string, language: string) {
@@ -880,11 +1504,41 @@ function mapCompletionKindString(kind: string): string {
   return kindMap[normalized] || normalized || "text";
 }
 
+function completionPayloadAllowedInAccessContext(item: CompletionPayload) {
+  const source = (item as CompletionPayload & { source?: string }).source || "";
+  if (source === "lsp") {
+    return true;
+  }
+  switch (item.proofKind) {
+    case "receiver-member":
+    case "self-static-member":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function completeFromStaticList(
+  options: Completion[],
+  context: CompletionContext,
+): CompletionResult | null {
+  const result = completeFromList(options)(context);
+  if (
+    result &&
+    typeof (result as Promise<CompletionResult | null>).then === "function"
+  ) {
+    return null;
+  }
+  return result as CompletionResult | null;
+}
+
 export const useCodeMirrorCompletionProvider = ({
   enabled,
   filePath,
   language,
   content,
+  sessionId: backendSessionIdOption,
+  surfaceId: backendSurfaceIdOption,
   editorFeatureBudget,
   getEditorView,
   onTyping,
@@ -901,11 +1555,21 @@ export const useCodeMirrorCompletionProvider = ({
   const completionDismissedVersionRef = useRef<number | null>(null);
   const autoStartedCompletionVersionRef = useRef<number | null>(null);
   const initialDocLengthRef = useRef(content.length);
-  const completionCacheRef = useRef(
-    createCompletionCache(COMPLETION_CACHE_TTL_MS),
+  const completionSessionSeqRef = useRef(0);
+  const completionSessionControllerRef = useRef(
+    createCompletionSessionController(),
+  );
+  const accessTransientRetryCountsRef = useRef<Map<string, number>>(new Map());
+  const lspTriggerCharactersRef = useRef<Map<string, Set<string>>>(new Map());
+  const fallbackSurfaceIdRef = useRef(
+    `cm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
   );
   const lastContentPropRef = useRef(content);
   const lastUserChangeContentRef = useRef<string | null>(null);
+  const completionRuntimeSessionOpenRef = useRef(false);
+  const completionInFlightRequestsRef = useRef(0);
+  const completionSourceBudgetRef = useRef(editorFeatureBudget.completions);
+  const metricsRef = useRef<MetricsHandle>(NOOP_METRICS);
   const [predictionStatus, setPredictionStatus] =
     useState<AIPredictionStatus | null>(null);
 
@@ -914,15 +1578,35 @@ export const useCodeMirrorCompletionProvider = ({
   onGhostRejectedRef.current = onGhostRejected;
   onEscapeRef.current = onEscape;
   getEditorViewRef.current = getEditorView;
+  const backendSessionId = backendSessionIdOption || filePath || "completion";
+  const backendSurfaceId =
+    backendSurfaceIdOption || fallbackSurfaceIdRef.current;
+
+  useEffect(() => {
+    completionSourceBudgetRef.current = editorFeatureBudget.completions;
+  }, [editorFeatureBudget.completions]);
 
   const orchestrator = useMemo(() => createCompletionOrchestrator({}), []);
 
-  const resetCompletionState = useCallback(() => {
-    completionDismissedVersionRef.current = null;
-    autoStartedCompletionVersionRef.current = null;
-    completionCacheRef.current.invalidate();
-    orchestrator.cancelPending();
-  }, [orchestrator]);
+  const currentDocumentVersion = useCallback(
+    () =>
+      getEditorDocumentVersion(filePath, language) ??
+      documentVersionRef.current,
+    [filePath, language],
+  );
+
+  const resetCompletionState = useCallback(
+    (options: { preserveSession?: boolean } = {}) => {
+      completionDismissedVersionRef.current = null;
+      autoStartedCompletionVersionRef.current = null;
+      accessTransientRetryCountsRef.current.clear();
+      if (!options.preserveSession) {
+        completionSessionControllerRef.current.clear();
+      }
+      orchestrator.cancelPending();
+    },
+    [orchestrator],
+  );
 
   useEffect(() => {
     if (!enabled || !filePath || !language) {
@@ -944,6 +1628,10 @@ export const useCodeMirrorCompletionProvider = ({
     lastContentPropRef.current = content;
     if (lastUserChangeContentRef.current === content) {
       lastUserChangeContentRef.current = null;
+      return;
+    }
+    const view = getEditorViewRef.current?.();
+    if (view?.state.doc.toString() === content) {
       return;
     }
 
@@ -988,12 +1676,30 @@ export const useCodeMirrorCompletionProvider = ({
     };
   }, [enabled]);
 
+  useEffect(() => {
+    if (!enabled) return;
+    const invalidateCompletionSession = () => {
+      completionSessionControllerRef.current.clear();
+    };
+    const offRuntimeRefreshed = EventsOn(
+      "depsync:runtime-refreshed",
+      invalidateCompletionSession,
+    );
+    const offLSPReady = EventsOn("lsp:ready", invalidateCompletionSession);
+    return () => {
+      offRuntimeRefreshed();
+      offLSPReady();
+    };
+  }, [enabled]);
+
   const recordDocumentChange = useCallback(
     (value: string) => {
       if (!enabled) return;
       lastUserChangeContentRef.current = value;
       documentVersionRef.current += 1;
-      resetCompletionState();
+      resetCompletionState({
+        preserveSession: completionRuntimeSessionOpenRef.current,
+      });
     },
     [enabled, resetCompletionState],
   );
@@ -1017,7 +1723,7 @@ export const useCodeMirrorCompletionProvider = ({
         onJitterUpdate: (stats) => {
           if (stats.total > 0 && stats.total % 10 === 0) {
             console.debug(
-              "[AutocompleteV2][UI] jitter",
+              "[Autocomplete][UI] jitter",
               Math.round(stats.ratio * 1000) / 10,
               "%",
             );
@@ -1026,7 +1732,7 @@ export const useCodeMirrorCompletionProvider = ({
         onAutocompleteLatencyUpdate: (stats) => {
           if (stats.samples > 0 && stats.samples % 10 === 0) {
             console.debug(
-              "[AutocompleteV2][UI] latency",
+              "[Autocomplete][UI] latency",
               `p50=${Math.round(stats.p50Ms)}ms`,
               `p95=${Math.round(stats.p95Ms)}ms`,
               `last=${Math.round(stats.lastMs)}ms`,
@@ -1036,7 +1742,7 @@ export const useCodeMirrorCompletionProvider = ({
         },
         onRequestPressureUpdate: (stats) => {
           console.debug(
-            "[AutocompleteV2][UI] pressure",
+            "[Autocomplete][UI] pressure",
             `backend=${stats.backendRequests}`,
             `cacheHit=${stats.cacheHits}`,
             `cacheMiss=${stats.cacheMisses}`,
@@ -1048,9 +1754,14 @@ export const useCodeMirrorCompletionProvider = ({
     );
   }, [editorFeatureBudget.richEditorFeatures, enabled]);
 
+  useEffect(() => {
+    metricsRef.current = metrics;
+  }, [metrics]);
+
   const handleProviderEscape = useCallback(() => {
-    completionDismissedVersionRef.current = documentVersionRef.current;
+    completionDismissedVersionRef.current = currentDocumentVersion();
     autoStartedCompletionVersionRef.current = null;
+    completionSessionControllerRef.current.dismiss();
     orchestrator.cancelPending();
     onEscapeRef.current?.();
   }, [orchestrator]);
@@ -1075,7 +1786,7 @@ export const useCodeMirrorCompletionProvider = ({
       fetchCompletions: async (payload) => {
         const result = (await GetEditorCompletions({
           ...payload,
-          version: documentVersionRef.current,
+          version: currentDocumentVersion(),
         })) as EditorCompletionResult | null;
         if (!result) {
           return null;
@@ -1092,7 +1803,7 @@ export const useCodeMirrorCompletionProvider = ({
         }
 
         const settings = status.settings;
-        const versionAtRequest = documentVersionRef.current;
+        const versionAtRequest = currentDocumentVersion();
         const documentVersion = `${versionAtRequest}`;
         const response = (await AIGetEditorContinuation(
           {
@@ -1119,7 +1830,7 @@ export const useCodeMirrorCompletionProvider = ({
           model?: string;
         };
 
-        if (versionAtRequest !== documentVersionRef.current) {
+        if (versionAtRequest !== currentDocumentVersion()) {
           return { stale: true };
         }
         if (
@@ -1160,6 +1871,7 @@ export const useCodeMirrorCompletionProvider = ({
     filePath,
     handleProviderEscape,
     language,
+    currentDocumentVersion,
     metrics,
     predictionStatus,
   ]);
@@ -1191,10 +1903,21 @@ export const useCodeMirrorCompletionProvider = ({
 
   const fetchPendingClassCompletions = useCallback(
     async (context: CompletionContext): Promise<Completion[]> => {
-      if (!enabled || !editorFeatureBudget.completions) return [];
+      if (!enabled || !completionSourceBudgetRef.current) return [];
       if (language !== "php") return [];
 
       const textUntilPosition = context.state.doc.sliceString(0, context.pos);
+      const currentLine = context.state.doc.lineAt(context.pos);
+      const textBeforeLine = currentLine.text.slice(
+        0,
+        context.pos - currentLine.from,
+      );
+      if (
+        endsWithAccessTrigger(textUntilPosition, language) ||
+        extractAccessPrefix(textBeforeLine, language)
+      ) {
+        return [];
+      }
       const patterns = [
         /new\s+([A-Z][a-zA-Z0-9]*)$/,
         /extends\s+([A-Z][a-zA-Z0-9]*)$/,
@@ -1233,7 +1956,7 @@ export const useCodeMirrorCompletionProvider = ({
             view.dispatch({
               changes: { from, to, insert: result.name },
             });
-            metrics.recordCompletionAccepted({
+            metricsRef.current.recordCompletionAccepted({
               label: result.name,
             } as Completion);
           },
@@ -1243,7 +1966,7 @@ export const useCodeMirrorCompletionProvider = ({
         return [];
       }
     },
-    [editorFeatureBudget.completions, enabled, language, metrics],
+    [enabled, language],
   );
 
   const buildInstantCompletionResult = useCallback(
@@ -1251,14 +1974,14 @@ export const useCodeMirrorCompletionProvider = ({
       context: CompletionContext,
       buildOptions: { recordMetrics?: boolean } = {},
     ): CompletionResult | null => {
-      if (!enabled || !editorFeatureBudget.completions) return null;
+      if (!enabled || !completionSourceBudgetRef.current) return null;
       if (context.aborted) return null;
 
       const pos = context.pos;
       const line = context.state.doc.lineAt(pos);
       const column = pos - line.from + 1;
       const textBeforeLine = line.text.slice(0, column - 1);
-      const accessInfo = extractAccessPrefix(textBeforeLine);
+      const accessInfo = extractAccessPrefix(textBeforeLine, language);
       const stringPrefix = extractStringPrefix(textBeforeLine);
       const packageNamePrefix =
         language === "go" ? extractGoPackageNamePrefix(textBeforeLine) : null;
@@ -1307,6 +2030,17 @@ export const useCodeMirrorCompletionProvider = ({
               currentPrefix,
             )
           : [];
+      const keywordResult =
+        !accessInfo && packageNamePrefix === null
+          ? completeFromStaticList(
+              getInstantKeywordCompletionOptions(language),
+              context,
+            )
+          : null;
+      const keywordOptions = [...(keywordResult?.options || [])];
+      const keywordOptionsMatchPrefix = keywordOptions.some((item) =>
+        item.label.toLowerCase().startsWith(currentPrefix.toLowerCase()),
+      );
       const completionOptions =
         packageNamePrefix !== null
           ? [
@@ -1322,18 +2056,20 @@ export const useCodeMirrorCompletionProvider = ({
             )
           : accessInfo
             ? []
-            : mergeInstantCompletions(
-                getInstantKeywordCompletions(language, currentPrefix),
-                instantDocumentOptions,
-              );
+            : mergeInstantCompletions(keywordOptions, instantDocumentOptions);
 
-      if (completionOptions.length === 0) {
+      const hasLexicalMatches =
+        packageNamePrefix !== null
+          ? completionOptions.length > 0
+          : !accessInfo &&
+            (keywordOptionsMatchPrefix || instantDocumentOptions.length > 0);
+      if (!hasLexicalMatches) {
         return null;
       }
 
       if (buildOptions.recordMetrics !== false) {
-        metrics.recordInstantFallbackUsed();
-        metrics.recordCompletionList(completionOptions);
+        metricsRef.current.recordInstantFallbackUsed();
+        metricsRef.current.recordCompletionList(completionOptions);
       }
       return {
         from,
@@ -1341,19 +2077,19 @@ export const useCodeMirrorCompletionProvider = ({
         validFor: getValidForRegex(language, false),
       };
     },
-    [editorFeatureBudget.completions, enabled, language, metrics],
+    [enabled, language],
   );
 
   const backendCompletionSource = useCallback(
     (context: CompletionContext) => {
-      if (!enabled || !editorFeatureBudget.completions) return null;
+      if (!enabled) return null;
       if (context.aborted) return null;
       const pos = context.pos;
       const line = context.state.doc.lineAt(pos);
       const lineNumber = line.number;
       const column = pos - line.from + 1;
       const textBeforeLine = line.text.slice(0, column - 1);
-      const accessInfo = extractAccessPrefix(textBeforeLine);
+      const accessInfo = extractAccessPrefix(textBeforeLine, language);
       const stringPrefix = extractStringPrefix(textBeforeLine);
       const packageNamePrefix =
         language === "go" ? extractGoPackageNamePrefix(textBeforeLine) : null;
@@ -1368,9 +2104,14 @@ export const useCodeMirrorCompletionProvider = ({
       const braceTailStartColumn = inBraceContext
         ? textBeforeLine.length - bracePrefix.length + 1
         : null;
-      const recent = context.state.doc.sliceString(Math.max(0, pos - 2), pos);
-      const accessTrigger =
-        recent.endsWith(".") || recent.endsWith("->") || recent.endsWith("::");
+      const bareAccessOperator = accessOperatorFromText(
+        textBeforeLine,
+        language,
+      );
+      const accessOperator = accessInfo
+        ? accessOperatorFromText(accessInfo.accessChain, language)
+        : bareAccessOperator;
+      const accessTrigger = bareAccessOperator !== "";
       const hasAccessTrigger = accessTrigger || accessInfo !== null;
 
       const rawPrefix =
@@ -1393,11 +2134,13 @@ export const useCodeMirrorCompletionProvider = ({
         language === "blade" ||
         language === "vue" ||
         language === "svelte";
-      let triggerChar = hasAccessTrigger
-        ? recent.slice(-1)
-        : hasDollarPrefix
-          ? "$"
-          : rawPrefix.slice(-1) || "";
+      let triggerChar = accessTrigger
+        ? lspTriggerCharacterForAccessOperator(bareAccessOperator)
+        : accessInfo
+          ? accessInfo.prefix.slice(-1) || ""
+          : hasDollarPrefix
+            ? "$"
+            : rawPrefix.slice(-1) || "";
       const trimmedLine = textBeforeLine.replace(/\s+$/, "");
       if (htmlLike && /<\s*[A-Za-z0-9:_-]*$/.test(textBeforeLine)) {
         triggerChar = "<";
@@ -1427,6 +2170,13 @@ export const useCodeMirrorCompletionProvider = ({
       if (!hasExplicitCompletionTrigger) {
         return null;
       }
+      const sourceBudgetAllowsCompletion =
+        completionSourceBudgetRef.current ||
+        completionRuntimeSessionOpenRef.current ||
+        hasAccessTrigger;
+      if (!sourceBudgetAllowsCompletion) {
+        return null;
+      }
       const from =
         stringPrefix !== null
           ? line.from + column - stringPrefix.length - 1
@@ -1440,13 +2190,42 @@ export const useCodeMirrorCompletionProvider = ({
                   ? line.from + prefixMatch.startColumn - 1
                   : pos;
 
-      const cacheKey = buildCompletionCacheKey(
+      const requestKey = buildCompletionCacheKey(
         lineNumber,
         accessInfo?.accessChain ?? null,
+        accessRequestStage(accessInfo),
         stringPrefix !== null,
         inBraceContext,
       );
-      const requestVersion = documentVersionRef.current;
+      const sessionKey = accessInfo
+        ? buildAccessSessionKey(
+            lineNumber,
+            accessInfo.accessChain,
+            stringPrefix !== null,
+            inBraceContext,
+          )
+        : requestKey;
+      const requestVersion = currentDocumentVersion();
+      const isAccessCompletion = accessInfo !== null;
+      const readSemanticKey: CompletionSemanticKeyReader = (updateContext) =>
+        completionSemanticKeyAt(updateContext, language);
+      const accessStatusResult = (
+        completion: Completion,
+        keepThroughPrefix: boolean,
+      ) =>
+        stableStatusCompletionResult({
+          from,
+          options: [completion],
+          semanticKey: sessionKey,
+          readSemanticKey,
+          keepThroughPrefix,
+        });
+      const accessPendingResult = () =>
+        accessStatusResult(accessPendingCompletion(), true);
+      const accessEmptyResult = () =>
+        accessStatusResult(accessEmptyCompletion(), false);
+      const accessErrorResult = () =>
+        accessStatusResult(accessErrorCompletion(), false);
       const wasAutoStartedForVersion =
         autoStartedCompletionVersionRef.current === requestVersion;
       const isDismissedForVersion = (version: number) =>
@@ -1454,10 +2233,67 @@ export const useCodeMirrorCompletionProvider = ({
         (!context.explicit || wasAutoStartedForVersion);
       if (isDismissedForVersion(requestVersion)) return null;
 
+      const currentSession = completionSessionControllerRef.current.matches(
+        filePath,
+        sessionKey,
+        requestVersion,
+      );
+      if (
+        currentSession?.status === "dismissed" &&
+        requestVersion === currentSession.version
+      ) {
+        return null;
+      }
+      if (
+        isAccessCompletion &&
+        currentSession?.status === "pending" &&
+        requestVersion === currentSession.version
+      ) {
+        return accessPendingResult();
+      }
+      if (
+        isAccessCompletion &&
+        currentSession?.status === "active" &&
+        currentSession.result &&
+        (!currentSession.isIncomplete ||
+          requestVersion === currentSession.version)
+      ) {
+        return currentSession.result;
+      }
+      if (
+        isAccessCompletion &&
+        (currentSession?.status === "empty" ||
+          currentSession?.status === "error") &&
+        currentSession.result &&
+        requestVersion === currentSession.version
+      ) {
+        return currentSession.result;
+      }
       const buildCompletionResult = async (
         requestId: number,
         versionAtRequest: number,
-      ): Promise<CompletionResult | null> => {
+        sessionId: string,
+      ): Promise<CompletionBuildOutcome> => {
+        const transientRetryKey = `${requestKey}@${versionAtRequest}`;
+        const retryTransientAccess = (): CompletionBuildOutcome => {
+          const attempts =
+            accessTransientRetryCountsRef.current.get(transientRetryKey) ?? 0;
+          if (attempts >= ACCESS_TRANSIENT_RETRY_LIMIT) {
+            return {
+              kind: "error",
+              result: accessErrorResult(),
+            };
+          }
+          accessTransientRetryCountsRef.current.set(
+            transientRetryKey,
+            attempts + 1,
+          );
+          return { kind: "retry" };
+        };
+        const emptyOutcome = (): CompletionBuildOutcome => ({
+          kind: "empty",
+          result: accessEmptyResult(),
+        });
         const fullText = context.state.doc.toString();
         const lineText = line.text;
         const textBefore = fullText.slice(0, pos);
@@ -1467,8 +2303,21 @@ export const useCodeMirrorCompletionProvider = ({
           lineNumber,
         );
 
-        metrics.recordBackendRequestStarted();
-        const result = (await GetEditorCompletions({
+        const exactMatchingSession =
+          completionSessionControllerRef.current.matches(
+            filePath,
+            sessionKey,
+            versionAtRequest,
+          );
+        const matchingSession = exactMatchingSession;
+        const completionTriggerKind = completionTriggerKindForRequest(
+          triggerChar,
+          language,
+          matchingSession,
+          lspTriggerCharactersRef.current,
+          accessTrigger,
+        );
+        const requestPayload = {
           filePath,
           language,
           line: lineNumber,
@@ -1482,31 +2331,120 @@ export const useCodeMirrorCompletionProvider = ({
           currentMethod,
           imports,
           triggerChar,
-        })) as EditorCompletionResult | null;
+          accessOperator,
+          completionTriggerKind,
+          sessionId: backendSessionId,
+          surfaceId: backendSurfaceId,
+        } satisfies EditorCompletionRequestPayload;
 
-        if (context.aborted || orchestrator.isStale(requestId)) return null;
-        if (versionAtRequest !== documentVersionRef.current) return null;
-        if (isDismissedForVersion(versionAtRequest)) return null;
-        if (result && "stale" in result && result.stale) return null;
-        if (!result?.items?.length) return null;
+        metricsRef.current.recordBackendRequestStarted();
+        completionInFlightRequestsRef.current += 1;
+        completionRuntimeSessionOpenRef.current = true;
+        let result: EditorCompletionResultPayload | null = null;
+        try {
+          result = (await GetEditorCompletions(
+            requestPayload,
+          )) as EditorCompletionResultPayload | null;
+        } finally {
+          completionInFlightRequestsRef.current = Math.max(
+            0,
+            completionInFlightRequestsRef.current - 1,
+          );
+          if (completionInFlightRequestsRef.current === 0) {
+            const view = getEditorViewRef.current?.();
+            completionRuntimeSessionOpenRef.current =
+              view !== null &&
+              view !== undefined &&
+              completionRuntimeSessionIsOpen(completionStatus(view.state));
+          }
+        }
+
+        updateLSPTriggerCharacters(lspTriggerCharactersRef, language, result);
+        const sameCompletionContextStillCurrent = () => {
+          if (!isAccessCompletion) {
+            return (
+              !context.aborted &&
+              !orchestrator.isStale(requestId) &&
+              versionAtRequest === currentDocumentVersion()
+            );
+          }
+          const view = getEditorViewRef.current?.();
+          if (!view) return false;
+          const currentKey = completionRequestKeyAt(
+            new CompletionContext(
+              view.state,
+              view.state.selection.main.head,
+              false,
+            ),
+            language,
+          );
+          return (
+            currentKey === requestKey &&
+            versionAtRequest === currentDocumentVersion()
+          );
+        };
+        if (!sameCompletionContextStillCurrent()) {
+          return { kind: "canceled" };
+        }
+        if (isDismissedForVersion(versionAtRequest)) {
+          return { kind: "canceled" };
+        }
+        if (result && "stale" in result && result.stale) {
+          return { kind: "stale" };
+        }
+        if (!result?.items?.length) {
+          if (!accessInfo) {
+            return { kind: "canceled" };
+          }
+          const emptyClassification = classifyAccessNoItemsResult(result);
+          if (emptyClassification === "empty") {
+            accessTransientRetryCountsRef.current.delete(transientRetryKey);
+            return emptyOutcome();
+          }
+          if (isRetryableAccessNoItemsResult(result)) {
+            return retryTransientAccess();
+          }
+          if (emptyClassification === "error") {
+            accessTransientRetryCountsRef.current.delete(transientRetryKey);
+            return {
+              kind: "error",
+              result: accessErrorResult(),
+            };
+          }
+          return { kind: "canceled" };
+        }
 
         const pendingItems = accessInfo
           ? []
           : await fetchPendingClassCompletions(context);
-        if (context.aborted || orchestrator.isStale(requestId)) return null;
-        if (versionAtRequest !== documentVersionRef.current) return null;
-        if (isDismissedForVersion(versionAtRequest)) return null;
+        if (!sameCompletionContextStillCurrent()) {
+          return { kind: "canceled" };
+        }
+        if (isDismissedForVersion(versionAtRequest)) {
+          return { kind: "canceled" };
+        }
 
         const completions: Completion[] = result.items.flatMap(
           (rawItem, itemIndex) => {
             const item = rawItem as typeof rawItem & CompletionPayload;
+            if (accessInfo && !completionPayloadAllowedInAccessContext(item)) {
+              return [];
+            }
             const completionItem = item;
             let insertText = item.insertText || item.text || item.label || "";
             if (shouldStripDollar && insertText.startsWith("$")) {
               insertText = insertText.slice(1);
             }
+            if (!completionInsertTextIsBounded(insertText)) {
+              return [];
+            }
             const resolvedInsertText =
               snippetToPlainText(insertText) || insertText;
+            if (
+              !completionInsertPayloadIsBounded(insertText, resolvedInsertText)
+            ) {
+              return [];
+            }
             const isSnippet =
               item.isSnippet === true || hasSnippetPlaceholder(insertText);
             if (
@@ -1524,17 +2462,45 @@ export const useCodeMirrorCompletionProvider = ({
               applyFrom: number,
               applyTo: number,
             ) => {
-              const versionAtApply = documentVersionRef.current;
+              const versionAtApply = currentDocumentVersion();
+              const docAtApply = view.state.doc;
+              const selectionHeadAtApply = view.state.selection.main.head;
+              const applyStillCurrent = () =>
+                currentDocumentVersion() === versionAtApply &&
+                view.state.doc === docAtApply &&
+                view.state.selection.main.head === selectionHeadAtApply &&
+                (!isAccessCompletion ||
+                  completionSessionMatches(
+                    completionSessionControllerRef.current.current(),
+                    filePath,
+                    sessionKey,
+                    versionAtApply,
+                  ));
               const applyResolved = (
                 finalInsertText: string,
                 finalIsSnippet: boolean,
                 finalPrimaryTextEdit?: PrimaryTextEditJSON | null,
                 finalAdditionalTextEdits?: TextEditJSON[],
               ) => {
+                if (!applyStillCurrent()) {
+                  return;
+                }
+                if (!completionInsertTextIsBounded(finalInsertText)) {
+                  return;
+                }
                 const finalPlainText =
                   snippetToPlainText(finalInsertText) || finalInsertText;
-                applyBackendCompletion(
+                if (
+                  !completionInsertPayloadIsBounded(
+                    finalInsertText,
+                    finalPlainText,
+                  )
+                ) {
+                  return;
+                }
+                const applied = applyBackendCompletion(
                   view,
+                  language,
                   completionToApply,
                   applyFrom,
                   applyTo,
@@ -1544,7 +2510,11 @@ export const useCodeMirrorCompletionProvider = ({
                   finalPrimaryTextEdit,
                   finalAdditionalTextEdits,
                 );
-                metrics.recordCompletionAccepted(completionToApply);
+                if (applied) {
+                  metricsRef.current.recordCompletionAccepted(
+                    completionToApply,
+                  );
+                }
               };
 
               const hasReadyAdditionalTextEdits =
@@ -1555,10 +2525,15 @@ export const useCodeMirrorCompletionProvider = ({
                   !hasReadyAdditionalTextEdits);
               if (shouldResolveBeforeApply) {
                 void (async () => {
-                  const resolved = await resolveEditorCompletionWithBudget(
-                    item.resolveToken || "",
-                  );
-                  if (versionAtApply !== documentVersionRef.current) return;
+                  const resolved = await resolveEditorCompletionWithBudget({
+                    resolveToken: item.resolveToken || "",
+                    completionId: item.completionId,
+                    stableKey: item.stableKey,
+                    documentVersion: versionAtApply,
+                    sessionId: backendSessionId,
+                    surfaceId: backendSurfaceId,
+                  });
+                  if (!applyStillCurrent()) return;
                   if (resolved) {
                     applyResolved(
                       resolved.insertText || insertText,
@@ -1608,6 +2583,11 @@ export const useCodeMirrorCompletionProvider = ({
                 : 0;
             const displayLabel = item.label || item.text || "";
             const filterLabel = item.filterText || displayLabel;
+            const sortText = item.sortText || "";
+            const commitCharacters =
+              source === "lsp"
+                ? lspCommitCharacters(item.commitCharacters)
+                : undefined;
 
             const completion: CompletionWithInsertText = {
               label: filterLabel,
@@ -1619,12 +2599,14 @@ export const useCodeMirrorCompletionProvider = ({
               info: item.documentation || undefined,
               type: mapCompletionKindString(kind),
               apply: applyCompletion,
+              ...(commitCharacters ? { commitCharacters } : {}),
               boost:
                 richCompletionBoost +
                 backendPriority / 1000 +
                 stableIndexTiebreak,
               __insertText: resolvedInsertText,
               __filterText: filterLabel,
+              __sortText: sortText,
               __hasAdditionalTextEdits:
                 hasPrimaryTextEdit ||
                 hasAdditionalTextEdits ||
@@ -1634,6 +2616,7 @@ export const useCodeMirrorCompletionProvider = ({
               __autoImportAllowed: completionItem.autoImportAllowed === true,
               __requiresResolveBeforeApply:
                 completionItem.requiresResolveBeforeApply === true,
+              __sourceKind: source,
             };
             (completion as unknown as Record<string, unknown>).__source =
               sourceLabel;
@@ -1642,183 +2625,183 @@ export const useCodeMirrorCompletionProvider = ({
           },
         );
 
-        const shouldStabilizeAccessList =
-          accessInfo !== null && currentPrefix.length === 0;
+        const shouldStabilizeAccessList = isAccessCompletion;
         const allOptions = shouldStabilizeAccessList
           ? sortAccessCompletionOptions([...pendingItems, ...completions])
           : [...pendingItems, ...completions];
-        if (context.aborted || orchestrator.isStale(requestId)) return null;
-        if (versionAtRequest !== documentVersionRef.current) return null;
-        if (isDismissedForVersion(versionAtRequest)) return null;
+        if (!sameCompletionContextStillCurrent()) {
+          return { kind: "canceled" };
+        }
+        if (isDismissedForVersion(versionAtRequest)) {
+          return { kind: "canceled" };
+        }
+        if (allOptions.length === 0) {
+          if (!accessInfo) {
+            return { kind: "canceled" };
+          }
+          if (classifyAccessNoItemsResult(result) === "empty") {
+            accessTransientRetryCountsRef.current.delete(transientRetryKey);
+            return emptyOutcome();
+          }
+          if (isRetryableAccessNoItemsResult(result)) {
+            return retryTransientAccess();
+          }
+          accessTransientRetryCountsRef.current.delete(transientRetryKey);
+          return {
+            kind: "error",
+            result: accessErrorResult(),
+          };
+        }
 
-        completionCacheRef.current.set({
-          items: allOptions,
-          prefix: currentPrefix,
-          timestamp: Date.now(),
-          filePath,
-          semanticKey: cacheKey,
-        });
-        metrics.recordCompletionList(allOptions);
+        const resultIsIncomplete = result.isIncomplete === true;
+        metricsRef.current.recordCompletionList(allOptions);
         orchestrator.markResponse(requestId);
+        accessTransientRetryCountsRef.current.delete(transientRetryKey);
+
+        if (resultIsIncomplete) {
+          return {
+            kind: "result",
+            isIncomplete: true,
+            result: {
+              from,
+              options: allOptions,
+            },
+          };
+        }
 
         return {
-          from,
-          options: allOptions,
-          validFor: getValidForRegex(
-            language,
-            stringPrefix !== null,
-            inBraceContext,
-          ),
+          kind: "result",
+          isIncomplete: false,
+          result: stableCompletionResult({
+            from,
+            options: allOptions,
+            validFor: getValidForRegex(
+              language,
+              stringPrefix !== null,
+              inBraceContext,
+            ),
+            semanticKey: sessionKey,
+            readSemanticKey,
+          }),
         };
       };
 
-      const cachedItems = completionCacheRef.current.get(
-        filePath,
-        cacheKey,
-        currentPrefix,
-      );
-      if (cachedItems && cachedItems.length > 0) {
-        metrics.recordCacheHit();
-        if (accessInfo?.accessChain && currentPrefix.length === 0) {
-          metrics.recordAccessChainWarmHit();
-        }
-        metrics.recordCompletionList(cachedItems);
-        return {
-          from,
-          options: cachedItems,
-          validFor: getValidForRegex(
-            language,
-            stringPrefix !== null,
-            inBraceContext,
-          ),
-        };
+      const requestId = orchestrator.nextRequestId();
+      const sessionId =
+        currentSession?.id ?? nextCompletionSessionId(completionSessionSeqRef);
+      const instantResult = isAccessCompletion
+        ? null
+        : buildInstantCompletionResult(context, {
+            recordMetrics: false,
+          });
+
+      if (isAccessCompletion && currentSession?.status !== "active") {
+        completionSessionControllerRef.current.beginPending({
+          id: sessionId,
+          filePath,
+          semanticKey: sessionKey,
+          version: requestVersion,
+          requestId,
+          isAccess: true,
+        });
       }
 
-      metrics.recordCacheMiss();
+      const refreshSameCompletionSession = () => {
+        queueMicrotask(() => {
+          const latestView = getEditorViewRef.current?.();
+          if (!latestView) return;
+          const currentKey = completionSemanticKeyAt(
+            new CompletionContext(
+              latestView.state,
+              latestView.state.selection.main.head,
+              false,
+            ),
+            language,
+          );
+          if (currentKey !== sessionKey) return;
+          startCompletion(latestView);
+        });
+      };
 
-      const instantResult = buildInstantCompletionResult(context, {
-        recordMetrics: false,
-      });
-      const requestId = orchestrator.nextRequestId();
       const backendPromise = buildCompletionResult(
         requestId,
         requestVersion,
+        sessionId,
       ).catch((err) => {
         console.warn("Completion error:", err);
-        return null;
+        if (isAccessCompletion) {
+          return {
+            kind: "error",
+            result: accessErrorResult(),
+          } satisfies CompletionBuildOutcome;
+        }
+        return { kind: "canceled" } satisfies CompletionBuildOutcome;
       });
-      if (instantResult && accessInfo !== null) {
-        void backendPromise;
-        metrics.recordInstantFallbackUsed();
-        metrics.recordCompletionList([...instantResult.options]);
-        return {
-          ...instantResult,
-          options: instantResult.options.map((completion) => {
-            const originalApply = completion.apply;
-            const completionMetadata = completion as Completion & {
-              __insertText?: unknown;
-              __hasAdditionalTextEdits?: unknown;
-              __completionId?: unknown;
-              __stableKey?: unknown;
-            };
-            const originalInsertText =
-              typeof completionMetadata.__insertText === "string" &&
-              completionMetadata.__insertText
-                ? completionMetadata.__insertText
-                : typeof originalApply === "string"
-                  ? originalApply
-                  : completion.label;
-            const originalStableKey =
-              typeof completionMetadata.__stableKey === "string"
-                ? completionMetadata.__stableKey
-                : "";
-            const originalCompletionId =
-              typeof completionMetadata.__completionId === "string"
-                ? completionMetadata.__completionId
-                : "";
-            return {
-              ...completion,
-              apply: (
-                view: EditorView,
-                appliedCompletion: Completion,
-                applyFrom: number,
-                applyTo: number,
-              ) => {
-                const richerCompletion =
-                  originalStableKey || originalCompletionId
-                    ? completionCacheRef.current
-                        .get(filePath, cacheKey, currentPrefix)
-                        ?.find((candidate) => {
-                          const metadata = candidate as Completion & {
-                            __completionId?: unknown;
-                            __stableKey?: unknown;
-                          };
-                          return (
-                            (originalCompletionId &&
-                              metadata.__completionId ===
-                                originalCompletionId) ||
-                            (originalStableKey &&
-                              metadata.__stableKey === originalStableKey)
-                          );
-                        })
-                    : undefined;
 
-                if (richerCompletion?.apply) {
-                  if (typeof richerCompletion.apply === "function") {
-                    richerCompletion.apply(
-                      view,
-                      richerCompletion,
-                      applyFrom,
-                      applyTo,
-                    );
-                    return;
-                  }
-
-                  const completionTransaction = insertCompletionText(
-                    view.state,
-                    richerCompletion.apply,
-                    applyFrom,
-                    applyTo,
-                  );
-                  view.dispatch({
-                    ...completionTransaction,
-                    annotations: [
-                      pickedCompletion.of(richerCompletion),
-                      Transaction.userEvent.of("input.complete"),
-                    ],
-                  });
-                  metrics.recordCompletionAccepted(richerCompletion);
-                  return;
-                }
-
-                if (typeof originalApply === "function") {
-                  originalApply(view, appliedCompletion, applyFrom, applyTo);
-                  return;
-                }
-
-                const completionTransaction = insertCompletionText(
-                  view.state,
-                  typeof originalApply === "string"
-                    ? originalApply
-                    : completion.label,
-                  applyFrom,
-                  applyTo,
-                );
-                view.dispatch({
-                  ...completionTransaction,
-                  annotations: [
-                    pickedCompletion.of(appliedCompletion),
-                    Transaction.userEvent.of("input.complete"),
-                  ],
-                });
-                metrics.recordCompletionAccepted(appliedCompletion);
+      if (isAccessCompletion) {
+        const visibleResult =
+          currentSession?.status === "active" && currentSession.result
+            ? currentSession.result
+            : accessPendingResult();
+        metricsRef.current.recordInstantFallbackUsed();
+        metricsRef.current.recordCompletionList([...visibleResult.options]);
+        backendPromise.then((outcome) => {
+          if (outcome.kind === "result") {
+            const updated = completionSessionControllerRef.current.activate(
+              sessionId,
+              outcome.result,
+              {
+                version: requestVersion,
+                requestId,
+                isIncomplete: outcome.isIncomplete,
               },
-              __insertText: originalInsertText,
-              __hasAdditionalTextEdits:
-                completionMetadata.__hasAdditionalTextEdits === true,
-            } satisfies CompletionWithInsertText;
-          }),
-        };
+            );
+            if (!updated) return;
+            refreshSameCompletionSession();
+            return;
+          }
+          if (outcome.kind === "empty") {
+            const updated = completionSessionControllerRef.current.finishEmpty(
+              sessionId,
+              outcome.result,
+              { version: requestVersion, requestId },
+            );
+            if (!updated) return;
+            refreshSameCompletionSession();
+            return;
+          }
+          if (outcome.kind === "error") {
+            const updated = completionSessionControllerRef.current.finishError(
+              sessionId,
+              outcome.result,
+              { version: requestVersion, requestId },
+            );
+            if (!updated) return;
+            refreshSameCompletionSession();
+            return;
+          }
+          if (outcome.kind === "retry") {
+            const cleared =
+              completionSessionControllerRef.current.cancelPending(sessionId, {
+                requestId,
+              });
+            if (cleared) {
+              refreshSameCompletionSession();
+            }
+            return;
+          }
+          if (outcome.kind === "stale" || outcome.kind === "canceled") {
+            const cleared =
+              completionSessionControllerRef.current.cancelPending(sessionId, {
+                requestId,
+              });
+            if (cleared) {
+              refreshSameCompletionSession();
+            }
+            return;
+          }
+        });
+        return visibleResult;
       }
       if (instantResult) {
         return new Promise<CompletionResult | null>((resolve) => {
@@ -1830,15 +2813,16 @@ export const useCodeMirrorCompletionProvider = ({
             resolve(result);
           };
           const settleInstant = () => {
-            metrics.recordInstantFallbackUsed();
-            metrics.recordCompletionList([...instantResult.options]);
+            metricsRef.current.recordInstantFallbackUsed();
+            metricsRef.current.recordCompletionList([...instantResult.options]);
             settle(instantResult);
           };
           const timer = window.setTimeout(() => {
             settleInstant();
           }, COMPLETION_FAST_BACKEND_GRACE_MS);
 
-          backendPromise.then((result) => {
+          backendPromise.then((outcome) => {
+            const result = completionOutcomeResult(outcome);
             if (result) {
               settle(result);
             } else {
@@ -1848,19 +2832,157 @@ export const useCodeMirrorCompletionProvider = ({
         });
       }
 
-      return backendPromise;
+      return backendPromise.then(completionOutcomeResult);
     },
     [
       buildInstantCompletionResult,
-      editorFeatureBudget.completions,
+      backendSessionId,
+      backendSurfaceId,
       enabled,
       fetchPendingClassCompletions,
       filePath,
       language,
-      metrics,
+      currentDocumentVersion,
       orchestrator,
     ],
   );
+
+  const completionShellExtensions = useMemo<Extension[]>(() => {
+    if (!enabled) {
+      return [];
+    }
+
+    return [
+      orchestrator.extension,
+      Prec.highest(
+        keymap.of([
+          {
+            key: "Enter",
+            run: acceptVisibleCompletion,
+          },
+          ...COMPLETION_KEYMAP_WITHOUT_ESCAPE_OR_ENTER,
+        ]),
+      ),
+      EditorView.updateListener.of((update) => {
+        const status = completionStatus(update.state);
+        completionRuntimeSessionOpenRef.current =
+          completionRuntimeSessionIsOpen(status) ||
+          completionInFlightRequestsRef.current > 0;
+        if (!update.docChanged) return;
+        if (update.view.composing || update.view.compositionStarted) return;
+
+        let insertedNonWhitespace = false;
+        let insertedAutocompleteWhitespace = false;
+        update.transactions.forEach((transaction) => {
+          if (!transaction.isUserEvent("input")) return;
+          if (transaction.isUserEvent("input.type.compose")) return;
+          if (transaction.isUserEvent("input.complete")) return;
+          if (
+            !transaction.isUserEvent("input.type") &&
+            !transaction.isUserEvent("input.paste")
+          ) {
+            return;
+          }
+          transaction.changes.iterChanges(
+            (_fromA, _toA, _fromB, _toB, inserted) => {
+              const insertedText = inserted.toString();
+              if (/\S/.test(insertedText)) {
+                insertedNonWhitespace = true;
+              } else if (/[^\S\r\n]/.test(insertedText)) {
+                insertedAutocompleteWhitespace = true;
+              }
+            },
+          );
+        });
+
+        const currentPos = update.state.selection.main.head;
+        const currentLine = update.state.doc.lineAt(currentPos);
+        const textBeforeLine = currentLine.text.slice(
+          0,
+          currentPos - currentLine.from,
+        );
+        const isWhitespaceCompletionTrigger =
+          insertedAutocompleteWhitespace &&
+          language === "go" &&
+          extractGoPackageNamePrefix(textBeforeLine) !== null;
+        if (!insertedNonWhitespace && !isWhitespaceCompletionTrigger) return;
+
+        const recentText = update.state.doc.sliceString(
+          Math.max(0, currentPos - 2),
+          currentPos,
+        );
+        const isAccessTrigger = endsWithAccessTrigger(recentText, language);
+
+        if (
+          status === "active" &&
+          !isAccessTrigger &&
+          !isWhitespaceCompletionTrigger
+        ) {
+          return;
+        }
+
+        const view = update.view;
+        const docSnapshot = update.state.doc;
+
+        queueMicrotask(() => {
+          if (view.state.doc !== docSnapshot) return;
+          const version = currentDocumentVersion();
+          if (completionDismissedVersionRef.current === version) return;
+          const nextStatus = completionStatus(view.state);
+          completionRuntimeSessionOpenRef.current =
+            completionRuntimeSessionIsOpen(nextStatus) ||
+            completionInFlightRequestsRef.current > 0;
+          if (
+            nextStatus === "active" &&
+            !isAccessTrigger &&
+            !isWhitespaceCompletionTrigger
+          ) {
+            return;
+          }
+          if (view.composing || view.compositionStarted) return;
+          metricsRef.current.recordAutocompleteRequested();
+          autoStartedCompletionVersionRef.current = version;
+          startCompletion(view);
+        });
+      }),
+      tooltips({
+        parent: typeof document !== "undefined" ? document.body : undefined,
+        position: "fixed",
+        tooltipSpace: completionTooltipSpace,
+      }),
+      autocompletion({
+        override: [backendCompletionSource],
+        activateOnTyping: false,
+        activateOnTypingDelay: 0,
+        updateSyncTime: COMPLETION_FAST_BACKEND_GRACE_MS,
+        maxRenderedOptions: COMPLETION_MAX_RENDERED_OPTIONS,
+        defaultKeymap: false,
+        aboveCursor: true,
+        closeOnBlur: true,
+        interactionDelay: 0,
+        addToOptions: [
+          {
+            render(completion) {
+              const src = (completion as unknown as Record<string, unknown>)
+                .__source as string;
+              if (!src) return null;
+              const el = document.createElement("span");
+              el.className = "cm-completionSource";
+              el.textContent = src;
+              return el;
+            },
+            position: 90,
+          },
+        ],
+      }),
+    ];
+  }, [
+    backendCompletionSource,
+    enabled,
+    language,
+    currentDocumentVersion,
+    orchestrator,
+  ]);
 
   const extensions = useMemo<Extension[]>(() => {
     if (!enabled) {
@@ -1872,157 +2994,34 @@ export const useCodeMirrorCompletionProvider = ({
     if (editorFeatureBudget.runtimeGhostText) {
       result.push(ghost.ghostField, ghost.extension);
     }
-
-    if (
-      editorFeatureBudget.runtimeGhostText ||
-      editorFeatureBudget.runtimeCompletions
-    ) {
-      result.push(Prec.highest(ghost.keymap));
-    }
+    result.push(Prec.highest(ghost.keymap));
 
     if (editorFeatureBudget.runtimeRichEditorFeatures) {
       result.push(metrics.extension);
     }
 
-    if (editorFeatureBudget.runtimeCompletions) {
-      result.push(
-        orchestrator.extension,
-        Prec.highest(
-          keymap.of([
-            {
-              key: "Enter",
-              run: acceptVisibleCompletion,
-            },
-            ...COMPLETION_KEYMAP_WITHOUT_ESCAPE_OR_ENTER,
-          ]),
-        ),
-        EditorView.updateListener.of((update) => {
-          if (!update.docChanged) return;
-          if (update.view.composing || update.view.compositionStarted) return;
-
-          let insertedNonWhitespace = false;
-          let insertedAutocompleteWhitespace = false;
-          update.transactions.forEach((transaction) => {
-            if (!transaction.isUserEvent("input")) return;
-            if (transaction.isUserEvent("input.type.compose")) return;
-            if (transaction.isUserEvent("input.complete")) return;
-            if (
-              !transaction.isUserEvent("input.type") &&
-              !transaction.isUserEvent("input.paste")
-            ) {
-              return;
-            }
-            transaction.changes.iterChanges(
-              (_fromA, _toA, _fromB, _toB, inserted) => {
-                const insertedText = inserted.toString();
-                if (/\S/.test(insertedText)) {
-                  insertedNonWhitespace = true;
-                } else if (/[^\S\r\n]/.test(insertedText)) {
-                  insertedAutocompleteWhitespace = true;
-                }
-              },
-            );
-          });
-
-          const currentPos = update.state.selection.main.head;
-          const currentLine = update.state.doc.lineAt(currentPos);
-          const textBeforeLine = currentLine.text.slice(
-            0,
-            currentPos - currentLine.from,
-          );
-          const isWhitespaceCompletionTrigger =
-            insertedAutocompleteWhitespace &&
-            language === "go" &&
-            extractGoPackageNamePrefix(textBeforeLine) !== null;
-          if (!insertedNonWhitespace && !isWhitespaceCompletionTrigger) return;
-
-          const recentText = update.state.doc.sliceString(
-            Math.max(0, currentPos - 2),
-            currentPos,
-          );
-          const isAccessTrigger = endsWithAccessTrigger(recentText);
-
-          if (
-            completionStatus(update.state) === "active" &&
-            !isAccessTrigger &&
-            !isWhitespaceCompletionTrigger
-          ) {
-            return;
-          }
-
-          const view = update.view;
-          const docSnapshot = update.state.doc;
-
-          queueMicrotask(() => {
-            if (view.state.doc !== docSnapshot) return;
-            const version = documentVersionRef.current;
-            if (completionDismissedVersionRef.current === version) return;
-            const status = completionStatus(view.state);
-            if (
-              status === "active" &&
-              !isAccessTrigger &&
-              !isWhitespaceCompletionTrigger
-            ) {
-              return;
-            }
-            if (view.composing || view.compositionStarted) return;
-            metrics.recordAutocompleteRequested();
-            autoStartedCompletionVersionRef.current = version;
-            startCompletion(view);
-          });
-        }),
-        autocompletion({
-          override: [backendCompletionSource],
-          activateOnTyping: false,
-          activateOnTypingDelay: 0,
-          updateSyncTime: COMPLETION_FAST_BACKEND_GRACE_MS,
-          maxRenderedOptions: 50,
-          defaultKeymap: false,
-          closeOnBlur: true,
-          interactionDelay: 0,
-          addToOptions: [
-            {
-              render(completion) {
-                const src = (completion as unknown as Record<string, unknown>)
-                  .__source as string;
-                if (!src) return null;
-                const el = document.createElement("span");
-                el.className = "cm-completionSource";
-                el.textContent = src;
-                return el;
-              },
-              position: 90,
-            },
-          ],
-        }),
-      );
-    }
+    result.push(...completionShellExtensions);
 
     return result;
   }, [
-    backendCompletionSource,
-    editorFeatureBudget.runtimeCompletions,
+    completionShellExtensions,
     editorFeatureBudget.runtimeGhostText,
     editorFeatureBudget.runtimeRichEditorFeatures,
     enabled,
     ghost,
-    language,
     metrics,
-    orchestrator,
   ]);
 
   const extensionsKey = useStableReferenceKey([
     "completion-provider",
     enabled,
-    editorFeatureBudget.runtimeCompletions,
     editorFeatureBudget.runtimeGhostText,
     editorFeatureBudget.runtimeRichEditorFeatures,
     filePath,
     language,
-    backendCompletionSource,
+    completionShellExtensions,
     ghost,
     metrics,
-    orchestrator,
   ]);
 
   return {

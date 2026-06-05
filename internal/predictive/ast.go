@@ -791,7 +791,7 @@ func (a *ASTAnalyzer) ExtractPrefixAtPosition(language string, content []byte, l
 			prefix = nodeContent
 		}
 
-		_, accessChain = extractAccessChainFromText(content, line, column, len(prefix))
+		_, accessChain = extractAccessChainFromText(content, line, column, len(prefix), language)
 		return
 	}
 
@@ -829,12 +829,12 @@ func extractPrefixWithAccessChain(content []byte, line, column int, language str
 	}
 
 	textBeforePrefix := beforeCursor[:prefixStart]
-	accessChain = extractTrailingAccessChain(textBeforePrefix)
+	accessChain = extractTrailingAccessChain(textBeforePrefix, language)
 
 	return prefix, accessChain
 }
 
-func extractAccessChainFromText(content []byte, line, column int, prefixLen int) (prefix string, accessChain string) {
+func extractAccessChainFromText(content []byte, line, column int, prefixLen int, language string) (prefix string, accessChain string) {
 	lines := strings.Split(string(content), "\n")
 	if line <= 0 || line > len(lines) {
 		return "", ""
@@ -857,17 +857,17 @@ func extractAccessChainFromText(content []byte, line, column int, prefixLen int)
 	}
 
 	textBeforePrefix := beforeCursor[:prefixStart]
-	accessChain = extractTrailingAccessChain(textBeforePrefix)
+	accessChain = extractTrailingAccessChain(textBeforePrefix, language)
 
 	return beforeCursor[prefixStart:], accessChain
 }
 
-func extractTrailingAccessChain(text string) string {
+func extractTrailingAccessChain(text, language string) string {
 	text = strings.TrimRightFunc(text, unicode.IsSpace)
 	if text == "" {
 		return ""
 	}
-	if !(strings.HasSuffix(text, "::") || strings.HasSuffix(text, "->") || strings.HasSuffix(text, ".")) {
+	if !hasAccessChainSuffix(text, language) {
 		return ""
 	}
 
@@ -881,17 +881,35 @@ func extractTrailingAccessChain(text string) string {
 	}
 
 	chain := strings.TrimSpace(text[start+1:])
-	if !(strings.HasSuffix(chain, "::") || strings.HasSuffix(chain, "->") || strings.HasSuffix(chain, ".")) {
+	if !hasAccessChainSuffix(chain, language) {
 		return ""
 	}
 	return chain
+}
+
+func hasAccessChainSuffix(text, language string) bool {
+	for _, suffix := range accessChainSuffixesForLanguage(language) {
+		if strings.HasSuffix(text, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func accessChainSuffixesForLanguage(language string) []string {
+	suffixes := []string{"?->", "->", "::", "?.", "&.", "."}
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "lua", "luau":
+		suffixes = append(suffixes, ":")
+	}
+	return suffixes
 }
 
 func isAccessChainChar(c byte) bool {
 	return (c >= 'a' && c <= 'z') ||
 		(c >= 'A' && c <= 'Z') ||
 		(c >= '0' && c <= '9') ||
-		c == '_' || c == '$' || c == '\\' || c == '.' || c == ':' || c == '-' || c == '>' || c == ' '
+		c == '_' || c == '$' || c == '\\' || c == '.' || c == ':' || c == '-' || c == '>' || c == '?' || c == '&' || c == ' '
 }
 
 func extractSimplePrefix(content []byte, line, column int, language string) string {
