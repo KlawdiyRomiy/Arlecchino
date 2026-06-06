@@ -26,7 +26,7 @@ import type {
 import { useEditorStore } from "../../stores/editorStore";
 import { useExplorerSelectionStore } from "../../stores/explorerStore";
 import { useTheme } from "../../hooks/useTheme";
-import { useIndexingProgress } from "../../hooks/useIndexingProgress";
+import { useIndexingPhase } from "../../hooks/useIndexingProgress";
 import { getThemeColors } from "../../styles/colors";
 import {
   ContextActionMenu,
@@ -211,7 +211,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   onNavigate,
   presentationMode = "compact",
 }) => {
-  const indexing = useIndexingProgress();
+  const indexingPhase = useIndexingPhase();
   const diagnosticsPreload = useProjectDiagnosticsPreload();
   const { isDark } = useTheme();
   const { copyAbsolutePath, copyRelativePath, copyText, revealEntry } =
@@ -360,7 +360,7 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
       ? previousNonEmptyProjectSummaryRef.current
       : rawProjectSummary;
 
-  const isIndexingActive = indexing.phase === "indexing";
+  const isIndexingActive = indexingPhase === "indexing";
   const isDiagnosticsPreloadActive =
     diagnosticsPreload.active &&
     diagnosticsPreload.projectPath === activeProjectPath;

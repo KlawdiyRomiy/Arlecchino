@@ -24,6 +24,10 @@ interface IndexerEventPayload {
 }
 
 const FAILSAFE_MS = 2000;
+const PROGRESS_EMIT_MIN_MS = 250;
+const PROGRESS_EMIT_MAX_MS = 1500;
+const PROGRESS_EMIT_MIN_PERCENT_STEP = 0.5;
+const PROGRESS_SMALL_BATCH = 64;
 
 // --- Module-level state (subscribes before React renders) ---
 
@@ -42,6 +46,13 @@ const matchesCurrentProjectSession = (data?: IndexerEventPayload) => {
 };
 
 const listeners = new Set<() => void>();
+let pendingProgress: {
+  state: IndexingState;
+  data: IndexerEventPayload;
+} | null = null;
+let progressFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let lastProgressEmitAt = 0;
+let lastProgressEmitPercentage = 0;
 
 const toPercentage = (current: number, total: number) => {
   if (total <= 0) {
@@ -51,7 +62,16 @@ const toPercentage = (current: number, total: number) => {
 };
 
 function emit(next: IndexingState | ((prev: IndexingState) => IndexingState)) {
-  state = typeof next === "function" ? next(state) : next;
+  const resolved = typeof next === "function" ? next(state) : next;
+  if (
+    resolved.phase === state.phase &&
+    resolved.current === state.current &&
+    resolved.total === state.total &&
+    resolved.percentage === state.percentage
+  ) {
+    return;
+  }
+  state = resolved;
   listeners.forEach((fn) => fn());
 }
 
@@ -94,9 +114,22 @@ function clearTimer(timer: ReturnType<typeof setTimeout> | null) {
   if (timer) clearTimeout(timer);
 }
 
+function clearProgressFlushTimer() {
+  clearTimer(progressFlushTimer);
+  progressFlushTimer = null;
+  pendingProgress = null;
+}
+
+function resetProgressCoalescing() {
+  clearProgressFlushTimer();
+  lastProgressEmitAt = 0;
+  lastProgressEmitPercentage = 0;
+}
+
 function clearAllTimers() {
   clearTimer(failsafeTimer);
   failsafeTimer = null;
+  resetProgressCoalescing();
 }
 
 function transitionToComplete() {
@@ -123,6 +156,65 @@ const notifyIndexingError = (data?: IndexerEventPayload) => {
   });
 };
 
+function applyProgressState(next: IndexingState, data: IndexerEventPayload) {
+  recordIndexerBudget(data);
+  lastProgressEmitAt = Date.now();
+  lastProgressEmitPercentage = next.percentage;
+  emit(next);
+}
+
+function progressFlushDelay(next: IndexingState, now: number) {
+  if (
+    next.total <= PROGRESS_SMALL_BATCH ||
+    next.percentage >= 100 ||
+    lastProgressEmitAt === 0
+  ) {
+    return 0;
+  }
+
+  const elapsed = now - lastProgressEmitAt;
+  if (elapsed >= PROGRESS_EMIT_MAX_MS) {
+    return 0;
+  }
+
+  const percentDelta = Math.abs(next.percentage - lastProgressEmitPercentage);
+  if (
+    elapsed >= PROGRESS_EMIT_MIN_MS &&
+    percentDelta >= PROGRESS_EMIT_MIN_PERCENT_STEP
+  ) {
+    return 0;
+  }
+
+  const targetDelay =
+    percentDelta >= PROGRESS_EMIT_MIN_PERCENT_STEP
+      ? PROGRESS_EMIT_MIN_MS
+      : PROGRESS_EMIT_MAX_MS;
+  return Math.max(0, targetDelay - elapsed);
+}
+
+function flushPendingProgress() {
+  progressFlushTimer = null;
+  const pending = pendingProgress;
+  pendingProgress = null;
+  if (!pending || !matchesCurrentProjectSession(pending.data)) {
+    return;
+  }
+  applyProgressState(pending.state, pending.data);
+}
+
+function commitProgressState(next: IndexingState, data: IndexerEventPayload) {
+  const delay = progressFlushDelay(next, Date.now());
+  if (delay <= 0) {
+    clearProgressFlushTimer();
+    applyProgressState(next, data);
+    return;
+  }
+
+  pendingProgress = { state: next, data };
+  clearTimer(progressFlushTimer);
+  progressFlushTimer = setTimeout(flushPendingProgress, delay);
+}
+
 // --- Event handlers (module-level, no stale closures) ---
 
 EventsOn("indexer:started", (data: IndexerEventPayload) => {
@@ -133,6 +225,8 @@ EventsOn("indexer:started", (data: IndexerEventPayload) => {
   recordIndexerBudget(data);
 
   const total = data.total ?? 0;
+  lastProgressEmitAt = Date.now();
+  lastProgressEmitPercentage = 0;
 
   emit({ phase: "indexing", current: 0, total, percentage: 0 });
 });
@@ -145,12 +239,15 @@ EventsOn("indexer:progress", (data: IndexerEventPayload) => {
   const current = data.current ?? 0;
   const total = data.total ?? 0;
   const boundedCurrent = total > 0 ? Math.min(Math.max(0, current), total) : 0;
-  emit({
-    phase: "indexing",
-    current: boundedCurrent,
-    total,
-    percentage: toPercentage(boundedCurrent, total),
-  });
+  commitProgressState(
+    {
+      phase: "indexing",
+      current: boundedCurrent,
+      total,
+      percentage: toPercentage(boundedCurrent, total),
+    },
+    data,
+  );
 });
 
 EventsOn("indexer:error", (data?: IndexerEventPayload) => {
@@ -175,6 +272,7 @@ EventsOn("indexer:completed", (data?: IndexerEventPayload) => {
   recordIndexerBudget({ ...(data ?? {}), queueDepth: 0 });
   clearTimer(failsafeTimer);
   failsafeTimer = null;
+  resetProgressCoalescing();
 
   transitionToComplete();
 });

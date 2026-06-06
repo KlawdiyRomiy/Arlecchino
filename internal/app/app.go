@@ -60,6 +60,8 @@ type App struct {
 	mcpBridgeServer          *mcp.IDEBridgeServer
 	mcpBridgeMu              sync.Mutex
 	backgroundShell          *BackgroundShellStatusService
+	indexerProgressMu        sync.Mutex
+	indexerProgress          map[string]indexerProgressState
 	shellMenuMu              sync.Mutex
 	shellMenuShortcuts       map[string][]string
 	shellMenuState           ShellMenuStatePayload
@@ -151,6 +153,7 @@ func NewApp() *App {
 		plugins:                  pluginRegistry,
 		executionService:         execution.NewService(pluginRegistry),
 		backgroundShell:          NewBackgroundShellStatusService(),
+		indexerProgress:          make(map[string]indexerProgressState),
 		windowLeases:             NewWindowLeaseRegistry(),
 		windowRoles:              NewWindowRoleRegistry(),
 		pendingMCPApprovalNonces: make(map[string]string),

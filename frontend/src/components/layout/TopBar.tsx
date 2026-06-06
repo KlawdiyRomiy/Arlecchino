@@ -213,6 +213,20 @@ const replaceTopbarSideOrder = (
   return normalizeTopbarItemOrder(nextOrder);
 };
 
+const topbarFadeTransition = { duration: 0.16, ease: "easeOut" } as const;
+const topbarFadeInitial = { opacity: 0, y: -2 };
+const topbarFadeAnimate = { opacity: 1, y: 0 };
+const topbarCenterChipClass =
+  "shell-pill font-mono text-[10px] tracking-[0.14em]";
+const topbarContextPathRootClass =
+  "flex min-w-0 max-w-[520px] items-center gap-0 overflow-hidden font-mono leading-none";
+const topbarContextPathParentClass =
+  "truncate whitespace-nowrap text-[18px] font-medium tracking-[0.02em] text-[var(--text-muted)]";
+const topbarContextPathNameClass =
+  "truncate whitespace-nowrap text-[18px] font-medium tracking-[0.02em] text-[var(--text-primary)]";
+const topbarIndexingBubbleClass =
+  "flex min-w-[188px] items-center justify-center gap-3 font-mono leading-none text-[12px] tracking-[0.1em] text-[var(--text-secondary)]";
+
 interface PanelVisibility {
   explorer: boolean;
   terminal: boolean;
@@ -250,6 +264,121 @@ interface TopBarProps {
   onChromePopupOpenChange?: (open: boolean) => void;
 }
 
+const TopBarContextItem = React.memo(function TopBarContextItem({
+  projectPath,
+  showTopbarProjectPath,
+}: {
+  projectPath: string;
+  showTopbarProjectPath: boolean;
+}) {
+  const indexing = useIndexingProgress();
+  const projectName = projectPath
+    ? projectPath.split("/").filter(Boolean).at(-1)
+    : null;
+  const projectParent = projectPath
+    ? projectPath.substring(0, projectPath.lastIndexOf("/") + 1)
+    : "";
+  const isIndexingActive =
+    Boolean(projectPath) && indexing.phase === "indexing";
+  const indexingProgressRatio = Math.max(
+    0,
+    Math.min(1, indexing.percentage / 100),
+  );
+  const indexingProgressValue = Number(indexing.percentage.toFixed(1));
+
+  return (
+    <AnimatePresence mode="wait">
+      {projectPath && (isIndexingActive || showTopbarProjectPath) ? (
+        <motion.div
+          key="context-strip"
+          initial={topbarFadeInitial}
+          animate={topbarFadeAnimate}
+          exit={topbarFadeInitial}
+          transition={topbarFadeTransition}
+          className="topbar-context-shell shell-cluster min-w-0 max-w-[560px] items-center overflow-hidden px-3 py-1.5"
+        >
+          <AnimatePresence mode="wait" initial={false}>
+            {isIndexingActive ? (
+              <motion.div
+                key="indexing-state"
+                initial={topbarFadeInitial}
+                animate={topbarFadeAnimate}
+                exit={topbarFadeInitial}
+                transition={topbarFadeTransition}
+                className={topbarIndexingBubbleClass}
+                data-testid="topbar-indexing-status"
+              >
+                <span>Indexing</span>
+                <span
+                  className="inline-flex h-2 w-28 overflow-hidden rounded-full bg-white/8"
+                  data-testid="topbar-indexing-progress"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={indexingProgressValue}
+                  data-progress={indexingProgressValue}
+                >
+                  <motion.span
+                    className="h-full w-full origin-left rounded-full bg-[var(--text-primary)] will-change-transform"
+                    initial={{ scaleX: 0 }}
+                    animate={{ scaleX: indexingProgressRatio }}
+                    transition={{
+                      type: "spring",
+                      stiffness: 210,
+                      damping: 28,
+                      mass: 0.45,
+                    }}
+                  />
+                </span>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="path-state"
+                initial={topbarFadeInitial}
+                animate={topbarFadeAnimate}
+                exit={topbarFadeInitial}
+                transition={topbarFadeTransition}
+                className={topbarContextPathRootClass}
+                data-testid="topbar-project-path"
+              >
+                <span
+                  className={topbarContextPathParentClass}
+                  data-testid="topbar-project-parent-path"
+                >
+                  {projectParent}
+                </span>
+                <span className={topbarContextPathNameClass}>
+                  {projectName}
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      ) : !projectPath ? (
+        <motion.div
+          key="empty-context-strip"
+          initial={topbarFadeInitial}
+          animate={topbarFadeAnimate}
+          exit={topbarFadeInitial}
+          transition={topbarFadeTransition}
+          className="topbar-context-shell shell-cluster px-2.5 py-1.5"
+        >
+          <span className={topbarCenterChipClass}>No project open</span>
+        </motion.div>
+      ) : (
+        <motion.div
+          key="compact-context-spacer"
+          initial={false}
+          animate={{ opacity: 0 }}
+          exit={{ opacity: 0 }}
+          className="h-0 w-0"
+          aria-hidden="true"
+        />
+      )}
+    </AnimatePresence>
+  );
+});
+
 export const TopBar: React.FC<TopBarProps> = ({
   onOpenSearch,
   onOpenSettings,
@@ -281,7 +410,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [addProjectMenuOpen, setAddProjectMenuOpen] = React.useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = React.useState(false);
   const [notificationMenuOpen, setNotificationMenuOpen] = React.useState(false);
-  const indexing = useIndexingProgress();
   const showTopbarProjectPath = useEditorSettingsStore(
     (state) => state.showTopbarProjectPath,
   );
@@ -324,18 +452,11 @@ export const TopBar: React.FC<TopBarProps> = ({
     () => resolveVisibleTopbarSideOrder(visibleTopbarOrder, "right"),
     [visibleTopbarOrder],
   );
-  const projectName = projectPath
-    ? projectPath.split("/").filter(Boolean).at(-1)
-    : null;
-  const projectParent = projectPath
-    ? projectPath.substring(0, projectPath.lastIndexOf("/") + 1)
-    : "";
   const topBarButtonClass =
     "topbar-control-button shell-control h-12 w-12 px-0";
   const activeTopBarPanelButtonClass = "topbar-panel-button-active";
   const topBarActionClass = `${topBarButtonClass} text-[var(--text-secondary)]`;
   const menuItemClass = "shell-menu-item text-[13px]";
-  const centerChipClass = "shell-pill font-mono text-[10px] tracking-[0.14em]";
   const topBarGroupClass =
     "relative flex h-full shrink-0 -translate-y-[2px] items-center gap-2";
   const topBarIconSize = 25;
@@ -344,30 +465,12 @@ export const TopBar: React.FC<TopBarProps> = ({
     "--wails-draggable": "no-drag",
     WebkitAppRegion: "no-drag",
   } as React.CSSProperties;
-  const isIndexingActive =
-    Boolean(projectPath) && indexing.phase === "indexing";
-  const indexingProgressRatio = Math.max(
-    0,
-    Math.min(1, indexing.percentage / 100),
-  );
-  const indexingProgressValue = Number(indexing.percentage.toFixed(1));
-  const fadeTransition = { duration: 0.16, ease: "easeOut" } as const;
-  const fadeInitial = { opacity: 0, y: -2 };
-  const fadeAnimate = { opacity: 1, y: 0 };
   const topbarReorderLayoutTransition = {
     type: "spring",
     stiffness: 520,
     damping: 42,
     mass: 0.42,
   } as const;
-  const contextPathRootClass =
-    "flex min-w-0 max-w-[520px] items-center gap-0 overflow-hidden font-mono leading-none";
-  const contextPathParentClass =
-    "truncate whitespace-nowrap text-[18px] font-medium tracking-[0.02em] text-[var(--text-muted)]";
-  const contextPathNameClass =
-    "truncate whitespace-nowrap text-[18px] font-medium tracking-[0.02em] text-[var(--text-primary)]";
-  const indexingBubbleClass =
-    "flex min-w-[188px] items-center justify-center gap-3 font-mono leading-none text-[12px] tracking-[0.1em] text-[var(--text-secondary)]";
   const getPanelActionClass = (active?: boolean) =>
     `${topBarButtonClass} ${
       active ? activeTopBarPanelButtonClass : "text-[var(--text-secondary)]"
@@ -723,93 +826,10 @@ export const TopBar: React.FC<TopBarProps> = ({
   );
 
   const renderContextItem = () => (
-    <AnimatePresence mode="wait">
-      {projectPath && (isIndexingActive || showTopbarProjectPath) ? (
-        <motion.div
-          key="context-strip"
-          initial={fadeInitial}
-          animate={fadeAnimate}
-          exit={fadeInitial}
-          transition={fadeTransition}
-          className="topbar-context-shell shell-cluster min-w-0 max-w-[560px] items-center overflow-hidden px-3 py-1.5"
-        >
-          <AnimatePresence mode="wait" initial={false}>
-            {isIndexingActive ? (
-              <motion.div
-                key="indexing-state"
-                initial={fadeInitial}
-                animate={fadeAnimate}
-                exit={fadeInitial}
-                transition={fadeTransition}
-                className={indexingBubbleClass}
-                data-testid="topbar-indexing-status"
-              >
-                <span>Indexing</span>
-                <span
-                  className="inline-flex h-2 w-28 overflow-hidden rounded-full bg-white/8"
-                  data-testid="topbar-indexing-progress"
-                  role="progressbar"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={indexingProgressValue}
-                  data-progress={indexingProgressValue}
-                >
-                  <motion.span
-                    className="h-full w-full origin-left rounded-full bg-[var(--text-primary)] will-change-transform"
-                    initial={{ scaleX: 0 }}
-                    animate={{ scaleX: indexingProgressRatio }}
-                    transition={{
-                      type: "spring",
-                      stiffness: 210,
-                      damping: 28,
-                      mass: 0.45,
-                    }}
-                  />
-                </span>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="path-state"
-                initial={fadeInitial}
-                animate={fadeAnimate}
-                exit={fadeInitial}
-                transition={fadeTransition}
-                className={contextPathRootClass}
-                data-testid="topbar-project-path"
-              >
-                <span
-                  className={contextPathParentClass}
-                  data-testid="topbar-project-parent-path"
-                >
-                  {projectParent}
-                </span>
-                <span className={contextPathNameClass}>{projectName}</span>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-      ) : !projectPath ? (
-        <motion.div
-          key="empty-context-strip"
-          initial={fadeInitial}
-          animate={fadeAnimate}
-          exit={fadeInitial}
-          transition={fadeTransition}
-          className="topbar-context-shell shell-cluster px-2.5 py-1.5"
-        >
-          <span className={centerChipClass}>No project open</span>
-        </motion.div>
-      ) : (
-        <motion.div
-          key="compact-context-spacer"
-          initial={false}
-          animate={{ opacity: 0 }}
-          exit={{ opacity: 0 }}
-          className="h-0 w-0"
-          aria-hidden="true"
-        />
-      )}
-    </AnimatePresence>
+    <TopBarContextItem
+      projectPath={projectPath}
+      showTopbarProjectPath={showTopbarProjectPath}
+    />
   );
 
   const renderMoreItem = () => (

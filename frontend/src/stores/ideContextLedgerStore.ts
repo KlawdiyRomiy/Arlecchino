@@ -51,6 +51,8 @@ interface IDEContextLedgerState {
 
 const MAX_IDE_CONTEXT_EVENTS = 160;
 const COALESCE_WINDOW_MS = 500;
+const INDEXER_PROGRESS_LEDGER_PERCENT_STEP = 10;
+const INDEXER_FILE_ERROR_LEDGER_MIN_MS = 5000;
 
 const sanitizeText = (value: string, limit = 280): string =>
   value.replace(/\s+/g, " ").trim().slice(0, limit);
@@ -190,6 +192,33 @@ const registerRuntimeEvent = (
 };
 
 let ledgerRuntimeCleanup: (() => void) | null = null;
+let lastIndexerProgressLedgerBucket = -1;
+let lastIndexerFileErrorLedgerAt = 0;
+
+const resetIndexerProgressLedgerMilestone = () => {
+  lastIndexerProgressLedgerBucket = -1;
+  lastIndexerFileErrorLedgerAt = 0;
+};
+
+const nextIndexerProgressLedgerMilestone = (payload: unknown) => {
+  const event = (payload ?? {}) as { current?: number; total?: number };
+  const current = typeof event.current === "number" ? event.current : 0;
+  const total = typeof event.total === "number" ? event.total : 0;
+  if (total <= 0 || current <= 0 || current >= total) {
+    return null;
+  }
+
+  const percent = Math.max(0, Math.min(100, (current / total) * 100));
+  const bucket =
+    Math.floor(percent / INDEXER_PROGRESS_LEDGER_PERCENT_STEP) *
+    INDEXER_PROGRESS_LEDGER_PERCENT_STEP;
+  if (bucket <= 0 || bucket === lastIndexerProgressLedgerBucket) {
+    return null;
+  }
+
+  lastIndexerProgressLedgerBucket = bucket;
+  return { current, total, percent: bucket };
+};
 
 export const bindIDEContextLedger = (): (() => void) => {
   if (ledgerRuntimeCleanup) {
@@ -415,6 +444,7 @@ export const bindIDEContextLedger = (): (() => void) => {
   });
 
   registerRuntimeEvent(cleanups, "indexer:started", () => {
+    resetIndexerProgressLedgerMilestone();
     recordIDEContextEvent({
       scope: "indexer",
       type: "indexer.started",
@@ -423,23 +453,53 @@ export const bindIDEContextLedger = (): (() => void) => {
   });
 
   registerRuntimeEvent(cleanups, "indexer:progress", (payload) => {
-    const event = (payload ?? {}) as { current?: number; total?: number };
+    const milestone = nextIndexerProgressLedgerMilestone(payload);
+    if (!milestone) {
+      return;
+    }
     recordIDEContextEvent({
       scope: "indexer",
       type: "indexer.progress",
-      title: "Indexer progress",
+      title: "Indexer progress milestone",
       metadata: {
-        current: event.current ?? null,
-        total: event.total ?? null,
+        current: milestone.current,
+        total: milestone.total,
+        percent: milestone.percent,
       },
     });
   });
 
   registerRuntimeEvent(cleanups, "indexer:completed", () => {
+    resetIndexerProgressLedgerMilestone();
     recordIDEContextEvent({
       scope: "indexer",
       type: "indexer.completed",
       title: "Indexer completed",
+    });
+  });
+
+  registerRuntimeEvent(cleanups, "indexer:error", (payload) => {
+    const event = (payload ?? {}) as { error?: string; terminal?: boolean };
+    if (event.terminal) {
+      resetIndexerProgressLedgerMilestone();
+    } else {
+      const now = Date.now();
+      if (
+        now - lastIndexerFileErrorLedgerAt <
+        INDEXER_FILE_ERROR_LEDGER_MIN_MS
+      ) {
+        return;
+      }
+      lastIndexerFileErrorLedgerAt = now;
+    }
+    recordIDEContextEvent({
+      scope: "indexer",
+      type: event.terminal ? "indexer.failed" : "indexer.file-error",
+      title: event.terminal ? "Indexer failed" : "Indexer file error",
+      detail: event.error,
+      metadata: {
+        terminal: event.terminal ?? false,
+      },
     });
   });
 

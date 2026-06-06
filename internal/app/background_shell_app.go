@@ -2,11 +2,25 @@ package app
 
 import (
 	"fmt"
+	"math"
 	"strings"
+	"time"
 
 	"arlecchino/internal/indexer/core"
 	lspinstaller "arlecchino/internal/lsp"
 )
+
+const (
+	indexerProgressMinInterval    = 350 * time.Millisecond
+	indexerProgressMaxInterval    = 2 * time.Second
+	indexerProgressMinPercentStep = 1.0
+	indexerProgressSmallBatch     = 64
+)
+
+type indexerProgressState struct {
+	lastEmittedAt time.Time
+	lastPercent   float64
+}
 
 func (a *App) GetBackgroundShellStatus() BackgroundShellStatusSnapshot {
 	if a == nil || a.backgroundShell == nil {
@@ -71,8 +85,9 @@ func (a *App) recordBackgroundIndexerEvent(evt core.IndexingEvent, projectPath s
 		return
 	}
 
+	jobID := fmt.Sprintf("indexer:%d", generation)
 	job := BackgroundShellJob{
-		ID:              fmt.Sprintf("indexer:%d", generation),
+		ID:              jobID,
 		Kind:            "indexing",
 		Category:        BackgroundShellCategoryJob,
 		Title:           "Project indexing",
@@ -82,10 +97,14 @@ func (a *App) recordBackgroundIndexerEvent(evt core.IndexingEvent, projectPath s
 
 	switch evt.Type {
 	case core.IndexingStarted:
+		a.clearBackgroundIndexerProgress(jobID)
 		job.Status = BackgroundShellJobRunning
 		job.Detail = fmt.Sprintf("Indexing %d project files.", evt.Total)
 		job.Progress = &BackgroundShellProgress{Total: int64(evt.Total)}
 	case core.IndexingProgress:
+		if !a.shouldRecordBackgroundIndexerProgress(jobID, evt) {
+			return
+		}
 		job.Status = BackgroundShellJobRunning
 		job.Detail = fmt.Sprintf("Indexed %d of %d project files.", evt.Current, evt.Total)
 		job.Progress = &BackgroundShellProgress{
@@ -97,11 +116,80 @@ func (a *App) recordBackgroundIndexerEvent(evt core.IndexingEvent, projectPath s
 		job.Status = BackgroundShellJobSucceeded
 		job.Detail = "Project indexing completed."
 		job.Progress = &BackgroundShellProgress{Percent: 100}
+	case core.IndexingFailed:
+		if !evt.Terminal {
+			return
+		}
+		job.Status = BackgroundShellJobFailed
+		job.Detail = strings.TrimSpace(evt.Error)
+		if job.Detail == "" {
+			job.Detail = "Project indexing failed."
+		}
+		job.Progress = &BackgroundShellProgress{
+			Percent: percentFromCounts(evt.Current, evt.Total),
+			Current: int64(evt.Current),
+			Total:   int64(evt.Total),
+		}
 	default:
 		return
 	}
 
 	a.recordBackgroundShellJob(job)
+	if evt.Type == core.IndexingCompleted || evt.Type == core.IndexingFailed {
+		a.clearBackgroundIndexerProgress(jobID)
+	}
+}
+
+func (a *App) shouldRecordBackgroundIndexerProgress(jobID string, evt core.IndexingEvent) bool {
+	if a == nil {
+		return false
+	}
+	if evt.Total <= indexerProgressSmallBatch || (evt.Total > 0 && evt.Current >= evt.Total) {
+		return true
+	}
+
+	percent := percentFromCounts(evt.Current, evt.Total)
+	now := time.Now()
+
+	a.indexerProgressMu.Lock()
+	defer a.indexerProgressMu.Unlock()
+
+	if a.indexerProgress == nil {
+		a.indexerProgress = make(map[string]indexerProgressState)
+	}
+
+	previous, ok := a.indexerProgress[jobID]
+	if !ok || previous.lastEmittedAt.IsZero() {
+		a.indexerProgress[jobID] = indexerProgressState{
+			lastEmittedAt: now,
+			lastPercent:   percent,
+		}
+		return true
+	}
+
+	elapsed := now.Sub(previous.lastEmittedAt)
+	if elapsed < indexerProgressMinInterval {
+		return false
+	}
+	if elapsed < indexerProgressMaxInterval &&
+		math.Abs(percent-previous.lastPercent) < indexerProgressMinPercentStep {
+		return false
+	}
+
+	a.indexerProgress[jobID] = indexerProgressState{
+		lastEmittedAt: now,
+		lastPercent:   percent,
+	}
+	return true
+}
+
+func (a *App) clearBackgroundIndexerProgress(jobID string) {
+	if a == nil {
+		return
+	}
+	a.indexerProgressMu.Lock()
+	defer a.indexerProgressMu.Unlock()
+	delete(a.indexerProgress, jobID)
 }
 
 func (a *App) recordBackgroundLSPInstallProgress(progress lspinstaller.InstallProgress) {
