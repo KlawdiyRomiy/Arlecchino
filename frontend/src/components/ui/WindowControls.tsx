@@ -43,6 +43,12 @@ const MAC_BUBBLE_HEIGHT = 28;
 const MAC_BUTTON_LEFT = 12;
 const MAC_BUTTON_GAP = 10;
 const MAC_BUTTON_SIZE = 13;
+const MAC_CONTROLS_BORDER_WIDTH = 1;
+const MAC_BUTTON_ROW_WIDTH = MAC_BUTTON_SIZE * 3 + MAC_BUTTON_GAP * 2;
+const MAC_BUBBLE_WIDTH =
+  MAC_BUTTON_ROW_WIDTH + MAC_BUTTON_LEFT * 2 + MAC_CONTROLS_BORDER_WIDTH * 2;
+const MAC_BUBBLE_X_OFFSET = 1;
+const MAC_BUBBLE_Y_OFFSET = 1;
 
 const APP_CLOSE_REQUEST_EVENT = "arlecchino:request-close";
 const PROJECT_SWITCH_FRAME_SELECTOR = '[data-project-switch-frame="true"]';
@@ -59,12 +65,13 @@ const macControlsOuterStyle = {
 
 const macControlsBubbleStyle: React.CSSProperties = {
   position: "relative",
-  width: `calc(${MAC_CONTROLS_WIDTH}px * var(--ui-inverse-scale))`,
+  width: `calc(${MAC_BUBBLE_WIDTH}px * var(--ui-inverse-scale))`,
   height: `calc(${MAC_BUBBLE_HEIGHT}px * var(--ui-inverse-scale))`,
-  minWidth: `calc(${MAC_CONTROLS_WIDTH}px * var(--ui-inverse-scale))`,
-  maxWidth: `calc(${MAC_CONTROLS_WIDTH}px * var(--ui-inverse-scale))`,
+  minWidth: `calc(${MAC_BUBBLE_WIDTH}px * var(--ui-inverse-scale))`,
+  maxWidth: `calc(${MAC_BUBBLE_WIDTH}px * var(--ui-inverse-scale))`,
   minHeight: `calc(${MAC_BUBBLE_HEIGHT}px * var(--ui-inverse-scale))`,
   maxHeight: `calc(${MAC_BUBBLE_HEIGHT}px * var(--ui-inverse-scale))`,
+  boxSizing: "border-box",
 };
 
 const macControlsMeasurementBubbleStyle: React.CSSProperties = {
@@ -75,6 +82,8 @@ const macControlsMeasurementBubbleStyle: React.CSSProperties = {
 const nativeBackdropPortalBubbleStyle: React.CSSProperties = {
   width: "100%",
   height: "100%",
+  boxSizing: "border-box",
+  transform: `translate(calc(${MAC_BUBBLE_X_OFFSET}px * var(--ui-inverse-scale)), calc(${MAC_BUBBLE_Y_OFFSET}px * var(--ui-inverse-scale)))`,
 };
 
 const nativeButtonTargetsStyle: React.CSSProperties = {
