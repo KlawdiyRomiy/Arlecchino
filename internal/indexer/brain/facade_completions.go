@@ -487,6 +487,8 @@ func (b *PredictionBrain) fromFacadeMethods(ctx CompletionContext) []Suggestion 
 				Detail:        m.Params,
 				Score:         0.95,
 				Source:        core.SourcePredictive,
+				Namespace:     accessClassName,
+				ProofKind:     "self-static-member",
 				InsertText:    insertText,
 				TypeInfo:      m.ReturnType,
 				Documentation: accessClassName + "::" + m.Name + "(" + m.Params + "): " + m.ReturnType,

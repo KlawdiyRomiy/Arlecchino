@@ -135,7 +135,7 @@ const (
 	fastFallbackSourceWait     = 45 * time.Millisecond
 	genericSourceWait          = 120 * time.Millisecond
 	focusedSourceWait          = 220 * time.Millisecond
-	accessCompletionMaxItems   = 300
+	accessCompletionMaxItems   = 1000
 )
 
 type accessOperatorSpec struct {
@@ -794,14 +794,14 @@ func sourceWaitBudget(ctx CompletionContext, fallbackCount int) time.Duration {
 	if fallbackCount > 0 {
 		return fastFallbackSourceWait
 	}
-	if ctx.InImport || ctx.AccessChain != "" || ctx.IsMethodCall || ctx.IsStaticCall {
+	if ctx.InImport || isAccessCompletionRequest(ctx) {
 		return focusedSourceWait
 	}
 	return genericSourceWait
 }
 
 func isAccessCompletionRequest(ctx CompletionContext) bool {
-	return ctx.AccessChain != "" || ctx.IsMethodCall || ctx.IsStaticCall
+	return ctx.AccessChain != "" || ctx.IsMethodCall || ctx.IsStaticCall || strings.TrimSpace(ctx.AccessOperator) != ""
 }
 
 func isBareAccessCompletionRequest(ctx CompletionContext) bool {
@@ -1479,26 +1479,21 @@ func limitCompletionSuggestions(ctx CompletionContext, suggestions []Suggestion,
 		return suggestions[:maxSuggestions], true
 	}
 
-	lspCount := 0
-	for _, suggestion := range suggestions {
-		if suggestion.Source == core.SourceLSP {
-			lspCount++
-		}
-	}
-	nonLSPBudget := maxSuggestions - lspCount
-	if nonLSPBudget < 0 {
-		nonLSPBudget = 0
-	}
-
 	result := make([]Suggestion, 0, maxSuggestions)
 	for _, suggestion := range suggestions {
-		if suggestion.Source == core.SourceLSP {
-			result = append(result, suggestion)
+		if suggestion.Source != core.SourceLSP {
 			continue
 		}
-		if nonLSPBudget > 0 {
+		if len(result) < maxSuggestions {
 			result = append(result, suggestion)
-			nonLSPBudget--
+		}
+	}
+	for _, suggestion := range suggestions {
+		if suggestion.Source == core.SourceLSP {
+			continue
+		}
+		if len(result) < maxSuggestions {
+			result = append(result, suggestion)
 		}
 	}
 	return result, len(result) < len(suggestions)
@@ -2270,6 +2265,9 @@ func (b *PredictionBrain) fromIndex(ctx CompletionContext) []Suggestion {
 			InsertText:    b.buildInsertText(sym, ctx),
 			Extra:         sym.Extra,
 		}
+		if descriptor := importDescriptorFromSymbolExtra(sym); descriptor != nil {
+			suggestion.Import = descriptor
+		}
 		if proofKind := indexAccessProofKind(ctx, sym, accessClassLower, resolvedNS); proofKind != "" {
 			suggestion.ProofKind = proofKind
 		}
@@ -2280,6 +2278,9 @@ func (b *PredictionBrain) fromIndex(ctx CompletionContext) []Suggestion {
 			if edit := b.autoImporter.GenerateImportEditForSuggestion(suggestion, ctx); edit != nil {
 				suggestion.AdditionalTextEdits = []core.TextEdit{*edit}
 				suggestion.AutoImportAllowed = true
+				if strings.TrimSpace(suggestion.ProofKind) == "" {
+					suggestion.ProofKind = "project-importable"
+				}
 			}
 		}
 		suggestions = append(suggestions, suggestion)
@@ -2307,6 +2308,18 @@ func indexAccessProofKind(ctx CompletionContext, sym core.Symbol, accessClassLow
 		}
 		if matchesClassName(sym.Namespace, sym.FilePath, accessClassLower) {
 			return "self-static-member"
+		}
+	}
+	if resolvedNSLower != "" {
+		namespaceLower := strings.ToLower(strings.TrimSpace(sym.Namespace))
+		if namespaceMatches(namespaceLower, resolvedNSLower) {
+			return "receiver-member"
+		}
+	}
+	if accessClassLower != "" {
+		namespaceLower := strings.ToLower(strings.TrimSpace(sym.Namespace))
+		if matchesClassName(sym.Namespace, sym.FilePath, accessClassLower) || namespaceHasTokenSuffix(namespaceLower, accessClassLower) {
+			return "receiver-member"
 		}
 	}
 	return ""
@@ -2484,22 +2497,38 @@ func (b *PredictionBrain) fromLSPWithOutcome(ctx CompletionContext) lspCompletio
 		log.Printf("[LSP] ERROR: %v", err)
 		return lspCompletionOutcome{status: "error"}
 	}
-	items := result.Items
-	if lspCtx.Err() != nil {
-		return lspCompletionOutcome{status: contextStatus(lspCtx.Err()), incomplete: result.IsIncomplete, rawCount: len(items)}
+	virtualImportCompletion := false
+	if shouldUseVirtualAccessImportLSP(ctx, result) {
+		if virtualResult, ok := b.completeWithVirtualAccessImportLSP(lspCtx, ctx, lspLanguage); ok {
+			result = virtualResult
+			virtualImportCompletion = true
+		}
+	} else if enrichedResult, ok := b.attachGeneratedAccessImportEdit(ctx, lspLanguage, result); ok {
+		result = enrichedResult
 	}
-	if fallbackOutcome, ok := accessInvokedFallbackOutcome(ctx, result); ok {
-		return fallbackOutcome
+	items := result.Items
+	if lspCtx.Err() != nil && (len(items) == 0 || !lspCompletionAllowsExpiredContextItems(result)) {
+		return lspCompletionOutcome{status: contextStatus(lspCtx.Err()), incomplete: result.IsIncomplete, rawCount: len(items)}
 	}
 	if len(items) == 0 {
 		debugLogf("[LSP] no items returned for lang=%s", lspLanguage)
-		return lspCompletionOutcome{status: "empty", incomplete: result.IsIncomplete}
+		return lspCompletionOutcome{
+			status:         lspCompletionNoItemsStatus(result),
+			triggerAttempt: lspCompletionTriggerAttempt(result),
+			incomplete:     result.IsIncomplete,
+			rawCount:       len(items),
+		}
 	}
 
 	debugLogf("[LSP] got %d items for lang=%s", len(items), lspLanguage)
 
+	accessMemberProofKind := lspCompletionAccessMemberProofKind(ctx, result)
 	suggestions := make([]Suggestion, 0, len(items))
 	for _, item := range items {
+		itemAccessMemberProofKind := accessMemberProofKind
+		if item.FallbackOnly && itemAccessMemberProofKind == "lsp-member" {
+			itemAccessMemberProofKind = "lsp-fallback-member"
+		}
 		kind := b.mapLSPKind(item.Kind)
 		insertText := item.InsertText
 		if insertText == "" {
@@ -2522,7 +2551,7 @@ func (b *PredictionBrain) fromLSPWithOutcome(ctx CompletionContext) lspCompletio
 		additionalEdits := lspTextEditsToCore(item.AdditionalTextEdits)
 		resolveToken := ""
 		capabilities := b.lspManager.CompletionCapabilities(lspLanguage)
-		if !ctx.InImport && capabilities.ResolveProvider {
+		if !virtualImportCompletion && !ctx.InImport && capabilities.ResolveProvider {
 			resolveCtx := ctx
 			resolveCtx.Language = lspLanguage
 			resolveToken = b.rememberLSPCompletionResolve(resolveCtx, item)
@@ -2549,35 +2578,74 @@ func (b *PredictionBrain) fromLSPWithOutcome(ctx CompletionContext) lspCompletio
 			Command:             item.Command,
 			Data:                item.Data,
 			ResolveToken:        resolveToken,
-			ProofKind:           lspCompletionProofKind(additionalEdits, resolveToken),
+			ProofKind:           lspCompletionProofKind(additionalEdits, resolveToken, itemAccessMemberProofKind),
 			AutoImportAllowed:   len(additionalEdits) > 0,
 			LSPListIncomplete:   result.IsIncomplete,
 		})
 	}
 
+	triggerAttempt := lspCompletionTriggerAttempt(result)
+	if virtualImportCompletion {
+		triggerAttempt = "virtual-import"
+	}
 	return lspCompletionOutcome{
 		suggestions:     suggestions,
 		status:          "ok",
+		triggerAttempt:  triggerAttempt,
 		incomplete:      result.IsIncomplete,
 		rawCount:        len(items),
 		normalizedCount: len(suggestions),
 	}
 }
 
-func accessInvokedFallbackOutcome(ctx CompletionContext, result lsp.CompletionResponse) (lspCompletionOutcome, bool) {
-	if !result.UsedInvokedFallback || !isAccessCompletionRequest(ctx) {
-		return lspCompletionOutcome{}, false
+func lspCompletionAllowsExpiredContextItems(result lsp.CompletionResponse) bool {
+	return result.InvokedFallbackRejected && strings.TrimSpace(result.InvokedFallbackRejectedReason) == "timeout"
+}
+
+func lspCompletionAccessMemberProof(ctx CompletionContext, result lsp.CompletionResponse) bool {
+	return lspCompletionAccessMemberProofKind(ctx, result) != ""
+}
+
+func lspCompletionAccessMemberProofKind(ctx CompletionContext, result lsp.CompletionResponse) string {
+	if !isAccessCompletionRequest(ctx) {
+		return ""
 	}
-	status := "empty"
-	if strings.TrimSpace(result.InvokedFallbackReason) == "error" {
-		status = "error"
+	if !result.UsedInvokedFallback {
+		return "lsp-member"
 	}
-	return lspCompletionOutcome{
-		status:         status,
-		triggerAttempt: "invoked-fallback-discarded",
-		incomplete:     result.IsIncomplete,
-		rawCount:       len(result.Items),
-	}, true
+	switch strings.TrimSpace(result.InvokedFallbackReason) {
+	case "incomplete":
+		return "lsp-member"
+	case "empty", "error", "unsupported-trigger":
+		return "lsp-fallback-member"
+	default:
+		return ""
+	}
+}
+
+func lspCompletionTriggerAttempt(result lsp.CompletionResponse) string {
+	if result.UsedInvokedFallback {
+		reason := strings.TrimSpace(result.InvokedFallbackReason)
+		if reason == "" {
+			return "invoked-fallback"
+		}
+		return "invoked-fallback:" + reason
+	}
+	if result.InvokedFallbackRejected {
+		reason := strings.TrimSpace(result.InvokedFallbackRejectedReason)
+		if reason == "" {
+			return "invoked-fallback-rejected"
+		}
+		return "invoked-fallback-rejected:" + reason
+	}
+	return ""
+}
+
+func lspCompletionNoItemsStatus(result lsp.CompletionResponse) string {
+	if result.UsedInvokedFallback && strings.TrimSpace(result.InvokedFallbackReason) == "error" {
+		return "error"
+	}
+	return "empty"
 }
 
 func lspSuggestionsIncomplete(suggestions []Suggestion) bool {
@@ -2593,10 +2661,11 @@ func lspCompletionTrigger(ctx CompletionContext) lsp.CompletionTrigger {
 	triggerChar := strings.TrimSpace(ctx.TriggerChar)
 	if triggerChar, ok := accessCompletionTriggerCharacter(ctx, triggerChar); ok {
 		return lsp.CompletionTrigger{
-			TriggerKind:         2,
-			TriggerCharacter:    triggerChar,
-			RetryInvokedOnEmpty: true,
-			AccessMemberIntent:  true,
+			TriggerKind:              2,
+			TriggerCharacter:         triggerChar,
+			RetryInvokedOnEmpty:      true,
+			RetryInvokedOnIncomplete: true,
+			AccessMemberIntent:       true,
 		}
 	}
 	switch ctx.CompletionTriggerKind {
@@ -2733,7 +2802,10 @@ func (b *PredictionBrain) mapLSPKind(kind int) core.SymbolKind {
 	return core.SymbolKindVariable
 }
 
-func lspCompletionProofKind(additionalEdits []core.TextEdit, resolveToken string) string {
+func lspCompletionProofKind(additionalEdits []core.TextEdit, resolveToken string, accessMemberProofKind string) string {
+	if accessMemberProofKind != "" {
+		return accessMemberProofKind
+	}
 	if len(additionalEdits) > 0 {
 		return "lsp-completion-edit"
 	}
@@ -2789,6 +2861,9 @@ func (b *PredictionBrain) enrichAutoImports(ctx CompletionContext, suggestions [
 		}
 		if edit := b.autoImporter.GenerateImportEditForSuggestion(enriched[i], ctx); edit != nil {
 			enriched[i].AdditionalTextEdits = []core.TextEdit{*edit}
+			if strings.TrimSpace(enriched[i].ProofKind) == "" {
+				enriched[i].ProofKind = "project-importable"
+			}
 		}
 	}
 
@@ -3182,6 +3257,14 @@ func completionProofTier(s Suggestion) int {
 		return 95
 	case "existing-import":
 		return 90
+	case "dependency-importable":
+		return 86
+	case "project-importable":
+		return 84
+	case "lsp-member":
+		return 88
+	case "lsp-fallback-member":
+		return 82
 	case "receiver-member", "self-static-member":
 		return 85
 	case "stdlib-platform":
@@ -3192,10 +3275,7 @@ func completionProofTier(s Suggestion) int {
 		return 45
 	}
 	if len(s.AdditionalTextEdits) > 0 || s.PrimaryTextEdit != nil || s.Command != nil || s.ResolveToken != "" {
-		if s.Source == core.SourceLSP {
-			return 92
-		}
-		return 65
+		return 50
 	}
 	switch s.Source {
 	case core.SourceLSP:

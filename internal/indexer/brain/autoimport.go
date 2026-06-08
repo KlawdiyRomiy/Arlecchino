@@ -52,6 +52,10 @@ var (
 	importDescriptorDottedPathRe      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$`)
 	importDescriptorDartPathRe        = regexp.MustCompile(`^(?:dart:[A-Za-z0-9_./-]+|package:[A-Za-z0-9_./-]+)$`)
 	importDescriptorSwiftModuleRe     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	importDescriptorPHPPathRe         = regexp.MustCompile(`^[A-Za-z_\\][A-Za-z0-9_\\]*(?:\\[A-Za-z_][A-Za-z0-9_]*)*$`)
+	importDescriptorRustPathRe        = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_:]*(?:\:\:[A-Za-z_][A-Za-z0-9_]*)*$`)
+	importDescriptorRubyPathRe        = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
+	importDescriptorCIncludePathRe    = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
 	importDescriptorESNamedStmtRe     = regexp.MustCompile(`^import\s+(?:type\s+)?\{\s*[A-Za-z_$][A-Za-z0-9_$]*(?:\s*,\s*[A-Za-z_$][A-Za-z0-9_$]*)*\s*\}\s+from\s+['"][^'"\r\n]+['"];?$`)
 	importDescriptorESDefaultStmtRe   = regexp.MustCompile(`^import\s+[A-Za-z_$][A-Za-z0-9_$]*\s+from\s+['"][^'"\r\n]+['"];?$`)
 	importDescriptorESNamespaceStmtRe = regexp.MustCompile(`^import\s+\*\s+as\s+[A-Za-z_$][A-Za-z0-9_$]*\s+from\s+['"][^'"\r\n]+['"];?$`)
@@ -212,6 +216,32 @@ func (ai *AutoImporter) importStatementFromDescriptor(symbol *core.Symbol, descr
 		return safeGeneratedDescriptorStatement(language, "using "+path+";")
 	case "swift":
 		return safeGeneratedDescriptorStatement(language, "import "+path)
+	case "go":
+		return safeGeneratedDescriptorStatement(language, `import "`+path+`"`)
+	case "php", "php-laravel":
+		return safeGeneratedDescriptorStatement(language, "use "+path+";")
+	case "python":
+		if mode == "module" || mode == "package" || importSymbol == "" || strings.HasSuffix(path, "."+importSymbol) {
+			return safeGeneratedDescriptorStatement(language, "import "+path)
+		}
+		importSymbol, symbolOK := safeDescriptorImportSymbol(importSymbol)
+		if !symbolOK {
+			return ""
+		}
+		return safeGeneratedDescriptorStatement(language, "from "+path+" import "+importSymbol)
+	case "rust":
+		if mode == "module" || mode == "package" || importSymbol == "" || strings.HasSuffix(path, "::"+importSymbol) {
+			return safeGeneratedDescriptorStatement(language, "use "+path+";")
+		}
+		importSymbol, symbolOK := safeDescriptorImportSymbol(importSymbol)
+		if !symbolOK {
+			return ""
+		}
+		return safeGeneratedDescriptorStatement(language, "use "+path+"::"+importSymbol+";")
+	case "ruby":
+		return safeGeneratedDescriptorStatement(language, "require '"+path+"'")
+	case "c", "cpp":
+		return safeGeneratedDescriptorStatement(language, "#include <"+path+">")
 	}
 
 	return ""
@@ -302,6 +332,18 @@ func safeDescriptorImportPath(language, path string) (string, bool) {
 		return path, importDescriptorDartPathRe.MatchString(path)
 	case "swift":
 		return path, importDescriptorSwiftModuleRe.MatchString(path)
+	case "go":
+		return path, importDescriptorESPathRe.MatchString(path)
+	case "php", "php-laravel":
+		return path, importDescriptorPHPPathRe.MatchString(path)
+	case "python":
+		return path, importDescriptorDottedPathRe.MatchString(path)
+	case "rust":
+		return path, importDescriptorRustPathRe.MatchString(path)
+	case "ruby":
+		return path, importDescriptorRubyPathRe.MatchString(path)
+	case "c", "cpp":
+		return path, importDescriptorCIncludePathRe.MatchString(path)
 	default:
 		return "", false
 	}

@@ -24,7 +24,9 @@ import (
 const (
 	editorCompletionTimeout            = 325 * time.Millisecond
 	editorAccessChainCompletionTimeout = 2400 * time.Millisecond
-	editorCompletionResolveTimeout     = 150 * time.Millisecond
+	editorCompletionResolveTimeout     = time.Second
+	editorCompletionResolveRefTTL      = 60 * time.Second
+	editorCompletionResolveRefLimit    = 512
 )
 
 var editorAccessOperators = []string{"?->", "->", "::", "?.", "&.", ".", ":"}
@@ -39,12 +41,123 @@ func editorAccessOperatorFromChain(accessChain string) string {
 	return ""
 }
 
+func editorCompletionAccessOperator(ctx EditorCompletionContext, accessChain string) string {
+	if operator := editorAccessOperatorFromChain(accessChain); operator != "" {
+		return operator
+	}
+	return strings.TrimSpace(ctx.AccessOperator)
+}
+
+func editorCompletionHasAccessIntent(ctx EditorCompletionContext, accessChain string) bool {
+	return strings.TrimSpace(accessChain) != "" || strings.TrimSpace(ctx.AccessOperator) != ""
+}
+
+func editorCompletionAccessInfoFromText(textBefore string, operator string) (string, string) {
+	operator = strings.TrimSpace(operator)
+	if operator == "" {
+		return "", ""
+	}
+	lineBefore := strings.TrimRight(editorCompletionCurrentLineBeforeCursor(textBefore), " \t\r")
+	if lineBefore == "" {
+		return "", ""
+	}
+	idx := strings.LastIndex(lineBefore, operator)
+	if idx < 0 {
+		return "", ""
+	}
+	receiver := strings.TrimSpace(lineBefore[:idx])
+	prefix := lineBefore[idx+len(operator):]
+	if !editorCompletionAccessReceiverLooksPlausible(receiver) || !editorCompletionAccessPrefixLooksPlausible(prefix) {
+		return "", ""
+	}
+	return receiver + operator, prefix
+}
+
+func editorCompletionCurrentLineBeforeCursor(textBefore string) string {
+	if textBefore == "" {
+		return ""
+	}
+	if idx := strings.LastIndexByte(textBefore, '\n'); idx >= 0 {
+		return textBefore[idx+1:]
+	}
+	return textBefore
+}
+
+func editorCompletionAccessReceiverLooksPlausible(receiver string) bool {
+	receiver = strings.TrimSpace(receiver)
+	if receiver == "" {
+		return false
+	}
+	if strings.HasPrefix(receiver, "//") || strings.HasPrefix(receiver, "/*") || strings.HasPrefix(receiver, "#") || strings.HasPrefix(receiver, "--") {
+		return false
+	}
+	if editorCompletionLooksNumeric(receiver) {
+		return false
+	}
+	last := receiver[len(receiver)-1]
+	return !strings.ContainsRune(" \t([{,:;=+-*/%!?&|^~<>", rune(last))
+}
+
+func editorCompletionLooksNumeric(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	digits := 0
+	dots := 0
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if i == 0 && (ch == '+' || ch == '-') {
+			continue
+		}
+		if ch >= '0' && ch <= '9' {
+			digits++
+			continue
+		}
+		if ch == '.' {
+			dots++
+			if dots > 1 {
+				return false
+			}
+			continue
+		}
+		return false
+	}
+	return digits > 0
+}
+
+func editorCompletionAccessPrefixLooksPlausible(prefix string) bool {
+	if prefix == "" {
+		return true
+	}
+	for i := 0; i < len(prefix); i++ {
+		ch := prefix[i]
+		if ch == '_' || ch == '$' || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') {
+			continue
+		}
+		if i > 0 && ch >= '0' && ch <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func editorAccessChainIsStaticCall(accessChain string) bool {
 	return editorAccessOperatorFromChain(accessChain) == "::"
 }
 
 func editorAccessChainIsMethodCall(accessChain string) bool {
 	operator := editorAccessOperatorFromChain(accessChain)
+	return operator != "" && operator != "::"
+}
+
+func editorCompletionIsStaticCall(ctx EditorCompletionContext, accessChain string) bool {
+	return editorCompletionAccessOperator(ctx, accessChain) == "::"
+}
+
+func editorCompletionIsMethodCall(ctx EditorCompletionContext, accessChain string) bool {
+	operator := editorCompletionAccessOperator(ctx, accessChain)
 	return operator != "" && operator != "::"
 }
 
@@ -160,6 +273,7 @@ type EditorCompletion struct {
 	AutoImportAllowed         bool                 `json:"autoImportAllowed"`
 	Primary                   bool                 `json:"primary"`
 	RequiresResolve           bool                 `json:"requiresResolveBeforeApply"`
+	RequiresSafeEdits         bool                 `json:"requiresSafeEditsBeforeApply,omitempty"`
 }
 
 // EditorCompletionResult represents completion response
@@ -337,20 +451,30 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		prefixInfo.InImport = true
 	}
 
-	if prefix == "" && ctx.TextBefore != "" && prefixInfo.AccessChain == "" {
+	accessChain := strings.TrimSpace(prefixInfo.AccessChain)
+	inferredAccessChain, inferredAccessPrefix := editorCompletionAccessInfoFromText(ctx.TextBefore, ctx.AccessOperator)
+	if inferredAccessChain != "" {
+		if accessChain == "" {
+			accessChain = inferredAccessChain
+		}
+		prefix = inferredAccessPrefix
+	}
+
+	if prefix == "" && ctx.TextBefore != "" && accessChain == "" {
 		prefix = predictive.ExtractCurrentPrefixWithLanguage(ctx.TextBefore, ctx.Language)
 	}
 
 	timeout := editorCompletionTimeout
-	if prefixInfo.AccessChain != "" {
+	if editorCompletionHasAccessIntent(ctx, accessChain) {
 		timeout = editorAccessChainCompletionTimeout
 	}
 
 	requestCtx, cancel := context.WithTimeout(baseRequestCtx, timeout)
 	defer cancel()
 
-	if !prefixInfo.InString && ctx.TextBefore != "" {
-		inString, stringValue, stringContext := predictive.DetectStringContextFromText(ctx.TextBefore)
+	textBeforeLine := editorCompletionCurrentLineBeforeCursor(ctx.TextBefore)
+	if !prefixInfo.InString && textBeforeLine != "" {
+		inString, stringValue, stringContext := predictive.DetectStringContextFromText(textBeforeLine)
 		if inString && stringContext != "" {
 			prefixInfo.InString = true
 			prefixInfo.StringContextType = stringContext
@@ -361,11 +485,11 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		}
 	}
 
-	isStaticCall := editorAccessChainIsStaticCall(prefixInfo.AccessChain)
-	isMethodCall := editorAccessChainIsMethodCall(prefixInfo.AccessChain)
+	isStaticCall := editorCompletionIsStaticCall(ctx, accessChain)
+	isMethodCall := editorCompletionIsMethodCall(ctx, accessChain)
 
 	a.logDebugf("[Autocomplete][Backend] prefix='%s' chain='%s' static=%v method=%v inString=%v",
-		prefix, prefixInfo.AccessChain, isStaticCall, isMethodCall, prefixInfo.InString)
+		prefix, accessChain, isStaticCall, isMethodCall, prefixInfo.InString)
 
 	contentWindow, contentStartLine := extractContextLines(ctx.FullText, ctx.Line, 50)
 	importsHash := computeCompletionImportsHash(ctx.FullText, ctx.Language, ctx.Imports)
@@ -390,7 +514,7 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		InImport:              prefixInfo.InImport,
 		StringValue:           prefixInfo.StringValue,
 		StringContextType:     prefixInfo.StringContextType,
-		AccessChain:           prefixInfo.AccessChain,
+		AccessChain:           accessChain,
 		IsMethodCall:          isMethodCall,
 		IsStaticCall:          isStaticCall,
 		ContentStartLine:      contentStartLine,
@@ -434,6 +558,20 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		stableKey := editorCompletionStableKey(s)
 		proofKind := editorCompletionProofKind(s)
 		autoImportAllowed := editorCompletionAutoImportAllowed(s, proofKind)
+		requiresSafeEdits := editorCompletionRequiresSafeEditsBeforeApply(prefixInfo.InImport, s, proofKind, autoImportAllowed)
+		trustsCompletionSideEffects := editorCompletionTrustsSideEffects(proofKind)
+		resolveToken := s.ResolveToken
+		primaryTextEdit := s.PrimaryTextEdit
+		additionalTextEdits := s.AdditionalTextEdits
+		command := s.Command
+		data := s.Data
+		if !trustsCompletionSideEffects {
+			resolveToken = ""
+			primaryTextEdit = nil
+			additionalTextEdits = nil
+			command = nil
+			data = nil
+		}
 		item := EditorCompletion{
 			Label:                     s.DisplayText,
 			Text:                      s.Text,
@@ -448,24 +586,25 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 			CommitCharacters:          append([]string(nil), s.CommitCharacters...),
 			IsSnippet:                 s.IsSnippet,
 			Priority:                  int(s.Score * 100),
-			ResolveToken:              s.ResolveToken,
+			ResolveToken:              resolveToken,
 			CompletionID:              editorCompletionID(requestID, i, stableKey),
 			StableKey:                 stableKey,
 			Provenance:                string(s.Source),
 			ProofKind:                 proofKind,
 			AccessMemberAuthoritative: editorCompletionAccessMemberAuthoritative(s, proofKind),
 			AutoImportAllowed:         autoImportAllowed,
-			RequiresResolve:           s.ResolveToken != "",
-			PrimaryTextEdit:           editorPrimaryTextEditJSON(s.PrimaryTextEdit),
-			Command:                   editorLSPCommandJSON(s.Command),
-			Data:                      s.Data,
+			RequiresResolve:           editorCompletionRequiresResolveBeforeApply(resolveToken, primaryTextEdit, additionalTextEdits, command, requiresSafeEdits),
+			RequiresSafeEdits:         requiresSafeEdits,
+			PrimaryTextEdit:           editorPrimaryTextEditJSON(primaryTextEdit),
+			Command:                   editorLSPCommandJSON(command),
+			Data:                      data,
 		}
 		if s.MatchResult != nil {
 			item.HighlightPositions = s.MatchResult.Positions
 			item.MatchType = s.MatchResult.Type.String()
 		}
-		if len(s.AdditionalTextEdits) > 0 {
-			for _, edit := range s.AdditionalTextEdits {
+		if len(additionalTextEdits) > 0 {
+			for _, edit := range additionalTextEdits {
 				item.AdditionalTextEdits = append(item.AdditionalTextEdits, TextEditJSON{
 					StartLine:   edit.StartLine,
 					StartColumn: edit.StartColumn,
@@ -495,7 +634,7 @@ func (a *App) GetEditorCompletions(ctx EditorCompletionContext) EditorCompletion
 		primary = &items[0]
 	}
 
-	ghostResult := completionBrain.SelectGhostTextWithContext(brainCtx, suggestions, prefix, prefixInfo.AccessChain)
+	ghostResult := completionBrain.SelectGhostTextWithContext(brainCtx, suggestions, prefix, accessChain)
 	if ghostResult.ShouldShow {
 		completionBrain.RecordCompletionShown()
 	}
@@ -587,9 +726,23 @@ func (a *App) rememberEditorCompletionResolveRef(token string, ref editorComplet
 	}
 	now := time.Now()
 	for key, existing := range a.completionResolveRefs {
-		if now.Sub(existing.createdAt) > 30*time.Second {
+		if now.Sub(existing.createdAt) > editorCompletionResolveRefTTL {
 			delete(a.completionResolveRefs, key)
 		}
+	}
+	for len(a.completionResolveRefs) >= editorCompletionResolveRefLimit {
+		oldestKey := ""
+		var oldestAt time.Time
+		for key, existing := range a.completionResolveRefs {
+			if oldestKey == "" || existing.createdAt.Before(oldestAt) {
+				oldestKey = key
+				oldestAt = existing.createdAt
+			}
+		}
+		if oldestKey == "" {
+			break
+		}
+		delete(a.completionResolveRefs, oldestKey)
 	}
 	a.completionResolveRefs[token] = ref
 }
@@ -600,6 +753,10 @@ func (a *App) lookupEditorCompletionResolveRef(token string, req EditorCompletio
 	defer a.completionResolveRefsMu.Unlock()
 	ref, ok := a.completionResolveRefs[token]
 	if !ok {
+		return editorCompletionResolveRef{}, false
+	}
+	if time.Since(ref.createdAt) > editorCompletionResolveRefTTL {
+		delete(a.completionResolveRefs, token)
 		return editorCompletionResolveRef{}, false
 	}
 	if !editorCompletionResolveRefMatches(ref, req) {
@@ -625,7 +782,7 @@ func editorCompletionResolveRefMatches(ref editorCompletionResolveRef, req Edito
 	if ref.stableKey != "" && req.StableKey != ref.stableKey {
 		return false
 	}
-	if ref.documentVersion > 0 && req.DocumentVersion != ref.documentVersion {
+	if ref.documentVersion > 0 && req.DocumentVersion < ref.documentVersion {
 		return false
 	}
 	if ref.sessionID != "" && req.SessionID != ref.sessionID {
@@ -763,12 +920,19 @@ func editorCompletionProofKind(s brain.Suggestion) string {
 }
 
 func editorCompletionAccessMemberAuthoritative(s brain.Suggestion, proofKind string) bool {
-	if s.Source == core.SourceLSP {
-		return true
-	}
 	switch strings.TrimSpace(proofKind) {
+	case "lsp-member":
+		return true
 	case "receiver-member", "self-static-member":
-		return strings.TrimSpace(s.Namespace) != ""
+		if strings.TrimSpace(s.Namespace) == "" {
+			return false
+		}
+		switch s.Source {
+		case core.SourceIndex, core.SourceAST, core.SourceLocal:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
@@ -776,10 +940,60 @@ func editorCompletionAccessMemberAuthoritative(s brain.Suggestion, proofKind str
 
 func editorCompletionAutoImportAllowed(s brain.Suggestion, proofKind string) bool {
 	switch proofKind {
+	case "lsp-member":
+		return s.AutoImportAllowed || len(s.AdditionalTextEdits) > 0
 	case "existing-import", "project-symbol", "stdlib-platform", "lsp-completion-edit", "lsp-resolve-edit", "lsp-code-action":
 		return s.AutoImportAllowed || len(s.AdditionalTextEdits) > 0
 	default:
 		return false
+	}
+}
+
+func editorCompletionRequiresSafeEditsBeforeApply(inImport bool, s brain.Suggestion, proofKind string, autoImportAllowed bool) bool {
+	if inImport {
+		return false
+	}
+	if autoImportAllowed || len(s.AdditionalTextEdits) > 0 {
+		return true
+	}
+	if s.Command != nil {
+		return true
+	}
+	switch strings.TrimSpace(proofKind) {
+	case "lsp-completion-edit", "lsp-code-action":
+		return true
+	}
+	if s.Source == core.SourceLSP {
+		switch s.Kind {
+		case core.SymbolKindModule, core.SymbolKindPackage:
+			return true
+		}
+	}
+	return false
+}
+
+func editorCompletionRequiresResolveBeforeApply(resolveToken string, primaryTextEdit *brain.CompletionPrimaryTextEdit, additionalTextEdits []core.TextEdit, command *indexerlsp.Command, requiresSafeEdits bool) bool {
+	if strings.TrimSpace(resolveToken) == "" {
+		return false
+	}
+	if command != nil {
+		return true
+	}
+	if len(additionalTextEdits) > 0 {
+		return false
+	}
+	if primaryTextEdit != nil && !requiresSafeEdits {
+		return false
+	}
+	return requiresSafeEdits
+}
+
+func editorCompletionTrustsSideEffects(proofKind string) bool {
+	switch strings.TrimSpace(proofKind) {
+	case "lsp-fallback-member":
+		return false
+	default:
+		return true
 	}
 }
 

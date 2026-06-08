@@ -42,6 +42,14 @@ type dependencyCatalog struct {
 	commandRunner func(name string, args ...string) ([]byte, error)
 }
 
+type dependencyOwnerResolution int
+
+const (
+	dependencyOwnerMissing dependencyOwnerResolution = iota
+	dependencyOwnerUnique
+	dependencyOwnerAmbiguous
+)
+
 func NewDependencyCatalog(root string) *dependencyCatalog {
 	return &dependencyCatalog{
 		root:          root,
@@ -98,23 +106,72 @@ func (c *dependencyCatalog) Suggestions(language, prefix string) []Suggestion {
 }
 
 func (c *dependencyCatalog) ResolveLibraryByOwner(language, owner string) string {
-	owner = strings.ToLower(strings.TrimSpace(owner))
-	if owner == "" {
+	library, status := c.ResolveLibraryByOwnerStatus(language, owner)
+	if status != dependencyOwnerUnique {
 		return ""
 	}
+	return library
+}
 
+func (c *dependencyCatalog) ResolveLibraryByOwnerStatus(language, owner string) (string, dependencyOwnerResolution) {
+	owner = strings.ToLower(strings.TrimSpace(owner))
+	if owner == "" {
+		return "", dependencyOwnerMissing
+	}
+
+	normalizedLanguage := normalizeDependencyLanguage(language)
 	entries := c.entriesForLanguage(language)
+	exactMatches := make(map[string]struct{})
+	ownerMatches := make(map[string]struct{})
 	for _, entry := range entries {
+		if entry.Internal {
+			continue
+		}
 		name := strings.TrimSpace(entry.Name)
 		if name == "" {
 			continue
 		}
 
 		if strings.ToLower(name) == owner {
-			return name
+			exactMatches[name] = struct{}{}
+			continue
+		}
+
+		for _, candidate := range []string{entry.Owner, dependencyEntryOwner(entry, normalizedLanguage)} {
+			if strings.ToLower(strings.TrimSpace(candidate)) == owner {
+				ownerMatches[name] = struct{}{}
+				break
+			}
 		}
 	}
 
+	if len(exactMatches) == 1 {
+		return uniqueDependencyLibraryMatch(exactMatches), dependencyOwnerUnique
+	}
+	if len(exactMatches) > 1 {
+		return "", dependencyOwnerAmbiguous
+	}
+	if len(ownerMatches) == 1 {
+		return uniqueDependencyLibraryMatch(ownerMatches), dependencyOwnerUnique
+	}
+	if len(ownerMatches) > 1 {
+		return "", dependencyOwnerAmbiguous
+	}
+	return "", dependencyOwnerMissing
+}
+
+func (c *dependencyCatalog) OwnerResolutionAmbiguous(language, owner string) bool {
+	_, status := c.ResolveLibraryByOwnerStatus(language, owner)
+	return status == dependencyOwnerAmbiguous
+}
+
+func uniqueDependencyLibraryMatch(matches map[string]struct{}) string {
+	if len(matches) != 1 {
+		return ""
+	}
+	for match := range matches {
+		return match
+	}
 	return ""
 }
 
