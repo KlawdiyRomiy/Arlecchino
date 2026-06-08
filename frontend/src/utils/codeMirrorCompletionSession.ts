@@ -26,6 +26,11 @@ type StableStatusCompletionResultOptions = Omit<
   keepThroughPrefix?: boolean;
 };
 
+type AccessCompletionMetadata = Completion & {
+  __filterText?: string;
+  __insertText?: string;
+};
+
 export type CompletionSessionStatus =
   | "pending"
   | "active"
@@ -150,10 +155,21 @@ export function createCompletionSessionController(): CompletionSessionController
       ) {
         return session;
       }
+      const previousResult =
+        session?.filePath === options.filePath &&
+        session.semanticKey === options.semanticKey
+          ? session.result
+          : undefined;
+      const previousIncomplete =
+        session?.filePath === options.filePath &&
+        session.semanticKey === options.semanticKey
+          ? session.isIncomplete
+          : false;
       session = {
         ...options,
         status: "pending",
-        isIncomplete: false,
+        isIncomplete: previousIncomplete,
+        result: previousResult,
       };
       return session;
     },
@@ -233,6 +249,152 @@ export function stableCompletionResult({
         ...current,
         from: updateFrom,
         to: updateTo,
+        validFor,
+      };
+    },
+    map(current, changes: ChangeDesc) {
+      return {
+        ...current,
+        from: changes.mapPos(current.from, 1),
+        to:
+          current.to === undefined ? undefined : changes.mapPos(current.to, -1),
+      };
+    },
+  };
+}
+
+function accessCompletionSearchValues(option: Completion): string[] {
+  const metadata = option as AccessCompletionMetadata;
+  const values = [
+    metadata.__filterText,
+    option.label,
+    option.displayLabel,
+    typeof option.apply === "string" ? option.apply : undefined,
+    metadata.__insertText,
+  ];
+  const seen = new Set<string>();
+  return values.flatMap((value) => {
+    const normalized = (value || "").trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) {
+      return [];
+    }
+    seen.add(normalized);
+    return [normalized];
+  });
+}
+
+function accessCompletionOptionMatchesPrefix(
+  option: Completion,
+  prefix: string,
+): boolean {
+  const normalizedPrefix = prefix.trim().toLowerCase();
+  if (!normalizedPrefix) {
+    return true;
+  }
+  return accessCompletionSearchValues(option).some((value) =>
+    value.startsWith(normalizedPrefix),
+  );
+}
+
+function filterAccessCompletionOptions(
+  options: readonly Completion[],
+  prefix: string,
+): readonly Completion[] {
+  if (!prefix) {
+    return options;
+  }
+  return options.filter((option) =>
+    accessCompletionOptionMatchesPrefix(option, prefix),
+  );
+}
+
+export function stableAccessCompletionResult({
+  from,
+  options,
+  validFor,
+  semanticKey,
+  readSemanticKey,
+}: StableCompletionResultOptions): CompletionResult {
+  return {
+    from,
+    options,
+    filter: false,
+    update(current, updateFrom, updateTo, context) {
+      if (context.aborted) {
+        return null;
+      }
+      if (readSemanticKey(context) !== semanticKey) {
+        return null;
+      }
+      const completedText = context.state.sliceDoc(updateFrom, updateTo);
+      if (
+        !completionTextMatchesValidFor(
+          validFor,
+          completedText,
+          updateFrom,
+          updateTo,
+          context,
+        )
+      ) {
+        return null;
+      }
+      return {
+        ...current,
+        from: updateFrom,
+        to: updateTo,
+        options: filterAccessCompletionOptions(options, completedText),
+        filter: false,
+        validFor,
+      };
+    },
+    map(current, changes: ChangeDesc) {
+      return {
+        ...current,
+        from: changes.mapPos(current.from, 1),
+        to:
+          current.to === undefined ? undefined : changes.mapPos(current.to, -1),
+      };
+    },
+  };
+}
+
+export function incompleteAccessCompletionResult({
+  from,
+  options,
+  validFor,
+  semanticKey,
+  readSemanticKey,
+}: StableCompletionResultOptions): CompletionResult {
+  return {
+    from,
+    options,
+    filter: false,
+    validFor,
+    update(current, updateFrom, updateTo, context) {
+      if (context.aborted) {
+        return null;
+      }
+      if (readSemanticKey(context) !== semanticKey) {
+        return null;
+      }
+      const completedText = context.state.sliceDoc(updateFrom, updateTo);
+      if (
+        !completionTextMatchesValidFor(
+          validFor,
+          completedText,
+          updateFrom,
+          updateTo,
+          context,
+        )
+      ) {
+        return null;
+      }
+      return {
+        ...current,
+        from: updateFrom,
+        to: updateTo,
+        options: filterAccessCompletionOptions(options, completedText),
+        filter: false,
         validFor,
       };
     },

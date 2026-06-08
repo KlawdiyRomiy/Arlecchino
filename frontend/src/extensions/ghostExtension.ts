@@ -869,24 +869,8 @@ export function ghostExtension(
     {
       key: "Enter",
       run: (view) => {
-        if (completionStatus(view.state) === "active") {
-          const selected = selectedCompletion(view.state);
-          if (isCompletionStatusOnly(selected)) {
-            return true;
-          }
-          if (!selected) {
-            const first = currentCompletions(view.state)[0];
-            if (isCompletionStatusOnly(first || null)) {
-              return true;
-            }
-            if (first) {
-              view.dispatch({ effects: setSelectedCompletion(0) });
-            }
-          }
-          if (acceptCompletion(view)) {
-            clearGhostText(view, false);
-            return true;
-          }
+        if (completionStatus(view.state) !== null) {
+          return false;
         }
         if (ghostState.isVisible) {
           return applyGhostText(view);
