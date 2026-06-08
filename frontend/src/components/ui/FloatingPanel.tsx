@@ -1832,7 +1832,7 @@ export const FloatingPanel = React.forwardRef<
                 onFullscreen();
               }}
               onMouseDown={(e) => e.stopPropagation()}
-              title="Полный экран"
+              title="Fullscreen"
             >
               <Maximize2 size={14} />
             </button>
@@ -1853,7 +1853,7 @@ export const FloatingPanel = React.forwardRef<
                 onPin();
               }}
               onMouseDown={(e) => e.stopPropagation()}
-              title={isPinned ? "Открепить панель" : "Закрепить панель"}
+              title={isPinned ? "Unpin panel" : "Pin panel"}
             >
               <Pin size={14} />
             </button>
@@ -1870,7 +1870,7 @@ export const FloatingPanel = React.forwardRef<
                 onClose();
               }}
               onMouseDown={(e) => e.stopPropagation()}
-              title="Закрыть панель"
+              title="Close panel"
             >
               <X size={14} />
             </button>

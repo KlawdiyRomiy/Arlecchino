@@ -87,7 +87,9 @@ export const BrowserPreview: React.FC<BrowserPreviewProps> = ({
         finalUrl = "http://" + finalUrl;
       }
       if (!isAllowedPreviewUrl(finalUrl, allowedOrigins)) {
-        setUrlWarning("URL не разрешён: только localhost и loopback-адреса.");
+        setUrlWarning(
+          "URL not allowed: only localhost and loopback addresses are supported.",
+        );
         setTimeout(() => setUrlWarning(null), 3000);
         return;
       }

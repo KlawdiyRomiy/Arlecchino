@@ -418,7 +418,7 @@ test("problems panel stays compact by default and expands into split fullscreen 
   expect(dockedBox).not.toBeNull();
 
   await page
-    .locator('[data-testid="panel-problems"] button[title="Полный экран"]')
+    .locator('[data-testid="panel-problems"] button[title="Fullscreen"]')
     .click();
   await nextAnimationFrame(page);
 
@@ -492,7 +492,7 @@ test("problems panel stays compact by default and expands into split fullscreen 
   expect(fullscreenBox?.height ?? 0).toBeGreaterThan(dockedBox?.height ?? 0);
 
   await page
-    .locator('[data-testid="panel-problems"] button[title="Полный экран"]')
+    .locator('[data-testid="panel-problems"] button[title="Fullscreen"]')
     .click();
 
   await expect(root).toHaveAttribute("data-problems-mode", "compact");
@@ -545,7 +545,7 @@ test("problems panel keeps compact, expanded left, and expanded summary regions 
   expect(compactScrollTop).toBeGreaterThan(0);
 
   await page
-    .locator('[data-testid="panel-problems"] button[title="Полный экран"]')
+    .locator('[data-testid="panel-problems"] button[title="Fullscreen"]')
     .click();
 
   await expect(root).toHaveAttribute("data-problems-mode", "expanded");
@@ -591,7 +591,7 @@ test("problems panel fullscreen toggle restores compact layout after ui scale ch
   const panel = page.getByTestId("panel-problems");
   const root = page.getByTestId("problems-panel");
   const fullscreenButton = page.locator(
-    '[data-testid="panel-problems"] button[title="Полный экран"]',
+    '[data-testid="panel-problems"] button[title="Fullscreen"]',
   );
   const scaledUi = 1.2;
 
@@ -647,7 +647,7 @@ test("persisted fullscreen problems panel can restore without an in-memory snaps
   const panel = page.getByTestId("panel-problems");
   const root = page.getByTestId("problems-panel");
   const fullscreenButton = page.locator(
-    '[data-testid="panel-problems"] button[title="Полный экран"]',
+    '[data-testid="panel-problems"] button[title="Fullscreen"]',
   );
 
   await expect(panel).toBeVisible();
@@ -698,7 +698,7 @@ test("expanded problems panel keeps filters visible when warnings filter has no 
 
   const root = page.getByTestId("problems-panel");
   const fullscreenButton = page.locator(
-    '[data-testid="panel-problems"] button[title="Полный экран"]',
+    '[data-testid="panel-problems"] button[title="Fullscreen"]',
   );
   const sidebar = page.getByTestId("problems-expanded-sidebar");
 

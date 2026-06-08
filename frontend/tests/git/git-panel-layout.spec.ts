@@ -396,7 +396,7 @@ test("git panel stays compact by default and expands into split fullscreen works
   expect(preFullscreenBox).not.toBeNull();
 
   await page
-    .locator('[data-testid="panel-git"] button[title="Полный экран"]')
+    .locator('[data-testid="panel-git"] button[title="Fullscreen"]')
     .click();
   await nextAnimationFrame(page);
 
@@ -464,7 +464,7 @@ test("git panel stays compact by default and expands into split fullscreen works
   );
 
   await page
-    .locator('[data-testid="panel-git"] button[title="Полный экран"]')
+    .locator('[data-testid="panel-git"] button[title="Fullscreen"]')
     .click();
 
   await expect(page.getByTestId("git-panel-root")).toHaveCount(1);
@@ -502,7 +502,7 @@ test("git panel keeps list regions scrollable in compact and expanded modes", as
   expect(compactScrollTop).toBeGreaterThan(0);
 
   await page
-    .locator('[data-testid="panel-git"] button[title="Полный экран"]')
+    .locator('[data-testid="panel-git"] button[title="Fullscreen"]')
     .click();
 
   await expect(root).toHaveAttribute("data-git-mode", "expanded");

@@ -791,7 +791,7 @@ test("floating code panel opens fullscreen with shared panel motion", async ({
 
   const motionSamples = await collectReadableFullscreenMotionSamples(page, {
     panelSelector: '[data-testid="panel-code"]',
-    trigger: { kind: "button", title: "Полный экран" },
+    trigger: { kind: "button", title: "Fullscreen" },
   });
 
   if (!motionSamples) {
@@ -993,7 +993,7 @@ test("Git fullscreen restore keeps readable content filling the projected frame"
 
   const motionSamples = await collectReadableFullscreenMotionSamples(page, {
     panelSelector: '[data-testid="panel-git"]',
-    trigger: { kind: "button", title: "Полный экран" },
+    trigger: { kind: "button", title: "Fullscreen" },
   });
 
   if (!motionSamples) {
@@ -1049,7 +1049,7 @@ test("light theme readable layer does not leave a fullscreen trail", async ({
 
   const motionSamples = await collectReadableFullscreenMotionSamples(page, {
     panelSelector: '[data-testid="panel-aiChat"]',
-    trigger: { kind: "button", title: "Полный экран" },
+    trigger: { kind: "button", title: "Fullscreen" },
   });
 
   if (!motionSamples) {
@@ -1068,7 +1068,7 @@ test("light theme readable layer does not leave a fullscreen trail", async ({
     )
     .toBe("false");
 
-  await chatPanel.locator('button[title="Закрыть панель"]').click();
+  await chatPanel.locator('button[title="Close panel"]').click();
   await expect(page.locator('[data-testid="panel-aiChat"]')).toHaveCount(0);
   await expect(page.locator('[data-panel-readable-layer="true"]')).toHaveCount(
     0,
@@ -1489,7 +1489,7 @@ test("snapped floating panel uses slide-only motion for open and close", async (
     )
     .toBe("settled");
 
-  await panel.locator('button[title="Закрыть панель"]').click();
+  await panel.locator('button[title="Close panel"]').click();
   await nextAnimationFrame(page);
 
   if (panelPosition === "left" || panelPosition === "right") {
@@ -1605,7 +1605,7 @@ for (const position of ["left", "right", "top", "bottom"] as const) {
 
       document
         .querySelector<HTMLButtonElement>(
-          `${panelSelector} button[title="Закрыть панель"]`,
+          `${panelSelector} button[title="Close panel"]`,
         )
         ?.click();
 
@@ -1852,7 +1852,7 @@ test("snapped right chat panel close keeps frozen bounds while the slot collapse
 
     document
       .querySelector<HTMLButtonElement>(
-        `${panelSelector} button[title="Закрыть панель"]`,
+        `${panelSelector} button[title="Close panel"]`,
       )
       ?.click();
 
@@ -1975,7 +1975,7 @@ test("snapped top panel close keeps its size with adjacent panels mounted", asyn
 
     document
       .querySelector<HTMLButtonElement>(
-        `${panelSelector} button[title="Закрыть панель"]`,
+        `${panelSelector} button[title="Close panel"]`,
       )
       ?.click();
 
@@ -2068,7 +2068,7 @@ test("snapped panel keeps slide motion while indexing and diagnostics preload ar
 
   const panelPosition = await panel.getAttribute("data-panel-position");
   await waitForPanelSettled(page, "panel-git");
-  await panel.locator('button[title="Закрыть панель"]').click();
+  await panel.locator('button[title="Close panel"]').click();
 
   await expectSnappedPanelCloseMotion(
     page,
@@ -2132,7 +2132,7 @@ test("snapped panel close control matches shortcut exit geometry", async ({
     );
     expect(closeControlStart).not.toBeNull();
 
-    await panel.locator('button[title="Закрыть панель"]').click();
+    await panel.locator('button[title="Close panel"]').click();
     await expectSnappedPanelCloseMotion(
       page,
       '[data-testid="panel-git"]',
@@ -2191,7 +2191,7 @@ test("close control stays above the snapped resize rail", async ({ page }) => {
   await expect(panel).toBeVisible();
   await waitForPanelSettled(page, "panel-git");
 
-  const closeButton = panel.locator('button[title="Закрыть панель"]');
+  const closeButton = panel.locator('button[title="Close panel"]');
   const closeButtonBox = await closeButton.boundingBox();
   expect(closeButtonBox).not.toBeNull();
   if (!closeButtonBox) {
@@ -2939,7 +2939,7 @@ test("fullscreen floating panel closes without a sideways slide under ui scale",
   await openGitPanel(page);
   await expect(panel).toBeVisible();
 
-  await panel.locator('button[title="Полный экран"]').click();
+  await panel.locator('button[title="Fullscreen"]').click();
   await expect
     .poll(async () => {
       const frame = await readPanelFrame(page, '[data-testid="panel-git"]');
@@ -2947,7 +2947,7 @@ test("fullscreen floating panel closes without a sideways slide under ui scale",
     })
     .toBe(0);
 
-  await panel.locator('button[title="Закрыть панель"]').click();
+  await panel.locator('button[title="Close panel"]').click();
   await nextAnimationFrame(page);
 
   const exitFrame = await readPanelFrame(page, '[data-testid="panel-git"]');
@@ -3080,7 +3080,7 @@ test("problems shortcut falls back to floating when every side is occupied", asy
   expect(Math.abs(openingFrame?.translateX ?? 0)).toBeLessThanOrEqual(1);
   expect(Math.abs(openingFrame?.translateY ?? 0)).toBeLessThanOrEqual(1);
 
-  await panel.locator('button[title="Закрыть панель"]').click();
+  await panel.locator('button[title="Close panel"]').click();
   await nextAnimationFrame(page);
   await page.waitForTimeout(80);
 
@@ -3868,9 +3868,7 @@ test("mouse drag relocation preserves smooth snapped close", async ({
   );
   await waitForPanelSettled(page, "panel-explorer");
 
-  await relocatedExplorerPanel
-    .locator('button[title="Закрыть панель"]')
-    .click();
+  await relocatedExplorerPanel.locator('button[title="Close panel"]').click();
   await expectSnappedPanelCloseMotion(
     page,
     '[data-testid="panel-explorer"]',
@@ -4210,7 +4208,7 @@ test("panel remembered snapped side survives close and reopen when free", async 
   await page
     .locator('[data-testid="panel-explorer"]')
     .last()
-    .locator('button[title="Закрыть панель"]')
+    .locator('button[title="Close panel"]')
     .click();
   await expect(page.locator('[data-testid="panel-explorer"]')).toHaveCount(0);
 
@@ -4264,9 +4262,7 @@ test("held shortcut relocation preserves smooth snapped close", async ({
   );
   await waitForPanelSettled(page, "panel-explorer");
 
-  await relocatedExplorerPanel
-    .locator('button[title="Закрыть панель"]')
-    .click();
+  await relocatedExplorerPanel.locator('button[title="Close panel"]').click();
   await expectSnappedPanelCloseMotion(
     page,
     '[data-testid="panel-explorer"]',

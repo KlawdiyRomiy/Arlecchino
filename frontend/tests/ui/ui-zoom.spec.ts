@@ -633,7 +633,7 @@ test("fullscreen problems panel tracks ui scale changes without clipping or shri
 
   const problemsPanel = page.getByTestId("panel-problems");
   await expect(problemsPanel).toBeVisible();
-  await problemsPanel.getByTitle("Полный экран").click();
+  await problemsPanel.getByTitle("Fullscreen").click();
 
   const readPanelGeometry = () =>
     page.evaluate(() => {

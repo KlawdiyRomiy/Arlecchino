@@ -1307,10 +1307,10 @@ test("TUI Git and Problems fullscreen panels fill the panel workspace", async ({
 
   const gitPanel = page.getByTestId("panel-git").last();
   await expect(gitPanel).toBeVisible();
-  await gitPanel.locator('button[title="Полный экран"]').click();
+  await gitPanel.locator('button[title="Fullscreen"]').click();
   await expectPanelFillsWorkspace(page, "panel-git");
 
-  await gitPanel.locator('button[title="Полный экран"]').click();
+  await gitPanel.locator('button[title="Fullscreen"]').click();
   await page.evaluate(() => {
     window.runtime.EventsEmit("ide:panel:open", {
       panel: "problems",
@@ -1321,6 +1321,6 @@ test("TUI Git and Problems fullscreen panels fill the panel workspace", async ({
 
   const problemsPanel = page.getByTestId("panel-problems").last();
   await expect(problemsPanel).toBeVisible();
-  await problemsPanel.locator('button[title="Полный экран"]').click();
+  await problemsPanel.locator('button[title="Fullscreen"]').click();
   await expectPanelFillsWorkspace(page, "panel-problems");
 });

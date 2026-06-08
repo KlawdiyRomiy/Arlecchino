@@ -1645,7 +1645,7 @@ test("Option+W closes fullscreen Git, Problems, and Terminal panels", async ({
   await page.getByRole("menuitem", { name: /Terminal/ }).click();
   const terminalPanel = page.getByTestId("panel-terminal");
   await expect(terminalPanel).toBeVisible();
-  await terminalPanel.locator('button[title="Полный экран"]').click();
+  await terminalPanel.locator('button[title="Fullscreen"]').click();
   const terminalFrame = await terminalPanel.boundingBox();
   expect(terminalFrame?.width ?? 0).toBeGreaterThan(900);
 
