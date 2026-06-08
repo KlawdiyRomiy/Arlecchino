@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -81,10 +82,11 @@ type completionFlight struct {
 }
 
 type CompletionTrigger struct {
-	TriggerKind         int
-	TriggerCharacter    string
-	RetryInvokedOnEmpty bool
-	AccessMemberIntent  bool
+	TriggerKind              int
+	TriggerCharacter         string
+	RetryInvokedOnEmpty      bool
+	RetryInvokedOnIncomplete bool
+	AccessMemberIntent       bool
 }
 
 const (
@@ -92,6 +94,8 @@ const (
 	completionTriggerCharacter  = 2
 	completionTriggerIncomplete = 3
 )
+
+var completionSnippetPlaceholderPattern = regexp.MustCompile(`\$\{[0-9]+(?::[^}]*)?\}|\$[0-9]+`)
 
 var ErrNoConfig = errors.New("lsp server config not found")
 
@@ -115,6 +119,7 @@ func (t CompletionTrigger) normalized() CompletionTrigger {
 
 type startFailure struct {
 	err     string
+	reason  string
 	at      time.Time
 	retryAt time.Time
 }
@@ -192,6 +197,7 @@ type CompletionItem struct {
 	Command             *Command        `json:"command,omitempty"`
 	Data                any             `json:"data,omitempty"`
 	Tags                []int           `json:"tags,omitempty"`
+	FallbackOnly        bool            `json:"-"`
 }
 
 type LabelDetails struct {
@@ -225,10 +231,12 @@ type CompletionItemDefaults struct {
 }
 
 type CompletionResponse struct {
-	Items                 []CompletionItem
-	IsIncomplete          bool
-	UsedInvokedFallback   bool
-	InvokedFallbackReason string
+	Items                         []CompletionItem
+	IsIncomplete                  bool
+	UsedInvokedFallback           bool
+	InvokedFallbackReason         string
+	InvokedFallbackRejected       bool
+	InvokedFallbackRejectedReason string
 }
 
 type CompletionProviderCapability struct {
@@ -457,6 +465,7 @@ func (m *Manager) recordStartFailure(language string, err error) {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return
 	}
+	reason := completionFallbackRejectedReason(err)
 	backoff := m.startBackoff
 	if errors.Is(err, context.DeadlineExceeded) {
 		backoff = m.startTimeoutGap
@@ -468,10 +477,23 @@ func (m *Manager) recordStartFailure(language string, err error) {
 	m.startMu.Lock()
 	m.startFailures[language] = startFailure{
 		err:     err.Error(),
+		reason:  reason,
 		at:      now,
 		retryAt: now.Add(backoff),
 	}
 	m.startMu.Unlock()
+}
+
+func startFailureError(language string, failure startFailure) error {
+	message := fmt.Sprintf("recent start failure for language %s: %s", language, failure.err)
+	switch failure.reason {
+	case "timeout":
+		return fmt.Errorf("%w: %s", context.DeadlineExceeded, message)
+	case "canceled":
+		return fmt.Errorf("%w: %s", context.Canceled, message)
+	default:
+		return fmt.Errorf("%s", message)
+	}
 }
 
 func (m *Manager) clearStartFailure(language string) {
@@ -693,7 +715,7 @@ func (m *Manager) ensureStartedWithContext(ctx context.Context, language string)
 	}
 
 	if failure, ok := m.activeStartFailure(language); ok {
-		return nil, fmt.Errorf("recent start failure for language %s: %s", language, failure.err)
+		return nil, startFailureError(language, failure)
 	}
 
 	ch, shouldStart := m.beginStart(language)
@@ -710,7 +732,7 @@ func (m *Manager) ensureStartedWithContext(ctx context.Context, language string)
 			return server, nil
 		}
 		if failure, ok := m.activeStartFailure(language); ok {
-			return nil, fmt.Errorf("recent start failure for language %s: %s", language, failure.err)
+			return nil, startFailureError(language, failure)
 		}
 		return nil, fmt.Errorf("server not started for language: %s", language)
 	}
@@ -1044,7 +1066,7 @@ func (m *Manager) CompleteWithTriggerResult(ctx context.Context, language, fileP
 
 	version := m.docVersion(language, filePath)
 	epoch := m.completionCacheEpoch()
-	cacheKey := fmt.Sprintf("%d|%s|%s|%d|%d|%d|%d|%s|%t|%t", epoch, language, filePath, line, column, version, trigger.TriggerKind, trigger.TriggerCharacter, trigger.RetryInvokedOnEmpty, trigger.AccessMemberIntent)
+	cacheKey := fmt.Sprintf("%d|%s|%s|%d|%d|%d|%d|%s|%t|%t|%t", epoch, language, filePath, line, column, version, trigger.TriggerKind, trigger.TriggerCharacter, trigger.RetryInvokedOnEmpty, trigger.RetryInvokedOnIncomplete, trigger.AccessMemberIntent)
 	if result, ok := m.getCompletionCache(cacheKey); ok {
 		return result.response, result.err
 	}
@@ -1097,7 +1119,13 @@ func shouldCacheCompletionResult(response CompletionResponse, err error, trigger
 	if response.UsedInvokedFallback {
 		return false
 	}
+	if response.InvokedFallbackRejected {
+		return false
+	}
 	if trigger.RetryInvokedOnEmpty && len(response.Items) == 0 {
+		return false
+	}
+	if trigger.RetryInvokedOnIncomplete && response.IsIncomplete {
 		return false
 	}
 	return true
@@ -2580,31 +2608,315 @@ func (s *Server) completeWithContext(ctx context.Context, filePath string, line,
 	}
 	trigger = trigger.normalized()
 	originalTrigger := trigger
-	if trigger.TriggerKind == completionTriggerCharacter && !trigger.AccessMemberIntent && !s.supportsCompletionTrigger(trigger.TriggerCharacter) {
+	unsupportedTriggerFallback := false
+	if trigger.TriggerKind == completionTriggerCharacter && !s.supportsCompletionTrigger(trigger.TriggerCharacter) {
 		trigger = CompletionTrigger{TriggerKind: completionTriggerInvoked}
+		unsupportedTriggerFallback = originalTrigger.AccessMemberIntent
 	}
 
 	response, err := s.completeOnceWithContext(ctx, filePath, line, column, trigger)
+	if err == nil && unsupportedTriggerFallback {
+		response.Items = markCompletionItemsFallbackOnly(response.Items)
+		response.UsedInvokedFallback = true
+		response.InvokedFallbackReason = "unsupported-trigger"
+	}
 	if err != nil && originalTrigger.RetryInvokedOnEmpty && trigger.TriggerKind == completionTriggerCharacter && ctx.Err() == nil {
 		retryResponse, retryErr := s.completeOnceWithContext(ctx, filePath, line, column, CompletionTrigger{TriggerKind: completionTriggerInvoked})
 		if retryErr == nil {
+			retryResponse.Items = markCompletionItemsFallbackOnly(retryResponse.Items)
 			retryResponse.UsedInvokedFallback = true
 			retryResponse.InvokedFallbackReason = "error"
 			return retryResponse, nil
 		}
 	}
-	if err != nil || len(response.Items) > 0 || !originalTrigger.RetryInvokedOnEmpty || trigger.TriggerKind != completionTriggerCharacter {
+	if err != nil || trigger.TriggerKind != completionTriggerCharacter {
 		return response, err
 	}
+	if len(response.Items) == 0 {
+		if !originalTrigger.RetryInvokedOnEmpty {
+			return response, nil
+		}
+		if ctx.Err() != nil {
+			return response, ctx.Err()
+		}
+		retryResponse, retryErr := s.completeOnceWithContext(ctx, filePath, line, column, CompletionTrigger{TriggerKind: completionTriggerInvoked})
+		if retryErr == nil {
+			retryResponse.Items = markCompletionItemsFallbackOnly(retryResponse.Items)
+			retryResponse.UsedInvokedFallback = true
+			retryResponse.InvokedFallbackReason = "empty"
+		}
+		return retryResponse, retryErr
+	}
+
+	if !response.IsIncomplete || !originalTrigger.RetryInvokedOnIncomplete {
+		return response, nil
+	}
 	if ctx.Err() != nil {
-		return response, ctx.Err()
+		response.InvokedFallbackRejected = true
+		response.InvokedFallbackRejectedReason = completionFallbackRejectedReason(ctx.Err())
+		return response, nil
 	}
 	retryResponse, retryErr := s.completeOnceWithContext(ctx, filePath, line, column, CompletionTrigger{TriggerKind: completionTriggerInvoked})
-	if retryErr == nil {
-		retryResponse.UsedInvokedFallback = true
-		retryResponse.InvokedFallbackReason = "empty"
+	if retryErr != nil {
+		response.InvokedFallbackRejected = true
+		response.InvokedFallbackRejectedReason = completionFallbackRejectedReason(retryErr)
+		return response, nil
 	}
-	return retryResponse, retryErr
+	if len(retryResponse.Items) == 0 {
+		response.InvokedFallbackRejected = true
+		response.InvokedFallbackRejectedReason = "empty"
+		return response, nil
+	}
+	if !completionResponsesHaveLabelOverlap(response, retryResponse) {
+		response.InvokedFallbackRejected = true
+		response.InvokedFallbackRejectedReason = "disjoint"
+		return response, nil
+	}
+	if !completionResponseIsMemberSuperset(response, retryResponse) {
+		response.InvokedFallbackRejected = true
+		response.InvokedFallbackRejectedReason = "not-superset"
+		return response, nil
+	}
+	return mergeCompletionFallbackResponses(response, retryResponse, "incomplete"), nil
+}
+
+func completionFallbackRejectedReason(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case err != nil:
+		return "error"
+	default:
+		return ""
+	}
+}
+
+func completionResponsesHaveLabelOverlap(left, right CompletionResponse) bool {
+	leftLabels := completionItemLabelSet(left.Items)
+	if len(leftLabels) == 0 {
+		return len(right.Items) > 0
+	}
+	for _, item := range right.Items {
+		if _, ok := leftLabels[completionItemLabelKey(item)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func completionResponseIsMemberSuperset(triggerResponse, fallbackResponse CompletionResponse) bool {
+	if len(triggerResponse.Items) == 0 {
+		return len(fallbackResponse.Items) > 0
+	}
+	fallbackItems := completionItemsByLabel(fallbackResponse.Items)
+	if len(fallbackItems) == 0 {
+		return false
+	}
+	checked := 0
+	for _, triggerItem := range triggerResponse.Items {
+		label := completionItemLabelKey(triggerItem)
+		if label == "" {
+			continue
+		}
+		checked++
+		if !completionItemsContainCompatibleMember(fallbackItems[label], triggerItem) {
+			return false
+		}
+	}
+	return checked > 0
+}
+
+func mergeCompletionFallbackResponses(triggerResponse, fallbackResponse CompletionResponse, reason string) CompletionResponse {
+	merged := fallbackResponse
+	merged.UsedInvokedFallback = true
+	merged.InvokedFallbackReason = reason
+	merged.InvokedFallbackRejected = false
+	merged.InvokedFallbackRejectedReason = ""
+	merged.IsIncomplete = fallbackResponse.IsIncomplete
+	triggerItems := completionItemsByLabel(triggerResponse.Items)
+	seen := completionItemLabelSet(merged.Items)
+	for i, item := range merged.Items {
+		key := completionItemLabelKey(item)
+		if key == "" {
+			continue
+		}
+		if triggerItem, ok := completionCompatibleMember(triggerItems[key], item); ok {
+			merged.Items[i] = mergeCompletionItem(triggerItem, item)
+			merged.Items[i].FallbackOnly = false
+			continue
+		}
+		merged.Items[i].FallbackOnly = true
+	}
+	for _, item := range triggerResponse.Items {
+		key := completionItemLabelKey(item)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged.Items = append(merged.Items, item)
+	}
+	return merged
+}
+
+func markCompletionItemsFallbackOnly(items []CompletionItem) []CompletionItem {
+	for i := range items {
+		items[i].FallbackOnly = true
+	}
+	return items
+}
+
+func completionItemsByLabel(items []CompletionItem) map[string][]CompletionItem {
+	byLabel := make(map[string][]CompletionItem, len(items))
+	for _, item := range items {
+		label := completionItemLabelKey(item)
+		if label == "" {
+			continue
+		}
+		byLabel[label] = append(byLabel[label], item)
+	}
+	return byLabel
+}
+
+func completionItemsContainCompatibleMember(items []CompletionItem, target CompletionItem) bool {
+	_, ok := completionCompatibleMember(items, target)
+	return ok
+}
+
+func completionCompatibleMember(items []CompletionItem, target CompletionItem) (CompletionItem, bool) {
+	for _, item := range items {
+		if completionItemsHaveCompatibleMemberIdentity(target, item) {
+			return item, true
+		}
+	}
+	return CompletionItem{}, false
+}
+
+func completionItemsHaveCompatibleMemberIdentity(left, right CompletionItem) bool {
+	if completionItemLabelKey(left) != completionItemLabelKey(right) {
+		return false
+	}
+	if left.Kind != 0 && right.Kind != 0 && left.Kind != right.Kind {
+		return false
+	}
+	if !completionItemOptionalIdentityMatches(completionItemDetailIdentity(left), completionItemDetailIdentity(right)) {
+		return false
+	}
+	if !completionItemOptionalIdentityMatches(completionItemDataIdentity(left), completionItemDataIdentity(right)) {
+		return false
+	}
+	if !completionItemOptionalIdentityMatches(completionItemAdditionalTextEditsIdentity(left), completionItemAdditionalTextEditsIdentity(right)) {
+		return false
+	}
+	if !completionItemOptionalIdentityMatches(completionItemCommandIdentity(left.Command), completionItemCommandIdentity(right.Command)) {
+		return false
+	}
+	return completionItemComparableInsertShape(left) == completionItemComparableInsertShape(right)
+}
+
+func completionItemOptionalIdentityMatches(left, right string) bool {
+	return left == "" || right == "" || left == right
+}
+
+func completionItemDetailIdentity(item CompletionItem) string {
+	parts := []string{strings.TrimSpace(item.Detail)}
+	if item.LabelDetails != nil {
+		parts = append(parts, strings.TrimSpace(item.LabelDetails.Detail), strings.TrimSpace(item.LabelDetails.Description))
+	}
+	return strings.ToLower(strings.Join(nonEmptyStrings(parts), "\x00"))
+}
+
+func completionItemDataIdentity(item CompletionItem) string {
+	if item.Data == nil {
+		return ""
+	}
+	raw, err := json.Marshal(item.Data)
+	if err != nil || len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	return string(raw)
+}
+
+func completionItemAdditionalTextEditsIdentity(item CompletionItem) string {
+	if len(item.AdditionalTextEdits) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(item.AdditionalTextEdits))
+	for _, edit := range item.AdditionalTextEdits {
+		parts = append(parts, completionTextEditIdentity(edit))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "\x00")
+}
+
+func completionTextEditIdentity(edit TextEdit) string {
+	return strings.Join([]string{
+		strconv.Itoa(edit.Range.Start.Line),
+		strconv.Itoa(edit.Range.Start.Character),
+		strconv.Itoa(edit.Range.End.Line),
+		strconv.Itoa(edit.Range.End.Character),
+		edit.NewText,
+	}, ":")
+}
+
+func completionItemCommandIdentity(command *Command) string {
+	if command == nil {
+		return ""
+	}
+	raw, err := json.Marshal(command.Arguments)
+	if err != nil || len(raw) == 0 || string(raw) == "null" {
+		raw = nil
+	}
+	return strings.Join([]string{
+		strings.TrimSpace(command.Title),
+		strings.TrimSpace(command.Command),
+		string(raw),
+	}, "\x00")
+}
+
+func completionItemComparableInsertShape(item CompletionItem) string {
+	insertText := strings.TrimSpace(item.TextEditText)
+	if insertText == "" && len(item.TextEdit) > 0 {
+		insertText = strings.TrimSpace(extractTextEditText(item.TextEdit))
+	}
+	if insertText == "" {
+		insertText = strings.TrimSpace(item.InsertText)
+	}
+	if insertText == "" {
+		insertText = strings.TrimSpace(item.Label)
+	}
+	return strings.ToLower(completionSnippetPlaceholderPattern.ReplaceAllString(insertText, ""))
+}
+
+func nonEmptyStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		result = append(result, value)
+	}
+	return result
+}
+
+func completionItemLabelSet(items []CompletionItem) map[string]struct{} {
+	labels := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		key := completionItemLabelKey(item)
+		if key == "" {
+			continue
+		}
+		labels[key] = struct{}{}
+	}
+	return labels
+}
+
+func completionItemLabelKey(item CompletionItem) string {
+	return strings.ToLower(strings.TrimSpace(item.Label))
 }
 
 func (s *Server) completeOnceWithContext(ctx context.Context, filePath string, line, column int, trigger CompletionTrigger) (CompletionResponse, error) {
@@ -2813,9 +3125,7 @@ func mergeCompletionItem(base, resolved CompletionItem) CompletionItem {
 	if len(resolved.TextEdit) == 0 {
 		resolved.TextEdit = base.TextEdit
 	}
-	if len(resolved.AdditionalTextEdits) == 0 {
-		resolved.AdditionalTextEdits = base.AdditionalTextEdits
-	}
+	resolved.AdditionalTextEdits = mergeCompletionTextEdits(base.AdditionalTextEdits, resolved.AdditionalTextEdits)
 	if len(resolved.CommitCharacters) == 0 {
 		resolved.CommitCharacters = base.CommitCharacters
 	}
@@ -2829,6 +3139,44 @@ func mergeCompletionItem(base, resolved CompletionItem) CompletionItem {
 		resolved.Tags = base.Tags
 	}
 	return resolved
+}
+
+func mergeCompletionTextEdits(base, resolved []TextEdit) []TextEdit {
+	if len(base) == 0 {
+		return resolved
+	}
+	if len(resolved) == 0 {
+		return base
+	}
+	merged := make([]TextEdit, 0, len(base)+len(resolved))
+	seen := make(map[string]struct{}, len(base)+len(resolved))
+	for _, edit := range base {
+		key := completionTextEditKey(edit)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, edit)
+	}
+	for _, edit := range resolved {
+		key := completionTextEditKey(edit)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, edit)
+	}
+	return merged
+}
+
+func completionTextEditKey(edit TextEdit) string {
+	return fmt.Sprintf("%d:%d:%d:%d:%s",
+		edit.Range.Start.Line,
+		edit.Range.Start.Character,
+		edit.Range.End.Line,
+		edit.Range.End.Character,
+		edit.NewText,
+	)
 }
 
 func extractTextEditText(raw json.RawMessage) string {

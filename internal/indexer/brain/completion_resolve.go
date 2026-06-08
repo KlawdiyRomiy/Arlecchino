@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	completionResolveTokenTTL = 5 * time.Second
+	completionResolveTokenTTL = 60 * time.Second
 	maxCompletionResolveItems = 512
 )
 
@@ -136,7 +136,7 @@ func (b *PredictionBrain) ResolveCompletionItem(ctx context.Context, req Complet
 }
 
 func completionResolveRequestMatches(entry completionResolveEntry, req CompletionResolveRequest) bool {
-	if entry.documentVersion > 0 && req.DocumentVersion != entry.documentVersion {
+	if entry.documentVersion > 0 && req.DocumentVersion < entry.documentVersion {
 		return false
 	}
 	if entry.requestID != "" && strings.TrimSpace(req.RequestID) != entry.requestID {
