@@ -8,6 +8,7 @@ import {
 import { usePerformanceStore } from "../stores/performanceStore";
 import { useGitStore } from "../stores/gitStore";
 import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
+import { resetIndexingProgressState } from "../hooks/useIndexingProgress";
 
 type ProjectAppBridge = {
   LSPPreloadProjectDiagnostics?: (projectPath: string) => Promise<unknown>;
@@ -97,7 +98,7 @@ const preloadStateIdleForProject = (
   projectPath,
 });
 
-const isProjectDiagnosticsPreloadEnabled = () => false;
+const isProjectDiagnosticsPreloadEnabled = () => true;
 
 const normalizeGeneration = (generation?: number) => {
   if (typeof generation !== "number" || !Number.isFinite(generation)) {
@@ -368,6 +369,7 @@ export const resetProjectBoundStores = () => {
   latestProjectRuntime = { generation: 0, projectPath: null };
   currentProjectScope = { generation: 0, projectPath: null };
   setDiagnosticsPreloadState(preloadStateIdle);
+  resetIndexingProgressState();
   useDiagnosticsStore.getState().reset();
   useGitStore.getState().setProjectPath("");
   usePerformanceStore.getState().resetTransientBudget();

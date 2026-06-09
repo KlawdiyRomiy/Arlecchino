@@ -1,9 +1,6 @@
 package adapters
 
 import (
-	"bufio"
-	"bytes"
-	"os"
 	"regexp"
 	"strings"
 
@@ -45,30 +42,25 @@ func (a *PHPAdapter) Extensions() []string {
 }
 
 func (a *PHPAdapter) ParseFile(path string) ([]core.Symbol, []core.Edge, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	return a.ParseContent(path, content)
+	return a.parseLines(path, fileLineIterator(path))
 }
 
 func (a *PHPAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []core.Edge, error) {
+	return a.parseLines(path, contentLineIterator(content))
+}
+
+func (a *PHPAdapter) parseLines(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
 	var symbols []core.Symbol
 	var edges []core.Edge
 
-	scanner := bufio.NewScanner(bytes.NewReader(content))
 	var namespace string
 	var currentClass string
 	var currentClassID string
-	lineNum := 0
 
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-
+	err := iterate(func(lineNum int, line string) error {
 		if m := a.namespaceRegex.FindStringSubmatch(line); m != nil {
 			namespace = m[1]
-			continue
+			return nil
 		}
 
 		if m := a.classRegex.FindStringSubmatch(line); m != nil {
@@ -84,7 +76,7 @@ func (a *PHPAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 			}
 			currentClassID = sym.ID
 			symbols = append(symbols, sym)
-			continue
+			return nil
 		}
 
 		if m := a.interfaceRegex.FindStringSubmatch(line); m != nil {
@@ -100,7 +92,7 @@ func (a *PHPAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 			}
 			currentClassID = sym.ID
 			symbols = append(symbols, sym)
-			continue
+			return nil
 		}
 
 		if m := a.traitRegex.FindStringSubmatch(line); m != nil {
@@ -116,7 +108,7 @@ func (a *PHPAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 			}
 			currentClassID = sym.ID
 			symbols = append(symbols, sym)
-			continue
+			return nil
 		}
 
 		if m := a.methodRegex.FindStringSubmatch(line); m != nil {
@@ -130,7 +122,7 @@ func (a *PHPAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 				ParentID:  currentClassID,
 				Source:    core.SourceIndex,
 			})
-			continue
+			return nil
 		}
 
 		if currentClass == "" {
@@ -144,7 +136,7 @@ func (a *PHPAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 					Line:      lineNum,
 					Source:    core.SourceIndex,
 				})
-				continue
+				return nil
 			}
 		}
 
@@ -159,7 +151,7 @@ func (a *PHPAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 				ParentID:  currentClassID,
 				Source:    core.SourceIndex,
 			})
-			continue
+			return nil
 		}
 
 		if m := a.constRegex.FindStringSubmatch(line); m != nil {
@@ -173,7 +165,7 @@ func (a *PHPAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 				ParentID:  currentClassID,
 				Source:    core.SourceIndex,
 			})
-			continue
+			return nil
 		}
 
 		if m := a.useRegex.FindStringSubmatch(line); m != nil && currentClass == "" {
@@ -187,9 +179,10 @@ func (a *PHPAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 				})
 			}
 		}
-	}
+		return nil
+	})
 
-	return symbols, edges, scanner.Err()
+	return symbols, edges, err
 }
 
 func phpUseTargets(value string) []string {

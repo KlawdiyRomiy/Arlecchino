@@ -260,7 +260,7 @@ func (s *Scheduler) processFile(job Job) error {
 
 	symbols, edges, err := adapter.ParseFile(job.FilePath)
 	if err != nil {
-		return err
+		return s.saveFileMeta(job.FilePath, job.Language, false)
 	}
 
 	return s.store.ReplaceFileIndex(job.FilePath, job.Language, symbols, edges)

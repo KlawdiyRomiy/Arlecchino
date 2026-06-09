@@ -1,9 +1,6 @@
 package adapters
 
 import (
-	"bufio"
-	"bytes"
-	"os"
 	"regexp"
 	"strings"
 
@@ -69,14 +66,14 @@ func (a *VueAdapter) extractComponentName(filePath string) string {
 }
 
 func (a *VueAdapter) ParseFile(path string) ([]core.Symbol, []core.Edge, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	return a.ParseContent(path, content)
+	return a.parseLines(path, fileLineIterator(path))
 }
 
 func (a *VueAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []core.Edge, error) {
+	return a.parseLines(path, contentLineIterator(content))
+}
+
+func (a *VueAdapter) parseLines(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
 	var symbols []core.Symbol
 	var edges []core.Edge
 
@@ -92,34 +89,30 @@ func (a *VueAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 	}
 	symbols = append(symbols, componentSym)
 
-	scanner := bufio.NewScanner(bytes.NewReader(content))
-	lineNum := 0
 	inScript := false
 	inScriptSetup := false
 	inMethods := false
 	inComputed := false
 	braceDepth := 0
 
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
+	err := iterate(func(lineNum int, line string) error {
 		trimmed := strings.TrimSpace(line)
 
 		if a.scriptTagRegex.MatchString(line) {
 			inScript = true
 			inScriptSetup = strings.Contains(line, "setup")
-			continue
+			return nil
 		}
 		if trimmed == "</script>" {
 			inScript = false
 			inScriptSetup = false
 			inMethods = false
 			inComputed = false
-			continue
+			return nil
 		}
 
 		if !inScript {
-			continue
+			return nil
 		}
 
 		braceDepth += strings.Count(line, "{") - strings.Count(line, "}")
@@ -132,13 +125,13 @@ func (a *VueAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 				FilePath:   path,
 				Line:       lineNum,
 			})
-			continue
+			return nil
 		}
 
 		if m := a.componentName.FindStringSubmatch(line); m != nil {
 			componentSym.Name = m[1]
 			componentSym.Line = lineNum
-			continue
+			return nil
 		}
 
 		if inScriptSetup {
@@ -154,7 +147,7 @@ func (a *VueAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 					Source:    core.SourceIndex,
 					Extra:     map[string]string{"reactive": "ref"},
 				})
-				continue
+				return nil
 			}
 
 			if m := a.reactiveRegex.FindStringSubmatch(line); m != nil {
@@ -169,7 +162,7 @@ func (a *VueAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 					Source:    core.SourceIndex,
 					Extra:     map[string]string{"reactive": "reactive"},
 				})
-				continue
+				return nil
 			}
 
 			if m := a.composableRegex.FindStringSubmatch(line); m != nil {
@@ -180,7 +173,7 @@ func (a *VueAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 					FilePath:   path,
 					Line:       lineNum,
 				})
-				continue
+				return nil
 			}
 
 			if strings.HasPrefix(trimmed, "function ") || strings.HasPrefix(trimmed, "const ") && strings.Contains(line, "= (") || strings.Contains(trimmed, "async function") {
@@ -197,16 +190,16 @@ func (a *VueAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 						Source:    core.SourceIndex,
 					})
 				}
-				continue
+				return nil
 			}
 		} else {
 			if strings.Contains(line, "methods:") && strings.Contains(line, "{") {
 				inMethods = true
-				continue
+				return nil
 			}
 			if strings.Contains(line, "computed:") && strings.Contains(line, "{") {
 				inComputed = true
-				continue
+				return nil
 			}
 
 			if inMethods && braceDepth > 1 {
@@ -241,7 +234,8 @@ func (a *VueAdapter) ParseContent(path string, content []byte) ([]core.Symbol, [
 				}
 			}
 		}
-	}
+		return nil
+	})
 
-	return symbols, edges, scanner.Err()
+	return symbols, edges, err
 }

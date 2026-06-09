@@ -114,6 +114,15 @@ function clearTimer(timer: ReturnType<typeof setTimeout> | null) {
   if (timer) clearTimeout(timer);
 }
 
+function scheduleFailsafe() {
+  clearTimer(failsafeTimer);
+  failsafeTimer = setTimeout(() => {
+    emit((prev) =>
+      prev.phase === "idle" ? { ...prev, phase: "revealed" } : prev,
+    );
+  }, FAILSAFE_MS);
+}
+
 function clearProgressFlushTimer() {
   clearTimer(progressFlushTimer);
   progressFlushTimer = null;
@@ -254,12 +263,12 @@ EventsOn("indexer:error", (data?: IndexerEventPayload) => {
   if (!matchesCurrentProjectSession(data)) {
     return;
   }
-  notifyIndexingError(data);
   if (data?.terminal !== true) {
     recordIndexerBudget(data);
     return;
   }
 
+  notifyIndexingError(data);
   recordIndexerBudget({ ...(data ?? {}), queueDepth: 0 });
   clearAllTimers();
   emit({ phase: "revealed", current: 0, total: 0, percentage: 0 });
@@ -278,13 +287,16 @@ EventsOn("indexer:completed", (data?: IndexerEventPayload) => {
 });
 
 // Failsafe: if no indexing starts within 2s, reveal content
-failsafeTimer = setTimeout(() => {
-  emit((prev) =>
-    prev.phase === "idle" ? { ...prev, phase: "revealed" } : prev,
-  );
-}, FAILSAFE_MS);
+scheduleFailsafe();
 
 // --- React hook ---
+
+export function resetIndexingProgressState() {
+  clearAllTimers();
+  recordIndexerBudget();
+  emit({ phase: "idle", current: 0, total: 0, percentage: 0 });
+  scheduleFailsafe();
+}
 
 export function useIndexingProgress(): IndexingState {
   return useSyncExternalStore(subscribe, getSnapshot);

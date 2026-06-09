@@ -1,9 +1,6 @@
 package adapters
 
 import (
-	"bufio"
-	"bytes"
-	"os"
 	"regexp"
 	"strings"
 
@@ -47,18 +44,17 @@ func (a *GoAdapter) Extensions() []string {
 }
 
 func (a *GoAdapter) ParseFile(path string) ([]core.Symbol, []core.Edge, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	return a.ParseContent(path, content)
+	return a.parseLines(path, fileLineIterator(path))
 }
 
 func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []core.Edge, error) {
+	return a.parseLines(path, contentLineIterator(content))
+}
+
+func (a *GoAdapter) parseLines(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
 	var symbols []core.Symbol
 	var edges []core.Edge
 
-	scanner := bufio.NewScanner(bytes.NewReader(content))
 	var packageName string
 	var inImportBlock bool
 	var inConstBlock bool
@@ -66,11 +62,8 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 	var currentStruct string
 	var currentStructID string
 	var braceDepth int
-	lineNum := 0
 
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
+	err := iterate(func(lineNum int, line string) error {
 		trimmed := strings.TrimSpace(line)
 
 		if m := a.packageRegex.FindStringSubmatch(line); m != nil {
@@ -83,17 +76,17 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 				Line:     lineNum,
 				Source:   core.SourceIndex,
 			})
-			continue
+			return nil
 		}
 
 		if trimmed == "import (" {
 			inImportBlock = true
-			continue
+			return nil
 		}
 		if inImportBlock {
 			if trimmed == ")" {
 				inImportBlock = false
-				continue
+				return nil
 			}
 			if m := a.importRegex.FindStringSubmatch(line); m != nil {
 				edges = append(edges, core.Edge{
@@ -104,7 +97,7 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 					Line:       lineNum,
 				})
 			}
-			continue
+			return nil
 		}
 
 		if strings.HasPrefix(trimmed, "import \"") {
@@ -117,17 +110,17 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 					Line:       lineNum,
 				})
 			}
-			continue
+			return nil
 		}
 
 		if trimmed == "const (" {
 			inConstBlock = true
-			continue
+			return nil
 		}
 		if inConstBlock {
 			if trimmed == ")" {
 				inConstBlock = false
-				continue
+				return nil
 			}
 			if m := a.constRegex.FindStringSubmatch(trimmed); m != nil && m[1] != "_" {
 				symbols = append(symbols, core.Symbol{
@@ -140,7 +133,7 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 					Source:    core.SourceIndex,
 				})
 			}
-			continue
+			return nil
 		}
 
 		if m := a.methodRegex.FindStringSubmatch(line); m != nil {
@@ -154,7 +147,7 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 				Source:    core.SourceIndex,
 				Extra:     map[string]string{"receiver": m[1]},
 			})
-			continue
+			return nil
 		}
 
 		if m := a.funcRegex.FindStringSubmatch(line); m != nil {
@@ -167,7 +160,7 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 				Line:      lineNum,
 				Source:    core.SourceIndex,
 			})
-			continue
+			return nil
 		}
 
 		if m := a.structRegex.FindStringSubmatch(line); m != nil {
@@ -185,7 +178,7 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 			symbols = append(symbols, sym)
 			inStructBlock = true
 			braceDepth = 1
-			continue
+			return nil
 		}
 
 		if inStructBlock {
@@ -194,7 +187,7 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 				inStructBlock = false
 				currentStruct = ""
 				currentStructID = ""
-				continue
+				return nil
 			}
 
 			if m := a.fieldRegex.FindStringSubmatch(line); m != nil {
@@ -214,7 +207,7 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 					})
 				}
 			}
-			continue
+			return nil
 		}
 
 		if m := a.interfaceRegex.FindStringSubmatch(line); m != nil {
@@ -227,7 +220,7 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 				Line:      lineNum,
 				Source:    core.SourceIndex,
 			})
-			continue
+			return nil
 		}
 
 		if m := a.typeRegex.FindStringSubmatch(line); m != nil && !strings.Contains(line, "struct") && !strings.Contains(line, "interface") {
@@ -240,7 +233,7 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 				Line:      lineNum,
 				Source:    core.SourceIndex,
 			})
-			continue
+			return nil
 		}
 
 		if m := a.varRegex.FindStringSubmatch(line); m != nil {
@@ -256,7 +249,8 @@ func (a *GoAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []
 		}
 
 		_ = currentStructID
-	}
 
-	return symbols, edges, scanner.Err()
+		return nil
+	})
+	return symbols, edges, err
 }

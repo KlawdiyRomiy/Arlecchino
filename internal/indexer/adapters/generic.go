@@ -1,16 +1,11 @@
 package adapters
 
 import (
-	"bufio"
-	"bytes"
-	"os"
 	"regexp"
 	"strings"
 
 	"arlecchino/internal/indexer/core"
 )
-
-const genericDependencyMaxBytes = 512 << 10
 
 type GenericDependencyAdapter struct {
 	language   string
@@ -33,27 +28,18 @@ func (a *GenericDependencyAdapter) Extensions() []string {
 }
 
 func (a *GenericDependencyAdapter) ParseFile(path string) ([]core.Symbol, []core.Edge, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	return a.ParseContent(path, content)
+	return a.parseLines(path, fileLineIterator(path))
 }
 
 func (a *GenericDependencyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []core.Edge, error) {
-	if len(content) > genericDependencyMaxBytes {
-		return nil, nil, nil
-	}
+	return a.parseLines(path, contentLineIterator(content))
+}
 
+func (a *GenericDependencyAdapter) parseLines(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
 	var edges []core.Edge
 	seen := make(map[string]struct{}, 8)
-	scanner := bufio.NewScanner(bytes.NewReader(content))
-	scanner.Buffer(make([]byte, 0, 64*1024), genericDependencyMaxBytes)
 
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
+	err := iterate(func(lineNum int, line string) error {
 		for _, ref := range genericDependencyRefs(a.language, line) {
 			key := string(ref.kind) + "\x00" + ref.target
 			if _, ok := seen[key]; ok {
@@ -68,9 +54,10 @@ func (a *GenericDependencyAdapter) ParseContent(path string, content []byte) ([]
 				Line:       lineNum,
 			})
 		}
-	}
+		return nil
+	})
 
-	return nil, edges, scanner.Err()
+	return nil, edges, err
 }
 
 type genericDependencyRef struct {

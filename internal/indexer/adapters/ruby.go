@@ -1,9 +1,6 @@
 package adapters
 
 import (
-	"bufio"
-	"bytes"
-	"os"
 	"regexp"
 	"strings"
 
@@ -72,26 +69,24 @@ func (a *RubyAdapter) extractNamespace(filePath string) string {
 }
 
 func (a *RubyAdapter) ParseFile(path string) ([]core.Symbol, []core.Edge, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	return a.ParseContent(path, content)
+	return a.parseLines(path, fileLineIterator(path))
 }
 
 func (a *RubyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []core.Edge, error) {
+	return a.parseLines(path, contentLineIterator(content))
+}
+
+func (a *RubyAdapter) parseLines(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
 	var symbols []core.Symbol
 	var edges []core.Edge
 
 	namespace := a.extractNamespace(path)
 
-	scanner := bufio.NewScanner(bytes.NewReader(content))
 	var scopeStack []struct {
 		name     string
 		kind     string
 		symbolID string
 	}
-	lineNum := 0
 	methodDepth := 0
 
 	currentScope := func() string {
@@ -115,9 +110,7 @@ func (a *RubyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, 
 		return scopeStack[len(scopeStack)-1].symbolID
 	}
 
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
+	err := iterate(func(lineNum int, line string) error {
 		trimmed := strings.TrimSpace(line)
 
 		if trimmed == "end" {
@@ -126,7 +119,7 @@ func (a *RubyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, 
 			} else if len(scopeStack) > 0 {
 				scopeStack = scopeStack[:len(scopeStack)-1]
 			}
-			continue
+			return nil
 		}
 
 		if m := a.requireRegex.FindStringSubmatch(line); m != nil {
@@ -137,7 +130,7 @@ func (a *RubyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, 
 				FilePath:   path,
 				Line:       lineNum,
 			})
-			continue
+			return nil
 		}
 
 		if m := a.moduleRegex.FindStringSubmatch(line); m != nil {
@@ -157,7 +150,7 @@ func (a *RubyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, 
 				kind     string
 				symbolID string
 			}{m[1], "module", sym.ID})
-			continue
+			return nil
 		}
 
 		if m := a.classRegex.FindStringSubmatch(line); m != nil {
@@ -187,7 +180,7 @@ func (a *RubyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, 
 				kind     string
 				symbolID string
 			}{m[1], "class", sym.ID})
-			continue
+			return nil
 		}
 
 		if m := a.classMethod.FindStringSubmatch(line); m != nil {
@@ -203,7 +196,7 @@ func (a *RubyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, 
 				Extra:     map[string]string{"static": "true"},
 			})
 			methodDepth++
-			continue
+			return nil
 		}
 
 		if m := a.methodRegex.FindStringSubmatch(line); m != nil {
@@ -222,7 +215,7 @@ func (a *RubyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, 
 				Source:    core.SourceIndex,
 			})
 			methodDepth++
-			continue
+			return nil
 		}
 
 		if m := a.attrRegex.FindStringSubmatch(line); m != nil {
@@ -244,7 +237,7 @@ func (a *RubyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, 
 					})
 				}
 			}
-			continue
+			return nil
 		}
 
 		if m := a.constantRegex.FindStringSubmatch(line); m != nil {
@@ -258,7 +251,7 @@ func (a *RubyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, 
 				ParentID:  currentParentID(),
 				Source:    core.SourceIndex,
 			})
-			continue
+			return nil
 		}
 
 		if m := a.includeRegex.FindStringSubmatch(line); m != nil {
@@ -269,7 +262,7 @@ func (a *RubyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, 
 				FilePath:   path,
 				Line:       lineNum,
 			})
-			continue
+			return nil
 		}
 
 		if m := a.extendRegex.FindStringSubmatch(line); m != nil {
@@ -280,9 +273,10 @@ func (a *RubyAdapter) ParseContent(path string, content []byte) ([]core.Symbol, 
 				FilePath:   path,
 				Line:       lineNum,
 			})
-			continue
+			return nil
 		}
-	}
+		return nil
+	})
 
-	return symbols, edges, scanner.Err()
+	return symbols, edges, err
 }

@@ -1,9 +1,6 @@
 package adapters
 
 import (
-	"bufio"
-	"bytes"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -52,38 +49,38 @@ func (a *LaravelAdapter) Extensions() []string {
 }
 
 func (a *LaravelAdapter) ParseFile(path string) ([]core.Symbol, []core.Edge, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	return a.ParseContent(path, content)
+	return a.parseLines(path, fileLineIterator(path))
 }
 
 func (a *LaravelAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []core.Edge, error) {
+	return a.parseLines(path, contentLineIterator(content))
+}
+
+func (a *LaravelAdapter) parseLines(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
 	if strings.HasSuffix(path, ".blade.php") {
-		return a.parseBlade(path, content)
+		return a.parseBlade(path, iterate)
 	}
 
 	if a.isRouteFile(path) {
-		return a.parseRouteFile(path, content)
+		return a.parseRouteFile(path, iterate)
 	}
 
 	if a.isController(path) {
-		return a.parseController(path, content)
+		return a.parseController(path, iterate)
 	}
 
 	if a.isModel(path) {
-		return a.parseModel(path, content)
+		return a.parseModel(path, iterate)
 	}
 
 	if a.isLivewireComponent(path) {
-		return a.parseLivewire(path, content)
+		return a.parseLivewire(path, iterate)
 	}
 
-	return a.PHPAdapter.ParseContent(path, content)
+	return a.PHPAdapter.parseLines(path, iterate)
 }
 
-func (a *LaravelAdapter) parseBlade(path string, content []byte) ([]core.Symbol, []core.Edge, error) {
+func (a *LaravelAdapter) parseBlade(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
 	var symbols []core.Symbol
 	var edges []core.Edge
 
@@ -97,13 +94,7 @@ func (a *LaravelAdapter) parseBlade(path string, content []byte) ([]core.Symbol,
 		Source:   core.SourceIndex,
 	})
 
-	scanner := bufio.NewScanner(bytes.NewReader(content))
-	lineNum := 0
-
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-
+	err := iterate(func(lineNum int, line string) error {
 		if m := a.bladeExtends.FindStringSubmatch(line); m != nil {
 			edges = append(edges, core.Edge{
 				FromSymbol: viewName,
@@ -133,24 +124,19 @@ func (a *LaravelAdapter) parseBlade(path string, content []byte) ([]core.Symbol,
 				Line:       lineNum,
 			})
 		}
-	}
+		return nil
+	})
 
-	return symbols, edges, nil
+	return symbols, edges, err
 }
 
-func (a *LaravelAdapter) parseRouteFile(path string, content []byte) ([]core.Symbol, []core.Edge, error) {
-	symbols, edges, err := a.PHPAdapter.ParseContent(path, content)
+func (a *LaravelAdapter) parseRouteFile(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
+	symbols, edges, err := a.PHPAdapter.parseLines(path, iterate)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	scanner := bufio.NewScanner(bytes.NewReader(content))
-	lineNum := 0
-
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-
+	err = iterate(func(lineNum int, line string) error {
 		if m := a.routeRegex.FindStringSubmatch(line); m != nil {
 			method := strings.ToUpper(m[1])
 			uri := m[2]
@@ -168,13 +154,14 @@ func (a *LaravelAdapter) parseRouteFile(path string, content []byte) ([]core.Sym
 				},
 			})
 		}
-	}
+		return nil
+	})
 
-	return symbols, edges, nil
+	return symbols, edges, err
 }
 
-func (a *LaravelAdapter) parseController(path string, content []byte) ([]core.Symbol, []core.Edge, error) {
-	symbols, edges, err := a.PHPAdapter.ParseContent(path, content)
+func (a *LaravelAdapter) parseController(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
+	symbols, edges, err := a.PHPAdapter.parseLines(path, iterate)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -188,8 +175,8 @@ func (a *LaravelAdapter) parseController(path string, content []byte) ([]core.Sy
 	return symbols, edges, nil
 }
 
-func (a *LaravelAdapter) parseModel(path string, content []byte) ([]core.Symbol, []core.Edge, error) {
-	symbols, edges, err := a.PHPAdapter.ParseContent(path, content)
+func (a *LaravelAdapter) parseModel(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
+	symbols, edges, err := a.PHPAdapter.parseLines(path, iterate)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -200,29 +187,17 @@ func (a *LaravelAdapter) parseModel(path string, content []byte) ([]core.Symbol,
 		}
 	}
 
-	fillableRegex := regexp.MustCompile(`protected\s+\$fillable\s*=\s*\[([^\]]+)\]`)
-	if m := fillableRegex.FindSubmatch(content); m != nil {
-		fields := string(m[1])
-		for _, field := range strings.Split(fields, ",") {
-			field = strings.Trim(strings.TrimSpace(field), "'\"")
-			if field != "" {
-				symbols = append(symbols, core.Symbol{
-					Name:     field,
-					Kind:     core.SymbolKindField,
-					Language: "php-laravel",
-					FilePath: path,
-					Source:   core.SourceIndex,
-					Extra:    map[string]string{"fillable": "true"},
-				})
-			}
-		}
+	fillableSymbols, fillableErr := a.extractFillableSymbols(path, iterate)
+	if fillableErr != nil {
+		return nil, nil, fillableErr
 	}
+	symbols = append(symbols, fillableSymbols...)
 
 	return symbols, edges, nil
 }
 
-func (a *LaravelAdapter) parseLivewire(path string, content []byte) ([]core.Symbol, []core.Edge, error) {
-	symbols, edges, err := a.PHPAdapter.ParseContent(path, content)
+func (a *LaravelAdapter) parseLivewire(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
+	symbols, edges, err := a.PHPAdapter.parseLines(path, iterate)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -235,6 +210,70 @@ func (a *LaravelAdapter) parseLivewire(path string, content []byte) ([]core.Symb
 	}
 
 	return symbols, edges, nil
+}
+
+func (a *LaravelAdapter) extractFillableSymbols(path string, iterate indexLineIterator) ([]core.Symbol, error) {
+	var symbols []core.Symbol
+	var fields strings.Builder
+	inFillable := false
+	startLine := 0
+
+	appendFields := func(lineNum int) {
+		for _, field := range strings.Split(fields.String(), ",") {
+			field = strings.Trim(strings.TrimSpace(field), "'\"")
+			if field != "" {
+				symbols = append(symbols, core.Symbol{
+					Name:     field,
+					Kind:     core.SymbolKindField,
+					Language: "php-laravel",
+					FilePath: path,
+					Line:     lineNum,
+					Source:   core.SourceIndex,
+					Extra:    map[string]string{"fillable": "true"},
+				})
+			}
+		}
+		fields.Reset()
+		startLine = 0
+	}
+
+	err := iterate(func(lineNum int, line string) error {
+		fragment := line
+		if !inFillable {
+			idx := strings.Index(fragment, "$fillable")
+			if idx < 0 {
+				return nil
+			}
+			fragment = fragment[idx:]
+			open := strings.Index(fragment, "[")
+			if open < 0 {
+				return nil
+			}
+			inFillable = true
+			startLine = lineNum
+			fragment = fragment[open+1:]
+		}
+
+		if close := strings.Index(fragment, "]"); close >= 0 {
+			fields.WriteString(fragment[:close])
+			appendFields(lineNum)
+			inFillable = false
+			return nil
+		}
+
+		if fields.Len() > 0 {
+			fields.WriteByte('\n')
+		}
+		fields.WriteString(fragment)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if inFillable && fields.Len() > 0 {
+		appendFields(startLine)
+	}
+	return symbols, nil
 }
 
 func (a *LaravelAdapter) isRouteFile(path string) bool {

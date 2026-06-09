@@ -129,10 +129,11 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 		if err != nil {
 			e.batchFailed.Store(true)
 			e.notifyIndexing(IndexingEvent{
-				Type:    IndexingFailed,
-				Current: int(done),
-				Total:   int(total),
-				Error:   err.Error(),
+				Type:     IndexingFailed,
+				Current:  int(done),
+				Total:    int(total),
+				Error:    err.Error(),
+				Terminal: true,
 			})
 			e.completeActiveBatchIfReady(bid)
 			return
@@ -413,18 +414,15 @@ func (e *Engine) OnFileCreated(path string, content []byte) {
 	e.recordInventoryFromContent(path, content)
 	if len(content) > foregroundIndexMaxBytes {
 		e.speculative.Remove(path)
-		return
+	} else {
+		e.updateSpeculative(path, content)
 	}
-	e.updateSpeculative(path, content)
 	e.IndexFile(path, 10)
 }
 
 func (e *Engine) OnFileSaved(path string) {
 	e.speculative.Remove(path)
 	e.recordInventory(path)
-	if !e.shouldIndexForeground(path) {
-		return
-	}
 	e.IndexFile(path, 10)
 }
 
@@ -444,14 +442,6 @@ func (e *Engine) OnFileChanged(path string, content []byte) {
 	if _, err := os.Stat(path); err != nil {
 		e.recordInventoryFromContent(path, content)
 	}
-}
-
-func (e *Engine) shouldIndexForeground(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return info.Size() <= foregroundIndexMaxBytes
 }
 
 // updateSpeculative parses content and adds symbols to speculative store

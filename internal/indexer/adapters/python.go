@@ -1,9 +1,6 @@
 package adapters
 
 import (
-	"bufio"
-	"bytes"
-	"os"
 	"regexp"
 	"strings"
 
@@ -78,30 +75,26 @@ func (a *PythonAdapter) extractNamespace(filePath string) string {
 }
 
 func (a *PythonAdapter) ParseFile(path string) ([]core.Symbol, []core.Edge, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	return a.ParseContent(path, content)
+	return a.parseLines(path, fileLineIterator(path))
 }
 
 func (a *PythonAdapter) ParseContent(path string, content []byte) ([]core.Symbol, []core.Edge, error) {
+	return a.parseLines(path, contentLineIterator(content))
+}
+
+func (a *PythonAdapter) parseLines(path string, iterate indexLineIterator) ([]core.Symbol, []core.Edge, error) {
 	var symbols []core.Symbol
 	var edges []core.Edge
 
 	namespace := a.extractNamespace(path)
 
-	scanner := bufio.NewScanner(bytes.NewReader(content))
 	var currentClass string
 	var currentClassID string
 	var lastDecorator string
 	var inInitMethod bool
 	var seenProperties = make(map[string]bool)
-	lineNum := 0
 
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
+	err := iterate(func(lineNum int, line string) error {
 		trimmed := strings.TrimSpace(line)
 
 		if m := a.decoratorRegex.FindStringSubmatch(trimmed); m != nil {
@@ -114,7 +107,7 @@ func (a *PythonAdapter) ParseContent(path string, content []byte) ([]core.Symbol
 				Line:     lineNum,
 				Source:   core.SourceIndex,
 			})
-			continue
+			return nil
 		}
 
 		if m := a.importRegex.FindStringSubmatch(trimmed); m != nil {
@@ -125,7 +118,7 @@ func (a *PythonAdapter) ParseContent(path string, content []byte) ([]core.Symbol
 				FilePath:   path,
 				Line:       lineNum,
 			})
-			continue
+			return nil
 		}
 
 		if m := a.fromImport.FindStringSubmatch(trimmed); m != nil {
@@ -136,7 +129,7 @@ func (a *PythonAdapter) ParseContent(path string, content []byte) ([]core.Symbol
 				FilePath:   path,
 				Line:       lineNum,
 			})
-			continue
+			return nil
 		}
 
 		if m := a.classRegex.FindStringSubmatch(trimmed); m != nil {
@@ -155,7 +148,7 @@ func (a *PythonAdapter) ParseContent(path string, content []byte) ([]core.Symbol
 			lastDecorator = ""
 			inInitMethod = false
 			seenProperties = make(map[string]bool)
-			continue
+			return nil
 		}
 
 		if currentClass == "" {
@@ -174,7 +167,7 @@ func (a *PythonAdapter) ParseContent(path string, content []byte) ([]core.Symbol
 					Extra:    extra,
 				})
 				lastDecorator = ""
-				continue
+				return nil
 			}
 		}
 
@@ -201,7 +194,7 @@ func (a *PythonAdapter) ParseContent(path string, content []byte) ([]core.Symbol
 				})
 				inInitMethod = methodName == "__init__"
 				lastDecorator = ""
-				continue
+				return nil
 			}
 
 			if m := a.typeHintRegex.FindStringSubmatch(line); m != nil {
@@ -221,7 +214,7 @@ func (a *PythonAdapter) ParseContent(path string, content []byte) ([]core.Symbol
 						Extra:     map[string]string{"type": propType},
 					})
 				}
-				continue
+				return nil
 			}
 
 			if inInitMethod {
@@ -259,7 +252,8 @@ func (a *PythonAdapter) ParseContent(path string, content []byte) ([]core.Symbol
 			currentClass = ""
 			currentClassID = ""
 		}
-	}
 
-	return symbols, edges, scanner.Err()
+		return nil
+	})
+	return symbols, edges, err
 }

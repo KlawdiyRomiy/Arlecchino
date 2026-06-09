@@ -330,13 +330,22 @@ func loadRootGitIgnoreMatcher(root string) gitignore.Matcher {
 	defer file.Close()
 
 	var patterns []gitignore.Pattern
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadString('\n')
+		if line != "" {
+			line = strings.TrimRight(line, "\r\n")
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+				patterns = append(patterns, gitignore.ParsePattern(line, nil))
+			}
 		}
-		patterns = append(patterns, gitignore.ParsePattern(line, nil))
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			break
+		}
 	}
 	if len(patterns) == 0 {
 		return nil
