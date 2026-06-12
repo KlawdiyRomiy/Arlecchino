@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -493,6 +494,9 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 				return
 			default:
 				if err := coreEngine.IndexProjectContext(projectCtx); err != nil {
+					if errors.Is(err, context.Canceled) {
+						return
+					}
 					a.emitEvent("indexer:error", map[string]any{
 						"projectPath": path,
 						"sessionId":   session.ID,
@@ -534,6 +538,7 @@ func (a *App) openProjectInSession(session *ProjectRuntimeSession, path string) 
 			"sessionId":   session.ID,
 		})
 		a.emitLSPDiagnosticsStatusForSession(session.ID, path, projectGeneration, "", "", "ready", "LSP diagnostics manager is ready")
+		a.startProjectDiagnosticsPreloadForSession(session, path, projectGeneration)
 	} else {
 		a.emitLSPDiagnosticsStatusForSession(session.ID, path, projectGeneration, "", "", "unavailable", "LSP diagnostics manager is not available")
 	}
@@ -804,7 +809,25 @@ func (a *App) RestartLSPServer(language string) (bool, error) {
 	if manager == nil {
 		return false, nil
 	}
-	return manager.ForceRestart(language)
+	session := a.activeProjectSession()
+	projectPath := a.currentProjectPath()
+	generation := a.activeProjectGeneration()
+	sessionID := ""
+	if session != nil {
+		sessionID = session.ID
+		projectPath = session.currentProjectPath()
+		generation = session.projectGeneration.Load()
+	}
+	a.emitLSPDiagnosticsStatusForSession(sessionID, projectPath, generation, language, "", "unavailable", "LSP diagnostics are restarting; retained diagnostics may be stale.")
+	restarted, err := manager.ForceRestart(language)
+	if err != nil {
+		a.emitLSPDiagnosticsStatusForSession(sessionID, projectPath, generation, language, "", "error", err.Error())
+		return restarted, err
+	}
+	if restarted {
+		a.emitLSPDiagnosticsStatusForSession(sessionID, projectPath, generation, language, "", "ready", "LSP diagnostics manager is ready")
+	}
+	return restarted, nil
 }
 
 // GetDevToolsStatus returns installation status of development tools (PHP, Go, Node, etc.)

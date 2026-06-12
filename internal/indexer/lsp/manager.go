@@ -52,6 +52,7 @@ type Manager struct {
 	diagnostics          map[string]map[string][]Diagnostic
 	diagnosticSeq        uint64
 	diagnosticSeen       map[string]uint64
+	transientCloseClears map[string]time.Time
 	onDiagnostics        func(language, filePath string, diagnostics []Diagnostic)
 	rootPath             string
 }
@@ -325,6 +326,11 @@ type FileRename struct {
 	NewURI string `json:"newUri"`
 }
 
+type DiagnosticsPublicationTarget struct {
+	Language string
+	FilePath string
+}
+
 type Command struct {
 	Title     string `json:"title,omitempty"`
 	Command   string `json:"command"`
@@ -361,11 +367,14 @@ func NewManager(rootPath string) *Manager {
 		completionWait:       500 * time.Millisecond,
 		diagnostics:          make(map[string]map[string][]Diagnostic),
 		diagnosticSeen:       make(map[string]uint64),
+		transientCloseClears: make(map[string]time.Time),
 		rootPath:             rootPath,
 	}
 }
 
 const diagnosticsPublishPollInterval = 25 * time.Millisecond
+const transientCloseDiagnosticsClearSuppressTTL = 2 * time.Second
+const transientCloseDiagnosticsClearMaxEntries = 2048
 
 func (m *Manager) SetDiagnosticsCallback(callback func(language, filePath string, diagnostics []Diagnostic)) {
 	m.diagnosticsMu.Lock()
@@ -641,6 +650,7 @@ func (m *Manager) ResetRuntimeState(languages []string, forgetOpenDocs bool) []s
 	if len(resolved) == 0 {
 		resolved = m.configuredLanguages()
 		m.clearCompletionCache()
+		m.clearAllTransientCloseDiagnosticsClears()
 		m.startMu.Lock()
 		m.startFailures = make(map[string]startFailure)
 		m.noConfigLogged = make(map[string]bool)
@@ -652,6 +662,7 @@ func (m *Manager) ResetRuntimeState(languages []string, forgetOpenDocs bool) []s
 			m.mu.Unlock()
 			m.documentMu.Unlock()
 		}
+		m.clearDiagnosticsForLanguages(resolved)
 		return resolved
 	}
 	m.startMu.Lock()
@@ -840,7 +851,6 @@ func (m *Manager) Stop(language string) error {
 	delete(m.servers, language)
 	m.mu.Unlock()
 	m.forceMarkLanguageClosed(language)
-	m.clearDiagnosticsForLanguages([]string{language})
 	m.clearCompletionCacheForLanguage(language)
 
 	return server.shutdown()
@@ -862,7 +872,6 @@ func (m *Manager) cleanupServer(language string, server *Server) {
 	m.mu.Unlock()
 	if shouldShutdown {
 		m.forceMarkLanguageClosed(closeLang)
-		m.clearDiagnosticsForLanguages([]string{closeLang})
 		m.clearCompletionCacheForLanguage(closeLang)
 		if err := server.shutdown(); err != nil {
 			log.Printf("[LSP-MGR] shutdown failed lang=%s err=%v", closeLang, err)
@@ -892,6 +901,7 @@ func (m *Manager) StopAll() {
 	m.diagnostics = make(map[string]map[string][]Diagnostic)
 	m.diagnosticSeq = 0
 	m.diagnosticSeen = make(map[string]uint64)
+	m.transientCloseClears = make(map[string]time.Time)
 	m.onDiagnostics = nil
 	m.diagnosticsMu.Unlock()
 
@@ -1265,6 +1275,7 @@ func (m *Manager) DidOpenWithContext(ctx context.Context, language, filePath, co
 		return ctx.Err()
 	default:
 	}
+	m.clearTransientCloseDiagnosticsClear(language, filePath)
 
 	m.documentMu.Lock()
 	defer m.documentMu.Unlock()
@@ -1388,6 +1399,7 @@ func (m *Manager) DidChangeWithContext(ctx context.Context, language, filePath s
 		return ctx.Err()
 	default:
 	}
+	m.clearTransientCloseDiagnosticsClear(language, filePath)
 
 	m.documentMu.Lock()
 	defer m.documentMu.Unlock()
@@ -1445,7 +1457,6 @@ func (m *Manager) DidChangeWithContext(ctx context.Context, language, filePath s
 func (m *Manager) DidClose(language, filePath string) error {
 	resolvedLanguage, ok := m.resolveConfiguredLanguage(language)
 	if !ok {
-		m.clearDiagnostics(language, filePath)
 		return nil
 	}
 	language = resolvedLanguage
@@ -1458,9 +1469,8 @@ func (m *Manager) DidClose(language, filePath string) error {
 	m.mu.RUnlock()
 
 	if !ok {
-		m.clearDiagnosticsForLanguages([]string{language})
 		m.forceMarkLanguageClosed(language)
-		m.clearCompletionCacheForFile(language, filePath)
+		m.clearCompletionCacheForLanguage(language)
 		return nil
 	}
 
@@ -1472,7 +1482,6 @@ func (m *Manager) DidClose(language, filePath string) error {
 
 	decision := m.prepareDocUserClose(language, filePath)
 	if !decision.known {
-		m.clearDiagnostics(language, filePath)
 		m.clearCompletionCacheForFile(language, filePath)
 		return nil
 	}
@@ -1480,12 +1489,12 @@ func (m *Manager) DidClose(language, filePath string) error {
 		return nil
 	}
 
+	m.suppressTransientCloseDiagnosticsClear(language, filePath)
 	if err := server.DidClose(filePath); err != nil {
 		m.cleanupServer(language, server)
 		return err
 	}
 	m.commitDocUserClose(language, filePath)
-	m.clearDiagnostics(language, filePath)
 	m.clearCompletionCacheForFile(language, filePath)
 	m.scheduleIdleStop(language)
 	return nil
@@ -1514,8 +1523,7 @@ func (m *Manager) DidCloseTransient(language, filePath string) error {
 	m.mu.RUnlock()
 
 	if !ok {
-		m.clearDiagnosticsForLanguages([]string{language})
-		m.forceMarkLanguageClosed(language)
+		m.forceMarkDocClosed(language, filePath)
 		m.clearCompletionCacheForFile(language, filePath)
 		return nil
 	}
@@ -1524,12 +1532,12 @@ func (m *Manager) DidCloseTransient(language, filePath string) error {
 		m.clearCompletionCacheForFile(language, filePath)
 		return nil
 	}
+	m.suppressTransientCloseDiagnosticsClear(language, filePath)
 	if err := server.DidClose(filePath); err != nil {
 		m.cleanupServer(language, server)
 		return err
 	}
 	m.commitDocTransientClose(language, filePath)
-	m.clearDiagnostics(language, filePath)
 	m.clearCompletionCacheForFile(language, filePath)
 	m.scheduleIdleStop(language)
 	return nil
@@ -1636,6 +1644,10 @@ func (m *Manager) DidRenameFiles(files []FileRename) {
 		return
 	}
 
+	m.remapDiagnosticsForRenames(files)
+	m.remapOpenDocsForRenames(files)
+	m.clearCompletionCache()
+
 	m.mu.RLock()
 	servers := make([]*Server, 0, len(m.servers))
 	for _, server := range m.servers {
@@ -1650,6 +1662,150 @@ func (m *Manager) DidRenameFiles(files []FileRename) {
 			log.Printf("[LSP-MGR] didRenameFiles ignored: %v", err)
 		}
 	}
+}
+
+func (m *Manager) PruneDiagnosticsForPath(pathPrefix string) {
+	pathPrefix = filepath.Clean(strings.TrimSpace(pathPrefix))
+	if pathPrefix == "." || pathPrefix == "" {
+		return
+	}
+
+	type prunedDiagnostic struct {
+		language string
+		filePath string
+	}
+	pruned := make([]prunedDiagnostic, 0)
+	m.diagnosticsMu.Lock()
+	callback := m.onDiagnostics
+	for language, langDiagnostics := range m.diagnostics {
+		for filePath := range langDiagnostics {
+			if !isSameOrChildPath(filePath, pathPrefix) {
+				continue
+			}
+			delete(langDiagnostics, filePath)
+			delete(m.diagnosticSeen, DiagnosticsPublicationKey(language, filePath))
+			m.clearTransientCloseDiagnosticsClearLocked(language, filePath)
+			m.diagnosticSeq++
+			pruned = append(pruned, prunedDiagnostic{language: language, filePath: filePath})
+		}
+		if len(langDiagnostics) == 0 {
+			delete(m.diagnostics, language)
+		}
+	}
+	m.diagnosticsMu.Unlock()
+
+	if callback != nil {
+		for _, item := range pruned {
+			callback(item.language, item.filePath, nil)
+		}
+	}
+}
+
+func (m *Manager) remapDiagnosticsForRenames(files []FileRename) {
+	type renamePair struct {
+		oldPath string
+		newPath string
+	}
+	pairs := make([]renamePair, 0, len(files))
+	for _, file := range files {
+		oldPath := filepath.Clean(fileURIToPath(file.OldURI))
+		newPath := filepath.Clean(fileURIToPath(file.NewURI))
+		if oldPath == "." || newPath == "." || oldPath == "" || newPath == "" || oldPath == newPath {
+			continue
+		}
+		pairs = append(pairs, renamePair{oldPath: oldPath, newPath: newPath})
+	}
+	if len(pairs) == 0 {
+		return
+	}
+
+	m.diagnosticsMu.Lock()
+	for language, langDiagnostics := range m.diagnostics {
+		nextDiagnostics := make(map[string][]Diagnostic, len(langDiagnostics))
+		for filePath, diagnostics := range langDiagnostics {
+			nextPath := filepath.Clean(filePath)
+			for _, pair := range pairs {
+				if remapped, ok := remapPathPrefix(nextPath, pair.oldPath, pair.newPath); ok {
+					nextPath = remapped
+				}
+			}
+			nextDiagnostics[nextPath] = cloneDiagnostics(diagnostics)
+		}
+		m.diagnostics[language] = nextDiagnostics
+	}
+
+	nextSeen := make(map[string]uint64, len(m.diagnosticSeen))
+	for key, seq := range m.diagnosticSeen {
+		language, filePath, ok := splitDiagnosticsPublicationKey(key)
+		if !ok {
+			nextSeen[key] = seq
+			continue
+		}
+		nextPath := filepath.Clean(filePath)
+		for _, pair := range pairs {
+			if remapped, ok := remapPathPrefix(nextPath, pair.oldPath, pair.newPath); ok {
+				nextPath = remapped
+			}
+		}
+		nextSeen[DiagnosticsPublicationKey(language, nextPath)] = seq
+	}
+	m.diagnosticSeen = nextSeen
+
+	if len(m.transientCloseClears) > 0 {
+		nextSuppressions := make(map[string]time.Time, len(m.transientCloseClears))
+		for key, until := range m.transientCloseClears {
+			language, filePath, ok := splitDiagnosticsPublicationKey(key)
+			if !ok {
+				nextSuppressions[key] = until
+				continue
+			}
+			nextPath := filepath.Clean(filePath)
+			for _, pair := range pairs {
+				if remapped, ok := remapPathPrefix(nextPath, pair.oldPath, pair.newPath); ok {
+					nextPath = remapped
+				}
+			}
+			nextSuppressions[DiagnosticsPublicationKey(language, nextPath)] = until
+		}
+		m.transientCloseClears = nextSuppressions
+	}
+	m.diagnosticsMu.Unlock()
+}
+
+func (m *Manager) remapOpenDocsForRenames(files []FileRename) {
+	type renamePair struct {
+		oldPath string
+		newPath string
+	}
+	pairs := make([]renamePair, 0, len(files))
+	for _, file := range files {
+		oldPath := filepath.Clean(fileURIToPath(file.OldURI))
+		newPath := filepath.Clean(fileURIToPath(file.NewURI))
+		if oldPath == "." || newPath == "." || oldPath == "" || newPath == "" || oldPath == newPath {
+			continue
+		}
+		pairs = append(pairs, renamePair{oldPath: oldPath, newPath: newPath})
+	}
+	if len(pairs) == 0 {
+		return
+	}
+
+	m.mu.Lock()
+	for language, openDocs := range m.openDocsByLang {
+		nextDocs := make(map[string]*openDocState, len(openDocs))
+		for filePath, state := range openDocs {
+			nextPath := filepath.Clean(filePath)
+			for _, pair := range pairs {
+				if remapped, ok := remapPathPrefix(nextPath, pair.oldPath, pair.newPath); ok {
+					nextPath = remapped
+				}
+			}
+			nextState := *state
+			nextDocs[nextPath] = &nextState
+		}
+		m.openDocsByLang[language] = nextDocs
+	}
+	m.mu.Unlock()
 }
 
 func (m *Manager) handleNotification(language, method string, params json.RawMessage) {
@@ -1674,8 +1830,12 @@ func (m *Manager) setDiagnostics(language, filePath string, diagnostics []Diagno
 	cloned := cloneDiagnostics(diagnostics)
 
 	m.diagnosticsMu.Lock()
+	if len(cloned) == 0 && m.shouldSuppressTransientCloseDiagnosticsClearLocked(language, filePath, time.Now()) {
+		m.diagnosticsMu.Unlock()
+		return
+	}
 	m.diagnosticSeq++
-	m.diagnosticSeen[filePath] = m.diagnosticSeq
+	m.diagnosticSeen[DiagnosticsPublicationKey(language, filePath)] = m.diagnosticSeq
 	callback := m.onDiagnostics
 	if len(cloned) == 0 {
 		langDiagnostics := m.diagnostics[language]
@@ -1695,6 +1855,7 @@ func (m *Manager) setDiagnostics(language, filePath string, diagnostics []Diagno
 	if m.diagnostics[language] == nil {
 		m.diagnostics[language] = make(map[string][]Diagnostic)
 	}
+	m.clearTransientCloseDiagnosticsClearLocked(language, filePath)
 	m.diagnostics[language][filePath] = cloned
 	m.diagnosticsMu.Unlock()
 
@@ -1703,11 +1864,144 @@ func (m *Manager) setDiagnostics(language, filePath string, diagnostics []Diagno
 	}
 }
 
+func DiagnosticsPublicationKey(language, filePath string) string {
+	language = lspregistry.NormalizeLanguageToken(language)
+	filePath = strings.TrimSpace(filePath)
+	if filePath != "" {
+		filePath = filepath.Clean(filePath)
+	}
+	return language + "\x00" + filePath
+}
+
+func splitDiagnosticsPublicationKey(key string) (string, string, bool) {
+	language, filePath, ok := strings.Cut(key, "\x00")
+	return language, filePath, ok
+}
+
+func transientDiagnosticsClearKey(language, filePath string) string {
+	return DiagnosticsPublicationKey(language, filePath)
+}
+
+func isSameOrChildPath(path, prefix string) bool {
+	path = filepath.Clean(path)
+	prefix = filepath.Clean(prefix)
+	if path == prefix {
+		return true
+	}
+	rel, err := filepath.Rel(prefix, path)
+	if err != nil || rel == "." || rel == ".." {
+		return false
+	}
+	return !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func remapPathPrefix(path, oldPrefix, newPrefix string) (string, bool) {
+	path = filepath.Clean(path)
+	oldPrefix = filepath.Clean(oldPrefix)
+	newPrefix = filepath.Clean(newPrefix)
+	if !isSameOrChildPath(path, oldPrefix) {
+		return path, false
+	}
+	rel, err := filepath.Rel(oldPrefix, path)
+	if err != nil || rel == "." {
+		return newPrefix, true
+	}
+	return filepath.Clean(filepath.Join(newPrefix, rel)), true
+}
+
+func (m *Manager) suppressTransientCloseDiagnosticsClear(language, filePath string) {
+	m.diagnosticsMu.Lock()
+	if m.transientCloseClears == nil {
+		m.transientCloseClears = make(map[string]time.Time)
+	}
+	now := time.Now()
+	m.sweepTransientCloseDiagnosticsClearsLocked(now)
+	m.transientCloseClears[transientDiagnosticsClearKey(language, filePath)] = now.Add(transientCloseDiagnosticsClearSuppressTTL)
+	m.trimTransientCloseDiagnosticsClearsLocked()
+	m.diagnosticsMu.Unlock()
+}
+
+func (m *Manager) shouldSuppressTransientCloseDiagnosticsClearLocked(language, filePath string, now time.Time) bool {
+	if len(m.transientCloseClears) == 0 {
+		return false
+	}
+	key := transientDiagnosticsClearKey(language, filePath)
+	until, ok := m.transientCloseClears[key]
+	if !ok {
+		return false
+	}
+	if now.After(until) {
+		delete(m.transientCloseClears, key)
+		return false
+	}
+	return true
+}
+
+func (m *Manager) clearTransientCloseDiagnosticsClear(language, filePath string) {
+	m.diagnosticsMu.Lock()
+	m.clearTransientCloseDiagnosticsClearLocked(language, filePath)
+	m.diagnosticsMu.Unlock()
+}
+
+func (m *Manager) clearAllTransientCloseDiagnosticsClears() {
+	m.diagnosticsMu.Lock()
+	m.transientCloseClears = make(map[string]time.Time)
+	m.diagnosticsMu.Unlock()
+}
+
+func (m *Manager) clearTransientCloseDiagnosticsClearLocked(language, filePath string) {
+	if len(m.transientCloseClears) == 0 {
+		return
+	}
+	delete(m.transientCloseClears, transientDiagnosticsClearKey(language, filePath))
+}
+
+func (m *Manager) clearTransientCloseDiagnosticsClearsForLanguagesLocked(languages map[string]bool) {
+	if len(m.transientCloseClears) == 0 || len(languages) == 0 {
+		return
+	}
+	for key := range m.transientCloseClears {
+		language, _, ok := strings.Cut(key, "\x00")
+		if ok && languages[language] {
+			delete(m.transientCloseClears, key)
+		}
+	}
+}
+
+func (m *Manager) sweepTransientCloseDiagnosticsClearsLocked(now time.Time) {
+	if len(m.transientCloseClears) == 0 {
+		return
+	}
+	for key, until := range m.transientCloseClears {
+		if now.After(until) {
+			delete(m.transientCloseClears, key)
+		}
+	}
+}
+
+func (m *Manager) trimTransientCloseDiagnosticsClearsLocked() {
+	if len(m.transientCloseClears) <= transientCloseDiagnosticsClearMaxEntries {
+		return
+	}
+	oldestKey := ""
+	var oldestUntil time.Time
+	for key, until := range m.transientCloseClears {
+		if oldestKey == "" || until.Before(oldestUntil) {
+			oldestKey = key
+			oldestUntil = until
+		}
+	}
+	if oldestKey != "" {
+		delete(m.transientCloseClears, oldestKey)
+	}
+}
+
 func (m *Manager) clearDiagnostics(language, filePath string) {
 	m.diagnosticsMu.Lock()
 	m.diagnosticSeq++
-	m.diagnosticSeen[filePath] = m.diagnosticSeq
+	m.diagnosticSeen[DiagnosticsPublicationKey(language, filePath)] = m.diagnosticSeq
 	callback := m.onDiagnostics
+	m.clearTransientCloseDiagnosticsClearLocked(language, filePath)
 	langDiagnostics := m.diagnostics[language]
 	if langDiagnostics != nil {
 		delete(langDiagnostics, filePath)
@@ -1748,11 +2042,12 @@ func (m *Manager) clearDiagnosticsForLanguages(languages []string) {
 		langDiagnostics := m.diagnostics[language]
 		for filePath := range langDiagnostics {
 			m.diagnosticSeq++
-			m.diagnosticSeen[filePath] = m.diagnosticSeq
+			m.diagnosticSeen[DiagnosticsPublicationKey(language, filePath)] = m.diagnosticSeq
 			cleared = append(cleared, clearedDiagnostic{language: language, filePath: filePath})
 		}
 		delete(m.diagnostics, language)
 	}
+	m.clearTransientCloseDiagnosticsClearsForLanguagesLocked(languageSet)
 	m.diagnosticsMu.Unlock()
 
 	if callback != nil {
@@ -1762,24 +2057,35 @@ func (m *Manager) clearDiagnosticsForLanguages(languages []string) {
 	}
 }
 
-func (m *Manager) WaitForDiagnosticsPublications(ctx context.Context, filePaths []string) bool {
-	tracked := make(map[string]uint64, len(filePaths))
-	for _, filePath := range filePaths {
-		if filePath == "" {
+func (m *Manager) WaitForDiagnosticsPublications(ctx context.Context, targets []DiagnosticsPublicationTarget) bool {
+	return m.WaitForDiagnosticsPublicationsSince(ctx, m.CaptureDiagnosticsPublicationBaseline(targets))
+}
+
+func (m *Manager) CaptureDiagnosticsPublicationBaseline(targets []DiagnosticsPublicationTarget) map[string]uint64 {
+	tracked := make(map[string]uint64, len(targets))
+	for _, target := range targets {
+		if strings.TrimSpace(target.FilePath) == "" {
 			continue
 		}
-		tracked[filePath] = 0
+		key := DiagnosticsPublicationKey(target.Language, target.FilePath)
+		if strings.HasPrefix(key, "\x00") {
+			continue
+		}
+		tracked[key] = 0
 	}
 	if len(tracked) == 0 {
-		return true
+		return tracked
 	}
 
 	m.diagnosticsMu.RLock()
-	for filePath := range tracked {
-		tracked[filePath] = m.diagnosticSeen[filePath]
+	for key := range tracked {
+		tracked[key] = m.diagnosticSeen[key]
 	}
 	m.diagnosticsMu.RUnlock()
+	return tracked
+}
 
+func (m *Manager) WaitForDiagnosticsPublicationsSince(ctx context.Context, tracked map[string]uint64) bool {
 	if m.haveDiagnosticsPublicationsSince(tracked) {
 		return true
 	}
@@ -1799,12 +2105,28 @@ func (m *Manager) WaitForDiagnosticsPublications(ctx context.Context, filePaths 
 	}
 }
 
-func (m *Manager) haveDiagnosticsPublicationsSince(tracked map[string]uint64) bool {
+func (m *Manager) CountDiagnosticsPublicationsSince(tracked map[string]uint64) int {
 	m.diagnosticsMu.RLock()
 	defer m.diagnosticsMu.RUnlock()
 
-	for filePath, version := range tracked {
-		if m.diagnosticSeen[filePath] <= version {
+	count := 0
+	for key, version := range tracked {
+		if m.diagnosticSeen[key] > version {
+			count++
+		}
+	}
+	return count
+}
+
+func (m *Manager) haveDiagnosticsPublicationsSince(tracked map[string]uint64) bool {
+	if len(tracked) == 0 {
+		return true
+	}
+	m.diagnosticsMu.RLock()
+	defer m.diagnosticsMu.RUnlock()
+
+	for key, version := range tracked {
+		if m.diagnosticSeen[key] <= version {
 			return false
 		}
 	}

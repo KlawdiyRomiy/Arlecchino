@@ -102,6 +102,7 @@ export interface DiagnosticsGroupOptions {
 
 interface DiagnosticsState {
   byFile: Map<string, DiagnosticsFileGroup>;
+  byFileLanguage: Map<string, Map<string, DiagnosticsFileGroup>>;
   projectSummary: DiagnosticsSummary;
   activeProjectPath: string | null;
   currentGeneration: number;
@@ -159,6 +160,11 @@ const getSeverityLabel = (severity: number): DiagnosticsSeverity => {
   return "info";
 };
 
+const normalizeDiagnosticsLanguage = (language: string): string => {
+  const normalized = language.trim().toLowerCase();
+  return normalized || "unknown";
+};
+
 const getFileName = (filePath: string): string => {
   const parts = filePath.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? filePath;
@@ -195,6 +201,26 @@ const summarizeGroups = (
 
   return summary;
 };
+
+const addSummary = (
+  summary: DiagnosticsSummary,
+  next: DiagnosticsSummary,
+): DiagnosticsSummary => ({
+  errors: summary.errors + next.errors,
+  warnings: summary.warnings + next.warnings,
+  infos: summary.infos + next.infos,
+  total: summary.total + next.total,
+});
+
+const subtractSummary = (
+  summary: DiagnosticsSummary,
+  previous: DiagnosticsSummary,
+): DiagnosticsSummary => ({
+  errors: Math.max(0, summary.errors - previous.errors),
+  warnings: Math.max(0, summary.warnings - previous.warnings),
+  infos: Math.max(0, summary.infos - previous.infos),
+  total: Math.max(0, summary.total - previous.total),
+});
 
 const compareProblems = (
   left: DiagnosticsProblem,
@@ -257,16 +283,18 @@ const normalizeProblems = (
   language: string,
   items: DiagnosticsEventItem[],
 ): DiagnosticsProblem[] => {
+  const normalizedLanguage = normalizeDiagnosticsLanguage(language);
   const normalized = items.map((item) => {
     const severityLabel = getSeverityLabel(item.severity);
     const line = item.range.start.line + 1;
     const column = item.range.start.character + 1;
     const stableCode = item.code ?? "";
+    const stableSource = item.source ?? "";
 
     return {
-      id: `${filePath}:${line}:${column}:${stableCode}:${item.message}`,
+      id: `${filePath}:${normalizedLanguage}:${line}:${column}:${stableSource}:${stableCode}:${item.message}`,
       filePath,
-      language,
+      language: normalizedLanguage,
       range: item.range,
       severity: item.severity,
       severityLabel,
@@ -287,11 +315,16 @@ const createFileGroup = (
   language: string,
   items: DiagnosticsEventItem[],
 ): DiagnosticsFileGroup => {
-  const normalizedItems = normalizeProblems(filePath, language, items);
+  const normalizedLanguage = normalizeDiagnosticsLanguage(language);
+  const normalizedItems = normalizeProblems(
+    filePath,
+    normalizedLanguage,
+    items,
+  );
   return {
     filePath,
     fileName: getFileName(filePath),
-    language,
+    language: normalizedLanguage,
     items: normalizedItems,
     summary: summarizeProblems(normalizedItems),
   };
@@ -312,7 +345,7 @@ const remapFileGroup = (
 
   const items = group.items.map((item) => ({
     ...item,
-    id: `${nextFilePath}:${item.line}:${item.column}:${item.code}:${item.message}`,
+    id: `${nextFilePath}:${item.language}:${item.line}:${item.column}:${item.source}:${item.code}:${item.message}`,
     filePath: nextFilePath,
   }));
 
@@ -322,6 +355,104 @@ const remapFileGroup = (
     fileName: getProjectPathBasename(nextFilePath),
     items,
   };
+};
+
+const getProblemAggregateKey = (problem: DiagnosticsProblem): string =>
+  [
+    problem.range.start.line,
+    problem.range.start.character,
+    problem.range.end.line,
+    problem.range.end.character,
+    problem.severity,
+    problem.source,
+    problem.code,
+    problem.message,
+  ].join("\u0000");
+
+const aggregateLanguageBucketsForFile = (
+  filePath: string,
+  buckets: Map<string, DiagnosticsFileGroup>,
+): DiagnosticsFileGroup | null => {
+  const itemsByKey = new Map<string, DiagnosticsProblem>();
+  const languages = new Set<string>();
+
+  buckets.forEach((group) => {
+    if (group.language) {
+      languages.add(group.language);
+    }
+    for (const item of group.items) {
+      const key = getProblemAggregateKey(item);
+      if (!itemsByKey.has(key)) {
+        itemsByKey.set(key, item);
+      }
+    }
+  });
+
+  const items = Array.from(itemsByKey.values()).sort(compareProblems);
+  if (items.length === 0) {
+    return null;
+  }
+
+  return {
+    filePath,
+    fileName: getFileName(filePath),
+    language: Array.from(languages).sort().join(","),
+    items,
+    summary: summarizeProblems(items),
+  };
+};
+
+const aggregateDiagnosticsByFile = (
+  byFileLanguage: Map<string, Map<string, DiagnosticsFileGroup>>,
+): Map<string, DiagnosticsFileGroup> => {
+  const next = new Map<string, DiagnosticsFileGroup>();
+
+  byFileLanguage.forEach((buckets, filePath) => {
+    const group = aggregateLanguageBucketsForFile(filePath, buckets);
+    if (group) {
+      next.set(filePath, group);
+    }
+  });
+
+  return next;
+};
+
+const problemListsEqual = (
+  previous: DiagnosticsProblem[],
+  next: DiagnosticsProblem[],
+): boolean => {
+  if (previous.length !== next.length) {
+    return false;
+  }
+
+  return previous.every((problem, index) => {
+    const nextProblem = next[index];
+    return (
+      nextProblem &&
+      problem.id === nextProblem.id &&
+      problem.severity === nextProblem.severity &&
+      problem.line === nextProblem.line &&
+      problem.column === nextProblem.column
+    );
+  });
+};
+
+const fileGroupsEqual = (
+  previous: DiagnosticsFileGroup | undefined,
+  next: DiagnosticsFileGroup | undefined,
+): boolean => {
+  if (!previous || !next) {
+    return previous === next;
+  }
+  return (
+    previous.filePath === next.filePath &&
+    previous.language === next.language &&
+    previous.summary.errors === next.summary.errors &&
+    previous.summary.warnings === next.summary.warnings &&
+    previous.summary.infos === next.summary.infos &&
+    previous.summary.total === next.summary.total &&
+    problemListsEqual(previous.items, next.items)
+  );
 };
 
 const filterGroupItems = (
@@ -355,6 +486,27 @@ const summarizeByFile = (
       matchesProjectPath(group.filePath, projectPath),
     ),
   );
+
+const summarizeFileChange = (
+  current: DiagnosticsSummary,
+  previousGroup: DiagnosticsFileGroup | null,
+  nextGroup: DiagnosticsFileGroup | null,
+  filePath: string,
+  projectPath?: string | null,
+): DiagnosticsSummary => {
+  if (!matchesProjectPath(filePath, projectPath)) {
+    return current;
+  }
+
+  let summary = current;
+  if (previousGroup) {
+    summary = subtractSummary(summary, previousGroup.summary);
+  }
+  if (nextGroup) {
+    summary = addSummary(summary, nextGroup.summary);
+  }
+  return summary;
+};
 
 const normalizeGeneration = (generation: number | undefined): number => {
   if (typeof generation !== "number" || !Number.isFinite(generation)) {
@@ -416,6 +568,7 @@ const scheduleDiagnosticsEventsBind = () => {
 export const useDiagnosticsStore = create<DiagnosticsState>()(
   subscribeWithSelector((set, get) => ({
     byFile: new Map(),
+    byFileLanguage: new Map(),
     projectSummary: emptySummary(),
     activeProjectPath: null,
     currentGeneration: 0,
@@ -476,7 +629,10 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
         get().setProjectScope(activeProjectPath, eventGeneration);
       }
 
-      const items = Array.isArray(event.items) ? event.items : [];
+      if (!Array.isArray(event.items)) {
+        return;
+      }
+      const items = event.items;
       get().setFileDiagnostics(filePath, event.language ?? "", items);
     },
 
@@ -527,30 +683,84 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
 
     setFileDiagnostics: (filePath, language, items) => {
       set((state) => {
-        const next = new Map(state.byFile);
-        if (items.length === 0) {
-          next.delete(filePath);
-          return {
-            byFile: next,
-            projectSummary: summarizeByFile(next, state.activeProjectPath),
-          };
+        const languageKey = normalizeDiagnosticsLanguage(language);
+        const previousFileBuckets = state.byFileLanguage.get(filePath);
+        const previousLanguageGroup = previousFileBuckets?.get(languageKey);
+        const nextLanguageGroup =
+          items.length > 0
+            ? createFileGroup(filePath, languageKey, items)
+            : undefined;
+
+        if (fileGroupsEqual(previousLanguageGroup, nextLanguageGroup)) {
+          return state;
         }
 
-        next.set(filePath, createFileGroup(filePath, language, items));
+        const nextByFileLanguage = new Map(state.byFileLanguage);
+        const nextFileBuckets = new Map<string, DiagnosticsFileGroup>(
+          previousFileBuckets ?? [],
+        );
+        if (items.length === 0) {
+          nextFileBuckets.delete(languageKey);
+        } else {
+          nextFileBuckets.set(languageKey, nextLanguageGroup!);
+        }
+
+        if (nextFileBuckets.size === 0) {
+          nextByFileLanguage.delete(filePath);
+        } else {
+          nextByFileLanguage.set(filePath, nextFileBuckets);
+        }
+
+        const previousAggregate = state.byFile.get(filePath) ?? null;
+        const nextAggregate =
+          nextFileBuckets.size > 0
+            ? aggregateLanguageBucketsForFile(filePath, nextFileBuckets)
+            : null;
+        const nextByFile = new Map(state.byFile);
+        if (nextAggregate) {
+          nextByFile.set(filePath, nextAggregate);
+        } else {
+          nextByFile.delete(filePath);
+        }
+
         return {
-          byFile: next,
-          projectSummary: summarizeByFile(next, state.activeProjectPath),
+          byFileLanguage: nextByFileLanguage,
+          byFile: nextByFile,
+          projectSummary: summarizeFileChange(
+            state.projectSummary,
+            previousAggregate,
+            nextAggregate,
+            filePath,
+            state.activeProjectPath,
+          ),
         };
       });
     },
 
     clearFileDiagnostics: (filePath) => {
       set((state) => {
-        const next = new Map(state.byFile);
-        next.delete(filePath);
+        if (
+          !state.byFileLanguage.has(filePath) &&
+          !state.byFile.has(filePath)
+        ) {
+          return state;
+        }
+
+        const nextByFileLanguage = new Map(state.byFileLanguage);
+        nextByFileLanguage.delete(filePath);
+        const previousAggregate = state.byFile.get(filePath) ?? null;
+        const nextByFile = new Map(state.byFile);
+        nextByFile.delete(filePath);
         return {
-          byFile: next,
-          projectSummary: summarizeByFile(next, state.activeProjectPath),
+          byFileLanguage: nextByFileLanguage,
+          byFile: nextByFile,
+          projectSummary: summarizeFileChange(
+            state.projectSummary,
+            previousAggregate,
+            null,
+            filePath,
+            state.activeProjectPath,
+          ),
         };
       });
     },
@@ -561,34 +771,53 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
 
     renamePathDiagnostics: (oldPrefix, newPrefix) => {
       set((state) => {
-        const next = new Map<string, DiagnosticsFileGroup>();
+        const nextByFileLanguage = new Map<
+          string,
+          Map<string, DiagnosticsFileGroup>
+        >();
 
-        state.byFile.forEach((group, filePath) => {
+        state.byFileLanguage.forEach((buckets, filePath) => {
           const nextFilePath =
             remapProjectPathPrefix(filePath, oldPrefix, newPrefix) ?? filePath;
-          next.set(nextFilePath, remapFileGroup(group, oldPrefix, newPrefix));
+          const nextFileBuckets = new Map(
+            nextByFileLanguage.get(nextFilePath) ?? new Map(),
+          );
+          buckets.forEach((group, language) => {
+            nextFileBuckets.set(
+              language,
+              remapFileGroup(group, oldPrefix, newPrefix),
+            );
+          });
+          nextByFileLanguage.set(nextFilePath, nextFileBuckets);
         });
 
+        const nextByFile = aggregateDiagnosticsByFile(nextByFileLanguage);
         return {
-          byFile: next,
-          projectSummary: summarizeByFile(next, state.activeProjectPath),
+          byFileLanguage: nextByFileLanguage,
+          byFile: nextByFile,
+          projectSummary: summarizeByFile(nextByFile, state.activeProjectPath),
         };
       });
     },
 
     prunePathDiagnostics: (pathPrefix) => {
       set((state) => {
-        const next = new Map<string, DiagnosticsFileGroup>();
+        const nextByFileLanguage = new Map<
+          string,
+          Map<string, DiagnosticsFileGroup>
+        >();
 
-        state.byFile.forEach((group, filePath) => {
+        state.byFileLanguage.forEach((buckets, filePath) => {
           if (!isSameOrChildPath(filePath, pathPrefix)) {
-            next.set(filePath, group);
+            nextByFileLanguage.set(filePath, new Map(buckets));
           }
         });
 
+        const nextByFile = aggregateDiagnosticsByFile(nextByFileLanguage);
         return {
-          byFile: next,
-          projectSummary: summarizeByFile(next, state.activeProjectPath),
+          byFileLanguage: nextByFileLanguage,
+          byFile: nextByFile,
+          projectSummary: summarizeByFile(nextByFile, state.activeProjectPath),
         };
       });
     },
@@ -596,14 +825,20 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
     reset: () =>
       set({
         byFile: new Map(),
+        byFileLanguage: new Map(),
         projectSummary: emptySummary(),
         activeProjectPath: null,
         currentGeneration: 0,
         runtimeStatus: emptyRuntimeStatus(),
       }),
 
-    getProjectSummary: (projectPath = null) =>
-      summarizeByFile(get().byFile, projectPath),
+    getProjectSummary: (projectPath = null) => {
+      const state = get();
+      if ((projectPath ?? null) === (state.activeProjectPath ?? null)) {
+        return state.projectSummary;
+      }
+      return summarizeByFile(state.byFile, projectPath);
+    },
 
     getFileSummary: (filePath) => {
       if (!filePath) {
@@ -618,24 +853,32 @@ export const useDiagnosticsStore = create<DiagnosticsState>()(
       currentFilePath = null,
       projectPath = null,
     }: DiagnosticsGroupOptions = {}) => {
-      const groups = Array.from(get().byFile.values())
-        .filter((group) => matchesProjectPath(group.filePath, projectPath))
-        .filter(
-          (group) => !currentFileOnly || group.filePath === currentFilePath,
-        )
-        .map((group) => {
-          const filteredItems = filterGroupItems(group, severity);
-          if (filteredItems.length === 0) {
-            return null;
-          }
+      const groups: DiagnosticsFileGroup[] = [];
 
-          return {
-            ...group,
-            items: filteredItems,
-            summary: summarizeProblems(filteredItems),
-          } satisfies DiagnosticsFileGroup;
-        })
-        .filter((group): group is DiagnosticsFileGroup => group !== null);
+      get().byFile.forEach((group) => {
+        if (
+          !matchesProjectPath(group.filePath, projectPath) ||
+          (currentFileOnly && group.filePath !== currentFilePath)
+        ) {
+          return;
+        }
+
+        if (severity === "all") {
+          groups.push(group);
+          return;
+        }
+
+        const filteredItems = filterGroupItems(group, severity);
+        if (filteredItems.length === 0) {
+          return;
+        }
+
+        groups.push({
+          ...group,
+          items: filteredItems,
+          summary: summarizeProblems(filteredItems),
+        });
+      });
 
       groups.sort(compareGroups);
       return groups;

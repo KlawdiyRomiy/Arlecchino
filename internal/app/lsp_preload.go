@@ -11,7 +11,13 @@ import (
 	"time"
 
 	"arlecchino/internal/indexer/core"
+	indexerlsp "arlecchino/internal/indexer/lsp"
 	"arlecchino/internal/lsp"
+)
+
+var (
+	errDiagnosticsPreloadUnsafePath  = errors.New("diagnostics preload candidate is not a regular project file")
+	errDiagnosticsPreloadEscapedRoot = errors.New("diagnostics preload candidate is outside the project root")
 )
 
 type diagnosticsPreloadBudget struct {
@@ -41,14 +47,38 @@ type diagnosticsPreloadOpen struct {
 
 type diagnosticsPreloadPlan struct {
 	Candidates         []diagnosticsPreloadCandidate
+	AllCandidates      []diagnosticsPreloadCandidate
 	Bounded            bool
+	CoverageState      diagnosticsPreloadCoverageState
+	CoverageMode       string
 	TotalCandidates    int
 	SelectedCandidates int
+	CheckedCandidates  int
+	FailedCandidates   int
 	TotalLanguages     int
 	SelectedLanguages  int
+	TimedOut           bool
+	Message            string
 }
 
 type diagnosticsPreloadRole string
+type diagnosticsPreloadCoverageState string
+
+type diagnosticsPreloadScanResult struct {
+	CheckedCandidates int
+	FailedCandidates  int
+	TimedOut          bool
+	Aborted           bool
+}
+
+type diagnosticsPreloadScanOptions struct {
+	BatchSize            int
+	BatchTimeout         time.Duration
+	BatchPause           time.Duration
+	CandidateOpenTimeout time.Duration
+	OnCandidateProcessed func(diagnosticsPreloadScanResult)
+	OnBatchComplete      func(diagnosticsPreloadScanResult)
+}
 
 const (
 	diagnosticsPreloadRoleSource    diagnosticsPreloadRole = "source"
@@ -59,6 +89,24 @@ const (
 	diagnosticsPreloadRoleAsset     diagnosticsPreloadRole = "asset"
 	diagnosticsPreloadRoleBinary    diagnosticsPreloadRole = "binary"
 	diagnosticsPreloadRoleUnknown   diagnosticsPreloadRole = "unknown"
+)
+
+const (
+	diagnosticsPreloadCoveragePending           diagnosticsPreloadCoverageState = "pending"
+	diagnosticsPreloadCoverageRunning           diagnosticsPreloadCoverageState = "running"
+	diagnosticsPreloadCoverageComplete          diagnosticsPreloadCoverageState = "complete"
+	diagnosticsPreloadCoverageIncomplete        diagnosticsPreloadCoverageState = "incomplete"
+	diagnosticsPreloadCoverageUnavailable       diagnosticsPreloadCoverageState = "unavailable"
+	diagnosticsPreloadCoverageModeSyntheticOpen                                 = "synthetic-open"
+)
+
+const (
+	diagnosticsPreloadBatchSize            = 16
+	diagnosticsPreloadBatchTimeout         = 1500 * time.Millisecond
+	diagnosticsPreloadBackgroundBatchPause = 150 * time.Millisecond
+	diagnosticsPreloadCandidateOpenTimeout = 1200 * time.Millisecond
+	diagnosticsPreloadCollectionMinTimeout = 10 * time.Second
+	diagnosticsPreloadProgressEmitEvery    = 8
 )
 
 func defaultDiagnosticsPreloadBudget() diagnosticsPreloadBudget {
@@ -117,15 +165,25 @@ func newLSPDiagnosticsPreloadEventForSession(
 	generation uint64,
 	plan diagnosticsPreloadPlan,
 ) LSPDiagnosticsPreloadEvent {
+	coverageState := plan.CoverageState
+	if coverageState == "" {
+		coverageState = diagnosticsPreloadCoverageRunning
+	}
 	return LSPDiagnosticsPreloadEvent{
 		ProjectPath:        projectPath,
 		SessionID:          sessionID,
 		Generation:         generation,
 		Bounded:            plan.Bounded,
+		CoverageState:      string(coverageState),
+		CoverageMode:       plan.CoverageMode,
 		TotalCandidates:    plan.TotalCandidates,
 		SelectedCandidates: plan.SelectedCandidates,
+		CheckedCandidates:  plan.CheckedCandidates,
+		FailedCandidates:   plan.FailedCandidates,
 		TotalLanguages:     plan.TotalLanguages,
 		SelectedLanguages:  plan.SelectedLanguages,
+		TimedOut:           plan.TimedOut,
+		Message:            plan.Message,
 	}
 }
 
@@ -172,6 +230,10 @@ func collectDiagnosticsPreloadPlanWithInventoryContext(
 			if path != root && shouldSkipPreloadDir(entry.Name()) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+
+		if entry.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
 
@@ -247,6 +309,7 @@ func buildDiagnosticsPreloadPlan(
 	allCandidates := flattenDiagnosticsPreloadGroups(grouped)
 	plan := diagnosticsPreloadPlan{
 		Candidates:      allCandidates,
+		AllCandidates:   allCandidates,
 		TotalCandidates: totalCandidates,
 		TotalLanguages:  totalLanguages,
 	}
@@ -687,6 +750,427 @@ func countSelectedDiagnosticsLanguages(
 	return len(languages)
 }
 
+func candidateTargetsForDiagnosticsPreload(candidates []diagnosticsPreloadCandidate) []indexerlsp.DiagnosticsPublicationTarget {
+	targets := make([]indexerlsp.DiagnosticsPublicationTarget, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.Path != "" {
+			targets = append(targets, indexerlsp.DiagnosticsPublicationTarget{
+				Language: candidate.Language,
+				FilePath: candidate.Path,
+			})
+		}
+	}
+	return targets
+}
+
+func filterDiagnosticsPreloadPlanForManager(
+	plan diagnosticsPreloadPlan,
+	mgr *indexerlsp.Manager,
+	budget diagnosticsPreloadBudget,
+) diagnosticsPreloadPlan {
+	if mgr == nil || len(plan.AllCandidates) == 0 {
+		return plan
+	}
+
+	candidates := make([]diagnosticsPreloadCandidate, 0, len(plan.AllCandidates))
+	for _, candidate := range plan.AllCandidates {
+		if mgr.HasConfig(candidate.Language) {
+			candidates = append(candidates, candidate)
+		}
+	}
+	candidates = filterExpensiveDiagnosticsPreloadTail(candidates, budget)
+	return buildDiagnosticsPreloadPlan(candidates, budget)
+}
+
+func filterExpensiveDiagnosticsPreloadTail(
+	candidates []diagnosticsPreloadCandidate,
+	budget diagnosticsPreloadBudget,
+) []diagnosticsPreloadCandidate {
+	if len(candidates) <= budget.LargeProjectFileThreshold {
+		return candidates
+	}
+
+	expensiveTotal := 0
+	for _, candidate := range candidates {
+		if isExpensiveDiagnosticsPreloadLanguage(candidate.Language) {
+			expensiveTotal++
+		}
+	}
+	if expensiveTotal == 0 || expensiveTotal*2 >= len(candidates) {
+		return candidates
+	}
+
+	filtered := make([]diagnosticsPreloadCandidate, 0, len(candidates)-expensiveTotal)
+	for _, candidate := range candidates {
+		if isExpensiveDiagnosticsPreloadLanguage(candidate.Language) {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	if len(filtered) == 0 {
+		return candidates
+	}
+	return filtered
+}
+
+func isExpensiveDiagnosticsPreloadLanguage(language string) bool {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "c", "cpp", "c++", "objectivec", "objective-c":
+		return true
+	default:
+		return false
+	}
+}
+
+func diagnosticsPreloadFullScanProgressPlan(
+	previewPlan diagnosticsPreloadPlan,
+	checkedCandidates int,
+	failedCandidates int,
+	timedOut bool,
+	message string,
+) diagnosticsPreloadPlan {
+	fullPlan := previewPlan
+	fullPlan.Candidates = previewPlan.AllCandidates
+	if len(fullPlan.Candidates) == 0 {
+		fullPlan.Candidates = previewPlan.Candidates
+	}
+	fullPlan.Bounded = false
+	fullPlan.CoverageState = diagnosticsPreloadCoverageRunning
+	fullPlan.CoverageMode = diagnosticsPreloadCoverageModeSyntheticOpen
+	fullPlan.SelectedCandidates = fullPlan.TotalCandidates
+	fullPlan.SelectedLanguages = fullPlan.TotalLanguages
+	fullPlan.CheckedCandidates = checkedCandidates
+	fullPlan.FailedCandidates = failedCandidates
+	fullPlan.TimedOut = timedOut
+	fullPlan.Message = message
+	return fullPlan
+}
+
+func diagnosticsPreloadRemainingCandidates(
+	allCandidates []diagnosticsPreloadCandidate,
+	alreadySelected []diagnosticsPreloadCandidate,
+) []diagnosticsPreloadCandidate {
+	if len(allCandidates) == 0 || len(alreadySelected) == 0 {
+		return allCandidates
+	}
+
+	seen := make(map[string]struct{}, len(alreadySelected))
+	for _, candidate := range alreadySelected {
+		seen[diagnosticsPreloadCandidateKey(candidate)] = struct{}{}
+	}
+
+	remaining := make([]diagnosticsPreloadCandidate, 0, maxInt(0, len(allCandidates)-len(seen)))
+	for _, candidate := range allCandidates {
+		if _, ok := seen[diagnosticsPreloadCandidateKey(candidate)]; ok {
+			continue
+		}
+		remaining = append(remaining, candidate)
+	}
+	return remaining
+}
+
+func diagnosticsPreloadCandidateKey(candidate diagnosticsPreloadCandidate) string {
+	return candidate.Language + "\x00" + candidate.Path
+}
+
+func diagnosticsPreloadPlanCollectionTimeout(budget diagnosticsPreloadBudget) time.Duration {
+	if budget.Timeout > diagnosticsPreloadCollectionMinTimeout {
+		return budget.Timeout
+	}
+	return diagnosticsPreloadCollectionMinTimeout
+}
+
+func diagnosticsPreloadPlanForCollectionError(err error) (diagnosticsPreloadPlan, bool) {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return diagnosticsPreloadPlan{
+			CoverageState: diagnosticsPreloadCoverageIncomplete,
+			CoverageMode:  diagnosticsPreloadCoverageModeSyntheticOpen,
+			TimedOut:      true,
+			Message:       "Diagnostics scan timed out before selecting project files.",
+		}, true
+	case errors.Is(err, context.Canceled):
+		return diagnosticsPreloadPlan{}, false
+	default:
+		return diagnosticsPreloadPlan{
+			CoverageState: diagnosticsPreloadCoverageUnavailable,
+			Message:       "Diagnostics preload could not collect project files.",
+		}, true
+	}
+}
+
+func readDiagnosticsPreloadCandidate(root string, candidate diagnosticsPreloadCandidate) ([]byte, error) {
+	if root == "" || candidate.Path == "" {
+		return nil, errDiagnosticsPreloadEscapedRoot
+	}
+
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	pathAbs, err := filepath.Abs(candidate.Path)
+	if err != nil {
+		return nil, err
+	}
+	if !diagnosticsPreloadPathWithinRoot(rootAbs, pathAbs) {
+		return nil, errDiagnosticsPreloadEscapedRoot
+	}
+
+	info, err := os.Lstat(pathAbs)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, errDiagnosticsPreloadUnsafePath
+	}
+
+	rootReal, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return nil, err
+	}
+	pathReal, err := filepath.EvalSymlinks(pathAbs)
+	if err != nil {
+		return nil, err
+	}
+	if !diagnosticsPreloadPathWithinRoot(rootReal, pathReal) {
+		return nil, errDiagnosticsPreloadEscapedRoot
+	}
+
+	return os.ReadFile(pathAbs)
+}
+
+func diagnosticsPreloadPathWithinRoot(root string, path string) bool {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	if root == "" || path == "" {
+		return false
+	}
+	if path == root {
+		return true
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." || filepath.IsAbs(rel) {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+func (a *App) runDiagnosticsPreloadScanForSession(
+	ctx context.Context,
+	session *ProjectRuntimeSession,
+	mgr *indexerlsp.Manager,
+	root string,
+	generation uint64,
+	preloadSeq uint64,
+	candidates []diagnosticsPreloadCandidate,
+) diagnosticsPreloadScanResult {
+	return a.runDiagnosticsPreloadScanForSessionWithOptions(ctx, session, mgr, root, generation, preloadSeq, candidates, diagnosticsPreloadScanOptions{})
+}
+
+func (a *App) runDiagnosticsPreloadScanForSessionWithOptions(
+	ctx context.Context,
+	session *ProjectRuntimeSession,
+	mgr *indexerlsp.Manager,
+	root string,
+	generation uint64,
+	preloadSeq uint64,
+	candidates []diagnosticsPreloadCandidate,
+	options diagnosticsPreloadScanOptions,
+) diagnosticsPreloadScanResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if mgr == nil || len(candidates) == 0 {
+		return diagnosticsPreloadScanResult{}
+	}
+	batchSize := options.BatchSize
+	if batchSize <= 0 {
+		batchSize = diagnosticsPreloadBatchSize
+	}
+	batchTimeout := options.BatchTimeout
+	if batchTimeout <= 0 {
+		batchTimeout = diagnosticsPreloadBatchTimeout
+	}
+	candidateOpenTimeout := options.CandidateOpenTimeout
+	if candidateOpenTimeout <= 0 {
+		candidateOpenTimeout = diagnosticsPreloadCandidateOpenTimeout
+	}
+
+	result := diagnosticsPreloadScanResult{}
+	markCandidateProcessed := func() {
+		result.CheckedCandidates++
+		if options.OnCandidateProcessed != nil {
+			options.OnCandidateProcessed(result)
+		}
+	}
+	for start := 0; start < len(candidates); start += batchSize {
+		select {
+		case <-ctx.Done():
+			result.TimedOut = result.TimedOut || errors.Is(ctx.Err(), context.DeadlineExceeded)
+			return result
+		default:
+		}
+
+		if session.projectGeneration.Load() != generation || !a.isCurrentDiagnosticsPreloadForSession(session, preloadSeq) {
+			result.Aborted = true
+			return result
+		}
+
+		end := start + batchSize
+		if end > len(candidates) {
+			end = len(candidates)
+		}
+		batch := candidates[start:end]
+		baseline := mgr.CaptureDiagnosticsPublicationBaseline(candidateTargetsForDiagnosticsPreload(batch))
+		openedDocs := make([]diagnosticsPreloadOpen, 0, len(batch))
+		tracked := make(map[string]uint64, len(baseline))
+
+		for _, candidate := range batch {
+			targetKey := indexerlsp.DiagnosticsPublicationKey(candidate.Language, candidate.Path)
+			version, ok := baseline[targetKey]
+			if !ok {
+				continue
+			}
+			if mgr.IsDocOpen(candidate.Language, candidate.Path) && version > 0 {
+				continue
+			}
+			tracked[targetKey] = version
+		}
+
+		for _, candidate := range batch {
+			select {
+			case <-ctx.Done():
+				result.TimedOut = result.TimedOut || errors.Is(ctx.Err(), context.DeadlineExceeded)
+				closeDiagnosticsPreloadDocs(a, mgr, openedDocs)
+				return result
+			default:
+			}
+
+			if session.projectGeneration.Load() != generation || !a.isCurrentDiagnosticsPreloadForSession(session, preloadSeq) {
+				result.Aborted = true
+				closeDiagnosticsPreloadDocs(a, mgr, openedDocs)
+				return result
+			}
+
+			if mgr.IsDocOpen(candidate.Language, candidate.Path) {
+				markCandidateProcessed()
+				continue
+			}
+
+			content, readErr := readDiagnosticsPreloadCandidate(root, candidate)
+			if readErr != nil {
+				result.FailedCandidates++
+				delete(tracked, indexerlsp.DiagnosticsPublicationKey(candidate.Language, candidate.Path))
+				markCandidateProcessed()
+				continue
+			}
+
+			openCtx := ctx
+			var openCancel context.CancelFunc
+			if candidateOpenTimeout > 0 {
+				openCtx, openCancel = context.WithTimeout(ctx, candidateOpenTimeout)
+			}
+			opened, openErr := mgr.DidOpenTransientWithContext(openCtx, candidate.Language, candidate.Path, string(content))
+			if openCancel != nil {
+				openCancel()
+			}
+			if openErr != nil {
+				if errors.Is(openErr, context.DeadlineExceeded) || errors.Is(openErr, context.Canceled) {
+					result.TimedOut = true
+				} else {
+					message := "Diagnostics preload could not open one selected file."
+					a.emitLSPDiagnosticsStatusForSession(session.ID, root, generation, candidate.Language, "", "error", message)
+				}
+				a.logWarning("[DiagnosticsPreload] " + candidate.Path + ": " + openErr.Error())
+				result.FailedCandidates++
+				delete(tracked, indexerlsp.DiagnosticsPublicationKey(candidate.Language, candidate.Path))
+				markCandidateProcessed()
+				continue
+			}
+			if opened {
+				openedDocs = append(openedDocs, diagnosticsPreloadOpen{Language: candidate.Language, Path: candidate.Path})
+			} else if !mgr.IsDocOpen(candidate.Language, candidate.Path) {
+				result.FailedCandidates++
+				delete(tracked, indexerlsp.DiagnosticsPublicationKey(candidate.Language, candidate.Path))
+			}
+			markCandidateProcessed()
+		}
+
+		publicationsComplete := true
+		if len(tracked) > 0 {
+			waitCtx, cancel := context.WithTimeout(ctx, batchTimeout)
+			publicationsComplete = mgr.WaitForDiagnosticsPublicationsSince(waitCtx, tracked)
+			cancel()
+		}
+		if !publicationsComplete {
+			result.TimedOut = true
+		}
+
+		closeDiagnosticsPreloadDocs(a, mgr, openedDocs)
+		if options.OnBatchComplete != nil {
+			options.OnBatchComplete(result)
+		}
+		if options.BatchPause > 0 && end < len(candidates) {
+			timer := time.NewTimer(options.BatchPause)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				result.TimedOut = result.TimedOut || errors.Is(ctx.Err(), context.DeadlineExceeded)
+				return result
+			case <-timer.C:
+			}
+		}
+	}
+
+	return result
+}
+
+func closeDiagnosticsPreloadDocs(a *App, mgr *indexerlsp.Manager, openedDocs []diagnosticsPreloadOpen) {
+	if mgr == nil {
+		return
+	}
+	for index := len(openedDocs) - 1; index >= 0; index-- {
+		doc := openedDocs[index]
+		if err := mgr.DidCloseTransient(doc.Language, doc.Path); err != nil && a != nil {
+			a.logWarning("[DiagnosticsPreload] failed to close transient doc " + doc.Path + ": " + err.Error())
+		}
+	}
+}
+
+func completeDiagnosticsPreloadPlan(
+	plan diagnosticsPreloadPlan,
+	checkedCandidates int,
+	failedCandidates int,
+	timedOut bool,
+) diagnosticsPreloadPlan {
+	plan.CoverageMode = diagnosticsPreloadCoverageModeSyntheticOpen
+	plan.CheckedCandidates = checkedCandidates
+	plan.FailedCandidates = failedCandidates
+	plan.TimedOut = timedOut
+
+	switch {
+	case plan.TotalCandidates == 0:
+		plan.CoverageState = diagnosticsPreloadCoverageUnavailable
+		plan.Message = "Workspace diagnostics are not available for the detected files in this project yet."
+	case plan.Bounded || plan.SelectedCandidates < plan.TotalCandidates:
+		plan.CoverageState = diagnosticsPreloadCoverageIncomplete
+		plan.Message = "Diagnostics scan checked a bounded subset of this project."
+	case timedOut:
+		plan.CoverageState = diagnosticsPreloadCoverageIncomplete
+		plan.Message = "Diagnostics scan timed out before all selected files published diagnostics."
+	case failedCandidates > 0:
+		plan.CoverageState = diagnosticsPreloadCoverageIncomplete
+		plan.Message = "Diagnostics scan could not open every selected file."
+	case checkedCandidates < plan.SelectedCandidates:
+		plan.CoverageState = diagnosticsPreloadCoverageIncomplete
+		plan.Message = "Diagnostics scan did not receive diagnostics publications for every selected file."
+	default:
+		plan.CoverageState = diagnosticsPreloadCoverageComplete
+	}
+
+	return plan
+}
+
 func splitPreloadPath(path string) []string {
 	raw := strings.Split(path, "/")
 	parts := make([]string, 0, len(raw))
@@ -705,11 +1189,43 @@ func minInt(left, right int) int {
 	return right
 }
 
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
 func (a *App) lspPreloadProjectDiagnostics(
 	projectPath string,
 	generation uint64,
 ) bool {
 	return a.lspPreloadProjectDiagnosticsForSession(a.activeProjectSession(), projectPath, generation)
+}
+
+func (a *App) startProjectDiagnosticsPreloadForSession(
+	session *ProjectRuntimeSession,
+	projectPath string,
+	generation uint64,
+) {
+	if session == nil || session.projectCtx == nil {
+		return
+	}
+
+	ctx := session.projectCtx
+	session.wg.Add(1)
+	go func() {
+		defer session.wg.Done()
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		if session.projectGeneration.Load() != generation {
+			return
+		}
+		a.lspPreloadProjectDiagnosticsForSession(session, projectPath, generation)
+	}()
 }
 
 func (a *App) lspPreloadProjectDiagnosticsForSession(
@@ -736,7 +1252,10 @@ func (a *App) lspPreloadProjectDiagnosticsForSession(
 	}
 	if mgr == nil {
 		a.emitLSPDiagnosticsStatusForSession(session.ID, root, generation, "", "", "unavailable", "LSP diagnostics manager is not available")
-		a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, diagnosticsPreloadPlan{}))
+		a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, diagnosticsPreloadPlan{
+			CoverageState: diagnosticsPreloadCoverageUnavailable,
+			Message:       "LSP diagnostics manager is not available",
+		}))
 		return false
 	}
 
@@ -756,74 +1275,98 @@ func (a *App) lspPreloadProjectDiagnosticsForSession(
 		}
 	}
 	budget = adaptDiagnosticsPreloadBudget(budget, projectFileCount, queueDepth)
-	timedCtx, cancel, preloadSeq := a.beginDiagnosticsPreloadForSession(session, ctx, budget.Timeout)
+	preloadCtx, cancel, preloadSeq := a.beginDiagnosticsPreloadForSession(session, ctx, 0)
 	defer cancel()
 
-	plan, err := collectDiagnosticsPreloadPlanWithInventoryContext(timedCtx, root, inventory, budget)
+	collectCtx, collectCancel := context.WithTimeout(preloadCtx, diagnosticsPreloadPlanCollectionTimeout(budget))
+	plan, err := collectDiagnosticsPreloadPlanWithInventoryContext(collectCtx, root, inventory, budget)
+	collectCancel()
 	if err != nil {
-		if err != context.Canceled {
+		failedPlan, shouldEmit := diagnosticsPreloadPlanForCollectionError(err)
+		if shouldEmit {
 			a.logWarning("[DiagnosticsPreload] collect error: " + err.Error())
+			if failedPlan.CoverageState == diagnosticsPreloadCoverageUnavailable {
+				a.emitLSPDiagnosticsStatusForSession(session.ID, root, generation, "", "", "error", failedPlan.Message)
+			}
+			a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, failedPlan))
 		}
 		return false
 	}
-	event := newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, plan)
-	a.emitEvent("lsp:diagnostics:preload:start", event)
-	openedDocs := make([]diagnosticsPreloadOpen, 0, len(plan.Candidates))
-	openedPaths := make([]string, 0, len(plan.Candidates))
-	defer func() {
-		for index := len(openedDocs) - 1; index >= 0; index-- {
-			doc := openedDocs[index]
-			if err := mgr.DidCloseTransient(doc.Language, doc.Path); err != nil {
-				a.logWarning("[DiagnosticsPreload] failed to close transient doc " + doc.Path + ": " + err.Error())
+	plan = filterDiagnosticsPreloadPlanForManager(plan, mgr, budget)
+	plan.CoverageState = diagnosticsPreloadCoverageRunning
+	plan.CoverageMode = diagnosticsPreloadCoverageModeSyntheticOpen
+	a.emitEvent("lsp:diagnostics:preload:start", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, plan))
+
+	previewCtx, previewCancel := context.WithTimeout(preloadCtx, budget.Timeout)
+	previewResult := a.runDiagnosticsPreloadScanForSession(previewCtx, session, mgr, root, generation, preloadSeq, plan.Candidates)
+	previewCancel()
+	if previewResult.Aborted {
+		return false
+	}
+
+	checkedCandidates := previewResult.CheckedCandidates
+	failedCandidates := previewResult.FailedCandidates
+	timedOut := previewResult.TimedOut
+
+	remainingCandidates := diagnosticsPreloadRemainingCandidates(plan.AllCandidates, plan.Candidates)
+	if plan.Bounded && len(remainingCandidates) > 0 && preloadCtx.Err() == nil {
+		fullProgressPlan := diagnosticsPreloadFullScanProgressPlan(
+			plan,
+			checkedCandidates,
+			failedCandidates,
+			timedOut,
+			"Still scanning diagnostics across this project.",
+		)
+		a.emitEvent("lsp:diagnostics:preload:start", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, fullProgressPlan))
+
+		lastProgressChecked := checkedCandidates
+		emitBackgroundProgress := func(result diagnosticsPreloadScanResult, force bool) {
+			totalChecked := previewResult.CheckedCandidates + result.CheckedCandidates
+			if !force && totalChecked-lastProgressChecked < diagnosticsPreloadProgressEmitEvery {
+				return
 			}
+			lastProgressChecked = totalChecked
+			progressPlan := diagnosticsPreloadFullScanProgressPlan(
+				plan,
+				totalChecked,
+				previewResult.FailedCandidates+result.FailedCandidates,
+				previewResult.TimedOut || result.TimedOut,
+				"Still scanning diagnostics across this project.",
+			)
+			a.emitEvent("lsp:diagnostics:preload:start", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, progressPlan))
 		}
-	}()
 
-preloadLoop:
-	for _, candidate := range plan.Candidates {
-		select {
-		case <-timedCtx.Done():
-			break preloadLoop
-		default:
-		}
-
-		if session.projectGeneration.Load() != generation || !a.isCurrentDiagnosticsPreloadForSession(session, preloadSeq) {
+		backgroundResult := a.runDiagnosticsPreloadScanForSessionWithOptions(
+			preloadCtx,
+			session,
+			mgr,
+			root,
+			generation,
+			preloadSeq,
+			remainingCandidates,
+			diagnosticsPreloadScanOptions{
+				BatchPause: diagnosticsPreloadBackgroundBatchPause,
+				OnCandidateProcessed: func(result diagnosticsPreloadScanResult) {
+					emitBackgroundProgress(result, false)
+				},
+				OnBatchComplete: func(result diagnosticsPreloadScanResult) {
+					emitBackgroundProgress(result, true)
+				},
+			},
+		)
+		if backgroundResult.Aborted {
 			return false
 		}
-
-		if mgr.IsDocOpen(candidate.Language, candidate.Path) {
-			continue
-		}
-
-		content, readErr := os.ReadFile(candidate.Path)
-		if readErr != nil {
-			continue
-		}
-
-		opened, openErr := mgr.DidOpenTransientWithContext(timedCtx, candidate.Language, candidate.Path, string(content))
-		if openErr != nil {
-			message := "LSP diagnostics preload failed for " + candidate.Path + ": " + openErr.Error()
-			a.emitLSPDiagnosticsStatusForSession(session.ID, root, generation, candidate.Language, candidate.Path, "error", message)
-			a.logWarning("[DiagnosticsPreload] " + candidate.Path + ": " + openErr.Error())
-			continue
-		}
-		if opened {
-			openedDocs = append(openedDocs, diagnosticsPreloadOpen{Language: candidate.Language, Path: candidate.Path})
-			openedPaths = append(openedPaths, candidate.Path)
-		}
+		checkedCandidates += backgroundResult.CheckedCandidates
+		failedCandidates += backgroundResult.FailedCandidates
+		timedOut = timedOut || backgroundResult.TimedOut
+		plan = diagnosticsPreloadFullScanProgressPlan(plan, checkedCandidates, failedCandidates, timedOut, "")
 	}
 
-	if session.projectGeneration.Load() != generation || !a.isCurrentDiagnosticsPreloadForSession(session, preloadSeq) {
-		return false
-	}
-
-	if len(openedPaths) > 0 {
-		mgr.WaitForDiagnosticsPublications(timedCtx, openedPaths)
-	}
-
-	if timedCtx.Err() == nil || errors.Is(timedCtx.Err(), context.DeadlineExceeded) {
-		a.emitEvent("lsp:diagnostics:preload:complete", event)
-		return timedCtx.Err() == nil
+	completedPlan := completeDiagnosticsPreloadPlan(plan, checkedCandidates, failedCandidates, timedOut)
+	if preloadCtx.Err() == nil || errors.Is(preloadCtx.Err(), context.DeadlineExceeded) {
+		a.emitEvent("lsp:diagnostics:preload:complete", newLSPDiagnosticsPreloadEventForSession(session.ID, root, generation, completedPlan))
+		return completedPlan.CoverageState == diagnosticsPreloadCoverageComplete
 	}
 
 	return false
@@ -848,7 +1391,13 @@ func (a *App) beginDiagnosticsPreloadForSession(
 		session = defaultProjectSessionFromApp(a)
 	}
 
-	timedCtx, cancel := context.WithTimeout(ctx, timeout)
+	var timedCtx context.Context
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		timedCtx, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		timedCtx, cancel = context.WithCancel(ctx)
+	}
 
 	session.diagnosticsPreloadMu.Lock()
 	if session.diagnosticsPreloadCancel != nil {

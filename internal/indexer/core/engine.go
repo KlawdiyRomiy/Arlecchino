@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -378,6 +379,9 @@ func (e *Engine) IndexProjectContext(ctx context.Context) error {
 	})
 	flushInventory()
 	if walkErr != nil {
+		if errors.Is(walkErr, context.Canceled) {
+			return walkErr
+		}
 		e.batchFailed.Store(true)
 		e.notifyIndexing(IndexingEvent{Type: IndexingFailed, Error: walkErr.Error(), Terminal: true})
 		return walkErr

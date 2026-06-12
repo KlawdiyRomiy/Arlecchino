@@ -14,15 +14,29 @@ type ProjectAppBridge = {
   LSPPreloadProjectDiagnostics?: (projectPath: string) => Promise<unknown>;
 };
 
+type DiagnosticsCoverageState =
+  | "pending"
+  | "running"
+  | "complete"
+  | "incomplete"
+  | "unavailable";
+
 interface DiagnosticsPreloadState {
   active: boolean;
+  completed: boolean;
+  coverageState: DiagnosticsCoverageState;
+  coverageMode: string;
   generation: number;
   projectPath: string | null;
   bounded: boolean;
   totalCandidates: number;
   selectedCandidates: number;
+  checkedCandidates: number;
+  failedCandidates: number;
   totalLanguages: number;
   selectedLanguages: number;
+  timedOut: boolean;
+  message: string;
 }
 
 interface DiagnosticsPreloadEventPayload {
@@ -30,10 +44,16 @@ interface DiagnosticsPreloadEventPayload {
   projectPath?: string;
   sessionId?: string;
   bounded?: boolean;
+  coverageState?: string;
+  coverageMode?: string;
   totalCandidates?: number;
   selectedCandidates?: number;
+  checkedCandidates?: number;
+  failedCandidates?: number;
   totalLanguages?: number;
   selectedLanguages?: number;
+  timedOut?: boolean;
+  message?: string;
 }
 
 interface LSPReadyEventPayload extends DiagnosticsPreloadEventPayload {}
@@ -41,19 +61,28 @@ interface LSPReadyEventPayload extends DiagnosticsPreloadEventPayload {}
 interface ProjectScopeState {
   generation: number;
   projectPath: string | null;
+  sessionId: string;
 }
 
 let diagnosticsPreloadState: DiagnosticsPreloadState = {
   active: false,
+  completed: false,
+  coverageState: "pending",
+  coverageMode: "",
   generation: 0,
   projectPath: null,
   bounded: false,
   totalCandidates: 0,
   selectedCandidates: 0,
+  checkedCandidates: 0,
+  failedCandidates: 0,
   totalLanguages: 0,
   selectedLanguages: 0,
+  timedOut: false,
+  message: "",
 };
 let diagnosticsPreloadEventsBound = false;
+let diagnosticsPreloadSessionId = "main";
 let diagnosticsPreloadBindTimer: ReturnType<typeof window.setTimeout> | null =
   null;
 let diagnosticsPreloadBoundWaiters: Array<() => void> = [];
@@ -61,10 +90,12 @@ const diagnosticsBindingsWaitTimeoutMs = 300;
 let latestProjectRuntime: ProjectScopeState = {
   generation: 0,
   projectPath: null,
+  sessionId: "main",
 };
 let currentProjectScope: ProjectScopeState = {
   generation: 0,
   projectPath: null,
+  sessionId: "main",
 };
 const diagnosticsPreloadListeners = new Set<() => void>();
 
@@ -82,13 +113,20 @@ const getDiagnosticsPreloadSnapshot = () => diagnosticsPreloadState;
 
 const preloadStateIdle: DiagnosticsPreloadState = {
   active: false,
+  completed: false,
+  coverageState: "pending",
+  coverageMode: "",
   generation: 0,
   projectPath: null,
   bounded: false,
   totalCandidates: 0,
   selectedCandidates: 0,
+  checkedCandidates: 0,
+  failedCandidates: 0,
   totalLanguages: 0,
   selectedLanguages: 0,
+  timedOut: false,
+  message: "",
 };
 
 const preloadStateIdleForProject = (
@@ -115,14 +153,15 @@ const normalizeProjectPath = (payload: DiagnosticsPreloadEventPayload) => {
     : null;
 };
 
+const normalizeSessionId = (payload: DiagnosticsPreloadEventPayload) =>
+  typeof payload.sessionId === "string" && payload.sessionId.length > 0
+    ? payload.sessionId
+    : "main";
+
 const payloadMatchesCurrentProjectSession = (
   payload: DiagnosticsPreloadEventPayload,
 ) => {
-  const sessionId =
-    typeof payload.sessionId === "string" && payload.sessionId.length > 0
-      ? payload.sessionId
-      : "main";
-  return sessionId === getCurrentProjectSessionId();
+  return normalizeSessionId(payload) === getCurrentProjectSessionId();
 };
 
 const normalizeCount = (value?: number) => {
@@ -131,6 +170,22 @@ const normalizeCount = (value?: number) => {
   }
 
   return value > 0 ? Math.trunc(value) : 0;
+};
+
+const normalizeCoverageState = (
+  value: string | undefined,
+  fallback: DiagnosticsCoverageState,
+): DiagnosticsCoverageState => {
+  switch (value) {
+    case "pending":
+    case "running":
+    case "complete":
+    case "incomplete":
+    case "unavailable":
+      return value;
+    default:
+      return fallback;
+  }
 };
 
 const syncProjectScopeToDiagnosticsStore = () => {
@@ -142,7 +197,11 @@ const syncProjectScopeToDiagnosticsStore = () => {
     );
 };
 
-const setDiagnosticsPreloadState = (next: DiagnosticsPreloadState) => {
+const setDiagnosticsPreloadState = (
+  next: DiagnosticsPreloadState,
+  sessionId = getCurrentProjectSessionId(),
+) => {
+  diagnosticsPreloadSessionId = sessionId;
   emitDiagnosticsPreloadState(next);
 };
 
@@ -160,32 +219,47 @@ const getPreloadMetadata = (payload: DiagnosticsPreloadEventPayload) => ({
   bounded: Boolean(payload.bounded),
   totalCandidates: normalizeCount(payload.totalCandidates),
   selectedCandidates: normalizeCount(payload.selectedCandidates),
+  checkedCandidates: normalizeCount(payload.checkedCandidates),
+  failedCandidates: normalizeCount(payload.failedCandidates),
   totalLanguages: normalizeCount(payload.totalLanguages),
   selectedLanguages: normalizeCount(payload.selectedLanguages),
+  timedOut: Boolean(payload.timedOut),
+  coverageMode:
+    typeof payload.coverageMode === "string" ? payload.coverageMode : "",
+  message: typeof payload.message === "string" ? payload.message : "",
 });
 
 const resolveMatchingProjectScope = (
   projectPath: string | null,
   generation: number,
+  sessionId: string,
 ) => {
   if (!projectPath) {
     return null;
   }
 
-  if (currentProjectScope.projectPath === projectPath) {
+  if (
+    currentProjectScope.projectPath === projectPath &&
+    currentProjectScope.sessionId === sessionId
+  ) {
     return {
       generation:
         generation ||
         currentProjectScope.generation ||
         latestProjectRuntime.generation,
       projectPath,
+      sessionId,
     };
   }
 
-  if (latestProjectRuntime.projectPath === projectPath) {
+  if (
+    latestProjectRuntime.projectPath === projectPath &&
+    latestProjectRuntime.sessionId === sessionId
+  ) {
     return {
       generation: generation || latestProjectRuntime.generation,
       projectPath,
+      sessionId,
     };
   }
 
@@ -225,22 +299,41 @@ const bindDiagnosticsPreloadEvents = () => {
     }
     const projectPath = normalizeProjectPath(payload);
     const generation = normalizeGeneration(payload.generation);
+    const sessionId = normalizeSessionId(payload);
     if (!projectPath || generation === 0) {
       return;
     }
 
-    latestProjectRuntime = { generation, projectPath };
-    if (currentProjectScope.projectPath !== projectPath) {
+    latestProjectRuntime = { generation, projectPath, sessionId };
+    if (
+      currentProjectScope.projectPath !== projectPath ||
+      currentProjectScope.sessionId !== sessionId
+    ) {
       return;
     }
 
-    currentProjectScope = { generation, projectPath };
+    currentProjectScope = { generation, projectPath, sessionId };
     syncProjectScopeToDiagnosticsStore();
-    if (diagnosticsPreloadState.projectPath === projectPath) {
-      setDiagnosticsPreloadState({
-        ...diagnosticsPreloadState,
-        generation,
-      });
+    if (
+      diagnosticsPreloadState.projectPath === projectPath &&
+      diagnosticsPreloadSessionId === sessionId &&
+      diagnosticsPreloadState.generation === generation
+    ) {
+      setDiagnosticsPreloadState(
+        {
+          ...diagnosticsPreloadState,
+          generation,
+        },
+        sessionId,
+      );
+    } else {
+      setDiagnosticsPreloadState(
+        {
+          ...preloadStateIdleForProject(projectPath),
+          generation,
+        },
+        sessionId,
+      );
     }
   });
   EventsOn(
@@ -251,9 +344,11 @@ const bindDiagnosticsPreloadEvents = () => {
       }
       const projectPath = normalizeProjectPath(payload);
       const generation = normalizeGeneration(payload.generation);
+      const sessionId = normalizeSessionId(payload);
       const matchingScope = resolveMatchingProjectScope(
         projectPath,
         generation,
+        sessionId,
       );
       if (!matchingScope) {
         return;
@@ -270,16 +365,34 @@ const bindDiagnosticsPreloadEvents = () => {
       currentProjectScope = matchingScope;
       syncProjectScopeToDiagnosticsStore();
       const metadata = getPreloadMetadata(payload);
+      const previousCheckedCandidates =
+        diagnosticsPreloadState.projectPath === projectPath &&
+        diagnosticsPreloadSessionId === sessionId &&
+        diagnosticsPreloadState.generation === matchingScope.generation
+          ? diagnosticsPreloadState.checkedCandidates
+          : 0;
+      const checkedCandidateDelta = Math.max(
+        1,
+        metadata.checkedCandidates - previousCheckedCandidates,
+      );
       usePerformanceStore
         .getState()
-        .recordEventPressure("lsp", Math.max(1, metadata.selectedCandidates));
+        .recordEventPressure("lsp", checkedCandidateDelta);
 
-      setDiagnosticsPreloadState({
-        active: true,
-        generation: matchingScope.generation,
-        projectPath,
-        ...metadata,
-      });
+      setDiagnosticsPreloadState(
+        {
+          active: true,
+          completed: false,
+          coverageState: normalizeCoverageState(
+            payload.coverageState,
+            "running",
+          ),
+          generation: matchingScope.generation,
+          projectPath,
+          ...metadata,
+        },
+        sessionId,
+      );
     },
   );
   EventsOn(
@@ -290,9 +403,11 @@ const bindDiagnosticsPreloadEvents = () => {
       }
       const projectPath = normalizeProjectPath(payload);
       const generation = normalizeGeneration(payload.generation);
+      const sessionId = normalizeSessionId(payload);
       const matchingScope = resolveMatchingProjectScope(
         projectPath,
         generation,
+        sessionId,
       );
       if (!matchingScope) {
         return;
@@ -308,13 +423,30 @@ const bindDiagnosticsPreloadEvents = () => {
       currentProjectScope = matchingScope;
       syncProjectScopeToDiagnosticsStore();
       const metadata = getPreloadMetadata(payload);
+      const fallbackCoverageState: DiagnosticsCoverageState =
+        metadata.totalCandidates === 0
+          ? "unavailable"
+          : metadata.bounded ||
+              metadata.selectedCandidates < metadata.totalCandidates ||
+              metadata.failedCandidates > 0 ||
+              metadata.timedOut
+            ? "incomplete"
+            : "complete";
 
-      setDiagnosticsPreloadState({
-        active: false,
-        generation: matchingScope.generation,
-        projectPath,
-        ...metadata,
-      });
+      setDiagnosticsPreloadState(
+        {
+          active: false,
+          completed: true,
+          coverageState: normalizeCoverageState(
+            payload.coverageState,
+            fallbackCoverageState,
+          ),
+          generation: matchingScope.generation,
+          projectPath,
+          ...metadata,
+        },
+        sessionId,
+      );
     },
   );
 };
@@ -366,9 +498,10 @@ const getProjectAppBridge = (): ProjectAppBridge | null => {
 };
 
 export const resetProjectBoundStores = () => {
-  latestProjectRuntime = { generation: 0, projectPath: null };
-  currentProjectScope = { generation: 0, projectPath: null };
-  setDiagnosticsPreloadState(preloadStateIdle);
+  const sessionId = getCurrentProjectSessionId();
+  latestProjectRuntime = { generation: 0, projectPath: null, sessionId };
+  currentProjectScope = { generation: 0, projectPath: null, sessionId };
+  setDiagnosticsPreloadState(preloadStateIdle, sessionId);
   resetIndexingProgressState();
   useDiagnosticsStore.getState().reset();
   useGitStore.getState().setProjectPath("");
@@ -376,42 +509,66 @@ export const resetProjectBoundStores = () => {
 };
 
 export const activateProjectScope = (projectPath: string | null) => {
+  const sessionId = getCurrentProjectSessionId();
+  const generation =
+    projectPath &&
+    latestProjectRuntime.projectPath === projectPath &&
+    latestProjectRuntime.sessionId === sessionId
+      ? latestProjectRuntime.generation
+      : 0;
+  const hasMatchingPreloadProject =
+    diagnosticsPreloadState.projectPath === projectPath &&
+    diagnosticsPreloadSessionId === sessionId &&
+    (generation === 0 ||
+      diagnosticsPreloadState.generation === 0 ||
+      diagnosticsPreloadState.generation === generation);
   currentProjectScope = {
     projectPath,
-    generation:
-      projectPath && latestProjectRuntime.projectPath === projectPath
-        ? latestProjectRuntime.generation
-        : 0,
+    generation,
+    sessionId,
   };
   syncProjectScopeToDiagnosticsStore();
   useGitStore.getState().setProjectPath(projectPath ?? "");
-  setDiagnosticsPreloadState({
-    active:
-      diagnosticsPreloadState.active &&
-      diagnosticsPreloadState.projectPath === projectPath,
-    generation:
-      currentProjectScope.generation || diagnosticsPreloadState.generation,
-    projectPath,
-    bounded:
-      diagnosticsPreloadState.projectPath === projectPath &&
-      diagnosticsPreloadState.bounded,
-    totalCandidates:
-      diagnosticsPreloadState.projectPath === projectPath
+  setDiagnosticsPreloadState(
+    {
+      active: diagnosticsPreloadState.active && hasMatchingPreloadProject,
+      completed: hasMatchingPreloadProject && diagnosticsPreloadState.completed,
+      coverageState: hasMatchingPreloadProject
+        ? diagnosticsPreloadState.coverageState
+        : projectPath
+          ? "pending"
+          : "unavailable",
+      coverageMode: hasMatchingPreloadProject
+        ? diagnosticsPreloadState.coverageMode
+        : "",
+      generation: hasMatchingPreloadProject
+        ? currentProjectScope.generation || diagnosticsPreloadState.generation
+        : currentProjectScope.generation,
+      projectPath,
+      bounded: hasMatchingPreloadProject && diagnosticsPreloadState.bounded,
+      totalCandidates: hasMatchingPreloadProject
         ? diagnosticsPreloadState.totalCandidates
         : 0,
-    selectedCandidates:
-      diagnosticsPreloadState.projectPath === projectPath
+      selectedCandidates: hasMatchingPreloadProject
         ? diagnosticsPreloadState.selectedCandidates
         : 0,
-    totalLanguages:
-      diagnosticsPreloadState.projectPath === projectPath
+      checkedCandidates: hasMatchingPreloadProject
+        ? diagnosticsPreloadState.checkedCandidates
+        : 0,
+      failedCandidates: hasMatchingPreloadProject
+        ? diagnosticsPreloadState.failedCandidates
+        : 0,
+      totalLanguages: hasMatchingPreloadProject
         ? diagnosticsPreloadState.totalLanguages
         : 0,
-    selectedLanguages:
-      diagnosticsPreloadState.projectPath === projectPath
+      selectedLanguages: hasMatchingPreloadProject
         ? diagnosticsPreloadState.selectedLanguages
         : 0,
-  });
+      timedOut: hasMatchingPreloadProject && diagnosticsPreloadState.timedOut,
+      message: hasMatchingPreloadProject ? diagnosticsPreloadState.message : "",
+    },
+    sessionId,
+  );
 };
 
 export const useProjectDiagnosticsPreload = () =>
@@ -425,17 +582,28 @@ export const getProjectDiagnosticsPreloadSnapshot = () =>
 
 export const preloadProjectDiagnostics = async (projectPath: string) => {
   if (!projectPath) {
-    emitDiagnosticsPreloadState(preloadStateIdle);
+    setDiagnosticsPreloadState(preloadStateIdle);
     return false;
   }
 
   if (!isProjectDiagnosticsPreloadEnabled()) {
-    emitDiagnosticsPreloadState(preloadStateIdleForProject(projectPath));
+    setDiagnosticsPreloadState({
+      ...preloadStateIdleForProject(projectPath),
+      completed: true,
+      coverageState: "unavailable",
+      message: "Workspace diagnostics preload is disabled.",
+    });
     return false;
   }
 
   const bridge = getProjectAppBridge();
   if (!bridge || typeof bridge.LSPPreloadProjectDiagnostics !== "function") {
+    setDiagnosticsPreloadState({
+      ...preloadStateIdleForProject(projectPath),
+      completed: true,
+      coverageState: "unavailable",
+      message: "Diagnostics preload bridge is unavailable.",
+    });
     return false;
   }
 
@@ -445,7 +613,13 @@ export const preloadProjectDiagnostics = async (projectPath: string) => {
     return true;
   } catch (error) {
     console.debug("[diagnostics] project preload failed", error);
-    emitDiagnosticsPreloadState(preloadStateIdle);
+    setDiagnosticsPreloadState({
+      ...preloadStateIdleForProject(projectPath),
+      completed: true,
+      coverageState: "unavailable",
+      message:
+        error instanceof Error ? error.message : "Diagnostics preload failed.",
+    });
     return false;
   }
 };

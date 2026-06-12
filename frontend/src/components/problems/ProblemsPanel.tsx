@@ -26,7 +26,6 @@ import type {
 import { useEditorStore } from "../../stores/editorStore";
 import { useExplorerSelectionStore } from "../../stores/explorerStore";
 import { useTheme } from "../../hooks/useTheme";
-import { useIndexingPhase } from "../../hooks/useIndexingProgress";
 import { getThemeColors } from "../../styles/colors";
 import {
   ContextActionMenu,
@@ -41,6 +40,10 @@ import {
 type ProblemsPresentationMode = "compact" | "expanded";
 
 const SPLIT_DIAGNOSTICS_HOLD_MS = 1200;
+const COMPACT_GROUP_RENDER_LIMIT = 80;
+const COMPACT_ITEMS_PER_GROUP_LIMIT = 6;
+const EXPANDED_GROUP_RENDER_LIMIT = 240;
+const EXPANDED_DETAIL_ITEM_LIMIT = 240;
 
 interface ProblemsPanelProps {
   activeFilePath?: string | null;
@@ -69,45 +72,6 @@ const summarizeLabel = (group: DiagnosticsFileGroup) => {
     parts.push(`${group.summary.infos} info`);
   }
   return parts.join(" · ");
-};
-
-const areGroupsEquivalent = (
-  previous: DiagnosticsFileGroup[],
-  next: DiagnosticsFileGroup[],
-) => {
-  if (previous.length !== next.length) {
-    return false;
-  }
-
-  return previous.every((group, groupIndex) => {
-    const nextGroup = next[groupIndex];
-    if (!nextGroup) {
-      return false;
-    }
-
-    if (
-      group.filePath !== nextGroup.filePath ||
-      group.summary.total !== nextGroup.summary.total ||
-      group.summary.errors !== nextGroup.summary.errors ||
-      group.summary.warnings !== nextGroup.summary.warnings ||
-      group.summary.infos !== nextGroup.summary.infos ||
-      group.items.length !== nextGroup.items.length
-    ) {
-      return false;
-    }
-
-    return group.items.every((problem, problemIndex) => {
-      const nextProblem = nextGroup.items[problemIndex];
-      return (
-        nextProblem &&
-        problem.id === nextProblem.id &&
-        problem.message === nextProblem.message &&
-        problem.line === nextProblem.line &&
-        problem.column === nextProblem.column &&
-        problem.severity === nextProblem.severity
-      );
-    });
-  });
 };
 
 const getDominantSeverity = (
@@ -211,7 +175,6 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   onNavigate,
   presentationMode = "compact",
 }) => {
-  const indexingPhase = useIndexingPhase();
   const diagnosticsPreload = useProjectDiagnosticsPreload();
   const { isDark } = useTheme();
   const { copyAbsolutePath, copyRelativePath, copyText, revealEntry } =
@@ -228,7 +191,6 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const previousNonEmptyProjectSummaryRef = useRef<DiagnosticsSummary | null>(
     null,
   );
-  const stableGroupsRef = useRef<DiagnosticsFileGroup[]>([]);
   const lastActiveFilePathRef = useRef<string | null>(null);
   const splitDiagnosticsHoldUntilRef = useRef(0);
   const [splitDiagnosticsHoldUntil, setSplitDiagnosticsHoldUntil] = useState(0);
@@ -296,27 +258,22 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     };
   }, []);
 
-  const groups = useMemo(() => {
-    const nextGroups = useDiagnosticsStore.getState().getProblemGroups({
-      severity: severityFilter,
+  const groups = useMemo(
+    () =>
+      useDiagnosticsStore.getState().getProblemGroups({
+        severity: severityFilter,
+        currentFileOnly,
+        currentFilePath: resolvedActiveFilePath,
+        projectPath: activeProjectPath,
+      }),
+    [
+      activeProjectPath,
+      byFile,
       currentFileOnly,
-      currentFilePath: resolvedActiveFilePath,
-      projectPath: activeProjectPath,
-    });
-
-    if (areGroupsEquivalent(stableGroupsRef.current, nextGroups)) {
-      return stableGroupsRef.current;
-    }
-
-    stableGroupsRef.current = nextGroups;
-    return nextGroups;
-  }, [
-    activeProjectPath,
-    byFile,
-    currentFileOnly,
-    resolvedActiveFilePath,
-    severityFilter,
-  ]);
+      resolvedActiveFilePath,
+      severityFilter,
+    ],
+  );
 
   const groupsQueryKey = [
     activeProjectPath ?? "",
@@ -352,6 +309,22 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     (shouldPreserveCurrentFileGroups || isSplitDiagnosticsHoldActive)
       ? previousNonEmptyGroupsRef.current
       : groups;
+  const compactDisplayedGroups = useMemo(
+    () => displayedGroups.slice(0, COMPACT_GROUP_RENDER_LIMIT),
+    [displayedGroups],
+  );
+  const expandedDisplayedGroups = useMemo(
+    () => displayedGroups.slice(0, EXPANDED_GROUP_RENDER_LIMIT),
+    [displayedGroups],
+  );
+  const hiddenCompactGroupCount = Math.max(
+    0,
+    displayedGroups.length - compactDisplayedGroups.length,
+  );
+  const hiddenExpandedGroupCount = Math.max(
+    0,
+    displayedGroups.length - expandedDisplayedGroups.length,
+  );
 
   const projectSummary =
     displayedGroups !== groups &&
@@ -359,14 +332,31 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     previousNonEmptyProjectSummaryRef.current
       ? previousNonEmptyProjectSummaryRef.current
       : rawProjectSummary;
+  const hasUnfilteredProjectDiagnostics = projectSummary.total > 0;
+  const shouldShowCoverageEmptyState =
+    displayedGroups.length === 0 && !hasUnfilteredProjectDiagnostics;
 
-  const isIndexingActive = indexingPhase === "indexing";
   const isDiagnosticsPreloadActive =
     diagnosticsPreload.active &&
     diagnosticsPreload.projectPath === activeProjectPath;
-  const isBoundedDiagnosticsProject =
+  const isDiagnosticsPreloadComplete =
     diagnosticsPreload.projectPath === activeProjectPath &&
-    diagnosticsPreload.bounded;
+    diagnosticsPreload.completed;
+  const diagnosticsCoverageState =
+    diagnosticsPreload.projectPath === activeProjectPath
+      ? diagnosticsPreload.coverageState
+      : activeProjectPath
+        ? "pending"
+        : "complete";
+  const hasDiagnosticsPreloadForProject =
+    diagnosticsPreload.projectPath === activeProjectPath;
+  const hasDiagnosticsPreloadCheckedSelectedFiles =
+    hasDiagnosticsPreloadForProject &&
+    diagnosticsPreload.selectedCandidates > 0 &&
+    diagnosticsPreload.checkedCandidates >=
+      diagnosticsPreload.selectedCandidates;
+  const isBoundedDiagnosticsProject =
+    hasDiagnosticsPreloadForProject && diagnosticsPreload.bounded;
   const isDiagnosticsRuntimeUnavailable =
     diagnosticsRuntimeStatus.projectPath === activeProjectPath &&
     (diagnosticsRuntimeStatus.state === "unavailable" ||
@@ -374,18 +364,58 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
   const diagnosticsUnavailableMessage =
     isDiagnosticsRuntimeUnavailable && diagnosticsRuntimeStatus.message
       ? diagnosticsRuntimeStatus.message
-      : "Workspace diagnostics are not available for the detected files in this project yet.";
+      : diagnosticsPreload.message ||
+        "Workspace diagnostics are not available for the detected files in this project yet.";
   const isWorkspaceDiagnosticsUnavailable =
-    isDiagnosticsRuntimeUnavailable ||
-    (diagnosticsPreload.projectPath === activeProjectPath &&
-      !diagnosticsPreload.active &&
-      diagnosticsPreload.totalCandidates === 0);
-  const isPartialWorkspaceDiagnostics =
-    isBoundedDiagnosticsProject &&
-    diagnosticsPreload.totalCandidates > diagnosticsPreload.selectedCandidates;
+    shouldShowCoverageEmptyState &&
+    (isDiagnosticsRuntimeUnavailable ||
+      (isDiagnosticsPreloadComplete &&
+        !diagnosticsPreload.active &&
+        diagnosticsCoverageState === "unavailable"));
+  const isWorkspaceDiagnosticsIncomplete =
+    shouldShowCoverageEmptyState &&
+    !isWorkspaceDiagnosticsUnavailable &&
+    hasDiagnosticsPreloadForProject &&
+    !diagnosticsPreload.active &&
+    (diagnosticsCoverageState === "incomplete" ||
+      (isBoundedDiagnosticsProject &&
+        diagnosticsPreload.totalCandidates >
+          diagnosticsPreload.selectedCandidates));
+  const isDiagnosticsCoverageIncomplete =
+    hasDiagnosticsPreloadForProject &&
+    !diagnosticsPreload.active &&
+    (diagnosticsCoverageState === "incomplete" ||
+      (isBoundedDiagnosticsProject &&
+        diagnosticsPreload.totalCandidates >
+          diagnosticsPreload.selectedCandidates));
+  const isPartialWorkspaceDiagnostics = isDiagnosticsCoverageIncomplete;
+  const isDiagnosticsPreloadPendingOrRunning =
+    hasDiagnosticsPreloadForProject &&
+    !hasDiagnosticsPreloadCheckedSelectedFiles &&
+    !diagnosticsPreload.completed &&
+    (isDiagnosticsPreloadActive ||
+      diagnosticsCoverageState === "pending" ||
+      diagnosticsCoverageState === "running");
+  const isProjectDiagnosticsScanRunning =
+    !isWorkspaceDiagnosticsUnavailable &&
+    !isWorkspaceDiagnosticsIncomplete &&
+    isDiagnosticsPreloadPendingOrRunning;
   const showScanningState =
-    displayedGroups.length === 0 &&
-    (isIndexingActive || isDiagnosticsPreloadActive);
+    shouldShowCoverageEmptyState && isProjectDiagnosticsScanRunning;
+  const showInlineScanningProgress =
+    !shouldShowCoverageEmptyState && isProjectDiagnosticsScanRunning;
+  const diagnosticsScanProgressLabel =
+    diagnosticsPreload.projectPath === activeProjectPath &&
+    diagnosticsPreload.selectedCandidates > 0
+      ? `${Math.min(
+          diagnosticsPreload.checkedCandidates,
+          diagnosticsPreload.selectedCandidates,
+        )}/${diagnosticsPreload.selectedCandidates} files checked`
+      : "Collecting project diagnostics";
+  const canShowCleanState =
+    hasUnfilteredProjectDiagnostics ||
+    !activeProjectPath ||
+    diagnosticsCoverageState === "complete";
 
   const panelVars = useMemo(
     () =>
@@ -477,13 +507,13 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
           style={summaryPillStyle("warning")}
         >
           <Layers3 size={12} />
-          Partial results
+          Diagnostics incomplete
         </span>
       ) : null}
-      {showScanningState ? (
+      {showScanningState || showInlineScanningProgress ? (
         <span className={problemsPillClass}>
           <LoaderCircle size={12} className="animate-spin" />
-          Scanning
+          Still scanning
         </span>
       ) : null}
     </div>
@@ -651,10 +681,50 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     </ContextActionMenu>
   );
 
+  const renderLimitNotice = (
+    hiddenCount: number,
+    label: "files" | "problems",
+  ): React.ReactNode => {
+    if (hiddenCount <= 0) {
+      return null;
+    }
+
+    return (
+      <div className="rounded-[16px] border border-[var(--problems-border)] bg-[var(--problems-bg-tertiary)] px-3.5 py-2 text-[12px] font-medium text-[var(--problems-text-secondary)]">
+        {hiddenCount} more {label}
+      </div>
+    );
+  };
+
+  const renderScanningProgressNotice = (): React.ReactNode => {
+    if (!showInlineScanningProgress) {
+      return null;
+    }
+
+    return (
+      <div className="flex items-center gap-3 rounded-[16px] border border-[var(--problems-border)] bg-[var(--problems-bg-tertiary)] px-3.5 py-2.5 text-[12px] text-[var(--problems-text-secondary)]">
+        <LoaderCircle size={14} className="shrink-0 animate-spin" />
+        <div className="min-w-0">
+          <div className="font-semibold text-[var(--problems-text)]">
+            Still scanning
+          </div>
+          <div className="truncate text-[11px] text-[var(--problems-text-tertiary)]">
+            {diagnosticsScanProgressLabel}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderGroupSection = (group: DiagnosticsFileGroup): React.ReactNode => {
     const dominantSeverity = getDominantSeverity(group.summary);
     const tone = severityTone(dominantSeverity);
     const isCurrentFile = group.filePath === currentFileCandidatePath;
+    const visibleItems = group.items.slice(0, COMPACT_ITEMS_PER_GROUP_LIMIT);
+    const hiddenItemCount = Math.max(
+      0,
+      group.items.length - visibleItems.length,
+    );
 
     return (
       <ContextActionMenu
@@ -703,7 +773,10 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
           </div>
 
           <div className="flex flex-col gap-2 px-3 py-3">
-            {group.items.map((problem) => renderProblemRow(problem, "compact"))}
+            {visibleItems.map((problem) =>
+              renderProblemRow(problem, "compact"),
+            )}
+            {renderLimitNotice(hiddenItemCount, "problems")}
           </div>
         </section>
       </ContextActionMenu>
@@ -825,9 +898,9 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
                 {diagnosticsUnavailableMessage}
               </div>
             </motion.div>
-          ) : isPartialWorkspaceDiagnostics ? (
+          ) : isWorkspaceDiagnosticsIncomplete ? (
             <motion.div
-              key="partial"
+              key="incomplete"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -835,14 +908,14 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
               className="max-w-[360px] text-center"
             >
               <div className="text-[14px] font-semibold text-[var(--problems-text)]">
-                Partial results only
+                Diagnostics incomplete
               </div>
               <div className="mt-1 text-[12px] text-[var(--problems-text-secondary)]">
-                No problems found in the scanned subset yet. Project-wide
-                results are currently limited for this workload.
+                {diagnosticsPreload.message ||
+                  "Project-wide diagnostics could not verify every supported file yet."}
               </div>
             </motion.div>
-          ) : (
+          ) : canShowCleanState ? (
             <motion.div
               key="empty"
               initial={{ opacity: 0 }}
@@ -858,6 +931,30 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
                 {currentFileOnly
                   ? "The current file has no problems under the active filters."
                   : "No problems match the current filters right now."}
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="pending"
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
+              className="flex max-w-[360px] flex-col items-center gap-4 text-center"
+            >
+              <div className="inline-flex h-14 w-14 items-center justify-center rounded-[20px] border border-[var(--problems-border)] bg-[var(--problems-bg-tertiary)]">
+                <LoaderCircle
+                  size={22}
+                  className="animate-spin text-[var(--problems-text-secondary)]"
+                />
+              </div>
+              <div>
+                <div className="text-[14px] font-semibold text-[var(--problems-text)]">
+                  Scanning diagnostics
+                </div>
+                <div className="mt-1 text-[12px] text-[var(--problems-text-secondary)]">
+                  Waiting for project-wide diagnostics coverage.
+                </div>
               </div>
             </motion.div>
           )}
@@ -882,7 +979,9 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
           className="min-h-0 flex-1 overflow-y-auto"
         >
           <div className="flex min-h-full flex-col gap-3 px-3 py-3">
-            {displayedGroups.map((group) => renderGroupSection(group))}
+            {renderScanningProgressNotice()}
+            {compactDisplayedGroups.map((group) => renderGroupSection(group))}
+            {renderLimitNotice(hiddenCompactGroupCount, "files")}
           </div>
         </div>
       </div>
@@ -897,6 +996,14 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
     const dominantSeverity = getDominantSeverity(selectedGroup.summary);
     const isSelectedCurrentFile =
       selectedGroup.filePath === currentFileCandidatePath;
+    const visibleItems = selectedGroup.items.slice(
+      0,
+      EXPANDED_DETAIL_ITEM_LIMIT,
+    );
+    const hiddenItemCount = Math.max(
+      0,
+      selectedGroup.items.length - visibleItems.length,
+    );
 
     return (
       <section
@@ -928,13 +1035,13 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
                     style={summaryPillStyle("warning")}
                   >
                     <Layers3 size={12} />
-                    Partial results
+                    Diagnostics incomplete
                   </span>
                 ) : null}
-                {showScanningState ? (
+                {showScanningState || showInlineScanningProgress ? (
                   <span className={problemsPillClass}>
                     <LoaderCircle size={12} className="animate-spin" />
-                    Scanning
+                    Still scanning
                   </span>
                 ) : null}
               </div>
@@ -977,9 +1084,8 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
         >
           <div className="flex flex-col gap-3">
-            {selectedGroup.items.map((problem) =>
-              renderProblemRow(problem, "detail"),
-            )}
+            {visibleItems.map((problem) => renderProblemRow(problem, "detail"))}
+            {renderLimitNotice(hiddenItemCount, "problems")}
           </div>
         </div>
       </section>
@@ -1004,9 +1110,11 @@ export const ProblemsPanel: React.FC<ProblemsPanelProps> = ({
             >
               {displayedGroups.length > 0 ? (
                 <div className="flex min-h-full flex-col gap-3">
-                  {displayedGroups.map((group) =>
+                  {renderScanningProgressNotice()}
+                  {expandedDisplayedGroups.map((group) =>
                     renderExpandedFileCard(group),
                   )}
+                  {renderLimitNotice(hiddenExpandedGroupCount, "files")}
                 </div>
               ) : null}
             </div>

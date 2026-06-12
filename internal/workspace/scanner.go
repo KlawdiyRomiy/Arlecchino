@@ -76,6 +76,7 @@ type ScannerOptions struct {
 	ContentSniffBytes int64
 	Workers           int
 	UseGitIgnore      bool
+	DetectVendor      bool
 	SkipDirs          map[string]struct{}
 }
 
@@ -161,6 +162,18 @@ func (s *Scanner) Walk(ctx context.Context, visit func(Entry) error) (Summary, e
 				return nil
 			}
 
+			if d.IsDir() && !s.options.IncludeDirs {
+				skip, err := s.shouldSkipPath(path, d.Name(), true)
+				if err != nil {
+					degraded++
+					return nil
+				}
+				if skip {
+					return fastwalk.SkipDir
+				}
+				return nil
+			}
+
 			entry, skip, err := s.entryFromDirEntry(path, d)
 			if err != nil {
 				degraded++
@@ -228,10 +241,7 @@ func (s *Scanner) entryFromDirEntry(path string, d fs.DirEntry) (Entry, bool, er
 	}
 	name := d.Name()
 	isDir := d.IsDir()
-	if isDir && s.shouldSkipDir(name, rel) {
-		return Entry{}, true, nil
-	}
-	if s.matcher != nil && s.matcher.Match(splitRelPath(rel), isDir) {
+	if s.shouldSkipRel(rel, name, isDir) {
 		return Entry{}, true, nil
 	}
 
@@ -246,13 +256,15 @@ func (s *Scanner) entryFromDirEntry(path string, d fs.DirEntry) (Entry, bool, er
 		IsDirectory: isDir,
 		Size:        info.Size(),
 		ModifiedAt:  info.ModTime(),
-		Vendor:      enry.IsVendor(path),
 		Fingerprint: MetadataFingerprint(info.ModTime(), info.Size()),
 	}
 	if isDir {
 		return entry, false, nil
 	}
 
+	if s.options.DetectVendor {
+		entry.Vendor = enry.IsVendor(path)
+	}
 	entry.Language = detectLanguageByPath(path)
 	if entry.Language == "" && s.options.ContentSniffBytes > 0 && info.Size() <= s.options.ContentSniffBytes {
 		content, readErr := readPrefix(path, s.options.ContentSniffBytes)
@@ -278,6 +290,27 @@ func (s *Scanner) shouldSkipDir(name string, rel string) bool {
 	}
 	_, ok := s.options.SkipDirs[filepath.ToSlash(rel)]
 	return ok
+}
+
+func (s *Scanner) shouldSkipPath(path string, name string, isDir bool) (bool, error) {
+	rel, err := filepath.Rel(s.root, path)
+	if err != nil {
+		return false, err
+	}
+	return s.shouldSkipRel(rel, name, isDir), nil
+}
+
+func (s *Scanner) shouldSkipRel(rel string, name string, isDir bool) bool {
+	if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return true
+	}
+	if isDir && s.shouldSkipDir(name, rel) {
+		return true
+	}
+	if s.matcher != nil && s.matcher.Match(splitRelPath(rel), isDir) {
+		return true
+	}
+	return false
 }
 
 func detectLanguageByPath(path string) string {

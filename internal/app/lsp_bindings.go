@@ -107,10 +107,16 @@ type LSPDiagnosticsPreloadEvent struct {
 	SessionID          string `json:"sessionId,omitempty"`
 	Generation         uint64 `json:"generation"`
 	Bounded            bool   `json:"bounded"`
+	CoverageState      string `json:"coverageState,omitempty"`
+	CoverageMode       string `json:"coverageMode,omitempty"`
 	TotalCandidates    int    `json:"totalCandidates"`
 	SelectedCandidates int    `json:"selectedCandidates"`
+	CheckedCandidates  int    `json:"checkedCandidates"`
+	FailedCandidates   int    `json:"failedCandidates"`
 	TotalLanguages     int    `json:"totalLanguages"`
 	SelectedLanguages  int    `json:"selectedLanguages"`
+	TimedOut           bool   `json:"timedOut"`
+	Message            string `json:"message,omitempty"`
 }
 
 type LSPCodeAction struct {
@@ -143,20 +149,10 @@ func ensureDocOpen(manager *indexerlsp.Manager, language, filePath, content stri
 	if manager.IsDocOpen(language, filePath) {
 		return false, nil
 	}
-	if err := manager.DidOpen(language, filePath, content); err != nil {
-		return false, err
-	}
-	if manager.IsDocOpen(language, filePath) {
-		return true, nil
-	}
-	return false, nil
+	return manager.DidOpenTransientWithContext(context.Background(), language, filePath, content)
 }
 
 func convertLSPDiagnostics(diagnostics []indexerlsp.Diagnostic) []LSPDiagnostic {
-	if len(diagnostics) == 0 {
-		return nil
-	}
-
 	result := make([]LSPDiagnostic, 0, len(diagnostics))
 	for _, d := range diagnostics {
 		code := ""
@@ -286,7 +282,7 @@ func (a *App) LSPGoToDefinition(filePath string, content string, line int, chara
 		return nil, fmt.Errorf("failed to open document: %w", err)
 	}
 	if opened {
-		defer manager.DidClose(language, filePath)
+		defer manager.DidCloseTransient(language, filePath)
 	}
 
 	// Get definition (LSP uses 0-indexed lines)
@@ -331,7 +327,7 @@ func (a *App) LSPHover(filePath string, content string, line int, character int)
 		return "", fmt.Errorf("failed to open document: %w", err)
 	}
 	if opened {
-		defer manager.DidClose(language, filePath)
+		defer manager.DidCloseTransient(language, filePath)
 	}
 
 	// Get hover info
@@ -361,7 +357,7 @@ func (a *App) LSPSignatureHelp(filePath string, content string, line int, charac
 		return nil, fmt.Errorf("failed to open document: %w", err)
 	}
 	if opened {
-		defer manager.DidClose(language, filePath)
+		defer manager.DidCloseTransient(language, filePath)
 	}
 
 	// Get signature help
@@ -410,7 +406,7 @@ func (a *App) LSPGetDiagnostics(filePath string) ([]LSPDiagnostic, error) {
 
 	diagnostics := manager.GetDiagnostics(language, filePath)
 	if len(diagnostics) == 0 {
-		return nil, nil
+		return []LSPDiagnostic{}, nil
 	}
 
 	return convertLSPDiagnostics(diagnostics), nil
@@ -432,7 +428,7 @@ func (a *App) LSPGetCodeActions(filePath string, content string, line int, chara
 		return nil, fmt.Errorf("failed to open document: %w", err)
 	}
 	if opened {
-		defer manager.DidClose(language, filePath)
+		defer manager.DidCloseTransient(language, filePath)
 	}
 
 	allDiagnostics := manager.GetDiagnostics(language, filePath)

@@ -13,7 +13,7 @@ import type { DiagnosticsSummary } from "../../stores/diagnosticsStore";
 interface DiagnosticsCompactIndicatorProps {
   summary: DiagnosticsSummary;
   onClick: () => void;
-  state?: "default" | "scanning" | "partial" | "unavailable";
+  state?: "default" | "scanning" | "partial" | "incomplete" | "unavailable";
 }
 
 const formatCount = (value: number, label: string) => `${value} ${label}`;
@@ -28,9 +28,11 @@ export const DiagnosticsCompactIndicator: React.FC<
       ? "Problems: scanning workspace diagnostics"
       : state === "partial"
         ? "Problems: partial workspace diagnostics"
-        : state === "unavailable"
-          ? "Problems: diagnostics unavailable"
-          : "Problems: no issues";
+        : state === "incomplete"
+          ? "Problems: workspace diagnostics incomplete"
+          : state === "unavailable"
+            ? "Problems: diagnostics unavailable"
+            : "Problems: no issues";
 
   return (
     <button
@@ -64,6 +66,11 @@ export const DiagnosticsCompactIndicator: React.FC<
         <span className="flex items-center gap-1 text-[#F59E0B]">
           <Layers3 size={12} />
           <span className="font-semibold">Partial</span>
+        </span>
+      ) : state === "incomplete" ? (
+        <span className="flex items-center gap-1 text-[#F59E0B]">
+          <Layers3 size={12} />
+          <span className="font-semibold">Incomplete</span>
         </span>
       ) : state === "unavailable" ? (
         <span className="flex items-center gap-1 text-[#F59E0B]">

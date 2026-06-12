@@ -95,6 +95,14 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
     ? `Ln ${cursorPosition.line}, Col ${cursorPosition.col}`
     : "Ln -, Col -";
   const diagnosticsIndicatorState = useMemo(() => {
+    const preloadMatchesProject =
+      diagnosticsPreload.projectPath === activeProjectPath;
+    const coverageState = preloadMatchesProject
+      ? diagnosticsPreload.coverageState
+      : activeProjectPath
+        ? "pending"
+        : "complete";
+
     if (projectSummary.total > 0) {
       return "default" as const;
     }
@@ -107,19 +115,29 @@ export const StatusBar: React.FC<StatusBarProps> = ({ onToggleProblems }) => {
       return "unavailable" as const;
     }
     if (
-      diagnosticsPreload.active &&
-      diagnosticsPreload.projectPath === activeProjectPath
+      activeProjectPath &&
+      (diagnosticsPreload.active ||
+        coverageState === "pending" ||
+        coverageState === "running")
     ) {
       return "scanning" as const;
     }
     if (
-      diagnosticsPreload.projectPath === activeProjectPath &&
-      (diagnosticsPreload.bounded ||
+      activeProjectPath &&
+      !diagnosticsPreload.active &&
+      coverageState === "unavailable"
+    ) {
+      return "unavailable" as const;
+    }
+    if (
+      activeProjectPath &&
+      (coverageState === "incomplete" ||
+        diagnosticsPreload.bounded ||
         (diagnosticsPreload.totalCandidates > 0 &&
           diagnosticsPreload.selectedCandidates <
             diagnosticsPreload.totalCandidates))
     ) {
-      return "partial" as const;
+      return "incomplete" as const;
     }
     return "default" as const;
   }, [
