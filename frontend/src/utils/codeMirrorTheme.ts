@@ -166,6 +166,7 @@ export const codeEditorStyles = EditorView.theme(
       scrollbarGutter: "stable",
       overflowAnchor: "none",
       contain: "layout style",
+      cursor: "text",
     },
     ".cm-scroller::-webkit-scrollbar": {
       width: "10px",
@@ -190,17 +191,26 @@ export const codeEditorStyles = EditorView.theme(
       fontFamily: editorFontFamily,
       caretColor: editorPalette.caret,
       backgroundColor: editorPalette.background,
+      cursor: "text",
     },
     ".cm-line": {
       padding: "0 18px 0 14px",
       color: editorPalette.text,
       fontFamily: editorFontFamily,
+      cursor: "text",
     },
     ".cm-gutters": {
       backgroundColor: editorPalette.gutter,
       color: editorPalette.textMuted,
       borderRight: `1px solid ${editorPalette.border}`,
       minWidth: "42px",
+      cursor: "default",
+    },
+    ".cm-gutterElement": {
+      cursor: "default",
+    },
+    ".cm-foldGutter .cm-gutterElement": {
+      cursor: "pointer",
     },
     ".cm-lineNumbers .cm-gutterElement": {
       padding: "0 10px 0 12px",
@@ -662,6 +672,18 @@ export const codeEditorStyles = EditorView.theme(
       textDecorationColor:
         "color-mix(in srgb, var(--editor-accent) 55%, transparent)",
       textUnderlineOffset: "0.18em",
+      cursor: "pointer",
+    },
+    "&.cm-definition-link-active .cm-scroller, &.cm-definition-link-active .cm-content, &.cm-definition-link-active .cm-line":
+      {
+        cursor: "pointer",
+      },
+    "&.cm-definition-link-active .cm-gutters, &.cm-definition-link-active .cm-gutterElement":
+      {
+        cursor: "default",
+      },
+    "&.cm-definition-link-active .cm-foldGutter .cm-gutterElement": {
+      cursor: "pointer",
     },
     ".perspective-highlight": {
       backgroundColor: editorPalette.highlight,

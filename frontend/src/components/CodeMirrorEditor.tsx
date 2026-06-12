@@ -64,7 +64,11 @@ import {
   type ContextActionMenuItem,
 } from "./ui/ContextActionMenu";
 import { LSPHover, LSPSignatureHelp, RevealProjectEntry } from "../wails/app";
-import { createDiagnosticsExtension } from "../extensions/diagnosticsExtension";
+import {
+  createDiagnosticsExtension,
+  hasInlineDiagnosticAtPosition,
+  LARGE_DOCUMENT_INLINE_DIAGNOSTIC_LIMIT,
+} from "../extensions/diagnosticsExtension";
 import { createGitGutterExtension } from "../extensions/gitGutterExtension";
 import { createOperatorLigaturesExtension } from "../extensions/operatorLigaturesExtension";
 import { useGitStore } from "../stores/gitStore";
@@ -321,33 +325,126 @@ function getPrefixCharClass(language: string): string {
   return "A-Za-z0-9_$";
 }
 
-const setDefinitionLinkEffect = StateEffect.define<{
+interface DefinitionLinkRange {
   from: number;
   to: number;
-} | null>();
-const definitionLinkField = StateField.define<DecorationSet>({
+}
+
+const DEFINITION_LINK_ACTIVE_CLASS = "cm-definition-link-active";
+
+const setDefinitionLinkEffect = StateEffect.define<DefinitionLinkRange | null>({
+  map(value, mapping) {
+    if (!value) {
+      return null;
+    }
+    const from = mapping.mapPos(value.from, 1);
+    const to = mapping.mapPos(value.to, -1);
+    return from < to ? { from, to } : null;
+  },
+});
+const definitionLinkField = StateField.define<DefinitionLinkRange | null>({
   create() {
-    return Decoration.none;
+    return null;
   },
   update(value, transaction) {
-    const mapped = value.map(transaction.changes);
+    let next = value;
+    if (next && transaction.docChanged) {
+      const from = transaction.changes.mapPos(next.from, 1);
+      const to = transaction.changes.mapPos(next.to, -1);
+      next = from < to ? { from, to } : null;
+    }
     for (const effect of transaction.effects) {
       if (effect.is(setDefinitionLinkEffect)) {
-        if (!effect.value) {
-          return Decoration.none;
-        }
-        const decoration = Decoration.mark({
-          class: "definition-link-hover",
-        });
-        return Decoration.set([
-          decoration.range(effect.value.from, effect.value.to),
-        ]);
+        return effect.value;
       }
     }
-    return mapped;
+    return next;
   },
-  provide: (field) => EditorView.decorations.from(field),
+  provide: (field) => [
+    EditorView.decorations.from(field, (value) => {
+      if (!value) {
+        return Decoration.none;
+      }
+      const decoration = Decoration.mark({
+        class: "definition-link-hover",
+      });
+      return Decoration.set([decoration.range(value.from, value.to)]);
+    }),
+    EditorView.editorAttributes.from(field, (value) =>
+      value ? { class: DEFINITION_LINK_ACTIVE_CLASS } : { class: "" },
+    ),
+  ],
 });
+
+const definitionLinkCleanupPlugin = ViewPlugin.fromClass(
+  class {
+    private readonly view: EditorView;
+
+    constructor(view: EditorView) {
+      this.view = view;
+      this.view.dom.addEventListener("mouseleave", this.handleEditorMouseLeave);
+      this.view.dom.addEventListener("blur", this.handleEditorBlur, true);
+      window.addEventListener("keyup", this.handleWindowKeyUp, true);
+      window.addEventListener("blur", this.handleWindowBlur, true);
+      document.addEventListener(
+        "visibilitychange",
+        this.handleVisibilityChange,
+        true,
+      );
+    }
+
+    destroy() {
+      this.view.dom.removeEventListener(
+        "mouseleave",
+        this.handleEditorMouseLeave,
+      );
+      this.view.dom.removeEventListener("blur", this.handleEditorBlur, true);
+      window.removeEventListener("keyup", this.handleWindowKeyUp, true);
+      window.removeEventListener("blur", this.handleWindowBlur, true);
+      document.removeEventListener(
+        "visibilitychange",
+        this.handleVisibilityChange,
+        true,
+      );
+    }
+
+    private clear = () => {
+      if (!this.view.state.field(definitionLinkField, false)) {
+        return;
+      }
+      this.view.dispatch({ effects: setDefinitionLinkEffect.of(null) });
+    };
+
+    private handleEditorMouseLeave = () => {
+      this.clear();
+    };
+
+    private handleEditorBlur = () => {
+      this.clear();
+    };
+
+    private handleWindowBlur = () => {
+      this.clear();
+    };
+
+    private handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        this.clear();
+      }
+    };
+
+    private handleWindowKeyUp = (event: KeyboardEvent) => {
+      if (
+        event.key === "Meta" ||
+        event.key === "Control" ||
+        event.key === "Alt" ||
+        (!event.metaKey && !event.ctrlKey && !event.altKey)
+      ) {
+        this.clear();
+      }
+    };
+  },
+);
 
 const setHighlightLineEffect = StateEffect.define<number | null>();
 const highlightLineField = StateField.define<DecorationSet>({
@@ -687,8 +784,16 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
         : createDiagnosticsExtension({
             filePath,
             language,
+            maxInlineDiagnostics: largeDocumentMode
+              ? LARGE_DOCUMENT_INLINE_DIAGNOSTIC_LIMIT
+              : undefined,
           }),
-    [editorFeatureBudget.runtimeDiagnostics, filePath, language],
+    [
+      editorFeatureBudget.runtimeDiagnostics,
+      filePath,
+      language,
+      largeDocumentMode,
+    ],
   );
 
   const [definitionMenu, setDefinitionMenu] = useState<DefinitionMenuState>({
@@ -1559,12 +1664,15 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     }
 
     const clearDefinitionLink = (view: EditorView) => {
+      if (!view.state.field(definitionLinkField, false)) {
+        return;
+      }
       view.dispatch({ effects: setDefinitionLinkEffect.of(null) });
-      view.dom.style.cursor = "";
     };
 
     return [
       definitionLinkField,
+      definitionLinkCleanupPlugin,
       EditorView.domEventHandlers({
         mousemove: (event, view) => {
           if (!projectPath || !filePath) return false;
@@ -1607,10 +1715,23 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
               to: line.from + wordInfo.endColumn - 1,
             }),
           });
-          view.dom.style.cursor = "pointer";
           return false;
         },
         mouseleave: (_event, view) => {
+          clearDefinitionLink(view);
+          return false;
+        },
+        keyup: (event, view) => {
+          if (
+            event.key === "Meta" ||
+            event.key === "Control" ||
+            event.key === "Alt"
+          ) {
+            clearDefinitionLink(view);
+          }
+          return false;
+        },
+        blur: (_event, view) => {
           clearDefinitionLink(view);
           return false;
         },
@@ -1647,6 +1768,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     return [
       hoverTooltip(async (view, pos) => {
         if (language !== "php") return null;
+        if (hasInlineDiagnosticAtPosition(view, pos)) return null;
 
         const line = view.state.doc.lineAt(pos);
         const lineNumber = line.number;

@@ -7,7 +7,10 @@ import { EditorView, keymap } from "@codemirror/view";
 
 import { WriteFile } from "../wails/app";
 import { createAIInlinePatchExtension } from "../extensions/aiInlinePatchExtension";
-import { createDiagnosticsExtension } from "../extensions/diagnosticsExtension";
+import {
+  createDiagnosticsExtension,
+  LARGE_DOCUMENT_INLINE_DIAGNOSTIC_LIMIT,
+} from "../extensions/diagnosticsExtension";
 import { createGitGutterExtension } from "../extensions/gitGutterExtension";
 import type { AIInlinePatchPreview } from "../stores/aiInlinePatchStore";
 import {
@@ -182,8 +185,11 @@ export const CodePanelSurface: React.FC<CodePanelSurfaceProps> = ({
         : createDiagnosticsExtension({
             filePath: path,
             language,
+            maxInlineDiagnostics: largeDocumentMode
+              ? LARGE_DOCUMENT_INLINE_DIAGNOSTIC_LIMIT
+              : undefined,
           }),
-    [editorFeatureBudget.runtimeDiagnostics, language, path],
+    [editorFeatureBudget.runtimeDiagnostics, language, largeDocumentMode, path],
   );
 
   useEffect(() => {
