@@ -61,6 +61,24 @@ interface PanelDragSession {
   pointerId: number;
 }
 
+interface PanelResizeSession {
+  captureTarget: HTMLElement | null;
+  cursor: string;
+  cursorOwner: string;
+  edge: string;
+  handleLostPointerCapture: (event: PointerEvent) => void;
+  handlePageHide: () => void;
+  handlePointerCancel: (event: PointerEvent) => void;
+  handlePointerMove: (event: PointerEvent) => void;
+  handlePointerUp: (event: PointerEvent) => void;
+  handleVisibilityChange: () => void;
+  handleWindowBlur: () => void;
+  pointerId: number;
+  previousCursor: string;
+  previousCursorOwner: string | null;
+  previousUserSelect: string;
+}
+
 const FLOATING_PANEL_FLOATING_SLIDE_OFFSET = 32;
 const FLOATING_PANEL_NO_MOTION_TRANSITION = { duration: 0 } as const;
 const FLOATING_PANEL_DROP_PREVIEW_WIDTH = 150;
@@ -76,9 +94,18 @@ const WAILS_NO_DRAG_STYLE = {
 } as React.CSSProperties;
 const PANEL_HEADER_NO_DRAG_SELECTOR =
   'button,input,textarea,select,[data-panel-controls="true"],[data-panel-no-drag="true"],[data-panel-resize-handle="true"]';
+const BODY_CURSOR_OWNER_ATTRIBUTE = "data-arle-cursor-owner";
 const warmedPanelContentIds = new Set<string>();
 const PROJECTED_READABLE_SCALE_MIN = 0.05;
 const PROJECTED_READABLE_SCALE_MAX = 12;
+
+const getResizeCursor = (edge: string): string => {
+  if (edge === "n" || edge === "s") return "ns-resize";
+  if (edge === "e" || edge === "w") return "ew-resize";
+  if (edge === "ne" || edge === "sw") return "nesw-resize";
+  if (edge === "nw" || edge === "se") return "nwse-resize";
+  return "default";
+};
 
 const clampProjectedReadableScale = (value: number): number =>
   Number.isFinite(value)
@@ -312,6 +339,8 @@ export const FloatingPanel = React.forwardRef<
     const pendingDragTargetRef = useRef<{ x: number; y: number } | null>(null);
     const dragMoveFrameRef = useRef<number | null>(null);
     const dragSessionRef = useRef<PanelDragSession | null>(null);
+    const resizeSessionRef = useRef<PanelResizeSession | null>(null);
+    const resizeSessionIdRef = useRef(0);
     const dragSelectionReleaseRef = useRef<(() => void) | null>(null);
     const metaKeyPressedRef = useRef(false);
     const isResizingRef = useRef(isResizing);
@@ -588,39 +617,22 @@ export const FloatingPanel = React.forwardRef<
       [flushResizeUpdate],
     );
 
-    const handleResizeStart = useCallback(
-      (e: React.MouseEvent, edge: string) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsResizing(true);
-        setResizeEdge(edge);
-
-        const rect = panelRef.current?.getBoundingClientRect();
-        panelRef.current
-          ?.querySelector<HTMLElement>('[data-panel-content="true"]')
-          ?.style.setProperty("pointer-events", "none");
-
-        startRef.current = {
-          ...startRef.current,
-          x: e.clientX,
-          y: e.clientY,
-          width:
-            rect?.width || logicalToScreenPixels(size.width, effectiveUiScale),
-          height:
-            rect?.height ||
-            logicalToScreenPixels(size.height, effectiveUiScale),
-          panelX: rect?.left || logicalToScreenPixels(x, effectiveUiScale),
-          panelY: rect?.top || logicalToScreenPixels(y, effectiveUiScale),
-        };
-        onResizeStartRef.current?.(id);
+    const releasePointerCapture = useCallback(
+      (target: HTMLElement | null, pointerId: number) => {
+        try {
+          if (target?.hasPointerCapture?.(pointerId)) {
+            target.releasePointerCapture(pointerId);
+          }
+        } catch {
+          // Synthetic pointer events used in tests may not create a browser
+          // capture target; window-level listeners remain the fallback.
+        }
       },
-      [effectiveUiScale, id, size, x, y],
+      [],
     );
 
-    const handleResizeMove = useCallback(
-      (e: MouseEvent) => {
-        if (!isResizing || !resizeEdge) return;
-
+    const applyResizeMove = useCallback(
+      (e: PointerEvent, edge: string) => {
         let newWidth = startRef.current.width;
         let newHeight = startRef.current.height;
         let newX: number | undefined;
@@ -629,7 +641,7 @@ export const FloatingPanel = React.forwardRef<
         const deltaX = e.clientX - startRef.current.x;
         const deltaY = e.clientY - startRef.current.y;
 
-        if (resizeEdge.includes("n")) {
+        if (edge.includes("n")) {
           const proposedHeight = startRef.current.height - deltaY;
           newHeight = Math.max(
             logicalToScreenPixels(minSize, effectiveUiScale),
@@ -641,7 +653,7 @@ export const FloatingPanel = React.forwardRef<
           const actualDeltaY = startRef.current.height - newHeight;
           newY = startRef.current.panelY + actualDeltaY;
         }
-        if (resizeEdge.includes("s")) {
+        if (edge.includes("s")) {
           newHeight = Math.max(
             logicalToScreenPixels(minSize, effectiveUiScale),
             Math.min(
@@ -650,7 +662,7 @@ export const FloatingPanel = React.forwardRef<
             ),
           );
         }
-        if (resizeEdge.includes("w")) {
+        if (edge.includes("w")) {
           const proposedWidth = startRef.current.width - deltaX;
           newWidth = Math.max(
             logicalToScreenPixels(minSize, effectiveUiScale),
@@ -662,7 +674,7 @@ export const FloatingPanel = React.forwardRef<
           const actualDeltaX = startRef.current.width - newWidth;
           newX = startRef.current.panelX + actualDeltaX;
         }
-        if (resizeEdge.includes("e")) {
+        if (edge.includes("e")) {
           newWidth = Math.max(
             logicalToScreenPixels(minSize, effectiveUiScale),
             Math.min(
@@ -685,60 +697,234 @@ export const FloatingPanel = React.forwardRef<
               : undefined,
         });
       },
-      [
-        effectiveUiScale,
-        isResizing,
-        maxSize,
-        minSize,
-        resizeEdge,
-        scheduleResizeUpdate,
-      ],
+      [effectiveUiScale, maxSize, minSize, scheduleResizeUpdate],
     );
 
-    const handleResizeEnd = useCallback(() => {
-      if (resizeFrameRef.current !== null) {
-        window.cancelAnimationFrame(resizeFrameRef.current);
+    const finishActiveResizeSession = useCallback(() => {
+      const session = resizeSessionRef.current;
+      if (!session) {
+        return;
+      }
+
+      resizeSessionRef.current = null;
+      window.removeEventListener(
+        "pointermove",
+        session.handlePointerMove,
+        true,
+      );
+      window.removeEventListener("pointerup", session.handlePointerUp, true);
+      window.removeEventListener(
+        "pointercancel",
+        session.handlePointerCancel,
+        true,
+      );
+      window.removeEventListener("blur", session.handleWindowBlur, true);
+      window.removeEventListener("pagehide", session.handlePageHide, true);
+      document.removeEventListener(
+        "visibilitychange",
+        session.handleVisibilityChange,
+        true,
+      );
+      session.captureTarget?.removeEventListener(
+        "lostpointercapture",
+        session.handleLostPointerCapture,
+      );
+      releasePointerCapture(session.captureTarget, session.pointerId);
+
+      if (resizeFrameRef.current !== null || pendingResizeRef.current) {
+        if (resizeFrameRef.current !== null) {
+          window.cancelAnimationFrame(resizeFrameRef.current);
+        }
         flushResizeUpdate();
       }
+
+      isResizingRef.current = false;
       setIsResizing(false);
       setResizeEdge(null);
       panelRef.current
         ?.querySelector<HTMLElement>('[data-panel-content="true"]')
         ?.style.removeProperty("pointer-events");
+
+      if (
+        document.body.getAttribute(BODY_CURSOR_OWNER_ATTRIBUTE) ===
+        session.cursorOwner
+      ) {
+        if (document.body.style.cursor === session.cursor) {
+          document.body.style.cursor = session.previousCursor;
+        }
+        if (document.body.style.userSelect === "none") {
+          document.body.style.userSelect = session.previousUserSelect;
+        }
+        if (session.previousCursorOwner) {
+          document.body.setAttribute(
+            BODY_CURSOR_OWNER_ATTRIBUTE,
+            session.previousCursorOwner,
+          );
+        } else {
+          document.body.removeAttribute(BODY_CURSOR_OWNER_ATTRIBUTE);
+        }
+      }
+
       onResizeEndRef.current?.(id);
-    }, [flushResizeUpdate, id]);
+    }, [flushResizeUpdate, id, releasePointerCapture]);
+
+    const handleResizeStart = useCallback(
+      (e: React.PointerEvent<HTMLDivElement>, edge: string) => {
+        if (e.button !== 0 || !e.isPrimary) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (resizeSessionRef.current) {
+          finishActiveResizeSession();
+        }
+        if (dragSessionRef.current) {
+          return;
+        }
+
+        const pointerId = e.pointerId;
+        const captureTarget = e.currentTarget;
+        const cursor = getResizeCursor(edge);
+        const cursorOwner = `floating-panel:${id}:resize:${++resizeSessionIdRef.current}`;
+
+        const rect = panelRef.current?.getBoundingClientRect();
+        panelRef.current
+          ?.querySelector<HTMLElement>('[data-panel-content="true"]')
+          ?.style.setProperty("pointer-events", "none");
+
+        startRef.current = {
+          ...startRef.current,
+          x: e.clientX,
+          y: e.clientY,
+          width:
+            rect?.width || logicalToScreenPixels(size.width, effectiveUiScale),
+          height:
+            rect?.height ||
+            logicalToScreenPixels(size.height, effectiveUiScale),
+          panelX: rect?.left || logicalToScreenPixels(x, effectiveUiScale),
+          panelY: rect?.top || logicalToScreenPixels(y, effectiveUiScale),
+        };
+
+        try {
+          captureTarget.setPointerCapture(pointerId);
+        } catch {
+          // Window listeners below still keep rapid resizes connected.
+        }
+
+        const handlePointerMove = (event: PointerEvent) => {
+          if (event.pointerId !== pointerId) {
+            return;
+          }
+
+          event.preventDefault();
+          document.getSelection()?.removeAllRanges();
+          applyResizeMove(event, edge);
+        };
+
+        const handlePointerUp = (event: PointerEvent) => {
+          if (event.pointerId !== pointerId) {
+            return;
+          }
+          finishActiveResizeSession();
+        };
+
+        const handlePointerCancel = (event: PointerEvent) => {
+          if (event.pointerId !== pointerId) {
+            return;
+          }
+          finishActiveResizeSession();
+        };
+
+        const handleLostPointerCapture = (event: PointerEvent) => {
+          if (event.pointerId !== pointerId) {
+            return;
+          }
+          finishActiveResizeSession();
+        };
+
+        const handleWindowBlur = () => {
+          finishActiveResizeSession();
+        };
+
+        const handlePageHide = () => {
+          finishActiveResizeSession();
+        };
+
+        const handleVisibilityChange = () => {
+          if (document.visibilityState === "hidden") {
+            finishActiveResizeSession();
+          }
+        };
+
+        resizeSessionRef.current = {
+          captureTarget,
+          cursor,
+          cursorOwner,
+          edge,
+          handleLostPointerCapture,
+          handlePageHide,
+          handlePointerCancel,
+          handlePointerMove,
+          handlePointerUp,
+          handleVisibilityChange,
+          handleWindowBlur,
+          pointerId,
+          previousCursor: document.body.style.cursor,
+          previousCursorOwner: document.body.getAttribute(
+            BODY_CURSOR_OWNER_ATTRIBUTE,
+          ),
+          previousUserSelect: document.body.style.userSelect,
+        };
+
+        window.addEventListener("pointermove", handlePointerMove, true);
+        window.addEventListener("pointerup", handlePointerUp, true);
+        window.addEventListener("pointercancel", handlePointerCancel, true);
+        window.addEventListener("blur", handleWindowBlur, true);
+        window.addEventListener("pagehide", handlePageHide, true);
+        document.addEventListener(
+          "visibilitychange",
+          handleVisibilityChange,
+          true,
+        );
+        captureTarget.addEventListener(
+          "lostpointercapture",
+          handleLostPointerCapture,
+        );
+
+        document.body.setAttribute(BODY_CURSOR_OWNER_ATTRIBUTE, cursorOwner);
+        document.body.style.cursor = cursor;
+        document.body.style.userSelect = "none";
+
+        isResizingRef.current = true;
+        flushSync(() => {
+          setIsResizing(true);
+          setResizeEdge(edge);
+          onResizeStartRef.current?.(id);
+        });
+      },
+      [
+        applyResizeMove,
+        effectiveUiScale,
+        finishActiveResizeSession,
+        id,
+        size.height,
+        size.width,
+        x,
+        y,
+      ],
+    );
 
     useEffect(() => {
       return () => {
-        if (resizeFrameRef.current !== null) {
+        if (resizeSessionRef.current) {
+          finishActiveResizeSession();
+        } else if (resizeFrameRef.current !== null) {
           window.cancelAnimationFrame(resizeFrameRef.current);
         }
       };
-    }, []);
-
-    useEffect(() => {
-      if (isResizing) {
-        document.addEventListener("mousemove", handleResizeMove);
-        document.addEventListener("mouseup", handleResizeEnd);
-
-        let cursor = "default";
-        if (resizeEdge === "n" || resizeEdge === "s") cursor = "ns-resize";
-        else if (resizeEdge === "e" || resizeEdge === "w") cursor = "ew-resize";
-        else if (resizeEdge === "ne" || resizeEdge === "sw")
-          cursor = "nesw-resize";
-        else if (resizeEdge === "nw" || resizeEdge === "se")
-          cursor = "nwse-resize";
-
-        document.body.style.cursor = cursor;
-        document.body.style.userSelect = "none";
-      }
-      return () => {
-        document.removeEventListener("mousemove", handleResizeMove);
-        document.removeEventListener("mouseup", handleResizeEnd);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-      };
-    }, [isResizing, handleResizeMove, handleResizeEnd, resizeEdge]);
+    }, [finishActiveResizeSession]);
 
     const detectDropZone = useCallback(
       (x: number, y: number): PanelPosition | null => {
@@ -817,20 +1003,6 @@ export const FloatingPanel = React.forwardRef<
       window.cancelAnimationFrame(dragMoveFrameRef.current);
       dragMoveFrameRef.current = null;
     }, []);
-
-    const releasePointerCapture = useCallback(
-      (target: HTMLElement | null, pointerId: number) => {
-        try {
-          if (target?.hasPointerCapture?.(pointerId)) {
-            target.releasePointerCapture(pointerId);
-          }
-        } catch {
-          // Synthetic pointer events used in tests may not create a browser
-          // capture target; window-level listeners remain the fallback.
-        }
-      },
-      [],
-    );
 
     const finishActiveDragSession = useCallback(
       (options: { event?: PointerEvent; commitDrop: boolean }) => {
@@ -938,6 +1110,9 @@ export const FloatingPanel = React.forwardRef<
         if (dragSessionRef.current) {
           finishActiveDragSession({ commitDrop: false });
         }
+        if (resizeSessionRef.current) {
+          finishActiveResizeSession();
+        }
 
         const rect = panelRef.current?.getBoundingClientRect();
         startRef.current = {
@@ -1036,6 +1211,7 @@ export const FloatingPanel = React.forwardRef<
         dragY,
         effectiveUiScale,
         finishActiveDragSession,
+        finishActiveResizeSession,
         id,
         mode,
         onZenPinToggle,
@@ -1734,7 +1910,7 @@ export const FloatingPanel = React.forwardRef<
         data-testid={`panel-${id}-resize-${edge}`}
         data-panel-resize-handle="true"
         style={edgeStyle(edge)}
-        onMouseDown={(e) => handleResizeStart(e, edge)}
+        onPointerDown={(e) => handleResizeStart(e, edge)}
       />
     );
 
