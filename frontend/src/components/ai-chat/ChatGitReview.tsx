@@ -317,6 +317,7 @@ export function ChatGitReview({
   const reduceMotion = useReducedMotion();
   const storeProjectPath = useGitStore((state) => state.projectPath);
   const setProjectPath = useGitStore((state) => state.setProjectPath);
+  const attachGitConsumer = useGitStore((state) => state.attachConsumer);
   const refresh = useGitStore((state) => state.refresh);
   const loading = useGitStore((state) => state.loading);
   const busy = useGitStore((state) => state.busy);
@@ -344,12 +345,17 @@ export function ChatGitReview({
   const [diffLoading, setDiffLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  useEffect(() => attachGitConsumer(), [attachGitConsumer]);
+
   useEffect(() => {
     const nextProjectPath = projectPath.trim();
     if (nextProjectPath !== storeProjectPath) {
       setProjectPath(nextProjectPath);
     }
-  }, [projectPath, setProjectPath, storeProjectPath]);
+    if (nextProjectPath) {
+      void refresh();
+    }
+  }, [projectPath, refresh, setProjectPath, storeProjectPath]);
 
   const allFiles = useMemo(
     () => [...conflictedFiles, ...stagedFiles, ...unstagedFiles],

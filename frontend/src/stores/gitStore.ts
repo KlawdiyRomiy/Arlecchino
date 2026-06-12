@@ -29,6 +29,7 @@ import { recordIDEContextEvent } from "./ideContextLedgerStore";
 
 const fileRefreshDebounceMs = 320;
 const fallbackPollIntervalMs = 15000;
+const gitMetadataCacheTtlMs = 30000;
 
 export interface GitStashEntry {
   ref: string;
@@ -41,6 +42,7 @@ interface GitStoreState {
   projectPath: string;
   loading: boolean;
   busy: boolean;
+  activeConsumers: number;
   error: string | null;
   isRepositoryMissing: boolean;
   expanded: boolean;
@@ -60,6 +62,7 @@ interface GitStoreState {
   markerUpdatedAt: Record<string, number>;
   markerLoading: Record<string, boolean>;
   setProjectPath: (projectPath: string) => void;
+  attachConsumer: () => () => void;
   setExpanded: (expanded: boolean) => void;
   toggleExpanded: () => void;
   setSelectedRemote: (remote: string) => void;
@@ -131,10 +134,85 @@ const parseStashEntries = (output: string): GitStashEntry[] =>
 const readStatus = async (): Promise<string> =>
   RunGitCommand(["status", "-b", "--porcelain=v2"]);
 
+interface GitMetadataCache {
+  projectPath: string;
+  branches: string[];
+  remotes: string[];
+  updatedAt: number;
+}
+
 let stopGitSync: (() => void) | null = null;
 let refreshTimer: number | null = null;
 let fallbackPollTimer: number | null = null;
 const markerRefreshTimers = new Map<string, number>();
+let refreshInFlight: Promise<void> | null = null;
+let refreshInFlightID = 0;
+let refreshInFlightProjectPath = "";
+let refreshPending = false;
+let gitMetadataCache: GitMetadataCache | null = null;
+
+const invalidateGitMetadataCache = (): void => {
+  gitMetadataCache = null;
+};
+
+const canUseFallbackStatus = (error: unknown): boolean => {
+  const errorMessage = toErrorMessage(error).toLowerCase();
+  return (
+    errorMessage.includes("porcelain=v2") ||
+    errorMessage.includes("unknown option") ||
+    errorMessage.includes("invalid option") ||
+    errorMessage.includes("usage:")
+  );
+};
+
+const readGitMetadata = async (
+  projectPath: string,
+  isCurrentProject: () => boolean,
+): Promise<GitMetadataCache | null> => {
+  const cached = gitMetadataCache;
+  if (
+    cached &&
+    cached.projectPath === projectPath &&
+    Date.now() - cached.updatedAt < gitMetadataCacheTtlMs
+  ) {
+    return cached;
+  }
+
+  if (!isCurrentProject()) {
+    return null;
+  }
+
+  const [branchesResult, remoteResult] = await Promise.allSettled([
+    GetGitBranches(),
+    RunGitCommand(["remote"]),
+  ]);
+
+  if (!isCurrentProject()) {
+    return null;
+  }
+
+  const branches =
+    branchesResult.status === "fulfilled"
+      ? Array.from(new Set(branchesResult.value))
+      : (cached?.branches ?? []);
+  const remotes =
+    remoteResult.status === "fulfilled"
+      ? parseRemoteNameList(remoteResult.value)
+      : (cached?.remotes ?? []);
+  const metadata = {
+    projectPath,
+    branches,
+    remotes,
+    updatedAt: Date.now(),
+  };
+  if (
+    branchesResult.status === "fulfilled" &&
+    remoteResult.status === "fulfilled"
+  ) {
+    gitMetadataCache = metadata;
+  }
+  return metadata;
+};
 
 const clearGitSync = (): void => {
   if (stopGitSync) {
@@ -154,6 +232,9 @@ const clearGitSync = (): void => {
 };
 
 const scheduleRefresh = (get: () => GitStoreState): void => {
+  if (get().activeConsumers <= 0) {
+    return;
+  }
   if (refreshTimer !== null) {
     window.clearTimeout(refreshTimer);
   }
@@ -262,7 +343,7 @@ const startGitSync = (projectPath: string, get: () => GitStoreState): void => {
   });
 
   fallbackPollTimer = window.setInterval(() => {
-    if (get().projectPath === projectPath) {
+    if (get().projectPath === projectPath && get().activeConsumers > 0) {
       void get().refresh();
     }
   }, fallbackPollIntervalMs);
@@ -289,6 +370,7 @@ const executeGitAction = async (
   set({ busy: true, error: null });
   try {
     await action();
+    invalidateGitMetadataCache();
     await Promise.all([get().refresh(), get().loadStashes()]);
   } catch (error) {
     set({
@@ -305,6 +387,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   projectPath: "",
   loading: false,
   busy: false,
+  activeConsumers: 0,
   error: null,
   isRepositoryMissing: false,
   expanded: false,
@@ -331,6 +414,7 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     }
 
     clearGitSync();
+    invalidateGitMetadataCache();
 
     set({
       projectPath: nextProjectPath,
@@ -358,7 +442,21 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
     }
 
     startGitSync(nextProjectPath, get);
-    void Promise.all([get().refresh(), get().loadStashes()]);
+  },
+
+  attachConsumer: () => {
+    let detached = false;
+    set((state) => ({ activeConsumers: state.activeConsumers + 1 }));
+
+    return () => {
+      if (detached) {
+        return;
+      }
+      detached = true;
+      set((state) => ({
+        activeConsumers: Math.max(0, state.activeConsumers - 1),
+      }));
+    };
   },
 
   setExpanded: (expanded) => set({ expanded }),
@@ -366,95 +464,126 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   setSelectedRemote: (remote) => set({ selectedRemote: remote }),
 
   refresh: async () => {
-    const { projectPath } = get();
-    if (!projectPath) {
-      set({
-        error: "No project open",
-        isRepositoryMissing: false,
-        branch: emptyBranchInfo(),
-        branches: [],
-        remotes: [],
-        stagedFiles: [],
-        unstagedFiles: [],
-        conflictedFiles: [],
-      });
-      return;
-    }
+    const activeProjectPath = get().projectPath;
 
-    set({ loading: true, error: null });
+    const runRefreshOnce = async (): Promise<void> => {
+      const { projectPath } = get();
+      if (!projectPath) {
+        set({
+          error: "No project open",
+          isRepositoryMissing: false,
+          branch: emptyBranchInfo(),
+          branches: [],
+          remotes: [],
+          stagedFiles: [],
+          unstagedFiles: [],
+          conflictedFiles: [],
+        });
+        return;
+      }
 
-    try {
-      let porcelainStatus = "";
-      let statusError: unknown = null;
+      set({ loading: true, error: null });
 
       try {
-        porcelainStatus = await readStatus();
+        let porcelainStatus = "";
+        let fallbackStatus = "";
+
+        try {
+          porcelainStatus = await readStatus();
+        } catch (error) {
+          if (!canUseFallbackStatus(error)) {
+            throw error;
+          }
+          fallbackStatus = await GetGitStatus();
+        }
+
+        if (get().projectPath !== projectPath) {
+          return;
+        }
+
+        const parsed = porcelainStatus.trim()
+          ? parseGitPorcelainStatus(porcelainStatus)
+          : parseGitFallbackStatus(fallbackStatus);
+
+        if (!parsed.branch.current) {
+          parsed.branch.current = await GetGitBranch().catch(() => "");
+        }
+
+        if (get().projectPath !== projectPath) {
+          return;
+        }
+
+        const metadata = await readGitMetadata(
+          projectPath,
+          () => get().projectPath === projectPath,
+        );
+        if (!metadata) {
+          return;
+        }
+
+        const selectedRemote = metadata.remotes.includes(get().selectedRemote)
+          ? get().selectedRemote
+          : metadata.remotes.includes("origin")
+            ? "origin"
+            : metadata.remotes[0] || "";
+
+        set({
+          loading: false,
+          isRepositoryMissing: false,
+          branch: parsed.branch,
+          branches: metadata.branches,
+          remotes: metadata.remotes,
+          selectedRemote,
+          stagedFiles: dedupeAndSortFiles(parsed.staged),
+          unstagedFiles: dedupeAndSortFiles(parsed.unstaged),
+          conflictedFiles: dedupeAndSortFiles(parsed.conflicted),
+        });
       } catch (error) {
-        statusError = error;
+        if (get().projectPath !== projectPath) {
+          return;
+        }
+        set({
+          loading: false,
+          error: toErrorMessage(error),
+          isRepositoryMissing: isMissingRepositoryError(error),
+          branch: emptyBranchInfo(),
+          branches: [],
+          remotes: [],
+          stagedFiles: [],
+          unstagedFiles: [],
+          conflictedFiles: [],
+        });
       }
+    };
 
-      const [fallbackStatus, branchCurrent, branchList, remoteOutput] =
-        await Promise.all([
-          GetGitStatus().catch(() => ""),
-          GetGitBranch().catch(() => ""),
-          GetGitBranches().catch(() => []),
-          RunGitCommand(["remote"]).catch(() => ""),
-        ]);
+    if (refreshInFlight && refreshInFlightProjectPath === activeProjectPath) {
+      refreshPending = true;
+      return refreshInFlight;
+    }
 
-      const canUseFallbackParser = statusError
-        ? (() => {
-            const errorMessage = toErrorMessage(statusError).toLowerCase();
-            return (
-              errorMessage.includes("porcelain=v2") ||
-              errorMessage.includes("unknown option") ||
-              errorMessage.includes("invalid option") ||
-              errorMessage.includes("usage:")
-            );
-          })()
-        : false;
+    const currentRefreshID = refreshInFlightID + 1;
+    refreshInFlightID = currentRefreshID;
+    const currentRefresh = (async () => {
+      do {
+        refreshPending = false;
+        await runRefreshOnce();
+      } while (
+        refreshPending &&
+        refreshInFlightID === currentRefreshID &&
+        refreshInFlightProjectPath === activeProjectPath
+      );
+    })();
+    refreshInFlight = currentRefresh;
+    refreshInFlightProjectPath = activeProjectPath;
 
-      if (statusError && !canUseFallbackParser) {
-        throw statusError;
+    try {
+      await currentRefresh;
+    } finally {
+      if (refreshInFlightID === currentRefreshID) {
+        refreshInFlight = null;
+        refreshInFlightProjectPath = "";
+        refreshPending = false;
       }
-
-      const parsed = porcelainStatus.trim()
-        ? parseGitPorcelainStatus(porcelainStatus)
-        : parseGitFallbackStatus(fallbackStatus);
-
-      if (!parsed.branch.current && branchCurrent) {
-        parsed.branch.current = branchCurrent;
-      }
-
-      const remotes = parseRemoteNameList(remoteOutput);
-      const selectedRemote = remotes.includes(get().selectedRemote)
-        ? get().selectedRemote
-        : remotes.includes("origin")
-          ? "origin"
-          : remotes[0] || "";
-
-      set({
-        loading: false,
-        isRepositoryMissing: false,
-        branch: parsed.branch,
-        branches: Array.from(new Set(branchList)),
-        remotes,
-        selectedRemote,
-        stagedFiles: dedupeAndSortFiles(parsed.staged),
-        unstagedFiles: dedupeAndSortFiles(parsed.unstaged),
-        conflictedFiles: dedupeAndSortFiles(parsed.conflicted),
-      });
-    } catch (error) {
-      set({
-        loading: false,
-        error: toErrorMessage(error),
-        isRepositoryMissing: isMissingRepositoryError(error),
-        branch: emptyBranchInfo(),
-        branches: [],
-        remotes: [],
-        stagedFiles: [],
-        unstagedFiles: [],
-        conflictedFiles: [],
-      });
     }
   },
 

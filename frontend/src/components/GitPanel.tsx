@@ -562,9 +562,11 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       stashEntries: state.stashEntries,
       stashLoading: state.stashLoading,
       setProjectPath: state.setProjectPath,
+      attachConsumer: state.attachConsumer,
       setSelectedRemote: state.setSelectedRemote,
       refresh: state.refresh,
       loadHistory: state.loadHistory,
+      loadStashes: state.loadStashes,
       stageFile: state.stageFile,
       unstageFile: state.unstageFile,
       stageAll: state.stageAll,
@@ -584,6 +586,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({
       openPullRequest: state.openPullRequest,
     })),
   );
+  const attachGitConsumer = useGitStore((state) => state.attachConsumer);
+  const setGitProjectPath = useGitStore((state) => state.setProjectPath);
+  const refreshGit = useGitStore((state) => state.refresh);
+  const loadGitStashes = useGitStore((state) => state.loadStashes);
 
   const [commitMessage, setCommitMessage] = useState("");
   const [stashMessage, setStashMessage] = useState("");
@@ -603,9 +609,12 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   const isDiffFocused =
     presentationMode === "compact" && detailOpen && detailTab === "diff";
 
+  useEffect(() => attachGitConsumer(), [attachGitConsumer]);
+
   useEffect(() => {
-    git.setProjectPath(projectPath);
-  }, [git, projectPath]);
+    setGitProjectPath(projectPath);
+    void Promise.all([refreshGit(), loadGitStashes()]);
+  }, [loadGitStashes, projectPath, refreshGit, setGitProjectPath]);
 
   useEffect(() => {
     onDiffFocusChange?.(isDiffFocused);

@@ -51,6 +51,8 @@ type App struct {
 	langDetector             *brain.LangDetector
 	projectPath              string
 	pathMu                   sync.RWMutex
+	gitStatusMu              sync.Mutex
+	gitStatusCalls           map[string]*gitStatusCall
 	projectGeneration        atomic.Uint64
 	lastRequestID            atomic.Value
 	completionRequestsMu     sync.Mutex

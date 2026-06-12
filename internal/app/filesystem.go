@@ -167,6 +167,20 @@ func gitCommandTimeout(args []string) time.Duration {
 	}
 }
 
+type gitStatusCall struct {
+	done   chan struct{}
+	output string
+	err    error
+}
+
+func isGitStatusCommand(args []string) bool {
+	return len(args) > 0 && args[0] == "status"
+}
+
+func gitStatusCallKey(projectPath string, args []string) string {
+	return projectPath + "\x00" + strings.Join(args, "\x00")
+}
+
 func projectGitMetadataExists(projectPath string) bool {
 	if projectPath == "" {
 		return false
@@ -1276,11 +1290,48 @@ func (a *App) RunGitCommand(args []string) (string, error) {
 		}
 	}
 
+	if isGitStatusCommand(args) {
+		return a.runGitStatusCommand(projectPath, args)
+	}
+
+	return runGitCommandInProject(projectPath, args)
+}
+
+func (a *App) runGitStatusCommand(projectPath string, args []string) (string, error) {
+	key := gitStatusCallKey(projectPath, args)
+
+	a.gitStatusMu.Lock()
+	if a.gitStatusCalls == nil {
+		a.gitStatusCalls = make(map[string]*gitStatusCall)
+	}
+	if call, ok := a.gitStatusCalls[key]; ok {
+		a.gitStatusMu.Unlock()
+		<-call.done
+		return call.output, call.err
+	}
+	call := &gitStatusCall{done: make(chan struct{})}
+	a.gitStatusCalls[key] = call
+	a.gitStatusMu.Unlock()
+
+	call.output, call.err = runGitCommandInProject(projectPath, args)
+	close(call.done)
+
+	a.gitStatusMu.Lock()
+	delete(a.gitStatusCalls, key)
+	a.gitStatusMu.Unlock()
+
+	return call.output, call.err
+}
+
+func runGitCommandInProject(projectPath string, args []string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout(args))
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = projectPath
+	if isGitStatusCommand(args) {
+		cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
