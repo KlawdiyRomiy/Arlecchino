@@ -126,11 +126,14 @@ import {
 import {
   createEditorFileLoadingLoad,
   createEditableEditorFileLoad,
+  coerceEditorNavigationTarget,
+  createEditorNavigationTarget,
   getEditorFileName,
   isEditorFilePolicyReadOnly,
   loadEditorFile,
   type EditorFileAccessPolicy,
   type EditorFileLoadState,
+  type EditorNavigationTarget,
 } from "../../utils/editorFileLoader";
 import type {
   CodePanelTab,
@@ -873,8 +876,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     }, []);
 
   const openFileInMainEditor = useCallback(
-    (file: EditorFileLoadState, line?: number) => {
-      const payload = { file, line };
+    (file: EditorFileLoadState, target?: number | EditorNavigationTarget) => {
+      const navigationTarget = coerceEditorNavigationTarget(target, {
+        focus: true,
+      });
+      const payload = {
+        file,
+        line: navigationTarget?.line,
+        navigationTarget,
+      };
       const directHandler = editorFileOpenHandlerRef.current;
       if (directHandler) {
         directHandler(payload);
@@ -900,7 +910,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       requestId: number,
       path: string,
       name: string,
-      line?: number,
+      navigationTarget?: EditorNavigationTarget,
       policy?: EditorFileAccessPolicy,
     ) => {
       clearEditorFileOpenLoadingTimer();
@@ -912,7 +922,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
         openFileInMainEditor(
           createEditorFileLoadingLoad(path, name, policy),
-          line,
+          navigationTarget,
         );
       }, 140);
     },
@@ -4782,6 +4792,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       line?: number,
       policy?: EditorFileAccessPolicy,
     ) => {
+      const navigationTarget = createEditorNavigationTarget(line, undefined, {
+        focus: true,
+      });
       if (tuiModeActive) {
         const accessDecision = canAccessPath(path, "read");
         if (!accessDecision.allowed) {
@@ -4802,7 +4815,13 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
       const requestId = openFileFromPathRequestRef.current + 1;
       openFileFromPathRequestRef.current = requestId;
-      scheduleEditorFileOpenLoading(requestId, path, name, line, policy);
+      scheduleEditorFileOpenLoading(
+        requestId,
+        path,
+        name,
+        navigationTarget,
+        policy,
+      );
       void loadEditorFile(path, {
         knownContent: content.length > 0 ? content : undefined,
         policy,
@@ -4812,7 +4831,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             return;
           }
           clearEditorFileOpenLoadingTimer();
-          openFileInMainEditor(file, line);
+          openFileInMainEditor(file, navigationTarget);
         })
         .catch((error) => {
           if (openFileFromPathRequestRef.current !== requestId) {
@@ -4834,9 +4853,16 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   );
 
   const openFileFromPath = useCallback(
-    async (path: string, line?: number, policy?: EditorFileAccessPolicy) => {
+    async (
+      path: string,
+      target?: number | EditorNavigationTarget,
+      policy?: EditorFileAccessPolicy,
+    ) => {
       const requestId = openFileFromPathRequestRef.current + 1;
       openFileFromPathRequestRef.current = requestId;
+      const navigationTarget = coerceEditorNavigationTarget(target, {
+        focus: true,
+      });
 
       if (tuiModeActive) {
         const accessDecision = canAccessPath(path, "read");
@@ -4849,7 +4875,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       try {
         if (tuiModeActive) {
           const name = path.split("/").pop() || path;
-          await handleFileOpenInPanel(path, name, line, {
+          await handleFileOpenInPanel(path, name, navigationTarget?.line, {
             openIntentPolicy: policy,
           });
           return;
@@ -4859,7 +4885,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           requestId,
           path,
           path.split("/").pop() || path,
-          line,
+          navigationTarget,
           policy,
         );
         const file = await loadEditorFile(path, { policy });
@@ -4867,7 +4893,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           return;
         }
         clearEditorFileOpenLoadingTimer();
-        openFileInMainEditor(file, line);
+        openFileInMainEditor(file, navigationTarget);
       } catch (error) {
         if (openFileFromPathRequestRef.current === requestId) {
           clearEditorFileOpenLoadingTimer();
@@ -4888,6 +4914,15 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   userCreatedFileOpenRef.current = (path: string) => {
     void openFileFromPath(path);
   };
+  const openFileLocationFromPath = useCallback(
+    (path: string, line?: number, column?: number) => {
+      const navigationTarget = createEditorNavigationTarget(line, column, {
+        focus: true,
+      });
+      void openFileFromPath(path, navigationTarget ?? line);
+    },
+    [openFileFromPath],
+  );
 
   useEffect(() => {
     const normalizedProjectPath = normalizeProjectPath(activeProjectPath);
@@ -5726,7 +5761,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
       onFileOpen={handleFileOpen}
       onFileOpenInPanel={handleFileOpenInPanel}
       filePanelSnapDrag={filePanelSnapDrag}
-      onOpenFileFromPath={openFileFromPath}
+      onOpenFileFromPath={openFileLocationFromPath}
       onOpenPreviewFromTerminal={openPreviewFromTerminal}
       onPerspectiveOpen={handlePerspectiveOpen}
       onPerspectiveClose={handlePerspectiveClose}
@@ -6516,8 +6551,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const tuiCenterTerminalContent = (
     <div data-testid="tui-center-terminal" style={tuiTerminalPaneStyle}>
       <TerminalPanelContent
-        onOpenFileRef={(path, line) => {
-          void openFileFromPath(path, line);
+        onOpenFileRef={(path, line, column) => {
+          openFileLocationFromPath(path, line, column);
         }}
         onOpenPreviewUrl={(url, sessionId) => {
           openPreviewFromTerminal({ url, sessionId, forceOpen: true });
@@ -6764,7 +6799,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               }
             }}
             onPaletteAction={handlePaletteAction}
-            onOpenFile={(path, line) => openFileFromPath(path, line)}
+            onOpenFile={(path, line) => openFileLocationFromPath(path, line)}
             onTerminalCommand={(command) => {
               void submitTerminalCommand(command);
             }}

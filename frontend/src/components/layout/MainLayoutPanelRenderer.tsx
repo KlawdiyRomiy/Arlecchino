@@ -112,7 +112,7 @@ interface MainLayoutPanelRendererProps {
     request?: Partial<PanelOpenRequest>,
   ) => unknown | Promise<unknown>;
   filePanelSnapDrag: PanelSnapDragCallbacks;
-  onOpenFileFromPath: (path: string, line?: number) => void;
+  onOpenFileFromPath: (path: string, line?: number, column?: number) => void;
   onOpenPreviewFromTerminal: (input: OpenTerminalPreviewInput) => void;
   onPerspectiveOpen: () => void;
   onPerspectiveClose: () => void;
@@ -372,8 +372,8 @@ export const MainLayoutPanelRenderer: React.FC<
           {tuiModeActive ? (
             <div style={tuiTerminalPaneStyle}>
               <TerminalPanelContent
-                onOpenFileRef={(path, line) => {
-                  void onOpenFileFromPath(path, line);
+                onOpenFileRef={(path, line, column) => {
+                  void onOpenFileFromPath(path, line, column);
                 }}
                 onOpenPreviewUrl={(url, sessionId) => {
                   onOpenPreviewFromTerminal({
@@ -386,8 +386,8 @@ export const MainLayoutPanelRenderer: React.FC<
             </div>
           ) : (
             <TerminalPanelContent
-              onOpenFileRef={(path, line) => {
-                void onOpenFileFromPath(path, line);
+              onOpenFileRef={(path, line, column) => {
+                void onOpenFileFromPath(path, line, column);
               }}
               onOpenPreviewUrl={(url, sessionId) => {
                 onOpenPreviewFromTerminal({ url, sessionId, forceOpen: true });
@@ -448,7 +448,9 @@ export const MainLayoutPanelRenderer: React.FC<
         >
           <ProblemsPanel
             activeFilePath={activeStatusFilePath ?? activeEditorTabPath}
-            onNavigate={(path, line, _column) => onOpenFileFromPath(path, line)}
+            onNavigate={(path, line, column) =>
+              onOpenFileFromPath(path, line, column)
+            }
             presentationMode={isFullscreen ? "expanded" : "compact"}
           />
         </FloatingPanel>

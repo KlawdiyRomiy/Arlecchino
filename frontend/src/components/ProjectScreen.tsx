@@ -48,11 +48,13 @@ import {
 import {
   createEditorFileLoadingLoad,
   createEditableEditorFileLoad,
+  createEditorNavigationTarget,
   grantEditorFileWriteAccess,
   isEditorFilePolicyReadOnly,
   loadEditorFile,
   type EditorFileLoadState,
   type EditorFileOpenPayload,
+  type EditorNavigationTarget,
 } from "../utils/editorFileLoader";
 import { replaceEditorDocumentFromDisk } from "../stores/editorDocumentObserver";
 import { getCurrentProjectSessionId } from "../shell/projectSessionRoute";
@@ -460,6 +462,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   const [highlightLine, setHighlightLine] = useState<number | undefined>(
     undefined,
   );
+  const [pendingEditorNavigation, setPendingEditorNavigation] = useState<{
+    path: string;
+    target: EditorNavigationTarget;
+  } | null>(null);
   const [closedTabs, setClosedTabs] = useState<Tab[]>([]);
   const [splitDirection, setSplitDirection] = useState<SplitDirection>(null);
   const [secondaryActiveTab, setSecondaryActiveTab] = useState<string | null>(
@@ -562,6 +568,12 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     },
     [updateActiveEditorView],
   );
+
+  const handleNavigationTargetApplied = useCallback((navId: number) => {
+    setPendingEditorNavigation((current) =>
+      current?.target.navId === navId ? null : current,
+    );
+  }, []);
 
   const focusEditorSplitSide = useCallback(
     (side: EditorSplitDropSide) => {
@@ -777,6 +789,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     // Prevent duplicate opens for the same file
     const fileKey = `${fileToOpen.file.kind}:${fileToOpen.file.path}:${
       fileToOpen.line || 0
+    }:${fileToOpen.navigationTarget?.column ?? 0}:${
+      fileToOpen.navigationTarget?.navId ?? 0
     }:${fileToOpen.file.policy?.source ?? ""}:${
       fileToOpen.file.policy?.readOnly ? "ro" : "rw"
     }`;
@@ -784,18 +798,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
     lastFileToOpenRef.current = fileKey;
 
     handleFileOpen(fileToOpen);
-    let highlightTimeout: ReturnType<typeof setTimeout> | undefined;
-    if (fileToOpen.line) {
-      setHighlightLine(fileToOpen.line);
-      highlightTimeout = setTimeout(() => setHighlightLine(undefined), 3000);
-    }
     onFileOpened?.();
-
-    return () => {
-      if (highlightTimeout) {
-        clearTimeout(highlightTimeout);
-      }
-    };
   }, [fileToOpen]);
 
   useEffect(() => {
@@ -1521,8 +1524,21 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
   );
 
   const handleFileOpen = useCallback(
-    ({ file, line }: EditorFileOpenPayload) => {
+    ({ file, line, navigationTarget }: EditorFileOpenPayload) => {
       const filePath = file.path;
+      const target =
+        navigationTarget ??
+        createEditorNavigationTarget(line, undefined, { focus: true });
+      const flashLine = target?.line ?? line;
+      const revealRequestedLocation = () => {
+        if (target) {
+          setPendingEditorNavigation({ path: filePath, target });
+        }
+        if (flashLine) {
+          setHighlightLine(flashLine);
+          window.setTimeout(() => setHighlightLine(undefined), 3000);
+        }
+      };
       removeStaleLoadingTabs(filePath);
       const tabId = makeEditorTabId(filePath);
       const existingTab = tabsRef.current.find((tab) => tab.path === filePath);
@@ -1536,17 +1552,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
             existingTab.id,
           ) ?? focusedEditorSplitSideRef.current;
         if (addTabToEditorSplitSide(existingTab.id, splitSide)) {
-          if (line) {
-            setHighlightLine(line);
-            window.setTimeout(() => setHighlightLine(undefined), 3000);
-          }
+          revealRequestedLocation();
           return;
         }
         setActiveTab(existingTab.id);
-        if (line) {
-          setHighlightLine(line);
-          window.setTimeout(() => setHighlightLine(undefined), 3000);
-        }
+        revealRequestedLocation();
         return;
       }
 
@@ -1564,17 +1574,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       if (
         addTabToEditorSplitSide(newTab.id, focusedEditorSplitSideRef.current)
       ) {
-        if (line) {
-          setHighlightLine(line);
-          window.setTimeout(() => setHighlightLine(undefined), 3000);
-        }
+        revealRequestedLocation();
         return;
       }
       setActiveTab(tabId);
-      if (line) {
-        setHighlightLine(line);
-        window.setTimeout(() => setHighlightLine(undefined), 3000);
-      }
+      revealRequestedLocation();
     },
     [addTabToEditorSplitSide, removeStaleLoadingTabs, storeFileLoadState],
   );
@@ -1593,6 +1597,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       requestId: number,
       path: string,
       line?: number,
+      navigationTarget?: EditorNavigationTarget,
       policy?: EditorFileLoadState["policy"],
     ) => {
       clearFileOpenLoadingTimer();
@@ -1605,6 +1610,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         handleFileOpen({
           file: createEditorFileLoadingLoad(path, undefined, policy),
           line,
+          navigationTarget,
         });
       }, 140);
     },
@@ -2291,17 +2297,16 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         fullPath = `${projectPath}/${path}`;
       }
 
-      scheduleFileOpenLoading(requestId, fullPath, line);
+      const navigationTarget = createEditorNavigationTarget(line, undefined, {
+        focus: true,
+      });
+      scheduleFileOpenLoading(requestId, fullPath, line, navigationTarget);
       const file = await loadEditorFile(fullPath);
       if (openFileRequestRef.current !== requestId) {
         return;
       }
       clearFileOpenLoadingTimer();
-      handleFileOpen({ file, line });
-      if (line) {
-        setHighlightLine(line);
-        setTimeout(() => setHighlightLine(undefined), 3000);
-      }
+      handleFileOpen({ file, line, navigationTarget });
     } catch (error) {
       if (openFileRequestRef.current === requestId) {
         clearFileOpenLoadingTimer();
@@ -3084,11 +3089,16 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
 
     closeQuickLook();
 
-    handleFileOpen({ file: createEditableEditorFileLoad(filePath, content) });
-    if (highlightLine) {
-      setHighlightLine(highlightLine);
-      setTimeout(() => setHighlightLine(undefined), 3000);
-    }
+    const navigationTarget = createEditorNavigationTarget(
+      highlightLine,
+      undefined,
+      { focus: true },
+    );
+    handleFileOpen({
+      file: createEditableEditorFileLoad(filePath, content),
+      line: navigationTarget?.line,
+      navigationTarget,
+    });
   };
 
   const handleSplit = useCallback(
@@ -3313,6 +3323,10 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         projectSessionId: currentProjectSessionId,
       },
     );
+    const navigationTarget =
+      pendingEditorNavigation?.path === tabData.path
+        ? pendingEditorNavigation.target
+        : undefined;
 
     return (
       <CodeMirrorEditor
@@ -3348,6 +3362,8 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
             : undefined
         }
         highlightLine={isSecondary ? undefined : highlightLine}
+        navigationTarget={navigationTarget}
+        onNavigationTargetApplied={handleNavigationTargetApplied}
         aiInlinePatchPreview={inlinePatchPreview}
         aiInlinePatchBusy={Boolean(
           inlinePatchPreview && aiInlinePatchBusyIds[inlinePatchPreview.id],

@@ -113,6 +113,7 @@ import { normalizePathForGit, type GitLineMarker } from "../utils/git";
 import { createLatestRequestGuard } from "../utils/latestRequestGuard";
 import { relativeProjectPath } from "../utils/projectPaths";
 import { useIndexingPhase } from "../hooks/useIndexingProgress";
+import type { EditorNavigationTarget } from "../utils/editorFileLoader";
 
 const EMPTY_GIT_MARKERS: GitLineMarker[] = [];
 const SIGNATURE_HIDE_MS = 2400;
@@ -613,11 +614,13 @@ interface CodeMirrorEditorProps {
   projectPath?: string;
   readOnly?: boolean;
   highlightLine?: number;
+  navigationTarget?: EditorNavigationTarget;
   aiInlinePatchPreview?: AIInlinePatchPreview | null;
   aiInlinePatchBusy?: boolean;
   onAcceptAIInlinePatch?: (preview: AIInlinePatchPreview) => void;
   onRejectAIInlinePatch?: (preview: AIInlinePatchPreview) => void;
   onEditorViewReady?: (view: EditorView | null) => void;
+  onNavigationTargetApplied?: (navId: number) => void;
   onHistoryAvailabilityChange?: (
     availability: EditorHistoryAvailability,
   ) => void;
@@ -645,11 +648,13 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   projectPath,
   readOnly = false,
   highlightLine,
+  navigationTarget,
   aiInlinePatchPreview,
   aiInlinePatchBusy = false,
   onAcceptAIInlinePatch,
   onRejectAIInlinePatch,
   onEditorViewReady,
+  onNavigationTargetApplied,
   onHistoryAvailabilityChange,
 }) => {
   const editorRef = useRef<ReactCodeMirrorRef>(null);
@@ -665,6 +670,7 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   const pendingCursorPositionRef = useRef<{ line: number; col: number } | null>(
     null,
   );
+  const appliedNavigationTargetRef = useRef<number | null>(null);
   const signatureRequestGuardRef = useRef(createLatestRequestGuard());
 
   onChangeRef.current = onChange;
@@ -895,7 +901,6 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
           yMargin,
         }),
       ],
-      selection: { anchor: line.from },
     });
 
     const timer = setTimeout(() => {
@@ -1097,6 +1102,70 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
     },
     [],
   );
+
+  const resolveNavigationPosition = useCallback(
+    (view: EditorView, target: EditorNavigationTarget) => {
+      const lineNumber = Math.min(
+        Math.max(1, target.line),
+        view.state.doc.lines,
+      );
+      const line = view.state.doc.line(lineNumber);
+      const column = Math.min(Math.max(1, target.column ?? 1), line.length + 1);
+
+      return {
+        line,
+        column,
+        pos: line.from + column - 1,
+      };
+    },
+    [],
+  );
+
+  const applyNavigationTarget = useCallback(
+    (view: EditorView, target: EditorNavigationTarget) => {
+      if (appliedNavigationTargetRef.current === target.navId) {
+        return;
+      }
+
+      const { line, pos } = resolveNavigationPosition(view, target);
+      appliedNavigationTargetRef.current = target.navId;
+      view.dispatch({
+        selection: { anchor: pos },
+        effects: [
+          setHighlightLineEffect.of(line.number),
+          EditorView.scrollIntoView(pos, {
+            x: "nearest",
+            y: "center",
+          }),
+        ],
+      });
+      if (target.focus !== false) {
+        view.focus();
+      }
+      syncCursorPosition(view.state);
+      onNavigationTargetApplied?.(target.navId);
+
+      window.setTimeout(() => {
+        if (
+          editorRef.current?.view === view &&
+          appliedNavigationTargetRef.current === target.navId
+        ) {
+          view.dispatch({ effects: setHighlightLineEffect.of(null) });
+        }
+      }, 1500);
+    },
+    [onNavigationTargetApplied, resolveNavigationPosition, syncCursorPosition],
+  );
+
+  useEffect(() => {
+    const view = editorRef.current?.view;
+    if (!view || !navigationTarget) {
+      return;
+    }
+
+    applyNavigationTarget(view, navigationTarget);
+  }, [applyNavigationTarget, navigationTarget]);
+
   const fileName = useMemo(
     () => filePath.split("/").pop() || filePath,
     [filePath],
@@ -2077,6 +2146,9 @@ export const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
             syncCursorPosition(view.state);
             onEditorViewReadyRef.current?.(view);
             publishHistoryAvailability(view.state);
+            if (navigationTarget) {
+              applyNavigationTarget(view, navigationTarget);
+            }
           }}
         />
 

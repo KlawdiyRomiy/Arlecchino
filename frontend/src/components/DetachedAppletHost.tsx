@@ -226,10 +226,10 @@ const DetachedHelperApplet: React.FC<{
     [projectPath],
   );
 
-  const openFileInMain = (path: string, line?: number) => {
+  const openFileInMain = (path: string, line?: number, column?: number) => {
     window.dispatchEvent(
       new CustomEvent("arlecchino:detached-open-file", {
-        detail: { path, line },
+        detail: { path, line, column },
       }),
     );
   };
@@ -250,7 +250,9 @@ const DetachedHelperApplet: React.FC<{
             <ProblemsPanel
               activeFilePath={activeFilePath}
               presentationMode="expanded"
-              onNavigate={(path, line) => openFileInMain(path, line)}
+              onNavigate={(path, line, column) =>
+                openFileInMain(path, line, column)
+              }
             />
           ) : payload.role === "terminal-helper" ? (
             <TerminalPanelContent />

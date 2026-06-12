@@ -135,10 +135,68 @@ export type EditorFileLoadState =
       policy?: EditorFileAccessPolicy;
     };
 
+export interface EditorNavigationTarget {
+  line: number;
+  column?: number;
+  navId: number;
+  focus?: boolean;
+}
+
 export interface EditorFileOpenPayload {
   file: EditorFileLoadState;
   line?: number;
+  navigationTarget?: EditorNavigationTarget;
 }
+
+let editorNavigationTargetId = 0;
+
+const normalizeNavigationOrdinal = (value: number | undefined) => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.floor(value));
+};
+
+export const createEditorNavigationTarget = (
+  line?: number,
+  column?: number,
+  options: { focus?: boolean } = {},
+): EditorNavigationTarget | undefined => {
+  const normalizedLine = normalizeNavigationOrdinal(line);
+  if (!normalizedLine) {
+    return undefined;
+  }
+
+  const normalizedColumn = normalizeNavigationOrdinal(column);
+  editorNavigationTargetId += 1;
+  return {
+    line: normalizedLine,
+    column: normalizedColumn,
+    navId: editorNavigationTargetId,
+    focus: options.focus,
+  };
+};
+
+export const coerceEditorNavigationTarget = (
+  target: number | EditorNavigationTarget | undefined,
+  options: { focus?: boolean } = {},
+): EditorNavigationTarget | undefined => {
+  if (typeof target === "number") {
+    return createEditorNavigationTarget(target, undefined, options);
+  }
+
+  if (!target) {
+    return undefined;
+  }
+
+  return {
+    ...target,
+    line: normalizeNavigationOrdinal(target.line) ?? 1,
+    column: normalizeNavigationOrdinal(target.column),
+    focus: target.focus ?? options.focus,
+  };
+};
 
 export const getEditorFileName = (path: string): string =>
   path.split("/").pop() || path;
