@@ -269,6 +269,7 @@ func (a *App) RenameProjectEntryWithHistory(ctx context.Context, req ProjectEntr
 		return ProjectEntryRenameResult{}, fmt.Errorf("rename project entry: %w", err)
 	}
 
+	a.remapLSPDiagnosticsForProjectEntry(source.Path, targetPath)
 	session.projectEntryHistory.push(projectEntryOperation{
 		ID:        newProjectEntryOperationID(),
 		Kind:      "rename",
@@ -351,6 +352,7 @@ func (a *App) TrashProjectEntries(ctx context.Context, req ProjectEntryTrashRequ
 
 	session.projectEntryHistory.push(operation)
 	for _, entry := range entries {
+		a.pruneLSPDiagnosticsForProjectEntry(entry.Path)
 		a.emitEvent("project:entry:deleted", projectEntryDeletedEvent{Path: entry.Path, IsDirectory: entry.IsDirectory})
 	}
 	return ProjectEntryTrashResult{Count: len(entries)}, nil
@@ -418,6 +420,7 @@ func (a *App) applyProjectEntryUndo(root projectEntryResolvedRoot, op projectEnt
 		} else if err := os.Remove(op.Create.Path); err != nil {
 			return err
 		}
+		a.pruneLSPDiagnosticsForProjectEntry(op.Create.Path)
 		a.emitEvent("project:entry:deleted", projectEntryDeletedEvent{Path: op.Create.Path, IsDirectory: op.Create.IsDirectory})
 		return nil
 	case "rename":
@@ -430,6 +433,7 @@ func (a *App) applyProjectEntryUndo(root projectEntryResolvedRoot, op projectEnt
 		if err := renameWithoutCollision(op.Rename.NewPath, op.Rename.OldPath); err != nil {
 			return err
 		}
+		a.remapLSPDiagnosticsForProjectEntry(op.Rename.NewPath, op.Rename.OldPath)
 		a.emitEvent("project:entry:renamed", projectEntryRenamedEvent{OldPath: op.Rename.NewPath, NewPath: op.Rename.OldPath, IsDirectory: op.Rename.IsDirectory})
 		return nil
 	case "trash":
@@ -492,6 +496,7 @@ func (a *App) applyProjectEntryRedo(root projectEntryResolvedRoot, op projectEnt
 		if err := renameWithoutCollision(op.Rename.OldPath, op.Rename.NewPath); err != nil {
 			return op, err
 		}
+		a.remapLSPDiagnosticsForProjectEntry(op.Rename.OldPath, op.Rename.NewPath)
 		a.emitEvent("project:entry:renamed", projectEntryRenamedEvent{OldPath: op.Rename.OldPath, NewPath: op.Rename.NewPath, IsDirectory: op.Rename.IsDirectory})
 		return op, nil
 	case "trash":
@@ -502,6 +507,7 @@ func (a *App) applyProjectEntryRedo(root projectEntryResolvedRoot, op projectEnt
 			return op, err
 		}
 		for _, entry := range op.Trash.Entries {
+			a.pruneLSPDiagnosticsForProjectEntry(entry.OriginalPath)
 			a.emitEvent("project:entry:deleted", projectEntryDeletedEvent{Path: entry.OriginalPath, IsDirectory: entry.IsDirectory})
 		}
 		return op, nil

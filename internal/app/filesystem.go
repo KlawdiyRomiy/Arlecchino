@@ -756,6 +756,7 @@ func (a *App) RenameProjectEntry(path string, newName string) (ProjectEntryRenam
 		return ProjectEntryRenameResult{}, fmt.Errorf("rename project entry: %w", err)
 	}
 
+	a.remapLSPDiagnosticsForProjectEntry(entryPath, targetPath)
 	result := ProjectEntryRenameResult{
 		NewPath:     targetPath,
 		IsDirectory: info.IsDir(),
@@ -786,6 +787,7 @@ func (a *App) TrashProjectEntry(path string) error {
 		return err
 	}
 
+	a.pruneLSPDiagnosticsForProjectEntry(entry.Path)
 	a.emitEvent("project:entry:deleted", projectEntryDeletedEvent{
 		Path:        entry.Path,
 		IsDirectory: entry.IsDirectory,
