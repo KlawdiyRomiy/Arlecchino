@@ -2875,8 +2875,11 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         return;
       }
 
+      const tabsBeforeDrop = tabsRef.current;
+      const openingFirstEditorTab =
+        !editorSplitSlotsRef.current && tabsBeforeDrop.length === 0;
       const tabId = makeEditorTabId(path);
-      const existingTab = tabsRef.current.find(
+      const existingTab = tabsBeforeDrop.find(
         (candidate) => candidate.id === tabId || candidate.path === path,
       );
       const tab: Tab = existingTab ?? {
@@ -2887,7 +2890,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
       };
 
       if (!existingTab) {
-        const nextTabs = normalizeEditorTabs([...tabsRef.current, tab]);
+        const nextTabs = normalizeEditorTabs([...tabsBeforeDrop, tab]);
         tabsRef.current = nextTabs;
         setTabs(nextTabs);
       }
@@ -2900,7 +2903,17 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         );
       }
 
-      applyEditorSplitForTab(tab.id, side);
+      if (openingFirstEditorTab) {
+        editorSplitSlotsRef.current = null;
+        setEditorSplitSlots(null);
+        setSplitDirection(null);
+        setSecondaryActiveTab(null);
+        activeTabRef.current = tab.id;
+        setActiveTab(tab.id);
+        focusEditorSplitSide(side);
+      } else {
+        applyEditorSplitForTab(tab.id, side);
+      }
       setActiveEditorSplitDropSide(null);
       if (detail.line) {
         setHighlightLine(detail.line);
@@ -2925,7 +2938,7 @@ const ProjectScreen: React.FC<ProjectScreenProps> = ({
         });
       }
     },
-    [applyEditorSplitForTab, storeFileLoadState],
+    [applyEditorSplitForTab, focusEditorSplitSide, storeFileLoadState],
   );
 
   const handleEditorTabClick = useCallback(
