@@ -38,6 +38,7 @@ fi
 
 OUTPUT="${ARLE_WAILS3_OUTPUT:-$BUILD_DIR/bin/$APP_NAME-v3}"
 export GOCACHE="${ARLE_WAILS3_GOCACHE:-$BUILD_DIR/go-build-cache}"
+MIN_MACOS_VERSION="${ARLE_WAILS3_MIN_MACOS_VERSION:-11.0}"
 BUILD_ONLY="0"
 SKIP_FRONTEND="0"
 FRONTEND_DEV_SERVER="0"
@@ -48,6 +49,27 @@ KEEP_STALE_MCP="${ARLE_WAILS3_KEEP_STALE_MCP:-0}"
 APP_ARGS=()
 app_pid=""
 frontend_pid=""
+
+ensure_macos_min_version_flag() {
+  local name="$1"
+  local value="${(P)name:-}"
+  if [[ "$value" == *"-mmacosx-version-min="* ]]; then
+    return 0
+  fi
+
+  export "$name=${value:+$value }-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
+}
+
+configure_macos_cgo_target() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    return 0
+  fi
+
+  export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$MIN_MACOS_VERSION}"
+  ensure_macos_min_version_flag CGO_CFLAGS
+  ensure_macos_min_version_flag CGO_CXXFLAGS
+  ensure_macos_min_version_flag CGO_LDFLAGS
+}
 
 usage() {
   cat <<EOF
@@ -64,6 +86,8 @@ Options:
   -h, --help                   Show this help
 EOF
 }
+
+configure_macos_cgo_target
 
 find_mcp_server_pids_for_output() {
   local target="$1"
